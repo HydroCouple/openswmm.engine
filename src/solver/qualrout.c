@@ -377,7 +377,7 @@ void findLinkQual(int i, double tStep)
         if (cOut < 0.0)
         {
             cOut = -cOut * tStep / (v1 + qIn * tStep);
-            cOut = min(c2, max(0.0, cOut));
+            cOut = MIN(c2, MAX(0.0, cOut));
             c2 -= cOut;
             
             cOut = cOut * (v1 + qIn * tStep);
@@ -453,7 +453,7 @@ void findSFLinkQual(int i, double qSeep, double fEvap, double tStep)
         if (cOut < 0.0)
         {
             cOut = -cOut * tStep / (v1 + qIn * tStep);
-            cOut = min(c2, max(0.0, cOut));
+            cOut = MIN(c2, MAX(0.0, cOut));
             c2 -= cOut;
             
             cOut = cOut * (v1 + qIn * tStep) ;
@@ -560,7 +560,7 @@ void findStorageQual(int j, double tStep)
             // --- Calculate bounded externally provided api pollutant flux and update mass balance
             // --- Positive fluxes are added in the addExternalInflow function in routing.c
             cOut = -Node[j].apiExtQualMassFlux[p] * tStep / (v1 + qIn * tStep);
-            cOut = min(c2, max(0.0, cOut));
+            cOut = MIN(c2, MAX(0.0, cOut));
             c2 -= cOut;
             massbal_addOutflowQual(p, cOut * (v1 + qIn * tStep) / tStep, FALSE);
         }
