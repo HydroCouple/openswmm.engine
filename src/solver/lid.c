@@ -1789,8 +1789,7 @@ double getImpervAreaRunoff(int j)
     {
         q *= Subcatch[j].subArea[IMPERV0].fOutlet;
     }
-    nonLidArea = Subcatch[j].area - Subcatch[j].lidArea;
-    nonLidArea = 0.0 < nonLidArea ? 0.0 : nonLidArea;
+    nonLidArea = MAX(0.0, Subcatch[j].area - Subcatch[j].lidArea);
     return q * nonLidArea;
 }
 
@@ -1816,7 +1815,7 @@ double getPervAreaRunoff(int j)
     {
         q *= Subcatch[j].subArea[PERV].fOutlet;
     }
-    nonLidArea = max(0.0, Subcatch[j].area - Subcatch[j].lidArea);
+    nonLidArea = MAX(0.0, Subcatch[j].area - Subcatch[j].lidArea);
     return q * nonLidArea;
 }
 
