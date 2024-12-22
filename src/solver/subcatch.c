@@ -675,7 +675,8 @@ double subcatch_getRunoff(int j, double tStep)
     // --- find volume of inflow to non-LID portion of subcatchment as existing
     //     ponded water + any runon volume from upstream areas;
     //     rainfall and snowmelt will be added as each sub-area is analyzed
-    nonLidArea = max(0.0, Subcatch[j].area - Subcatch[j].lidArea);
+    nonLidArea = Subcatch[j].area - Subcatch[j].lidArea;
+    nonLidArea = nonLidArea < 0.0 ? 0.0 : nonLidArea;
     vRunon = Subcatch[j].runon * tStep * nonLidArea;
     Vinflow = vRunon + subcatch_getDepth(j) * nonLidArea;
 

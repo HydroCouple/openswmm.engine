@@ -128,7 +128,8 @@ void surfqual_getBuildup(int j, double tStep)
             newBuildup = MAX(newBuildup, oldBuildup);
 
             //--- add bounded building from external API
-            newBuildup = max(0.0, newBuildup + Subcatch[j].apiExtBuildup[p] * area);
+            newBuildup = newBuildup + Subcatch[j].apiExtBuildup[p] * area;
+            newBuildup = newBuildup < 0.0 ? 0.0 : newBuildup;
 
             Subcatch[j].landFactor[i].buildup[p] = newBuildup;
             massbal_updateLoadingTotals(BUILDUP_LOAD, p, 

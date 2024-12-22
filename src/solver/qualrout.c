@@ -250,7 +250,8 @@ void findNodeQual(int j)
 
             // --- Calculate bounded externally provided api pollutant flux and update mass balance
             // --- Positive fluxes are added in the addExternalInflows function in routing.c (This really needs to be refactored for consistency)
-            cOut = min(cIn, max(0.0, -Node[j].apiExtQualMassFlux[p] / qNode));
+            cOut =  -Node[j].apiExtQualMassFlux[p] / qNode;
+            cOut = cOut < 0.0 ? 0.0 : cOut > cIn ? cIn : cOut;
             cIn -= cOut;
             massbal_addOutflowQual(p, cOut * qNode, FALSE);
 

@@ -9,7 +9,7 @@
 
 # Test solver api
 add_executable(
-    test_solver
+    test_solver_api
         test_solver_api.cpp
 )
      
