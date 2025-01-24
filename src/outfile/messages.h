@@ -1,9 +1,9 @@
  /*! 
  * \file messages.h
- * \brief Error and warning messages
+ * \brief Header file for SWMM output API error and warning messages.
  * \author Michael Tryby (US EPA - ORD/NRMRL)
- * \date Created On: 2017-10-20
- * \date Last Edited: 2024-10-23
+ * \date Created: 2017-10-20
+ * \date Last edited: 2024-10-23
  */
 #ifndef SRC_MESSAGES_H_
 #define SRC_MESSAGES_H_
@@ -16,8 +16,15 @@
 #define MAXMSG 56
 
 /*!
-* \defgroup Error_Messages Error and warning messages
-* \brief Error messages for the Output API
+* \defgroup Output_Error_Warning_Local_Functions Output API Error, Warning, and Functions
+* \brief Output API error, warning, and local functions
+* \{
+*/
+
+/*!
+* \addtogroup Output_API_Error_Messages Output API Error and Warning Messages
+* \brief Error messages for the output API
+* \ingroup Output_Error_Warning_Local_Functions
 * \{
 */
 
@@ -80,6 +87,10 @@
 * \brief Error 440: an unspecified error has occurred
 */
 #define ERR440 "ERROR 440: an unspecified error has occurred"
+
+/*!
+ * \}
+ */
 
 /*!
  * \}

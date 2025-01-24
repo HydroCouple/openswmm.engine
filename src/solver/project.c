@@ -105,27 +105,31 @@ static char     MemPoolAllocated;      // TRUE if memory pool allocated
 //-----------------------------------------------------------------------------
 static void initPointers(void);
 static void setDefaults(void);
-static void openFiles(const char *f1, const char *f2, const char *f3);
+
+/*!
+* \brief Opens a project's input and report files.
+* \param[in] inp_file SWMM input file
+* \param[in] rpt_file SWMM report file
+* \param[in] out_file SWMM output file
+*/
+static void openFiles(const char *inp_file, const char *rpt_file, const char *out_file);
 static void createObjects(void);
 static void deleteObjects(void);
 static void createHashTables(void);
 static void deleteHashTables(void);
 
 
-//=============================================================================
-
-void project_open(const char *f1, const char *f2, const char *f3)
-//
-//  Input:   f1 = pointer to name of input file
-//           f2 = pointer to name of report file
-//           f3 = pointer to name of binary output file
-//  Output:  none
-//  Purpose: opens a new SWMM project.
-//
+/*!
+* \brief Opens a new SWMM project
+* \param[in] inp_file SWMM input file
+* \param[in] rpt_file SWMM report file
+* \param[in] out_file SWMM output file
+*/
+void project_open(const char *inp_file, const char *rpt_file, const char *out_file)
 {
     initPointers();
     setDefaults();
-    openFiles(f1, f2, f3);
+    openFiles(inp_file, rpt_file, out_file);
 }
 
 //=============================================================================
@@ -962,16 +966,13 @@ void setDefaults()
    Adjust.hydconFactor = 1.0;
 }
 
-//=============================================================================
-
-void openFiles(const char *f1, const char *f2, const char *f3)
-//
-//  Input:   f1 = name of input file
-//           f2 = name of report file
-//           f3 = name of binary output file
-//  Output:  none
-//  Purpose: opens a project's input and report files.
-//
+/*!
+* \brief Opens a project's input and report files.
+* \param[in] inp_file SWMM input file
+* \param[in] rpt_file SWMM report file
+* \param[in] out_file SWMM output file
+*/
+void openFiles(const char *inp_file, const char *rpt_file, const char *out_file)
 {
     // --- initialize file pointers to NULL
     Finp.file = NULL;
@@ -979,12 +980,12 @@ void openFiles(const char *f1, const char *f2, const char *f3)
     Fout.file = NULL;
 
     // --- save file names
-    sstrncpy(Finp.name, f1, MAXFNAME);
-    sstrncpy(Frpt.name, f2, MAXFNAME);
-    sstrncpy(Fout.name, f3, MAXFNAME);
+    sstrncpy(Finp.name, inp_file, MAXFNAME);
+    sstrncpy(Frpt.name, rpt_file, MAXFNAME);
+    sstrncpy(Fout.name, out_file, MAXFNAME);
 
     // --- check that file names are not identical
-    if (strcomp(f1, f2) || strcomp(f1, f3) || strcomp(f2, f3))
+    if (strcomp(inp_file, rpt_file) || strcomp(inp_file, out_file) || strcomp(rpt_file, out_file))
     {
         writecon(FMT11);
         ErrorCode = ERR_FILE_NAME;
@@ -992,14 +993,14 @@ void openFiles(const char *f1, const char *f2, const char *f3)
     }
 
     // --- open input and report files
-    if ((Finp.file = fopen(f1,"rt")) == NULL)
+    if ((Finp.file = fopen(inp_file,"rt")) == NULL)
     {
         writecon(FMT12);
-        writecon(f1);
+        writecon(inp_file);
         ErrorCode = ERR_INP_FILE;
         return;
     }
-    if ((Frpt.file = fopen(f2,"wt")) == NULL)
+    if ((Frpt.file = fopen(rpt_file,"wt")) == NULL)
     {
        writecon(FMT13);
        ErrorCode = ERR_RPT_FILE;

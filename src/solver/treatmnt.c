@@ -61,14 +61,11 @@ static int    getVariableIndex(char* s);
 static double getVariableValue(int varCode);
 
 
-//=============================================================================
-
+/*!
+* \brief Allocates memory for computing pollutant removals by treatment.
+* \return Returns True if successful, False if not
+*/
 int  treatmnt_open(void)
-//
-//  Input:   none
-//  Output:  returns TRUE if successful, FALSE if not
-//  Purpose: allocates memory for computing pollutant removals by treatment.
-//
 {
     R = NULL;
     Cin = NULL;
@@ -85,28 +82,22 @@ int  treatmnt_open(void)
     return TRUE;
 }
 
-//=============================================================================
-
+/*!
+* \brief Frees memory used for computing pollutant removals by treatment.
+*/
 void treatmnt_close(void)
-//
-//  Input:   none
-//  Output:  returns an error code
-//  Purpose: frees memory used for computing pollutant removals by treatment.
-//
 {
     FREE(R);
     FREE(Cin);
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads a treatment expression from a tokenized line of input.
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+*/
 int  treatmnt_readExpression(char* tok[], int ntoks)
-//
-//  Input:   tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns an error code
-//  Purpose: reads a treatment expression from a tokenized line of input.
-//
 {
     char  s[MAXLINE+1];
     char* expr;
@@ -160,9 +151,11 @@ int  treatmnt_readExpression(char* tok[], int ntoks)
     return 0;
 }
 
-//=============================================================================
-
-void treatmnt_delete(int j)
+/*!
+* \brief Deletes the treatment objects for each pollutant at a node.
+* \param[in] nodeIndex Node index
+*/
+void treatmnt_delete(int nodeIndex)
 //
 //  Input:   j = node index
 //  Output:  none
@@ -170,25 +163,21 @@ void treatmnt_delete(int j)
 //
 {
     int p;
-    if ( Node[j].treatment )
+    if ( Node[nodeIndex].treatment )
     {
         for (p=0; p<Nobjects[POLLUT]; p++)
-            mathexpr_delete(Node[j].treatment[p].equation);
-        free(Node[j].treatment);
+            mathexpr_delete(Node[nodeIndex].treatment[p].equation);
+        free(Node[nodeIndex].treatment);
     }
-    Node[j].treatment = NULL;
+    Node[nodeIndex].treatment = NULL;
 }
 
-//=============================================================================
-
+/*!
+* \brief Computes and saves array of inflow concentrations to a node.
+* \param[in] qIn Flow inflow rate (cfs)
+* \param[in] wIn Pollutant mass inflow rates (mass/sec)
+*/
 void  treatmnt_setInflow(double qIn, double wIn[])
-//
-//  Input:   j = node index
-//           qIn = flow inflow rate (cfs)
-//           wIn = pollutant mass inflow rate (mass/sec)
-//  Output:  none
-//  Purpose: computes and saves array of inflow concentrations to a node.
-//
 {
     int    p;
     if ( qIn > 0.0 )
@@ -197,17 +186,14 @@ void  treatmnt_setInflow(double qIn, double wIn[])
         for (p = 0; p < Nobjects[POLLUT]; p++) Cin[p] = 0.0;
 }
 
-//=============================================================================
-
+/*!
+* \brief Updates pollutant concentrations at a node after treatment.
+* \param[in] nodeIndex Node index
+* \param[in] q Inflow to node (cfs)
+* \param[in] v Volume of node (ft3)
+* \param[in] tStep Routing time step (sec)
+*/
 void  treatmnt_treat(int j, double q, double v, double tStep)
-//
-//  Input:   j     = node index
-//           q     = inflow to node (cfs)
-//           v     = volume of node (ft3)
-//           tStep = routing time step (sec)
-//  Output:  none
-//  Purpose: updates pollutant concentrations at a node after treatment.
-//
 {
     int    p;                          // pollutant index
     double cOut;                       // concentration after treatment

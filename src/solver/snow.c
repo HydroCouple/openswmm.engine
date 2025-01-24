@@ -63,8 +63,16 @@ static void   updateColdContent(TSnowpack* snowpack, int i, double asc,
               double snowfall, double tStep);
 
 
-//=============================================================================
-
+/*!
+* \brief Reads snowmelt parameters from a tokenized line of input data.
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details
+* Format of data are:
+* - Name  SubArea   Cmin  Cmax  Tbase  FWF  SD0  FW0  SNN0/SD100
+* - Name  REMOVAL   SDplow Fout Fimperv Fperv Fimelt Fsubcatch (Subcatch)
+*/
 int snow_readMeltParams(char* tok[], int ntoks)
 //
 //  Input:   tok[] = array of string tokens
@@ -121,9 +129,13 @@ int snow_readMeltParams(char* tok[], int ntoks)
     return 0;
 }
 
-//=============================================================================
-
-int snow_createSnowpack(int j, int k)
+/*!
+* \brief Creates a snowpack object for a subcatchment.
+* \param[in] subcatchIndex Subcatchment index
+* \param[in] snowIndex Snowmelt parameter set index
+* \return TRUE if successful, FALSE if not
+*/
+int snow_createSnowpack(int subcatchIndex, int snowIndex)
 //
 //  Input:   j = subcatchment index
 //           k = snow melt parameter set index
@@ -134,14 +146,16 @@ int snow_createSnowpack(int j, int k)
     TSnowpack* snowpack;
     snowpack = (TSnowpack *) malloc(sizeof(TSnowpack));
     if ( !snowpack ) return FALSE;
-    Subcatch[j].snowpack = snowpack;
-    snowpack->snowmeltIndex = k;
+    Subcatch[subcatchIndex].snowpack = snowpack;
+    snowpack->snowmeltIndex = snowIndex;
     return TRUE;
 }
 
-//=============================================================================
-
-void snow_initSnowpack(int j)
+/*!
+* \brief Initializes state of a subcatchment's snowpack.
+* \param[in] subcatchIndex Subcatchment index
+*/
+void snow_initSnowpack(int subcatchIndex)
 //
 //  Input:   j = subcatchment index
 //  Output:  none
@@ -155,17 +169,17 @@ void snow_initSnowpack(int j)
     TSnowpack* snowpack;               // ptr. to snow pack object
 
     // --- get ptr. to subcatchment's snow pack object
-    snowpack = Subcatch[j].snowpack;
+    snowpack = Subcatch[subcatchIndex].snowpack;
     if ( snowpack == NULL ) return;
 
     // --- identify index of snow melt data set used by snow pack
-    k = Subcatch[j].snowpack->snowmeltIndex;
+    k = Subcatch[subcatchIndex].snowpack->snowmeltIndex;
 
     // --- find fractional area of each snow surface
     f = Snowmelt[k].snn;
-    snowpack->fArea[SNOW_PLOWABLE] = f * Subcatch[j].fracImperv;
-    snowpack->fArea[SNOW_IMPERV]   = (1.0 - f) * Subcatch[j].fracImperv;
-    snowpack->fArea[SNOW_PERV]     = 1.0 - Subcatch[j].fracImperv;
+    snowpack->fArea[SNOW_PLOWABLE] = f * Subcatch[subcatchIndex].fracImperv;
+    snowpack->fArea[SNOW_IMPERV]   = (1.0 - f) * Subcatch[subcatchIndex].fracImperv;
+    snowpack->fArea[SNOW_PERV]     = 1.0 - Subcatch[subcatchIndex].fracImperv;
 
     // --- initialize state of snow pack on each snow surface
     for (i=SNOW_PLOWABLE; i<=SNOW_PERV; i++)
@@ -185,12 +199,14 @@ void snow_initSnowpack(int j)
         snowpack->awe[i]   = 1.0;
         snowDepth += snowpack->wsnow[i] * snowpack->fArea[i];
     }
-    Subcatch[j].newSnowDepth = snowDepth;
+    Subcatch[subcatchIndex].newSnowDepth = snowDepth;
 }
 
-//=============================================================================
-
-void  snow_initSnowmelt(int j)
+/*!
+* \brief Initializes values in a snowmelt parameter set.
+* \param[in] snowIndex Snowmelt parameter set index
+*/
+void  snow_initSnowmelt(int snowIndex)
 //
 //  Input:   j = snowmelt parameter set index
 //  Output:  none
@@ -200,23 +216,25 @@ void  snow_initSnowmelt(int j)
     int i, k;
     for (i=0; i<3; i++)
     {
-        Snowmelt[j].snn       = 0.0;
-        Snowmelt[j].si[i]     = 0.0;
-        Snowmelt[j].dhmin[i]  = 0.0;
-        Snowmelt[j].dhmax[i]  = 0.0;
-        Snowmelt[j].tbase[i]  = 0.0;
-        Snowmelt[j].fwfrac[i] = 0.0;
-        Snowmelt[j].wsnow[i]  = 0.0;
-        Snowmelt[j].fwnow[i]  = 0.0;
-        Snowmelt[j].weplow    = 1.0e6;
-        for (k=0; k<5; k++) Snowmelt[j].sfrac[k] = 0.0;
-        Snowmelt[j].toSubcatch   = -1;
+        Snowmelt[snowIndex].snn       = 0.0;
+        Snowmelt[snowIndex].si[i]     = 0.0;
+        Snowmelt[snowIndex].dhmin[i]  = 0.0;
+        Snowmelt[snowIndex].dhmax[i]  = 0.0;
+        Snowmelt[snowIndex].tbase[i]  = 0.0;
+        Snowmelt[snowIndex].fwfrac[i] = 0.0;
+        Snowmelt[snowIndex].wsnow[i]  = 0.0;
+        Snowmelt[snowIndex].fwnow[i]  = 0.0;
+        Snowmelt[snowIndex].weplow    = 1.0e6;
+        for (k=0; k<5; k++) Snowmelt[snowIndex].sfrac[k] = 0.0;
+        Snowmelt[snowIndex].toSubcatch   = -1;
     }
 }
 
-//=============================================================================
-
-void snow_validateSnowmelt(int j)
+/*!
+* \brief Checks for valid values in a snowmelt parameter set.
+* \param[in] snowIndex Snowmelt parameter set index
+*/
+void snow_validateSnowmelt(int snowIndex)
 //
 //  Input:   j = snowmelt parameter set index
 //  Output:  none
@@ -230,24 +248,28 @@ void snow_validateSnowmelt(int j)
     for ( k = SNOW_PLOWABLE; k <= SNOW_PERV; k++ )
     {
         // --- check melt coeffs.
-        if ( Snowmelt[j].dhmin[k] > Snowmelt[j].dhmax[k] ) err = TRUE; 
+        if ( Snowmelt[snowIndex].dhmin[k] > Snowmelt[snowIndex].dhmax[k] ) err = TRUE; 
 
         // --- check free water fraction
-        if ( Snowmelt[j].fwfrac[k] < 0.0 ||
-             Snowmelt[j].fwfrac[k] > 1.0) err = TRUE;
+        if ( Snowmelt[snowIndex].fwfrac[k] < 0.0 ||
+             Snowmelt[snowIndex].fwfrac[k] > 1.0) err = TRUE;
     }
 
     // --- check fraction of imperv. area plowable
-    if ( Snowmelt[j].snn < 0.0 || Snowmelt[j].snn > 1.0 ) err = TRUE;
+    if ( Snowmelt[snowIndex].snn < 0.0 || Snowmelt[snowIndex].snn > 1.0 ) err = TRUE;
 
     // --- check that removal fractions sum <= 1.0
-    for ( k=0; k<5; k++ ) sum += Snowmelt[j].sfrac[k];
+    for ( k=0; k<5; k++ ) sum += Snowmelt[snowIndex].sfrac[k];
     if ( sum > 1.01 ) err = TRUE;
-    if ( err ) report_writeErrorMsg(ERR_SNOWPACK_PARAMS, Snowmelt[j].ID);
+    if ( err ) report_writeErrorMsg(ERR_SNOWPACK_PARAMS, Snowmelt[snowIndex].ID);
 }
 
-//=============================================================================
-
+/*!
+* \brief Retrieves the current state of a snowpack object.
+* \param[in] subcatch Subcatchment index
+* \param[in] subArea Snowpack sub-area index
+* \param[out] x Array of snowpack state variables
+*/
 void snow_getState(int i, int j, double x[])
 //
 //  Input:   i = subcatchment index
@@ -265,9 +287,13 @@ void snow_getState(int i, int j, double x[])
     x[4] = snowpack->awe[j];
 }
 
-//=============================================================================
-
-void snow_setState(int i, int j, double x[])
+/*!
+* \brief Sets the current state of a snowpack object.
+* \param[in] subcatchIndex Subcatchment index
+* \param[in] subAreaIndex Snowpack sub-area index
+* \param[in] x Array of snowpack state variables
+*/
+void snow_setState(int subcatchIndex, int subAreaIndex, double x[])
 //
 //  Input:   i = subcatchment index
 //           j = snow pack sub-area index
@@ -276,13 +302,13 @@ void snow_setState(int i, int j, double x[])
 //  Purpose: sets the current state of a snow pack object.
 //
 {
-    TSnowpack* snowpack = Subcatch[i].snowpack;
+    TSnowpack* snowpack = Subcatch[subcatchIndex].snowpack;
     if ( snowpack == NULL ) return;
-    snowpack->wsnow[j] = x[0];
-    snowpack->fw[j]    = x[1];
-    snowpack->coldc[j] = x[2];
-    snowpack->ati[j]   = x[3];
-    snowpack->awe[j]   = x[4];
+    snowpack->wsnow[subAreaIndex] = x[0];
+    snowpack->fw[subAreaIndex]    = x[1];
+    snowpack->coldc[subAreaIndex] = x[2];
+    snowpack->ati[subAreaIndex]   = x[3];
+    snowpack->awe[subAreaIndex]   = x[4];
 }
 
 //=============================================================================
@@ -336,9 +362,12 @@ void setMeltParams(int j, int k, double x[])
     }
 }
 
-//=============================================================================
-
-void snow_setMeltCoeffs(int j, double s)
+/*!
+* \brief Sets values of snowmelt coefficients for a particular time of year.
+* \param[in] snowIndex Snowmelt parameter set index
+* \param[in] season Season of the year
+*/
+void snow_setMeltCoeffs(int snowIndex, double season)
 //
 //  Input:   j = snowmelt parameter set index
 //           s = snow season of year
@@ -350,14 +379,17 @@ void snow_setMeltCoeffs(int j, double s)
 
     for (k=SNOW_PLOWABLE; k<=SNOW_PERV; k++)
     {
-        Snowmelt[j].dhm[k] = 0.5 * (Snowmelt[j].dhmax[k] * (1.0 + s)
-                             + Snowmelt[j].dhmin[k] * (1.0 - s));
+        Snowmelt[snowIndex].dhm[k] = 0.5 * (Snowmelt[snowIndex].dhmax[k] * (1.0 + season)
+                             + Snowmelt[snowIndex].dhmin[k] * (1.0 - season));
     }
 }
 
-//=============================================================================
-
-void snow_plowSnow(int j, double tStep)
+/*!
+* \brief Adds new snow to subcatchment and plows it between sub-areas.
+* \param[in] subcatchIndex Subcatchment index
+* \param[in] tStep Time step (sec)
+*/
+void snow_plowSnow(int subcatchIndex, double tStep)
 //
 //  Input:   j     = subcatchment index
 //           tStep = time step (sec)
@@ -375,11 +407,11 @@ void snow_plowSnow(int j, double tStep)
     double sfracTotal;                 // total fraction of snow moved
     TSnowpack* snowpack;               // ptr. to snow pack object
 
-    snowpack = Subcatch[j].snowpack;
+    snowpack = Subcatch[subcatchIndex].snowpack;
     if ( !snowpack ) return;
 
     // --- see if there's any snowfall
-    gage_getPrecip(Subcatch[j].gage, &rainfall, &snowfall);
+    gage_getPrecip(Subcatch[subcatchIndex].gage, &rainfall, &snowfall);
 
     // --- add snowfall to snow pack
     for (i=SNOW_PLOWABLE; i<=SNOW_PERV; i++)
@@ -402,7 +434,7 @@ void snow_plowSnow(int j, double tStep)
 
             // --- plow out of system
             f = snowpack->fArea[SNOW_PLOWABLE] *
-                (Subcatch[j].area - Subcatch[j].lidArea);
+                (Subcatch[subcatchIndex].area - Subcatch[subcatchIndex].lidArea);
             Snow.removed += Snowmelt[k].sfrac[0] * exc * f;
             sfracTotal = Snowmelt[k].sfrac[0];
 
@@ -453,9 +485,17 @@ void snow_plowSnow(int j, double tStep)
     }
 }
 
-//=============================================================================
-
-double snow_getSnowMelt(int j, double rainfall, double snowfall, double tStep,
+/*!
+* \brief Modifies rainfall input to subcatchment's subareas based on possible
+*        snow melt and updates snow depth over entire subcatchment.
+* \param[in] subcatchIndex Subcatchment index
+* \param[in] rainfall Rainfall (ft/sec)
+* \param[in] snowfall Snowfall (ft/sec)
+* \param[in] tStep Time step (sec)
+* \param[out] netPrecip Rainfall + snowmelt on each runoff sub-area (ft/sec)
+* \return New snow depth over subcatchment
+*/
+double snow_getSnowMelt(int subcatchIndex, double rainfall, double snowfall, double tStep,
                         double netPrecip[])
 //
 //  Input:   j = subcatchment index
@@ -477,7 +517,7 @@ double snow_getSnowMelt(int j, double rainfall, double snowfall, double tStep,
     TSnowpack* snowpack;               // ptr. to snow pack object
 
     // --- get ptr. to subcatchment's snowpack
-    snowpack = Subcatch[j].snowpack;
+    snowpack = Subcatch[subcatchIndex].snowpack;
 
     // --- compute snowmelt over entire subcatchment when rain falling
     rmelt = getRainmelt(rainfall);
@@ -515,21 +555,24 @@ double snow_getSnowMelt(int j, double rainfall, double snowfall, double tStep,
     }
 
     // --- combine netPrecip on plowable & non-plowable imperv. areas
-    if ( Subcatch[j].fracImperv > 0.0 )
+    if ( Subcatch[subcatchIndex].fracImperv > 0.0 )
     {
         impervPrecip =
             (netPrecip[SNOW_PLOWABLE] * snowpack->fArea[SNOW_PLOWABLE] +
              netPrecip[SNOW_IMPERV] * snowpack->fArea[SNOW_IMPERV]) /
-             Subcatch[j].fracImperv;
+             Subcatch[subcatchIndex].fracImperv;
         netPrecip[IMPERV0] = impervPrecip;
         netPrecip[IMPERV1] = impervPrecip;
     }
     return snowDepth;
 }
 
-//=============================================================================
-
-double snow_getSnowCover(int j)
+/*!
+* \brief Computes volume of snow on a subcatchment.
+* \param[in] subcatchIndex Subcatchment index
+* \return Volume of snow cover (ft3)
+*/
+double snow_getSnowCover(int subcatchIndex)
 //
 //  Input:   j = subcatchment index
 //  Output:  returns volume of snow cover (ft3)
@@ -540,14 +583,14 @@ double snow_getSnowCover(int j)
     double  snowCover = 0.0;           // snow cover volume (ft3)
     TSnowpack* snowpack;               // ptr. to snowpack object
 
-    snowpack = Subcatch[j].snowpack;
+    snowpack = Subcatch[subcatchIndex].snowpack;
     if ( !snowpack ) return 0.0;
     for (i=SNOW_PLOWABLE; i<=SNOW_PERV; i++)
     {
         snowCover += (snowpack->wsnow[i] + snowpack->fw[i]) * 
                       snowpack->fArea[i];
     }
-    return snowCover * (Subcatch[j].area - Subcatch[j].lidArea);
+    return snowCover * (Subcatch[subcatchIndex].area - Subcatch[subcatchIndex].lidArea);
 }
 
 //=============================================================================

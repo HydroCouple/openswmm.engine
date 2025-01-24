@@ -1,10 +1,10 @@
 
 /*!
 * \file errormanager.h
-* \brief Header file for error handling
+* \brief Header file for SWMM output API error handling.
 * \author Michael E. Tryby (US EPA - ORD/NRMRL)
-* \date Created On: 2017-08-25
-* \date Last Edited: 2024-10-17
+* \date Created: 2017-08-25
+* \date Last edited: 2024-10-17
 */
 #ifndef ERRORMANAGER_H_
 #define ERRORMANAGER_H_

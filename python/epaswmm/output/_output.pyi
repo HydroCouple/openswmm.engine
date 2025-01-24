@@ -267,13 +267,13 @@ class Output:
 
     def __init__(self, output_file: str) -> None:
         """
-        Constructor to initialize the SWMM output file instance.
+        Constructor to open the SWMM output file.
 
         :param output_file: Path to the SWMM output file.
         :type output_file: str
         """
         ...
-
+    
     def __enter__(self): # -> Self@Output:
         """
         Method to return the SWMM output file instance.
@@ -356,7 +356,7 @@ class Output:
         """
         ...
     
-    def get_time_attribute(self, time_atrribute: int) -> int:
+    def get_time_attribute(self, time_attribute: TimeAttribute) -> int:
         """
         Method to get the temporal attributes of the simulation in the SWMM output file.
 
@@ -365,7 +365,7 @@ class Output:
         """
         ...
     
-    def get_element_name(self, element_type: int, element_index: int) -> str:
+    def get_element_name(self, element_type: ElementType, element_index: int) -> str:
         """
         Method to get the name of an element in the SWMM output file.
 
@@ -378,7 +378,7 @@ class Output:
         """
         ...
     
-    def get_element_names(self, element_type: int) -> list:
+    def get_element_names(self, element_type: ElementType) -> List[str]:
         """
         Method to get the names of all elements of a given type in the SWMM output file.
 
@@ -389,7 +389,7 @@ class Output:
         """
         ...
     
-    def get_subcatchment_timeseries(self, element_index: int, attribute: int, start_date_index: int = ..., end_date_index: int = ...) -> dict:
+    def get_subcatchment_timeseries(self, element_index: int, attribute: SubcatchAttribute, start_date_index: int = ..., end_date_index: int = ...) -> Dict[datetime, float]:
         """
         Method to get the time series data for a subcatchment attribute in the SWMM output file.
 
@@ -407,7 +407,7 @@ class Output:
         """
         ...
     
-    def get_node_timeseries(self, element_index: int, attribute: int, start_date_index: int = ..., end_date_index: int = ...) -> dict:
+    def get_node_timeseries(self, element_index: int, attribute: NodeAttribute, start_date_index: int = ..., end_date_index: int = ...) -> Dict[datetime, float]:
         """
         Method to get the time series data for a node attribute in the SWMM output file.
 
@@ -424,7 +424,7 @@ class Output:
         """
         ...
     
-    def get_link_timeseries(self, element_index: int, attribute: int, start_date_index: int = ..., end_date_index: int = ...) -> dict:
+    def get_link_timeseries(self, element_index: int, attribute: LinkAttribute, start_date_index: int = ..., end_date_index: int = ...) -> Dict[datetime, float]:
         """
         Method to get the time series data for a link attribute in the SWMM output file.
 
@@ -441,7 +441,7 @@ class Output:
         """
         ...
     
-    def get_system_timeseries(self, attribute: int, start_date_index: int = ..., end_date_index: int = ...) -> dict:
+    def get_system_timeseries(self, attribute: SystemAttribute, start_date_index: int = ..., end_date_index: int = ...) -> Dict[datetime, float]:
         """
         Method to get the time series data for a system attribute in the SWMM output file.
 
@@ -456,7 +456,7 @@ class Output:
         """
         ...
     
-    def get_subcatchment_values_by_time_and_attribute(self, time_index: int, attribute: int) -> dict:
+    def get_subcatchment_values_by_time_and_attribute(self, time_index: int, attribute: SubcatchAttribute) -> Dict[str, float]:
         """
         Method to get the subcatchment values for all subcatchments for a given time index and attribute.
 
@@ -469,7 +469,7 @@ class Output:
         """
         ...
     
-    def get_node_values_by_time_and_attribute(self, time_index: int, attribute: int) -> dict:
+    def get_node_values_by_time_and_attribute(self, time_index: int, attribute: NodeAttribute) -> Dict[str, float]:
         """
         Method to get the node values for all nodes for a given time index and attribute.
 
@@ -482,7 +482,7 @@ class Output:
         """
         ...
     
-    def get_link_values_by_time_and_attribute(self, time_index: int, attribute: int) -> dict:
+    def get_link_values_by_time_and_attribute(self, time_index: int, attribute: LinkAttribute) -> Dict[str, float]:
         """
         Method to get the link values for all links for a given time index and attribute.
 
@@ -495,7 +495,7 @@ class Output:
         """
         ...
     
-    def get_system_values_by_time_and_attribute(self, time_index: int, attribute: int) -> dict:
+    def get_system_values_by_time_and_attribute(self, time_index: int, attribute: SystemAttribute) -> Dict[str, float]:
         """
         Method to get the system values for a given time index and attribute.
         
@@ -508,7 +508,7 @@ class Output:
         """
         ...
     
-    def get_subcatchment_values_by_time_and_element_index(self, time_index: int, element_index: int) -> dict:
+    def get_subcatchment_values_by_time_and_element_index(self, time_index: int, element_index: int) -> Dict[str, float]:
         """
         Method to get all attributes of a given subcatchment for specified time.
 
@@ -521,7 +521,7 @@ class Output:
         """
         ...
     
-    def get_node_values_by_time_and_element_index(self, time_index: int, element_index: int) -> dict:
+    def get_node_values_by_time_and_element_index(self, time_index: int, element_index: int) -> Dict[str, float]:
         """
         Method to get all attributes of a given node for specified time.
 
@@ -534,7 +534,7 @@ class Output:
         """
         ...
     
-    def get_link_values_by_time_and_element_index(self, time_index: int, element_index: int) -> dict:
+    def get_link_values_by_time_and_element_index(self, time_index: int, element_index: int) -> Dict[str, float]:
         """
         Method to get all attributes of a given link for specified time.
 
@@ -548,7 +548,7 @@ class Output:
         """
         ...
     
-    def get_system_values_by_time(self, time_index: int) -> dict:
+    def get_system_values_by_time(self, time_index: int) -> Dict[str, float]:
         """
         Method to get all attributes of the system for specified time.
 

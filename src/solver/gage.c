@@ -53,20 +53,17 @@ static int    getNextRainfall(int gage);
 static double convertRainfall(int gage, double rain);
 static void   initPastRain(int gage);
 
-//=============================================================================
-
-int gage_readParams(int j, char* tok[], int ntoks)
-//
-//  Input:   j = rain gage index
-//           tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns an error code
-//  Purpose: reads rain gage parameters from a line of input data
-//
-//  Data formats are:
-//    Name RainType RecdFreq SCF TIMESERIES SeriesName
-//    Name RainType RecdFreq SCF FILE FileName Station Units StartDate
-//
+/*!
+* \brief Reads rain gage parameters from a line of input data
+* \param[in] gageIndex Gage index
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details Data formats are:
+*  Name RainType RecdFreq SCF TIMESERIES SeriesName
+*  Name RainType RecdFreq SCF FILE FileName Station Units StartDate
+*/
+int gage_readParams(int gageIndex, char* tok[], int ntoks)
 {
     int      k, err;
     char     *id;
@@ -107,24 +104,24 @@ int gage_readParams(int j, char* tok[], int ntoks)
 
     // --- save parameters to rain gage object
     if ( err > 0 ) return err;
-    Gage[j].ID = id;
-    Gage[j].tSeries      = (int)x[0];
-    Gage[j].rainType     = (int)x[1];
-    Gage[j].rainInterval = (int)x[2];
-    Gage[j].snowFactor   = x[3];
-    Gage[j].rainUnits    = (int)x[6];
-    if ( Gage[j].tSeries >= 0 ) Gage[j].dataSource = RAIN_TSERIES;
-    else                        Gage[j].dataSource = RAIN_FILE;
-    if ( Gage[j].dataSource == RAIN_FILE )
+    Gage[gageIndex].ID = id;
+    Gage[gageIndex].tSeries      = (int)x[0];
+    Gage[gageIndex].rainType     = (int)x[1];
+    Gage[gageIndex].rainInterval = (int)x[2];
+    Gage[gageIndex].snowFactor   = x[3];
+    Gage[gageIndex].rainUnits    = (int)x[6];
+    if ( Gage[gageIndex].tSeries >= 0 ) Gage[gageIndex].dataSource = RAIN_TSERIES;
+    else                        Gage[gageIndex].dataSource = RAIN_FILE;
+    if ( Gage[gageIndex].dataSource == RAIN_FILE )
     {
-        sstrncpy(Gage[j].fname, addAbsolutePath(fname), MAXFNAME);
-        sstrncpy(Gage[j].staID, staID, MAXMSG);
-        Gage[j].startFileDate = x[4];
-        Gage[j].endFileDate = x[5];
+        sstrncpy(Gage[gageIndex].fname, addAbsolutePath(fname), MAXFNAME);
+        sstrncpy(Gage[gageIndex].staID, staID, MAXMSG);
+        Gage[gageIndex].startFileDate = x[4];
+        Gage[gageIndex].endFileDate = x[5];
     }
-    Gage[j].unitsFactor = 1.0;
-    Gage[j].coGage = -1;
-    Gage[j].isUsed = FALSE;
+    Gage[gageIndex].unitsFactor = 1.0;
+    Gage[gageIndex].coGage = -1;
+    Gage[gageIndex].isUsed = FALSE;
     return 0;
 }
 
@@ -204,40 +201,35 @@ int readGageFileFormat(char* tok[], int ntoks, double x[])
     return 0;
 }
 
-//=============================================================================
-
-void  gage_validate(int j)
-//
-//  Input:   j = rain gage index
-//  Output:  none
-//  Purpose: checks for valid rain gage parameters
-//
-//  NOTE: assumes that any time series used by a rain gage has been
-//        previously validated.
-//
+/*!
+* \brief Checks for valid rain gage parameters
+* \param[in] gageIndex Gage index
+* \note Assumes that any time series used by the gage has been previously validated
+*/
+void  gage_validate(int gageIndex)
 {
     int i, k;
     int gageInterval;
 
     // --- for gage with time series data:
-    if ( Gage[j].dataSource == RAIN_TSERIES )
+    if ( Gage[gageIndex].dataSource == RAIN_TSERIES )
     {
         // --- no validation for an unused gage
-        if ( !Gage[j].isUsed ) return;
+        if ( !Gage[gageIndex].isUsed ) return;
 
         // --- see if gage uses same time series as another gage
-        k = Gage[j].tSeries;
-        for (i=0; i<j; i++)
+        k = Gage[gageIndex].tSeries;
+        for (i=0; i<gageIndex; i++)
         {
             if ( Gage[i].dataSource == RAIN_TSERIES && Gage[i].tSeries == k
                  && Gage[i].isUsed )
             {
-                Gage[j].coGage = i;
+                Gage[gageIndex].coGage = i;
 
                 // --- check that both gages record same type of data
-                if ( Gage[j].rainType != Gage[i].rainType )
+                if ( Gage[gageIndex].rainType != Gage[i].rainType )
                 {
-                    report_writeErrorMsg(ERR_RAIN_GAGE_FORMAT, Gage[j].ID);
+                    report_writeErrorMsg(ERR_RAIN_GAGE_FORMAT, Gage[gageIndex].ID);
                 }
                 return;
             }
@@ -246,33 +238,30 @@ void  gage_validate(int j)
         // --- check gage's recording interval against that of time series
         if ( Tseries[k].refersTo >= 0 )
         {
-            report_writeErrorMsg(ERR_RAIN_GAGE_TSERIES, Gage[j].ID);
+            report_writeErrorMsg(ERR_RAIN_GAGE_TSERIES, Gage[gageIndex].ID);
         }
         gageInterval = (int)(floor(Tseries[k].dxMin*SECperDAY + 0.5));
-        if ( gageInterval > 0 && Gage[j].rainInterval > gageInterval )
+        if ( gageInterval > 0 && Gage[gageIndex].rainInterval > gageInterval )
         {
-            report_writeErrorMsg(ERR_RAIN_GAGE_INTERVAL, Gage[j].ID);
+            report_writeErrorMsg(ERR_RAIN_GAGE_INTERVAL, Gage[gageIndex].ID);
         } 
-        if ( Gage[j].rainInterval < gageInterval )
+        if ( Gage[gageIndex].rainInterval < gageInterval )
         {
-            report_writeWarningMsg(WARN09, Gage[j].ID);
+            report_writeWarningMsg(WARN09, Gage[gageIndex].ID);
         }
-        if ( Gage[j].rainInterval < WetStep )
+        if ( Gage[gageIndex].rainInterval < WetStep )
         {
-            report_writeWarningMsg(WARN01, Gage[j].ID);
-            WetStep = Gage[j].rainInterval;
+            report_writeWarningMsg(WARN01, Gage[gageIndex].ID);
+            WetStep = Gage[gageIndex].rainInterval;
         }
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Initializes state of a rain gage
+* \param[in] gageIndex Rain gage index
+*/
 void  gage_initState(int j)
-//
-//  Input:   j = rain gage index
-//  Output:  none
-//  Purpose: initializes state of rain gage.
-//
 {
     // --- initialize actual and reported rainfall
     Gage[j].rainfall = 0.0;
@@ -412,66 +401,62 @@ void initPastRain(int j)
     Gage[j].pastInterval = 0;
 }
 
-//=============================================================================
-
-void gage_updatePastRain(int j, int tStep)
-//
-//  Input:   j = rain gage index
-//           tStep = current runoff time step (sec)
-//  Output:  none
-//  Purpose: updates past MAXPASTRAIN hourly rain totals.
-//
-//  Note: pastRain[0] is past rain volume prior to 1 hour,
-//        pastRain[n] is past rain volume after n hours,
-//        pastInterval is time since last hour was reached.
+/*!
+* \brief Updates past MAXPASTRAIN hourly rain totals.
+* \param[in] gageIndex Rain gage index
+* \param[in] tStep Time step (sec)
+* \note
+* pastRain[0] is past rain volume prior to 1 hour,
+* pastRain[n] is past rain volume after n hours,
+* pastInterval is time since last hour was reached.
+*/
+void gage_updatePastRain(int gageIndex, int tStep)
 {
     int    i, t;
     double r;
 
     // --- current rainfall intensity (in/sec or mm/sec) 
-    r = Gage[j].rainfall / 3600.;
+    r = Gage[gageIndex].rainfall / 3600.;
 
     // --- process each hourly interval of current time step
     while (tStep > 0)
     {
         // --- time for most recent rainfall interval to reach 1 hr
-        t = 3600 - Gage[j].pastInterval;
+        t = 3600 - Gage[gageIndex].pastInterval;
 
         // --- remaining time step is greater than this time
         if (tStep > t)
         {
             // --- add current rain to most recent interval
-            Gage[j].pastRain[0] += t * r;
+            Gage[gageIndex].pastRain[0] += t * r;
 
             // --- shift all prior hourly rain amounts by 1 hour
             for (i = MAXPASTRAIN; i > 0; i-- )
-                Gage[j].pastRain[i] = Gage[j].pastRain[i-1];
+                Gage[gageIndex].pastRain[i] = Gage[gageIndex].pastRain[i-1];
 
             // --- begin a new most recent interval
-            Gage[j].pastInterval = 0;
-            Gage[j].pastRain[0] = 0.0;
+            Gage[gageIndex].pastInterval = 0;
+            Gage[gageIndex].pastRain[0] = 0.0;
             tStep -= t;
         }
         // --- time to reach 1 hr in most recent interval is greater
         //     than remaining time step so update most recent interval
         else
         {
-            Gage[j].pastRain[0] += tStep * r;
-            Gage[j].pastInterval += tStep;
+            Gage[gageIndex].pastRain[0] += tStep * r;
+            Gage[gageIndex].pastInterval += tStep;
             tStep = 0;
         }
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Retrieves rainfall total over some previous number of hours.
+* \param[in] gageIndex Rain gage index
+* \param[in] hrs Number of hours
+* \return Returns cumulative rain volume (inches or mm) in last n hours
+*/
 double gage_getPastRain(int j, int n)
-//
-//  Input:   j = rain gage index
-//           n = number of hours prior to current date
-//  Output:  cumulative rain volume (inches or mm) in last n hours
-//  Purpose: retrieves rainfall total over some previous number of hours.
-//
 {
     int i;
     double result = 0.0;
@@ -481,67 +466,60 @@ double gage_getPastRain(int j, int n)
     return result;
 }
 
-//=============================================================================
-
-DateTime gage_getNextRainDate(int j, DateTime aDate)
-//
-//  Input:   j = rain gage index
-//           aDate = calendar date/time
-//  Output:  next date with rainfall occurring
-//  Purpose: finds the next date from  specified date when rainfall occurs.
-//
+/*!
+* \brief Finds the next date from  specified date when rainfall occurs.
+* \param[in] gageIndex Rain gage index
+* \param[in] aDate Current date/time
+* \return Returns next date when rainfall occurs
+*/
+DateTime gage_getNextRainDate(int gageIndex, DateTime aDate)
 {
-    if ( Gage[j].isUsed == FALSE ) return aDate;
+    if ( Gage[gageIndex].isUsed == FALSE ) return aDate;
     aDate += OneSecond;
-    if ( aDate < Gage[j].startDate ) return Gage[j].startDate;
-    if ( aDate < Gage[j].endDate   ) return Gage[j].endDate;
-    return Gage[j].nextDate;
+    if ( aDate < Gage[gageIndex].startDate ) return Gage[gageIndex].startDate;
+    if ( aDate < Gage[gageIndex].endDate   ) return Gage[gageIndex].endDate;
+    return Gage[gageIndex].nextDate;
 }
 
-//=============================================================================
-
-double gage_getPrecip(int j, double *rainfall, double *snowfall)
-//
-//  Input:   j = rain gage index
-//  Output:  rainfall = rainfall rate (ft/sec)
-//           snowfall = snow fall rate (ft/sec)
-//           returns total precipitation (ft/sec)
-//  Purpose: determines whether gage's recorded rainfall is rain or snow.
-//
+/*!
+* \brief Determines whether gage's recorded rainfall is rain or snow.
+* \param[in] gageIndex Rain gage index
+* \param[out] rainfall Rainfall rate (ft/sec)
+* \param[out] snowfall Snowfall rate (ft/sec)
+* \return Returns Total precipitation (ft/sec)
+*/
+double gage_getPrecip(int gageIndex, double *rainfall, double *snowfall)
 {
     *rainfall = 0.0;
     *snowfall = 0.0;
     if ( !IgnoreSnowmelt && Temp.ta <= Snow.snotmp )
     {
-       *snowfall = Gage[j].rainfall * Gage[j].snowFactor / UCF(RAINFALL);
+       *snowfall = Gage[gageIndex].rainfall * Gage[gageIndex].snowFactor / UCF(RAINFALL);
     }
-    else *rainfall = Gage[j].rainfall / UCF(RAINFALL);
+    else *rainfall = Gage[gageIndex].rainfall / UCF(RAINFALL);
     return (*rainfall) + (*snowfall);
 } 
 
-//=============================================================================
-
-void gage_setReportRainfall(int j, DateTime reportDate)
-//
-//  Input:   j = rain gage index
-//           reportDate = date/time value of current reporting time
-//  Output:  none
-//  Purpose: sets the rainfall value reported at the current reporting time.
-//
+/*!
+* \brief Sets the rainfall value reported at the current reporting time.
+* \param[in] gageIndex Rain gage index
+* \param[in] aDate Current date/time
+*/
+void gage_setReportRainfall(int gageIndex, DateTime reportDate)
 {
     double result;
 
     // --- use value from co-gage if it exists
-    if ( Gage[j].coGage >= 0)
+    if ( Gage[gageIndex].coGage >= 0)
     {
-        Gage[j].reportRainfall = Gage[Gage[j].coGage].reportRainfall;
+        Gage[gageIndex].reportRainfall = Gage[Gage[gageIndex].coGage].reportRainfall;
         return;
     }
 
     // --- rainfall set by API call
-    if (Gage[j].apiRainfall != MISSING)
+    if (Gage[gageIndex].apiRainfall != MISSING)
     {
-        Gage[j].reportRainfall = Gage[j].apiRainfall;
+        Gage[gageIndex].reportRainfall = Gage[gageIndex].apiRainfall;
         return;
     }
 
@@ -551,15 +529,15 @@ void gage_setReportRainfall(int j, DateTime reportDate)
 
     // --- use current rainfall if report date/time is before end
     //     of current rain interval
-    if ( reportDate < Gage[j].endDate ) result = Gage[j].rainfall;
+    if ( reportDate < Gage[gageIndex].endDate ) result = Gage[gageIndex].rainfall;
 
     // --- use 0.0 if report date/time is before start of next rain interval
-    else if ( reportDate < Gage[j].nextDate ) result = 0.0;
+    else if ( reportDate < Gage[gageIndex].nextDate ) result = 0.0;
 
     // --- otherwise report date/time falls right on end of current rain
     //     interval and start of next interval so use next interval's rainfall
-    else result = Gage[j].nextRainfall;
-    Gage[j].reportRainfall = result;
+    else result = Gage[gageIndex].nextRainfall;
+    Gage[gageIndex].reportRainfall = result;
 }
 
 //=============================================================================

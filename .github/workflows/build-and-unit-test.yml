@@ -14,14 +14,17 @@ env:
   PKG_NAME: vcpkg-export-20220826-200052
 
 jobs:
-  unit_test:
-    name: Build and unit test
+  engine_unit_test:
+    name: Build and unit test computational engine
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-13, macos-latest]
+        python-version: [3.11]
     runs-on: windows-2019
     environment: testing
     defaults:
       run:
         shell: cmd
-
     steps:
     - name: Checkout repo
       uses: actions/checkout@v3
@@ -45,7 +48,7 @@ jobs:
       run: ctest --test-dir .\build -C Debug --output-on-failure
 
 
-  reg_test:
+  python_binding_unit_test:
     name: Build and reg test
     runs-on: windows-2019
     defaults:

@@ -46,40 +46,38 @@ using CMake and the Microsoft Visual Studio C compiler on Windows:
    Readme file resides (which should have 'src' as a sub-directory
    underneath it).
 
-2. Issue the following command to create the directory for storing the built binaries:
+2. Use the following command to create the directory for storing the built binaries:
 
 ```bash
 mkdir build
-cd build
 ```
 
-3. Then enter the following CMake commands to build the binaries:
+3. Then the following CMake commands to build the binaries:
 
 ``` bash
-cmake -G <compiler> .. -A <platform>
+cmake -G <compiler> .. -A <platform> -B .\build
 cmake --build . --config Release
 ```
 
-where `<compiler>` is the name of the Visual Studio compiler being used
+where `<compiler>` is the name of the compiler being used
 in double quotes (e.g., "Visual Studio 15 2017", "Visual Studio 16 2019",
-or "Visual Studio 17 2022") and `<platform>` is Win32 for a 32-bit build 
-or x64 for a 64-bit build. The resulting engine DLL (swmm5.dll), command 
-line executable (runswmm.exe), and output processing libraries (swmm-output.dll)
+or "Visual Studio 17 2022") and `<platform>` (e.g., Win32 for a 32-bit build 
+or x64 for a 64-bit build). The resulting engine shared libraries (i.e., swmm5.dll), command line executable (i.e., runswmm.exe), and output processing libraries (i.e., swmm-output.dll)
 will appear in the build\Release directory.
 
 For other platforms, such as Linux or MacOS, Step 3 can be replaced with:
 
 ```bash
-cmake ..
-cmake --build .
+cmake .
+cmake --build .\build
 ```
 
 The resulting shared object library (libswmm5.so or libswmm5.dylib) and 
-command line executable (runswmm) will appear in the build directory. 
+command line executable (runswmm) will be compiled to the build directory. 
 
 ### Python Bindings (Experimental)
 
-Experimental python bindings for the SWMM API are being developed to support regression and benchmark testing as well as other applications. _**These bindings are still under development and testing and has yet to be cleared through US EPA ORD's official quality assurance review process**_. The exprimental python bindings can be built and installed locally using the following command.
+Experimental python bindings for the SWMM API are being developed to support regression and benchmark testing as well as for other applications. _**These bindings are still under development and testing and has yet to be cleared through US EPA ORD's official quality assurance review process**_. The exprimental python bindings can be built and installed locally using the following command.
 
 ```bash
 cd python

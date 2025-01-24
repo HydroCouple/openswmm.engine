@@ -204,7 +204,6 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out
         ) as swmm_solver:
-
             # Initialize the solver
             swmm_solver.initialize()
 
@@ -222,7 +221,6 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out
         ) as swmm_solver:
-
             swmm_solver.initialize()
 
             num_raingages = swmm_solver.get_object_count(solver.SWMMObjects.RAIN_GAGE)
@@ -279,7 +277,6 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out,
         ) as swmm_solver:
-
             swmm_solver.initialize()
 
             raingage_names = swmm_solver.get_object_names(solver.SWMMObjects.RAIN_GAGE)
@@ -309,7 +306,6 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out,
         ) as swmm_solver:
-
             swmm_solver.initialize()
 
             rg_index = swmm_solver.get_object_index(solver.SWMMObjects.RAIN_GAGE, 'RainGage')
@@ -339,7 +335,6 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out,
         ) as swmm_solver:
-
             swmm_solver.initialize()
 
             for t in range(12):
@@ -364,7 +359,6 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out,
         ) as swmm_solver:
-
             swmm_solver.initialize()
 
             swmm_solver.set_value(
@@ -396,7 +390,6 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out,
         ) as swmm_solver:
-
             swmm_solver.initialize()
 
             for t in range(12):
@@ -421,7 +414,6 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out,
         ) as swmm_solver:
-
             swmm_solver.initialize()
 
             swmm_solver.set_value(
@@ -534,7 +526,7 @@ class TestSWMMSolver(unittest.TestCase):
         ) as swmm_solver:
             swmm_solver.initialize()
 
-            error_code = swmm_solver.set_value(
+            swmm_solver.set_value(
                 object_type=solver.SWMMObjects.LINK.value,
                 property_type=solver.SWMMLinkProperties.OFFSET1.value,
                 index=9,
@@ -551,3 +543,28 @@ class TestSWMMSolver(unittest.TestCase):
             )
 
             self.assertAlmostEqual(link_value, 1.0)
+
+    def test_run_banklick(self):
+        """
+        Run the SWMM solver to solve the example input file
+
+        :return:
+        """
+        BANKLICK_EXAMPLE_INPUT_FILE = r'C:\Users\CBUAHIN\SourceCodes\DigitalWaterAnalytics\SERTO\tests\spatialswmm\swmm\test_model.inp'
+        if os.path.exists(self.site_drainage_rpt):
+            os.remove(self.site_drainage_rpt)
+
+        if os.path.exists(self.site_drainage_out):
+            os.remove(self.site_drainage_out)
+
+        error = solver.run_solver(
+            inp_file=BANKLICK_EXAMPLE_INPUT_FILE,
+            rpt_file=BANKLICK_EXAMPLE_INPUT_FILE.replace(".inp", ".rpt"),
+            out_file=BANKLICK_EXAMPLE_INPUT_FILE.replace(".inp", ".out"),
+        )
+
+        self.assertEqual(error, 0, "SWMM solver run successfully.")
+
+        # Assert output and report files were created
+        self.assertTrue(os.path.exists(self.site_drainage_rpt))
+        self.assertTrue(os.path.exists(self.site_drainage_out))

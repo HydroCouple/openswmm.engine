@@ -52,14 +52,12 @@ static void findSpanningTree(int startNode);
 static void evalLoop(int startLink);
 static int  traceLoop(int i1, int i2, int k);
 static void checkDummyLinks(void);
-//=============================================================================
 
+/*!
+* \brief Sorts links in topological order for flow routing.
+* \param[in, out] sortedLinks Array of link indices
+*/
 void toposort_sortLinks(int sortedLinks[])
-//
-//  Input:   none
-//  Output:  sortedLinks = array of link indexes in sorted order
-//  Purpose: sorts links from upstream to downstream.
-//
 {
     int i, n = 0;
 

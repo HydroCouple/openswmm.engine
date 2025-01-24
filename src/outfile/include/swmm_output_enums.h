@@ -1,9 +1,9 @@
 /*!
  *  \file swmm_output_enums.h
  *  \author Michael Tryby (US EPA - ORD/CESER)
- *  \brief Header file for SWMM output enumeration types
- *  \date Created On: 2019-10-18
- *  \date Last Edited: 2024-10-17
+ *  \brief Header file for SWMM output API enumeration types.
+ *  \date Created: 2019-10-18
+ *  \date Last edited: 2024-10-17
  */
 
  #ifndef SWMM_OUTPUT_ENUMS_H_

@@ -77,8 +77,10 @@ static void   runoff_readFromFile(void);
 static void   runoff_saveToFile(float tStep);
 static void   runoff_getOutfallRunon(double tStep);
 
-//=============================================================================
-
+/*!
+* \brief Opens the runoff analyzer.
+* \return Error code
+*/
 int runoff_open()
 //
 //  Input:   none
@@ -119,8 +121,9 @@ int runoff_open()
     return ErrorCode;
 }
 
-//=============================================================================
-
+/*!
+* \brief Closes the runoff analyzer.
+*/
 void runoff_close()
 //
 //  Input:   none
@@ -150,8 +153,9 @@ void runoff_close()
     if ( Fclimate.file ) fclose(Fclimate.file);
 }
 
-//=============================================================================
-
+/*!
+* \brief Computes runoff for each subcatchment at the current runoff time.
+*/
 void runoff_execute()
 //
 //  Input:   none

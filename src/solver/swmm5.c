@@ -1,67 +1,85 @@
-//-----------------------------------------------------------------------------
-//   swmm5.c
-//
-//   Project:  EPA SWMM5
-//   Version:  5.2
-//   Date:     11/01/21  (Build 5.2.0)
-//   Author:   L. Rossman
-//
-//   This is the main module of the computational engine for Version 5 of
-//   the U.S. Environmental Protection Agency's Storm Water Management Model
-//   (SWMM). It contains functions that control the flow of computations.
-//
-//   This engine should be compiled into a shared object library whose API
-//   functions are listed in swmm5.h.
-//
-//   Update History
-//   ==============
-//   Build 5.1.008:
-//   - Support added for the MinGW compiler.
-//   - Reporting of project options moved to swmm_start.
-//   - Hot start file now read before routing system opened.
-//   - Final routing step adjusted so that total duration not exceeded.
-//   Build 5.1.011:
-//   - Made sure that MS exception handling only used with MS C compiler.
-//   - Added name of module handling an exception to error report.
-//   - Elapsed simulation time now saved to new global variable ElaspedTime.
-//   - Added swmm_getError() function that retrieves error code and message.
-//   - Changed WarningCode to Warnings (# warnings issued).
-//   - Added swmm_getWarnings() function to retrieve value of Warnings.
-//   - Fixed error code returned on swmm_xxx functions.
-//   Build 5.1.012:
-//   - #include <direct.h> only used when compiled for Windows.
-//   Build 5.1.013:
-//   - Support added for saving average results within a reporting period.
-//   - SWMM engine now always compiled to a shared object library.
-//   Build 5.1.015:
-//   - Fixes bug in summary statistics when Report Start date > Start Date.
-//   Build 5.2.0:
-//   - Added additional API functions.
-//   - Set max. number of open files to 8192.
-//   - Changed getElapsedTime function to use report start as base date/time.
-//   - Prevented possible infinite loop if swmm_step() called when ErrorCode > 0.
-//   - Prevented early exit from swmm_end() when ErrorCode > 0.
-//   - Support added for relative file names.
-//   Build 5.3.0:
-//   - Added support for saving hot start files at specific times.
-//   - Expanded SWMM api to save and use prescribed hotstart files.
-//   - Expansions to the SWMM API to include attributes of more objects and water quality.
-//-----------------------------------------------------------------------------
+/*!
+ * \file swmm5.c
+ * \brief Main module of the computational engine for Version 5 of the 
+ * U.S. Environmental Protection Agency's Storm Water Management Model (SWMM).
+ * \author L. Rossman
+ * \date Created: 2021-11-01
+ * \date Last edited: 2024-12-23
+ * \version 5.3
+ * \details This is the main module of the computational engine for Version 5 of
+ * the U.S. Environmental Protection Agency's Storm Water Management Model
+ * (SWMM). It contains functions that control the flow of computations.
+ * 
+ * This engine should be compiled into a shared object library whose API
+ * functions are listed in swmm5.h.
+ * 
+ * Update History
+ * ==============
+ * Build 5.1.008:
+ * - Support added for the MinGW compiler.
+ * - Reporting of project options moved to swmm_start.
+ * - Hot start file now read before routing system opened.
+ * - Final routing step adjusted so that total duration not exceeded.
+ * Build 5.1.011:
+ * - Made sure that MS exception handling only used with MS C compiler.
+ * - Added name of module handling an exception to error report.
+ * - Elapsed simulation time now saved to new global variable ElaspedTime.
+ * - Added swmm_getError() function that retrieves error code and message.
+ * - Changed WarningCode to Warnings (# warnings issued).
+ * - Added swmm_getWarnings() function to retrieve value of Warnings.
+ * - Fixed error code returned on swmm_xxx functions.
+ * Build 5.1.012:
+ * - #include <direct.h> only used when compiled for Windows.
+ * Build 5.1.013:
+ * - Support added for saving average results within a reporting period.
+ * - SWMM engine now always compiled to a shared object library.
+ * Build 5.1.015:
+ * - Fixes bug in summary statistics when Report Start date > Start Date.
+ * Build 5.2.0:
+ * - Added additional API functions.
+ * - Set max. number of open files to 8192.
+ * - Changed getElapsedTime function to use report start as base date/time.
+ * - Prevented possible infinite loop if swmm_step() called when ErrorCode > 0.
+ * - Prevented early exit from swmm_end() when ErrorCode > 0.
+ * - Support added for relative file names.
+ * Build 5.3.0:
+ * - Added support for saving hot start files at specific times.
+ * - Expanded SWMM api to save and use prescribed hotstart files.
+ * - Expansions to the SWMM API to include attributes of more objects and water quality.
+ */
+
+/*!
+* \def _CRT_SECURE_NO_DEPRECATE 
+* \brief Define to prevent deprecation warnings from MS Visual C++ compilers
+*/
 #define _CRT_SECURE_NO_DEPRECATE
 
 // --- define WINDOWS
 #undef WINDOWS
 #ifdef _WIN32
+
+/*!
+ * \def WINDOWS
+ * \brief Define for Windows platform
+ */
 #define WINDOWS
 #endif
 #ifdef __WIN32__
+
+/*!
+ * \def WINDOWS
+ * \brief Define for Windows platform
+ */
 #define WINDOWS
 #endif
 
-// --- define EXH (MS Windows exception handling)
 #undef EXH // indicates if exception handling included
 #ifdef WINDOWS
 #ifdef _MSC_VER
+/*!
+ * \def EXH
+ * \brief Define for MS Windows exception handling
+ */
 #define EXH
 #endif
 #endif
@@ -89,6 +107,10 @@
 #if defined(_OPENMP)
 #include <omp.h>     
 #else
+/*!
+* \brief Dummy function for getting threads available for OpenMP to prevent compiler errors.
+* \return 1
+*/
 int omp_get_max_threads(void) { return 1; }
 #endif
 
@@ -100,7 +122,13 @@ int omp_get_max_threads(void) { return 1; }
 //-----------------------------------------------------------------------------
 #include "macros.h"  // macros used throughout SWMM
 #include "objects.h" // definitions of SWMM's data objects
+
+/*!
+* \def EXTERN
+* \brief Define for 'extern' in headers.h
+*/
 #define EXTERN       // defined as 'extern' in headers.h
+
 #include "globals.h" // declaration of all global variables
 #include "funcs.h"   // declaration of all global functions
 #include "error.h"   // error message codes
@@ -108,11 +136,23 @@ int omp_get_max_threads(void) { return 1; }
 
 #include "swmm5.h" // declaration of SWMM's API functions
 
-#define MAX_EXCEPTIONS 100 // max. number of exceptions handled
+/*!
+* \def MAX_EXCEPTIONS
+* \brief Maximum number of exceptions handled
+*/
+#define MAX_EXCEPTIONS 100 
 
-//-----------------------------------------------------------------------------
-//  Unit conversion factors
-//-----------------------------------------------------------------------------
+/*!
+* \addtogroup UnitConversionFactors Unit Conversion Factors
+* \brief Conversion factors for units used in SWMM.
+* \ingroup SWMM_Constants
+* \{
+*/
+
+/*!
+* \var Ucf
+* \brief Unit conversion factors for different units used in SWMM.
+*/
 const double Ucf[10][2] =
     {
         //  US      SI
@@ -127,87 +167,279 @@ const double Ucf[10][2] =
         {2.203e-6, 1.0e-6},      // MASS (lb, kg --> mg)
         {43560.0, 3048.0}        // GWFLOW (cfs/ac, cms/ha --> ft/sec)
 };
+
+/*!
+* \var Qcf 
+* \brief Flow conversion factors for different flow units used in SWMM.
+*/
 const double Qcf[6] =          // Flow Conversion Factors:
     {1.0, 448.831, 0.64632,    // cfs, gpm, mgd --> cfs
      0.02832, 28.317, 2.4466}; // cms, lps, mld --> cfs
+/*!
+* \}
+*/
 
-//-----------------------------------------------------------------------------
-//  Shared variables
-//-----------------------------------------------------------------------------
+/*!
+* \addtogroup SWMM_API_Shared_Variable SWMM Shared Variables
+* \brief SWMM API shared variables.
+* \ingroup SWMM_Constants
+* \{
+*/
+
+/*!
+* \var IsOpenFlag 
+* \brief TRUE if a project has been opened.
+*/
 static int IsOpenFlag;         // TRUE if a project has been opened
+
+/*!
+* \var IsStartedFlag
+* \brief TRUE if a simulation has been started.
+*/
 static int IsStartedFlag;      // TRUE if a simulation has been started
+
+/*!
+* \var SaveResultsFlag
+* \brief TRUE if output to be saved to binary file.
+*/
 static int SaveResultsFlag;    // TRUE if output to be saved to binary file
+
+/*!
+* \var ExceptionCount
+* \brief Number of exceptions handled.
+*/
 static int ExceptionCount;     // number of exceptions handled
+
+/*!
+* \var DoRunoff
+* \brief TRUE if runoff is computed.
+*/
 static int DoRunoff;           // TRUE if runoff is computed
+
+/*!
+* \var DoRouting
+* \brief TRUE if flow routing is computed.
+*/
 static int DoRouting;          // TRUE if flow routing is computed
+
+/*!
+* \var RoutingDuration
+* \brief Duration of a set of routing steps (msecs).
+*/
 static double RoutingDuration; // duration of a set of routing steps (msecs)
+/*!
+* \}
+*/
 
-//-----------------------------------------------------------------------------
-//  External API functions (prototyped in swmm5.h)
-//-----------------------------------------------------------------------------
-//  swmm_run
-//  swmm_open
-//  swmm_start
-//  swmm_step
-//  swmm_end
-//  swmm_report
-//  swmm_close
-//  swmm_getMassBalErr
-//  swmm_getVersion
-//  swmm_getError
-//  swmm_getWarnings
-//  swmm_getCount
-//  swmm_getIDname
-//  swmm_getIndex
-//  swmm_getStartNode
-//  swmm_getEndNode
-//  swmm_getValue
-//  swmm_setValue
-//  swmm_getSavedValue
-//  swmm_writeLine
-//  swmm_decodeDate
+/*!
+* \addtogroup SWMM_API_Local_Functions SWMM Local Functions
+* \brief Local functions used by the SWMM API functions.
+* \ingroup SWMM_Constants
+* \{
+*/
 
-//-----------------------------------------------------------------------------
-//  Local functions
-//-----------------------------------------------------------------------------
+/*!
+* \brief Routes flow and WQ through drainage system over a single time step.
+*/
 static void execRouting(void);
-static void saveResults(void);
-static double getGageValue(int index, int property);
-static double getSubcatchValue(int property, int index, int subIndex);
-static double getNodeValue(int property, int index, int subIndex);
-static double getLinkValue(int property, int index, int subIndex);
-static double getSavedDate(int period);
-static double getSavedSubcatchValue(int property, int index, int period);
-static double getSavedNodeValue(int property, int index, int period);
-static double getSavedLinkValue(int property, int index, int period);
-static double getSystemValue(int property);
-static double getMaxRouteStep();
-static int setGageValue(int property, int index, int subIndex, double value);
-static int setSubcatchValue(int property, int index, int subIndex, double value);
-static int setNodeValue(int property, int index, int subIndex, double value);
-static int setLinkValue(int property, int index, int subIndex, double value);
-static int setNodeLatFlow(int index, double value);
-static int setOutfallStage(int index, double value);
-static int setLinkSetting(int index, double value);
-static int setRoutingStep(double value);
-static int setSystemValue(int property, double value);
-static void getAbsolutePath(const char *fname, char *absPath, size_t size);
 
-// Exception filtering function
+/*!
+* \brief Saves current results to binary output file.
+*/
+static void saveResults(void);
+
+/*!
+* \brief Retrieve rain gage value given its index and property type.
+* \param[in] index Object index
+* \param[in] property Property type
+* \return Property value
+*/
+static double getGageValue(int index, int property);
+
+/*!
+* \brief Retrieve subcatchment value given its index, property type, and subindex.
+* \param[in] index Object index
+* \param[in] property Property type
+* \param[in] subIndex Subindex
+* \return Property value
+*/
+static double getSubcatchValue(int property, int index, int subIndex);
+
+/*!
+* \brief Retrieve node value given its index, property type, and subindex.
+* \param[in] index Object index
+* \param[in] property Property type
+* \param[in] subIndex Subindex
+* \return Property value
+*/
+static double getNodeValue(int property, int index, int subIndex);
+
+/*!
+* \brief Retrieve link value given its index, property type, and subindex.
+* \param[in] index Object index
+* \param[in] property Property type
+* \param[in] subIndex Subindex
+* \return Property value
+*/
+static double getLinkValue(int property, int index, int subIndex);
+
+/*!
+* \brief Retrieve saved date value given a period.
+* \param[in] period Period
+* \return Date value
+*/
+static double getSavedDate(int period);
+
+/*!
+* \brief Retrieve saved value of a subcatchment, node, or link given its index, property type, and period.
+* \param[in] property Property type
+* \param[in] index Object index
+* \param[in] period Period
+* \return Property value
+*/
+static double getSavedSubcatchValue(int property, int index, int period);
+
+/*!
+* \brief Retrieve saved value of a node given its index, property type, and period.
+* \param[in] property Property type
+* \param[in] index Object index
+* \param[in] period Period
+* \return Property value
+*/
+static double getSavedNodeValue(int property, int index, int period);
+
+/*!
+* \brief Retrieve saved value of a link given its index, property type, and period.
+* \param[in] property Property type
+* \param[in] index Object index
+* \param[in] period Period
+* \return Property value
+*/
+static double getSavedLinkValue(int property, int index, int period);
+
+/*!
+* \brief Retrieve system value given its property type.
+* \param[in] property Property type
+* \return Property value
+*/
+static double getSystemValue(int property);
+
+/*!
+* \brief Retrieve the maximum routing step.
+* \return Maximum routing step
+*/
+static double getMaxRouteStep();
+
+/*!
+* \brief Set gage value given its property type, index, subindex, and value.
+* \param[in] property Property type
+* \param[in] index Object index
+* \param[in] subIndex Subindex
+* \param[in] value Property value
+* \return Error code
+*/
+static int setGageValue(int property, int index, int subIndex, double value);
+
+/*!
+* \brief Set subcatchment value given its property type, index, subindex, and value.
+* \param[in] property Property type
+* \param[in] index Object index
+* \param[in] subIndex Subindex
+* \param[in] value Property value
+* \return Error code
+*/
+static int setSubcatchValue(int property, int index, int subIndex, double value);
+
+/*!
+* \brief Set node value given its property type, index, subindex, and value.
+* \param[in] property Property type
+* \param[in] index Object index
+* \param[in] subIndex Subindex
+* \param[in] value Property value
+* \return Error code
+*/
+static int setNodeValue(int property, int index, int subIndex, double value);
+
+/*!
+* \brief Set link value given its property type, index, subindex, and value.
+* \param[in] property Property type
+* \param[in] index Object index
+* \param[in] subIndex Subindex
+* \param[in] value Property value
+* \return Error code
+*/
+static int setLinkValue(int property, int index, int subIndex, double value);
+
+/*!
+* \brief Set node lateral inflow value given its index and value.
+* \param[in] index Object index
+* \param[in] value Property value
+* \return Error code
+*/
+static int setNodeLatFlow(int index, double value);
+
+/*!
+* \brief Set outfall stage value given its index and value.
+* \param[in] index Object index
+* \param[in] value Property value
+* \return Error code
+*/
+static int setOutfallStage(int index, double value);
+
+/*!
+* \brief Set link setting value given its index and value.
+* \param[in] index Object index
+* \param[in] value Property value
+* \return Error code
+*/
+static int setLinkSetting(int index, double value);
+
+/*!
+* \brief Set routing step value.
+* \param[in] value Property value
+* \return Error code
+*/
+static int setRoutingStep(double value);
+
+/*!
+* \brief Set system value given its property type and value.
+* \param[in] property Property type
+* \param[in] value Property value
+* \return Error code
+*/
+static int setSystemValue(int property, double value);
+
+/*!
+* \brief Get absolute path of a file.
+* \param[in] fname File name
+* \param[out] absPath Absolute path
+* \param[in] size Size of the absPath array
+*/
+static void getAbsolutePath(const char *fname, char *absPath, size_t size);
+/*!
+* \}
+*/
+
 #ifdef EXH
+/*!
+* \brief Exception filter function
+* \param[in] xc Exception code
+* \param[in] module Module name
+* \param[in] elapsedTime Elapsed time
+* \param[in] step Step
+* \return Error code
+*/
 static int xfilter(int xc, char *module, double elapsedTime, long step);
 #endif
 
-//=============================================================================
-
+/*!
+* \brief Run a SWMM simulation with the given input file, report file, and output file.
+* \param[in] inputFile Path to the input file
+* \param[in] reportFile Path to the report file
+* \param[in] outputFile Path to the output file
+* \return Error code
+*/
 int DLLEXPORT swmm_run(const char *inputFile, const char *reportFile, const char *outputFile)
-//
-//  Input:   inputFile = name of input file
-//           reportFile = name of report file
-//           outputFile = name of binary output file
-//  Output:  returns error code
-//  Purpose: runs a SWMM simulation.
-//
 {
     long newHour, oldHour = 0;
     long theDay, theHour;
@@ -268,17 +500,15 @@ int DLLEXPORT swmm_run(const char *inputFile, const char *reportFile, const char
     return ErrorCode;
 }
 
-//=============================================================================
-
+/*!
+* \brief Run a SWMM simulation with the given input file, report file, output file, and progress callback function.
+* \param[in] inputFile Path to the input file
+* \param[in] reportFile Path to the report file
+* \param[in] outputFile Path to the output file
+* \param[in] callback Progress callback function
+* \return Error code
+*/
 int DLLEXPORT swmm_run_with_callback(const char *inputFile, const char *reportFile, const char *outputFile, progress_callback callback)
-//
-//  Input:   inputFile = name of input file
-//           reportFile = name of report file
-//           outputFile = name of binary output file
-//           callback = function pointer to a progress callback function
-//  Output:  returns error code
-//  Purpose: runs a SWMM simulation.
-//
 {
     double progress = 0.0, elapsedTime = 0.0;
 
@@ -331,16 +561,14 @@ int DLLEXPORT swmm_run_with_callback(const char *inputFile, const char *reportFi
     return ErrorCode;
 }
 
-//=============================================================================
-
+/*!
+* \brief Open a SWMM project.
+* \param[in] inputFile Path to the input file
+* \param[in] reportFile Path to the report file
+* \param[in] outputFile Path to the output file
+* \return Error code
+*/
 int DLLEXPORT swmm_open(const char *inputFile, const char *reportFile, const char *outputFile)
-//
-//  Input:   inputFile  = name of input file
-//           reportFile = name of report file
-//           outputFile = name of binary output file
-//  Output:  returns error code
-//  Purpose: opens a SWMM project.
-//
 {
 // --- to be safe, reset the state of the floating point unit
 #ifdef WINDOWS
@@ -391,14 +619,12 @@ int DLLEXPORT swmm_open(const char *inputFile, const char *reportFile, const cha
     return ErrorCode;
 }
 
-//=============================================================================
-
+/*!
+* \brief Start a SWMM simulation.
+* \param[in] saveResults TRUE if simulation results saved to binary file
+* \return Error code
+*/
 int DLLEXPORT swmm_start(int saveResults)
-//
-//  Input:   saveResults = TRUE if simulation results saved to binary file
-//  Output:  returns an error code
-//  Purpose: starts a SWMM simulation.
-//
 {
     // --- check that a project is open & no run started
     if (ErrorCode)
@@ -498,8 +724,11 @@ int DLLEXPORT swmm_start(int saveResults)
     return ErrorCode;
 }
 
-//=============================================================================
-
+/*!
+* \brief Perform a SWMM simulation step and return the elapsed time.
+* \param[out] elapsedTime Elapsed time
+* \return Error code 
+*/
 int DLLEXPORT swmm_step(double *elapsedTime)
 //
 //  Input:   elapsedTime = current elapsed time in decimal days
@@ -558,15 +787,13 @@ int DLLEXPORT swmm_step(double *elapsedTime)
     return ErrorCode;
 }
 
-//=============================================================================
-
+/*!
+* \brief Perform a SWMM simulation step with a stride step and return the elapsed time.
+* \param[in] strideStep Stride step
+* \param[out] elapsedTime Elapsed time
+* \return Error code 
+*/
 int DLLEXPORT swmm_stride(int strideStep, double *elapsedTime)
-//
-//  Input:   strideStep = number of seconds to advance the simulation
-//           elapsedTime = current elapsed time in decimal days
-//  Output:  updated value of elapsedTime,
-//           returns error code
-//  Purpose: advances the simulation by a fixed number of seconds.
 {
     double realRouteStep = RouteStep;
 
@@ -608,14 +835,14 @@ int DLLEXPORT swmm_stride(int strideStep, double *elapsedTime)
     return ErrorCode;
 }
 
-//=============================================================================
-
+/*!
+* \brief Set hotstart file for SWMM simulation.
+* \details Sets the hotstart file to use for simulation. Errors does not terminate simulation unless
+* there is a prior terminating error.
+* \param[in] hotStartFile Path to the hotstart file
+* \return Error code 
+*/
 int DLLEXPORT swmm_useHotStart(const char *hotStartFile)
-//
-//  Input:   hotStartFile = filepath to hotstart file to use
-//  Output:  returns error code
-//  Purpose: Sets the hotstart file to use for simulation. Errors does not terminate simulation unless
-//  there is a prior terminating error.
 {
     int errorCode = 0;
     int fileVersion = 0;
@@ -645,13 +872,12 @@ int DLLEXPORT swmm_useHotStart(const char *hotStartFile)
     return errorCode;
 }
 
-//=============================================================================
-
+/*!
+* \brief Save hotstart file for SWMM simulation at current time.
+* \param[in] hotStartFile Path to the hotstart file
+* \return Error code 
+*/
 int DLLEXPORT swmm_saveHotStart(const char *hotStartFile)
-//
-//  Input:   hotStartFile = filepath to hotstart file to save
-//  Output:  returns error code
-//  Purpose: Saves hotstart file at the current simulation time
 {
     int errorCode = 0;
 
@@ -667,14 +893,10 @@ int DLLEXPORT swmm_saveHotStart(const char *hotStartFile)
     return errorCode;
 }
 
-//=============================================================================
-
+/*!
+* \brief Routes flow and WQ through drainage system over a single time step.
+*/
 void execRouting()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: routes flow & WQ through drainage system over a single time step.
-//
 {
     double nextRoutingTime; // updated elapsed routing time (msec)
     double routingStep;     // routing time step (sec)
@@ -737,13 +959,10 @@ void execRouting()
 #endif
 }
 
-//=============================================================================
-
+/*!
+* \brief Saves current results to binary output file.
+*/
 void saveResults()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: saves current results to binary output file.
 {
     if (NewRoutingTime >= ReportTime)
     {
@@ -778,14 +997,11 @@ void saveResults()
         output_updateAvgResults();
 }
 
-//=============================================================================
-
+/*!
+* \brief End a SWMM simulation.
+* \return Error code
+*/
 int DLLEXPORT swmm_end(void)
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: ends a SWMM simulation.
-//
 {
     // --- check that project opened and run started
     if (!IsOpenFlag)
@@ -819,41 +1035,32 @@ int DLLEXPORT swmm_end(void)
     return ErrorCode;
 }
 
-//=============================================================================
-
+/*!
+* \brief Writes simulation results to the report file.
+* \return Error code 
+*/
 int DLLEXPORT swmm_report()
-//
-//  Input:   none
-//  Output:  returns an error code
-//  Purpose: writes simulation results to the report file.
-//
 {
     if (!ErrorCode)
         report_writeReport();
     return ErrorCode;
 }
 
-//=============================================================================
-
+/*!
+* \brief Write a line of text to the SWMM report file.
+* \param[in] line Line of text
+*/
 void DLLEXPORT swmm_writeLine(const char *line)
-//
-//  Input:   line = a character string
-//  Output:  returns an error code
-//  Purpose: writes a line of text to the report file.
-//
 {
     if (IsOpenFlag)
         report_writeLine(line);
 }
 
-//=============================================================================
-
+/*!
+* \brief Close a SWMM simulation.
+* \return Error code 
+*/
 int DLLEXPORT swmm_close()
-//
-//  Input:   none
-//  Output:  returns an error code
-//  Purpose: closes a SWMM project.
-//
 {
     if (Fout.file)
         output_close();
@@ -875,18 +1082,15 @@ int DLLEXPORT swmm_close()
     return 0;
 }
 
-//=============================================================================
-
+/*!
+* \brief Get the mass balance errors for a SWMM simulation.
+* \param[out] runoffErr Runoff error (percent)
+* \param[out] flowErr Flow error (percent)
+* \param[out] qualErr Quality error (percent)
+* \return Error code 
+*/
 int DLLEXPORT swmm_getMassBalErr(float *runoffErr, float *flowErr,
                                  float *qualErr)
-//
-//  Input:   none
-//  Output:  runoffErr = runoff mass balance error (percent)
-//           flowErr   = flow routing mass balance error (percent)
-//           qualErr   = quality routing mass balance error (percent)
-//           returns an error code
-//  Purpose: reports a simulation's mass balance errors.
-//
 {
     *runoffErr = 0.0;
     *flowErr = 0.0;
@@ -901,41 +1105,36 @@ int DLLEXPORT swmm_getMassBalErr(float *runoffErr, float *flowErr,
     return 0;
 }
 
-//=============================================================================
-
+/*!
+* \brief Gets the version of the SWMM engine.
+* \details Retrieves the version number of the current SWMM engine which uses a 
+format of xyzzz where x = major version number, y = minor version number, and 
+zzz = build number.
+* \note Each New Release should be updated in consts.h
+* \return SWMM engine version number
+*/
 int DLLEXPORT swmm_getVersion()
-//
-//  Input:   none
-//  Output:  returns SWMM engine version number
-//  Purpose: retrieves version number of current SWMM engine which
-//           uses a format of xyzzz where x = major version number,
-//           y = minor version number, and zzz = build number.
-//
-//  NOTE: Each New Release should be updated in consts.h
 {
     return VERSION;
 }
 
-//=============================================================================
-
+/*!
+* \brief Gets the number of warnings issued during a simulation.
+* \return Number of warning messages issued
+*/
 int DLLEXPORT swmm_getWarnings()
-//
-//  Input:  none
-//  Output: returns number of warning messages issued.
-//  Purpose: retrieves number of warning messages issued during an analysis.
 {
     return Warnings;
 }
 
-//=============================================================================
-
+/*!
+* \brief Retrieves the code number and text of the error condition that 
+* caused SWMM to abort its analysis.
+* \param[out] errMsg Error message text
+* \param[in] msgLen Maximum size of errMsg
+* \return Error message code number
+*/
 int DLLEXPORT swmm_getError(char *errMsg, int msgLen)
-//
-//  Input:   errMsg = character array to hold error message text
-//           msgLen = maximum size of errMsg
-//  Output:  returns error message code number and text of error message.
-//  Purpose: retrieves the code number and text of the error condition that
-//           caused SWMM to abort its analysis.
 {
     // --- copy text of last error message into errMsg
     if (ErrorCode > 0 && strlen(ErrorMsg) == 0)
@@ -949,14 +1148,13 @@ int DLLEXPORT swmm_getError(char *errMsg, int msgLen)
     return ErrorCode;
 }
 
-//=============================================================================
-
+/*!
+* \brief Retrieves the text of the error message that corresponds to the error code number.
+* \param[in] errorCode Error code number
+* \param[out] outErrMsg Error message text
+* \return Error code
+*/
 int DLLEXPORT swmm_getErrorFromCode(int errorCode, char *outErrMsg[1024])
-//
-//  Input:   errorCode = error code number
-//  Output:  outErrMsg = error message text
-//  Purpose: retrieves the text of the error message that corresponds to the
-//           error code number.
 {
     char err_msg[MAXMSG];
     error_getMsg(errorCode, err_msg);
@@ -965,13 +1163,12 @@ int DLLEXPORT swmm_getErrorFromCode(int errorCode, char *outErrMsg[1024])
     return 0;
 }
 
-//=============================================================================
-
+/*!
+* \brief Retrieves the number of objects of a specific type.
+* \param[in] objType Type of SWMM object
+* \return Number of objects or error code
+*/
 int DLLEXPORT swmm_getCount(int objType)
-//
-//  Input:   objType = a type of SWMM object
-//  Output:  returns the number of objects or error code;
-//  Purpose: retrieves the number of objects of a specific type.
 {
     if (!IsOpenFlag)
         return ERR_API_NOT_OPEN;
@@ -980,17 +1177,15 @@ int DLLEXPORT swmm_getCount(int objType)
     return Nobjects[objType];
 }
 
-//=============================================================================
-
+/*!
+* \brief Retrieves the ID name of an object.
+* \param[in] objType Type of SWMM object
+* \param[in] index Object index
+* \param[out] name Object name
+* \param[in] size Size of the name array
+* \return Error code
+*/
 int DLLEXPORT swmm_getName(int objType, int index, char *name, int size)
-//
-//  Input:   objType = a type of SWMM object
-//           index = the object's index in the array of objects
-//           name = a character array
-//           size = size of the name array
-//  Output:  name = the object's ID name;
-//           error code
-//  Purpose: retrieves the ID name of an object.
 {
     char *idName = NULL;
 
@@ -1049,14 +1244,13 @@ int DLLEXPORT swmm_getName(int objType, int index, char *name, int size)
     return 0;
 }
 
-//=============================================================================
-
+/*!
+* \brief Retrieves the index of a named object.
+* \param[in] objType Type of SWMM object
+* \param[in] name Object name
+* \return Object index or error code
+*/
 int DLLEXPORT swmm_getIndex(int objType, const char *name)
-//
-//  Input:   objType = a type of SWMM object
-//           name = the object's ID name
-//  Output:  returns the object's position in the array of like objects or error code;
-//  Purpose: retrieves the index of a named object.
 {
     if (!IsOpenFlag)
         return ERR_API_NOT_OPEN;
@@ -1065,16 +1259,15 @@ int DLLEXPORT swmm_getIndex(int objType, const char *name)
     return project_findObject(objType, name);
 }
 
-//=============================================================================
-
+/*!
+* \brief Get the value of a property for an object of a given property in the SWMM model.
+* \param[in] property Property type
+* \param[in] index Object index
+* \return Property value
+* \deprecated Use swmm_getValueExpanded instead. Function will be changed to 
+* swmm_getValueExpanded in future versions.
+*/
 double DLLEXPORT swmm_getValue(int property, int index)
-//
-//  Input:   property = an object's property code
-//           index = the object's index in the array of like objects
-//
-//  Output:  returns the property's current value
-//  Purpose: retrieves the value of an object's property.
-//  TODO:    Will be deprecated in SWMM version 6.0. Use swmm_getValueExpanded instead.
 {
     if (!IsOpenFlag)
         return ERR_API_NOT_OPEN;
@@ -1092,16 +1285,15 @@ double DLLEXPORT swmm_getValue(int property, int index)
     return ERR_API_PROPERTY_TYPE;
 }
 
-//=============================================================================
-
+/*!
+* \brief Get the value of a property for an object of a given property in the SWMM model.
+* \param[in] objType Type of SWMM object
+* \param[in] property Property type
+* \param[in] index Object index in the array of like objects
+* \param[in] subIndex Subindex
+* \return Property value
+*/
 double DLLEXPORT swmm_getValueExpanded(int objType, int property, int index, int subIndex)
-//
-//  Input:   property = an object's property code
-//           index = the object's index in the array of like objects
-//           subIndex = an index of the object's property
-//
-//  Output:  returns the property's current value
-//  Purpose: retrieves the value of an object's property.
 {
     if (!IsOpenFlag)
         return ERR_API_NOT_OPEN;
@@ -1123,17 +1315,16 @@ double DLLEXPORT swmm_getValueExpanded(int objType, int property, int index, int
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Set the value of a property for an object of a given property in the SWMM model.
+* \param[in] property Property type
+* \param[in] index Object index in the array of like objects
+* \param[in] value Property value   
+* \return Error code
+* \deprecated Use swmm_setValueExpanded instead. Function will be changed to
+* swmm_setValueExpanded in future versions.
+*/
 int DLLEXPORT swmm_setValue(int property, int index, double value)
-//
-//  Input:   property = an object's property code
-//           index = the object's index in the array of like objects
-//           value = the property's new value
-//  Output:  returns error code
-//  Purpose: sets the value of an object's property.
-//  TODO:    Will be deprecated in SWMM version 6.0. Use swmm_setValueExpanded instead, 
-//           which will be renamed to swmm_setValue.
 {
 
     if (!IsOpenFlag)

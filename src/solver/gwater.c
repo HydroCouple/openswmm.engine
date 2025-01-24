@@ -114,9 +114,19 @@ static void   updateMassBal(double area,  double tStep);
 static int    getVariableIndex(char* s);
 static double getVariableValue(int varIndex);
 
-//=============================================================================
-
-int gwater_readAquiferParams(int j, char* tok[], int ntoks)
+/*!
+* \brief Reads aquifer parameter values from line of input data
+* \param[in] aquiferIndex Index of aquifer
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details Data line contains following parameters:
+*  ID, porosity, wiltingPoint, fieldCapacity,     conductivity,
+*  conductSlope, tensionSlope, upperEvapFraction, lowerEvapDepth,
+*  gwRecession,  bottomElev,   waterTableElev,    upperMoisture
+*  (evapPattern)
+*/
+int gwater_readAquiferParams(int aquiferIndex, char* tok[], int ntoks)
 //
 //  Input:   j = aquifer index
 //           tok[] = array of string tokens
@@ -157,25 +167,33 @@ int gwater_readAquiferParams(int j, char* tok[], int ntoks)
     }
 
     // --- assign parameters to aquifer object
-    Aquifer[j].ID = id;
-    Aquifer[j].porosity       = x[0];
-    Aquifer[j].wiltingPoint   = x[1];
-    Aquifer[j].fieldCapacity  = x[2];
-    Aquifer[j].conductivity   = x[3] / UCF(RAINFALL);
-    Aquifer[j].conductSlope   = x[4];
-    Aquifer[j].tensionSlope   = x[5] / UCF(LENGTH);
-    Aquifer[j].upperEvapFrac  = x[6];
-    Aquifer[j].lowerEvapDepth = x[7] / UCF(LENGTH);
-    Aquifer[j].lowerLossCoeff = x[8] / UCF(RAINFALL);
-    Aquifer[j].bottomElev     = x[9] / UCF(LENGTH);
-    Aquifer[j].waterTableElev = x[10] / UCF(LENGTH);
-    Aquifer[j].upperMoisture  = x[11];
-    Aquifer[j].upperEvapPat   = p;
+    Aquifer[aquiferIndex].ID = id;
+    Aquifer[aquiferIndex].porosity       = x[0];
+    Aquifer[aquiferIndex].wiltingPoint   = x[1];
+    Aquifer[aquiferIndex].fieldCapacity  = x[2];
+    Aquifer[aquiferIndex].conductivity   = x[3] / UCF(RAINFALL);
+    Aquifer[aquiferIndex].conductSlope   = x[4];
+    Aquifer[aquiferIndex].tensionSlope   = x[5] / UCF(LENGTH);
+    Aquifer[aquiferIndex].upperEvapFrac  = x[6];
+    Aquifer[aquiferIndex].lowerEvapDepth = x[7] / UCF(LENGTH);
+    Aquifer[aquiferIndex].lowerLossCoeff = x[8] / UCF(RAINFALL);
+    Aquifer[aquiferIndex].bottomElev     = x[9] / UCF(LENGTH);
+    Aquifer[aquiferIndex].waterTableElev = x[10] / UCF(LENGTH);
+    Aquifer[aquiferIndex].upperMoisture  = x[11];
+    Aquifer[aquiferIndex].upperEvapPat   = p;
     return 0;
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads groundwater inflow parameters for a subcatchment from
+* a line of input data.
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details Data format is:
+*  subcatch  aquifer  node  surfElev  a1  b1  a2  b2  a3  fixedDepth +
+*            (nodeElev  bottomElev  waterTableElev  upperMoisture )
+*/
 int gwater_readGroundwaterParams(char* tok[], int ntoks)
 //
 //  Input:   tok[] = array of string tokens
@@ -310,58 +328,54 @@ int gwater_readFlowExpression(char* tok[], int ntoks)
     return 0;
 }
 
-//=============================================================================
-
-void gwater_deleteFlowExpression(int j)
-//
-//  Input:   j = subcatchment index
-//  Output:  none
-//  Purpose: deletes a subcatchment's custom groundwater flow expressions.
-//
+/*!
+* \brief Veletes a subcatchment's custom groundwater flow expressions.
+* \param[in] subcatchIndex Subcatchment index
+*/
+void gwater_deleteFlowExpression(int subcatchIndex)
 {
-    mathexpr_delete(Subcatch[j].gwLatFlowExpr);
-    mathexpr_delete(Subcatch[j].gwDeepFlowExpr);
+    mathexpr_delete(Subcatch[subcatchIndex].gwLatFlowExpr);
+    mathexpr_delete(Subcatch[subcatchIndex].gwDeepFlowExpr);
 }
 
-//=============================================================================
-
-void  gwater_validateAquifer(int j)
-//
-//  Input:   j = aquifer index
-//  Output:  none
-//  Purpose: validates groundwater aquifer properties .
-//
+/*!
+* \brief Validates groundwater aquifer properties.
+* \param[in] aquiferIndex Index of aquifer
+*/
+void  gwater_validateAquifer(int aquiferIndex)
 {
 	int p;
 
-    if ( Aquifer[j].porosity          <= 0.0 
-    ||   Aquifer[j].fieldCapacity     >= Aquifer[j].porosity
-    ||   Aquifer[j].wiltingPoint      >= Aquifer[j].fieldCapacity
-    ||   Aquifer[j].conductivity      <= 0.0
-    ||   Aquifer[j].conductSlope      <  0.0
-    ||   Aquifer[j].tensionSlope      <  0.0
-    ||   Aquifer[j].upperEvapFrac     <  0.0
-    ||   Aquifer[j].lowerEvapDepth    <  0.0
-    ||   Aquifer[j].waterTableElev    <  Aquifer[j].bottomElev
-    ||   Aquifer[j].upperMoisture     >  Aquifer[j].porosity 
-    ||   Aquifer[j].upperMoisture     <  Aquifer[j].wiltingPoint )
-        report_writeErrorMsg(ERR_AQUIFER_PARAMS, Aquifer[j].ID);
+    if ( Aquifer[aquiferIndex].porosity          <= 0.0 
+    ||   Aquifer[aquiferIndex].fieldCapacity     >= Aquifer[aquiferIndex].porosity
+    ||   Aquifer[aquiferIndex].wiltingPoint      >= Aquifer[aquiferIndex].fieldCapacity
+    ||   Aquifer[aquiferIndex].conductivity      <= 0.0
+    ||   Aquifer[aquiferIndex].conductSlope      <  0.0
+    ||   Aquifer[aquiferIndex].tensionSlope      <  0.0
+    ||   Aquifer[aquiferIndex].upperEvapFrac     <  0.0
+    ||   Aquifer[aquiferIndex].lowerEvapDepth    <  0.0
+    ||   Aquifer[aquiferIndex].waterTableElev    <  Aquifer[aquiferIndex].bottomElev
+    ||   Aquifer[aquiferIndex].upperMoisture     >  Aquifer[aquiferIndex].porosity 
+    ||   Aquifer[aquiferIndex].upperMoisture     <  Aquifer[aquiferIndex].wiltingPoint )
+        report_writeErrorMsg(ERR_AQUIFER_PARAMS, Aquifer[aquiferIndex].ID);
 
-    p = Aquifer[j].upperEvapPat;
+    p = Aquifer[aquiferIndex].upperEvapPat;
     if ( p >= 0 && Pattern[p].type != MONTHLY_PATTERN )
     {
-        report_writeErrorMsg(ERR_AQUIFER_PARAMS, Aquifer[j].ID);
+        report_writeErrorMsg(ERR_AQUIFER_PARAMS, Aquifer[aquiferIndex].ID);
     }
 }
 
-//=============================================================================
-
-void  gwater_validate(int j)
+/*!
+* \brief Validates groundwater parameters for a subcatchment.
+* \param[in] subcatchIndex Subcatchment index
+*/
+void  gwater_validate(int subcatchIndex)
 {
     TAquifer a;         // Aquifer data structure
     TGroundwater* gw;   // Groundwater data structure
     
-    gw = Subcatch[j].groundwater;
+    gw = Subcatch[subcatchIndex].groundwater;
     if ( gw )
     {
         a = Aquifer[gw->aquifer];
@@ -373,23 +387,20 @@ void  gwater_validate(int j)
 
         // ... ground elevation can't be below water table elevation
         if ( gw->surfElev < gw->waterTableElev )
-            report_writeErrorMsg(ERR_GROUND_ELEV, Subcatch[j].ID);
+            report_writeErrorMsg(ERR_GROUND_ELEV, Subcatch[subcatchIndex].ID);
     }
 }
 
-//=============================================================================
-
-void  gwater_initState(int j)
-//
-//  Input:   j = subcatchment index
-//  Output:  none
-//  Purpose: initializes state of subcatchment's groundwater.
-//
+/*!
+* \brief Initializes state of subcatchment's groundwater.
+* \param[in] subcatchIndex Subcatchment index
+*/
+void  gwater_initState(int subcatchIndex)
 {
     TAquifer a;         // Aquifer data structure
     TGroundwater* gw;   // Groundwater data structure
     
-    gw = Subcatch[j].groundwater;
+    gw = Subcatch[subcatchIndex].groundwater;
     if ( gw )
     {
         a = Aquifer[gw->aquifer];
@@ -416,36 +427,32 @@ void  gwater_initState(int j)
         // ... initial available infiltration volume into upper zone
         gw->maxInfilVol = (gw->surfElev - gw->waterTableElev) *
                           (a.porosity - gw->theta) /
-                          subcatch_getFracPerv(j);
+                          subcatch_getFracPerv(subcatchIndex);
     }
 }
 
-//=============================================================================
-
-void gwater_getState(int j, double x[])
-//
-//  Input:   j = subcatchment index
-//  Output:  x[] = array of groundwater state variables
-//  Purpose: retrieves state of subcatchment's groundwater.
-//
+/*!
+* \brief Retrieves state of subcatchment's groundwater.
+* \param[in] subcatchIndex Subcatchment index
+* \param[out] x Array of groundwater state variables
+*/
+void gwater_getState(int subcatchIndex, double x[])
 {
-    TGroundwater* gw = Subcatch[j].groundwater;
+    TGroundwater* gw = Subcatch[subcatchIndex].groundwater;
     x[0] = gw->theta;
     x[1] = gw->bottomElev + gw->lowerDepth;
     x[2] = gw->newFlow;
     x[3] = gw->maxInfilVol;
 }
 
-//=============================================================================
-
-void gwater_setState(int j, double x[])
-//
-//  Input:   j = subcatchment index
-//           x[] = array of groundwater state variables
-//  Purpose: assigns values to a subcatchment's groundwater state.
-//
+/*!
+* \brief Assigns values to a subcatchment's groundwater state.
+* \param[in] subcatchIndex Subcatchment index
+* \param[in] x Array of groundwater state variables
+*/
+void gwater_setState(int subcatchIndex, double x[])
 {
-    TGroundwater* gw = Subcatch[j].groundwater;
+    TGroundwater* gw = Subcatch[subcatchIndex].groundwater;
     if ( gw == NULL ) return;
     gw->theta = x[0];
     gw->lowerDepth = x[1] - gw->bottomElev;
@@ -453,19 +460,17 @@ void gwater_setState(int j, double x[])
     if ( x[3] != MISSING ) gw->maxInfilVol = x[3];
 }
 
-//=============================================================================
-
-double gwater_getVolume(int j)
-//
-//  Input:   j = subcatchment index
-//  Output:  returns total volume of groundwater in ft/ft2
-//  Purpose: finds volume of groundwater stored in upper & lower zones
-//
+/*!
+* \brief Finds volume of groundwater stored in upper & lower zones.
+* \param[in] subcatchIndex Subcatchment index
+* \return Total volume of groundwater in ft/ft2
+*/
+double gwater_getVolume(int subcatchIndex)
 {
     TAquifer a;
     TGroundwater* gw;
     double upperDepth;
-    gw = Subcatch[j].groundwater;
+    gw = Subcatch[subcatchIndex].groundwater;
     if ( gw == NULL ) return 0.0;
     a = Aquifer[gw->aquifer];
     upperDepth = gw->surfElev - gw->bottomElev - gw->lowerDepth;

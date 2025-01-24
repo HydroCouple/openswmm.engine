@@ -97,14 +97,11 @@ static void stats_updateLinkStats(int link, double tStep, DateTime aDate);
 static void stats_findMaxStats(void);
 static void stats_updateMaxStats(TMaxStats maxStats[], int i, int j, double x);
 
-//=============================================================================
-
-int  stats_open()
-//
-//  Input:   none
-//  Output:  returns an error code
-//  Purpose: opens the simulation statistics system.
-//
+/*!
+* \brief Opens the simulation statistics system.
+* \return Error code
+*/
+int stats_open()
 {
     int j, k;
     double timeStepDelta;
@@ -313,14 +310,10 @@ int  stats_open()
     return 0;
 }
 
-//=============================================================================
-
-void  stats_close()
-//
-//  Input:   none
-//  Output:  
-//  Purpose: closes the simulation statistics system.
-//
+/*!
+* \brief Closes the simulation statistics system.
+*/
+void stats_close()
 {
     int j;
 
@@ -337,14 +330,10 @@ void  stats_close()
     FREE(PumpStats);
 }
 
-//=============================================================================
-
-void  stats_report()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: reports simulation statistics.
-//
+/*!
+* \brief Reports simulation statistics.
+*/
+void stats_report()
 {
     // --- report flow routing accuracy statistics
     if ( Nobjects[LINK] > 0 && RouteModel != NO_ROUTING )
@@ -364,64 +353,67 @@ void  stats_report()
         statsrpt_writeReport();
 }
 
-//=============================================================================
-
-void   stats_updateSubcatchStats(int j, double rainVol, double runonVol,
+/*!
+* \brief Updates totals of runoff components for a specific subcatchment.
+* \param[in] subcatchIndex Subcatchment index
+* \param[in] rainVol Rainfall + snowfall volume (ft3)
+* \param[in] runonVol Runon volume from other subcatchments (ft3)
+* \param[in] evapVol Evaporation volume (ft3)
+* \param[in] infilVol Infiltration volume (ft3)
+* \param[in] impervVol Impervious runoff volume (ft3)
+* \param[in] pervVol Pervious runoff volume (ft3)
+* \param[in] runoffVol Total runoff volume (ft3)
+* \param[in] runoff Runoff rate (cfs)
+*/
+void stats_updateSubcatchStats(int subcatchIndex, double rainVol, double runonVol,
                                  double evapVol, double infilVol,
 	                             double impervVol, double pervVol,
                                  double runoffVol, double runoff)
-//
-//  Input:   j = subcatchment index
-//           rainVol   = rainfall + snowfall volume (ft3)
-//           runonVol  = runon volume from other subcatchments (ft3)
-//           evapVol   = evaporation volume (ft3)
-//           infilVol  = infiltration volume (ft3)
-//           impervVol = impervious runoff volume (ft3)
-//           pervVol   = pervious runoff volume (ft3)
-//           runoffVol = runoff volume (ft3)
-//           runoff    = runoff rate (cfs)
-//  Output:  none
-//  Purpose: updates totals of runoff components for a specific subcatchment.
-//
 {
-    SubcatchStats[j].precip += rainVol;
-    SubcatchStats[j].runon  += runonVol;
-    SubcatchStats[j].evap   += evapVol;
-    SubcatchStats[j].infil  += infilVol;
-	SubcatchStats[j].runoff += runoffVol;
-    SubcatchStats[j].maxFlow = MAX(SubcatchStats[j].maxFlow, runoff);
-	SubcatchStats[j].impervRunoff += impervVol;
-	SubcatchStats[j].pervRunoff += pervVol;
+    SubcatchStats[subcatchIndex].precip += rainVol;
+    SubcatchStats[subcatchIndex].runon  += runonVol;
+    SubcatchStats[subcatchIndex].evap   += evapVol;
+    SubcatchStats[subcatchIndex].infil  += infilVol;
+	SubcatchStats[subcatchIndex].runoff += runoffVol;
+    SubcatchStats[subcatchIndex].maxFlow = MAX(SubcatchStats[subcatchIndex].maxFlow, runoff);
+	SubcatchStats[subcatchIndex].impervRunoff += impervVol;
+	SubcatchStats[subcatchIndex].pervRunoff += pervVol;
 }
 
-//=============================================================================
-
-void  stats_updateGwaterStats(int j, double infil, double evap, double latFlow,
+/*!
+* \brief Updates groundwater statistics for a specific subcatchment.
+* \param[in] subcatchIndex Subcatchment index
+* \param[in] infil Infiltration volume (ft3)
+* \param[in] evap Evaporation volume (ft3)
+* \param[in] latFlow Lateral flow volume (ft3)
+* \param[in] deepFlow Deep flow volume (ft3)
+* \param[in] theta Soil moisture content
+* \param[in] waterTable Depth to water table (ft)
+* \param[in] tStep Time step (sec)
+*/
+void stats_updateGwaterStats(int subcatchIndex, double infil, double evap, double latFlow,
                               double deepFlow, double theta, double waterTable,
                               double tStep)
 {
-    Subcatch[j].groundwater->stats.infil += infil * tStep;
-    Subcatch[j].groundwater->stats.evap += evap * tStep;
-    Subcatch[j].groundwater->stats.latFlow += latFlow * tStep;
-    Subcatch[j].groundwater->stats.deepFlow += deepFlow * tStep;
-    Subcatch[j].groundwater->stats.avgUpperMoist += theta * tStep;
-    Subcatch[j].groundwater->stats.avgWaterTable += waterTable * tStep;
-    Subcatch[j].groundwater->stats.finalUpperMoist = theta;
-    Subcatch[j].groundwater->stats.finalWaterTable = waterTable;
-    if ( fabs(latFlow) > fabs(Subcatch[j].groundwater->stats.maxFlow) )
+    Subcatch[subcatchIndex].groundwater->stats.infil += infil * tStep;
+    Subcatch[subcatchIndex].groundwater->stats.evap += evap * tStep;
+    Subcatch[subcatchIndex].groundwater->stats.latFlow += latFlow * tStep;
+    Subcatch[subcatchIndex].groundwater->stats.deepFlow += deepFlow * tStep;
+    Subcatch[subcatchIndex].groundwater->stats.avgUpperMoist += theta * tStep;
+    Subcatch[subcatchIndex].groundwater->stats.avgWaterTable += waterTable * tStep;
+    Subcatch[subcatchIndex].groundwater->stats.finalUpperMoist = theta;
+    Subcatch[subcatchIndex].groundwater->stats.finalWaterTable = waterTable;
+    if ( fabs(latFlow) > fabs(Subcatch[subcatchIndex].groundwater->stats.maxFlow) )
     {
-        Subcatch[j].groundwater->stats.maxFlow = latFlow;
+        Subcatch[subcatchIndex].groundwater->stats.maxFlow = latFlow;
     }
 }
 
-//=============================================================================
-
-void  stats_updateMaxRunoff()
-//
-//   Input:   none
-//   Output:  updates global variable MaxRunoffFlow
-//   Purpose: updates value of maximum system runoff rate.
-//
+/*!
+* \brief Updates value of maximum system runoff rate.
+* \note Updates global variable MaxRunoffFlow
+*/
+void stats_updateMaxRunoff()
 {
     int j;
     double sysRunoff = 0.0;
@@ -430,29 +422,23 @@ void  stats_updateMaxRunoff()
     MaxRunoffFlow = MAX(MaxRunoffFlow, sysRunoff);
 }    
 
-//=============================================================================
-
-void   stats_updateMaxNodeDepth(int j, double depth)
-//
-//   Input:   j = node index
-//            depth = water depth at node at current reporting time (ft)
-//   Output:  none
-//   Purpose: updates a node's maximum depth recorded at reporting times.
-//
+/*!
+* \brief Updates a node's maximum depth recorded at reporting times.
+* \param[in] nodeIndex Node index
+* \param[in] depth Water depth at node at current reporting time (ft)
+*/
+void stats_updateMaxNodeDepth(int j, double depth)
 {
     if ( NodeStats != NULL )
         NodeStats[j].maxRptDepth = MAX(NodeStats[j].maxRptDepth, depth);
 }
 
-//=============================================================================
-
-void   stats_updateFlowStats(double tStep, DateTime aDate)
-//
-//  Input:   tStep = routing time step (sec)
-//           aDate = current date/time
-//  Output:  none
-//  Purpose: updates various flow routing statistics at current time period.
-//
+/*!
+* \brief Updates various flow routing statistics at current time period.
+* \param[in] tStep Routing time step (sec)
+* \param[in] aDate Current date/time
+*/
+void stats_updateFlowStats(double tStep, DateTime aDate)
 {
     int   j;
 
@@ -479,16 +465,13 @@ void   stats_updateFlowStats(double tStep, DateTime aDate)
     MaxOutfallFlow = MAX(MaxOutfallFlow, SysOutfallFlow);
 }
 
-//=============================================================================
-
+/*!
+* \brief Updates flow routing time step statistics.
+* \param[in] tStep Current flow routing time step (sec)
+* \param[in] trialsCount Number of trials used to solve routing
+* \param[in] steadyState TRUE if steady flow conditions exist
+*/
 void stats_updateTimeStepStats(double tStep, int trialsCount, int steadyState)
-//
-//  Input:   tStep = current flow routing time step (sec)
-//           trialsCount = number of trials used to solve routing
-//           steadyState = TRUE if steady flow conditions exist
-//  Output:  none
-//  Purpose: updates flow routing time step statistics.
-//
 {
     int j;
 
@@ -517,22 +500,22 @@ void stats_updateTimeStepStats(double tStep, int trialsCount, int steadyState)
     }
 }
 
-//=============================================================================
-   
-void stats_updateCriticalTimeCount(int node, int link)
-//
-//  Input:   node = node index
-//           link = link index
-//  Output:  none
-//  Purpose: updates count of times a node or link was time step-critical.
-//
+/*!
+* \brief Updates count of times a node or link was time step-critical.
+* \param[in] nodeIndex Node index
+* \param[in] linkIndex Link index
+*/
+void stats_updateCriticalTimeCount(int nodeIndex, int linkIndex)
 {
-    if      ( node >= 0 ) NodeStats[node].timeCourantCritical += 1.0;
-    else if ( link >= 0 ) LinkStats[link].timeCourantCritical += 1.0;
+    if      ( nodeIndex >= 0 ) NodeStats[nodeIndex].timeCourantCritical += 1.0;
+    else if ( linkIndex >= 0 ) LinkStats[linkIndex].timeCourantCritical += 1.0;
 }
 
-//=============================================================================
-
+/*!
+* \brief Updates convergence statistics node
+* \param[in] nodeIndex Node index
+* \param[in] converged TRUE if node has converged
+*/
 void stats_updateConvergenceStats(int node, int converged)
 {
     if (converged == FALSE) NodeStats[node].nonConvergedCount++;
@@ -644,7 +627,7 @@ void stats_updateNodeStats(int j, double tStep, DateTime aDate)
 
 //=============================================================================
 
-void  stats_updateLinkStats(int j, double tStep, DateTime aDate)
+void stats_updateLinkStats(int j, double tStep, DateTime aDate)
 //
 //  Input:   j = link index
 //           tStep = routing time step (sec)
@@ -753,7 +736,7 @@ void  stats_updateLinkStats(int j, double tStep, DateTime aDate)
 
 //=============================================================================
 
-void  stats_findMaxStats()
+void stats_findMaxStats()
 //
 //  Input:   none
 //  Output:  none
@@ -838,7 +821,7 @@ void  stats_findMaxStats()
 
 //=============================================================================
 
-void  stats_updateMaxStats(TMaxStats maxStats[], int i, int j, double x)
+void stats_updateMaxStats(TMaxStats maxStats[], int i, int j, double x)
 //
 //  Input:   maxStats[] = array of critical statistics values
 //           i = object category (NODE or LINK)

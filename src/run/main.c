@@ -1,30 +1,33 @@
-//-----------------------------------------------------------------------------
-//   main.c
-//
-//   Project:  EPA SWMM5
-//   Version:  5.2
-//   Date:     03/24/2021
-//   Author:   L. Rossman
-
-//   Main stub for the command line version of EPA SWMM 5.2
-//   to be run with swmm5.dll.
-
+/*!
+* \file main.c
+* \author L. Rossman
+* \date 2021-03-24
+* \brief Main stub for the command line version of EPA SWMM 5.2
+* \details This is the main stub for the command line version of EPA SWMM 5.2
+* to be run with swmm5.dll.
+* \version 5.3
+*/
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
 #include "swmm5.h"
 
+/*!
+* \brief Main function for the command line version of EPA SWMM 5.2
+* \param[in] argc Number of command line arguments
+* \param[in] argv Array of command line arguments
+* \return Error status
+* \details Runs the command line version of EPA SWMM 5.2.
+* Command line may be executed using the following command: 
+* ```bash
+* runswmm f1 f2 f3
+* ```
+* where f1 = name of input file (typically with extension .inp),
+*       f2 = name of report file (typically with extension .rpt), and
+*       f3 = name of binary output file if saved or blank if not 
+*            saved (typically with extension .out).
+*/
 int  main(int argc, char *argv[])
-//
-//  Input:   argc = number of command line arguments
-//           argv = array of command line arguments
-//  Output:  returns error status
-//  Purpose: runs the command line version of EPA SWMM 5.2.
-//
-//  Command line is: runswmm f1  f2  f3
-//  where f1 = name of input file, f2 = name of report file, and
-//  f3 = name of binary output file if saved (or blank if not saved).
-//
 {
     char *inputFile;
     char *reportFile;

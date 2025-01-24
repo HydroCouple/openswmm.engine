@@ -4,8 +4,8 @@
 * \author Colleen Barr (US EPA - ORD/NHEERL)
 * \author  Michael E. Tryby (US EPA - ORD/NHEERL) (Modified)
 * \author  Bryant McDonnell (Modified)
-* \date Created On: 2017-08-25
-* \date Last Edited: 2024-10-17
+* \date Created: 2017-08-25
+* \date Last edited: 2024-10-17
 */
 
 #include <stdio.h>
@@ -847,13 +847,21 @@ int EXPORT_OUT_API SMO_getNodeSeries(SMO_Handle p_handle, int nodeIndex,
     return set_error(p_data->error_handle, errorcode);
 }
 
+/*!
+* \brief Gets the time series results for a particular attribute for a link. Specify series
+* start and length using timeIndex and length respectively.
+* \param[in] p_handle Pointer to opaque SMO_Handle
+* \param[in] linkIndex Link index
+* \param[in] attr Link attribute
+* \param[in] startPeriod Start period index 
+* \param[in] endPeriod End period index 
+* \param[out] outValueArray Array of values to use to store the results
+* \param[out] length Length of outValueArray
+* \return Error code 0 on success, -1 on failure or error code
+*/
 int EXPORT_OUT_API SMO_getLinkSeries(SMO_Handle p_handle, int linkIndex,
     SMO_linkAttribute attr, int startPeriod, int endPeriod,
     float **outValueArray, int *length)
-//
-//  Purpose: Get time series results for particular attribute. Specify series
-//  start and length using timeIndex and length respectively.
-//
 {
     int    k, len, errorcode = 0;
     float  *temp;
@@ -884,12 +892,19 @@ int EXPORT_OUT_API SMO_getLinkSeries(SMO_Handle p_handle, int linkIndex,
     return set_error(p_data->error_handle, errorcode);
 }
 
+/*!
+* \brief Get system time series results for particular attribute. Specify series
+* start and length using timeIndex and length respectively.
+* \param[in] p_handle Pointer to opaque SMO_Handle
+* \param[in] attr System attribute 
+* \param[in] startPeriod Start period index
+* \param[in] endPeriod End period index
+* \param[out] outValueArray Array of values to use to store the results 
+* \param[out] length Length of outValueArray
+* \return Error code 0 on success, -1 on failure or error code
+*/
 int EXPORT_OUT_API SMO_getSystemSeries(SMO_Handle p_handle, SMO_systemAttribute attr,
     int startPeriod, int endPeriod, float **outValueArray, int *length)
-//
-//  Purpose: Get time series results for particular attribute. Specify series
-//  start and length using timeIndex and length respectively.
-//
 {
     int    k, len, errorcode = 0;
     float  *temp;
@@ -918,11 +933,17 @@ int EXPORT_OUT_API SMO_getSystemSeries(SMO_Handle p_handle, SMO_systemAttribute 
     return set_error(p_data->error_handle, errorcode);
 }
 
+/*!
+* \brief Get attribute for all subcatchments at a given time.
+* \param[in] p_handle Pointer to opaque SMO_Handle
+* \param[in] periodIndex Time index 
+* \param[in] attr Subcatchment attribute
+* \param[out] outValueArray Array of values to use to store the results
+* \param[out] length Length of outValueArray
+* \return Error code 0 on success, -1 on failure or error code
+*/
 int EXPORT_OUT_API SMO_getSubcatchAttribute(SMO_Handle p_handle, int periodIndex,
     SMO_subcatchAttribute attr, float **outValueArray, int *length)
-//
-//   Purpose: For all subcatchments at given time, get a particular attribute.
-//
 {
     int    k, errorcode = 0;
     float  *temp;
@@ -949,11 +970,17 @@ int EXPORT_OUT_API SMO_getSubcatchAttribute(SMO_Handle p_handle, int periodIndex
     return set_error(p_data->error_handle, errorcode);
 }
 
+/*!
+* \brief Get attribute for all nodes at a given time.
+* \param[in] p_handle Pointer to opaque SMO_Handle
+* \param[in] periodIndex Time index
+* \param[in] attr Node attribute
+* \param[out] outValueArray Array of values to use to store the results
+* \param[out] length Length of outValueArray
+* \return Error code 0 on success, -1 on failure or error code
+*/
 int EXPORT_OUT_API SMO_getNodeAttribute(SMO_Handle p_handle, int periodIndex,
     SMO_nodeAttribute attr, float **outValueArray, int *length)
-//
-//  Purpose: For all nodes at given time, get a particular attribute.
-//
 {
     int    k, errorcode = 0;
     float  *temp;
@@ -980,11 +1007,17 @@ int EXPORT_OUT_API SMO_getNodeAttribute(SMO_Handle p_handle, int periodIndex,
     return set_error(p_data->error_handle, errorcode);
 }
 
+/*!
+* \brief Get attribute for all links at a given time.
+* \param[in] p_handle Pointer to opaque SMO_Handle
+* \param[in] periodIndex Time index
+* \param[in] attr Link attribute
+* \param[out] outValueArray Array of values to use to store the results
+* \param[out] length Length of outValueArray
+* \return Error code 0 on success, -1 on failure or error code
+*/
 int EXPORT_OUT_API SMO_getLinkAttribute(SMO_Handle p_handle, int periodIndex,
     SMO_linkAttribute attr, float **outValueArray, int *length)
-//
-//  Purpose: For all links at given time, get a particular attribute.
-//
 {
     int    k, errorcode = 0;
     float  *temp;
@@ -1011,11 +1044,17 @@ int EXPORT_OUT_API SMO_getLinkAttribute(SMO_Handle p_handle, int periodIndex,
     return set_error(p_data->error_handle, errorcode);
 }
 
+/*!
+* \brief Get attribute for the system at a given time.
+* \param[in] p_handle Pointer to opaque SMO_Handle
+* \param[in] periodIndex Time index 
+* \param[in] attr System attribute
+* \param[out] outValueArray Array of values to use to store the results
+* \param[out] length Length of outValueArray
+* \return Error code 0 on success, -1 on failure or error code
+*/
 int EXPORT_OUT_API SMO_getSystemAttribute(SMO_Handle p_handle, int periodIndex,
     SMO_systemAttribute attr, float **outValueArray, int *length)
-//
-//  Purpose: For the system at given time, get a particular attribute.
-//
 {
     int     errorcode = 0;
     float   *temp;
@@ -1040,11 +1079,17 @@ int EXPORT_OUT_API SMO_getSystemAttribute(SMO_Handle p_handle, int periodIndex,
     return set_error(p_data->error_handle, errorcode);
 }
 
+/*!
+* \brief Get subcatchment result for all attributes at a given time.
+* \param[in] p_handle Pointer to opaque SMO_Handle
+* \param[in] periodIndex Time index
+* \param[in] subcatchIndex Subcatchment index
+* \param[out] outValueArray Array of values to use to store the results
+* \param[out] length Length of outValueArray
+* \return Error code 0 on success, -1 on failure or error code
+*/
 int EXPORT_OUT_API SMO_getSubcatchResult(SMO_Handle p_handle, int periodIndex,
     int subcatchIndex, float **outValueArray, int *arrayLength)
-//
-// Purpose: For a subcatchment at given time, get all attributes.
-//
 {
     int    errorcode = 0;
     float  *temp;
@@ -1078,11 +1123,17 @@ int EXPORT_OUT_API SMO_getSubcatchResult(SMO_Handle p_handle, int periodIndex,
     return set_error(p_data->error_handle, errorcode);
 }
 
+/*!
+* \brief Get node result for all attributes at a given time.
+* \param[in] p_handle Pointer to opaque SMO_Handle
+* \param[in] periodIndex Time index
+* \param[in] nodeIndex Node index
+* \param[out] outValueArray Array of values to use to store the results
+* \param[out] length Length of outValueArray
+* \return Error code 0 on success, -1 on failure or error code
+*/
 int EXPORT_OUT_API SMO_getNodeResult(SMO_Handle p_handle, int periodIndex,
     int nodeIndex, float **outValueArray, int *arrayLength)
-//
-//	Purpose: For a node at given time, get all attributes.
-//
 {
     int    errorcode = 0;
     float  *temp;
@@ -1118,11 +1169,17 @@ int EXPORT_OUT_API SMO_getNodeResult(SMO_Handle p_handle, int periodIndex,
     return set_error(p_data->error_handle, errorcode);
 }
 
+/*!
+* \brief Get link result for all attributes at a given time.
+* \param[in] p_handle Pointer to opaque SMO_Handle
+* \param[in] periodIndex Time index
+* \param[in] linkIndex Link index
+* \param[out] outValueArray Array of values to use to store the results
+* \param[out] length Length of outValueArray
+* \return Error code 0 on success, -1 on failure or error code
+*/
 int EXPORT_OUT_API SMO_getLinkResult(SMO_Handle p_handle, int periodIndex,
     int linkIndex, float **outValueArray, int *arrayLength)
-//
-//	Purpose: For a link at given time, get all attributes.
-//
 {
     int    errorcode = 0;
     float  *temp;
@@ -1159,11 +1216,17 @@ int EXPORT_OUT_API SMO_getLinkResult(SMO_Handle p_handle, int periodIndex,
     return set_error(p_data->error_handle, errorcode);
 }
 
+/*!
+* \brief Get system result for all attributes at a given time.
+* \param[in] p_handle Pointer to opaque SMO_Handle
+* \param[in] periodIndex Time index
+* \param[in] dummyIndex Dummy index
+* \param[out] outValueArray Array of values to use to store the results
+* \param[out] length Length of outValueArray
+* \return Error code 0 on success, -1 on failure or error code
+*/
 int EXPORT_OUT_API SMO_getSystemResult(SMO_Handle p_handle, int periodIndex,
     int dummyIndex, float **outValueArray, int *arrayLength)
-//
-//	Purpose: For the system at given time, get all attributes.
-//
 {
     int    errorcode = 0;
     float  *temp;
@@ -1199,10 +1262,11 @@ int EXPORT_OUT_API SMO_getSystemResult(SMO_Handle p_handle, int periodIndex,
     return set_error(p_data->error_handle, errorcode);
 }
 
+/*!
+* \brief Frees memory allocated by API calls
+* \param[in] array Pointer to array
+*/
 void EXPORT_OUT_API SMO_free(void **array)
-//
-//  Purpose: Frees memory allocated by API calls
-//
 {
     if (array != NULL) {
         free(*array);
@@ -1210,6 +1274,10 @@ void EXPORT_OUT_API SMO_free(void **array)
     }
 }
 
+/*!
+* \brief Clears error message stored in the error handle
+* \param[in] p_handle Pointer to opaque SMO_Handle
+*/
 void EXPORT_OUT_API SMO_clearError(SMO_Handle p_handle) {
     data_t *p_data;
 
@@ -1217,6 +1285,13 @@ void EXPORT_OUT_API SMO_clearError(SMO_Handle p_handle) {
     clear_error(p_data->error_handle);
 }
 
+/*!
+* \brief Checks for error in the error handle and copies the error message to the
+* message buffer 
+* \param[in] p_handle Pointer to opaque SMO_Handle
+* \param[out] msg_buffer Error message buffer 
+* \return Error code
+*/
 int EXPORT_OUT_API SMO_checkError(SMO_Handle p_handle, char **msg_buffer) {
     int    errorcode = 0;
     char   *temp      = NULL;
@@ -1237,10 +1312,13 @@ int EXPORT_OUT_API SMO_checkError(SMO_Handle p_handle, char **msg_buffer) {
     return errorcode;
 }
 
+/*!
+* \brief Takes error code and returns error message
+* \param[in] errcode Error code 
+* \param[out] dest_msg Destination message buffer
+* \param[in] dest_len Length of destination message buffer
+*/
 void errorLookup(int errcode, char *dest_msg, int dest_len)
-//
-//  Purpose: takes error code returns error message
-//
 {
     const char *msg;
 
@@ -1284,7 +1362,18 @@ void errorLookup(int errcode, char *dest_msg, int dest_len)
 
 }
 
-// Local functions:
+/*!
+* \addtogroup SWMM_Output_API_Local_Functions SWMM Output API Local Functions
+* \brief Local functions used by the SWMM output API functions 
+* \ingroup Output_Error_Warning_Local_Functions
+* \{
+*/
+
+/*!
+* \brief Validates the SWMM binary output file
+* \param[in] p_data Pointer to data_t structure
+* \return Error code
+*/
 int validateFile(data_t *p_data) {
     INT4 magic1, magic2, errcode;
     int  errorcode = 0;
@@ -1315,6 +1404,10 @@ int validateFile(data_t *p_data) {
     return errorcode;
 }
 
+/*!
+* \brief Initializes the element names array in the data_t structure
+* \param[in] p_data Pointer to data_t structure
+*/
 void initElementNames(data_t *p_data) {
     int j, numNames;
 
@@ -1338,6 +1431,12 @@ void initElementNames(data_t *p_data) {
     }
 }
 
+/*!
+* \brief Gets the value of a particular time index
+* \param[in] p_data Pointer to data_t structure
+* \param[in] timeIndex Time index
+* \return Time value at the given indexes
+*/
 double getTimeValue(data_t *p_data, int timeIndex) {
 
     F_OFF  offset;
@@ -1353,6 +1452,14 @@ double getTimeValue(data_t *p_data, int timeIndex) {
     return value;
 }
 
+/*!
+* \brief Gets the value of a particular subcatchment attribute at a given time index 
+* \param[in] p_data Pointer to data_t structure
+* \param[in] timeIndex Time index
+* \param[in] subcatchIndex Subcatchment index
+* \param[in] attr Subcatchment attribute
+* \return Subcatchment value at the given indexes
+*/
 float getSubcatchValue(data_t *p_data, int timeIndex, int subcatchIndex,
     SMO_subcatchAttribute attr) {
 
@@ -1372,6 +1479,14 @@ float getSubcatchValue(data_t *p_data, int timeIndex, int subcatchIndex,
     return value;
 }
 
+/*!
+* \brief Gets the value of a particular node attribute at a given time index
+* \param[in] p_data Pointer to data_t structure
+* \param[in] timeIndex Time index
+* \param[in] nodeIndex Node index
+* \param[in] attr Node attribute 
+* \return Node value at the given indexes
+*/
 float getNodeValue(data_t *p_data, int timeIndex, int nodeIndex,
     SMO_nodeAttribute attr) {
 
@@ -1392,6 +1507,14 @@ float getNodeValue(data_t *p_data, int timeIndex, int nodeIndex,
     return value;
 }
 
+/*!
+* \brief Gets the value of a particular link attribute at a given time index
+* \param[in] p_data Pointer to data_t structure
+* \param[in] timeIndex Time index
+* \param[in] linkIndex Link index
+* \param[in] attr Link attribute
+* \return Link value at the given indexes
+*/
 float getLinkValue(data_t *p_data, int timeIndex, int linkIndex,
     SMO_linkAttribute attr) {
 
@@ -1413,6 +1536,13 @@ float getLinkValue(data_t *p_data, int timeIndex, int linkIndex,
     return value;
 }
 
+/*!
+* \brief Gets the value of a particular system attribute at a given time index
+* \param[in] p_data Pointer to data_t structure
+* \param[in] timeIndex Time index
+* \param[in] attr System attribute
+* \return System value at the given indexes
+*/
 float getSystemValue(data_t *p_data, int timeIndex, SMO_systemAttribute attr) {
 
     F_OFF offset;
@@ -1433,11 +1563,15 @@ float getSystemValue(data_t *p_data, int timeIndex, SMO_systemAttribute attr) {
     return value;
 }
 
+/*!
+* \brief Wrapper function for opening file to account for different fopen functions on different platforms
+* \param[in] f Pointer to file pointer
+* \param[in] name File name 
+* \param[in] mode File mode 
+* \return Error code
+* \note fopen_s is part of C++11 standard
+*/
 int _fopen(FILE **f, const char *name, const char *mode) {
-    //
-    //  Purpose: Substitute for fopen_s on platforms where it doesn't exist
-    //  Note: fopen_s is part of C++11 standard
-    //
     int ret = 0;
 #ifdef _MSC_VER
     ret = (int)fopen_s(f, name, mode);
@@ -1449,10 +1583,14 @@ int _fopen(FILE **f, const char *name, const char *mode) {
     return ret;
 }
 
+/*!
+* \brief Wrapper function for fseek to account for different fseek functions on different platforms
+* \param[in] stream Pointer to file stream
+* \param[in] offset Offset value
+* \param[in] whence Whence value
+* \return Error code
+*/
 int _fseek(FILE *stream, F_OFF offset, int whence)
-//
-//  Purpose: Selects platform fseek() for large file support
-//
 {
 #ifdef _MSC_VER
 #define FSEEK64 _fseeki64
@@ -1463,10 +1601,12 @@ int _fseek(FILE *stream, F_OFF offset, int whence)
     return FSEEK64(stream, offset, whence);
 }
 
+/*!
+* \brief Wrapper function for ftell to account for different ftell functions on different platforms
+* \param[in] stream Pointer to file stream
+* \return Error code
+*/
 F_OFF _ftell(FILE *stream)
-//
-//  Purpose: Selects platform ftell() for large file support
-//
 {
 #ifdef _MSC_VER
 #define FTELL64 _ftelli64
@@ -1476,6 +1616,11 @@ F_OFF _ftell(FILE *stream)
     return FTELL64(stream);
 }
 
+/*!
+* \brief Creates a new float array of size n
+* \param[in] n Size of the array
+* \return Pointer to the float array
+*/
 float *newFloatArray(int n)
 //
 //  Warning: Caller must free memory allocated by this function.
@@ -1484,6 +1629,11 @@ float *newFloatArray(int n)
     return (float *)malloc((n) * sizeof(float));
 }
 
+/*!
+* \brief Creates a new int array of size n
+* \param[in] n Size of the array
+* \return Pointer to the int array
+*/
 int *newIntArray(int n)
 //
 //  Warning: Caller must free memory allocated by this function.
@@ -1492,6 +1642,11 @@ int *newIntArray(int n)
     return (int *)malloc((n) * sizeof(int));
 }
 
+/*!
+* \brief Creates a new char array of size n
+* \param[in] n Size of the array
+* \return Pointer to the char array
+*/
 char *newCharArray(int n)
 //
 //  Warning: Caller must free memory allocated by this function.
@@ -1499,3 +1654,7 @@ char *newCharArray(int n)
 {
     return (char *)malloc((n) * sizeof(char));
 }
+
+/*!
+* \}
+*/

@@ -3,21 +3,30 @@
 * \author Colleen Barr (US EPA - ORD/NHEERL)
 * \author Michael Tryby (US EPA) (Modified)
 * \author Bryant McDonnell (Modified)
-* \brief SWMM Output API
-* \date Created On: 2017-08-25
-* \date Last Edited: 2024-10-17
+* \brief Header file for SWMM output API.
+* \date Created: 2017-08-25
+* \date Last edited: 2024-10-17
 */
 
 #ifndef SWMM_OUTPUT_H_
 #define SWMM_OUTPUT_H_
 
-/*! \brief Maximum number of characters in a file path */
+/*! 
+* \def MAXFILENAME
+* \brief Maximum number of characters in a file path 
+*/
 #define MAXFILENAME 259
 
-/*! \brief Maximum number of characters in a element name */
+/*!
+* \def MAXELENAME
+* \brief Maximum number of characters in a element name
+*/
 #define MAXELENAME 31
 
-/*! \brief Opaque pointer to struct. Do not access variables. */
+/*! 
+* \typedef SMO_Handle 
+* \brief Opaque pointer to struct. Do not access variables. 
+*/
 typedef void *SMO_Handle;
 
 

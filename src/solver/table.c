@@ -303,11 +303,17 @@ int   table_validate(TTable *table)
         if ( table->file.file == NULL ) return ERR_TABLE_FILE_OPEN;
     }
 
+    if (strcomp("CVG", table->ID))
+    {
+        printf("Test");
+    }
+
     // --- retrieve the first data entry in the table
     result = table_getFirstEntry(table, &x1, &y1);
 
     // --- return error condition if external file has no valid data
-    if ( !result && table->file.mode == USE_FILE ) return ERR_TABLE_FILE_READ;
+    if ( !result && table->file.mode == USE_FILE )
+        return ERR_TABLE_FILE_READ;
 
     // --- retrieve successive table entries and check for non-increasing x-values
     while ( table_getNextEntry(table, &x2, &y2) )
@@ -845,10 +851,11 @@ int  table_parseFileLine(char* line, TTable* table, double* x, double* y)
 //  Purpose: parses a line of time series data from an external file.
 //
 {
-    int   n;
-    char  s1[50],
-          s2[50],
-          s3[50];
+    int   n = 0;
+    char  *s1,
+          *s2,
+          *s3;
+
     char* tStr;              // time as string
     char* yStr;              // value as string
     double yy;               // value as double
@@ -856,11 +863,31 @@ int  table_parseFileLine(char* line, TTable* table, double* x, double* y)
     DateTime t;              // time portion of date/time value
 
     // --- return if line is blank or is a comment
-    tStr = strtok(line, SEPSTR);
+    tStr = strtok(line, TBLSEPSTR);
     if ( tStr == NULL || *tStr == ';' ) return -1;
 
-    // --- get 3 string tokens from line and check if its a comment
-    n = sscanf(line, "%s %s %s", s1, s2, s3);
+
+    // --- get 3 string tokens from line
+    while (tStr != NULL)
+    {
+        switch (n)
+        {
+        case 0:
+            s1 = tStr;
+            n++;
+            break;
+		case 1:
+			s2 = tStr;
+            n++;
+            break;
+		case 2:
+			s3 = tStr;
+            n++;
+            break;
+        }
+
+        tStr = strtok(NULL, TBLSEPSTR);
+    }
 
     // --- line only has a time and a value
     if ( n == 2 )

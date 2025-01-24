@@ -100,25 +100,23 @@ static void   divider_validate(int j);
 static double divider_getOutflow(int j, int link);
 
 
-//=============================================================================
-
-int node_readParams(int j, int type, int k, char* tok[], int ntoks)
-//
-//  Input:   j = node index
-//           type = node type code
-//           k = index of node type
-//           tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns an error code
-//  Purpose: reads node properties from a tokenized line of input.
-//
+/*!
+* \brief Reads node properties from a tokenized line of input.
+* \param[in] nodeIndex Node index
+* \param[in] type Node type code
+* \param[in] subIndex Node sub-type code
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+*/
+int node_readParams(int nodeIndex, int type, int k, char* tok[], int ntoks)
 {
     switch ( type )
     {
-      case JUNCTION: return junc_readParams(j, k, tok, ntoks);
-      case OUTFALL:  return outfall_readParams(j, k, tok, ntoks);
-      case STORAGE:  return storage_readParams(j, k, tok, ntoks);
-      case DIVIDER:  return divider_readParams(j, k, tok, ntoks);
+      case JUNCTION: return junc_readParams(nodeIndex, k, tok, ntoks);
+      case OUTFALL:  return outfall_readParams(nodeIndex, k, tok, ntoks);
+      case STORAGE:  return storage_readParams(nodeIndex, k, tok, ntoks);
+      case DIVIDER:  return divider_readParams(nodeIndex, k, tok, ntoks);
       default:       return 0;
     }
 }
@@ -198,36 +196,33 @@ void  node_setParams(int j, int type, int k, double x[])
     }
 }
 
-//=============================================================================
-
-void  node_validate(int j)
-//
-//  Input:   j = node index
-//  Output:  none
-//  Purpose: validates a node's properties.
-//
+/*!
+* \brief Validates a node's properties.
+* \param[in] nodeIndex Node index
+*/
+void  node_validate(int nodeIndex)
 {
     TDwfInflow* inflow;
 
     // --- see if full depth was increased to accommodate conduit crown
-    if ( Node[j].fullDepth > Node[j].oldDepth && Node[j].oldDepth > 0.0 )
+    if ( Node[nodeIndex].fullDepth > Node[nodeIndex].oldDepth && Node[nodeIndex].oldDepth > 0.0 )
     {
-        report_writeWarningMsg(WARN02, Node[j].ID);
+        report_writeWarningMsg(WARN02, Node[nodeIndex].ID);
     }
 
     // --- check that initial depth does not exceed max. depth
-    if ( Node[j].initDepth > Node[j].fullDepth + Node[j].surDepth )
-        report_writeErrorMsg(ERR_NODE_DEPTH, Node[j].ID);
+    if ( Node[nodeIndex].initDepth > Node[nodeIndex].fullDepth + Node[nodeIndex].surDepth )
+        report_writeErrorMsg(ERR_NODE_DEPTH, Node[nodeIndex].ID);
 
     // --- check for negative volume for storage node at full depth
-    if (Node[j].type == STORAGE)
-        if (node_getVolume(j, Node[j].fullDepth) < 0.0)
-            report_writeErrorMsg(ERR_STORAGE_VOLUME, Node[j].ID);
+    if (Node[nodeIndex].type == STORAGE)
+        if (node_getVolume(nodeIndex, Node[nodeIndex].fullDepth) < 0.0)
+            report_writeErrorMsg(ERR_STORAGE_VOLUME, Node[nodeIndex].ID);
 
-    if ( Node[j].type == DIVIDER ) divider_validate(j);
+    if ( Node[nodeIndex].type == DIVIDER ) divider_validate(nodeIndex);
 
     // --- initialize dry weather inflows
-    inflow = Node[j].dwfInflow;
+    inflow = Node[nodeIndex].dwfInflow;
     while (inflow)
     {
         inflow_initDwfInflow(inflow);
@@ -235,44 +230,41 @@ void  node_validate(int j)
     }
 }
 
-//=============================================================================
-
-void node_initState(int j)
-//
-//  Input:   j = node index
-//  Output:  none
-//  Purpose: initializes a node's state variables at start of simulation.
-//
+/*!
+* \brief Initializes a node's state variables at start of simulation.
+* \param[in] nodeIndex Node index
+*/
+void node_initState(int nodeIndex)
 {
     int p, k;
 
     // --- initialize depth
-    Node[j].oldDepth = Node[j].initDepth;
-    Node[j].newDepth = Node[j].oldDepth;
-    Node[j].crownElev = Node[j].invertElev;
+    Node[nodeIndex].oldDepth = Node[nodeIndex].initDepth;
+    Node[nodeIndex].newDepth = Node[nodeIndex].oldDepth;
+    Node[nodeIndex].crownElev = Node[nodeIndex].invertElev;
 
-    Node[j].fullVolume = node_getVolume(j, Node[j].fullDepth);
-    Node[j].oldVolume = node_getVolume(j, Node[j].oldDepth);
-    Node[j].newVolume = Node[j].oldVolume;
+    Node[nodeIndex].fullVolume = node_getVolume(nodeIndex, Node[nodeIndex].fullDepth);
+    Node[nodeIndex].oldVolume = node_getVolume(nodeIndex, Node[nodeIndex].oldDepth);
+    Node[nodeIndex].newVolume = Node[nodeIndex].oldVolume;
 
     // --- initialize water quality state
     for (p = 0; p < Nobjects[POLLUT]; p++)
     {
-        Node[j].oldQual[p]  = 0.0;
-        Node[j].newQual[p]  = 0.0;
+        Node[nodeIndex].oldQual[p]  = 0.0;
+        Node[nodeIndex].newQual[p]  = 0.0;
     }
 
     // --- initialize any inflow
-    Node[j].oldLatFlow = 0.0;
-    Node[j].newLatFlow = 0.0;
-    Node[j].apiExtInflow = 0.0;
-    Node[j].losses = 0.0;
+    Node[nodeIndex].oldLatFlow = 0.0;
+    Node[nodeIndex].newLatFlow = 0.0;
+    Node[nodeIndex].apiExtInflow = 0.0;
+    Node[nodeIndex].losses = 0.0;
 
     // --- initialize storage nodes
-    if ( Node[j].type == STORAGE )
+    if ( Node[nodeIndex].type == STORAGE )
     {
         // --- set hydraulic residence time to 0
-        k = Node[j].subIndex;
+        k = Node[nodeIndex].subIndex;
         Storage[k].hrt = 0.0;
 
         // --- initialize exfiltration properties
@@ -280,9 +272,9 @@ void node_initState(int j)
     }
 
     // --- initialize flow stream routed from outfall onto a subcatchment
-    if ( Node[j].type == OUTFALL )
+    if ( Node[nodeIndex].type == OUTFALL )
     {
-        k = Node[j].subIndex;
+        k = Node[nodeIndex].subIndex;
         if ( Outfall[k].routeTo >= 0 )
         {
             Outfall[k].vRouted = 0.0;
@@ -291,105 +283,90 @@ void node_initState(int j)
     }
 }
 
-//=============================================================================
-
-void node_setOldHydState(int j)
-//
-//  Input:   j = node index
-//  Output:  none
-//  Purpose: replaces a node's old hydraulic state values with new ones.
-//
+/*!
+* \brief Replaces a node's old hydraulic state values with new ones.
+* \param[in] nodeIndex Node index
+*/
+void node_setOldHydState(int nodeIndex)
 {
-    Node[j].oldDepth    = Node[j].newDepth;
-    Node[j].oldVolume   = Node[j].newVolume;
-    Node[j].oldFlowInflow = Node[j].inflow;
-    Node[j].oldNetInflow = Node[j].inflow - Node[j].outflow;
+    Node[nodeIndex].oldDepth    = Node[nodeIndex].newDepth;
+    Node[nodeIndex].oldVolume   = Node[nodeIndex].newVolume;
+    Node[nodeIndex].oldFlowInflow = Node[nodeIndex].inflow;
+    Node[nodeIndex].oldNetInflow = Node[nodeIndex].inflow - Node[nodeIndex].outflow;
 }
 
-//=============================================================================
-
-void node_setOldQualState(int j)
-//
-//  Input:   j = node index
-//  Output:  none
-//  Purpose: replaces a node's old water quality state values with new ones.
-//
+/*!
+* \brief Replaces a node's old water quality state values with new ones.
+* \param[in] nodeIndex Node index
+*/
+void node_setOldQualState(int nodeIndex)
 {
     int p;
     for (p = 0; p < Nobjects[POLLUT]; p++)
     {
-        Node[j].oldQual[p] = Node[j].newQual[p];
-        Node[j].newQual[p] = 0.0;
+        Node[nodeIndex].oldQual[p] = Node[nodeIndex].newQual[p];
+        Node[nodeIndex].newQual[p] = 0.0;
     }
 }
 
-//=============================================================================
-
-void node_initFlows(int j, double tStep)
-//
-//  Input:   j = node index
-//           tStep = time step (sec)
-//  Output:  none
-//  Purpose: initializes a node's inflow/outflow/overflow at start of time step.
-//
+/*!
+* \brief Initializes a node's inflow/outflow/overflow at start of time step.
+* \param[in] nodeIndex Node index
+* \param[in] tStep Time step (sec)
+*/
+void node_initFlows(int nodeIndex, double tStep)
 {
     // --- initialize inflow & outflow
-    Node[j].inflow = Node[j].newLatFlow;
-    Node[j].outflow = Node[j].losses;
+    Node[nodeIndex].inflow = Node[nodeIndex].newLatFlow;
+    Node[nodeIndex].outflow = Node[nodeIndex].losses;
 
     // --- set overflow to any excess stored volume
-    if ( Node[j].newVolume > Node[j].fullVolume )
-        Node[j].overflow = (Node[j].newVolume - Node[j].fullVolume) / tStep;
-    else Node[j].overflow = 0.0;
+    if ( Node[nodeIndex].newVolume > Node[nodeIndex].fullVolume )
+        Node[nodeIndex].overflow = (Node[nodeIndex].newVolume - Node[nodeIndex].fullVolume) / tStep;
+    else Node[nodeIndex].overflow = 0.0;
 }
 
-//=============================================================================
-
-double node_getDepth(int j, double v)
-//
-//  Input:   j = node index
-//           v = volume (ft3)
-//  Output:  returns depth of water at a node (ft)
-//  Purpose: computes a node's water depth from its volume.
-//
+/*!
+* \brief Computes a node's water depth from its volume.
+* \param[in] nodeIndex Node index
+* \param[in] volume Volume of water stored at node (ft3)
+* \return Returns water depth at node (ft)
+*/
+double node_getDepth(int nodeIndex, double v)
 {
-    switch ( Node[j].type )
+    switch ( Node[nodeIndex].type )
     {
-      case STORAGE: return storage_getDepth(j, v);
+      case STORAGE: return storage_getDepth(nodeIndex, v);
       default:      return 0.0;
     }
 }
 
-//=============================================================================
-
-double node_getVolume(int j, double d)
-//
-//  Input:   j = node index
-//           d = water depth (ft)
-//  Output:  returns volume of water at a node (ft3)
-//  Purpose: computes volume stored at a node from its water depth.
-//
+/*!
+* \brief Computes volume stored at a node from its water depth.
+* \param[in] nodeIndex Node index
+* \param[in] depth Water depth at node (ft)
+* \return Returns volume of water stored at node (ft3)
+*/
+double node_getVolume(int nodeIndex, double depth)
 {
-    switch ( Node[j].type )
+    switch ( Node[nodeIndex].type )
     {
-      case STORAGE: return storage_getVolume(j, d);
+      case STORAGE: return storage_getVolume(nodeIndex, depth);
 
       default:
-        if ( Node[j].fullDepth > 0.0 )
-            return Node[j].fullVolume * (d / Node[j].fullDepth);
+        if ( Node[nodeIndex].fullDepth > 0.0 )
+            return Node[nodeIndex].fullVolume * (depth / Node[nodeIndex].fullDepth);
         else return 0.0;
     }
 }
 
-//=============================================================================
-
-double  node_getSurfArea(int j, double d)
-//
-//  Input:   j = node index
-//           d = water depth (ft)
-//  Output:  returns surface area of water at a node (ft2)
-//  Purpose: computes surface area of water stored at a node from water depth.
-//
+/*!
+* \brief Computes surface area of water stored at a node from water depth.
+* \param[in] nodeIndex Node index
+* \param[in] depth Water depth (ft)
+* \return Returns surface area of water stored at node (ft2)
+*/
+double node_getSurfArea(int j, double d)
 {
     switch (Node[j].type)
     {
@@ -398,39 +375,35 @@ double  node_getSurfArea(int j, double d)
     }
 }
 
-//=============================================================================
-
-double node_getOutflow(int j, int k)
-//
-//  Input:   j = node index
-//           k = link index
-//  Output:  returns flow rate (cfs)
-//  Purpose: computes outflow from node available for inflow into a link.
-//
+/*!
+* \brief Computes outflow from node available for inflow into a link.
+* \param[in] nodeIndex Node index
+* \param[in] linkIndex Link index
+* \return Returns flow rate leaving node (cfs)
+*/
+double node_getOutflow(int nodeIndex, int linkIndex)
 {
-    switch ( Node[j].type )
+    switch ( Node[nodeIndex].type )
     {
-      case DIVIDER: return divider_getOutflow(j, k);
-      case STORAGE: return storage_getOutflow(j, k);
-      default:      return Node[j].inflow + Node[j].overflow;
+      case DIVIDER: return divider_getOutflow(nodeIndex, linkIndex);
+      case STORAGE: return storage_getOutflow(nodeIndex, linkIndex);
+      default:      return Node[nodeIndex].inflow + Node[nodeIndex].overflow;
     }
 }
 
-//=============================================================================
-
-double node_getMaxOutflow(int j, double q, double tStep)
-//
-//  Input:   j = node index
-//           q = original outflow rate (cfs)
-//           tStep = time step (sec)
-//  Output:  returns modified flow rate (cfs)
-//  Purpose: limits outflow rate from a node with storage volume.
-//
+/*!
+* \brief Limits outflow rate from a node with storage volume.
+* \param[in] nodeIndex Node index
+* \param[in] q Flow rate leaving node (cfs)
+* \param[in] tStep Time step (sec)
+* \return Returns modified flow rate (cfs)
+*/
+double node_getMaxOutflow(int nodeIndex, double q, double tStep)
 {
     double qMax;
-    if ( Node[j].fullVolume > 0.0 )
+    if ( Node[nodeIndex].fullVolume > 0.0 )
     {
-        qMax = Node[j].inflow + Node[j].oldVolume / tStep;
+        qMax = Node[nodeIndex].inflow + Node[nodeIndex].oldVolume / tStep;
         if ( q > qMax ) q = qMax;
     }
     return MAX(0.0, q);
@@ -495,52 +468,46 @@ double node_getSystemOutflow(int j, int *isFlooded)
     return outflow;
 }
 
-//=============================================================================
-
-void node_getResults(int j, double f, float x[])
-//
-//  Input:   j = node index
-//           f = weighting factor
-//           x[] = array of nodal reporting variables
-//  Output:  none
-//  Purpose: computes weighted average of old and new results at a node.
-//
+/*!
+* \brief Computes weighted average of old and new results at a node.
+* \param[in] nodeIndex Node index
+* \param[in] wt Weighting factor
+* \param[out] x Array of node results
+*/
+void node_getResults(int nodeIndex, double wt, float x[])
 {
     int    p;
     double z;
-    double f1 = 1.0 - f;
+    double f1 = 1.0 - wt;
 
-    z = (f1 * Node[j].oldDepth + f * Node[j].newDepth) * UCF(LENGTH);
+    z = (f1 * Node[nodeIndex].oldDepth + wt * Node[nodeIndex].newDepth) * UCF(LENGTH);
     x[NODE_DEPTH] = (float)z;
-    z = Node[j].invertElev * UCF(LENGTH);
+    z = Node[nodeIndex].invertElev * UCF(LENGTH);
     x[NODE_HEAD] = x[NODE_DEPTH] + (float)z;
-    z = (f1*Node[j].oldVolume + f*Node[j].newVolume) * UCF(VOLUME);
+    z = (f1*Node[nodeIndex].oldVolume + wt * Node[nodeIndex].newVolume) * UCF(VOLUME);
     x[NODE_VOLUME]  = (float)z;
-    z = (f1*Node[j].oldLatFlow + f*Node[j].newLatFlow) * UCF(FLOW); 
+    z = (f1*Node[nodeIndex].oldLatFlow + wt * Node[nodeIndex].newLatFlow) * UCF(FLOW); 
     x[NODE_LATFLOW] = (float)z;
-    z = (f1*Node[j].oldFlowInflow + f*Node[j].inflow) * UCF(FLOW);
+    z = (f1*Node[nodeIndex].oldFlowInflow + wt * Node[nodeIndex].inflow) * UCF(FLOW);
     x[NODE_INFLOW] = (float)z;
-    z = Node[j].overflow * UCF(FLOW);
+    z = Node[nodeIndex].overflow * UCF(FLOW);
     x[NODE_OVERFLOW] = (float)z;
 
     if ( !IgnoreQuality ) for (p = 0; p < Nobjects[POLLUT]; p++)
     {
-        z = f1*Node[j].oldQual[p] + f*Node[j].newQual[p];
+        z = f1*Node[nodeIndex].oldQual[p] + wt * Node[nodeIndex].newQual[p];
         x[NODE_QUAL+p] = (float)z;
     }
 }
 
-//=============================================================================
-
-void   node_setOutletDepth(int j, double yNorm, double yCrit, double z)
-//
-//  Input:   j = node index
-//           yNorm = normal flow depth (ft)
-//           yCrit = critical flow depth (ft)
-//           z = offset of connecting outfall link from node invert (ft)
-//  Output:  none
-//  Purpose: sets water depth at a node that serves as an outlet point.
-//
+/*!
+* \brief Sets water depth at a node that serves as an outlet point.
+* \param[in] nodeIndex Node index
+* \param[in] yNorm Normal flow depth (ft)
+* \param[in] yCrit Critical flow depth (ft)
+* \param[in] z Offset of connecting outfall link from node invert (ft)
+*/
+void node_setOutletDepth(int j, double yNorm, double yCrit, double z)
 {
     switch (Node[j].type)
     {
@@ -559,45 +526,41 @@ void   node_setOutletDepth(int j, double yNorm, double yCrit, double z)
     }
 }
 
-//=============================================================================
-
-double node_getPondedArea(int j, double d)
-//
-//  Input:   j = node index
-//           d = water depth (ft)
-//  Output:  returns surface area of water at a node (ft2)
-//  Purpose: computes surface area of water at a node based on depth.
-//
+/*!
+* \brief Computes surface area of water at a node based on depth.
+* \param[in] nodeIndex Node index
+* \param[in] depth Water depth at node (ft)
+* \return Returns surface area of water at node (ft2)
+*/
+double node_getPondedArea(int nodeIndex, double depth)
 {
     double a;
 
     // --- use regular getSurfArea function if node not flooded
-    if ( d <= Node[j].fullDepth || Node[j].pondedArea == 0.0 )
+    if ( depth <= Node[nodeIndex].fullDepth || Node[nodeIndex].pondedArea == 0.0 )
     {
-        return node_getSurfArea(j, d);
+        return node_getSurfArea(nodeIndex, depth);
     }
 
     // --- compute ponded depth
-    d = d - Node[j].fullDepth;
+    depth = depth - Node[nodeIndex].fullDepth;
 
     // --- use ponded area for flooded node
-    a = Node[j].pondedArea;
-    if ( a <= 0.0 ) a = node_getSurfArea(j, Node[j].fullDepth);
+    a = Node[nodeIndex].pondedArea;
+    if ( a <= 0.0 ) a = node_getSurfArea(nodeIndex, Node[nodeIndex].fullDepth);
     return a;
 }
 
-//=============================================================================
-
-double node_getLosses(int j, double tStep)
-//
-//  Input:   j = node index
-//           tStep = time step (sec)
-//  Output:  returns water loss rate at node (ft3)
-//  Purpose: computes the rates of evaporation and infiltration over a given
-//           time step for a node.
-//
+/*!
+* \brief Computes the rates of evaporation and infiltration over a given
+* time step for a node.
+* \param[in] nodeIndex Node index
+* \param[in] tStep Time step (sec)
+* \return Returns water loss rate at node (ft3)
+*/
+double node_getLosses(int nodeIndex, double tStep)
 {
-    if ( Node[j].type == STORAGE ) return storage_getLosses(j, tStep);
+    if ( Node[nodeIndex].type == STORAGE ) return storage_getLosses(nodeIndex, tStep);
     else return 0.0;
 }
 

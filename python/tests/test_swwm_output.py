@@ -31,7 +31,7 @@ class TestSWMMOutput(unittest.TestCase):
 
         self.test_artifacts = {}
 
-        with open(example_output_data.JSON_TIME_SERIES_FILE, 'rb') as f:
+        with open(file=example_output_data.JSON_TIME_SERIES_FILE, mode='rb') as f:
             self.test_artifacts = pickle.load(f)
 
     def test_output_unit_system_enum(self):
@@ -40,8 +40,13 @@ class TestSWMMOutput(unittest.TestCase):
         :return:
         """
 
-        self.assertEqual(output.UnitSystem.US.value, 0, "US unit system value should be 0")
-        self.assertEqual(output.UnitSystem.SI.value, 1, "SI unit system value should be 1")
+        self.assertEqual(
+            first=output.UnitSystem.US.value, second=0, msg="US unit system value should be 0"
+        )
+
+        self.assertEqual(
+            first=output.UnitSystem.SI.value, second=1, msg="SI unit system value should be 1"
+        )
 
     def test_output_flow_units_enum(self):
         """
@@ -49,12 +54,24 @@ class TestSWMMOutput(unittest.TestCase):
         :return:
         """
 
-        self.assertEqual(output.FlowUnits.CFS.value, 0, "CFS flow unit value should be 0")
-        self.assertEqual(output.FlowUnits.GPM.value, 1, "GPM flow unit value should be 1")
-        self.assertEqual(output.FlowUnits.MGD.value, 2, "MGD flow unit value should be 2")
-        self.assertEqual(output.FlowUnits.CMS.value, 3, "CMS flow unit value should be 3")
-        self.assertEqual(output.FlowUnits.LPS.value, 4, "LPS flow unit value should be 4")
-        self.assertEqual(output.FlowUnits.MLD.value, 5, "MLD flow unit value should be 5")
+        self.assertEqual(
+            first=output.FlowUnits.CFS.value, second=0, msg="CFS flow unit value should be 0"
+        )
+        self.assertEqual(
+            first=output.FlowUnits.GPM.value, second=1, msg="GPM flow unit value should be 1"
+        )
+        self.assertEqual(
+            first=output.FlowUnits.MGD.value, second=2, msg="MGD flow unit value should be 2"
+        )
+        self.assertEqual(
+            first=output.FlowUnits.CMS.value, second=3, msg="CMS flow unit value should be 3"
+        )
+        self.assertEqual(
+            first=output.FlowUnits.LPS.value, second=4, msg="LPS flow unit value should be 4"
+        )
+        self.assertEqual(
+            first=output.FlowUnits.MLD.value, second=5, msg="MLD flow unit value should be 5"
+        )
 
     def test_output_concentration_units_enum(self):
         """
@@ -62,10 +79,18 @@ class TestSWMMOutput(unittest.TestCase):
         :return:
         """
 
-        self.assertEqual(output.ConcentrationUnits.MG.value, 0, "MG concentration unit value should be 0")
-        self.assertEqual(output.ConcentrationUnits.UG.value, 1, "UG concentration unit value should be 1")
-        self.assertEqual(output.ConcentrationUnits.COUNT.value, 2, "COUNT concentration unit value should be 2")
-        self.assertEqual(output.ConcentrationUnits.NONE.value, 3, "NONE concentration unit value should be 3")
+        self.assertEqual(
+            first=output.ConcentrationUnits.MG.value, second=0, msg="MG concentration unit value should be 0"
+        )
+        self.assertEqual(
+            first=output.ConcentrationUnits.UG.value, second=1, msg="UG concentration unit value should be 1"
+        )
+        self.assertEqual(
+            first=output.ConcentrationUnits.COUNT.value, second=2, msg="COUNT concentration unit value should be 2"
+        )
+        self.assertEqual(
+            first=output.ConcentrationUnits.NONE.value, second=3, msg="NONE concentration unit value should be 3"
+        )
 
     def test_output_element_type_enum(self):
         """
@@ -73,11 +98,21 @@ class TestSWMMOutput(unittest.TestCase):
         :return:
         """
 
-        self.assertEqual(output.ElementType.SUBCATCHMENT.value, 0, "SUBCATCHMENT element type value should be 0")
-        self.assertEqual(output.ElementType.NODE.value, 1, "NODE element type value should be 1")
-        self.assertEqual(output.ElementType.LINK.value, 2, "LINK element type value should be 2")
-        self.assertEqual(output.ElementType.SYSTEM.value, 3, "SYSTEM element type value should be 3")
-        self.assertEqual(output.ElementType.POLLUTANT.value, 4, "POLLUTANT element type value should be 4")
+        self.assertEqual(
+            first=output.ElementType.SUBCATCHMENT.value, second=0, msg="SUBCATCHMENT element type value should be 0"
+        )
+        self.assertEqual(
+            first=output.ElementType.NODE.value, second=1, msg="NODE element type value should be 1"
+        )
+        self.assertEqual(
+            first=output.ElementType.LINK.value, second=2, msg="LINK element type value should be 2"
+        )
+        self.assertEqual(
+            first=output.ElementType.SYSTEM.value, second=3, msg="SYSTEM element type value should be 3"
+        )
+        self.assertEqual(
+            first=output.ElementType.POLLUTANT.value, second=4, msg="POLLUTANT element type value should be 4"
+        )
 
     def test_output_time_enum(self):
         """
@@ -85,33 +120,55 @@ class TestSWMMOutput(unittest.TestCase):
         :return:
         """
 
-        self.assertEqual(output.TimeAttribute.REPORT_STEP.value, 0, "REPORT_STEP time value should be 0")
-        self.assertEqual(output.TimeAttribute.NUM_PERIODS.value, 1, "NUM_PERIODS time value should be 1")
+        self.assertEqual(
+            first=output.TimeAttribute.REPORT_STEP.value, second=0, msg="REPORT_STEP time value should be 0"
+        )
+        self.assertEqual(
+            first=output.TimeAttribute.NUM_PERIODS.value, second=1, msg="NUM_PERIODS time value should be 1"
+        )
 
-    def test_output_subcatch_attribute_enum(self):
+    def test_output_sub_catch_attribute_enum(self):
         """
-        Test the output subcatchment attribute enum
+        Test the output sub-catchment attribute enum
         :return:
         """
 
-        self.assertEqual(output.SubcatchAttribute.RAINFALL.value, 0,
-                         "RAINFALL subcatchment attribute value should be 0")
-        self.assertEqual(output.SubcatchAttribute.SNOW_DEPTH.value, 1,
-                         "SNOW_DEPTH subcatchment attribute value should be 1")
-        self.assertEqual(output.SubcatchAttribute.EVAPORATION_LOSS.value, 2,
-                         "EVAPORATION_LOSS subcatchment attribute value should be 2")
-        self.assertEqual(output.SubcatchAttribute.INFILTRATION_LOSS.value, 3,
-                         "INFILTRATION_LOSS subcatchment attribute value should be 3")
-        self.assertEqual(output.SubcatchAttribute.RUNOFF_RATE.value, 4,
-                         "RUNOFF_RATE subcatchment attribute value should be 4")
-        self.assertEqual(output.SubcatchAttribute.GROUNDWATER_OUTFLOW.value, 5,
-                         "GROUNDWATER_OUTFLOW subcatchment attribute value should be 5")
-        self.assertEqual(output.SubcatchAttribute.GROUNDWATER_TABLE_ELEVATION.value, 6,
-                         "GROUNTWATER_TABLE subcatchment attribute value should be 6")
-        self.assertEqual(output.SubcatchAttribute.SOIL_MOISTURE.value, 7,
-                         "SOIL_MOISTURE subcatchment attribute value should be 7")
-        self.assertEqual(output.SubcatchAttribute.POLLUTANT_CONCENTRATION.value, 8,
-                         "POLLUTANT_CONCENTRATION subcatchment attribute value should be 8")
+        self.assertEqual(
+            first=output.SubcatchAttribute.RAINFALL.value, second=0,
+            msg="RAINFALL sub-catchment attribute value should be 0"
+        )
+        self.assertEqual(
+            first=output.SubcatchAttribute.SNOW_DEPTH.value, second=1,
+            msg="SNOW_DEPTH sub-catchment attribute value should be 1"
+        )
+        self.assertEqual(
+            first=output.SubcatchAttribute.EVAPORATION_LOSS.value, second=2,
+            msg="EVAPORATION_LOSS sub-catchment attribute value should be 2"
+        )
+        self.assertEqual(
+            first=output.SubcatchAttribute.INFILTRATION_LOSS.value, second=3,
+            msg="INFILTRATION_LOSS sub-catchment attribute value should be 3"
+        )
+        self.assertEqual(
+            first=output.SubcatchAttribute.RUNOFF_RATE.value, second=4,
+            msg="RUNOFF_RATE sub-catchment attribute value should be 4"
+        )
+        self.assertEqual(
+            first=output.SubcatchAttribute.GROUNDWATER_OUTFLOW.value, second=5,
+            msg="GROUNDWATER_OUTFLOW sub-catchment attribute value should be 5"
+        )
+        self.assertEqual(
+            first=output.SubcatchAttribute.GROUNDWATER_TABLE_ELEVATION.value, second=6,
+            msg="GROUNDWATER_TABLE sub-catchment attribute value should be 6"
+        )
+        self.assertEqual(
+            first=output.SubcatchAttribute.SOIL_MOISTURE.value, second=7,
+            msg="SOIL_MOISTURE sub-catchment attribute value should be 7"
+        )
+        self.assertEqual(
+            first=output.SubcatchAttribute.POLLUTANT_CONCENTRATION.value, second=8,
+            msg="POLLUTANT_CONCENTRATION sub-catchment attribute value should be 8"
+        )
 
     def test_output_node_attribute_enum(self):
         """
@@ -119,17 +176,34 @@ class TestSWMMOutput(unittest.TestCase):
         :return:
         """
 
-        self.assertEqual(output.NodeAttribute.INVERT_DEPTH.value, 0, "INVERT_DEPTH node attribute value should be 0")
-        self.assertEqual(output.NodeAttribute.HYDRAULIC_HEAD.value, 1,
-                         "HYDRAULIC_HEAD node attribute value should be 1")
-        self.assertEqual(output.NodeAttribute.STORED_VOLUME.value, 2, "STORED_VOLUME node attribute value should be 2")
-        self.assertEqual(output.NodeAttribute.LATERAL_INFLOW.value, 3,
-                         "LATERAL_INFLOW node attribute value should be 3")
-        self.assertEqual(output.NodeAttribute.TOTAL_INFLOW.value, 4, "TOTAL_INFLOW node attribute value should be 4")
-        self.assertEqual(output.NodeAttribute.FLOODING_LOSSES.value, 5,
-                         "FLOODING_LOSSES node attribute value should be 5")
-        self.assertEqual(output.NodeAttribute.POLLUTANT_CONCENTRATION.value, 6,
-                         "POLLUTANT_CONCENTRATION node attribute value should be 6")
+        self.assertEqual(
+            first=output.NodeAttribute.INVERT_DEPTH.value, second=0,
+            msg="INVERT_DEPTH node attribute value should be 0"
+        )
+        self.assertEqual(
+            first=output.NodeAttribute.HYDRAULIC_HEAD.value, second=1,
+            msg="HYDRAULIC_HEAD node attribute value should be 1"
+        )
+        self.assertEqual(
+            first=output.NodeAttribute.STORED_VOLUME.value, second=2,
+            msg="STORED_VOLUME node attribute value should be 2"
+        )
+        self.assertEqual(
+            first=output.NodeAttribute.LATERAL_INFLOW.value, second=3,
+            msg="LATERAL_INFLOW node attribute value should be 3"
+        )
+        self.assertEqual(
+            first=output.NodeAttribute.TOTAL_INFLOW.value, second=4,
+            msg="TOTAL_INFLOW node attribute value should be 4"
+        )
+        self.assertEqual(
+            first=output.NodeAttribute.FLOODING_LOSSES.value, second=5,
+            msg="FLOODING_LOSSES node attribute value should be 5"
+        )
+        self.assertEqual(
+            first=output.NodeAttribute.POLLUTANT_CONCENTRATION.value, second=6,
+            msg="POLLUTANT_CONCENTRATION node attribute value should be 6"
+        )
 
     def test_output_link_attribute_enum(self):
         """
@@ -137,13 +211,30 @@ class TestSWMMOutput(unittest.TestCase):
         :return:
         """
 
-        self.assertEqual(output.LinkAttribute.FLOW_RATE.value, 0, "FLOW_RATE link attribute value should be 0")
-        self.assertEqual(output.LinkAttribute.FLOW_DEPTH.value, 1, "FLOW_DEPTH link attribute value should be 1")
-        self.assertEqual(output.LinkAttribute.FLOW_VELOCITY.value, 2, "FLOW_VELOCITY link attribute value should be 2")
-        self.assertEqual(output.LinkAttribute.FLOW_VOLUME.value, 3, "FLOW_VOLUME link attribute value should be 3")
-        self.assertEqual(output.LinkAttribute.CAPACITY.value, 4, "CAPACITY link attribute value should be 4")
-        self.assertEqual(output.LinkAttribute.POLLUTANT_CONCENTRATION.value, 5,
-                         "POLLUTANT_CONCENTRATION link attribute value should be 5")
+        self.assertEqual(
+            first=output.LinkAttribute.FLOW_RATE.value, second=0,
+            msg="FLOW_RATE link attribute value should be 0"
+        )
+        self.assertEqual(
+            first=output.LinkAttribute.FLOW_DEPTH.value, second=1,
+            msg="FLOW_DEPTH link attribute value should be 1"
+        )
+        self.assertEqual(
+            first=output.LinkAttribute.FLOW_VELOCITY.value, second=2,
+            msg="FLOW_VELOCITY link attribute value should be 2"
+        )
+        self.assertEqual(
+            first=output.LinkAttribute.FLOW_VOLUME.value, second=3,
+            msg="FLOW_VOLUME link attribute value should be 3"
+        )
+        self.assertEqual(
+            first=output.LinkAttribute.CAPACITY.value, second=4,
+            msg="CAPACITY link attribute value should be 4"
+        )
+        self.assertEqual(
+            first=output.LinkAttribute.POLLUTANT_CONCENTRATION.value, second=5,
+            msg="POLLUTANT_CONCENTRATION link attribute value should be 5"
+        )
 
     def test_output_system_attribute_enum(self):
         """
@@ -151,47 +242,80 @@ class TestSWMMOutput(unittest.TestCase):
         :return:
         """
 
-        self.assertEqual(output.SystemAttribute.AIR_TEMP.value, 0, "AIR_TEMP system attribute value should be 0")
-        self.assertEqual(output.SystemAttribute.RAINFALL.value, 1, "RAINFALL system attribute value should be 1")
-        self.assertEqual(output.SystemAttribute.SNOW_DEPTH.value, 2, "SNOW_DEPTH system attribute value should be 2")
-        self.assertEqual(output.SystemAttribute.EVAP_INFIL_LOSS.value, 3,
-                         "EVAP_INFIL_LOSS system attribute value should be 3")
-        self.assertEqual(output.SystemAttribute.RUNOFF_FLOW.value, 4, "RUNOFF_FLOW system attribute value should be 4")
-        self.assertEqual(output.SystemAttribute.DRY_WEATHER_INFLOW.value, 5,
-                         "DRY_WEATHER_INFLOW system attribute value should be 5")
-        self.assertEqual(output.SystemAttribute.GROUNDWATER_INFLOW.value, 6,
-                         "GROUNDWATER_INFLOW system attribute value should be 6")
-        self.assertEqual(output.SystemAttribute.RDII_INFLOW.value, 7, "RDII_INFLOW system attribute value should be 7")
-        self.assertEqual(output.SystemAttribute.DIRECT_INFLOW.value, 8,
-                         "DIRECT_INFLOW system attribute value should be 8")
-        self.assertEqual(output.SystemAttribute.TOTAL_LATERAL_INFLOW.value, 9,
-                         "TOTAL_LATERAL_INFLOW system attribute value should be 9")
-        self.assertEqual(output.SystemAttribute.FLOOD_LOSSES.value, 10,
-                         "FLOOD_LOSSES system attribute value should be 10")
-        self.assertEqual(output.SystemAttribute.OUTFALL_FLOWS.value, 11,
-                         "OUTFALL_FLOWS system attribute value should be 11")
-        self.assertEqual(output.SystemAttribute.VOLUME_STORED.value, 12,
-                         "VOLUME_STORED system attribute value should be 12")
-        self.assertEqual(output.SystemAttribute.EVAPORATION_RATE.value, 13,
-                         "EVAPORATION_RATE system attribute value should be 13")
+        self.assertEqual(
+            first=output.SystemAttribute.AIR_TEMP.value, second=0,
+            msg="AIR_TEMP system attribute value should be 0"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.RAINFALL.value, second=1,
+            msg="RAINFALL system attribute value should be 1"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.SNOW_DEPTH.value, second=2,
+            msg="SNOW_DEPTH system attribute value should be 2"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.EVAP_INFIL_LOSS.value, second=3,
+            msg="EVAP_INFIL_LOSS system attribute value should be 3"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.RUNOFF_FLOW.value, second=4,
+            msg="RUNOFF_FLOW system attribute value should be 4"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.DRY_WEATHER_INFLOW.value, second=5,
+            msg="DRY_WEATHER_INFLOW system attribute value should be 5"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.GROUNDWATER_INFLOW.value, second=6,
+            msg="GROUNDWATER_INFLOW system attribute value should be 6"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.RDII_INFLOW.value, second=7,
+            msg="RDII_INFLOW system attribute value should be 7"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.DIRECT_INFLOW.value, second=8,
+            msg="DIRECT_INFLOW system attribute value should be 8"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.TOTAL_LATERAL_INFLOW.value, second=9,
+            msg="TOTAL_LATERAL_INFLOW system attribute value should be 9"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.FLOOD_LOSSES.value, second=10,
+            msg="FLOOD_LOSSES system attribute value should be 10"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.OUTFALL_FLOWS.value, second=11,
+            msg="OUTFALL_FLOWS system attribute value should be 11"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.VOLUME_STORED.value, second=12,
+            msg="VOLUME_STORED system attribute value should be 12"
+        )
+        self.assertEqual(
+            first=output.SystemAttribute.EVAPORATION_RATE.value, second=13,
+            msg="EVAPORATION_RATE system attribute value should be 13"
+        )
 
     def test_output_open_and_close(self):
         """
         Test the output open and close functions
         :return:
         """
-        with Output(example_output_data.EXAMPLE_OUTPUT_FILE_1) as swmm_output:
+        with Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1) as swmm_output:
             pass
 
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
 
     def test_output_open_error(self):
         """
         Test the output open error function
         :return:
         """
-        with self.assertRaises(FileNotFoundError) as context:
-            swmm_output = Output(example_output_data.NON_EXISTENT_OUTPUT_FILE)
+        with self.assertRaises(expected_exception=FileNotFoundError) as context:
+            swmm_output = Output(output_file=example_output_data.NON_EXISTENT_OUTPUT_FILE)
 
         self.assertIn(
             member="Error opening the SWMM output file",
@@ -204,37 +328,39 @@ class TestSWMMOutput(unittest.TestCase):
         Test the output get version function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
         version = swmm_output.version
 
-        self.assertEqual(version, 51000, "Version should be 51000")
+        self.assertEqual(first=version, second=51000, msg="Version should be 51000")
 
     def test_output_get_size(self):
         """
         Test the output get size function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
-        size = swmm_output.output_size.values()
-
-        self.assertListEqual(list(size), [8, 14, 13, 1, 2], "Size should be [8, 14, 13, 1, 2]")
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        self.assertDictEqual(
+            d1={'subcatchments': 8, 'nodes': 14, 'links': 13, 'system': 1, 'pollutants': 2},
+            d2=swmm_output.output_size,
+            msg="Output size should be {'subcatchments': 8, 'nodes': 14, 'links': 13, 'system': 1, 'pollutants': 2}"
+        )
 
     def test_output_get_units(self):
         """
         Test the output get units function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
         units = swmm_output.units
 
         self.assertListEqual(
-            list(units),
-            [
+            list1=list(units),
+            list2 = [
                 output.UnitSystem.US,
                 output.FlowUnits.CFS,
                 [output.ConcentrationUnits.MG, output.ConcentrationUnits.UG]
             ],
-            "Units should be [US, CFS, [MG, UG]]"
+            msg="Units should be [US, CFS, [MG, UG]]"
         )
 
     def test_output_get_flow_units(self):
@@ -242,93 +368,125 @@ class TestSWMMOutput(unittest.TestCase):
         Test the output get flow units function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
         flow_units = swmm_output.flow_units
 
-        self.assertEqual(flow_units, output.FlowUnits.CFS, "Flow units should be CFS")
+        self.assertEqual(
+            first=flow_units, second=output.FlowUnits.CFS, msg="Flow units should be CFS"
+        )
 
     def test_output_get_start_date(self):
         """
         Test the output get start date function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
         start_date = swmm_output.start_date
 
-        self.assertEqual(start_date, datetime(year=1998, month=1, day=1), "Start date should be 01/01/1998")
+        self.assertEqual(
+            first=start_date,
+            second=datetime(year=1998, month=1, day=1),
+            msg="Start date should be 01/01/1998"
+        )
 
     def test_output_get_time_attributes(self):
         """
         Test the output get temporal attributes function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
-        report_step = swmm_output.get_time_attribute(output.TimeAttribute.REPORT_STEP.value)
-        num_periods = swmm_output.get_time_attribute(output.TimeAttribute.NUM_PERIODS.value)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        report_step = swmm_output.get_time_attribute(time_attribute=output.TimeAttribute.REPORT_STEP)
+        num_periods = swmm_output.get_time_attribute(time_attribute=output.TimeAttribute.NUM_PERIODS)
 
-        self.assertEqual(report_step, 3600, "Report step should be 300")
-        self.assertEqual(num_periods, 36, "Number of periods should be 365")
+        self.assertEqual(
+            first=report_step, second=3600,
+            msg="Report step should be 3600"
+        )
+        self.assertEqual(
+            first=num_periods, second=36,
+            msg="Number of periods should be 365"
+        )
 
     def test_output_get_element_name(self):
         """
         Test the output get element names function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
 
-        retrieved_subcatch_names = [
-            swmm_output.get_element_name(output.ElementType.SUBCATCHMENT.value, i) for i in range(8)
+        retrieved_sub_catch_names = [
+            swmm_output.get_element_name(
+                element_type=output.ElementType.SUBCATCHMENT, element_index=i
+            )
+            for i in range(8)
         ]
-        subcatch_names = ['1', '2', '3', '4', '5', '6', '7', '8']
+        sub_catch_names = ['1', '2', '3', '4', '5', '6', '7', '8']
+
         self.assertListEqual(
-            retrieved_subcatch_names, subcatch_names, "Subcatchment names should be [1, 2, 3, 4, 5, 6, 7, 8]"
+            list1=retrieved_sub_catch_names, list2=sub_catch_names,
+            msg="Sub-catchment names should be [1, 2, 3, 4, 5, 6, 7, 8]"
         )
 
         retrieved_node_names = [
-            swmm_output.get_element_name(output.ElementType.NODE.value, i) for i in range(14)
+            swmm_output.get_element_name(
+                element_type=output.ElementType.NODE, element_index=i
+            )
+            for i in range(14)
         ]
 
-        node_names = [
-            '9', '10', '13', '14', '15', '16', '17', '19', '20', '21', '22', '23', '24', '18'
-        ]
+        node_names = ['9', '10', '13', '14', '15', '16', '17', '19', '20', '21', '22', '23', '24', '18']
+
         self.assertListEqual(
-            retrieved_node_names, node_names,
-            "Node names should be [9, 10, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24, 18]"
+            list1=retrieved_node_names, list2=node_names,
+            msg="Node names should be [9, 10, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24, 18]"
         )
 
         retrieved_link_names = [
-            swmm_output.get_element_name(output.ElementType.LINK.value, i) for i in range(13)
+            swmm_output.get_element_name(
+                element_type=output.ElementType.LINK, element_index=i
+            ) for i in range(13)
         ]
+
         link_names = ['1', '4', '5', '6', '7', '8', '10', '11', '12', '13', '14', '15', '16']
         self.assertListEqual(
-            retrieved_link_names, link_names,
-            "Link names should be [1, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16]"
+            list1=retrieved_link_names, list2=link_names,
+            msg="Link names should be [1, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16]"
         )
 
         retrieved_pollutant_names = [
-            swmm_output.get_element_name(output.ElementType.POLLUTANT.value, i) for i in range(2)
+            swmm_output.get_element_name(
+                element_type=output.ElementType.POLLUTANT, element_index=i
+            )
+            for i in range(2)
         ]
+
         pollutant_names = ['TSS', 'Lead']
-        self.assertListEqual(retrieved_pollutant_names, pollutant_names, "Pollutant names should be [TSS, TSS]")
+        self.assertListEqual(
+            list1=retrieved_pollutant_names, list2=pollutant_names,
+            msg="Pollutant names should be [TSS, TSS]"
+        )
 
     def test_get_element_name_errors(self):
         """
         Test the output get element name error function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
 
-        with self.assertRaises(Exception) as context:
-            swmm_output.get_element_name(output.ElementType.SYSTEM.value, 0)
+        with self.assertRaises(expected_exception=Exception) as context:
+            swmm_output.get_element_name(
+                element_type=output.ElementType.SYSTEM, element_index=0
+            )
 
         self.assertIn(
-            member="nvalid parameter code",
-            container=str(context.exception),
+            member="invalid parameter code", container=str(context.exception),
             msg="Error message should be 'Invalid element type'"
         )
 
-        with self.assertRaises(Exception) as context:
-            swmm_output.get_element_name(output.ElementType.SUBCATCHMENT.value, 8)
+        with self.assertRaises(expected_exception=Exception) as context:
+            swmm_output.get_element_name(
+                element_type=output.ElementType.SUBCATCHMENT, element_index=8
+            )
 
         self.assertIn(
             member="element index out of range",
@@ -341,36 +499,42 @@ class TestSWMMOutput(unittest.TestCase):
         Test the output get element names error function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
 
-        retrieved_subcatch_names = swmm_output.get_element_names(output.ElementType.SUBCATCHMENT.value)
-        subcatch_names = ['1', '2', '3', '4', '5', '6', '7', '8']
+        retrieved_sub_catch_names = swmm_output.get_element_names(element_type=output.ElementType.SUBCATCHMENT)
+        sub_catch_names = ['1', '2', '3', '4', '5', '6', '7', '8']
+
         self.assertListEqual(
-            retrieved_subcatch_names, subcatch_names, "Subcatchment names should be [1, 2, 3, 4, 5, 6, 7, 8]"
+            list1=retrieved_sub_catch_names,
+            list2=sub_catch_names,
+            msg="Sub-catchment names should be [1, 2, 3, 4, 5, 6, 7, 8]"
         )
 
-        retrieved_node_names = swmm_output.get_element_names(output.ElementType.NODE.value)
+        retrieved_node_names = swmm_output.get_element_names(element_type=output.ElementType.NODE)
         node_names = [
             '9', '10', '13', '14', '15', '16', '17', '19', '20', '21', '22', '23', '24', '18'
         ]
         self.assertListEqual(
-            retrieved_node_names, node_names,
-            "Node names should be [9, 10, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24, 18]"
+            list1=retrieved_node_names, list2=node_names,
+            msg="Node names should be [9, 10, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24, 18]"
         )
 
-        retrieved_link_names = swmm_output.get_element_names(output.ElementType.LINK.value)
+        retrieved_link_names = swmm_output.get_element_names(element_type=output.ElementType.LINK)
         link_names = ['1', '4', '5', '6', '7', '8', '10', '11', '12', '13', '14', '15', '16']
         self.assertListEqual(
-            retrieved_link_names, link_names,
-            "Link names should be [1, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16]"
+            list1=retrieved_link_names, list2=link_names,
+            msg="Link names should be [1, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16]"
         )
 
-        retrieved_pollutant_names = swmm_output.get_element_names(output.ElementType.POLLUTANT.value)
+        retrieved_pollutant_names = swmm_output.get_element_names(element_type=output.ElementType.POLLUTANT)
         pollutant_names = ['TSS', 'Lead']
-        self.assertListEqual(retrieved_pollutant_names, pollutant_names, "Pollutant names should be [TSS, TSS]")
+        self.assertListEqual(
+            list1=retrieved_pollutant_names, list2=pollutant_names,
+            msg="Pollutant names should be [TSS, TSS]"
+        )
 
-        with self.assertRaises(SWMMOutputException) as context:
-            swmm_output.get_element_names(output.ElementType.SYSTEM.value)
+        with self.assertRaises(expected_exception=SWMMOutputException) as context:
+            swmm_output.get_element_names(element_type=output.ElementType.SYSTEM)
 
         self.assertIn(
             member="Cannot get element names for the system element type",
@@ -383,43 +547,40 @@ class TestSWMMOutput(unittest.TestCase):
         Test the output get timeseries function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
         times = swmm_output.times
 
-        self.assertEqual(len(times), 36, "Number of times should be 36")
+        self.assertEqual(first=len(times), second=36, msg="Number of times should be 36")
 
         self.assertEqual(
-            times[0],
-            datetime(1998, 1, 1, 1, 0),
-            "First time should be 01/01/1998 01:00"
+            first=times[0], second=datetime(year=1998, month=1, day=1, hour=1),
+            msg="First time should be 01/01/1998 01:00"
         )
 
         self.assertEqual(
-            times[16],
-            datetime(1998, 1, 1, 17, 0),
-            "Middle time should be 01/01/1998 14:00"
+            first=times[16], second=datetime(year=1998, month=1, day=1, hour=17),
+            msg="Middle time should be 01/01/1998 14:00"
         )
 
         self.assertEqual(
-            times[-1],
-            datetime(1998, 1, 2, 12, 0),
-            "Last time should be 01/02/1998 12:00"
+            first=times[-1], second=datetime(year=1998, month=1, day=2, hour=12),
+            msg="Last time should be 01/02/1998 12:00"
         )
 
-    def test_get_subcatchment_timeseries(self):
+    def test_get_sub_catchment_timeseries(self):
         """
-        Test the output get subcatchment timeseries function
+        Test the output get sub-catchment timeseries function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
-        subcatchment_timeseries = swmm_output.get_subcatchment_timeseries(
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        sub_catchment_timeseries = swmm_output.get_subcatchment_timeseries(
             element_index=5,
-            attribute=output.SubcatchAttribute.RUNOFF_RATE.value,
+            attribute=output.SubcatchAttribute.RUNOFF_RATE,
         )
 
         TestSWMMOutput.assert_dict_almost_equal(
-            subcatchment_timeseries,
-            self.test_artifacts['test_get_subcatchment_timeseries'],
+            d1=sub_catchment_timeseries,
+            d2=self.test_artifacts['test_get_subcatchment_timeseries'],
         )
 
     def test_get_node_timeseries(self):
@@ -427,15 +588,15 @@ class TestSWMMOutput(unittest.TestCase):
         Test the output get node timeseries function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
         node_timeseries = swmm_output.get_node_timeseries(
             element_index=7,
-            attribute=output.NodeAttribute.TOTAL_INFLOW.value,
+            attribute=output.NodeAttribute.TOTAL_INFLOW,
         )
 
         TestSWMMOutput.assert_dict_almost_equal(
-            node_timeseries,
-            self.test_artifacts['test_get_node_timeseries'],
+            d1=node_timeseries,
+            d2=self.test_artifacts['test_get_node_timeseries'],
         )
 
     def test_get_link_timeseries(self):
@@ -443,10 +604,10 @@ class TestSWMMOutput(unittest.TestCase):
         Test the output get link timeseries function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
         link_timeseries = swmm_output.get_link_timeseries(
             element_index=5,
-            attribute=output.LinkAttribute.FLOW_RATE.value,
+            attribute=output.LinkAttribute.FLOW_RATE,
         )
 
         TestSWMMOutput.assert_dict_almost_equal(
@@ -461,7 +622,7 @@ class TestSWMMOutput(unittest.TestCase):
         """
         swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
         system_timeseries = swmm_output.get_system_timeseries(
-            attribute=output.SystemAttribute.RUNOFF_FLOW.value
+            attribute=output.SystemAttribute.RUNOFF_FLOW
         )
 
         TestSWMMOutput.assert_dict_almost_equal(
@@ -469,19 +630,19 @@ class TestSWMMOutput(unittest.TestCase):
             self.test_artifacts['test_get_system_timeseries'],
         )
 
-    def test_get_subcatchment_values_by_time_and_attributes(self):
+    def test_get_sub_catchment_values_by_time_and_attributes(self):
         """
-        Test the output get subcatchment values by time and attributes function
+        Test the output get sub-catchment values by time and attributes function
         :return:
         """
         swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
-        subcatchment_values = swmm_output.get_subcatchment_values_by_time_and_attribute(
+        sub_catchment_values = swmm_output.get_subcatchment_values_by_time_and_attribute(
             time_index=5,
-            attribute=output.SubcatchAttribute.RUNOFF_RATE.value
+            attribute=output.SubcatchAttribute.RUNOFF_RATE
         )
 
         TestSWMMOutput.assert_dict_almost_equal(
-            subcatchment_values,
+            sub_catchment_values,
             self.test_artifacts['test_get_subcatchment_values_by_time_and_attributes'],
         )
 
@@ -493,7 +654,7 @@ class TestSWMMOutput(unittest.TestCase):
         swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
         node_values = swmm_output.get_node_values_by_time_and_attribute(
             time_index=8,
-            attribute=output.NodeAttribute.TOTAL_INFLOW.value
+            attribute=output.NodeAttribute.TOTAL_INFLOW
         )
 
         TestSWMMOutput.assert_dict_almost_equal(
@@ -509,12 +670,12 @@ class TestSWMMOutput(unittest.TestCase):
         swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
         link_values = swmm_output.get_link_values_by_time_and_attribute(
             time_index=10,
-            attribute=output.LinkAttribute.FLOW_RATE.value
+            attribute=output.LinkAttribute.FLOW_RATE
         )
 
         TestSWMMOutput.assert_dict_almost_equal(
-            link_values,
-            self.test_artifacts['test_get_link_values_by_time_and_attributes'],
+            d1=link_values,
+            d2=self.test_artifacts['test_get_link_values_by_time_and_attributes'],
         )
 
     def test_get_system_values_by_time_and_attributes(self):
@@ -522,31 +683,31 @@ class TestSWMMOutput(unittest.TestCase):
         Test the output get system values by time and attributes function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
         system_values = swmm_output.get_system_values_by_time_and_attribute(
             time_index=12,
-            attribute=output.SystemAttribute.RUNOFF_FLOW.value
+            attribute=output.SystemAttribute.RUNOFF_FLOW
         )
 
         TestSWMMOutput.assert_dict_almost_equal(
-            system_values,
-            self.test_artifacts['test_get_system_values_by_time_and_attributes'],
+            d1=system_values,
+            d2=self.test_artifacts['test_get_system_values_by_time_and_attributes'],
         )
 
-    def test_get_subcatchment_values_by_time_and_index(self):
+    def test_get_sub_catchment_values_by_time_and_index(self):
         """
-        Test the output get subcatchment values by time and index function
+        Test the output get sub-catchment values by time and index function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
-        subcatchment_values = swmm_output.get_subcatchment_values_by_time_and_element_index(
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        sub_catchment_values = swmm_output.get_subcatchment_values_by_time_and_element_index(
             time_index=5,
             element_index=3
         )
 
         TestSWMMOutput.assert_dict_almost_equal(
-            subcatchment_values,
-            self.test_artifacts['test_get_subcatchment_values_by_time_and_index'],
+            d1=sub_catchment_values,
+            d2=self.test_artifacts['test_get_subcatchment_values_by_time_and_index'],
         )
 
     def test_get_node_values_by_time_and_index(self):
@@ -554,15 +715,15 @@ class TestSWMMOutput(unittest.TestCase):
         Test the output get node values by time and index function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
         node_values = swmm_output.get_node_values_by_time_and_element_index(
             time_index=8,
             element_index=4
         )
 
         TestSWMMOutput.assert_dict_almost_equal(
-            node_values,
-            self.test_artifacts['test_get_node_values_by_time_and_index'],
+            d1=node_values,
+            d2=self.test_artifacts['test_get_node_values_by_time_and_index'],
         )
 
     def test_get_link_values_by_time_and_index(self):
@@ -570,15 +731,15 @@ class TestSWMMOutput(unittest.TestCase):
         Test the output get link values by time and index function
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
         link_values = swmm_output.get_link_values_by_time_and_element_index(
             time_index=10,
             element_index=5
         )
 
         TestSWMMOutput.assert_dict_almost_equal(
-            link_values,
-            self.test_artifacts['test_get_link_values_by_time_and_index'],
+            d1=link_values,
+            d2=self.test_artifacts['test_get_link_values_by_time_and_index'],
         )
 
     def test_get_system_values_by_time(self):
@@ -586,22 +747,22 @@ class TestSWMMOutput(unittest.TestCase):
         Test the output get system values by time
         :return:
         """
-        swmm_output = Output(example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
         system_values = swmm_output.get_system_values_by_time(time_index=12)
 
         TestSWMMOutput.assert_dict_almost_equal(
-            system_values,
-            self.test_artifacts['test_get_system_values_by_time']
+            d1=system_values,
+            d2=self.test_artifacts['test_get_system_values_by_time']
         )
 
     @staticmethod
     def assert_dict_almost_equal(d1: dict, d2: dict, rtol: float = 1e-5, atol: float = 1e-8):
         """
         Assert that two dictionaries are almost equal
-        :param d1: First dictionary
-        :param d2: Second dictionary
-        :param rtol: Relative error
-        :param atol: Absolute error
+        :param d1: First dictionary to compare with d2 dictionary
+        :param d2: Second dictionary to compare with d1 dictionary
+        :param rtol: Relative error tolerance for floating point values
+        :param atol: Absolute error tolerance for floating point values
         :return:
         """
         """Assert that two dictionaries are almost equal (with tolerance)."""

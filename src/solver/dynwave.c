@@ -114,14 +114,10 @@ static double getVariableStep(double maxStep);
 static double getLinkStep(double tMin, int *minLink);
 static double getNodeStep(double tMin, int *minNode);
 
-//=============================================================================
-
+/*!
+* \brief Initializes dynamic wave routing method.
+*/
 void dynwave_init()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: initializes dynamic wave routing method.
-//
 {
     int i, j;
     double z;
@@ -174,14 +170,10 @@ void  dynwave_close()
     FREE(Xnode);
 }
 
-//=============================================================================
-
+/*!
+* \brief Adjusts dynamic wave routing options.
+*/
 void dynwave_validate()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: adjusts dynamic wave routing options.
-//
 {
     if ( MinRouteStep > RouteStep ) MinRouteStep = RouteStep;
     if ( MinRouteStep < MINTIMESTEP ) MinRouteStep = MINTIMESTEP;
@@ -192,14 +184,12 @@ void dynwave_validate()
     if ( MaxTrials == 0 ) MaxTrials = DEFAULT_MAXTRIALS;
 }
 
-//=============================================================================
-
+/*!
+* \brief Computes variable routing time step if applicable.
+* \param[in] fixedStep User-supplied fixed time step (sec)
+* \return Returns routing time step (sec)
+*/
 double dynwave_getRoutingStep(double fixedStep)
-//
-//  Input:   fixedStep = user-supplied fixed time step (sec)
-//  Output:  returns routing time step (sec)
-//  Purpose: computes variable routing time step if applicable.
-//
 {
     // --- use user-supplied fixed step if variable step option turned off
     //     or if its smaller than the min. allowable variable time step
@@ -221,15 +211,11 @@ double dynwave_getRoutingStep(double fixedStep)
     return VariableStep;
 }
 
-//=============================================================================
-
+/*!
+* \brief Routes flows through drainage network over current time step.
+* \param[in] tStep Time step (sec)
+*/
 int dynwave_execute(double tStep)
-//
-//  Input:   links = array of topo sorted links indexes
-//           tStep = time step (sec)
-//  Output:  returns number of iterations used
-//  Purpose: routes flows through drainage network over current time step.
-//
 {
     int converged;
 

@@ -1,34 +1,37 @@
-//-----------------------------------------------------------------------------
-//   climate.c
-//
-//   Project: EPA SWMM5
-//   Version: 5.2
-//   Date:    11/01/21  (Build 5.2.0)
-//   Author:  L. Rossman
-//
-//   Climate related functions.
-//
-//   Update History
-//   ==============
-//   Build 5.1.007:
-//   - NCDC GHCN climate file format added.
-//   - Monthly adjustments for temperature, evaporation & rainfall added.
-//   Build 5.1.008:
-//   - Monthly adjustments for hyd. conductivity added.
-//   - Time series evaporation rates can now vary within a day.
-//   - Evaporation rates are now properly updated when only flow routing
-//     is being simulated.
-//   Build 5.1.010:
-//   - Hargreaves evaporation now computed using 7-day average temperatures.
-//   Build 5.1.011:
-//   - Monthly adjustment for hyd. conductivity <= 0 is ignored.
-//   Build 5.1.013:
-//   - Reads names of monthly adjustment patterns for various parameters
-//     of a subcatchment from the [ADJUSTMENTS] section of input file.
-//   Build 5.2.0:
-//   - Reads temperature units for use with GHCND climate files.
-//   - Support added for relative file names.
-///-----------------------------------------------------------------------------
+/*!
+* \file climate.c
+* \brief Climate related functions.
+* \author L. Rossman
+* \date Created: 2021-11-01
+* \date Last edited: 2024-12-23
+* \details Climate related functions.
+*
+*  Update History
+*  ==============
+*   Build 5.1.007:
+*   - NCDC GHCN climate file format added.
+*   - Monthly adjustments for temperature, evaporation & rainfall added.
+*   Build 5.1.008:
+*   - Monthly adjustments for hyd. conductivity added.
+*   - Time series evaporation rates can now vary within a day.
+*   - Evaporation rates are now properly updated when only flow routing
+*     is being simulated.
+*   Build 5.1.010:
+*   - Hargreaves evaporation now computed using 7-day average temperatures.
+*   Build 5.1.011:
+*   - Monthly adjustment for hyd. conductivity <= 0 is ignored.
+*   Build 5.1.013:
+*   - Reads names of monthly adjustment patterns for various parameters
+*     of a subcatchment from the [ADJUSTMENTS] section of input file.
+*   Build 5.2.0:
+*   - Reads temperature units for use with GHCND climate files.
+*   - Support added for relative file names.
+*/
+
+/*!
+* \def _CRT_SECURE_NO_DEPRECATE 
+* \brief Define to prevent deprecation warnings from MS Visual C++ compilers
+*/
 #define _CRT_SECURE_NO_DEPRECATE
 
 #include <stdlib.h>
@@ -37,76 +40,289 @@
 #include <math.h>
 #include "headers.h"
 
-//-----------------------------------------------------------------------------
-//  Constants
-//-----------------------------------------------------------------------------
-enum ClimateFileFormats {UNKNOWN_FORMAT,
-                         USER_PREPARED,     // SWMM 5's own user format
-                         GHCND,             // NCDC GHCN Daily format
-                         TD3200,            // NCDC TD3200 format
-                         DLY0204};          // Canadian DLY02 or DLY04 format
-static const int    MAXCLIMATEVARS  = 4;
-static const int    MAXDAYSPERMONTH = 32;
+/*!
+* \defgroup Climate_File_Constants_and_Shared_Variables Climate File Constants, Enumerations, Shared Variables, and Functions
+* \brief Climate file constants, enumeration types, shared variables, and functions.
+* \{
+*/
+/*!
+* \addtogroup Climate_File_Constants Climate File Constants and Enumerations
+* \brief Climate files local constants and enumeration types.
+* \ingroup Climate_File_Constants_and_Shared_Variables
+* \{
+*/
+/*!
+* \enum ClimateFileFormats Climate file formats.
+*/
+enum ClimateFileFormats {
+    /*! \brief Unknown format */
+    UNKNOWN_FORMAT,
+    /*! \brief SWMM 5's own user format */
+    USER_PREPARED,
+    /*! \brief NCDC GHCN Daily format */
+    GHCND,
+    /*! \brief NCDC TD3200 format */
+    TD3200,
+    /*! \brief Canadian DLY02 or DLY04 format */
+    DLY0204
+};
 
-// These variables are used when processing climate files.
-enum   ClimateVarType {TMIN, TMAX, EVAP, WIND};
-enum   WindSpeedType  {WDMV, AWND};
-enum   TempUnitsType {DEG_C10, DEG_C, DEG_F};
-static char* ClimateVarWords[] = {"TMIN", "TMAX", "EVAP", "WDMV", "AWND",
-                                  NULL};
-static char* TempUnitsWords[] = {"C10", "C", "F", NULL};
+/*! 
+* \var MAXCLIMATEVARS 
+* \brief Maximum number of climate variables
+*/
+static const int MAXCLIMATEVARS  = 4;
 
-//-----------------------------------------------------------------------------
-//  Data Structures
-//-----------------------------------------------------------------------------
+/*!
+* \var MAXDAYSPERMONTH 
+* \brief Maximum number of days per month
+*/
+static const int MAXDAYSPERMONTH = 32;
+
+/*!
+* \enum ClimateVarType Climate variable types. 
+These variables are used when processing climate files.
+*/
+enum ClimateVarType {
+    /*! \brief Minimum temperature */
+    TMIN, 
+    /*! \brief Maximum temperature */
+    TMAX, 
+    /*! \brief Evaporation */
+    EVAP, 
+    /*! \brief Wind speed */
+    WIND
+};
+
+/*!
+* \enum WindSpeedType Wind speed types. 
+These variables are used when processing climate files.
+*/
+enum WindSpeedType  {
+    /*! \brief Wind speed */
+    WDMV, 
+    /*! \brief Wind direction */
+    AWND
+};
+
+/*!
+* \enum TempUnitsType Temperature units types. 
+These variables are used when processing climate files.
+*/
+enum TempUnitsType {
+    /*! \brief Temperature in tenths of a degree Celsius */
+    DEG_C10, 
+    /*! \brief Temperature in degrees Celsius */
+    DEG_C, 
+    /*! \brief Temperature in degrees Fahrenheit */
+    DEG_F
+};
+
+/*!
+* \var ClimateVarWords 
+* \brief Climate variable words. These words are used when processing climate files.
+*/
+static char* ClimateVarWords[] = {
+    "TMIN", "TMAX", "EVAP", "WDMV", "AWND", NULL
+};
+
+/*!
+* \var TempUnitsWords
+* \brief Temperature units words. These words are used when processing climate files.
+*/
+static char* TempUnitsWords[] = {
+    "C10", "C", "F", NULL
+};
+/*!
+* \}
+*/
+
+/*!
+* \struct TMovAve
+* \brief Structure for moving average of daily temperatures.
+*/
 typedef struct
-{
-    double    tAve;          // moving avg. for daily temperature (deg F)
-    double    tRng;          // moving avg. for daily temp. range (deg F)
-    double    ta[7];         // data window for tAve
-    double    tr[7];         // data window for tRng
-    int       count;         // length of moving average window
-    int       maxCount;      // maximum length of moving average window
-    int       front;         // index of front of moving average window
+{   
+    /*! \brief Moving average for daily temperature (deg F) */
+    double    tAve;
+    /*! \brief Moving average for daily temperature range (deg F) */
+    double    tRng;
+    /*! \brief Data window for tAve */
+    double    ta[7];
+    /*! \brief Data window for tRng */
+    double    tr[7];
+    /*! \brief Length of moving average window */
+    int       count;
+    /*! \brief Maximum length of moving average window */
+    int       maxCount;
+    /*! \brief Index of front of moving average window */
+    int       front;
 } TMovAve;
 
 
-//-----------------------------------------------------------------------------
-//  Shared variables
-//-----------------------------------------------------------------------------
+/*!
+* \defgroup Climate_File_Shared_Variables Climate Files Shared Variables
+* \brief Climate files shared variables.
+* \{
+*/
 // Temperature variables
-static double    Tmin;                 // min. daily temperature (deg F)
-static double    Tmax;                 // max. daily temperature (deg F)
-static double    Trng;                 // 1/2 range of daily temperatures
-static double    Trng1;                // prev. max - current min. temp.
-static double    Tave;                 // average daily temperature (deg F)
-static double    Hrsr;                 // time of min. temp. (hrs)
-static double    Hrss;                 // time of max. temp (hrs)
-static double    Hrday;                // avg. of min/max temp times
-static double    Dhrdy;                // hrs. between min. & max. temp. times
-static double    Dydif;                // hrs. between max. & min. temp. times
-static DateTime  LastDay;              // date of last day with temp. data
-static TMovAve   Tma;                  // moving average of daily temperatures
+/*!
+ * \var Tmin
+ * \brief Minimum daily temperature (deg F) 
+ */
+static double    Tmin;
+/*!
+ * \var Tmax
+ * \brief Maximum daily temperature (deg F) 
+ */
+static double    Tmax;
+/*!
+ * \var Trng
+ * \brief 1/2 range of daily temperatures 
+ */
+static double    Trng;
+/*!
+ * \var Trng1
+ * \brief Previous day's max - current day's min temperature 
+ */
+static double    Trng1;
+/*!
+ * \var Tave
+ * \brief Average daily temperature (deg F) 
+ */
+static double    Tave;
+/*!
+ * \var Hrsr
+ * \brief Time of min. temp. (hrs) 
+ */
+static double    Hrsr;
+/*!
+ * \var Hrss
+ * \brief Time of max. temp. (hrs) 
+ */
+static double    Hrss;
+/*!
+ * \var Hrday
+ * \brief Avg. of min/max temp times 
+ */
+static double    Hrday;
+/*!
+ * \var Dhrdy
+ * \brief Hrs. between min. & max. temp. times 
+ */
+static double    Dhrdy;
+/*!
+ * \var Dydif
+ * \brief Hrs. between max. & min. temp. times 
+ */
+static double    Dydif;
+/*!
+ * \var LastDay
+ * \brief Date of last day with temp. data 
+ */
+static DateTime  LastDay;
+/*!
+ * \var Tma
+ * \brief Moving average of daily temperatures 
+ */
+static TMovAve   Tma;
 
 // Evaporation variables
-static DateTime  NextEvapDate;         // next date when evap. rate changes
+
+/*!
+ * \var NextEvapDate
+ * \brief Next date when evap. rate changes
+ */
+static DateTime  NextEvapDate;
+
+/*!
+ * \var NextEvapRate
+ * \brief Next evaporation rate (user units)
+ */
 static double    NextEvapRate;         // next evaporation rate (user units)
 
 // Climate file variables
+
+/*!
+* \var FileFormat 
+* \brief File format (see ClimateFileFormats)
+*/
 static int      FileFormat;            // file format (see ClimateFileFormats)
+
+/*!
+* \var FileYear
+* \brief Current year of file data
+*/
 static int      FileYear;              // current year of file data
+
+/*!
+* \var FileMonth
+* \brief Current month of year of file data
+*/
 static int      FileMonth;             // current month of year of file data
+
+/*!
+* \var FileDay
+* \brief Current day of month of file data
+*/
 static int      FileDay;               // current day of month of file data
+
+/*!
+* \var FileLastDay
+* \brief Last day of current month of file data
+*/
 static int      FileLastDay;           // last day of current month of file data
+
+/*!
+* \var FileElapsedDays
+* \brief Number of days read from file
+*/
 static int      FileElapsedDays;       // number of days read from file
+
+/*!
+* \var FileStartDate
+* \brief Starting date of file data
+*/
 static double   FileValue[4];          // current day's values of climate data
+
+/*!
+* \var FileData
+* \brief Month's worth of daily climate data
+*/
 static double   FileData[4][32];       // month's worth of daily climate data
+
+/*!
+* \var FileLine
+* \brief Line from climate data file
+*/
 static char     FileLine[MAXLINE+1];   // line from climate data file
 
+/*!
+* \var FileFieldPos
+* \brief Start of data fields for file record
+*/
 static int      FileFieldPos[4];       // start of data fields for file record
+
+/*!
+* \var FileDateFieldPos
+* \brief Start of date field for file record
+*/
 static int      FileDateFieldPos;      // start of date field for file record 
+
+/*!
+* \var FileWindType
+* \brief Wind speed type
+*/
 static int      FileWindType;          // wind speed type
+
+/*!
+* \var FileTempUnits
+* \brief GHCND file temperature units (C10, C or F)
+*/
 static int      FileTempUnits;         // GHCND file temperature units (C10, C or F)
+/*!
+* \}
+*/
 
 //-----------------------------------------------------------------------------
 //  External functions (defined in funcs.h)
@@ -122,49 +338,180 @@ static int      FileTempUnits;         // GHCND file temperature units (C10, C o
 //-----------------------------------------------------------------------------
 //  Local functions
 //-----------------------------------------------------------------------------
+/*!
+* \defgroup Climate_Local_Function Climate Related Local Functions
+* \brief Climate related local functions.
+* \{
+*/
+
+/*!
+* \brief Determines the format of a climate file.
+* \return The format code (TD3200, DLY0204, USER_PREPARED, GHCND, UNKNOWN_FORMAT)
+*/
 static int  getFileFormat(void);
+
+/*!
+* \brief Reads a line of data from a climate file.
+* \param[out] y Year
+* \param[out] m Month
+*/
 static void readFileLine(int *year, int *month);
+
+/*!
+* \brief Reads year & month from line of User-Prepared climate file.
+* \param[out] y Year
+* \param[out] m Month
+*/
 static void readUserFileLine(int *year, int *month);
+
+/*!
+* \brief Reads year & month from line of TD-3200 climate file.
+* \param[out] y Year
+* \param[out] m Month
+*/
 static void readTD3200FileLine(int *year, int *month);
+
+/*!
+* \brief Reads year & month from line of DLY02 or DLY04 climate file.
+* \param[out] y Year
+* \param[out] m Month
+*/
 static void readDLY0204FileLine(int *year, int *month);
+
+/*!
+* \brief Reads next month's worth of data from a GHCND climate file.
+*/
 static void readFileValues(void);
 
+/*!
+* \brief Finds date for next change in evaporation after the current date.
+* \param[in] theDate Current simulation date
+* \return The new value for NextEvapDate
+*/
 static void setNextEvapDate(DateTime thedate);
-static void setEvap(DateTime theDate);
-static void setTemp(DateTime theDate);
-static void setWind(DateTime theDate);
-static void updateTempTimes(int day);
-static void updateTempMoveAve(double tmin, double tmax);
-static double getTempEvap(int day, double ta, double tr);
 
+/*!
+* \brief Sets evaporation rate (ft/sec) for a specified date.
+* \param[in] theDate Simulation date
+*/
+static void setEvap(DateTime theDate);
+
+/*!
+* \brief Updates temperatures for new simulation date.
+* \param[in] theDate Simulation date
+*/
+static void setTemp(DateTime theDate);
+
+/*!
+* \brief Sets wind speed (mph) for a specified date.
+* \param[in] theDate Simulation date
+*/
+static void setWind(DateTime theDate);
+
+/*!
+* \brief Computes time of day when min/max temperatures occur.
+* (min. temp occurs at sunrise, max. temp. at 3 hrs. < sunset)
+* \param[in] day Day of year
+*/
+static void updateTempTimes(int day);
+
+/*!
+* \brief Updates moving averages of average daily temperature and daily temperature range
+* stored in structure Tma.
+* \param[in] tmin Minimum daily temperature (deg F)
+* \param[in] tmax Maximum daily temperature (deg F)
+*/
+static void updateTempMoveAve(double tmin, double tmax);
+
+/*!
+* \brief Uses Hargreaves method to compute daily evaporation rate
+* from daily average temperatures and Julian day.
+* \param[in] day Day of year
+* \param[in] tave 7-day average temperature (deg F)
+* \param[in] trng 7-day average daily temperature range (deg F)
+* \return Evaporation rate in user's units (US:in/day, SI:mm/day)
+*/
+static double getTempEvap(int day, double tave, double trng);
+
+/*!
+* \brief Updates daily climate variables for new day or reads in
+* another month worth of values if a new month begins.
+* \param[in] theDate Current simulation date
+* \note Counters FileElapsedDays, FileDay, FileMonth, FileYear and
+* FileLastDay were initialized in climate_openFile().
+*/
 static void updateFileValues(DateTime theDate);
+
+/*!
+* \brief Parses climate variable values from a line of a user-prepared climate file.
+*/
 static void parseUserFileLine(void);
+
+/*!
+* \brief Parses climate variable values from a line of a TD3200 file.
+*/
 static void parseTD3200FileLine(void);
+
+/*!
+* \brief Parses a month's worth of climate variable values from a line of 
+* a DLY02 or DLY04 climate file.
+*/
 static void parseDLY0204FileLine(void);
+
+/*!
+* \brief Reads month worth of values for climate variable from TD-3200 file.
+* \param[in] i Climate variable code
+*/
 static void setTD3200FileValues(int param);
 
+/*!
+* \brief Checks if a climate file is in the NCDC GHCN Daily format 
+* and determines the position of each climate variable field.
+* \param[in] line Line from the climate file
+* \return 1 if line is in GHCN format, 0 if not
+*/
 static int  isGhcndFormat(char* line);
+
+/*!
+* \brief Reads year & month from line of a NCDC GHCN Daily climate file.
+* \param[out] y Year
+* \param[out] m Month
+*/
 static void readGhcndFileLine(int *year, int *month);
+
+/*!
+* \brief Parses a line of a NCDC GHCN Daily file for daily values of max/min temperature,
+* pan evaporation and wind speed.
+*/
 static void parseGhcndFileLine(void);
+
+/*!
+* \brief Converts a climate variable value read from a NCDC GHCN Daily file
+* to SWMM's internal units.
+* \param[in] var Climate variable code
+* \param[in] v Climate variable value
+* \return Climate variable value in SWMM's internal units
+*/
 static double convertGhcndValue(int var, double v);
+/*!
+* \}
+*/
 
-//=============================================================================
-
+/*!
+* \brief Reads climate/temperature parameters from input line of data.
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details 
+* Format of data can be:
+* - TIMESERIES  name
+* - FILE        name  (start)  (units)
+* - WINDSPEED   MONTHLY  v1  v2  ...  v12
+* - WINDSPEED   FILE
+* - SNOWMELT    v1  v2  ...  v6
+* - ADC         IMPERV/PERV  v1  v2  ...  v10
+*/
 int  climate_readParams(char* tok[], int ntoks)
-//
-//  Input:   tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns error code
-//  Purpose: reads climate/temperature parameters from input line of data
-//
-//  Format of data can be
-//    TIMESERIES  name
-//    FILE        name  (start)  (units)
-//    WINDSPEED   MONTHLY  v1  v2  ...  v12
-//    WINDSPEED   FILE
-//    SNOWMELT    v1  v2  ...  v6
-//    ADC         IMPERV/PERV  v1  v2  ...  v10
-//
 {
     int      i, j, k;
     double   x[6], y;
@@ -280,24 +627,22 @@ int  climate_readParams(char* tok[], int ntoks)
     return 0;
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads evaporation parameters from input line of data.
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details 
+* Data formats are:
+* - CONSTANT  value
+* - MONTHLY   v1 ... v12
+* - TIMESERIES name
+* - TEMPERATURE
+* - FILE      (v1 ... v12)
+* - RECOVERY   name
+* - DRY_ONLY   YES/NO
+*/
 int climate_readEvapParams(char* tok[], int ntoks)
-//
-//  Input:   tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns error code
-//  Purpose: reads evaporation parameters from input line of data.
-//
-//  Data formats are:
-//    CONSTANT  value
-//    MONTHLY   v1 ... v12
-//    TIMESERIES name
-//    TEMPERATURE
-//    FILE      (v1 ... v12)
-//    RECOVERY   name
-//    DRY_ONLY   YES/NO
-//
 {
     int i, k;
     double x;
@@ -372,24 +717,22 @@ int climate_readEvapParams(char* tok[], int ntoks)
     return 0;
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads adjustments to monthly evaporation or rainfall from input line of data.
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details
+* Data formats are:
+* - TEMPERATURE   v1 ... v12
+* - EVAPORATION   v1 ... v12
+* - RAINFALL      v1 ... v12
+* - CONDUCTIVITY  v1 ... v12
+* - N-PERV        subcatchID  patternID
+* - DSTORE        subcatchID  patternID
+* - INFIL         subcatchID  patternID
+*/
 int climate_readAdjustments(char* tok[], int ntoks)
-//
-//  Input:   tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns error code
-//  Purpose: reads adjustments to monthly evaporation or rainfall
-//           from input line of data.
-//
-//  Data formats are:
-//    TEMPERATURE   v1 ... v12
-//    EVAPORATION   v1 ... v12
-//    RAINFALL      v1 ... v12
-//    CONDUCTIVITY  v1 ... v12
-//    N-PERV        subcatchID  patternID 
-//    DSTORE        subcatchID  patternID
-//    INFIL         subcatchID  patternID
 {
     int i, j;
 
@@ -475,14 +818,10 @@ int climate_readAdjustments(char* tok[], int ntoks)
     return error_setInpError(ERR_KEYWORD, tok[0]);
 }
 
-//=============================================================================
-
+/*!
+* \brief Validates climatological variables.
+*/
 void climate_validate()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: validates climatological variables
-//
 {
     int       i;
     double    a, z, pa;
@@ -526,14 +865,10 @@ void climate_validate()
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Opens a climate file and reads in first set of values.
+*/
 void climate_openFile()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: opens a climate file and reads in first set of values.
-//
 {
     int i, m, y;
 
@@ -593,14 +928,10 @@ void climate_openFile()
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Initializes climate state variables.
+*/
 void climate_initState()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: initializes climate state variables.
-//
 {
     LastDay = NO_DATE;
     Temp.tmax = MISSING;
@@ -636,14 +967,11 @@ void climate_initState()
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Sets climate variables for current date.
+* \param[in] theDate Simulation date
+*/
 void climate_setState(DateTime theDate)
-//
-//  Input:   theDate = simulation date
-//  Output:  none
-//  Purpose: sets climate variables for current date.
-//
 {
     if ( Fclimate.mode == USE_FILE ) updateFileValues(theDate);
     if ( Temp.dataSource != NO_TEMP ) setTemp(theDate);
@@ -654,26 +982,21 @@ void climate_setState(DateTime theDate)
     setNextEvapDate(theDate);
 }
 
-//=============================================================================
-
+/*!
+* \brief Gets the next date when evaporation rate changes.
+* \return The current value of NextEvapDate
+*/
 DateTime climate_getNextEvapDate()
-//
-//  Input:   none
-//  Output:  returns the current value of NextEvapDate
-//  Purpose: gets the next date when evaporation rate changes.
-//
 {
     return NextEvapDate;
 }
 
-//=============================================================================
-
+/*!
+* \brief Finds date for next change in evaporation after the current date.
+* \param[in] theDate Current simulation date
+* \return The new value for NextEvapDate
+*/
 void setNextEvapDate(DateTime theDate)
-//
-//  Input:   theDate = current simulation date
-//  Output:  sets a new value for NextEvapDate
-//  Purpose: finds date for next change in evaporation after the current date.
-//
 {
     int    yr, mon, day, k;
     double d, e;
@@ -729,18 +1052,14 @@ void setNextEvapDate(DateTime theDate)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Updates daily climate variables for new day or reads in
+* another month worth of values if a new month begins.
+* \param[in] theDate Current simulation date
+* \note Counters FileElapsedDays, FileDay, FileMonth, FileYear and
+* FileLastDay were initialized in climate_openFile().
+*/
 void updateFileValues(DateTime theDate)
-//
-//  Input:   theDate = current simulation date
-//  Output:  none
-//  Purpose: updates daily climate variables for new day or reads in
-//           another month worth of values if a new month begins.
-//
-//  NOTE:    counters FileElapsedDays, FileDay, FileMonth, FileYear and
-//           FileLastDay were initialized in climate_openFile().
-//
 {
     int i;
     int deltaDays;
@@ -777,14 +1096,11 @@ void updateFileValues(DateTime theDate)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Updates temperatures for new simulation date.
+* \param[in] theDate Simulation date
+*/
 void setTemp(DateTime theDate)
-//
-//  Input:   theDate = simulation date
-//  Output:  none
-//  Purpose: updates temperatures for new simulation date.
-//
 {
     int      j;                        // snow data object index
     int      k;                        // time series index
@@ -867,14 +1183,11 @@ void setTemp(DateTime theDate)
     Temp.ea = 8.1175e6 * exp(-7701.544 / (Temp.ta + 405.0265) );
 }
 
-//=============================================================================
-
+/*!
+* \brief Sets evaporation rate (ft/sec) for a specified date.
+* \param[in] theDate Simulation date
+*/
 void setEvap(DateTime theDate)
-//
-//  Input:   theDate = simulation date
-//  Output:  none
-//  Purpose: sets evaporation rate (ft/sec) for a specified date.
-//
 {
     int k;
     int mon = datetime_monthOfYear(theDate);
@@ -918,14 +1231,11 @@ void setEvap(DateTime theDate)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Sets wind speed (mph) for a specified date.
+* \param[in] theDate Simulation date
+*/
 void setWind(DateTime theDate)
-//
-//  Input:   theDate = simulation date
-//  Output:  none
-//  Purpose: sets wind speed (mph) for a specified date.
-//
 {
     int yr, mon, day;
 
@@ -944,15 +1254,12 @@ void setWind(DateTime theDate)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Computes time of day when min/max temperatures occur.
+* (min. temp occurs at sunrise, max. temp. at 3 hrs. < sunset)
+* \param[in] day Day of year
+*/
 void updateTempTimes(int day)
-//
-//  Input:   day = day of year
-//  Output:  none
-//  Purpose: computes time of day when min/max temperatures occur.
-//           (min. temp occurs at sunrise, max. temp. at 3 hrs. < sunset)
-//
 {
     double decl;                       // earth's declination
     double hrang;                      // hour angle of sunrise/sunset
@@ -976,17 +1283,15 @@ void updateTempTimes(int day)
     Temp.tmax = Tmax;
 }
 
-//=============================================================================
-
+/*!
+* \brief Uses Hargreaves method to compute daily evaporation rate
+* from daily average temperatures and Julian day.
+* \param[in] day Day of year
+* \param[in] tave 7-day average temperature (deg F)
+* \param[in] trng 7-day average daily temperature range (deg F)
+* \return Evaporation rate in user's units (US:in/day, SI:mm/day)
+*/
 double getTempEvap(int day, double tave, double trng)
-//
-//  Input:   day = day of year
-//           tave = 7-day average temperature (deg F)
-//           trng = 7-day average daily temperature range (deg F)
-//  Output:  returns evaporation rate in user's units (US:in/day, SI:mm/day)
-//  Purpose: uses Hargreaves method to compute daily evaporation rate
-//           from daily average temperatures and Julian day.
-//
 {
     double a = 2.0*PI/365.0;
     double ta = (tave - 32.0)*5.0/9.0;           //average temperature (deg C)
@@ -1005,14 +1310,11 @@ double getTempEvap(int day, double tave, double trng)
     return e;
 }
 
-//=============================================================================
-
+/*!
+* \brief Determines the format of a climate file.
+* \return The format code (TD3200, DLY0204, USER_PREPARED, GHCND, UNKNOWN_FORMAT)
+*/
 int  getFileFormat()
-//
-//  Input:   none
-//  Output:  returns code number of climate file's format
-//  Purpose: determines what format the climate file is in.
-//
 {
     char recdType[4] = "";
     char elemType[4] = "";
@@ -1050,15 +1352,12 @@ int  getFileFormat()
     return UNKNOWN_FORMAT;
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads a line of data from a climate file.
+* \param[out] y Year
+* \param[out] m Month
+*/
 void readFileLine(int *y, int *m)
-//
-//  Input:   none
-//  Output:  y = year
-//           m = month
-//  Purpose: reads year & month from next line of climate file.
-//
 {
     // --- read next line from climate data file
     while ( strlen(FileLine) == 0 )
@@ -1077,15 +1376,12 @@ void readFileLine(int *y, int *m)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads year & month from line of User-Prepared climate file.
+* \param[out] y Year
+* \param[out] m Month
+*/
 void readUserFileLine(int* y, int* m)
-//
-//  Input:   none
-//  Output:  y = year
-//           m = month
-//  Purpose: reads year & month from line of User-Prepared climate file.
-//
 {
     int n;
     char staID[80];
@@ -1096,15 +1392,12 @@ void readUserFileLine(int* y, int* m)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads year & month from line of TD-3200 climate file.
+* \param[out] y Year
+* \param[out] m Month
+*/
 void readTD3200FileLine(int* y, int* m)
-//
-//  Input:   none
-//  Output:  y = year
-//           m = month
-//  Purpose: reads year & month from line of TD-3200 climate file.
-//
 {
     char recdType[4] = "";
     char year[5] = "";
@@ -1132,15 +1425,12 @@ void readTD3200FileLine(int* y, int* m)
     *m = atoi(month);
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads year & month from line of DLY02 or DLY04 climate file.
+* \param[out] y Year
+* \param[out] m Month
+*/
 void readDLY0204FileLine(int* y, int* m)
-//
-//  Input:   none
-//  Output:  y = year
-//           m = month
-//  Purpose: reads year & month from line of DLY02 or DLY04 climate file.
-//
 {
     char year[5] = "";
     char month[3] = "";
@@ -1159,14 +1449,10 @@ void readDLY0204FileLine(int* y, int* m)
     *m = atoi(month);
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads next month's worth of data from a GHCND climate file.
+*/
 void readFileValues()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: reads next month's worth of data from climate file.
-//
 {
     int  i, j;
     int  y, m;
@@ -1196,15 +1482,10 @@ void readFileValues()
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Parses climate variable values from a line of a user-prepared climate file.
+*/
 void parseUserFileLine()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: parses climate variable values from a line of a user-prepared
-//           climate file.
-//
 {
     int   n;
     int   y, m, d;
@@ -1244,14 +1525,10 @@ void parseUserFileLine()
     if ( strlen(s3) > 0 && *s3 != '*' ) FileData[WIND][d] = atof(s3);
 }
 
-//=============================================================================
-
+/*!
+* \brief Parses climate variable values from a line of a TD3200 file.
+*/
 void parseTD3200FileLine()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: parses climate variable values from a line of a TD3200 file.
-//
 {
     int  i;
     char param[5] = "";
@@ -1266,14 +1543,11 @@ void parseTD3200FileLine()
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads month worth of values for climate variable from TD-3200 file.
+* \param[in] i Climate variable code
+*/
 void setTD3200FileValues(int i)
-//
-//  Input:   i = climate variable code
-//  Output:  none
-//  Purpose: reads month worth of values for climate variable from TD-3200 file.
-//
 {
     char valCount[4] = "";
     char day[3] = "";
@@ -1331,15 +1605,11 @@ void setTD3200FileValues(int i)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Parses a month's worth of climate variable values from a line of 
+* a DLY02 or DLY04 climate file.
+*/
 void parseDLY0204FileLine()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: parses a month's worth of climate variable values from a line of
-//           a DLY02 or DLY04 climate file.
-//
 {
     int  j, k, p;
     char param[4] = "";
@@ -1396,15 +1666,13 @@ void parseDLY0204FileLine()
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Checks if a climate file is in the NCDC GHCN Daily format and
+* determines the position of each climate variable field.
+* \param[in] line First line of text from a climate file
+* \return TRUE if climate file is in NCDC GHCN Daily format, FALSE otherwise
+*/
 int isGhcndFormat(char* line)
-//
-//  Input:   line = first line of text from a climate file
-//  Output:  returns TRUE if climate file is in NCDC GHCN Daily format.
-//  Purpose: Checks if a climate file is in the NCDC GHCN Daily format
-//           and determines the position of each climate variable field.
-//
 {
     int i;
     char* ptr;
@@ -1440,15 +1708,12 @@ int isGhcndFormat(char* line)
     return FALSE;
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads year & month from line of a NCDC GHCN Daily climate file.
+* \param[out] y Year
+* \param[out] m Month
+*/
 void readGhcndFileLine(int* y, int* m)
-//
-//  Input:   none
-//  Output:  y = year
-//           m = month
-//  Purpose: reads year & month from line of a NCDC GHCN Daily climate file.
-//
 {
     int n = sscanf(&FileLine[FileDateFieldPos], "%4d%2d", y, m);
     if ( n != 2 )
@@ -1458,16 +1723,11 @@ void readGhcndFileLine(int* y, int* m)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Parses a line of a NCDC GHCN Daily file for daily values of max/min temperature,
+* pan evaporation and wind speed.
+*/
 void parseGhcndFileLine()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: parses a line of a NCDC GHCN Daily file for daily
-//           values of max/min temperature, pan evaporation and
-//           wind speed.
-//
 {
     int y, m, d, n, i;
     double v;
@@ -1491,16 +1751,14 @@ void parseGhcndFileLine()
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Converts a climate variable value read from a NCDC GHCN Daily file
+* to SWMM's internal units.
+* \param[in] var Climate variable code
+* \param[in] v Climate variable value
+* \return Climate variable value in SWMM's internal units
+*/
 double convertGhcndValue(int var, double v)
-//
-//  Input:   var = climate variable code
-//           v = climate variable value
-//  Output:  climate variable value in SWMM's internal units
-//  Purpose: converts a climate variable value read from a NCDC GHCN Daily file
-//           to SWMM's internal units.
-//
 {
     switch (var)
     {
@@ -1564,16 +1822,13 @@ double convertGhcndValue(int var, double v)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Updates moving averages of average daily temperature and daily temperature range
+* stored in structure Tma.
+* \param[in] tmin Minimum daily temperature (deg F)
+* \param[in] tmax Maximum daily temperature (deg F)
+*/
 void updateTempMoveAve(double tmin, double tmax)
-//
-//  Input:   tmin = minimum daily temperature (deg F)
-//           tmax = maximum daily temperature (deg F)
-//  Output:  none
-//  Purpose: updates moving averages of average daily temperature
-//           and daily temperature range stored in structure Tma.
-//
 {
     double ta,               // new day's average temperature (deg F)
            tr;               // new day's temperature range (deg F)

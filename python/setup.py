@@ -12,32 +12,32 @@ from setuptools.command.build_ext import build_ext
 import shutil
 
 # third party imports
-from skbuild import setup 
+from skbuild import setup
 
 # local imports
 
 
 platform_system = platform.system()
 
-
 # Get the directory containing this file
 here = os.path.abspath(os.path.dirname(__file__))
 
 # Read the README file
 shutil.copyfile(
-    os.path.join(here, '..\README.md'), 
+    os.path.join(here, r'..\README.md'),
     os.path.join(here, 'README.md')
 )
 
 with open(os.path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
+
 def get_version():
     """
     Get version from toolkit
     TODO: This should be revised to get version information from the toolkit
     """
-    return "5.3.0.dev3"
+    return "5.3.0.dev5"
 
 
 if os.environ.get('EPASWMM_CMAKE_ARGS') is not None:

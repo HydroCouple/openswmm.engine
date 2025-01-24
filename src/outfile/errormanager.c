@@ -1,9 +1,9 @@
 /*!
 * \file errormanager.c
-* \brief Source providing a simple interface for managing runtime error messages.
+* \brief Source file providing a simple interface for managing SWMM output API runtime error messages.
 * \author Michael E. Tryby (US EPA - ORD/NRMRL)
-* \date Created On: 2017-08-25
-* \date Last Edited: 2024-10-17
+* \date Created: 2017-08-25
+* \date Last edited: 2024-10-17
 */
 #include <string.h>
 #include <stdlib.h>

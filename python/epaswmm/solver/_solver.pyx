@@ -1006,7 +1006,7 @@ cdef class Solver:
             SWMMSystemProperties
         ], 
         index: int, 
-        value: double, 
+        value: float, 
         sub_index: int = -1
         ) -> None:
         """
@@ -1038,7 +1038,7 @@ cdef class Solver:
         ],
         index: int, 
         sub_index: int = -1
-        ) -> double:
+        ) -> float:
         """
         Get a SWMM system property value.
         

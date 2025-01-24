@@ -38,17 +38,16 @@
 double getPatternFactor(int p, int month, int day, int hour);
 
 
+/*!
+* \brief Reads parameters of a direct external inflow from a line of input.
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details Data formats of data line are:
+* nodeID  FLOW      tSeriesID  (FLOW         1.0          scaleFactor  baseline  basePat)
+* nodeID  pollutID  tSeriesID  (CONCEN/MASS  unitsFactor  scaleFactor  baseline  basePat)
+*/
 int inflow_readExtInflow(char* tok[], int ntoks)
-//
-//  Input:   tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns an error message
-//  Purpose: reads parameters of a direct external inflow from a line of input.
-//
-//  Formats of data line are:
-//     nodeID  FLOW      tSeriesID  (FLOW         1.0          scaleFactor  baseline  basePat)
-//     nodeID  pollutID  tSeriesID  (CONCEN/MASS  unitsFactor  scaleFactor  baseline  basePat)
-//
 {
     int    j;                          // object index
     int    param;                      // FLOW (-1) or pollutant index
@@ -133,26 +132,25 @@ int inflow_readExtInflow(char* tok[], int ntoks)
         cf, baseline, sf));
 }
 
-//=============================================================================
-
-int inflow_setExtInflow(int j, int param, int type, int tseries, int basePat,
+/*!
+* \brief This function assigns property values to the inflow object.
+* \param[in] nodeIndex Node index
+* \param[in] param Parameter code
+* \param[in] type Inflow type code
+* \param[in] tSeries Time series index
+* \param[in] basePat Base pattern index
+* \param[in] cf Conversion factor
+* \param[in] baseline Baseline value
+* \param[in] sf Scale factor
+* \return Error code
+*/
+int inflow_setExtInflow(int nodeIndex, int param, int type, int tseries, int basePat,
                         double cf, double baseline, double sf)
-// Purpose:  This function assigns property values to the inflow object 
-// Inputs:   j = Node index
-//           param = FLOW (-1) or pollutant index
-//           type = FLOW, CONCEN or MASS inflow
-//           tSeries = time series index
-//           basePat = baseline pattern
-//           cf = units conversion factor
-//           baseline = baseline inflow value
-//           sf = scaling factor
-// Return:   returns Error Code
-
 {
     TExtInflow* inflow;            // external inflow object
 
     // --- check if an external inflow object for this constituent already exists
-    inflow = Node[j].extInflow;
+    inflow = Node[nodeIndex].extInflow;
     while ( inflow )
     {
         if ( inflow->param == param ) break;
@@ -167,8 +165,8 @@ int inflow_setExtInflow(int j, int param, int type, int tseries, int basePat,
         {
             return error_setInpError(ERR_MEMORY, "");
         }
-        inflow->next = Node[j].extInflow;
-        Node[j].extInflow = inflow;
+        inflow->next = Node[nodeIndex].extInflow;
+        Node[nodeIndex].extInflow = inflow;
     }
 
     // --- assign property values to the inflow object
@@ -182,18 +180,15 @@ int inflow_setExtInflow(int j, int param, int type, int tseries, int basePat,
     return 0;
 }
 
-//=============================================================================
-
-void inflow_deleteExtInflows(int j)
-//
-//  Input:   j = node index
-//  Output:  none
-//  Purpose: deletes all time series inflow data for a node.
-//
+/*!
+* \brief Deletes all time series inflow data for a node.
+* \param[in] nodeIndex Node index
+*/
+void inflow_deleteExtInflows(int nodeIndex)
 {
     TExtInflow* inflow1;
     TExtInflow* inflow2;
-    inflow1 = Node[j].extInflow;
+    inflow1 = Node[nodeIndex].extInflow;
     while ( inflow1 )
     {
         inflow2 = inflow1->next;
@@ -202,16 +197,14 @@ void inflow_deleteExtInflows(int j)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Retrieves the value of an external inflow at a specific
+* date and time.
+* \param[in] inflow External inflow data structure
+* \param[in] aDate Current simulation date/time
+* \return Returns current value of external inflow parameter
+*/
 double inflow_getExtInflow(TExtInflow* inflow, DateTime aDate)
-//
-//  Input:   inflow = external inflow data structure
-//           aDate = current simulation date/time
-//  Output:  returns current value of external inflow parameter
-//  Purpose: retrieves the value of an external inflow at a specific
-//           date and time.
-//
 {
     int    month, day, hour;
     int    p = inflow->basePat;      // baseline pattern
@@ -232,18 +225,15 @@ double inflow_getExtInflow(TExtInflow* inflow, DateTime aDate)
     return cf * (tsv + blv);
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads dry weather inflow parameters from line of input data.
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details Format of data line is:
+* nodeID  FLOW/pollutID  avgValue  (pattern1 pattern2  ... pattern4)
+*/
 int inflow_readDwfInflow(char* tok[], int ntoks)
-//
-//  Input:   tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns an error message
-//  Purpose: reads dry weather inflow parameters from line of input data.
-//
-//  Format of data line is:
-//    nodeID  FLOW/pollutID  avgValue  (pattern1 pattern2  ... pattern4)
-//
 {
     int    i;
     int    j;                          // node index
@@ -308,7 +298,7 @@ int inflow_readDwfInflow(char* tok[], int ntoks)
 
 //=============================================================================
 
-void inflow_deleteDwfInflows(int j)
+void inflow_deleteDwfInflows(int nodeIndex)
 //
 //  Input:   j = node index
 //  Output:  none
@@ -317,7 +307,7 @@ void inflow_deleteDwfInflows(int j)
 {
     TDwfInflow* inflow1;
     TDwfInflow* inflow2;
-    inflow1 = Node[j].dwfInflow;
+    inflow1 = Node[nodeIndex].dwfInflow;
     while ( inflow1 )
     {
         inflow2 = inflow1->next;
@@ -326,18 +316,14 @@ void inflow_deleteDwfInflows(int j)
     }
 }
 
-//=============================================================================
-
-void   inflow_initDwfInflow(TDwfInflow* inflow)
-//
-//  Input:   inflow = dry weather inflow data structure
-//  Output:  none
-//  Purpose: initialzes a dry weather inflow by ordering its time patterns.
-//
-//  This function sorts the user-supplied time patterns for a dry weather
-//  inflow in the order of the PatternType enumeration (monthly, daily,
-//  weekday hourly, weekend hourly) to help speed up pattern processing.
-//
+/*!
+* \brief Initialzes a dry weather inflow by ordering its time patterns.
+* \param[in] inflow Dry weather inflow object
+* \details This function sorts the user-supplied time patterns for a dry weather
+* inflow in the order of the PatternType enumeration (monthly, daily,
+* weekday hourly, weekend hourly) to help speed up pattern processing.
+*/
+void inflow_initDwfInflow(TDwfInflow* inflow)
 {
     int i, p;
     int tmpPattern[4];  // index of each type of DWF pattern
@@ -389,34 +375,29 @@ double inflow_getDwfInflow(TDwfInflow* inflow, int month, int day, int hour)
 
 }
 
-//=============================================================================
-
-void inflow_initDwfPattern(int j)
-//
-//  Input:   j = time pattern index
-//  Output:  none
-//  Purpose: initialzes a dry weather inflow time pattern.
-//
+/*!
+* \brief Initialzes a dry weather inflow time pattern.
+* \param[in] patternIndex Time pattern index
+*/
+void inflow_initDwfPattern(int patternIndex)
 {
     int i;
-    for (i=0; i<24; i++) Pattern[j].factor[i] = 1.0;
-    Pattern[j].count = 0;
-    Pattern[j].type  = -1;
-    Pattern[j].ID    = NULL;
+    for (i=0; i<24; i++) Pattern[patternIndex].factor[i] = 1.0;
+    Pattern[patternIndex].count = 0;
+    Pattern[patternIndex].type  = -1;
+    Pattern[patternIndex].ID    = NULL;
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads values of a time pattern from a line of input data.
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details Format of data line is:
+* patternID  patternType  value(1) value(2) ...
+* patternID  value(n)  value(n+1) ....          (for continuation lines)
+*/
 int inflow_readDwfPattern(char* tok[], int ntoks)
-//
-//  Input:   tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns an error message
-//  Purpose: reads values of a time pattern from a line of input data.
-//
-//  Format of data line is:
-//    patternID  patternType  value(1) value(2) ...
-//    patternID  value(n)  value(n+1) ....          (for continuation lines)
 {
     int i, j, k, n = 1;
 

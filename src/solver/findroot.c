@@ -17,9 +17,7 @@
 #define MAXIT 60
 
 
-int findroot_Newton(double x1, double x2, double* rts, double xacc,
-                    void (*func) (double x, double* f, double* df, void* p),
-					void* p)
+int findroot_Newton(double x1, double x2, double* rts, double xacc, newton_callback func,  void* p)
 //
 //  Using a combination of Newton-Raphson and bisection, find the root of a
 //  function func bracketed between x1 and x2. The root, returned in rts,
@@ -87,9 +85,7 @@ int findroot_Newton(double x1, double x2, double* rts, double xacc,
     else return 0;
 };
 
-
-double findroot_Ridder(double x1, double x2, double xacc,
-	double (*func)(double, void* p), void* p)
+double findroot_Ridder(double x1, double x2, double xacc, ridder_callback func, void* p)
 {
     int j;
     double ans, fhi, flo, fm, fnew, s, xhi, xlo, xm, xnew;

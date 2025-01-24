@@ -52,26 +52,24 @@ static TXsect*  pXsect;
 static int   solveContinuity(double qin, double ain, double* aout);
 static void  evalContinuity(double a, double* f, double* df, void* p);
 
-//=============================================================================
-
-int kinwave_execute(int j, double* qinflow, double* qoutflow, double tStep)
-//
-//  Input:   j = link index
-//           qinflow = inflow at current time (cfs)
-//           tStep = time step (sec)
-//  Output:  qoutflow = outflow at current time (cfs),
-//           returns number of iterations used
-//  Purpose: finds outflow over time step tStep given flow entering a
-//           conduit using Kinematic Wave flow routing.
-//
-//
-//                               ^ q3 
-//  t                            |   
-//  |          qin, ain |-------------------| qout, aout
-//  |                   |  Flow --->        |
-//  |----> x     q1, a1 |-------------------| q2, a2
-//
-//
+/*!
+* \brief Finds outflow over time step tStep given flow entering a
+* conduit using Kinematic Wave flow routing.
+* \param[in] linkIndex Link index
+* \param[in] qinflow Inflow at current time (cfs)
+* \param[out] qoutflow Outflow at current time (cfs)
+* \param[in] tStep Time step (sec)
+* \return Returns number of iterations used
+* \details
+*  Orientation of link and variables:
+*  q1, a1, q2, a2, q3, a3, x, t 
+*                               ^ q3 
+*  t                            |   
+*  |          qin, ain |-------------------| qout, aout
+*  |                   |  Flow --->        |
+*  |----> x     q1, a1 |-------------------| q2, a2
+*/
+int kinwave_execute(int linkIndex, double* qinflow, double* qoutflow, double tStep)
 {
     int    k;
     int    result = 1;
@@ -82,16 +80,16 @@ int kinwave_execute(int j, double* qinflow, double* qoutflow, double tStep)
 
     // --- no routing for non-conduit link
     (*qoutflow) = (*qinflow); 
-    if ( Link[j].type != CONDUIT ) return result;
+    if ( Link[linkIndex].type != CONDUIT ) return result;
 
     // --- no routing for dummy xsection
-    if ( Link[j].xsect.type == DUMMY ) return result;
+    if ( Link[linkIndex].xsect.type == DUMMY ) return result;
 
     // --- assign module-level variables
-    pXsect = &Link[j].xsect;
-    Qfull = Link[j].qFull;
-    Afull = Link[j].xsect.aFull;
-    k = Link[j].subIndex;
+    pXsect = &Link[linkIndex].xsect;
+    Qfull = Link[linkIndex].qFull;
+    Afull = Link[linkIndex].xsect.aFull;
+    k = Link[linkIndex].subIndex;
     Beta1 = Conduit[k].beta / Qfull;
  
     // --- normalize previous flows
@@ -102,7 +100,7 @@ int kinwave_execute(int j, double* qinflow, double* qoutflow, double tStep)
     qin = (*qinflow) / Conduit[k].barrels / Qfull;
 
     // --- compute evaporation and infiltration loss rate
-    q3 = link_getLossRate(j, KW, qin*Qfull, tStep) / Qfull;
+    q3 = link_getLossRate(linkIndex, KW, qin*Qfull, tStep) / Qfull;
 
     // --- normalize previous areas
     a1 = Conduit[k].a1 / Afull;
@@ -125,7 +123,7 @@ int kinwave_execute(int j, double* qinflow, double* qoutflow, double tStep)
     else
     {
         // --- compute constant factors
-        dxdt = link_getLength(j) / tStep * Afull / Qfull;
+        dxdt = link_getLength(linkIndex) / tStep * Afull / Qfull;
         dq   = q2 - q1;
         C1   = dxdt * WT / WX;
         C2   = (1.0 - WT) * (ain - a1);
@@ -143,7 +141,7 @@ int kinwave_execute(int j, double* qinflow, double* qoutflow, double tStep)
         // --- report error if continuity eqn. not solved
         if ( result == -1 )
         {
-            report_writeErrorMsg(ERR_KINWAVE, Link[j].ID);
+            report_writeErrorMsg(ERR_KINWAVE, Link[linkIndex].ID);
             return 1;
         }
         if ( result <= 0 ) result = 1;

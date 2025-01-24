@@ -365,8 +365,8 @@ cdef class Output:
         self._output_size, self._output_size_length = self.__get_output_size()
         self._pollutant_units = [ConcentrationUnits(i) for i in  self.__get_pollutant_units()]
         self._start_date = self.__get_start_date()
-        self._report_step = self.get_time_attribute(SMO_time.SMO_reportStep)
-        self._num_periods = self.get_time_attribute(SMO_time.SMO_numPeriods)
+        self._report_step = self.get_time_attribute(TimeAttribute.REPORT_STEP)
+        self._num_periods = self.get_time_attribute(TimeAttribute.NUM_PERIODS)
         self._times = [self._start_date + timedelta(seconds=self._report_step) * i for i in range(1, self._num_periods + 1)]
     
     def __enter__(self):
@@ -584,7 +584,7 @@ cdef class Output:
         """
         return self._times
 
-    cpdef int get_time_attribute(self, int time_atrribute):
+    def get_time_attribute(self, time_attribute: TimeAttribute) -> int:
         """
         Method to get the temporal attributes of the simulation in the SWMM output file.
 
@@ -593,14 +593,13 @@ cdef class Output:
         """
         cdef int error_code = 0
         cdef int temporal_attribute = -1
-        cdef SMO_time SMO_time_atrribute = <SMO_time>time_atrribute
 
-        error_code = SMO_getTimes(self._output_file_handle, SMO_time_atrribute, &temporal_attribute)
+        error_code = SMO_getTimes(self._output_file_handle, <SMO_time>time_attribute.value, &temporal_attribute)
         self.__validate_error_code(error_code)
 
         return temporal_attribute
 
-    cpdef str get_element_name(self, int element_type, int element_index):
+    def get_element_name(self, element_type: ElementType,  element_index: int) -> str:
         """
         Method to get the name of an element in the SWMM output file.
 
@@ -614,9 +613,8 @@ cdef class Output:
         cdef int error_code = 0
         cdef int strlen = 0
         cdef char* element_name = NULL
-        cdef SMO_elementType SMO_element_type = <SMO_elementType>element_type
 
-        error_code = SMO_getElementName(self._output_file_handle, SMO_element_type, element_index, &element_name, &strlen)
+        error_code = SMO_getElementName(self._output_file_handle, <SMO_elementType>element_type.value, element_index, &element_name, &strlen)
         self.__validate_error_code(error_code)
 
         # Convert the C string to a Python string and delete the C string
@@ -627,7 +625,7 @@ cdef class Output:
 
         return element_name_str
 
-    cpdef list get_element_names(self, int element_type):
+    def get_element_names(self, element_type: ElementType) -> List[str]:
         """
         Method to get the names of all elements of a given type in the SWMM output file.
 
@@ -642,19 +640,18 @@ cdef class Output:
         cdef int strlen = 0
         cdef char** c_element_names = NULL
         cdef list element_names
-        cdef SMO_elementType SMO_element_type = <SMO_elementType>element_type
 
-        if element_type == SMO_elementType.SMO_sys:
+        if element_type.value == SMO_elementType.SMO_sys:
             raise SWMMOutputException(f"Cannot get element names for the system element type {ElementType.SYSTEM}.")
-        elif element_type > SMO_elementType.SMO_pollut:
+        elif element_type.value > SMO_elementType.SMO_pollut:
             raise SWMMOutputException("Invalid element type.")
 
-        num_elements = self._output_size[element_type]
+        num_elements = self._output_size[element_type.value]
         
         c_element_names = <char**>malloc(num_elements * sizeof(char*))
 
         for i in range(num_elements):
-            error_code = SMO_getElementName(self._output_file_handle, SMO_element_type, i, &c_element_names[i], &strlen)
+            error_code = SMO_getElementName(self._output_file_handle, <SMO_elementType>element_type.value, i, &c_element_names[i], &strlen)
             self.__validate_error_code(error_code)
 
         element_names = [c_element_names[i].decode('utf-8') for i in range(num_elements)]
@@ -669,7 +666,7 @@ cdef class Output:
 
         return element_names
     
-    cpdef dict get_subcatchment_timeseries(self, int element_index, int attribute, int start_date_index = 0, int end_date_index = -1):
+    def get_subcatchment_timeseries(self, element_index: int, attribute: SubcatchAttribute, start_date_index: int = 0, end_date_index: int = -1) -> Dict[datetime, float]:
         """
         Method to get the time series data for a subcatchment attribute in the SWMM output file.
 
@@ -695,7 +692,7 @@ cdef class Output:
         error_code = SMO_getSubcatchSeries(
             self._output_file_handle, 
             element_index, 
-            <SMO_subcatchAttribute>attribute, 
+            <SMO_subcatchAttribute>attribute.value, 
             start_date_index, 
             end_date_index, 
             &values, &length
@@ -709,7 +706,7 @@ cdef class Output:
 
         return results
 
-    cpdef dict get_node_timeseries(self, int element_index, int attribute, int start_date_index = 0, int end_date_index = -1):
+    def get_node_timeseries(self, element_index: int, attribute: NodeAttribute, start_date_index: int = 0, end_date_index: int = -1) -> Dict[datetime, float]:
         """
         Method to get the time series data for a node attribute in the SWMM output file.
 
@@ -734,7 +731,7 @@ cdef class Output:
         error_code = SMO_getNodeSeries(
             self._output_file_handle, 
             element_index, 
-            <SMO_nodeAttribute>attribute, 
+            <SMO_nodeAttribute>attribute.value, 
             start_date_index, 
             end_date_index, 
             &values, &length
@@ -749,7 +746,7 @@ cdef class Output:
 
         return results
 
-    cpdef dict get_link_timeseries(self, int element_index, int attribute, int start_date_index = 0, int end_date_index = -1):
+    def get_link_timeseries(self, element_index: int, attribute: LinkAttribute, start_date_index: int = 0, end_date_index: int = -1) -> Dict[datetime, float]:
         """
         Method to get the time series data for a link attribute in the SWMM output file.
 
@@ -774,7 +771,7 @@ cdef class Output:
         error_code = SMO_getLinkSeries(
             self._output_file_handle, 
             element_index, 
-            <SMO_linkAttribute>attribute, 
+            <SMO_linkAttribute>attribute.value, 
             start_date_index, 
             end_date_index, 
             &values, &length
@@ -789,7 +786,7 @@ cdef class Output:
 
         return results
     
-    cpdef dict get_system_timeseries(self, int attribute, int start_date_index = 0, int end_date_index = -1):
+    def get_system_timeseries(self, attribute: SystemAttribute, start_date_index: int = 0, end_date_index: int = -1) -> Dict[datetime, float]:
         """
         Method to get the time series data for a system attribute in the SWMM output file.
 
@@ -811,7 +808,7 @@ cdef class Output:
 
         error_code = SMO_getSystemSeries(
             self._output_file_handle, 
-            <SMO_systemAttribute>attribute, 
+            <SMO_systemAttribute>attribute.value, 
             start_date_index, 
             end_date_index, 
             &values, &length
@@ -826,7 +823,7 @@ cdef class Output:
 
         return results
 
-    cpdef dict get_subcatchment_values_by_time_and_attribute(self, int time_index, int attribute):
+    def get_subcatchment_values_by_time_and_attribute(self, time_index: int, attribute: SubcatchAttribute) -> Dict[str, float]:
         """
         Method to get the subcatchment values for all subcatchments for a given time index and attribute.
 
@@ -845,21 +842,21 @@ cdef class Output:
         error_code = SMO_getSubcatchAttribute(
             self._output_file_handle, 
             time_index, 
-            <SMO_subcatchAttribute>attribute, 
+            <SMO_subcatchAttribute>attribute.value, 
             &values, 
             &length
         )
         
         self.__validate_error_code(error_code)
 
-        subcatchment_values = dict(zip(self.get_element_names(ElementType.SUBCATCHMENT.value), <float[:length]>values))
+        subcatchment_values = dict(zip(self.get_element_names(ElementType.SUBCATCHMENT), <float[:length]>values))
 
         if values != NULL:
             free(values)
         
         return subcatchment_values
 
-    cpdef dict get_node_values_by_time_and_attribute(self, int time_index, int attribute):
+    def get_node_values_by_time_and_attribute(self, time_index: int, attribute: NodeAttribute) -> Dict[str, float]:
         """
         Method to get the node values for all nodes for a given time index and attribute.
 
@@ -877,21 +874,22 @@ cdef class Output:
 
         error_code = SMO_getNodeAttribute(
             self._output_file_handle, 
-            time_index, <SMO_nodeAttribute>attribute, 
+            time_index, 
+            <SMO_nodeAttribute>attribute.value, 
             &values,
             &length
         )
 
         self.__validate_error_code(error_code)
 
-        node_values = dict(zip(self.get_element_names(ElementType.NODE.value), <float[:length]>values))
+        node_values = dict(zip(self.get_element_names(ElementType.NODE), <float[:length]>values))
 
         if values != NULL:
             free(values)
         
         return node_values
 
-    cpdef dict get_link_values_by_time_and_attribute(self, int time_index, int attribute):
+    def get_link_values_by_time_and_attribute(self, time_index: int, attribute: LinkAttribute) -> Dict[str, float]:
         """
         Method to get the link values for all links for a given time index and attribute.
 
@@ -909,21 +907,22 @@ cdef class Output:
 
         error_code = SMO_getLinkAttribute(
             self._output_file_handle, 
-            time_index, <SMO_linkAttribute>attribute, 
+            time_index, 
+            <SMO_linkAttribute>attribute.value, 
             &values,
             &length
-            )
+        )
         
         self.__validate_error_code(error_code)
 
-        link_values = dict(zip(self.get_element_names(ElementType.LINK.value), <float[:length]>values))
+        link_values = dict(zip(self.get_element_names(ElementType.LINK), <float[:length]>values))
 
         if values != NULL:
             free(values)
         
         return link_values
    
-    cpdef dict get_system_values_by_time_and_attribute(self, int time_index, int attribute):
+    def get_system_values_by_time_and_attribute(self, time_index: int, attribute: SystemAttribute) -> Dict[str, float]:
         """
         Method to get the system values for a given time index and attribute.
         
@@ -941,14 +940,15 @@ cdef class Output:
 
         error_code = SMO_getSystemAttribute(
             self._output_file_handle, 
-            time_index, <SMO_systemAttribute>attribute, 
+            time_index, 
+            <SMO_systemAttribute>attribute.value, 
             &values,
             &length
-            )
+        )
         
         self.__validate_error_code(error_code)
 
-        system_values = dict(zip([SubcatchAttribute(attribute).name], <float[:length]>values))
+        system_values = dict(zip([SystemAttribute(attribute).name], <float[:length]>values))
 
 
         if values != NULL:
@@ -956,7 +956,7 @@ cdef class Output:
         
         return system_values
 
-    cpdef dict get_subcatchment_values_by_time_and_element_index(self, int time_index, int element_index):
+    def get_subcatchment_values_by_time_and_element_index(self, time_index: int, element_index: int) -> Dict[str, float]:
         """
         Method to get all attributes of a given subcatchment for specified time.
 
@@ -971,7 +971,7 @@ cdef class Output:
         cdef float* values = NULL
         cdef int length = 0
         cdef int enum_values_length = len(SubcatchAttribute) - 1
-        cdef list pollutant_names = self.get_element_names(ElementType.POLLUTANT.value)
+        cdef list pollutant_names = self.get_element_names(ElementType.POLLUTANT)
         cdef list attrib_names = []
 
         error_code = SMO_getSubcatchResult(
@@ -996,7 +996,7 @@ cdef class Output:
 
         return subcatchment_values
 
-    cpdef dict get_node_values_by_time_and_element_index(self, int time_index, int element_index):
+    def get_node_values_by_time_and_element_index(self, time_index: int, element_index: int) -> Dict[str, float]:
         """
         Method to get all attributes of a given node for specified time.
 
@@ -1012,7 +1012,7 @@ cdef class Output:
         cdef float* values = NULL
         cdef int length = 0
         cdef int enum_values_length = len(NodeAttribute) - 1
-        cdef list pollutant_names = self.get_element_names(ElementType.POLLUTANT.value)
+        cdef list pollutant_names = self.get_element_names(ElementType.POLLUTANT)
         cdef list attrib_names = []
 
         error_code = SMO_getNodeResult(
@@ -1037,7 +1037,7 @@ cdef class Output:
 
         return node_values
 
-    cpdef dict get_link_values_by_time_and_element_index(self, int time_index, int element_index):
+    def get_link_values_by_time_and_element_index(self, time_index: int, element_index: int) -> Dict[str, float]:
         """
         Method to get all attributes of a given link for specified time.
 
@@ -1054,7 +1054,7 @@ cdef class Output:
         cdef float* values = NULL
         cdef int length = 0
         cdef int enum_values_length = len(LinkAttribute) - 1
-        cdef list pollutant_names = self.get_element_names(ElementType.POLLUTANT.value)
+        cdef list pollutant_names = self.get_element_names(ElementType.POLLUTANT)
         cdef list attrib_names = []
 
         error_code = SMO_getLinkResult(
@@ -1079,7 +1079,7 @@ cdef class Output:
 
         return link_values
 
-    cpdef dict get_system_values_by_time(self, int time_index):
+    def get_system_values_by_time(self, time_index: int) -> Dict[str, float]:
         """
         Method to get all attributes of the system for specified time.
 

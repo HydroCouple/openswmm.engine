@@ -119,14 +119,10 @@ static void output_saveAvgResults(FILE* file);
 //  output_readLinkResults        (called by report_Links)
 
 
-//=============================================================================
-
+/*!
+* \brief Writes basic project data to binary output file.
+*/
 int output_open()
-//
-//  Input:   none
-//  Output:  returns an error code
-//  Purpose: writes basic project data to binary output file.
-//
 {
     int   j;
     int   m;
@@ -425,7 +421,6 @@ void  output_checkFileSize()
 }
 */
 
-//=============================================================================
 
 void output_openOutFile()
 //
@@ -455,8 +450,10 @@ void output_openOutFile()
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Writes computed results for current report time to binary file.
+* \param[in] reportTime Elapsed simulation time (millisec)
+*/
 void output_saveResults(double reportTime)
 //
 //  Input:   reportTime = elapsed simulation time (millisec)
@@ -513,14 +510,10 @@ void output_saveResults(double reportTime)
     Nperiods++;
 }
 
-//=============================================================================
-
+/*!
+* \brief Writes closing records to binary file.
+*/
 void output_end()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: writes closing records to binary file.
-//
 {
     INT4 k;
     fwrite(&IDStartPos, sizeof(INT4), 1, Fout.file);
@@ -537,14 +530,10 @@ void output_end()
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Frees memory used for accessing the binary file.
+*/
 void output_close()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: frees memory used for accessing the binary file.
-//
 {
     FREE(SubcatchResults);
     FREE(NodeResults);
@@ -697,15 +686,13 @@ void output_saveLinkResults(double reportTime, FILE* file)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Retrieves the date/time for a specific reporting period
+* from the binary output file.
+* \param[in] period Index of reporting time period
+* \param[out] days Date/time value
+*/
 void output_readDateTime(long period, DateTime* days)
-//
-//  Input:   period = index of reporting time period
-//  Output:  days = date/time value
-//  Purpose: retrieves the date/time for a specific reporting period
-//           from the binary output file.
-//
 {
     F_OFF p = period;
     F_OFF bytePos = OutputStartPos + (p-1)*BytesPerPeriod;
@@ -714,16 +701,13 @@ void output_readDateTime(long period, DateTime* days)
     fread(days, sizeof(REAL8), 1, Fout.file);
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads computed results for a subcatchment at a specific time
+* period.
+* \param[in] period Index of reporting time period
+* \param[in] index Subcatchment index in binary output file
+*/
 void output_readSubcatchResults(long period, int index)
-//
-//  Input:   period = index of reporting time period
-//           index = subcatchment index in binary output file
-//  Output:  none
-//  Purpose: reads computed results for a subcatchment at a specific time
-//           period.
-//
 {
     long offset = index*NumSubcatchVars;
     F_OFF p = period;
@@ -733,15 +717,12 @@ void output_readSubcatchResults(long period, int index)
     fread(SubcatchResults, sizeof(REAL4), NumSubcatchVars, Fout.file);
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads computed results for a node at a specific time period.
+* \param[in] period Index of reporting time period
+* \param[in] index Node index in binary output file
+*/
 void output_readNodeResults(long period, int index)
-//
-//  Input:   period = index of reporting time period
-//           index = node index in binary output file
-//  Output:  none
-//  Purpose: reads computed results for a node at a specific time period.
-//
 {
     long offset = NumSubcatch*NumSubcatchVars + index*NumNodeVars;
     F_OFF p = period;
@@ -751,15 +732,12 @@ void output_readNodeResults(long period, int index)
     fread(NodeResults, sizeof(REAL4), NumNodeVars, Fout.file);
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads computed results for a link at a specific time period.
+* \param[in] period Index of reporting time period
+* \param[in] index Link index in binary output file
+*/
 void output_readLinkResults(long period, int index)
-//
-//  Input:   period = index of reporting time period
-//           index = link index in binary output file
-//  Output:  none
-//  Purpose: reads computed results for a link at a specific time period.
-//
 {
     long offset = (NumSubcatch*NumSubcatchVars + NumNodes*NumNodeVars + index*NumLinkVars);
     F_OFF p = period;

@@ -334,15 +334,12 @@ double massbal_getBuildup(int p)
     return load;
 }
 
-//=============================================================================
-
+/*!
+* \brief Updates runoff totals after current time step.
+* \param[in] flowType Type of flow (RUNOFF_RAINFALL, RUNOFF_EVAP, RUNOFF_RUNOFF, etc.)
+* \param[in] v Volume of flow (ft3)
+*/
 void massbal_updateRunoffTotals(int flowType, double v)
-//
-//  Input:   flowType = type of flow
-//           v = flow volume (ft3)
-//  Output:  none
-//  Purpose: updates runoff totals after current time step.
-//
 {
     switch(flowType)
     {
@@ -355,19 +352,16 @@ void massbal_updateRunoffTotals(int flowType, double v)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Updates groundwater totals after current time step.
+* \param[in] vInfil Volume depth of infiltration (ft)
+* \param[in] vUpperEvap Volume depth of upper zone evaporation (ft)
+* \param[in] vLowerEvap Volume depth of lower zone evaporation (ft)
+* \param[in] vLowerPerc Volume depth of percolation to deep GW (ft)
+* \param[in] vGwater Volume depth of groundwater outflow (ft)
+*/
 void massbal_updateGwaterTotals(double vInfil, double vUpperEvap, double vLowerEvap,
                                 double vLowerPerc, double vGwater)
-//
-//  Input:   vInfil = volume depth of infiltrated water (ft)
-//           vUpperEvap = volume depth of upper evaporation (ft)
-//           vLowerEvap = volume depth of lower evaporation (ft)
-//           vLowerPerc = volume depth of percolation to deep GW (ft)
-//           vGwater = volume depth of groundwater outflow (ft)
-//  Output:  none
-//  Purpose: updates groundwater totals after current time step.
-//
 {
     GwaterTotals.infil     += vInfil;
     GwaterTotals.upperEvap += vUpperEvap;
@@ -376,14 +370,10 @@ void massbal_updateGwaterTotals(double vInfil, double vUpperEvap, double vLowerE
     GwaterTotals.gwater    += vGwater;
 }
 
-//=============================================================================
-
+/*!
+* \brief Initializes routing totals for current time step.
+*/
 void massbal_initTimeStepTotals()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: initializes routing totals for current time step.
-//
 {
     int j;
     OldStepFlowTotals = StepFlowTotals;
@@ -413,15 +403,12 @@ void massbal_initTimeStepTotals()
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Adds flow inflow to routing totals for current time step.
+* \param[in] type Type of inflow
+* \param[in] q Inflow rate (cfs)
+*/
 void massbal_addInflowFlow(int type, double q)
-//
-//  Input:   type = type of inflow
-//           q    = inflow rate (cfs)
-//  Output:  none
-//  Purpose: adds flow inflow to routing totals for current time step.
-//
 {
     switch (type)
     {
@@ -433,16 +420,13 @@ void massbal_addInflowFlow(int type, double q)
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Adds inflow mass loading to loading totals for current time step.
+* \param[in] type Type of inflow
+* \param[in] pollutIndex Pollutant index
+* \param[in] w Mass loading
+*/
 void massbal_updateLoadingTotals(int type, int p, double w)
-//
-//  Input:   type = type of inflow
-//           p    = pollutant index
-//           w    = mass loading
-//  Output:  none
-//  Purpose: adds inflow mass loading to loading totals for current time step.
-//
 {
     switch (type)
     {
@@ -456,52 +440,43 @@ void massbal_updateLoadingTotals(int type, int p, double w)
     }
 }
 
-//=============================================================================
-
-void massbal_addInflowQual(int type, int p, double w)
-//
-//  Input:   type = type of inflow
-//           p    = pollutant index
-//           w    = mass flow rate (mass/sec)
-//  Output:  none
-//  Purpose: adds quality inflow to routing totals for current time step.
-//
+/*!
+* \brief Adds quality inflow to routing totals for current time step.
+* \param[in] type Type of inflow
+* \param[in] pollutIndex Pollutant index
+* \param[in] w Mass flow rate (mass/sec)
+*/
+void massbal_addInflowQual(int type, int pollutIndex, double w)
 {
-    if ( p < 0 || p >= Nobjects[POLLUT] ) return;
+    if ( pollutIndex < 0 || pollutIndex >= Nobjects[POLLUT] ) return;
     switch (type)
     {
-      case DRY_WEATHER_INFLOW: StepQualTotals[p].dwInflow += w; break;
-      case WET_WEATHER_INFLOW: StepQualTotals[p].wwInflow += w; break;
-      case GROUNDWATER_INFLOW: StepQualTotals[p].gwInflow += w; break;
-      case EXTERNAL_INFLOW:    StepQualTotals[p].exInflow += w; break;
-      case RDII_INFLOW:        StepQualTotals[p].iiInflow += w; break;
+      case DRY_WEATHER_INFLOW: StepQualTotals[pollutIndex].dwInflow += w; break;
+      case WET_WEATHER_INFLOW: StepQualTotals[pollutIndex].wwInflow += w; break;
+      case GROUNDWATER_INFLOW: StepQualTotals[pollutIndex].gwInflow += w; break;
+      case EXTERNAL_INFLOW:    StepQualTotals[pollutIndex].exInflow += w; break;
+      case RDII_INFLOW:        StepQualTotals[pollutIndex].iiInflow += w; break;
    }
 }
 
-//=============================================================================
-
+/*!
+* \brief Adds flow outflow over current time step to routing totals.
+* \param[in] q Outflow rate (cfs)
+* \param[in] isFlooded TRUE if outflow represents internal flooding
+*/
 void massbal_addOutflowFlow(double q, int isFlooded)
-//
-//  Input:   q = outflow flow rate (cfs)
-//           isFlooded = TRUE if outflow represents internal flooding
-//  Output:  none
-//  Purpose: adds flow outflow over current time step to routing totals.
-//
 {
     if ( isFlooded ) StepFlowTotals.flooding += q;
     else             StepFlowTotals.outflow += q;
 }
 
-//=============================================================================
-
+/*!
+* \brief Adds pollutant outflow over current time step to routing totals.
+* \param[in] pollutIndex Pollutant index
+* \param[in] mass Mass outflow rate (mass/sec)
+* \param[in] isFlooded TRUE if outflow represents internal flooding
+*/
 void massbal_addOutflowQual(int p, double w, int isFlooded)
-//
-//  Input:   p = pollutant index
-//           w = mass outflow rate (mass/sec)
-//           isFlooded = TRUE if outflow represents internal flooding
-//  Output:  none
-//  Purpose: adds pollutant outflow over current time step to routing totals.
-//
 {
     if ( p < 0 || p >= Nobjects[POLLUT] ) return;
     if ( w >= 0.0 )
@@ -512,78 +487,65 @@ void massbal_addOutflowQual(int p, double w, int isFlooded)
     else StepQualTotals[p].exInflow -= w;
 }
 
-//=============================================================================
-
-void massbal_addReactedMass(int p, double w)
-//
-//  Input:   p = pollutant index
-//           w = rate of mass reacted (mass/sec)
-//  Output:  none
-//  Purpose: adds mass reacted during current time step to routing totals.
-//
+/*!
+* \brief Adds mass reacted during current time step to routing totals.
+* \param[in] pollutIndex Pollutant index
+* \param[in] mass Rate of mass reacted (mass/sec)
+*/
+void massbal_addReactedMass(int pollutIndex, double w)
 {
-    if ( p < 0 || p >= Nobjects[POLLUT] ) return;
-    StepQualTotals[p].reacted += w;
+    if ( pollutIndex < 0 || pollutIndex >= Nobjects[POLLUT] ) return;
+    StepQualTotals[pollutIndex].reacted += w;
 }
 
-//=============================================================================
-
-void massbal_addSeepageLoss(int p, double w)
-//
-//  Input:   p = pollutant index
-//           w = mass seepage rate (mass/sec)
-//  Output:  none
-//  Purpose: adds mass lost to seepage during current time step to routing totals.
-//
+/*!
+* \brief Adds mass lost to seepage during current time step to routing totals.
+* \param[in] pollutIndex Pollutant index
+* \param[in] seepLoss Mass seepage rate (mass/sec)
+*/
+void massbal_addSeepageLoss(int pollutIndex, double w)
 {
-    if ( p < 0 || p >= Nobjects[POLLUT] ) return;
-    StepQualTotals[p].seepLoss += w;
+    if ( pollutIndex < 0 || pollutIndex >= Nobjects[POLLUT] ) return;
+    StepQualTotals[pollutIndex].seepLoss += w;
 }
 
-//=============================================================================
-
-void massbal_addToFinalStorage(int p, double w)
-//
-//  Input:   p = pollutant index
-//           w = pollutant mass
-//  Output:  none
-//  Purpose: adds mass remaining on dry surface to routing totals.
-//
+/*!
+* \brief Adds mass remaining on dry surface to routing totals.
+* \param[in] pollutIndex Pollutant index
+* \param[in] mass Pollutant mass
+*/
+void massbal_addToFinalStorage(int pollutIndex, double w)
 {
-    if ( p < 0 || p >= Nobjects[POLLUT] ) return;
-    StepQualTotals[p].finalStorage += w;
+    if ( pollutIndex < 0 || pollutIndex >= Nobjects[POLLUT] ) return;
+    StepQualTotals[pollutIndex].finalStorage += w;
 }
 
-//=============================================================================
-
+/*!
+* \brief Adds node losses over current time step to routing totals.
+* \param[in] evapLoss Evaporation loss from all nodes (ft3/sec)
+* \param[in] infilLoss Seepage loss from all nodes (ft3/sec)
+*/
 void massbal_addNodeLosses(double evapLoss, double seepLoss)
-//
-//  Input:   evapLoss = evaporation loss from all nodes (ft3/sec)
-//           seepLoss = seepage loss from all nodes (ft3/sec)
-//  Output:  none
-//  Purpose: adds node losses over current time step to routing totals.
-//
 {
     StepFlowTotals.evapLoss += evapLoss;
     StepFlowTotals.seepLoss += seepLoss;
 }
 
-//=============================================================================
-
+/*!
+* \brief Adds link losses over current time step to routing totals.
+* \param[in] evapLoss Evaporation loss from all links (ft3/sec)
+* \param[in] infilLoss Infiltration loss from all links (ft3/sec)
+*/
 void massbal_addLinkLosses(double evapLoss, double seepLoss)
-//
-//  Input:   evapLoss = evaporation loss from all links (ft3/sec)
-//           infilLoss = infiltration loss from all links (ft3/sec)
-//  Output:  none
-//  Purpose: adds link losses over current time step to routing totals.
-//
 {
     StepFlowTotals.evapLoss += evapLoss;
     StepFlowTotals.seepLoss += seepLoss;
 }
 
-//=============================================================================
-
+/*!
+* \brief Updates overall routing totals with totals from current time step.
+* \param[in] tStep Time step (sec)
+*/
 void massbal_updateRoutingTotals(double tStep)
 //
 //  Input:   tStep = time step (sec)

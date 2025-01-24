@@ -60,14 +60,11 @@ static void updateHRT(int j, double v, double q, double tStep);
 static double getReactedQual(int p, double c, double v1, double tStep);
 static double getMixedQual(double c, double v1, double wIn, double qIn,
                            double tStep);
-//=============================================================================
 
+/*!
+* \brief Initializes water quality concentrations in all nodes and links.
+*/
 void qualrout_init()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: initializes water quality concentrations in all nodes and links.
-//
 {
     int i, p, isWet;
     double c;
@@ -101,15 +98,12 @@ void qualrout_init()
     }
 }
 
-//=============================================================================
-
+/*!
+* \brief Routes water quality constituents through the drainage
+* network over the current time step.
+* \param[in] tStep Routing time step (sec)
+*/
 void qualrout_execute(double tStep)
-//
-//  Input:   tStep = routing time step (sec)
-//  Output:  none
-//  Purpose: routes water quality constituents through the drainage
-//           network over the current time step.
-//
 {
     int i, j;
     double qIn, vAvg;

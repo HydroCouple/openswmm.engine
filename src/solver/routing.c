@@ -150,8 +150,12 @@ void routing_close(int routingModel)
     FREE(SortedLinks);
 }
 
-//=============================================================================
-
+/*!
+* \brief Determines time step used for flow routing at current time period.
+* \param[in] routingModel Routing method code
+* \param[in] fixedStep User-supplied time step (sec)
+* \return Time step used for flow routing (sec)
+*/
 double routing_getRoutingStep(int routingModel, double fixedStep)
 //
 //  Input:   routingModel = routing method code

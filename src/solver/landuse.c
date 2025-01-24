@@ -46,60 +46,54 @@ static double landuse_getWashoffQual(int landuse, int pollut, double buildup,
 static double landuse_getExternalBuildup(int i, int p, double buildup,
               double tStep);
 
-//=============================================================================
-
-int  landuse_readParams(int j, char* tok[], int ntoks)
-//
-//  Input:   j = land use index
-//           tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns an error code
-//  Purpose: reads landuse parameters from a tokenized line of input.
-//
-//  Data format is:
-//    landuseID  (sweepInterval sweepRemoval sweepDays0)
-//
+/*!
+* \brief Reads landuse parameters from a tokenized line of input.
+* \param[in] landuseIndex Land use index
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details Data format is:
+*  landuseID  (sweepInterval sweepRemoval sweepDays0)
+*/
+int  landuse_readParams(int landuseIndex, char* tok[], int ntoks)
 {
     char *id;
     if ( ntoks < 1 ) return error_setInpError(ERR_ITEMS, "");
     id = project_findID(LANDUSE, tok[0]);
     if ( id == NULL ) return error_setInpError(ERR_NAME, tok[0]);
-    Landuse[j].ID = id;
+    Landuse[landuseIndex].ID = id;
     if ( ntoks > 1 )
     {
         if ( ntoks < 4 ) return error_setInpError(ERR_ITEMS, "");
-        if ( ! getDouble(tok[1], &Landuse[j].sweepInterval) )
+        if ( ! getDouble(tok[1], &Landuse[landuseIndex].sweepInterval) )
             return error_setInpError(ERR_NUMBER, tok[1]);
-        if ( ! getDouble(tok[2], &Landuse[j].sweepRemoval) )
+        if ( ! getDouble(tok[2], &Landuse[landuseIndex].sweepRemoval) )
             return error_setInpError(ERR_NUMBER, tok[2]);
-        if ( ! getDouble(tok[3], &Landuse[j].sweepDays0) )
+        if ( ! getDouble(tok[3], &Landuse[landuseIndex].sweepDays0) )
             return error_setInpError(ERR_NUMBER, tok[3]);
     }
     else
     {
-        Landuse[j].sweepInterval = 0.0;
-        Landuse[j].sweepRemoval = 0.0;
-        Landuse[j].sweepDays0 = 0.0;
+        Landuse[landuseIndex].sweepInterval = 0.0;
+        Landuse[landuseIndex].sweepRemoval = 0.0;
+        Landuse[landuseIndex].sweepDays0 = 0.0;
     }
-    if ( Landuse[j].sweepRemoval < 0.0
-        || Landuse[j].sweepRemoval > 1.0 )
+    if ( Landuse[landuseIndex].sweepRemoval < 0.0
+        || Landuse[landuseIndex].sweepRemoval > 1.0 )
         return error_setInpError(ERR_NUMBER, tok[2]);
     return 0;
 }
 
-//=============================================================================
-
-int  landuse_readPollutParams(int j, char* tok[], int ntoks)
-//
-//  Input:   j = pollutant index
-//           tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns an error code
-//  Purpose: reads pollutant parameters from a tokenized line of input.
-//
-//  Data format is:
-//    ID Units cRain cGW cRDII kDecay (snowOnly coPollut coFrac cDWF cInit)
-//
+/*!
+* \brief Reads pollutant parameters from a tokenized line of input.
+* \param[in] pollutIndex Pollutant index
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details Data format is:
+*  ID Units cRain cGW cRDII kDecay (snowOnly coPollut coFrac cDWF cInit)
+*/
+int  landuse_readPollutParams(int pollutIndex, char* tok[], int ntoks)
 {
     int    i, k, coPollut, snowFlag;
     double x[4], coFrac, cDWF, cInit;
@@ -168,20 +162,20 @@ int  landuse_readPollutParams(int j, char* tok[], int ntoks)
     }
 
     // --- save values for pollutant object   
-    Pollut[j].ID = id;
-    Pollut[j].units = k;
-    if      ( Pollut[j].units == MG ) Pollut[j].mcf = UCF(MASS);
-    else if ( Pollut[j].units == UG ) Pollut[j].mcf = UCF(MASS) / 1000.0;
-    else                              Pollut[j].mcf = 1.0;
-    Pollut[j].pptConcen  = x[0];
-    Pollut[j].gwConcen   = x[1];
-    Pollut[j].rdiiConcen = x[2];
-    Pollut[j].kDecay     = x[3]/SECperDAY;
-    Pollut[j].snowOnly   = snowFlag;
-    Pollut[j].coPollut   = coPollut;
-    Pollut[j].coFraction = coFrac;
-    Pollut[j].dwfConcen  = cDWF;
-    Pollut[j].initConcen = cInit;
+    Pollut[pollutIndex].ID = id;
+    Pollut[pollutIndex].units = k;
+    if      ( Pollut[pollutIndex].units == MG ) Pollut[pollutIndex].mcf = UCF(MASS);
+    else if ( Pollut[pollutIndex].units == UG ) Pollut[pollutIndex].mcf = UCF(MASS) / 1000.0;
+    else                              Pollut[pollutIndex].mcf = 1.0;
+    Pollut[pollutIndex].pptConcen  = x[0];
+    Pollut[pollutIndex].gwConcen   = x[1];
+    Pollut[pollutIndex].rdiiConcen = x[2];
+    Pollut[pollutIndex].kDecay     = x[3]/SECperDAY;
+    Pollut[pollutIndex].snowOnly   = snowFlag;
+    Pollut[pollutIndex].coPollut   = coPollut;
+    Pollut[pollutIndex].coFraction = coFrac;
+    Pollut[pollutIndex].dwfConcen  = cDWF;
+    Pollut[pollutIndex].initConcen = cInit;
     return 0;
 }
 
@@ -276,17 +270,15 @@ int  landuse_readBuildupParams(char* tok[], int ntoks)
     return 0;
 }
 
-//=============================================================================
-
+/*!
+* \brief Reads pollutant washoff parameters from a tokenized line of input.
+* \param[in] tok Array of string tokens
+* \param[in] ntoks Number of tokens
+* \return Error code
+* \details Data format is:
+*  landuseID  pollutID  washoffType  c1  c2  sweepEffic  bmpRemoval
+*/
 int  landuse_readWashoffParams(char* tok[], int ntoks)
-//
-//  Input:   tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns an error code
-//  Purpose: reads pollutant washoff parameters from a tokenized line of input.
-//
-//  Data format is:
-//    landuseID  pollutID  washoffType  c1  c2  sweepEffic  bmpRemoval
 {
     int    i, j, p;
     int    func;
@@ -408,7 +400,7 @@ void  landuse_getInitBuildup(TLandFactor* landFactor,  double* initBuildup,
 
 //=============================================================================
 
-double  landuse_getBuildup(int i, int p, double area, double curb, double buildup,
+double  landuse_getBuildup(int landuseIndex, int pollutIndex, double area, double curb, double buildup,
                            double tStep)
 //
 //  Input:   i = land use index
@@ -426,31 +418,31 @@ double  landuse_getBuildup(int i, int p, double area, double curb, double buildu
     double  perUnit;                   // normalizer value (area or curb length)
 
     // --- return current buildup if no buildup function or time increment
-    if ( Landuse[i].buildupFunc[p].funcType == NO_BUILDUP || tStep == 0.0 )
+    if ( Landuse[landuseIndex].buildupFunc[pollutIndex].funcType == NO_BUILDUP || tStep == 0.0 )
     {
         return buildup;
     }
 
     // --- see what buildup is normalized to
-    n = Landuse[i].buildupFunc[p].normalizer;
+    n = Landuse[landuseIndex].buildupFunc[pollutIndex].normalizer;
     perUnit = 1.0;
     if ( n == PER_AREA ) perUnit = area;
     if ( n == PER_CURB ) perUnit = curb;
     if ( perUnit == 0.0 ) return 0.0;
 
     // --- buildup determined by loading time series
-    if ( Landuse[i].buildupFunc[p].funcType == EXTERNAL_BUILDUP )
+    if ( Landuse[landuseIndex].buildupFunc[pollutIndex].funcType == EXTERNAL_BUILDUP )
     {
-        return landuse_getExternalBuildup(i, p, buildup/perUnit, tStep) *
+        return landuse_getExternalBuildup(landuseIndex, pollutIndex, buildup/perUnit, tStep) *
                perUnit;
     }
 
     // --- determine equivalent days of current buildup
-    days = landuse_getBuildupDays(i, p, buildup/perUnit);
+    days = landuse_getBuildupDays(landuseIndex, pollutIndex, buildup/perUnit);
 
     // --- compute buildup after adding on time increment
     days += tStep / SECperDAY;
-    return landuse_getBuildupMass(i, p, days) * perUnit;
+    return landuse_getBuildupMass(landuseIndex, pollutIndex, days) * perUnit;
 }
 
 //=============================================================================
@@ -527,9 +519,14 @@ double landuse_getBuildupMass(int i, int p, double days)
     return b;
 }
 
-//=============================================================================
-
-double landuse_getAvgBmpEffic(int j, int p)
+/*!
+* \brief Finds the overall average BMP removal achieved for pollutant pollutIndex
+* treated in subcatchment j.
+* \param[in] subcatchIndex Subcatchment index
+* \param[in] pollutIndex Pollutant index
+* \return Returns a BMP removal fraction for a pollutant pollutIndex
+*/
+double landuse_getAvgBmpEffic(int subcatchIndex, int pollutIndex)
 //
 //  Input:   j = subcatchment index
 //           p = pollutant index
@@ -542,8 +539,8 @@ double landuse_getAvgBmpEffic(int j, int p)
     double r = 0.0;
     for (i = 0; i < Nobjects[LANDUSE]; i++)
     {
-        r += Subcatch[j].landFactor[i].fraction *
-             Landuse[i].washoffFunc[p].bmpEffic;
+        r += Subcatch[subcatchIndex].landFactor[i].fraction *
+             Landuse[i].washoffFunc[pollutIndex].bmpEffic;
     }
     return r;
 }
@@ -660,8 +657,12 @@ double landuse_getWashoffQual(int i, int p, double buildup, double runoff,
     return cWashoff;
 }
 
-//=============================================================================
-
+/*!
+* \brief Finds washoff mass added by a co-pollutant of a given pollutant.
+* \param[in] p Pollutant index
+* \param[in] washoff Array of washoff mass for each pollutant
+* \return Returns washoff mass added by co-pollutant relation (mass)
+*/
 double landuse_getCoPollutLoad(int p, double washoff[])
 //
 //  Input:   p = pollutant index
