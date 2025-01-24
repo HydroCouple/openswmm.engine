@@ -303,11 +303,6 @@ int   table_validate(TTable *table)
         if ( table->file.file == NULL ) return ERR_TABLE_FILE_OPEN;
     }
 
-    if (strcomp("CVG", table->ID))
-    {
-        printf("Test");
-    }
-
     // --- retrieve the first data entry in the table
     result = table_getFirstEntry(table, &x1, &y1);
 
