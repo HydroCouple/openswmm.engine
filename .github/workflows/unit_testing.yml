@@ -26,26 +26,26 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-13, macos-latest]
         include:
-          # - os: ubuntu-latest
-          #   alias: Linux
-          #   shell: bash
-          #   cmake_preset: Linux
-          #   shell_extension: .sh
-          #   vcpkg_triplet: x64-linux
+          - os: ubuntu-latest
+            alias: Linux
+            shell: bash
+            cmake_preset: Linux
+            shell_extension: .sh
+            vcpkg_triplet: x64-linux
 
-          # - os: macos-13
-          #   alias: intel-mac
-          #   cmake_preset: Darwin
-          #   shell: bash
-          #   shell_extension: .sh
-          #   vcpkg_triplet: x64-osx
+          - os: macos-13
+            alias: intel-mac
+            cmake_preset: Darwin
+            shell: bash
+            shell_extension: .sh
+            vcpkg_triplet: x64-osx
 
-          # - os: macos-latest
-          #   alias: apple-silicon
-          #   cmake_preset: Darwin
-          #   shell: bash
-          #   shell_extension: .sh
-          #   vcpkg_triplet: arm64-osx
+          - os: macos-latest
+            alias: apple-silicon
+            cmake_preset: Darwin
+            shell: bash
+            shell_extension: .sh
+            vcpkg_triplet: arm64-osx
 
           - os: windows-latest
             alias: win64
@@ -118,20 +118,22 @@ jobs:
         mono `./vcpkg fetch nuget | tail -n 1` sources
 
     - name: Install Boost-Test (Windows)
+      working-directory: ${{ env.VCPKG_ROOT }}
       run: |
-        .$(vcpkg fetch nuget) install boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} -Source github || (
-          vcpkg install boost-test && 
-          vcpkg export boost-test --nuget --output-dir=. &&
+          .$(vcpkg fetch nuget) install boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} -Source github || (
+            vcpkg install boost-test && 
+            vcpkg export boost-test --nuget --output-dir=. &&
           .$(vcpkg fetch nuget) push boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
-        )
+          )
 
     - name: Install Boost-Test (Unix like)
+      working-directory: ${{ env.VCPKG_ROOT }}
       run: |
-        mono `./vcpkg fetch nuget | tail -n 1` install boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} -Source github || (
-          vcpkg install boost-test && 
-          vcpkg export boost-test --nuget --output-dir=. &&
-          mono `./vcpkg fetch nuget | tail -n 1` push boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
-        )
+          mono `./vcpkg fetch nuget | tail -n 1` install boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} -Source github || (
+            vcpkg install boost-test && 
+            vcpkg export boost-test --nuget --output-dir=. &&
+            mono `./vcpkg fetch nuget | tail -n 1` push boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
+          )
 
     - name: Build (Windows)
       if: ${{ matrix.os == 'windows-latest' }}
