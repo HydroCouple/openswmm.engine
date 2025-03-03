@@ -61,6 +61,15 @@ jobs:
     steps:
     - name: Checkout SWMM Repo
       uses: actions/checkout@v4
+      with:
+        repository: SWMM
+    
+    - name: Checkout VCPKG
+      uses: actions/checkout@v4
+      with:
+        repository: microsoft/vcpkg
+        ref: 2025.02.14
+        path: vcpkg
     
     - name: Install OpenMP on MacOS
       if: ${{ matrix.os == 'macos-latest' || matrix.os == 'macos-13' }}
@@ -68,12 +77,6 @@ jobs:
         brew reinstall --build-from-source libomp
         brew link --force --overwrite libomp
 
-    - name: Checkout VCPKG
-      uses: actions/checkout@v4
-      with:
-        repository: microsoft/vcpkg
-        ref: 2025.02.14
-        path: vcpkg
 
     - name: Bootstrap VCPKG (Windows)
       if: ${{ matrix.os == 'windows-latest' }}
@@ -121,10 +124,11 @@ jobs:
     
     - name: Configure Binary Sources (Windows)
       if: ${{ matrix.os == 'windows-latest' }}
+      working-directory: ${{ env.VCPKG_ROOT }}
       run: |
-        .$(vcpkg fetch nuget) sources add -Name github -Source ${{ env.NUGET_FEED_URL }} -UserName ${{ env.NUGET_USER_NAME }} -Password ${{ env.NUGET_API_KEY }}
-        .$(vcpkg fetch nuget) setapikey ${{ env.NUGET_API_KEY }} -Source github
-        .$(vcpkg fetch nuget) sources
+        (vcpkg fetch nuget) sources add -Name github -Source ${{ env.NUGET_FEED_URL }} -UserName ${{ env.NUGET_USER_NAME }} -Password ${{ env.NUGET_API_KEY }}
+        (vcpkg fetch nuget) setapikey ${{ env.NUGET_API_KEY }} -Source github
+        (vcpkg fetch nuget) sources
 
     - name: Configure Binary Sources (Unix like)
       if: ${{ matrix.os != 'windows-latest' }}
