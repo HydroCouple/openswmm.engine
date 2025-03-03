@@ -8,8 +8,8 @@ on:
 
 env:
   BUILD_TYPE: Release
-  VCPKG_ROOT: "${{ github.workspace }}/vcpkg"
-  VCPKG_EXE:  "${{ github.workspace }}/vcpkg/vcpkg"
+  VCPKG_ROOT: "${{ github.workspace }}\vcpkg"
+  VCPKG_EXE:  "${{ github.workspace }}\vcpkg\vcpkg"
   NUGET_FEED_URL: https://nuget.pkg.github.com/USEPA/index.json
   VCPKG_BINARY_SOURCES: "clear;nuget,https://nuget.pkg.github.com/USEPA/index.json,readwrite"
   OMP_NUM_THREADS: 1
@@ -24,28 +24,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-13, macos-latest]
+        os: [windows-latest] #, ubuntu-latest, macos-13, macos-latest]
         include:
-          - os: ubuntu-latest
-            alias: Linux
-            shell: bash
-            cmake_preset: Linux
-            shell_extension: .sh
-            vcpkg_triplet: x64-linux
+          # - os: ubuntu-latest
+          #   alias: Linux
+          #   shell: bash
+          #   cmake_preset: Linux
+          #   shell_extension: .sh
+          #   vcpkg_triplet: x64-linux
 
-          - os: macos-13
-            alias: intel-mac
-            cmake_preset: Darwin
-            shell: bash
-            shell_extension: .sh
-            vcpkg_triplet: x64-osx
+          # - os: macos-13
+          #   alias: intel-mac
+          #   cmake_preset: Darwin
+          #   shell: bash
+          #   shell_extension: .sh
+          #   vcpkg_triplet: x64-osx
 
-          - os: macos-latest
-            alias: apple-silicon
-            cmake_preset: Darwin
-            shell: bash
-            shell_extension: .sh
-            vcpkg_triplet: arm64-osx
+          # - os: macos-latest
+          #   alias: apple-silicon
+          #   cmake_preset: Darwin
+          #   shell: bash
+          #   shell_extension: .sh
+          #   vcpkg_triplet: arm64-osx
 
           - os: windows-latest
             alias: win64
@@ -111,9 +111,9 @@ jobs:
     - name: Configure Binary Sources (Unix like)
       if: ${{ matrix.os != 'windows-latest' }}
       run: |
-        mono `./${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` sources add -Name github -Source ${{ env.NUGET_FEED_URL }} -UserName ${{ env.NUGET_USER_NAME }} -Password ${{ env.NUGET_API_KEY }} 
-        mono `./${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` setapikey ${{ env.NUGET_API_KEY }} -Source github 
-        mono `./${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` sources
+        mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` sources add -Name github -Source ${{ env.NUGET_FEED_URL }} -UserName ${{ env.NUGET_USER_NAME }} -Password ${{ env.NUGET_API_KEY }} 
+        mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` setapikey ${{ env.NUGET_API_KEY }} -Source github 
+        mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` sources
 
     - name: Install Boost-Test (Windows)
       if: ${{ matrix.os == 'windows-latest' }}
@@ -127,10 +127,10 @@ jobs:
     - name: Install Boost-Test (Unix like)
       if: ${{ matrix.os != 'windows-latest' }}
       run: |
-          mono `./${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` install boost-test-${{ matrix.vcpkg_triplet }} -Source github || (
-            ./${{ env.VCPKG_EXE }} install && 
-            ./${{ env.VCPKG_EXE }} export boost-test --nuget --nuget-id=boost-test-${{ matrix.vcpkg_triplet }} --output-dir=. &&
-            mono `./${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` push boost-test-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
+          mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` install boost-test-${{ matrix.vcpkg_triplet }} -Source github || (
+            ${{ env.VCPKG_EXE }} install && 
+            ${{ env.VCPKG_EXE }} export boost-test --nuget --nuget-id=boost-test-${{ matrix.vcpkg_triplet }} --output-dir=. &&
+            mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` push boost-test-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
           )
 
     - name: Build Binaries
