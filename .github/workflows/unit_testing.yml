@@ -26,26 +26,26 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-13, macos-latest]
         include:
-          - os: ubuntu-latest
-            alias: Linux
-            shell: bash
-            cmake_preset: Linux
-            shell_extension: .sh
-            vcpkg_triplet: x64-linux
+          # - os: ubuntu-latest
+          #   alias: Linux
+          #   shell: bash
+          #   cmake_preset: Linux
+          #   shell_extension: .sh
+          #   vcpkg_triplet: x64-linux
 
-          - os: macos-13
-            alias: intel-mac
-            cmake_preset: Darwin
-            shell: bash
-            shell_extension: .sh
-            vcpkg_triplet: x64-osx
+          # - os: macos-13
+          #   alias: intel-mac
+          #   cmake_preset: Darwin
+          #   shell: bash
+          #   shell_extension: .sh
+          #   vcpkg_triplet: x64-osx
 
-          - os: macos-latest
-            alias: apple-silicon
-            cmake_preset: Darwin
-            shell: bash
-            shell_extension: .sh
-            vcpkg_triplet: arm64-osx
+          # - os: macos-latest
+          #   alias: apple-silicon
+          #   cmake_preset: Darwin
+          #   shell: bash
+          #   shell_extension: .sh
+          #   vcpkg_triplet: arm64-osx
 
           - os: windows-latest
             alias: win64
@@ -96,28 +96,10 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y mono-complete
 
-    # - name: Install NuGet
-    #   uses: nuget/setup-nuget@v2
-    #   with:
-    #     nuget-version: 5.x
-    - name: Install Mono (Linux)
-      if: ${{ matrix.os == 'ubuntu-latest' }}
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y mono-complete
-
-    - name: Install NuGet (Linux)
-      if: ${{ matrix.os == 'ubuntu-latest' }}
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y nuget
-        nuget update -self
-
-    - name: Install NuGet (macOS)
-      if: ${{ matrix.os == 'macos-latest' || matrix.os == 'macos-13' }}
-      run: |
-        brew install nuget
-        nuget update -self
+    - name: Install NuGet
+      uses: nuget/setup-nuget@v2
+      with:
+        nuget-version: 5.x
     
     - name: Configure Binary Sources (Windows)
       if: ${{ matrix.os == 'windows-latest' }}
