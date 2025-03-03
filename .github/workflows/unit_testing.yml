@@ -118,6 +118,7 @@ jobs:
         mono `./vcpkg fetch nuget | tail -n 1` sources
 
     - name: Install Boost-Test (Windows)
+      if: ${{ matrix.os == 'windows-latest' }}
       working-directory: ${{ env.VCPKG_ROOT }}
       run: |
           .$(vcpkg fetch nuget) install boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} -Source github || (
@@ -127,6 +128,7 @@ jobs:
           )
 
     - name: Install Boost-Test (Unix like)
+      if: ${{ matrix.os != 'windows-latest' }}
       working-directory: ${{ env.VCPKG_ROOT }}
       run: |
           mono `./vcpkg fetch nuget | tail -n 1` install boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} -Source github || (
@@ -135,14 +137,15 @@ jobs:
             mono `./vcpkg fetch nuget | tail -n 1` push boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
           )
 
-    - name: Build (Windows)
-      if: ${{ matrix.os == 'windows-latest' }}
+    - name: Build Binaries
       env:
         VCPKG_ROOT:  ${{ env.VCPKG_ROOT }}
       run: |
         cmake --preset=${{ matrix.cmake_preset }}
         cmake -B ${{github.workspace}}/build-${{ matrix.vcpkg_triplet }} -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}  -DBUILD_TESTS=ON 
         cmake --build ${{github.workspace}}/build-${{ matrix.vcpkg_triplet }} --target package
+
+
     
     - name: Unit Test
       run: ctest --test-dir ${{github.workspace}}/build-${{ matrix.vcpkg_triplet }}  -C Debug --output-on-failure
