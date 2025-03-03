@@ -63,7 +63,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         path: SWMM
-        
+
     - name: Checkout VCPKG
       uses: actions/checkout@v4
       with:
@@ -74,7 +74,8 @@ jobs:
     - name: Install OpenMP on MacOS
       if: ${{ matrix.os == 'macos-latest' || matrix.os == 'macos-13' }}
       run: |
-        brew reinstall --build-from-source libomp
+        # brew reinstall --build-from-source libomp
+        brew reinstall libomp
         brew link --force --overwrite libomp
 
 
@@ -114,7 +115,7 @@ jobs:
         brew install mono
 
     - name: Install NuGet
-      if: ${{ matrix.os == 'windows-latest' }}
+      if: ${{ matrix.os != 'windows-latest' }}
       run: |
         mono --version
         wget https://dist.nuget.org/win-x86-commandline/latest/nuget.exe -O /usr/local/bin/nuget.exe
