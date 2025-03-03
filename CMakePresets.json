@@ -10,7 +10,7 @@
         },
         {
             "name": "Windows-debug",
-            "inherits": "default",
+            "inherits": "default-debug",
             "description": "Windows build using Visual Studio generator",
             "generator": "Visual Studio 17 2022",
             "condition": {
@@ -21,7 +21,7 @@
         },
         {
             "name": "Linux-debug",
-            "inherits": "default",
+            "inherits": "default-debug",
             "description": "Linux build using Ninja generator",
             "generator": "Ninja",
             "condition": {
@@ -32,7 +32,7 @@
         },
         {
             "name": "Darwin-debug",
-            "inherits": "default",
+            "inherits": "default-debug",
             "description": "macOS build using Unix Makefiles generator",
             "generator": "Xcode",
             "condition": {

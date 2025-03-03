@@ -103,38 +103,34 @@ jobs:
     
     - name: Configure Binary Sources (Windows)
       if: ${{ matrix.os == 'windows-latest' }}
-      working-directory: ${{ env.VCPKG_ROOT }}
       run: |
-        .$(vcpkg fetch nuget) sources add -Name github -Source ${{ env.NUGET_FEED_URL }} -UserName ${{ env.NUGET_USER_NAME }} -Password ${{ env.NUGET_API_KEY }}
-        .$(vcpkg fetch nuget) setapikey ${{ env.NUGET_API_KEY }} -Source github
-        .$(vcpkg fetch nuget) sources
+        .$(${{ env.VCPKG_EXE }} fetch nuget) sources add -Name github -Source ${{ env.NUGET_FEED_URL }} -UserName ${{ env.NUGET_USER_NAME }} -Password ${{ env.NUGET_API_KEY }}
+        .$(${{ env.VCPKG_EXE }} fetch nuget) setapikey ${{ env.NUGET_API_KEY }} -Source github
+        .$(${{ env.VCPKG_EXE }} fetch nuget) sources
 
     - name: Configure Binary Sources (Unix like)
       if: ${{ matrix.os != 'windows-latest' }}
-      working-directory: ${{ env.VCPKG_ROOT }}
       run: |
-        mono `./vcpkg fetch nuget | tail -n 1` sources add -Name github -Source ${{ env.NUGET_FEED_URL }} -UserName ${{ env.NUGET_USER_NAME }} -Password ${{ env.NUGET_API_KEY }} 
-        mono `./vcpkg fetch nuget | tail -n 1` setapikey ${{ env.NUGET_API_KEY }} -Source github 
-        mono `./vcpkg fetch nuget | tail -n 1` sources
+        mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` sources add -Name github -Source ${{ env.NUGET_FEED_URL }} -UserName ${{ env.NUGET_USER_NAME }} -Password ${{ env.NUGET_API_KEY }} 
+        mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` setapikey ${{ env.NUGET_API_KEY }} -Source github 
+        mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` sources
 
     - name: Install Boost-Test (Windows)
       if: ${{ matrix.os == 'windows-latest' }}
-      working-directory: ${{ env.VCPKG_ROOT }}
       run: |
-          .$(vcpkg fetch nuget) install boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} -Source github || (
-            vcpkg install boost-test && 
-            vcpkg export boost-test --nuget --nuget-id=boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} --output-dir=. &&
-          .$(vcpkg fetch nuget) push boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
+          .$(${{ env.VCPKG_EXE }} fetch nuget) install boost-test-${{ matrix.vcpkg_triplet }} -Source github || (
+            ${{ env.VCPKG_EXE }} install && 
+            ${{ env.VCPKG_EXE }} export boost-test --nuget --nuget-id=boost-test-${{ matrix.vcpkg_triplet }} --output-dir=. &&
+          .$(${{ env.VCPKG_EXE }} fetch nuget) push boost-test-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
           )
 
     - name: Install Boost-Test (Unix like)
       if: ${{ matrix.os != 'windows-latest' }}
-      working-directory: ${{ env.VCPKG_ROOT }}
       run: |
-          mono `./vcpkg fetch nuget | tail -n 1` install boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} -Source github || (
-            vcpkg install boost-test && 
-            vcpkg export boost-test --nuget --nuget-id=boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} --output-dir=. &&
-            mono `./vcpkg fetch nuget | tail -n 1` push boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
+          mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` install boost-test-${{ matrix.vcpkg_triplet }} -Source github || (
+            ${{ env.VCPKG_EXE }} install && 
+            ${{ env.VCPKG_EXE }} export boost-test --nuget --nuget-id=boost-test-${{ matrix.vcpkg_triplet }} --output-dir=. &&
+            mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` push boost-test-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
           )
 
     - name: Build Binaries
@@ -145,8 +141,6 @@ jobs:
         cmake -B ${{github.workspace}}/build-${{ matrix.vcpkg_triplet }} -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}  -DBUILD_TESTS=ON 
         cmake --build ${{github.workspace}}/build-${{ matrix.vcpkg_triplet }} --target package
 
-
-    
     - name: Unit Test
       run: ctest --test-dir ${{github.workspace}}/build-${{ matrix.vcpkg_triplet }}  -C Debug --output-on-failure
 
