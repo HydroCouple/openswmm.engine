@@ -122,7 +122,7 @@ jobs:
       run: |
           .$(vcpkg fetch nuget) install boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} -Source github || (
             vcpkg install boost-test && 
-            vcpkg export boost-test --nuget --output-dir=. &&
+            vcpkg export boost-test --nuget --nuget-id=boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} --output-dir=. &&
           .$(vcpkg fetch nuget) push boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
           )
 
@@ -131,7 +131,7 @@ jobs:
       run: |
           mono `./vcpkg fetch nuget | tail -n 1` install boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} -Source github || (
             vcpkg install boost-test && 
-            vcpkg export boost-test --nuget --output-dir=. &&
+            vcpkg export boost-test --nuget --nuget-id=boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} --output-dir=. &&
             mono `./vcpkg fetch nuget | tail -n 1` push boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
           )
 
