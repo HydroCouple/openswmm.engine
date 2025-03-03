@@ -4,46 +4,17 @@
  * \date Created on: 2021-11-01
  * \date Last edited on: 2024-12-23 (Build 5.3.0)
  * \details This file contains the prototypes for SWMM5 API functions.
- * 
+ *
  *  Update History
  *  ==============
- *  Build 5.3.0:
- *  - Added new functions to support saving hotstart files at specific times.
- *  - Expansions to the SWMM API to include attributes of more objects and water quality.
+ *  - Build 5.3.0:
+ *      - Added new functions to support saving hotstart files at specific times.
+ *      - Expansions to the SWMM API to include attributes of more objects and water quality.
  */
 #ifndef SWMM5_H
 #define SWMM5_H
 
-
-#undef WINDOWS
-#ifdef _WIN32
-/*!
- * \def WINDOWS
- * \brief Define for Windows platform
- */
-  #define WINDOWS
-#endif
-#ifdef __WIN32__
-/*!
- * \def WINDOWS
- * \brief Define for Windows platform
- */
-  #define WINDOWS
-#endif
-
-#ifdef WINDOWS
-   /*!
-    * \def DLLEXPORT
-    * \brief Export macro for Windows platform
-    */
-    #define DLLEXPORT __declspec(dllexport) __stdcall
-#else
-   /*!
-    * \def DLLEXPORT
-    * \brief Export macro for non-Windows platforms 
-    */
-    #define DLLEXPORT
-#endif
+#include "swmm5_export.h"
 
 // --- use "C" linkage for C++ programs
 #ifdef __cplusplus
@@ -51,11 +22,12 @@ extern "C" {
 #endif
 
 /*!
-* \enum swmm_Object
-* \brief Enumeration of object types used in SWMM5
-*/
-typedef enum {
-    /*! \brief Rain gages */ 
+ * \enum swmm_Object
+ * \brief Enumeration of object types used in SWMM5
+ */
+typedef enum
+{
+    /*! \brief Rain gages */
     swmm_GAGE,
     /*! \brief Subcatchments */
     swmm_SUBCATCH,
@@ -92,46 +64,49 @@ typedef enum {
     /*! \brief Inlet */
     swmm_INLET,
     /*! \brief System */
-    swmm_SYSTEM   = 100
+    swmm_SYSTEM = 100
 } swmm_Object;
 
 /*!
-* \enum swmm_NodeType
-* \brief Enumeration of node types used in SWMM5
-*/
-typedef enum {
+ * \enum swmm_NodeType
+ * \brief Enumeration of node types used in SWMM5
+ */
+typedef enum
+{
     /*! \brief Junction node */
     swmm_JUNCTION = 0,
     /*! \brief Outfall node */
-    swmm_OUTFALL  = 1,
+    swmm_OUTFALL = 1,
     /*! \brief Storage node */
-    swmm_STORAGE  = 2,
+    swmm_STORAGE = 2,
     /*! \brief Divider node */
-    swmm_DIVIDER  = 3
+    swmm_DIVIDER = 3
 } swmm_NodeType;
 
 /*!
-* \enum swmm_LinkType
-* \brief Enumeration of link types used in SWMM5
-*/
-typedef enum {
+ * \enum swmm_LinkType
+ * \brief Enumeration of link types used in SWMM5
+ */
+typedef enum
+{
     /*! \brief Conduit link */
     swmm_CONDUIT = 0,
     /*! \brief Pump link */
-    swmm_PUMP    = 1,
+    swmm_PUMP = 1,
     /*! \brief Orifice link */
     swmm_ORIFICE = 2,
     /*! \brief Weir link */
-    swmm_WEIR    = 3,
+    swmm_WEIR = 3,
     /*! \brief Outlet link */
-    swmm_OUTLET  = 4
+    swmm_OUTLET = 4
 } swmm_LinkType;
 
 /*!
-* \enum swmm_GageProperty
-* \brief Enumeration of gage properties used in SWMM5
-*/
-typedef enum {
+ * \enum swmm_GageProperty
+ * \brief Enumeration of gage properties used in SWMM5
+ */
+typedef enum
+{
     /*! \brief Total precipitation */
     swmm_GAGE_TOTAL_PRECIPITATION = 100,
     /*! \brief Rainfall */
@@ -141,28 +116,29 @@ typedef enum {
 } swmm_GageProperty;
 
 /*!
-* \enum swmm_SubcatchProperty
-* \brief Enumeration of subcatchment properties used in SWMM5
-*/
-typedef enum {
+ * \enum swmm_SubcatchProperty
+ * \brief Enumeration of subcatchment properties used in SWMM5
+ */
+typedef enum
+{
     /*! \brief Area */
-    swmm_SUBCATCH_AREA      = 200,
+    swmm_SUBCATCH_AREA = 200,
     /*! \brief Rain gage */
-    swmm_SUBCATCH_RAINGAGE  = 201,
-    /*! \brief Rainfall */          
-    swmm_SUBCATCH_RAINFALL  = 202,
+    swmm_SUBCATCH_RAINGAGE = 201,
+    /*! \brief Rainfall */
+    swmm_SUBCATCH_RAINFALL = 202,
     /*! \brief Evaporation */
-    swmm_SUBCATCH_EVAP      = 203,
+    swmm_SUBCATCH_EVAP = 203,
     /*! \brief Infiltration */
-    swmm_SUBCATCH_INFIL     = 204,
+    swmm_SUBCATCH_INFIL = 204,
     /*! \brief Runoff */
-    swmm_SUBCATCH_RUNOFF    = 205,
+    swmm_SUBCATCH_RUNOFF = 205,
     /*! \brief Report flag */
-    swmm_SUBCATCH_RPTFLAG   = 206,
+    swmm_SUBCATCH_RPTFLAG = 206,
     /*! \brief Width */
-    swmm_SUBCATCH_WIDTH     = 207,
+    swmm_SUBCATCH_WIDTH = 207,
     /*! \brief Slope */
-    swmm_SUBCATCH_SLOPE     = 208,
+    swmm_SUBCATCH_SLOPE = 208,
     /*! \brief Curb length */
     swmm_SUBCATCH_CURB_LENGTH = 209,
     /*! \brief API provided rainfall */
@@ -170,7 +146,7 @@ typedef enum {
     /*! \brief API provided snowfall */
     swmm_SUBCATCH_API_SNOWFALL = 211,
     /*! \brief Pollutant buildup */
-    swmm_SUBCATCH_POLLUTANT_BUILDUP  = 212,
+    swmm_SUBCATCH_POLLUTANT_BUILDUP = 212,
     /*! \brief External pollutant buildup */
     swmm_SUBCATCH_EXTERNAL_POLLUTANT_BUILDUP = 213,
     /*! \brief Runoff concentration */
@@ -182,30 +158,31 @@ typedef enum {
 } swmm_SubcatchProperty;
 
 /*!
-* \enum swmm_NodeProperty
-* \brief Enumeration of node properties used in SWMM5
-*/
-typedef enum {
+ * \enum swmm_NodeProperty
+ * \brief Enumeration of node properties used in SWMM5
+ */
+typedef enum
+{
     /*! \brief Node type */
-    swmm_NODE_TYPE     = 300,
+    swmm_NODE_TYPE = 300,
     /*! \brief Elevation */
-    swmm_NODE_ELEV     = 301,
+    swmm_NODE_ELEV = 301,
     /*! \brief Maximum depth */
     swmm_NODE_MAXDEPTH = 302,
     /*! \brief Depth */
-    swmm_NODE_DEPTH    = 303,
+    swmm_NODE_DEPTH = 303,
     /*! \brief Hydraulic head */
-    swmm_NODE_HEAD     = 304,
+    swmm_NODE_HEAD = 304,
     /*! \brief Volume */
-    swmm_NODE_VOLUME   = 305,
+    swmm_NODE_VOLUME = 305,
     /*! \brief Lateral inflow */
-    swmm_NODE_LATFLOW  = 306,
+    swmm_NODE_LATFLOW = 306,
     /*! \brief Inflow */
-    swmm_NODE_INFLOW   = 307,
+    swmm_NODE_INFLOW = 307,
     /*! \brief Overflow */
     swmm_NODE_OVERFLOW = 308,
     /*! \brief Report flag */
-    swmm_NODE_RPTFLAG  = 309,
+    swmm_NODE_RPTFLAG = 309,
     /*! \brief Surcharge depth */
     swmm_NODE_SURCHARGE_DEPTH = 310,
     /*! \brief Ponded area */
@@ -219,71 +196,77 @@ typedef enum {
 } swmm_NodeProperty;
 
 /*!
-* \enum swmm_LinkProperty
-* \brief Enumeration of link properties used in SWMM5
-*/
-typedef enum {
+ * \enum swmm_LinkProperty
+ * \brief Enumeration of link properties used in SWMM5
+ */
+typedef enum
+{
     /*! \brief Link type */
-    swmm_LINK_TYPE       = 400,
+    swmm_LINK_TYPE = 400,
     /*! \brief Upstream node */
-    swmm_LINK_NODE1      = 401,
+    swmm_LINK_NODE1 = 401,
     /*! \brief Downstream node */
-    swmm_LINK_NODE2      = 402,
+    swmm_LINK_NODE2 = 402,
     /*! \brief Length */
-    swmm_LINK_LENGTH     = 403,
+    swmm_LINK_LENGTH = 403,
     /*! \brief Slope */
-    swmm_LINK_SLOPE      = 404,
+    swmm_LINK_SLOPE = 404,
     /*! \brief Full depth */
-    swmm_LINK_FULLDEPTH  = 405,
+    swmm_LINK_FULLDEPTH = 405,
     /*! \brief Full flow */
-    swmm_LINK_FULLFLOW   = 406,
+    swmm_LINK_FULLFLOW = 406,
     /*! \brief Setting */
-    swmm_LINK_SETTING    = 407,
+    swmm_LINK_SETTING = 407,
     /*! \brief Time open */
-    swmm_LINK_TIMEOPEN   = 408,
+    swmm_LINK_TIMEOPEN = 408,
     /*! \brief Time closed */
     swmm_LINK_TIMECLOSED = 409,
     /*! \brief Flow */
-    swmm_LINK_FLOW       = 410,
+    swmm_LINK_FLOW = 410,
     /*! \brief Depth */
-    swmm_LINK_DEPTH      = 411,
+    swmm_LINK_DEPTH = 411,
     /*! \brief Velocity */
-    swmm_LINK_VELOCITY   = 412,
+    swmm_LINK_VELOCITY = 412,
     /*! \brief Top width */
-    swmm_LINK_TOPWIDTH   = 413,
+    swmm_LINK_TOPWIDTH = 413,
+    /*! \brief Volume */
+    swmm_LINK_VOLUME = 414,
+    /*! \brief Capacity */
+    swmm_LINK_CAPACITY = 415,
     /*! \brief Report flag */
-    swmm_LINK_RPTFLAG    = 414,
+    swmm_LINK_RPTFLAG = 416,
     /*! \brief Upstream invert offset */
-    swmm_LINK_OFFSET1    = 415,
+    swmm_LINK_OFFSET1 = 417,
     /*! \brief Downstream invert offset */
-    swmm_LINK_OFFSET2    = 416,
+    swmm_LINK_OFFSET2 = 418,
     /*! \brief Initial flow */
-    swmm_LINK_INITIAL_FLOW = 417,
+    swmm_LINK_INITIAL_FLOW = 419,
     /*! \brief Flow limit */
-    swmm_LINK_FLOW_LIMIT = 418,
+    swmm_LINK_FLOW_LIMIT = 420,
     /*! \brief Inlet loss */
-    swmm_LINK_INLET_LOSS = 419,
+    swmm_LINK_INLET_LOSS = 421,
     /*! \brief Outlet loss */
-    swmm_LINK_OUTLET_LOSS = 420,
+    swmm_LINK_OUTLET_LOSS = 422,
     /*! \brief Average loss */
-    swmm_LINK_AVERAGE_LOSS = 421,
+    swmm_LINK_AVERAGE_LOSS = 423,
     /*! \brief Seepage rate */
-    swmm_LINK_SEEPAGE_RATE = 422,
+    swmm_LINK_SEEPAGE_RATE = 424,
     /*! \brief Flap gate */
-    swmm_LINK_HAS_FLAPGATE = 423,
+    swmm_LINK_HAS_FLAPGATE = 425,
     /*! \brief Pollutant concentration */
-    swmm_LINK_POLLUTANT_CONCENTRATION = 424,
+    swmm_LINK_POLLUTANT_CONCENTRATION = 426,
     /*! \brief Pollutant load */
-    swmm_LINK_POLLUTANT_LOAD = 425,
+    swmm_LINK_POLLUTANT_LOAD = 427,
     /*! \brief Pollutant lateral mass flux */
-    swmm_LINK_POLLUTANT_LATMASS_FLUX = 426,
+    swmm_LINK_POLLUTANT_LATMASS_FLUX = 428,
 } swmm_LinkProperty;
 
 /*!
-* \enum swmm_SystemProperty
-* \brief Enumeration of system properties used in SWMM5
-*/
-typedef enum {
+ * \enum swmm_SystemProperty
+ * \brief Enumeration of system properties used in SWMM5
+ */
+typedef enum
+{
     /*! \brief Start date */
     swmm_STARTDATE = 0,
     /*! \brief Current date */
@@ -333,7 +316,7 @@ typedef enum {
     /*! \brief Error code */
     swmm_ERROR_CODE = 23,
     /*! \brief Rule step */
-    swmm_RULESTEP= 24,
+    swmm_RULESTEP = 24,
     /*! \brief Sweep start */
     swmm_SWEEPSTART = 25,
     /*! \brief Sweep end */
@@ -369,10 +352,11 @@ typedef enum {
 } swmm_SystemProperty;
 
 /*!
-* \enum swmm_FlowUnitsProperty
-* \brief Enumeration of flow units used in SWMM5
-*/
-typedef enum {
+ * \enum swmm_FlowUnitsProperty
+ * \brief Enumeration of flow units used in SWMM5
+ */
+typedef enum
+{
     /*! \brief Cubic feet per second */
     swmm_CFS = 0,
     /*! \brief Gallons per minute */
@@ -388,10 +372,11 @@ typedef enum {
 } swmm_FlowUnitsProperty;
 
 /*!
-* \enum swmm_API_Errors
-* \brief Enumeration of API errors used in SWMM5
-*/
-typedef enum {
+ * \enum swmm_API_Errors
+ * \brief Enumeration of API errors used in SWMM5
+ */
+typedef enum
+{
     /*! \brief API error for file not opened */
     ERR_API_NOT_OPEN = -999901,
     /*! \brief API error for API not started */
@@ -413,249 +398,250 @@ typedef enum {
     /*! \brief API error for errorneous hotstart file open */
     ERR_API_HOTSTART_FILE_OPEN = -999910,
     /*! \brief API error for errorneous hotstart file format */
-    ERR_API_HOTSTART_FILE_FORMAT= -999911,
+    ERR_API_HOTSTART_FILE_FORMAT = -999911,
     /*! \brief API error for API already running */
     ERR_API_IS_RUNNING = -999912,
 } swmm_API_Errors;
 
 /*!
-* \typedef progress_callback
-* \brief Callback function for progress reporting
-* \param[in] progress Progress value between 0 and 1
-*/
+ * \typedef progress_callback
+ * \brief Callback function for progress reporting
+ * \param[in] progress Progress value between 0 and 1
+ */
 typedef void (*progress_callback)(double progress);
 
 /*!
-* \brief Run a SWMM simulation with the given input file, report file, and output file.
-* \param[in] inputFile Path to the input file
-* \param[in] reportFile Path to the report file
-* \param[in] outputFile Path to the output file
-* \return Error code 
-*/
-int DLLEXPORT swmm_run(const char *inputFile, const char *reportFile, const char *outputFile);
+ * \brief Run a SWMM simulation with the given input file, report file, and output file.
+ * \param[in] inputFile Path to the input file
+ * \param[in] reportFile Path to the report file
+ * \param[in] outputFile Path to the output file
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_run(const char *inputFile, const char *reportFile, const char *outputFile);
 
 /*!
-* \brief Run a SWMM simulation with the given input file, report file, and output file with a progress callback.
-* \param[in] inputFile Path to the input file
-* \param[in] reportFile Path to the report file
-* \param[in] outputFile Path to the output file
-* \param[in] callback Progress callback function
-* \return Error code 
-*/
-int DLLEXPORT swmm_run_with_callback(const char *inputFile, const char *reportFile, const char *outputFile, progress_callback callback);
+ * \brief Run a SWMM simulation with the given input file, report file, and output file with a progress callback.
+ * \param[in] inputFile Path to the input file
+ * \param[in] reportFile Path to the report file
+ * \param[in] outputFile Path to the output file
+ * \param[in] callback Progress callback function
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_run_with_callback(
+    const char *inputFile, const char *reportFile, const char *outputFile, progress_callback callback);
 
 /*!
-* \brief Open a SWMM simulation with the given input file, report file, and output file.
-* \param[in] inputFile Path to the input file 
-* \param[in] reportFile Path to the report file
-* \param[in] outputFile Path to the output file
-* \return Error code 
-*/
-int DLLEXPORT swmm_open(const char *inputFile, const char *reportFile, const char *outputFile);
+ * \brief Open a SWMM simulation with the given input file, report file, and output file.
+ * \param[in] inputFile Path to the input file
+ * \param[in] reportFile Path to the report file
+ * \param[in] outputFile Path to the output file
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_open(const char *inputFile, const char *reportFile, const char *outputFile);
 
 /*!
-* \brief Start a SWMM simulation with the given save flag.
-* \param[in] saveFlag Flag to save simulation
-* \return Error code 
-*/
-int DLLEXPORT swmm_start(int saveFlag);
+ * \brief Start a SWMM simulation with the given save flag.
+ * \param[in] saveFlag Flag to save simulation
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_start(int saveFlag);
 
 /*!
-* \brief Perform a SWMM simulation step and return the elapsed time.
-* \param[out] elapsedTime Elapsed time
-* \return Error code 
-*/
-int DLLEXPORT swmm_step(double *elapsedTime);
+ * \brief Perform a SWMM simulation step and return the elapsed time.
+ * \param[out] elapsedTime Elapsed time in decimal days
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_step(double *elapsedTime);
 
 /*!
-* \brief Perform a SWMM simulation step with a stride step and return the elapsed time.
-* \param[in] strideStep Stride step
-* \param[out] elapsedTime Elapsed time
-* \return Error code 
-*/
-int DLLEXPORT swmm_stride(int strideStep, double *elapsedTime);
+ * \brief Perform a SWMM simulation step with a stride step and return the elapsed time.
+ * \param[in] strideStep Stride step
+ * \param[out] elapsedTime Elapsed time
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_stride(int strideStep, double *elapsedTime);
 
 /*!
-* \brief Set hotstart file for SWMM simulation.
-* \details Sets the hotstart file to use for simulation. Errors does not terminate simulation unless
-* there is a prior terminating error.
-* \param[in] hotStartFile Path to the hotstart file
-* \return Error code 
-*/
-int DLLEXPORT swmm_useHotStart(const char* hotStartFile);
+ * \brief Set hotstart file for SWMM simulation.
+ * \details Sets the hotstart file to use for simulation. Errors does not terminate simulation unless
+ * there is a prior terminating error.
+ * \param[in] hotStartFile Path to the hotstart file
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_useHotStart(const char *hotStartFile);
 
 /*!
-* \brief Save hotstart file for SWMM simulation at current time.
-* \param[in] hotStartFile Path to the hotstart file
-* \return Error code 
-*/
-int DLLEXPORT swmm_saveHotStart(const char* hotStartFile);
+ * \brief Save hotstart file for SWMM simulation at current time.
+ * \param[in] hotStartFile Path to the hotstart file
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_saveHotStart(const char *hotStartFile);
 
 /*!
-* \brief End a SWMM simulation.
-* \return Error code 
-*/
-int DLLEXPORT swmm_end(void);
+ * \brief End a SWMM simulation.
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_end(void);
 
 /*!
-* \brief Writes simulation results to the report file.
-* \return Error code 
-*/
-int DLLEXPORT swmm_report(void);
+ * \brief Writes simulation results to the report file.
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_report(void);
 
 /*!
-* \brief Close a SWMM simulation.
-* \return Error code 
-*/
-int DLLEXPORT swmm_close(void);
+ * \brief Close a SWMM simulation.
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_close(void);
 
 /*!
-* \brief Get the mass balance errors for a SWMM simulation.
-* \param[out] runoffErr Runoff error (percent)
-* \param[out] flowErr Flow error (percent)
-* \param[out] qualErr Quality error (percent)
-* \return Error code 
-*/
-int DLLEXPORT swmm_getMassBalErr(float *runoffErr, float *flowErr, float *qualErr);
+ * \brief Get the mass balance errors for a SWMM simulation.
+ * \param[out] runoffErr Runoff error (percent)
+ * \param[out] flowErr Flow error (percent)
+ * \param[out] qualErr Quality error (percent)
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getMassBalErr(float *runoffErr, float *flowErr, float *qualErr);
 
 /*!
-* \brief Get the version of the SWMM engine.
-* \return Version number
-*/
-int DLLEXPORT swmm_getVersion(void);
+ * \brief Get the version of the SWMM engine.
+ * \return Version number
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getVersion(void);
 
 /*!
-* \brief Retrieves the code number and text of the error condition that 
-* caused SWMM to abort its analysis.
-* \param[out] errMsg Error message text
-* \param[in] msgLen Maximum size of errMsg
-* \return Error message code number
-*/
-int DLLEXPORT swmm_getError(char *errMsg, int msgLen);
+ * \brief Retrieves the code number and text of the error condition that
+ * caused SWMM to abort its analysis.
+ * \param[out] errMsg Error message text
+ * \param[in] msgLen Maximum size of errMsg
+ * \return Error message code number
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getError(char *errMsg, int msgLen);
 
 /*!
-* \brief Retrieves the text of the error message that corresponds to the error code number.
-* \param[in] errorCode Error code number
-* \param[out] outErrMsg Error message text
-* \return Error code
-*/
-int DLLEXPORT swmm_getErrorFromCode(int error_code, char *outErrMsg[1024]);
+ * \brief Retrieves the text of the error message that corresponds to the error code number.
+ * \param[in] errorCode Error code number
+ * \param[out] outErrMsg Error message text
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getErrorFromCode(int error_code, char *outErrMsg[1024]);
 
 /*!
-* \brief Gets the number of warnings issued during a simulation.
-* \return Number of warning messages issued
-*/
-int DLLEXPORT swmm_getWarnings(void);
+ * \brief Gets the number of warnings issued during a simulation.
+ * \return Number of warning messages issued
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getWarnings(void);
 
 /*!
-* \brief Retrieves the number of objects of a specific type.
-* \param[in] objType Type of SWMM object
-* \return Number of objects or error code
-*/
-int DLLEXPORT swmm_getCount(int objType);
+ * \brief Retrieves the number of objects of a specific type.
+ * \param[in] objType Type of SWMM object
+ * \return Number of objects or error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getCount(int objType);
 
 /*!
-* \brief Retrieves the ID name of an object.
-* \param[in] objType Type of SWMM object
-* \param[in] index Object index
-* \param[out] name Object name
-* \param[in] size Size of the name array
-* \return Error code
-*/
-int DLLEXPORT swmm_getName(int objType, int index, char *name, int size);
+ * \brief Retrieves the ID name of an object.
+ * \param[in] objType Type of SWMM object
+ * \param[in] index Object index
+ * \param[out] name Object name
+ * \param[in] size Size of the name array
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getName(int objType, int index, char *name, int size);
 
 /*!
-* \brief Retrieves the index of a named object.
-* \param[in] objType Type of SWMM object
-* \param[in] name Object name
-* \return Object index or error code
-*/
-int DLLEXPORT swmm_getIndex(int objType, const char *name);
+ * \brief Retrieves the index of a named object.
+ * \param[in] objType Type of SWMM object
+ * \param[in] name Object name
+ * \return Object index or error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getIndex(int objType, const char *name);
 
 /*!
-* \brief Get the value of a property for an object of a given property in the SWMM model.
-* \param[in] property Property type
-* \param[in] index Object index
-* \return Property value
-* \deprecated Use swmm_getValueExpanded instead. Function will be changed to swmm_getValueExpanded in future versions.
-*/
-double DLLEXPORT swmm_getValue(int property, int index);
+ * \brief Get the value of a property for an object of a given property in the SWMM model.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \return Property value
+ * \deprecated Use swmm_getValueExpanded instead. Function will be changed to swmm_getValueExpanded in future versions.
+ */
+double EXPORT_SWMM_SOLVER_API swmm_getValue(int property, int index);
 
 /*!
-* \brief Get the value of a property for an object given property, index, and subindex in the SWMM model.
-* \param[in] objType Object type
-* \param[in] property Property type
-* \param[in] index Object index
-* \param[in] subIndex Optional Subindex for the property
-* \return Property value
-*/
-double DLLEXPORT swmm_getValueExpanded(int objType, int property, int index, int subIndex);
+ * \brief Get the value of a property for an object given property, index, and subindex in the SWMM model.
+ * \param[in] objType Object type
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] subIndex Optional Subindex for the property
+ * \return Property value
+ */
+double EXPORT_SWMM_SOLVER_API swmm_getValueExpanded(int objType, int property, int index, int subIndex);
 
 /*!
-* \brief Set the value of a property for an object of a given property and index in the SWMM model.
-* \param[in] property Property type
-* \param[in] index Object index
-* \param[in] value Property value
-* \return Error code
-* \deprecated Use swmm_setValueExpanded instead. Function will be changed to swmm_setValueExpanded in future versions.
-*/
-int DLLEXPORT swmm_setValue(int property, int index,  double value);
+ * \brief Set the value of a property for an object of a given property and index in the SWMM model.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] value Property value
+ * \return Error code
+ * \deprecated Use swmm_setValueExpanded instead. Function will be changed to swmm_setValueExpanded in future versions.
+ */
+int EXPORT_SWMM_SOLVER_API swmm_setValue(int property, int index, double value);
 
 /*!
-* \brief Set the value of a property for an object given property, index, and subindex in the SWMM model.
-* \param[in] objType Object type
-* \param[in] property Property type
-* \param[in] index Object index
-* \param[in] subIndex Optional Subindex for the property
-* \param[in] value Property value
-* \return Error code
-*/
-int DLLEXPORT swmm_setValueExpanded(int objType, int property, int index, int subIndex, double value);
+ * \brief Set the value of a property for an object given property, index, and subindex in the SWMM model.
+ * \param[in] objType Object type
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] subIndex Optional Subindex for the property
+ * \param[in] value Property value
+ * \return Error code
+ */
+int EXPORT_SWMM_SOLVER_API swmm_setValueExpanded(int objType, int property, int index, int subIndex, double value);
 
 /*!
-* \brief Get saved value of 
-* \param[in] property Property type
-* \param[in] index Object index
-* \return Property value
-*/
-double DLLEXPORT swmm_getSavedValue(int property, int index, int period);
+ * \brief Get saved value of
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] period Time period index
+ * \return Property value
+ */
+double EXPORT_SWMM_SOLVER_API swmm_getSavedValue(int property, int index, int period);
 
 /*!
-* \brief Write a line of text to the SWMM report file.
-* \param[in] line Line of text
-*/
-void DLLEXPORT swmm_writeLine(const char *line);
+ * \brief Write a line of text to the SWMM report file.
+ * \param[in] line Line of text
+ */
+void EXPORT_SWMM_SOLVER_API swmm_writeLine(const char *line);
 
 /*!
-* \brief Decode double date value into year, month, day, hour, minute, second, and day of week.
-* \param[in] date Date value
-* \param[out] year Year
-* \param[out] month Month
-* \param[out] day Day
-* \param[out] hour Hour
-* \param[out] minute Minute
-* \param[out] second Second 
-* \param[out] dayOfWeek Day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
-*/
-void DLLEXPORT swmm_decodeDate(double date, int *year, int *month, int *day,
-                 int *hour, int *minute, int *second, int *dayOfWeek);
+ * \brief Decode double date value into year, month, day, hour, minute, second, and day of week.
+ * \param[in] date Date value
+ * \param[out] year Year
+ * \param[out] month Month
+ * \param[out] day Day
+ * \param[out] hour Hour
+ * \param[out] minute Minute
+ * \param[out] second Second
+ * \param[out] dayOfWeek Day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
+ */
+void EXPORT_SWMM_SOLVER_API swmm_decodeDate(double date, int *year, int *month, int *day,
+                               int *hour, int *minute, int *second, int *dayOfWeek);
 
 /*!
-* \brief Encode date values into a double date value.
-* \param[in] year Year
-* \param[in] month Month
-* \param[in] day Day
-* \param[in] hour Hour
-* \param[in] minute Minute
-* \param[in] second Second
-* \return Date value
-*/
-double DLLEXPORT swmm_encodeDate(int year, int month, int day,
-                 int hour, int minute, int second);
+ * \brief Encode date values into a double date value.
+ * \param[in] year Year
+ * \param[in] month Month
+ * \param[in] day Day
+ * \param[in] hour Hour
+ * \param[in] minute Minute
+ * \param[in] second Second
+ * \return Date value
+ */
+double EXPORT_SWMM_SOLVER_API swmm_encodeDate(int year, int month, int day,
+                                 int hour, int minute, int second);
 
-
-#ifdef __cplusplus 
-}   // matches the linkage specification from above */ 
+#ifdef __cplusplus
+} // matches the linkage specification from above */
 #endif
 
-#endif //SWMM5_H
+#endif // SWMM5_H

@@ -18,5 +18,11 @@ if platform.system() == "Windows":
         os.add_dll_directory(lib_dir)
     else:
         os.environ["PATH"] = lib_dir + ";" + os.environ["PATH"]
-
+elif platform.system() == "Linux":
+    lib_dir = os.path.join(sys.prefix, 'lib')
+    os.environ["LD_LIBRARY_PATH"] = lib_dir + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+elif platform.system() == "Darwin":  # macOS
+    lib_dir = os.path.join(sys.prefix, 'lib')
+    os.environ["DYLD_LIBRARY_PATH"] = lib_dir + ":" + os.environ.get("DYLD_LIBRARY_PATH", "")
+    
 from epaswmm import *

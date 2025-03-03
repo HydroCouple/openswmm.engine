@@ -2,15 +2,16 @@
 # CMakeLists.txt - CMake configuration file for swmm-solver/library
 #
 # Created: Jul 11, 2019
-# Updated: Dec  1, 2021
+# Updated: Feb 26, 2025
 #
 # Author: Michael E. Tryby
 #         US EPA ORD/CESER
+#         
+#         Caleb Buahin (Modified)
+#         US EPA ORD/CESER 
 #
 
-
 find_package(OpenMP)
-
 
 # configure file groups
 set(SWMM_PUBLIC_HEADERS
@@ -59,6 +60,62 @@ target_link_options(swmm5
         >
 )
 
+# CONFIGURE BUILD_NUMBER, BUILD_ID, BUILD_COMMIT, BUILD_BRANCH, BUILD_DATE
+string(TIMESTAMP BUILD_TIMESTAMP "%Y-%m-%d %H:%M:%S UTC")
+set(BUILD_DATE "${BUILD_TIMESTAMP}")
+
+execute_process(
+    COMMAND git rev-parse HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+# Get the branch name
+execute_process(
+    COMMAND git rev-parse --abbrev-ref HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_BRANCH_NAME
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+string(
+    UUID BUILD_ID 
+    NAMESPACE "00000000-0000-0000-0000-000000000000" 
+    NAME "https://www.epa.gov/water-research/storm-water-management-model-swmm" 
+    TYPE MD5
+)
+set(BUILD_ID "${BUILD_ID}")
+set(BUILD_BRANCH "${GIT_BRANCH_NAME}")
+set(BUILD_COMMIT "${GIT_COMMIT_HASH}")
+
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/version.h.in 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/version.h
+)
+
+
+# Define preprocessor macros for different platforms
+if(WIN32)
+    add_compile_definitions(OS_WINDOWS)
+elseif(APPLE)
+    add_compile_definitions(OS_MAC)
+elseif(UNIX)
+    add_compile_definitions(OS_UNIX)
+endif()
+
+include(GenerateExportHeader)
+generate_export_header(swmm5
+    BASE_NAME swmm5
+    EXPORT_MACRO_NAME EXPORT_SWMM_SOLVER_API
+    EXPORT_FILE_NAME swmm5_export.h
+    STATIC_DEFINE SHARED_EXPORTS_BUILT_AS_STATIC
+)
+
+file(COPY ${CMAKE_CURRENT_BINARY_DIR}/swmm5_export.h
+    DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
 target_link_libraries(swmm5
     PUBLIC
         $<$<NOT:$<BOOL:$<C_COMPILER_ID:MSVC>>>:m>
@@ -70,6 +127,23 @@ target_include_directories(swmm5
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${INCLUDE_DIST}>
 )
+
+
+if(APPLE)
+    set(LIB_ROOT "@loader_path")
+else()
+    set(LIB_ROOT "$ORIGIN")
+endif()
+
+set_target_properties(swmm5
+    PROPERTIES
+        MACOSX_RPATH TRUE
+        SKIP_BUILD_RPATH FALSE
+        BUILD_WITH_INSTALL_RPATH FALSE
+        INSTALL_RPATH "${LIB_ROOT};${PACKAGE_RPATH};"
+        INSTALL_RPATH_USE_LINK_PATH TRUE
+)
+
 
 install(TARGETS swmm5 EXPORT swmm5Targets
     RUNTIME    DESTINATION "${TOOL_DIST}"

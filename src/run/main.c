@@ -2,8 +2,8 @@
 * \file main.c
 * \author L. Rossman
 * \date 2021-03-24
-* \brief Main stub for the command line version of EPA SWMM 5.2
-* \details This is the main stub for the command line version of EPA SWMM 5.2
+* \brief Main stub for the command line version of EPA SWMM 5.3
+* \details This is the main stub for the command line version of EPA SWMM 5.3
 * to be run with swmm5.dll.
 * \version 5.3
 */
@@ -13,19 +13,19 @@
 #include "swmm5.h"
 
 /*!
-* \brief Main function for the command line version of EPA SWMM 5.2
+* \brief Main function for the command line version of EPA SWMM 5.3
 * \param[in] argc Number of command line arguments
 * \param[in] argv Array of command line arguments
 * \return Error status
 * \details Runs the command line version of EPA SWMM 5.2.
 * Command line may be executed using the following command: 
 * ```bash
-* runswmm f1 f2 f3
+* runswmm input_file report_file [output_file]
 * ```
-* where f1 = name of input file (typically with extension .inp),
-*       f2 = name of report file (typically with extension .rpt), and
-*       f3 = name of binary output file if saved or blank if not 
-*            saved (typically with extension .out).
+* where input_file  = name of input file (typically with extension .inp),
+*       report_file = name of report file (typically with extension .rpt), and
+*       output_file = name of binary output file if saved or blank if not 
+*                     aved (typically with extension .out).
 */
 int  main(int argc, char *argv[])
 {

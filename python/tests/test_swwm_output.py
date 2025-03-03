@@ -355,7 +355,7 @@ class TestSWMMOutput(unittest.TestCase):
 
         self.assertListEqual(
             list1=list(units),
-            list2 = [
+            list2=[
                 output.UnitSystem.US,
                 output.FlowUnits.CFS,
                 [output.ConcentrationUnits.MG, output.ConcentrationUnits.UG]
@@ -373,6 +373,210 @@ class TestSWMMOutput(unittest.TestCase):
 
         self.assertEqual(
             first=flow_units, second=output.FlowUnits.CFS, msg="Flow units should be CFS"
+        )
+
+    def test_output_get_element_properties(self):
+        """
+        Test the output get element properties function
+        :return:
+        """
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
+
+        sub_catchment_properties = swmm_output.get_num_properties(
+            element_type=output.ElementType.SUBCATCHMENT
+        )
+        node_properties = swmm_output.get_num_properties(
+            element_type=output.ElementType.NODE
+        )
+        link_properties = swmm_output.get_num_properties(
+            element_type=output.ElementType.LINK
+        )
+
+        self.assertEqual(
+            first=sub_catchment_properties, second=1,
+            msg="Number of sub-catchment properties should be 1"
+        )
+
+        self.assertEqual(
+            first=node_properties, second=3,
+            msg="Number of node properties should be 3"
+        )
+
+        self.assertEqual(
+            first=link_properties, second=5,
+            msg="Number of link properties should be 5"
+        )
+
+        sub_catchment_property_codes = [
+            swmm_output.get_property_code(
+                element_type=output.ElementType.SUBCATCHMENT,
+                property_index=i
+            ) for i in range(sub_catchment_properties)
+        ]
+
+        sub_catchment_property_codes_all = swmm_output.get_property_codes(
+            element_type=output.ElementType.SUBCATCHMENT
+        )
+
+        self.assertListEqual(
+            list1=sub_catchment_property_codes,
+            list2=[1],
+            msg="Sub-catchment property codes should be [1]"
+        )
+
+        self.assertListEqual(
+            list1=sub_catchment_property_codes,
+            list2=sub_catchment_property_codes_all,
+            msg="Sub-catchment property codes should be [1]"
+        )
+
+        node_property_codes = [
+            swmm_output.get_property_code(
+                element_type=output.ElementType.NODE,
+                property_index=i
+            ) for i in range(node_properties)
+        ]
+
+        node_property_codes_all = swmm_output.get_property_codes(
+            element_type=output.ElementType.NODE
+        )
+
+        self.assertListEqual(
+            list1=node_property_codes,
+            list2=[0, 2, 3],
+            msg="Node property codes should be [0, 2, 3]"
+        )
+
+        self.assertListEqual(
+            list1=node_property_codes,
+            list2=node_property_codes_all,
+            msg="Node property codes should be [0, 2, 3]"
+        )
+
+        link_property_codes = [
+            swmm_output.get_property_code(
+                element_type=output.ElementType.LINK,
+                property_index=i
+            ) for i in range(link_properties)
+        ]
+
+        link_property_codes_all = swmm_output.get_property_codes(
+            element_type=output.ElementType.LINK
+        )
+
+        self.assertListEqual(
+            list1=link_property_codes,
+            list2=[0, 4, 4, 3, 5],
+            msg="Link property codes should be [0, 4, 4, 3, 5]"
+        )
+
+        self.assertListEqual(
+            list1=link_property_codes,
+            list2=link_property_codes_all,
+            msg="Link property codes should be [0, 4, 4, 3, 5]"
+        )
+
+    def test_get_element_property_values(self):
+
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
+
+        sub_catchment_property_values = [
+            swmm_output.get_property_value(
+                element_type=output.ElementType.SUBCATCHMENT,
+                element_index=0,
+                property_code=i
+            ) for i in range(1)
+        ]
+
+        sub_catchment_property_values_all = swmm_output.get_property_values(
+            element_type=output.ElementType.SUBCATCHMENT,
+            element_index=0
+        )
+
+        self.assertListEqual(
+            list1=sub_catchment_property_values,
+            list2=[10.0],
+            msg="Sub-catchment property values should be [10.0]"
+        )
+
+        self.assertListEqual(
+            list1=sub_catchment_property_values,
+            list2=sub_catchment_property_values_all,
+            msg="Sub-catchment property values should be [10.0]"
+        )
+
+        node_property_values = [
+            swmm_output.get_property_value(
+                element_type=output.ElementType.NODE,
+                element_index=0,
+                property_code=i
+            ) for i in range(3)
+        ]
+
+        node_property_values_all = swmm_output.get_property_values(
+            element_type=output.ElementType.NODE,
+            element_index=0
+        )
+
+        self.assertListEqual(
+            list1=node_property_values,
+            list2=[0.0, 1000.0, 3.0],
+            msg="Node property values should be [0.0, 1000.0, 3.0]"
+        )
+
+        self.assertListEqual(
+            list1=node_property_values,
+            list2=node_property_values_all,
+            msg="Node property values should be [0.0, 1000.0, 3.0]"
+        )
+
+        link_property_values = [
+            swmm_output.get_property_value(
+                element_type=output.ElementType.LINK,
+                element_index=0,
+                property_code=i
+            ) for i in range(5)
+        ]
+
+        link_property_values_all = swmm_output.get_property_values(
+            element_type=output.ElementType.LINK,
+            element_index=0
+        )
+
+        self.assertListEqual(
+            list1=link_property_values,
+            list2=[0.0, 0.0, 0.0, 1.5, 400.0],
+            msg="Link property values should be [0.0, 0.0, 0.0, 1.5, 400.0]"
+        )
+
+        self.assertListEqual(
+            list1=link_property_values,
+            list2=link_property_values_all,
+            msg="Link property values should be [0.0, 0.0, 0.0, 1.5, 400.0]"
+        )
+
+    def test_output_get_element_variables(self):
+
+        swmm_output = Output(output_file=example_output_data.EXAMPLE_OUTPUT_FILE_1)
+        num_sub_catch_vars = swmm_output.get_num_variables(output.ElementType.SUBCATCHMENT)
+        num_node_vars = swmm_output.get_num_variables(output.ElementType.NODE)
+        num_link_vars = swmm_output.get_num_variables(output.ElementType.LINK)
+        num_system_vars = swmm_output.get_num_variables(output.ElementType.SYSTEM)
+
+        self.assertEqual(
+            first=num_sub_catch_vars, second=10, msg="Number of sub-catchment variables should be 10"
+        )
+
+        self.assertEqual(
+            first=num_node_vars, second=8, msg="Number of node variables should be 8"
+        )
+
+        self.assertEqual(
+            first=num_link_vars, second=7, msg="Number of link variables should be 7"
+        )
+
+        self.assertEqual(
+            first=num_system_vars, second=14, msg="Number of system variables should be 14"
         )
 
     def test_output_get_start_date(self):
@@ -578,9 +782,19 @@ class TestSWMMOutput(unittest.TestCase):
             attribute=output.SubcatchAttribute.RUNOFF_RATE,
         )
 
+        sub_catchment_timeseries_by_name = swmm_output.get_subcatchment_timeseries(
+            element_index='6',
+            attribute=output.SubcatchAttribute.RUNOFF_RATE,
+        )
+
         TestSWMMOutput.assert_dict_almost_equal(
             d1=sub_catchment_timeseries,
             d2=self.test_artifacts['test_get_subcatchment_timeseries'],
+        )
+
+        TestSWMMOutput.assert_dict_almost_equal(
+            d1=sub_catchment_timeseries_by_name,
+            d2=sub_catchment_timeseries,
         )
 
     def test_get_node_timeseries(self):
@@ -594,9 +808,19 @@ class TestSWMMOutput(unittest.TestCase):
             attribute=output.NodeAttribute.TOTAL_INFLOW,
         )
 
+        node_timeseries_by_name = swmm_output.get_node_timeseries(
+            element_index='19',
+            attribute=output.NodeAttribute.TOTAL_INFLOW,
+        )
+
         TestSWMMOutput.assert_dict_almost_equal(
             d1=node_timeseries,
             d2=self.test_artifacts['test_get_node_timeseries'],
+        )
+
+        TestSWMMOutput.assert_dict_almost_equal(
+            d1=node_timeseries_by_name,
+            d2=node_timeseries,
         )
 
     def test_get_link_timeseries(self):
@@ -610,9 +834,19 @@ class TestSWMMOutput(unittest.TestCase):
             attribute=output.LinkAttribute.FLOW_RATE,
         )
 
+        link_timeseries_by_name = swmm_output.get_link_timeseries(
+            element_index='8',
+            attribute=output.LinkAttribute.FLOW_RATE,
+        )
+
         TestSWMMOutput.assert_dict_almost_equal(
             link_timeseries,
             self.test_artifacts['test_get_link_timeseries'],
+        )
+
+        TestSWMMOutput.assert_dict_almost_equal(
+            link_timeseries_by_name,
+            link_timeseries,
         )
 
     def test_get_system_timeseries(self):
@@ -705,9 +939,19 @@ class TestSWMMOutput(unittest.TestCase):
             element_index=3
         )
 
+        sub_catchment_values_by_name = swmm_output.get_subcatchment_values_by_time_and_element_index(
+            time_index=5,
+            element_index='4'
+        )
+
         TestSWMMOutput.assert_dict_almost_equal(
             d1=sub_catchment_values,
             d2=self.test_artifacts['test_get_subcatchment_values_by_time_and_index'],
+        )
+
+        TestSWMMOutput.assert_dict_almost_equal(
+            d1=sub_catchment_values_by_name,
+            d2=sub_catchment_values,
         )
 
     def test_get_node_values_by_time_and_index(self):
@@ -721,9 +965,19 @@ class TestSWMMOutput(unittest.TestCase):
             element_index=4
         )
 
+        node_values_by_name = swmm_output.get_node_values_by_time_and_element_index(
+            time_index=8,
+            element_index='15'
+        )
+
         TestSWMMOutput.assert_dict_almost_equal(
             d1=node_values,
             d2=self.test_artifacts['test_get_node_values_by_time_and_index'],
+        )
+
+        TestSWMMOutput.assert_dict_almost_equal(
+            d1=node_values_by_name,
+            d2=node_values,
         )
 
     def test_get_link_values_by_time_and_index(self):
@@ -737,9 +991,19 @@ class TestSWMMOutput(unittest.TestCase):
             element_index=5
         )
 
+        link_values_by_name = swmm_output.get_link_values_by_time_and_element_index(
+            time_index=10,
+            element_index='8'
+        )
+
         TestSWMMOutput.assert_dict_almost_equal(
             d1=link_values,
             d2=self.test_artifacts['test_get_link_values_by_time_and_index'],
+        )
+
+        TestSWMMOutput.assert_dict_almost_equal(
+            d1=link_values_by_name,
+            d2=link_values,
         )
 
     def test_get_system_values_by_time(self):

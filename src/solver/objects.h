@@ -392,8 +392,8 @@ typedef struct
    double        fracImperv;      // fraction impervious
    double        slope;           // slope (ft/ft)
    double        curbLength;      // total curb length (ft)
-   double*       initBuildup;     // initial pollutant buildup (mass/ft2)
-   double*       apiExtBuildup;   // build up flux from API (mass/ft2)
+   double*       initBuildup;     // initial pollutant buildup (mass or count/ft2)
+   double*       apiExtBuildup;   // build up flux from API (mass or count/ft2)
    TLandFactor*  landFactor;      // array of land use factors
    TGroundwater* groundwater;     // associated groundwater data
    MathExpr*     gwLatFlowExpr;   // user-supplied lateral outflow expression

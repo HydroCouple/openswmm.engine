@@ -11,9 +11,7 @@
 
 
 /*!
-* \brief Constructs a new error handle.
-* \param message_lookup Function pointer for error message lookup
-* \return Pointer to instance of error manager handlke
+* \copydoc new_error_manager
 */
 error_handle_t* new_error_manager(p_msg_lookup message_lookup)
 {	
@@ -26,8 +24,7 @@ error_handle_t* new_error_manager(p_msg_lookup message_lookup)
 }
 
 /*!
-* \brief Destroy error manager handle
-* \param error_handle Pointer to error manager handle
+* \copydoc dst_error_manager
 */
 void dst_error_manager(error_handle_t* error_handle)
 {
@@ -35,9 +32,7 @@ void dst_error_manager(error_handle_t* error_handle)
 }
 
 /*!
-* \brief Sets an error code in the handle.
-* \param error_handle Pointer to error manager handle
-* \param errorcode Error code
+* \copydoc set_error
 */
 int set_error(error_handle_t* error_handle, int errorcode)
 {
@@ -50,10 +45,7 @@ int set_error(error_handle_t* error_handle, int errorcode)
 }
 
 /*!
-* \brief Returns the error message or NULL.
-* \param error_handle Pointer to error manager handle
-* \return Error message or NULL
-* \note Caller must free memory allocated by check_error
+* \copydoc check_error
 */
 char* check_error(error_handle_t* error_handle)
 {
@@ -68,10 +60,8 @@ char* check_error(error_handle_t* error_handle)
 	return temp;
 }
 
-
 /*!
-* \brief Clears the error from the handle.
-* \param error_handle Pointer to error manager handle
+* \copydoc clear_error
 */
 void clear_error(error_handle_t* error_handle)
 {

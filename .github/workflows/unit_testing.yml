@@ -1,0 +1,241 @@
+name: Build and Unit Test
+
+on:
+  push:
+    branches: [ master, bug_fixes]
+  pull_request:
+    branches: [ master]
+
+env:
+  BUILD_TYPE: Release
+  VCPKG_ROOT: "${{ github.workspace }}/vcpkg"
+  VCPKG_EXE:  "${{ github.workspace }}/vcpkg/vcpkg"
+  NUGET_FEED_URL: https://nuget.pkg.github.com/USEPA/index.json
+  VCPKG_BINARY_SOURCES: "clear;nuget,https://nuget.pkg.github.com/USEPA/index.json,readwrite"
+  OMP_NUM_THREADS: 1
+  BUILD_HOME: build
+  NUGET_USER_NAME: ${{ secrets.CALEB_NUGET_USER_NAME }}
+  NUGET_API_KEY: ${{ secrets.GITHUB_TOKEN  }}
+
+jobs:
+  engine_unit_test:
+    name: Build and Unit Testing of Engine
+    permissions: write-all
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-13, macos-latest]
+        include:
+          - os: ubuntu-latest
+            alias: Linux
+            shell: bash
+            cmake_preset: Linux
+            shell_extension: .sh
+            vcpkg_triplet: x64-linux
+
+          - os: macos-13
+            alias: intel-mac
+            cmake_preset: Darwin
+            shell: bash
+            shell_extension: .sh
+            vcpkg_triplet: x64-osx
+
+          - os: macos-latest
+            alias: apple-silicon
+            cmake_preset: Darwin
+            shell: bash
+            shell_extension: .sh
+            vcpkg_triplet: arm64-osx
+
+          - os: windows-latest
+            alias: win64
+            cmake_preset: Windows
+            shell: cmd
+            shell_extension: .bat
+            vcpkg_triplet: x64-windows
+
+    runs-on: ${{ matrix.os }}
+    environment: testing
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
+    steps:
+    - name: Checkout SWMM Repo
+      uses: actions/checkout@v4
+    
+    - name: Install OpenMP on MacOS
+      if: ${{ matrix.os == 'macos-latest' || matrix.os == 'macos-13' }}
+      run: |
+        brew reinstall --build-from-source libomp
+        brew link --force --overwrite libomp
+
+    - name: Checkout VCPKG
+      uses: actions/checkout@v4
+      with:
+        repository: microsoft/vcpkg
+        ref: 2025.02.14
+        path: vcpkg
+
+    - name: Bootstrap VCPKG (Windows)
+      if: ${{ matrix.os == 'windows-latest' }}
+      working-directory: ${{ env.VCPKG_ROOT }}
+      run: |
+        bootstrap-vcpkg${{ matrix.shell_extension }}
+        vcpkg integrate install
+    
+    - name: Bootstrap VCPKG (Unix like)
+      if: ${{ matrix.os != 'windows-latest' }}
+      working-directory: ${{ env.VCPKG_ROOT }}
+      run: |
+        ./bootstrap-vcpkg${{ matrix.shell_extension }}
+        chmod +x vcpkg
+
+    - name: Install Mono (Linux)
+      if: ${{ matrix.os == 'ubuntu-latest' }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mono-complete
+
+    - name: Install NuGet
+      uses: nuget/setup-nuget@v2
+      with:
+        nuget-version: 5.x
+    
+    - name: Configure Binary Sources (Windows)
+      if: ${{ matrix.os == 'windows-latest' }}
+      run: |
+        .$(vcpkg fetch nuget) sources add -Name github -Source ${{ env.NUGET_FEED_URL }} -UserName ${{ env.NUGET_USER_NAME }} -Password ${{ env.NUGET_API_KEY }}
+        .$(vcpkg fetch nuget) setapikey ${{ env.NUGET_API_KEY }} -Source github
+        .$(vcpkg fetch nuget) sources
+
+    - name: Configure Binary Sources (Unix like)
+      if: ${{ matrix.os != 'windows-latest' }}
+      working-directory: ${{ env.VCPKG_ROOT }}
+      run: |
+        mono `./vcpkg fetch nuget | tail -n 1` sources add -Name github -Source ${{ env.NUGET_FEED_URL }} -UserName ${{ env.NUGET_USER_NAME }} -Password ${{ env.NUGET_API_KEY }} 
+        mono `./vcpkg fetch nuget | tail -n 1` setapikey ${{ env.NUGET_API_KEY }} -Source github 
+        mono `./vcpkg fetch nuget | tail -n 1` sources
+
+    - name: Install Boost-Test (Windows)
+      run: |
+        .$(vcpkg fetch nuget) install boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} -Source github || (
+          vcpkg install boost-test && 
+          vcpkg export boost-test --nuget --output-dir=. &&
+          .$(vcpkg fetch nuget) push boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
+        )
+
+    - name: Install Boost-Test (Unix like)
+      run: |
+        mono `./vcpkg fetch nuget | tail -n 1` install boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }} -Source github || (
+          vcpkg install boost-test && 
+          vcpkg export boost-test --nuget --output-dir=. &&
+          mono `./vcpkg fetch nuget | tail -n 1` push boost-test-${{ matrix.os }}-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
+        )
+
+    - name: Build (Windows)
+      if: ${{ matrix.os == 'windows-latest' }}
+      env:
+        VCPKG_ROOT:  ${{ env.VCPKG_ROOT }}
+      run: |
+        cmake --preset=${{ matrix.cmake_preset }}
+        cmake -B ${{github.workspace}}/build-${{ matrix.vcpkg_triplet }} -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}  -DBUILD_TESTS=ON 
+        cmake --build ${{github.workspace}}/build-${{ matrix.vcpkg_triplet }} --target package
+    
+    - name: Unit Test
+      run: ctest --test-dir ${{github.workspace}}/build-${{ matrix.vcpkg_triplet }}  -C Debug --output-on-failure
+
+    
+    - name: Upload Artifacts
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts-${{ matrix.vcpkg_triplet }}
+        path: |
+          build-${{ matrix.vcpkg_triplet }}/*.tar.gz
+          build-${{ matrix.vcpkg_triplet }}/*.zip
+          build-${{ matrix.vcpkg_triplet }}/*.nupkg
+
+
+  python_binding_unit_test:
+    name: Build and Unit Test and Python Bindings
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-13, macos-latest]
+        python: [3.13]
+        include:
+          - os: ubuntu-latest
+            alias: Linux
+            shell: bash
+            cmake_preset: Linux
+            shell_extension: .sh
+            vcpkg_triplet: x64-linux
+
+          - os: macos-13
+            alias: intel-mac
+            cmake_preset: Darwin
+            shell: bash
+            shell_extension: .sh
+            vcpkg_triplet: x64-osx
+
+          - os: macos-latest
+            alias: apple-silicon
+            cmake_preset: Darwin
+            shell: bash
+            shell_extension: .sh
+            vcpkg_triplet: arm64-osx
+
+          - os: windows-latest
+            alias: win64
+            cmake_preset: Windows
+            shell: cmd
+            shell_extension: .bat
+            vcpkg_triplet: x64-windows
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
+    steps:
+    - name: Checkout SWMM Repo
+      uses: actions/checkout@v4
+
+    - name: Setup python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python }}
+    
+    - name: Install Python Requirements
+      working-directory: ${{ github.workspace }}/python
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r requirements-swmm.txt
+    
+    - name: Build Wheels
+      working-directory: ${{ github.workspace }}/python
+      run: |
+        python -m build --sduild
+        cibuildwheel --output-dir wheelhouse
+
+    - name: Build and Install
+      working-directory: ${{ github.workspace }}/python
+      run: |
+        python -m pip install .
+    
+    - name: Unit Test
+      working-directory: ${{ github.workspace }}/python
+      run: |
+        python -m pytest -v tests
+
+    - name: Upload Python Wheels
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-wheels-${{ matrix.vcpkg_triplet }} 
+        path: |
+          python/wheelhouse/*.whl
+          python/wheelhouse/*.tar.gz
+          python/wheelhouse/*.zip
+          python/dist/*.whl
+          python/dist/*.tar.gz
+          python/dist/*.zip

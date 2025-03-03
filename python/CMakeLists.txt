@@ -2,7 +2,7 @@
 # Created by: Caleb Buahin (EPA/ORD/CESER/WID)
 # Created on: 2024-11-19
 
-cmake_minimum_required(VERSION 3.15...3.26)
+cmake_minimum_required(VERSION 3.15...3.31)
 
 project(
     epaswmm
@@ -11,9 +11,10 @@ project(
 )
 
 # Define build options
+cmake_policy(SET CMP0148 OLD)
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 find_package(PythonExtensions REQUIRED)
 find_package(Cython REQUIRED)
-find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 
 # Append local dir to module search path
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)

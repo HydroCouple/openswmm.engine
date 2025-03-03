@@ -1,0 +1,26 @@
+{
+    "name": "swmm",
+    "description": "Stormwater Management Model (SWMM) is a dynamic rainfall-runoff-subsurface runoff simulation model used for single event or long-term (continuous) simulation of runoff quantity and quality from primarily urban areas.",
+    "license": "Public Domain",
+    "homepage": "https://www.epa.gov/water-research/storm-water-management-model-swmm",
+    "version-semver": "5.3.0-alpha.1",
+    "dependencies": [
+        {
+            "name": "vcpkg-cmake",
+            "host": true
+        },
+        {
+            "name": "vcpkg-cmake-config",
+            "host": true
+        },
+        {
+            "name": "boost-test" 
+        }
+    ],
+    "overrides": [
+        {
+            "name": "boost-test",
+            "version": "1.80.0"
+        }
+    ]
+}

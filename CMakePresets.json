@@ -1,0 +1,120 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "default-debug",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "Windows-debug",
+            "inherits": "default",
+            "description": "Windows build using Visual Studio generator",
+            "generator": "Visual Studio 17 2022",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "Linux-debug",
+            "inherits": "default",
+            "description": "Linux build using Ninja generator",
+            "generator": "Ninja",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "Darwin-debug",
+            "inherits": "default",
+            "description": "macOS build using Unix Makefiles generator",
+            "generator": "Xcode",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "default",
+            "generator": "Ninja",
+            "cacheVariables": {
+            }
+        },
+        {
+            "name": "Windows",
+            "inherits": "default",
+            "description": "Windows build using Visual Studio generator",
+            "generator": "Visual Studio 17 2022",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "Linux",
+            "inherits": "default",
+            "description": "Linux build using Ninja generator",
+            "generator": "Ninja",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "Darwin",
+            "inherits": "default",
+            "description": "macOS build using Unix Makefiles generator",
+            "generator": "Xcode",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "default",
+            "hidden": true,
+            "configurePreset": "default"
+        },
+        {
+            "name": "Windows",
+            "configurePreset": "Windows"
+        },
+        {
+            "name": "Linux",
+            "configurePreset": "Linux"
+        },
+        {
+            "name": "Darwin",
+            "configurePreset": "Darwin"
+        },
+        {
+            "name": "default-debug",
+            "hidden": true,
+            "configurePreset": "default-debug"
+        },
+        {
+            "name": "Windows-debug",
+            "configurePreset": "Windows-debug"
+        },
+        {
+            "name": "Linux-debug",
+            "configurePreset": "Linux-debug"
+        },
+        {
+            "name": "Darwin-debug",
+            "configurePreset": "Darwin-debug"
+        }
+    ]
+}

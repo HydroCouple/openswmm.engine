@@ -599,31 +599,32 @@ struct TExpression *Expression;       // array of math expressions
 int addPremise(int r, int type, char *Tok[], int nToks);
 
 /*!
- * \brief Retrieves a variable from a tokenized line of input.
- * \param[in] tok Array of string tokens
- * \param[in] nToks Number of tokens
- * \param[in] k Index of current token
- * \param[in, out] v Variable structure
- * \return Error code
- */
+* \brief Parses a variable (e.g., Node 123 Depth) used in a control rule.
+* \param[in] tok Array of string tokens
+* \param[in] nToks Number of tokens
+* \param[in] k Index of current token
+* \param[in, out] v Variable structure
+* \return Error code; updates k to new current token and places identity of specified variable in v
+*/
 int getPremiseVariable(char *tok[], int nToks, int *k, struct TVariable *v);
 
 /*!
- * \brief Retrieves a premise value from a tokenized line of input.
- * \param[in] token Token to evaluate
- * \param[in] attrib Attribute of object
- * \param[out] value Value of object
- * \return Error code
- */
+* \brief Parses the numerical value of a particular node/link attribute
+* in the premise clause of a control rule.
+* \param[in] token String token
+* \param[in] attrib Index of a node/link attribute
+* \param[out] value Attribute value
+* \return Error code
+*/
 int getPremiseValue(char *token, int attrib, double *value);
 
 /*!
- * \brief Adds an action clause to a control rule.
- * \param[in] r Rule index
- * \param[in] Tok Array of string tokens
- * \param[in] nToks Number of tokens
- * \return Error code
- */
+* \brief Adds a new action to a control rule.
+* \param[in] r Rule index
+* \param[in] tok Array of string tokens containing action statement
+* \param[in] nToks Number of string tokens
+* \return Error code
+*/
 int addAction(int r, char *Tok[], int nToks);
 
 /*!
@@ -689,23 +690,23 @@ void deleteActionList(void);
 void deleteRules(void);
 
 /*!
- * \brief Finds an exact match in a list of keywords.
- * \param[in] s String to match
- * \param[in] keyword Array of keywords
- * \return Index of keyword if found, -1 if not
- */
+* \brief Finds the exact match between a string and an array of keyword strings.
+* \param[in] s Character string
+* \param[in] keyword Array of keyword strings
+* \return Index of keyword which matches s or -1 if no match found
+*/
 int findExactMatch(char *s, char *keyword[]);
 
 /*!
- * \brief Sets the value of a control action.
- * \param[in] tok Array of string tokens
- * \param[in] nToks Number of tokens
- * \param[in] curve Curve index
- * \param[in] tseries Time series index
- * \param[in] attrib Attribute index
- * \param[out] value Value of action
- * \return Error code
- */
+* \brief Identifies how control actions settings are determined.
+* \param[in] tok Array of string tokens containing action statement
+* \param[in] nToks Number of string tokens
+* \param[in] curve Index of controller curve
+* \param[in] tseries Index of controller time series
+* \param[in] attrib r_PID if PID controller used
+* \param[out] values Values of control settings
+* \return Error code
+*/
 int setActionSetting(char *tok[], int nToks, int *curve, int *tseries,
                      int *attrib, double value[]);
 
@@ -747,10 +748,12 @@ double getNamedVariableValue(int varIndex);
 int getExpressionIndex(char *exprName);
 
 /*!
- * \brief Gets gauge attribute.
- * \param[in] token Token to evaluate
- * \return Attribute of gauge
- */
+* \brief Determines the attribute code for a rain gage variable.
+* \param[in] token String token
+* \return Attribute code or -1 if an error occurred
+* \note A valid token is INTENSITY for current rainfall intensity (attribute code = 0) 
+* or nHR_PRECIP for total rain depth over past n hours (attribute code = n).
+*/
 int getGageAttrib(char *token);
 
 /*!
@@ -780,9 +783,7 @@ void controls_init()
 }
 
 /*!
-* \brief Updates the number of named variables or math expressions used
-* by control rules.
-* \param[in] s String containing either "VARIABLE" or "EXPRESSION"
+* \copydoc controls_addToCount
 */
 void controls_addToCount(char *s)
 {
@@ -793,9 +794,7 @@ void controls_addToCount(char *s)
 }
 
 /*!
- * \brief Creates an array of control rules.
- * \param[in] n Total number of control rules
- * \return Error code
+ * \copydoc controls_create
  */
 int controls_create(int n)
 {
@@ -839,7 +838,7 @@ int controls_create(int n)
 }
 
 /*!
- * \brief Deletes all control rules.
+ * \copydoc controls_delete
  */
 void controls_delete(void)
 {
@@ -860,13 +859,7 @@ void controls_delete(void)
 }
 
 /*!
-* \brief Adds a named variable to the control rule system from a
-* tokenized line of input with formats:
-*  - VARIABLE  name = Object  id  attribute
-*  - VARIABLE  name = SIMULATION attribute
-* \param[in] tok Array of string tokens
-* \param[in] nToks Number of tokens
-* \return Error code
+* \copydoc controls_addVariable
 */
 int controls_addVariable(char *tok[], int nToks)
 {
@@ -893,12 +886,7 @@ int controls_addVariable(char *tok[], int nToks)
 }
 
 /*!
-* \brief Adds a math expression to the control rule system from a
-* a tokenized line of input with format:
-*   EXPRESSION  name = <math expression containing VARIABLE names>
-* \param[in] tok Array of string tokens
-* \param[in] nToks Number of tokens
-* \return Error code
+* \copydoc controls_addExpression
 */
 int controls_addExpression(char *tok[], int nToks)
 {
@@ -928,54 +916,7 @@ int controls_addExpression(char *tok[], int nToks)
 }
 
 /*!
-* \brief Finds the array index of a named variable.
-* \param[in] varName String containing a variable name
-* \return Index of the named variable or -1 if not found
-*/
-int getVariableIndex(char *varName)
-{
-    int i;
-    for (i = 0; i < VariableCount; i++)
-    {
-        if (match(varName, NamedVariable[i].name))
-            return i;
-    }
-    return -1;
-}
-
-/*!
-* \brief Finds the value of a named variable.
-* \param[in] varIndex Index of a named variable
-* \return Current value of the variable
-*/
-double getNamedVariableValue(int varIndex)
-{
-    return getVariableValue(NamedVariable[varIndex].variable);
-}
-
-/*!
-* \brief Finds the array index of a math expression.
-* \param[in] exprName String containing an expression name
-* \return Index of the expression or -1 if not found
-*/
-int getExpressionIndex(char *exprName)
-{
-    int i;
-    for (i = 0; i < ExpressionCount; i++)
-    {
-        if (match(exprName, Expression[i].name))
-            return i;
-    }
-    return -1;
-}
-
-/*!
-* \brief Adds a new clause to a control rule.
-* \param[in] r Rule index
-* \param[in] keyword Clause's keyword code (IF, THEN, etc.)
-* \param[in] tok Array of string tokens that comprises the clause
-* \param[in] nToks Number of tokens
-* \return Error code
+* \copydoc controls_addRuleClause
 */
 int controls_addRuleClause(int r, int keyword, char *tok[], int nToks)
 {
@@ -1034,11 +975,7 @@ int controls_addRuleClause(int r, int keyword, char *tok[], int nToks)
 }
 
 /*!
-* \brief Evaluates all control rules at the current time of the simulation.
-* \param[in] currentTime Current simulation date/time
-* \param[in] elapsedTime Decimal days since start of simulation
-* \param[in] tStep Simulation time step (days)
-* \return Number of new actions taken
+* \copydoc controls_evaluate
 */
 int controls_evaluate(DateTime currentTime, DateTime elapsedTime, double tStep)
 {
@@ -1099,12 +1036,43 @@ int controls_evaluate(DateTime currentTime, DateTime elapsedTime, double tStep)
 }
 
 /*!
-* \brief Adds a new premise to a control rule.
-* \param[in] r Control rule index
-* \param[in] type Type of premise (IF, AND, OR)
-* \param[in] tok Array of string tokens containing premise statement
-* \param[in] nToks Number of string tokens
-* \return Error code
+* \copydoc getVariableIndex
+*/
+int getVariableIndex(char *varName)
+{
+    int i;
+    for (i = 0; i < VariableCount; i++)
+    {
+        if (match(varName, NamedVariable[i].name))
+            return i;
+    }
+    return -1;
+}
+
+/*!
+* \copydoc getVariableValue
+*/
+double getNamedVariableValue(int varIndex)
+{
+    return getVariableValue(NamedVariable[varIndex].variable);
+}
+
+/*!
+* \copydoc getExpressionIndex
+*/
+int getExpressionIndex(char *exprName)
+{
+    int i;
+    for (i = 0; i < ExpressionCount; i++)
+    {
+        if (match(exprName, Expression[i].name))
+            return i;
+    }
+    return -1;
+}
+
+/*!
+* \copydoc addPremise
 */
 int addPremise(int r, int type, char *tok[], int nToks)
 {
@@ -1218,12 +1186,7 @@ int addPremise(int r, int type, char *tok[], int nToks)
 }
 
 /*!
-* \brief Parses a variable (e.g., Node 123 Depth) used in a control rule.
-* \param[in] tok Array of string tokens
-* \param[in] nToks Number of tokens
-* \param[in] k Index of current token
-* \param[in, out] v Variable structure
-* \return Error code; updates k to new current token and places identity of specified variable in v
+* \copydoc getPremiseVariable
 */
 int getPremiseVariable(char *tok[], int nToks, int *k, struct TVariable *v)
 {
@@ -1366,11 +1329,7 @@ int getPremiseVariable(char *tok[], int nToks, int *k, struct TVariable *v)
 }
 
 /*!
-* \brief Determines the attribute code for a rain gage variable.
-* \param[in] token String token
-* \return Attribute code or -1 if an error occurred
-* \note A valid token is INTENSITY for current rainfall intensity (attribute code = 0) 
-* or nHR_PRECIP for total rain depth over past n hours (attribute code = n).
+* \copydoc getGageAttrib
 */
 int getGageAttrib(char *token)
 {
@@ -1390,12 +1349,7 @@ int getGageAttrib(char *token)
 }
 
 /*!
-* \brief Parses the numerical value of a particular node/link attribute
-* in the premise clause of a control rule.
-* \param[in] token String token
-* \param[in] attrib Index of a node/link attribute
-* \param[out] value Attribute value
-* \return Error code
+* \copydoc getPremiseValue
 */
 int getPremiseValue(char *token, int attrib, double *value)
 {
@@ -1456,11 +1410,7 @@ int getPremiseValue(char *token, int attrib, double *value)
 }
 
 /*!
-* \brief Adds a new action to a control rule.
-* \param[in] r Rule index
-* \param[in] tok Array of string tokens containing action statement
-* \param[in] nToks Number of string tokens
-* \return Error code
+* \copydoc addAction
 */
 int addAction(int r, char *tok[], int nToks)
 {
@@ -2158,10 +2108,7 @@ void deleteRules(void)
 }
 
 /*!
-* \brief Finds the exact match between a string and an array of keyword strings.
-* \param[in] s Character string
-* \param[in] keyword Array of keyword strings
-* \return Index of keyword which matches s or -1 if no match found
+* \copydoc findExactMatch
 */
 int findExactMatch(char *s, char *keyword[])
 {

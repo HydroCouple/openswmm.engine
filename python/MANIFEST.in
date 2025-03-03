@@ -1,11 +1,30 @@
 include LICENSE
 include README.md
-recursive-include . *.py
-recursive-include . *.txt
-recursive-include . *.md
-recursive-include . *.pyi
-recursive-include . *.inp
-recursive-include . *.pickle
-recursive-include docs *.rst
-recursive-include tests *.csv
+prune **/.git
+prune **/.git
+prune **/.github
+prune **/.vscode
+prune **/.pytest_cache
+prune **/__pycache__
+prune **/build
+prune **/dist
+prune **/epaswmm.egg-info
+prune **/venvepaswmm
+prune **/venvtest
+prune **/output_build
+prune **/_skbuild
+prune **/wheelhouse
+recursive-include epaswmm *.py
+recursive-include tests *.py
+recursive-include epaswmm *.txt
+recursive-include epaswmm *.md
+recursive-include epaswmm *.pyi
+recursive-include epaswmm *.pyx
+recursive-include epaswmm *.pxd
+recursive-include tests *.inp
+recursive-include docs *.*
+recursive-include tests *.*
+global-exclude *.pyd
 global-exclude *.pyc
+global-exclude *_drainage_example.out
+global-exclude __pycache__

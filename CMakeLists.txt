@@ -1,23 +1,24 @@
 #
 # CMakeLists.txt - CMake configuration file for swmm-solver
 #
-# Created: July 11, 2019
-# Modified: Aug 16, 2022
+# Created:  July 11, 2019
+# Modified: February 26, 2025
 #
 # Author: Michael E. Tryby
 #         US EPA ORD/CESER
 #
+#         Caleb Buahin (Modified)
+#         US EPA ORD/CESER 
+#
 
-
-cmake_minimum_required (VERSION 3.13)
+cmake_minimum_required (VERSION 3.27)
 
 if("${CMAKE_BINARY_DIR}" STREQUAL "${CMAKE_SOURCE_DIR}")
     message(FATAL_ERROR "In-source builds are disabled.") 
 endif()
 
-
 project(swmm-solver
-    VERSION 5.2.4
+    VERSION 5.3.0
     LANGUAGES C CXX
 )
 

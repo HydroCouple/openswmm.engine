@@ -95,18 +95,20 @@ from epaswmm import solver
 from epaswmm.solver import Solver 
 from epaswmm.output import Output
 
+# Alternative 1 to run SWMM
+
 with Solver(inp_file="input_file.inp") as swmm_solver:
    
-   # Open swmm file and initialize objects
-   swmm_solver.initialize()
+   # Open swmm file and starts the simulation
+   swmm_solver.start()
 
    # Set initialization parameters e.g., time step stride, start date, end date etc.
    swmm_solver.time_stride = 600 
 
-   for elapsed_time in swmm_solver:
+   for elapsed_time, current_datetime in swmm_solver:
 
       # Get and set attributes per timestep
-      print(swmm_solver.current_datetime)
+      print(current_datetime)
 
       swmm_solver.set_value(
          object_type=solver.SWMMObjects.RAIN_GAGE,
@@ -114,7 +116,27 @@ with Solver(inp_file="input_file.inp") as swmm_solver:
          index=0,
          value=3.6
       )
-   
+
+# Alternative 2 to run SWMM
+swmm_solver = Solver(inp_file="input_file.inp")
+swmm_solver.initialize()
+
+for elapsed_time, current_datetime in swmm_solver:
+   # Get and set attributes per timestep
+   print(current_datetime)
+
+swmm_solver.finalize()
+# or
+# swmm_solver.end()
+# swmm_solver.report()
+# swmm_solver.close()
+
+# Alternative 3 to run SWMM
+swmm_solver = Solver(inp_file="input_file.inp")
+swmm_solver.execute()
+
+# To read output file
+
 swmm_output = Output(output_file='output_file.out')
 
 # Dict[datetime, float]

@@ -1,6 +1,6 @@
 /*!
  * \file swmm5.c
- * \brief Main module of the computational engine for Version 5 of the 
+ * \brief Main module of the computational engine for Version 5 of the
  * U.S. Environmental Protection Agency's Storm Water Management Model (SWMM).
  * \author L. Rossman
  * \date Created: 2021-11-01
@@ -9,72 +9,53 @@
  * \details This is the main module of the computational engine for Version 5 of
  * the U.S. Environmental Protection Agency's Storm Water Management Model
  * (SWMM). It contains functions that control the flow of computations.
- * 
+ *
  * This engine should be compiled into a shared object library whose API
  * functions are listed in swmm5.h.
- * 
+ *
  * Update History
  * ==============
- * Build 5.1.008:
- * - Support added for the MinGW compiler.
- * - Reporting of project options moved to swmm_start.
- * - Hot start file now read before routing system opened.
- * - Final routing step adjusted so that total duration not exceeded.
- * Build 5.1.011:
- * - Made sure that MS exception handling only used with MS C compiler.
- * - Added name of module handling an exception to error report.
- * - Elapsed simulation time now saved to new global variable ElaspedTime.
- * - Added swmm_getError() function that retrieves error code and message.
- * - Changed WarningCode to Warnings (# warnings issued).
- * - Added swmm_getWarnings() function to retrieve value of Warnings.
- * - Fixed error code returned on swmm_xxx functions.
- * Build 5.1.012:
- * - #include <direct.h> only used when compiled for Windows.
- * Build 5.1.013:
- * - Support added for saving average results within a reporting period.
- * - SWMM engine now always compiled to a shared object library.
- * Build 5.1.015:
- * - Fixes bug in summary statistics when Report Start date > Start Date.
- * Build 5.2.0:
- * - Added additional API functions.
- * - Set max. number of open files to 8192.
- * - Changed getElapsedTime function to use report start as base date/time.
- * - Prevented possible infinite loop if swmm_step() called when ErrorCode > 0.
- * - Prevented early exit from swmm_end() when ErrorCode > 0.
- * - Support added for relative file names.
- * Build 5.3.0:
- * - Added support for saving hot start files at specific times.
- * - Expanded SWMM api to save and use prescribed hotstart files.
- * - Expansions to the SWMM API to include attributes of more objects and water quality.
+ *  - Build 5.1.008:
+ *      - Support added for the MinGW compiler.
+ *      - Reporting of project options moved to swmm_start.
+ *      - Hot start file now read before routing system opened.
+ *      - Final routing step adjusted so that total duration not exceeded.
+ *  - Build 5.1.011:
+ *      - Made sure that MS exception handling only used with MS C compiler.
+ *      - Added name of module handling an exception to error report.
+ *      - Elapsed simulation time now saved to new global variable ElaspedTime.
+ *      - Added swmm_getError() function that retrieves error code and message.
+ *      - Changed WarningCode to Warnings (# warnings issued).
+ *      - Added swmm_getWarnings() function to retrieve value of Warnings.
+ *      - Fixed error code returned on swmm_xxx functions.
+ *  - Build 5.1.012:
+ *      - #include <direct.h> only used when compiled for Windows.
+ *  - Build 5.1.013:
+ *      - Support added for saving average results within a reporting period.
+ *      - SWMM engine now always compiled to a shared object library.
+ *  - Build 5.1.015:
+ *      - Fixes bug in summary statistics when Report Start date > Start Date.
+ *  - Build 5.2.0:
+ *      - Added additional API functions.
+ *      - Set max. number of open files to 8192.
+ *      - Changed getElapsedTime function to use report start as base date/time.
+ *      - Prevented possible infinite loop if swmm_step() called when ErrorCode > 0.
+ *      - Prevented early exit from swmm_end() when ErrorCode > 0.
+ *      - Support added for relative file names.
+ *  - Build 5.3.0:
+ *      - Added support for saving hot start files at specific times.
+ *      - Expanded SWMM api to save and use prescribed hotstart files.
+ *      - Expansions to the SWMM API to include attributes of more objects and water quality.
  */
 
 /*!
-* \def _CRT_SECURE_NO_DEPRECATE 
-* \brief Define to prevent deprecation warnings from MS Visual C++ compilers
-*/
+ * \def _CRT_SECURE_NO_DEPRECATE
+ * \brief Define to prevent deprecation warnings from MS Visual C++ compilers
+ */
 #define _CRT_SECURE_NO_DEPRECATE
 
-// --- define WINDOWS
-#undef WINDOWS
-#ifdef _WIN32
-
-/*!
- * \def WINDOWS
- * \brief Define for Windows platform
- */
-#define WINDOWS
-#endif
-#ifdef __WIN32__
-
-/*!
- * \def WINDOWS
- * \brief Define for Windows platform
- */
-#define WINDOWS
-#endif
-
 #undef EXH // indicates if exception handling included
-#ifdef WINDOWS
+#ifdef OS_WINDOWS
 #ifdef _MSC_VER
 /*!
  * \def EXH
@@ -85,13 +66,14 @@
 #endif
 
 // --- include Windows & exception handling headers
-#ifdef WINDOWS
+#ifdef OS_WINDOWS
 #include <windows.h>
 #include <direct.h>
 #include <errno.h>
 #else
 #include <unistd.h>
 #endif
+
 #ifdef EXH
 #include <excpt.h>
 #endif
@@ -105,12 +87,12 @@
 
 // Protect against lack of compiler support for OpenMP
 #if defined(_OPENMP)
-#include <omp.h>     
+#include <omp.h>
 #else
 /*!
-* \brief Dummy function for getting threads available for OpenMP to prevent compiler errors.
-* \return 1
-*/
+ * \brief Dummy function for getting threads available for OpenMP to prevent compiler errors.
+ * \return 1
+ */
 int omp_get_max_threads(void) { return 1; }
 #endif
 
@@ -124,10 +106,10 @@ int omp_get_max_threads(void) { return 1; }
 #include "objects.h" // definitions of SWMM's data objects
 
 /*!
-* \def EXTERN
-* \brief Define for 'extern' in headers.h
-*/
-#define EXTERN       // defined as 'extern' in headers.h
+ * \def EXTERN
+ * \brief Define for 'extern' in headers.h
+ */
+#define EXTERN // defined as 'extern' in headers.h
 
 #include "globals.h" // declaration of all global variables
 #include "funcs.h"   // declaration of all global functions
@@ -137,22 +119,22 @@ int omp_get_max_threads(void) { return 1; }
 #include "swmm5.h" // declaration of SWMM's API functions
 
 /*!
-* \def MAX_EXCEPTIONS
-* \brief Maximum number of exceptions handled
-*/
-#define MAX_EXCEPTIONS 100 
+ * \def MAX_EXCEPTIONS
+ * \brief Maximum number of exceptions handled
+ */
+#define MAX_EXCEPTIONS 100
 
 /*!
-* \addtogroup UnitConversionFactors Unit Conversion Factors
-* \brief Conversion factors for units used in SWMM.
-* \ingroup SWMM_Constants
-* \{
-*/
+ * \addtogroup UnitConversionFactors Unit Conversion Factors
+ * \brief Conversion factors for units used in SWMM.
+ * \ingroup SWMM_Constants
+ * \{
+ */
 
 /*!
-* \var Ucf
-* \brief Unit conversion factors for different units used in SWMM.
-*/
+ * \var Ucf
+ * \brief Unit conversion factors for different units used in SWMM.
+ */
 const double Ucf[10][2] =
     {
         //  US      SI
@@ -169,277 +151,284 @@ const double Ucf[10][2] =
 };
 
 /*!
-* \var Qcf 
-* \brief Flow conversion factors for different flow units used in SWMM.
-*/
+ * \var Qcf
+ * \brief Flow conversion factors for different flow units used in SWMM.
+ */
 const double Qcf[6] =          // Flow Conversion Factors:
     {1.0, 448.831, 0.64632,    // cfs, gpm, mgd --> cfs
      0.02832, 28.317, 2.4466}; // cms, lps, mld --> cfs
 /*!
-* \}
-*/
+ * \}
+ */
 
 /*!
-* \addtogroup SWMM_API_Shared_Variable SWMM Shared Variables
-* \brief SWMM API shared variables.
-* \ingroup SWMM_Constants
-* \{
-*/
+ * \addtogroup SWMM_API_Shared_Variable SWMM Shared Variables
+ * \brief SWMM API shared variables.
+ * \ingroup SWMM_Constants
+ * \{
+ */
 
 /*!
-* \var IsOpenFlag 
-* \brief TRUE if a project has been opened.
-*/
-static int IsOpenFlag;         // TRUE if a project has been opened
+ * \var IsOpenFlag
+ * \brief TRUE if a project has been opened.
+ */
+static int IsOpenFlag; // TRUE if a project has been opened
 
 /*!
-* \var IsStartedFlag
-* \brief TRUE if a simulation has been started.
-*/
-static int IsStartedFlag;      // TRUE if a simulation has been started
+ * \var IsStartedFlag
+ * \brief TRUE if a simulation has been started.
+ */
+static int IsStartedFlag; // TRUE if a simulation has been started
 
 /*!
-* \var SaveResultsFlag
-* \brief TRUE if output to be saved to binary file.
-*/
-static int SaveResultsFlag;    // TRUE if output to be saved to binary file
+ * \var SaveResultsFlag
+ * \brief TRUE if output to be saved to binary file.
+ */
+static int SaveResultsFlag; // TRUE if output to be saved to binary file
 
 /*!
-* \var ExceptionCount
-* \brief Number of exceptions handled.
-*/
-static int ExceptionCount;     // number of exceptions handled
+ * \var ExceptionCount
+ * \brief Number of exceptions handled.
+ */
+static int ExceptionCount; // number of exceptions handled
 
 /*!
-* \var DoRunoff
-* \brief TRUE if runoff is computed.
-*/
-static int DoRunoff;           // TRUE if runoff is computed
+ * \var DoRunoff
+ * \brief TRUE if runoff is computed.
+ */
+static int DoRunoff; // TRUE if runoff is computed
 
 /*!
-* \var DoRouting
-* \brief TRUE if flow routing is computed.
-*/
-static int DoRouting;          // TRUE if flow routing is computed
+ * \var DoRouting
+ * \brief TRUE if flow routing is computed.
+ */
+static int DoRouting; // TRUE if flow routing is computed
 
 /*!
-* \var RoutingDuration
-* \brief Duration of a set of routing steps (msecs).
-*/
+ * \var RoutingDuration
+ * \brief Duration of a set of routing steps (msecs).
+ */
 static double RoutingDuration; // duration of a set of routing steps (msecs)
 /*!
-* \}
-*/
+ * \}
+ */
 
 /*!
-* \addtogroup SWMM_API_Local_Functions SWMM Local Functions
-* \brief Local functions used by the SWMM API functions.
-* \ingroup SWMM_Constants
-* \{
-*/
+ * \addtogroup SWMM_API_Local_Functions SWMM Local Functions
+ * \brief Local functions used by the SWMM API functions.
+ * \ingroup SWMM_Constants
+ * \{
+ */
 
 /*!
-* \brief Routes flow and WQ through drainage system over a single time step.
-*/
+ * \brief Routes flow and WQ through drainage system over a single time step.
+ */
 static void execRouting(void);
 
 /*!
-* \brief Saves current results to binary output file.
-*/
+ * \brief Saves current results to binary output file.
+ */
 static void saveResults(void);
 
 /*!
-* \brief Retrieve rain gage value given its index and property type.
-* \param[in] index Object index
-* \param[in] property Property type
-* \return Property value
-*/
-static double getGageValue(int index, int property);
+ * \brief Retrieve rain gage value given its index and property type.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \return Property value
+ */
+static double getGageValue(int property, int index);
 
 /*!
-* \brief Retrieve subcatchment value given its index, property type, and subindex.
-* \param[in] index Object index
-* \param[in] property Property type
-* \param[in] subIndex Subindex
-* \return Property value
-*/
+ * \brief Retrieve subcatchment value given its index, property type, and subindex.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] subIndex Subindex
+ * \return Property value
+ */
 static double getSubcatchValue(int property, int index, int subIndex);
 
 /*!
-* \brief Retrieve node value given its index, property type, and subindex.
-* \param[in] index Object index
-* \param[in] property Property type
-* \param[in] subIndex Subindex
-* \return Property value
-*/
+ * \brief Retrieve node value given its index, property type, and subindex.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] subIndex Subindex
+ * \return Property value
+ */
 static double getNodeValue(int property, int index, int subIndex);
 
 /*!
-* \brief Retrieve link value given its index, property type, and subindex.
-* \param[in] index Object index
-* \param[in] property Property type
-* \param[in] subIndex Subindex
-* \return Property value
-*/
+ * \brief Retrieve link value given its index, property type, and subindex.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] subIndex Subindex
+ * \return Property value
+ */
 static double getLinkValue(int property, int index, int subIndex);
 
 /*!
-* \brief Retrieve saved date value given a period.
-* \param[in] period Period
-* \return Date value
-*/
+ * \brief Retrieves the date/time of a reporting period.
+ * \param[in] period reporting period (starting at 1)
+ * \return Returns the date/time of the reporting period in decimal days
+ */
 static double getSavedDate(int period);
 
 /*!
-* \brief Retrieve saved value of a subcatchment, node, or link given its index, property type, and period.
-* \param[in] property Property type
-* \param[in] index Object index
-* \param[in] period Period
-* \return Property value
-*/
+ * \brief Retrieve saved value of a subcatchment, node, or link given its index, property type, and period.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] period Reporting period (starting at 1)
+ * \return Property value
+ */
 static double getSavedSubcatchValue(int property, int index, int period);
 
 /*!
-* \brief Retrieve saved value of a node given its index, property type, and period.
-* \param[in] property Property type
-* \param[in] index Object index
-* \param[in] period Period
-* \return Property value
-*/
+ * \brief Retrieve saved value of a node given its index, property type, and period.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] period Reporting period (starting at 1)
+ * \return Property value
+ */
 static double getSavedNodeValue(int property, int index, int period);
 
 /*!
-* \brief Retrieve saved value of a link given its index, property type, and period.
-* \param[in] property Property type
-* \param[in] index Object index
-* \param[in] period Period
-* \return Property value
-*/
+ * \brief Retrieve saved value of a link given its index, property type, and period.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] period Reporting period (starting at 1)
+ * \return Property value
+ */
 static double getSavedLinkValue(int property, int index, int period);
 
 /*!
-* \brief Retrieve system value given its property type.
-* \param[in] property Property type
-* \return Property value
-*/
+ * \brief Retrieve system value given its property type.
+ * \param[in] property Property type
+ * \return Property value
+ */
 static double getSystemValue(int property);
 
 /*!
-* \brief Retrieve the maximum routing step.
-* \return Maximum routing step
-*/
+ * \brief Retrieve the maximum routing step.
+ * \return Maximum routing step
+ */
 static double getMaxRouteStep();
 
 /*!
-* \brief Set gage value given its property type, index, subindex, and value.
-* \param[in] property Property type
-* \param[in] index Object index
-* \param[in] subIndex Subindex
-* \param[in] value Property value
-* \return Error code
-*/
+ * \brief Set gage value given its property type, index, subindex, and value.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] subIndex Subindex
+ * \param[in] value Property value
+ * \return Error code
+ */
 static int setGageValue(int property, int index, int subIndex, double value);
 
 /*!
-* \brief Set subcatchment value given its property type, index, subindex, and value.
-* \param[in] property Property type
-* \param[in] index Object index
-* \param[in] subIndex Subindex
-* \param[in] value Property value
-* \return Error code
-*/
+ * \brief Set subcatchment value given its property type, index, subindex, and value.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] subIndex Subindex
+ * \param[in] value Property value
+ * \return Error code
+ */
 static int setSubcatchValue(int property, int index, int subIndex, double value);
 
 /*!
-* \brief Set node value given its property type, index, subindex, and value.
-* \param[in] property Property type
-* \param[in] index Object index
-* \param[in] subIndex Subindex
-* \param[in] value Property value
-* \return Error code
-*/
+ * \brief Set node value given its property type, index, subindex, and value.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] subIndex Subindex
+ * \param[in] value Property value
+ * \return Error code
+ */
 static int setNodeValue(int property, int index, int subIndex, double value);
 
 /*!
-* \brief Set link value given its property type, index, subindex, and value.
-* \param[in] property Property type
-* \param[in] index Object index
-* \param[in] subIndex Subindex
-* \param[in] value Property value
-* \return Error code
-*/
+ * \brief Set link value given its property type, index, subindex, and value.
+ * \param[in] property Property type
+ * \param[in] index Object index
+ * \param[in] subIndex Subindex
+ * \param[in] value Property value
+ * \return Error code
+ */
 static int setLinkValue(int property, int index, int subIndex, double value);
 
 /*!
-* \brief Set node lateral inflow value given its index and value.
-* \param[in] index Object index
-* \param[in] value Property value
-* \return Error code
-*/
+ * \brief Set node lateral inflow value given its index and value.
+ * \param[in] index Object index
+ * \param[in] value Property value
+ * \return Error code
+ */
 static int setNodeLatFlow(int index, double value);
 
 /*!
-* \brief Set outfall stage value given its index and value.
-* \param[in] index Object index
-* \param[in] value Property value
-* \return Error code
-*/
+ * \brief Set outfall stage value given its index and value.
+ * \param[in] index Object index
+ * \param[in] value Property value
+ * \return Error code
+ */
 static int setOutfallStage(int index, double value);
 
 /*!
-* \brief Set link setting value given its index and value.
-* \param[in] index Object index
-* \param[in] value Property value
-* \return Error code
-*/
+ * \brief Set link setting value given its index and value.
+ * \param[in] index Object index
+ * \param[in] value Property value
+ * \return Error code
+ */
 static int setLinkSetting(int index, double value);
 
 /*!
-* \brief Set routing step value.
-* \param[in] value Property value
-* \return Error code
-*/
+ * \brief Set routing step value.
+ * \param[in] value Property value
+ * \return Error code
+ */
 static int setRoutingStep(double value);
 
 /*!
-* \brief Set system value given its property type and value.
-* \param[in] property Property type
-* \param[in] value Property value
-* \return Error code
-*/
+ * \brief Set system value given its property type and value.
+ * \param[in] property Property type
+ * \param[in] value Property value
+ * \return Error code
+ */
 static int setSystemValue(int property, double value);
 
 /*!
-* \brief Get absolute path of a file.
-* \param[in] fname File name
-* \param[out] absPath Absolute path
-* \param[in] size Size of the absPath array
-*/
-static void getAbsolutePath(const char *fname, char *absPath, size_t size);
+ * \brief Determine if a file name contains a relative or absolute path.
+ * \param[in] fname File name
+ * \return 1 if fname's path is relative or 0 if absolute
+ */
+static int isRelativePath(const char *fname);
+
 /*!
-* \}
-*/
+ * \brief Finds the full path of the directory for a file name.
+ * \param[in] fname File name
+ * \param[out] absPath Absolute path of fname (including ending path delimiter)
+ * \param[in] size Size of the absPath array
+ */
+static void getAbsolutePath(const char *fname, char *absPath, size_t size);
+
+/*!
+ * \}
+ */
 
 #ifdef EXH
+
 /*!
-* \brief Exception filter function
-* \param[in] xc Exception code
-* \param[in] module Module name
-* \param[in] elapsedTime Elapsed time
-* \param[in] step Step
-* \return Error code
-*/
+ * \brief Exception filtering routine for operating system exceptions
+ * under Windows and the Microsoft C compiler.
+ * \param[in] xc Exception code
+ * \param[in] module Module name of code module where exception was handled
+ * \param[in] elapsedTime Simulation time when exception occurred (days)
+ * \param[in] step Step count at time when exception occurred
+ * \return Returns an exception handling code
+ */
 static int xfilter(int xc, char *module, double elapsedTime, long step);
+
 #endif
 
 /*!
-* \brief Run a SWMM simulation with the given input file, report file, and output file.
-* \param[in] inputFile Path to the input file
-* \param[in] reportFile Path to the report file
-* \param[in] outputFile Path to the output file
-* \return Error code
-*/
-int DLLEXPORT swmm_run(const char *inputFile, const char *reportFile, const char *outputFile)
+ * \copydoc swmm_run
+ */
+int EXPORT_SWMM_SOLVER_API swmm_run(const char *inputFile, const char *reportFile, const char *outputFile)
 {
     long newHour, oldHour = 0;
     long theDay, theHour;
@@ -501,14 +490,9 @@ int DLLEXPORT swmm_run(const char *inputFile, const char *reportFile, const char
 }
 
 /*!
-* \brief Run a SWMM simulation with the given input file, report file, output file, and progress callback function.
-* \param[in] inputFile Path to the input file
-* \param[in] reportFile Path to the report file
-* \param[in] outputFile Path to the output file
-* \param[in] callback Progress callback function
-* \return Error code
-*/
-int DLLEXPORT swmm_run_with_callback(const char *inputFile, const char *reportFile, const char *outputFile, progress_callback callback)
+ * \copydoc swmm_run_with_callback
+ */
+int EXPORT_SWMM_SOLVER_API swmm_run_with_callback(const char *inputFile, const char *reportFile, const char *outputFile, progress_callback callback)
 {
     double progress = 0.0, elapsedTime = 0.0;
 
@@ -562,16 +546,12 @@ int DLLEXPORT swmm_run_with_callback(const char *inputFile, const char *reportFi
 }
 
 /*!
-* \brief Open a SWMM project.
-* \param[in] inputFile Path to the input file
-* \param[in] reportFile Path to the report file
-* \param[in] outputFile Path to the output file
-* \return Error code
-*/
-int DLLEXPORT swmm_open(const char *inputFile, const char *reportFile, const char *outputFile)
+ * \copydoc swmm_open
+ */
+int EXPORT_SWMM_SOLVER_API swmm_open(const char *inputFile, const char *reportFile, const char *outputFile)
 {
 // --- to be safe, reset the state of the floating point unit
-#ifdef WINDOWS
+#ifdef OS_WINDOWS
     _fpreset();
     _setmaxstdio(8192);
 #endif
@@ -620,11 +600,9 @@ int DLLEXPORT swmm_open(const char *inputFile, const char *reportFile, const cha
 }
 
 /*!
-* \brief Start a SWMM simulation.
-* \param[in] saveResults TRUE if simulation results saved to binary file
-* \return Error code
-*/
-int DLLEXPORT swmm_start(int saveResults)
+ * \copydoc swmm_start
+ */
+int EXPORT_SWMM_SOLVER_API swmm_start(int saveResults)
 {
     // --- check that a project is open & no run started
     if (ErrorCode)
@@ -725,11 +703,9 @@ int DLLEXPORT swmm_start(int saveResults)
 }
 
 /*!
-* \brief Perform a SWMM simulation step and return the elapsed time.
-* \param[out] elapsedTime Elapsed time
-* \return Error code 
-*/
-int DLLEXPORT swmm_step(double *elapsedTime)
+ * \copydoc swmm_end
+ */
+int EXPORT_SWMM_SOLVER_API swmm_step(double *elapsedTime)
 //
 //  Input:   elapsedTime = current elapsed time in decimal days
 //  Output:  updated value of elapsedTime,
@@ -788,12 +764,9 @@ int DLLEXPORT swmm_step(double *elapsedTime)
 }
 
 /*!
-* \brief Perform a SWMM simulation step with a stride step and return the elapsed time.
-* \param[in] strideStep Stride step
-* \param[out] elapsedTime Elapsed time
-* \return Error code 
-*/
-int DLLEXPORT swmm_stride(int strideStep, double *elapsedTime)
+ * \copydoc swmm_stride
+ */
+int EXPORT_SWMM_SOLVER_API swmm_stride(int strideStep, double *elapsedTime)
 {
     double realRouteStep = RouteStep;
 
@@ -836,13 +809,9 @@ int DLLEXPORT swmm_stride(int strideStep, double *elapsedTime)
 }
 
 /*!
-* \brief Set hotstart file for SWMM simulation.
-* \details Sets the hotstart file to use for simulation. Errors does not terminate simulation unless
-* there is a prior terminating error.
-* \param[in] hotStartFile Path to the hotstart file
-* \return Error code 
-*/
-int DLLEXPORT swmm_useHotStart(const char *hotStartFile)
+ * \copydoc swmm_useHotStart
+ */
+int EXPORT_SWMM_SOLVER_API swmm_useHotStart(const char *hotStartFile)
 {
     int errorCode = 0;
     int fileVersion = 0;
@@ -873,11 +842,9 @@ int DLLEXPORT swmm_useHotStart(const char *hotStartFile)
 }
 
 /*!
-* \brief Save hotstart file for SWMM simulation at current time.
-* \param[in] hotStartFile Path to the hotstart file
-* \return Error code 
-*/
-int DLLEXPORT swmm_saveHotStart(const char *hotStartFile)
+ * \copydoc swmm_saveHotStart
+ */
+int EXPORT_SWMM_SOLVER_API swmm_saveHotStart(const char *hotStartFile)
 {
     int errorCode = 0;
 
@@ -894,8 +861,8 @@ int DLLEXPORT swmm_saveHotStart(const char *hotStartFile)
 }
 
 /*!
-* \brief Routes flow and WQ through drainage system over a single time step.
-*/
+ * \copydoc execRouting
+ */
 void execRouting()
 {
     double nextRoutingTime; // updated elapsed routing time (msec)
@@ -960,8 +927,8 @@ void execRouting()
 }
 
 /*!
-* \brief Saves current results to binary output file.
-*/
+ * \copydoc saveResults
+ */
 void saveResults()
 {
     if (NewRoutingTime >= ReportTime)
@@ -998,10 +965,9 @@ void saveResults()
 }
 
 /*!
-* \brief End a SWMM simulation.
-* \return Error code
-*/
-int DLLEXPORT swmm_end(void)
+ * \copydoc swmm_end
+ */
+int EXPORT_SWMM_SOLVER_API swmm_end(void)
 {
     // --- check that project opened and run started
     if (!IsOpenFlag)
@@ -1036,10 +1002,9 @@ int DLLEXPORT swmm_end(void)
 }
 
 /*!
-* \brief Writes simulation results to the report file.
-* \return Error code 
-*/
-int DLLEXPORT swmm_report()
+ * \copydoc swmm_report
+ */
+int EXPORT_SWMM_SOLVER_API swmm_report()
 {
     if (!ErrorCode)
         report_writeReport();
@@ -1047,20 +1012,18 @@ int DLLEXPORT swmm_report()
 }
 
 /*!
-* \brief Write a line of text to the SWMM report file.
-* \param[in] line Line of text
-*/
-void DLLEXPORT swmm_writeLine(const char *line)
+ * \copydoc swmm_writeLine
+ */
+void EXPORT_SWMM_SOLVER_API swmm_writeLine(const char *line)
 {
     if (IsOpenFlag)
         report_writeLine(line);
 }
 
 /*!
-* \brief Close a SWMM simulation.
-* \return Error code 
-*/
-int DLLEXPORT swmm_close()
+ * \copydoc swmm_close
+ */
+int EXPORT_SWMM_SOLVER_API swmm_close()
 {
     if (Fout.file)
         output_close();
@@ -1083,14 +1046,10 @@ int DLLEXPORT swmm_close()
 }
 
 /*!
-* \brief Get the mass balance errors for a SWMM simulation.
-* \param[out] runoffErr Runoff error (percent)
-* \param[out] flowErr Flow error (percent)
-* \param[out] qualErr Quality error (percent)
-* \return Error code 
-*/
-int DLLEXPORT swmm_getMassBalErr(float *runoffErr, float *flowErr,
-                                 float *qualErr)
+ * \copydoc swmm_getMassBalErr
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getMassBalErr(float *runoffErr, float *flowErr,
+                                              float *qualErr)
 {
     *runoffErr = 0.0;
     *flowErr = 0.0;
@@ -1106,35 +1065,25 @@ int DLLEXPORT swmm_getMassBalErr(float *runoffErr, float *flowErr,
 }
 
 /*!
-* \brief Gets the version of the SWMM engine.
-* \details Retrieves the version number of the current SWMM engine which uses a 
-format of xyzzz where x = major version number, y = minor version number, and 
-zzz = build number.
-* \note Each New Release should be updated in consts.h
-* \return SWMM engine version number
-*/
-int DLLEXPORT swmm_getVersion()
+ * \copydoc swmm_getVersion
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getVersion()
 {
     return VERSION;
 }
 
 /*!
-* \brief Gets the number of warnings issued during a simulation.
-* \return Number of warning messages issued
-*/
-int DLLEXPORT swmm_getWarnings()
+ * \copydoc swmm_getWarnings
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getWarnings()
 {
     return Warnings;
 }
 
 /*!
-* \brief Retrieves the code number and text of the error condition that 
-* caused SWMM to abort its analysis.
-* \param[out] errMsg Error message text
-* \param[in] msgLen Maximum size of errMsg
-* \return Error message code number
-*/
-int DLLEXPORT swmm_getError(char *errMsg, int msgLen)
+ * \copydoc swmm_getError
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getError(char *errMsg, int msgLen)
 {
     // --- copy text of last error message into errMsg
     if (ErrorCode > 0 && strlen(ErrorMsg) == 0)
@@ -1149,12 +1098,9 @@ int DLLEXPORT swmm_getError(char *errMsg, int msgLen)
 }
 
 /*!
-* \brief Retrieves the text of the error message that corresponds to the error code number.
-* \param[in] errorCode Error code number
-* \param[out] outErrMsg Error message text
-* \return Error code
-*/
-int DLLEXPORT swmm_getErrorFromCode(int errorCode, char *outErrMsg[1024])
+ * \copydoc swmm_getErrorFromCode
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getErrorFromCode(int errorCode, char *outErrMsg[1024])
 {
     char err_msg[MAXMSG];
     error_getMsg(errorCode, err_msg);
@@ -1164,11 +1110,9 @@ int DLLEXPORT swmm_getErrorFromCode(int errorCode, char *outErrMsg[1024])
 }
 
 /*!
-* \brief Retrieves the number of objects of a specific type.
-* \param[in] objType Type of SWMM object
-* \return Number of objects or error code
-*/
-int DLLEXPORT swmm_getCount(int objType)
+ * \copydoc swmm_getCount
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getCount(int objType)
 {
     if (!IsOpenFlag)
         return ERR_API_NOT_OPEN;
@@ -1178,14 +1122,9 @@ int DLLEXPORT swmm_getCount(int objType)
 }
 
 /*!
-* \brief Retrieves the ID name of an object.
-* \param[in] objType Type of SWMM object
-* \param[in] index Object index
-* \param[out] name Object name
-* \param[in] size Size of the name array
-* \return Error code
-*/
-int DLLEXPORT swmm_getName(int objType, int index, char *name, int size)
+ * \copydoc swmm_getName
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getName(int objType, int index, char *name, int size)
 {
     char *idName = NULL;
 
@@ -1245,12 +1184,9 @@ int DLLEXPORT swmm_getName(int objType, int index, char *name, int size)
 }
 
 /*!
-* \brief Retrieves the index of a named object.
-* \param[in] objType Type of SWMM object
-* \param[in] name Object name
-* \return Object index or error code
-*/
-int DLLEXPORT swmm_getIndex(int objType, const char *name)
+ * \copydoc swmm_getIndex
+ */
+int EXPORT_SWMM_SOLVER_API swmm_getIndex(int objType, const char *name)
 {
     if (!IsOpenFlag)
         return ERR_API_NOT_OPEN;
@@ -1260,14 +1196,9 @@ int DLLEXPORT swmm_getIndex(int objType, const char *name)
 }
 
 /*!
-* \brief Get the value of a property for an object of a given property in the SWMM model.
-* \param[in] property Property type
-* \param[in] index Object index
-* \return Property value
-* \deprecated Use swmm_getValueExpanded instead. Function will be changed to 
-* swmm_getValueExpanded in future versions.
-*/
-double DLLEXPORT swmm_getValue(int property, int index)
+ * \copydoc swmm_getValue
+ */
+double EXPORT_SWMM_SOLVER_API swmm_getValue(int property, int index)
 {
     if (!IsOpenFlag)
         return ERR_API_NOT_OPEN;
@@ -1286,14 +1217,9 @@ double DLLEXPORT swmm_getValue(int property, int index)
 }
 
 /*!
-* \brief Get the value of a property for an object of a given property in the SWMM model.
-* \param[in] objType Type of SWMM object
-* \param[in] property Property type
-* \param[in] index Object index in the array of like objects
-* \param[in] subIndex Subindex
-* \return Property value
-*/
-double DLLEXPORT swmm_getValueExpanded(int objType, int property, int index, int subIndex)
+ * \copydoc swmm_getValueExpanded
+ */
+double EXPORT_SWMM_SOLVER_API swmm_getValueExpanded(int objType, int property, int index, int subIndex)
 {
     if (!IsOpenFlag)
         return ERR_API_NOT_OPEN;
@@ -1316,15 +1242,9 @@ double DLLEXPORT swmm_getValueExpanded(int objType, int property, int index, int
 }
 
 /*!
-* \brief Set the value of a property for an object of a given property in the SWMM model.
-* \param[in] property Property type
-* \param[in] index Object index in the array of like objects
-* \param[in] value Property value   
-* \return Error code
-* \deprecated Use swmm_setValueExpanded instead. Function will be changed to
-* swmm_setValueExpanded in future versions.
-*/
-int DLLEXPORT swmm_setValue(int property, int index, double value)
+ * \copydoc swmm_setValue
+ */
+int EXPORT_SWMM_SOLVER_API swmm_setValue(int property, int index, double value)
 {
 
     if (!IsOpenFlag)
@@ -1370,28 +1290,20 @@ int DLLEXPORT swmm_setValue(int property, int index, double value)
         if (!IsStartedFlag)
             RptFlags.disabled = (value > 0.0);
         return 0;
-	default:
-		return ERR_API_PROPERTY_TYPE;
+    default:
+        return ERR_API_PROPERTY_TYPE;
     }
 }
 
-//=============================================================================
-
-int DLLEXPORT swmm_setValueExpanded(int objType, int property, int index, int subIndex, double value)
-//
-//  Input:   objType = a type of SWMM object
-//           property = an object's property code
-//           index = the object's index in the array of like objects
-//           subIndex = an index of the object's property
-//           value = the property's new value
-//  Output:  returns error code
-//  Purpose: sets the value of an object's property.
-//  TODO:    Will be deprecated in SWMM version 6.0
+/*!
+ * \copydoc swmm_setValueExpanded
+ */
+int EXPORT_SWMM_SOLVER_API swmm_setValueExpanded(int objType, int property, int index, int subIndex, double value)
 {
     if (!IsOpenFlag)
         return ERR_API_NOT_OPEN;
 
-    switch (index)
+    switch (objType)
     {
     case swmm_SYSTEM:
         return setSystemValue(property, value);
@@ -1408,16 +1320,10 @@ int DLLEXPORT swmm_setValueExpanded(int objType, int property, int index, int su
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc setGageValue
+ */
 int setGageValue(int property, int index, int subIndex, double value)
-//
-//  Input:   property = an object's property code
-//           index = the object's index in the array of like objects
-//           subIndex = an index of the object's property
-//           value = the property's new value
-//  Output:  returns error code
-//  Purpose: sets the value of a rain gage object's property.
 {
     if (index < 0 || index >= Nobjects[GAGE])
         return ERR_API_OBJECT_INDEX;
@@ -1437,24 +1343,17 @@ int setGageValue(int property, int index, int subIndex, double value)
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc setSubcatchValue
+ */
 int setSubcatchValue(int property, int index, int subIndex, double value)
-//
-//  Input:   property = an object's property code
-//           index = the object's index in the array of like objects
-//           subIndex = an index of the object's property
-//           value = the property's new value
-//  Output:  returns error code
-//  Purpose: sets the value of a subcatchment object's property.
-//  TODO: Convert Error codes to warnings
 {
 
     if (IsOpenFlag == FALSE)
     {
         return ERR_API_NOT_OPEN;
     }
-        // Check if object index is within bounds
+    // Check if object index is within bounds
     else if (index < 0 || index >= Nobjects[SUBCATCH])
         return ERR_API_OBJECT_INDEX;
     // Check if Simulation is Running
@@ -1463,25 +1362,29 @@ int setSubcatchValue(int property, int index, int subIndex, double value)
         // Set values that can be configured at runtime during simulation
         switch (property)
         {
-		case swmm_SUBCATCH_API_RAINFALL:
+        case swmm_SUBCATCH_API_RAINFALL:
             if (value >= 0.0)
             {
                 Subcatch[index].apiRainfall = value / UCF(RAINFALL);
                 return 0;
             }
-			else
-				return ERR_API_PROPERTY_VALUE;
-		case swmm_SUBCATCH_API_SNOWFALL:
-			if (value >= 0.0)
-			{
-				Subcatch[index].apiSnowfall = value / UCF(RAINFALL);
-				return 0;
-			}
-			else
-				return ERR_API_PROPERTY_VALUE;
+            else
+                return ERR_API_PROPERTY_VALUE;
+        case swmm_SUBCATCH_API_SNOWFALL:
+            if (value >= 0.0)
+            {
+                Subcatch[index].apiSnowfall = value / UCF(RAINFALL);
+                return 0;
+            }
+            else
+                return ERR_API_PROPERTY_VALUE;
         case swmm_SUBCATCH_EXTERNAL_POLLUTANT_BUILDUP:
-            Subcatch[index].apiExtBuildup[subIndex] = value;
-            return 0;
+            {
+                if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+                    return ERR_API_OBJECT_INDEX;
+                Subcatch[index].apiExtBuildup[subIndex] = value;
+                return 0;
+            }
         default:
             return ERR_API_IS_RUNNING;
         }
@@ -1506,22 +1409,22 @@ int setSubcatchValue(int property, int index, int subIndex, double value)
             }
             else
                 return ERR_API_PROPERTY_VALUE;
-		case swmm_SUBCATCH_SLOPE:
-			if (value >= 0.0)
-			{
-				Subcatch[index].slope = value;
-				return 0;
-			}
-			else
-				return ERR_API_PROPERTY_VALUE;
-		case swmm_SUBCATCH_CURB_LENGTH:
-			if (value >= 0.0)
-			{
-				Subcatch[index].curbLength = value / UCF(LENGTH);
-				return 0;
-			}
-			else
-				return ERR_API_PROPERTY_VALUE;
+        case swmm_SUBCATCH_SLOPE:
+            if (value >= 0.0)
+            {
+                Subcatch[index].slope = value;
+                return 0;
+            }
+            else
+                return ERR_API_PROPERTY_VALUE;
+        case swmm_SUBCATCH_CURB_LENGTH:
+            if (value >= 0.0)
+            {
+                Subcatch[index].curbLength = value / UCF(LENGTH);
+                return 0;
+            }
+            else
+                return ERR_API_PROPERTY_VALUE;
         case swmm_SUBCATCH_API_RAINFALL:
             if (value >= 0.0)
             {
@@ -1546,26 +1449,16 @@ int setSubcatchValue(int property, int index, int subIndex, double value)
             }
             else
                 return ERR_API_PROPERTY_VALUE;
-        case swmm_SUBCATCH_EXTERNAL_POLLUTANT_BUILDUP:
-            Subcatch[index].apiExtBuildup[subIndex] = value;
-            return 0;
         default:
             return ERR_API_PROPERTY_TYPE;
         }
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc setNodeValue
+ */
 int setNodeValue(int property, int index, int subIndex, double value)
-//
-//  Input:   property = an object's property code
-//           index = the object's index in the array of like objects
-//           subIndex = an index of the object's property
-//           value = the property's new value
-//  Output:  returns error code
-//  Purpose: sets the value of a node object's property.
-//  TODO: Convert Error codes to warnings
 {
 
     TNode *node = NULL;
@@ -1576,7 +1469,7 @@ int setNodeValue(int property, int index, int subIndex, double value)
     }
     // Check if object index is within bounds
     else if (index < 0 || index >= Nobjects[NODE])
-    {   
+    {
         return ERR_API_OBJECT_INDEX;
     }
     // Check if Simulation is Running
@@ -1590,23 +1483,30 @@ int setNodeValue(int property, int index, int subIndex, double value)
             Node[index].apiExtInflow = value / UCF(FLOW);
             return 0;
         case swmm_NODE_HEAD:
-            node = &Node[index];
+            {
+                node = &Node[index];
 
-            if (node->type != OUTFALL)
-                return ERR_API_OBJECT_TYPE;
+                if (node->type != OUTFALL)
+                    return ERR_API_OBJECT_TYPE;
 
-            Outfall[node->subIndex].fixedStage = value / UCF(LENGTH);
-            Outfall[node->subIndex].type = FIXED_OUTFALL;
-            return 0;
+                Outfall[node->subIndex].fixedStage = value / UCF(LENGTH);
+                Outfall[node->subIndex].type = FIXED_OUTFALL;
+                return 0;
+            }
         case swmm_NODE_POLLUTANT_LATMASS_FLUX:
-            Node[index].apiExtQualMassFlux[subIndex] = value;
-            return 0;
+            {
+                if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+                    return ERR_API_OBJECT_INDEX;
+
+                Node[index].apiExtQualMassFlux[subIndex] = value;
+                return 0;
+            }
         default:
             return ERR_API_IS_RUNNING;
         }
     }
     else
-    {   
+    {
         // Set values that can only be configured before simulation starts
         switch (property)
         {
@@ -1669,21 +1569,14 @@ int setNodeValue(int property, int index, int subIndex, double value)
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc setLinkValue
+ */
 int setLinkValue(int property, int index, int subIndex, double value)
-//
-//  Input:   property = an object's property code
-//           index = the object's index in the array of like objects
-//           subIndex = an index of the object's property
-//           value = the property's new value
-//  Output:  returns error code
-//  Purpose: sets the value of a link object's property.
-//  TODO: Convert Error codes to warnings
 {
     TLink *link = NULL;
-    const char* control_rule_label = "SWMM API";
-    
+    const char *control_rule_label = "SWMM API";
+
     if (IsOpenFlag == FALSE)
     {
         return ERR_API_NOT_OPEN;
@@ -1698,32 +1591,37 @@ int setLinkValue(int property, int index, int subIndex, double value)
     {
 
         link = &Link[index];
-        
+
         // Set values that can be configured at runtime during simulation
         switch (property)
         {
         case swmm_LINK_SETTING:
             return setLinkSetting(index, value);
-		case swmm_LINK_FLOW_LIMIT:
-			link->qLimit = value / UCF(FLOW);
-			return 0;
-		case swmm_LINK_SEEPAGE_RATE:
-			if (value >= 0.0)
-			{
-				link->seepRate = value / UCF(RAINFALL);
-				return 0;
-			}
-			else
-				return ERR_API_PROPERTY_VALUE;
-        case swmm_LINK_POLLUTANT_LATMASS_FLUX:
-            link->apiExtQualMassFlux[subIndex] = value;
+        case swmm_LINK_FLOW_LIMIT:
+            link->qLimit = value / UCF(FLOW);
             return 0;
+        case swmm_LINK_SEEPAGE_RATE:
+            if (value >= 0.0)
+            {
+                link->seepRate = value / UCF(RAINFALL);
+                return 0;
+            }
+            else
+                return ERR_API_PROPERTY_VALUE;
+        case swmm_LINK_POLLUTANT_LATMASS_FLUX:
+            {
+                if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+                    return ERR_API_OBJECT_INDEX;
+
+                link->apiExtQualMassFlux[subIndex] = value;
+                return 0;
+            }
         default:
             return ERR_API_IS_RUNNING;
         }
     }
     else
-    {  
+    {
         // Set values that can only be configured before simulation starts
         switch (property)
         {
@@ -1763,23 +1661,23 @@ int setLinkValue(int property, int index, int subIndex, double value)
             Link[index].hasFlapGate = (value > 0.0);
             return 0;
         case swmm_LINK_POLLUTANT_LATMASS_FLUX:
-            link->apiExtQualMassFlux[subIndex] = value;
-            return 0;
+            {
+                if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+                    return ERR_API_OBJECT_INDEX;
+
+                link->apiExtQualMassFlux[subIndex] = value;
+                return 0;
+            }
         default:
             return ERR_API_PROPERTY_TYPE;
         }
     }
 }
 
-//=============================================================================
-
-double DLLEXPORT swmm_getSavedValue(int property, int index, int period)
-//
-//  Input:   property = an object's property code
-//           index = the object's index in the array of like objects
-//           period = a reporting time period (starting from 1)
-//  Output:  returns the property's saved value
-//  Purpose: retrieves an object's computed value at a specific reporting time period.
+/*!
+ * \copydoc swmm_getSavedValue
+ */
+double EXPORT_SWMM_SOLVER_API swmm_getSavedValue(int property, int index, int period)
 {
     if (!IsOpenFlag)
         return 0;
@@ -1798,44 +1696,30 @@ double DLLEXPORT swmm_getSavedValue(int property, int index, int period)
     return 0;
 }
 
-//=============================================================================
-
-void DLLEXPORT swmm_decodeDate(double date, int *year, int *month, int *day,
-                               int *hour, int *minute, int *second, int *dayOfWeek)
-//
-//  Input:  date = an encoded date in decimal days
-//  Output: date's year, month of year, day of month, time of day (hour,
-//           minute, second), and day of weeek
-//  Purpose: retrieves the calendar date and clock time of an encoded date.
+/*!
+ * \copydoc swmm_decodeDate
+ */
+void EXPORT_SWMM_SOLVER_API swmm_decodeDate(double date, int *year, int *month, int *day,
+                                            int *hour, int *minute, int *second, int *dayOfWeek)
 {
     datetime_decodeDate(date, year, month, day);
     datetime_decodeTime(date, hour, minute, second);
     *dayOfWeek = datetime_dayOfWeek(date);
 }
 
-//=============================================================================
-
-double DLLEXPORT swmm_encodeDate(int year, int month, int day,
-                                 int hour, int minute, int second)
-//
-//  Input:  date's year, month of year, day of month, time of day (hour,
-//           minute, second), and day of weeek
-//  Output: date = an encoded date in decimal days
-//  Purpose: retrieves the calendar date and clock time of a decoded date.
+/*!
+ * \copydoc swmm_encodeDate
+ */
+double EXPORT_SWMM_SOLVER_API swmm_encodeDate(int year, int month, int day,
+                                              int hour, int minute, int second)
 {
     return datetime_encodeDate(year, month, day) + datetime_encodeTime(hour, minute, second);
 }
 
-//=============================================================================
-//   Object property getters and setters
-//=============================================================================
-
+/*!
+ * \copydoc getGageValue
+ */
 double getGageValue(int property, int index)
-//
-//  Input:   property = a rain gage property code
-//           index = the index of a rain gage
-//  Output:  returns current property value
-//  Purpose: retrieves current value of a rain gage property.
 {
     double total, snow, rain;
 
@@ -1857,18 +1741,14 @@ double getGageValue(int property, int index)
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getSubcatchValue
+ */
 double getSubcatchValue(int property, int index, int subIndex)
-//
-//  Input:   property = a subcatchment property code
-//           index = the index of a subcatchment
-//           subIndex = an index of the subcatchment's property
-//  Output:  returns current property value
-//  Purpose: retrieves current value of a subcatchment's property.
 {
     TSubcatch *subcatch;
-    double prop_results = 0.0;
+    double sub_catch_area;
+    double prop_results;
     int i;
 
     if (index < 0 || index >= Nobjects[SUBCATCH])
@@ -1883,7 +1763,7 @@ double getSubcatchValue(int property, int index, int subIndex)
     case swmm_SUBCATCH_RAINGAGE:
         return subcatch->gage;
     case swmm_SUBCATCH_RAINFALL:
-		return subcatch->rainfall * UCF(RAINFALL);
+        return subcatch->rainfall * UCF(RAINFALL);
     case swmm_SUBCATCH_EVAP:
         return subcatch->evapLoss * UCF(EVAPRATE);
     case swmm_SUBCATCH_INFIL:
@@ -1894,29 +1774,35 @@ double getSubcatchValue(int property, int index, int subIndex)
         return (subcatch->rptFlag > 0);
     case swmm_SUBCATCH_WIDTH:
         return subcatch->width * UCF(LENGTH);
-	case swmm_SUBCATCH_SLOPE:
-		return subcatch->slope;
-	case swmm_SUBCATCH_CURB_LENGTH:
-		return subcatch->curbLength * UCF(LENGTH);
-	case swmm_SUBCATCH_API_RAINFALL:
-		return subcatch->apiRainfall * UCF(RAINFALL);
+    case swmm_SUBCATCH_SLOPE:
+        return subcatch->slope;
+    case swmm_SUBCATCH_CURB_LENGTH:
+        return subcatch->curbLength * UCF(LENGTH);
+    case swmm_SUBCATCH_API_RAINFALL:
+        return subcatch->apiRainfall * UCF(RAINFALL);
     case swmm_SUBCATCH_API_SNOWFALL:
-		return subcatch->apiSnowfall * UCF(RAINFALL);
+        return subcatch->apiSnowfall * UCF(RAINFALL);
     case swmm_SUBCATCH_POLLUTANT_BUILDUP:
         if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
-        
-        for(i = 0; i < Nobjects[LANDUSE]; i++)
+
+        prop_results = 0.0;
+
+        for (i = 0; i < Nobjects[LANDUSE]; i++)
         {
-            prop_results += subcatch->landFactor[i].buildup[subIndex] /
-            (subcatch->area * UCF(LANDAREA) * subcatch->landFactor[i].fraction); 
+            sub_catch_area = subcatch->area * UCF(LANDAREA) * subcatch->landFactor[i].fraction;
+
+            if (sub_catch_area > 0)
+            {
+                prop_results += subcatch->landFactor[i].buildup[subIndex] / sub_catch_area;
+            }
         }
 
         return prop_results;
     case swmm_SUBCATCH_EXTERNAL_POLLUTANT_BUILDUP:
         if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
-        return subcatch->apiExtBuildup[subIndex] /  UCF(LANDAREA);
+        return subcatch->apiExtBuildup[subIndex] / UCF(LANDAREA);
 
     case swmm_SUBCATCH_POLLUTANT_RUNOFF_CONCENTRATION:
         if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
@@ -1926,7 +1812,7 @@ double getSubcatchValue(int property, int index, int subIndex)
     case swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION:
         if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
-        return subcatch->pondedQual[subIndex] / (subcatch_getDepth(index) * MAX(0.0, subcatch->area - subcatch->lidArea)  * UCF(LANDAREA));
+        return subcatch->pondedQual[subIndex] / (subcatch_getDepth(index) * MAX(0.0, subcatch->area - subcatch->lidArea) * UCF(LANDAREA));
 
     case swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD:
         if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
@@ -1938,15 +1824,10 @@ double getSubcatchValue(int property, int index, int subIndex)
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getNodeValue
+ */
 double getNodeValue(int property, int index, int subIndex)
-//
-//  Input:   property = a node property code
-//           index = the index of a node
-//           subIndex = an index of the node's property
-//  Output:  returns current property value
-//  Purpose: retrieves current value of a node's property.
 {
     TNode *node;
     if (index < 0 || index >= Nobjects[NODE])
@@ -1954,7 +1835,7 @@ double getNodeValue(int property, int index, int subIndex)
     else
     {
         node = &Node[index];
-        
+
         switch (property)
         {
         case swmm_NODE_TYPE:
@@ -1997,15 +1878,10 @@ double getNodeValue(int property, int index, int subIndex)
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getLinkValue
+ */
 double getLinkValue(int property, int index, int subIndex)
-//
-//  Input:   property = a link property code
-//           index = the index of a link
-//           subIndex = an index of the link's property
-//  Output:  returns current property value
-//  Purpose: retrieves current value of a link's property.
 {
     TLink *link;
     if (index < 0 || index >= Nobjects[LINK])
@@ -2042,10 +1918,10 @@ double getLinkValue(int property, int index, int subIndex)
         else
             return 0;
     case swmm_LINK_TIMECLOSED:
-          if (link->setting <= 0.0)
-              return (getDateTime(NewRoutingTime) - link->timeLastSet) * 24.;
-          else
-              return 0;
+        if (link->setting <= 0.0)
+            return (getDateTime(NewRoutingTime) - link->timeLastSet) * 24.;
+        else
+            return 0;
     case swmm_LINK_FLOW:
         return link->newFlow * UCF(FLOW);
     case swmm_LINK_DEPTH:
@@ -2057,26 +1933,39 @@ double getLinkValue(int property, int index, int subIndex)
             return xsect_getWofY(&link->xsect, link->newDepth) * UCF(LENGTH);
         else
             return ERR_API_OBJECT_TYPE;
+    case swmm_LINK_VOLUME:
+        return link->newVolume * UCF(VOLUME);
+    case swmm_LINK_CAPACITY:
+        if (link->type == CONDUIT)
+        {
+            if (link->xsect.type != DUMMY)
+                return xsect_getAofY(&link->xsect, link->newDepth) / link->xsect.aFull;
+            else
+                return 0.0;
+        }
+        else
+            return link->setting;
+
     case swmm_LINK_RPTFLAG:
         return (link->rptFlag > 0);
-	case swmm_LINK_OFFSET1:
-		return link->offset1 * UCF(LENGTH);
-	case swmm_LINK_OFFSET2:
-		return link->offset2 * UCF(LENGTH);
-	case swmm_LINK_INITIAL_FLOW:
-		return link->q0 * UCF(FLOW);
-	case swmm_LINK_FLOW_LIMIT:
-		return link->qLimit * UCF(FLOW);
-	case swmm_LINK_INLET_LOSS:
-		return link->cLossInlet;
-	case swmm_LINK_OUTLET_LOSS:
-		return link->cLossOutlet;
-	case swmm_LINK_AVERAGE_LOSS:
-		return link->cLossAvg;
-	case swmm_LINK_SEEPAGE_RATE:
-		return link->seepRate * UCF(RAINFALL);
-	case swmm_LINK_HAS_FLAPGATE:
-		return (link->hasFlapGate > 0);
+    case swmm_LINK_OFFSET1:
+        return link->offset1 * UCF(LENGTH);
+    case swmm_LINK_OFFSET2:
+        return link->offset2 * UCF(LENGTH);
+    case swmm_LINK_INITIAL_FLOW:
+        return link->q0 * UCF(FLOW);
+    case swmm_LINK_FLOW_LIMIT:
+        return link->qLimit * UCF(FLOW);
+    case swmm_LINK_INLET_LOSS:
+        return link->cLossInlet;
+    case swmm_LINK_OUTLET_LOSS:
+        return link->cLossOutlet;
+    case swmm_LINK_AVERAGE_LOSS:
+        return link->cLossAvg;
+    case swmm_LINK_SEEPAGE_RATE:
+        return link->seepRate * UCF(RAINFALL);
+    case swmm_LINK_HAS_FLAPGATE:
+        return (link->hasFlapGate > 0);
     case swmm_LINK_POLLUTANT_CONCENTRATION:
         if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
@@ -2094,13 +1983,10 @@ double getLinkValue(int property, int index, int subIndex)
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getSystemValue
+ */
 double getSystemValue(int property)
-//
-//  Input:   property = a system property code
-//  Output:  returns current property value or an error code
-//  Purpose: retrieves current value of a system property.
 {
     switch (property)
     {
@@ -2189,14 +2075,10 @@ double getSystemValue(int property)
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc setNodeLatFlow
+ */
 int setNodeLatFlow(int index, double value)
-//
-//  Input:   index = the index of a node
-//           value = the node's external inflow value
-//  Output:  returns an error code
-//  Purpose: sets the value of a node's external inflow.
 {
     if (index < 0 || index >= Nobjects[NODE])
         return ERR_API_OBJECT_INDEX;
@@ -2204,14 +2086,10 @@ int setNodeLatFlow(int index, double value)
     return 0;
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc setOutfallStage
+ */
 int setOutfallStage(int index, double value)
-//
-//  Input:   index = the index of an outfall node
-//           value = the outfall's fixed stage elevation
-//  Output:  returns an error code
-//  Purpose: sets the value of an outfall node's fixed stage.
 {
     TNode *node;
     if (index < 0 || index >= Nobjects[NODE])
@@ -2228,14 +2106,10 @@ int setOutfallStage(int index, double value)
     return 0;
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc setLinkSetting
+ */
 int setLinkSetting(int index, double value)
-//
-//  Input:   index = the index of a link
-//           value = the link's new setting
-//  Output:  returns an error code
-//  Purpose: sets the value of a link's setting.
 {
     TLink *link;
     char control_rule_label[9] = "SWMM API";
@@ -2271,29 +2145,20 @@ int setLinkSetting(int index, double value)
     return 0;
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getSavedDate
+ */
 double getSavedDate(int period)
-//
-//  Input:   period = a reporting period (starting at 1)
-//  Output:  returns the date/time of the reporting period in decimal days
-//  Purpose: retrieves the date/time of a reporting period.
 {
     double days;
     output_readDateTime(period, &days);
     return days;
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getSavedSubcatchValue
+ */
 double getSavedSubcatchValue(int property, int index, int period)
-//
-//  Input:   property = index of a computed property
-//           index = index of a subcatchment
-//           period = a reporting period (starting at 1)
-//  Output:  returns the property's value at the recording period
-//  Purpose: retrieves the computed value of a subcatchment property at a
-//           specific reporting period.
 {
     // --- SubcatchResults array is defined in output.c and contains
     //     computed results in user's units
@@ -2320,16 +2185,10 @@ double getSavedSubcatchValue(int property, int index, int period)
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getSavedNodeValue
+ */
 double getSavedNodeValue(int property, int index, int period)
-//
-//  Input:   property = index of a computed property
-//           index = index of a node
-//           period = a reporting period (starting at 1)
-//  Output:  returns the property's value at the recording period
-//  Purpose: retrieves the computed value of a node property at a
-//           specific reporting period.
 {
     // --- NodeResults array is defined in output.c and contains
     //     computed results in user's units
@@ -2360,16 +2219,10 @@ double getSavedNodeValue(int property, int index, int period)
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getSavedLinkValue
+ */
 double getSavedLinkValue(int property, int index, int period)
-//
-//  Input:   property = index of a computed property
-//           index = index of a link
-//           period = a reporting period (starting at 1)
-//  Output:  returns the property's value at the recording period
-//  Purpose: retrieves the computed value of a link property at a
-//           specific reporting period.
 {
     double y, w;
 
@@ -2402,8 +2255,9 @@ double getSavedLinkValue(int property, int index, int period)
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getMaxRouteStep
+ */
 double getMaxRouteStep()
 {
     double tmpCourantFactor = CourantFactor;
@@ -2417,13 +2271,10 @@ double getMaxRouteStep()
     return result;
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc setRoutingStep
+ */
 int setRoutingStep(double value)
-//
-//  Input:   value = a routing time step (in decimal seconds)
-//  Output:  returns an error code
-//  Purpose: sets the value of the current flow routing time step.
 {
     if (value <= 0.0)
         return ERR_API_PROPERTY_VALUE;
@@ -2437,14 +2288,10 @@ int setRoutingStep(double value)
     return 0;
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc setSystemValue
+ */
 int setSystemValue(int property, double value)
-//
-//  Input:   property = a system property code
-//           value = the property's new value
-//  Output:  returns an error code
-//  Purpose: sets the value of a system property.
 {
     int y, m, d, h, mm, s;
 
@@ -2647,7 +2494,7 @@ int setSystemValue(int property, double value)
             return ERR_API_PROPERTY_VALUE;
         }
     case swmm_MINSLOPE:
-        if (value >= 0 && value < 100) 
+        if (value >= 0 && value < 100)
         {
             MinSlope = value;
             return 0;
@@ -2661,17 +2508,10 @@ int setSystemValue(int property, double value)
     }
 }
 
-//=============================================================================
-//   General purpose functions
-//=============================================================================
-
+/*!
+ * \copydoc UCF
+ */
 double UCF(int u)
-//
-//  Input:   u = integer code of quantity being converted
-//  Output:  returns a units conversion factor
-//  Purpose: computes a conversion factor from SWMM's internal
-//           units to user's units
-//
 {
     if (u < FLOW)
         return Ucf[u][UnitSystem];
@@ -2679,16 +2519,10 @@ double UCF(int u)
         return Qcf[FlowUnits];
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc sstrncpy
+ */
 size_t sstrncpy(char *dest, const char *src, size_t n)
-//
-//  Input:   dest = string to be copied to
-//           src = string to be copied from
-//           n = number of bytes to copy
-//  Output:  returns the size of dest
-//  Purpose: better version of standard strncpy function
-//
 {
     int offset = 0;
     if (n > 0)
@@ -2705,16 +2539,10 @@ size_t sstrncpy(char *dest, const char *src, size_t n)
     return strlen(dest);
 }
 
-//=============================================================================
-
-size_t sstrcat(char *dest, const char *src, size_t size)
-//
-//  Input:   dest = string to be appended
-//           src = string to append to dest
-//           size = allocated size of dest (including nul terminator)
-//  Output:  returns new size of dest
-//  Purpose: safe version of standard strcat function
-//
+/*!
+ * \copydoc sstrcat
+ */
+size_t sstrcat(char *dest, const char *src, size_t destsize)
 {
     size_t dest_len, src_len, offset, src_index;
 
@@ -2733,22 +2561,17 @@ size_t sstrcat(char *dest, const char *src, size_t size)
         offset++;
         src_index++;
         // don't copy more than size - dest_len - 1 characters
-        if (offset == size - 1)
+        if (offset == destsize - 1)
             break;
     }
     *(dest + offset) = '\0';
     return strlen(dest);
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc strcomp
+ */
 int strcomp(const char *s1, const char *s2)
-//
-//  Input:   s1 = a character string
-//           s2 = a character string
-//  Output:  returns 1 if s1 is same as s2, 0 otherwise
-//  Purpose: does a case insensitive comparison of two strings.
-//
 {
     int i;
     for (i = 0; UCHAR(s1[i]) == UCHAR(s2[i]); i++)
@@ -2759,17 +2582,13 @@ int strcomp(const char *s1, const char *s2)
     return (0);
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getTempFileName
+ */
 char *getTempFileName(char *fname)
-//
-//  Input:   fname = file name string (with max size of MAXFNAME)
-//  Output:  returns pointer to file name
-//  Purpose: creates a temporary file name with path prepended to it.
-//
 {
 // For Windows systems:
-#ifdef WINDOWS
+#ifdef OS_WINDOWS
 
     char *name = NULL;
     char *dir = NULL;
@@ -2809,14 +2628,10 @@ char *getTempFileName(char *fname)
 #endif
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getElapsedTime
+ */
 void getElapsedTime(DateTime aDate, int *days, int *hrs, int *mins)
-//
-//  Input:   aDate = simulation calendar date + time
-//  Output:  days, hrs, mins = elapsed days, hours & minutes for aDate
-//  Purpose: finds elapsed simulation time for a given calendar date
-//
 {
     DateTime x;
     int secs;
@@ -2834,27 +2649,18 @@ void getElapsedTime(DateTime aDate, int *days, int *hrs, int *mins)
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getDateTime
+ */
 DateTime getDateTime(double elapsedMsec)
-//
-//  Input:   elapsedMsec = elapsed milliseconds
-//  Output:  returns date/time value
-//  Purpose: finds calendar date/time value for elapsed milliseconds of
-//           simulation time.
-//
 {
     return datetime_addSeconds(StartDateTime, (elapsedMsec + 1) / 1000.0);
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc isRelativePath
+ */
 static int isRelativePath(const char *fname)
-//
-//  Input:   fname = a file name
-//  Output:  returns 1 if fname's path is relative or 0 if absolute
-//  Purpose: determines if a file name contains a relative or absolute path.
-//
 {
     if (strchr(fname, ':'))
         return 0;
@@ -2865,17 +2671,10 @@ static int isRelativePath(const char *fname)
     return 1;
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc getAbsolutePath
+ */
 void getAbsolutePath(const char *fname, char *absPath, size_t size)
-//
-//  Input:   fname = a file name
-//           absPath = string to hold the absolute path
-//           size = max. size of absPath
-//  Output:  absPath = string containing absolute path of fname
-//                     (including ending path delimiter)
-//  Purpose: finds the full path of the directory for file fname
-//
 {
     char *endOfDir;
 
@@ -2886,7 +2685,7 @@ void getAbsolutePath(const char *fname, char *absPath, size_t size)
     // --- if fname has a relative path then retrieve its full path
     if (isRelativePath(fname))
     {
-#ifdef WINDOWS
+#ifdef OS_WINDOWS
         GetFullPathName((LPCSTR)fname, (DWORD)size, (LPSTR)absPath, NULL);
 #else
         realpath(fname, absPath);
@@ -2900,7 +2699,7 @@ void getAbsolutePath(const char *fname, char *absPath, size_t size)
     }
 
 // --- trim file name portion of absPath
-#ifdef WINDOWS
+#ifdef OS_WINDOWS
     endOfDir = strrchr(absPath, '\\');
 #else
     endOfDir = strrchr(absPath, '/');
@@ -2911,15 +2710,10 @@ void getAbsolutePath(const char *fname, char *absPath, size_t size)
     }
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc addAbsolutePath
+ */
 char *addAbsolutePath(char *fname)
-//
-//  Input:   fname = a file name
-//  Output:  returns fname with a full path prepended to it
-//  Purpose: adds an absolute path name to a file name.
-//  Note:    fname must have been dimensioned to accept MAXFNAME characters.
-//
 {
     size_t n;
     char buffer[MAXFNAME];
@@ -2932,32 +2726,21 @@ char *addAbsolutePath(char *fname)
     return fname;
 }
 
-//=============================================================================
-
+/*!
+ * \copydoc writecon
+ */
 void writecon(const char *s)
-//
-//  Input:   s = a character string
-//  Output:  none
-//  Purpose: writes string of characters to the console.
-//
 {
     fprintf(stdout, "%s", s);
     fflush(stdout);
 }
 
-//=============================================================================
-
 #ifdef EXH
+
+/*!
+ * \copydoc xfilter
+ */
 int xfilter(int xc, char *module, double elapsedTime, long step)
-//
-//  Input:   xc          = exception code
-//           module      = name of code module where exception was handled
-//           elapsedTime = simulation time when exception occurred (days)
-//           step        = step count at time when exception occurred
-//  Output:  returns an exception handling code
-//  Purpose: exception filtering routine for operating system exceptions
-//           under Windows and the Microsoft C compiler.
-//
 {
     int rc;         // result code
     long hour;      // current hour of simulation
@@ -3017,4 +2800,5 @@ int xfilter(int xc, char *module, double elapsedTime, long step)
     report_writeLine(xmsg);
     return rc;
 }
+
 #endif

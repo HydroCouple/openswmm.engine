@@ -9,29 +9,29 @@
  * \details
  * Update History
  * =================
- * Global interfacing functions used in the SWMM model.
- * Build 5.1.007:
- * - climate_readAdjustments() added.
- * Build 5.1.008:
- * - Function list was re-ordered and blank lines added for readability.
- * - Pollutant buildup/washoff functions for the new surfqual.c module added.
- * - Several other functions added, re-named or have modified arguments.
- * Build 5.1.010:
- * - New roadway_getInflow() function added.
- * Build 5.1.013:
- * - Additional arguments added to function stats_updateSubcatchStats.
- * Build 5.1.014:
- * - Arguments to link_getLossRate function changed.
- * Build 5.2.0:
- * - Support added for Streets and Inlets.
- * - Support added for reporting most frequent non-converging links.
- * - Support added for named variables & math expressions in control rules.
- * - Support added for tracking a gage's prior n-hour rainfall total.
- * - Refactored external inflow code.
- * Build 5.2.4:
- * - Additional arguments added to function link_getLossRate.
- * Build 5.3.0:
- * - Modified code to allow saving multiple hotstart files at different times.
+ *  - Build 5.1.007:
+ *      - climate_readAdjustments() added.
+ *  - Build 5.1.008:
+ *      - Function list was re-ordered and blank lines added for readability.
+ *      - Pollutant buildup/washoff functions for the new surfqual.c module added.
+ *      - Several other functions added, re-named or have modified arguments.
+ *  - Build 5.1.010:
+ *      - New roadway_getInflow() function added.
+ *  - Build 5.1.013:
+ *      - Additional arguments added to function stats_updateSubcatchStats.
+ *  - Build 5.1.014:
+ *      - Arguments to link_getLossRate function changed.
+ *  - Build 5.2.0:
+ *      - Support added for Streets and Inlets.
+ *      - Support added for reporting most frequent non-converging links.
+ *      - Support added for named variables & math expressions in control rules.
+ *      - Support added for tracking a gage's prior n-hour rainfall total.
+ *      - Refactored external inflow code.
+ *  - Build 5.2.4:
+ *      - Additional arguments added to function link_getLossRate.
+ *  - Build 5.3.0:
+ *      - Modified code to allow saving multiple hotstart files at different times.
+ *      - Added support for API provided pollutant build up and washoff.
  */
 
 #ifndef FUNCS_H
@@ -344,19 +344,20 @@ void statsrpt_writeReport(void);
  * \ingroup Global_Interfacing_Functions
  * \{
  */
+
 /*!
  * \brief Reads climate/temperature parameters from input line of data
  * \param[in] tok Array of string tokens
  * \param[in] ntoks Number of tokens
  * \return Error code
  * \details
- * Format of data can be:
- * - TIMESERIES  name
- * - FILE        name  (start)  (units)
- * - WINDSPEED   MONTHLY  v1  v2  ...  v12
- * - WINDSPEED   FILE
- * - SNOWMELT    v1  v2  ...  v6
- * - ADC         IMPERV/PERV  v1  v2  ...  v10
+ *  - Format of data can be:
+ *      - TIMESERIES  name
+ *      - FILE        name  (start)  (units)
+ *      - WINDSPEED   MONTHLY  v1  v2  ...  v12
+ *      - WINDSPEED   FILE
+ *      - SNOWMELT    v1  v2  ...  v6
+ *      - ADC         IMPERV/PERV  v1  v2  ...  v10
  */
 int climate_readParams(char *tok[], int ntoks);
 
@@ -366,14 +367,14 @@ int climate_readParams(char *tok[], int ntoks);
  * \param[in] ntoks Number of tokens
  * \return Error code
  * \details
- * Data formats are:
- * - CONSTANT  value
- * - MONTHLY   v1 ... v12
- * - TIMESERIES name
- * - TEMPERATURE
- * - FILE      (v1 ... v12)
- * - RECOVERY   name
- * - DRY_ONLY   YES/NO
+ *  - Data formats are:
+ *      - CONSTANT  value
+ *      - MONTHLY   v1 ... v12
+ *      - TIMESERIES name
+ *      - TEMPERATURE
+ *      - FILE      (v1 ... v12)
+ *      - RECOVERY   name
+ *      - DRY_ONLY   YES/NO
  */
 int climate_readEvapParams(char *tok[], int ntoks);
 
@@ -383,14 +384,14 @@ int climate_readEvapParams(char *tok[], int ntoks);
  * \param[in] ntoks Number of tokens
  * \return Error code
  * \details
- * Data formats are:
- * - TEMPERATURE   v1 ... v12
- * - EVAPORATION   v1 ... v12
- * - RAINFALL      v1 ... v12
- * - CONDUCTIVITY  v1 ... v12
- * - N-PERV        subcatchID  patternID
- * - DSTORE        subcatchID  patternID
- * - INFIL         subcatchID  patternID
+ *  - Data formats are:
+ *      - TEMPERATURE   v1 ... v12
+ *      - EVAPORATION   v1 ... v12
+ *      - RAINFALL      v1 ... v12
+ *      - CONDUCTIVITY  v1 ... v12
+ *      - N-PERV        subcatchID  patternID
+ *      - DSTORE        subcatchID  patternID
+ *      - INFIL         subcatchID  patternID
  */
 int climate_readAdjustments(char *tok[], int ntoks);
 
@@ -420,6 +421,7 @@ void climate_setState(DateTime theDate);
  * \return The current value of NextEvapDate
  */
 DateTime climate_getNextEvapDate(void);
+
 /*!
  * \}
  */
@@ -440,6 +442,7 @@ void rain_open(void);
  * \brief Closes rain interface file and RDII processor.
  */
 void rain_close(void);
+
 /*!
  * \}
  */
@@ -1615,6 +1618,16 @@ void surfqual_getWashoff(int subcatchIndex, double runoff, double tStep);
 void surfqual_getBuildup(int subcatchIndex, double tStep);
 
 /*!
+* \brief Applies the buildup of a pollutant over a subcatchment for a given time step.
+* \param[in] subcatchIndex Subcatchment index
+* \details Applies the buildup of a pollutant over a subcatchment for a given time step.
+* API use is unconstrained by whether its is raining or not and other factors that apply
+* to the inbuilt buildup function. Negative buildup may be applied in which case the
+* function will not allow the buildup to go below zero.
+*/
+void surfqual_applyAPIBuildup(int subcatchIndex);
+
+/*!
 * \brief Reduces pollutant buildup over a subcatchment if sweeping occurs.
 * \param[in] subcatchIndex Subcatchment index
 * \param[in] aDate Current date/time
@@ -2003,16 +2016,75 @@ int shape_validate(TShape *shape, TTable *curve);
  * \}
  */
 
-//-----------------------------------------------------------------------------
-//   Control Rule Methods
-//-----------------------------------------------------------------------------
-int controls_create(int n);
-void controls_delete(void);
+ /*!
+ * \addtogroup Control_Rules_File_Methods Global Control Rule Methods
+ * \brief Global control rules methods
+ * \ingroup Global_Interfacing_Functions
+ * \{
+ */
+
+/*!
+* \brief Initializes the control rule system.
+*/
 void controls_init(void);
+
+/*!
+* \brief Updates the number of named variables or math expressions used
+* by control rules.
+* \param[in] s String containing either "VARIABLE" or "EXPRESSION"
+*/
 void controls_addToCount(char *s);
+
+/*!
+ * \brief Creates an array of control rules.
+ * \param[in] n Total number of control rules
+ * \return Error code
+ */
+int controls_create(int n);
+
+/*!
+ * \brief Deletes all control rules.
+ */
+void controls_delete(void);
+
+/*!
+* \brief Adds a named variable to the control rule system from a
+* tokenized line of input with formats:
+*  - VARIABLE  name = Object  id  attribute
+*  - VARIABLE  name = SIMULATION attribute
+* \param[in] tok Array of string tokens
+* \param[in] nToks Number of tokens
+* \return Error code
+*/
 int controls_addVariable(char *tok[], int ntoks);
+
+/*!
+* \brief Adds a math expression to the control rule system from a
+* a tokenized line of input with format:
+*   EXPRESSION  name = <math expression containing VARIABLE names>
+* \param[in] tok Array of string tokens
+* \param[in] nToks Number of tokens
+* \return Error code
+*/
 int controls_addExpression(char *tok[], int ntoks);
+
+/*!
+* \brief Adds a new clause to a control rule.
+* \param[in] r Rule index
+* \param[in] keyword Clause's keyword code (IF, THEN, etc.)
+* \param[in] tok Array of string tokens that comprises the clause
+* \param[in] nToks Number of tokens
+* \return Error code
+*/
 int controls_addRuleClause(int rule, int keyword, char *Tok[], int nTokens);
+
+/*!
+* \brief Evaluates all control rules at the current time of the simulation.
+* \param[in] currentTime Current simulation date/time
+* \param[in] elapsedTime Decimal days since start of simulation
+* \param[in] tStep Simulation time step (days)
+* \return Number of new actions taken
+*/
 int controls_evaluate(DateTime currentTime, DateTime elapsedTime,
                       double tStep);
 /*!
@@ -2049,25 +2121,125 @@ double table_tseriesLookup(TTable *table, double t, char extend);
  * \}
  */
 
-//-----------------------------------------------------------------------------
-//   Utility Methods
-//-----------------------------------------------------------------------------
-double UCF(int quantity);                    // units conversion factor
-int getInt(char *s, int *y);                 // get integer from string
-int getFloat(char *s, float *y);             // get float from string
-int getDouble(char *s, double *y);           // get double from string
-char *getTempFileName(char *s);              // get temporary file name
-int findmatch(char *s, char *keyword[]);     // search for matching keyword
-int match(char *str, char *substr);          // true if substr matches part of str
-int strcomp(const char *s1, const char *s2); // case insensitive string compare
-size_t sstrncpy(char *dest, const char *src,
-                size_t n); // safe string copy
-size_t sstrcat(char *dest, const char *src,
-               size_t destsize);          // safe string concatenation
-void writecon(const char *s);             // writes string to console
-DateTime getDateTime(double elapsedMsec); // convert elapsed time to date
-void getElapsedTime(DateTime aDate,       // convert elapsed date
-                    int *days, int *hrs, int *mins);
+/*!
+ * \addtogroup Utility_Methods Global Utility Methods
+ * \brief Global utility methods
+ * \ingroup Global_Interfacing_Functions
+ * \{
+ */
+
+/*!
+* \brief Computes a conversion factor from SWMM's internal units to user's units.
+* \param[in] integer code of quantity being converted
+* \return Returns units conversion factor
+*/
+double UCF(int quantity);
+
+/*!
+* \brief Converts a string to an int value.
+* \param[in] s a character string
+* \param[out] y converted value of s
+* \return Error code. Returns 1 if conversion successful, 0 if not.
+*/
+int getInt(char *s, int *y);
+
+/*!
+* \brief Converts a string to a float value.
+* \param[in] s a character string
+* \param[out] y converted value of s
+* \return Error code. Returns 1 if conversion successful, 0 if not.
+*/
+int getFloat(char *s, float *y);
+
+/*!
+* \brief Converts a string to a double precision floating point number.
+* \param[in] s a character string
+* \param[out] y converted value of s
+* \return Error code. Returns 1 if conversion successful, 0 if not.
+*/
+int getDouble(char *s, double *y);
+
+/*!
+* \brief Creates a temporary file name with path prepended to it.
+* \param[in] fname file name string (with max size of MAXFNAME)
+* \return Returns pointer to the temporary file name
+*/
+char *getTempFileName(char *fname);
+
+/*!
+* \brief Finds match between string and array of keyword strings.
+* \param[in] s a character string
+* \param[in] keyword array of keyword strings
+* \return Returns index of matching keyword, or -1 if no match found.
+*/
+int findmatch(char *s, char *keyword[]);
+
+/*!
+* \brief Sees if a sub-string of characters appears in a string (not case sensitive).
+* (not case sensitive).
+* \param[in] str character string being searched
+* \param[in] substr sub-string being searched for
+* \return Returns 1 if sub-string found, 0 if not.
+*/
+int match(char *str, char *substr);
+
+/*!
+* \brief Compares two strings (case insensitive).
+* \param[in] s1 first string
+* \param[in] s2 second string
+* \return Returns 1 if strings are equal (ignoring case), 0 if not.
+*/
+int strcomp(const char *s1, const char *s2);
+
+/*!
+* \brief Copies a string to a new memory location in a safe way.
+* \param[in] s a character string
+* \param[in] src pointer to source string
+* \param[in] n number of characters to copy from source string
+* \return Returns the size of the copied string.
+* \todo use portable C version and deprecate
+*/
+size_t sstrncpy(char *dest, const char *src, size_t n);
+
+/*!
+* \brief Safe string concatenation
+* \param[in, out] dest string to be appended
+* \param[in] src string to append to dest
+* \param[in] destsize allocated size of dest (including null terminator)
+* \return Returns the size of the concatenated string.
+*/
+size_t sstrcat(char *dest, const char *src, size_t destsize);
+
+/*!
+* \brief Writes string to console
+* \param[in] s a character string
+*/
+void writecon(const char *s);
+
+/*!
+* \brief Finds elapsed simulation time for a given calendar date.
+* \param[in] aDate a calendar date + time
+* \param[out] days number of days since simulation start
+* \param[out] hrs number of hours since start of current day
+* \param[out] mins number of minutes since start of current hour
+* \return Returns elapsed simulation time in decimal days
+*/
+void getElapsedTime(DateTime aDate,  int *days, int *hrs, int *mins);
+
+/*!
+* \brief Finds calendar date/time value for elapsed milliseconds of
+* simulation time.
+* \param[in] elapsedMsec elapsed time in milliseconds
+* \return Returns a DateTime
+*/
+DateTime getDateTime(double elapsedMsec);
+
+/*!
+* \brief Adds an absolute path name to a file name.
+* \param[in] fname file name string
+* \return Returns fname with a full path prepended to it
+* \note fname must have been dimensioned to accept MAXFNAME characters.
+*/
 char *addAbsolutePath(char *fname); // add full path to a file name
 /*!
  * \}

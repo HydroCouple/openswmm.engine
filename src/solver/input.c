@@ -774,15 +774,11 @@ int  readEvent(char* tok[], int ntoks)
     return 0;
 }
 
-//=============================================================================
 
-int  findmatch(char *s, char *keyword[])
-//
-//  Input:   s = character string
-//           keyword = array of keyword strings
-//  Output:  returns index of matching keyword or -1 if no match found  
-//  Purpose: finds match between string and array of keyword strings.
-//
+/*!
+* \copydoc findmatch
+*/
+int findmatch(char *s, char *keyword[])
 {
    int i = 0;
    while (keyword[i] != NULL)
@@ -793,16 +789,10 @@ int  findmatch(char *s, char *keyword[])
    return(-1);
 }
 
-//=============================================================================
-
-int  match(char *str, char *substr)
-//
-//  Input:   str = character string being searched
-//           substr = sub-string being searched for
-//  Output:  returns 1 if sub-string found, 0 if not
-//  Purpose: sees if a sub-string of characters appears in a string
-//           (not case sensitive).
-//
+/*!
+* \copydoc match
+*/
+int match(char *str, char *substr)
 {
     int i,j,k;
 
@@ -823,15 +813,10 @@ int  match(char *str, char *substr)
     return(1);
 }
 
-//=============================================================================
-
-int  getInt(char *s, int *y)
-//
-//  Input:   s = a character string
-//  Output:  y = converted value of s,
-//           returns 1 if conversion successful, 0 if not
-//  Purpose: converts a string to an integer number.
-//
+/*!
+* \copydoc getInt
+*/
+int getInt(char *s, int *y)
 {
     double x;
     if ( getDouble(s, &x) )
@@ -845,15 +830,10 @@ int  getInt(char *s, int *y)
     return 0;
 }
 
-//=============================================================================
-
-int  getFloat(char *s, float *y)
-//
-//  Input:   s = a character string
-//  Output:  y = converted value of s,
-//           returns 1 if conversion successful, 0 if not
-//  Purpose: converts a string to a single precision floating point number.
-//
+/*!
+* \copydoc getFloat
+*/
+int getFloat(char *s, float *y)
 {
     char *endptr;
     *y = (float) strtod(s, &endptr);
@@ -861,15 +841,10 @@ int  getFloat(char *s, float *y)
     return(1);
 }
 
-//=============================================================================
-
-int  getDouble(char *s, double *y)
-//
-//  Input:   s = a character string
-//  Output:  y = converted value of s,
-//           returns 1 if conversion successful, 0 if not
-//  Purpose: converts a string to a double precision floating point number.
-//
+/*!
+* \copydoc getDouble
+*/
+int getDouble(char *s, double *y)
 {
     char *endptr;
     *y = strtod(s, &endptr);
@@ -879,7 +854,7 @@ int  getDouble(char *s, double *y)
 
 //=============================================================================
 
-int  getTokens(char *s)
+int getTokens(char *s)
 //
 //  Input:   s = a character string
 //  Output:  returns number of tokens found in s

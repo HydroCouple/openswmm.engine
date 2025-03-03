@@ -44,8 +44,8 @@
 //-----------------------------------------------------------------------------
 //  Local functions
 //-----------------------------------------------------------------------------
-int    table_getNextFileEntry(TTable* table, double* x, double* y);
-int    table_parseFileLine(char* line, TTable* table, double* x, double* y);
+int table_getNextFileEntry(TTable* table, double* x, double* y);
+int table_parseFileLine(char* line, TTable* table, double* x, double* y);
 double table_interpolate(double x, double x1, double y1, double x2, double y2);
 
 
@@ -231,7 +231,7 @@ int table_addEntry(TTable* table, double x, double y)
 
 //=============================================================================
 
-void   table_deleteEntries(TTable *table)
+void table_deleteEntries(TTable *table)
 //
 //  Input:   table = pointer to a TTable structure
 //  Output:  none
@@ -260,7 +260,7 @@ void   table_deleteEntries(TTable *table)
 
 //=============================================================================
 
-void   table_init(TTable *table)
+void table_init(TTable *table)
 //
 //  Input:   table = pointer to a TTable structure
 //  Output:  none
@@ -285,7 +285,7 @@ void   table_init(TTable *table)
 
 //=============================================================================
 
-int   table_validate(TTable *table)
+int table_validate(TTable *table)
 //
 //  Input:   table = pointer to a TTable structure
 //  Output:  returns error code
@@ -300,7 +300,8 @@ int   table_validate(TTable *table)
     if ( table->file.mode == USE_FILE )
     {
         table->file.file = fopen(table->file.name, "rt");
-        if ( table->file.file == NULL ) return ERR_TABLE_FILE_OPEN;
+        if ( table->file.file == NULL )
+            return ERR_TABLE_FILE_OPEN;
     }
 
     // --- retrieve the first data entry in the table
@@ -731,7 +732,7 @@ double table_getStorageDepth(TTable *table, double v)
 
 //=============================================================================
 
-void   table_tseriesInit(TTable *table)
+void table_tseriesInit(TTable *table)
 //
 //  Input:   table = pointer to a TTable structure
 //  Output:  none
@@ -809,7 +810,7 @@ double table_tseriesLookup(TTable *table, double x, char extend)
 
 //=============================================================================
 
-int  table_getNextFileEntry(TTable* table, double* x, double* y)
+int table_getNextFileEntry(TTable* table, double* x, double* y)
 //
 //  Input:   table = pointer to a TTable structure
 //           x = pointer to a date (as decimal days)
@@ -834,7 +835,7 @@ int  table_getNextFileEntry(TTable* table, double* x, double* y)
 
 //=============================================================================
 
-int  table_parseFileLine(char* line, TTable* table, double* x, double* y)
+int table_parseFileLine(char* line, TTable* table, double* x, double* y)
 //
 //  Input:   table = pointer to a TTable structure
 //           x = pointer to a date (as decimal days)

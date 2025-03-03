@@ -4,16 +4,16 @@
 
 [build-system]
 requires = [
-    "setuptools>=42",
-    "wheel>=0.45.0",
-    "cmake>=3.26.0",
+    "wheel==0.45.1",
+    "setuptools>=75.3.0",
+    "cmake>=3.27.0",
     "scikit-build>=0.18.1",
-    "cython>=3.0.11"
+    "cython>=3.0.12"
 ]
 build-backend = "setuptools.build_meta"
 
 [tool.cibuildwheel]
-build = "cp37-* cp38-* cp39-* cp310-* cp311-* cp312-* cp313-*"
+build = "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-*"
 
 [project]
 name = "epaswmm"
@@ -57,12 +57,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
     "Development Status :: 3 - Alpha",
 ]
-
-# [tool.setuptools.bdist_wheel]
-# universal = true
-
-[tool.distutils.bdist_wheel]
-universal = true
 
 [project.urls]
 # TODO: Change these URLs to the correct ones

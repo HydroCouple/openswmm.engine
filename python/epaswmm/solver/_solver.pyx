@@ -8,7 +8,8 @@
 from enum import Enum
 from warnings import warn
 from typing import List, Tuple, Union, Dict, Set, Callable
-from cpython.datetime cimport datetime, timedelta
+from cpython.datetime cimport datetime as cython_datetime
+from datetime import datetime, timedelta
 from libc.stdlib cimport free, malloc
 from functools import partialmethod
 
@@ -61,8 +62,10 @@ class SWMMObjects(Enum):
     """
     Enumeration of SWMM objects.
 
-    :ivar SUBCATCH: Subcatchment object
-    :type SUBCATCH: int 
+    :ivar RAIN_GAGE: Raingage object
+    :type RAIN_GAGE: int
+    :ivar SUBCATCHMENT: Subcatchment object
+    :type SUBCATCHMENT: int 
     :ivar NODE: Node object
     :type NODE: int
     :ivar LINK: Link object
@@ -142,8 +145,8 @@ class SWMMRainGageProperties(Enum):
 
     :ivar GAGE_TOTAL_PRECIPITATION: Total precipitation
     :type GAGE_TOTAL_PRECIPITATION: int
-    :ivar GAGE_SNOW_DEPTH: Snow depth
-    :type GAGE_SNOW_DEPTH: int
+    :ivar GAGE_RAINFALL: Rainfall
+    :type GAGE_RAINFALL: int
     :ivar GAGE_SNOWFALL: Snowfall
     :type GAGE_SNOWFALL: int
     """
@@ -265,26 +268,58 @@ class SWMMLinkProperties(Enum):
 
     :ivar TYPE: Link type
     :type TYPE: int
-    :ivar OFFSET1: Offset 1
-    :type OFFSET1: int
-    :ivar OFFSET2: Offset 2
-    :type OFFSET2: int
-    :ivar DIAMETER: Diameter
-    :type DIAMETER: int
+    :ivar START_NODE: Start node
+    :type START_NODE: int
+    :ivar END_NODE: End node
+    :type END_NODE: int
     :ivar LENGTH: Length
     :type LENGTH: int
-    :ivar ROUGHNESS: Roughness
-    :type ROUGHNESS: int
-    :ivar INLET_HEIGHT: Inlet height
-    :type INLET_HEIGHT: int
-    :ivar OUTLET_HEIGHT: Outlet height
-    :type OUTLET_HEIGHT: int
-    :ivar INIT_FLOW: Initial flow
-    :type INIT_FLOW: int
-    :ivar FLOW_LIMIT: Flow limit
-    :type FLOW_LIMIT: int
+    :ivar SLOPE: Slope
+    :type SLOPE: int
+    :ivar FULL_DEPTH: Full depth
+    :type FULL_DEPTH: int
+    :ivar FULL_FLOW: Full flow
+    :type FULL_FLOW: int
+    :ivar SETTING: Setting
+    :type SETTING: int
+    :ivar TIME_OPEN: Time open
+    :type TIME_OPEN: int
+    :ivar TIME_CLOSED: Time closed
+    :type TIME_CLOSED: int
+    :ivar FLOW: Flow
+    :type FLOW: int
+    :ivar DEPTH: Depth
+    :type DEPTH: int
+    :ivar VELOCITY: Velocity
+    :type VELOCITY: int
+    :ivar TOP_WIDTH: Top width
+    :type TOP_WIDTH: int
     :ivar REPORT_FLAG: Report flag
     :type REPORT_FLAG: int
+    :ivar START_NODE_OFFSET: Start node offset
+    :type START_NODE_OFFSET: int
+    :ivar END_NODE_OFFSET: End node offset
+    :type END_NODE_OFFSET: int
+    :ivar INITIAL_FLOW: Initial flow
+    :type INITIAL_FLOW: int
+    :ivar FLOW_LIMIT: Flow limit
+    :type FLOW_LIMIT: int
+    :ivar INLET_LOSS: Inlet loss
+    :type INLET_LOSS: int
+    :ivar OUTLET_LOSS: Outlet loss
+    :type OUTLET_LOSS: int
+    :ivar AVERAGE_LOSS: Average loss
+    :type AVERAGE_LOSS: int
+    :ivar SEEPAGE_RATE: Seepage rate
+    :type SEEPAGE_RATE: int
+    :ivar HAS_FLAPGATE: Has flapgate
+    :type HAS_FLAPGATE: int
+    :ivar POLLUTANT_CONCENTRATION: Pollutant concentration
+    :type POLLUTANT_CONCENTRATION: int
+    :ivar POLLUTANT_LOAD: Pollutant load
+    :type POLLUTANT_LOAD: int
+    :ivar POLLUTANT_LATERAL_MASS_FLUX: Pollutant lateral mass flux
+    :type POLLUTANT_LATERAL_MASS_FLUX: int
     """
     TYPE = swmm_LinkProperty.swmm_LINK_TYPE
     START_NODE = swmm_LinkProperty.swmm_LINK_NODE1
@@ -300,6 +335,8 @@ class SWMMLinkProperties(Enum):
     DEPTH = swmm_LinkProperty.swmm_LINK_DEPTH
     VELOCITY = swmm_LinkProperty.swmm_LINK_VELOCITY
     TOP_WIDTH = swmm_LinkProperty.swmm_LINK_TOPWIDTH
+    VOLUME = swmm_LinkProperty.swmm_LINK_VOLUME
+    CAPACITY = swmm_LinkProperty.swmm_LINK_CAPACITY
     REPORT_FLAG = swmm_LinkProperty.swmm_LINK_RPTFLAG
     START_NODE_OFFSET = swmm_LinkProperty.swmm_LINK_OFFSET1
     END_NODE_OFFSET = swmm_LinkProperty.swmm_LINK_OFFSET2
@@ -542,21 +579,31 @@ cdef void progress_callback_wrapper(double progress):
     Wrapper function to call the instance method.
     
     :param progress: Progress percentage
+    :type progress: double
+
     """
     global solver_instance
 
     if solver_instance is not None:
         solver_instance.__progress_callback(progress)
 
-def run_solver(inp_file: str, rpt_file: str, out_file: str, swmm_progress_callback: Callable[[float], None] = None) -> int:
+def run_solver(
+    inp_file: str, 
+    rpt_file: str, 
+    out_file: str, 
+    swmm_progress_callback: Callable[[float], None] = None
+    ) -> int:
     """
     Run a SWMM simulation with a progress callback.
 
     :param inp_file: Input file name
+    :rtype inp_file: str
     :param rpt_file: Report file name
+    :rtype rpt_file: str
     :param out_file: Output file name
-    :param progress_callback: Progress callback function
-    :type progress_callback: callable
+    :rtype out_file: str
+    :param swmm_progress_callback: Progress callback function
+    :type swmm_progress_callback: callable
     :return: Error code (0 if successful)
     """
     cdef int error_code = 0
@@ -587,12 +634,13 @@ def run_solver(inp_file: str, rpt_file: str, out_file: str, swmm_progress_callba
     
     return error_code
 
-cpdef datetime decode_swmm_datetime(double swmm_datetime):
+cpdef cython_datetime decode_swmm_datetime(double swmm_datetime):
     """
     Decode a SWMM datetime into a datetime object.
     
     :param swmm_datetime: SWMM datetime float value
     :type swmm_datetime: float
+    
     :return: datetime object
     :rtype: datetime
     """
@@ -601,7 +649,7 @@ cpdef datetime decode_swmm_datetime(double swmm_datetime):
 
     return datetime(year, month, day, hour, minute, second)
 
-cpdef double encode_swmm_datetime(datetime dt):
+cpdef double encode_swmm_datetime(cython_datetime dt):
     """
     Encode a datetime object into a SWMM datetime float value.
 
@@ -709,7 +757,14 @@ cdef class Solver:
     cdef object _solver_state
     cdef object _partial_step_function 
 
-    def __cinit__(self, str inp_file, str rpt_file = None, str out_file = None, int stride_step = 300, bint save_results=True):
+    def __cinit__(
+        self, 
+        str inp_file, 
+        str rpt_file = None, 
+        str out_file = None, 
+        int stride_step = 300, 
+        bint save_results=True
+    ):
         """
         Constructor to create a new SWMM solver.
 
@@ -759,7 +814,8 @@ cdef class Solver:
         """
         Enter method for context manager.
         """
-
+        self.__execute_callbacks(CallbackType.BEFORE_INITIALIZE)
+        self.open()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -797,7 +853,12 @@ cdef class Solver:
         :return: Start date
         :rtype: datetime
         """
-        cdef double start_date = swmm_getValue(SWMMSystemProperties.START_DATE.value, 0)
+        cdef double start_date = swmm_getValueExpanded(
+            objType=SWMMObjects.SYSTEM.value, 
+            property=SWMMSystemProperties.START_DATE.value,
+            index=0,
+            subIndex=0
+        )
         
         return decode_swmm_datetime(start_date)
 
@@ -809,8 +870,14 @@ cdef class Solver:
         :param sim_start_datetime: Start date of the simulation
         :return: Error code (0 if successful)
         """
-        cdef double start_date = encode_swmm_datetime(sim_start_datetime)
-        cdef int error_code = swmm_setValue(SWMMSystemProperties.START_DATE.value, 0, start_date)
+        cdef double start_date = encode_swmm_datetime(dt=sim_start_datetime)
+        cdef int error_code = swmm_setValueExpanded(
+            objType=SWMMObjects.SYSTEM.value,
+            property=SWMMSystemProperties.START_DATE.value,
+            index=0,
+            subindex=0,
+            value=start_date
+        )
 
         self.__validate_error(error_code)
 
@@ -822,7 +889,13 @@ cdef class Solver:
         :return: End date
         :rtype: datetime
         """
-        cdef double end_date = swmm_getValue(SWMMSystemProperties.END_DATE.value, 0)
+        cdef double end_date = swmm_getValueExpanded(
+            objType=SWMMObjects.SYSTEM.value,
+            property=SWMMSystemProperties.END_DATE.value,
+            index=0,
+            subIndex=0
+        )
+        
         return decode_swmm_datetime(end_date)
 
     @end_datetime.setter
@@ -833,8 +906,14 @@ cdef class Solver:
         :param sim_end_datetime: End date of the simulation
         :return: Error code (0 if successful)
         """
-        cdef double end_date = encode_swmm_datetime(sim_end_datetime)
-        cdef int error_code = swmm_setValue(SWMMSystemProperties.END_DATE.value, 0, end_date)
+        cdef double end_date = encode_swmm_datetime(dt=sim_end_datetime)
+        cdef int error_code = swmm_setValueExpanded(
+            objType=SWMMObjects.SYSTEM.value,
+            property=SWMMSystemProperties.END_DATE.value,
+            index=0,
+            subindex=0,
+            value=end_date
+        )
 
         self.__validate_error(error_code)
     
@@ -846,7 +925,13 @@ cdef class Solver:
         :return: Routing time step
         :rtype: double
         """
-        cdef double routing_step = swmm_getValue(SWMMSystemProperties.ROUTING_STEP.value, 0)
+        cdef double routing_step = swmm_getValueExpanded(
+            objType=SWMMObjects.SYSTEM.value,
+            property=SWMMSystemProperties.ROUTING_STEP.value,
+            index=0,
+            subIndex=0
+        )
+        
         return routing_step
 
     @routing_step.setter
@@ -857,7 +942,14 @@ cdef class Solver:
         :param value: Routing time step in seconds
         :type value: float
         """
-        cdef int error_code = swmm_setValue(SWMMSystemProperties.ROUTING_STEP.value, 0, value)
+        cdef int error_code = swmm_setValueExpanded(
+            objType=SWMMObjects.SYSTEM.value,
+            property=SWMMSystemProperties.ROUTING_STEP.value,
+            index=0,
+            subindex=0,
+            value=value
+        )
+
         self.__validate_error(error_code)
 
     @property
@@ -868,7 +960,13 @@ cdef class Solver:
         :return: Reporting time step
         :rtype: double
         """
-        cdef double reporting_step = swmm_getValue(SWMMSystemProperties.REPORT_STEP.value, 0)
+        cdef double reporting_step = swmm_getValueExpanded(
+            objType=SWMMObjects.SYSTEM.value,
+            property=SWMMSystemProperties.REPORT_STEP.value,
+            index=0,
+            subIndex=0
+        )
+        
         return reporting_step
 
     @reporting_step.setter
@@ -879,7 +977,14 @@ cdef class Solver:
         :param value: Reporting time step in seconds
         :type value: float
         """
-        cdef int error_code = swmm_setValue(SWMMSystemProperties.REPORT_STEP.value, 0, value)
+        cdef int error_code = swmm_setValueExpanded(
+            objType=SWMMObjects.SYSTEM.value,
+            property=SWMMSystemProperties.REPORT_STEP.value,
+            index=0,
+            subindex=0,
+            value=value
+        )
+        
         self.__validate_error(error_code)
    
     @property
@@ -890,7 +995,13 @@ cdef class Solver:
         :return: Report start date
         :rtype: datetime
         """
-        cdef double report_start_date = swmm_getValue(SWMMSystemProperties.REPORT_START_DATE.value, 0)
+        cdef double report_start_date = swmm_getValueExpanded(
+            objType=SWMMObjects.SYSTEM.value,
+            property=SWMMSystemProperties.REPORT_START_DATE.value,
+            index=0,
+            subIndex=0
+        )
+
         return decode_swmm_datetime(report_start_date)
 
     @report_start_datetime.setter
@@ -902,7 +1013,14 @@ cdef class Solver:
         :type report_start_datetime: datetime
         """
         cdef double report_start_date = encode_swmm_datetime(report_start_datetime)
-        cdef int error_code = swmm_setValue(SWMMSystemProperties.REPORT_START_DATE.value, 0, report_start_date)
+        cdef int error_code = swmm_setValueExpanded(
+            objType=SWMMObjects.SYSTEM.value, 
+            property=SWMMSystemProperties.REPORT_START_DATE.value, 
+            index=0, 
+            subindex=0, 
+            value=report_start_date
+        )
+
         self.__validate_error(error_code)
 
     @property
@@ -913,10 +1031,35 @@ cdef class Solver:
         :return: Current date
         :rtype: datetime
         """
-        cdef double current_date = swmm_getValue(SWMMSystemProperties.CURRENT_DATE.value, 0)
+        cdef double current_date = swmm_getValueExpanded(
+            objType=SWMMObjects.SYSTEM.value,
+            property=SWMMSystemProperties.CURRENT_DATE.value,
+            index=0,
+            subIndex=0
+        )
 
         return decode_swmm_datetime(current_date)
     
+    @property
+    def progress_callbacks_per_second(self) -> int:
+        """
+        Get the number of progress callbacks per second.
+        
+        :return: Progress callbacks per second
+        :rtype: int
+        """
+        return self._progress_callbacks_per_second
+    
+    @progress_callbacks_per_second.setter
+    def progress_callbacks_per_second(self, value: int) -> None:
+        """
+        Set the number of progress callbacks per second.
+        
+        :param value: Progress callbacks per second
+        :type value: int
+        """
+        self._progress_callbacks_per_second = max(1, value)
+
     def get_object_count(self, object_type: SWMMObjects) -> int:
         """
         Get the count of a SWMM object type.
@@ -926,7 +1069,7 @@ cdef class Solver:
         :return: Object count
         :rtype: int
         """
-        cdef int count = swmm_getCount(object_type.value)
+        cdef int count = swmm_getCount(objType=object_type.value)
 
         self.__validate_error(count)
 
@@ -945,7 +1088,13 @@ cdef class Solver:
         """
         cdef char* c_object_name = <char*>malloc(1024*sizeof(char))
 
-        cdef int error_code = swmm_getName(object_type.value, index, c_object_name, 1024)
+        cdef int error_code = swmm_getName(
+            objType=object_type.value,
+            index=index,
+            name=c_object_name,
+            size=1024
+        )
+
         self.__validate_error(error_code)
 
         object_name = c_object_name.decode('utf-8')
@@ -965,11 +1114,17 @@ cdef class Solver:
         """
         cdef char* c_object_name = <char*>malloc(1024*sizeof(char))
         cdef list object_names = []
-        cdef int count = self.get_object_count(object_type)
+        cdef int count = self.get_object_count(object_type=object_type)
 
         for i in range(count):
 
-            error_code = swmm_getName(object_type.value, i, c_object_name, 1024)
+            error_code = swmm_getName(
+                objType=object_type.value,
+                index=i,
+                name=c_object_name,
+                size=1024
+            )
+
             self.__validate_error(error_code)
 
             object_name = c_object_name.decode('utf-8')
@@ -991,7 +1146,10 @@ cdef class Solver:
         :return: Object index
         :rtype: int
         """
-        cdef int index = swmm_getIndex(object_type.value, object_name.encode('utf-8'))
+        cdef int index = swmm_getIndex(
+            objType=object_type.value,
+            name=object_name.encode('utf-8')
+        )
 
         return index
 
@@ -1005,7 +1163,7 @@ cdef class Solver:
             SWMMLinkProperties, 
             SWMMSystemProperties
         ], 
-        index: int, 
+        index: Union[int, str], 
         value: float, 
         sub_index: int = -1
         ) -> None:
@@ -1016,14 +1174,29 @@ cdef class Solver:
         :type object_type: SWMMObjects 
         :param property_type: SWMM system property type (e.g., SWMMSystemProperties.START_DATE)
         :type property_type: Union[SWMMRainGageProperties, SWMMSubcatchmentProperties, SWMMNodeProperties, SWMMLinkProperties, SWMMSystemProperties]
-        :param index: Object index (e.g., 0)
-        :type index: int
+        :param index: Object index (e.g., 0, 'J1')
+        :type index: int or str
         :param value: Property value (e.g., 10.0)
         :type value: double
         :param sub_index: Sub-index (e.g., 0) for properties with sub-indexes. For example pollutant index for POLLUTANT properties.
         :type sub_index: int
         """
-        cdef int error_code = swmm_setValueExpanded(<int>object_type.value, <int>property_type.value, index, sub_index, value)
+        cdef int element_index = -1
+
+        if isinstance(index, str):
+            element_index = self.get_object_index(object_type, index)
+            self.__validate_error(element_index)
+        else:
+            element_index = index
+
+        cdef int error_code = swmm_setValueExpanded(
+            objType=<int>object_type.value, 
+            property=<int>property_type.value,
+            index=element_index, 
+            subindex=sub_index, 
+            value=value
+        )
+
         self.__validate_error(error_code)
 
     def get_value(
@@ -1036,7 +1209,7 @@ cdef class Solver:
             SWMMLinkProperties, 
             SWMMSystemProperties
         ],
-        index: int, 
+        index: Union[int, str], 
         sub_index: int = -1
         ) -> float:
         """
@@ -1046,14 +1219,29 @@ cdef class Solver:
         :type object_type: SWMMObjects
         :param property_type: SWMM system property type (e.g., SWMMSystemProperties.START_DATE)
         :type property_type: Union[SWMMRainGageProperties, SWMMSubcatchmentProperties, SWMMNodeProperties, SWMMLinkProperties, SWMMSystemProperties]
-        :param index: Object index (e.g., 0)
-        :type index: int
+        :param index: Object index (e.g., 0, 'J1')
+        :type index: int or str
         :param sub_index: Sub-index (e.g., 0) for properties with sub-indexes. For example pollutant index for POLLUTANT properties.
         :type sub_index: int
         :return: Property value
         :rtype: double
         """
-        cdef double value = swmm_getValueExpanded(<int>object_type.value, <int>property_type.value, index, sub_index)
+
+        cdef int element_index = -1
+
+        if isinstance(index, str):
+            element_index = self.get_object_index(object_type, index)
+            self.__validate_error(element_index)
+        else:
+            element_index = index
+
+        cdef double value = swmm_getValueExpanded(
+            objType=<int>object_type.value, 
+            property=<int>property_type.value, 
+            index=element_index, 
+            subIndex=sub_index
+        )
+
         self.__validate_error(<int>value)
 
         return value
@@ -1108,18 +1296,11 @@ cdef class Solver:
         """
         self._progress_callbacks.append(callback)
 
-    cpdef void initialize(self):
+    cpdef void open(self):
         """
-        Initialize the solver.
-        
-        :param inp_file: Input file name
-        :param rpt_file: Report file name
-        :param out_file: Output file name
-
+        Opens the SWMM solver by calling the open method in the SWMM API.
         """
-        cdef error_code = 0
-        self._clock = clock()
-
+        cdef int error_code = 0
         cdef bytes c_inp_file_bytes = self._inp_file.encode('utf-8')
         cdef bytes c_rpt_file_bytes = self._rpt_file.encode('utf-8')
         cdef bytes c_out_file_bytes = self._out_file.encode('utf-8')
@@ -1127,75 +1308,179 @@ cdef class Solver:
         cdef const char* c_inp_file = c_inp_file_bytes
         cdef const char* c_rpt_file = c_rpt_file_bytes
         cdef const char* c_out_file = c_out_file_bytes
-
-        if (self._solver_state != SolverState.CREATED or self._solver_state != SolverState.CLOSED):
-            self.__execute_callbacks(CallbackType.BEFORE_INITIALIZE)
+        
+        if self._solver_state == SolverState.OPEN:
+            pass
+        elif self._solver_state == SolverState.CREATED or self._solver_state == SolverState.CLOSED:
             self.__execute_callbacks(CallbackType.BEFORE_OPEN)
-            error_code = swmm_open(c_inp_file, c_rpt_file, c_out_file)
+            
+            error_code = swmm_open(
+                inp_file=c_inp_file,
+                rpt_file=c_rpt_file,
+                out_file=c_out_file
+            )
+            
             self.__validate_error(error_code)
             self._solver_state = SolverState.OPEN
             self.__execute_callbacks(CallbackType.AFTER_OPEN)
+            self._clock = clock()
         else:
-            raise SWMMSolverException(f'Initialize failed: Solver is not in a valid state: {self._solver_state}')
+            raise SWMMSolverException(f'Open failed: Solver is not in a valid state: {self._solver_state}')
+        
+        self._total_duration = swmm_getValue(
+            property=SWMMSystemProperties.END_DATE.value,
+            index=0
+        ) - swmm_getValue(
+            property=SWMMSystemProperties.START_DATE.value,
+            index=0
+        )
 
-        self._total_duration = swmm_getValue(SWMMSystemProperties.END_DATE.value, 0) - swmm_getValue(SWMMSystemProperties.START_DATE.value, 0)
+    cpdef void start(self):
+        """
+        Starts the SWMM solver.
+        """
+        cdef int error_code = 0
+
+        if self._solver_state == SolverState.STARTED:
+            pass
+        elif self._solver_state == SolverState.OPEN:
+            self.__execute_callbacks(CallbackType.BEFORE_START)
+            error_code = swmm_start(save_flag=self._save_results)
+            self.__validate_error(error_code)
+            self._solver_state = SolverState.STARTED
+            self.__execute_callbacks(CallbackType.AFTER_START)
+        else:
+            raise SWMMSolverException(f'Start failed: Solver is not in a valid state: {self._solver_state}')
+
+    cpdef void initialize(self):
+        """
+        Initializes the solver and starts the simulation. Calls the open and start methods in
+        the SWMM API.
+        """
+        self.__execute_callbacks(CallbackType.BEFORE_INITIALIZE)
+        self.open()
+        self.start()
     
-    cpdef double step(self):
+    cpdef tuple step(self, int steps = 0):
         """
         Step a SWMM simulation.
         
+        :param steps: Number of steps to run. Overrides internal stride step if greater than 0.
+        :type steps: int
         :return: elapsed_time, current_date
         :rtype: Tuple[float, datetime]
         """
         cdef double elapsed_time = 0.0
         cdef double progress = 0.0
-
-        if self._solver_state == SolverState.OPEN:
-            self.__execute_callbacks(CallbackType.BEFORE_START)
-            error_code = swmm_start(self._save_results)
-            self.__validate_error(error_code)
-            self._solver_state = SolverState.STARTED
-            self.__execute_callbacks(CallbackType.AFTER_START)
-
-        if self._stride_step > 0:
-            error_code = swmm_stride(self._stride_step, &elapsed_time)
-        else:
-            error_code = swmm_step(&elapsed_time)
-
-        self.__validate_error(error_code)
         
-        progress = (swmm_getValue(SWMMSystemProperties.CURRENT_DATE.value, 0) - self._total_duration) / self._total_duration
-        self.__execute_progress_callbacks(progress)
+        if self._solver_state == SolverState.STARTED:
+            if steps > 0:
+                error_code = swmm_stride(strideStep=steps, elapsedTime=&elapsed_time)
+            elif self._stride_step > 0:
+                error_code = swmm_stride(strideStep=self._stride_step, elapsedTime=&elapsed_time)
+            else:
+                error_code = swmm_step(elapsed_time=&elapsed_time)
 
-        if elapsed_time <= 0.0:
-            self._solver_state = SolverState.FINISHED
+            self.__validate_error(error_code)
+            
+            progress = (
+                swmm_getValue(
+                    property=SWMMSystemProperties.CURRENT_DATE.value,
+                    index=0
+                ) - self._total_duration
+            ) / self._total_duration
+            
+            self.__execute_progress_callbacks(progress)
 
-        return elapsed_time
+            if elapsed_time <= 0.0:
+                self._solver_state = SolverState.FINISHED
 
-    cpdef void finalize(self):
+            return elapsed_time, decode_swmm_datetime(
+                swmm_datetime=swmm_getValue(
+                    property=SWMMSystemProperties.CURRENT_DATE.value,
+                    index=0
+                )
+            )
+        else:
+            raise SWMMSolverException(f'Step failed: Solver is not in a valid state: {self._solver_state}')
+
+    cpdef void end(self):
         """
-        Finalize the solver.
+        Ends the SWMM simulation.
         """
         cdef int error_code = 0
 
-        if self._solver_state == SolverState.OPEN or self._solver_state == SolverState.STARTED or self._solver_state == SolverState.FINISHED:
+        if self._solver_state == SolverState.ENDED or \
+           self._solver_state == SolverState.CREATED:
+            pass
+        elif self._solver_state == SolverState.OPEN or \
+             self._solver_state == SolverState.STARTED or \
+             self._solver_state == SolverState.FINISHED:
+            
             self.__execute_callbacks(CallbackType.BEFORE_END)
             error_code = swmm_end()
             self.__validate_error(error_code)
             self._solver_state = SolverState.ENDED
             self.__execute_callbacks(CallbackType.AFTER_END)
+        else:
+            raise SWMMSolverException(f'End failed: Solver is not in a valid state: {self._solver_state}')
+    
+    cpdef void report(self):
+        """
+        Reports the results of the SWMM simulation.
+        """
+        cdef int error_code = 0
 
+        if self._solver_state == SolverState.REPORTED or self._solver_state == SolverState.CREATED:
+            pass
+        elif self._solver_state == SolverState.ENDED:
             self.__execute_callbacks(CallbackType.BEFORE_REPORT)
             error_code = swmm_report()
             self.__validate_error(error_code)
             self._solver_state = SolverState.REPORTED
             self.__execute_callbacks(CallbackType.AFTER_REPORT)
+        else:
+            raise SWMMSolverException(f'Report failed: Solver is not in a valid state: {self._solver_state}')
+    
+    cpdef void close(self):
+        """
+        Close the solver.
+        """
+        cdef int error_code = 0
 
+        if self._solver_state == SolverState.CREATED:
+            pass
+        elif self._solver_state == SolverState.REPORTED:
             self.__execute_callbacks(CallbackType.BEFORE_CLOSE)
             error_code = swmm_close()
             self.__validate_error(error_code)
             self._solver_state = SolverState.CLOSED
             self.__execute_callbacks(CallbackType.AFTER_CLOSE)
+        else:
+            raise SWMMSolverException(f'Close failed: Solver is not in a valid state: {self._solver_state}')
+
+    cpdef void finalize(self):
+        """
+        Finalize the solver. Ends simulation, reports the results, and dispose objects.
+        """
+        cdef int error_code = 0
+
+        if self._solver_state == SolverState.OPEN or \
+           self._solver_state == SolverState.STARTED or \
+           self._solver_state == SolverState.FINISHED:
+
+            self.end()
+            self.report()
+            self.close()
+        elif self._solver_state == SolverState.ENDED:
+            self.report()
+            self.close()
+        elif self._solver_state == SolverState.REPORTED:
+            self.close()
+        elif self._solver_state == SolverState.CREATED or self._solver_state == SolverState.CLOSED:
+            pass
+        else:
+            raise SWMMSolverException(f'Finalize failed: Solver is not in a valid state: {self._solver_state}')
 
     cpdef void execute(self):
         """
@@ -1215,9 +1500,18 @@ cdef class Solver:
 
         if (self._solver_state != SolverState.CREATED or self._solver_state != SolverState.CLOSED):
             if len(self._progress_callbacks) > 0:
-                error_code = swmm_run_with_callback(c_inp_file, c_rpt_file, c_out_file, swmm_progress_callback)
+                error_code = swmm_run_with_callback(
+                    inp_file=c_inp_file, 
+                    rpt_file=c_rpt_file, 
+                    out_file=c_out_file,
+                    progress=swmm_progress_callback
+                )
             else:
-                error_code = swmm_run(c_inp_file, c_rpt_file, c_out_file)
+                error_code = swmm_run(
+                    inp_file=c_inp_file,
+                    rpt_file=c_rpt_file,
+                    out_file=c_out_file
+                )
         else:
             raise SWMMSolverException(f'Solver is not in a valid state: {self._solver_state}')
 
@@ -1229,7 +1523,7 @@ cdef class Solver:
         """
         cdef bytes c_hotstart_file = hotstart_file.encode('utf-8')
         cdef const char* cc_hotstart_file = c_hotstart_file
-        cdef int error_code = swmm_useHotStart(cc_hotstart_file)
+        cdef int error_code = swmm_useHotStart(hotStartFile=cc_hotstart_file)
 
         self.__validate_error(error_code)
     
@@ -1241,7 +1535,7 @@ cdef class Solver:
         """
         cdef bytes c_hotstart_file = hotstart_file.encode('utf-8')
         cdef const char* cc_hotstart_file = c_hotstart_file
-        cdef int error_code = swmm_saveHotStart(cc_hotstart_file)
+        cdef int error_code = swmm_saveHotStart(hotStartFile=cc_hotstart_file)
 
         self.__validate_error(error_code)
 
@@ -1255,7 +1549,12 @@ cdef class Solver:
         cdef int error_code = 0
         cdef float runoffErr, flowErr, qualErr
 
-        swmm_getMassBalErr(&runoffErr, &flowErr, &qualErr)
+        swmm_getMassBalErr(
+            runoffErr=&runoffErr, 
+            flowErr=&flowErr,
+            qualErr=&qualErr
+        )
+
         self.__validate_error(error_code)
 
     def __execute_callbacks(self, callback_type: CallbackType) -> None:
@@ -1288,7 +1587,10 @@ cdef class Solver:
         cdef clock_t elapsed_time =   clock() - self._clock
 
         if elapsed_time > 1.0 / self._progress_callbacks_per_second:
-            self.__execute_progress_callbacks(percent_complete)
+            self.__execute_progress_callbacks(
+                percent_complete=percent_complete
+            )
+
             self._clock = clock()
 
     cpdef void __validate_error(self, error_code: int) :
@@ -1298,7 +1600,10 @@ cdef class Solver:
         :param error_code: Error code to validate
         :type error_code: int
         """
-        cdef int internal_error_code = <int>swmm_getValue(SWMMObjects.SYSTEM.value, SWMMSystemProperties.ERROR_CODE.value)
+        cdef int internal_error_code = <int>swmm_getValue(
+            property=SWMMObjects.SYSTEM.value,
+            index=SWMMSystemProperties.ERROR_CODE.value
+        )
 
         if error_code < 0:
             if internal_error_code > 0:

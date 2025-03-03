@@ -13,6 +13,40 @@
 #define ERR_MAXMSG 256
 
 /*!
+* \enum OutputErrorTypes
+* \brief Error codes
+*/
+enum OutputErrorTypes{
+	/*! \brief Error 411: memory allocation failure */
+	ERR411 = 411,
+	/*! \brief Error 421: invalid parameter code */
+	ERR421 = 421,
+	/*! \brief Error 422: reporting period index out of range */
+	ERR422 = 422,
+	/*! \brief Error 423: element index out of range */
+	ERR423 = 423,
+	/*! \brief Error 424: no memory allocated for results */
+	ERR424 = 424,
+	/*! \brief Error 434: unable to open binary output file */
+	ERR434 = 434,
+	/*! \brief Error 435: invalid file - not created by SWMM */
+	ERR435 = 435,
+	/*! \brief Error 436: invalid file - contains no results */
+	ERR436 = 436,
+	/*! \brief rror 440: an unspecified error has occurred */
+	ERR440 = 440,
+};
+
+/*!
+* \enum OutputWarningTypes
+* \brief Warning codes
+*/
+enum OutputWarningTypes{
+	/*! \brief Model run issued warnings */
+	WARN10 = 10,
+};
+
+/*!
 * \typedef p_msg_lookup
 * \brief Function pointer for error message lookup
 * \param[in] errorcode Error code

@@ -17,7 +17,7 @@ typedef enum {
      /*! \brief US Customary units (ft, acre, etc.) */
      SMO_US,
      /*! \brief International System of Units (m, ha, etc.) */
-    SMO_SI
+     SMO_SI
 } SMO_unitSystem;
 
 /*!

@@ -41,6 +41,14 @@ from .output cimport (
     SMO_getStartDate,
     SMO_getTimes,
     SMO_getElementName,
+    SMO_getNumVars,
+    SMO_getVarCode,
+    SMO_getVarCodes,
+    SMO_getNumProperties,
+    SMO_getPropertyCode,
+    SMO_getPropertyCodes,
+    SMO_getPropertyValue,
+    SMO_getPropertyValues,
     SMO_getSubcatchSeries,
     SMO_getNodeSeries,
     SMO_getLinkSeries,
@@ -313,8 +321,9 @@ cdef class Output:
     cdef int _flow_units
     cdef int* _output_size
     cdef int _output_size_length
-    cdef object _pollutant_units
-    cdef object _start_date
+    cdef list _pollutant_units
+    cdef dict _element_name_indexes
+    cdef datetime _start_date
     cdef int _report_step
     cdef int _num_periods
     cdef list _times
@@ -364,6 +373,7 @@ cdef class Output:
         self._flow_units = self.__get_flow_units()
         self._output_size, self._output_size_length = self.__get_output_size()
         self._pollutant_units = [ConcentrationUnits(i) for i in  self.__get_pollutant_units()]
+        self._element_name_indexes = self.__get_element_name_indexes()
         self._start_date = self.__get_start_date()
         self._report_step = self.get_time_attribute(TimeAttribute.REPORT_STEP)
         self._num_periods = self.get_time_attribute(TimeAttribute.NUM_PERIODS)
@@ -550,6 +560,24 @@ cdef class Output:
 
         return pollutant_units_list
 
+    cdef dict __get_element_name_indexes(self):
+        """
+        Method to get the indexes of all elements of a given type and name in the SWMM output file.
+        :rtype: Dict[str, Dict[str, int]]
+        """
+        cdef dict element_name_indexes = {} 
+
+        for element_type in ElementType:
+            if element_type.value == SMO_elementType.SMO_sys:
+                continue
+
+            num_elements = self._output_size[element_type.value]
+            element_names = self.get_element_names(element_type)
+
+            element_name_indexes[element_type.name] = {element_name: i for i , element_name in enumerate(element_names)}
+
+        return element_name_indexes
+
     @property
     def start_date(self) -> datetime:
         """
@@ -584,12 +612,247 @@ cdef class Output:
         """
         return self._times
 
+    def get_num_variables(self, element_type: ElementType) -> int:
+        """
+        Method to get the number of variables for an element type in the SWMM output file.
+
+        :param element_type: Type of the element.
+        :type element_type: int
+
+        :return: Number of variables for the element type.
+        :rtype: int
+        """
+        cdef int error_code = 0
+        cdef int num_vars = 0
+
+        error_code = SMO_getNumVars(
+            p_handle=self._output_file_handle, 
+            type=<SMO_elementType>element_type.value, 
+            count=&num_vars
+        )
+
+        self.__validate_error_code(error_code)
+
+        return num_vars
+
+    def get_variable_code(self, element_type: ElementType, variable_index: int) -> int:
+        """
+        Method to get the variable code for an element type in the SWMM output file.
+
+        :param element_type: Type of the element.
+        :type element_type: int
+        
+        :param variable_index: Index of the variable.
+        :type variable_index: int
+
+        :return: Variable code for the element type.
+        :rtype: int
+        """
+        cdef int error_code = 0
+        cdef int var_code = 0
+
+        error_code = SMO_getVarCode(
+            p_handle=self._output_file_handle,
+            type=<SMO_elementType>element_type.value, 
+            varIndex=variable_index,
+            varCode=&var_code
+        )
+        
+        self.__validate_error_code(error_code)
+
+        return var_code
+
+    def get_variable_codes(self, element_type: ElementType) -> List[int]:
+        """
+        Method to get the variable codes for an element type in the SWMM output file.
+
+        :param element_type: Type of the element.
+        :type element_type: int
+
+        :return: Variable codes for the element type.
+        :rtype: List[int]
+        """
+        cdef int error_code = 0
+        cdef int num_vars = 0
+        cdef int* var_codes = NULL
+        cdef list variable_codes
+
+        error_code = SMO_getVarCodes(
+            p_handle=self._output_file_handle, 
+            type=<SMO_elementType>element_type.value, 
+            varCodes=&var_codes, 
+            size=&num_vars
+        )
+        
+        self.__validate_error_code(error_code)
+
+        variable_codes = [var_codes[i] for i in range(num_vars)]
+
+        if var_codes != NULL:
+            free(var_codes)
+
+        return variable_codes
+
+    def get_num_properties(self, element_type: ElementType) -> int:
+        """
+        Method to get the number of properties for an element type in the SWMM output file.
+
+        :param element_type: Type of the element.
+        :type element_type: int
+
+        :return: Number of properties for the element type.
+        :rtype: int
+        """
+        cdef int error_code = 0
+        cdef int num_properties = 0
+
+        error_code = SMO_getNumProperties(
+            p_handle=self._output_file_handle,
+            type=<SMO_elementType>element_type.value, 
+            count=&num_properties
+        )
+
+        self.__validate_error_code(error_code)
+
+        return num_properties
+    
+    def get_property_code(self, element_type: ElementType, property_index: int) -> int:
+        """
+        Method to get the property code for an element type in the SWMM output file.
+
+        :param element_type: Type of the element.
+        :type element_type: int
+
+        :param property_index: Index of the property.
+        :type property_index: int
+
+        :return: Property code for the element type.
+        :rtype: int
+        """
+        cdef int error_code = 0
+        cdef int property_code = 0
+
+        error_code = SMO_getPropertyCode(
+            p_handle=self._output_file_handle, 
+            type=<SMO_elementType>element_type.value, 
+            propertyIndex=property_index, 
+            propertyCode=&property_code
+        )
+        
+        self.__validate_error_code(error_code)
+
+        return property_code
+
+    def get_property_codes(self, element_type: ElementType) -> List[int]:
+        """
+        Method to get the property codes for an element type in the SWMM output file.
+
+        :param element_type: Type of the element.
+        :type element_type: int
+
+        :return: Property codes for the element type.
+        :rtype: List[int]
+        """
+        cdef int error_code = 0
+        cdef int num_properties = 0
+        cdef int* property_codes = NULL
+
+        error_code = SMO_getPropertyCodes(
+            p_handle=self._output_file_handle, 
+            type=<SMO_elementType>element_type.value, 
+            propertyCodes=&property_codes, 
+            size=&num_properties
+        )
+        
+        self.__validate_error_code(error_code)
+
+        property_codes_list = [property_codes[i] for i in range(num_properties)]
+
+        if property_codes != NULL:
+            free(property_codes)
+
+        return property_codes_list
+
+    def get_property_value(self, element_type: ElementType, element_index: Union[int, str], property_code: int) -> float:
+        """
+        Method to get the property value for an element in the SWMM output file.
+
+        :param element_type: Type of the element.
+        :type element_type: int
+
+        :param element_index: Index of the element.
+        :type element_index: int
+
+        :param property_code: Property code.
+        :type property_code: int
+
+        :return: Property value for the element.
+        :rtype: float
+        """
+        cdef int error_code = 0
+        cdef float property_value = 0
+        cdef int l_element_index = element_index if isinstance(element_index, int) \
+                                   else self._element_name_indexes[ElementType.NODE.name][element_index]
+                                   
+        error_code = SMO_getPropertyValue(
+            p_handle=self._output_file_handle, 
+            type=<SMO_elementType>element_type.value, 
+            propertyIndex=property_code, 
+            elementIndex=l_element_index, 
+            value=&property_value
+        )
+
+        self.__validate_error_code(error_code)
+
+        return property_value
+    
+    def get_property_values(self, element_type: ElementType, element_index: Union[int, str]) -> List[float]:
+        """
+        Method to get the property values for an element type in the SWMM output file.
+
+        :param element_type: Type of the element.
+        :type element_type: int
+
+        :param element_index: Element index.
+        :type element_index: int
+
+        :return: Property values for the element type.
+        :rtype: List[float]
+        """
+        cdef int error_code = 0
+        cdef int num_elements = 0
+        cdef int i = 0
+        cdef float* property_values = NULL
+        cdef list property_values_list
+        cdef int l_element_index = element_index if isinstance(element_index, int) \
+                                   else self._element_name_indexes[ElementType.NODE.name][element_index]
+
+        error_code = SMO_getPropertyValues(
+            p_handle=self._output_file_handle, 
+            type=<SMO_elementType>element_type.value, 
+            elementIndex=l_element_index, 
+            outValueArray=&property_values,
+            length=&num_elements
+        )
+        
+        self.__validate_error_code(error_code)
+        property_values_list = [*<float[:num_elements]>property_values]
+
+        if property_values != NULL:
+            free(property_values)
+
+        return property_values_list
+
     def get_time_attribute(self, time_attribute: TimeAttribute) -> int:
         """
         Method to get the temporal attributes of the simulation in the SWMM output file.
 
+        :param time_attribute: Temporal attribute.
+        :type time_attribute: TimeAttribute
+
         :return: Temporal attributes of the simulation in the SWMM output file.
         :rtype: int
+
         """
         cdef int error_code = 0
         cdef int temporal_attribute = -1
@@ -605,8 +868,10 @@ cdef class Output:
 
         :param element_type: Type of the element.
         :type element_type: int
-        :param index: Index of the element.
-        :type index: int
+
+        :param indelement_indexex: Index of the element.
+        :type element_index: int
+        
         :return: Name of the element.
         :rtype: str
         """
@@ -631,6 +896,7 @@ cdef class Output:
 
         :param element_type: Type of the element.
         :type element_type: int
+
         :return: Names of all elements of the given type.
         :rtype: List[str]
         """
@@ -666,36 +932,52 @@ cdef class Output:
 
         return element_names
     
-    def get_subcatchment_timeseries(self, element_index: int, attribute: SubcatchAttribute, start_date_index: int = 0, end_date_index: int = -1) -> Dict[datetime, float]:
+    def get_subcatchment_timeseries(
+        self, element_index: Union[int, str], 
+        attribute: SubcatchAttribute, 
+        start_date_index: int = 0, 
+        end_date_index: int = -1, 
+        sub_index: int = 0
+        ) -> Dict[datetime, float]:
         """
         Method to get the time series data for a subcatchment attribute in the SWMM output file.
 
-        :param subcatchment_index: Index of the subcatchment.
-        :type subcatchment_index: int
+        :param element_index: Index of the subcatchment.
+        :type element_index: int or str
+
         :param attribute: Subcatchment attribute.
         :type attribute: SubcatchAttribute
+        
         :param start_date_index: Start date index. Default is 0.
         :type start_date_index: int
+        
         :param end_date_index: End date index. Default is the last date index.
-        :type end_date_index: int        
+        :type end_date_index: int 
+        
+        :param sub_index: Attribute index for the subcatchment non enumerated attributes primarily for the pollutants
+        :type sub_index: int
+        
         :return: Time series data for the subcatchment attribute.
         :rtype: Dict[datetime, double]
-        TODO: Add option to return memoryview
         """
         cdef int error_code = 0
         cdef float* values = NULL
         cdef int length = 0
+        cdef int attribute_index = attribute.value + sub_index
+        cdef int l_element_index = element_index if isinstance(element_index, int) \
+                                   else self._element_name_indexes[ElementType.SUBCATCHMENT.name][element_index]
 
         if end_date_index == -1:
             end_date_index = self._num_periods
 
         error_code = SMO_getSubcatchSeries(
-            self._output_file_handle, 
-            element_index, 
-            <SMO_subcatchAttribute>attribute.value, 
-            start_date_index, 
-            end_date_index, 
-            &values, &length
+            p_handle=self._output_file_handle, 
+            subcatchIndex=l_element_index, 
+            attr=<SMO_subcatchAttribute>attribute_index, 
+            startPeriod=start_date_index, 
+            endPeriod=end_date_index, 
+            outValueArray=&values, 
+            length=&length
         )
         self.__validate_error_code(error_code)
 
@@ -706,35 +988,53 @@ cdef class Output:
 
         return results
 
-    def get_node_timeseries(self, element_index: int, attribute: NodeAttribute, start_date_index: int = 0, end_date_index: int = -1) -> Dict[datetime, float]:
+    def get_node_timeseries(
+        self, 
+        element_index: Union[int, str], 
+        attribute: NodeAttribute, 
+        start_date_index: int = 0, 
+        end_date_index: int = -1, 
+        sub_index: int = 0
+        ) -> Dict[datetime, float]:
         """
         Method to get the time series data for a node attribute in the SWMM output file.
 
-        :param node_index: Index of the node.
-        :type node_index: int
+        :param element_index: Index of the node.
+        :type element_index: int or str
+
         :param attribute: Node attribute.
         :type attribute: NodeAttribute
+        
         :param start_date_index: Start date index. Default is 0.
         :type start_date_index: int
+        
         :param end_date_index: End date index. Default is the last date index.
         :type end_date_index: int
+        
+        :param sub_index: Attribute index for the subcatchment non enumerated attributes primarily for the pollutants
+        :type sub_index: int
+        
         :return: Time series data for the node attribute.
         :rtype: Dict[datetime, double]
         """
         cdef int error_code = 0
         cdef float* values = NULL
         cdef int length = 0
+        cdef int attribute_index = attribute.value + sub_index
+        cdef int l_element_index = element_index if isinstance(element_index, int) \
+                                   else self._element_name_indexes[ElementType.NODE.name][element_index]
 
         if end_date_index == -1:
             end_date_index = self._num_periods
         
         error_code = SMO_getNodeSeries(
-            self._output_file_handle, 
-            element_index, 
-            <SMO_nodeAttribute>attribute.value, 
-            start_date_index, 
-            end_date_index, 
-            &values, &length
+            p_handle=self._output_file_handle, 
+            nodeIndex=l_element_index, 
+            attr=<SMO_nodeAttribute>attribute_index, 
+            startPeriod=start_date_index, 
+            endPeriod=end_date_index, 
+            outValueArray=&values,
+            length=&length
         )
 
         self.__validate_error_code(error_code)
@@ -746,35 +1046,53 @@ cdef class Output:
 
         return results
 
-    def get_link_timeseries(self, element_index: int, attribute: LinkAttribute, start_date_index: int = 0, end_date_index: int = -1) -> Dict[datetime, float]:
+    def get_link_timeseries(
+        self, 
+        element_index: Union[int, str], 
+        attribute: LinkAttribute, 
+        start_date_index: int = 0, 
+        end_date_index: int = -1, 
+        sub_index: int = 0
+        ) -> Dict[datetime, float]:
         """
         Method to get the time series data for a link attribute in the SWMM output file.
 
-        :param link_index: Index of the link.
-        :type link_index: int
+        :param element_index: Index of the link.
+        :type element_index: int
+        
         :param attribute: Link attribute.
         :type attribute: LinkAttribute
+        
         :param start_date_index: Start date index. Default is 0.
         :type start_date_index: int
+        
         :param end_date_index: End date index. Default is the last date index.
         :type end_date_index: int
+        
+        :param sub_index: Attribute index for the subcatchment non enumerated attributes primarily for the pollutants
+        :type sub_index: int
+        
         :return: Time series data for the link attribute.
         :rtype: Dict[datetime, double]
         """
         cdef int error_code = 0
         cdef float* values = NULL
         cdef int length = 0
+        cdef int attribute_index = attribute.value + sub_index
+        cdef int l_element_index = element_index if isinstance(element_index, int) \
+                                   else self._element_name_indexes[ElementType.LINK.name][element_index]
 
         if end_date_index == -1:
             end_date_index = self._num_periods
         
         error_code = SMO_getLinkSeries(
-            self._output_file_handle, 
-            element_index, 
-            <SMO_linkAttribute>attribute.value, 
-            start_date_index, 
-            end_date_index, 
-            &values, &length
+            p_handle=self._output_file_handle, 
+            linkIndex=l_element_index,
+            attr=<SMO_linkAttribute>(attribute_index), 
+            startPeriod=start_date_index, 
+            endPeriod=end_date_index, 
+            outValueArray=&values, 
+            length=&length
         )
 
         self.__validate_error_code(error_code)
@@ -786,32 +1104,46 @@ cdef class Output:
 
         return results
     
-    def get_system_timeseries(self, attribute: SystemAttribute, start_date_index: int = 0, end_date_index: int = -1) -> Dict[datetime, float]:
+    def get_system_timeseries(
+        self, 
+        attribute: SystemAttribute, 
+        start_date_index: int = 0, 
+        end_date_index: int = -1, 
+        sub_index: int = 0
+        ) -> Dict[datetime, float]:
         """
         Method to get the time series data for a system attribute in the SWMM output file.
 
         :param attribute: System attribute.
         :type attribute: SystemAttribute
+        
         :param start_date_index: Start date index. Default is 0.
         :type start_date_index: int
+        
         :param end_date_index: End date index. Default is the last date index.
         :type end_date_index: int
+        
+        :param sub_index: Attribute index for the subcatchment non enumerated attributes primarily for the pollutants
+        :type sub_index: int
+        
         :return: Time series data for the system attribute.
         :rtype: Dict[datetime, double]
         """
         cdef int error_code = 0
         cdef float* values = NULL
         cdef int length = 0
+        cdef int attribute_index = attribute.value + sub_index
 
         if end_date_index == -1:
             end_date_index = self._num_periods
 
         error_code = SMO_getSystemSeries(
-            self._output_file_handle, 
-            <SMO_systemAttribute>attribute.value, 
-            start_date_index, 
-            end_date_index, 
-            &values, &length
+            p_handle=self._output_file_handle, 
+            attr=<SMO_systemAttribute>attribute_index, 
+            startPeriod=start_date_index, 
+            endPeriod=end_date_index, 
+            outValueArray=&values,
+            length=&length
         )
 
         self.__validate_error_code(error_code)
@@ -823,14 +1155,24 @@ cdef class Output:
 
         return results
 
-    def get_subcatchment_values_by_time_and_attribute(self, time_index: int, attribute: SubcatchAttribute) -> Dict[str, float]:
+    def get_subcatchment_values_by_time_and_attribute(
+        self, 
+        time_index: int, 
+        attribute: SubcatchAttribute, 
+        sub_index: int = 0
+        ) -> Dict[str, float]:
         """
         Method to get the subcatchment values for all subcatchments for a given time index and attribute.
 
         :param time_index: Time index.
         :type time_index: int
+        
         :param attribute: Subcatchment attribute.
         :type attribute: SubcatchAttribute
+        
+        :param sub_index: Attribute index for the subcatchment non enumerated attributes primarily for the pollutants
+        :type sub_index: int
+        
         :return: Subcatchment values for all subcatchments. 
         :rtype: Dict[str, float]
         """
@@ -838,13 +1180,14 @@ cdef class Output:
         cdef int error_code = 0
         cdef float* values = NULL
         cdef int length = 0
+        cdef int attribute_index = attribute.value + sub_index
 
         error_code = SMO_getSubcatchAttribute(
-            self._output_file_handle, 
-            time_index, 
-            <SMO_subcatchAttribute>attribute.value, 
-            &values, 
-            &length
+            p_handle=self._output_file_handle, 
+            timeIndex=time_index, 
+            attr=<SMO_subcatchAttribute>attribute_index, 
+            outValueArray=&values, 
+            length=&length
         )
         
         self.__validate_error_code(error_code)
@@ -856,14 +1199,24 @@ cdef class Output:
         
         return subcatchment_values
 
-    def get_node_values_by_time_and_attribute(self, time_index: int, attribute: NodeAttribute) -> Dict[str, float]:
+    def get_node_values_by_time_and_attribute(
+        self, 
+        time_index: int, 
+        attribute: NodeAttribute, 
+        sub_index: int = 0
+        ) -> Dict[str, float]:
         """
         Method to get the node values for all nodes for a given time index and attribute.
 
         :param time_index: Time index.
         :type time_index: int
+        
         :param attribute: Node attribute.
         :type attribute: NodeAttribute
+        
+        :param sub_index: Attribute index for the subcatchment non enumerated attributes primarily for the pollutants
+        :type sub_index: int
+        
         :return: Node values for all nodes.
         :rtype: Dict[str, float]
         """
@@ -871,13 +1224,14 @@ cdef class Output:
         cdef int error_code = 0
         cdef float* values = NULL
         cdef int length = 0
+        cdef int attribute_index = attribute.value + sub_index
 
         error_code = SMO_getNodeAttribute(
-            self._output_file_handle, 
-            time_index, 
-            <SMO_nodeAttribute>attribute.value, 
-            &values,
-            &length
+            p_handle=self._output_file_handle, 
+            timeIndex=time_index, 
+            attr=<SMO_nodeAttribute>attribute_index, 
+            outValueArray=&values,
+            length=&length
         )
 
         self.__validate_error_code(error_code)
@@ -889,14 +1243,24 @@ cdef class Output:
         
         return node_values
 
-    def get_link_values_by_time_and_attribute(self, time_index: int, attribute: LinkAttribute) -> Dict[str, float]:
+    def get_link_values_by_time_and_attribute(
+        self, 
+        time_index: int, 
+        attribute: LinkAttribute, 
+        sub_index: int = 0
+        ) -> Dict[str, float]:
         """
         Method to get the link values for all links for a given time index and attribute.
 
         :param time_index: Time index.
         :type time_index: int
+        
         :param attribute: Link attribute.
         :type attribute: LinkAttribute
+        
+        :param sub_index: Attribute index for the subcatchment non enumerated attributes primarily for the pollutants
+        :type sub_index: int
+        
         :return: Link values for all links.
         :rtype: Dict[str, float]
         """
@@ -904,13 +1268,14 @@ cdef class Output:
         cdef int error_code = 0
         cdef float* values = NULL
         cdef int length = 0
+        cdef int attribute_index = attribute.value + sub_index
 
         error_code = SMO_getLinkAttribute(
-            self._output_file_handle, 
-            time_index, 
-            <SMO_linkAttribute>attribute.value, 
-            &values,
-            &length
+            p_handle=self._output_file_handle, 
+            timeIndex=time_index, 
+            attr=<SMO_linkAttribute>attribute_index, 
+            outValueArray=&values,
+            length=&length
         )
         
         self.__validate_error_code(error_code)
@@ -922,14 +1287,24 @@ cdef class Output:
         
         return link_values
    
-    def get_system_values_by_time_and_attribute(self, time_index: int, attribute: SystemAttribute) -> Dict[str, float]:
+    def get_system_values_by_time_and_attribute(
+        self, 
+        time_index: int, 
+        attribute: SystemAttribute, 
+        sub_index: int = 0
+        ) -> Dict[str, float]:
         """
         Method to get the system values for a given time index and attribute.
         
         :param time_index: Time index.
         :type time_index: int
+        
         :param attribute: System attribute.
         :type attribute: SystemAttribute
+        
+        :param sub_index: Attribute index for the subcatchment non enumerated attributes primarily for the pollutants
+        :type sub_index: int
+        
         :return: System values.
         :rtype: Dict[str, float]
         """
@@ -937,13 +1312,14 @@ cdef class Output:
         cdef int error_code = 0
         cdef float* values = NULL
         cdef int length = 0
+        cdef int attribute_index = attribute.value + sub_index
 
         error_code = SMO_getSystemAttribute(
-            self._output_file_handle, 
-            time_index, 
-            <SMO_systemAttribute>attribute.value, 
-            &values,
-            &length
+            p_handle=self._output_file_handle, 
+            timeIndex=time_index, 
+            attr=<SMO_systemAttribute>attribute_index, 
+            outValueArray=&values,
+            length=&length
         )
         
         self.__validate_error_code(error_code)
@@ -956,14 +1332,20 @@ cdef class Output:
         
         return system_values
 
-    def get_subcatchment_values_by_time_and_element_index(self, time_index: int, element_index: int) -> Dict[str, float]:
+    def get_subcatchment_values_by_time_and_element_index(
+        self, 
+        time_index: int, 
+        element_index: Union[int, str]
+        ) -> Dict[str, float]:
         """
         Method to get all attributes of a given subcatchment for specified time.
 
         :param time_index: Time index.
         :type time_index: int
-        :param subcatchment_index: Index of the subcatchment.
-        :type subcatchment_index: int
+        
+        :param element_index: Index of the subcatchment.
+        :type element_index: int or str
+        
         :return: Dictionary of subcatchment attributes.
         :rtype: Dict[str, float]
         """
@@ -973,12 +1355,15 @@ cdef class Output:
         cdef int enum_values_length = len(SubcatchAttribute) - 1
         cdef list pollutant_names = self.get_element_names(ElementType.POLLUTANT)
         cdef list attrib_names = []
+        cdef int l_element_index = element_index if isinstance(element_index, int) \
+                                   else self._element_name_indexes[ElementType.SUBCATCHMENT.name][element_index]
 
         error_code = SMO_getSubcatchResult(
-            self._output_file_handle, 
-            time_index, 
-            element_index, 
-            &values, &length
+            p_handle=self._output_file_handle, 
+            timeIndex=time_index, 
+            subcatchIndex=l_element_index, 
+            outValueArray=&values,
+            length=&length
         )
 
         self.__validate_error_code(error_code)
@@ -996,14 +1381,20 @@ cdef class Output:
 
         return subcatchment_values
 
-    def get_node_values_by_time_and_element_index(self, time_index: int, element_index: int) -> Dict[str, float]:
+    def get_node_values_by_time_and_element_index(
+        self, 
+        time_index: int, 
+        element_index: Union[int, str]
+        ) -> Dict[str, float]:
         """
         Method to get all attributes of a given node for specified time.
 
         :param time_index: Time index.
         :type time_index: int
-        :param node_index: Index of the node.
-        :type node_index: int
+        
+        :param element_index: Index of the node.
+        :type element_index: int 
+        
         :return: Dictionary of node attributes.
         :rtype: Dict[str, float]
         """
@@ -1014,12 +1405,15 @@ cdef class Output:
         cdef int enum_values_length = len(NodeAttribute) - 1
         cdef list pollutant_names = self.get_element_names(ElementType.POLLUTANT)
         cdef list attrib_names = []
+        cdef int l_element_index = element_index if isinstance(element_index, int) \
+                                   else self._element_name_indexes[ElementType.NODE.name][element_index]
 
         error_code = SMO_getNodeResult(
-            self._output_file_handle, 
-            time_index, 
-            element_index, 
-            &values, &length
+            p_handle=self._output_file_handle, 
+            timeIndex=time_index, 
+            nodeIndex=l_element_index, 
+            outValueArray=&values, 
+            length=&length
         )
 
         self.__validate_error_code(error_code)
@@ -1037,14 +1431,19 @@ cdef class Output:
 
         return node_values
 
-    def get_link_values_by_time_and_element_index(self, time_index: int, element_index: int) -> Dict[str, float]:
+    def get_link_values_by_time_and_element_index(
+        self, 
+        time_index: int, 
+        element_index: Union[int, str]
+        ) -> Dict[str, float]:
         """
         Method to get all attributes of a given link for specified time.
 
         :param time_index: Time index.
         :type time_index: int
-        :param link_index: Index of the link.
-        :type link_index: int
+        
+        :param element_index: Index of the link.
+        :type element_index: int, str
 
         :return: Dictionary of link attributes.
         :rtype: Dict[str, float]
@@ -1056,12 +1455,15 @@ cdef class Output:
         cdef int enum_values_length = len(LinkAttribute) - 1
         cdef list pollutant_names = self.get_element_names(ElementType.POLLUTANT)
         cdef list attrib_names = []
+        cdef int l_element_index = element_index if isinstance(element_index, int) \
+                                   else self._element_name_indexes[ElementType.LINK.name][element_index]
 
         error_code = SMO_getLinkResult(
-            self._output_file_handle, 
-            time_index, 
-            element_index, 
-            &values, &length
+            p_handle=self._output_file_handle, 
+            timeIndex=time_index,
+            linkIndex=l_element_index,
+            outValueArray=&values,
+            length=&length
         )
 
         self.__validate_error_code(error_code)
@@ -1096,10 +1498,11 @@ cdef class Output:
         cdef int enum_values_length = len(SystemAttribute) - 1
 
         error_code = SMO_getSystemResult(
-            self._output_file_handle, 
-            time_index, 
-            0,
-            &values, &length
+            p_handle=self._output_file_handle, 
+            timeIndex=time_index, 
+            dummyIndex=0,
+            outValueArray=&values,
+            length=&length
         )
 
         self.__validate_error_code(error_code)
@@ -1138,6 +1541,7 @@ cdef class Output:
 
         :param error_code: Error code to validate.
         :type error_code: int
+        
         :return: Error message if there is an error, otherwise None.
         :rtype: str
         """

@@ -273,6 +273,9 @@ void runoff_execute()
         // --- skip pollutant buildup/washoff if quality ignored
         if ( IgnoreQuality ) continue;
 
+        // --- apply api unconstrained pollutant buildup from API
+        surfqual_applyAPIBuildup(j);
+        
         // --- add to pollutant buildup if runoff is negligible
         if ( runoff < MIN_RUNOFF ) surfqual_getBuildup(j, runoffStep); 
 

@@ -174,6 +174,70 @@ cdef extern from "swmm_output.h":
     # Returns: Error code
     int SMO_getElementName(SMO_Handle p_handle, int type, int elementIndex, char **elementName, int *size)
 
+    # Retrieves the number of attributes for a given element type
+    # p_handle: Pointer to a SMO_Handle
+    # type: The type of element
+    # count: Pointer to the number of attributes
+    # Returns: Error code
+    int SMO_getNumVars(SMO_Handle p_handle, SMO_elementType type, int *count)
+
+
+    # Retrieves the attribute code for a given element type and attribute index
+    # p_handle: Pointer to a SMO_Handle
+    # type: The type of element
+    # varIndex: The index of the attribute
+    # Returns: The attribute code
+    int SMO_getVarCode(SMO_Handle p_handle, SMO_elementType type, int varIndex, int *varCode)
+
+    # Retrieves the attribute codes for a given element type
+    # p_handle: Pointer to a SMO_Handle
+    # type: The type of element
+    # varCodes: Pointer to the attribute codes
+    # size: Pointer to the size of the varCodes array
+    # Returns: Error code
+    int SMO_getVarCodes(SMO_Handle p_handle, SMO_elementType type, int **varCodes, int *size)
+    
+    # Retrieves the number of properties for a given element type
+    # p_handle: Pointer to a SMO_Handle
+    # type: The type of element
+    # count: Pointer to the number of properties
+    # Returns: Error code
+    int SMO_getNumProperties(SMO_Handle p_handle, SMO_elementType type, int *count)
+
+    # Retrieves the property code for a given element type and property index
+    # p_handle: Pointer to a SMO_Handle
+    # type: The type of element
+    # propertyIndex: The index of the property
+    # propertyCode: Pointer to the property code
+    # Returns: The property code
+    int SMO_getPropertyCode(SMO_Handle p_handle, SMO_elementType type, int propertyIndex, int *propertyCode)
+
+    # Retrieves the property codes for a given element type
+    # p_handle: Pointer to a SMO_Handle
+    # type: The type of element
+    # propertyCodes: Pointer to the property codes
+    # size: Pointer to the size of the propertyCodes array
+    # Returns: Error code
+    int SMO_getPropertyCodes(SMO_Handle p_handle, SMO_elementType type, int **propertyCodes, int *size)
+
+    # Retrieves the property value for a given element type, property index, and element index
+    # p_handle: Pointer to a SMO_Handle
+    # type: The type of element
+    # propertyIndex: The index of the property
+    # elementIndex: The index of the element
+    # value: Pointer to the property value
+    int SMO_getPropertyValue(SMO_Handle p_handle, SMO_elementType type, int propertyIndex, int elementIndex, float *value)
+
+    # Retrieves the property values for a given element type, property index, and element index
+    # p_handle: Pointer to a SMO_Handle
+    # type: The type of element
+    # propertyIndex: The index of the property
+    # elementIndex: The index of the element
+    # outValueArray: Pointer to the property values
+    # length: Pointer to the length of the outValueArray array
+    # Returns: Error code
+    int SMO_getPropertyValues(SMO_Handle p_handle, SMO_elementType type, int elementIndex, float **outValueArray, int *length)
+
     # Retrieves subcatchment attribute values for a given time period and attribute type
     # p_handle: Pointer to a SMO_Handle
     # subcatchIndex: The index of the subcatchment
@@ -183,7 +247,7 @@ cdef extern from "swmm_output.h":
     # outValueArray: Pointer to the subcatchment attribute values
     # length: Pointer to the length of the outValueArray array
     # Returns: Error code
-    int SMO_getSubcatchSeries(SMO_Handle p_handle, int subcatchIndex, int attr, int startPeriod, int endPeriod, float **outValueArray, int *length)
+    int SMO_getSubcatchSeries(SMO_Handle p_handle, int subcatchIndex, SMO_subcatchAttribute attr, int startPeriod, int endPeriod, float **outValueArray, int *length)
 
     # Retrieves node attribute values for a given time period and attribute type
     # p_handle: Pointer to a SMO_Handle
@@ -194,7 +258,7 @@ cdef extern from "swmm_output.h":
     # outValueArray: Pointer to the node attribute values
     # length: Pointer to the length of the outValueArray array
     # Returns: Error code
-    int SMO_getNodeSeries(SMO_Handle p_handle, int nodeIndex, int attr, int startPeriod, int endPeriod, float **outValueArray, int *length)
+    int SMO_getNodeSeries(SMO_Handle p_handle, int nodeIndex, SMO_nodeAttribute attr, int startPeriod, int endPeriod, float **outValueArray, int *length)
 
     # Retrieves link attribute values for a given time period and attribute type
     # p_handle: Pointer to a SMO_Handle
@@ -205,7 +269,7 @@ cdef extern from "swmm_output.h":
     # outValueArray: Pointer to the link attribute values
     # length: Pointer to the length of the outValueArray array
     # Returns: Error code
-    int SMO_getLinkSeries(SMO_Handle p_handle, int linkIndex, int attr, int startPeriod, int endPeriod, float **outValueArray, int *length)
+    int SMO_getLinkSeries(SMO_Handle p_handle, int linkIndex, SMO_linkAttribute attr, int startPeriod, int endPeriod, float **outValueArray, int *length)
 
     # Retrieves system attribute values for a given time period and attribute type
     # p_handle: Pointer to a SMO_Handle
@@ -215,7 +279,7 @@ cdef extern from "swmm_output.h":
     # outValueArray: Pointer to the system attribute values
     # length: Pointer to the length of the outValueArray array
     # Returns: Error code
-    int SMO_getSystemSeries(SMO_Handle p_handle, int attr, int startPeriod, int endPeriod, float **outValueArray, int *length)
+    int SMO_getSystemSeries(SMO_Handle p_handle, SMO_systemAttribute attr, int startPeriod, int endPeriod, float **outValueArray, int *length)
 
     # Retrieves subcatchment attribute values for a given time period and attribute type
     # p_handle: Pointer to a SMO_Handle
@@ -224,7 +288,7 @@ cdef extern from "swmm_output.h":
     # outValueArray: Pointer to the subcatchment attribute values
     # length: Pointer to the length of the outValueArray array
     # Returns: Error code
-    int SMO_getSubcatchAttribute(SMO_Handle p_handle, int timeIndex, int attr, float **outValueArray, int *length)
+    int SMO_getSubcatchAttribute(SMO_Handle p_handle, int timeIndex, SMO_subcatchAttribute attr, float **outValueArray, int *length)
 
     # Retrieves node attribute values for a given time period and attribute type
     # p_handle: Pointer to a SMO_Handle
@@ -233,7 +297,7 @@ cdef extern from "swmm_output.h":
     # outValueArray: Pointer to the node attribute values
     # length: Pointer to the length of the outValueArray array
     # Returns: Error code
-    int SMO_getNodeAttribute(SMO_Handle p_handle, int timeIndex, int attr, float **outValueArray, int *length)
+    int SMO_getNodeAttribute(SMO_Handle p_handle, int timeIndex, SMO_nodeAttribute attr, float **outValueArray, int *length)
 
     # Retrieves link attribute values for a given time period and attribute type
     # p_handle: Pointer to a SMO_Handle
@@ -242,7 +306,7 @@ cdef extern from "swmm_output.h":
     # outValueArray: Pointer to the link attribute values
     # length: Pointer to the length of the outValueArray array
     # Returns: Error code
-    int SMO_getLinkAttribute(SMO_Handle p_handle, int timeIndex, int attr, float **outValueArray, int *length)
+    int SMO_getLinkAttribute(SMO_Handle p_handle, int timeIndex, SMO_linkAttribute attr, float **outValueArray, int *length)
 
     # Retrieves system attribute values for a given time period and attribute type
     # p_handle: Pointer to a SMO_Handle
@@ -251,7 +315,7 @@ cdef extern from "swmm_output.h":
     # outValueArray: Pointer to the system attribute values
     # length: Pointer to the length of the outValueArray array
     # Returns: Error code
-    int SMO_getSystemAttribute(SMO_Handle p_handle, int timeIndex, int attr, float **outValueArray, int *length)
+    int SMO_getSystemAttribute(SMO_Handle p_handle, int timeIndex, SMO_systemAttribute attr, float **outValueArray, int *length)
 
     # Retrieves subcatchment result values for a given time period
     # p_handle: Pointer to a SMO_Handle

@@ -1,37 +1,37 @@
 /*!
-* \file climate.c
-* \brief Climate related functions.
-* \author L. Rossman
-* \date Created: 2021-11-01
-* \date Last edited: 2024-12-23
-* \details Climate related functions.
-*
-*  Update History
-*  ==============
-*   Build 5.1.007:
-*   - NCDC GHCN climate file format added.
-*   - Monthly adjustments for temperature, evaporation & rainfall added.
-*   Build 5.1.008:
-*   - Monthly adjustments for hyd. conductivity added.
-*   - Time series evaporation rates can now vary within a day.
-*   - Evaporation rates are now properly updated when only flow routing
-*     is being simulated.
-*   Build 5.1.010:
-*   - Hargreaves evaporation now computed using 7-day average temperatures.
-*   Build 5.1.011:
-*   - Monthly adjustment for hyd. conductivity <= 0 is ignored.
-*   Build 5.1.013:
-*   - Reads names of monthly adjustment patterns for various parameters
-*     of a subcatchment from the [ADJUSTMENTS] section of input file.
-*   Build 5.2.0:
-*   - Reads temperature units for use with GHCND climate files.
-*   - Support added for relative file names.
-*/
+ * \file climate.c
+ * \brief Climate related functions.
+ * \author L. Rossman
+ * \date Created: 2021-11-01
+ * \date Last edited: 2024-12-23
+ * \details Climate related functions.
+ *
+ *  Update History
+ *  ==============
+ *   - Build 5.1.007:
+ *      - NCDC GHCN climate file format added.
+ *      - Monthly adjustments for temperature, evaporation & rainfall added.
+ *   - Build 5.1.008:
+ *      - Monthly adjustments for hyd. conductivity added.
+ *      - Time series evaporation rates can now vary within a day.
+ *      - Evaporation rates are now properly updated when only flow routing
+ *        is being simulated.
+ *   - Build 5.1.010:
+ *      - Hargreaves evaporation now computed using 7-day average temperatures.
+ *   - Build 5.1.011:
+ *      - Monthly adjustment for hyd. conductivity <= 0 is ignored.
+ *   - Build 5.1.013:
+ *      - Reads names of monthly adjustment patterns for various parameters
+ *        of a subcatchment from the [ADJUSTMENTS] section of input file.
+ *   - Build 5.2.0:
+ *      - Reads temperature units for use with GHCND climate files.
+ *      - Support added for relative file names.
+ */
 
 /*!
-* \def _CRT_SECURE_NO_DEPRECATE 
-* \brief Define to prevent deprecation warnings from MS Visual C++ compilers
-*/
+ * \def _CRT_SECURE_NO_DEPRECATE
+ * \brief Define to prevent deprecation warnings from MS Visual C++ compilers
+ */
 #define _CRT_SECURE_NO_DEPRECATE
 
 #include <stdlib.h>
@@ -41,20 +41,21 @@
 #include "headers.h"
 
 /*!
-* \defgroup Climate_File_Constants_and_Shared_Variables Climate File Constants, Enumerations, Shared Variables, and Functions
-* \brief Climate file constants, enumeration types, shared variables, and functions.
-* \{
-*/
+ * \defgroup Climate_File_Constants_and_Shared_Variables Climate File Constants, Enumerations, Shared Variables, and Functions
+ * \brief Climate file constants, enumeration types, shared variables, and functions.
+ * \{
+ */
 /*!
-* \addtogroup Climate_File_Constants Climate File Constants and Enumerations
-* \brief Climate files local constants and enumeration types.
-* \ingroup Climate_File_Constants_and_Shared_Variables
-* \{
-*/
+ * \addtogroup Climate_File_Constants Climate File Constants and Enumerations
+ * \brief Climate files local constants and enumeration types.
+ * \ingroup Climate_File_Constants_and_Shared_Variables
+ * \{
+ */
 /*!
-* \enum ClimateFileFormats Climate file formats.
-*/
-enum ClimateFileFormats {
+ * \enum ClimateFileFormats Climate file formats.
+ */
+enum ClimateFileFormats
+{
     /*! \brief Unknown format */
     UNKNOWN_FORMAT,
     /*! \brief SWMM 5's own user format */
@@ -67,165 +68,183 @@ enum ClimateFileFormats {
     DLY0204
 };
 
-/*! 
-* \var MAXCLIMATEVARS 
-* \brief Maximum number of climate variables
-*/
-static const int MAXCLIMATEVARS  = 4;
+/*!
+ * \var MAXCLIMATEVARS
+ * \brief Maximum number of climate variables
+ */
+static const int MAXCLIMATEVARS = 4;
 
 /*!
-* \var MAXDAYSPERMONTH 
-* \brief Maximum number of days per month
-*/
+ * \var MAXDAYSPERMONTH
+ * \brief Maximum number of days per month
+ */
 static const int MAXDAYSPERMONTH = 32;
 
 /*!
-* \enum ClimateVarType Climate variable types. 
+* \enum ClimateVarType Climate variable types.
 These variables are used when processing climate files.
 */
-enum ClimateVarType {
+enum ClimateVarType
+{
     /*! \brief Minimum temperature */
-    TMIN, 
+    TMIN,
     /*! \brief Maximum temperature */
-    TMAX, 
+    TMAX,
     /*! \brief Evaporation */
-    EVAP, 
+    EVAP,
     /*! \brief Wind speed */
     WIND
 };
 
 /*!
-* \enum WindSpeedType Wind speed types. 
+* \enum WindSpeedType Wind speed types.
 These variables are used when processing climate files.
 */
-enum WindSpeedType  {
+enum WindSpeedType
+{
     /*! \brief Wind speed */
-    WDMV, 
+    WDMV,
     /*! \brief Wind direction */
     AWND
 };
 
 /*!
-* \enum TempUnitsType Temperature units types. 
+* \enum TempUnitsType Temperature units types.
 These variables are used when processing climate files.
 */
-enum TempUnitsType {
+enum TempUnitsType
+{
     /*! \brief Temperature in tenths of a degree Celsius */
-    DEG_C10, 
+    DEG_C10,
     /*! \brief Temperature in degrees Celsius */
-    DEG_C, 
+    DEG_C,
     /*! \brief Temperature in degrees Fahrenheit */
     DEG_F
 };
 
 /*!
-* \var ClimateVarWords 
-* \brief Climate variable words. These words are used when processing climate files.
-*/
-static char* ClimateVarWords[] = {
-    "TMIN", "TMAX", "EVAP", "WDMV", "AWND", NULL
-};
+ * \var ClimateVarWords
+ * \brief Climate variable words. These words are used when processing climate files.
+ */
+static char *ClimateVarWords[] = {
+    /*! \brief Minimum temperature */
+    "TMIN",
+    /*! \brief Maximum temperature */
+    "TMAX",
+    /*! \brief Evaporation */
+    "EVAP",
+    /*! \brief Wind speed */
+    "WDMV",
+    /*! \brief Wind direction */
+    "AWND",
+    /*! \brief NULL */
+    NULL};
 
 /*!
-* \var TempUnitsWords
-* \brief Temperature units words. These words are used when processing climate files.
-*/
-static char* TempUnitsWords[] = {
-    "C10", "C", "F", NULL
-};
+ * \var TempUnitsWords
+ * \brief Temperature units words. These words are used when processing climate files.
+ */
+static char *TempUnitsWords[] = {
+    /*! \brief Temperature in tenths of a degree Celsius */
+    "C10",
+    /*! \brief Temperature in degrees Celsius */
+    "C",
+    /*! \brief Temperature in degrees Fahrenheit */
+    "F",
+    /*! \brief NULL */
+    NULL};
 /*!
-* \}
-*/
+ * \}
+ */
 
 /*!
-* \struct TMovAve
-* \brief Structure for moving average of daily temperatures.
-*/
+ * \struct TMovAve
+ * \brief Structure for moving average of daily temperatures.
+ */
 typedef struct
-{   
+{
     /*! \brief Moving average for daily temperature (deg F) */
-    double    tAve;
+    double tAve;
     /*! \brief Moving average for daily temperature range (deg F) */
-    double    tRng;
+    double tRng;
     /*! \brief Data window for tAve */
-    double    ta[7];
+    double ta[7];
     /*! \brief Data window for tRng */
-    double    tr[7];
+    double tr[7];
     /*! \brief Length of moving average window */
-    int       count;
+    int count;
     /*! \brief Maximum length of moving average window */
-    int       maxCount;
+    int maxCount;
     /*! \brief Index of front of moving average window */
-    int       front;
+    int front;
 } TMovAve;
 
-
 /*!
-* \defgroup Climate_File_Shared_Variables Climate Files Shared Variables
-* \brief Climate files shared variables.
-* \{
-*/
+ * \defgroup Climate_File_Shared_Variables Climate Files Shared Variables
+ * \brief Climate files shared variables.
+ * \{
+ */
 // Temperature variables
 /*!
  * \var Tmin
- * \brief Minimum daily temperature (deg F) 
+ * \brief Minimum daily temperature (deg F)
  */
-static double    Tmin;
+static double Tmin;
 /*!
  * \var Tmax
- * \brief Maximum daily temperature (deg F) 
+ * \brief Maximum daily temperature (deg F)
  */
-static double    Tmax;
+static double Tmax;
 /*!
  * \var Trng
- * \brief 1/2 range of daily temperatures 
+ * \brief 1/2 range of daily temperatures
  */
-static double    Trng;
+static double Trng;
 /*!
  * \var Trng1
- * \brief Previous day's max - current day's min temperature 
+ * \brief Previous day's max - current day's min temperature
  */
-static double    Trng1;
+static double Trng1;
 /*!
  * \var Tave
- * \brief Average daily temperature (deg F) 
+ * \brief Average daily temperature (deg F)
  */
-static double    Tave;
+static double Tave;
 /*!
  * \var Hrsr
- * \brief Time of min. temp. (hrs) 
+ * \brief Time of min. temp. (hrs)
  */
-static double    Hrsr;
+static double Hrsr;
 /*!
  * \var Hrss
- * \brief Time of max. temp. (hrs) 
+ * \brief Time of max. temp. (hrs)
  */
-static double    Hrss;
+static double Hrss;
 /*!
  * \var Hrday
- * \brief Avg. of min/max temp times 
+ * \brief Avg. of min/max temp times
  */
-static double    Hrday;
+static double Hrday;
 /*!
  * \var Dhrdy
- * \brief Hrs. between min. & max. temp. times 
+ * \brief Hrs. between min. & max. temp. times
  */
-static double    Dhrdy;
+static double Dhrdy;
 /*!
  * \var Dydif
- * \brief Hrs. between max. & min. temp. times 
+ * \brief Hrs. between max. & min. temp. times
  */
-static double    Dydif;
+static double Dydif;
 /*!
  * \var LastDay
- * \brief Date of last day with temp. data 
+ * \brief Date of last day with temp. data
  */
-static DateTime  LastDay;
+static DateTime LastDay;
 /*!
  * \var Tma
- * \brief Moving average of daily temperatures 
+ * \brief Moving average of daily temperatures
  */
-static TMovAve   Tma;
+static TMovAve Tma;
 
 // Evaporation variables
 
@@ -233,96 +252,97 @@ static TMovAve   Tma;
  * \var NextEvapDate
  * \brief Next date when evap. rate changes
  */
-static DateTime  NextEvapDate;
+static DateTime NextEvapDate;
 
 /*!
  * \var NextEvapRate
  * \brief Next evaporation rate (user units)
  */
-static double    NextEvapRate;         // next evaporation rate (user units)
+static double NextEvapRate; // next evaporation rate (user units)
 
 // Climate file variables
 
 /*!
-* \var FileFormat 
-* \brief File format (see ClimateFileFormats)
-*/
-static int      FileFormat;            // file format (see ClimateFileFormats)
+ * \var FileFormat
+ * \brief File format (see ClimateFileFormats)
+ */
+static int FileFormat; // file format (see ClimateFileFormats)
 
 /*!
-* \var FileYear
-* \brief Current year of file data
-*/
-static int      FileYear;              // current year of file data
+ * \var FileYear
+ * \brief Current year of file data
+ */
+static int FileYear; // current year of file data
 
 /*!
-* \var FileMonth
-* \brief Current month of year of file data
-*/
-static int      FileMonth;             // current month of year of file data
+ * \var FileMonth
+ * \brief Current month of year of file data
+ */
+static int FileMonth; // current month of year of file data
 
 /*!
-* \var FileDay
-* \brief Current day of month of file data
-*/
-static int      FileDay;               // current day of month of file data
+ * \var FileDay
+ * \brief Current day of month of file data
+ */
+static int FileDay; // current day of month of file data
 
 /*!
-* \var FileLastDay
-* \brief Last day of current month of file data
-*/
-static int      FileLastDay;           // last day of current month of file data
+ * \var FileLastDay
+ * \brief Last day of current month of file data
+ */
+static int FileLastDay; // last day of current month of file data
 
 /*!
-* \var FileElapsedDays
-* \brief Number of days read from file
-*/
-static int      FileElapsedDays;       // number of days read from file
+ * \var FileElapsedDays
+ * \brief Number of days read from file
+ */
+static int FileElapsedDays; // number of days read from file
 
 /*!
-* \var FileStartDate
-* \brief Starting date of file data
-*/
-static double   FileValue[4];          // current day's values of climate data
+ * \var FileValue
+ * \brief Current day's values of climate data
+ */
+static double FileValue[4]; // current day's values of climate data
 
 /*!
-* \var FileData
-* \brief Month's worth of daily climate data
-*/
-static double   FileData[4][32];       // month's worth of daily climate data
+ * \var FileData
+ * \brief Month's worth of daily climate data
+ */
+static double FileData[4][32]; // month's worth of daily climate data
 
 /*!
-* \var FileLine
-* \brief Line from climate data file
-*/
-static char     FileLine[MAXLINE+1];   // line from climate data file
+ * \var FileLine
+ * \brief Line from climate data file
+ */
+static char FileLine[MAXLINE + 1]; // line from climate data file
 
 /*!
-* \var FileFieldPos
-* \brief Start of data fields for file record
-*/
-static int      FileFieldPos[4];       // start of data fields for file record
+ * \var FileFieldPos
+ * \brief Start of data fields for file record
+ */
+static int FileFieldPos[4]; // start of data fields for file record
 
 /*!
-* \var FileDateFieldPos
-* \brief Start of date field for file record
-*/
-static int      FileDateFieldPos;      // start of date field for file record 
+ * \var FileDateFieldPos
+ * \brief Start of date field for file record
+ */
+static int FileDateFieldPos; // start of date field for file record
 
 /*!
-* \var FileWindType
-* \brief Wind speed type
-*/
-static int      FileWindType;          // wind speed type
+ * \var FileWindType
+ * \brief Wind speed type
+ */
+static int FileWindType; // wind speed type
 
 /*!
-* \var FileTempUnits
-* \brief GHCND file temperature units (C10, C or F)
-*/
-static int      FileTempUnits;         // GHCND file temperature units (C10, C or F)
+ * \var FileTempUnits
+ * \brief GHCND file temperature units (C10, C or F)
+ */
+static int FileTempUnits; // GHCND file temperature units (C10, C or F)
+
 /*!
-* \}
-*/
+ * \}
+ */
 
 //-----------------------------------------------------------------------------
 //  External functions (defined in funcs.h)
@@ -339,195 +359,187 @@ static int      FileTempUnits;         // GHCND file temperature units (C10, C o
 //  Local functions
 //-----------------------------------------------------------------------------
 /*!
-* \defgroup Climate_Local_Function Climate Related Local Functions
-* \brief Climate related local functions.
-* \{
-*/
+ * \defgroup Climate_Local_Function Climate Related Local Functions
+ * \brief Climate related local functions.
+ * \{
+ */
 
 /*!
-* \brief Determines the format of a climate file.
-* \return The format code (TD3200, DLY0204, USER_PREPARED, GHCND, UNKNOWN_FORMAT)
-*/
-static int  getFileFormat(void);
+ * \brief Determines the format of a climate file.
+ * \return The format code (TD3200, DLY0204, USER_PREPARED, GHCND, UNKNOWN_FORMAT)
+ */
+static int getFileFormat(void);
 
 /*!
-* \brief Reads a line of data from a climate file.
-* \param[out] y Year
-* \param[out] m Month
-*/
+ * \brief Reads a line of data from a climate file.
+ * \param[out] y Year
+ * \param[out] m Month
+ */
 static void readFileLine(int *year, int *month);
 
 /*!
-* \brief Reads year & month from line of User-Prepared climate file.
-* \param[out] y Year
-* \param[out] m Month
-*/
+ * \brief Reads year & month from line of User-Prepared climate file.
+ * \param[out] y Year
+ * \param[out] m Month
+ */
 static void readUserFileLine(int *year, int *month);
 
 /*!
-* \brief Reads year & month from line of TD-3200 climate file.
-* \param[out] y Year
-* \param[out] m Month
-*/
+ * \brief Reads year & month from line of TD-3200 climate file.
+ * \param[out] y Year
+ * \param[out] m Month
+ */
 static void readTD3200FileLine(int *year, int *month);
 
 /*!
-* \brief Reads year & month from line of DLY02 or DLY04 climate file.
-* \param[out] y Year
-* \param[out] m Month
-*/
+ * \brief Reads year & month from line of DLY02 or DLY04 climate file.
+ * \param[out] y Year
+ * \param[out] m Month
+ */
 static void readDLY0204FileLine(int *year, int *month);
 
 /*!
-* \brief Reads next month's worth of data from a GHCND climate file.
-*/
+ * \brief Reads next month's worth of data from a GHCND climate file.
+ */
 static void readFileValues(void);
 
 /*!
-* \brief Finds date for next change in evaporation after the current date.
-* \param[in] theDate Current simulation date
-* \return The new value for NextEvapDate
-*/
+ * \brief Finds date for next change in evaporation after the current date.
+ * \param[in] theDate Current simulation date
+ * \return The new value for NextEvapDate
+ */
 static void setNextEvapDate(DateTime thedate);
 
 /*!
-* \brief Sets evaporation rate (ft/sec) for a specified date.
-* \param[in] theDate Simulation date
-*/
+ * \brief Sets evaporation rate (ft/sec) for a specified date.
+ * \param[in] theDate Simulation date
+ */
 static void setEvap(DateTime theDate);
 
 /*!
-* \brief Updates temperatures for new simulation date.
-* \param[in] theDate Simulation date
-*/
+ * \brief Updates temperatures for new simulation date.
+ * \param[in] theDate Simulation date
+ */
 static void setTemp(DateTime theDate);
 
 /*!
-* \brief Sets wind speed (mph) for a specified date.
-* \param[in] theDate Simulation date
-*/
+ * \brief Sets wind speed (mph) for a specified date.
+ * \param[in] theDate Simulation date
+ */
 static void setWind(DateTime theDate);
 
 /*!
-* \brief Computes time of day when min/max temperatures occur.
-* (min. temp occurs at sunrise, max. temp. at 3 hrs. < sunset)
-* \param[in] day Day of year
-*/
+ * \brief Computes time of day when min/max temperatures occur.
+ * (min. temp occurs at sunrise, max. temp. at 3 hrs. < sunset)
+ * \param[in] day Day of year
+ */
 static void updateTempTimes(int day);
 
 /*!
-* \brief Updates moving averages of average daily temperature and daily temperature range
-* stored in structure Tma.
-* \param[in] tmin Minimum daily temperature (deg F)
-* \param[in] tmax Maximum daily temperature (deg F)
-*/
+ * \brief Updates moving averages of average daily temperature and daily temperature range
+ * stored in structure Tma.
+ * \param[in] tmin Minimum daily temperature (deg F)
+ * \param[in] tmax Maximum daily temperature (deg F)
+ */
 static void updateTempMoveAve(double tmin, double tmax);
 
 /*!
-* \brief Uses Hargreaves method to compute daily evaporation rate
-* from daily average temperatures and Julian day.
-* \param[in] day Day of year
-* \param[in] tave 7-day average temperature (deg F)
-* \param[in] trng 7-day average daily temperature range (deg F)
-* \return Evaporation rate in user's units (US:in/day, SI:mm/day)
-*/
+ * \brief Uses Hargreaves method to compute daily evaporation rate
+ * from daily average temperatures and Julian day.
+ * \param[in] day Day of year
+ * \param[in] tave 7-day average temperature (deg F)
+ * \param[in] trng 7-day average daily temperature range (deg F)
+ * \return Evaporation rate in user's units (US:in/day, SI:mm/day)
+ */
 static double getTempEvap(int day, double tave, double trng);
 
 /*!
-* \brief Updates daily climate variables for new day or reads in
-* another month worth of values if a new month begins.
-* \param[in] theDate Current simulation date
-* \note Counters FileElapsedDays, FileDay, FileMonth, FileYear and
-* FileLastDay were initialized in climate_openFile().
-*/
+ * \brief Updates daily climate variables for new day or reads in
+ * another month worth of values if a new month begins.
+ * \param[in] theDate Current simulation date
+ * \note Counters FileElapsedDays, FileDay, FileMonth, FileYear and
+ * FileLastDay were initialized in climate_openFile().
+ */
 static void updateFileValues(DateTime theDate);
 
 /*!
-* \brief Parses climate variable values from a line of a user-prepared climate file.
-*/
+ * \brief Parses climate variable values from a line of a user-prepared climate file.
+ */
 static void parseUserFileLine(void);
 
 /*!
-* \brief Parses climate variable values from a line of a TD3200 file.
-*/
+ * \brief Parses climate variable values from a line of a TD3200 file.
+ */
 static void parseTD3200FileLine(void);
 
 /*!
-* \brief Parses a month's worth of climate variable values from a line of 
-* a DLY02 or DLY04 climate file.
-*/
+ * \brief Parses a month's worth of climate variable values from a line of
+ * a DLY02 or DLY04 climate file.
+ */
 static void parseDLY0204FileLine(void);
 
 /*!
-* \brief Reads month worth of values for climate variable from TD-3200 file.
-* \param[in] i Climate variable code
-*/
+ * \brief Reads month worth of values for climate variable from TD-3200 file.
+ * \param[in] i Climate variable code
+ */
 static void setTD3200FileValues(int param);
 
 /*!
-* \brief Checks if a climate file is in the NCDC GHCN Daily format 
-* and determines the position of each climate variable field.
-* \param[in] line Line from the climate file
-* \return 1 if line is in GHCN format, 0 if not
-*/
-static int  isGhcndFormat(char* line);
+ * \brief Checks if a climate file is in the NCDC GHCN Daily format
+ * and determines the position of each climate variable field.
+ * \param[in] line Line from the climate file
+ * \return 1 if line is in GHCN format, 0 if not
+ */
+static int isGhcndFormat(char *line);
 
 /*!
-* \brief Reads year & month from line of a NCDC GHCN Daily climate file.
-* \param[out] y Year
-* \param[out] m Month
-*/
+ * \brief Reads year & month from line of a NCDC GHCN Daily climate file.
+ * \param[out] y Year
+ * \param[out] m Month
+ */
 static void readGhcndFileLine(int *year, int *month);
 
 /*!
-* \brief Parses a line of a NCDC GHCN Daily file for daily values of max/min temperature,
-* pan evaporation and wind speed.
-*/
+ * \brief Parses a line of a NCDC GHCN Daily file for daily values of max/min temperature,
+ * pan evaporation and wind speed.
+ */
 static void parseGhcndFileLine(void);
 
 /*!
-* \brief Converts a climate variable value read from a NCDC GHCN Daily file
-* to SWMM's internal units.
-* \param[in] var Climate variable code
-* \param[in] v Climate variable value
-* \return Climate variable value in SWMM's internal units
-*/
+ * \brief Converts a climate variable value read from a NCDC GHCN Daily file
+ * to SWMM's internal units.
+ * \param[in] var Climate variable code
+ * \param[in] v Climate variable value
+ * \return Climate variable value in SWMM's internal units
+ */
 static double convertGhcndValue(int var, double v);
 /*!
-* \}
-*/
+ * \}
+ */
 
 /*!
-* \brief Reads climate/temperature parameters from input line of data.
-* \param[in] tok Array of string tokens
-* \param[in] ntoks Number of tokens
-* \return Error code
-* \details 
-* Format of data can be:
-* - TIMESERIES  name
-* - FILE        name  (start)  (units)
-* - WINDSPEED   MONTHLY  v1  v2  ...  v12
-* - WINDSPEED   FILE
-* - SNOWMELT    v1  v2  ...  v6
-* - ADC         IMPERV/PERV  v1  v2  ...  v10
-*/
-int  climate_readParams(char* tok[], int ntoks)
+ * \copydoc climate_readParams
+ */
+int climate_readParams(char *tok[], int ntoks)
 {
-    int      i, j, k;
-    double   x[6], y;
+    int i, j, k;
+    double x[6], y;
     DateTime aDate;
-    char  fname[MAXFNAME + 1];
+    char fname[MAXFNAME + 1];
 
     // --- identify keyword
     k = findmatch(tok[0], TempKeyWords);
-    if ( k < 0 ) return error_setInpError(ERR_KEYWORD, tok[0]);
+    if (k < 0)
+        return error_setInpError(ERR_KEYWORD, tok[0]);
     switch (k)
     {
-      case 0: // Time series name
+    case 0: // Time series name
         // --- check that time series name exists
-        if ( ntoks < 2 ) return error_setInpError(ERR_ITEMS, "");
+        if (ntoks < 2)
+            return error_setInpError(ERR_ITEMS, "");
         i = project_findObject(TSERIES, tok[1]);
-        if ( i < 0 ) return error_setInpError(ERR_NAME, tok[1]);
+        if (i < 0)
+            return error_setInpError(ERR_NAME, tok[1]);
 
         // --- record the time series as being the data source for temperature
         Temp.dataSource = TSERIES_TEMP;
@@ -535,9 +547,10 @@ int  climate_readParams(char* tok[], int ntoks)
         Tseries[i].refersTo = TSERIES_TEMP;
         break;
 
-      case 1: // Climate file
+    case 1: // Climate file
         // --- record file as being source of temperature data
-        if ( ntoks < 2 ) return error_setInpError(ERR_ITEMS, "");
+        if (ntoks < 2)
+            return error_setInpError(ERR_ITEMS, "");
         Temp.dataSource = FILE_TEMP;
 
         // --- save name and usage mode of external climate file
@@ -547,11 +560,11 @@ int  climate_readParams(char* tok[], int ntoks)
 
         // --- save starting date to read from file if one is provided
         Temp.fileStartDate = NO_DATE;
-        if ( ntoks > 2 )
+        if (ntoks > 2)
         {
-            if ( *tok[2] != '*')
+            if (*tok[2] != '*')
             {
-                if ( !datetime_strToDate(tok[2], &aDate) )
+                if (!datetime_strToDate(tok[2], &aDate))
                     return error_setInpError(ERR_DATETIME, tok[2]);
                 Temp.fileStartDate = aDate;
             }
@@ -570,9 +583,9 @@ int  climate_readParams(char* tok[], int ntoks)
         }
         break;
 
-      case 2: // Wind speeds
+    case 2: // Wind speeds
         // --- check if wind speeds will be supplied from climate file
-        if ( strcomp(tok[1], w_FILE) )
+        if (strcomp(tok[1], w_FILE))
         {
             Wind.type = FILE_WIND;
         }
@@ -580,46 +593,53 @@ int  climate_readParams(char* tok[], int ntoks)
         // --- otherwise read 12 monthly avg. wind speed values
         else
         {
-            if ( ntoks < 14 ) return error_setInpError(ERR_ITEMS, "");
+            if (ntoks < 14)
+                return error_setInpError(ERR_ITEMS, "");
             Wind.type = MONTHLY_WIND;
-            for (i=0; i<12; i++)
+            for (i = 0; i < 12; i++)
             {
-                if ( !getDouble(tok[i+2], &y) )
-                    return error_setInpError(ERR_NUMBER, tok[i+2]);
+                if (!getDouble(tok[i + 2], &y))
+                    return error_setInpError(ERR_NUMBER, tok[i + 2]);
                 Wind.aws[i] = y;
             }
         }
         break;
 
-      case 3: // Snowmelt params
-        if ( ntoks < 7 ) return error_setInpError(ERR_ITEMS, "");
-        for (i=1; i<7; i++)
+    case 3: // Snowmelt params
+        if (ntoks < 7)
+            return error_setInpError(ERR_ITEMS, "");
+        for (i = 1; i < 7; i++)
         {
-            if ( !getDouble(tok[i], &x[i-1]) )
+            if (!getDouble(tok[i], &x[i - 1]))
                 return error_setInpError(ERR_NUMBER, tok[i]);
         }
         // --- convert deg. C to deg. F for snowfall temperature
-        if ( UnitSystem == SI ) x[0] = 9./5.*x[0] + 32.0;
+        if (UnitSystem == SI)
+            x[0] = 9. / 5. * x[0] + 32.0;
         Snow.snotmp = x[0];
-        Snow.tipm   = x[1];
-        Snow.rnm    = x[2];
-        Temp.elev   = x[3] / UCF(LENGTH);
+        Snow.tipm = x[1];
+        Snow.rnm = x[2];
+        Temp.elev = x[3] / UCF(LENGTH);
         Temp.anglat = x[4];
         Temp.dtlong = x[5] / 60.0;
         break;
 
-      case 4:  // Areal Depletion Curve data
+    case 4: // Areal Depletion Curve data
         // --- check if data is for impervious or pervious areas
-        if ( ntoks < 12 ) return error_setInpError(ERR_ITEMS, "");
-        if      ( match(tok[1], w_IMPERV) ) i = 0;
-        else if ( match(tok[1], w_PERV)   ) i = 1;
-        else return error_setInpError(ERR_KEYWORD, tok[1]);
+        if (ntoks < 12)
+            return error_setInpError(ERR_ITEMS, "");
+        if (match(tok[1], w_IMPERV))
+            i = 0;
+        else if (match(tok[1], w_PERV))
+            i = 1;
+        else
+            return error_setInpError(ERR_KEYWORD, tok[1]);
 
         // --- read 10 fractional values
-        for (j=0; j<10; j++)
+        for (j = 0; j < 10; j++)
         {
-            if ( !getDouble(tok[j+2], &y) || y < 0.0 || y > 1.0 )
-                return error_setInpError(ERR_NUMBER, tok[j+2]);
+            if (!getDouble(tok[j + 2], &y) || y < 0.0 || y > 1.0)
+                return error_setInpError(ERR_NUMBER, tok[j + 2]);
             Snow.adc[i][j] = y;
         }
         break;
@@ -628,88 +648,87 @@ int  climate_readParams(char* tok[], int ntoks)
 }
 
 /*!
-* \brief Reads evaporation parameters from input line of data.
-* \param[in] tok Array of string tokens
-* \param[in] ntoks Number of tokens
-* \return Error code
-* \details 
-* Data formats are:
-* - CONSTANT  value
-* - MONTHLY   v1 ... v12
-* - TIMESERIES name
-* - TEMPERATURE
-* - FILE      (v1 ... v12)
-* - RECOVERY   name
-* - DRY_ONLY   YES/NO
-*/
-int climate_readEvapParams(char* tok[], int ntoks)
+ * \copydoc climate_readEvapParams
+ */
+int climate_readEvapParams(char *tok[], int ntoks)
 {
     int i, k;
     double x;
 
     // --- find keyword indicating what form the evaporation data is in
     k = findmatch(tok[0], EvapTypeWords);
-    if ( k < 0 ) return error_setInpError(ERR_KEYWORD, tok[0]);
+    if (k < 0)
+        return error_setInpError(ERR_KEYWORD, tok[0]);
 
     // --- check for RECOVERY pattern data
-    if ( k == RECOVERY )
+    if (k == RECOVERY)
     {
-        if ( ntoks < 2 ) return error_setInpError(ERR_ITEMS, "");
+        if (ntoks < 2)
+            return error_setInpError(ERR_ITEMS, "");
         i = project_findObject(TIMEPATTERN, tok[1]);
-        if ( i < 0 ) return error_setInpError(ERR_NAME, tok[1]);
+        if (i < 0)
+            return error_setInpError(ERR_NAME, tok[1]);
         Evap.recoveryPattern = i;
         return 0;
     }
 
     // --- check for no evaporation in wet periods
-    if ( k == DRYONLY )
+    if (k == DRYONLY)
     {
-        if ( ntoks < 2 ) return error_setInpError(ERR_ITEMS, "");
-        if      ( strcomp(tok[1], w_NO ) )  Evap.dryOnly = FALSE;
-        else if ( strcomp(tok[1], w_YES ) ) Evap.dryOnly = TRUE;
-        else return error_setInpError(ERR_KEYWORD, tok[1]);
+        if (ntoks < 2)
+            return error_setInpError(ERR_ITEMS, "");
+        if (strcomp(tok[1], w_NO))
+            Evap.dryOnly = FALSE;
+        else if (strcomp(tok[1], w_YES))
+            Evap.dryOnly = TRUE;
+        else
+            return error_setInpError(ERR_KEYWORD, tok[1]);
         return 0;
     }
 
     // --- process data depending on its form
     Evap.type = k;
-    if ( k != TEMPERATURE_EVAP && ntoks < 2 )
+    if (k != TEMPERATURE_EVAP && ntoks < 2)
         return error_setInpError(ERR_ITEMS, "");
-    switch ( k )
+    switch (k)
     {
-      case CONSTANT_EVAP:
+    case CONSTANT_EVAP:
         // --- for constant evap., fill monthly avg. values with same number
-        if ( !getDouble(tok[1], &x) )
+        if (!getDouble(tok[1], &x))
             return error_setInpError(ERR_NUMBER, tok[1]);
-        for (i=0; i<12; i++) Evap.monthlyEvap[i] = x;
+        for (i = 0; i < 12; i++)
+            Evap.monthlyEvap[i] = x;
         break;
 
-      case MONTHLY_EVAP:
+    case MONTHLY_EVAP:
         // --- for monthly evap., read a value for each month of year
-        if ( ntoks < 13 ) return error_setInpError(ERR_ITEMS, "");
-        for ( i=0; i<12; i++)
-            if ( !getDouble(tok[i+1], &Evap.monthlyEvap[i]) )
-                return error_setInpError(ERR_NUMBER, tok[i+1]);
+        if (ntoks < 13)
+            return error_setInpError(ERR_ITEMS, "");
+        for (i = 0; i < 12; i++)
+            if (!getDouble(tok[i + 1], &Evap.monthlyEvap[i]))
+                return error_setInpError(ERR_NUMBER, tok[i + 1]);
         break;
 
-      case TIMESERIES_EVAP:
+    case TIMESERIES_EVAP:
         // --- for time series evap., read name of time series
         i = project_findObject(TSERIES, tok[1]);
-        if ( i < 0 ) return error_setInpError(ERR_NAME, tok[1]);
+        if (i < 0)
+            return error_setInpError(ERR_NAME, tok[1]);
         Evap.tSeries = i;
         Tseries[i].refersTo = TIMESERIES_EVAP;
         break;
 
-      case FILE_EVAP:
+    case FILE_EVAP:
         // --- for evap. from climate file, read monthly pan coeffs.
         //     if they are provided (default values are 1.0)
-        if ( ntoks > 1 )
+        if (ntoks > 1)
         {
-            if ( ntoks < 13 ) return error_setInpError(ERR_ITEMS, "");
-            for (i=0; i<12; i++)
+            if (ntoks < 13)
+                return error_setInpError(ERR_ITEMS, "");
+            for (i = 0; i < 12; i++)
             {
-                if ( !getDouble(tok[i+1], &Evap.panCoeff[i]) )
-                    return error_setInpError(ERR_NUMBER, tok[i+1]);
+                if (!getDouble(tok[i + 1], &Evap.panCoeff[i]))
+                    return error_setInpError(ERR_NUMBER, tok[i + 1]);
             }
         }
         break;
@@ -718,100 +737,103 @@ int climate_readEvapParams(char* tok[], int ntoks)
 }
 
 /*!
-* \brief Reads adjustments to monthly evaporation or rainfall from input line of data.
-* \param[in] tok Array of string tokens
-* \param[in] ntoks Number of tokens
-* \return Error code
-* \details
-* Data formats are:
-* - TEMPERATURE   v1 ... v12
-* - EVAPORATION   v1 ... v12
-* - RAINFALL      v1 ... v12
-* - CONDUCTIVITY  v1 ... v12
-* - N-PERV        subcatchID  patternID
-* - DSTORE        subcatchID  patternID
-* - INFIL         subcatchID  patternID
-*/
-int climate_readAdjustments(char* tok[], int ntoks)
+ * \copydoc climate_readAdjustments
+ */
+int climate_readAdjustments(char *tok[], int ntoks)
 {
     int i, j;
 
-    if (ntoks == 1) return 0;
+    if (ntoks == 1)
+        return 0;
 
-    if ( match(tok[0], "TEMP") )
+    if (match(tok[0], "TEMP"))
     {
-        if ( ntoks < 13 )  return error_setInpError(ERR_ITEMS, "");
+        if (ntoks < 13)
+            return error_setInpError(ERR_ITEMS, "");
         for (i = 1; i < 13; i++)
         {
-            if ( !getDouble(tok[i], &Adjust.temp[i-1]) )
+            if (!getDouble(tok[i], &Adjust.temp[i - 1]))
                 return error_setInpError(ERR_NUMBER, tok[i]);
         }
         return 0;
     }
 
-    if ( match(tok[0], "EVAP") )
+    if (match(tok[0], "EVAP"))
     {
-        if ( ntoks < 13 )  return error_setInpError(ERR_ITEMS, "");
+        if (ntoks < 13)
+            return error_setInpError(ERR_ITEMS, "");
         for (i = 1; i < 13; i++)
         {
-            if ( !getDouble(tok[i], &Adjust.evap[i-1]) )
+            if (!getDouble(tok[i], &Adjust.evap[i - 1]))
                 return error_setInpError(ERR_NUMBER, tok[i]);
         }
         return 0;
     }
 
-    if ( match(tok[0], "RAIN") )
+    if (match(tok[0], "RAIN"))
     {
-        if ( ntoks < 13 )  return error_setInpError(ERR_ITEMS, "");
+        if (ntoks < 13)
+            return error_setInpError(ERR_ITEMS, "");
         for (i = 1; i < 13; i++)
         {
-            if ( !getDouble(tok[i], &Adjust.rain[i-1]) )
+            if (!getDouble(tok[i], &Adjust.rain[i - 1]))
                 return error_setInpError(ERR_NUMBER, tok[i]);
         }
         return 0;
     }
 
-    if ( match(tok[0], "CONDUCT") )
+    if (match(tok[0], "CONDUCT"))
     {
-        if ( ntoks < 13 )  return error_setInpError(ERR_ITEMS, "");
+        if (ntoks < 13)
+            return error_setInpError(ERR_ITEMS, "");
         for (i = 1; i < 13; i++)
         {
-            if ( !getDouble(tok[i], &Adjust.hydcon[i-1]) )
+            if (!getDouble(tok[i], &Adjust.hydcon[i - 1]))
                 return error_setInpError(ERR_NUMBER, tok[i]);
-            if ( Adjust.hydcon[i-1] <= 0.0 ) Adjust.hydcon[i-1] = 1.0;
+            if (Adjust.hydcon[i - 1] <= 0.0)
+                Adjust.hydcon[i - 1] = 1.0;
         }
         return 0;
     }
 
-    if ( match(tok[0], "N-PERV") )
+    if (match(tok[0], "N-PERV"))
     {
-        if ( ntoks < 3 ) return error_setInpError(ERR_ITEMS, "");
+        if (ntoks < 3)
+            return error_setInpError(ERR_ITEMS, "");
         i = project_findObject(SUBCATCH, tok[1]);
-        if (i < 0) return error_setInpError(ERR_NAME, tok[1]);
+        if (i < 0)
+            return error_setInpError(ERR_NAME, tok[1]);
         j = project_findObject(TIMEPATTERN, tok[2]);
-        if (j < 0) return error_setInpError(ERR_NAME, tok[2]);
+        if (j < 0)
+            return error_setInpError(ERR_NAME, tok[2]);
         Subcatch[i].nPervPattern = j;
         return 0;
     }
 
-    if ( match(tok[0], "DSTORE") )
+    if (match(tok[0], "DSTORE"))
     {
-        if (ntoks < 3) return error_setInpError(ERR_ITEMS, "");
+        if (ntoks < 3)
+            return error_setInpError(ERR_ITEMS, "");
         i = project_findObject(SUBCATCH, tok[1]);
-        if (i < 0) return error_setInpError(ERR_NAME, tok[1]);
+        if (i < 0)
+            return error_setInpError(ERR_NAME, tok[1]);
         j = project_findObject(TIMEPATTERN, tok[2]);
-        if (j < 0) return error_setInpError(ERR_NAME, tok[2]);
+        if (j < 0)
+            return error_setInpError(ERR_NAME, tok[2]);
         Subcatch[i].dStorePattern = j;
         return 0;
     }
 
     if (match(tok[0], "INFIL"))
     {
-        if (ntoks < 3) return error_setInpError(ERR_ITEMS, "");
+        if (ntoks < 3)
+            return error_setInpError(ERR_ITEMS, "");
         i = project_findObject(SUBCATCH, tok[1]);
-        if (i < 0) return error_setInpError(ERR_NAME, tok[1]);
+        if (i < 0)
+            return error_setInpError(ERR_NAME, tok[1]);
         j = project_findObject(TIMEPATTERN, tok[2]);
-        if (j < 0) return error_setInpError(ERR_NAME, tok[2]);
+        if (j < 0)
+            return error_setInpError(ERR_NAME, tok[2]);
         Subcatch[i].infilPattern = j;
         return 0;
     }
@@ -819,61 +841,68 @@ int climate_readAdjustments(char* tok[], int ntoks)
 }
 
 /*!
-* \brief Validates climatological variables.
-*/
+ * \copydoc climate_validate
+ */
 void climate_validate()
 {
-    int       i;
-    double    a, z, pa;
+    int i;
+    double a, z, pa;
 
-    // --- check if climate data comes from external data file 
-    if ( Wind.type == FILE_WIND || Evap.type == FILE_EVAP ||
-         Evap.type == TEMPERATURE_EVAP )
+    // --- check if climate data comes from external data file
+    if (Wind.type == FILE_WIND || Evap.type == FILE_EVAP ||
+        Evap.type == TEMPERATURE_EVAP)
     {
-        if ( Fclimate.mode == NO_FILE )
+        if (Fclimate.mode == NO_FILE)
         {
             report_writeErrorMsg(ERR_NO_CLIMATE_FILE, "");
         }
     }
 
     // --- open the climate data file
-    if ( Fclimate.mode == USE_FILE ) climate_openFile();
+    if (Fclimate.mode == USE_FILE)
+        climate_openFile();
 
     // --- snow melt parameters tipm & rnm must be fractions
-    if ( Snow.tipm < 0.0 ||
-         Snow.tipm > 1.0 ||
-         Snow.rnm  < 0.0 ||
-         Snow.rnm  > 1.0 ) report_writeErrorMsg(ERR_SNOWMELT_PARAMS, "");
+    if (Snow.tipm < 0.0 ||
+        Snow.tipm > 1.0 ||
+        Snow.rnm < 0.0 ||
+        Snow.rnm > 1.0)
+        report_writeErrorMsg(ERR_SNOWMELT_PARAMS, "");
 
     // --- latitude should be between -90 & 90 degrees
     a = Temp.anglat;
-    if ( a <= -89.99 ||
-         a >= 89.99  ) report_writeErrorMsg(ERR_SNOWMELT_PARAMS, "");
-    else Temp.tanAnglat = tan(a * PI / 180.0);
+    if (a <= -89.99 ||
+        a >= 89.99)
+        report_writeErrorMsg(ERR_SNOWMELT_PARAMS, "");
+    else
+        Temp.tanAnglat = tan(a * PI / 180.0);
 
     // --- compute psychrometric constant
     z = Temp.elev / 1000.0;
-    if ( z <= 0.0 ) pa = 29.9;
-    else  pa = 29.9 - 1.02*z + 0.0032*pow(z, 2.4); // atmos. pressure
+    if (z <= 0.0)
+        pa = 29.9;
+    else
+        pa = 29.9 - 1.02 * z + 0.0032 * pow(z, 2.4); // atmos. pressure
     Temp.gamma = 0.000359 * pa;
 
     // --- convert units of monthly temperature & evap adjustments
     for (i = 0; i < 12; i++)
     {
-        if (UnitSystem == SI) Adjust.temp[i] *= 9.0/5.0;
+        if (UnitSystem == SI)
+            Adjust.temp[i] *= 9.0 / 5.0;
         Adjust.evap[i] /= UCF(EVAPRATE);
     }
 }
 
 /*!
-* \brief Opens a climate file and reads in first set of values.
-*/
+ * \copydoc climate_openFile
+ */
 void climate_openFile()
 {
     int i, m, y;
 
     // --- open the file
-    if ( (Fclimate.file = fopen(Fclimate.name, "rt")) == NULL )
+    if ((Fclimate.file = fopen(Fclimate.name, "rt")) == NULL)
     {
         report_writeErrorMsg(ERR_CLIMATE_FILE_OPEN, Fclimate.name);
         return;
@@ -888,7 +917,7 @@ void climate_openFile()
 
     // --- find climate file's format
     FileFormat = getFileFormat();
-    if ( FileFormat == UNKNOWN_FORMAT )
+    if (FileFormat == UNKNOWN_FORMAT)
     {
         report_writeErrorMsg(ERR_CLIMATE_FILE_READ, Fclimate.name);
         return;
@@ -898,39 +927,41 @@ void climate_openFile()
     //     month/year or at start of simulation period.
     rewind(Fclimate.file);
     sstrncpy(FileLine, "", 0);
-    if ( Temp.fileStartDate == NO_DATE )
+    if (Temp.fileStartDate == NO_DATE)
         datetime_decodeDate(StartDate, &FileYear, &FileMonth, &FileDay);
     else
         datetime_decodeDate(Temp.fileStartDate, &FileYear, &FileMonth, &FileDay);
-    while ( !feof(Fclimate.file) )
+    while (!feof(Fclimate.file))
     {
         sstrncpy(FileLine, "", 0);
         readFileLine(&y, &m);
-        if ( y == FileYear && m == FileMonth ) break;
+        if (y == FileYear && m == FileMonth)
+            break;
     }
-    if ( feof(Fclimate.file) )
+    if (feof(Fclimate.file))
     {
         report_writeErrorMsg(ERR_CLIMATE_END_OF_FILE, Fclimate.name);
         return;
     }
 
     // --- initialize file dates and current climate variable values
-    if ( !ErrorCode )
+    if (!ErrorCode)
     {
         FileElapsedDays = 0;
         FileLastDay = datetime_daysPerMonth(FileYear, FileMonth);
         readFileValues();
-        for (i=TMIN; i<=WIND; i++)
+        for (i = TMIN; i <= WIND; i++)
         {
-            if ( FileData[i][FileDay] == MISSING ) continue;
+            if (FileData[i][FileDay] == MISSING)
+                continue;
             FileValue[i] = FileData[i][FileDay];
         }
     }
 }
 
 /*!
-* \brief Initializes climate state variables.
-*/
+ * \copydoc climate_initState
+ */
 void climate_initState()
 {
     LastDay = NO_DATE;
@@ -940,24 +971,24 @@ void climate_initState()
     NextEvapRate = 0.0;
 
     // --- initialize variables for time series evaporation
-    if ( Evap.type == TIMESERIES_EVAP && Evap.tSeries >= 0  )
+    if (Evap.type == TIMESERIES_EVAP && Evap.tSeries >= 0)
     {
         // --- initialize NextEvapDate & NextEvapRate to first entry of
         //     time series whose date <= the simulation start date
         table_getFirstEntry(&Tseries[Evap.tSeries],
                             &NextEvapDate, &NextEvapRate);
-        if ( NextEvapDate < StartDate )
-        {  
+        if (NextEvapDate < StartDate)
+        {
             setNextEvapDate(StartDate);
         }
         Evap.rate = NextEvapRate / UCF(EVAPRATE);
 
         // --- find the next time evaporation rates change after this
-        setNextEvapDate(NextEvapDate); 
+        setNextEvapDate(NextEvapDate);
     }
 
     // --- initialize variables for temperature evaporation
-    if ( Evap.type == TEMPERATURE_EVAP )
+    if (Evap.type == TEMPERATURE_EVAP)
     {
         Tma.maxCount = sizeof(Tma.ta) / sizeof(double);
         Tma.count = 0;
@@ -968,72 +999,73 @@ void climate_initState()
 }
 
 /*!
-* \brief Sets climate variables for current date.
-* \param[in] theDate Simulation date
-*/
+ * \copydoc climate_setState
+ */
 void climate_setState(DateTime theDate)
 {
-    if ( Fclimate.mode == USE_FILE ) updateFileValues(theDate);
-    if ( Temp.dataSource != NO_TEMP ) setTemp(theDate);
+    if (Fclimate.mode == USE_FILE)
+        updateFileValues(theDate);
+    if (Temp.dataSource != NO_TEMP)
+        setTemp(theDate);
     setEvap(theDate);
     setWind(theDate);
-    Adjust.rainFactor = Adjust.rain[datetime_monthOfYear(theDate)-1];
-    Adjust.hydconFactor = Adjust.hydcon[datetime_monthOfYear(theDate)-1];
+    Adjust.rainFactor = Adjust.rain[datetime_monthOfYear(theDate) - 1];
+    Adjust.hydconFactor = Adjust.hydcon[datetime_monthOfYear(theDate) - 1];
     setNextEvapDate(theDate);
 }
 
 /*!
-* \brief Gets the next date when evaporation rate changes.
-* \return The current value of NextEvapDate
-*/
+ * \copydoc climate_getNextEvapDate
+ */
 DateTime climate_getNextEvapDate()
 {
     return NextEvapDate;
 }
 
 /*!
-* \brief Finds date for next change in evaporation after the current date.
-* \param[in] theDate Current simulation date
-* \return The new value for NextEvapDate
-*/
+ * \copydoc climate_getNextEvapRate
+ * \note local function
+ */
 void setNextEvapDate(DateTime theDate)
 {
-    int    yr, mon, day, k;
+    int yr, mon, day, k;
     double d, e;
 
     // --- do nothing if current date hasn't reached the current next date
-    if ( NextEvapDate > theDate ) return;
+    if (NextEvapDate > theDate)
+        return;
 
-    switch ( Evap.type )
+    switch (Evap.type)
     {
-      // --- for constant evaporation, use a next date far in the future
-      case CONSTANT_EVAP:
-         NextEvapDate = theDate + 365.;
-         break;
+    // --- for constant evaporation, use a next date far in the future
+    case CONSTANT_EVAP:
+        NextEvapDate = theDate + 365.;
+        break;
 
-      // --- for monthly evaporation, use the start of the next month
-      case MONTHLY_EVAP:
+    // --- for monthly evaporation, use the start of the next month
+    case MONTHLY_EVAP:
         datetime_decodeDate(theDate, &yr, &mon, &day);
-        if ( mon == 12 )
+        if (mon == 12)
         {
             mon = 1;
             yr++;
         }
-        else mon++;
+        else
+            mon++;
         NextEvapDate = datetime_encodeDate(yr, mon, 1);
         break;
 
-      // --- for time series evaporation, find the next entry in the
-      //     series on or after the current date
-      case TIMESERIES_EVAP:
+    // --- for time series evaporation, find the next entry in the
+    //     series on or after the current date
+    case TIMESERIES_EVAP:
         k = Evap.tSeries;
-        if ( k >= 0 )
+        if (k >= 0)
         {
             NextEvapDate = theDate + 365.;
-            while ( table_getNextEntry(&Tseries[k], &d, &e) &&
-                    d <= EndDateTime )
+            while (table_getNextEntry(&Tseries[k], &d, &e) &&
+                   d <= EndDateTime)
             {
-                if ( d >= theDate )
+                if (d >= theDate)
                 {
                     NextEvapDate = d;
                     NextEvapRate = e;
@@ -1043,22 +1075,20 @@ void setNextEvapDate(DateTime theDate)
         }
         break;
 
-      // --- for climate file daily evaporation, use the next day
-      case FILE_EVAP:
+    // --- for climate file daily evaporation, use the next day
+    case FILE_EVAP:
         NextEvapDate = floor(theDate) + 1.0;
         break;
 
-      default: NextEvapDate = theDate + 365.;
+    default:
+        NextEvapDate = theDate + 365.;
     }
 }
 
 /*!
-* \brief Updates daily climate variables for new day or reads in
-* another month worth of values if a new month begins.
-* \param[in] theDate Current simulation date
-* \note Counters FileElapsedDays, FileDay, FileMonth, FileYear and
-* FileLastDay were initialized in climate_openFile().
-*/
+ * \copydoc updateFileValues
+ * \note local function
+ */
 void updateFileValues(DateTime theDate)
 {
     int i;
@@ -1066,17 +1096,17 @@ void updateFileValues(DateTime theDate)
 
     // --- see if a new day has begun
     deltaDays = (int)(floor(theDate) - floor(StartDateTime));
-    if ( deltaDays > FileElapsedDays )
+    if (deltaDays > FileElapsedDays)
     {
         // --- advance day counters
         FileElapsedDays++;
         FileDay++;
 
         // --- see if new month of data needs to be read from file
-        if ( FileDay > FileLastDay )
+        if (FileDay > FileLastDay)
         {
             FileMonth++;
-            if ( FileMonth > 12 )
+            if (FileMonth > 12)
             {
                 FileMonth = 1;
                 FileYear++;
@@ -1087,57 +1117,58 @@ void updateFileValues(DateTime theDate)
         }
 
         // --- set climate variables for new day
-        for (i=TMIN; i<=WIND; i++)
+        for (i = TMIN; i <= WIND; i++)
         {
             // --- no change in current value if its missing
-            if ( FileData[i][FileDay] == MISSING ) continue;
+            if (FileData[i][FileDay] == MISSING)
+                continue;
             FileValue[i] = FileData[i][FileDay];
         }
     }
 }
 
 /*!
-* \brief Updates temperatures for new simulation date.
-* \param[in] theDate Simulation date
-*/
+ * \copydoc setTemp
+ * \note local function
+ */
 void setTemp(DateTime theDate)
 {
-    int      j;                        // snow data object index
-    int      k;                        // time series index
-    int      mon;                      // month of year 
-    int      day;                      // day of year
-    DateTime theDay;                   // calendar day
-    double   hour;                     // hour of day
-    double   tmp;                      // temporary temperature
+    int j;           // snow data object index
+    int k;           // time series index
+    int mon;         // month of year
+    int day;         // day of year
+    DateTime theDay; // calendar day
+    double hour;     // hour of day
+    double tmp;      // temporary temperature
 
     // --- see if a new day has started
     mon = datetime_monthOfYear(theDate);
     theDay = floor(theDate);
-    if ( theDay > LastDay )
+    if (theDay > LastDay)
     {
         // --- update min. & max. temps & their time of day
         day = datetime_dayOfYear(theDate);
-        if ( Temp.dataSource == FILE_TEMP )
+        if (Temp.dataSource == FILE_TEMP)
         {
-            Tmin = FileValue[TMIN] + Adjust.temp[mon-1];
-            Tmax = FileValue[TMAX] + Adjust.temp[mon-1];
-            if ( Tmin > Tmax )
+            Tmin = FileValue[TMIN] + Adjust.temp[mon - 1];
+            Tmax = FileValue[TMAX] + Adjust.temp[mon - 1];
+            if (Tmin > Tmax)
             {
                 tmp = Tmin;
                 Tmin = Tmax;
                 Tmax = tmp;
             }
             updateTempTimes(day);
-            if ( Evap.type == TEMPERATURE_EVAP )
+            if (Evap.type == TEMPERATURE_EVAP)
             {
-                updateTempMoveAve(Tmin, Tmax); 
+                updateTempMoveAve(Tmin, Tmax);
                 FileValue[EVAP] = getTempEvap(day, Tma.tAve, Tma.tRng);
             }
         }
 
         // --- compute snow melt coefficients based on day of year
-        Snow.season = sin(0.0172615*(day-81.0));
-        for (j=0; j<Nobjects[SNOWMELT]; j++)
+        Snow.season = sin(0.0172615 * (day - 81.0));
+        for (j = 0; j < Nobjects[SNOWMELT]; j++)
         {
             snow_setMeltCoeffs(j, Snow.season);
         }
@@ -1148,173 +1179,177 @@ void setTemp(DateTime theDate)
 
     // --- for min/max daily temps. from climate file,
     //     compute hourly temp. by sinusoidal interp.
-    if ( Temp.dataSource == FILE_TEMP )
+    if (Temp.dataSource == FILE_TEMP)
     {
         hour = (theDate - theDay) * 24.0;
-        if ( hour < Hrsr )
-            Temp.ta = Tmin + Trng1/2.0 * sin(PI/Dydif * (Hrsr - hour));
-        else if ( hour >= Hrsr && hour <= Hrss )
-            Temp.ta = Tave + Trng * sin(PI/Dhrdy * (Hrday - hour));
+        if (hour < Hrsr)
+            Temp.ta = Tmin + Trng1 / 2.0 * sin(PI / Dydif * (Hrsr - hour));
+        else if (hour >= Hrsr && hour <= Hrss)
+            Temp.ta = Tave + Trng * sin(PI / Dhrdy * (Hrday - hour));
         else
-            Temp.ta = Tmax - Trng * sin(PI/Dydif * (hour - Hrss));
+            Temp.ta = Tmax - Trng * sin(PI / Dydif * (hour - Hrss));
     }
 
     // --- for user-supplied temperature time series,
     //     get temperature value from time series
-    if ( Temp.dataSource == TSERIES_TEMP )
+    if (Temp.dataSource == TSERIES_TEMP)
     {
         k = Temp.tSeries;
-        if ( k >= 0)
+        if (k >= 0)
         {
             Temp.ta = table_tseriesLookup(&Tseries[k], theDate, TRUE);
 
             // --- convert from deg. C to deg. F if need be
-            if ( UnitSystem == SI )
+            if (UnitSystem == SI)
             {
-                Temp.ta = (9./5.) * Temp.ta + 32.0;
+                Temp.ta = (9. / 5.) * Temp.ta + 32.0;
             }
 
-            // --- apply climate change adjustment factor 
-            Temp.ta += Adjust.temp[mon-1];
+            // --- apply climate change adjustment factor
+            Temp.ta += Adjust.temp[mon - 1];
         }
     }
 
     // --- compute saturation vapor pressure
-    Temp.ea = 8.1175e6 * exp(-7701.544 / (Temp.ta + 405.0265) );
+    Temp.ea = 8.1175e6 * exp(-7701.544 / (Temp.ta + 405.0265));
 }
 
 /*!
-* \brief Sets evaporation rate (ft/sec) for a specified date.
-* \param[in] theDate Simulation date
-*/
+ * \copydoc setEvap
+ * \note local function
+ */
 void setEvap(DateTime theDate)
 {
     int k;
     int mon = datetime_monthOfYear(theDate);
 
-    switch ( Evap.type )
+    switch (Evap.type)
     {
-      case CONSTANT_EVAP:
+    case CONSTANT_EVAP:
         Evap.rate = Evap.monthlyEvap[0] / UCF(EVAPRATE);
         break;
 
-      case MONTHLY_EVAP:
-        Evap.rate = Evap.monthlyEvap[mon-1] / UCF(EVAPRATE);
+    case MONTHLY_EVAP:
+        Evap.rate = Evap.monthlyEvap[mon - 1] / UCF(EVAPRATE);
         break;
 
-      case TIMESERIES_EVAP:
-        if ( theDate >= NextEvapDate )
+    case TIMESERIES_EVAP:
+        if (theDate >= NextEvapDate)
             Evap.rate = NextEvapRate / UCF(EVAPRATE);
         break;
 
-      case FILE_EVAP:
+    case FILE_EVAP:
         Evap.rate = FileValue[EVAP] / UCF(EVAPRATE);
-        Evap.rate *= Evap.panCoeff[mon-1];
+        Evap.rate *= Evap.panCoeff[mon - 1];
         break;
 
-      case TEMPERATURE_EVAP:
+    case TEMPERATURE_EVAP:
         Evap.rate = FileValue[EVAP] / UCF(EVAPRATE);
         break;
 
-      default: Evap.rate = 0.0;
+    default:
+        Evap.rate = 0.0;
     }
 
     // --- apply climate change adjustment
-    Evap.rate += Adjust.evap[mon-1];
+    Evap.rate += Adjust.evap[mon - 1];
 
     // --- set soil recovery factor
     Evap.recoveryFactor = 1.0;
     k = Evap.recoveryPattern;
-    if ( k >= 0 && Pattern[k].type == MONTHLY_PATTERN )
+    if (k >= 0 && Pattern[k].type == MONTHLY_PATTERN)
     {
-        Evap.recoveryFactor = Pattern[k].factor[mon-1];
+        Evap.recoveryFactor = Pattern[k].factor[mon - 1];
     }
 }
 
 /*!
-* \brief Sets wind speed (mph) for a specified date.
-* \param[in] theDate Simulation date
-*/
+ * \copydoc setWind
+ * \note local function
+ */
 void setWind(DateTime theDate)
 {
     int yr, mon, day;
 
-    switch ( Wind.type )
+    switch (Wind.type)
     {
-      case MONTHLY_WIND:
+    case MONTHLY_WIND:
         datetime_decodeDate(theDate, &yr, &mon, &day);
-        Wind.ws = Wind.aws[mon-1] / UCF(WINDSPEED);
+        Wind.ws = Wind.aws[mon - 1] / UCF(WINDSPEED);
         break;
 
-      case FILE_WIND:
+    case FILE_WIND:
         Wind.ws = FileValue[WIND];
         break;
 
-      default: Wind.ws = 0.0;
+    default:
+        Wind.ws = 0.0;
     }
 }
 
 /*!
-* \brief Computes time of day when min/max temperatures occur.
-* (min. temp occurs at sunrise, max. temp. at 3 hrs. < sunset)
-* \param[in] day Day of year
-*/
+ * \copydoc updateTempTimes
+ * \note local function
+ */
 void updateTempTimes(int day)
 {
-    double decl;                       // earth's declination
-    double hrang;                      // hour angle of sunrise/sunset
+    double decl;  // earth's declination
+    double hrang; // hour angle of sunrise/sunset
     double arg;
 
-    decl  = 0.40928*cos(0.017202*(172.0-day));
-    arg = -tan(decl)*Temp.tanAnglat;
-    if      ( arg <= -1.0 ) arg = PI;
-    else if ( arg >= 1.0 )  arg = 0.0;
-    else                    arg = acos(arg);
+    decl = 0.40928 * cos(0.017202 * (172.0 - day));
+    arg = -tan(decl) * Temp.tanAnglat;
+    if (arg <= -1.0)
+        arg = PI;
+    else if (arg >= 1.0)
+        arg = 0.0;
+    else
+        arg = acos(arg);
     hrang = 3.8197 * arg;
-    Hrsr  = 12.0 - hrang + Temp.dtlong;
-    Hrss  = 12.0 + hrang + Temp.dtlong - 3.0;
+    Hrsr = 12.0 - hrang + Temp.dtlong;
+    Hrss = 12.0 + hrang + Temp.dtlong - 3.0;
     Dhrdy = Hrsr - Hrss;
     Dydif = 24.0 + Hrsr - Hrss;
     Hrday = (Hrsr + Hrss) / 2.0;
-    Tave  = (Tmin + Tmax) / 2.0;
-    Trng  = (Tmax - Tmin) / 2.0;
-    if ( Temp.tmax == MISSING ) Trng1 = Tmax - Tmin;
-    else                        Trng1 = Temp.tmax - Tmin;
+    Tave = (Tmin + Tmax) / 2.0;
+    Trng = (Tmax - Tmin) / 2.0;
+    if (Temp.tmax == MISSING)
+        Trng1 = Tmax - Tmin;
+    else
+        Trng1 = Temp.tmax - Tmin;
     Temp.tmax = Tmax;
 }
 
 /*!
-* \brief Uses Hargreaves method to compute daily evaporation rate
-* from daily average temperatures and Julian day.
-* \param[in] day Day of year
-* \param[in] tave 7-day average temperature (deg F)
-* \param[in] trng 7-day average daily temperature range (deg F)
-* \return Evaporation rate in user's units (US:in/day, SI:mm/day)
-*/
+ * \copydoc getTempEvap
+ * \note local function
+ */
 double getTempEvap(int day, double tave, double trng)
 {
-    double a = 2.0*PI/365.0;
-    double ta = (tave - 32.0)*5.0/9.0;           //average temperature (deg C)
-    double tr = trng*5.0/9.0;                    //temperature range (deg C)
-    double lamda = 2.50 - 0.002361 * ta;         //latent heat of vaporization
-    double dr = 1.0 + 0.033*cos(a*day);          //relative earth-sun distance
-    double phi = Temp.anglat*2.0*PI/360.0;       //latitude angle (rad)
-    double del = 0.4093*sin(a*(284.+(double)day)); //solar declination angle (rad)
-    double omega = acos(-tan(phi)*tan(del));     //sunset hour angle (rad)
-    double ra = 37.6*dr*                         //extraterrestrial radiation
-                (omega*sin(phi)*sin(del) +
-                 cos(phi)*cos(del)*sin(omega));
-    double e = 0.0023*ra/lamda*sqrt(tr)*(ta+17.8);    //evap. rate (mm/day)
-    if ( e < 0.0 ) e = 0.0;
-    if ( UnitSystem == US ) e /= MMperINCH;           //evap rate (in/day)
+    double a = 2.0 * PI / 365.0;
+    double ta = (tave - 32.0) * 5.0 / 9.0;               // average temperature (deg C)
+    double tr = trng * 5.0 / 9.0;                        // temperature range (deg C)
+    double lamda = 2.50 - 0.002361 * ta;                 // latent heat of vaporization
+    double dr = 1.0 + 0.033 * cos(a * day);              // relative earth-sun distance
+    double phi = Temp.anglat * 2.0 * PI / 360.0;         // latitude angle (rad)
+    double del = 0.4093 * sin(a * (284. + (double)day)); // solar declination angle (rad)
+    double omega = acos(-tan(phi) * tan(del));           // sunset hour angle (rad)
+    double ra = 37.6 * dr *                              // extraterrestrial radiation
+                (omega * sin(phi) * sin(del) +
+                 cos(phi) * cos(del) * sin(omega));
+    double e = 0.0023 * ra / lamda * sqrt(tr) * (ta + 17.8); // evap. rate (mm/day)
+    if (e < 0.0)
+        e = 0.0;
+    if (UnitSystem == US)
+        e /= MMperINCH; // evap rate (in/day)
     return e;
 }
 
 /*!
-* \brief Determines the format of a climate file.
-* \return The format code (TD3200, DLY0204, USER_PREPARED, GHCND, UNKNOWN_FORMAT)
-*/
-int  getFileFormat()
+ * \copydoc getFileFormat
+ * \note local function
+ */
+int getFileFormat()
 {
     char recdType[4] = "";
     char elemType[4] = "";
@@ -1323,88 +1358,100 @@ int  getFileFormat()
     char s[80];
     char line[MAXLINE];
 
-    int  y, m, d, n;
+    int y, m, d, n;
 
     // --- read first line of file
-    if ( fgets(line, MAXLINE, Fclimate.file) == NULL ) return UNKNOWN_FORMAT;
+    if (fgets(line, MAXLINE, Fclimate.file) == NULL)
+        return UNKNOWN_FORMAT;
 
     // --- check for TD3200 format
     sstrncpy(recdType, line, 3);
     sstrncpy(filler, &line[23], 4);
-    if ( strcmp(recdType, "DLY") == 0 &&
-         strcmp(filler, "9999")  == 0 ) return TD3200;
+    if (strcmp(recdType, "DLY") == 0 &&
+        strcmp(filler, "9999") == 0)
+        return TD3200;
 
     // --- check for DLY0204 format
-    if ( strlen(line) >= 233 )
+    if (strlen(line) >= 233)
     {
         sstrncpy(elemType, &line[13], 3);
         n = atoi(elemType);
-        if ( n == 1 || n == 2 || n == 151 ) return DLY0204;
+        if (n == 1 || n == 2 || n == 151)
+            return DLY0204;
     }
 
     // --- check for USER_PREPARED format
     n = sscanf(line, "%s %d %d %d %s", staID, &y, &m, &d, s);
-    if ( n == 5 ) return USER_PREPARED;
+    if (n == 5)
+        return USER_PREPARED;
 
     // --- check for GHCND format
-    if ( isGhcndFormat(line) ) return GHCND;
+    if (isGhcndFormat(line))
+        return GHCND;
 
     return UNKNOWN_FORMAT;
 }
 
 /*!
-* \brief Reads a line of data from a climate file.
-* \param[out] y Year
-* \param[out] m Month
-*/
+ * \copydoc readFileLine
+ * \note local function
+ */
 void readFileLine(int *y, int *m)
 {
     // --- read next line from climate data file
-    while ( strlen(FileLine) == 0 )
+    while (strlen(FileLine) == 0)
     {
-        if ( fgets(FileLine, MAXLINE, Fclimate.file) == NULL ) return;
-     	if ( FileLine[0] == '\n' ) FileLine[0] = '\0';
+        if (fgets(FileLine, MAXLINE, Fclimate.file) == NULL)
+            return;
+        if (FileLine[0] == '\n')
+            FileLine[0] = '\0';
     }
 
     // --- parse year & month from line
     switch (FileFormat)
     {
-    case  USER_PREPARED: readUserFileLine(y, m);   break;
-    case  TD3200:        readTD3200FileLine(y,m);  break;
-    case  DLY0204:       readDLY0204FileLine(y,m); break;
-    case  GHCND:         readGhcndFileLine(y,m);   break; 
+    case USER_PREPARED:
+        readUserFileLine(y, m);
+        break;
+    case TD3200:
+        readTD3200FileLine(y, m);
+        break;
+    case DLY0204:
+        readDLY0204FileLine(y, m);
+        break;
+    case GHCND:
+        readGhcndFileLine(y, m);
+        break;
     }
 }
 
 /*!
-* \brief Reads year & month from line of User-Prepared climate file.
-* \param[out] y Year
-* \param[out] m Month
-*/
-void readUserFileLine(int* y, int* m)
+ * \copydoc readUserFileLine
+ * \note local function
+ */
+void readUserFileLine(int *y, int *m)
 {
     int n;
     char staID[80];
     n = sscanf(FileLine, "%s %d %d", staID, y, m);
-    if ( n < 3 )
+    if (n < 3)
     {
         report_writeErrorMsg(ERR_CLIMATE_FILE_READ, Fclimate.name);
     }
 }
 
 /*!
-* \brief Reads year & month from line of TD-3200 climate file.
-* \param[out] y Year
-* \param[out] m Month
-*/
-void readTD3200FileLine(int* y, int* m)
+ * \copydoc readTD3200FileLine
+ * \note local function
+ */
+void readTD3200FileLine(int *y, int *m)
 {
     char recdType[4] = "";
     char year[5] = "";
     char month[3] = "";
 
     // --- check for minimum number of characters
-    if ( strlen(FileLine) < 30 )
+    if (strlen(FileLine) < 30)
     {
         report_writeErrorMsg(ERR_CLIMATE_FILE_READ, Fclimate.name);
         return;
@@ -1412,141 +1459,161 @@ void readTD3200FileLine(int* y, int* m)
 
     // --- check for proper type of record
     sstrncpy(recdType, FileLine, 3);
-    if ( strcmp(recdType, "DLY") != 0 )
+    if (strcmp(recdType, "DLY") != 0)
     {
         report_writeErrorMsg(ERR_CLIMATE_FILE_READ, Fclimate.name);
         return;
     }
 
     // --- get record's date
-    sstrncpy(year,  &FileLine[17], 4);
+    sstrncpy(year, &FileLine[17], 4);
     sstrncpy(month, &FileLine[21], 2);
     *y = atoi(year);
     *m = atoi(month);
 }
 
 /*!
-* \brief Reads year & month from line of DLY02 or DLY04 climate file.
-* \param[out] y Year
-* \param[out] m Month
-*/
-void readDLY0204FileLine(int* y, int* m)
+ * \copydoc readDLY0204FileLine
+ * \note local function
+ */
+void readDLY0204FileLine(int *y, int *m)
 {
     char year[5] = "";
     char month[3] = "";
 
     // --- check for minimum number of characters
-    if ( strlen(FileLine) < 16 )
+    if (strlen(FileLine) < 16)
     {
         report_writeErrorMsg(ERR_CLIMATE_FILE_READ, Fclimate.name);
         return;
     }
 
     // --- get record's date
-    sstrncpy(year,  &FileLine[7], 4);
+    sstrncpy(year, &FileLine[7], 4);
     sstrncpy(month, &FileLine[11], 2);
     *y = atoi(year);
     *m = atoi(month);
 }
 
 /*!
-* \brief Reads next month's worth of data from a GHCND climate file.
-*/
+ * \copydoc readFileValues
+ * \note local function
+ */
 void readFileValues()
 {
-    int  i, j;
-    int  y, m;
+    int i, j;
+    int y, m;
 
     // --- initialize FileData array to missing values
-    for ( i=0; i<MAXCLIMATEVARS; i++)
+    for (i = 0; i < MAXCLIMATEVARS; i++)
     {
-        for (j=0; j<MAXDAYSPERMONTH; j++) FileData[i][j] = MISSING;
+        for (j = 0; j < MAXDAYSPERMONTH; j++)
+            FileData[i][j] = MISSING;
     }
 
-    while ( !ErrorCode )
+    while (!ErrorCode)
     {
         // --- return when date on line is after current file date
-        if ( feof(Fclimate.file) ) return;
+        if (feof(Fclimate.file))
+            return;
         readFileLine(&y, &m);
-        if ( y > FileYear || m > FileMonth ) return;
+        if (y > FileYear || m > FileMonth)
+            return;
 
         // --- parse climate values from file line
         switch (FileFormat)
         {
-        case  USER_PREPARED: parseUserFileLine();   break;
-        case  TD3200:        parseTD3200FileLine();  break;
-        case  DLY0204:       parseDLY0204FileLine(); break;
-        case  GHCND:         parseGhcndFileLine();   break; 
+        case USER_PREPARED:
+            parseUserFileLine();
+            break;
+        case TD3200:
+            parseTD3200FileLine();
+            break;
+        case DLY0204:
+            parseDLY0204FileLine();
+            break;
+        case GHCND:
+            parseGhcndFileLine();
+            break;
         }
         sstrncpy(FileLine, "", 0);
     }
 }
 
 /*!
-* \brief Parses climate variable values from a line of a user-prepared climate file.
-*/
+ * \copydoc parseUserFileLine
+ * \note local function
+ */
 void parseUserFileLine()
 {
-    int   n;
-    int   y, m, d;
-    char  staID[80];
-    char  s0[80] = "";
-    char  s1[80] = "";
-    char  s2[80] = "";
-    char  s3[80] = "";
+    int n;
+    int y, m, d;
+    char staID[80];
+    char s0[80] = "";
+    char s1[80] = "";
+    char s2[80] = "";
+    char s3[80] = "";
     double x;
 
     // --- read day, Tmax, Tmin, Evap, & Wind from file line
     n = sscanf(FileLine, "%s %d %d %d %s %s %s %s",
-        staID, &y, &m, &d, s0, s1, s2, s3);
-    if ( n < 4 ) return;
-    if ( d < 1 || d > 31 ) return;
+               staID, &y, &m, &d, s0, s1, s2, s3);
+    if (n < 4)
+        return;
+    if (d < 1 || d > 31)
+        return;
 
     // --- process TMAX
-    if ( strlen(s0) > 0 && *s0 != '*' )
+    if (strlen(s0) > 0 && *s0 != '*')
     {
         x = atof(s0);
-        if ( UnitSystem == SI ) x = 9./5.*x + 32.0;
-        FileData[TMAX][d] =  x;
+        if (UnitSystem == SI)
+            x = 9. / 5. * x + 32.0;
+        FileData[TMAX][d] = x;
     }
 
     // --- process TMIN
-    if ( strlen(s1) > 0 && *s1 != '*' )
+    if (strlen(s1) > 0 && *s1 != '*')
     {
         x = atof(s1);
-        if ( UnitSystem == SI ) x = 9./5.*x + 32.0;
-        FileData[TMIN][d] =  x;
+        if (UnitSystem == SI)
+            x = 9. / 5. * x + 32.0;
+        FileData[TMIN][d] = x;
     }
 
     // --- process EVAP
-    if ( strlen(s2) > 0 && *s2 != '*' ) FileData[EVAP][d] = atof(s2);
+    if (strlen(s2) > 0 && *s2 != '*')
+        FileData[EVAP][d] = atof(s2);
 
     // --- process WIND
-    if ( strlen(s3) > 0 && *s3 != '*' ) FileData[WIND][d] = atof(s3);
+    if (strlen(s3) > 0 && *s3 != '*')
+        FileData[WIND][d] = atof(s3);
 }
 
 /*!
-* \brief Parses climate variable values from a line of a TD3200 file.
-*/
+ * \copydoc parseTD3200FileLine
+ * \note local function
+ */
 void parseTD3200FileLine()
 {
-    int  i;
+    int i;
     char param[5] = "";
 
     // --- parse parameter name
     sstrncpy(param, &FileLine[11], 4);
 
     // --- see if parameter is temperature, evaporation or wind speed
-    for (i=0; i<MAXCLIMATEVARS; i++)
+    for (i = 0; i < MAXCLIMATEVARS; i++)
     {
-        if (strcmp(param, ClimateVarWords[i]) == 0 ) setTD3200FileValues(i);
+        if (strcmp(param, ClimateVarWords[i]) == 0)
+            setTD3200FileValues(i);
     }
 }
 
 /*!
-* \brief Reads month worth of values for climate variable from TD-3200 file.
-* \param[in] i Climate variable code
-*/
+ * \copydoc setTD3200FileValues
+ * \note local function
+ */
 void setTD3200FileValues(int i)
 {
     char valCount[4] = "";
@@ -1555,48 +1622,48 @@ void setTD3200FileValues(int i)
     char value[6] = "";
     char flag2[2] = "";
     double x;
-    int  nValues;
-    int  j, k, d;
+    int nValues;
+    int j, k, d;
 
     // --- parse number of days with data from cols. 27-29 of file line
     sstrncpy(valCount, &FileLine[27], 3);
     nValues = atoi(valCount);
 
     // --- check for enough characters on line
-    if ( (int)strlen(FileLine) >= 12*nValues + 30 )
+    if ((int)strlen(FileLine) >= 12 * nValues + 30)
     {
         // --- for each day's value
-        for (j=0; j<nValues; j++)
+        for (j = 0; j < nValues; j++)
         {
             // --- parse day, value & flag from file line
-            k = 30 + j*12;
-            sstrncpy(day,   &FileLine[k], 2);
-            sstrncpy(sign,  &FileLine[k+4], 1);
-            sstrncpy(value, &FileLine[k+5], 5);
-            sstrncpy(flag2, &FileLine[k+11], 1);
+            k = 30 + j * 12;
+            sstrncpy(day, &FileLine[k], 2);
+            sstrncpy(sign, &FileLine[k + 4], 1);
+            sstrncpy(value, &FileLine[k + 5], 5);
+            sstrncpy(flag2, &FileLine[k + 11], 1);
 
             // --- if value is valid then store it in FileData array
             d = atoi(day);
-            if ( strcmp(value, "99999") != 0
-                 && ( flag2[0] == '0' || flag2[0] == '1')
-                 &&   d > 0
-                 &&   d <= 31 )
+            if (strcmp(value, "99999") != 0 && (flag2[0] == '0' || flag2[0] == '1') && d > 0 && d <= 31)
             {
                 // --- convert from string value to numerical value
                 x = atof(value);
-                if ( sign[0] == '-' ) x = -x;
+                if (sign[0] == '-')
+                    x = -x;
 
                 // --- convert evaporation from hundreths of inches
-                if ( i == EVAP )
+                if (i == EVAP)
                 {
                     x /= 100.0;
 
                     // --- convert to mm if using SI units
-                    if ( UnitSystem == SI ) x *= MMperINCH;
+                    if (UnitSystem == SI)
+                        x *= MMperINCH;
                 }
 
                 // --- convert wind speed from miles/day to miles/hour
-                if ( i == WIND ) x /= 24.0;
+                if (i == WIND)
+                    x /= 24.0;
 
                 // --- store value
                 FileData[i][d] = x;
@@ -1606,16 +1673,16 @@ void setTD3200FileValues(int i)
 }
 
 /*!
-* \brief Parses a month's worth of climate variable values from a line of 
-* a DLY02 or DLY04 climate file.
-*/
+ * \copydoc parseDLY0204FileLine
+ * \note local function
+ */
 void parseDLY0204FileLine()
 {
-    int  j, k, p;
+    int j, k, p;
     char param[4] = "";
-    char sign[2]  = "";
+    char sign[2] = "";
     char value[6] = "";
-    char code[2]  = "";
+    char code[2] = "";
     double x;
 
     // --- parse parameter name
@@ -1623,27 +1690,32 @@ void parseDLY0204FileLine()
 
     // --- see if parameter is min or max temperature
     p = atoi(param);
-    if ( p == 1 ) p = TMAX;
-    else if ( p == 2 ) p = TMIN;
-    else if ( p == 151 ) p = EVAP;
-    else return;
+    if (p == 1)
+        p = TMAX;
+    else if (p == 2)
+        p = TMIN;
+    else if (p == 151)
+        p = EVAP;
+    else
+        return;
 
     // --- check for 233 characters on line
-    if ( strlen(FileLine) < 233 ) return;
+    if (strlen(FileLine) < 233)
+        return;
 
     // --- for each of 31 days
     k = 16;
-    for (j=1; j<=31; j++)
+    for (j = 1; j <= 31; j++)
     {
         // --- parse value & flag from file line
-        sstrncpy(sign,  &FileLine[k], 1);
-        sstrncpy(value, &FileLine[k+1], 5);
-        sstrncpy(code,  &FileLine[k+6], 1);
+        sstrncpy(sign, &FileLine[k], 1);
+        sstrncpy(value, &FileLine[k + 1], 5);
+        sstrncpy(code, &FileLine[k + 6], 1);
         k += 7;
 
         // --- if value is valid then store it in FileData array
 
-        if ( strcmp(value, "99999") != 0 && strcmp(value, "     ") != 0 )
+        if (strcmp(value, "99999") != 0 && strcmp(value, "     ") != 0)
         {
             switch (p)
             {
@@ -1651,15 +1723,18 @@ void parseDLY0204FileLine()
             case TMIN:
                 // --- convert from integer tenths of a degree C to degrees F
                 x = atof(value) / 10.0;
-                if ( sign[0] == '-' ) x = -x;
-                x = 9./5.*x + 32.0;
+                if (sign[0] == '-')
+                    x = -x;
+                x = 9. / 5. * x + 32.0;
                 break;
             case EVAP:
                 // --- convert from 0.1 mm to inches or mm
                 x = atof(value) / 10.0;
-                if ( UnitSystem == US ) x /= MMperINCH;
+                if (UnitSystem == US)
+                    x /= MMperINCH;
                 break;
-			default: return;
+            default:
+                return;
             }
             FileData[p][j] = x;
         }
@@ -1667,56 +1742,61 @@ void parseDLY0204FileLine()
 }
 
 /*!
-* \brief Checks if a climate file is in the NCDC GHCN Daily format and
-* determines the position of each climate variable field.
-* \param[in] line First line of text from a climate file
-* \return TRUE if climate file is in NCDC GHCN Daily format, FALSE otherwise
-*/
-int isGhcndFormat(char* line)
+ * \copydoc isGhcndFormat
+ * \note local function
+ */
+int isGhcndFormat(char *line)
 {
     int i;
-    char* ptr;
+    char *ptr;
 
     // --- find starting position of the DATE field
     ptr = strstr(line, "DATE");
-    if ( ptr == NULL ) return FALSE;
+    if (ptr == NULL)
+        return FALSE;
     FileDateFieldPos = (int)(ptr - line);
 
     // --- initialize starting position of each data field
-    for ( i = TMIN; i <= WIND; i++) FileFieldPos[i] = -1;
+    for (i = TMIN; i <= WIND; i++)
+        FileFieldPos[i] = -1;
 
     // --- find starting position of each climate variable's data field
     ptr = strstr(line, "TMIN");
-    if ( ptr ) FileFieldPos[TMIN] = (int)(ptr - line);
+    if (ptr)
+        FileFieldPos[TMIN] = (int)(ptr - line);
     ptr = strstr(line, "TMAX");
-    if ( ptr ) FileFieldPos[TMAX] = (int)(ptr - line);
+    if (ptr)
+        FileFieldPos[TMAX] = (int)(ptr - line);
     ptr = strstr(line, "EVAP");
-    if ( ptr ) FileFieldPos[EVAP] = (int)(ptr - line);
+    if (ptr)
+        FileFieldPos[EVAP] = (int)(ptr - line);
 
     // --- WIND can either be daily movement or average speed
     FileWindType = WDMV;
     ptr = strstr(line, "WDMV");
-    if ( ptr == NULL )
+    if (ptr == NULL)
     {
         FileWindType = AWND;
         ptr = strstr(line, "AWND");
     }
-    if ( ptr ) FileFieldPos[WIND] = (int)(ptr - line);
+    if (ptr)
+        FileFieldPos[WIND] = (int)(ptr - line);
 
     // --- check if at least one climate variable was found
-    for (i = TMIN; i <= WIND; i++) if (FileFieldPos[i] >= 0 ) return TRUE;
+    for (i = TMIN; i <= WIND; i++)
+        if (FileFieldPos[i] >= 0)
+            return TRUE;
     return FALSE;
 }
 
 /*!
-* \brief Reads year & month from line of a NCDC GHCN Daily climate file.
-* \param[out] y Year
-* \param[out] m Month
-*/
-void readGhcndFileLine(int* y, int* m)
+ * \copydoc readGhcndFileLine
+ * \note local function
+ */
+void readGhcndFileLine(int *y, int *m)
 {
     int n = sscanf(&FileLine[FileDateFieldPos], "%4d%2d", y, m);
-    if ( n != 2 )
+    if (n != 2)
     {
         *y = -99999;
         *m = -99999;
@@ -1724,9 +1804,9 @@ void readGhcndFileLine(int* y, int* m)
 }
 
 /*!
-* \brief Parses a line of a NCDC GHCN Daily file for daily values of max/min temperature,
-* pan evaporation and wind speed.
-*/
+ * \copydoc parseGhcndFileLine
+ * \note local function
+ */
 void parseGhcndFileLine()
 {
     int y, m, d, n, i;
@@ -1734,17 +1814,19 @@ void parseGhcndFileLine()
 
     // --- parse day of month from date field
     n = sscanf(&FileLine[FileDateFieldPos], "%4d%2d%2d", &y, &m, &d);
-    if ( n < 3 ) return;
-    if ( d < 1 || d > 31 ) return;
+    if (n < 3)
+        return;
+    if (d < 1 || d > 31)
+        return;
 
     // --- parse climate variables
     for (i = TMIN; i <= WIND; i++)
     {
-        if ( FileFieldPos[i] >= 0 )
+        if (FileFieldPos[i] >= 0)
         {
-            if ( sscanf(&FileLine[FileFieldPos[i]], "%8lf", &v) > 0 )
+            if (sscanf(&FileLine[FileFieldPos[i]], "%8lf", &v) > 0)
             {
-                if ( fabs(v) < 9999. )
+                if (fabs(v) < 9999.)
                     FileData[i][d] = convertGhcndValue(i, v);
             }
         }
@@ -1752,87 +1834,85 @@ void parseGhcndFileLine()
 }
 
 /*!
-* \brief Converts a climate variable value read from a NCDC GHCN Daily file
-* to SWMM's internal units.
-* \param[in] var Climate variable code
-* \param[in] v Climate variable value
-* \return Climate variable value in SWMM's internal units
-*/
+ * \copydoc convertGhcndValue
+ * \note local function
+ */
 double convertGhcndValue(int var, double v)
 {
     switch (var)
     {
-        case TMIN:
-        case TMAX:
-            switch (FileTempUnits)
-            {
-                case DEG_C10:  // tenths deg. C ==> deg. F
-                    return v / 10. * 9.0 / 5.0 + 32.0;
+    case TMIN:
+    case TMAX:
+        switch (FileTempUnits)
+        {
+        case DEG_C10: // tenths deg. C ==> deg. F
+            return v / 10. * 9.0 / 5.0 + 32.0;
 
-                case DEG_C:    // deg. C ==> deg. F
-                    return v * 9.0 / 5.0 + 32.0;
+        case DEG_C: // deg. C ==> deg. F
+            return v * 9.0 / 5.0 + 32.0;
 
-                default:       // deg. F
-                    return v;
-            }
-        case EVAP:
-            switch (FileTempUnits)
-            {
-                case DEG_C10:  // tenths mm ==> inches or mm
-                    v /= 10.;
-                    if (UnitSystem == US) v /= MMperINCH;
-                    return v;
-
-                case DEG_C:    // mm ==> inches or mm
-                    if (UnitSystem == US) v /= MMperINCH;
-                    return v;
-
-                default:       // inches ==> inches or mm
-                    if (UnitSystem == SI) v *= MMperINCH;
-                    return v;
-            }
-        case WIND:
-            switch (FileTempUnits)
-            {
-                case DEG_C10:
-                    // km/day ==> miles/hr
-                    if (FileWindType == WDMV)
-                        return v * 0.62137 / 24.;
-                    // tenths m/s ==> miles/hr
-                    else
-                        return v / 10. / 1000. * 0.62137 * 3600.;
-                case DEG_C:
-                    // km/day ==> miles/hr
-                    if (FileWindType == WDMV)
-                        return v * 0.62137 / 24.;
-                    // m/s ==> miles/hr
-                    else
-                        return v / 1000. * 0.62137 * 3600.;
-
-                default:
-                    // miles ==> miles/hr
-                    if (FileWindType == WDMV)
-                        return v / 24.;
-                    // miles/hr
-                    else
-                        return v;
-            }
-        default:
+        default: // deg. F
             return v;
+        }
+    case EVAP:
+        switch (FileTempUnits)
+        {
+        case DEG_C10: // tenths mm ==> inches or mm
+            v /= 10.;
+            if (UnitSystem == US)
+                v /= MMperINCH;
+            return v;
+
+        case DEG_C: // mm ==> inches or mm
+            if (UnitSystem == US)
+                v /= MMperINCH;
+            return v;
+
+        default: // inches ==> inches or mm
+            if (UnitSystem == SI)
+                v *= MMperINCH;
+            return v;
+        }
+    case WIND:
+        switch (FileTempUnits)
+        {
+        case DEG_C10:
+            // km/day ==> miles/hr
+            if (FileWindType == WDMV)
+                return v * 0.62137 / 24.;
+            // tenths m/s ==> miles/hr
+            else
+                return v / 10. / 1000. * 0.62137 * 3600.;
+        case DEG_C:
+            // km/day ==> miles/hr
+            if (FileWindType == WDMV)
+                return v * 0.62137 / 24.;
+            // m/s ==> miles/hr
+            else
+                return v / 1000. * 0.62137 * 3600.;
+
+        default:
+            // miles ==> miles/hr
+            if (FileWindType == WDMV)
+                return v / 24.;
+            // miles/hr
+            else
+                return v;
+        }
+    default:
+        return v;
     }
 }
 
 /*!
-* \brief Updates moving averages of average daily temperature and daily temperature range
-* stored in structure Tma.
-* \param[in] tmin Minimum daily temperature (deg F)
-* \param[in] tmax Maximum daily temperature (deg F)
-*/
+ * \copydoc updateTempMoveAve
+ * \note local function
+ */
 void updateTempMoveAve(double tmin, double tmax)
 {
-    double ta,               // new day's average temperature (deg F)
-           tr;               // new day's temperature range (deg F)
-    int    kount = Tma.count;
+    double ta, // new day's average temperature (deg F)
+        tr;    // new day's temperature range (deg F)
+    int kount = Tma.count;
     double count = kount;
 
     // --- find ta and tr from new day's min and max temperature
@@ -1840,7 +1920,7 @@ void updateTempMoveAve(double tmin, double tmax)
     tr = fabs(tmax - tmin);
 
     // --- if the array used to store previous days' temperatures is full
-    if ( kount == Tma.maxCount )
+    if (kount == Tma.maxCount)
     {
         // --- update the moving averages with the new day's value
         Tma.tAve = (Tma.tAve * count + ta - Tma.ta[Tma.front]) / count;
@@ -1852,7 +1932,8 @@ void updateTempMoveAve(double tmin, double tmax)
 
         // --- move the front one position forward
         Tma.front++;
-        if ( Tma.front == count ) Tma.front = 0;
+        if (Tma.front == count)
+            Tma.front = 0;
     }
 
     // --- array of previous day's values not full (at start of simulation)
@@ -1869,6 +1950,7 @@ void updateTempMoveAve(double tmin, double tmax)
         // --- increment count and front of moving average window
         Tma.count++;
         Tma.front++;
-        if ( Tma.count == Tma.maxCount ) Tma.front = 0;
+        if (Tma.count == Tma.maxCount)
+            Tma.front = 0;
     }
 }

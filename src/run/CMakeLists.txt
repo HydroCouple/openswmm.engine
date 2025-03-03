@@ -1,12 +1,15 @@
 #
 # CMakeLists.txt - CMake configuration file for swmm-solver/run
 #
-# Created: July 11, 2019
+# Created:  July 11, 2019
+# Modified: February 26, 2025
 #
-# Modified by: Michael E. Tryby
-#              US EPA ORD/NRMRL
+# Modified: Michael E. Tryby
+#           US EPA ORD/NRMRL
 #
-
+#           Caleb Buahin
+#           US EPA ORD/CESER
+#
 
 # Creates the EPANET command line executable
 add_executable(runswmm

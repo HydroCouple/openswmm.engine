@@ -48,7 +48,7 @@ class TestSWMMSolver(unittest.TestCase):
         :return:
         """
 
-        swmm_datetime_encoded = solver.encode_swmm_datetime(self.swmm_test_datetime)
+        swmm_datetime_encoded = solver.encode_swmm_datetime(dt=self.swmm_test_datetime)
         self.assertAlmostEqual(swmm_datetime_encoded, self.swmm_test_double_datetime)
 
     def test_swmm_decode_date(self):
@@ -56,7 +56,10 @@ class TestSWMMSolver(unittest.TestCase):
         Test the decode_swmm_datetime function
         :return:
         """
-        swmm_datetime = solver.decode_swmm_datetime(self.swmm_test_double_datetime)
+        swmm_datetime = solver.decode_swmm_datetime(
+            swmm_datetime=self.swmm_test_double_datetime
+        )
+
         self.assertEqual(swmm_datetime, self.swmm_test_datetime)
 
     def test_run_solver(self):
@@ -191,7 +194,10 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=example_solver_data.NON_EXISTENT_INPUT_FILE.replace(".inp", ".rpt"),
                 out_file=example_solver_data.SITE_DRAINAGE_EXAMPLE_INPUT_FILE.replace(".inp", ".out"),
         ) as swmm_solver:
-            for t in swmm_solver:
+
+            swmm_solver.start()
+
+            for _ in swmm_solver:
                 pass
 
     def test_solver_get_time_attributes(self):
@@ -205,11 +211,40 @@ class TestSWMMSolver(unittest.TestCase):
                 out_file=self.site_drainage_out
         ) as swmm_solver:
             # Initialize the solver
-            swmm_solver.initialize()
+            swmm_solver.start()
 
             start_date = swmm_solver.start_datetime
+            end_date = swmm_solver.end_datetime
+            report_start_date = swmm_solver.report_start_datetime
 
             self.assertEqual(start_date, datetime(year=1998, month=1, day=1))
+            self.assertEqual(end_date, datetime(year=1998, month=1, day=1, hour=6))
+            self.assertEqual(report_start_date, datetime(year=1998, month=1, day=1))
+
+    def test_solver_set_time_attributes(self):
+        """
+        Test the set_start_date function of the SWMM solver
+        :return:
+        """
+        with solver.Solver(
+                inp_file=self.site_drainage_inp,
+                rpt_file=self.site_drainage_rpt,
+                out_file=self.site_drainage_out
+        ) as swmm_solver:
+            # Initialize the solver
+            swmm_solver.start()
+
+            start_date = datetime(year=2000, month=1, day=2)
+            end_date = datetime(year=2000, month=1, day=2, hour=2)
+            report_start_date = datetime(year=2000, month=1, day=2)
+
+            swmm_solver.start_datetime = start_date
+            swmm_solver.end_datetime = end_date
+            swmm_solver.report_start_datetime = report_start_date
+
+            for i, t in enumerate(swmm_solver):
+                current_datetime = swmm_solver.current_datetime
+                self.assertTrue(start_date <= current_datetime <= end_date, "Current datetime is within the range")
 
     def test_get_object_count(self):
         """
@@ -221,7 +256,8 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out
         ) as swmm_solver:
-            swmm_solver.initialize()
+
+            swmm_solver.start()
 
             num_raingages = swmm_solver.get_object_count(solver.SWMMObjects.RAIN_GAGE)
             num_subcatchments = swmm_solver.get_object_count(solver.SWMMObjects.SUBCATCHMENT)
@@ -277,7 +313,7 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out,
         ) as swmm_solver:
-            swmm_solver.initialize()
+            swmm_solver.start()
 
             raingage_names = swmm_solver.get_object_names(solver.SWMMObjects.RAIN_GAGE)
             subcatchment_names = swmm_solver.get_object_names(solver.SWMMObjects.SUBCATCHMENT)
@@ -306,7 +342,7 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out,
         ) as swmm_solver:
-            swmm_solver.initialize()
+            swmm_solver.start()
 
             rg_index = swmm_solver.get_object_index(solver.SWMMObjects.RAIN_GAGE, 'RainGage')
             sc_index = swmm_solver.get_object_index(solver.SWMMObjects.SUBCATCHMENT, 'S2')
@@ -335,7 +371,7 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out,
         ) as swmm_solver:
-            swmm_solver.initialize()
+            swmm_solver.start()
 
             for t in range(12):
                 swmm_solver.step()
@@ -359,7 +395,7 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out,
         ) as swmm_solver:
-            swmm_solver.initialize()
+            swmm_solver.start()
 
             swmm_solver.set_value(
                 object_type=solver.SWMMObjects.RAIN_GAGE,
@@ -379,7 +415,7 @@ class TestSWMMSolver(unittest.TestCase):
 
             self.assertAlmostEqual(rg_value, 3.6)
 
-    def test_get_subcatchment_value(self):
+    def test_get_sub_catchment_value(self):
         """
         Test the get_subcatchment_value function of the SWMM solver
         :return:
@@ -390,7 +426,7 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out,
         ) as swmm_solver:
-            swmm_solver.initialize()
+            swmm_solver.start()
 
             for t in range(12):
                 swmm_solver.step()
@@ -403,7 +439,7 @@ class TestSWMMSolver(unittest.TestCase):
 
             self.assertAlmostEqual(sc_value, 17.527141504933294)
 
-    def test_set_subcatchment_value(self):
+    def test_set_sub_catchment_value(self):
         """
         Test the set_subcatchment_value function of the SWMM solver
         :return:
@@ -414,7 +450,7 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=self.site_drainage_rpt,
                 out_file=self.site_drainage_out,
         ) as swmm_solver:
-            swmm_solver.initialize()
+            swmm_solver.start()
 
             swmm_solver.set_value(
                 object_type=solver.SWMMObjects.SUBCATCHMENT,
@@ -434,6 +470,130 @@ class TestSWMMSolver(unittest.TestCase):
 
             self.assertAlmostEqual(sc_value, 100.0)
 
+    def test_get_sub_catchment_initial_buildup(self):
+        """
+        Test the get_subcatchment_initial_buildup function of the SWMM solver
+
+        :return:
+        """
+
+        with solver.Solver(
+                inp_file=self.site_drainage_inp,
+                rpt_file=self.site_drainage_rpt,
+                out_file=self.site_drainage_out,
+        ) as swmm_solver:
+            swmm_solver.start()
+
+            sc_value = swmm_solver.get_value(
+                object_type=solver.SWMMObjects.SUBCATCHMENT,
+                property_type=solver.SWMMSubcatchmentProperties.POLLUTANT_BUILDUP,
+                index=0,
+                sub_index=0,
+            )
+
+            self.assertEqual(first=sc_value, second=80.0)
+
+    def test_set_sub_catchment_initial_buildup(self):
+        """
+        Test the get_subcatchment_initial_buildup function of the SWMM solver
+
+        :return:
+        """
+
+        import matplotlib
+        matplotlib.use('TkAgg')
+
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        fig, axes = plt.subplots(nrows=2, ncols=1 , sharex=True)
+
+        with solver.Solver(
+                inp_file=self.site_drainage_inp,
+                rpt_file=self.site_drainage_rpt,
+                out_file=self.site_drainage_out,
+        ) as swmm_solver:
+
+            swmm_solver.stride_step = 10000
+
+            swmm_solver.start()
+
+            for _ in swmm_solver:
+                pass
+
+        from epaswmm import output
+        toutput = output.Output(output_file=self.site_drainage_out)
+
+        runoff = toutput.get_subcatchment_timeseries(
+            element_index='S1',
+            attribute=output.SubcatchAttribute.INFILTRATION_LOSS,
+            sub_index=0
+        )
+
+        results = toutput.get_subcatchment_timeseries(
+            element_index='S1',
+            attribute=output.SubcatchAttribute.POLLUTANT_CONCENTRATION,
+            sub_index=1
+        )
+        del toutput
+
+        runoff = pd.Series(runoff, index=pd.to_datetime(list(runoff.keys())))
+        runoff = pd.DataFrame(runoff, columns=['Runoff (cfs)'])
+
+        runoff.plot()
+        plt.show()
+        matplotlib.use('TkAgg')
+
+        runoff.plot(ax=axes[0])
+
+        data = pd.Series(results, index=pd.to_datetime(list(results.keys())))
+        data = pd.DataFrame(data, columns=['TSS Original (mg/L)'])
+        data.plot(ax=axes[1], linewidth=3.0)
+
+        with solver.Solver(
+                inp_file=self.site_drainage_inp,
+                rpt_file=self.site_drainage_rpt,
+                out_file=self.site_drainage_out,
+        ) as swmm_solver:
+
+            swmm_solver.start()
+
+            for t, elapsed_time in enumerate(swmm_solver):
+
+                if t == 10:
+                    swmm_solver.set_value(
+                        object_type=solver.SWMMObjects.SUBCATCHMENT,
+                        property_type=solver.SWMMSubcatchmentProperties.EXTERNAL_POLLUTANT_BUILDUP,
+                        index='S1',
+                        value=120.0,
+                        sub_index=0,
+                    )
+                    swmm_solver.step(1)
+                    swmm_solver.set_value(
+                        object_type=solver.SWMMObjects.SUBCATCHMENT,
+                        property_type=solver.SWMMSubcatchmentProperties.EXTERNAL_POLLUTANT_BUILDUP,
+                        index='S1',
+                        value=0.0,
+                        sub_index=0,
+                    )
+                else:
+                    pass
+
+        toutput = output.Output(output_file=self.site_drainage_out)
+        results = toutput.get_subcatchment_timeseries(
+            element_index='S1',
+            attribute=output.SubcatchAttribute.POLLUTANT_CONCENTRATION,
+            sub_index=1
+        )
+        del toutput
+
+        rdata = pd.Series(results, index=pd.to_datetime(list(results.keys())))
+        rdata = pd.DataFrame(rdata, columns=['TSS Modified (mg/L)'])
+        rdata.plot(ax=axes[1])
+
+        plt.show()
+        matplotlib.use('TkAgg')
+
     def test_get_node_value(self):
         """
         Test the get_node_value function of the SWMM solver
@@ -445,7 +605,7 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=example_solver_data.NON_EXISTENT_INPUT_FILE.replace(".inp", ".rpt"),
                 out_file=example_solver_data.SITE_DRAINAGE_EXAMPLE_INPUT_FILE.replace(".inp", ".out"),
         ) as swmm_solver:
-            swmm_solver.initialize()
+            swmm_solver.start()
 
             for t in range(12):
                 swmm_solver.step()
@@ -469,9 +629,9 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=example_solver_data.NON_EXISTENT_INPUT_FILE.replace(".inp", ".rpt"),
                 out_file=example_solver_data.SITE_DRAINAGE_EXAMPLE_INPUT_FILE.replace(".inp", ".out"),
         ) as swmm_solver:
-            swmm_solver.initialize()
+            swmm_solver.start()
 
-            error_code = swmm_solver.set_value(
+            swmm_solver.set_value(
                 object_type=solver.SWMMObjects.NODE.value,
                 property_type=solver.SWMMNodeProperties.INVERT_ELEVATION.value,
                 index=5,
@@ -500,18 +660,25 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=example_solver_data.NON_EXISTENT_INPUT_FILE.replace(".inp", ".rpt"),
                 out_file=example_solver_data.SITE_DRAINAGE_EXAMPLE_INPUT_FILE.replace(".inp", ".out"),
         ) as swmm_solver:
-            swmm_solver.initialize()
+            swmm_solver.start()
 
             for t in range(12):
                 swmm_solver.step()
 
             link_value = swmm_solver.get_value(
-                object_type=solver.SWMMObjects.LINK.value,
-                property_type=solver.SWMMLinkProperties.FLOW.value,
+                object_type=solver.SWMMObjects.LINK,
+                property_type=solver.SWMMLinkProperties.FLOW,
                 index=9,
             )
 
-            self.assertAlmostEqual(link_value, 0.0)
+            link_value_by_name = swmm_solver.get_value(
+                object_type=solver.SWMMObjects.LINK,
+                property_type=solver.SWMMLinkProperties.FLOW,
+                index='C10',
+            )
+
+            self.assertAlmostEqual(first=link_value, second=102.01283173880869)
+            self.assertAlmostEqual(first=link_value, second=link_value_by_name)
 
     def test_set_link_value(self):
         """
@@ -524,47 +691,23 @@ class TestSWMMSolver(unittest.TestCase):
                 rpt_file=example_solver_data.NON_EXISTENT_INPUT_FILE.replace(".inp", ".rpt"),
                 out_file=example_solver_data.SITE_DRAINAGE_EXAMPLE_INPUT_FILE.replace(".inp", ".out"),
         ) as swmm_solver:
-            swmm_solver.initialize()
 
             swmm_solver.set_value(
-                object_type=solver.SWMMObjects.LINK.value,
-                property_type=solver.SWMMLinkProperties.OFFSET1.value,
+                object_type=solver.SWMMObjects.LINK,
+                property_type=solver.SWMMLinkProperties.START_NODE_OFFSET,
                 index=9,
                 value=1.0
             )
+
+            swmm_solver.start()
 
             for _ in range(12):
                 swmm_solver.step()
 
             link_value = swmm_solver.get_value(
-                object_type=solver.SWMMObjects.LINK.value,
-                property_type=solver.SWMMLinkProperties.OFFSET1.value,
+                object_type=solver.SWMMObjects.LINK,
+                property_type=solver.SWMMLinkProperties.START_NODE_OFFSET,
                 index=9,
             )
 
             self.assertAlmostEqual(link_value, 1.0)
-
-    def test_run_banklick(self):
-        """
-        Run the SWMM solver to solve the example input file
-
-        :return:
-        """
-        BANKLICK_EXAMPLE_INPUT_FILE = r'C:\Users\CBUAHIN\SourceCodes\DigitalWaterAnalytics\SERTO\tests\spatialswmm\swmm\test_model.inp'
-        if os.path.exists(self.site_drainage_rpt):
-            os.remove(self.site_drainage_rpt)
-
-        if os.path.exists(self.site_drainage_out):
-            os.remove(self.site_drainage_out)
-
-        error = solver.run_solver(
-            inp_file=BANKLICK_EXAMPLE_INPUT_FILE,
-            rpt_file=BANKLICK_EXAMPLE_INPUT_FILE.replace(".inp", ".rpt"),
-            out_file=BANKLICK_EXAMPLE_INPUT_FILE.replace(".inp", ".out"),
-        )
-
-        self.assertEqual(error, 0, "SWMM solver run successfully.")
-
-        # Assert output and report files were created
-        self.assertTrue(os.path.exists(self.site_drainage_rpt))
-        self.assertTrue(os.path.exists(self.site_drainage_out))

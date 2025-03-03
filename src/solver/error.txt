@@ -1,3 +1,9 @@
+ /*! 
+ * \file error.txt
+ * \brief Header file for SWMM API error and warning messages.
+ * \date Last edited: 2024-10-23
+ */
+
 // SWMM 5.3 Error Messages
 
 ERR(101,"\n  ERROR 101: memory allocation error.")

@@ -630,7 +630,7 @@ double landuse_getWashoffQual(int i, int p, double buildup, double runoff,
     if ( func == NO_WASHOFF || runoff == 0.0 ) return 0.0;
     
     // --- if buildup function exists but no current buildup, return 0
-    if ( Landuse[i].buildupFunc[p].funcType != NO_BUILDUP && buildup == 0.0 )
+    if ( Landuse[i].buildupFunc[p].funcType != NO_BUILDUP && buildup >= 0.0 )
         return 0.0;
 
     // --- Exponential Washoff function

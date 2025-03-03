@@ -53,8 +53,17 @@
 #define REAL4 float
 #define REAL8 double
 
-enum InputDataType {INPUT_TYPE_CODE, INPUT_AREA, INPUT_INVERT, INPUT_MAX_DEPTH,
-                    INPUT_OFFSET, INPUT_LENGTH};
+enum InputDataType {
+    INPUT_TYPE_CODE, 
+    INPUT_AREA, 
+    INPUT_INVERT,
+    OUTPUT_INVERT,
+    INPUT_MAX_DEPTH,
+    OUTPUT_MAX_DEPTH,
+    INPUT_OFFSET, 
+    OUTPUT_OFFSET,
+    INPUT_LENGTH
+};
 
 typedef struct
 {
@@ -219,7 +228,7 @@ int output_open()
     }
     for (j=0; j<NumPolluts; j++) output_saveID(Pollut[j].ID, Fout.file);
 
-    // --- save codes of pollutant concentration units
+    // --- save units of pollutant concentration units
     for (j=0; j<NumPolluts; j++)
     {
         k = Pollut[j].units;
@@ -266,7 +275,7 @@ int output_open()
     fwrite(&k, sizeof(INT4), 1, Fout.file);
     k = INPUT_OFFSET;
     fwrite(&k, sizeof(INT4), 1, Fout.file);
-    k = INPUT_OFFSET;
+    k = OUTPUT_OFFSET;
     fwrite(&k, sizeof(INT4), 1, Fout.file);
     k = INPUT_MAX_DEPTH;
     fwrite(&k, sizeof(INT4), 1, Fout.file);

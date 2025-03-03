@@ -1,6 +1,8 @@
-# Description: Requirements file for epaswmm ptyhon package
-# Created by: Caleb Buahin (EPA/ORD/CESER/WID)
-# Created on: 2024-11-19
-scikit-build~=0.18.1
-cython~=3.0.11
-setuptools~=67.6.1
+build>=1.2.2
+setuptools>=75.3.0
+cmake>=3.31.4
+wheel>=0.45.1
+cibuildwheel>=2.22.0
+Cython>=3.0.12
+scikit-build>=0.18.1
+twine>=6.1.0

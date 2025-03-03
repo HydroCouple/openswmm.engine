@@ -5,17 +5,17 @@
 # cython: language_level=3
 
 # cython imports
-from cpython.datetime cimport datetime
+from cpython.datetime cimport datetime as cython_datetime
 
 # third-party imports
 
 # project imports
 
 # Define the number of days since 01/01/00
-cpdef double encode_swmm_datetime(datetime pdatetime)
+cpdef double encode_swmm_datetime(cython_datetime pdatetime)
 
 # Define the number of days since 01/01/00
-cpdef datetime decode_swmm_datetime(double swmm_datetime)
+cpdef cython_datetime decode_swmm_datetime(double swmm_datetime)
 
 
 cdef extern from "Python.h":
@@ -123,6 +123,8 @@ cdef extern from "swmm5.h":
         swmm_LINK_DEPTH      # Depth
         swmm_LINK_VELOCITY   # Velocity
         swmm_LINK_TOPWIDTH   # Top width
+        swmm_LINK_VOLUME     # Volume
+        swmm_LINK_CAPACITY   # Capacity
         swmm_LINK_RPTFLAG    # Reporting flag
         swmm_LINK_OFFSET1    # Inlet offset
         swmm_LINK_OFFSET2    # Outlet offset
