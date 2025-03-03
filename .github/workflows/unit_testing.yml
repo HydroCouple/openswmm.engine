@@ -55,10 +55,6 @@ jobs:
             vcpkg_triplet: x64-windows
 
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: ${{ matrix.shell }}
-
     steps:
     - name: Checkout SWMM Repo
       uses: actions/checkout@v4
@@ -110,18 +106,17 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y mono-complete
 
-    - name: Install Mono (macOS)
+    - name: Install NuGet (Linux)
+      if: ${{ matrix.os == 'ubuntu-latest' }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y nuget
+        nuget update -self
+
+    - name: Install NuGet (macOS)
       if: ${{ matrix.os == 'macos-latest' || matrix.os == 'macos-13' }}
       run: |
-        brew install mono
-
-    - name: Install NuGet
-      if: ${{ matrix.os != 'windows-latest' }}
-      run: |
-        mono --version
-        wget https://dist.nuget.org/win-x86-commandline/latest/nuget.exe -O /usr/local/bin/nuget.exe
-        chmod +x /usr/local/bin/nuget.exe
-        alias nuget='mono /usr/local/bin/nuget.exe'
+        brew install nuget
         nuget update -self
     
     - name: Configure Binary Sources (Windows)
