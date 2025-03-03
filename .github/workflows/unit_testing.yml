@@ -176,6 +176,7 @@ jobs:
 
   python_binding_unit_test:
     name: Build and Unit Test and Python Bindings
+    needs: engine_unit_test
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-13, macos-latest]
@@ -215,8 +216,8 @@ jobs:
         shell: ${{ matrix.shell }}
 
     steps:
-    - name: Checkout SWMM Repo
-      uses: actions/checkout@v4
+    # - name: Checkout SWMM Repo
+    #   uses: actions/checkout@v4
 
     - name: Setup python
       uses: actions/setup-python@v4
