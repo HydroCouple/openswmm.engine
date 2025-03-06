@@ -97,19 +97,17 @@ jobs:
     - name: Install Required Libraries (Windows)
       if: ${{ matrix.os == 'windows-latest' }}
       run: |
-          ${{ env.VCPKG_EXE }} new --application
           ${{ env.VCPKG_EXE }} install
 
     - name: Build Binaries
       env:
         VCPKG_ROOT:  ${{ env.VCPKG_ROOT }}
       run: |
-        cmake --preset=${{ matrix.cmake_preset }}
-        cmake -B ${{github.workspace}}/build-${{ matrix.vcpkg_triplet }} -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}  -DBUILD_TESTS=ON 
-        cmake --build ${{github.workspace}}/build-${{ matrix.vcpkg_triplet }} --target package
+        cmake -B build-${{ matrix.vcpkg_triplet }} -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DBUILD_TESTS=ON  --preset=${{ matrix.cmake_preset }}
+        cmake --build build-${{ matrix.vcpkg_triplet }} --target package
 
     - name: Unit Test
-      run: ctest --test-dir ${{github.workspace}}/build-${{ matrix.vcpkg_triplet }}  -C Debug --output-on-failure
+      run: ctest --test-dir build-${{ matrix.vcpkg_triplet }}  -C Debug --output-on-failure
 
     
     - name: Upload Artifacts
