@@ -119,9 +119,7 @@ jobs:
       if: ${{ matrix.os == 'windows-latest' }}
       run: |
           .$(${{ env.VCPKG_EXE }} fetch nuget) install boost-test-${{ matrix.vcpkg_triplet }} -Source github || (
-            ${{ env.VCPKG_EXE }} new --application && ${{ env.VCPKG_EXE }} install && 
-            ${{ env.VCPKG_EXE }} export boost-test --nuget --nuget-id=boost-test-${{ matrix.vcpkg_triplet }} --output-dir=. &&
-          .$(${{ env.VCPKG_EXE }} fetch nuget) push boost-test-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
+            ${{ env.VCPKG_EXE }} new --application && ${{ env.VCPKG_EXE }} install
           )
 
     - name: Install Boost-Test (Unix like)
