@@ -58,8 +58,6 @@ jobs:
     steps:
     - name: Checkout SWMM Repo
       uses: actions/checkout@v4
-      with:
-        path: SWMM
 
     - name: Checkout VCPKG
       uses: actions/checkout@v4
