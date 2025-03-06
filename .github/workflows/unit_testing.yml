@@ -119,7 +119,7 @@ jobs:
       if: ${{ matrix.os == 'windows-latest' }}
       run: |
           .$(${{ env.VCPKG_EXE }} fetch nuget) install boost-test-${{ matrix.vcpkg_triplet }} -Source github || (
-            ${{ env.VCPKG_EXE }} install && 
+            ${{ env.VCPKG_EXE }} new --application && ${{ env.VCPKG_EXE }} install && 
             ${{ env.VCPKG_EXE }} export boost-test --nuget --nuget-id=boost-test-${{ matrix.vcpkg_triplet }} --output-dir=. &&
           .$(${{ env.VCPKG_EXE }} fetch nuget) push boost-test-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
           )
@@ -128,7 +128,7 @@ jobs:
       if: ${{ matrix.os != 'windows-latest' }}
       run: |
           mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` install boost-test-${{ matrix.vcpkg_triplet }} -Source github || (
-            ${{ env.VCPKG_EXE }} install && 
+            ${{ env.VCPKG_EXE }} new --application &&  ${{ env.VCPKG_EXE }} install &&
             ${{ env.VCPKG_EXE }} export boost-test --nuget --nuget-id=boost-test-${{ matrix.vcpkg_triplet }} --output-dir=. &&
             mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` push boost-test-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
           )
