@@ -2,15 +2,16 @@
 # CMakeLists.txt - CMake configuration file for swmm-solver/tests
 #
 # Created: Mar 4, 2020
-# Updated: Feb 01, 2024
+# Updated: Mar 6, 2025
 #
 # Author: Michael E. Tryby
 #         US EPA ORD/CESER
 #
+#         Caleb A. Buahin (Modified)
+#         US EPA ORD/CESER
 
 
-#Prep ourselves for compiling with boost
-include(../extern/boost.cmake)
+find_package(boost_unit_test_framework CONFIG REQUIRED)
 
 # Set the minimum required version c++ 
 set(CMAKE_CXX_STANDARD 17)

@@ -16,16 +16,17 @@ add_executable(
 target_include_directories(
     test_solver_api
     PUBLIC 
-        ../
-        ../../solver/include
-        ../../outfile/include
+        ${PROJECT_SOURCE_DIR}/tests 
+        ${PROJECT_SOURCE_DIR}/src/solver/include
+        ${PROJECT_SOURCE_DIR}/src/outfile/include
     )
 
 target_link_libraries(
     test_solver_api
-        ${Boost_LIBRARIES}
-        swmm5
+    PRIVATE
         swmm-output 
+        swmm5
+        Boost::unit_test_framework
  )
 
 set_target_properties(
@@ -42,15 +43,17 @@ add_executable(
 target_include_directories(
     test_solver_errors
     PUBLIC 
-        ../../solver/include
-        ../../outfile/include
+        ${PROJECT_SOURCE_DIR}/tests 
+        ${PROJECT_SOURCE_DIR}/src/solver/include
+        ${PROJECT_SOURCE_DIR}/src/outfile/include
     )
 
 target_link_libraries(
     test_solver_errors
-        ${Boost_LIBRARIES}
-        swmm5
+    PRIVATE
         swmm-output 
+        swmm5
+        Boost::unit_test_framework
  )
 
 set_target_properties(
@@ -67,16 +70,17 @@ add_executable(
 target_include_directories(
     test_solver_hotstart
     PUBLIC 
-        ../
-        ../../solver/include
-        ../../outfile/include
+        ${PROJECT_SOURCE_DIR}/tests 
+        ${PROJECT_SOURCE_DIR}/src/solver/include
+        ${PROJECT_SOURCE_DIR}/src/outfile/include
     )
 
 target_link_libraries(
     test_solver_hotstart
-        ${Boost_LIBRARIES}
-        swmm5
+    PRIVATE
         swmm-output 
+        swmm5
+        Boost::unit_test_framework
  )
 
 set_target_properties(
@@ -94,15 +98,17 @@ add_executable(
 target_include_directories(
     test_solver_shapes
     PUBLIC 
-        ../../solver/include
-        ../../outfile/include
+        ${PROJECT_SOURCE_DIR}/tests 
+        ${PROJECT_SOURCE_DIR}/src/solver/include
+        ${PROJECT_SOURCE_DIR}/src/outfile/include
     )
 
 target_link_libraries(
     test_solver_shapes
-        ${Boost_LIBRARIES}
-        swmm5
+    PRIVATE
         swmm-output 
+        swmm5
+        Boost::unit_test_framework
  )
 
 set_target_properties( 

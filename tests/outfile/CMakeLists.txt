@@ -13,12 +13,13 @@ add_executable(
     )
 target_include_directories(
     test_output
-    PUBLIC ${Boost_INCLUDE_DIR}             
-           ../../outfile/include
+    PRIVATE 
+        ${PROJECT_SOURCE_DIR}/src/outfile
     )
 target_link_libraries(
     test_output
-        ${Boost_LIBRARIES} 
+    PRIVATE
+        Boost::unit_test_framework
         swmm-output
     )
 
