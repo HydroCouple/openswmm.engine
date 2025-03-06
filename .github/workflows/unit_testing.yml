@@ -80,8 +80,8 @@ jobs:
       if: ${{ matrix.os == 'windows-latest' }}
       working-directory: ${{ env.VCPKG_ROOT }}
       run: |
-        bootstrap-vcpkg${{ matrix.shell_extension }}
-        vcpkg integrate install
+        .\bootstrap-vcpkg${{ matrix.shell_extension }}
+        .\vcpkg.exe integrate install
     
     - name: Bootstrap VCPKG (Unix like)
       if: ${{ matrix.os != 'windows-latest' }}
