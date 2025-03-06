@@ -11,7 +11,7 @@ env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_EXE:  ${{ github.workspace }}/vcpkg/vcpkg
   NUGET_FEED_URL: https://nuget.pkg.github.com/USEPA/index.json
-  VCPKG_BINARY_SOURCES: "clear;nuget,https://nuget.pkg.github.com/USEPA/index.json,readwrite"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   OMP_NUM_THREADS: 1
   BUILD_HOME: build
   NUGET_USER_NAME: ${{ secrets.CALEB_NUGET_USER_NAME }}
@@ -73,7 +73,6 @@ jobs:
         brew reinstall libomp
         brew link --force --overwrite libomp
 
-
     - name: Bootstrap VCPKG (Windows)
       if: ${{ matrix.os == 'windows-latest' }}
       working-directory: ${{ env.VCPKG_ROOT }}
@@ -88,46 +87,18 @@ jobs:
         ./bootstrap-vcpkg${{ matrix.shell_extension }}
         chmod +x vcpkg
 
-    - name: Install Mono (Linux)
-      if: ${{ matrix.os == 'ubuntu-latest' }}
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y mono-complete
-
-    - name: Install NuGet
-      uses: nuget/setup-nuget@v2
+    - name: Export GitHub Actions cache environment variables
+      uses: actions/github-script@v7
       with:
-        nuget-version: 5.x
+        script: |
+          core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+          core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
     
-    - name: Configure Binary Sources (Windows)
+    - name: Install Required Libraries (Windows)
       if: ${{ matrix.os == 'windows-latest' }}
       run: |
-        .$(${{ env.VCPKG_EXE }} fetch nuget) sources add -Name github -Source ${{ env.NUGET_FEED_URL }} -UserName ${{ env.NUGET_USER_NAME }} -Password ${{ env.NUGET_API_KEY }}
-        .$(${{ env.VCPKG_EXE }} fetch nuget) setapikey ${{ env.NUGET_API_KEY }} -Source github
-        .$(${{ env.VCPKG_EXE }} fetch nuget) sources
-
-    - name: Configure Binary Sources (Unix like)
-      if: ${{ matrix.os != 'windows-latest' }}
-      run: |
-        mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` sources add -Name github -Source ${{ env.NUGET_FEED_URL }} -UserName ${{ env.NUGET_USER_NAME }} -Password ${{ env.NUGET_API_KEY }} 
-        mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` setapikey ${{ env.NUGET_API_KEY }} -Source github 
-        mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` sources
-
-    - name: Install Boost-Test (Windows)
-      if: ${{ matrix.os == 'windows-latest' }}
-      run: |
-          .$(${{ env.VCPKG_EXE }} fetch nuget) install boost-test-${{ matrix.vcpkg_triplet }} -Source github || (
-            ${{ env.VCPKG_EXE }} new --application && ${{ env.VCPKG_EXE }} install
-          )
-
-    - name: Install Boost-Test (Unix like)
-      if: ${{ matrix.os != 'windows-latest' }}
-      run: |
-          mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` install boost-test-${{ matrix.vcpkg_triplet }} -Source github || (
-            ${{ env.VCPKG_EXE }} new --application &&  ${{ env.VCPKG_EXE }} install &&
-            ${{ env.VCPKG_EXE }} export boost-test --nuget --nuget-id=boost-test-${{ matrix.vcpkg_triplet }} --output-dir=. &&
-            mono `${{ env.VCPKG_EXE }} fetch nuget | tail -n 1` push boost-test-${{ matrix.vcpkg_triplet }}*.nupkg -Source github -ApiKey ${{ env.NUGET_API_KEY }}
-          )
+          ${{ env.VCPKG_EXE }} new --application
+          ${{ env.VCPKG_EXE }} install
 
     - name: Build Binaries
       env:
