@@ -18,12 +18,12 @@ build = "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-*"
 [project]
 name = "epaswmm"
 description = "A python package for EPA SWMM5 preprocessing, solver, and post-processing."
-# readme = {file = "./../README.md", content-type = "text/markdown"}
-#specify dynamic readme from setup.py
-license = { file = "LICENSE" }
 requires-python = ">=3.8"
-dynamic = ["version", "readme"]
+version = "5.3.0.dev8"
+dynamic = ["readme"]
 keywords = ["SWMM", "stormwater", "modeling", "water", "hydrology", "hydraulics", "wastewater"]
+license =  {file = "LICENSE"}
+# license-files = ["LICEN[CS]E"]
 
 authors = [
     {name = "Caleb Buahin", email = "buahin.caleb@epa.gov"},
@@ -37,7 +37,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",

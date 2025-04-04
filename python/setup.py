@@ -9,6 +9,7 @@ import platform
 import subprocess
 from setuptools import Command, find_packages
 from setuptools.command.build_ext import build_ext
+from setuptools.command.build_py import build_py
 import shutil
 
 # third party imports
@@ -38,46 +39,14 @@ def debug_qualifier():
         return ""
 
 
-def configure_cmake_presets():
-    """
-    Cpoy the CMakePresets.json file to the build directory
-    """
-    shutil.copyfile(os.path.join(here, r"./../CMakePresets.json"), os.path.join(here, "CMakePresets.json"))
-
-
-def get_version() -> str:
-    """
-    Get version from toolkit
-    """
-    import re
-
-    version = None # The version string
-    root_cmake_lists = os.path.join(here, r"./../CMakeLists.txt")
-    
-    if os.path.exists(root_cmake_lists):
-        with open(root_cmake_lists, 'r') as file:
-            content = file.read()
-            version_match = re.search(r'project\(\s*swmm-solver\s+VERSION\s+(\d+\.\d+\.\d+)', content)
-            if version_match:
-                version = version_match.group(1)
-            else:
-                raise RuntimeError("Unable to find version string.")
-
-    if version is None:
-        raise RuntimeError("Unable to find version string.")
-    else:
-        version = f'{version.strip()}.dev8'
-
-    # Get version information
-    return version
-
-
 def get_readme():
     """
     Get readme from toolkit
     """
     # Read the README file
-    shutil.copyfile(os.path.join(here, r"./../README.md"), os.path.join(here, "README.md"))
+    # Copy to build folder first
+    if not os.path.exists(os.path.join(here, "README.md")):
+        shutil.copyfile(os.path.join(here, r"./../README.md"), os.path.join(here, "README.md"))
 
     # Read the README file
     with open(os.path.join(here, "README.md"), encoding="utf-8") as f:
@@ -91,21 +60,15 @@ def get_cmake_args():
     Get cmake arguments
     :return:
     """
-
-    configure_cmake_presets()
-
     # Get the cmake arguments
-
     cmake_args = os.getenv(
         "EPASWMM_CMAKE_ARGS", [f"--preset={platform_system}{debug_qualifier()}"]
     )
 
     return cmake_args
 
-
 setup(
     name="epaswmm",
-    version=get_version(),
     long_description=get_readme(),
     long_description_content_type="text/markdown",
     packages=find_packages(),
@@ -113,6 +76,4 @@ setup(
         *get_cmake_args(),
     ],
     include_package_data=True,
-    cmdclass={
-    },
 )

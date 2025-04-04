@@ -602,7 +602,7 @@ int EXPORT_SWMM_SOLVER_API swmm_open(const char *inputFile, const char *reportFi
 /*!
  * \copydoc swmm_start
  */
-int EXPORT_SWMM_SOLVER_API swmm_start(int saveResults)
+int EXPORT_SWMM_SOLVER_API swmm_start(int saveFlag)
 {
     // --- check that a project is open & no run started
     if (ErrorCode)
@@ -621,7 +621,7 @@ int EXPORT_SWMM_SOLVER_API swmm_start(int saveResults)
     }
 
     // --- save saveResults flag to global variable
-    SaveResultsFlag = saveResults;
+    SaveResultsFlag = saveFlag;
     ExceptionCount = 0;
 
 #ifdef EXH
@@ -769,6 +769,9 @@ int EXPORT_SWMM_SOLVER_API swmm_step(double *elapsedTime)
 int EXPORT_SWMM_SOLVER_API swmm_stride(int strideStep, double *elapsedTime)
 {
     double realRouteStep = RouteStep;
+
+    if (strideStep <= 0)
+        return swmm_step(elapsedTime);
 
     // --- check that simulation can proceed
     *elapsedTime = 0.0;
@@ -1575,7 +1578,6 @@ int setNodeValue(int property, int index, int subIndex, double value)
 int setLinkValue(int property, int index, int subIndex, double value)
 {
     TLink *link = NULL;
-    const char *control_rule_label = "SWMM API";
 
     if (IsOpenFlag == FALSE)
     {
@@ -2529,7 +2531,7 @@ size_t sstrncpy(char *dest, const char *src, size_t n)
     {
         while (*(src + offset) != '\0')
         {
-            if (offset == n)
+            if ((size_t)offset == n)
                 break;
             *(dest + offset) = *(src + offset);
             offset++;
@@ -2544,11 +2546,10 @@ size_t sstrncpy(char *dest, const char *src, size_t n)
  */
 size_t sstrcat(char *dest, const char *src, size_t destsize)
 {
-    size_t dest_len, src_len, offset, src_index;
+    size_t dest_len, offset = 0, src_index = 0;
 
     // obtain initial sizes
     dest_len = strlen(dest);
-    src_len = strlen(src);
 
     // get the end of dest
     offset = dest_len;

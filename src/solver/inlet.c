@@ -1060,7 +1060,7 @@ void writeStreetStats(int link)
 //           SWMM's report file.
 //
 {
-    int     k, t, placement;
+    int     k = 0, t = 0, placement = 0;
     double  maxSpread, maxDepth, maxFlow;
     double  fp, cp, afc = 0.0, bpf = 0.0;
     TInlet* inlet;
@@ -1279,8 +1279,8 @@ double getOnGradeCapturedFlow(TInlet* inlet, double q, double d)
 //  sequentially, where its approach flow has been reduced by the
 //  amount of flow captured by prior inlets.
 {
-    int    i,
-           linkIndex;        // index of link containing inlets
+    int    i = 0,
+           linkIndex = 0;        // index of link containing inlets
     double qApproach,        // single inlet's approach flow (cfs)
            qc,               // single inlet's captured flow (cfs)
            qCaptured,        // total flow captured by link's inlets (cfs)
@@ -1580,7 +1580,7 @@ double getOnSagCapturedFlow(TInlet* inlet, double q, double d)
 //  Purpose: computes flow captured by an inlet placed on-sag.
 //
 {
-    int    linkIndex, designIndex, totalInlets;
+    int    linkIndex = 0, designIndex = 0, totalInlets = 0;
     double qCaptured = 0.0, qMax = BIG;
 
     if (inlet->numInlets == 0) return 0.0;
@@ -1817,7 +1817,7 @@ void getBackflowRatios()
     TInlet* inlet;
     double  area;
     double  f;
-    int     n;
+    int     nodeIndex = 0;
 
     // --- info for each node receiving flow from an inlet
     typedef struct
@@ -1834,15 +1834,15 @@ void getBackflowRatios()
     for (inlet = FirstInlet; inlet != NULL; inlet = inlet->nextInlet)
     {
         n = inlet->nodeIndex;
-        inletNodes[n].numInletLinks++;
+        inletNodes[nodeIndex].numInletLinks++;
         area = getInletArea(inlet);
         if (area > 0.0)
         {
-            inletNodes[n].numStdInletLinks++;
-            inletNodes[n].totalInletArea += area;
+            inletNodes[nodeIndex].numStdInletLinks++;
+            inletNodes[nodeIndex].totalInletArea += area;
         }
         else
-            inletNodes[n].numCustomInlets += inlet->numInlets;
+            inletNodes[nodeIndex].numCustomInlets += inlet->numInlets;
     }
 
     // --- find fraction of capture node's overflow that becomes inlet backflow        
@@ -1851,16 +1851,16 @@ void getBackflowRatios()
         // --- f is ratio of links with standard inlets to all inlet links
         //     connected to receptor node n
         n = inlet->nodeIndex;
-        f = (double) inletNodes[n].numStdInletLinks /
-            (double) inletNodes[n].numInletLinks;
+        f = (double) inletNodes[nodeIndex].numStdInletLinks /
+            (double) inletNodes[nodeIndex].numInletLinks;
 
         // --- backflow ratio depends if inlet is standard or custom (area = 0)
         area = getInletArea(inlet);
         if (area == 0.0)
             inlet->backflowRatio = (double)inlet->numInlets /
-                                   (double)inletNodes[n].numCustomInlets * (1. - f);
+                                   (double)inletNodes[nodeIndex].numCustomInlets * (1. - f);
         else
-            inlet->backflowRatio = area / inletNodes[n].totalInletArea * f;
+            inlet->backflowRatio = area / inletNodes[nodeIndex].totalInletArea * f;
     }
     free(inletNodes);
 }

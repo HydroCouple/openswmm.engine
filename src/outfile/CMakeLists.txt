@@ -26,10 +26,19 @@ add_library(swmm-output
         errormanager.c
 )
 
+if (APPLE)
+    set_target_properties(
+        swmm-output
+        PROPERTIES
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+    )
+endif()
+
 target_include_directories(swmm-output
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:${INCLUDE_DIST}>
+        $<INSTALL_INTERFACE:include>
 )
 
 include(GenerateExportHeader)
@@ -59,36 +68,19 @@ set_target_properties(swmm-output
         INSTALL_RPATH_USE_LINK_PATH TRUE
 )
 
-install(TARGETS swmm-output
-    EXPORT
-        swmm-outputTargets
-    RUNTIME
-        DESTINATION "${TOOL_DIST}"
-    LIBRARY
-        DESTINATION "${TOOL_DIST}"
-    ARCHIVE
-        DESTINATION "${LIBRARY_DIST}"
-    FRAMEWORK
-        DESTINATION "${TOOL_DIST}"
-
+install(
+    FILES 
+        ${SWMM_OUT_PUBLIC_HEADERS} 
+    DESTINATION 
+        include
 )
 
 install(
+    TARGETS
+        swmm-output
     EXPORT
-        swmm-outputTargets
-    DESTINATION
-        "${CONFIG_DIST}"
-    FILE
-        swmm-output-config.cmake
+        swmmTargets
 )
-
-install(
-    FILES
-        ${SWMM_OUT_PUBLIC_HEADERS}
-    DESTINATION
-        "${INCLUDE_DIST}"
-)
-
 
 # copy epanet-output to build tree for testing
 if(BUILD_TESTS)

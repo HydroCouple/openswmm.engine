@@ -1,10 +1,10 @@
+# cython: language_level=3str
 # Description: Cython module for epaswmm output file processing and data extraction functions for the epaswmm python package.
 # Created by: Caleb Buahin (EPA/ORD/CESER/WID)
 # Created on: 2024-11-19
 
-# cython: language_level=3
-
 # python and cython imports
+import os
 from enum import Enum
 from typing import List, Tuple, Union, Optional, Dict, Set
 from cpython.datetime cimport datetime, timedelta
@@ -352,6 +352,10 @@ cdef class Output:
             error_message = self.check_error()
             raise SWMMOutputException(f"Error initializing the SWMM output file {output_file}. Error code: {error_code}: {error_message}")
 
+        # Check if the output file exists
+        if not os.path.exists(output_file):
+            raise FileNotFoundError(f"Error opening the SWMM output file {output_file}. Error code: 434: The output file does not exist.")
+        
         error_code = SMO_open(self._output_file_handle, c_output_file)
 
         # get error message if error code is not 0 and print it and prevent any memory leaks
@@ -363,7 +367,7 @@ cdef class Output:
                 self._output_file_handle = NULL
 
             if error_code == 434:
-                raise FileNotFoundError(f"Error opening the SWMM output file {output_file}. Error code: {error_code}: {error_message}. The output file may be locked by another process.")
+                raise FileNotFoundError(f"Error opening the SWMM output file {output_file}. Error code: {error_code}: {error_message}. The output file may not exist or may be locked by another process.")
             else:
                 raise SWMMOutputException(f"Error opening the SWMM output file {output_file}. Error code: {error_code}: {error_message}")
 
@@ -1533,7 +1537,7 @@ cdef class Output:
             free(msg_buffer)
             return error_message
         else:
-            return ""
+            return u""
 
     cdef str __validate_error_code(self, int error_code):
         """
@@ -1550,4 +1554,4 @@ cdef class Output:
             error_message = self.check_error()
             raise SWMMOutputException(f"Error code: {error_code}: {error_message}")
         else:
-            return ""
+            return u""

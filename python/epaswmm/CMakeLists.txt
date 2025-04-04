@@ -8,6 +8,12 @@ add_cython_target(_epaswmm _epaswmm.pyx CXX PY3)
 # Create Python extension modules
 add_library(_epaswmm MODULE ${_epaswmm})
 
+set_target_properties(_epaswmm
+    PROPERTIES
+        VERSION ${LIBRARY_VERSION}
+        SOVERSION ${LIBRARY_SOVERSION}
+)
+
 python_extension_module(_epaswmm)
 
 # Install the epaswmm module
@@ -15,7 +21,8 @@ install(TARGETS _epaswmm LIBRARY DESTINATION epaswmm)
 
 # Include the current source directory
 target_include_directories(
-    _epaswmm PRIVATE
+    _epaswmm
+    PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
