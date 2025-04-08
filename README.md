@@ -61,12 +61,8 @@ To build the SWMM engine and related libraries:
 
 ``` bash
 cmake ---preset=<platform>
+cmake --build build --target package
 ```
-
-where `<compiler>` is the name of the compiler being used
-in double quotes (e.g., "Visual Studio 17 2022" for windows, "Ninja" for linux, or "Xcode" for macos). The resulting engine shared libraries (i.e., swmm5.dll), command line executable (i.e., runswmm.exe), and output processing libraries (i.e., swmm-output.dll)
-will appear in the build\Release directory.
-
 
 ### Python Bindings (Experimental)
 

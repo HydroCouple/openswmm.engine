@@ -92,6 +92,8 @@ jobs:
           core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
     
     - name: Build Binaries
+      env:
+        CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
       run: |
         cmake --preset=${{ matrix.cmake_preset }}-debug -B build-${{ matrix.vcpkg_triplet }} -DBUILD_TESTS=ON
         cmake --build build-${{ matrix.vcpkg_triplet }} --target package --clean-first
