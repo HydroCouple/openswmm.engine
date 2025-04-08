@@ -34,7 +34,7 @@ jobs:
             shell: bash
             shell_extension: .sh
             vcpkg_triplet: x64-osx
-            cmake_osx_arch: "x86_64"
+            cmake_osx_arch: x86_64
 
           - os: macos-latest
             alias: apple-silicon
@@ -42,7 +42,7 @@ jobs:
             shell: bash
             shell_extension: .sh
             vcpkg_triplet: arm64-osx
-            cmake_osx_arch: "arm64"
+            cmake_osx_arch: arm64
 
           - os: windows-latest
             alias: win64
@@ -92,10 +92,8 @@ jobs:
           core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
     
     - name: Build Binaries
-      env:
-        CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
       run: |
-        cmake --preset=${{ matrix.cmake_preset }}-debug -B build-${{ matrix.vcpkg_triplet }} -DBUILD_TESTS=ON
+        cmake --preset=${{ matrix.cmake_preset }}-debug -B build-${{ matrix.vcpkg_triplet }} -DBUILD_TESTS=ON -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
         cmake --build build-${{ matrix.vcpkg_triplet }} --target package --clean-first
     
     - name: Unit Test
@@ -133,7 +131,7 @@ jobs:
             shell: bash
             shell_extension: .sh
             vcpkg_triplet: x64-osx
-            cmake_osx_arch: "x86_64"
+            cmake_osx_arch: x86_64
 
           - os: macos-latest
             alias: apple-silicon
@@ -141,7 +139,7 @@ jobs:
             shell: bash
             shell_extension: .sh
             vcpkg_triplet: arm64-osx
-            cmake_osx_arch: "arm64"
+            cmake_osx_arch: arm64
           
           - os: windows-latest
             alias: win64
@@ -149,6 +147,7 @@ jobs:
             shell: cmd
             shell_extension: .bat
             vcpkg_triplet: x64-windows   
+            cmake_osx_arch: ""     
 
     runs-on: ${{ matrix.os }}
     defaults:

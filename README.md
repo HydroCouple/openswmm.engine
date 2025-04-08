@@ -37,39 +37,36 @@ interface.
 Also included is a python interface for the SWMM computational engine and output 
 post-processing application programming interfaces located in the python folder.
 
+### Computational Engine
+
 The 'CMakeLists.txt' file is a script used by CMake (https://cmake.org/)
 to build the SWMM binaries. CMake is a cross-platform build tool
 that generates platform native build systems for many compilers. To
 check if the required version is installed on your system, enter from 
-a console window and check that the version is 3.5 or higher.
+a console window and check that the version is 3.15 or higher.
 
 ```bash
 cmake --version
 ```
 
-To build the SWMM engine library and its command line executable
-using CMake and the Microsoft Visual Studio C compiler on Windows:
+To build the SWMM engine and related libraries:
 
 1. Open a console window and navigate to the directory where this
    Readme file resides (which should have 'src' as a sub-directory
    underneath it).
 
-2. Use the following command to create the directory for storing the built binaries:
-
-```bash
-mkdir build
-```
-
-3. Then the following CMake commands to build the binaries:
+2. Then the following CMake commands to build the binaries. Where
+   <platform> can either be Windows, Linux, or Darwin. The confurations
+   for the platforms can be modified in the CMakePresets.json file.
 
 ``` bash
-cmake -G <compiler> -B build
-cmake --build ./build --config Release
+cmake ---preset=<platform>
 ```
 
 where `<compiler>` is the name of the compiler being used
 in double quotes (e.g., "Visual Studio 17 2022" for windows, "Ninja" for linux, or "Xcode" for macos). The resulting engine shared libraries (i.e., swmm5.dll), command line executable (i.e., runswmm.exe), and output processing libraries (i.e., swmm-output.dll)
 will appear in the build\Release directory.
+
 
 ### Python Bindings (Experimental)
 
