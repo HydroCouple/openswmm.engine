@@ -32,7 +32,7 @@ set_target_properties(_solver
     PROPERTIES
         BUILD_RPATH "${BUILD_LIB_ROOT}"
         INSTALL_RPATH "${INSTALL_LIB_ROOT}"
-        BUILD_WITH_INSTALL_RPATH True
+        BUILD_WITH_INSTALL_RPATH True 
 )
 
 # Install the target

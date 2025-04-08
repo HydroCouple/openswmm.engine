@@ -6,6 +6,11 @@
 #
 #
 
+if(APPLE)
+    set(LIB_ROOT "@loader_path;@rpath;@executable_path;@loader_path/../lib;@rpath/../lib;@executable_path/../lib;@executable_path/$CMAKE_BUILD_TYPE")
+elseif(UNIX)
+    set(LIB_ROOT "$ORIGIN;$ORIGIN/../lib;$ORIGIN/$CMAKE_BUILD_TYPE")
+endif()
 
 # Test solver api
 add_executable(
@@ -31,8 +36,12 @@ target_link_libraries(
 
 set_target_properties(
     test_solver_api
-        PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    PROPERTIES 
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
 )
+
+
 
 # Test solver errors
 add_executable(
@@ -58,7 +67,9 @@ target_link_libraries(
 
 set_target_properties(
     test_solver_errors
-        PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    PROPERTIES 
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
 )
 
 # Test solver hotstart
@@ -85,7 +96,9 @@ target_link_libraries(
 
 set_target_properties(
     test_solver_hotstart
-        PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    PROPERTIES 
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
 )
 
 
@@ -113,5 +126,7 @@ target_link_libraries(
 
 set_target_properties( 
     test_solver_shapes
-        PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    PROPERTIES 
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
 )

@@ -115,11 +115,14 @@ with Solver(inp_file="input_file.inp") as swmm_solver:
 
 # Alternative 2 to run SWMM
 swmm_solver = Solver(inp_file="input_file.inp")
+
+# Open and start the simulation
 swmm_solver.initialize()
 
 for elapsed_time, current_datetime in swmm_solver:
    # Get and set attributes per timestep
    print(current_datetime)
+
 
 swmm_solver.finalize()
 # or
