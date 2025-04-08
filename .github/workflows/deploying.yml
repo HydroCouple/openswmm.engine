@@ -1,95 +1,229 @@
-name: Build for Release
+name: Build Binaries for Deployment
 
 on:
   push:
-    branches: [ master]
+    branches: [ master, bug_fixes]
   pull_request:
     branches: [ master]
-  release:
-    types: [created]
 
+env:
+  VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+  VCPKG_EXE:  ${{ github.workspace }}/vcpkg/vcpkg
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  OMP_NUM_THREADS: 1
 jobs:
-  build_and_deploy_binaries:
+  engine_unit_test:
+    name: Build Engine
+    permissions: write-all
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-13, macos-latest]
+        include:
+          - os: ubuntu-latest
+            alias: Linux
+            shell: bash
+            cmake_preset: Linux
+            shell_extension: .sh
+            vcpkg_triplet: x64-linux
+            cmake_osx_arch: ""
 
-    name: Building Binaries for Release
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-  
-  build_and_deploy_python:
-    name: Building Python Bindings for Release
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
+          - os: macos-13
+            alias: intel-mac
+            cmake_preset: Darwin
+            shell: bash
+            shell_extension: .sh
+            vcpkg_triplet: x64-osx
+            cmake_osx_arch: x86_64
 
-    - name: Set up Python 3.8
-      uses: actions/setup-python@v2
+          - os: macos-latest
+            alias: apple-silicon
+            cmake_preset: Darwin
+            shell: bash
+            shell_extension: .sh
+            vcpkg_triplet: arm64-osx
+            cmake_osx_arch: arm64
+
+          - os: windows-latest
+            alias: win64
+            cmake_preset: Windows
+            shell: cmd
+            shell_extension: .bat
+            vcpkg_triplet: x64-windows
+            cmake_osx_arch: ""
+
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Checkout SWMM Repo
+      uses: actions/checkout@v4
+
+    - name: Checkout VCPKG
+      uses: actions/checkout@v4
       with:
-        python-version: 3.8
+        repository: microsoft/vcpkg
+        ref: 2025.02.14
+        path: vcpkg
 
-    - name: Install dependencies
+    - name: Install OpenMP (MacOS)
+      if: ${{ matrix.os == 'macos-latest' || matrix.os == 'macos-13' }}
+      run: |
+        brew reinstall libomp
+        brew link --force --overwrite libomp
+
+    - name: Bootstrap VCPKG (Windows)
+      if: ${{ matrix.os == 'windows-latest' }}
+      working-directory: ${{ env.VCPKG_ROOT }}
+      run: |
+        .\bootstrap-vcpkg${{ matrix.shell_extension }}
+        .\vcpkg.exe integrate install
+    
+    - name: Bootstrap VCPKG (Unix like)
+      if: ${{ matrix.os != 'windows-latest' }}
+      working-directory: ${{ env.VCPKG_ROOT }}
+      run: |
+        ./bootstrap-vcpkg${{ matrix.shell_extension }}
+        chmod +x vcpkg
+
+    - name: Export GitHub Actions cache environment variables
+      uses: actions/github-script@v7
+      with:
+        script: |
+          core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+          core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+    
+    - name: Build Binaries
+      run: |
+        cmake --preset=${{ matrix.cmake_preset }} -B build-${{ matrix.vcpkg_triplet }} -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
+        cmake --build build-${{ matrix.vcpkg_triplet }} --target package --clean-first
+    
+    - name: Upload Artifacts
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts-${{ matrix.vcpkg_triplet }}
+        path: |
+          build-${{ matrix.vcpkg_triplet }}/*.tar.gz
+          build-${{ matrix.vcpkg_triplet }}/*.zip
+
+  python_binding_unit_test:
+    name: Build Python Binding Wheels
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-13, macos-latest]
+        python: [3.13]
+        include:
+          - os: ubuntu-latest
+            alias: Linux
+            shell: bash
+            cmake_preset: Linux
+            shell_extension: .sh
+            vcpkg_triplet: x64-linux
+            cmake_osx_arch: ""     
+
+          - os: macos-13
+            alias: intel-mac
+            cmake_preset: Darwin
+            shell: bash
+            shell_extension: .sh
+            vcpkg_triplet: x64-osx
+            cmake_osx_arch: x86_64
+
+          - os: macos-latest
+            alias: apple-silicon
+            cmake_preset: Darwin
+            shell: bash
+            shell_extension: .sh
+            vcpkg_triplet: arm64-osx
+            cmake_osx_arch: arm64
+          
+          - os: windows-latest
+            alias: win64
+            cmake_preset: Windows
+            shell: cmd
+            shell_extension: .bat
+            vcpkg_triplet: x64-windows   
+            cmake_osx_arch: ""     
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
+    steps:
+    - name: Checkout SWMM Repo
+      uses: actions/checkout@v4
+
+    - name: Install OpenMP and Ninja (MacOS)
+      if: ${{ matrix.os == 'macos-latest' || matrix.os == 'macos-13' }}
+      run: |
+        brew reinstall libomp
+        brew link --force --overwrite libomp
+        brew install ninja
+
+    # - name: Bootstrap VCPKG (Windows)
+    #   if: ${{ matrix.os == 'windows-latest' }}
+    #   working-directory: ${{ env.VCPKG_ROOT }}
+    #   run: |
+    #     .\bootstrap-vcpkg${{ matrix.shell_extension }}
+    #     .\vcpkg.exe integrate install
+    
+    # - name: Bootstrap VCPKG (Unix like)
+    #   if: ${{ matrix.os != 'windows-latest' }}
+    #   working-directory: ${{ env.VCPKG_ROOT }}
+    #   run: |
+    #     ./bootstrap-vcpkg${{ matrix.shell_extension }}
+    #     chmod +x vcpkg
+
+    # - name: Export GitHub Actions cache environment variables
+    #   uses: actions/github-script@v7
+    #   with:
+    #     script: |
+    #       core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+    #       core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+          
+    - name: Setup python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python }}
+    
+    - name: Install Python Requirements
+      working-directory: ${{ github.workspace }}/python
       run: |
         python -m pip install --upgrade pip
-        pip install wheel
-        pip install cmake
-    - name: Build and all versions using cibuidwheel
+        python -m pip install -r requirements.txt
+    
+    - name: Build Python Bindings
+      env:
+        CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
+      working-directory: ${{ github.workspace }}/python
       run: |
-        python -m build --sdist
-        python -m pip install cibuildwheel
-        cibuildwheel --output-dir wheelhouse
+        pyclean . 
+        python -m build .
 
-    # - name: Upload Python Package to PyPI
-    #   uses: pypa/gh-action-pypi-publish@master
-    #   with:
-    #     user: __token__
-    #     password: ${{ secrets.PYPI_API_TOKEN }}
-    #     packages: wheelhouse/*.whl
-    #     repository_url: https://upload.pypi.org/legacy/
-    #     skip_existing: true
-  
-    # build_swmm_docs:
-    #   name: Building and Deploying WMM Docs
-    #   runs-on: ubuntu-latest
-    #   steps:
-    #   - name: Deploy to GitHub Pages
-    #     uses: peaceiris/actions-gh-pages@v3
-    #     with:
-    #       github_token: ${{ secrets.GITHUB_TOKEN }}
-    #       publish_dir: ./docs
-    #       publish_branch: gh-pages
-    #       cname: swmm5-python.readthedocs.io
-    #       commit_message: ${{ github.event.head_commit.message }}
-    #       user_name: ${{ github.event.head_commit.author.name }}
-    #       user_email: ${{ github.event.head_commit.author.email }}
-    #       allow_empty_commit: true
-    #       keep_files: true
-    #       clean: true
-    #       force_orphan: true
-    #       enable_jekyll: true
-    #       jekyll_build_opts: --config _config.yml,_config_dev.yml
-    #       enable_cache: true
-    #       cache_ignore: 'node_modules'
+   
+    - name: Build Wheels
+      uses: pypa/cibuildwheel@v2.23.2
+      with:
+        package-dir: ./python
+        output-dir: ./python/wheelhouse
+      env:
+        CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
+        # CIBW_TEST_COMMAND: "python {package}/setup.py build_ext --inplace && python -m pip install {package} && python -m pytest {package}/tests -v"
+        CIBW_BEFORE_TEST: "pip install -r {package}/requirements.txt && python -m pip install ninja"
+        CIBW_BUILD_VERBOSITY: 1
+        CIBW_BEFORE_BUILD_MACOS: brew install ninja
+        CIBW_REPAIR_WHEEL_COMMAND: ${{ matrix.os == 'ubuntu-latest' && 'auditwheel repair -w {dest_dir} {wheel}' || '' }}
 
-  # build_and_deploy_python_docs:
-  #   name: Building and Deploying Python Docs
-  #   depends-on: [build_python]
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #   - name: Deploy to GitHub Pages
-  #     uses: peaceiris/actions-gh-pages@v3
-  #     with:
-  #       github_token: ${{ secrets.GITHUB_TOKEN }}
-  #       publish_dir: ./docs
-  #       publish_branch: gh-pages
-  #       cname: swmm5-python.readthedocs.io
-  #       commit_message: ${{ github.event.head_commit.message }}
-  #       user_name: ${{ github.event.head_commit.author.name }}
-  #       user_email: ${{ github.event.head_commit.author.email }}
-  #       allow_empty_commit: true
-  #       keep_files: true
-  #       clean: true
-  #       force_orphan: true
-  #       enable_jekyll: true
-  #       jekyll_build_opts: --config _config.yml,_config_dev.yml
-  #       enable_cache: true
-  #       cache_ignore: 'node_modules'
+    - name: Upload Python Wheels
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-wheels-${{ matrix.vcpkg_triplet }} 
+        path: |
+          python/wheelhouse/*.whl
+          python/wheelhouse/*.tar.gz
+          python/wheelhouse/*.zip
+          python/dist/*.whl
+          python/dist/*.tar.gz
+          python/dist/*.zip
