@@ -114,17 +114,22 @@
             "description": "macOS build using Ninja generator",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/darwin",
+            "environment": {
+                "VCPKG_OSX_ARCHITECTURES": "arm64;x86_64"
+            },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra -fvisibility=hidden",
-                "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra -fvisibility=hidden",
+                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -fvisibility=hidden",
+                "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -fvisibility=hidden",
                 "CMAKE_EXE_LINKER_FLAGS": "-Wl, -flto",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-                "CMAKE_C_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra",
-                "CMAKE_CXX_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra",
+                "CMAKE_C_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
+                "CMAKE_CXX_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
                 "CMAKE_SHARED_LINKER_FLAGS": "-twolevel_namespace",
-                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store"
+                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
+                "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64"
+
             },
             "condition": {
                 "type": "equals",
@@ -138,15 +143,19 @@
             "description": "macOS build for debugging using Ninja generator",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/darwin-debug",
+            "environment": {
+                "VCPKG_OSX_ARCHITECTURES": "arm64;x86_64"
+            },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store -fvisibility=hidden",
-                "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store -fvisibility=hidden",
+                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fvisibility=hidden",
+                "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fvisibility=hidden",
                 "CMAKE_EXE_LINKER_FLAGS": "-g",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
                 "CMAKE_SHARED_LINKER_FLAGS": "-twolevel_namespace",
-                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store"
+                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
+                "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64"
             },
             "condition": {
                 "type": "equals",
