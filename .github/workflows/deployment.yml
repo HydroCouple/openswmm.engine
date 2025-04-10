@@ -1,8 +1,9 @@
-name: Build Binaries for Deployment
+name: Deployment
 
 on:
   push:
     branches: [ master, bug_fixes]
+    tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ master]
 

@@ -1,4 +1,4 @@
-name: Build and Unit Test
+name: Unit Testing
 
 on:
   push:
@@ -158,13 +158,41 @@ jobs:
     - name: Checkout SWMM Repo
       uses: actions/checkout@v4
     
+    # - name: Checkout VCPKG
+    #   uses: actions/checkout@v4
+    #   with:
+    #     repository: microsoft/vcpkg
+    #     ref: 2025.02.14
+    #     path: vcpkg
+
     - name: Install OpenMP and Ninja (MacOS)
       if: ${{ matrix.os == 'macos-latest' || matrix.os == 'macos-13' }}
       run: |
         brew reinstall libomp
         brew link --force --overwrite libomp
         brew install ninja
-        
+
+    # - name: Bootstrap VCPKG (Windows)
+    #   if: ${{ matrix.os == 'windows-latest' }}
+    #   working-directory: ${{ env.VCPKG_ROOT }}
+    #   run: |
+    #     .\bootstrap-vcpkg${{ matrix.shell_extension }}
+    #     .\vcpkg.exe integrate install
+    
+    # - name: Bootstrap VCPKG (Unix like)
+    #   if: ${{ matrix.os != 'windows-latest' }}
+    #   working-directory: ${{ env.VCPKG_ROOT }}
+    #   run: |
+    #     ./bootstrap-vcpkg${{ matrix.shell_extension }}
+    #     chmod +x vcpkg
+
+    # - name: Export GitHub Actions cache environment variables
+    #   uses: actions/github-script@v7
+    #   with:
+    #     script: |
+    #       core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+    #       core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+          
     - name: Setup python
       uses: actions/setup-python@v4
       with:
@@ -194,6 +222,19 @@ jobs:
         python setup.py clean --all
         python -m build .
    
+    # - name: Build Wheels
+    #   uses: pypa/cibuildwheel@v2.23.2
+    #   with:
+    #     package-dir: ./python
+    #     output-dir: ./python/wheelhouse
+    #   env:
+    #     CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
+    #     # CIBW_TEST_COMMAND: "python {package}/setup.py build_ext --inplace && python -m pip install {package} && python -m pytest {package}/tests -v"
+    #     CIBW_BEFORE_TEST: "pip install -r {package}/requirements.txt && python -m pip install ninja"
+    #     CIBW_BUILD_VERBOSITY: 1
+    #     CIBW_BEFORE_BUILD_MACOS: brew install ninja
+    #     CIBW_REPAIR_WHEEL_COMMAND: ${{ matrix.os == 'ubuntu-latest' && 'auditwheel repair -w {dest_dir} {wheel}' || '' }}
+
     - name: Upload Python Wheels
       if: ${{ always() }}
       uses: actions/upload-artifact@v4

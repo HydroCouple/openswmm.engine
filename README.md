@@ -4,10 +4,11 @@ EPA ORD Stormwater Management Model (SWMM)
 Stormwater Management Model (SWMM) computational engine and output post-processing codebase
 
 ## Build Status
-[![Build and Unit Testing](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/unit_testing.yml)
+[![Unit Testing](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/unit_testing.yml)
 [![Build and Regression Testing](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/regression_testing.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/regression_testing.yml)
-[![Documentation](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/build_docs.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/build_docs.yml)
-[![Deployment](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/deploying.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/deploying.yml)
+[![Docs](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/build_docs.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/build_docs.yml)
+[![Deployment](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/deploy.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/deploy.yml)
+[![Documentation](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/build-and-test.yml/badge.svg?branch=docs)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/build-and-test.yml)
 [![Issues](https://img.shields.io/github/issues/USEPA/Stormwater-Management-Model)](https://github.com/USEPA/Stormwater-Management-Model/issues)
 
 ## Python Binding
@@ -164,7 +165,7 @@ pytest --data-dir <path-to-regression-testing-files> --atol <absolute-tolerance>
 The source code distributed here is identical to the code found at the official [SWMM website](https://www.epa.gov/water-research/storm-water-management-model-swmm).
 The SWMM website also hosts the official manuals and installation binaries for the SWMM software. 
 
-A live web version of the SWMM documentation of the API and user manuals can be found on the [SWMM GitHub Pages website](https://usepa.github.io/Stormwater-Management-Model). Note that this is an experimental version that is still under development and has yet to go through EPA'S official quality assurance review process.
+A live web version of the SWMM documentation of the API and user manuals can be found on the [SWMM GitHub Pages website](https://USEPA.github.io/Stormwater-Management-Model). Note that this is an experimental version that is still under development and has yet to go through EPA'S official quality assurance review process.
 
 ## Disclaimer 
 The United States Environmental Protection Agency (EPA) GitHub project code is provided on an "as is" basis and the user assumes responsibility for its use. EPA has relinquished control of the information and no longer has responsibility to protect the integrity, confidentiality, or availability of the information. Any reference to specific commercial products, processes, or services by service mark, trademark, manufacturer, or otherwise, does not constitute or imply their endorsement, recommendation or favoring by EPA. The EPA seal and logo shall not be used in any manner to imply endorsement of any commercial product or activity by EPA or the United States Government.
