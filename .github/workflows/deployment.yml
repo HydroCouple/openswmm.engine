@@ -2,7 +2,7 @@ name: Deployment
 
 on:
   push:
-    branches: [ master, bug_fixes]
+    branches: [ master]
     tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ master]
