@@ -96,7 +96,7 @@ int input_countObjects()
         // --- skip blank lines & those beginning with a comment
         lineCount++;
         sstrncpy(wLine, line, MAXLINE);     // make working copy of line
-        tok = strtok(wLine, SEPSTR);        // get first text token on line
+        tok = strtok_r(wLine, SEPSTR);        // get first text token on line
         if ( tok == NULL ) continue;
         if ( *tok == ';' ) continue;
 
@@ -391,7 +391,7 @@ int  addObject(int objType, char* id)
             Nobjects[CURVE]++;
 
             // --- check for a conduit shape curve
-            id = strtok(NULL, SEPSTR);
+            id = strtok_r(NULL, SEPSTR);
             if ( findmatch(id, CurveTypeWords) == SHAPE_CURVE )
                 Nobjects[SHAPE]++;
         }
@@ -416,7 +416,7 @@ int  addObject(int objType, char* id)
         // --- for TRANSECTS, ID name appears as second entry on X1 line
         if ( match(id, "X1") )
         {
-            id = strtok(NULL, SEPSTR);
+            id = strtok_r(NULL, SEPSTR);
             if ( id ) 
             {
                 if ( !project_addObject(TRANSECT, id, Nobjects[TRANSECT]) )

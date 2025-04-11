@@ -8,16 +8,13 @@ def pytest_addoption(parser):
     )
 
     parser.addoption(
-        "--atol", action="store", default=None, help="Absolute tolerance for floating point comparisons"
+        "--atol", action="store", default=1.0e-8, help="Absolute tolerance for floating point comparisons"
     )
 
     parser.addoption(
         "--rtol", action="store", default=1.0e-8, help="Relative tolerance for floating point comparisons"
     )
 
-    parser.addoption(
-        "--force-regen", action="store_true", default=1.0e-8, help="Force regeneration of the data files"
-    )
 
 @pytest.fixture
 def data_dir(request):
@@ -40,12 +37,7 @@ def rtol(request):
     """
     return request.config.getoption("--rtol")
 
-@pytest.fixture
-def force_regen(request):
-    """
-    Fixture to get the force-regen flag
-    """
-    return request.config.getoption("--force_regen")
+
 
 @pytest.fixture
 def discovered_files(data_dir):

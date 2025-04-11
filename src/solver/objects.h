@@ -1,65 +1,67 @@
-//-----------------------------------------------------------------------------
-//   objects.h
-//
-//   Project: EPA SWMM5
-//   Version: 5.2
-//   Date:    11/01/21  (Build 5.2.0)
-//   Author:  L. Rossman
-//            M. Tryby (EPA)
-//            R. Dickinson (CDM)
-//
-//   Definitions of data structures.
-//
-//   Most SWMM 5 "objects" are represented as C data structures.
-//
-//   The units shown next to each structure's properties are SWMM's
-//   internal units and may be different than the units required
-//   for the property as it appears in the input file.
-//
-//   In many structure definitions, a blank line separates the set of
-//   input properties from the set of computed output properties.
-//
-//   Update History
-//   ==============
-//   Build 5.1.007:
-//   - Data structure for monthly adjustments of temperature, evaporation,
-//     and rainfall added.
-//   - User-supplied equation for deep GW flow added to subcatchment object.
-//   - Exfiltration added to storage node object.
-//   - Surcharge option added to weir object.
-//   Build 5.1.008:
-//   - Route to subcatchment option added to Outfall data structure.
-//   - Hydraulic conductivity added to monthly adjustments data structure.
-//   - Total LID drain flow and outfall runon added to Runoff Totals.
-//   - Groundwater statistics object added.
-//   - Maximum depth for reporting times added to node statistics object.
-//   Build 5.1.010:
-//   - Additional fields added to Weir object to support ROADWAY_WEIR type.
-//   - New field added to Link object to record when its setting was changed.
-//   - q1Old and q2Old of Link object restored.
-//   Build 5.1.011:
-//   - Description of oldFlow & newFlow for TGroundwater object modified.
-//   - Weir shape parameter deprecated.
-//   - Added definition of a hydraulic event time period (TEvent).
-//   Build 5.1.013:
-//   - New member 'averages' added to the TRptFlags structure.
-//   - Adjustment patterns added to TSubcatch structure.
-//   - Members impervRunoff and pervRunoff added to TSubcatchStats structure.
-//   - Member cdCurve (weir coeff. curve) added to TWeir structure.
-//   Build 5.1.015:
-//   - Support added for multiple infiltration methods within a project.
-//   - Support added for grouped freqency table of routing time steps.
-//  Build 5.2.0:
-//  - Support added for Street and Inlet objects.
-//  - Support added for analytical storage shapes.
-//  - Support added for reporting most frequent non-converging links.
-//  - Support added for tracking a gage's prior n-hour rainfall total.
-//  - Removed extIfaceInflow member from ExtInflow struct.
-//  - Refactored TRptFlags struct.
-//  Build 5.3.0:
-//  - Modified TFile to support specification of time for saving hotstart files.
-//  - Adding support for API provided pollutant fluxes and inflows.
-//-----------------------------------------------------------------------------
+/*!
+* \file objects.h
+* \brief Definitions of data structures.
+* \author L. Rossman
+* \author M. Tryby (EPA)
+* \author R. Dickinson (CDM)
+* \author C. Buahin (EPA)
+* \date Created: 2021-11-01
+* \date Last updated: 2025-04-11
+* \version 5.3.0
+* \details
+*   Most SWMM 5 "objects" are represented as C data structures.
+*
+*   The units shown next to each structure's properties are SWMM's
+*   internal units and may be different than the units required
+*   for the property as it appears in the input file.
+*
+*   In many structure definitions, a blank line separates the set of
+*   input properties from the set of computed output properties.
+*
+*   Update History
+*   ==============
+*   - Build 5.1.007:
+*     - Data structure for monthly adjustments of temperature, evaporation,
+*       and rainfall added.
+*     - User-supplied equation for deep GW flow added to subcatchment object.
+*     - Exfiltration added to storage node object.
+*     - Surcharge option added to weir object.
+*   - Build 5.1.008:
+*     - Route to subcatchment option added to Outfall data structure.
+*     - Hydraulic conductivity added to monthly adjustments data structure.
+*     - Total LID drain flow and outfall runon added to Runoff Totals.
+*     - Groundwater statistics object added.
+*     - Maximum depth for reporting times added to node statistics object.
+*   - Build 5.1.010:
+*     - Additional fields added to Weir object to support ROADWAY_WEIR type.
+*     - New field added to Link object to record when its setting was changed.
+*     - q1Old and q2Old of Link object restored.
+*   - Build 5.1.011:
+*     - Description of oldFlow & newFlow for TGroundwater object modified.
+*     - Weir shape parameter deprecated.
+*     - Added definition of a hydraulic event time period (TEvent).
+*   - Build 5.1.013:
+*     - New member 'averages' added to the TRptFlags structure.
+*     - Adjustment patterns added to TSubcatch structure.
+*     - Members impervRunoff and pervRunoff added to TSubcatchStats structure.
+*     - Member cdCurve (weir coeff. curve) added to TWeir structure.
+*   - Build 5.1.015:
+*     - Support added for multiple infiltration methods within a project.
+*     - Support added for grouped freqency table of routing time steps.
+*   - Build 5.2.0:
+*     - Support added for Street and Inlet objects.
+*     - Support added for analytical storage shapes.
+*     - Support added for reporting most frequent non-converging links.
+*     - Support added for tracking a gage's prior n-hour rainfall total.
+*     - Removed extIfaceInflow member from ExtInflow struct.
+*     - Refactored TRptFlags struct.
+*  - Build 5.3.0:
+*     - Modified TFile to support specification of time for saving hotstart files.
+*     - Adding support for API provided pollutant fluxes and inflows.
+*     - Added a project structure to hold project-wide settings to for thread safety and rentrancy.
+*     - Use vectors instead of linked lists for computational efficiency.
+*     - Use structures of arrays for selected data structures to improve cache performance.
+*/
 
 #ifndef OBJECTS_H
 #define OBJECTS_H
@@ -1094,5 +1096,16 @@ typedef struct
    char          Enabled;         // TRUE if appears in report table
    int           Precision;       // number of decimal places when reported
 }  TRptField;
+
+
+//-----------------
+// FILE INFORMATION
+//-----------------
+typedef struct
+{
+   int index;
+
+} Project;
+
 
 #endif //OBJECTS_H

@@ -2567,8 +2567,8 @@ int outlet_readParams(int j, int k, char* tok[], int ntoks)
 
     // --- see if rating curve is head or depth based
     x[5] = NODE_DEPTH;                                //default is depth-based
-    s = strtok(tok[4], "/");                          //parse token for
-    s = strtok(NULL, "/");                            //  qualifier term
+    s = strtok_r(tok[4], "/");                          //parse token for
+    s = strtok_r(NULL, "/");                            //  qualifier term
     if ( strcomp(s, w_HEAD) ) x[5] = NODE_HEAD;       //check if its "HEAD"
 
     // --- get params. for functional outlet device

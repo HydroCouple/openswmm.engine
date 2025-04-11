@@ -506,7 +506,7 @@ class SWMMAPIErrors(Enum):
     SIMULATION_IS_RUNNING = ...
 
 
-def run_solver(inp_file: str, rpt_file: str, out_file: str, swmm_progress_callback: Callable[[float], None] = ...) -> int:
+def run_solver(inp_file: str, rpt_file: str = None, out_file: str = None, swmm_progress_callback: Callable[[float], None] = ...) -> int:
     """
     Run a SWMM simulation with a progress callback.
 

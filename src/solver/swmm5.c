@@ -243,27 +243,30 @@ static double getGageValue(int property, int index);
  * \param[in] property Property type
  * \param[in] index Object index
  * \param[in] subIndex Subindex
+ * \param[in] pollutantIndex Pollutant index
  * \return Property value
  */
-static double getSubcatchValue(int property, int index, int subIndex);
+static double getSubcatchValue(int property, int index, int subIndex, int pollutantIndex);
 
 /*!
  * \brief Retrieve node value given its index, property type, and subindex.
  * \param[in] property Property type
  * \param[in] index Object index
  * \param[in] subIndex Subindex
+ * \param[in] pollutantIndex Pollutant index
  * \return Property value
  */
-static double getNodeValue(int property, int index, int subIndex);
+static double getNodeValue(int property, int index, int subIndex, int pollutantIndex);
 
 /*!
  * \brief Retrieve link value given its index, property type, and subindex.
  * \param[in] property Property type
  * \param[in] index Object index
  * \param[in] subIndex Subindex
+ * \param[in] pollutantIndex Pollutant index
  * \return Property value
  */
-static double getLinkValue(int property, int index, int subIndex);
+static double getLinkValue(int property, int index, int subIndex, int pollutantIndex);
 
 /*!
  * \brief Retrieves the date/time of a reporting period.
@@ -326,31 +329,34 @@ static int setGageValue(int property, int index, int subIndex, double value);
  * \brief Set subcatchment value given its property type, index, subindex, and value.
  * \param[in] property Property type
  * \param[in] index Object index
- * \param[in] subIndex Subindex
+ * \param[in] subIndex Optional Subindex
+ * @param[in] pollutantIndex Pollutant index
  * \param[in] value Property value
  * \return Error code
  */
-static int setSubcatchValue(int property, int index, int subIndex, double value);
+static int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, double value);
 
 /*!
  * \brief Set node value given its property type, index, subindex, and value.
  * \param[in] property Property type
  * \param[in] index Object index
  * \param[in] subIndex Subindex
+ * \param[in] pollutantIndex Pollutant index
  * \param[in] value Property value
  * \return Error code
  */
-static int setNodeValue(int property, int index, int subIndex, double value);
+static int setNodeValue(int property, int index, int subIndex, int pollutantIndex, double value);
 
 /*!
  * \brief Set link value given its property type, index, subindex, and value.
  * \param[in] property Property type
  * \param[in] index Object index
  * \param[in] subIndex Subindex
+ * @param[in] pollutantIndex Pollutant index
  * \param[in] value Property value
  * \return Error code
  */
-static int setLinkValue(int property, int index, int subIndex, double value);
+static int setLinkValue(int property, int index, int subIndex, int pollutantIndex, double value);
 
 /*!
  * \brief Set node lateral inflow value given its index and value.
@@ -492,7 +498,8 @@ int EXPORT_SWMM_SOLVER_API swmm_run(const char *inputFile, const char *reportFil
 /*!
  * \copydoc swmm_run_with_callback
  */
-int EXPORT_SWMM_SOLVER_API swmm_run_with_callback(const char *inputFile, const char *reportFile, const char *outputFile, progress_callback callback)
+int EXPORT_SWMM_SOLVER_API swmm_run_with_callback(
+    const char *inputFile, const char *reportFile, const char *outputFile, progress_callback callback)
 {
     double progress = 0.0, elapsedTime = 0.0;
 
@@ -866,7 +873,7 @@ int EXPORT_SWMM_SOLVER_API swmm_saveHotStart(const char *hotStartFile)
 /*!
  * \copydoc execRouting
  */
-void execRouting()
+static void execRouting()
 {
     double nextRoutingTime; // updated elapsed routing time (msec)
     double routingStep;     // routing time step (sec)
@@ -932,7 +939,7 @@ void execRouting()
 /*!
  * \copydoc saveResults
  */
-void saveResults()
+static void saveResults()
 {
     if (NewRoutingTime >= ReportTime)
     {
@@ -1210,11 +1217,11 @@ double EXPORT_SWMM_SOLVER_API swmm_getValue(int property, int index)
     if (property < 200)
         return getGageValue(property, index);
     if (property < 300)
-        return getSubcatchValue(property, index, -1);
+        return getSubcatchValue(property, index, -1, -1);
     if (property < 400)
-        return getNodeValue(property, index, -1);
+        return getNodeValue(property, index, -1, -1);
     if (property < 500)
-        return getLinkValue(property, index, -1);
+        return getLinkValue(property, index, -1, - 1);
 
     return ERR_API_PROPERTY_TYPE;
 }
@@ -1222,7 +1229,7 @@ double EXPORT_SWMM_SOLVER_API swmm_getValue(int property, int index)
 /*!
  * \copydoc swmm_getValueExpanded
  */
-double EXPORT_SWMM_SOLVER_API swmm_getValueExpanded(int objType, int property, int index, int subIndex)
+double EXPORT_SWMM_SOLVER_API swmm_getValueExpanded(int objType, int property, int index, int subIndex, int pollutantIndex)
 {
     if (!IsOpenFlag)
         return ERR_API_NOT_OPEN;
@@ -1234,11 +1241,11 @@ double EXPORT_SWMM_SOLVER_API swmm_getValueExpanded(int objType, int property, i
     case swmm_GAGE:
         return getGageValue(property, index);
     case swmm_SUBCATCH:
-        return getSubcatchValue(property, index, subIndex);
+        return getSubcatchValue(property, index, subIndex, pollutantIndex);
     case swmm_NODE:
-        return getNodeValue(property, index, subIndex);
+        return getNodeValue(property, index, subIndex, pollutantIndex);
     case swmm_LINK:
-        return getLinkValue(property, index, subIndex);
+        return getLinkValue(property, index, subIndex, pollutantIndex);
     default:
         return ERR_API_OBJECT_TYPE;
     }
@@ -1301,7 +1308,7 @@ int EXPORT_SWMM_SOLVER_API swmm_setValue(int property, int index, double value)
 /*!
  * \copydoc swmm_setValueExpanded
  */
-int EXPORT_SWMM_SOLVER_API swmm_setValueExpanded(int objType, int property, int index, int subIndex, double value)
+int EXPORT_SWMM_SOLVER_API swmm_setValueExpanded(int objType, int property, int index, int subIndex, int pollutantIndex, double value)
 {
     if (!IsOpenFlag)
         return ERR_API_NOT_OPEN;
@@ -1313,11 +1320,11 @@ int EXPORT_SWMM_SOLVER_API swmm_setValueExpanded(int objType, int property, int 
     case swmm_GAGE:
         return setGageValue(property, index, subIndex, value);
     case swmm_SUBCATCH:
-        return setSubcatchValue(property, index, subIndex, value);
+        return setSubcatchValue(property, index, subIndex, pollutantIndex, value);
     case swmm_NODE:
-        return setNodeValue(property, index, subIndex, value);
+        return setNodeValue(property, index, subIndex, pollutantIndex, value);
     case swmm_LINK:
-        return setLinkValue(property, index, subIndex, value);
+        return setLinkValue(property, index, subIndex, pollutantIndex, value);
     default:
         return ERR_API_OBJECT_TYPE;
     }
@@ -1349,7 +1356,7 @@ int setGageValue(int property, int index, int subIndex, double value)
 /*!
  * \copydoc setSubcatchValue
  */
-int setSubcatchValue(int property, int index, int subIndex, double value)
+int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, double value)
 {
 
     if (IsOpenFlag == FALSE)
@@ -1382,12 +1389,12 @@ int setSubcatchValue(int property, int index, int subIndex, double value)
             else
                 return ERR_API_PROPERTY_VALUE;
         case swmm_SUBCATCH_EXTERNAL_POLLUTANT_BUILDUP:
-            {
-                if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
-                    return ERR_API_OBJECT_INDEX;
-                Subcatch[index].apiExtBuildup[subIndex] = value;
-                return 0;
-            }
+        {
+            if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
+                return ERR_API_OBJECT_INDEX;
+            Subcatch[index].apiExtBuildup[pollutantIndex] = value;
+            return 0;
+        }
         default:
             return ERR_API_IS_RUNNING;
         }
@@ -1461,7 +1468,7 @@ int setSubcatchValue(int property, int index, int subIndex, double value)
 /*!
  * \copydoc setNodeValue
  */
-int setNodeValue(int property, int index, int subIndex, double value)
+int setNodeValue(int property, int index, int subIndex, int pollutantIndex, double value)
 {
 
     TNode *node = NULL;
@@ -1486,24 +1493,24 @@ int setNodeValue(int property, int index, int subIndex, double value)
             Node[index].apiExtInflow = value / UCF(FLOW);
             return 0;
         case swmm_NODE_HEAD:
-            {
-                node = &Node[index];
+        {
+            node = &Node[index];
 
-                if (node->type != OUTFALL)
-                    return ERR_API_OBJECT_TYPE;
+            if (node->type != OUTFALL)
+                return ERR_API_OBJECT_TYPE;
 
-                Outfall[node->subIndex].fixedStage = value / UCF(LENGTH);
-                Outfall[node->subIndex].type = FIXED_OUTFALL;
-                return 0;
-            }
+            Outfall[node->subIndex].fixedStage = value / UCF(LENGTH);
+            Outfall[node->subIndex].type = FIXED_OUTFALL;
+            return 0;
+        }
         case swmm_NODE_POLLUTANT_LATMASS_FLUX:
-            {
-                if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
-                    return ERR_API_OBJECT_INDEX;
+        {
+            if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
+                return ERR_API_OBJECT_INDEX;
 
-                Node[index].apiExtQualMassFlux[subIndex] = value;
-                return 0;
-            }
+            Node[index].apiExtQualMassFlux[pollutantIndex] = value;
+            return 0;
+        }
         default:
             return ERR_API_IS_RUNNING;
         }
@@ -1564,7 +1571,7 @@ int setNodeValue(int property, int index, int subIndex, double value)
             Node[index].rptFlag = (value > 0.0);
             return 0;
         case swmm_NODE_POLLUTANT_LATMASS_FLUX:
-            Node[index].apiExtQualMassFlux[subIndex] = value;
+            Node[index].apiExtQualMassFlux[pollutantIndex] = value;
             return 0;
         default:
             return ERR_API_PROPERTY_TYPE;
@@ -1575,7 +1582,7 @@ int setNodeValue(int property, int index, int subIndex, double value)
 /*!
  * \copydoc setLinkValue
  */
-int setLinkValue(int property, int index, int subIndex, double value)
+int setLinkValue(int property, int index, int subIndex, int pollutantIndex, double value)
 {
     TLink *link = NULL;
 
@@ -1611,13 +1618,13 @@ int setLinkValue(int property, int index, int subIndex, double value)
             else
                 return ERR_API_PROPERTY_VALUE;
         case swmm_LINK_POLLUTANT_LATMASS_FLUX:
-            {
-                if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
-                    return ERR_API_OBJECT_INDEX;
+        {
+            if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
+                return ERR_API_OBJECT_INDEX;
 
-                link->apiExtQualMassFlux[subIndex] = value;
-                return 0;
-            }
+            link->apiExtQualMassFlux[pollutantIndex] = value;
+            return 0;
+        }
         default:
             return ERR_API_IS_RUNNING;
         }
@@ -1663,13 +1670,13 @@ int setLinkValue(int property, int index, int subIndex, double value)
             Link[index].hasFlapGate = (value > 0.0);
             return 0;
         case swmm_LINK_POLLUTANT_LATMASS_FLUX:
-            {
-                if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
-                    return ERR_API_OBJECT_INDEX;
+        {
+            if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+                return ERR_API_OBJECT_INDEX;
 
-                link->apiExtQualMassFlux[subIndex] = value;
-                return 0;
-            }
+            link->apiExtQualMassFlux[subIndex] = value;
+            return 0;
+        }
         default:
             return ERR_API_PROPERTY_TYPE;
         }
@@ -1721,7 +1728,7 @@ double EXPORT_SWMM_SOLVER_API swmm_encodeDate(int year, int month, int day,
 /*!
  * \copydoc getGageValue
  */
-double getGageValue(int property, int index)
+static double getGageValue(int property, int index)
 {
     double total, snow, rain;
 
@@ -1746,7 +1753,7 @@ double getGageValue(int property, int index)
 /*!
  * \copydoc getSubcatchValue
  */
-double getSubcatchValue(int property, int index, int subIndex)
+static double getSubcatchValue(int property, int index, int subIndex, int pollutantIndex)
 {
     TSubcatch *subcatch;
     double sub_catch_area;
@@ -1778,6 +1785,56 @@ double getSubcatchValue(int property, int index, int subIndex)
         return subcatch->width * UCF(LENGTH);
     case swmm_SUBCATCH_SLOPE:
         return subcatch->slope;
+    case swmm_SUBCATCH_OUTLET_TYPE:
+        return subcatch->outSubcatch >= 0 ? swmm_SUBCATCH : swmm_NODE;
+    case swmm_SUBCATCH_OUTLET_INDEX:
+        return subcatch->outSubcatch >= 0 ? subcatch->outSubcatch : subcatch->outNode;
+    case swmm_SUBCATCH_INFILTRATION_MODEL:
+        return subcatch->infilModel;
+    case swmm_SUBCATCH_FRACTION_IMPERVIOUS:
+        return subcatch->fracImperv;
+    case swmm_SUBCATCH_SUB_AREA_ROUTE_TO:
+        if (subIndex < 0 || subIndex > 2)
+            return ERR_API_OBJECT_INDEX;
+        else
+            return subcatch->subArea[subIndex].routeTo;
+    case swmm_SUBCATCH_SUB_AREA_FRACTION_OUTLET:
+        if (subIndex < 0 || subIndex > 2)
+            return ERR_API_OBJECT_INDEX;
+        else
+            return subcatch->subArea[subIndex].fOutlet;
+    case swmm_SUBCATCH_SUB_AREA_MANNINGS_N:
+        if (subIndex < 0 || subIndex > 2)
+            return ERR_API_OBJECT_INDEX;
+        else
+            return subcatch->subArea[subIndex].N;
+    case swmm_SUBCATCH_SUB_AREA_FRACTION_AREA:
+        if (subIndex < 0 || subIndex > 2)
+            return ERR_API_OBJECT_INDEX;
+        else
+            return subcatch->subArea[subIndex].fArea;
+    case swmm_SUBCATCH_SUB_AREA_DEPRESSION_STORAGE:
+        if (subIndex < 0 || subIndex > 2)
+            return ERR_API_OBJECT_INDEX;
+        else
+            return subcatch->subArea[subIndex].dStore * UCF(LENGTH);
+    case swmm_SUBCATCH_SUB_AREA_INFLOW:
+        if (subIndex < 0 || subIndex > 2)
+            return ERR_API_OBJECT_INDEX;
+        else
+            return subcatch->subArea[subIndex].inflow * UCF(EVAPRATE);
+    case swmm_SUBCATCH_SUB_AREA_RUNOFF:
+        if (subIndex < 0 || subIndex > 2)
+            return ERR_API_OBJECT_INDEX;
+        else
+            return subcatch->subArea[subIndex].runoff * UCF(EVAPRATE);
+    case swmm_SUBCATCH_SUB_AREA_DEPTH:
+        if (subIndex < 0 || subIndex > 2)
+            return ERR_API_OBJECT_INDEX;
+        else
+            return subcatch->subArea[subIndex].depth * UCF(LENGTH); 
+    case swmm_SUBCATCH_LID_UNIT_AREA:
+        return subcatch->lidArea * UCF(LANDAREA);
     case swmm_SUBCATCH_CURB_LENGTH:
         return subcatch->curbLength * UCF(LENGTH);
     case swmm_SUBCATCH_API_RAINFALL:
@@ -1785,7 +1842,7 @@ double getSubcatchValue(int property, int index, int subIndex)
     case swmm_SUBCATCH_API_SNOWFALL:
         return subcatch->apiSnowfall * UCF(RAINFALL);
     case swmm_SUBCATCH_POLLUTANT_BUILDUP:
-        if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+        if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
 
         prop_results = 0.0;
@@ -1796,30 +1853,30 @@ double getSubcatchValue(int property, int index, int subIndex)
 
             if (sub_catch_area > 0)
             {
-                prop_results += subcatch->landFactor[i].buildup[subIndex] / sub_catch_area;
+                prop_results += subcatch->landFactor[i].buildup[pollutantIndex] / sub_catch_area;
             }
         }
 
         return prop_results;
     case swmm_SUBCATCH_EXTERNAL_POLLUTANT_BUILDUP:
-        if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+        if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
-        return subcatch->apiExtBuildup[subIndex] / UCF(LANDAREA);
+        return subcatch->apiExtBuildup[pollutantIndex] / UCF(LANDAREA);
 
     case swmm_SUBCATCH_POLLUTANT_RUNOFF_CONCENTRATION:
-        if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+        if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
-        return subcatch->newQual[subIndex];
+        return subcatch->newQual[pollutantIndex];
 
     case swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION:
-        if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+        if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
-        return subcatch->pondedQual[subIndex] / (subcatch_getDepth(index) * MAX(0.0, subcatch->area - subcatch->lidArea) * UCF(LANDAREA));
+        return subcatch->pondedQual[pollutantIndex] / (subcatch_getDepth(index) * MAX(0.0, subcatch->area - subcatch->lidArea) * UCF(LANDAREA));
 
     case swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD:
-        if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+        if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
-        return subcatch->totalLoad[subIndex];
+        return subcatch->totalLoad[pollutantIndex];
 
     default:
         return ERR_API_PROPERTY_TYPE;
@@ -1829,7 +1886,7 @@ double getSubcatchValue(int property, int index, int subIndex)
 /*!
  * \copydoc getNodeValue
  */
-double getNodeValue(int property, int index, int subIndex)
+static double getNodeValue(int property, int index, int subIndex, int pollutantIndex)
 {
     TNode *node;
     if (index < 0 || index >= Nobjects[NODE])
@@ -1867,13 +1924,13 @@ double getNodeValue(int property, int index, int subIndex)
         case swmm_NODE_INITIAL_DEPTH:
             return node->initDepth * UCF(LENGTH);
         case swmm_NODE_POLLUTANT_CONCENTRATION:
-            if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+            if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
                 return ERR_API_OBJECT_INDEX;
-            return node->newQual[subIndex];
+            return node->newQual[pollutantIndex];
         case swmm_NODE_POLLUTANT_LATMASS_FLUX:
-            if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+            if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
                 return ERR_API_OBJECT_INDEX;
-            return node->apiExtQualMassFlux[subIndex];
+            return node->apiExtQualMassFlux[pollutantIndex];
         default:
             return ERR_API_OBJECT_TYPE;
         }
@@ -1883,7 +1940,7 @@ double getNodeValue(int property, int index, int subIndex)
 /*!
  * \copydoc getLinkValue
  */
-double getLinkValue(int property, int index, int subIndex)
+static double getLinkValue(int property, int index, int subIndex, int pollutantIndex)
 {
     TLink *link;
     if (index < 0 || index >= Nobjects[LINK])
@@ -1969,17 +2026,17 @@ double getLinkValue(int property, int index, int subIndex)
     case swmm_LINK_HAS_FLAPGATE:
         return (link->hasFlapGate > 0);
     case swmm_LINK_POLLUTANT_CONCENTRATION:
-        if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+        if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
-        return link->newQual[subIndex];
+        return link->newQual[pollutantIndex];
     case swmm_LINK_POLLUTANT_LOAD:
-        if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+        if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
-        return link->totalLoad[subIndex];
+        return link->totalLoad[pollutantIndex];
     case swmm_LINK_POLLUTANT_LATMASS_FLUX:
-        if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+        if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
-        return link->apiExtQualMassFlux[subIndex];
+        return link->apiExtQualMassFlux[pollutantIndex];
     default:
         return ERR_API_OBJECT_TYPE;
     }
@@ -2150,7 +2207,7 @@ int setLinkSetting(int index, double value)
 /*!
  * \copydoc getSavedDate
  */
-double getSavedDate(int period)
+static double getSavedDate(int period)
 {
     double days;
     output_readDateTime(period, &days);
@@ -2160,7 +2217,7 @@ double getSavedDate(int period)
 /*!
  * \copydoc getSavedSubcatchValue
  */
-double getSavedSubcatchValue(int property, int index, int period)
+static double getSavedSubcatchValue(int property, int index, int period)
 {
     // --- SubcatchResults array is defined in output.c and contains
     //     computed results in user's units
@@ -2190,7 +2247,7 @@ double getSavedSubcatchValue(int property, int index, int period)
 /*!
  * \copydoc getSavedNodeValue
  */
-double getSavedNodeValue(int property, int index, int period)
+static double getSavedNodeValue(int property, int index, int period)
 {
     // --- NodeResults array is defined in output.c and contains
     //     computed results in user's units
@@ -2224,7 +2281,7 @@ double getSavedNodeValue(int property, int index, int period)
 /*!
  * \copydoc getSavedLinkValue
  */
-double getSavedLinkValue(int property, int index, int period)
+static double getSavedLinkValue(int property, int index, int period)
 {
     double y, w;
 
@@ -2260,7 +2317,7 @@ double getSavedLinkValue(int property, int index, int period)
 /*!
  * \copydoc getMaxRouteStep
  */
-double getMaxRouteStep()
+static double getMaxRouteStep()
 {
     double tmpCourantFactor = CourantFactor;
     double result = RouteStep;
@@ -2276,7 +2333,7 @@ double getMaxRouteStep()
 /*!
  * \copydoc setRoutingStep
  */
-int setRoutingStep(double value)
+static int setRoutingStep(double value)
 {
     if (value <= 0.0)
         return ERR_API_PROPERTY_VALUE;
@@ -2293,7 +2350,7 @@ int setRoutingStep(double value)
 /*!
  * \copydoc setSystemValue
  */
-int setSystemValue(int property, double value)
+static int setSystemValue(int property, double value)
 {
     int y, m, d, h, mm, s;
 
@@ -2675,7 +2732,7 @@ static int isRelativePath(const char *fname)
 /*!
  * \copydoc getAbsolutePath
  */
-void getAbsolutePath(const char *fname, char *absPath, size_t size)
+static void getAbsolutePath(const char *fname, char *absPath, size_t size)
 {
     char *endOfDir;
 
@@ -2741,7 +2798,7 @@ void writecon(const char *s)
 /*!
  * \copydoc xfilter
  */
-int xfilter(int xc, char *module, double elapsedTime, long step)
+static int xfilter(int xc, char *module, double elapsedTime, long step)
 {
     int rc;         // result code
     long hour;      // current hour of simulation

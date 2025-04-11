@@ -588,8 +588,8 @@ cdef void progress_callback_wrapper(double progress):
 
 def run_solver(
     inp_file: str, 
-    rpt_file: str, 
-    out_file: str, 
+    rpt_file: str = None, 
+    out_file: str = None, 
     swmm_progress_callback: Callable[[float], None] = None
     ) -> int:
     """

@@ -152,6 +152,7 @@ static TLidProc*  LidProcs;            // array of LID processes
 static int        LidCount;            // number of LID processes
 static TLidGroup* LidGroups;           // array of LID process groups
 static int        GroupCount;          // number of LID groups (subcatchments)
+static int        LidUnitsCount;       // number of LID units in all groups
 
 static double     EvapRate;            // evaporation rate (ft/s)
 static double     NativeInfil;         // native soil infil. rate (ft/s)

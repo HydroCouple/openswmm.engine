@@ -110,51 +110,114 @@ typedef enum
     /*! \brief Total precipitation */
     swmm_GAGE_TOTAL_PRECIPITATION = 100,
     /*! \brief Rainfall */
-    swmm_GAGE_RAINFALL = 101,
+    swmm_GAGE_RAINFALL,
     /*! \brief Snowfall */
-    swmm_GAGE_SNOWFALL = 102,
+    swmm_GAGE_SNOWFALL,
 } swmm_GageProperty;
 
 /*!
  * \enum swmm_SubcatchProperty
  * \brief Enumeration of subcatchment properties used in SWMM5
+ * \TODO Add LID properties to this enum
  */
 typedef enum
 {
     /*! \brief Area */
     swmm_SUBCATCH_AREA = 200,
     /*! \brief Rain gage */
-    swmm_SUBCATCH_RAINGAGE = 201,
+    swmm_SUBCATCH_RAINGAGE,
     /*! \brief Rainfall */
-    swmm_SUBCATCH_RAINFALL = 202,
+    swmm_SUBCATCH_RAINFALL,
     /*! \brief Evaporation */
-    swmm_SUBCATCH_EVAP = 203,
+    swmm_SUBCATCH_EVAP,
     /*! \brief Infiltration */
-    swmm_SUBCATCH_INFIL = 204,
+    swmm_SUBCATCH_INFIL,
     /*! \brief Runoff */
-    swmm_SUBCATCH_RUNOFF = 205,
+    swmm_SUBCATCH_RUNOFF,
     /*! \brief Report flag */
-    swmm_SUBCATCH_RPTFLAG = 206,
+    swmm_SUBCATCH_RPTFLAG,
     /*! \brief Width */
-    swmm_SUBCATCH_WIDTH = 207,
+    swmm_SUBCATCH_WIDTH,
     /*! \brief Slope */
-    swmm_SUBCATCH_SLOPE = 208,
+    swmm_SUBCATCH_SLOPE,
+    /*! \brief Outlet type */
+    swmm_SUBCATCH_OUTLET_TYPE,
+    /*! \brief Outlet index */
+    swmm_SUBCATCH_OUTLET_INDEX,
+    /*! \brief Infiltration model */
+    swmm_SUBCATCH_INFILTRATION_MODEL,
+    /*! \brief Fraction impervious */
+    swmm_SUBCATCH_FRACTION_IMPERVIOUS,
+    /*! \brief Subarea routing to */
+    swmm_SUBCATCH_SUB_AREA_ROUTE_TO,
+    /*! \brief Fraction subarea routed to outlet */
+    swmm_SUBCATCH_SUB_AREA_FRACTION_OUTLET,
+    /*! \brief Subarea's Manning's n */
+    swmm_SUBCATCH_SUB_AREA_MANNINGS_N,
+    /*! \brief Subarea's depression storage */
+    swmm_SUBCATCH_SUB_AREA_FRACTION_AREA,
+    /*! \brief Subarea's depression storage */
+    swmm_SUBCATCH_SUB_AREA_DEPRESSION_STORAGE,
+    /*! \brief Subarea's inflow */
+    swmm_SUBCATCH_SUB_AREA_INFLOW,
+    /*! \brief Subarea's runoff */
+    swmm_SUBCATCH_SUB_AREA_RUNOFF,
+    /*! \brief Subarea's depth */
+    swmm_SUBCATCH_SUB_AREA_DEPTH,
+    /*! \brief Subcatch's LID unit count */
+    swmm_SUBCATCH_LID_UNITS_COUNT,
+    /*! \brief Subcatch's LID pervious area */
+    swmm_SUBCATCH_LID_UNITS_PERV_AREA,
+    /*! \brief Subcatch's LID flow to pervious area */
+    swmm_SUBCATCH_LID_UNITS_FLOW_TO_PERV_AREA,
+    /*! \brief Subcatch's LID drain flow */
+    swmm_SUBCATCH_LID_UNITS_DRAIN_FLOW,
+    /*! \brief Number of Subcatch's LID replicates*/
+    swmm_SUBCATCH_LID_UNIT_REPLICATES,
+    /*! \brief Subcatch's LID unit area */
+    swmm_SUBCATCH_LID_UNIT_AREA,
+    /*! \brief Subcatch's LID unit full top width */
+    swmm_SUBCATCH_LID_UNIT_FULL_WIDTH,
+    /*! \brief Subcatch's LID unit bottom width */
+    swmm_SUBCATCH_LID_UNIT_BOTTOM_WIDTH,
+    /*! \brief Subcatch's LID unit initial saturation of soil and storage layers*/
+    swmm_SUBCATCH_LID_UNIT_INIT_SATURATION,
+    /*! \brief Subcatch's LID unit fraction of impervious area runoff treated */
+    swmm_SUBCATCH_LID_UNIT_FROM_IMPERVIOUS,
+    /*! \brief Subcatch's LID unit fraction of pervious area runoff treated */
+    swmm_SUBCATCH_LID_UNIT_FROM_PERVIOUS,
+    /*! \brief Whether Subcatch's LID unit's flow is sent to the pervious area */
+    swmm_SUBCATCH_LID_UNIT_TO_PERVIOUS,
+    /*! \brief The object type of the receiving drain flow */
+    swmm_SUBCATCH_LID_UNIT_RECEIVING_OUTLET_TYPE,
+    /*! \brief The index of the object receiving drain flow */
+    swmm_SUBCATCH_LID_UNIT_RECEIVING_OUTLET_INDEX,
+    /*! \brief Subcatch's LID unit surface depth */
+    swmm_SUBCATCH_LID_UNIT_SURFACE_DEPTH,
+    /*! \brief Subcatch's LID unit soil moisture content of biocell soil layer */
+    swmm_SUBCATCH_LID_UNIT_SOIL_MOISTURE,
+    /*! \brief Subcatch's LID unit green and ampt soil capillary suction */
+    swmm_SUBCATCH_LID_UNIT_GREEN_AMPT_CAPILLARY_SUCTION,
+    /*! \brief Subcatch's LID unit green and ampt saturated conductivity */
+    swmm_SUBCATCH_LID_UNIT_GREEN_AMPT_SATURATED_CONDUCTIVITY,
+    /*! \brief Subcatch's LID unit green and ampt maximum soil moisture deficit */
+    swmm_SUBCATCH_LID_UNIT_GREEN_AMPT_MAXIMUM_SOIL_MOISTURE_DEFICIT,
     /*! \brief Curb length */
-    swmm_SUBCATCH_CURB_LENGTH = 209,
+    swmm_SUBCATCH_CURB_LENGTH,
     /*! \brief API provided rainfall */
-    swmm_SUBCATCH_API_RAINFALL = 210,
+    swmm_SUBCATCH_API_RAINFALL,
     /*! \brief API provided snowfall */
-    swmm_SUBCATCH_API_SNOWFALL = 211,
+    swmm_SUBCATCH_API_SNOWFALL,
     /*! \brief Pollutant buildup */
-    swmm_SUBCATCH_POLLUTANT_BUILDUP = 212,
+    swmm_SUBCATCH_POLLUTANT_BUILDUP,
     /*! \brief External pollutant buildup */
-    swmm_SUBCATCH_EXTERNAL_POLLUTANT_BUILDUP = 213,
+    swmm_SUBCATCH_EXTERNAL_POLLUTANT_BUILDUP,
     /*! \brief Runoff concentration */
-    swmm_SUBCATCH_POLLUTANT_RUNOFF_CONCENTRATION = 214,
+    swmm_SUBCATCH_POLLUTANT_RUNOFF_CONCENTRATION,
     /*! \brief Ponded concentration */
-    swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION = 215,
+    swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION,
     /*! \brief Total pollutant load */
-    swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD = 216,
+    swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD,
 } swmm_SubcatchProperty;
 
 /*!
@@ -166,33 +229,33 @@ typedef enum
     /*! \brief Node type */
     swmm_NODE_TYPE = 300,
     /*! \brief Elevation */
-    swmm_NODE_ELEV = 301,
+    swmm_NODE_ELEV,
     /*! \brief Maximum depth */
-    swmm_NODE_MAXDEPTH = 302,
+    swmm_NODE_MAXDEPTH,
     /*! \brief Depth */
-    swmm_NODE_DEPTH = 303,
+    swmm_NODE_DEPTH,
     /*! \brief Hydraulic head */
-    swmm_NODE_HEAD = 304,
+    swmm_NODE_HEAD,
     /*! \brief Volume */
-    swmm_NODE_VOLUME = 305,
+    swmm_NODE_VOLUME,
     /*! \brief Lateral inflow */
-    swmm_NODE_LATFLOW = 306,
+    swmm_NODE_LATFLOW,
     /*! \brief Inflow */
-    swmm_NODE_INFLOW = 307,
+    swmm_NODE_INFLOW,
     /*! \brief Overflow */
-    swmm_NODE_OVERFLOW = 308,
+    swmm_NODE_OVERFLOW,
     /*! \brief Report flag */
-    swmm_NODE_RPTFLAG = 309,
+    swmm_NODE_RPTFLAG,
     /*! \brief Surcharge depth */
-    swmm_NODE_SURCHARGE_DEPTH = 310,
+    swmm_NODE_SURCHARGE_DEPTH,
     /*! \brief Ponded area */
-    swmm_NODE_PONDED_AREA = 311,
+    swmm_NODE_PONDED_AREA,
     /*! \brief Initial depth */
-    swmm_NODE_INITIAL_DEPTH = 312,
+    swmm_NODE_INITIAL_DEPTH,
     /*! \brief Pollutant concentration */
-    swmm_NODE_POLLUTANT_CONCENTRATION = 313,
+    swmm_NODE_POLLUTANT_CONCENTRATION,
     /*! \brief Pollutant lateral mass flux inflow */
-    swmm_NODE_POLLUTANT_LATMASS_FLUX = 314,
+    swmm_NODE_POLLUTANT_LATMASS_FLUX,
 } swmm_NodeProperty;
 
 /*!
@@ -573,9 +636,10 @@ double EXPORT_SWMM_SOLVER_API swmm_getValue(int property, int index);
  * \param[in] property Property type
  * \param[in] index Object index
  * \param[in] subIndex Optional Subindex for the property
+ * \param[in] pollutantIndex Optional Pollutant index for the property
  * \return Property value
  */
-double EXPORT_SWMM_SOLVER_API swmm_getValueExpanded(int objType, int property, int index, int subIndex);
+double EXPORT_SWMM_SOLVER_API swmm_getValueExpanded(int objType, int property, int index, int subIndex, int pollutantIndex);
 
 /*!
  * \brief Set the value of a property for an object of a given property and index in the SWMM model.
@@ -593,10 +657,11 @@ int EXPORT_SWMM_SOLVER_API swmm_setValue(int property, int index, double value);
  * \param[in] property Property type
  * \param[in] index Object index
  * \param[in] subIndex Optional Subindex for the property
+ * \param[in] pollutantIndex Optional Pollutant index for the property
  * \param[in] value Property value
  * \return Error code
  */
-int EXPORT_SWMM_SOLVER_API swmm_setValueExpanded(int objType, int property, int index, int subIndex, double value);
+int EXPORT_SWMM_SOLVER_API swmm_setValueExpanded(int objType, int property, int index, int subIndex, int pollutantIndex, double value);
 
 /*!
  * \brief Get saved value of

@@ -11,6 +11,6 @@ def test_compare_node_results_(benchmark, data_regression, input_file):
     def run_test():
         # Your test logic here
         assert True
-
+    print(f"Running test for input file: {input_file}")
     # Optionally, you can add assertions to check the benchmark results
     assert benchmark.stats.mean < 0.1  # Example assertion
