@@ -598,35 +598,35 @@ void readNewIfaceValues()
         fgets(line, MAXLINE, Finflows.file);
 
         // --- parse date & time from line
-        if ( strtok_r(line, SEPSTR) == NULL ) return;
-        s = strtok_r(NULL, SEPSTR);
+        if ( strtok(line, SEPSTR) == NULL ) return;
+        s = strtok(NULL, SEPSTR);
         if ( s == NULL ) return;
-        yr  = strtok_r(s);
-        s = strtok_r(NULL, SEPSTR);
+        yr  = atoi(s);
+        s = strtok(NULL, SEPSTR);
         if ( s == NULL ) return;
         mon = atoi(s);
-        s = strtok_r(NULL, SEPSTR);
+        s = strtok(NULL, SEPSTR);
         if ( s == NULL ) return;
         day = atoi(s);
-        s = strtok_r(NULL, SEPSTR);
+        s = strtok(NULL, SEPSTR);
         if ( s == NULL ) return;
         hr  = atoi(s);
-        s = strtok_r(NULL, SEPSTR);
+        s = strtok(NULL, SEPSTR);
         if ( s == NULL ) return;
         min = atoi(s);
-        s = strtok_r(NULL, SEPSTR);
+        s = strtok(NULL, SEPSTR);
         if ( s == NULL ) return;
         sec = atoi(s);
 
         // --- parse flow value
-        s = strtok_r(NULL, SEPSTR);
+        s = strtok(NULL, SEPSTR);
         if ( s == NULL ) return;
         NewIfaceValues[i][0] = atof(s) / Qcf[IfaceFlowUnits]; 
 
         // --- parse pollutant values
         for (j=1; j<=NumIfacePolluts; j++)
         {
-            s = strtok_r(NULL, SEPSTR);
+            s = strtok(NULL, SEPSTR);
             if ( s == NULL ) return;
             NewIfaceValues[i][j] = atof(s);
         }
