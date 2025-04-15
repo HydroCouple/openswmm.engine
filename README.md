@@ -1,7 +1,6 @@
-EPA ORD Stormwater Management Model (SWMM)
-==========================================
+## EPA ORD Stormwater Management Model (SWMM)
 
-Stormwater Management Model (SWMM) computational engine and output post-processing codebase
+Stormwater Management Model (SWMM) computational engine and output post-processing documentation
 
 ## Build Status
 [![Unit Testing](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/unit_testing.yml)

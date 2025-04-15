@@ -1,6 +1,11 @@
-# SWMM 5.2.0 Major Updates
+# Updates Overview
 
-## 1.  HEC-22 Inlet Analysis
+## SWMM 5.3.0
+
+
+## SWMM 5.2.0
+
+### 1.  HEC-22 Inlet Analysis
 
 SWMM 5 now has the capability to compute the amount of surface runoff flow captured by street inlet structures and sent into a below ground drainage system using the FHWA HEC-22 methodology (see Figure 1). 
 
@@ -164,7 +169,7 @@ where
  5. The default inlet placement is `AUTOMATIC`, meaning that the program uses the street network topography to determine whether an inlet operates on-grade or on-sag.
  6. There is no requirement that the rim elevation of the receptor sewer node equal the invert elevation of the street node.
 
-## 2.  New Storage Unit Shapes
+### 2.  New Storage Unit Shapes
 
 Two new functional types of surface area v. depth curves have been added to represent the following shaped storage units:
  - **Conical** (truncated elliptical cone): ![ ](./Images/Fig4.png) with surface area equation:
@@ -196,7 +201,7 @@ where
 |`fEvap` |fraction of potential evaporation realized |
 |`infil` |optional set of infiltration parameters
 
-## 3.  Variable Speed Pumps
+### 3.  Variable Speed Pumps
 
 A new **Type5** pump curve has been introduced to represent a variable speed pump. The curve itself specifies how the pump head decreases with increasing flow (same as a Type3 pump) at some nominal speed which represents a setting of 1.0. At any other speed setting `S` (as adjusted by control rules) a point with head `H` and flow `Q` on the curve becomes `H*S^2` and `Q*S`, respectively on a speed-adjusted curve.
 \
@@ -210,7 +215,7 @@ name  TYPE5
 followed by lines containing `name  flow head` values for specific points on the nominal curve.
 
 
-## 4.  New Control Rule Features
+### 4.  New Control Rule Features
 \
 *Additional Condition Clause Attributes* 
 
