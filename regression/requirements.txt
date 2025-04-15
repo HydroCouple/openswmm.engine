@@ -1,1 +1,3 @@
+../python
 pytest-regressions==2.7.0
+header-detail-footer==2.4

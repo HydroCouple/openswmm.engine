@@ -859,7 +859,7 @@ int table_parseFileLine(char* line, TTable* table, double* x, double* y)
     DateTime t;              // time portion of date/time value
 
     // --- return if line is blank or is a comment
-    tStr = strtok_r(line, TBLSEPSTR);
+    tStr = strtok(line, TBLSEPSTR);
     if ( tStr == NULL || *tStr == ';' ) return -1;
 
 
@@ -882,7 +882,7 @@ int table_parseFileLine(char* line, TTable* table, double* x, double* y)
             break;
         }
 
-        tStr = strtok_r(NULL, TBLSEPSTR);
+        tStr = strtok(NULL, TBLSEPSTR);
     }
 
     // --- line only has a time and a value
