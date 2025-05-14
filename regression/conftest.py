@@ -8,6 +8,10 @@ def pytest_addoption(parser):
     )
 
     parser.addoption(
+        "--data-dir", action="store", default=None, help="Directory to search for data files", required=True
+    )
+
+    parser.addoption(
         "--atol", action="store", default=1.0e-8, help="Absolute tolerance for floating point comparisons"
     )
 

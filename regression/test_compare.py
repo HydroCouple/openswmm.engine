@@ -9,45 +9,14 @@ from epaswmm import output
 from epaswmm.output import Output
 
 
-def output_generator(output_path):
-    '''
-    The output_generator is designed to iterate over a swmm binary file and
-    yield element results. It is useful for comparing contents of binary files
-    for numerical regression testing.
-
-    The generator yields a list containing the SWMM element result.
-
-    Arguments:
-        path_ref - path to result file
-
-    Raises:
-        SWMM_OutputReaderError()
-        ...
-    '''
-
-    with Output(output_file=output_path) as reader:
-
-        output_size = reader.output_size
-        units = reader.units
-     
-        
-        num_variables = reader.get_num_variables(output.ElementType.SUBCATCH)
-        sub_catchment_properties = reader.get_property_values(output.ElementType.SUBCATCH)
-
-
-        for period_index in range(0, reader.report_periods()):
-            for element_type in islice(shared_enum.ElementType, 4):
-                for element_index in range(0, reader.element_count(element_type)):
-
-                    yield (reader.element_result(element_type, period_index, element_index),
-                        (element_type, period_index, element_index))
-
-
-
 def compare_report_files(reference_report : str, test_report : str) -> bool:
     """
     Compare two reports and return True if they are the same, False otherwise.
     Ignores contents of header and footer.
+
+    :param reference_report: Path to the reference report file.
+    :param test_report: Path to the test report file.
+    :return: True if reports are the same, False otherwise.
     """
 
     HEADER = 4
@@ -67,6 +36,10 @@ def compare_report_files(reference_report : str, test_report : str) -> bool:
 def test_compare_node_results_(benchmark, data_regression, input_file):
     """
     Compare the results of the node results and benchmark the execution time.
+    :benchmark: pytest-benchmark fixture to measure performance.
+    :data_regression: pytest-data-regression fixture to check data regression.
+    :param input_file: Path to the input file for testing.
+    :return: None
     """
     @benchmark
     def run_test():

@@ -9,6 +9,7 @@ import platform
 import sys
 import importlib.metadata
 
+
 if platform.system() == "Windows":
     lib_dir = os.path.join(sys.prefix, "bin")
     if hasattr(os, "add_dll_directory"):

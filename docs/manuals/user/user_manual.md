@@ -1,4 +1,4 @@
- SWMM User Manual Version 5.3  {#user_manual}
+SWMM User Manual Version 5.3 {#user_manual}
 =====================================
 
 <center>
@@ -22,6 +22,8 @@ The information in this document has been funded wholly or in part by the U.S. E
 Protection Agency (EPA). The content in this document is a live documentation that has yet
 to be subjected to the Agency’s peer and administrative review. The contents DO NOT necessarily reflect the views of the Agency. Mention of trade names or commercial products does not constitute endorsement or recommendation for use.
 
+Although a reasonable effort has been made to assure that the results obtained are correct, the computer programs described in this manual are experimental. Therefore the author and the U.S. Environmental Protection Agency are not responsible and assume no liability whatsoever for any results or any use made of the results obtained from these programs, nor for any damages or litigation that result from the use of these programs for any purpose.
+ 
 NOTICE: This report was prepared as an account of work sponsored by an agency of the United
 States Government. Neither the United States Government, nor any agency thereof, nor any of
 their employees, nor any of their contractors, subcontractors, or their employees, make any
@@ -66,13 +68,13 @@ The document was previously reviewed by Michelle Simon, Katherine Ratliff, and A
 
 The EPA Storm Water Management Model (SWMM) is a dynamic rainfall-runoff simulation model used for single event or long-term (continuous) simulation of runoff quantity and quality from primarily urban areas. The runoff component of SWMM operates on a collection of subcatchment areas that receive precipitation and generate runoff and pollutant loads. The routing portion of SWMM transports this runoff through a system of pipes, channels, storage/treatment devices, pumps, and regulators. SWMM tracks the quantity and quality of runoff generated within each subcatchment, and the flow rate, flow depth, and quality of water in each pipe and channel during a simulation period comprised of multiple time steps. 
 
-![A schematic diagram showing the generation and fate of urban wet weather flows.](figures/urban_sewershed.png)
+![A schematic diagram showing the generation and fate of urban wet weather flows.](figures/figure1_1_urban_sewershed.png "Figure 1-1. A schematic diagram showing the generation and fate of urban wet weather flows."){#user_manual_figure1_1}
 
 SWMM was first released in 1971 and has undergone several major upgrades since then. It continues to be widely used throughout the world for planning, analysis and design related to storm water runoff, combined sewers, sanitary sewers, and other drainage systems in urban areas, with many applications in non-urban areas as well. The current edition, Version 5, is a complete re-write of previous releases.
 
 Running under Windows, SWMM 5 provides an integrated environment for editing study area input data, running hydrologic, hydraulic and water quality simulations, and viewing the results in a variety of formats. These include color-coded drainage area and conveyance system maps, time series graphs and tables, profile plots, and statistical frequency analyses.
 
-## 1.2 Modeling Capabilities
+### 1.2 Modeling Capabilities
 
 SWMM accounts for various hydrologic processes that produce runoff from land surfaces. These include:
 
@@ -90,41 +92,47 @@ SWMM accounts for various hydrologic processes that produce runoff from land sur
 Spatial variability in all of these processes is achieved by dividing a study area into a collection of smaller, homogeneous subcatchment areas, each containing its own fraction of pervious and impervious subareas. Overland flow can be routed between subareas, between subcatchments, or between entry points of a drainage system. 
 
 SWMM also contains a flexible set of hydraulic modeling capabilities used to route runoff and external inflows through a drainage system network of pipes, channels, storage/treatment units and diversion structures. These include the ability to: 
-	handle networks of unlimited size  
-	use a wide variety of standard closed and open conduit shapes as well as natural channels  
-	model special elements such as storage/treatment units, curb and gutter inlets, culverts, flow dividers, pumps, weirs, and orifices  
-	apply external flows and water quality inputs from surface runoff, groundwater interflow, rainfall-dependent infiltration and inflow, dry weather sanitary flow, and user-defined inflows  
-	utilize either kinematic wave or full dynamic wave flow routing methods  
-	model various flow regimes, such as backwater, surcharging, reverse flow, and surface ponding  
-	apply user-defined dynamic control rules to simulate the operation of pumps, orifice openings, and weir crest levels.
+
+- handle networks of unlimited size  
+- use a wide variety of standard closed and open conduit shapes as well as natural channels  
+- model special elements such as storage/treatment units, curb and gutter inlets, culverts, flow dividers, pumps, weirs, and orifices  
+- apply external flows and water quality inputs from surface runoff, groundwater interflow, rainfall-dependent infiltration and inflow, dry weather- sanitary flow, and user-defined inflows  
+- utilize either kinematic wave or full dynamic wave flow routing methods  
+- model various flow regimes, such as backwater, surcharging, reverse flow, and surface ponding  
+- apply user-defined dynamic control rules to simulate the operation of pumps, orifice openings, and weir crest levels.
  
 In addition to modeling the generation and transport of runoff flows, SWMM can also estimate the production of pollutant loads associated with this runoff. The following processes can be modeled for any number of user-defined water quality constituents: 
-	dry-weather pollutant buildup over different land uses  
-	pollutant washoff from specific land uses during storm events  
-	direct contribution of rainfall deposition  
-	reduction in dry-weather buildup due to street cleaning  
-	reduction in washoff load due to BMPs  
-	entry of dry weather sanitary flows and user-specified external inflows at any point in the drainage system  
-	routing of water quality constituents through the drainage system  
-	reduction in constituent concentration through treatment in storage units or by natural processes in pipes and channels.   
 
-	Typical Applications of SWMM
+- dry-weather pollutant buildup over different land uses  
+- pollutant washoff from specific land uses during storm events  
+- direct contribution of rainfall deposition  
+- reduction in dry-weather buildup due to street cleaning  
+- reduction in washoff load due to BMPs  
+- entry of dry weather sanitary flows and user-specified external inflows at any point in the drainage system  
+- routing of water quality constituents through the drainage system  
+- reduction in constituent concentration through treatment in storage units or by natural processes in pipes and channels.   
+
+### 1.3 Typical Applications of SWMM
 
 Since its inception, SWMM has been used in thousands of sewer and stormwater studies throughout the world. Typical applications include:
-	design and sizing of drainage system components for flood control  
-	sizing of detention facilities and their appurtenances for flood control and water quality protection
-	flood plain mapping of natural channel systems
-	designing control strategies for minimizing combined sewer overflows
-	evaluating the impact of rainfall-dependent infiltration and inflow on sanitary sewer overflows
-	generating non-point source pollutant loadings for waste load allocation studies
-	evaluating the effectiveness of BMPs for reducing wet weather pollutant loadings.
 
-	Installing EPA SWMM
+- design and sizing of drainage system components for flood control  
+- sizing of detention facilities and their appurtenances for flood control and water quality protection
+- flood plain mapping of natural channel systems
+- designing control strategies for minimizing combined sewer overflows
+- evaluating the impact of rainfall-dependent infiltration and inflow on sanitary sewer overflows
+- generating non-point source pollutant loadings for waste load allocation studies
+- evaluating the effectiveness of BMPs for reducing wet weather pollutant loadings.
 
-EPA SWMM 5.2 runs on both 32- and 64-bit versions of Microsoft Windows. It is distributed as a single file named swmm52#(x86)_setup.exe for the 32-bit edition or swmm52#(x64)_setup.exe for the 64-bit edition (where # is the current release number which as of this writing is 0) that contains a self-extracting setup program. To install EPA SWMM:
-	Select the Search icon from the Windows Taskbar and enter the word Run.
-	In the Run dialog that appears click the Browse button to locate the SWMM setup file on your computer.
-	Click the OK button type to begin the setup process.
+### 1.4	Installing EPA SWMM
+
+EPA SWMM 5.3 runs on both 32- and 64-bit versions of Microsoft Windows. It is distributed as a single file named swmm52#(x86)_setup.exe for the 32-bit edition or swmm52#(x64)_setup.exe for the 64-bit edition (where # is the current release number which as of this writing is 0) that contains a self-extracting setup program. To install EPA SWMM:
+	
+1. Select the Search icon from the Windows Taskbar and enter the word Run.
+
+2. In the Run dialog that appears click the Browse button to locate the SWMM setup file on your computer.
+
+3. Click the OK button type to begin the setup process.
 
 The setup program will ask you to choose a folder (directory) where the SWMM program files will be placed. After the files are installed your Start Menu will have a new item named EPA SWMM 5.2.# where # is the current release number. To launch SWMM, select this item off of the Start Menu, and then select SWMM 5.2 from the submenu that appears. (The name of the executable file that runs SWMM under Windows is epaswmm5.exe.)
 
@@ -135,125 +143,146 @@ A user’s personal settings for running SWMM are stored in a folder named EPASW
 Several example data sets have been included with the installation package to help users become familiar with the program. They are placed in a sub-folder named EPA SWMM Projects\Sample Projects in the user’s Documents folder. Each example consists of an .INP file that holds the project’s data along with a .TXT file that describes the system being modeled. 
 
 To remove EPA SWMM from your computer, do the following:
-	Select Settings from the Windows Start menu.
-	Select Apps from the Settings page.
-	Select EPA SWMM 5.2.# from the list of programs that appears.
-	Click the Uninstall button.
 
-	Steps in Using SWMM
+1. Select Settings from the Windows Start menu.
+
+2. Select Apps from the Settings page.
+
+3. Select EPA SWMM 5.2.# from the list of programs that appears.
+
+4. Click the Uninstall button.
+
+### 1.5	Steps in Using SWMM
 
 One typically carries out the following steps when using EPA SWMM to model a study area: 
-	Specify a default set of options and object properties to use (see Section 5.4).
-	Draw a network representation of the physical components of the study area (see Section 6.2).
-	Edit the properties of the objects that make up the system (see Section 6.4).
-	Select a set of analysis options (see Section 8.1).
-	Run a simulation (see Section 8.4).
-	View the results of the simulation (see Chapter 9).  
+
+1. Specify a default set of options and object properties to use (see Section 5.4).
+
+2. Draw a network representation of the physical components of the study area (see Section 6.2).
+
+3. Edit the properties of the objects that make up the system (see Section 6.4).
+
+4. Select a set of analysis options (see Section 8.1).
+
+5. Run a simulation (see Section 8.4).
+
+6. View the results of the simulation (see Chapter 9).  
  
 For building larger systems from scratch it might be more convenient to replace Step 2 by collecting study area data from various sources, such as CAD drawings or GIS files, and transferring these data into a SWMM input file whose format is described in Appendix D of this manual.
 
-	About This Manual
+### 1.6 About This Manual
 
-Chapter 2 presents a short tutorial to help get started using EPA SWMM. It shows how to add objects to a SWMM project, how to edit the properties of these objects, how to run a single event simulation for both hydrology and water quality, and how to run a long-term continuous simulation.
+[Chapter 2](@ref user_manual_chapter_2) presents a short tutorial to help get started using EPA SWMM. It shows how to add objects to a SWMM project, how to edit the properties of these objects, how to run a single event simulation for both hydrology and water quality, and how to run a long-term continuous simulation.
 
-Chapter 3 provides background material on how SWMM models stormwater runoff within a drainage area. It discusses the behavior of the physical components that comprise a stormwater drainage area and collection system as well as how additional modeling information, such as rainfall quantity, dry weather sanitary inflows, and operational control, are handled. It also provides an overview of how the numerical simulation of system hydrology, hydraulics and water quality behavior is carried out.
+[Chapter 3](@ref user_manual_chapter_3) provides background material on how SWMM models stormwater runoff within a drainage area. It discusses the behavior of the physical components that comprise a stormwater drainage area and collection system as well as how additional modeling information, such as rainfall quantity, dry weather sanitary inflows, and operational control, are handled. It also provides an overview of how the numerical simulation of system hydrology, hydraulics and water quality behavior is carried out.
 
-Chapter 4 shows how the EPA SWMM graphical user interface is organized. It describes the functions of the various menu options and toolbar buttons, and how the three main windows – the Study Area Map, the Browser panel, and the Property Editor—are used. 
+[Chapter 4](@ref user_manual_chapter_4) shows how the EPA SWMM graphical user interface is organized. It describes the functions of the various menu options and toolbar buttons, and how the three main windows – the Study Area Map, the Browser panel, and the Property Editor—are used. 
 
-Chapter 5 discusses the project files that store all of the information contained in a SWMM model of a drainage system. It shows how to create, open, and save these files as well as how to set default project options. It also discusses how to register calibration data that are used to compare simulation results against actual measurements.
+[Chapter 5](@ref user_manual_chapter_5) discusses the project files that store all of the information contained in a SWMM model of a drainage system. It shows how to create, open, and save these files as well as how to set default project options. It also discusses how to register calibration data that are used to compare simulation results against actual measurements.
 
-Chapter 6 describes how one goes about building a network model of a drainage system with SWMM. It shows how to create the various physical objects (subcatchment areas, drainage pipes and channels, pumps, weirs, storage units, etc.) that make up a system, how to edit the properties of these objects, and how to describe the way that externally imposed inflows, boundary conditions and operational controls change over time.
+[Chapter 6](@ref user_manual_chapter_6) describes how one goes about building a network model of a drainage system with SWMM. It shows how to create the various physical objects (subcatchment areas, drainage pipes and channels, pumps, weirs, storage units, etc.) that make up a system, how to edit the properties of these objects, and how to describe the way that externally imposed inflows, boundary conditions and operational controls change over time.
 
-Chapter 7 explains how to use the study area map that provides a graphical view of the system being modeled. It shows how to view different design and computed variables in color-coded fashion on the map, how to re-scale, zoom, and pan the map, how to locate objects by name on the map, how to utilize a backdrop image, and what options are available to customize the appearance of the map.
-Chapter 8 shows how to run a simulation of a SWMM model. It describes the options that control how the analysis is made and offers some troubleshooting tips to use when examining simulation results.
+[Chapter 7](@ref user_manual_chapter_7) explains how to use the study area map that provides a graphical view of the system being modeled. It shows how to view different design and computed variables in color-coded fashion on the map, how to re-scale, zoom, and pan the map, how to locate objects by name on the map, how to utilize a backdrop image, and what options are available to customize the appearance of the map.
 
-Chapter 9 discusses the various ways in which the results of an analysis can be viewed. These include different views of the study area map, various kinds of graphs and tables, and several different types of special reports. 
+[Chapter 8](@ref user_manual_chapter_8) shows how to run a simulation of a SWMM model. It describes the options that control how the analysis is made and offers some troubleshooting tips to use when examining simulation results.
 
-Chapter 10 explains how to print and copy the results discussed in Chapter 9. 
+[Chapter 9](@ref user_manual_chapter_9) discusses the various ways in which the results of an analysis can be viewed. These include different views of the study area map, various kinds of graphs and tables, and several different types of special reports. 
 
-Chapter 11 describes how EPA SWMM can use different types of interface files to make simulations runs more efficient.
+[Chapter 10](@ref user_manual_chapter_10) explains how to print and copy the results discussed in Chapter 9. 
 
-Chapter 12 describes how add-in tools can be registered and share data with SWMM. These tools are external applications launched from SWMM’s graphical user interface that can extend its capabilities. 
+[Chapter 11](@ref user_manual_chapter_11) describes how EPA SWMM can use different types of interface files to make simulations runs more efficient.
+
+[Chapter 12](@ref user_manual_chapter_12) describes how add-in tools can be registered and share data with SWMM. These tools are external applications launched from SWMM’s graphical user interface that can extend its capabilities. 
 
 The manual also contains several appendixes:
-Appendix A -	provides several useful tables of parameter values, including a table of units of expression for all design and computed quantities.
-Appendix B -	lists the editable properties of all visual objects that can be displayed on the study area map and be selected for editing using point and click.
-Appendix C -	describes the specialized editors available for setting the properties of non-visual objects.
-Appendix D -	provides instructions for running the command line version of SWMM and includes a detailed description of the format of a project file.
-Appendix E -	lists all of the error messages and their meaning that SWMM can produce.
+
+[Appendix A](@ref user_manual_appendix_a) -	provides several useful tables of parameter values, including a table of units of expression for all design and computed quantities.
+
+[Appendix B](@ref user_manual_appendix_b) -	lists the editable properties of all visual objects that can be displayed on the study area map and be selected for editing using point and click.
+
+[Appendix C](@ref user_manual_appendix_c) -	describes the specialized editors available for setting the properties of non-visual objects.
+
+[Appendix D](@ref user_manual_appendix_d) -	provides instructions for running the command line version of SWMM and includes a detailed description of the format of a project file.
+
+[Appendix E](@ref user_manual_appendix_e) -	lists all of the error messages and their meaning that SWMM can produce.
  
-QUICK START TUTORIAL
-________________________________________
+## CHAPTER 2 – QUICK START TUTORIAL {#user_manual_chapter_2}
+
 
 This chapter provides a tutorial on how to use EPA SWMM. If you are not familiar with the elements that comprise a drainage system, and how these are represented in a SWMM model, you might want to review the material in Chapter 3 first.
 
-	Example Study Area
+### 2.1 Example Study Area
 
-In this tutorial we will model the drainage system serving a 12-acre residential area. The system layout is shown in Figure 2-1 and consists of subcatchment areas  S1 through S3, storm sewer conduits C1 through C4, and conduit junctions J1 through J4. The system discharges to a creek at the point labeled Out1. We will first go through the steps of creating the objects shown in this diagram on SWMM's study area map and setting the various properties of these objects. Then we will simulate the water quantity and quality response to a 3-inch, 6-hour rainfall event, as well as a continuous, multi-year rainfall record.
+In this tutorial we will model the drainage system serving a 12-acre residential area. The system layout is shown in Figure 2-1(@ref user_manual_figure2_1) and consists of subcatchment areas [^1]  S1 through S3, storm sewer conduits C1 through C4, and conduit junctions J1 through J4. The system discharges to a creek at the point labeled Out1. We will first go through the steps of creating the objects shown in this diagram on SWMM's study area map and setting the various properties of these objects. Then we will simulate the water quantity and quality response to a 3-inch, 6-hour rainfall event, as well as a continuous, multi-year rainfall record.
 
- 
-Figure 2 1  Example Study Area
+![Figure 2-1. A schematic diagram of the study area being analyzed in the example tutorial.](./figures/figure2_1_example_study_area.png "Figure 2-1. A schematic diagram of the study area being analyzed in the example tutorial."){#user_manual_figure2_1}
 
+[^1]: A subcatchment is an area of land containing a mix of pervious and impervious surfaces whose runoff drains to a common outlet point, which could be either a node of the drainage network or another subcatchment.
 
-
-
-	Project Setup
+### 2.2 Project Setup
 
 Our first task is to create a new SWMM project and make sure that certain default options are selected. Using these defaults will simplify the data entry tasks later on.
-	Launch EPA SWMM if it is not already running and select File >> New from the Main Menu bar to create a new project.
-	Select Project >> Defaults to open the Project Defaults dialog.
-	On the ID Labels page of the dialog, set the ID Prefixes as shown below. This will make SWMM automatically label new objects with consecutive numbers following the designated prefix.
 
- 
+1. Launch EPA SWMM if it is not already running and select File >> New from the Main Menu bar to create a new project.
 
+2. Select Project >> Defaults to open the Project Defaults dialog.
 
+3. On the ID Labels page of the dialog, set the ID Prefixes as shown below. This will make SWMM automatically label new objects with consecutive numbers following the designated prefix.
 
+	![Figure 2-2. SWMM's Project Defaults dialog form showing the default ID labeling used for the tutorial example.](./figures/figure2_2_project_defaults_dialog.png "Figure 2-2. SWMM's Project Defaults dialog form showing the default ID labeling used for the tutorial example."){#user_manual_figure2_2}
 
+4. On the Subcatchments page of the dialog set the following default values:
 
+	```
+	Area					4
+	Width					400	
+	% Slope					0.5	
+	% Imperv.				50	
+	N-Imperv.				0.01
+	N-Perv.					0.10
+	Dstore-Imperv.			0.05
+	Dstore-Perv				0.05
+	%Zero-Imperv.			25
+	Infil. Model			<click to edit>
+	-  Method				Modified Green-Ampt
+	-  Suction Head			3.5
+	-  Conductivity			0.5
+	-  Initial Deficit		0.26
+	```
 
+5. On the Nodes/Links page set the following default values:
 
-
-	On the Subcatchments page of the dialog set the following default values:
-Area					4
-Width					400	
-% Slope					0.5	
-% Imperv.				50	
-N-Imperv.				0.01
-N-Perv.					0.10
-Dstore-Imperv.			0.05
-Dstore-Perv				0.05
-%Zero-Imperv.			25
-Infil. Model				<click to edit>
--  Method				Modified Green-Ampt
--  Suction Head			3.5
--  Conductivity			0.5
--  Initial Deficit			0.26
-
-	On the Nodes/Links page set the following default values:
-Node Invert			 	0
-Node Max. Depth	 	4
-Node Ponded Area		0
-Conduit Length		 	400
-Conduit Geometry	 	<click to edit>
-	- Barrels			1
-	- Shape				Circular
-	- Max. Depth		1.0
-Conduit Roughness	 	0.01
-Flow Units			 	CFS
-Link Offsets				DEPTH
-Routing Model			Kinematic Wave
-
-	Click OK to accept these choices and close the dialog. If you wanted to save these choices for all future new projects you could check the Save box at the bottom of the form before accepting it.
+	```
+	Node Invert			 	0
+	Node Max. Depth	 	4
+	Node Ponded Area		0
+	Conduit Length		 	400
+	Conduit Geometry	 	<click to edit>
+		- Barrels			1
+		- Shape				Circular
+		- Max. Depth		1.0
+	Conduit Roughness	 	0.01
+	Flow Units			 	CFS
+	Link Offsets				DEPTH
+	Routing Model			Kinematic Wave
+	```
+6. Click OK to accept these choices and close the dialog. If you wanted to save these choices for all future new projects you could check the Save box at the bottom of the form before accepting it.
 
 Next we will set some map display options so that ID labels and symbols will be displayed as we add objects to the study area map, and links will have direction arrows.
-	Select Tools >> Map Display Options to bring up the Map Options dialog .
-	Select the Subcatchments page, set the Fill Style to Diagonal and the Symbol Size to 5.
-	Then select the Nodes page and set the Node Size to 5.
-	Select the Annotation page and check off the boxes that will display ID labels for Subcatchments, Nodes, and Links. Leave the others un-checked.
-	Finally, select the Flow Arrows page, select the Filled arrow style, and set the arrow size to 7.
-	Click the OK button to accept these choices and close the dialog.
 
- 
+1. Select **Tools >> Map Display Options** to bring up the Map Options dialog .
+
+2. Select the Subcatchments page, set the Fill Style to Diagonal and the Symbol Size to 5.
+
+3. Then select the Nodes page and set the Node Size to 5.
+
+4. Select the Annotation page and check off the boxes that will display ID labels for Subcatchments, Nodes, and Links. Leave the others un-checked.
+
+5. Finally, select the Flow Arrows page, select the Filled arrow style, and set the arrow size to 7.
+	
+6. Click the **OK** button to accept these choices and close the dialog.
+
+	![Figure 2-3. SWMM's Map Options dialog form.](./figures/figure2_3_map_options_dialog.png "Figure 2-3. SWMM's Map Options dialog form."){#user_manual_figure2_3} 
 
 Before placing objects on the map we should set its dimensions.
 	Select View >> Dimensions to bring up the Map Dimensions dialog.
@@ -265,7 +294,7 @@ Finally, look in the status bar at the bottom of the main window and check that 
 
 
 
-	Drawing Objects
+### 2.3 Drawing Objects
 
 We are now ready to begin adding components to the Study Area Map . We will start with the subcatchments. 
 	Begin by selecting the Subcatchments category (under Hydrology) in the Project Browser panel (on the left side of the main window).
@@ -314,7 +343,7 @@ To re-shape a subcatchment's outline:
 
 This same procedure can also be used to re-shape a link.
 
-	Setting Object Properties
+### 2.4 Setting Object Properties
 
 As visual objects are added to our project, SWMM assigns them a default set of properties. To change the value of a specific property for an object we must select the object into the Property Editor. There are several different ways to do this. If the Editor is already visible, then you can simply click on the object or select it from the Project Browser. If the Editor is not visible then you can make it appear by one of the following actions:
 	double-click the object on the map,
@@ -382,7 +411,7 @@ Having completed the initial design of our example project it is a good idea to 
 
 The project data are saved to the file in a readable text format. You can view what the file looks like by selecting Project >> Details from the main menu. To open our project at some later time, you would select the Open command from the File menu.
 
-	Running a Simulation
+### 2.5 Running a Simulation
 
 Setting Simulation Options
 
@@ -533,7 +562,7 @@ To run the analysis with Dynamic Wave routing:
 	Click OK to close the form and select Project >> Run Simulation (or click the    button) to re-run the analysis.
 If you look at the Summary Report for this run, you will see that there is no longer any junction flooding and that the peak flow carried by conduit C2 has been increased from 3.52 cfs to 4.04 cfs.
 
-	Simulating Water Quality
+### 2.6 Simulating Water Quality
 
 In the next phase of this tutorial we will add water quality analysis to our example project. SWMM has the ability to analyze the buildup, washoff, transport and treatment of any number of water quality constituents. The steps needed to accomplish this are:
 	Identify the pollutants to be analyzed.
@@ -598,7 +627,7 @@ If you plot the runoff concentration of TSS for subcatchment S1 and S3 together 
 
  
 
-	Running a Continuous Simulation
+### 2.7 Running a Continuous Simulation
 
 As a final exercise in this tutorial we will demonstrate how to run a long-term continuous simulation using a historical rainfall record and how to perform a statistical frequency analysis on the results. The rainfall record will come from a file named sta310301.dat that was included with the example data sets provided with EPA SWMM. It contains several years of hourly rainfall beginning in January 1998. The data are stored in the National Climatic Data Center's DSI 3240 format, which SWMM can automatically recognize.
 
@@ -637,7 +666,7 @@ We have only touched the surface of SWMM's capabilities. Some additional feature
 	utilizing a background street, site plan, or topo map to assist in laying out a system's drainage elements and to help relate simulated results to real-world locations.
 You can find more information on these and other features in the remaining chapters of this manual.
  
-SWMM’S CONCEPTUAL MODEL
+## CHAPTER 3 - SWMM’S CONCEPTUAL MODEL {#user_manual_chapter_3}
 ________________________________________
 
 This chapter discusses how SWMM models the objects and operational parameters that constitute a stormwater drainage system. Details about how this information is entered into the program are presented in later chapters. An overview is also given on the computational methods that SWMM uses to simulate the hydrology, hydraulics and water quality behavior of a drainage system.
@@ -1463,9 +1492,9 @@ Vegetative Swale	x
 
 All of the LID controls provide some amount of rainfall/runoff storage and evaporation of stored water (except for rain barrels). Infiltration into native soil occurs in vegetative swales and can also occur in bio-retention cells, rain gardens, permeable pavement systems, and infiltration trenches if those systems do not employ an optional impermeable bottom liner. Infiltration trenches and permeable pavement systems can also be subjected to clogging. This reduces their hydraulic conductivity over time proportional to the cumulative hydraulic loading they receive.
 
-The performance of the LID controls placed in a subcatchment is reflected in the overall runoff, infiltration, and evaporation rates computed for the subcatchment as normally reported by SWMM. SWMM's Status Report also contains a section entitled LID Performance Summary that provides an overall water balance for each LID control placed in each subcatchment. The components of this water balance include total inflow, infiltration, evaporation, surface runoff, drain flow and initial and final stored volumes, all expressed as inches (or mm) over the LID's area. Optionally, the entire time series of flux rates and moisture levels for a selected LID control in a given subcatchment can be written to a tab delimited text file for easy viewing and graphing in a spreadsheet program (such as Microsoft Excel).  
-SWMM’S MAIN WINDOW
-________________________________________
+The performance of the LID controls placed in a subcatchment is reflected in the overall runoff, infiltration, and evaporation rates computed for the subcatchment as normally reported by SWMM. SWMM's Status Report also contains a section entitled LID Performance Summary that provides an overall water balance for each LID control placed in each subcatchment. The components of this water balance include total inflow, infiltration, evaporation, surface runoff, drain flow and initial and final stored volumes, all expressed as inches (or mm) over the LID's area. Optionally, the entire time series of flux rates and moisture levels for a selected LID control in a given subcatchment can be written to a tab delimited text file for easy viewing and graphing in a spreadsheet program (such as Microsoft Excel).
+
+## CHAPTER 4 - SWMM’S MAIN WINDOW {#user_manual_chapter_4}
 
 This chapter discusses the essential features of SWMM’s workspace. It describes the main menu bar, the tool and status bars, and the three windows used most often – the Study Area Map, the Browser, and the Property Editor. It also shows how to set program preferences.
 
@@ -1833,8 +1862,7 @@ Style Theme 	Selects a color theme to use for SWMM’s user interface (see below
 
 The Numerical Precision page of the Preferences dialog controls the number of decimal places displayed when simulation results are reported. Use the dropdown list boxes to select a specific Subcatchment, Node or Link parameter, and then use the edit boxes next to them to select the number of decimal places to use when displaying computed results for the parameter. . Note that there is no such limit to the number of decimal places displayed for any particular input design parameter, such as slope, diameter, length, etc. The number of decimal places displayed is whatever the user enters.
  
-WORKING WITH PROJECTS
-________________________________________
+## CHAPTER 5 - WORKING WITH PROJECTS {#user_manual_chapter_5}
 
 Project files contain all of the information used to model a study area. They are usually named with a .INP extension. This section describes how to create, open, and save EPA SWMM projects as well as setting their default properties.
 
@@ -1984,11 +2012,7 @@ To register calibration data residing in a Calibration File:
 
 A listing of all project data (with the exception of map coordinates) can be viewed in a non-editable window, formatted for input to SWMM's computational engine (see below). This can be useful for checking data consistency and to make sure that no key components are missing. To view such a listing select Project >> Details from the Main Menu. The format of the data in this listing is the same as that used when the file is saved to disk. It is described in detail in Appendix D.2.
 
- 
-
- 
-WORKING WITH OBJECTS
-________________________________________
+## CHAPTER 6 - WORKING WITH OBJECTS {#user_manual_chapter_6}
 
 SWMM uses various types of objects to model a drainage area and its conveyance system. This section describes how these objects can be created, selected, edited, deleted, and repositioned.
 
@@ -2164,29 +2188,7 @@ After the group edit is executed a confirmation dialog box will appear informing
 
 To delete the objects located within a selected area of the map, select Edit >> Group Delete from the Main Menu. Then select the categories of objects you wish to delete from the dialog box that appears. As an option, you can specify that only objects within the selected area that have a specific Tag property should be deleted. Keep in mind that deleting a node will also delete any links connected to the node. 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-WORKING WITH THE MAP 
-________________________________________
+## CHAPTER 7 - WORKING WITH THE MAP {#user_manual_chapter_7}
 
 EPA SWMM can display a map of the study area being modeled. This section describes how you can manipulate this map to enhance your visualization of the system.
 
@@ -2498,9 +2500,9 @@ To export the map to a DXF, metafile, or text file:
 
 If you select DXF format, you have a choice of how nodes will be represented in the DXF file. They can be drawn as filled circles, as open circles, or as filled squares. Not all DXF readers can recognize the format used in the DXF file to draw a filled circle. Also note that map annotation, such as node and link ID labels will not be exported, but map label objects will be. 
 
-After choosing a format, click OK and enter a name for the file in the Save As dialog that appears. 
-RUNNING A SIMULATION 
-________________________________________
+After choosing a format, click OK and enter a name for the file in the Save As dialog that appears.
+
+## CHAPTER 8 - RUNNING A SIMULATION {#user_manual_chapter_8}
 
 After a study area has been suitably described, its runoff response, flow routing and water quality behavior can be simulated. This section describes how to specify options to be used in the analysis, how to run the simulation and how to troubleshoot common problems that might occur.
 
@@ -2780,13 +2782,7 @@ Flow time series plots for the links having the highest FII’s should be inspec
 	selecting to ignore the inertial terms of the momentum equation
 	selecting the option to lengthen short conduits.
 
-
-
-
-
-
-VIEWING RESULTS
-________________________________________
+## CHAPTER 9 - VIEWING RESULTS {#user_manual_chapter_9}
 
 This chapter describes the different ways in which the results of a simulation can be viewed. These include a status report, a summary report, various map views, graphs, tables, and a statistical frequency report.
 
@@ -3282,12 +3278,7 @@ After the choices made on the Statistics Selection dialog form are processed, a 
 
 The exceedance frequencies included in the Statistics Report are computed with respect to the number of events that occur, not the total number of reporting periods. 
 
-
-
- 
- 
-PRINTING AND COPYING
-________________________________________
+## CHAPTER 10 - PRINTING AND COPYING {#user_manual_chapter_10}
 
 This chapter describes how to print, copy to the Windows clipboard, or copy to file the contents of the currently active window in the SWMM workspace. This can include the study area map, a graph, a table, or a report.
 
@@ -3354,21 +3345,7 @@ Use the Copy dialog as follows to define how you want your data copied and to wh
 The bitmap format copies the individual pixels of a graphic. The metafile format copies the instructions used to create the graphic and is more suitable for pasting into word processing documents where the graphic can be re-scaled without losing resolution. When data is copied, it can be pasted directly into a spreadsheet program to create customized tables or charts.
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-FILES USED BY SWMM
-________________________________________
+## CHAPTER 11 - FILES USED BY SWMM {#user_manual_chapter_11}
 
 This section describes the various files that SWMM can utilize. They include: the project file, the report and output files, rainfall files, the climate file, calibration data files, time series files, and interface files. The only file required to run SWMM is the project file; the others are optional.
 
@@ -3596,21 +3573,7 @@ N2   2002 04  01  00 20  00  0.002549
 N1   2002 04  01  00 25  00  0.000000
 N2   2002 04  01  00 25  00  0.002549
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-USING ADD-IN TOOLS
-________________________________________
+## CHAPTER 12 - USING ADD-IN TOOLS {#user_manual_chapter_12}
 
 SWMM 5 has the ability to launch external applications from its graphical user interface that can extend its capabilities. This section describes how such tools can be registered and share data with SWMM 5.
 
@@ -3673,1101 +3636,815 @@ Check this option if SWMM should be updated after the tool finishes executing. T
 Generally speaking, the suppliers of third-party tools will provide instructions on what settings should be used in the Tool Properties dialog to properly register their tool with SWMM.
 
  
-USEFUL TABLES
-________________________________________
-	Units of Measurement
+## APPENDIX A - USEFUL TABLES
 
-PARAMETER	US CUSTOMARY	SI METRIC
-Area (Subcatchment)	 acres	hectares
-Area (Storage Unit)	 square feet	square meters
-Area (Ponding)	 square feet	square meters
-Capillary Suction	 inches	millimeters
-Concentration	 mg/L (milligrams/liter)
- ug/L (micrograms/liter)
- #/L (counts/liter)	mg/L
-ug/L
-#/L
-Decay Constant (Infiltration)	 1/hours	1/hours
-Decay Constant (Pollutants)	 1/days	1/days
-Depression Storage	 inches	millimeters
-Depth	 feet	meters
-Diameter	 feet	meters
-Discharge Coefficient:
-    Orifice
-    Weir	 
- dimensionless
- CFS/footn	
-dimensionless
-CMS/metern
-Elevation	 feet	meters
-Evaporation	 inches/day	millimeters/day
-Flow	 CFS (cubic feet / second)
- GPM (gallons / minute)
- MGD (million gallons/day)	CMS (cubic meters/second)
-LPS (liters/second)
-MLD (million liters/day)
-Head	 feet	meters
-Hydraulic Conductivity	 inches/hour	millimeters/hour
-Infiltration Rate	 inches/hour	millimeters/hour
-Length	 feet	meters
-Manning's Coefficient (n)	 seconds/meter1/3	seconds/meter1/3
-Pollutant Buildup	 mass/length
- mass/acre	mass/length
-mass/hectare
-Rainfall Intensity	 inches/hour	millimeters/hour
-Rainfall Volume	 inches	millimeters
-Slope (Subcatchments)	 percent	percent
-Slope (Cross Section)	 rise/run	rise/run
-Street Cleaning Interval	 days	days
-Volume	 cubic feet	cubic meters
-Width	 feet	meters
+A.1 Units of Measurement {#user_manual_appendix_tbl_a_1}
 
+| **PARAMETER**                | **US CUSTOMARY**                                   | **SI METRIC**                                |
+|------------------------------|---------------------------------------------------|---------------------------------------------|
+| Area (Subcatchment)          | acres                                             | hectares                                    |
+| Area (Storage Unit)          | square feet                                       | square meters                               |
+| Area (Ponding)               | square feet                                       | square meters                               |
+| Capillary Suction            | inches                                            | millimeters                                 |
+| Concentration                | mg/L (milligrams/liter), ug/L (micrograms/liter), #/L (counts/liter) | mg/L, ug/L, #/L                             |
+| Decay Constant (Infiltration)| 1/hours                                           | 1/hours                                     |
+| Decay Constant (Pollutants)  | 1/days                                            | 1/days                                      |
+| Depression Storage           | inches                                            | millimeters                                 |
+| Depth                        | feet                                              | meters                                      |
+| Diameter                     | feet                                              | meters                                      |
+| Discharge Coefficient:       |                                                   |                                             |
+| - Orifice                    | dimensionless                                     | dimensionless                               |
+| - Weir                       | CFS/footⁿ                                         | CMS/meterⁿ                                  |
+| Elevation                    | feet                                              | meters                                      |
+| Evaporation                  | inches/day                                        | millimeters/day                             |
+| Flow                         | CFS (cubic feet/second), GPM (gallons/minute), MGD (million gallons/day) | CMS (cubic meters/second), LPS (liters/second), MLD (million liters/day) |
+| Head                         | feet                                              | meters                                      |
+| Hydraulic Conductivity       | inches/hour                                       | millimeters/hour                            |
+| Infiltration Rate            | inches/hour                                       | millimeters/hour                            |
+| Length                       | feet                                              | meters                                      |
+| Manning's Coefficient (n)    | seconds/meter^(1/3)                               | seconds/meter^(1/3)                         |
+| Pollutant Buildup            | mass/length, mass/acre                            | mass/length, mass/hectare                   |
+| Rainfall Intensity           | inches/hour                                       | millimeters/hour                            |
+| Rainfall Volume              | inches                                            | millimeters                                 |
+| Slope (Subcatchments)        | percent                                           | percent                                     |
+| Slope (Cross Section)        | rise/run                                          | rise/run                                    |
+| Street Cleaning Interval     | days                                              | days                                        |
+| Volume                       | cubic feet                                        | cubic meters                                |
+| Width                        | feet                                              | meters                                      |
 
-	Soil Characteristics
+| **Soil Texture Class** | **K (in/hr)** | **$\psi$ (in)** | **$\phi$ (fraction)** | **FC (fraction)** | **WP (fraction)** |
+|-------------------------|---------------|-------------|-------------------|-------------------|-------------------|
+| Sand                   | 4.74          | 1.93        | 0.437             | 0.062             | 0.024             |
+| Loamy Sand             | 1.18          | 2.40        | 0.437             | 0.105             | 0.047             |
+| Sandy Loam             | 0.43          | 4.33        | 0.453             | 0.190             | 0.085             |
+| Loam                   | 0.13          | 3.50        | 0.463             | 0.232             | 0.116             |
+| Silt Loam              | 0.26          | 6.69        | 0.501             | 0.284             | 0.135             |
+| Sandy Clay Loam        | 0.06          | 8.66        | 0.398             | 0.244             | 0.136             |
+| Clay Loam              | 0.04          | 8.27        | 0.464             | 0.310             | 0.187             |
+| Silty Clay Loam        | 0.04          | 10.63       | 0.471             | 0.342             | 0.210             |
+| Sandy Clay             | 0.02          | 9.45        | 0.430             | 0.321             | 0.221             |
+| Silty Clay             | 0.02          | 11.42       | 0.479             | 0.371             | 0.251             |
+| Clay                   | 0.01          | 12.60       | 0.475             | 0.378             | 0.265             |
 
-Soil Texture Class	K			FC	WP
-Sand	 4.74	  1.93	 0.437	 0.062	 0.024
-Loamy Sand	 1.18	  2.40	 0.437	 0.105	 0.047
-Sandy Loam	0.43	 4.33	 0.453	 0.190	 0.085
-Loam	0.13	3.50	 0.463	 0.232	 0.116
-Silt Loam	0.26	6.69	 0.501	 0.284	 0.135
-Sandy Clay Loam	0.06	 8.66	 0.398	 0.244	 0.136
-Clay Loam	0.04	 8.27	 0.464	 0.310	 0.187
-Silty Clay Loam	 0.04	10.63	 0.471	 0.342	 0.210
-Sandy Clay	 0.02	9.45	 0.430	 0.321	0.221
-Silty Clay	 0.02	11.42	 0.479	 0.371	0.251
-Clay	 0.01	12.60	 0.475	 0.378	 0.265
+K	=   saturated hydraulic conductivity, in/hr <br>
+$\psi$	=   suction head, in. <br>
+$\phi$	=   porosity, fraction <br>
+FC	=   field capacity, fraction <br>
+WP	=   wilting point, fraction <br>
 
-K	=   saturated hydraulic conductivity, in/hr
-	=   suction head, in.
-	=   porosity, fraction
-FC	=   field capacity, fraction
-WP	=   wilting point, fraction
+Source: Rawls, W.J. et al., (1983). J. Hyd. Engr., 109:1316. <br>
 
-Source: Rawls, W.J. et al., (1983). J. Hyd. Engr., 109:1316.
-
-Note:	The following relation between and K can be derived
+Note:	The following relation between $\psi$ and K can be derived
 from this table:
-			 = 3.23 K-0.328	(R2 = 0.9)
+			$\psi$ = 3.23 K-0.328	(R2 = 0.9) <br>
 
 
+A.3 NRCS Hydrologic Soil Group Definitions {#user_manual_appendix_tbl_a_3}
+
+| **Group** | **Meaning**                                                                                                           | **Saturated Hydraulic Conductivity (in/hr)** |
+|-----------|-----------------------------------------------------------------------------------------------------------------------|---------------------------------------------|
+| **A**     | Low runoff potential. Water is transmitted freely through the soil. Group A soils typically have less than 10% clay and more than 90% sand or gravel and have gravel or sand textures. | > 1.42                                      |
+| **B**     | Moderately low runoff potential. Water transmission through the soil is unimpeded. Group B soils typically have between 10% and 20% clay and 50% to 90% sand and have loamy sand or sandy loam textures. | 0.57 – 1.42                                 |
+| **C**     | Moderately high runoff potential. Water transmission through the soil is somewhat restricted. Group C soils typically have between 20% and 40% clay and less than 50% sand and have loam, silt loam, sandy clay loam, clay loam, and silty clay loam textures. | 0.06 – 0.57                                 |
+| **D**     | High runoff potential. Water movement through the soil is restricted or very restricted. Group D soils typically have greater than 40% clay, less than 50% sand, and have clayey textures. | < 0.06                                      |
+
+Source: *Hydrology National Engineering Handbook, Chapter 7, Natural Resources Conservation Service, U.S. Department of Agriculture, January 2009.*
 
 
+A.4 SCS Curve Numbers¹
 
+| **Land Use Description**                              | **Hydrologic Soil Group** | **A** | **B** | **C** | **D** |
+|-------------------------------------------------------|---------------------------|-------|-------|-------|-------|
+| Cultivated land                                       |                           |       |       |       |       |
+| - Without conservation treatment                      |                           | 72    | 81    | 88    | 91    |
+| - With conservation treatment                         |                           | 62    | 71    | 78    | 81    |
+| Pasture or range land                                 |                           |       |       |       |       |
+| - Poor condition                                      |                           | 68    | 79    | 86    | 89    |
+| - Good condition                                      |                           | 39    | 61    | 74    | 80    |
+| Meadow                                                | - Good condition          | 30    | 58    | 71    | 78    |
+| Wood or forest land                                   |                           |       |       |       |       |
+| - Thin stand, poor cover, no mulch                    |                           | 45    | 66    | 77    | 83    |
+| - Good cover²                                         |                           | 25    | 55    | 70    | 77    |
+| Open spaces, lawns, parks, golf courses, cemeteries   |                           |       |       |       |       |
+| - Good condition: grass cover on 75% or more of area  |                           | 39    | 61    | 74    | 80    |
+| - Fair condition: grass cover on 50-75% of area       |                           | 49    | 69    | 79    | 84    |
+| Commercial and business areas (85% impervious)        |                           | 89    | 92    | 94    | 95    |
+| Industrial districts (72% impervious)                |                           | 81    | 88    | 91    | 93    |
+| Residential³                                          |                           |       |       |       |       |
+| - Average lot size (% Impervious⁴)                   |                           |       |       |       |       |
+| - 1/8 ac or less (65)                                 |                           | 77    | 85    | 90    | 92    |
+| - 1/4 ac (38)                                         |                           | 61    | 75    | 83    | 87    |
+| - 1/3 ac (30)                                         |                           | 57    | 72    | 81    | 86    |
+| - 1/2 ac (25)                                         |                           | 54    | 70    | 80    | 85    |
+| - 1 ac (20)                                           |                           | 51    | 68    | 79    | 84    |
+| Paved parking lots, roofs, driveways, etc.⁵           |                           | 98    | 98    | 98    | 98    |
+| Streets and roads                                     |                           |       |       |       |       |
+| - Paved with curbs and storm sewers⁵                  |                           | 98    | 98    | 98    | 98    |
+| - Gravel                                              |                           | 76    | 85    | 89    | 91    |
+| - Dirt                                                |                           | 72    | 82    | 87    | 89    |
 
-	NRCS Hydrologic Soil Group Definitions
-
-
-
-Group	
-
-Meaning	Saturated Hydraulic
-Conductivity
-(in/hr)
-
-A	Low runoff potential.
-Water is transmitted freely through the soil. Group A soils typically have less than 10 percent clay and more than 90 percent sand or gravel and have gravel or sand textures. 	
- 1.42
-
-B	Moderately low runoff potential.
-Water transmission through the soil is unimpeded. Group B soils typically have between 10 percent and 20 percent clay and 50 percent to 90 percent sand and have loamy sand or sandy loam textures.	
-0.57 – 1.42
-
-C	Moderately high runoff potential.
-Water transmission through the soil is somewhat restricted. Group C soils typically have between 20 percent and 40 percent clay and less than 50 percent sand and have loam, silt loam, sandy clay loam, clay loam, and silty clay loam textures.	
-0.06 - 0.57
-
-D	High runoff potential.
-Water movement through the soil is restricted or very restricted. Group D soils typically have greater than 40 percent clay, less than 50 percent sand, and have clayey textures.	
-< 0.06
-
-Source: Hydrology National Engineering Handbook, Chapter 7, Natural Resources Conservation Service, U.S. Department of Agriculture, January 2009.
-
- 
-	SCS Curve Numbers1
-
-Land Use Description 	Hydrologic Soil Group
-	A	B	C	D
-Cultivated land
-   Without conservation treatment
-   With conservation treatment	
-72
-62	
-81
-71	
-88
-78	
-91
-81
-Pasture or range land
-   Poor condition
-   Good condition	
-68
-39	
-79
-61	
-86
-74	
-89
-80
-Meadow
-   Good condition	
-30	
-58	
-71	
-78
-Wood or forest land
-   Thin stand, poor cover, no mulch
-   Good cover2	
-45
-25	
-66
-55	
-77
-70	
-83
-77
-Open spaces, lawns, parks, golf courses, cemeteries, etc.
-   Good condition: grass cover on
-   75% or more of the area
-   Fair condition: grass cover on
-   50-75% of the area	
-
-
-39
-
-49	
-
-
-61
-
-69	
-
-
-74
-
-79	
-
-
-80
-
-84
-Commercial and business areas (85% impervious) 	89	92	94	95
-Industrial districts (72% impervious) 	81	88	91	93
-Residential3 
-Average lot size (% Impervious4)
-   1/8 ac or less (65)
-   1/4 ac (38)
-   1/3 ac (30)
-   1/2 ac (25)
-   1 ac (20)	
-
-77
-61
-57
-54
-51	
-
-85
-75
-72
-70
-68	
-
-90
-83
-81
-80
-79	
-
-92
-87
-86
-85
-84
-Paved parking lots, roofs, driveways, etc.5	98	98	98	98
-Streets and roads
-   Paved with curbs and storm sewers5
-   Gravel
-   Dirt	
-98
-76
-72	
-98
-85
-82	
-98
-89
-87	
-98
-91
-89
+¹ Antecedent moisture condition II.  
+² Good cover is protected from grazing and litter and brush cover soil.  
+³ Curve numbers are computed assuming that the runoff from the house and driveway is directed toward the street with a minimum of roof water directed to lawns where additional infiltration could occur.  
+⁴ The remaining pervious areas (lawn) are considered to be in good pasture condition for these curve numbers.  
+⁵ In some warmer climates of the country, a curve number of 95 may be used.  
 
 Source: SCS Urban Hydrology for Small Watersheds, 2nd Ed., (TR-55), June 1986.
-Footnotes:
-	Antecedent moisture condition II.
-	Good cover is protected from grazing and litter and brush cover soil.
-	Curve numbers are computed assuming that the runoff from the house and driveway is directed toward the street with a minimum of roof water directed to lawns where additional infiltration could occur.
-	The remaining pervious areas (lawn) are considered to be in good pasture condition for these curve numbers.
-	In some warmer climates of the country a curve number of 95 may be used.
 
 
-	Depression Storage
+A.5 Depression Storage {#user_manual_appendix_tbl_a_5}
 
-Impervious surfaces  	0.05 - 0.10 inches
-Lawns 	0.10 - 0.20 inches
-Pasture 	0.20 inches
-Forest litter 	0.30 inches
+| **Surface Type**       | **Depression Storage (inches)** |
+|-------------------------|---------------------------------|
+| Impervious Surfaces     | 0.05 - 0.10                   |
+| Lawns                  | 0.10 - 0.20                   |
+| Pasture                | 0.20                          |
+| Forest Litter          | 0.30                          |
 
 Source:	ASCE, (1992). Design & Construction of Urban Stormwater Management Systems, New York, NY.
 
+A.6 Manning’s Coefficient (n) – Overland Flow {#user_manual_appendix_tbl_a_6}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-	Manning’s Coefficient (n) – Overland Flow
-
-Surface 	n
-Smooth asphalt 	0.011
-Smooth concrete 	0.012
-Ordinary concrete lining 	0.013
-Good wood 	0.014
-Brick with cement mortar	0.014
-Vitrified clay	0.015
-Cast iron 	0.015
-Corrugated metal pipes 	0.024
-Cement rubble surface 	0.024
-Fallow soils (no residue) 	0.05
-Cultivated soils
-   Residue cover < 20%
-   Residue cover > 20%	
-0.06
-0.17
-Range (natural) 	0.13
-Grass
-   Short, prairie
-   Dense
-   Bermuda grass	
-0.15
-0.24
-0.41
-Woods
-   Light underbrush
-   Dense underbrush	
-0.40
-0.80
+| **Surface**                     | **n**   |
+|---------------------------------|---------|
+| Smooth asphalt                  | 0.011   |
+| Smooth concrete                 | 0.012   |
+| Ordinary concrete lining        | 0.013   |
+| Good wood                       | 0.014   |
+| Brick with cement mortar        | 0.014   |
+| Vitrified clay                  | 0.015   |
+| Cast iron                       | 0.015   |
+| Corrugated metal pipes          | 0.024   |
+| Cement rubble surface           | 0.024   |
+| Fallow soils (no residue)       | 0.05    |
+| Cultivated soils                |         |
+| - Residue cover < 20%           | 0.06    |
+| - Residue cover > 20%           | 0.17    |
+| Range (natural)                 | 0.13    |
+| Grass                           |         |
+| - Short, prairie                | 0.15    |
+| - Dense                         | 0.24    |
+| - Bermuda grass                 | 0.41    |
+| Woods                           |         |
+| - Light underbrush              | 0.40    |
+| - Dense underbrush              | 0.80    |
 
 Source:	McCuen, R. et al. (1996), Hydrology, FHWA-SA-96-067, Federal Highway Administration, Washington, DC
 
+A.7 Manning’s Coefficient (n) – Closed Conduits {#user_manual_appendix_tbl_a_7}
 
-
-
-
-
-
-	Manning’s Coefficient (n) – Closed Conduits
-
-Conduit Material	n
-Asbestos-cement pipe	0.011 - 0.015
-Brick	0.013 - 0.017
-Cast iron pipe
-- Cement-lined & seal coated	
-0.011 - 0.015
-Concrete (monolithic)
-- Smooth forms
-- Rough forms	
-0.012 - 0.014
-0.015 - 0.017
-Concrete pipe	0.011 - 0.015
-Corrugated-metal pipe
-(1/2-in. x 2-2/3-in. corrugations)
-- Plain
-- Paved invert
-- Spun asphalt lined	
-
-0.022 - 0.026
-0.018 - 0.022
-0.011 - 0.015
-Plastic pipe (smooth)	0.011 - 0.015
-Vitrified clay
-- Pipes
-- Liner plates	
-0.011 - 0.015
-0.013 - 0.017
+| **Conduit Material**            | **n**               |
+|----------------------------------|---------------------|
+| Asbestos-cement pipe             | 0.011 - 0.015       |
+| Brick                            | 0.013 - 0.017       |
+| Cast iron pipe                   |                     |
+| - Cement-lined & seal coated     | 0.011 - 0.015       |
+| Concrete (monolithic)            |                     |
+| - Smooth forms                   | 0.012 - 0.014       |
+| - Rough forms                    | 0.015 - 0.017       |
+| Concrete pipe                    | 0.011 - 0.015       |
+| Corrugated-metal pipe            |                     |
+| - Plain                          | 0.022 - 0.026       |
+| - Paved invert                   | 0.018 - 0.022       |
+| - Spun asphalt lined             | 0.011 - 0.015       |
+| Plastic pipe (smooth)            | 0.011 - 0.015       |
+| Vitrified clay                   |                     |
+| - Pipes                          | 0.011 - 0.015       |
+| - Liner plates                   | 0.013 - 0.017       |
 
 Source:	ASCE (1982). Gravity Sanitary Sewer Design and Construction, ASCE Manual of Practice No. 60, New York, NY.
 
  
-	Manning’s Coefficient (n) – Open Channels
+A.8 Manning’s Coefficient (n) – Open Channels {#user_manual_appendix_tbl_a_8}
 
-Channel Type	n
-Lined Channels	
-   - Asphalt	0.013 - 0.017
-   - Brick	0.012 - 0.018
-   - Concrete	0.011 - 0.020
-   - Rubble or riprap	0.020 - 0.035
-   - Vegetal	0.030 - 0.40
-Excavated or dredged	
-   - Earth, straight and uniform	0.020 - 0.030
-   - Earth, winding, fairly uniform	0.025 - 0.040
-   - Rock	0.030 - 0.045
-   - Unmaintained	0.050 - 0.140
-Natural channels (minor streams, top width at flood stage < 100 ft)	
-
-   - Fairly regular section	0.030 - 0.070
-   - Irregular section with pools	0.040 - 0.100
+| **Channel Type**                | **n**           |
+|----------------------------------|-----------------|
+| **Lined Channels**              |                 |
+| - Asphalt                        | 0.013 - 0.017   |
+| - Brick                          | 0.012 - 0.018   |
+| - Concrete                       | 0.011 - 0.020   |
+| - Rubble or riprap               | 0.020 - 0.035   |
+| - Vegetal                        | 0.030 - 0.40    |
+| **Excavated or dredged**         |                 |
+| - Earth, straight and uniform    | 0.020 - 0.030   |
+| - Earth, winding, fairly uniform | 0.025 - 0.040   |
+| - Rock                           | 0.030 - 0.045   |
+| - Unmaintained                   | 0.050 - 0.140   |
+| **Natural channels (minor streams, top width at flood stage < 100 ft)** | |
+| - Fairly regular section         | 0.030 - 0.070   |
+| - Irregular section with pools   | 0.040 - 0.100   |
 
 Source:	ASCE (1982). Gravity Sanitary Sewer Design and Construction, ASCE Manual of Practice No. 60, New York, NY.
 
 
+A.9 Water Quality Characteristics of Urban Runoff {#user_manual_appendix_tbl_a_9}
 
-
-
-
-
-
-
-
-
-
-
-
-
-	Water Quality Characteristics of Urban Runoff
-
-Constituent	Event Mean Concentrations
-TSS (mg/L)	180 - 548
-BOD (mg/L)	12 - 19
-COD (mg/L)	82 - 178
-Total P (mg/L)	0.42 - 0.88
-Soluble P (mg/L)	0.15 - 0.28
-TKN (mg/L)	1.90 - 4.18
-NO2/NO3-N (mg/L)	0.86 - 2.2
-Total Cu (ug/L)	43 - 118
-Total Pb (ug/L)	182 - 443
-Total Zn (ug/L)	202 - 633
+| **Constituent** | **Event Mean Concentration** |
+|------------------|-----------------------------|
+| TSS (mg/L)      | 180 - 548                   |
+| BOD (mg/L)      | 12 - 19                     |
+| COD (mg/L)      | 82 - 178                    |
+| Total P (mg/L)  | 0.42 - 0.88                 |
+| Soluble P (mg/L)| 0.15 - 0.28                 |
+| TKN (mg/L)      | 1.90 - 4.18                 |
+| NO2/NO3-N (mg/L)| 0.86 - 2.2                  |
+| Total Cu (ug/L) | 43 - 118                    |
+| Total Pb (ug/L) | 182 - 443                   |
+| Total Zn (ug/L) | 202 - 633                   |
 
 Source: U.S. Environmental Protection Agency. (1983). Results of the Nationwide Urban Runoff Program (NURP), Vol. 1, NTIS PB 84-185552), Water Planning Division, Washington, DC.
 
 
+A.10 Culvert Code Numbers {#user_manual_appendix_tbl_a_10}
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Culvert Code Numbers
-
-Circular Concrete
-1	Square edge with headwall	
-2	Groove end with headwall	
-3	Groove end projecting	
-
-Circular Corrugated Metal Pipe
-4	Headwall	
-5	Mitered to slope	
-6	Projecting
-		
-Circular Pipe, Beveled Ring Entrance	
-7	45 deg. bevels	
-8	33.7 deg. bevels	
-
-Rectangular Box; Flared Wingwalls	
-9	30-75 deg. wingwall flares	
-10	90 or 15 deg. wingwall flares	
-11	0 deg. wingwall flares (straight sides)	
-
-Rectangular Box;Flared Wingwalls and Top Edge Bevel:	
-12	45 deg flare; 0.43D top edge bevel	
-13	18-33.7 deg. flare; 0.083D top edge bevel	
-
-Rectangular Box, 90-deg Headwall, Chamfered / Beveled Inlet Edges	
-14	chamfered 3/4-in.	
-15	beveled 1/2-in/ft at 45 deg (1:1)	
-16	beveled 1-in/ft at 33.7 deg (1:1.5)	
-
-Rectangular Box, Skewed Headwall, Chamfered / Beveled Inlet Edges	
-17	3/4" chamfered edge, 45 deg skewed headwall	
-18	3/4" chamfered edge, 30 deg skewed headwall	
-19	3/4" chamfered edge, 15 deg skewed headwall	
-20	45 deg beveled edge, 10-45 deg skewed headwall	
-
-Rectangular Box, Non-offset Flared Wingwalls, 3/4" Chamfer at Top of Inlet    	
-21	45 deg (1:1) wingwall flare	
-22	8.4 deg (3:1) wingwall flare	
-23	18.4 deg (3:1) wingwall flare, 30 deg inlet skew	
-Rectangular Box, Offset Flared Wingwalls, Beveled Edge at Inlet Top	
-24	45 deg (1:1) flare, 0.042D top edge bevel	
-25	33.7 deg (1.5:1) flare, 0.083D top edge bevel	
-26	18.4 deg (3:1) flare, 0.083D top edge bevel	
-
-Corrugated Metal Box
-27	90 deg headwall	
-28	Thick wall projecting	
-29	Thin wall projecting	
-
-Horizontal Ellipse Concrete
-30	Square edge with headwall	
-31	Grooved end with headwall	
-32	Grooved end projecting	
-
-Vertical Ellipse Concrete
-33	Square edge with headwall	
-34	Grooved end with headwall	
-35	Grooved end projecting	
-
-Pipe Arch, 18" Corner Radius, Corrugated Metal	
-36	90 deg headwall	
-37	Mitered to slope	
-38	Projecting	
-
-Pipe Arch, 18" Corner Radius, Corrugated Metal	
-39	Projecting	
-40	No bevels	
-41	33.7 deg bevels	
-
-Pipe Arch, 31" Corner Radius,Corrugated Metal
-42	Projecting	
-43	No bevels
-44	33.7 deg. bevels
-
-Arch, Corrugated Metal
-45	90 deg headwall
-46	Mitered to slope
-47	Thin wall projecting
-
-Circular Culvert
-48	Smooth tapered inlet throat
-49	Rough tapered inlet throat
-
-Elliptical Inlet Face
-50	Tapered inlet, beveled edges
-51	Tapered inlet, square edges
-52	Tapered inlet, thin edge projecting
-
-Rectangular
-53	Tapered inlet throat
-
-Rectangular Concrete
-54	Side tapered, less favorable edges
-55	Side tapered, more favorable edges
-56	Slope tapered, less favorable edges
-57	Slope tapered, more favorable edges
-
+| **Culvert Type**                                   | **Code** | **Description**                                   |
+|----------------------------------------------------|----------|---------------------------------------------------|
+| Circular Concrete                                  | 1        | Square edge with headwall                         |
+|                                                    | 2        | Groove end with headwall                          |
+|                                                    | 3        | Groove end projecting                             |
+| Circular Corrugated Metal Pipe                    | 4        | Headwall                                          |
+|                                                    | 5        | Mitered to slope                                  |
+|                                                    | 6        | Projecting                                        |
+| Circular Pipe, Beveled Ring Entrance              | 7        | 45 deg. bevels                                    |
+|                                                    | 8        | 33.7 deg. bevels                                  |
+| Rectangular Box; Flared Wingwalls                 | 9        | 30-75 deg. wingwall flares                        |
+|                                                    | 10       | 90 or 15 deg. wingwall flares                     |
+|                                                    | 11       | 0 deg. wingwall flares (straight sides)           |
+| Rectangular Box; Flared Wingwalls and Top Edge Bevel | 12     | 45 deg flare; 0.43D top edge bevel               |
+|                                                    | 13       | 18-33.7 deg. flare; 0.083D top edge bevel         |
+| Rectangular Box, 90-deg Headwall, Chamfered / Beveled Inlet Edges | 14 | Chamfered 3/4-in.                                |
+|                                                    | 15       | Beveled 1/2-in/ft at 45 deg (1:1)                 |
+|                                                    | 16       | Beveled 1-in/ft at 33.7 deg (1:1.5)               |
+| Rectangular Box, Skewed Headwall, Chamfered / Beveled Inlet Edges | 17 | 3/4" chamfered edge, 45 deg skewed headwall      |
+|                                                    | 18       | 3/4" chamfered edge, 30 deg skewed headwall       |
+|                                                    | 19       | 3/4" chamfered edge, 15 deg skewed headwall       |
+|                                                    | 20       | 45 deg beveled edge, 10-45 deg skewed headwall    |
+| Rectangular Box, Non-offset Flared Wingwalls, 3/4" Chamfer at Top of Inlet | 21 | 45 deg (1:1) wingwall flare                      |
+|                                                    | 22       | 8.4 deg (3:1) wingwall flare                     |
+|                                                    | 23       | 18.4 deg (3:1) wingwall flare, 30 deg inlet skew |
+| Rectangular Box, Offset Flared Wingwalls, Beveled Edge at Inlet Top | 24 | 45 deg (1:1) flare, 0.042D top edge bevel       |
+|                                                    | 25       | 33.7 deg (1.5:1) flare, 0.083D top edge bevel     |
+|                                                    | 26       | 18.4 deg (3:1) flare, 0.083D top edge bevel       |
+| Corrugated Metal Box                               | 27       | 90 deg headwall                                   |
+|                                                    | 28       | Thick wall projecting                             |
+|                                                    | 29       | Thin wall projecting                              |
+| Horizontal Ellipse Concrete                        | 30       | Square edge with headwall                         |
+|                                                    | 31       | Grooved end with headwall                         |
+|                                                    | 32       | Grooved end projecting                            |
+| Vertical Ellipse Concrete                          | 33       | Square edge with headwall                         |
+|                                                    | 34       | Grooved end with headwall                         |
+|                                                    | 35       | Grooved end projecting                            |
+| Pipe Arch, 18" Corner Radius, Corrugated Metal     | 36       | 90 deg headwall                                   |
+|                                                    | 37       | Mitered to slope                                  |
+|                                                    | 38       | Projecting                                        |
+| Pipe Arch, 18" Corner Radius, Corrugated Metal     | 39       | Projecting                                        |
+|                                                    | 40       | No bevels                                         |
+|                                                    | 41       | 33.7 deg bevels                                   |
+| Pipe Arch, 31" Corner Radius, Corrugated Metal     | 42       | Projecting                                        |
+|                                                    | 43       | No bevels                                         |
+|                                                    | 44       | 33.7 deg. bevels                                  |
+| Arch, Corrugated Metal                             | 45       | 90 deg headwall                                   |
+|                                                    | 46       | Mitered to slope                                  |
+|                                                    | 47       | Thin wall projecting                              |
+| Circular Culvert                                   | 48       | Smooth tapered inlet throat                       |
+|                                                    | 49       | Rough tapered inlet throat                        |
+| Elliptical Inlet Face                              | 50       | Tapered inlet, beveled edges                      |
+|                                                    | 51       | Tapered inlet, square edges                       |
+|                                                    | 52       | Tapered inlet, thin edge projecting               |
+| Rectangular                                        | 53       | Tapered inlet throat                              |
+| Rectangular Concrete                               | 54       | Side tapered, less favorable edges               |
+|                                                    | 55       | Side tapered, more favorable edges               |
+|                                                    | 56       | Slope tapered, less favorable edges              |
+|                                                    | 57       | Slope tapered, more favorable edges              |
 
  
-Culvert Entrance Loss Coefficients
+A.11 Culvert Entrance Loss Coefficients {#user_manual_appendix_tbl_a_11}
 
-Type of Structure and Design of Entrance 			     	Coefficient
-• Pipe, Concrete
-Projecting from fill, socket end (groove-end) 				0.2
-Projecting from fill, sq. cut end 								0.5
-Headwall or headwall and wingwalls:
-Socket end of pipe (groove-end)							0.2
-Square-edge 											0.5
-Rounded (radius = D/12) 									0.2
-Mitered to conform to fill slope 								0.7
-*End-Section conforming to fill slope 						0.5
-Beveled edges, 33.7 or 45 bevels 						0.2
-Side- or slope-tapered inlet 									0.2
-• Pipe or Pipe-Arch. Corrugated Metal
-Projecting from fill (no headwall) 							0.9
-Headwall or headwall and wingwalls square-edge 			0.5
-Mitered to conform to fill slope, paved or unpaved slope 	0.7
-*End-Section conforming to fill slope 						0.5
-Beveled edges, 33.7 or 45 bevels 						0.2
-Side- or slope-tapered inlet 									0.2
-• Box, Reinforced Concrete
-Headwall parallel to embankment (no wingwalls):
-Square-edged on 3 edges 								0.5
-Rounded on 3 edges to radius of D/12 or B/12
-or beveled edges on 3 sides 							0.2
-Wingwalls at 30 to 75 to barrel:
-Square-edged at crown 									0.4
-Crown edge rounded to radius of D/12:
-or beveled top edge 									0.2
-Wingwall at 10 to 25 to barrel:
-Square-edged at crown 									0.5
-Wingwalls parallel (extension of sides):
-Square-edged at crown 									0.7
-Side- or slope-tapered inlet 								0.2
+| **Type of Structure and Design of Entrance**                     | **Coefficient** |
+|-------------------------------------------------------------------|-----------------|
+| **Pipe, Concrete**                                                |                 |
+| Projecting from fill, socket end (groove-end)                     | 0.2             |
+| Projecting from fill, square cut end                              | 0.5             |
+| Headwall or headwall and wingwalls:                               |                 |
+| - Socket end of pipe (groove-end)                                 | 0.2             |
+| - Square-edge                                                     | 0.5             |
+| - Rounded (radius = D/12)                                         | 0.2             |
+| - Mitered to conform to fill slope                                | 0.7             |
+| - *End-Section conforming to fill slope*                          | 0.5             |
+| - Beveled edges, 33.7° or 45° bevels                              | 0.2             |
+| - Side- or slope-tapered inlet                                    | 0.2             |
+| **Pipe or Pipe-Arch, Corrugated Metal**                           |                 |
+| Projecting from fill (no headwall)                                | 0.9             |
+| Headwall or headwall and wingwalls, square-edge                   | 0.5             |
+| Mitered to conform to fill slope, paved or unpaved slope          | 0.7             |
+| *End-Section conforming to fill slope*                            | 0.5             |
+| Beveled edges, 33.7° or 45° bevels                                | 0.2             |
+| Side- or slope-tapered inlet                                      | 0.2             |
+| **Box, Reinforced Concrete**                                      |                 |
+| Headwall parallel to embankment (no wingwalls):                   |                 |
+| - Square-edged on 3 edges                                         | 0.5             |
+| - Rounded on 3 edges to radius of D/12 or B/12, or beveled edges  | 0.2             |
+| Wingwalls at 30° to 75° to barrel:                                |                 |
+| - Square-edged at crown                                           | 0.4             |
+| - Crown edge rounded to radius of D/12, or beveled top edge       | 0.2             |
+| Wingwalls at 10° to 25° to barrel:                                |                 |
+| - Square-edged at crown                                           | 0.5             |
+| Wingwalls parallel (extension of sides):                          |                 |
+| - Square-edged at crown                                           | 0.7             |
+| Side- or slope-tapered inlet                                      | 0.2             |
 
-*Note: "End Sections conforming to fill slope," made of either metal or concrete, are the sections commonly available from manufacturers. From limited hydraulic tests they are equivalent in operation to a headwall in both inlet and outlet control. Some end sections, incorporating a closed taper in their design have a superior hydraulic performance. These latter sections can be designed using the information given for the beveled inlet.
+**Note:**  
+*"End Sections conforming to fill slope,"* made of either metal or concrete, are the sections commonly available from manufacturers. From limited hydraulic tests, they are equivalent in operation to a headwall in both inlet and outlet control. Some end sections, incorporating a closed taper in their design, have superior hydraulic performance. These latter sections can be designed using the information given for the beveled inlet.
 
 Source: Federal Highway Administration (2005). Hydraulic Design of Highway Culverts, Publication No. FHWA-NHI-01-020. 
-Standard Elliptical Pipe Sizes
 
-Code	Minor Axis (in)	Major Axis (in)	Minor Axis (mm)	Major Axis (mm)
-1	14	23	356	584
-2	19	30	483	762
-3	22	34	559	864
-4	24	38	610	965
-5	27	42	686	1067
-6	29	45	737	1143
-7	32	49	813	1245
-8	34	53	864	1346
-9	38	60	965	1524
-10	43	68	1092	1727
-11	48	76	1219	1930
-12	53	83	1346	2108
-13	58	91	1473	2311
-14	63	98	1600	2489
-15	68	106	1727	2692
-16	72	113	1829	2870
-17	77	121	1956	3073
-18	82	128	2083	3251
-19	87	136	2210	3454
-20	92	143	2337	3632
-21	97	151	2464	3835
-22	106	166	2692	4216
-23	116	180	2946	4572
+A.12 Standard Elliptical Pipe Sizes {#user_manual_appendix_tbl_a_12}
 
-Note: The Minor Axis is the maximum width for a vertical ellipse and the full depth for a horizontal ellipse while the Major Axis is the maximum width for a horizontal ellipse and the full depth for a vertical ellipse.
+
+| **Code** | **Minor Axis (in)** | **Major Axis (in)** | **Minor Axis (mm)** | **Major Axis (mm)** |
+|----------|----------------------|----------------------|----------------------|----------------------|
+| 1        | 14                   | 23                   | 356                  | 584                  |
+| 2        | 19                   | 30                   | 483                  | 762                  |
+| 3        | 22                   | 34                   | 559                  | 864                  |
+| 4        | 24                   | 38                   | 610                  | 965                  |
+| 5        | 27                   | 42                   | 686                  | 1067                 |
+| 6        | 29                   | 45                   | 737                  | 1143                 |
+| 7        | 32                   | 49                   | 813                  | 1245                 |
+| 8        | 34                   | 53                   | 864                  | 1346                 |
+| 9        | 38                   | 60                   | 965                  | 1524                 |
+| 10       | 43                   | 68                   | 1092                 | 1727                 |
+| 11       | 48                   | 76                   | 1219                 | 1930                 |
+| 12       | 53                   | 83                   | 1346                 | 2108                 |
+| 13       | 58                   | 91                   | 1473                 | 2311                 |
+| 14       | 63                   | 98                   | 1600                 | 2489                 |
+| 15       | 68                   | 106                  | 1727                 | 2692                 |
+| 16       | 72                   | 113                  | 1829                 | 2870                 |
+| 17       | 77                   | 121                  | 1956                 | 3073                 |
+| 18       | 82                   | 128                  | 2083                 | 3251                 |
+| 19       | 87                   | 136                  | 2210                 | 3454                 |
+| 20       | 92                   | 143                  | 2337                 | 3632                 |
+| 21       | 97                   | 151                  | 2464                 | 3835                 |
+| 22       | 106                  | 166                  | 2692                 | 4216                 |
+| 23       | 116                  | 180                  | 2946                 | 4572                 |
+
+**Note:** The Minor Axis is the maximum width for a vertical ellipse and the full depth for a horizontal ellipse, while the Major Axis is the maximum width for a horizontal ellipse and the full depth for a vertical ellipse.
 
 Source: Concrete Pipe Design Manual, American Concrete Pipe Association, 2011 (www.concrete-pipe.org).
 
  
-Standard Arch Pipe Sizes
+A.13 Standard Arch Pipe Sizes {#user_manual_appendix_tbl_a_13}
 
-Concrete Arch Pipes
+### Concrete Arch Pipes
 
-Code	Rise (in)	Span (in)	Rise (mm)	Span (mm)
-1	11	18	279	457
-2	13.5	22	343	559
-3	15.5	26	394	660
-4	18	28.5	457	724
-5	22.5	36.25	572	921
-6	26.625	43.75	676	1111
-7	31.3125	51.125	795	1299
-8	36	58.5	914	1486
-9	40	65	1016	1651
-10	45	73	1143	1854
-11	54	88	1372	2235
-12	62	102	1575	2591
-13	72	115	1829	2921
-14	77.5	122	1969	3099
-15	87.125	138	2213	3505
-16	96.875	154	2461	3912
-17	106.5	168.75	2705	4286
-
-
-Corrugated Steel, 2-2/3 x 1/2" Corrugation
-
-Code	Rise (in)	Span (in)	Rise (mm)	Span (mm)
-18	13	17	330	432
-19	15	21	381	533
-20	18	24	457	610
-21	20	28	508	711
-22	24	35	610	889
-23	29	42	737	1067
-24	33	49	838	1245
-25	38	57	965	1448
-26	43	64	1092	1626
-27	47	71	1194	1803
-28	52	77	1321	1956
-29	57	83	1448	2108
+| **Code** | **Rise (in)** | **Span (in)** | **Rise (mm)** | **Span (mm)** |
+|----------|---------------|---------------|---------------|---------------|
+| 1        | 11            | 18            | 279           | 457           |
+| 2        | 13.5          | 22            | 343           | 559           |
+| 3        | 15.5          | 26            | 394           | 660           |
+| 4        | 18            | 28.5          | 457           | 724           |
+| 5        | 22.5          | 36.25         | 572           | 921           |
+| 6        | 26.625        | 43.75         | 676           | 1111          |
+| 7        | 31.3125       | 51.125        | 795           | 1299          |
+| 8        | 36            | 58.5          | 914           | 1486          |
+| 9        | 40            | 65            | 1016          | 1651          |
+| 10       | 45            | 73            | 1143          | 1854          |
+| 11       | 54            | 88            | 1372          | 2235          |
+| 12       | 62            | 102           | 1575          | 2591          |
+| 13       | 72            | 115           | 1829          | 2921          |
+| 14       | 77.5          | 122           | 1969          | 3099          |
+| 15       | 87.125        | 138           | 2213          | 3505          |
+| 16       | 96.875        | 154           | 2461          | 3912          |
+| 17       | 106.5         | 168.75        | 2705          | 4286          |
 
 
+### Corrugated Steel, 2-2/3 x 1/2" Corrugation
 
-Corrugated Steel, 3 x 1" Corrugation
+| **Code** | **Rise (in)** | **Span (in)** | **Rise (mm)** | **Span (mm)** |
+|----------|---------------|---------------|---------------|---------------|
+| 18       | 13            | 17            | 330           | 432           |
+| 19       | 15            | 21            | 381           | 533           |
+| 20       | 18            | 24            | 457           | 610           |
+| 21       | 20            | 28            | 508           | 711           |
+| 22       | 24            | 35            | 610           | 889           |
+| 23       | 29            | 42            | 737           | 1067          |
+| 24       | 33            | 49            | 838           | 1245          |
+| 25       | 38            | 57            | 965           | 1448          |
+| 26       | 43            | 64            | 1092          | 1626          |
+| 27       | 47            | 71            | 1194          | 1803          |
+| 28       | 52            | 77            | 1321          | 1956          |
+| 29       | 57            | 83            | 1448          | 2108          |
 
-Code	Rise (in)	Span (in)	Rise (mm)	Span (mm)
-30	31	40	787	1016
-31	36	46	914	1168
-32	41	53	1041	1346
-33	46	60	1168	1524
-34	51	66	1295	1676
-35	55	73	1397	1854
-36	59	81	1499	2057
-37	63	87	1600	2210
-38	67	95	1702	2413
-39	71	103	1803	2616
-40	75	112	1905	2845
-41	79	117	2007	2972
-42	83	128	2108	3251
-43	87	137	2210	3480
-44	91	142	2311	3607
+
+### Corrugated Steel, 3 x 1" Corrugation
+
+| **Code** | **Rise (in)** | **Span (in)** | **Rise (mm)** | **Span (mm)** |
+|----------|---------------|---------------|---------------|---------------|
+| 30       | 31            | 40            | 787           | 1016          |
+| 31       | 36            | 46            | 914           | 1168          |
+| 32       | 41            | 53            | 1041          | 1346          |
+| 33       | 46            | 60            | 1168          | 1524          |
+| 34       | 51            | 66            | 1295          | 1676          |
+| 35       | 55            | 73            | 1397          | 1854          |
+| 36       | 59            | 81            | 1499          | 2057          |
+| 37       | 63            | 87            | 1600          | 2210          |
+| 38       | 67            | 95            | 1702          | 2413          |
+| 39       | 71            | 103           | 1803          | 2616          |
+| 40       | 75            | 112           | 1905          | 2845          |
+| 41       | 79            | 117           | 2007          | 2972          |
+| 42       | 83            | 128           | 2108          | 3251          |
+| 43       | 87            | 137           | 2210          | 3480          |
+| 44       | 91            | 142           | 2311          | 3607          |
+ 
+### Structural Plate, 18" Corner Radius
+
+| **Code** | **Rise (in)** | **Span (in)** | **Rise (mm)** | **Span (mm)** |
+|----------|---------------|---------------|---------------|---------------|
+| 45       | 55            | 73            | 1397          | 1854          |
+| 46       | 57            | 76            | 1448          | 1930          |
+| 47       | 59            | 81            | 1499          | 2057          |
+| 48       | 61            | 84            | 1549          | 2134          |
+| 49       | 63            | 87            | 1600          | 2210          |
+| 50       | 65            | 92            | 1651          | 2337          |
+| 51       | 67            | 95            | 1702          | 2413          |
+| 52       | 69            | 98            | 1753          | 2489          |
+| 53       | 71            | 103           | 1803          | 2616          |
+| 54       | 73            | 106           | 1854          | 2692          |
+| 55       | 75            | 112           | 1905          | 2845          |
+| 56       | 77            | 114           | 1956          | 2896          |
+| 57       | 79            | 117           | 2007          | 2972          |
+| 58       | 81            | 123           | 2057          | 3124          |
+| 59       | 83            | 128           | 2108          | 3251          |
+| 60       | 85            | 131           | 2159          | 3327          |
+| 61       | 87            | 137           | 2210          | 3480          |
+| 62       | 89            | 139           | 2261          | 3531          |
+| 63       | 91            | 142           | 2311          | 3607          |
+| 64       | 93            | 148           | 2362          | 3759          |
+| 65       | 95            | 150           | 2413          | 3810          |
+| 66       | 97            | 152           | 2464          | 3861          |
+| 67       | 100           | 154           | 2540          | 3912          |
+| 68       | 101           | 161           | 2565          | 4089          |
+| 69       | 103           | 167           | 2616          | 4242          |
+| 70       | 105           | 169           | 2667          | 4293          |
+| 71       | 107           | 171           | 2718          | 4343          |
+| 72       | 109           | 178           | 2769          | 4521          |
+| 73       | 111           | 184           | 2819          | 4674          |
+| 74       | 113           | 186           | 2870          | 4724          |
+| 75       | 115           | 188           | 2921          | 4775          |
+| 76       | 118           | 190           | 2997          | 4826          |
+| 77       | 119           | 197           | 3023          | 5004          |
+| 78       | 121           | 199           | 3073          | 5055          |
 
  
-Structural Plate, 18" Corner Radius
+### Structural Plate, 31" Corner Radius
 
-Code	Rise (in)	Span (in)	Rise (mm)	Span (mm)
-45	55	73	1397	1854
-46	57	76	1448	1930
-47	59	81	1499	2057
-48	61	84	1549	2134
-49	63	87	1600	2210
-50	65	92	1651	2337
-51	67	95	1702	2413
-52	69	98	1753	2489
-53	71	103	1803	2616
-54	73	106	1854	2692
-55	75	112	1905	2845
-56	77	114	1956	2896
-57	79	117	2007	2972
-58	81	123	2057	3124
-59	83	128	2108	3251
-60	85	131	2159	3327
-61	87	137	2210	3480
-62	89	139	2261	3531
-63	91	142	2311	3607
-64	93	148	2362	3759
-65	95	150	2413	3810
-66	97	152	2464	3861
-67	100	154	2540	3912
-68	101	161	2565	4089
-69	103	167	2616	4242
-70	105	169	2667	4293
-71	107	171	2718	4343
-72	109	178	2769	4521
-73	111	184	2819	4674
-74	113	186	2870	4724
-75	115	188	2921	4775
-76	118	190	2997	4826
-77	119	197	3023	5004
-78	121	199	3073	5055
-
-
- 
-Structural Plate, 31" Corner Radius
-
-Code	Rise (in)	Span (in)	Rise (mm)	Span (mm)
-79	112	159	2845	4039
-80	114	162	2896	4115
-81	116	168	2946	4267
-82	118	170	2997	4318
-83	120	173	3048	4394
-84	122	179	3099	4547
-85	124	184	3150	4674
-86	126	187	3200	4750
-87	128	190	3251	4826
-88	130	195	3302	4953
-89	132	198	3353	5029
-90	134	204	3404	5182
-91	136	206	3454	5232
-92	138	209	3505	5309
-93	140	215	3556	5461
-94	142	217	3607	5512
-95	144	223	3658	5664
-96	146	225	3708	5715
-97	148	231	3759	5867
-98	150	234	3810	5944
-99	152	236	3861	5994
-100	154	239	3912	6071
-101	156	245	3962	6223
-102	158	247	4013	6274
+| **Code** | **Rise (in)** | **Span (in)** | **Rise (mm)** | **Span (mm)** |
+|----------|---------------|---------------|---------------|---------------|
+| 79       | 112           | 159           | 2845          | 4039          |
+| 80       | 114           | 162           | 2896          | 4115          |
+| 81       | 116           | 168           | 2946          | 4267          |
+| 82       | 118           | 170           | 2997          | 4318          |
+| 83       | 120           | 173           | 3048          | 4394          |
+| 84       | 122           | 179           | 3099          | 4547          |
+| 85       | 124           | 184           | 3150          | 4674          |
+| 86       | 126           | 187           | 3200          | 4750          |
+| 87       | 128           | 190           | 3251          | 4826          |
+| 88       | 130           | 195           | 3302          | 4953          |
+| 89       | 132           | 198           | 3353          | 5029          |
+| 90       | 134           | 204           | 3404          | 5182          |
+| 91       | 136           | 206           | 3454          | 5232          |
+| 92       | 138           | 209           | 3505          | 5309          |
+| 93       | 140           | 215           | 3556          | 5461          |
+| 94       | 142           | 217           | 3607          | 5512          |
+| 95       | 144           | 223           | 3658          | 5664          |
+| 96       | 146           | 225           | 3708          | 5715          |
+| 97       | 148           | 231           | 3759          | 5867          |
+| 98       | 150           | 234           | 3810          | 5944          |
+| 99       | 152           | 236           | 3861          | 5994          |
+| 100      | 154           | 239           | 3912          | 6071          |
+| 101      | 156           | 245           | 3962          | 6223          |
+| 102      | 158           | 247           | 4013          | 6274          |
 
 Source: Modern Sewer Design (Fourth Edition), American Iron and Steel Institute, Washington, DC, 1999.
 
 
-
-
-
-
-
-
-
-
-
-VISUAL OBJECT PROPERTIES
+## APPENDIX B - VISUAL OBJECT PROPERTIES {#user_manual_appendix_b}
 ________________________________________
 
-	Rain Gage Properties
+### B.1 Rain Gage Properties {#user_manual_appendix_b_1}
 
-Name	User-assigned rain gage name.
-X-Coordinate	Horizontal location of the rain gage on the Study Area Map. If left blank then the rain gage will not appear on the map.
-Y-Coordinate	Vertical location of the rain gage on the Study Area Map. If left blank then the rain gage will not appear on the map.
-Description	Click the ellipsis button (or press Enter) to edit an optional description of the rain gage.
-Tag	Optional label used to categorize or classify the rain gage.
-Rain Format	Format in which the rain data are supplied:
-INTENSITY: each rainfall value is an average rate in inches/hour (or mm/hour) over the recording interval,
-VOLUME: each rainfall value is the volume of rain that fell in the recording interval (in inches or millimeters),
-CUMULATIVE: each rainfall value represents the cumulative rainfall that has occurred since the start of the last series of non-zero values (in inches or millimeters).
-Time Interval	Recording time interval between gage readings in either decimal hours or hours:minutes format.
-Snow Catch Factor	Factor that corrects gage readings for snowfall.
-Data Source	Source of rainfall data; either TIMESERIES for user-supplied time series data or FILE for an external data file.
-TIME SERIES	
- - Series Name	Name of time series with rainfall data if Data Source selection was TIMESERIES; leave blank otherwise (double-click to edit the series).
-DATA FILE	
- - File Name	Name of external file containing rainfall data (see Section 11.3).
- - Station ID	Recording gage station identifier.
-- Rain Units	Depth units (IN or MM) for rainfall values in user-prepared files (other standard file formats have fixed units depending on the format).
+| **Property**         | **Description**                                                                                                                                                                                                 |
+|-----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Name**             | User-assigned rain gage name.                                                                                                                                                                                  |
+| **X-Coordinate**     | Horizontal location of the rain gage on the Study Area Map. If left blank, the rain gage will not appear on the map.                                                                                            |
+| **Y-Coordinate**     | Vertical location of the rain gage on the Study Area Map. If left blank, the rain gage will not appear on the map.                                                                                              |
+| **Description**      | Click the ellipsis button (or press Enter) to edit an optional description of the rain gage.                                                                                                                    |
+| **Tag**              | Optional label used to categorize or classify the rain gage.                                                                                                                                                    |
+| **Rain Format**      | Format in which the rain data are supplied: <br> - **INTENSITY**: Rainfall value is an average rate in inches/hour (or mm/hour) over the recording interval. <br> - **VOLUME**: Rainfall value is the volume of rain that fell in the recording interval (in inches or millimeters). <br> - **CUMULATIVE**: Rainfall value represents the cumulative rainfall since the start of the last series of non-zero values (in inches or millimeters). |
+| **Time Interval**    | Recording time interval between gage readings in either decimal hours or hours:minutes format.                                                                                                                  |
+| **Snow Catch Factor**| Factor that corrects gage readings for snowfall.                                                                                                                                                                |
+| **Data Source**      | Source of rainfall data; either **TIMESERIES** for user-supplied time series data or **FILE** for an external data file.                                                                                         |
+| **TIME SERIES**      |                                                                                                                                                                                                                 |
+| - **Series Name**    | Name of time series with rainfall data if Data Source selection was **TIMESERIES**; leave blank otherwise (double-click to edit the series).                                                                    |
+| **DATA FILE**        |                                                                                                                                                                                                                 |
+| - **File Name**      | Name of external file containing rainfall data (see Section 11.3).                                                                                                                                              |
+| - **Station ID**     | Recording gage station identifier.                                                                                                                                                                              |
+| - **Rain Units**     | Depth units (**IN** or **MM**) for rainfall values in user-prepared files (other standard file formats have fixed units depending on the format).                                                                |
  
-	Subcatchment Properties
-
-Name	User-assigned subcatchment name.
-X-Coordinate	Horizontal location of the subcatchment's centroid on the Study Area Map. If left blank then the subcatchment will not appear on the map.
-Y-Coordinate	Vertical location of the subcatchment's centroid on the Study Area Map. If left blank then the subcatchment will not appear on the map.
-Description	Click the ellipsis button (or press Enter) to edit an optional description of the subcatchment.
-Tag	Optional label used to categorize or classify the subcatchment.
-Rain Gage	Name of the rain gage associated with the subcatchment.
-Outlet	Name of the node or subcatchment which receives the subcatchment's runoff.
-Area	Area of the subcatchment, including any LID controls (acres or hectares). 
-Width1	Characteristic width of the overland flow path for sheet flow runoff (feet or meters). 
-% Slope	Average percent slope of the subcatchment.
-% Imperv	Percent of land area (excluding the area used for LID controls) which is impervious.
-N-Imperv	Manning's coefficient (n) for overland flow over the impervious portion of the subcatchment (see Section A.6 for typical values).
-N-Perv	Manning's coefficient (n) for overland flow over the pervious portion of the subcatchment (see Section A.6 for typical values).
-Dstore-Imperv	Depth of depression storage on the impervious portion of the subcatchment (inches or millimeters) (see Section A.5 for typical values).
-Dstore-Perv	Depth of depression storage on the pervious portion of the subcatchment (inches or millimeters) (see Section A.5 for typical values).
-% Zero-Imperv	Percent of the impervious area with no depression storage.
-Subarea Routing	Choice of internal routing of runoff between pervious and impervious areas:
-IMPERV: runoff from pervious area flows to impervious area,
-PERV: 	runoff from impervious area flows to pervious area,
-OUTLET: runoff from both areas flows directly to outlet.
-Percent Routed	Percent of runoff routed between subareas.
-Infiltration Data	Click the ellipsis button (or press Enter) to edit infiltration parameters for the subcatchment.
-Groundwater	Click the ellipsis button (or press Enter) to edit groundwater flow parameters for the subcatchment.
-Snow Pack	Name of snow pack parameter set (if any) assigned to the subcatchment.
-LID Controls	Click the ellipsis button (or press Enter) to edit the use of low impact development controls in the subcatchment.
-Land Uses	Click the ellipsis button (or press Enter) to assign land uses to the subcatchment. Only needed if pollutant buildup/washoff modeled.
-Initial Buildup	Click the ellipsis button (or press Enter) to specify initial quantities of pollutant buildup over the subcatchment.
-Curb Length	Total length of curbs in the subcatchment (any length units). Used only when pollutant buildup is normalized to curb length.
-N-Perv Pattern	Name of optional monthly pattern that adjusts pervious Manning’s n.
-Dstore Pattern	Name of optional monthly pattern that adjusts depression storage.
-Infil. Pattern	Name of optional monthly pattern that adjusts infiltration rate.
-
-1 An initial estimate of the characteristic width is given by the subcatchment area divided by the average maximum overland flow length. The maximum overland flow length is the length of the flow path from the furthest drainage point of the subcatchment before the flow becomes channelized. Maximum lengths from several different possible flow paths should be averaged. These paths should reflect slow flow, such as over pervious surfaces, more than rapid flow over pavement, for example. Adjustments should be made to the width parameter to produce good fits to measured runoff hydrographs.
-
-
-
-
-
-
-
-
-
-
-
-
-
-	Junction Properties
-
-Name	User-assigned junction name.
-X-Coordinate	Horizontal location of the junction on the Study Area Map. If left blank then the junction will not appear on the map.
-Y-Coordinate	Vertical location of the junction on the Study Area Map. If left blank then the junction will not appear on the map.
-Description	Click the ellipsis button (or press Enter) to edit an optional description of the junction.
-Tag	Optional label used to categorize or classify the junction.
-Inflows	Click the ellipsis button (or press Enter) to assign external direct, dry weather or RDII inflows to the junction.
-Treatment	Click the ellipsis button (or press Enter) to edit a set of treatment functions for pollutants entering the node.
-Invert El.	Invert elevation of the junction (feet or meters).
-Max. Depth	Maximum depth of junction (i.e., from ground surface to invert) (feet or meters). If zero, then the distance from the invert to the top of the highest connecting link will be used.
-Initial Depth	Depth of water at the junction at the start of the simulation (feet or meters).
-Surcharge Depth	Additional depth of water beyond the maximum depth that the junction can sustain before overflowing (feet or meters). This parameter can be used to simulate bolted manhole covers or force main connections. 
-Ponded Area	Area occupied by ponded water atop the junction after flooding occurs (sq. feet or sq. meters). If the Allow Ponding simulation option is turned on, a non-zero value of this parameter will allow ponded water to be stored and subsequently returned to the conveyance system when capacity exists.
-
-
-
-
-
-
-
-
-
-	Outfall Properties
-
-Name	User-assigned outfall name.
-X-Coordinate	Horizontal location of the outfall on the Study Area Map. If left blank then the outfall will not appear on the map.
-Y-Coordinate	Vertical location of the outfall on the Study Area Map. If left blank then the outfall will not appear on the map.
-Description	Click the ellipsis button (or press Enter) to edit an optional description of the outfall.
-Tag	Optional label used to categorize or classify the outfall.
-Inflows	Click the ellipsis button (or press Enter) to assign external direct, dry weather or RDII inflows to the outfall.
-Treatment	Click the ellipsis button (or press Enter) to edit a set of treatment functions for pollutants entering the node.
-Invert El.	Invert elevation of the outfall (feet or meters).
-Tide Gate	YES -  tide gate present to prevent backflow
-NO - no tide gate present
-Route To	Optional name of a subcatchment that receives the outfall's discharge.
-Type	Type of outfall boundary condition:
-FREE: outfall stage determined by minimum of critical flow depth and normal flow depth in the connecting conduit
-NORMAL: outfall stage based on normal flow depth in connecting conduit 
-FIXED: outfall stage set to a fixed value
-TIDAL: outfall stage given by a table of tide elevation versus time of day
-TIMESERIES: outfall stage supplied from a time series of elevations.
-Fixed Stage	Water elevation for a FIXED type of outfall (feet or meters).
-Tidal Curve Name	Name of the Tidal Curve relating water elevation to hour of the day for a TIDAL outfall (double-click to edit the curve).
-Time Series Name	Name of time series containing time history of outfall elevations for a TIMESERIES outfall (double-click to edit the series).
-
-
-
-
-	Flow Divider Properties
-
-Name	User-assigned divider name.
-X-Coordinate	Horizontal location of the divider on the Study Area Map. If left blank then the divider will not appear on the map.
-Y-Coordinate	Vertical location of the divider on the Study Area Map. If left blank then the divider will not appear on the map.
-Description	Click the ellipsis button (or press Enter) to edit an optional description of the divider.
-Tag	Optional label used to categorize or classify the divider.
-Inflows	Click the ellipsis button (or press Enter) to assign external direct, dry weather or RDII inflows to the divider.
-Treatment	Click the ellipsis button (or press Enter) to edit a set of treatment functions for pollutants entering the node.
-Invert El.	Invert elevation of the divider (feet or meters).
-Max. Depth	Maximum depth of divider (i.e., from ground surface to invert) (feet or meters). See description for Junctions.
-Initial Depth	Depth of water at the divider at the start of the simulation (feet or meters). 
-Surcharge Depth	Additional depth of water beyond the maximum depth that the divider can sustain before overflowing (feet or meters). 
-Ponded Area	Area occupied by ponded water atop the junction after flooding occurs (sq. feet or sq. meters). See description for Junctions.
-Diverted Link	Name of link which receives the diverted flow.
-Type	Type of flow divider. Choices are:
-CUTOFF (diverts all inflow above a defined cutoff value),
-OVERFLOW (diverts all inflow above the flow capacity of the non-diverted link),
-TABULAR (uses a Diversion Curve to express diverted flow as a function of the total inflow),
-WEIR (uses a weir equation to compute diverted flow).
-CUTOFF DIVIDER
- - Cutoff Flow	Cutoff flow value used for a CUTOFF divider (flow units).
-TABULAR DIVIDER
- - Curve Name	Name of Diversion Curve for a TABULAR divider (double-click to edit).
-WEIR DIVIDER
- - Min. Flow	Minimum flow at which diversion begins for a WEIR divider (flow units).
- - Max. Depth	Vertical height of WEIR opening (feet or meters)
- - Coefficient	Product of WEIR's discharge coefficient and its length. Weir coefficients are typically in the range of 2.65 to 3.10 per foot, for flows in CFS.
-
-Note: 	Flow dividers are operational only for Steady Flow and Kinematic Wave flow routing. For Dynamic Wave flow routing they behave as Junction nodes.
- 
-	Storage Unit Properties
-
-Name	User-assigned storage unit name.
-X-Coordinate	Horizontal location of the storage unit on the Study Area Map. If left blank then the storage unit will not appear on the map.
-Y-Coordinate	Vertical location of the storage unit on the Study Area Map. If left blank then the storage unit will not appear on the map.
-Description	Click the ellipsis button (or press Enter) to edit an optional description of the storage unit.
-Tag	Optional label used to categorize or classify the storage unit.
-Inflows	Click the ellipsis button (or press Enter) to assign external direct, dry weather or RDII inflows to the storage unit.
-Treatment	Click the ellipsis button (or press Enter) to edit a set of treatment functions for pollutants within the storage unit.
-Invert El.	Elevation of the bottom of the storage unit (feet or meters).
-Max. Depth	Maximum depth of the storage unit (feet or meters).
-Initial Depth	Initial depth of water in the storage unit at the start of the simulation (feet or meters).
-Surcharge Depth	Additional depth of water above full depth that a storage unit can sustain before overflowing (feet or meters). Only used for covered units.
-Evap. Factor	The fraction of the potential evaporation from the storage unit’s water surface that is actually realized.
-Seepage Loss	Click the ellipsis button (or press Enter) to specify optional soil properties that determine seepage loss through the bottom and sloped sides of the storage unit.
-Storage Shape	Click the ellipsis button (or press Enter) to specify the shape of the storage unit by relating surface area to depth.
-
- 
-	Conduit Properties
-
-Name	User-assigned conduit name.
-Inlet Node	Name of node on the inlet end of the conduit (normally the end at higher elevation).
-Outlet Node	Name of node on the outlet end of the conduit (normally the end at lower elevation).
-Description	Click the ellipsis button (or press Enter) to edit an optional description of the conduit.
-Tag	Optional label used to categorize or classify the conduit.
-Shape	Click the ellipsis button (or press Enter) to edit the geometric properties of the conduit's cross-section.
-Max. Depth	Maximum depth of the conduit's cross-section (feet or meters).
-Length	Conduit length (feet or meters).
-Roughness	Manning's roughness coefficient (n)  (see Section A.7 for closed conduit values or Section A.8 for open channel values).
-Inlet Offset	Depth or elevation of the conduit invert above the node invert at the upstream end of the conduit (feet or meters). See note below.
-Outlet Offset	Depth or elevation of the conduit invert above the node invert at the downstream end of the conduit (feet or meters). See note below.
-Initial Flow	Initial flow in the conduit (flow units).
-Maximum Flow	Maximum flow allowed in the conduit (flow units) – use 0 or leave blank if not applicable.
-Entry Loss Coeff.	Head loss coefficient associated with energy losses at the entrance of the conduit. For culverts, refer to Table A11.
-Exit Loss Coeff.	Head loss coefficient associated with energy losses at the exit of the conduit. For culverts, use a value of 1.0
-Avg. Loss Coeff.	Head loss coefficient associated with energy losses along the length of the conduit.
-Seepage Loss Rate	Rate of seepage loss into surrounding soil (inches or millimeters per hour).
-Flap Gate	YES if a flap gate exists that prevents backflow through the conduit, or NO if no flap gate exists.
-Culvert Code	If the conduit is a culvert subject to possible inlet flow control click the ellipsis button (or press Enter) to select a code number for its inlet geometry from those listed in Appendix A10
-Inlets	Click the ellipsis button (or press Enter) to assign a storm drain inlet to a street or open channel conduit.
-
-NOTE: Conduits and flow regulators (orifices, weirs, and outlets) can be offset some distance above the invert of their connecting end nodes. There are two different conventions available for specifying the location of these offsets. The Depth convention uses the offset distance from the node’s invert (distance between  and  in the figure on the right). The Elevation convention uses the absolute elevation of the offset location (the elevation of point  in the figure). The choice of convention can be made on the Status Bar of SWMM’s main window or on the Node/Link Properties page of the Project Defaults dialog.	 
-
-
-	Pump Properties
-
-Name	User-assigned pump name.
-Inlet Node	Name of node on the inlet side of the pump.
-Outlet Node	Name of node on the outlet side of the pump.
-Description	Click the ellipsis button (or press Enter) to edit an optional description of the pump.
-Tag	Optional label used to categorize or classify the pump.
-Pump Curve	Name of the Pump Curve which contains the pump's operating data (double-click to edit the curve). Enter * for an Ideal pump.
-Initial Status	Status of the pump (ON or OFF) at the start of the simulation.
-Startup Depth	Depth at inlet node when pump turns on (feet or meters). Enter 0 if not applicable.
-Shutoff Depth	Depth at inlet node when pump shuts off (feet or meters). Must be lower than the Startup Depth. Enter 0 if not applicable.
-
-	Orifice Properties
-
-Name	User-assigned orifice name.
-Inlet Node	Name of node on the inlet side of the orifice.
-Outlet Node	Name of node on the outlet side of the orifice.
-Description	Click the ellipsis button (or press Enter) to edit an optional description of the orifice.
-Tag	Optional label used to categorize or classify the orifice.
-Type	Type of orifice (SIDE or BOTTOM).
-Shape	Orifice shape (CIRCULAR or RECT_CLOSED).
-Height	Height of orifice opening when fully open (feet or meters). Corresponds to the diameter of a circular orifice or the height of a rectangular orifice.
-Width	Width of rectangular orifice when fully opened (feet or meters).
-Inlet Offset	Depth or elevation of bottom of orifice above invert of inlet node (feet or meters – see note below table of Conduit Properties).
-Discharge Coeff.	Discharge coefficient (unitless). A typical value is 0.65.
-Flap Gate	YES if the orifice has a flap gate that prevents backflow, NO otherwise.
-Time to Open / Close	The time it takes to open a closed (or close an open) gated orifice in decimal hours. Use 0 or leave blank if timed openings/closings do not apply. Use Control Rules to adjust gate position.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Weir Properties
-
-Name	User-assigned weir name.
-Inlet Node	Name of node on inlet side of weir.
-Outlet Node	Name of node on outlet side of weir.
-Description	Click the ellipsis button (or press Enter) to edit an optional description of the weir.
-Tag	Optional label used to categorize or classify the weir.
-Type	Weir type: TRANSVERSE, SIDEFLOW, V-NOTCH, TRAPEZOIDAL or ROADWAY.
-Height	Vertical height of weir opening (feet or meters).
-Length	Horizontal length of weir opening (feet or meters).
-Side Slope	Slope (run/rise) of side walls for a V-NOTCH or TRAPEZOIDAL weir.
-Inlet Offset	Depth or elevation of bottom of weir opening from invert of inlet node (feet or meters – see note below table of Conduit Properties).
-Discharge Coeff.1	Discharge coefficient for flow through the central portion of the weir (for flow in CFS when using US units or CMS when using SI units). 
-Flap Gate	YES if the weir has a flap gate that prevents backflow, NO otherwise.
-End Contractions	Number of end contractions for a TRANSVERSE or TRAPEZOIDAL weir whose length is shorter than the channel it is placed in. Values will be either 0, 1, or 2 depending if no ends, one end, or both ends are beveled in from the side walls.
-End Coeff.	Discharge coefficient for flow through the triangular ends of a TRAPEZOIDAL weir. See the recommended values for V-notch weirs. 
-Can Surcharge	YES if the weir can surcharge (have an upstream water level higher than the height of the opening) or NO if it cannot.
-Coeff. Curve	Name of an optional Weir Curve that allows the central Discharge Coeff. to vary with head (ft or m) across the weir. Does not apply to Roadway weirs.
-ROADWAY WEIR	(used only for Roadway weirs)
-Road Width	Width of roadway and shoulders (feet or meters)
-Road Surface	Type of road surface: PAVED or GRAVEL.
-
-1 Typical values are: 3.33 US (1.84 SI) for sharp crested transverse weirs, 2.5 - 3.3 US (1.38 - 1.83 SI) for broad crested rectangular weirs, 2.4 - 2.8 US (1.35 - 1.55 SI) for V-notch (triangular) weirs. 
-Outlet Properties
-
-Name	User-assigned outlet name.
-Inlet Node	Name of node on inflow side of outlet.
-Outlet Node	Name of node on discharge side of outlet.
-Description	Click the ellipsis button (or press Enter) to edit an optional description of the outlet.
-Tag	Optional label used to categorize or classify the outlet.
-Inlet Offset	Depth or elevation of outlet above inlet node invert (feet or meters – see note below table of Conduit Properties).
-Flap Gate	YES if the outlet has a flap gate that prevents backflow, NO otherwise.
-Rating Curve	Method of defining flow (Q) as a function of depth or head (y) across the outlet.
-FUNCTIONAL/DEPTH uses a power function (Q = AyB) to describe this relation where y is the depth of water above the outlet’s opening at the inlet node.
-FUNCTIONAL/HEAD uses the same power function except that y is the difference in head across the outlet’s nodes.
-TABULAR/DEPTH uses a tabulated curve of flow versus depth of water above the outlet’s opening at the inlet node.
-TABULAR/HEAD uses a tabulated curve of flow versus difference in head across the outlet’s nodes.
-FUNCTIONAL	(used only for a functional rating curve)
-  - Coefficient	Coefficient (A) for the functional relationship between depth or head and flow rate.
-  - Exponent	Exponent (B) used for the functional relationship between depth or head and flow rate.
-TABULAR	(used only for a tabular rating curve)
-  - Curve Name	Name of Rating Curve containing the relationship between depth or head and flow rate (double-click to edit the curve).
-
-
-
-
-
-
-Map Label Properties
-
-Text	Text of label.
-X-Coordinate	Horizontal location of the upper-left corner of the label on the Study Area Map.
-Y-Coordinate	Vertical location of the upper-left corner of the label on the Study Area Map.
-Anchor Node	Name of node (or subcatchment) that anchors the label's position when the map is zoomed in (i.e., the pixel distance between the node and the label remains constant). Leave blank if anchoring is not used.
-Font	Click the ellipsis button (or press Enter) to modify the font used to draw the label.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-SPECIALIZED PROPERTY EDITORS
-________________________________________
-
-	Aquifer Editor
+### B.2 Subcatchment Properties {#user_manual_appendix_b_2}
+
+| **Property**         | **Description**                                                                                                                                                                                                 |
+|-----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Name**             | User-assigned subcatchment name.                                                                                                                                                                                |
+| **X-Coordinate**     | Horizontal location of the subcatchment's centroid on the Study Area Map. If left blank, the subcatchment will not appear on the map.                                                                            |
+| **Y-Coordinate**     | Vertical location of the subcatchment's centroid on the Study Area Map. If left blank, the subcatchment will not appear on the map.                                                                              |
+| **Description**      | Click the ellipsis button (or press Enter) to edit an optional description of the subcatchment.                                                                                                                  |
+| **Tag**              | Optional label used to categorize or classify the subcatchment.                                                                                                                                                  |
+| **Rain Gage**        | Name of the rain gage associated with the subcatchment.                                                                                                                                                          |
+| **Outlet**           | Name of the node or subcatchment which receives the subcatchment's runoff.                                                                                                                                       |
+| **Area**             | Area of the subcatchment, including any LID controls (acres or hectares).                                                                                                                                        |
+| **Width**            | Characteristic width of the overland flow path for sheet flow runoff (feet or meters).                                                                                                                           |
+| **% Slope**          | Average percent slope of the subcatchment.                                                                                                                                                                       |
+| **% Imperv**         | Percent of land area (excluding the area used for LID controls) which is impervious.                                                                                                                             |
+| **N-Imperv**         | Manning's coefficient (n) for overland flow over the impervious portion of the subcatchment (see Section A.6 for typical values).                                                                                |
+| **N-Perv**           | Manning's coefficient (n) for overland flow over the pervious portion of the subcatchment (see Section A.6 for typical values).                                                                                  |
+| **Dstore-Imperv**    | Depth of depression storage on the impervious portion of the subcatchment (inches or millimeters) (see Section A.5 for typical values).                                                                          |
+| **Dstore-Perv**      | Depth of depression storage on the pervious portion of the subcatchment (inches or millimeters) (see Section A.5 for typical values).                                                                            |
+| **% Zero-Imperv**    | Percent of the impervious area with no depression storage.                                                                                                                                                        |
+| **Subarea Routing**  | Choice of internal routing of runoff between pervious and impervious areas: <br> - **IMPERV**: runoff from pervious area flows to impervious area. <br> - **PERV**: runoff from impervious area flows to pervious area. <br> - **OUTLET**: runoff from both areas flows directly to outlet. |
+| **Percent Routed**   | Percent of runoff routed between subareas.                                                                                                                                                                       |
+| **Infiltration Data**| Click the ellipsis button (or press Enter) to edit infiltration parameters for the subcatchment.                                                                                                                 |
+| **Groundwater**      | Click the ellipsis button (or press Enter) to edit groundwater flow parameters for the subcatchment.                                                                                                             |
+| **Snow Pack**        | Name of snow pack parameter set (if any) assigned to the subcatchment.                                                                                                                                           |
+| **LID Controls**     | Click the ellipsis button (or press Enter) to edit the use of low impact development controls in the subcatchment.                                                                                               |
+| **Land Uses**        | Click the ellipsis button (or press Enter) to assign land uses to the subcatchment. Only needed if pollutant buildup/washoff is modeled.                                                                          |
+| **Initial Buildup**  | Click the ellipsis button (or press Enter) to specify initial quantities of pollutant buildup over the subcatchment.                                                                                              |
+| **Curb Length**      | Total length of curbs in the subcatchment (any length units). Used only when pollutant buildup is normalized to curb length.                                                                                       |
+| **N-Perv Pattern**   | Name of optional monthly pattern that adjusts pervious Manning’s n.                                                                                                                                              |
+| **Dstore Pattern**   | Name of optional monthly pattern that adjusts depression storage.                                                                                                                                                |
+| **Infil. Pattern**   | Name of optional monthly pattern that adjusts infiltration rate.                                                                                                                                                 |
+
+**Note:** An initial estimate of the characteristic width is given by the subcatchment area divided by the average maximum overland flow length. The maximum overland flow length is the length of the flow path from the furthest drainage point of the subcatchment before the flow becomes channelized. Maximum lengths from several different possible flow paths should be averaged. These paths should reflect slow flow, such as over pervious surfaces, more than rapid flow over pavement, for example. Adjustments should be made to the width parameter to produce good fits to measured runoff hydrographs.
+
+### B.3 Junction Properties {#user_manual_appendix_b_3}
+
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Name**           | User-assigned junction name.                                                                                                                                                                                   |
+| **X-Coordinate**   | Horizontal location of the junction on the Study Area Map. If left blank, the junction will not appear on the map.                                                                                              |
+| **Y-Coordinate**   | Vertical location of the junction on the Study Area Map. If left blank, the junction will not appear on the map.                                                                                                |
+| **Description**    | Click the ellipsis button (or press Enter) to edit an optional description of the junction.                                                                                                                     |
+| **Tag**            | Optional label used to categorize or classify the junction.                                                                                                                                                     |
+| **Inflows**        | Click the ellipsis button (or press Enter) to assign external direct, dry weather, or RDII inflows to the junction.                                                                                              |
+| **Treatment**      | Click the ellipsis button (or press Enter) to edit a set of treatment functions for pollutants entering the node.                                                                                                |
+| **Invert El.**     | Invert elevation of the junction (feet or meters).                                                                                                                                                              |
+| **Max. Depth**     | Maximum depth of the junction (i.e., from ground surface to invert) (feet or meters). If zero, the distance from the invert to the top of the highest connecting link will be used.                               |
+| **Initial Depth**  | Depth of water at the junction at the start of the simulation (feet or meters).                                                                                                                                 |
+| **Surcharge Depth**| Additional depth of water beyond the maximum depth that the junction can sustain before overflowing (feet or meters). This parameter can be used to simulate bolted manhole covers or force main connections.    |
+| **Ponded Area**    | Area occupied by ponded water atop the junction after flooding occurs (sq. feet or sq. meters). If the Allow Ponding simulation option is turned on, a non-zero value of this parameter will allow ponded water to be stored and subsequently returned to the conveyance system when capacity exists. |
+
+
+### B.4 Outfall Properties {#user_manual_appendix_b_4}
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Name**           | User-assigned outfall name.                                                                                                                                                                                     |
+| **X-Coordinate**   | Horizontal location of the outfall on the Study Area Map. If left blank, the outfall will not appear on the map.                                                                                                |
+| **Y-Coordinate**   | Vertical location of the outfall on the Study Area Map. If left blank, the outfall will not appear on the map.                                                                                                  |
+| **Description**    | Click the ellipsis button (or press Enter) to edit an optional description of the outfall.                                                                                                                       |
+| **Tag**            | Optional label used to categorize or classify the outfall.                                                                                                                                                       |
+| **Inflows**        | Click the ellipsis button (or press Enter) to assign external direct, dry weather, or RDII inflows to the outfall.                                                                                               |
+| **Treatment**      | Click the ellipsis button (or press Enter) to edit a set of treatment functions for pollutants entering the node.                                                                                                |
+| **Invert El.**     | Invert elevation of the outfall (feet or meters).                                                                                                                                                               |
+| **Tide Gate**      | **YES**: Tide gate present to prevent backflow. <br> **NO**: No tide gate present.                                                                                                                               |
+| **Route To**       | Optional name of a subcatchment that receives the outfall's discharge.                                                                                                                                           |
+| **Type**           | Type of outfall boundary condition: <br> - **FREE**: Outfall stage determined by the minimum of critical flow depth and normal flow depth in the connecting conduit. <br> - **NORMAL**: Outfall stage based on normal flow depth in the connecting conduit. <br> - **FIXED**: Outfall stage set to a fixed value. <br> - **TIDAL**: Outfall stage given by a table of tide elevation versus time of day. <br> - **TIMESERIES**: Outfall stage supplied from a time series of elevations. |
+| **Fixed Stage**    | Water elevation for a **FIXED** type of outfall (feet or meters).                                                                                                                                                |
+| **Tidal Curve Name** | Name of the Tidal Curve relating water elevation to hour of the day for a **TIDAL** outfall (double-click to edit the curve).                                                                                   |
+| **Time Series Name** | Name of the time series containing the time history of outfall elevations for a **TIMESERIES** outfall (double-click to edit the series).                                                                       |
+
+
+### B.5 Flow Divider Properties {#user_manual_appendix_b_5}
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------| 
+| **Name**           | User-assigned divider name.                                                                                                                                                                                     |
+| **X-Coordinate**   | Horizontal location of the divider on the Study Area Map. If left blank, the divider will not appear on the map.                                                                                                |
+| **Y-Coordinate**   | Vertical location of the divider on the Study Area Map. If left blank, the divider will not appear on the map.                                                                                                  |
+| **Description**    | Click the ellipsis button (or press Enter) to edit an optional description of the divider.                                                                                                                       |
+| **Tag**            | Optional label used to categorize or classify the divider.                                                                                                                                                       |
+| **Inflows**        | Click the ellipsis button (or press Enter) to assign external direct, dry weather, or RDII inflows to the divider.                                                                                               |
+| **Treatment**      | Click the ellipsis button (or press Enter) to edit a set of treatment functions for pollutants entering the node.                                                                                                |
+| **Invert El.**     | Invert elevation of the divider (feet or meters).                                                                                                                                                               |
+| **Max. Depth**     | Maximum depth of the divider (feet or meters). See description for Junctions.                                                                                                                                   |
+| **Initial Depth**  | Depth of water at the divider at the start of the simulation (feet or meters).                                                                                                                                  |
+| **Surcharge Depth**| Additional depth of water beyond the maximum depth that the divider can sustain before overflowing (feet or meters).                                                                                           |
+| **Ponded Area**    | Area occupied by ponded water atop the junction after flooding occurs (sq. feet or sq. meters). See description for Junctions.                                                                                   |
+| **Diverted Link**  | Name of the link which receives the diverted flow.                                                                                                                                                              |
+| **Type**           | Type of flow divider: <br> - **CUTOFF**: Diverts all inflow above a defined cutoff value. <br> - **OVERFLOW**: Diverts all inflow above the flow capacity of the non-diverted link. <br> - **TABULAR**: Uses a Diversion Curve to express diverted flow as a function of the total inflow. <br> - **WEIR**: Uses a weir equation to compute diverted flow. |
+
+#### CUTOFF Divider
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Cutoff Flow**    | Cutoff flow value used for a CUTOFF divider (flow units).                                                                                                                                                        |
+
+#### TABULAR Divider
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Curve Name**     | Name of the Diversion Curve for a TABULAR divider (double-click to edit).                                                                                                                                       |
+
+#### WEIR Divider
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Min. Flow**      | Minimum flow at which diversion begins for a WEIR divider (flow units).                                                                                                                                         |
+| **Max. Depth**     | Vertical height of the WEIR opening (feet or meters).                                                                                                                                                           |
+| **Coefficient**    | Product of the WEIR's discharge coefficient and its length. Typical values range from 2.65 to 3.10 per foot for flows in CFS.                                                                                   |
+
+**Note:** Flow dividers are operational only for Steady Flow and Kinematic Wave flow routing. For Dynamic Wave flow routing, they behave as Junction nodes.
+
+
+### B.6 Storage Unit Properties {#user_manual_appendix_b_6}	
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Name**           | User-assigned storage unit name.                                                                                                                                                                                |
+| **X-Coordinate**   | Horizontal location of the storage unit on the Study Area Map. If left blank, the storage unit will not appear on the map.                                                                                       |
+| **Y-Coordinate**   | Vertical location of the storage unit on the Study Area Map. If left blank, the storage unit will not appear on the map.                                                                                         |
+| **Description**    | Click the ellipsis button (or press Enter) to edit an optional description of the storage unit.                                                                                                                  |
+| **Tag**            | Optional label used to categorize or classify the storage unit.                                                                                                                                                  |
+| **Inflows**        | Click the ellipsis button (or press Enter) to assign external direct, dry weather, or RDII inflows to the storage unit.                                                                                          |
+| **Treatment**      | Click the ellipsis button (or press Enter) to edit a set of treatment functions for pollutants within the storage unit.                                                                                          |
+| **Invert El.**     | Elevation of the bottom of the storage unit (feet or meters).                                                                                                                                                    |
+| **Max. Depth**     | Maximum depth of the storage unit (feet or meters).                                                                                                                                                             |
+| **Initial Depth**  | Initial depth of water in the storage unit at the start of the simulation (feet or meters).                                                                                                                     |
+| **Surcharge Depth**| Additional depth of water above full depth that a storage unit can sustain before overflowing (feet or meters). Only used for covered units.                                                                    |
+| **Evap. Factor**   | Fraction of the potential evaporation from the storage unit’s water surface that is realized.                                                                                                                   |
+| **Seepage Loss**   | Click the ellipsis button (or press Enter) to specify optional soil properties that determine seepage loss through the bottom and sloped sides of the storage unit.                                               |
+| **Storage Shape**  | Click the ellipsis button (or press Enter) to specify the shape of the storage unit by relating surface area to depth.                                                                                           |
+
+
+### B.7 Conduit Properties {#user_manual_appendix_b_7}
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Name**           | User-assigned conduit name.                                                                                                                                                                                     |
+| **Inlet Node**     | Name of the node on the inlet end of the conduit (normally the end at higher elevation).                                                                                                                         |
+| **Outlet Node**    | Name of the node on the outlet end of the conduit (normally the end at lower elevation).                                                                                                                         |
+| **Description**    | Click the ellipsis button (or press Enter) to edit an optional description of the conduit.                                                                                                                       |
+| **Tag**            | Optional label used to categorize or classify the conduit.                                                                                                                                                       |
+| **Shape**          | Click the ellipsis button (or press Enter) to edit the geometric properties of the conduit’s cross-section.                                                                                                     |
+| **Max. Depth**     | Maximum depth of the conduit’s cross-section (feet or meters).                                                                                                                                                  |
+| **Length**         | Conduit length (feet or meters).                                                                                                                                                                                |
+| **Roughness**      | Manning’s roughness coefficient (n). See Section A.7 for closed conduit values or Section A.8 for open channel values.                                                                                          |
+| **Inlet Offset**   | Depth or elevation of the conduit invert above the node invert at the upstream end of the conduit (feet or meters).                                                                                             |
+| **Outlet Offset**  | Depth or elevation of the conduit invert above the node invert at the downstream end of the conduit (feet or meters).                                                                                           |
+| **Initial Flow**   | Initial flow in the conduit (flow units).                                                                                                                                                                       |
+| **Maximum Flow**   | Maximum flow allowed in the conduit (flow units). Use 0 or leave blank if not applicable.                                                                                                                       |
+| **Entry Loss Coeff.** | Head loss coefficient associated with energy losses at the entrance of the conduit. For culverts, refer to Table A.11.                                                                                       |
+| **Exit Loss Coeff.** | Head loss coefficient associated with energy losses at the exit of the conduit. For culverts, use a value of 1.0.                                                                                             |
+| **Avg. Loss Coeff.** | Head loss coefficient associated with energy losses along the length of the conduit.                                                                                                                          |
+| **Seepage Loss Rate** | Rate of seepage loss into surrounding soil (inches or millimeters per hour).                                                                                                                                 |
+| **Flap Gate**      | **YES** if a flap gate exists that prevents backflow through the conduit, or **NO** if no flap gate exists.                                                                                                     |
+| **Culvert Code**   | If the conduit is a culvert subject to possible inlet flow control, click the ellipsis button (or press Enter) to select a code number for its inlet geometry from those listed in Appendix A.10.                                                      |
+| **Inlets**         | Click the ellipsis button (or press Enter) to assign a storm drain inlet to a street or open channel conduit.                                                                                                   |
+
+**Note:** Conduits and flow regulators (orifices, weirs, and outlets) can be offset some distance above the invert of their connecting end nodes. The choice of offset convention (Depth or Elevation) can be made on the Status Bar of SWMM’s main window or on the Node/Link Properties page of the Project Defaults dialog.
+
+
+### B.8 Pump Properties {#user_manual_appendix_b_8}
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Name**           | User-assigned pump name.                                                                                                                                                                                        |
+| **Inlet Node**     | Name of the node on the inlet side of the pump.                                                                                                                                                                 |
+| **Outlet Node**    | Name of the node on the outlet side of the pump.                                                                                                                                                                |
+| **Description**    | Click the ellipsis button (or press Enter) to edit an optional description of the pump.                                                                                                                          |
+| **Tag**            | Optional label used to categorize or classify the pump.                                                                                                                                                         |
+| **Pump Curve**     | Name of the Pump Curve which contains the pump’s operating data (double-click to edit the curve). Enter * for an Ideal pump.                                                                                     |
+| **Initial Status** | Status of the pump (**ON** or **OFF**) at the start of the simulation.                                                                                                                                           |
+| **Startup Depth**  | Depth at the inlet node when the pump turns on (feet or meters). Enter 0 if not applicable.                                                                                                                      |
+| **Shutoff Depth**  | Depth at the inlet node when the pump shuts off (feet or meters). Must be lower than the Startup Depth. Enter 0 if not applicable.                                                                               |
+…
+
+### B.9 Orifice Properties {#user_manual_appendix_b_9}
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Name**           | User-assigned orifice name.                                                                                                                                                                                     |
+| **Inlet Node**     | Name of the node on the inlet side of the orifice.                                                                                                                                                              |
+| **Outlet Node**    | Name of the node on the outlet side of the orifice.                                                                                                                                                             |
+| **Description**    | Click the ellipsis button (or press Enter) to edit an optional description of the orifice.                                                                                                                       |
+| **Tag**            | Optional label used to categorize or classify the orifice.                                                                                                                                                       |
+| **Type**           | Type of orifice (**SIDE** or **BOTTOM**).                                                                                                                                                                       |
+| **Shape**          | Orifice shape (**CIRCULAR** or **RECT_CLOSED**).                                                                                                                                                                |
+| **Height**         | Height of the orifice opening when fully open (feet or meters). Corresponds to the diameter of a circular orifice or the height of a rectangular orifice.                                                       |
+| **Width**          | Width of a rectangular orifice when fully opened (feet or meters).                                                                                                                                              |
+| **Inlet Offset**   | Depth or elevation of the bottom of the orifice above the invert of the inlet node (feet or meters).                                                                                                            |
+| **Discharge Coeff.** | Discharge coefficient (unitless). A typical value is 0.65.                                                                                                                                                    |
+| **Flap Gate**      | **YES** if the orifice has a flap gate that prevents backflow, **NO** otherwise.                                                                                                                                |
+| **Time to Open/Close** | Time it takes to open a closed (or close an open) gated orifice in decimal hours. Use 0 or leave blank if timed openings/closings do not apply. Use Control Rules to adjust gate position.                                                         |
+
+
+### B.10 Weir Properties {#user_manual_appendix_b_10}
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Name**           | User-assigned weir name.                                                                                                                                                                                        |
+| **Inlet Node**     | Name of the node on the inlet side of the weir.                                                                                                                                                                 |
+| **Outlet Node**    | Name of the node on the outlet side of the weir.                                                                                                                                                                |
+| **Description**    | Click the ellipsis button (or press Enter) to edit an optional description of the weir.                                                                                                                          |
+| **Tag**            | Optional label used to categorize or classify the weir.                                                                                                                                                         |
+| **Type**           | Weir type: **TRANSVERSE**, **SIDEFLOW**, **V-NOTCH**, **TRAPEZOIDAL**, or **ROADWAY**.                                                                                                                           |
+| **Height**         | Vertical height of the weir opening (feet or meters).                                                                                                                                                           |
+| **Length**         | Horizontal length of the weir opening (feet or meters).                                                                                                                                                         |
+| **Side Slope**     | Slope (run/rise) of side walls for a **V-NOTCH** or **TRAPEZOIDAL** weir.                                                                                                                                       |
+| **Inlet Offset**   | Depth or elevation of the bottom of the weir opening from the invert of the inlet node (feet or meters).                                                                                                        |
+| **Discharge Coeff.** | Discharge coefficient for flow through the central portion of the weir. Typical values are: <br> - 3.33 US (1.84 SI) for sharp-crested transverse weirs. <br> - 2.5–3.3 US (1.38–1.83 SI) for broad-crested rectangular weirs. <br> - 2.4–2.8 US (1.35–1.55 SI) for V-notch weirs. |
+| **Flap Gate**      | **YES** if the weir has a flap gate that prevents backflow, **NO** otherwise.                                                                                                                                   |
+| **End Contractions** | Number of end contractions for a **TRANSVERSE** or **TRAPEZOIDAL** weir whose length is shorter than the channel it is placed in. Values will be 0, 1, or 2 depending on the number of beveled ends.                                                |
+| **End Coeff.**     | Discharge coefficient for flow through the triangular ends of a **TRAPEZOIDAL** weir.                                                                                                                           |
+| **Can Surcharge**  | **YES** if the weir can surcharge (have an upstream water level higher than the height of the opening), or **NO** if it cannot.                                                                                 |
+| **Coeff. Curve**   | Name of an optional Weir Curve that allows the central Discharge Coeff. to vary with head (ft or m) across the weir. Does not apply to Roadway weirs.                                                            |
+
+### 6.1 ROADWAY WEIR (Used Only for Roadway Weirs)
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Road Width**     | Width of the roadway and shoulders (feet or meters).                                                                                                                                                            |
+| **Road Surface**   | Type of road surface: **PAVED** or **GRAVEL**.                                                                                                                                                                  |
+
+---
+
+## 7. Outlet Properties
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Name**           | User-assigned outlet name.                                                                                                                                                                                      |
+| **Inlet Node**     | Name of the node on the inflow side of the outlet.                                                                                                                                                              |
+| **Outlet Node**    | Name of the node on the discharge side of the outlet.                                                                                                                                                           |
+| **Description**    | Click the ellipsis button (or press Enter) to edit an optional description of the outlet.                                                                                                                        |
+| **Tag**            | Optional label used to categorize or classify the outlet.                                                                                                                                                       |
+| **Inlet Offset**   | Depth or elevation of the outlet above the inlet node invert (feet or meters).                                                                                                                                  |
+| **Flap Gate**      | **YES** if the outlet has a flap gate that prevents backflow, **NO** otherwise.                                                                                                                                 |
+| **Rating Curve**   | Method of defining flow (Q) as a function of depth or head (y) across the outlet: <br> - **FUNCTIONAL/DEPTH**: Uses a power function (Q = Ay^B) where y is the depth of water above the outlet’s opening at the inlet node. <br> - **FUNCTIONAL/HEAD**: Uses the same power function except y is the difference in head across the outlet’s nodes. <br> - **TABULAR/DEPTH**: Uses a tabulated curve of flow versus depth of water above the outlet’s opening at the inlet node. <br> - **TABULAR/HEAD**: Uses a tabulated curve of flow versus the difference in head across the outlet’s nodes. |
+
+### 7.1 FUNCTIONAL (Used Only for a Functional Rating Curve)
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Coefficient**    | Coefficient (A) for the functional relationship between depth or head and flow rate.                                                                                                                            |
+| **Exponent**       | Exponent (B) used for the functional relationship between depth or head and flow rate.                                                                                                                          |
+
+### 7.2 TABULAR (Used Only for a Tabular Rating Curve)
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Curve Name**     | Name of the Rating Curve containing the relationship between depth or head and flow rate (double-click to edit the curve).                                                                                       |
+
+---
+
+## 8. Map Label Properties
+
+| **Property**       | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Text**           | Text of the label.                                                                                                                                                                                              |
+| **X-Coordinate**   | Horizontal location of the upper-left corner of the label on the Study Area Map.                                                                                                                                |
+| **Y-Coordinate**   | Vertical location of the upper-left corner of the label on the Study Area Map.                                                                                                                                  |
+| **Anchor Node**    | Name of the node (or subcatchment) that anchors the label's position when the map is zoomed in (i.e., the pixel distance between the node and the label remains constant). Leave blank if anchoring is not used.  |
+| **Font**           | Click the ellipsis button (or press Enter) to modify the font used to draw the label.                                                                                                                           |
+
+
+
+## APPENDIX C - SPECIALIZED PROPERTY EDITORS {#user_manual_appendix_c}
+
+### C.1 Aquifer Editor {#user_manual_appendix_c_1}
 
 The Aquifer Editor is invoked whenever a new aquifer object is created or an existing aquifer object is selected for editing. It contains the following data fields:
 
  
+### Aquifer Properties {#user_manual_appendix_c_1_aquifer_properties}
 
-Aquifer Name
-User-assigned aquifer name.
+| **Property**               | **Description**                                                                                                                                                     |
+|----------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Aquifer Name**           | User-assigned aquifer name.                                                                                                                                        |
+| **Porosity**               | Volume of voids / total soil volume (volumetric fraction).                                                                                                         |
+| **Wilting Point**          | Volume of pore water relative to total volume for a well-dried soil where only bound water remains. The moisture content of the soil cannot fall below this limit. |
+| **Field Capacity**         | Volume of pore water relative to total volume after the soil has been allowed to drain fully. Below this level, vertical drainage does not occur.                  |
+| **Conductivity**           | Soil's saturated hydraulic conductivity (in/hr or mm/hr).                                                                                                         |
+| **Conductivity Slope**     | Average slope of log(conductivity) versus soil moisture deficit (porosity minus moisture content) curve (unitless).                                                |
+| **Tension Slope**          | Average slope of soil tension versus soil moisture content curve (inches or mm).                                                                                  |
+| **Upper Evaporation Fraction** | Fraction of total evaporation available for evapotranspiration in the upper unsaturated zone.                                                                  |
+| **Lower Evaporation Depth** | Maximum depth below the surface at which evapotranspiration from the lower saturated zone can still occur (ft or m).                                              |
+| **Lower Groundwater Loss Rate** | Rate of percolation to deep groundwater when the water table reaches the ground surface (in/hr or mm/hr).                                                     |
+| **Bottom Elevation**       | Elevation of the bottom of the aquifer (ft or m).                                                                                                                 |
+| **Water Table Elevation**  | Elevation of the water table in the aquifer at the start of the simulation (ft or m).                                                                              |
+| **Unsaturated Zone Moisture** | Moisture content of the unsaturated upper zone of the aquifer at the start of the simulation (volumetric fraction) (cannot exceed soil porosity).               |
+| **Upper Evaporation Pattern** | Name of the monthly time pattern of adjustments applied to the upper evaporation fraction (optional – leave blank if not applicable).                           |
 
-Porosity
-Volume of voids / total soil volume (volumetric fraction).
-
-
-
-Wilting Point
-Volume of pore water relative to total volume for a well dried soil where only bound water remains. The moisture content of the soil cannot fall below this limit.
-
-Field Capacity
-Volume of pore water relative to total volume after the soil has been allowed to drain fully. Below this level, vertical drainage of water through the soil layer does not occur.
-
-Conductivity
-Soil's saturated hydraulic conductivity (in/hr or mm/hr).
-
-Conductivity Slope
-Average slope of log(conductivity) versus soil moisture deficit (porosity minus moisture content)  curve (unitless).
-
-Tension Slope
-Average slope of soil tension versus soil moisture content curve (inches or mm).
-
-Upper Evaporation Fraction
-Fraction of total evaporation available for evapotranspiration in the upper unsaturated zone.
-
-Lower Evaporation Depth
-Maximum depth below the surface at which evapotranspiration from the lower saturated zone can still occur  (ft or m).
-
-Lower Groundwater Loss Rate
-Rate of percolation to deep groundwater when the water table reaches the ground surface (in/hr or mm/hr). 
-
-Bottom Elevation
-Elevation of the bottom of the aquifer (ft or m).
-
-Water Table Elevation
-Elevation of the water table in the aquifer at the start of the simulation (ft or m).
-
-Unsaturated Zone Moisture
-Moisture content of the unsaturated upper zone of the aquifer at the start of the simulation (volumetric fraction) (cannot exceed soil porosity).
-
-Upper Evaporation Pattern
-Name of the monthly time pattern of adjustments applied to the upper evaporation fraction (optional – leave blank if not applicable). 
-	Climatology Editor
+### C.2 Climatology Editor {#user_manual_appendix_c_2}
 
 The Climatology Editor is used to enter values for various climate-related variables required by certain SWMM simulations. The dialog is divided into six tabbed pages, where each page provides a separate editor for a specific category of climate data.
 
@@ -4776,74 +4453,54 @@ Temperature Page
  
 
 The Temperature page of the Climatology Editor dialog is used to specify the source of temperature data used for snowmelt computations. It is also used to select a climate file as a possible source for evaporation rates. There are three choices available:
-	No Data
-Select this choice if snowmelt is not being simulated and evaporation rates are not based on data in a climate file.
 
-	Time Series
-Select this choice if the variation in temperature over the simulation period will be described by one of the project's time series. Also, enter (or select) the name of the time series. Click the   button to make the Time Series Editor appear for the selected time series.
-	External Climate File
-Select this choice if min/max daily temperatures will be read from an external climate file (see Section 11.4). Also choose this option if you want daily evaporation rates to be estimated from daily temperatures or be read directly from the file. Then do the following:
-	Click the   button to search for a climate file or click the   button to clear the file name.
-	To start reading the climate file at a particular date in time that is different than the start date of the simulation (as specified in the Simulation Options), check off the “Start Reading File at” box and enter a starting date (month/day/year) in the date entry field next to it.
-	If using a NOAA-GHCN file, specify the temperature units used by the file.
- 
+| **Option**               | **Description**                                                                                                                                                                                                 |
+|--------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **No Data**              | Select this choice if snowmelt is not being simulated and evaporation rates are not based on data in a climate file.                                                                                           |
+| **Time Series**          | Select this choice if the variation in temperature over the simulation period will be described by one of the project's time series. Also, enter (or select) the name of the time series. Click the button to make the Time Series Editor appear for the selected time series. |
+| **External Climate File**| Select this choice if min/max daily temperatures will be read from an external climate file (see Section 11.4). Also choose this option if you want daily evaporation rates to be estimated from daily temperatures or be read directly from the file. Then do the following: <ul><li>Click the button to search for a climate file or click the button to clear the file name.</li><li>To start reading the climate file at a particular date in time that is different than the start date of the simulation (as specified in the Simulation Options), check off the “Start Reading File at” box and enter a starting date (month/day/year) in the date entry field next to it.</li><li>If using a NOAA-GHCN file, specify the temperature units used by the file.</li></ul>|
+
  
 Evaporation Page
 
  
+The Evaporation page of the Climatology Editor dialog is used to specify evaporation rates for a study area. These rates are provided in inches/day (or mm/day). There are five options for specifying evaporation rates, selected from the **Source of Evaporation Rates** combo box:
 
-The Evaporation page of the Climatology Editor dialog is used to supply evaporation rates, in inches/day (or mm/day), for a study area. There are five choices for specifying these rates that are selected from the Source of Evaporation Rates combo box:
-	Constant Value
-Use this choice if evaporation remains constant over time. Enter the value in the edit box provided. 
-	Time Series
-Select this choice if evaporation rates will be specified in a time series. Enter or select the name of the time series in the dropdown combo box provided. Click the   button to bring up the Time Series editor for the selected series. Note that for each date specified in the time series, the evaporation rate remains constant at the value supplied for that date until the next date in the series is reached (i.e., interpolation is not used on the series).
-	Climate File
-This choice indicates that daily evaporation rates will be read from the same climate file that was specified for temperature. Enter values for monthly pan coefficients in the data grid provided (these are used to convert pan evaporation to actual evaporation and are typically on the order of 0.7).  
-	Monthly Averages
-Use this choice to supply an average rate for each month of the year. Enter the value for each month in the data grid provided. Note that rates remain constant within each month.
-	Temperatures
-The Hargreaves method will be used to compute daily evaporation rates from the daily air temperature record contained in the external climate file specified on the Temperature page of the dialog. This method also uses the site’s latitude, which can be entered on the Snowmelt page of the dialog even if snow melt is not being simulated.
-	Evaporate Only During Dry Periods:
-Select this option if evaporation can only occur during periods with no precipitation.
+| **Option**                          | **Description**                                                                                                                                                                                                 |
+|-------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Constant Value**                  | Use this option if evaporation remains constant over time. Enter the value in the provided edit box.                                                                                                           |
+| **Time Series**                     | Select this option if evaporation rates are specified in a time series. Enter or select the name of the time series in the dropdown combo box. Note that for each date in the time series, the evaporation rate remains constant until the next date in the series (interpolation is not used). |
+| **Climate File**                    | This option indicates that daily evaporation rates will be read from the same climate file specified for temperature. Enter monthly pan coefficients in the data grid (these convert pan evaporation to actual evaporation and are typically around 0.7). |
+| **Monthly Averages**                | Use this option to supply an average evaporation rate for each month of the year. Enter the value for each month in the data grid. Rates remain constant within each month.                                    |
+| **Temperatures**                    | The Hargreaves method will compute daily evaporation rates from the daily air temperature record in the external climate file specified on the Temperature page. This method also uses the site’s latitude, which can be entered on the Snowmelt page, even if snowmelt is not simulated. |
+| **Evaporate Only During Dry Periods** | Select this option if evaporation occurs only during periods without precipitation.                                                                                                                           |
 
-In addition this page allows one to specify an optional Monthly Soil Recovery Pattern. This is a time pattern whose factors adjust the rate at which infiltration capacity is recovered during periods with no precipitation. It applies to all subcatchments for any choice of infiltration method. For example, if the normal infiltration recovery rate was 1% during a specific time period and a pattern factor of 0.8 applied to this period, then the actual recovery rate would be 0.8%. The Soil Recovery Pattern allows one to account for seasonal soil drying rates. In principle, the variation in pattern factors should mirror the variation in evaporation rates but might be influenced by other factors such as seasonal groundwater levels. The   button is used to launch the Time Pattern Editor for the selected pattern.
-
+In addition this page allows one to specify an optional **Monthly Soil Recovery Pattern**. This is a time pattern whose factors adjust the rate at which infiltration capacity is recovered during periods with no precipitation. It applies to all subcatchments for any choice of infiltration method. For example, if the normal infiltration recovery rate was 1% during a specific time period and a pattern factor of 0.8 applied to this period, then the actual recovery rate would be 0.8%. The Soil Recovery Pattern allows one to account for seasonal soil drying rates. In principle, the variation in pattern factors should mirror the variation in evaporation rates but might be influenced by other factors such as seasonal groundwater levels. The   button is used to launch the Time Pattern Editor for the selected pattern.
  
 Wind Speed Page
 
- 
 
-The Wind Speed page of the Climatology Editor dialog is used to provide average monthly wind speeds. These are used when computing snowmelt rates under rainfall conditions. Melt rates increase with increasing wind speed. Units of wind speed are miles/hour for US units and km/hour for metric units. There are two choices for specifying wind speeds:
-	Climate File Data
-Wind speeds will be read from the same climate file that was specified for temperature.
-	Monthly Averages
-Wind speed is specified as an average value that remains constant in each month of the year. Enter a value for each month in the data grid provided. The default values are all zero.
+The Wind Speed page of the Climatology Editor dialog is used to provide average monthly wind speeds. These are used when computing snowmelt rates under rainfall conditions, as melt rates increase with increasing wind speed. Units of wind speed are miles/hour for US units and km/hour for metric units. There are two options for specifying wind speeds:
 
 
+| **Option**          | **Description**                                                                                                                                                                                                 |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Climate File Data** | Wind speeds will be read from the same climate file that was specified for temperature.                                                                                                                       |
+| **Monthly Averages**  | Wind speed is specified as an average value that remains constant in each month of the year. Enter a value for each month in the data grid provided. The default values are all zero.                                                               |
 
 Snowmelt Page
 
- 
 
-The Snowmelt page of the Climatology Editor dialog is used to supply values for the following parameters related to snow melt calculations:
+The Snowmelt page of the Climatology Editor dialog is used to supply values for the following parameters related to snowmelt calculations:
 
-Dividing Temperature Between Snow and Rain
-Enter the temperature below which precipitation falls as snow instead of rain. Use degrees F for US units or degrees C for metric units.
-
-ATI (Antecedent Temperature Index) Weight
-This parameter reflects the degree to which heat transfer within a snow pack during non-melt periods is affected by prior air temperatures. Smaller values reflect a thicker surface layer of snow which results in reduced rates of heat transfer. Values must be between 0 and 1, and the default is 0.5. 
-
-Negative Melt Ratio
-This is the ratio of the heat transfer coefficient of a snow pack during non-melt conditions to the coefficient during melt conditions. It must be a number between 0 and 1. The default value is 0.6.
-
-Elevation Above MSL
-Enter the average elevation above mean sea level for the study area, in feet or meters. This value is used to provide a more accurate estimate of atmospheric pressure. The default is 0.0, which results in a pressure of 29.9 inches Hg. The effect of wind on snow melt rates during rainfall periods is greater at higher pressures, which occur at lower elevations.
-
-Latitude
-Enter the latitude of the study area in degrees North. This number is used when computing the hours of sunrise and sunset, which in turn are used to extend min/max daily temperatures into continuous values. It is also used to compute daily evaporation rates from daily temperatures. The default is 50 degrees North.
-
-Longitude Correction
-This is a correction, in minutes of time, between true solar time and the standard clock time. It depends on a location's longitude () and the standard meridian of its time zone (SM) through the expression 4(-SM). This correction is used to adjust the hours of sunrise and sunset when extending daily min/max temperatures into continuous values. The default value is 0.
+| **Parameter**                     | **Description**                                                                                                                                                                                                 |
+|-----------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Dividing Temperature Between Snow and Rain** | Temperature below which precipitation falls as snow instead of rain. Use degrees F for US units or degrees C for metric units.                                                                              |
+| **ATI (Antecedent Temperature Index) Weight** | Reflects the degree to which heat transfer within a snowpack during non-melt periods is affected by prior air temperatures. Smaller values reflect a thicker surface layer of snow, resulting in reduced rates of heat transfer. Values must be between 0 and 1. Default is 0.5. |
+| **Negative Melt Ratio**           | Ratio of the heat transfer coefficient of a snowpack during non-melt conditions to the coefficient during melt conditions. Must be a number between 0 and 1. Default value is 0.6.                              |
+| **Elevation Above MSL**           | Average elevation above mean sea level for the study area, in feet or meters. Used to provide a more accurate estimate of atmospheric pressure. Default is 0.0, which results in a pressure of 29.9 inches Hg. Higher pressures (lower elevations) increase the effect of wind on snowmelt rates during rainfall periods. |
+| **Latitude**                      | Latitude of the study area in degrees North. Used to compute hours of sunrise and sunset, which extend min/max daily temperatures into continuous values. Also used to compute daily evaporation rates from daily temperatures. Default is 50 degrees North. |
+| **Longitude Correction**          | Correction, in minutes of time, between true solar time and standard clock time. Depends on a location's longitude (θ) and the standard meridian of its time zone (SM) through the expression 4(θ-SM). Adjusts hours of sunrise and sunset when extending daily min/max temperatures into continuous values. Default value is 0. |
  
 Areal Depletion Page
 
@@ -4874,6 +4531,7 @@ The Control Rules Editor is invoked whenever a new control rule is created or an
 Control Rule Format
 
 Each control rule is a series of statements of the form:
+```
 RULE  ruleID
 IF    condition_1
 AND   condition_2
@@ -4887,7 +4545,7 @@ ELSE  action_3
 AND   action_4
 Etc.
 PRIORITY value
-
+```
 where keywords are shown in boldface and ruleID is an ID label assigned to the rule, condition_n is a Condition Clause, action_n is an Action Clause, and value is a priority value (e.g., a number from 1 to 5). The formats used for Condition and Action clauses are discussed below.
 
 Only the RULE, IF and THEN portions of a rule are required; the ELSE and PRIORITY portions are optional.
@@ -4895,6 +4553,8 @@ Only the RULE, IF and THEN portions of a rule are required; the ELSE and PRIORIT
 Blank lines between clauses are permitted and any text to the right of a semicolon is considered a comment.
 
 When mixing AND and OR clauses, the OR operator has higher precedence than AND, i.e.,
+
+```
 IF A or B and C
 is equivalent to
 IF (A or B) and C.
@@ -4903,7 +4563,7 @@ IF A or (B and C)
 then this can be expressed using two rules as in
 IF A THEN ...
 IF B and C THEN ...
-
+```
 The PRIORITY value is used to determine which rule applies when two or more rules require that conflicting actions be taken on a link. A conflicting rule with a higher priority value has precedence over one with a lower value (e.g., PRIORITY 5 outranks PRIORITY 1). A rule without a priority value always has a lower priority than one with a value. For two rules with the same priority value, the rule that appears first is given the higher priority.
 
 Condition Clauses
@@ -4928,6 +4588,7 @@ SIMULATION CLOCKTIME = 22:45:00
 
 The objects and attributes that can appear in a condition clause are as follows:
 
+```
 Object	Attributes	Value
 GAGE	INTENSITY
 n-HR_DEPTH	numerical value
@@ -4962,7 +4623,7 @@ SIMULATION	TIME	elapsed time in decimal hours or hr:min:sec
 	MONTH	month of year (January = 1)
 	DAY	day of week (Sunday = 1)
 	CLOCKTIME	time of day in hr:min:sec
-
+```
 Gage INTENSITY is the rainfall intensity for a specific rain gage in the current simulation time period. Gage n-HR_DEPTH is a gage's total rainfall depth over the past n hours where n is a number between 1 and 48.
 
 TIMEOPEN is the duration a link has been in an OPEN or ON state or have its SETTING be greater than zero; TIMECLOSED is the duration it has remained in a CLOSED or OFF state or have its SETTING be zero. Both TIMEOPEN and TIMECLOSED apply to all link objects, including pumps, orifices, weirs, and outlets.

@@ -5,18 +5,7 @@
   <navindex>
     <tab type="mainpage" visible="yes" title="SWMM"/>
     <tab type="usergroup" visible="yes" title="Manuals" url="[none]">
-      <!-- <tab type="page" title="User Manual" visible="yes" url="@ref user_manual"/> -->
       <tab type="user" title="User Manual" visible="yes" url="@ref user_manual"/>
-      <!-- <tab title="Application Manual" visible="yes" name="hydrology_manual" url="@ref manuals/application/application.md"/> -->
-      <!-- <tab title="Hydrology Reference" visible="yes"> -->
-        <!-- <userdoc name="hydrology_manual"/> -->
-      <!-- </tab> -->
-      <!-- <tab title="Hydraulic Reference" visible="yes"> -->
-        <!-- <userdoc name="hydraulics_manual"/> -->
-      <!-- </tab> -->
-      <!-- <tab title="Water Quality Reference" visible="yes"> -->
-        <!-- <userdoc name="quality_manual"/> -->
-      <!-- </tab> -->
     </tab>
     <tab type="pages" visible="yes" title="" intro=""/>
     <tab type="topics" visible="yes" title="" intro=""/>
