@@ -2,17 +2,8 @@ name: Deployment
 
 on:
   push:
-<<<<<<< HEAD
-    branches: [ master]
-    tags: [ 'v*.*.*' ]
-=======
-<<<<<<<< HEAD:.github/workflows/deploying.yml
-    branches: [ master]
-========
     branches: [ master, bug_fixes]
     tags: [ 'v*.*.*' ]
->>>>>>>> b8863c2981ab20052a67635514fddb9e228821f8:.github/workflows/deployment.yml
->>>>>>> b8863c2981ab20052a67635514fddb9e228821f8
   pull_request:
     branches: [ master]
 
