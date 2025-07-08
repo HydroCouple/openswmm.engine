@@ -1,0 +1,14 @@
+name: serto
+dependencies:
+    - python=3.8
+    - numpy
+    - scipy
+    - networkx
+    - pandas
+    - matplotlib
+    - sphinx
+    - numpydoc
+    - docutils<0.17
+    - sphinx_design
+    - pydata_sphinx_theme
+    - sphinxcontrib-bibtex
