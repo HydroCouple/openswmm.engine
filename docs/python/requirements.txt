@@ -7,3 +7,5 @@ sphinx_copybutton==0.5.2
 sphinxcontrib-bibtex==2.6.3
 ipython==8.18.1
 sphinxcontrib-bibtex
+sphinx-autodoc-typehints
+sphinx-cython

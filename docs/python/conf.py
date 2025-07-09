@@ -15,6 +15,10 @@
 import sys
 import os
 import shlex
+
+sys.path.insert(0, os.path.abspath('../../python/'))
+
+import epaswmm
 from epaswmm import __version__
 
 # If extensions (or modules to document with autodoc) are in another directory,
@@ -41,7 +45,9 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.intersphinx',
     'sphinx_design',
-    'sphinxcontrib.bibtex'
+    'sphinxcontrib.bibtex',
+    'sphinx-autodoc-typehints',
+    'sphinx-cython',
 ]
 
 add_function_parentheses = True
