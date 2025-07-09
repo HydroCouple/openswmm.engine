@@ -8,44 +8,44 @@ Installation
 ======================================
 .. include:: <isonum.txt>
 
-SERTO requires 64-bit Python (tested on versions 3.7, 3.8, 3.9, and 3.10) along with several 
+EPASWMM requires 64-bit Python (tested on versions 3.7, 3.8, 3.9, and 3.10) along with several 
 Python package dependencies. 
 See :ref:`requirements` and :ref:`optional_dependencies` for more information.
-SERTO can be installed as a Python package as briefly described below. 
+EPASWMM can be installed as a Python package as briefly described below. 
 :ref:`detailed_instructions` are included in the following section.
 
-The latest release of SERTO can be installed from PyPI or Anaconda using one of the 
+The latest release of EPASWMM can be installed from PyPI or Anaconda using one of the 
 following commands in a terminal, command line, or PowerShell prompt. 
 
 .. only:: html
 
    * PyPI |pypi version|_ |pypi downloads|_ ::
 
-       pip install serto
+       pip install epaswmm
 
    * Anaconda |anaconda version|_ |anaconda downloads|_ ::
 
-       conda install -c conda-forge serto
+       conda install -c conda-forge epaswmm
 
 .. only:: latex
 
    * PyPI::
 
-       pip install serto
+       pip install epaswmm
 
    * Anaconda::
 
-       conda install -c conda-forge serto
+       conda install -c conda-forge epaswmm
 
 
 .. |pypi version| image:: https://img.shields.io/pypi/v/sert.svg?maxAge=3600
-.. _pypi version: https://pypi.org/project/serto/
-.. |pypi downloads| image:: https://static.pepy.tech/badge/serto
-.. _pypi downloads: https://pepy.tech/project/serto
-.. |anaconda version| image:: https://anaconda.org/conda-forge/serto/badges/version.svg
-.. _anaconda version: https://anaconda.org/conda-forge/serto
-.. |anaconda downloads| image:: https://anaconda.org/conda-forge/serto/badges/downloads.svg
-.. _anaconda downloads: https://anaconda.org/conda-forge/serto
+.. _pypi version: https://pypi.org/project/epaswmm/
+.. |pypi downloads| image:: https://static.pepy.tech/badge/epaswmm
+.. _pypi downloads: https://pepy.tech/project/epaswmm
+.. |anaconda version| image:: https://anaconda.org/conda-forge/epaswmm/badges/version.svg
+.. _anaconda version: https://anaconda.org/conda-forge/epaswmm
+.. |anaconda downloads| image:: https://anaconda.org/conda-forge/epaswmm/badges/downloads.svg
+.. _anaconda downloads: https://anaconda.org/conda-forge/epaswmm
 
 .. _detailed_instructions:
 
@@ -58,7 +58,7 @@ Step 1: Setup the Python environment
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 	Python can be installed on Windows, Linux, and Mac OS X operating systems.
-	SERTO requires 64-bit Python (tested on versions 3.7, 3.8, 3.9, and 3.10) along with several Python package dependencies.
+	EPASWMM requires 64-bit Python (tested on versions 3.7, 3.8, 3.9, and 3.10) along with several Python package dependencies.
 	Python distributions, such as Anaconda, are recommended to manage 
 	the Python environment.  Anaconda can be downloaded from https://www.anaconda.com/products/individual.
 	Additional instructions for setting up a Python environment independent of Anaconda are available at https://docs.python.org/.
@@ -75,7 +75,7 @@ Step 1: Setup the Python environment
 	     While the second option allows the user to define priority, this requires administrator privileges. 
 	     If Anaconda is not added to the PATH environment variable, Python can be run by using the full path name (e.g., C:\\Users\\username\\Anaconda3\\python).
 		 
-	Anaconda includes the Python packages needed for SERTO, including NumPy, SciPy, NetworkX, Pandas, and
+	Anaconda includes the Python packages needed for EPASWMM, including NumPy, SciPy, NetworkX, Pandas, and
 	Matplotlib.  For more information on Python package dependencies, see :ref:`requirements`.
 	If the Python installation does not include these dependencies, the user will need to install them. 
 	This is most commonly done using pip or conda. 
@@ -108,77 +108,77 @@ Step 1: Setup the Python environment
 	   
 	   Python console using Spyder.
 	   
-Step 2: Install SERTO
+Step 2: Install EPASWMM
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-	SERTO can be installed using PyPI, Anaconda, or by downloading 
+	EPASWMM can be installed using PyPI, Anaconda, or by downloading 
 	a zip file and building the source code, as described below.
 	Information for developers can be found in the :ref:`developer_instructions` section.
 	
 	.. note:: 
-	   If SERTO is installed using PyPI or Anaconda (Options 1 or 2 below), the examples folder will not be downloaded.  
-	   The examples can be downloaded by going to https://github.com/USEPA/SERTO, select the "Clone or download" button and then select "Download ZIP."
+	   If EPASWMM is installed using PyPI or Anaconda (Options 1 or 2 below), the examples folder will not be downloaded.  
+	   The examples can be downloaded by going to https://github.com/USEPA/EPASWMM, select the "Clone or download" button and then select "Download ZIP."
 	   Uncompress the zip file using standard software tools (e.g., unzip, WinZip) and store them in a folder. 
 	   
-	* **Option 1**: Users can install SERTO from PyPI using pip, which is a command line software tool used to install and manage Python 
+	* **Option 1**: Users can install EPASWMM from PyPI using pip, which is a command line software tool used to install and manage Python 
 	  packages.  It can be downloaded from https://pypi.python.org/pypi/pip.
 	
-	  To install SERTO using pip, open a command line or PowerShell prompt and run::
+	  To install EPASWMM using pip, open a command line or PowerShell prompt and run::
 
-		  pip install serto
+		  pip install epaswmm
 	
-	  This will install the latest release of SERTO from https://pypi.python.org/pypi/serto.  
+	  This will install the latest release of EPASWMM from https://pypi.python.org/pypi/epaswmm.  
 	
-	* **Option 2**: Users can install SERTO from Anaconda using conda, which is a command line software tool used to install and manage Python 
+	* **Option 2**: Users can install EPASWMM from Anaconda using conda, which is a command line software tool used to install and manage Python 
 	  packages.  It can be downloaded from https://www.anaconda.com/products/individual.
 	
-	  To install SERTO using conda, open a command line or PowerShell prompt and run::
+	  To install EPASWMM using conda, open a command line or PowerShell prompt and run::
 
-		  conda install -c conda-forge serto
+		  conda install -c conda-forge epaswmm
 	
-	  This will install the latest release of SERTO from https://anaconda.org/conda-forge/serto.
+	  This will install the latest release of EPASWMM from https://anaconda.org/conda-forge/epaswmm.
 	  
-	* **Option 3**: Users can download and build SERTO using source files from the SERTO GitHub repository.  
+	* **Option 3**: Users can download and build EPASWMM using source files from the EPASWMM GitHub repository.  
 	  
-	  To download a zip file of the main branch, go to https://github.com/USEPA/SERTO, select the "Clone or download" button and then select "Download ZIP."
-	  This downloads a file called SERTO-main.zip.
-	  To download a specific release, go to https://github.com/USEPA/SERTO/releases and select a zip file.
+	  To download a zip file of the main branch, go to https://github.com/USEPA/EPASWMM, select the "Clone or download" button and then select "Download ZIP."
+	  This downloads a file called EPASWMM-main.zip.
+	  To download a specific release, go to https://github.com/USEPA/EPASWMM/releases and select a zip file.
 	  The zip file contains the examples folder.
 	  
 	  Uncompress the zip file using standard software tools (e.g., unzip, WinZip) and store them in a folder. 
-	  SERTO can then be installed using pip, which is a command line software tool used to install and manage Python 
+	  EPASWMM can then be installed using pip, which is a command line software tool used to install and manage Python 
 	  packages.  It can be downloaded from https://pypi.python.org/pypi/pip.
-	  To build SERTO from the source files, open a command line or PowerShell prompt from within the folder that contains the ``setup.py`` file and run:: 
+	  To build EPASWMM from the source files, open a command line or PowerShell prompt from within the folder that contains the ``setup.py`` file and run:: 
 	  
 		  python -m pip install .
 	
 	  This runs ``setup.py install``. The ``-m`` option runs pip as a Python script. 
 	  The ``.`` indicates that the source files are in the current directory.
-	  This use of pip installs SERTO using the local source files (not from PyPI as shown in Option 1).
+	  This use of pip installs EPASWMM using the local source files (not from PyPI as shown in Option 1).
 	   
 	  .. note:: 
-	     SERTO includes C++ code that is built into shared object files (e.g., pyd for Windows)
+	     EPASWMM includes C++ code that is built into shared object files (e.g., pyd for Windows)
 	     during the setup process. This requires that the user has a C++ compiler (e.g., Visual Studio C++, GNU C++, MinGW) on their path.
-	     No compiler is needed when installing SERTO through PyPI (Option 1) or conda (Option 2). 
+	     No compiler is needed when installing EPASWMM through PyPI (Option 1) or conda (Option 2). 
    
 Step 3: Test installation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-	To test that SERTO is installed, open a Python console and run::
+	To test that EPASWMM is installed, open a Python console and run::
 	
-		import serto
+		import epaswmm
 
-	If SERTO is installed properly, Python proceeds to the next line. No other output is printed to the screen. 
+	If EPASWMM is installed properly, Python proceeds to the next line. No other output is printed to the screen. 
 	
-	If SERTO is **not** installed properly, the user will see the following ImportError::
+	If EPASWMM is **not** installed properly, the user will see the following ImportError::
 	
-		ImportError: No module named serto
+		ImportError: No module named epaswmm
 	
-	To verify the version of SERTO that has been installed, continue in the Python console and run::
+	To verify the version of EPASWMM that has been installed, continue in the Python console and run::
 	
-		print(serto.__version__)
+		print(epaswmm.__version__)
 		
-	This will print the SERTO version to the screen, for example, "1.0.0".
+	This will print the EPASWMM version to the screen, for example, "1.0.0".
 	
 	See :ref:`getting_started` for a simple example that can also be used to test installation.
 	A full set of software tests can also be run locally to ensure proper installation, see :ref:`software_tests` for more details.
@@ -188,59 +188,59 @@ Step 3: Test installation
 Developer instructions
 ------------------------
 
-Developers should review the :ref:`developers` section before contributing to SERTO.
+Developers should review the :ref:`developers` section before contributing to EPASWMM.
 
-Developers can clone and setup the main branch of SERTO from source files 
+Developers can clone and setup the main branch of EPASWMM from source files 
 using the following commands in a terminal, command line, or PowerShell prompt::
 
-    git clone https://github.com/USEPA/SERTO
-    cd SERTO
+    git clone https://github.com/USEPA/EPASWMM
+    cd EPASWMM
     python -m pip install -e .
     pip install -r requirements.txt
 
 The ``-e`` option runs ``setup.py develop``.
-This will install the main branch of SERTO from https://github.com/USEPA/SERTO in development mode.
+This will install the main branch of EPASWMM from https://github.com/USEPA/EPASWMM in development mode.
 The ``requirements.txt`` file contains all the necessary dependencies for testing the package
 and building the documentation.
 
 .. note:: 
-   SERTO includes C++ code that is built into shared object files (e.g., pyd for Windows)
+   EPASWMM includes C++ code that is built into shared object files (e.g., pyd for Windows)
    during the setup process. This requires that the developer has a C++ compiler located in a folder specified in their PATH.
-   When installing SERTO through PyPI or conda, the shared object files do not need to be built 
+   When installing EPASWMM through PyPI or conda, the shared object files do not need to be built 
    and no compiler is needed.
 
 If the developer does NOT have a C++ compiler, or would rather use prebuilt wheels (a pre-built binary package format for Python modules and libraries),
-the shared object files can be downloaded from SERTO GitHub Actions using the following steps:
+the shared object files can be downloaded from EPASWMM GitHub Actions using the following steps:
 
-* Clone and setup the main branch of SERTO from the GitHub 
+* Clone and setup the main branch of EPASWMM from the GitHub 
   repository using the following commands in a terminal, command line, or PowerShell prompt 
   (the ``--no-build`` command line argument omits the build step in the setup process)::
 
-    git clone https://github.com/USEPA/SERTO
-    cd SERTO
+    git clone https://github.com/USEPA/EPASWMM
+    cd EPASWMM
     python -m pip install -e . --no-build
     pip install -r requirements.txt
 	
-* Select the latest GitHub Actions build_tests that uses the main branch from https://github.com/USEPA/SERTO/actions/workflows/build_tests.yml
+* Select the latest GitHub Actions build_tests that uses the main branch from https://github.com/USEPA/EPASWMM/actions/workflows/build_tests.yml
 * Scroll down to "Artifacts"
 * Download the wheel that matches the desired operating system and Python version (for example, wntr_3.9_windows-latest.whl)
 * Unzip the wheel and locate the following files (which are named according to the operating system and Python version)
 
-   * serto/sim/aml/_evaluator.cp39-win_amd64.pyd
-   * serto/sim/network_isolation/_network_isolation.cp39-win_amd64.pyd
+   * epaswmm/sim/aml/_evaluator.cp39-win_amd64.pyd
+   * epaswmm/sim/network_isolation/_network_isolation.cp39-win_amd64.pyd
    
-* Copy these files into the matching directory in the cloned version of SERTO
+* Copy these files into the matching directory in the cloned version of EPASWMM
 
-To test SERTO, developers can run software tests locally using the following command::
+To test EPASWMM, developers can run software tests locally using the following command::
 	
-	pytest serto
+	pytest epaswmm
 
 .. _requirements:
 
 Requirements
 -------------
 
-Requirements for SERTO include 64-bit Python (tested on versions 3.7, 3.8, 3.9, and 3.10) along with several Python packages. 
+Requirements for EPASWMM include 64-bit Python (tested on versions 3.7, 3.8, 3.9, and 3.10) along with several Python packages. 
 Users should have experience using Python (https://www.python.org/), including the installation of additional Python packages. The following Python packages are required:
 
 * NumPy :cite:p:`vacv11`: used to support large, multi-dimensional arrays and matrices, 
@@ -253,7 +253,7 @@ Users should have experience using Python (https://www.python.org/), including t
   http://pandas.pydata.org/
 * Matplotlib :cite:p:`hunt07`: used to produce graphics, 
   http://matplotlib.org/
-* Setuptools: used to install the SERTO package, https://setuptools.pypa.io/
+* Setuptools: used to install the EPASWMM package, https://setuptools.pypa.io/
   
 These packages are included in the Anaconda Python distribution.
  
@@ -289,7 +289,7 @@ To install optional dependencies, run::
    On Windows, the dependencies must be installed manually, see https://geoffboeing.com/2014/09/using-geopandas-windows/ for more information.
    
 .. The following is not shown in the UM
-   SERTO includes a beta version of a Pyomo hydraulic simulator which requires installing 
+   EPASWMM includes a beta version of a Pyomo hydraulic simulator which requires installing 
    Pyomo, Interior Point OPTimizer (Ipopt), and HSL.
 
    * Pyomo [Hart2014]_: optimization modeling language and optimization capabilities, https://software.sandia.gov/trac/pyomo.  

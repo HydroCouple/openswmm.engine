@@ -5,8 +5,9 @@
 User Guide
 ==========
 
-The Water Network Tool for Resilience (SERTO) is an EPANET compatible Python package 
-designed to simulate and analyze resilience of water distribution networks.
+Experimental python bindings for the SWMM API are being developed to support regression and benchmark testing as well as for other applications. 
+These bindings are still under development and testing and has yet to be cleared through US EPA ORD's official quality assurance review process. 
+The experimental python bindings can be built and installed locally using the following command.
 
 .. toctree::
    :maxdepth: 1

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# SERTO documentation build configuration file, created by
+# epaswmm documentation build configuration file, created by
 # sphinx-quickstart on Fri Sep 25 20:20:05 2015.
 #
 # This file is execfile()d with the current directory set to its
@@ -15,7 +15,7 @@
 import sys
 import os
 import shlex
-from serto import __version__
+from epaswmm import __version__
 
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
@@ -93,7 +93,7 @@ templates_path = ['_templates']
 
 import glob
 
-autosummary_generate = ["serto-api.rst", ] + glob.glob("apidoc/*.rst")
+autosummary_generate = ["epaswmm-api.rst", ] + glob.glob("apidoc/*.rst")
 autosummary_generate_overwrite = True
 
 # The suffix(es) of source filenames.
@@ -108,9 +108,9 @@ source_suffix = '.rst'
 master_doc = 'index'
 
 # General information about the project.
-project = u'SERT0'
-copyright = u'2024 US EPA ORD'
-author = u'SERTO Developers'
+project = u'EPA SWMM'
+copyright = u'2025 US EPA ORD'
+author = u'epaswmm Developers'
 
 bibtex_bibfiles = ['references.bib', 'citations.bib']
 bibtex_default_style = 'plain'
@@ -194,12 +194,12 @@ if not on_rtd:  # only import and set the theme if we're building docs locally
 
 else:
     def setup(app):
-        app.add_css_file("serto.css")
+        app.add_css_file("epaswmm.css")
 
 
     html_theme = 'default'
 #    html_context = {
-#        'css_files': ['_static/serto.css'],
+#        'css_files': ['_static/epaswmm.css'],
 #    }  
 
 # Theme options are theme-specific and customize the look and feel of a theme
@@ -211,7 +211,7 @@ html_theme_options = {
             # Label for this link
             "name": "GitHub",
             # URL where the link will redirect
-            "url": "https://github.com/USEPA/serto",  # required
+            "url": "https://github.com/USEPA/Stormwater-Management-Model",  # required
             # Icon class (if "type": "fontawesome"), or path to local image (if "type": "local")
             "icon": "fa-brands fa-github",
             # The type of image to be used (see below for details)
@@ -243,17 +243,17 @@ html_theme_options = {
 
 # The name of an image file (relative to this directory) to place at the top
 # of the sidebar.
-html_logo = 'images/serto_logo.svg'
+html_logo = '_static/epa_logo.png'
 
 # The name of an image file (within the static path) to use as favicon of the
 # docs.  This file should be a Windows icon file (.ico) being 16x16 or 32x32
 # pixels large.
-html_favicon = "images/serto_logo.svg"
+html_favicon = "_static/epa_logo.png"
 
 # The style sheet to use for HTML and HTML Help pages. A file of that name
 # must exist either in Sphinx' static/ path, or in one of the custom paths
 # given in html_static_path.
-# html_style = 'serto.css'
+# html_style = 'epaswmm.css'
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
@@ -321,7 +321,7 @@ html_extra_path = ['_data']
 # html_search_scorer = 'scorer.js'
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = 'sertodoc'
+htmlhelp_basename = 'epaswmmdoc'
 
 # -- Options for LaTeX output ---------------------------------------------
 
@@ -364,8 +364,8 @@ title=\sphinxstrong{#1}]}
 latex_documents = [
     (
         'index_latex',
-        'serto.tex',
-        u'SERTO Documentation',
+        'epaswmm.tex',
+        u'EPA SWMM Documentation',
         u'',
         'howto',
         'True'
@@ -401,8 +401,8 @@ latex_use_modindex = False
 man_pages = [
     (
         master_doc,
-        'serto',
-        u'Serto Documentation',
+        'epaswmm',
+        u'EPA SWMM Documentation',
         [author],
         1
     )
@@ -420,10 +420,10 @@ man_pages = [
 texinfo_documents = [
     (
         master_doc,
-        'serto',
-        u'SERTO Documentation',
+        'epaswmm',
+        u'EPA SWMM Documentation',
         author,
-        'SERTO',
+        'epaswmm',
         'One line description of project.',
         'Miscellaneous'
     ),

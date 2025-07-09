@@ -1,7 +1,7 @@
 :orphan:
 
 
-SERTO documentation
+EPASWMM documentation
 ==================================
 
 .. toctree::

@@ -1,14 +1,13 @@
-<<<<<<< HEAD
 ﻿## Overview
 
 The United States Environmental Protection Agency (EPA) Office of Research and Development (ORD) Stormwater Management Model (SWMM) computational engine and output post-processing documentation.
 
 ## Build Status
-[![Unit Testing](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/unit_testing.yml)
-[![Build and Regression Testing](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/regression_testing.yml/badge.svg)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/regression_testing.yml)
-[![Docs](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/build_docs.yml/badge.svg)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/build_docs.yml)
-[![Deployment](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/deploy.yml/badge.svg)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/deploy.yml)
-[![Documentation](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/build-and-test.yml/badge.svg?branch=docs)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/build-and-test.yml)
+[![Unit Testing](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/unit_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/unit_testing.yml?query=branch%3Abug_fixes)
+[![Build and Regression Testing](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/regression_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/regression_testing.yml?query=branch%3Abug_fixes)
+[![Docs](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/build_docs.yml/badge.svg?branch=bug_fixes)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/build_docs.yml?query=branch%3Abug_fixes)
+[![Deployment](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/deploy.yml/badge.svg?branch=bug_fixes)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/deploy.yml?query=branch%3Abug_fixes)
+[![Documentation](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/build-and-test.yml/badge.svg?branch=docs)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/build-and-test.yml?query=branch%3Abug_fixes)
 [![Issues](https://img.shields.io/github/issues/cbuahin/Stormwater-Management-Model)](https://github.com/cbuahin/Stormwater-Management-Model/issues)
 
 ## Python Binding
@@ -170,32 +169,3 @@ A live web version of the SWMM documentation of the API and user manuals can be 
 ## Disclaimer 
 The United States Environmental Protection Agency (EPA) GitHub project code is provided on an "as is" basis and the user assumes responsibility for its use. EPA has relinquished control of the information and no longer has responsibility to protect the integrity, confidentiality, or availability of the information. Any reference to specific commercial products, processes, or services by service mark, trademark, manufacturer, or otherwise, does not constitute or imply their endorsement, recommendation or favoring by EPA. The EPA seal and logo shall not be used in any manner to imply endorsement of any commercial product or activity by EPA or the United States Government.
 
-=======
-﻿
-
-# Stormwater Management Model
-
-SWMM is a dynamic hydrology-hydraulic water quality simulation model. 
-It is used for single event or long-term (continuous) simulation of 
-runoff quantity and quality from primarily urban areas. SWMM source code 
-is written in the C Programming Language and released in the Public Domain.
-
-## Build Status
-
-[![Build and Test](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/build-and-test.yml)
-[![Build Docs](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/build_docs.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/build_docs.yml)
-
-## Disclaimer
-
-The United States Environmental Protection Agency (EPA) GitHub project code is provided on an "as is" basis and the user assumes responsibility for its use. EPA has relinquished control of the information and no longer has responsibility to protect the integrity, confidentiality, or availability of the information. Any reference to specific commercial products, processes, or services by service mark, trademark, manufacturer, or otherwise, does not constitute or imply their endorsement, recommendation or favoring by EPA. The EPA seal and logo shall not be used in any manner to imply endorsement of any commercial product or activity by EPA or the United States Government.
-
-This document is distributed solely for the purpose of pre-dissemination peer review under applicable information quality guidelines. It has not been formally disseminated by the U.S. Environmental Protection Agency. It does not represent and should not be construed to represent any agency determination or policy.
-
-## Major Release Updates 
-
-* [SWMM 5.2.0 Major Updates](./SWMM_5.2.0.md)
-
-
-# Find Out More
-The source code distributed here is identical to the code found at the official [SWMM Website](http://www2.epa.gov/water-research/storm-water-management-model-swmm).
->>>>>>> b8863c2981ab20052a67635514fddb9e228821f8

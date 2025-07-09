@@ -8,7 +8,7 @@ Software quality assurance
 =======================================
 
 The following section includes information about 
-the SERTO software repository, 
+the EPASWMM software repository, 
 software tests,
 documentation, 
 examples, 
@@ -16,44 +16,44 @@ bug reports,
 feature requests, and
 ways to contribute.
 Developers should follow the :ref:`developer_instructions` to 
-clone and setup SERTO.
+clone and setup EPASWMM.
 
 GitHub repository
 ---------------------
-SERTO is maintained in a version controlled repository.  
-SERTO is hosted on US EPA GitHub organization at https://github.com/USEPA/SERTO.
+EPASWMM is maintained in a version controlled repository.  
+EPASWMM is hosted on US EPA GitHub organization at https://github.com/USEPA/EPASWMM.
 
 .. _software_tests:
 
 Software tests
 --------------------
-SERTO includes continuous integration software tests that are run using GitHub Actions.
+EPASWMM includes continuous integration software tests that are run using GitHub Actions.
 Travis CI and AppVeyor are used by the core development team as secondary testing services.
 The tests are run each time changes are made to the repository.  
 The tests cover a wide range of unit and 
 integration tests designed to ensure that the code is performing as expected.  
 New tests are developed each time new functionality is added to the code.   
 Testing status (passed/failed) and code coverage statistics are posted on 
-the README section at https://github.com/USEPA/SERTO.
+the README section at https://github.com/USEPA/EPASWMM.
 	
 Tests can also be run locally using the Python package pytest.  
 For more information on pytest, see  https://docs.pytest.org/.
 The pytest package comes with a command line software tool.
-Tests can be run in the SERTO directory using the following command in a command line/PowerShell prompt::
+Tests can be run in the EPASWMM directory using the following command in a command line/PowerShell prompt::
 
 	pytest serto
 
 In addition to the publicly available software tests run using GitHub Actions,
-SERTO is also tested on private servers using several large water utility network models.
+EPASWMM is also tested on private servers using several large water utility network models.
 	
 Documentation
 ---------------------
-SERTO includes a user manual that is built using the Read the Docs service.
+EPASWMM includes a user manual that is built using the Read the Docs service.
 The user manual is automatically rebuilt each time changes are made to the code.
-The documentation is publicly available at https://usepa.github.io/SERTO/.
+The documentation is publicly available at https://usepa.github.io/EPASWMM/.
 The user manual includes an overview, installation instructions, simple examples, 
 and information on the code structure and functions.  
-SERTO includes documentation on the API for all 
+EPASWMM includes documentation on the API for all 
 public functions, methods, and classes.
 New content is marked `Draft`.
 Python documentation string formatting can be found at
@@ -69,13 +69,13 @@ Open ``index.html`` to view the documentation.
 
 Examples
 ---------------------
-SERTO includes examples to help new users get started.  
-These examples are intended to demonstrate high level features and use cases for SERTO.  
+EPASWMM includes examples to help new users get started.  
+These examples are intended to demonstrate high level features and use cases for EPASWMM.  
 The examples are tested to ensure they stay current with the software project.
 
 Bug reports and feature requests
 ----------------------------------
-Bug reports and feature requests can be submitted to https://github.com/USEPA/SERTO/issues.  
+Bug reports and feature requests can be submitted to https://github.com/USEPA/EPASWMM/issues.  
 The core development team will prioritize and assign bug reports and feature requests to team members.
 
 Contributing
@@ -88,9 +88,9 @@ Pull requests will be reviewed by the core development team.
 
 Pull requests can be made to the **main** or **dev** (development) branch.  
 Developers can discuss new features and the appropriate branch for contributing 
-by opening a new issue on https://github.com/USEPA/SERTO/issues.  
+by opening a new issue on https://github.com/USEPA/EPASWMM/issues.  
 
-Pull requests must meet the following minimum requirements to be included in SERTO:
+Pull requests must meet the following minimum requirements to be included in EPASWMM:
 
 * Code is expected to be documented using Read the Docs.  
 
@@ -103,7 +103,7 @@ Pull requests must meet the following minimum requirements to be included in SER
 
 Development team
 -------------------
-SERTO was developed as part of a collaboration between the United States 
+EPASWMM was developed as part of a collaboration between the United States 
 Environmental Protection Agency Office of Research and Development, 
 Sandia National Laboratories, and Purdue University.  
-See https://github.com/USEPA/SERTO/graphs/contributors for a full list of contributors.
+See https://github.com/USEPA/EPASWMM/graphs/contributors for a full list of contributors.

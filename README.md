@@ -3,20 +3,11 @@
 Stormwater Management Model (SWMM) computational engine and output post-processing documentation
 
 ## Build Status
-<<<<<<< HEAD
-[![Unit Testing](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/unit_testing.yml)
-[![Build and Regression Testing](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/regression_testing.yml/badge.svg)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/regression_testing.yml)
-[![Docs](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/build_docs.yml/badge.svg)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/build_docs.yml)
-[![Deployment](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/deploy.yml/badge.svg)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/deploy.yml)
-[![Documentation](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/build-and-test.yml/badge.svg?branch=docs)](https://github.com/cbuahin/Stormwater-Management-Model/actions/workflows/build-and-test.yml)
-[![Issues](https://img.shields.io/github/issues/cbuahin/Stormwater-Management-Model)](https://github.com/cbuahin/Stormwater-Management-Model/issues)
-=======
-[![Unit Testing](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/unit_testing.yml)
-[![Build and Regression Testing](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/regression_testing.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/regression_testing.yml)
-[![Documentation](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/documentation.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/documentation.yml)
-[![Deployment](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/deployment.yml/badge.svg)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/deployment.yml)
+[![Unit Testing](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/unit_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/unit_testing.yml?query=branch%3Abug_fixes)
+[![Build and Regression Testing](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/regression_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/regression_testing.yml?query=branch%3Abug_fixes)
+[![Documentation](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/documentation.yml/badge.svg?branch=bug_fixes)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/documentation.yml?query=branch%3Abug_fixes)
+[![Deployment](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/deployment.yml/badge.svg?branch=bug_fixes)](https://github.com/USEPA/Stormwater-Management-Model/actions/workflows/deployment.yml?query=branch%3Abug_fixes)
 [![Issues](https://img.shields.io/github/issues/USEPA/Stormwater-Management-Model)](https://github.com/USEPA/Stormwater-Management-Model/issues)
->>>>>>> b8863c2981ab20052a67635514fddb9e228821f8
 
 ## Python Binding
 [![PyPi](https://img.shields.io/pypi/v/epaswmm.svg)](https://pypi.org/project/epaswmm)

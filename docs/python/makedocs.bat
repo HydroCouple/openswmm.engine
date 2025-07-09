@@ -1,2 +1,2 @@
-sphinx-apidoc -f -M --separate -o apidoc ../serto
+sphinx-apidoc -f -M --separate -o apidoc ../epaswmm
 make.bat html

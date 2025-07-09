@@ -1,7 +1,7 @@
 v0.0.1 (October 17, 20242)
 -------------------------------
 
-This is the first official release of SERTO.  
+This is the first official release of epaswmm.  
 Features include basic functionality to:
 
 * Generate water network models
