@@ -842,7 +842,7 @@ FILE_VERSION_FILTER    =
 # DoxygenLayout.xml, Doxygen will parse it automatically even if the LAYOUT_FILE
 # tag is left empty.
 
-LAYOUT_FILE            =
+LAYOUT_FILE            = DOxygenLayout.xml
 
 # The CITE_BIB_FILES tag can be used to specify one or more bib files containing
 # the reference definitions. This must be a list of .bib files. The .bib
@@ -999,9 +999,9 @@ INPUT                  = ../src \
                          ./manuals/user/figures/*.png \
                          ./Mainpage.md \
                          ./Updates.md \
-                         ./manuals/user/user_manual.md \
-                         ./manuals/reference/*.md \
-                         ./manuals/application/*.md
+                         ./manuals/user \
+                         ./manuals/reference \
+                         ./manuals/application
 
 # This tag can be used to specify the character encoding of the source files
 # that Doxygen parses. Internally Doxygen uses the UTF-8 encoding. Doxygen uses
@@ -1114,7 +1114,12 @@ EXCLUDE_SYMLINKS       = NO
 # Note that the wildcards are matched against the file with absolute path, so to
 # exclude all test directories for example use the pattern */test/*
 
-EXCLUDE_PATTERNS       =
+EXCLUDE_PATTERNS       = manuals/user/*md \
+                         manuals/reference/*md \
+                         manuals/application/*md \
+                         manuals/user/figures/* \
+                         manuals/reference/figures/* \
+                         manuals/application/figures/*
 
 # The EXCLUDE_SYMBOLS tag can be used to specify one or more symbol names
 # (namespaces, classes, functions, etc.) that should be excluded from the
@@ -1135,7 +1140,7 @@ EXAMPLE_PATH           =
 # *.h) to filter out the source-files in the directories. If left blank all
 # files are included.
 
-EXAMPLE_PATTERNS       = *
+EXAMPLE_PATTERNS       = 
 
 # If the EXAMPLE_RECURSIVE tag is set to YES then subdirectories will be
 # searched for input files to be used with the \include or \dontinclude commands

@@ -1,5 +1,10 @@
-SWMM Hydrology Reference Manual Version 5.3 {#hydrology_ref_manual}
+@page hydrology_reference_manual SWMM Hydrology Reference Manual Version 5.3
+
+<center>
+SWMM Hydrology Reference Manual Version 5.3
 =============================================
+</center>
+
 
 <center>
 

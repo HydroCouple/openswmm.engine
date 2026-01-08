@@ -4,8 +4,12 @@
   <!-- Navigation index tabs for HTML output -->
   <navindex>
     <tab type="mainpage" visible="yes" title="SWMM"/>
-    <tab type="usergroup" visible="yes" title="Manuals" url="[none]">
+    <tab type="usergroup" visible="yes" title="Manuals" url="@ref manuals">
       <tab type="user" title="User Manual" visible="yes" url="@ref user_manual"/>
+      <tab type="user" title="Application Manual" visible="yes" url="@ref application_manual"/>
+      <tab type="user" title="Hydrology Reference Manual" visible="yes" url="@ref hydrology_reference_manual"/>
+      <tab type="user" title="Hydraulics Reference Manual" visible="yes" url="@ref hydraulics_reference_manual"/>
+      <tab type="user" title="Quality Reference Manual" visible="yes" url="@ref quality_reference_manual"/>
     </tab>
     <tab type="pages" visible="yes" title="" intro=""/>
     <tab type="topics" visible="yes" title="" intro=""/>

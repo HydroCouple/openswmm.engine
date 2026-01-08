@@ -1,21 +1,23 @@
-## EPA ORD Stormwater Management Model (SWMM)
+EPA ORD Stormwater Management Model (SWMM)
+==========================================
 
-Stormwater Management Model (SWMM) computational engine and output post-processing documentation
+Stormwater Management Model (SWMM) computational engine and output post-processing codebase
 
 ## Build Status
-[![Unit Testing](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/unit_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/unit_testing.yml?query=branch%3Abug_fixes)
-[![Build and Regression Testing](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/regression_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/regression_testing.yml?query=branch%3Abug_fixes)
-[![Documentation](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/documentation.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/documentation.yml?query=branch%3Abug_fixes)
-[![Deployment](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/deployment.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/deployment.yml?query=branch%3Abug_fixes)
+[![Build and Unit Testing](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/unit_testing.yml)
+[![Build and Regression Testing](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/regression_testing.yml/badge.svg)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/regression_testing.yml)
+[![Docs](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/build_docs.yml/badge.svg)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/build_docs.yml)
+[![Deployment](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/deploy.yml/badge.svg)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/deploy.yml)
+[![Documentation](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/build-and-test.yml/badge.svg?branch=docs)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/build-and-test.yml)
 [![Issues](https://img.shields.io/github/issues/HydroCouple/Stormwater-Management-Model)](https://github.com/HydroCouple/Stormwater-Management-Model/issues)
 
 ## Python Binding
-[![PyPi](https://img.shields.io/pypi/v/epaswmm.svg)](https://pypi.org/project/epaswmm)
-[![PythonVersion](https://img.shields.io/pypi/pyversions/epaswmm.svg)](https://pypi.org/project/epaswmm)
-[![Wheel](https://img.shields.io/pypi/wheel/epaswmm.svg)](https://pypi.org/project/epaswmm)
-[![Downloads](https://pepy.tech/badge/epaswmm)](https://pepy.tech/project/epaswmm)
-[![Downloads](https://pepy.tech/badge/epaswmm/month)](https://pepy.tech/project/epaswmm)
-[![Downloads](https://pepy.tech/badge/epaswmm/week)](https://pepy.tech/project/epaswmm)
+[![PyPi](https://img.shields.io/pypi/v/openswmmcore.svg)](https://pypi.org/project/openswmmcore)
+[![PythonVersion](https://img.shields.io/pypi/pyversions/openswmmcore.svg)](https://pypi.org/project/openswmmcore)
+[![Wheel](https://img.shields.io/pypi/wheel/openswmmcore.svg)](https://pypi.org/project/openswmmcore)
+[![Downloads](https://pepy.tech/badge/openswmmcore)](https://pepy.tech/project/openswmmcore)
+[![Downloads](https://pepy.tech/badge/openswmmcore/month)](https://pepy.tech/project/openswmmcore)
+[![Downloads](https://pepy.tech/badge/openswmmcore/week)](https://pepy.tech/project/openswmmcore)
 
 ## Introduction
 This is the official SWMM source code repository maintained by US EPA Office of Research and Development, Center For Environmental Solutions & Emergency Response, Water Infrastructure Division located in Cincinnati, Ohio.
@@ -35,32 +37,39 @@ interface.
 Also included is a python interface for the SWMM computational engine and output 
 post-processing application programming interfaces located in the python folder.
 
-### Computational Engine
-
 The 'CMakeLists.txt' file is a script used by CMake (https://cmake.org/)
 to build the SWMM binaries. CMake is a cross-platform build tool
 that generates platform native build systems for many compilers. To
 check if the required version is installed on your system, enter from 
-a console window and check that the version is 3.15 or higher.
+a console window and check that the version is 3.5 or higher.
 
 ```bash
 cmake --version
 ```
 
-To build the SWMM engine and related libraries:
+To build the SWMM engine library and its command line executable
+using CMake and the Microsoft Visual Studio C compiler on Windows:
 
 1. Open a console window and navigate to the directory where this
    Readme file resides (which should have 'src' as a sub-directory
    underneath it).
 
-2. Then the following CMake commands to build the binaries. Where
-   <platform> can either be Windows, Linux, or Darwin. The confurations
-   for the platforms can be modified in the CMakePresets.json file.
+2. Use the following command to create the directory for storing the built binaries:
+
+```bash
+mkdir build
+```
+
+3. Then the following CMake commands to build the binaries:
 
 ``` bash
-cmake ---preset=<platform>
-cmake --build build --target package
+cmake -G <compiler> -B build
+cmake --build ./build --config Release
 ```
+
+where `<compiler>` is the name of the compiler being used
+in double quotes (e.g., "Visual Studio 17 2022" for windows, "Ninja" for linux, or "Xcode" for macos). The resulting engine shared libraries (i.e., swmm5.dll), command line executable (i.e., runswmm.exe), and output processing libraries (i.e., swmm-output.dll)
+will appear in the build\Release directory.
 
 ### Python Bindings (Experimental)
 
@@ -78,9 +87,9 @@ Example usage of python bindings can be found below. More extensive documentatio
 
 ```python
 
-from swmm.ai import solver
-from swmm.ai.solver import Solver 
-from swmm.ai.output import Output
+from openswmmcore import solver
+from openswmmcore.solver import Solver 
+from openswmmcore.output import Output
 
 # Alternative 1 to run SWMM
 
@@ -106,14 +115,11 @@ with Solver(inp_file="input_file.inp") as swmm_solver:
 
 # Alternative 2 to run SWMM
 swmm_solver = Solver(inp_file="input_file.inp")
-
-# Open and start the simulation
 swmm_solver.initialize()
 
 for elapsed_time, current_datetime in swmm_solver:
    # Get and set attributes per timestep
    print(current_datetime)
-
 
 swmm_solver.finalize()
 # or
@@ -163,7 +169,7 @@ pytest --data-dir <path-to-regression-testing-files> --atol <absolute-tolerance>
 The source code distributed here is identical to the code found at the official [SWMM website](https://www.epa.gov/water-research/storm-water-management-model-swmm).
 The SWMM website also hosts the official manuals and installation binaries for the SWMM software. 
 
-A live web version of the SWMM documentation of the API and user manuals can be found on the [SWMM GitHub Pages website](https://hydrocouple.github.io/Stormwater-Management-Model). Note that this is an experimental version that is still under development and has yet to go through EPA'S official quality assurance review process.
+A live web version of the SWMM documentation of the API and user manuals can be found on the [SWMM GitHub Pages website](https://usepa.github.io/Stormwater-Management-Model). Note that this is an experimental version that is still under development and has yet to go through EPA'S official quality assurance review process.
 
 ## Disclaimer 
 The United States Environmental Protection Agency (EPA) GitHub project code is provided on an "as is" basis and the user assumes responsibility for its use. EPA has relinquished control of the information and no longer has responsibility to protect the integrity, confidentiality, or availability of the information. Any reference to specific commercial products, processes, or services by service mark, trademark, manufacturer, or otherwise, does not constitute or imply their endorsement, recommendation or favoring by EPA. The EPA seal and logo shall not be used in any manner to imply endorsement of any commercial product or activity by EPA or the United States Government.

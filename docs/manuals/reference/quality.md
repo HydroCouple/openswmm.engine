@@ -1,8 +1,9 @@
-/**
-\page quality_manual SWMM Water Quality Reference Manual
+@page quality_reference_manual SWMM Water Quality Reference Manual Version 5.3
 
+<center>
 SWMM Water Quality Reference Manual Version 5.3
 =============================================
+</center>
 
 <center>
 by </br>

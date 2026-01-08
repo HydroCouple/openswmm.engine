@@ -1,5 +1,10 @@
-SWMM User Manual Version 5.3 {#user_manual}
+
+@page user_manual SWMM User Manual Version 5.3
+
+<center>
+SWMM User Manual Version 5.3
 =====================================
+</center>
 
 <center>
 

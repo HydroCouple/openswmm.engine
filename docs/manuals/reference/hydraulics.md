@@ -1,8 +1,10 @@
-/**
-\page hydraulics_manual SWMM Hydraulics Reference Manual
 
+@page hydraulics_reference_manual SWMM Hydraulics Reference Manual Version 5.3
+
+<center>
 SWMM Hydraulics Reference Manual Version 5.3
 =============================================
+</center>
 
 <center>
 by </br>

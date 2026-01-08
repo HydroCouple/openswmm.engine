@@ -1,118 +1,114 @@
 #
-# CMakeLists.txt - CMake configuration file for swmm-solver
+# CMakeLists.txt - CMake configuration file for OpenSWMMCore
 #
 # Created:  July 11, 2019
-# Modified: February 26, 2025
+# Last Modified:  January 07, 2026
 #
-# Author: Michael E. Tryby
-#         US EPA ORD/CESER
+# Original Creators: Michael E. Tryby
+#                    US EPA ORD/CESER
 #
-#         Caleb Buahin (Modified)
-#         US EPA ORD/CESER 
+#                    Caleb Buahin (Modified)
+#                    US EPA ORD/CESER 
 #
 
-cmake_minimum_required (VERSION 3.15...3.31)
 
-if("${CMAKE_BINARY_DIR}" STREQUAL "${CMAKE_SOURCE_DIR}")
-    message(FATAL_ERROR "In-source builds are disabled.") 
+cmake_minimum_required(VERSION 3.21...4.2)
+
+# Prevent in-source builds (Keep)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+    message(FATAL_ERROR "In-source builds not allowed. Please make a new directory (called a build directory) and run CMake from there.")
 endif()
 
-project(swmm
+# Modern project declaration with metadata
+project(
+    OpenSWMMCore
     VERSION 5.3.0
+    DESCRIPTION "OpenSWMM Core - Storm Water Management Model"
+    HOMEPAGE_URL "https://hydrocouple.org/projects/openswmmcore"
     LANGUAGES C CXX
 )
 
-set(CMAKE_MACOSX_RPATH ON)
+# Modern build type handling
+get_property(isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT isMultiConfig)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+        "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
 
-# Sets the position independent code property for all targets
+# Essential global settings
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Define build options
-option(BUILD_TESTS "Builds component tests (requires Boost)" OFF)
-option(BUILD_DEF   "Builds library with def file interface" OFF)
+# Modern feature options with namespacing
+option(OPENSWMMCORE_BUILD_TESTS "Build tests" OFF)
+option(OPENSWMMCORE_INSTALL "Install OpenSWMMCore" ON)
+
+# Include essential modules
+include(CMakePackageConfigHelpers)
+include(GNUInstallDirs)
+include(GenerateExportHeader)
+
+# Build information (improved)
+find_package(Git QUIET)
+if(Git_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE OPENSWMMCORE_GIT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE GIT_RESULT
+    )
+    if(NOT GIT_RESULT EQUAL 0)
+        set(OPENSWMMCORE_GIT_HASH "unknown")
+    endif()
+else()
+    set(OPENSWMMCORE_GIT_HASH "unknown")
+endif()
 
 
-# Add project subdirectories
-add_subdirectory(src/outfile)
-add_subdirectory(src/solver)
-add_subdirectory(src/run)
+# Add subdirectories
+add_subdirectory(src)
 
-if(BUILD_TESTS)
-    enable_testing() 
+if(OPENSWMMCORE_BUILD_TESTS)
+    enable_testing()
     add_subdirectory(tests)
 endif()
 
-# CONFIGURE BUILD_NUMBER, BUILD_ID, BUILD_COMMIT, BUILD_BRANCH, BUILD_DATE
-string(TIMESTAMP BUILD_TIMESTAMP "%Y-%m-%d %H:%M:%S UTC")
-set(BUILD_DATE "${BUILD_TIMESTAMP}" CACHE STRING "Build date" FORCE)
+# Modern package configuration
+if(OPENSWMMCORE_INSTALL)
+    configure_package_config_file(
+        cmake/OpenSWMMCoreConfig.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMCoreConfig.cmake
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenSWMMCore
+        PATH_VARS CMAKE_INSTALL_INCLUDEDIR CMAKE_INSTALL_LIBDIR
+    )
 
-execute_process(
-    COMMAND git rev-parse HEAD
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_COMMIT_HASH
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
+    write_basic_package_version_file(
+        ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMCoreConfigVersion.cmake
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMinorVersion  # ✅ More appropriate than AnyNewerVersion
+    )
 
-# Get the branch name
-execute_process(
-    COMMAND git rev-parse --abbrev-ref HEAD
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_BRANCH_NAME
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
+    install(
+        FILES
+            ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMCoreConfig.cmake
+            ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMCoreConfigVersion.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenSWMMCore
+    )
 
-string(
-    UUID BUILD_ID 
-    NAMESPACE "00000000-0000-0000-0000-000000000000" 
-    NAME "https://www.epa.gov/water-research/storm-water-management-model-swmm" 
-    TYPE MD5
-)
-set(BUILD_ID "${BUILD_ID}" CACHE STRING "Build ID" FORCE)
-set(BUILD_BRANCH "${GIT_BRANCH_NAME}" CACHE STRING "Build branch" FORCE)
-set(BUILD_COMMIT "${GIT_COMMIT_HASH}" CACHE STRING "Build commit" FORCE)
+    install(
+        EXPORT OpenSWMMCoreTargets
+        FILE OpenSWMMCoreTargets.cmake
+        NAMESPACE OpenSWMMCore::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenSWMMCore
+    )
+endif()
 
-# Create install rules for vcruntime.dll, msvcp.dll, vcomp.dll etc.
-set(CMAKE_INSTALL_OPENMP_LIBRARIES TRUE)
-include(GNUInstallDirs)
-include(CMakePackageConfigHelpers)
-
-# Configure the package configuration file
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/swmmConfig.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/swmmConfig.cmake
-    @ONLY
-)
-
-# Generate the version file
-write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/swmmConfigVersion.cmake
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY AnyNewerVersion
-)
-
-# Define install locations (will be prepended by install prefix)
-install(
-    FILES
-        ${CMAKE_CURRENT_BINARY_DIR}/swmmConfig.cmake
-        ${CMAKE_CURRENT_BINARY_DIR}/swmmConfigVersion.cmake
-    DESTINATION
-        ${CMAKE_INSTALL_LIBDIR}/cmake/swmm
-)
-
-# Install the config file
-install(
-    EXPORT
-        swmmTargets
-    NAMESPACE
-        swmm::
-    DESTINATION
-        ${CMAKE_INSTALL_LIBDIR}/cmake/swmm
-)
-
-
-# Configure CPack driven installer package
-set(CPACK_GENERATOR "ZIP")
-set(CPACK_PACKAGE_VENDOR "US_EPA")
-set(CPACK_ARCHIVE_FILE_NAME "swmm")
-
+# Simplified CPack (remove unnecessary variables)
+set(CPACK_PACKAGE_VENDOR "https://hydrocouple.org")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${PROJECT_DESCRIPTION}")
 include(CPack)

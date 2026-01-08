@@ -1,5 +1,4 @@
-/**
-\page application_manual SWMM Application Manual
+@page application_manual SWMM Application Manual
 
 SWMM Application Manual Version 5.3
 =====================================
