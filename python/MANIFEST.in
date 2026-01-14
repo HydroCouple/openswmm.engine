@@ -1,0 +1,32 @@
+include LICENSE
+include README.md
+prune **/.git
+prune **/.git
+prune **/.github
+prune **/.vscode
+prune **/.pytest_cache
+prune **/__pycache__
+prune **/build
+prune **/dist
+prune **/openswmm.egg-info
+prune **/venvopenswmm
+prune **/venvtest
+prune **/output_build
+prune **/_skbuild
+prune **/wheelhouse
+recursive-include openswmm *.py
+recursive-include tests *.py
+recursive-include openswmm *.txt
+recursive-include openswmm *.md
+recursive-include openswmm *.pyi
+recursive-include openswmm *.pyx
+recursive-include openswmm *.pxd
+recursive-include tests *.inp
+recursive-include docs *.*
+recursive-include tests *.*
+global-exclude *.pyd
+global-exclude *.so
+global-exclude *.pyc
+global-exclude *_drainage_example.out
+global-exclude *__pycache__*
+global-exclude __pycache__

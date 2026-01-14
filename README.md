@@ -1,35 +1,55 @@
-## EPA ORD Stormwater Management Model (SWMM)
+## Stormwater Management Model (SWMM) Open Source Initiative
 
-Stormwater Management Model (SWMM) computational engine and output post-processing documentation
+Stormwater Management Model (SWMM) SWMM is a dynamic hydrology-hydraulic water quality simulation model. 
+It is used for single event or long-term (continuous) simulation of runoff quantity and quality from primarily 
+urban areas. SWMM was originally developed by the U.S. Environmental Protection Agency (EPA) is being advanced
+as an open source project by the community to ensure its long-term sustainability.
+
+Recent advancements to the SWMM computational engine include a modernized codebase with improved modularity and computational
+efficiency, a well-documented application programming interface (API) for easier integration with third-party applications,
+and Python bindings for enhanced accessibility and usability by the broader community.
+
+New process formulations including a spatially explicit overland flow solver, a groundwater transport model, 
+and a new low impact development (LID) module have also been added and are being tested.
+
+The SWMM source code is written in the C/C++ Programming Language. 
 
 ## Build Status
-[![Unit Testing](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/unit_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/unit_testing.yml?query=branch%3Abug_fixes)
-[![Build and Regression Testing](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/regression_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/regression_testing.yml?query=branch%3Abug_fixes)
-[![Documentation](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/documentation.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/documentation.yml?query=branch%3Abug_fixes)
-[![Deployment](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/deployment.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/Stormwater-Management-Model/actions/workflows/deployment.yml?query=branch%3Abug_fixes)
-[![Issues](https://img.shields.io/github/issues/HydroCouple/Stormwater-Management-Model)](https://github.com/HydroCouple/Stormwater-Management-Model/issues)
+[![Unit Testing](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/unit_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/unit_testing.yml?query=branch%3Abug_fixes)
+[![Build and Regression Testing](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/regression_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/regression_testing.yml?query=branch%3Abug_fixes)
+[![Documentation](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/documentation.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/documentation.yml?query=branch%3Abug_fixes)
+[![Deployment](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/deployment.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/deployment.yml?query=branch%3Abug_fixes)
+[![Issues](https://img.shields.io/github/issues/HydroCouple/OpenSWMMCore)](https://github.com/HydroCouple/OpenSWMMCore/issues)
 
 ## Python Binding
-[![PyPi](https://img.shields.io/pypi/v/epaswmm.svg)](https://pypi.org/project/epaswmm)
-[![PythonVersion](https://img.shields.io/pypi/pyversions/epaswmm.svg)](https://pypi.org/project/epaswmm)
-[![Wheel](https://img.shields.io/pypi/wheel/epaswmm.svg)](https://pypi.org/project/epaswmm)
-[![Downloads](https://pepy.tech/badge/epaswmm)](https://pepy.tech/project/epaswmm)
-[![Downloads](https://pepy.tech/badge/epaswmm/month)](https://pepy.tech/project/epaswmm)
-[![Downloads](https://pepy.tech/badge/epaswmm/week)](https://pepy.tech/project/epaswmm)
+[![PyPi](https://img.shields.io/pypi/v/openswmm.svg)](https://pypi.org/project/openswmm)
+[![PythonVersion](https://img.shields.io/pypi/pyversions/openswmm.svg)](https://pypi.org/project/openswmm)
+[![Wheel](https://img.shields.io/pypi/wheel/openswmm.svg)](https://pypi.org/project/openswmm)
+[![Downloads](https://pepy.tech/badge/openswmm)](https://pepy.tech/project/openswmm)
+[![Downloads](https://pepy.tech/badge/openswmm/month)](https://pepy.tech/project/openswmm)
+[![Downloads](https://pepy.tech/badge/openswmm/week)](https://pepy.tech/project/openswmm)
 
 ## Introduction
-This is the official SWMM source code repository maintained by US EPA Office of Research and Development, Center For Environmental Solutions & Emergency Response, Water Infrastructure Division located in Cincinnati, Ohio.
 
-SWMM is a dynamic hydrology-hydraulic water quality simulation model. It is used for single event or long-term (continuous) simulation of runoff quantity and quality from primarily urban areas. SWMM source code is written in the C Programming Language and released in the Public Domain.
+This repository hosts a community-driven, open source initiative to continue development of the SWMM computational engine. 
+The project aims to preserve and advance the rich legacy of SWMM by developing high-quality, QA/QC'd, and peer-reviewed 
+code while the EPA Office of Research and Development (ORD) is being dissolved. The goal is to build an active community 
+around the codebase so it can be sustainably maintained and improved, and to continue collaborating with the agency 
+toward future official releases when feasible. This community is actively working with organizations such as
+ASCE's Environmental and Water Resources Institute (EWRI) and Water Environment Federation (WEF) to ensure the
+long-term sustainability of the SWMM codebase.
+
+SWMM is a dynamic hydrology-hydraulic water quality simulation model. It is used for single event or long-term 
+(continuous) simulation of runoff quantity and quality from primarily urban areas. SWMM source code is written 
+in the C Programming Language and released in the Public Domain.
 
 ## Build Instructions
 
 The 'src' folder of this repository contains the C source code for
-version of Storm Water Management Model's computational
-engine. Consult the included 'Roadmap.txt' file for an overview of
-the various code modules. The code can be compiled into both a shared
+the current version of Storm Water Management Model's computational
+engine. The code can be compiled into both a shared
 object library and a command line executable. Under Windows, the 
-library file (swmm5.dll) is used to power SWMM's graphical user
+library file (openswmmcore.dll) is used to power SWMM's graphical user
 interface.
 
 Also included is a python interface for the SWMM computational engine and output 
@@ -62,25 +82,24 @@ cmake ---preset=<platform>
 cmake --build build --target package
 ```
 
-### Python Bindings (Experimental)
+### Python Bindings
 
-Experimental python bindings for the SWMM API are being developed to support regression and benchmark testing as well as for other applications. _**These bindings are still under development and testing and has yet to be cleared through US EPA ORD's official quality assurance review process**_. The exprimental python bindings can be built and installed locally using the following command.
+Python bindings for the SWMM API have been developed. _**These bindings are still under development and testing**_. 
+The python bindings can be built and installed locally using the following command.
 
 ```bash
 cd python
 python -m pip install -r requirements.txt
 python -m pip install . 
 ```
-Users may also build python wheels for installation or distribution. Once the python bindings
-have been validated and cleared through EPA's quality assuracnce clearance process, they will be available for installation via package indexing repositories such as pypi.
-
-Example usage of python bindings can be found below. More extensive documentation will be provided once cleared.
+Users may also build python wheels for installation or distribution.  Example usage of python bindings can be 
+found below. More extensive documentation will be provided once cleared.
 
 ```python
 
-from swmm.ai import solver
-from swmm.ai.solver import Solver 
-from swmm.ai.output import Output
+from openswmmcore import solver
+from openswmmcore.solver import Solver 
+from openswmmcore.output import Output
 
 # Alternative 1 to run SWMM
 
@@ -89,7 +108,7 @@ with Solver(inp_file="input_file.inp") as swmm_solver:
    # Open swmm file and starts the simulation
    swmm_solver.start()
 
-   # Set initialization parameters e.g., time step stride, start date, end date etc.
+   # Set initialization parameters e.g., time step stride, start date, end da.te etc.
    swmm_solver.time_stride = 600 
 
    for elapsed_time, current_datetime in swmm_solver:
@@ -160,11 +179,5 @@ pytest --data-dir <path-to-regression-testing-files> --atol <absolute-tolerance>
 ```
 
 ## Find Out More
-The source code distributed here is identical to the code found at the official [SWMM website](https://www.epa.gov/water-research/storm-water-management-model-swmm).
-The SWMM website also hosts the official manuals and installation binaries for the SWMM software. 
 
-A live web version of the SWMM documentation of the API and user manuals can be found on the [SWMM GitHub Pages website](https://hydrocouple.github.io/Stormwater-Management-Model). Note that this is an experimental version that is still under development and has yet to go through EPA'S official quality assurance review process.
-
-## Disclaimer 
-The United States Environmental Protection Agency (EPA) GitHub project code is provided on an "as is" basis and the user assumes responsibility for its use. EPA has relinquished control of the information and no longer has responsibility to protect the integrity, confidentiality, or availability of the information. Any reference to specific commercial products, processes, or services by service mark, trademark, manufacturer, or otherwise, does not constitute or imply their endorsement, recommendation or favoring by EPA. The EPA seal and logo shall not be used in any manner to imply endorsement of any commercial product or activity by EPA or the United States Government.
-
+A live web version of the SWMM documentation of the API and user manuals can be found on the [SWMM GitHub Pages website](https://hydrocouple.github.io/OpenSWMMCore). Note that this documentation is experimental and maintained by the community; it has yet to go through formal agency quality assurance review. The project welcomes contributions, review, and collaboration from the community and from agency partners toward future official releases.

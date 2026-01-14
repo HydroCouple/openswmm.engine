@@ -15,7 +15,7 @@
 #include <string.h>
 
 #include "errormanager.h"
-#include "swmm_output.h"
+#include "openswmm_output.h"
 
 // NOTE: These depend on machine data model and may change when porting
 #ifdef _WIN32 // Windows (32-bit and 64-bit)
@@ -307,7 +307,7 @@ char *newCharArray(int n);
 /*!
  * \copydoc SMO_init
  */
-int EXPORT_SWMM_OUTPUT_API SMO_init(SMO_Handle *p_handle)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_init(SMO_Handle *p_handle)
 {
     int errorcode = 0;
     data_t *priv_data = NULL;
@@ -342,7 +342,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_init(SMO_Handle *p_handle)
 /*!
  * \copydoc SMO_open
  */
-int EXPORT_SWMM_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *path)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *path)
 {
     int i, err, errorcode = 0;
     F_OFF offset;
@@ -491,7 +491,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *path)
 /*!
  * \copydoc SMO_close
  */
-int EXPORT_SWMM_OUTPUT_API SMO_close(SMO_Handle *p_handle)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_close(SMO_Handle *p_handle)
 {
     data_t *p_data;
     int i, n, errorcode = 0;
@@ -576,7 +576,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_close(SMO_Handle *p_handle)
 /*!
  * \copydoc SMO_getVersion
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getVersion(SMO_Handle p_handle, int *version)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVersion(SMO_Handle p_handle, int *version)
 {
     int errorcode = 0;
     data_t *p_data;
@@ -598,7 +598,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getVersion(SMO_Handle p_handle, int *version)
 /*!
  * \copydoc SM0_getProjectSize
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getProjectSize(SMO_Handle p_handle, int **elementCount, int *length)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getProjectSize(SMO_Handle p_handle, int **elementCount, int *length)
 {
     int errorcode = 0;
     int *temp;
@@ -630,7 +630,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getProjectSize(SMO_Handle p_handle, int **element
 /*!
  * \copydoc SMO_getUnits
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getUnits(SMO_Handle p_handle, int **unitFlag, int *length)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getUnits(SMO_Handle p_handle, int **unitFlag, int *length)
 {
     int errorcode = 0;
     int *temp;
@@ -681,7 +681,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getUnits(SMO_Handle p_handle, int **unitFlag, int
 /*!
  * \copydoc SMO_getFlowUnits
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getFlowUnits(SMO_Handle p_handle, int *unitFlag)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getFlowUnits(SMO_Handle p_handle, int *unitFlag)
 {
     int errorcode = 0;
     data_t *p_data;
@@ -704,7 +704,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getFlowUnits(SMO_Handle p_handle, int *unitFlag)
 /*!
  * \copydoc SMO_getPollutantUnits
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getPollutantUnits(SMO_Handle p_handle, int **unitFlag, int *length)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPollutantUnits(SMO_Handle p_handle, int **unitFlag, int *length)
 {
     int errorcode = 0;
     int *temp;
@@ -733,7 +733,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getPollutantUnits(SMO_Handle p_handle, int **unit
 /*!
  * \copydoc SMO_getStartDate
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getStartDate(SMO_Handle p_handle, double *date)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getStartDate(SMO_Handle p_handle, double *date)
 {
     int errorcode = 0;
     data_t *p_data;
@@ -753,7 +753,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getStartDate(SMO_Handle p_handle, double *date)
 /*!
  * \copydoc SMO_getTimes
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getTimes(SMO_Handle p_handle, SMO_time code, int *time)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getTimes(SMO_Handle p_handle, SMO_time code, int *time)
 {
     int errorcode = 0;
     data_t *p_data;
@@ -785,7 +785,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getTimes(SMO_Handle p_handle, SMO_time code, int 
 /*!
  * \copydoc SMO_getElementName
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getElementName(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getElementName(
     SMO_Handle p_handle,
     SMO_elementType type,
     int index,
@@ -867,7 +867,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getElementName(
 /*!
  * \copydoc SMO_getNumVars
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getNumVars(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNumVars(
     SMO_Handle p_handle,
     SMO_elementType type,
     int *count)
@@ -906,7 +906,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getNumVars(
 /*!
  * \copydoc SMO_getVarCode
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getVarCode(SMO_Handle p_handle, SMO_elementType type, int varIndex, int *varCode)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVarCode(SMO_Handle p_handle, SMO_elementType type, int varIndex, int *varCode)
 {
     int errorcode = 0;
     int *temp = NULL;
@@ -957,7 +957,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getVarCode(SMO_Handle p_handle, SMO_elementType t
 /*!
  * \copydoc SMO_getVarCodes
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getVarCodes(SMO_Handle p_handle, SMO_elementType type, int **varCodes, int *size)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVarCodes(SMO_Handle p_handle, SMO_elementType type, int **varCodes, int *size)
 {
     int errorcode = 0;
     int *temp = NULL;
@@ -1003,7 +1003,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getVarCodes(SMO_Handle p_handle, SMO_elementType 
 /*!
  * \copydoc SMO_getNumProperties
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getNumProperties(SMO_Handle p_handle, SMO_elementType type, int *count)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNumProperties(SMO_Handle p_handle, SMO_elementType type, int *count)
 {
     int errorcode = 0;
     data_t *p_data;
@@ -1036,7 +1036,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getNumProperties(SMO_Handle p_handle, SMO_element
 /*!
  * \copydoc SMO_getPropertyCode
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getPropertyCode(SMO_Handle p_handle, SMO_elementType type, int propertyIndex, int *propertyCode)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyCode(SMO_Handle p_handle, SMO_elementType type, int propertyIndex, int *propertyCode)
 {
     int errorcode = 0;
     int *temp = NULL;
@@ -1083,7 +1083,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getPropertyCode(SMO_Handle p_handle, SMO_elementT
 /*!
  * \copydoc SMO_getPropertyCodes
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getPropertyCodes(SMO_Handle p_handle, SMO_elementType type, int **propertyCodes, int *size)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyCodes(SMO_Handle p_handle, SMO_elementType type, int **propertyCodes, int *size)
 {
     int errorcode = 0;
     int *temp = NULL;
@@ -1125,7 +1125,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getPropertyCodes(SMO_Handle p_handle, SMO_element
 /*!
  * \copydoc SMO_getSubcatchSeries
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getSubcatchSeries(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchSeries(
     SMO_Handle p_handle,
     int subcatchIndex,
     SMO_subcatchAttribute attr,
@@ -1167,7 +1167,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getSubcatchSeries(
 /*!
  * \copydoc SMO_getPropertyValue
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getPropertyValue(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValue(
     SMO_Handle p_handle,
     SMO_elementType type,
     int propertyIndex,
@@ -1241,7 +1241,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getPropertyValue(
 /*!
  * \copydoc SMO_getPropertyValue
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getPropertyValues(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValues(
     SMO_Handle p_handle,
     SMO_elementType type,
     int elementIndex,
@@ -1314,7 +1314,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getPropertyValues(
 /*!
  * \copydoc SMO_getNodeSeries
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getNodeSeries(SMO_Handle p_handle, int nodeIndex,
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeSeries(SMO_Handle p_handle, int nodeIndex,
                                              SMO_nodeAttribute attr, int startPeriod, int endPeriod,
                                              float **outValueArray, int *length)
 {
@@ -1350,7 +1350,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getNodeSeries(SMO_Handle p_handle, int nodeIndex,
 /*!
  * \copydoc SMO_getLinkSeries
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getLinkSeries(SMO_Handle p_handle, int linkIndex,
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkSeries(SMO_Handle p_handle, int linkIndex,
                                              SMO_linkAttribute attr, int startPeriod, int endPeriod,
                                              float **outValueArray, int *length)
 {
@@ -1386,7 +1386,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getLinkSeries(SMO_Handle p_handle, int linkIndex,
 /*!
  * \Copydoc SMO_getSystemSeries
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getSystemSeries(SMO_Handle p_handle, SMO_systemAttribute attr,
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemSeries(SMO_Handle p_handle, SMO_systemAttribute attr,
                                                int startPeriod, int endPeriod, float **outValueArray, int *length)
 {
     int k, len, errorcode = 0;
@@ -1419,7 +1419,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getSystemSeries(SMO_Handle p_handle, SMO_systemAt
 /*!
  * \copydoc SMO_getSubcatchAttribute
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getSubcatchAttribute(SMO_Handle p_handle, int periodIndex,
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchAttribute(SMO_Handle p_handle, int periodIndex,
                                                     SMO_subcatchAttribute attr, float **outValueArray, int *length)
 {
     int k, errorcode = 0;
@@ -1451,7 +1451,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getSubcatchAttribute(SMO_Handle p_handle, int per
 /*!
  * \copydoc SMO_getNodeAttribute
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getNodeAttribute(SMO_Handle p_handle, int periodIndex,
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeAttribute(SMO_Handle p_handle, int periodIndex,
                                                 SMO_nodeAttribute attr, float **outValueArray, int *length)
 {
     int k, errorcode = 0;
@@ -1483,7 +1483,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getNodeAttribute(SMO_Handle p_handle, int periodI
 /*!
  * \copydoc SMO_getLinkAttribute
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getLinkAttribute(SMO_Handle p_handle, int periodIndex,
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkAttribute(SMO_Handle p_handle, int periodIndex,
                                                 SMO_linkAttribute attr, float **outValueArray, int *length)
 {
     int k, errorcode = 0;
@@ -1515,7 +1515,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getLinkAttribute(SMO_Handle p_handle, int periodI
 /*!
  * \copydoc SMO_getSystemAttribute
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getSystemAttribute(SMO_Handle p_handle, int periodIndex,
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemAttribute(SMO_Handle p_handle, int periodIndex,
                                                   SMO_systemAttribute attr, float **outValueArray, int *length)
 {
     int errorcode = 0;
@@ -1545,7 +1545,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getSystemAttribute(SMO_Handle p_handle, int perio
 /*!
  * \copydoc SMO_getSubcatchResult
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getSubcatchResult(SMO_Handle p_handle, int periodIndex,
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchResult(SMO_Handle p_handle, int periodIndex,
                                                  int subcatchIndex, float **outValueArray, int *arrayLength)
 {
     int errorcode = 0;
@@ -1584,7 +1584,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getSubcatchResult(SMO_Handle p_handle, int period
 /*!
  * \copydoc SMO_getNodeResult
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getNodeResult(SMO_Handle p_handle, int periodIndex,
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeResult(SMO_Handle p_handle, int periodIndex,
                                              int nodeIndex, float **outValueArray, int *arrayLength)
 {
     int errorcode = 0;
@@ -1625,7 +1625,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getNodeResult(SMO_Handle p_handle, int periodInde
 /*!
  * \copydoc SMO_getLinkResult
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getLinkResult(SMO_Handle p_handle, int periodIndex,
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkResult(SMO_Handle p_handle, int periodIndex,
                                              int linkIndex, float **outValueArray, int *arrayLength)
 {
     int errorcode = 0;
@@ -1667,7 +1667,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getLinkResult(SMO_Handle p_handle, int periodInde
 /*!
  * \copydoc SMO_getSystemResult
  */
-int EXPORT_SWMM_OUTPUT_API SMO_getSystemResult(SMO_Handle p_handle, int periodIndex,
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemResult(SMO_Handle p_handle, int periodIndex,
                                                int dummyIndex, float **outValueArray, int *arrayLength)
 {
     int errorcode = 0;
@@ -1707,7 +1707,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getSystemResult(SMO_Handle p_handle, int periodIn
 /*!
  * \copydoc SM0_free
  */
-void EXPORT_SWMM_OUTPUT_API SMO_free(void **array)
+void EXPORT_OPENSWMMCORE_OUTPUT_API SMO_free(void **array)
 {
     if (array != NULL)
     {
@@ -1719,7 +1719,7 @@ void EXPORT_SWMM_OUTPUT_API SMO_free(void **array)
 /*!
  * \copydoc SMO_clearError
  */
-void EXPORT_SWMM_OUTPUT_API SMO_clearError(SMO_Handle p_handle)
+void EXPORT_OPENSWMMCORE_OUTPUT_API SMO_clearError(SMO_Handle p_handle)
 {
     data_t *p_data;
 
@@ -1730,7 +1730,7 @@ void EXPORT_SWMM_OUTPUT_API SMO_clearError(SMO_Handle p_handle)
 /*!
  * \copydoc SMO_checkError
  */
-int EXPORT_SWMM_OUTPUT_API SMO_checkError(SMO_Handle p_handle, char **msg_buffer)
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_checkError(SMO_Handle p_handle, char **msg_buffer)
 {
     int errorcode = 0;
     char *temp = NULL;

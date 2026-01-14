@@ -38,14 +38,14 @@ extern "C" {
 * \param[out] p_handle Opaque pointer to SWMM output file handle
 * \return Error code 0 if successful or -1 if an error occurs
 */
-int EXPORT_SWMM_OUTPUT_API SMO_init(SMO_Handle *p_handle);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_init(SMO_Handle *p_handle);
 
 /*!
 * \brief Closes the SWMM output file handle
 * \param[in] p_handle Opaque pointer to SWMM output file handle
 * \return Error code 0 if successful or -1 if an error occurs
 */
-int EXPORT_SWMM_OUTPUT_API SMO_close(SMO_Handle *p_handle);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_close(SMO_Handle *p_handle);
 
 /*!
 * \brief Opens a SWMM output file
@@ -53,7 +53,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_close(SMO_Handle *p_handle);
 * \param[in] path Path to the SWMM output file
 * \return Error code 0 if successful or -1 if an error occurs
 */
-int EXPORT_SWMM_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *path);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *path);
 
 /*!
 * \brief Retrieves the model version number that created the output file
@@ -61,7 +61,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *path);
 * \param[out] version Pointer to the version number
 * \return Error code 0 if successful or -1 if an error occurs
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getVersion(SMO_Handle p_handle, int *version);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVersion(SMO_Handle p_handle, int *version);
 
 /*!
 * \brief Get project size.
@@ -70,7 +70,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getVersion(SMO_Handle p_handle, int *version);
 * \param[out] length Length of elementCount array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getProjectSize(SMO_Handle p_handle, int **elementCount, int *length);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getProjectSize(SMO_Handle p_handle, int **elementCount, int *length);
 
 /*!
 * \brief Retrieves the unit system used in the SWMM model
@@ -79,7 +79,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getProjectSize(SMO_Handle p_handle, int **element
 * \param[out] length Length of unitFlag array
 * \return Error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getUnits(SMO_Handle p_handle, int **unitFlag, int *length);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getUnits(SMO_Handle p_handle, int **unitFlag, int *length);
 
 /*!
 * \brief Returns unit flag for flow
@@ -93,7 +93,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getUnits(SMO_Handle p_handle, int **unitFlag, int
 *  5: MLD (million liters per day)
 * \return Error code 
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getFlowUnits(SMO_Handle p_handle, int *unitFlag);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getFlowUnits(SMO_Handle p_handle, int *unitFlag);
 
 /*!
 * \brief Returns unit flag for pollutant. Concentration units are located after the pollutant ID
@@ -108,7 +108,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getFlowUnits(SMO_Handle p_handle, int *unitFlag);
 * \returns Error code
 * \note Valid values are 0 to Npolluts-1
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getPollutantUnits(SMO_Handle p_handle, int **unitFlag, int *length);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPollutantUnits(SMO_Handle p_handle, int **unitFlag, int *length);
 
 /*!
 * \brief Retrieves the start date of the simulation
@@ -116,7 +116,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getPollutantUnits(SMO_Handle p_handle, int **unit
 * \param[out] date Pointer to the start date
 * \return Error code 0 on success, -1 on failure
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getStartDate(SMO_Handle p_handle, double *date);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getStartDate(SMO_Handle p_handle, double *date);
 
 /*!
 * \brief Retrieves the number of reporting periods in the simulation
@@ -125,7 +125,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getStartDate(SMO_Handle p_handle, double *date);
 * \param[out] time Pointer to the reporting attribute value
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getTimes(SMO_Handle p_handle, SMO_time code, int *time);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getTimes(SMO_Handle p_handle, SMO_time code, int *time);
 
 /*!
 * \brief Retrieves the element name by index and type from the SWMM output file
@@ -136,7 +136,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getTimes(SMO_Handle p_handle, SMO_time code, int 
 * \param[out] length Pointer to the size of the elementName array
 * \return Error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getElementName(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getElementName(
     SMO_Handle p_handle, 
     SMO_elementType type, 
     int elementIndex, 
@@ -152,7 +152,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getElementName(
 * \param[out] count Pointer to the number of variables
 * \return Error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getNumVars(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNumVars(
     SMO_Handle p_handle,
     SMO_elementType type, 
     int *count
@@ -166,7 +166,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getNumVars(
 * \param[out] varCode Pointer to the variable code
 * \return Variable code or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getVarCode(SMO_Handle p_handle, SMO_elementType type, int varIndex, int *varCode);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVarCode(SMO_Handle p_handle, SMO_elementType type, int varIndex, int *varCode);
 
 /*!
 * \brief Retrieves the variable codes for a given element type that are stored in the output file
@@ -176,7 +176,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getVarCode(SMO_Handle p_handle, SMO_elementType t
 * \param[out] size Pointer to the size of the varCodes array
 * \return Error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getVarCodes(SMO_Handle p_handle, SMO_elementType type, int **varCodes, int *size);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVarCodes(SMO_Handle p_handle, SMO_elementType type, int **varCodes, int *size);
 
 /*!
 * \brief Retrieves the number of properties for a given element type that are stored in the output file
@@ -185,7 +185,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getVarCodes(SMO_Handle p_handle, SMO_elementType 
 * \param[out] count Pointer to the number of properties
 * \return Error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getNumProperties(SMO_Handle p_handle, SMO_elementType type, int *count);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNumProperties(SMO_Handle p_handle, SMO_elementType type, int *count);
 
 /*!
 * \brief Retrieves the property code for a given element type and property index that is stored in the output file
@@ -195,7 +195,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getNumProperties(SMO_Handle p_handle, SMO_element
 * \param[out] propertyCode Pointer to the property code
 * \return Property code or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getPropertyCode(SMO_Handle p_handle, SMO_elementType type, int propertyIndex, int *propertyCode);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyCode(SMO_Handle p_handle, SMO_elementType type, int propertyIndex, int *propertyCode);
 
 /*!
 * \brief Retrieves the property codes for a given element type that are stored in the output file
@@ -205,7 +205,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getPropertyCode(SMO_Handle p_handle, SMO_elementT
 * \param[out] size Pointer to the size of the propertyCodes array
 * \return Error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getPropertyCodes(SMO_Handle p_handle, SMO_elementType type, int **propertyCodes, int *size);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyCodes(SMO_Handle p_handle, SMO_elementType type, int **propertyCodes, int *size);
 
 /*!
 * \brief Retrieves the value of a property for a given element type, property index, and element index
@@ -216,7 +216,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getPropertyCodes(SMO_Handle p_handle, SMO_element
 * \param[out] value Pointer to the property value
 * \return Error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getPropertyValue(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValue(
     SMO_Handle p_handle, 
     SMO_elementType type, 
     int propertyIndex, 
@@ -233,7 +233,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getPropertyValue(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getPropertyValues(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValues(
     SMO_Handle p_handle, 
     SMO_elementType type, 
     int elementIndex, 
@@ -252,7 +252,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getPropertyValues(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getSubcatchSeries(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchSeries(
     SMO_Handle p_handle, 
     int subcatchIndex, 
     SMO_subcatchAttribute attr, 
@@ -273,7 +273,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getSubcatchSeries(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getNodeSeries(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeSeries(
     SMO_Handle p_handle, 
     int nodeIndex, 
     SMO_nodeAttribute attr, 
@@ -294,7 +294,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getNodeSeries(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getLinkSeries(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkSeries(
     SMO_Handle p_handle, 
     int linkIndex, 
     SMO_linkAttribute attr, 
@@ -314,7 +314,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getLinkSeries(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getSystemSeries(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemSeries(
     SMO_Handle p_handle, 
     SMO_systemAttribute attr, 
     int startPeriod, 
@@ -332,7 +332,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getSystemSeries(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getSubcatchAttribute(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchAttribute(
     SMO_Handle p_handle, 
     int timeIndex, 
     SMO_subcatchAttribute attr, 
@@ -349,7 +349,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getSubcatchAttribute(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getNodeAttribute(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeAttribute(
     SMO_Handle p_handle, 
     int timeIndex, 
     SMO_nodeAttribute attr, 
@@ -366,7 +366,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getNodeAttribute(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getLinkAttribute(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkAttribute(
     SMO_Handle p_handle, 
     int timeIndex, 
     SMO_linkAttribute attr, 
@@ -383,7 +383,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getLinkAttribute(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getSystemAttribute(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemAttribute(
     SMO_Handle p_handle, 
     int timeIndex, 
     SMO_systemAttribute attr, 
@@ -400,7 +400,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getSystemAttribute(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getSubcatchResult(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchResult(
     SMO_Handle p_handle,
     int timeIndex, 
     int subcatchIndex,
@@ -417,7 +417,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getSubcatchResult(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getNodeResult(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeResult(
     SMO_Handle p_handle, 
     int timeIndex, 
     int nodeIndex, 
@@ -434,7 +434,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getNodeResult(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getLinkResult(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkResult(
     SMO_Handle p_handle, 
     int timeIndex, 
     int linkIndex, 
@@ -451,7 +451,7 @@ int EXPORT_SWMM_OUTPUT_API SMO_getLinkResult(
 * \param[out] length Pointer to the length of the outValueArray array
 * \return Error code 0 on success, -1 on failure or error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_getSystemResult(
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemResult(
     SMO_Handle p_handle, 
     int timeIndex, 
     int dummyIndex, 
@@ -463,13 +463,13 @@ int EXPORT_SWMM_OUTPUT_API SMO_getSystemResult(
 * \brief Frees memory allocated by the API for the outValueArray
 * \param[in] array Pointer to the outValueArray
 */
-void EXPORT_SWMM_OUTPUT_API SMO_free(void **array);
+void EXPORT_OPENSWMMCORE_OUTPUT_API SMO_free(void **array);
 
 /*!
 * \brief Clears the error status of the SMO_Handle
 * \param[in] p_handle Opaque pointer to SWMM output file handle
 */
-void EXPORT_SWMM_OUTPUT_API SMO_clearError(SMO_Handle p_handle_in);
+void EXPORT_OPENSWMMCORE_OUTPUT_API SMO_clearError(SMO_Handle p_handle_in);
 
 /*!
 * \brief Checks for error in the error handle and copies the error message to the
@@ -478,7 +478,7 @@ void EXPORT_SWMM_OUTPUT_API SMO_clearError(SMO_Handle p_handle_in);
 * \param[out] msg_buffer Error message buffer 
 * \return Error code
 */
-int EXPORT_SWMM_OUTPUT_API SMO_checkError(SMO_Handle p_handle_in, char **msg_buffer);
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_checkError(SMO_Handle p_handle_in, char **msg_buffer);
 
 #ifdef __cplusplus
 }

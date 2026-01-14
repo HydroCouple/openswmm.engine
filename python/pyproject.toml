@@ -1,0 +1,79 @@
+# Description: The pyproject.toml file for the openswmmcore python package
+# Created by: Caleb Buahin
+# Created on: 2024-1
+
+[build-system]
+requires = [
+    "wheel==0.45.1",
+    "setuptools>=75.3.0",
+    "cmake>=3.27.0",
+    "scikit-build>=0.18.1",
+    "cython>=3.0.12"
+]
+build-backend = "setuptools.build_meta"
+
+[tool.cibuildwheel]
+build = "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-*"
+
+[project]
+name = "openswmm"
+description = "A python package for EPA SWMM preprocessing, solver, and post-processing."
+requires-python = ">=3.8"
+dynamic = ["version", "readme"]
+keywords = [
+    "SWMM", 
+    "storm water", 
+    "modeling",
+    "water", 
+    "hydrology", 
+    "hydraulics", 
+    "wastewater", 
+    "machine learning", 
+    "AI", 
+    "GIS", 
+    "environmental engineering", 
+    "civil engineering"
+]
+
+license =  {file = "LICENSE"}
+# license-files = ["LICEN[CS]E"]
+
+authors = [
+    {name = "Caleb Buahin", email = "caleb.buahin@gmail.com"},
+]
+
+maintainers = [
+    {name = "Caleb Buahin", email = "caleb.buahin@gmail.com"}
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: C",
+    "Programming Language :: C++",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Hydrology",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: GIS"
+]
+
+[project.urls]
+# TODO: Change these URLs to the correct ones
+Homepage = "https://github.com/HydroCouple/Stormwater-Management-Model"
+Documentation = "https://github.com/HydroCouple/Stormwater-Management-Model"
+"Source Code" = "https://github.com/HydroCouple/Stormwater-Management-Model"
+"Bug Tracker" = "https://github.com/HydroCouple/Stormwater-Management-Model/issues"
+Repository =  "https://github.com/HydroCouple/Stormwater-Management-Model"
+Changelog = "https://github.com/HydroCouple/Stormwater-Management-Model/blob/master/CHANGELOG.md"

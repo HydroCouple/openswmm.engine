@@ -1,5 +1,23 @@
 @PACKAGE_INIT@
 
-include("${CMAKE_CURRENT_LIST_DIR}/@PROJECT_NAME@Targets.cmake")
+include(CMakeFindDependencyMacro)
 
-set(OPENSWMMCORE_FOUND 1)
+# Platform-specific dependencies
+if(UNIX AND NOT APPLE)
+    find_dependency(Threads)
+endif()
+
+# Include the targets file
+include("${CMAKE_CURRENT_LIST_DIR}/OpenSWMMCoreTargets.cmake")
+
+# Provide portable variables for consumers
+set_and_check(OpenSWMMCore_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+set_and_check(OpenSWMMCore_LIB_DIR "@PACKAGE_CMAKE_INSTALL_LIBDIR@")
+
+# Set convenience variables
+set(OpenSWMMCore_INCLUDE_DIRS "${OpenSWMMCore_INCLUDE_DIR}")
+set(OpenSWMMCore_LIBRARY_DIRS "${OpenSWMMCore_LIB_DIR}")
+set(OpenSWMMCore_VERSION "@PROJECT_VERSION@")
+
+# Check required components
+check_required_components(OpenSWMMCore)

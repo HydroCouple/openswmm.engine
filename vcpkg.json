@@ -1,8 +1,8 @@
 {
-    "name": "swmm",
-    "description": "Stormwater Management Model (SWMM) is a dynamic rainfall-runoff-subsurface runoff simulation model used for single event or long-term (continuous) simulation of runoff quantity and quality from primarily urban areas.",
-    "license": "CC0-1.0",
-    "homepage": "https://www.epa.gov/water-research/storm-water-management-model-swmm",
+    "name": "openswmmcore",
+    "description": "Open Storm Water Management Model (OpenSWMM) Core Library is an extension of the EPA SWMM model. It is a dynamic rainfall-runoff-subsurface runoff simulation model used for single event or long-term (continuous) simulation of runoff quantity and quality from primarily urban areas.",
+    "license": "MIT",
+    "homepage": "https://hydrocouple.org/projects/openswmmcore",
     "version-semver": "5.3.0-alpha.1",
     "dependencies": [
         {

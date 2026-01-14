@@ -1,5 +1,5 @@
 /*!
- *  \file swmm_output_enums.h
+ *  \file openswmm_output_enums.h
  *  \brief Header file for SWMM output API enumeration types.
  *  \date Created: 2019-10-18
  *  \date Last edited: 2024-10-17

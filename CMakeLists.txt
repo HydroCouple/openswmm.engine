@@ -8,7 +8,7 @@
 #                    US EPA ORD/CESER
 #
 #                    Caleb Buahin (Modified)
-#                    US EPA ORD/CESER 
+#                    US EPA ORD/CESER
 #
 
 
@@ -23,7 +23,7 @@ endif()
 project(
     OpenSWMMCore
     VERSION 5.3.0
-    DESCRIPTION "OpenSWMM Core - Storm Water Management Model"
+    DESCRIPTION "Open Storm Water Management Model Core Library"
     HOMEPAGE_URL "https://hydrocouple.org/projects/openswmmcore"
     LANGUAGES C CXX
 )
@@ -69,10 +69,41 @@ else()
     set(OPENSWMMCORE_GIT_HASH "unknown")
 endif()
 
+# Create interface library for global headers
+add_library(openswmmcore INTERFACE)
+add_library(OpenSWMMCore::openswmmcore ALIAS openswmmcore)
 
-# Add subdirectories
-add_subdirectory(src)
 
+# Configure global version header
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/include/version.h
+)
+
+# Set include directories for the common interface
+target_include_directories(openswmmcore
+    INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+
+# Install generated headers
+install(
+    FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/include/version.h
+    DESTINATION
+        ${CMAKE_INSTALL_INCLUDEDIR}/openswmmcore
+)
+
+# Install static headers
+install(
+    DIRECTORY include/openswmmcore
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.h"
+)
+
+# Add testing subdirectory conditionally
 if(OPENSWMMCORE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
@@ -97,7 +128,8 @@ if(OPENSWMMCORE_INSTALL)
         FILES
             ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMCoreConfig.cmake
             ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMCoreConfigVersion.cmake
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenSWMMCore
+        DESTINATION
+            ${CMAKE_INSTALL_LIBDIR}/cmake/OpenSWMMCore
     )
 
     install(
@@ -106,7 +138,15 @@ if(OPENSWMMCORE_INSTALL)
         NAMESPACE OpenSWMMCore::
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenSWMMCore
     )
+
+    install(
+        TARGETS openswmmcore
+        EXPORT OpenSWMMCoreTargets
+    )
 endif()
+
+# Add subdirectories
+add_subdirectory(src)
 
 # Simplified CPack (remove unnecessary variables)
 set(CPACK_PACKAGE_VENDOR "https://hydrocouple.org")
