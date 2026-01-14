@@ -4,7 +4,7 @@ on:
   push:
     branches: [ master, main, develop, bug_fixes ]
   pull_request:
-    branches: [ master]
+    branches: [ master, develop]
 
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
