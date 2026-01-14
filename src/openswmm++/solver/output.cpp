@@ -39,6 +39,8 @@
   #define F_OFF __int64
   #define F_SEEK _fseeki64
 #else              // Other platforms
+  #include <sys/types.h>
+  #include <unistd.h>
   #define F_OFF off_t
   #define F_SEEK fseeko
 #endif
