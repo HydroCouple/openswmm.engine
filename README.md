@@ -97,9 +97,9 @@ found below. More extensive documentation will be provided once cleared.
 
 ```python
 
-from openswmmcore import solver
-from openswmmcore.solver import Solver 
-from openswmmcore.output import Output
+from openswmm import solver
+from openswmm.solver import Solver 
+from openswmm.output import Output
 
 # Alternative 1 to run SWMM
 
