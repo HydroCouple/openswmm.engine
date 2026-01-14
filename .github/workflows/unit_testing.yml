@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-13, macos-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest]
         include:
           - os: ubuntu-latest
             alias: Linux
@@ -27,14 +27,6 @@ jobs:
             shell_extension: .sh
             vcpkg_triplet: x64-linux
             cmake_osx_arch: ""
-
-          - os: macos-13
-            alias: intel-mac
-            cmake_preset: Darwin
-            shell: bash
-            shell_extension: .sh
-            vcpkg_triplet: x64-osx
-            cmake_osx_arch: x86_64
 
           - os: macos-latest
             alias: apple-silicon

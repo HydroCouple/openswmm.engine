@@ -24,7 +24,7 @@ cdef extern from "time.h":
     ctypedef long clock_t
     clock_t clock()
 
-cdef extern from "openswmm++_solver.h":
+cdef extern from "openswmm_solver.h":
     # SWMM object type enumeration
     ctypedef enum swmm_Object:
         swmm_GAGE      # Rain gage
