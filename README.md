@@ -15,7 +15,7 @@ and a new low impact development (LID) module have also been added and are being
 The SWMM source code is written in the C/C++ Programming Language. 
 
 ## Build Status
-[![Unit Testing](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/unit_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/unit_testing.yml?query=branch%3Abug_fixes)
+[![Unit Testing](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/unit_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/unit_testing.yml?query=branch%3Abug_fixes) 
 [![Build and Regression Testing](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/regression_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/regression_testing.yml?query=branch%3Abug_fixes)
 [![Documentation](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/documentation.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/documentation.yml?query=branch%3Abug_fixes)
 [![Deployment](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/deployment.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/deployment.yml?query=branch%3Abug_fixes)
