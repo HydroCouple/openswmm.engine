@@ -1,62 +1,65 @@
-@page application_manual SWMM Application Manual
-
-SWMM Application Manual Version 5.3
-=====================================
+@page application_manual OpenSWMM Application Manual
 
 <center>
-by </br>
+OpenSWMM Application Manual
+============================
+</center>
 
-Caleb Buahin </br>
-Research Engineer </br>
-U.S. Environmental Protection Agency </br>
+<center>
 
-Center for Environmental Solutions and Emergency Response </br>
-Office of Research and Development </br>
-
-U.S. Environmental Protection Agency </br>
-26 Martin Luther King Drive </br>
-Cincinnati, OH 45268 </br>
-
-
-April 2025
+See @ref authors for the full list of authors and contributors.
 
 </center>
 
-
-##  ACKNOWLEDGEMENTS
-
-The manual was originally prepared by Lewis A. Rossman, formerly and Environmental Scientist Emeritus, U.S.
-Environmental Protection Agency, Office of Research and Development, National Risk Management Research Laboratory.
-It has been adapted and revised by Caleb Buahin, a Research Engineer at the U.S.
-Environmental Protection Agency, Office of Research and Development, Center for Environmental Solutions
-and Emergency Response.
-
 ## DISCLAIMER
 
-The information in this document has been funded wholly or in part by the U.S. Environmental
-Protection Agency (EPA). It has been subjected to the Agency’s peer and administrative review,
-and has been approved for publication as an EPA document. Note that approval does not signify
-that the contents necessarily reflect the views of the Agency. Mention of trade names or
-commercial products does not constitute endorsement or recommendation for use.
+This software is provided on an "as is" basis and the user assumes responsibility for its use. Although a reasonable effort has been made to assure that the results obtained are correct, the authors are not responsible and assume no liability whatsoever for any results or any use made of the results obtained from these programs, nor for any damages or litigation that result from the use of these programs for any purpose.
 
-NOTICE: This report was prepared as an account of work sponsored by an agency of the United
-States Government. Neither the United States Government, nor any agency thereof, nor any of
-their employees, nor any of their contractors, subcontractors, or their employees, make any
-warranty, express or implied, or assume any legal liability or responsibility for the accuracy,
-completeness, or usefulness of any information, apparatus, product, or process disclosed, or
-represent that its use would not infringe privately owned rights. Reference herein to any specific
-commercial product, process, or service by trade name, trademark, manufacturer, or otherwise,
-does not necessarily constitute or imply its endorsement, recommendation, or favoring by the
-United States Government, any agency thereof, or any of their contractors or subcontractors. The
-views and opinions expressed herein do not necessarily state or reflect those of the United States
-Government, any agency thereof, or any of their contractors.
+## ACKNOWLEDGEMENTS
 
-## CONTENTS
+The original SWMM 5 Applications Manual was prepared by **Lewis A. Rossman**, Environmental Scientist Emeritus, U.S. Environmental Protection Agency, Office of Research and Development, National Risk Management Research Laboratory. His foundational work in providing practical application examples for SWMM is gratefully acknowledged.
 
-[ACKNOWLEDGEMENTS](#acknowledgements)
-[DISCLAIMER](#disclaimer)
+See @ref authors for the complete list of authors and contributors.
 
+@tableofcontents
 
-##  CHAPTER 1 – INTRODUCTION
+## Introduction
 
-*/
+The OpenSWMM Application Manual provides a series of worked-out examples that illustrate how to apply OpenSWMM to model common stormwater and drainage system scenarios. This manual complements the @ref user_manual, which explains how to use the program, and the reference manuals (@ref hydrology_reference_manual, @ref hydraulics_reference_manual, @ref quality_reference_manual), which describe the underlying theory and numerical methods.
+
+The examples progress from simple to more complex applications:
+
+- Basic drainage system modeling
+- Continuous simulation with climate data
+- Water quality analysis
+- Low impact development (LID) controls
+- Combined sewer overflow analysis
+- Real-time control strategies
+
+## Chapter 1 – Site Drainage Design {#app_manual_ch1}
+
+*Content is under development. This chapter will cover the design of a basic site drainage system using OpenSWMM.*
+
+## Chapter 2 – Detention Pond Design {#app_manual_ch2}
+
+*Content is under development. This chapter will cover the design and sizing of a detention pond for flood control.*
+
+## Chapter 3 – Water Quality Analysis {#app_manual_ch3}
+
+*Content is under development. This chapter will cover pollutant buildup and washoff modeling for water quality analysis.*
+
+## Chapter 4 – LID Controls {#app_manual_ch4}
+
+*Content is under development. This chapter will cover the modeling of low impact development controls such as bio-retention cells, permeable pavement, and rain gardens.*
+
+## Chapter 5 – Continuous Simulation {#app_manual_ch5}
+
+*Content is under development. This chapter will cover long-term continuous simulation using historical climate data.*
+
+## Chapter 6 – Combined Sewer Overflow Analysis {#app_manual_ch6}
+
+*Content is under development. This chapter will cover the analysis of combined sewer overflows and the evaluation of control strategies.*
+
+## Chapter 7 – Real-Time Control {#app_manual_ch7}
+
+*Content is under development. This chapter will cover the implementation of real-time control rules for dynamic operation of drainage system elements.*

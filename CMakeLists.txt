@@ -1,15 +1,6 @@
 #
 # CMakeLists.txt - CMake configuration file for OpenSWMMCore
 #
-# Created:  July 11, 2019
-# Last Modified:  January 07, 2026
-#
-# Original Creators: Michael E. Tryby
-#                    US EPA ORD/CESER
-#
-#                    Caleb Buahin (Modified)
-#                    US EPA ORD/CESER
-#
 
 
 cmake_minimum_required(VERSION 3.21...4.2)
@@ -22,7 +13,7 @@ endif()
 # Modern project declaration with metadata
 project(
     OpenSWMMCore
-    VERSION 5.3.0
+    VERSION 6.0.0
     DESCRIPTION "Open Storm Water Management Model Core Library"
     HOMEPAGE_URL "https://hydrocouple.org/projects/openswmmcore"
     LANGUAGES C CXX

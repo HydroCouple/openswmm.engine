@@ -1,52 +1,48 @@
 #
-# CMakeLists.txt - CMake configuration file for swmm-solver/run
+# src/cli/CMakeLists.txt
 #
-# Created:  July 11, 2019
-# Modified: February 26, 2025
+# OpenSWMM Engine 6.0 command-line executable.
+# Links against the new engine library (openswmm_engine).
 #
-# Modified: Michael E. Tryby
-#           US EPA ORD/NRMRL
-#
-#           Caleb Buahin
-#           US EPA ORD/CESER
+# The legacy CLI (EPA SWMM 5.x) is now at src/legacy/cli/.
 #
 
-# Creates the EPANET command line executable
 add_executable(openswmm
-    main.c
-)
-
-target_include_directories(openswmm
-    PUBLIC
-        include
+    main.cpp
 )
 
 target_link_libraries(openswmm
-    LINK_PUBLIC
-        OpenSWMMCore::Solver
+    PRIVATE
+        openswmm_engine
+)
+
+target_include_directories(openswmm
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include/openswmm/engine
+)
+
+set_target_properties(openswmm
+    PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        OUTPUT_NAME "openswmm"
 )
 
 if(APPLE)
-    set(LIB_ROOT "@loader_path;@rpath;@executable_path;@loader_path/../lib;@rpath/../lib;@executable_path/../lib")
+    set(LIB_ROOT "@loader_path;@rpath;@loader_path/../lib;@rpath/../lib")
 elseif(UNIX)
     set(LIB_ROOT "$ORIGIN;$ORIGIN/../lib")
 endif()
 
-# Set up rpath for openswmm inside install package
 set_target_properties(openswmm
     PROPERTIES
         INSTALL_RPATH "${LIB_ROOT}"
+        BUILD_RPATH "${LIB_ROOT}"
+        BUILD_WITH_INSTALL_RPATH TRUE
 )
 
-install(
-    TARGETS
-        openswmm
-    DESTINATION
-        bin
-)
+install(TARGETS openswmm DESTINATION bin)
 
-
-# copy openswmm to build tree for testing
 add_custom_command(TARGET openswmm POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
         $<TARGET_FILE:openswmm>
