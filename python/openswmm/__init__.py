@@ -1,42 +1,78 @@
 """
-openswmm Python API
+openswmm -- Python bindings for the OpenSWMM stormwater modelling engine.
 
-This module provides a Python interface to the openswmm library.
+:author: Caleb Buahin
+:copyright: Copyright (c) HydroCouple 2026
+:license: MIT
+
+Subpackages
+-----------
+legacy.engine
+    Legacy EPA SWMM 5.x solver bindings (Cython).
+legacy.output
+    Legacy EPA SWMM 5.x binary output reader (Cython).
+engine
+    New data-oriented engine 6.x bindings (Cython).
 """
+
+import importlib.metadata
 import os
 import platform
 import sys
-import importlib.metadata
 
-# Platform-specific DLL/library path configuration
+# ---------------------------------------------------------------------------
+# Platform-specific shared-library search path configuration
+#
+# The Cython extensions link against shared C/C++ libraries that are
+# installed alongside the Python package.  We need to tell the dynamic
+# linker where to find them.
+# ---------------------------------------------------------------------------
+_LIB_DIR = os.path.join(sys.prefix, "lib")
+_BIN_DIR = os.path.join(sys.prefix, "bin")
+
 if platform.system() == "Windows":
-    lib_dir = os.path.join(sys.prefix, "bin")
     if hasattr(os, "add_dll_directory"):
-        conda_exists = os.path.exists(os.path.join(sys.prefix, "conda-meta"))
-        if conda_exists:
+        if os.path.exists(os.path.join(sys.prefix, "conda-meta")):
             os.environ["CONDA_DLL_SEARCH_MODIFICATION_ENABLE"] = "1"
-        os.add_dll_directory(lib_dir)
+        os.add_dll_directory(_BIN_DIR)
     else:
-        os.environ["PATH"] = lib_dir + ";" + os.environ["PATH"]
+        os.environ["PATH"] = _BIN_DIR + ";" + os.environ.get("PATH", "")
 
 elif platform.system() == "Linux":
-    lib_dir = os.path.join(sys.prefix, "lib")
-    sys.path.append(lib_dir)
-    os.environ["LD_LIBRARY_PATH"] = lib_dir + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+    sys.path.append(_LIB_DIR)
+    os.environ["LD_LIBRARY_PATH"] = (
+        _LIB_DIR + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+    )
 
-elif platform.system() == "Darwin":  # macOS
-    lib_dir = os.path.join(sys.prefix, "lib")
-    sys.path.append(lib_dir)
-    os.environ["DYLD_LIBRARY_PATH"] = lib_dir + ":" + os.environ.get("DYLD_LIBRARY_PATH", "")
+elif platform.system() == "Darwin":
+    sys.path.append(_LIB_DIR)
+    os.environ["DYLD_LIBRARY_PATH"] = (
+        _LIB_DIR + ":" + _BIN_DIR + ":" + os.environ.get("DYLD_LIBRARY_PATH", "")
+    )
 
-    lib_dir = os.path.join(sys.prefix, "bin")
-    os.environ["DYLD_LIBRARY_PATH"] = lib_dir + ":" + os.environ.get("DYLD_LIBRARY_PATH", "")
+# ---------------------------------------------------------------------------
+# Version
+# ---------------------------------------------------------------------------
+try:
+    __version__: str = importlib.metadata.version("openswmm")
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "0.0.0.dev0"
 
-# Get version from package metadata
-__version__ = importlib.metadata.version('openswmm')
+# ---------------------------------------------------------------------------
+# Public re-exports  (legacy subpackages)
+#
+# These require compiled Cython extensions (.so/.pyd).  When building
+# documentation or in a partial install the extensions may not be available,
+# so we import them conditionally.
+# ---------------------------------------------------------------------------
+try:
+    from openswmm.legacy.engine import *  # noqa: F401,F403
+except ImportError:
+    pass
 
-# Import submodules
-from openswmm.solver import *
-from openswmm.output import *
+try:
+    from openswmm.legacy.output import *  # noqa: F401,F403
+except ImportError:
+    pass
 
-__all__ = ['__version__']
+__all__ = ["__version__"]

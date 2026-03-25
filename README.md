@@ -1,183 +1,242 @@
-## Stormwater Management Model (SWMM) Open Source Initiative
+# OpenSWMM Engine
 
-Stormwater Management Model (SWMM) SWMM is a dynamic hydrology-hydraulic water quality simulation model. 
-It is used for single event or long-term (continuous) simulation of runoff quantity and quality from primarily 
-urban areas. SWMM was originally developed by the U.S. Environmental Protection Agency (EPA) is being advanced
-as an open source project by the community to ensure its long-term sustainability.
+**Open Storm Water Management Model — Next-Generation Computational Engine**
 
-Recent advancements to the SWMM computational engine include a modernized codebase with improved modularity and computational
-efficiency, a well-documented application programming interface (API) for easier integration with third-party applications,
-and Python bindings for enhanced accessibility and usability by the broader community.
-
-New process formulations including a spatially explicit overland flow solver, a groundwater transport model, 
-and a new low impact development (LID) module have also been added and are being tested.
-
-The SWMM source code is written in the C/C++ Programming Language. 
-
-## Build Status
-[![Unit Testing](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/unit_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/unit_testing.yml?query=branch%3Abug_fixes)
-[![Build and Regression Testing](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/regression_testing.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/regression_testing.yml?query=branch%3Abug_fixes)
-[![Documentation](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/documentation.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/documentation.yml?query=branch%3Abug_fixes)
-[![Deployment](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/deployment.yml/badge.svg?branch=bug_fixes)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/deployment.yml?query=branch%3Abug_fixes)
+[![Unit Testing](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/unit_testing.yml)
+[![Regression Testing](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/regression_testing.yml/badge.svg)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/regression_testing.yml)
+[![Documentation](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/documentation.yml/badge.svg)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/documentation.yml)
+[![Deployment](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/deployment.yml/badge.svg)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/deployment.yml)
 [![Issues](https://img.shields.io/github/issues/HydroCouple/OpenSWMMCore)](https://github.com/HydroCouple/OpenSWMMCore/issues)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## Python Binding
-[![PyPi](https://img.shields.io/pypi/v/openswmm.svg)](https://pypi.org/project/openswmm)
-[![PythonVersion](https://img.shields.io/pypi/pyversions/openswmm.svg)](https://pypi.org/project/openswmm)
-[![Wheel](https://img.shields.io/pypi/wheel/openswmm.svg)](https://pypi.org/project/openswmm)
-[![Downloads](https://pepy.tech/badge/openswmm)](https://pepy.tech/project/openswmm)
-[![Downloads](https://pepy.tech/badge/openswmm/month)](https://pepy.tech/project/openswmm)
-[![Downloads](https://pepy.tech/badge/openswmm/week)](https://pepy.tech/project/openswmm)
+| Python Bindings | |
+|---|---|
+| [![PyPI](https://img.shields.io/pypi/v/openswmm.svg)](https://pypi.org/project/openswmm) | [![Downloads](https://pepy.tech/badge/openswmm)](https://pepy.tech/project/openswmm) |
+| [![Python](https://img.shields.io/pypi/pyversions/openswmm.svg)](https://pypi.org/project/openswmm) | [![Wheel](https://img.shields.io/pypi/wheel/openswmm.svg)](https://pypi.org/project/openswmm) |
 
-## Introduction
+---
 
-This repository hosts a community-driven, open source initiative to continue development of the SWMM computational engine. 
-The project aims to preserve and advance the rich legacy of SWMM by developing high-quality, QA/QC'd, and peer-reviewed 
-code while the EPA Office of Research and Development (ORD) is being dissolved. The goal is to build an active community 
-around the codebase so it can be sustainably maintained and improved, and to continue collaborating with the agency 
-toward future official releases when feasible. This community is actively working with organizations such as
-ASCE's Environmental and Water Resources Institute (EWRI) and Water Environment Federation (WEF) to ensure the
-long-term sustainability of the SWMM codebase.
+## Overview
 
-SWMM is a dynamic hydrology-hydraulic water quality simulation model. It is used for single event or long-term 
-(continuous) simulation of runoff quantity and quality from primarily urban areas. SWMM source code is written 
-in the C Programming Language and released in the Public Domain.
+OpenSWMM Engine is a community-driven, open-source continuation of the EPA Storm Water Management Model (SWMM). SWMM is a dynamic hydrology–hydraulic–water quality simulation model used for single-event or long-term (continuous) simulation of runoff quantity and quality from primarily urban areas.
+
+This project preserves and advances the rich legacy of SWMM by developing high-quality, QA/QC'd code while building an active community for sustainable maintenance and improvement. The community is actively working with organizations including ASCE's Environmental and Water Resources Institute (EWRI) and Water Environment Federation (WEF) to ensure the long-term sustainability of the SWMM codebase.
+
+## What's New in v6.0.0
+
+OpenSWMM Engine v6.0.0 is a major modernization of the SWMM computational engine. Key improvements include:
+
+### Architecture & Performance
+
+- **Data-Oriented Design** — Core data structures refactored to Structure of Arrays (SoA) layout for cache efficiency and SIMD-friendly computation.
+- **Reentrant Engine** — Global state eliminated; all simulation state encapsulated in an opaque `SWMM_Engine` handle, enabling multiple independent simulations in the same process.
+- **Plugin-Based I/O** — Output and report writing abstracted through a plugin interface. Plugins receive read-only simulation snapshots on a dedicated I/O thread.
+- **C++20 Codebase** — New engine written in modern C++20; legacy EPA SWMM 5.x solver preserved unmodified in `src/legacy/`.
+
+### New C API
+
+A comprehensive, domain-split C API replaces the monolithic legacy interface:
+
+| Header | Domain |
+|---|---|
+| `openswmm_engine.h` | Engine lifecycle, error codes, state machine |
+| `openswmm_model.h` | Model building, validation, serialization, options |
+| `openswmm_nodes.h` | Junctions, outfalls, storage, dividers |
+| `openswmm_links.h` | Conduits, pumps, orifices, weirs, outlets |
+| `openswmm_subcatchments.h` | Subcatchments, infiltration, coverage |
+| `openswmm_gages.h` | Rain gages (timeseries and file sources) |
+| `openswmm_pollutants.h` | Pollutant definitions and runtime injection |
+| `openswmm_tables.h` | Time series, curves, and patterns |
+| `openswmm_inflows.h` | External inflows, DWF, RDII |
+| `openswmm_controls.h` | Control rules and direct link actions |
+| `openswmm_infrastructure.h` | Transects, streets, inlets, LID controls |
+| `openswmm_spatial.h` | CRS, coordinates, polylines, polygons |
+| `openswmm_quality.h` | Landuse, buildup, washoff, treatment |
+| `openswmm_massbalance.h` | Continuity errors and cumulative flux totals |
+| `openswmm_callbacks.h` | Progress, warning, and step callbacks |
+| `openswmm_hotstart.h` | Hot start file save/load/modify |
+| `openswmm_statistics.h` | Node, link, and subcatchment statistics |
+
+### Additional Features
+
+- **Hot Start API** — Save, load, modify, and query hot start files through a transparent C ABI.
+- **CRS Support** — Coordinate reference system specification via OPTIONS for spatial data.
+- **User Flags** — Custom USER_FLAGS section for user-defined metadata on objects.
+- **Plugin SDK** — Header-only development kit for building output/report plugins.
+- **HEC-22 Inlet Analysis** — Street inlet capture, grate and curb inlets (from SWMM 5.2).
+- **Variable Speed Pumps** — Type5 pump curves with speed scaling.
+- **New Storage Shapes** — Conical and pyramidal shapes with elliptical/rectangular bases.
+
+### Testing & Quality
+
+- **Google Test** — All unit tests migrated from Boost.Test to Google Test 1.15.2.
+- **Comprehensive Test Suite** — Legacy engine (73+ tests), legacy output (41 tests), and new engine unit tests.
+- **Multi-Platform CI** — GitHub Actions pipelines for Windows, Linux, and macOS (Intel + ARM64).
+- **Doxygen API Docs** — All 19 public C API headers fully documented with Doxygen conventions.
+
+---
+
+## Project Structure
+
+```
+OpenSWMMCore/
+├── include/openswmm/
+│   ├── engine/           # New engine public C API headers (19 headers)
+│   └── legacy/           # Legacy SWMM 5.x public headers
+├── src/
+│   ├── engine/           # New C++20 engine implementation
+│   ├── legacy/engine/    # Original EPA SWMM 5.x solver (preserved unmodified)
+│   ├── legacy/output/    # Original binary output reader
+│   ├── plugin_sdk/       # Header-only plugin development kit
+│   └── cli/              # Command-line interface
+├── tests/
+│   ├── unit/legacy/      # Legacy solver and output tests (Google Test)
+│   ├── unit/engine/      # New engine unit tests
+│   ├── regression/       # Regression tests (new vs. legacy)
+│   └── benchmarks/       # Performance benchmarks (Google Benchmark)
+├── python/               # Python bindings (Cython + scikit-build)
+├── docs/                 # Doxygen config and technical manuals
+├── cmake/                # CMake helper modules
+└── .github/workflows/    # CI/CD pipelines
+```
+
+## Prerequisites
+
+| Requirement | Version |
+|---|---|
+| CMake | 3.21 or higher |
+| C compiler | C17 support (GCC 10+, Clang 12+, MSVC 19.29+) |
+| C++ compiler | C++20 support (GCC 10+, Clang 14+, MSVC 19.29+) |
+| vcpkg | 2025.02.14 (for test dependencies) |
+| Python | 3.9–3.13 (optional, for bindings) |
+| Ninja | Recommended for Linux/macOS builds |
 
 ## Build Instructions
 
-The 'src' folder of this repository contains the C source code for
-the current version of Storm Water Management Model's computational
-engine. The code can be compiled into both a shared
-object library and a command line executable. Under Windows, the 
-library file (openswmmcore.dll) is used to power SWMM's graphical user
-interface.
-
-Also included is a python interface for the SWMM computational engine and output 
-post-processing application programming interfaces located in the python folder.
-
-### Computational Engine
-
-The 'CMakeLists.txt' file is a script used by CMake (https://cmake.org/)
-to build the SWMM binaries. CMake is a cross-platform build tool
-that generates platform native build systems for many compilers. To
-check if the required version is installed on your system, enter from 
-a console window and check that the version is 3.15 or higher.
+### C/C++ Engine
 
 ```bash
-cmake --version
+# Clone the repository
+git clone https://github.com/HydroCouple/OpenSWMMCore.git
+cd OpenSWMMCore
+
+# Bootstrap vcpkg (for test dependencies)
+git clone https://github.com/microsoft/vcpkg.git
+./vcpkg/bootstrap-vcpkg.sh   # or bootstrap-vcpkg.bat on Windows
+
+# Configure and build using a platform preset
+# Available presets: Windows, Windows-debug, Linux, Linux-debug, Darwin, Darwin-debug
+export VCPKG_ROOT=$(pwd)/vcpkg
+
+cmake --preset=<platform> -B build
+cmake --build build --config Release
+
+# Build with tests enabled
+cmake --preset=<platform>-debug -B build-debug -DOPENSWMM_BUILD_TESTS=ON
+cmake --build build-debug --config Debug
 ```
 
-To build the SWMM engine and related libraries:
+### Running Tests
 
-1. Open a console window and navigate to the directory where this
-   Readme file resides (which should have 'src' as a sub-directory
-   underneath it).
+```bash
+# Run all C++ unit tests
+ctest --test-dir build-debug -C Debug --output-on-failure
 
-2. Then the following CMake commands to build the binaries. Where
-   <platform> can either be Windows, Linux, or Darwin. The confurations
-   for the platforms can be modified in the CMakePresets.json file.
+# Run with verbose output
+ctest --test-dir build-debug -C Debug --output-on-failure -V
+```
 
-``` bash
-cmake ---preset=<platform>
+### Packaging
+
+```bash
+# Create distributable archives (ZIP + TGZ)
 cmake --build build --target package
 ```
 
 ### Python Bindings
 
-Python bindings for the SWMM API have been developed. _**These bindings are still under development and testing**_. 
-The python bindings can be built and installed locally using the following command.
-
 ```bash
 cd python
+
+# Install requirements
 python -m pip install -r requirements.txt
-python -m pip install . 
+
+# Build and install
+python -m pip install .
+
+# Run Python tests
+python -m pytest -v tests
 ```
-Users may also build python wheels for installation or distribution.  Example usage of python bindings can be 
-found below. More extensive documentation will be provided once cleared.
+
+## Python Usage Examples
 
 ```python
-
 from openswmm import solver
-from openswmm.solver import Solver 
+from openswmm.solver import Solver
 from openswmm.output import Output
 
-# Alternative 1 to run SWMM
+# Context manager (recommended)
+with Solver(inp_file="model.inp") as swmm:
+    swmm.start()
+    swmm.time_stride = 600
 
-with Solver(inp_file="input_file.inp") as swmm_solver:
-   
-   # Open swmm file and starts the simulation
-   swmm_solver.start()
+    for elapsed_time, current_datetime in swmm:
+        print(current_datetime)
 
-   # Set initialization parameters e.g., time step stride, start date, end da.te etc.
-   swmm_solver.time_stride = 600 
+# Manual lifecycle control
+swmm = Solver(inp_file="model.inp")
+swmm.initialize()
 
-   for elapsed_time, current_datetime in swmm_solver:
+for elapsed_time, current_datetime in swmm:
+    print(current_datetime)
 
-      # Get and set attributes per timestep
-      print(current_datetime)
+swmm.finalize()
 
-      swmm_solver.set_value(
-         object_type=solver.SWMMObjects.RAIN_GAGE,
-         property_type=solver.SWMMRainGageProperties.GAGE_RAINFALL,
-         index="RG1",
-         value=3.6
-      )
-
-# Alternative 2 to run SWMM
-swmm_solver = Solver(inp_file="input_file.inp")
-
-# Open and start the simulation
-swmm_solver.initialize()
-
-for elapsed_time, current_datetime in swmm_solver:
-   # Get and set attributes per timestep
-   print(current_datetime)
-
-
-swmm_solver.finalize()
-# or
-# swmm_solver.end()
-# swmm_solver.report()
-# swmm_solver.close()
-
-# Alternative 3 to run SWMM
-swmm_solver = Solver(inp_file="input_file.inp")
-swmm_solver.execute()
-
-# To read output file
-
-swmm_output = Output(output_file='output_file.out')
-
-# Dict[datetime, float]
-link_timeseries = swmm_output.get_link_timeseries(
-   element_index="C1",
-   attribute=output.LinkAttribute.FLOW_RATE,
+# Read output
+output = Output(output_file="model.out")
+flow = output.get_link_timeseries(
+    element_index="C1",
+    attribute=output.LinkAttribute.FLOW_RATE,
 )
-
 ```
 
-## Unit and Regression Testing
+## Libraries Built
 
-Unit tests and regression tests have been developed for both the natively compiled SWMM computational engine and output toolkit as well as their respective python bindings. Unit tests for the natively compiled toolkits use the Boost 1.67.0 library and can be compiled by adding DBUILD_TESTS=ON flag during the cmake build phase as shown below:
+| Target | Description |
+|---|---|
+| `openswmm_legacy_engine` | Original EPA SWMM 5.x solver (shared library) |
+| `openswmm_legacy_output` | Original SWMM binary output reader (shared library) |
+| `openswmm_engine` | New refactored C++20 engine (shared library) |
+| `openswmm_plugin_sdk` | Header-only plugin SDK (INTERFACE library) |
+| `openswmm_cli` | Command-line executable |
 
-```bash
-ctest --test-dir .  -DBUILD_TESTS=ON --config Debug --output-on-failure
-```
+## Documentation
 
-Unit testing on the python bindings may be executed using the following command after installation.
+API documentation is auto-generated with Doxygen and deployed to GitHub Pages:
 
-```bash
-cd python\tests
-pytest .
-```
+**[OpenSWMM Engine API Documentation](https://hydrocouple.github.io/OpenSWMMCore)**
 
-Regression tests are executed using the python bindings using the pytest and pytest-regressions extension using the following commands.
+The documentation includes:
+- Full C API reference with parameter descriptions and usage notes
+- Technical reference manuals (Hydrology, Hydraulics, Water Quality)
+- User manual with modeling capabilities and examples
+- Architecture design decisions and implementation plan
 
-```bash
-cd ci
-pytest --data-dir <path-to-regression-testing-files> --atol <absolute-tolerance> --rtol <relative-tolerance> --benchmark-compare --benchmark-json=PATH
-```
+## Contributing
 
-## Find Out More
+Contributions are welcome. Please:
 
-A live web version of the SWMM documentation of the API and user manuals can be found on the [SWMM GitHub Pages website](https://hydrocouple.github.io/OpenSWMMCore). Note that this documentation is experimental and maintained by the community; it has yet to go through formal agency quality assurance review. The project welcomes contributions, review, and collaboration from the community and from agency partners toward future official releases.
+1. Fork the repository and create a feature branch.
+2. Ensure all tests pass (`ctest` for C++, `pytest` for Python).
+3. Follow existing code style and naming conventions.
+4. Submit a pull request against the `develop` branch.
+
+## License
+
+This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
+
+Copyright 2026 HydroCouple. Original EPA SWMM material is in the public domain under 17 USC § 105.
+
+## Acknowledgements
+
+OpenSWMM builds on the foundational work of the EPA Storm Water Management Model, originally developed by Lewis A. Rossman at the U.S. EPA Office of Research and Development. See [docs/authors.md](docs/authors.md) for the complete list of authors and contributors.

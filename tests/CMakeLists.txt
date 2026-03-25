@@ -1,58 +1,59 @@
 #
-# CMakeLists.txt - CMake configuration file for swmm-solver/tests
+# tests/CMakeLists.txt - Test suite for openswmm.engine
 #
-# Created: Mar 4, 2020
-# Updated: Mar 6, 2025
+# Test framework: Google Test (all tests)
+#                 Google Benchmark (performance)
 #
-# Author: Michael E. Tryby
-#         US EPA ORD/CESER
+# Directory layout:
+#   unit/
+#     legacy/
+#       engine/   — tests for openswmm_legacy_engine  (legacy SWMM solver API)
+#       output/   — tests for openswmm_legacy_output  (legacy SWMM binary output)
+#     engine/     — unit tests for the new openswmm_engine library
+#     output/     — unit tests for the new openswmm_engine output layer
+#   regression/ — full-simulation regression tests (new engine vs. legacy)
+#   benchmarks/ — performance benchmarks (added from root when OPENSWMM_BUILD_BENCHMARKS is ON)
 #
-#         Caleb A. Buahin (Modified)
-#         US EPA ORD/CESER
+# Updated: 2026-03-25 — removed Boost.Test dependency; all tests now use Google Test.
+# Updated: 2026-03-25 — reorganised into unit/ subtree (legacy/ moved under unit/).
+#
 
+cmake_minimum_required(VERSION 3.21)
 
-find_package(boost_unit_test_framework CONFIG REQUIRED)
+# ---- Google Test (required when OPENSWMM_BUILD_TESTS is ON) ----
+find_package(GTest CONFIG REQUIRED)
 
-# Set the minimum required version c++ 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Setting up tests to run from build tree
+# Directory with test input data files
 set(TEST_BIN_DIRECTORY ${CMAKE_BINARY_DIR}/bin/$<CONFIG>)
+set(TEST_DATA_ROOT     ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Add solver tests
-add_subdirectory(solver)
+# ---- All tests (legacy + unit) ----
+add_subdirectory(unit)
 
-# Add output file tests
-add_subdirectory(outfile)
+add_test(NAME test_legacy_solver_api
+    COMMAND $<TARGET_FILE:test_solver_api>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+add_test(NAME test_legacy_solver_errors
+    COMMAND $<TARGET_FILE:test_solver_errors>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+add_test(NAME test_legacy_solver_hotstart
+    COMMAND $<TARGET_FILE:test_solver_hotstart>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+add_test(NAME test_legacy_solver_shapes
+    COMMAND $<TARGET_FILE:test_solver_shapes>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+add_test(NAME test_legacy_solver_expanded_api
+    COMMAND $<TARGET_FILE:test_solver_expanded_api>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+add_test(NAME test_legacy_output
+    COMMAND $<TARGET_FILE:test_output>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/output/data)
 
-# ctest doesn't like tests added in subdirectories so adding them here
-add_test(
-  NAME test_solver_api
-  COMMAND "${TEST_BIN_DIRECTORY}/test_solver_api"
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/solver/data
-)
+# ---- Regression tests ----
+add_subdirectory(regression)
 
-add_test(
-  NAME test_solver_errors
-  COMMAND "${TEST_BIN_DIRECTORY}/test_solver_errors"
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/solver/data
-)
-
-add_test(
-  NAME test_solver_hotstart
-  COMMAND "${TEST_BIN_DIRECTORY}/test_solver_hotstart"
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/solver/data
-)
-
-add_test(
-  NAME test_solver_shapes
-  COMMAND "${TEST_BIN_DIRECTORY}/test_solver_shapes"
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/solver/data
-)
-
-add_test(
-    NAME test_output
-    COMMAND "${TEST_BIN_DIRECTORY}/test_output"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/outfile/data
-)
+# Benchmarks are added from root CMakeLists when OPENSWMM_BUILD_BENCHMARKS is ON.
+# Do not add_subdirectory(benchmarks) here.

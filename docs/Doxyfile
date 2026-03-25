@@ -42,26 +42,26 @@ DOXYFILE_ENCODING      = UTF-8
 # title of most generated pages and in a few other places.
 # The default value is: My Project.
 
-PROJECT_NAME           = SWMM
+PROJECT_NAME           = "OpenSWMM Engine"
 
 # The PROJECT_NUMBER tag can be used to enter a project or revision number. This
 # could be handy for archiving the generated documentation or if some version
 # control system is used.
 
-PROJECT_NUMBER         = 5.3.0
+PROJECT_NUMBER         = 6.0.0-alpha.1
 
 # Using the PROJECT_BRIEF tag one can provide an optional one line description
 # for a project that appears at the top of each page and should give viewers a
 # quick idea about the purpose of the project. Keep the description short.
 
-PROJECT_BRIEF          = Documentation
+PROJECT_BRIEF          = "Data-oriented, plugin-extensible SWMM Engine (6.0.0-alpha.1)"
 
 # With the PROJECT_LOGO tag one can specify a logo or an icon that is included
 # in the documentation. The maximum height of the logo should not exceed 55
 # pixels and the maximum width should not exceed 200 pixels. Doxygen will copy
 # the logo to the output directory.
 
-PROJECT_LOGO           = ./images/Epaswmm5_Icon7.png
+PROJECT_LOGO           = ./images/hydrocouple_logo.png
 
 # With the PROJECT_ICON tag one can specify an icon that is included in the tabs
 # when the HTML document is shown. Doxygen will copy the logo to the output
@@ -842,7 +842,7 @@ FILE_VERSION_FILTER    =
 # DoxygenLayout.xml, Doxygen will parse it automatically even if the LAYOUT_FILE
 # tag is left empty.
 
-LAYOUT_FILE            = DOxygenLayout.xml
+LAYOUT_FILE            = DoxygenLayout.xml
 
 # The CITE_BIB_FILES tag can be used to specify one or more bib files containing
 # the reference definitions. This must be a list of .bib files. The .bib
@@ -994,11 +994,18 @@ WARN_LOGFILE           =
 # spaces. See also FILE_PATTERNS and EXTENSION_MAPPING
 # Note: If this tag is empty the current directory is searched.
 
-INPUT                  = ../src \
+INPUT                  = ../src/legacy/engine \
+                         ../src/legacy/output \
+                         ../src/engine \
+                         ../src/solver \
+                         ../src/output \
+                         ../include/openswmm \
                          ./images/*.png \
                          ./manuals/user/figures/*.png \
-                         ./Mainpage.md \
+                         ../README.md \
                          ./Updates.md \
+                         ./authors.md \
+                         ./manuals/manuals.md \
                          ./manuals/user \
                          ./manuals/reference \
                          ./manuals/application
@@ -1098,7 +1105,10 @@ RECURSIVE              = YES
 # Note that relative paths are relative to the directory from which Doxygen is
 # run.
 
-EXCLUDE                =
+EXCLUDE                = ./manuals/reference/hydrology/sections \
+                         ./manuals/reference/hydraulics/sections \
+                         ./manuals/reference/quality/sections \
+                         ./manuals/user/manual
 
 # The EXCLUDE_SYMLINKS tag can be used to select whether or not files or
 # directories that are symbolic links (a Unix file system feature) are excluded
@@ -1114,12 +1124,14 @@ EXCLUDE_SYMLINKS       = NO
 # Note that the wildcards are matched against the file with absolute path, so to
 # exclude all test directories for example use the pattern */test/*
 
-EXCLUDE_PATTERNS       = manuals/user/*md \
-                         manuals/reference/*md \
-                         manuals/application/*md \
+EXCLUDE_PATTERNS       = manuals/user/manual/* \
+                         */sections/* \
+                         */SWMM* \
                          manuals/user/figures/* \
-                         manuals/reference/figures/* \
-                         manuals/application/figures/*
+                         manuals/reference/*/media/* \
+                         manuals/reference/*/figures/* \
+                         manuals/application/figures/* \
+                         implementation-plan.md.bak
 
 # The EXCLUDE_SYMBOLS tag can be used to specify one or more symbol names
 # (namespaces, classes, functions, etc.) that should be excluded from the
@@ -1155,8 +1167,9 @@ EXAMPLE_RECURSIVE      = NO
 
 IMAGE_PATH             = ./images \
                          ./manuals/user/figures \
-                         ./manuals/reference/figures \
-                         ./manuals/application/figures
+                         ./manuals/reference/hydrology/media/media \
+                         ./manuals/reference/hydraulics/media/media \
+                         ./manuals/reference/quality/media/media
 
 # The INPUT_FILTER tag can be used to specify a program that Doxygen should
 # invoke to filter for each input file. Doxygen will invoke the filter program
@@ -1217,7 +1230,7 @@ FILTER_SOURCE_PATTERNS =
 # (index.html). This can be useful if you have a project on for instance GitHub
 # and want to reuse the introduction page also for the Doxygen output.
 
-USE_MDFILE_AS_MAINPAGE = ./Mainpage.md
+USE_MDFILE_AS_MAINPAGE = ../README.md
 
 # If the IMPLICIT_DIR_DOCS tag is set to YES, any README.md file found in sub-
 # directories of the project's root, is used as the documentation for that sub-
@@ -2252,7 +2265,7 @@ LATEX_EMOJI_DIRECTORY  =
 # readers/editors.
 # The default value is: NO.
 
-GENERATE_RTF           = YES
+GENERATE_RTF           = NO
 
 # The RTF_OUTPUT tag is used to specify where the RTF docs will be put. If a
 # relative path is entered the value of OUTPUT_DIRECTORY will be put in front of

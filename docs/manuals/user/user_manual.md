@@ -166,7 +166,9 @@ For building larger systems from scratch it might be more convenient to replace 
 
 [Chapter 11](@ref user_manual_chapter_11) describes how EPA SWMM can use different types of interface files to make simulations runs more efficient.
 
-[Chapter 12](@ref user_manual_chapter_12) describes how add-in tools can be registered and share data with SWMM. These tools are external applications launched from SWMM’s graphical user interface that can extend its capabilities. 
+[Chapter 12](@ref user_manual_chapter_12) describes how add-in tools can be registered and share data with SWMM. These tools are external applications launched from SWMM’s graphical user interface that can extend its capabilities.
+
+[Chapter 13](@ref user_manual_chapter_13) introduces the OpenSWMM Engine v6 programmatic C API, which allows models to be built, run, and queried entirely through code without requiring an input file. It covers the engine lifecycle, building a network, callbacks, hot start files, Python bindings, and integration with CMake.
 
 The manual also contains several appendixes:
 
@@ -8012,5 +8014,144 @@ The premise of a control is comparing two different types of attributes to one a
 
 WARNING 12:     inlet removed due to unsupported shape for Conduit xxx. 
 Curb and gutter inlets can only be placed in conduits with a Street shaped cross-section while drop inlets can only be placed in open rectangular and trapezoidal conduits.
+
+
+## CHAPTER 13 – PROGRAMMATIC C API {#user_manual_chapter_13}
+
+OpenSWMM Engine v6 provides a comprehensive C API for building, running, and querying SWMM models entirely through code, without requiring an input file. This is useful for embedding SWMM in larger simulation frameworks, coupling with other models, or building custom user interfaces.
+
+### 13.1 Architecture Overview
+
+The new engine uses an opaque handle (`SWMM_Engine`) that encapsulates all simulation state. This reentrant design allows multiple independent simulations to run within the same process. The engine progresses through a well-defined lifecycle:
+
+```
+CREATED → OPENED → INITIALIZED → STARTED → [RUNNING] → ENDED → CLOSED
+```
+
+All API functions return an integer error code (`SWMM_OK` on success) and are organized by domain into separate headers:
+
+| Header | Domain |
+|---|---|
+| `openswmm_engine.h` | Engine lifecycle, error codes, state machine |
+| `openswmm_model.h` | Model building, validation, serialization |
+| `openswmm_nodes.h` | Junction, outfall, storage, and divider nodes |
+| `openswmm_links.h` | Conduit, pump, orifice, weir, and outlet links |
+| `openswmm_subcatchments.h` | Subcatchments and infiltration |
+| `openswmm_gages.h` | Rain gages |
+| `openswmm_tables.h` | Time series, curves, and patterns |
+| `openswmm_inflows.h` | External inflows, DWF, and RDII |
+| `openswmm_controls.h` | Control rules |
+| `openswmm_infrastructure.h` | Transects, streets, inlets, LID controls |
+| `openswmm_spatial.h` | CRS, coordinates, polylines, polygons |
+| `openswmm_quality.h` | Landuse, buildup/washoff, treatment |
+| `openswmm_callbacks.h` | Progress and step callbacks |
+| `openswmm_hotstart.h` | Hot start file operations |
+
+### 13.2 Basic Workflow
+
+The typical workflow for building and running a model programmatically:
+
+```c
+#include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_nodes.h>
+#include <openswmm/engine/openswmm_links.h>
+
+// 1. Create the engine
+SWMM_Engine engine;
+swmm_engine_create(&engine);
+
+// 2. Open the engine (enters BUILDING state)
+swmm_engine_open(engine);
+
+// 3. Set model options
+swmm_model_set_flow_units(engine, SWMM_CFS);
+swmm_model_set_routing_model(engine, SWMM_DYNWAVE);
+
+// 4. Build the network
+swmm_node_add(engine, "J1", SWMM_JUNCTION);
+swmm_node_set_invert_elev(engine, 0, 100.0);
+swmm_node_set_max_depth(engine, 0, 6.0);
+
+swmm_node_add(engine, "Out1", SWMM_OUTFALL);
+swmm_node_set_invert_elev(engine, 1, 95.0);
+
+swmm_link_add(engine, "C1", SWMM_CONDUIT);
+swmm_link_set_nodes(engine, 0, 0, 1);  // from J1 to Out1
+swmm_link_set_xsect(engine, 0, SWMM_CIRCULAR, 2.0, 0, 0, 0, 1);
+
+// 5. Initialize the simulation
+swmm_engine_initialize(engine);
+
+// 6. Start the simulation
+swmm_engine_start(engine);
+
+// 7. Step through the simulation
+double elapsed;
+while (swmm_engine_step(engine, &elapsed) == SWMM_OK && elapsed > 0) {
+    // Query results during simulation
+    double depth;
+    swmm_node_get_depth(engine, 0, &depth);
+}
+
+// 8. End, close, and destroy
+swmm_engine_end(engine);
+swmm_engine_close(engine);
+swmm_engine_destroy(engine);
+```
+
+### 13.3 Callbacks
+
+The callback system allows applications to receive notifications during simulation execution:
+
+- **Progress callback** — Receives periodic updates on simulation progress (0–100%).
+- **Warning callback** — Receives warning messages generated during simulation.
+- **Step-begin / step-end callbacks** — Called before and after each computational time step.
+- **Plugin state callback** — Notifies plugins of engine state transitions.
+
+Register callbacks before calling `swmm_engine_initialize()`. See @ref openswmm_callbacks.h for details and examples.
+
+### 13.4 Hot Start Files
+
+The hot start API enables saving and restoring simulation state for warm-start scenarios:
+
+```c
+#include <openswmm/engine/openswmm_hotstart.h>
+
+// Save state to a hot start file
+swmm_hotstart_save(engine, "warmup.hsf");
+
+// Later, open and apply a hot start file
+SWMM_HotStart hs;
+swmm_hotstart_open(engine, "warmup.hsf", &hs);
+swmm_hotstart_apply(hs);
+swmm_hotstart_close(hs);
+```
+
+### 13.5 Python Bindings
+
+Python bindings mirror the C API structure, providing Pythonic wrappers:
+
+```python
+from openswmm.solver import Solver
+
+with Solver(inp_file="model.inp") as swmm:
+    swmm.start()
+    for elapsed_time, current_datetime in swmm:
+        print(current_datetime)
+```
+
+See the `python/` directory and the PyPI package documentation for details.
+
+### 13.6 Building with the API
+
+To use the OpenSWMM Engine C API in your own project, link against `openswmm_engine` using CMake:
+
+```cmake
+find_package(OpenSWMMCore REQUIRED)
+target_link_libraries(my_app PRIVATE OpenSWMMCore::openswmm_engine)
+```
+
+All public headers are installed under `include/openswmm/engine/`.
 
 

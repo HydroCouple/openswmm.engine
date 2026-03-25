@@ -1,10 +1,10 @@
-# Description: __init__.py file for the openswmmcore.solver package.
-# Created by: Caleb Buahin (EPA/ORD/CESER/WID)
-# Created on: 2024-11-19
-
-from ._solver import (
+# Backward-compatibility shim: openswmm.solver -> openswmm.legacy.engine
+# Deprecated: use ``from openswmm.legacy.engine import ...`` instead.
+from openswmm.legacy.engine import *  # noqa: F401,F403
+from openswmm.legacy.engine import (  # noqa: F401  explicit re-exports
     SWMMObjects,
     SWMMNodeTypes,
+    SWMMLinkTypes,
     SWMMRainGageProperties,
     SWMMSubcatchmentProperties,
     SWMMNodeProperties,
@@ -16,7 +16,9 @@ from ._solver import (
     decode_swmm_datetime,
     encode_swmm_datetime,
     version,
+    get_error_message,
     SolverState,
+    CallbackType,
     SWMMSolverException,
-    Solver
+    Solver,
 )

@@ -1,6 +1,6 @@
-# Description: Cython module for encoding and decoding SWMM datetimes
-# Created by: Caleb Buahin (EPA/ORD/CESER/WID)
-# Created on: 2024-11-19
+# :author: Caleb Buahin
+# :copyright: Copyright (c) HydroCouple 2026
+# :license: MIT
 
 # cython: language_level=3
 # python imports

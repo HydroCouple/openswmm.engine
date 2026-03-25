@@ -2,240 +2,207 @@ name: Unit Testing
 
 on:
   push:
-    branches: [ master, main, develop, bug_fixes ]
+    branches: [master, main, develop]
   pull_request:
-    branches: [ master, develop]
+    branches: [master, main, develop]
 
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-  VCPKG_EXE:  ${{ github.workspace }}/vcpkg/vcpkg
+  VCPKG_EXE: ${{ github.workspace }}/vcpkg/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   OMP_NUM_THREADS: 1
+
 jobs:
-  engine_unit_test:
-    name: Build and Unit Test C/C++ Engine
+  # ──────────────────────────────────────────────────────────────────────
+  #  C / C++ Engine — build, unit test, and package
+  # ──────────────────────────────────────────────────────────────────────
+  engine:
+    name: "C++ Engine (${{ matrix.alias }})"
     permissions: write-all
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
         include:
           - os: ubuntu-latest
-            alias: Linux
-            shell: bash
+            alias: Linux-x64
             cmake_preset: Linux
-            shell_extension: .sh
+            shell_ext: .sh
             vcpkg_triplet: x64-linux
             cmake_osx_arch: ""
 
-          - os: macos-latest
-            alias: apple-silicon
+          - os: macos-13
+            alias: macOS-x64
             cmake_preset: Darwin
-            shell: bash
-            shell_extension: .sh
+            shell_ext: .sh
+            vcpkg_triplet: x64-osx
+            cmake_osx_arch: x86_64
+
+          - os: macos-latest
+            alias: macOS-arm64
+            cmake_preset: Darwin
+            shell_ext: .sh
             vcpkg_triplet: arm64-osx
             cmake_osx_arch: arm64
 
           - os: windows-latest
-            alias: win64
+            alias: Windows-x64
             cmake_preset: Windows
-            shell: cmd
-            shell_extension: .bat
+            shell_ext: .bat
             vcpkg_triplet: x64-windows
             cmake_osx_arch: ""
 
     runs-on: ${{ matrix.os }}
     steps:
-    - name: Checkout OpenSWMM Repo
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Checkout VCPKG
-      uses: actions/checkout@v4
-      with:
-        repository: microsoft/vcpkg
-        ref: 2025.02.14
-        path: vcpkg
+      - name: Checkout vcpkg
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: 2025.02.14
+          path: vcpkg
 
-    - name: Install OpenMP (MacOS)
-      if: ${{ matrix.os == 'macos-latest' || matrix.os == 'macos-13' }}
-      run: |
-        brew reinstall libomp
-        brew link --force --overwrite libomp
+      - name: Install OpenMP (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew reinstall libomp
+          brew link --force --overwrite libomp
 
-    - name: Bootstrap VCPKG (Windows)
-      if: ${{ matrix.os == 'windows-latest' }}
-      working-directory: ${{ env.VCPKG_ROOT }}
-      run: |
-        .\bootstrap-vcpkg${{ matrix.shell_extension }}
-        .\vcpkg.exe integrate install
-    
-    - name: Bootstrap VCPKG (Unix like)
-      if: ${{ matrix.os != 'windows-latest' }}
-      working-directory: ${{ env.VCPKG_ROOT }}
-      run: |
-        ./bootstrap-vcpkg${{ matrix.shell_extension }}
-        chmod +x vcpkg
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          .\bootstrap-vcpkg${{ matrix.shell_ext }}
+          .\vcpkg.exe integrate install
 
-    - name: Export GitHub Actions cache environment variables
-      uses: actions/github-script@v7
-      with:
-        script: |
-          core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-          core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-    
-    - name: Build Binaries
-      run: |
-        cmake --preset=${{ matrix.cmake_preset }}-debug -B build-${{ matrix.vcpkg_triplet }} -DBUILD_TESTS=ON -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
-        cmake --build build-${{ matrix.vcpkg_triplet }} --target package --clean-first
-    
-    - name: Unit Test
-      run: |
-        ctest --test-dir ./build-${{ matrix.vcpkg_triplet }}  -C Debug --output-on-failure
+      - name: Bootstrap vcpkg (Unix)
+        if: runner.os != 'Windows'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          ./bootstrap-vcpkg${{ matrix.shell_ext }}
+          chmod +x vcpkg
 
-    - name: Upload Artifacts
-      if: ${{ always() }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-artifacts-${{ matrix.vcpkg_triplet }}
-        path: |
-          build-${{ matrix.vcpkg_triplet }}/*.tar.gz
-          build-${{ matrix.vcpkg_triplet }}/*.zip
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-  python_binding_unit_test:
-    name: Build and Unit Test Python Bindings
+      - name: Configure
+        run: >
+          cmake
+          --preset=${{ matrix.cmake_preset }}-debug
+          -B build-${{ matrix.vcpkg_triplet }}
+          -DOPENSWMM_BUILD_TESTS=ON
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
+
+      - name: Build
+        run: cmake --build build-${{ matrix.vcpkg_triplet }} --config Debug
+
+      - name: Unit tests
+        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug --output-on-failure
+
+      - name: Package
+        run: cmake --build build-${{ matrix.vcpkg_triplet }} --target package
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-${{ matrix.vcpkg_triplet }}
+          path: |
+            build-${{ matrix.vcpkg_triplet }}/*.tar.gz
+            build-${{ matrix.vcpkg_triplet }}/*.zip
+
+  # ──────────────────────────────────────────────────────────────────────
+  #  Python bindings — build, test, and wheel packaging
+  # ──────────────────────────────────────────────────────────────────────
+  python:
+    name: "Python (${{ matrix.alias }})"
+    needs: engine
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-13, macos-latest]
-        python: [3.13]
         include:
           - os: ubuntu-latest
-            alias: Linux
-            shell: bash
-            cmake_preset: Linux
-            shell_extension: .sh
+            alias: Linux-x64
             vcpkg_triplet: x64-linux
-            cmake_osx_arch: ""     
+            cmake_osx_arch: ""
 
           - os: macos-13
-            alias: intel-mac
-            cmake_preset: Darwin
-            shell: bash
-            shell_extension: .sh
+            alias: macOS-x64
             vcpkg_triplet: x64-osx
             cmake_osx_arch: x86_64
 
           - os: macos-latest
-            alias: apple-silicon
-            cmake_preset: Darwin
-            shell: bash
-            shell_extension: .sh
+            alias: macOS-arm64
             vcpkg_triplet: arm64-osx
             cmake_osx_arch: arm64
-          
+
           - os: windows-latest
-            alias: win64
-            cmake_preset: Windows
-            shell: cmd
-            shell_extension: .bat
-            vcpkg_triplet: x64-windows   
-            cmake_osx_arch: ""     
+            alias: Windows-x64
+            vcpkg_triplet: x64-windows
+            cmake_osx_arch: ""
 
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: ${{ matrix.shell }}
-
     steps:
-    - name: Checkout SWMM Repo
-      uses: actions/checkout@v4
-    
-    # - name: Checkout VCPKG
-    #   uses: actions/checkout@v4
-    #   with:
-    #     repository: microsoft/vcpkg
-    #     ref: 2025.02.14
-    #     path: vcpkg
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Install OpenMP and Ninja (MacOS)
-      if: ${{ matrix.os == 'macos-latest' || matrix.os == 'macos-13' }}
-      run: |
-        brew reinstall libomp
-        brew link --force --overwrite libomp
-        brew install ninja
+      - name: Install OpenMP and Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew reinstall libomp
+          brew link --force --overwrite libomp
+          brew install ninja
 
-    # - name: Bootstrap VCPKG (Windows)
-    #   if: ${{ matrix.os == 'windows-latest' }}
-    #   working-directory: ${{ env.VCPKG_ROOT }}
-    #   run: |
-    #     .\bootstrap-vcpkg${{ matrix.shell_extension }}
-    #     .\vcpkg.exe integrate install
-    
-    # - name: Bootstrap VCPKG (Unix like)
-    #   if: ${{ matrix.os != 'windows-latest' }}
-    #   working-directory: ${{ env.VCPKG_ROOT }}
-    #   run: |
-    #     ./bootstrap-vcpkg${{ matrix.shell_extension }}
-    #     chmod +x vcpkg
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
 
-    # - name: Export GitHub Actions cache environment variables
-    #   uses: actions/github-script@v7
-    #   with:
-    #     script: |
-    #       core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-    #       core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-          
-    - name: Setup python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python }}
-    
-    - name: Install Python Requirements
-      working-directory: ${{ github.workspace }}/python
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install -r requirements.txt
-    
-    - name: Build and Install
-      env:
-        CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-      working-directory: ${{ github.workspace }}/python
-      run: |
-        pyclean . 
-        python setup.py build_ext --inplace
-        python -m pip install .
-    
-    - name: Unit Test
-      env:
-        CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-      working-directory: ${{ github.workspace }}/python
-      run: |
-        python -m pytest -v tests
-        python setup.py clean --all
-        python -m build .
-   
-    - name: Build Wheels
-      uses: pypa/cibuildwheel@v2.23.2
-      with:
-        package-dir: ./python
-        output-dir: ./python/wheelhouse
-      env:
-        CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-         # CIBW_TEST_COMMAND: "python {package}/setup.py build_ext --inplace && python -m pip install {package} && python -m pytest {package}/tests -v"
-        CIBW_BEFORE_TEST: "pip install -r {package}/requirements.txt && python -m pip install ninja"
-        CIBW_BUILD_VERBOSITY: 1
-        CIBW_BEFORE_BUILD_MACOS: brew install ninja
-        CIBW_REPAIR_WHEEL_COMMAND: ${{ matrix.os == 'ubuntu-latest' && 'auditwheel repair -w {dest_dir} {wheel}' || '' }}
+      - name: Install Python requirements
+        working-directory: python
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
 
-    - name: Upload Python Wheels
-      if: ${{ always() }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: python-wheels-${{ matrix.vcpkg_triplet }} 
-        path: |
-          python/wheelhouse/*.whl
-          python/wheelhouse/*.tar.gz
-          python/wheelhouse/*.zip
-          python/dist/*.whl
-          python/dist/*.tar.gz
-          python/dist/*.zip
+      - name: Build and install
+        env:
+          CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
+        working-directory: python
+        run: |
+          python setup.py build_ext --inplace
+          python -m pip install .
+
+      - name: Run Python tests
+        env:
+          CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
+        working-directory: python
+        run: python -m pytest -v tests
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.23.2
+        with:
+          package-dir: ./python
+          output-dir: ./python/wheelhouse
+        env:
+          CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
+          CIBW_BEFORE_TEST: "pip install -r {package}/requirements.txt && pip install ninja"
+          CIBW_BUILD_VERBOSITY: 1
+          CIBW_BEFORE_BUILD_MACOS: brew install ninja
+          CIBW_REPAIR_WHEEL_COMMAND: >-
+            ${{ matrix.os == 'ubuntu-latest'
+              && 'auditwheel repair -w {dest_dir} {wheel}'
+              || '' }}
+
+      - name: Upload Python wheels
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-${{ matrix.vcpkg_triplet }}
+          path: |
+            python/wheelhouse/*.whl
+            python/dist/*.whl

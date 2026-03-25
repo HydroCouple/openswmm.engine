@@ -1,9 +1,9 @@
 {
-    "name": "openswmmcore",
-    "description": "Open Storm Water Management Model (OpenSWMM) Core Library is an extension of the EPA SWMM model. It is a dynamic rainfall-runoff-subsurface runoff simulation model used for single event or long-term (continuous) simulation of runoff quantity and quality from primarily urban areas.",
+    "name": "openswmm-engine",
+    "description": "Open Storm Water Management Model Engine — data-oriented, plugin-extensible, reentrant C++20 engine built on the EPA SWMM 5.x foundation.",
     "license": "MIT",
-    "homepage": "https://hydrocouple.org/projects/openswmmcore",
-    "version-semver": "5.3.0-alpha.1",
+    "homepage": "https://hydrocouple.org/projects/openswmm",
+    "version-semver": "6.0.0-alpha.1",
     "dependencies": [
         {
             "name": "vcpkg-cmake",
@@ -14,13 +14,21 @@
             "host": true
         },
         {
-            "name": "boost-test" 
+            "name": "gtest",
+            "features": ["gmock"]
+        },
+        {
+            "name": "benchmark"
         }
     ],
     "overrides": [
         {
-            "name": "boost-test",
-            "version": "1.86.0"
+            "name": "gtest",
+            "version": "1.15.2"
+        },
+        {
+            "name": "benchmark",
+            "version": "1.9.1"
         }
     ]
 }

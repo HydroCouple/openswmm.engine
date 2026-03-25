@@ -1,5 +1,5 @@
 # Description: CMake configuration for openswmmcore python library
-# Created by: Caleb Buahin (EPA/ORD/CESER/WID)
+# Created by: Caleb Buahin 
 # Created on: 2024-11-19
 
 # Add Cython targets for openswmmcore
@@ -27,5 +27,5 @@ target_include_directories(
 )
 
 # Add subdirectories
-add_subdirectory(solver)
-add_subdirectory(output)
+add_subdirectory(legacy)
+add_subdirectory(engine)
