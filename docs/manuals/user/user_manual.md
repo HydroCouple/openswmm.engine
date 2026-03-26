@@ -48,6 +48,8 @@ SWMM was first released in 1971 and has undergone several major upgrades since t
 
 Running under Windows, SWMM 5 provides an integrated environment for editing study area input data, running hydrologic, hydraulic and water quality simulations, and viewing the results in a variety of formats. These include color-coded drainage area and conveyance system maps, time series graphs and tables, profile plots, and statistical frequency analyses.
 
+**OpenSWMM 6.0** represents a major architectural overhaul of the engine, re-implemented in C++20 with a clean plugin-extensible design. It introduces the `openswmm` Python package, which provides first-class programmatic access to all simulation capabilities. See [Chapter 13](@ref user_manual_chapter_13) for a full description of the new engine and Python API.
+
 ### 1.2 Modeling Capabilities
 
 SWMM accounts for various hydrologic processes that produce runoff from land surfaces. These include:
@@ -6010,7 +6012,13 @@ MIN_SURFAREA is a minimum surface area used at nodes when computing changes in w
 MIN_SLOPE is the minimum value allowed for a conduit’s slope (%). If zero (the default) then no minimum is imposed (although SWMM uses a lower limit on elevation drop of 0.001 ft (0.00035 m) when computing a conduit slope).
 MAX_TRIALS is the maximum number of trials allowed during a time step to reach convergence when updating hydraulic heads at the conveyance system’s nodes. The default value is 8.
 HEAD_TOLERANCE is the difference in computed head at each node between successive trials below which the flow solution for the current time step is assumed to have converged. The default tolerance is 0.005 ft (0.0015 m).
-THREADS is the number of parallel computing threads to use for dynamic wave flow routing on machines equipped with multi-core processors. The default is 1. 
+THREADS is the number of parallel computing threads to use for dynamic wave flow routing on machines equipped with multi-core processors. The default is 1.
+
+**New in OpenSWMM v6:**
+
+CRS specifies a Coordinate Reference System for the model geometry, given as an EPSG code (e.g. `EPSG:4326`) or a PROJ string. This value is stored in `SimulationOptions::crs` and is available through the C API via `swmm_spatial_get_crs()`. When a CRS is set, all coordinate and polygon data in the `[COORDINATES]`, `[VERTICES]`, and `[POLYGONS]` sections are assumed to be in that reference system.
+
+Any option keyword not recognized by the parser is stored in an extension-options map as a key–value string pair (the key is upper-cased). A non-fatal warning is issued for each unrecognised key. Extension options can be queried at runtime with `swmm_options_get_ext()` and set with `swmm_options_set_ext()`. This allows plugins and coupled models to receive configuration through the `[OPTIONS]` section. 
 Section:    [REPORT]
 
 Purpose:
@@ -6081,6 +6089,8 @@ Units    rain depth units for the data in a user-prepared formatted rain file, e
 Remarks:
 Enclose the external file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file.
 The station name and depth units entries are only required when using a user-prepared formatted rainfall file.
+
+**New in OpenSWMM v6:** A multi-column CSV rain file can be referenced by appending a colon and column name to the file path, e.g. `FILE "rain.csv:EAST_GAGE"`. The engine opens the CSV, locates the column whose header matches the given name, and reads the rainfall values from that column. This allows a single CSV file to supply data for multiple rain gages.
 
  
 Section:    [EVAPORATION]
@@ -8128,20 +8138,154 @@ swmm_hotstart_apply(hs);
 swmm_hotstart_close(hs);
 ```
 
-### 13.5 Python Bindings
+### 13.5 Python Bindings {#user_manual_chapter_13_python}
 
-Python bindings mirror the C API structure, providing Pythonic wrappers:
+OpenSWMM 6.0 ships a first-class Python package (`openswmm`) that provides
+Pythonic, type-annotated access to the full engine feature set.  Install from
+PyPI:
 
-```python
-from openswmm.solver import Solver
-
-with Solver(inp_file="model.inp") as swmm:
-    swmm.start()
-    for elapsed_time, current_datetime in swmm:
-        print(current_datetime)
+```bash
+pip install openswmm
 ```
 
-See the `python/` directory and the PyPI package documentation for details.
+#### 13.5.1 Core Classes (`openswmm.engine`)
+
+All simulation functionality lives in the `openswmm.engine` sub-package.
+
+| Class | Purpose |
+|---|---|
+| `Solver` | Engine lifecycle — open, start, step, end, report |
+| `Nodes` | Query and set node attributes and results |
+| `Links` | Query and set link attributes and results |
+| `Subcatchments` | Query and set subcatchment attributes and results |
+| `Gages` | Query rain-gage attributes and recorded rainfall |
+| `HotStart` | Save and restore simulation state |
+| `MassBalance` | Retrieve continuity error and mass-balance statistics |
+| `ModelBuilder` | Construct a SWMM model programmatically without an input file |
+
+#### 13.5.2 Running a Simulation from an Input File
+
+```python
+from openswmm.engine import Solver, Nodes, Links, Subcatchments
+
+with Solver("model.inp", "model.rpt", "model.out") as solver:
+    solver.start(save_results=True)
+
+    nodes = Nodes(solver)
+    links = Links(solver)
+    subcatchments = Subcatchments(solver)
+
+    while solver.step() > 0:
+        # Access current time-step values by object name
+        depth  = nodes["J1"].depth
+        head   = nodes["J1"].head
+        flow   = links["C1"].flow
+        runoff = subcatchments["S1"].runoff
+
+    solver.end()
+    solver.report()
+```
+
+#### 13.5.3 Accessing Rain Gages
+
+```python
+from openswmm.engine import Solver, Gages
+
+with Solver("model.inp", "model.rpt", "model.out") as solver:
+    solver.start(save_results=True)
+    gages = Gages(solver)
+
+    while solver.step() > 0:
+        rain = gages["RG1"].rainfall   # current rainfall rate (in/hr or mm/hr)
+```
+
+#### 13.5.4 Hot Start Files
+
+Hot start files allow a long-term simulation to be split into segments, each
+beginning from the hydraulic state left by the previous run.
+
+```python
+from openswmm.engine import Solver, HotStart
+
+# --- Warm-up run: save state at end ---
+with Solver("warmup.inp", "warmup.rpt", "warmup.out") as solver:
+    solver.start(save_results=True)
+    while solver.step() > 0:
+        pass
+    solver.save_hotstart("state.hsf")
+    solver.end()
+    solver.report()
+
+# --- Main run: restore state from hot start file ---
+with Solver("main.inp", "main.rpt", "main.out") as solver:
+    solver.use_hotstart("state.hsf")
+    solver.start(save_results=True)
+    while solver.step() > 0:
+        pass
+    solver.end()
+    solver.report()
+```
+
+#### 13.5.5 Mass Balance and Continuity
+
+```python
+from openswmm.engine import Solver, MassBalance
+
+with Solver("model.inp", "model.rpt", "model.out") as solver:
+    solver.start(save_results=True)
+    while solver.step() > 0:
+        pass
+    solver.end()
+
+    mb = MassBalance(solver)
+    print(f"Runoff continuity error : {mb.runoff_error:.4f} %")
+    print(f"Routing continuity error: {mb.routing_error:.4f} %")
+```
+
+#### 13.5.6 Building a Model Programmatically
+
+`ModelBuilder` constructs a complete SWMM network without an input file.  The
+finished model is passed directly to `Solver`.
+
+```python
+from openswmm.engine import ModelBuilder, Solver, Nodes, Links
+from openswmm.engine import NodeType, LinkType, FlowUnits, RoutingModel
+
+# Build the network
+mb = ModelBuilder()
+mb.flow_units = FlowUnits.CFS
+mb.routing_model = RoutingModel.DYNWAVE
+
+j1 = mb.add_node("J1", NodeType.JUNCTION)
+j1.invert_elev = 100.0
+j1.max_depth = 6.0
+
+out1 = mb.add_node("Out1", NodeType.OUTFALL)
+out1.invert_elev = 95.0
+
+c1 = mb.add_link("C1", LinkType.CONDUIT, from_node="J1", to_node="Out1")
+c1.length = 500.0
+c1.roughness = 0.013
+c1.set_circular_xsect(diameter=2.0)
+
+# Simulate the built model
+with Solver(mb, "model.rpt", "model.out") as solver:
+    solver.start(save_results=True)
+    nodes = Nodes(solver)
+    while solver.step() > 0:
+        print(nodes["J1"].depth)
+    solver.end()
+    solver.report()
+```
+
+#### 13.5.7 Full API Reference
+
+The complete class and method documentation, including all attributes,
+enumerations, and error types, is published in the
+[Python Bindings API Reference](python/index.html).
+
+See the `python/` directory in the source tree for the Cython source (`.pyx`),
+type stubs (`.pyi`), and test suite.
 
 ### 13.6 Building with the API
 
@@ -8153,5 +8297,159 @@ target_link_libraries(my_app PRIVATE OpenSWMMCore::openswmm_engine)
 ```
 
 All public headers are installed under `include/openswmm/engine/`.
+
+### 13.7 User-Defined Flags {#user_manual_chapter_13_user_flags}
+
+OpenSWMM Engine v6 introduces **user-defined flags** (inspired by InfoWorks ICM custom attributes) that allow metadata to be attached to any model object—nodes, links, or subcatchments. Flags are defined with a name, data type, and optional description and then assigned values per object.
+
+#### Input File Syntax
+
+Two new sections are recognised in the input file:
+
+```ini
+[USER_FLAGS]
+;;Name            Type      Description
+INSPECTED         BOOLEAN   "Has the object been field-inspected?"
+PRIORITY          INTEGER   "Maintenance priority (1 = highest)"
+ROUGHNESS_ADJ     REAL      "Site-specific roughness multiplier"
+ASSET_ID          STRING    "External asset-management system ID"
+
+[USER_FLAG_VALUES]
+;;ObjectType   ObjectName   FlagName        Value
+NODE           J1           INSPECTED       YES
+NODE           J1           PRIORITY        2
+LINK           C_MAIN       ROUGHNESS_ADJ   1.05
+LINK           C_MAIN       ASSET_ID        "AM-00341"
+SUBCATCHMENT   S_WEST       INSPECTED       NO
+```
+
+Supported types are **BOOLEAN** (`YES`/`NO`/`TRUE`/`FALSE`/`1`/`0`), **INTEGER**, **REAL**, and **STRING**.
+
+#### C API
+
+Flag values can be read or written at runtime through the C API:
+
+```c
+int swmm_userflag_get_bool(SWMM_Engine engine, const char* name, int* value);
+int swmm_userflag_set_bool(SWMM_Engine engine, const char* name, int  value);
+
+int swmm_userflag_get_int (SWMM_Engine engine, const char* name, int* value);
+int swmm_userflag_set_int (SWMM_Engine engine, const char* name, int  value);
+
+int swmm_userflag_get_real(SWMM_Engine engine, const char* name, double* value);
+int swmm_userflag_set_real(SWMM_Engine engine, const char* name, double  value);
+```
+
+See `openswmm_model.h` for the complete set of flag functions.
+
+### 13.8 Plugin Interface for Output and Reporting {#user_manual_chapter_13_plugins}
+
+The new **plugin SDK** enables third-party shared libraries to replace or supplement the built-in binary output (`.out`) file and the text-based status report. Two abstract C++ interfaces are provided:
+
+| Interface | Header | Purpose |
+|---|---|---|
+| `IOutputPlugin` | `IOutputPlugin.hpp` | Writes time-series results at each output time step |
+| `IReportPlugin` | `IReportPlugin.hpp` | Writes summary statistics at simulation end |
+
+Both interfaces share a common lifecycle that mirrors the engine's own state machine:
+
+```
+LOADED → initialize() → INITIALIZED → validate() → VALIDATED
+       → prepare()    → PREPARED     → update() [N times]
+       → finalize()   → FINALIZED    → CLOSED
+```
+
+Each plugin is compiled as a shared library (`.so` / `.dylib` / `.dll`) that exports a single C factory function:
+
+```cpp
+extern "C" openswmm::IPluginComponentInfo* openswmm_plugin_info(void);
+```
+
+The `IPluginComponentInfo` class provides metadata (id, caption, version, vendor, license) and factory methods for creating `IOutputPlugin` or `IReportPlugin` instances.
+
+#### Registering Plugins
+
+Plugins are loaded from a new `[PLUGINS]` input-file section:
+
+```ini
+[PLUGINS]
+./plugins/hdf5_output.dylib     file="results.h5"  compress=9
+./plugins/csv_report.dylib      file="report.csv"   delimiter=","
+```
+
+Each line gives the path to the shared library followed by key=value initialisation arguments that are forwarded to the plugin's `initialize()` method.
+
+#### Data Available to Plugins
+
+At every output time step the engine passes a read-only **SimulationSnapshot** to `update()`. The snapshot exposes per-object results:
+
+- **NodeSnapshot** — depth, head, volume, lateral inflow, total inflow, overflow
+- **LinkSnapshot** — flow, depth, velocity, capacity fraction
+- **SubcatchSnapshot** — rainfall, evaporation, infiltration, runoff, groundwater flow, groundwater elevation, soil moisture
+- **GageSnapshot** — current rainfall rate
+
+See the headers in `include/openswmm/plugin_sdk/` for full details.
+
+### 13.9 CSV Rain-File Inputs {#user_manual_chapter_13_csv}
+
+A new rain-file format, **USER_CSV**, allows rain gage data to be read from multi-column CSV files. A single CSV file can serve multiple rain gages by specifying a column name after the file path:
+
+```ini
+[RAINGAGES]
+;;Name   Format   Interval  SCF   Source
+RG1      VOLUME   0:15      1.0   TIMESERIES RAIN1
+RG2      VOLUME   0:15      1.0   FILE "rain.csv:EAST_GAGE"
+RG3      VOLUME   0:15      1.0   FILE "rain.csv:WEST_GAGE"
+```
+
+The syntax `"filename.csv:COLUMN_NAME"` tells the engine to open `filename.csv` and read the column whose header matches `COLUMN_NAME`. The CSV file is expected to have a header row; columns are separated by commas.
+
+The `RainFileFormat` enumeration now includes:
+
+| Value | Constant | Description |
+|---|---|---|
+| 0 | `NWS_15` | NWS 15-minute data |
+| 1 | `NWS_HOURLY` | NWS hourly data |
+| 2 | `DSI_3240` | NCDC DSI 3240 hourly |
+| 3 | `DSI_3260` | NCDC DSI 3260 15-minute |
+| 4 | `HLY_PRCP` | HLY_PRCP format |
+| 5 | `STAN_PRCP` | Standard SWMM rain file |
+| 6 | `USER_CSV` | User-supplied multi-column CSV (**new in v6**) |
+
+### 13.10 Extension Options (Optional Tags) {#user_manual_chapter_13_ext_options}
+
+The `[OPTIONS]` section now tolerates **extension option keys** that are not part of the standard SWMM vocabulary. Any key the parser does not recognise is stored in an extension-options map as a string key-value pair rather than producing a fatal error (a non-fatal warning is issued). This mechanism allows plugins and coupled models to pass configuration through the familiar `[OPTIONS]` section.
+
+#### Input File Syntax
+
+```ini
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+END_DATE             01/02/2020
+
+;; Standard new option — Coordinate Reference System (EPSG or PROJ string)
+CRS                  EPSG:4326
+
+;; Extension options — stored as-is, available to plugins via API
+TURBULENCE_DAMP      0.85
+PLUGIN_TIMEOUT       30
+MY_VENDOR_SETTING    value123
+```
+
+Extension option keys are **upper-cased** for storage. Plugins (or any code using the C API) can retrieve and set these values at runtime:
+
+```c
+// Retrieve an extension option
+char buffer[256];
+swmm_options_get_ext(engine, "TURBULENCE_DAMP", buffer, sizeof(buffer));
+double damp = atof(buffer);
+
+// Create or update an extension option
+swmm_options_set_ext(engine, "MY_VENDOR_SETTING", "new_value");
+```
+
+Note that the **CRS** key is a standard option new to v6 and is stored separately in `SimulationOptions::crs`. All other unrecognised keys go into the extension map.
 
 

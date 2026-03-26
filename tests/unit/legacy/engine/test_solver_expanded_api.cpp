@@ -43,7 +43,13 @@
 #define MODEL_INP "./hotstart/site_drainage_model.inp"
 #define API_RPT   "./hotstart/_expanded_api_test.rpt"
 #define API_OUT   "./hotstart/_expanded_api_test.out"
-#define HS_FILE   "./hotstart/_expanded_api_test.hsf"
+
+// swmm_saveHotStart passes the filename through addAbsolutePath() which
+// prepends InpDir (extracted from MODEL_INP, i.e. "./hotstart/").
+// Therefore the API call must receive just the bare filename, while local
+// file-system operations (std::remove, std::ifstream) need the full path.
+#define HS_FILE_API   "_expanded_api_test.hsf"
+#define HS_FILE_LOCAL "./hotstart/_expanded_api_test.hsf"
 
 // ============================================================================
 //  1. swmm_getValueExpanded / swmm_setValueExpanded
@@ -641,7 +647,7 @@ class ExpandedAPIHotstartFixture : public ::testing::Test {
 protected:
     void SetUp() override {
         // Ensure clean state
-        std::remove(HS_FILE);
+        std::remove(HS_FILE_LOCAL);
         ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0);
         ASSERT_EQ(swmm_start(/*saveFlag=*/1), 0);
     }
@@ -651,7 +657,7 @@ protected:
             swmm_step(&elapsed);
         swmm_end();
         swmm_close();
-        std::remove(HS_FILE);
+        std::remove(HS_FILE_LOCAL);
     }
 };
 
@@ -661,10 +667,10 @@ TEST_F(ExpandedAPIHotstartFixture, SaveHotstartCreatesFile) {
     for (int i = 0; i < 5 && elapsed > 0.0; ++i)
         ASSERT_EQ(swmm_step(&elapsed), 0);
 
-    int err = swmm_saveHotStart(HS_FILE);
+    int err = swmm_saveHotStart(HS_FILE_API);
     EXPECT_EQ(err, 0);
 
-    std::ifstream f(HS_FILE);
+    std::ifstream f(HS_FILE_LOCAL);
     EXPECT_TRUE(f.good()) << "Hotstart file was not created";
     EXPECT_GT(f.seekg(0, std::ios::end).tellg(), 0)
         << "Hotstart file is empty";
@@ -675,23 +681,26 @@ TEST_F(ExpandedAPIHotstartFixture, SaveHotstartMultipleTimes) {
     for (int i = 0; i < 5 && elapsed > 0.0; ++i)
         ASSERT_EQ(swmm_step(&elapsed), 0);
 
-    EXPECT_EQ(swmm_saveHotStart(HS_FILE), 0);
+    EXPECT_EQ(swmm_saveHotStart(HS_FILE_API), 0);
 
     // Advance more and save again — should overwrite
     for (int i = 0; i < 5 && elapsed > 0.0; ++i)
         ASSERT_EQ(swmm_step(&elapsed), 0);
 
-    EXPECT_EQ(swmm_saveHotStart(HS_FILE), 0);
+    EXPECT_EQ(swmm_saveHotStart(HS_FILE_API), 0);
 
-    std::ifstream f(HS_FILE);
+    std::ifstream f(HS_FILE_LOCAL);
     EXPECT_TRUE(f.good());
 }
 
 // ============================================================================
-//  8. Per-element statistics (after full simulation)
+//  8. Per-element statistics (queried BEFORE swmm_end because stats_close()
+//     inside swmm_end frees SubcatchStats/NodeStats/LinkStats/OutfallStats)
 // ============================================================================
 
-class ExpandedAPIFullRunFixture : public ::testing::Test {
+// Fixture: simulation stepped to completion but swmm_end NOT yet called.
+// The stats arrays are populated and still alive.
+class ExpandedAPIStatsFixture : public ::testing::Test {
 protected:
     void SetUp() override {
         ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0);
@@ -699,16 +708,17 @@ protected:
         double elapsed = 1.0;
         while (elapsed > 0.0)
             ASSERT_EQ(swmm_step(&elapsed), 0);
-        ASSERT_EQ(swmm_end(), 0);
+        // NOTE: swmm_end() is NOT called here so stats arrays remain valid
     }
     void TearDown() override {
+        swmm_end();
         swmm_close();
     }
 };
 
 // --- Subcatchment statistics ---
 
-TEST_F(ExpandedAPIFullRunFixture, SubcatchStats_AllFields) {
+TEST_F(ExpandedAPIStatsFixture, SubcatchStats_AllFields) {
     swmm_SubcatchStats stats = {};
     ASSERT_EQ(swmm_getSubcatchStats(0, &stats), 0);
     EXPECT_GT(stats.precip, 0.0);
@@ -721,7 +731,7 @@ TEST_F(ExpandedAPIFullRunFixture, SubcatchStats_AllFields) {
     EXPECT_GE(stats.pervRunoff, 0.0);
 }
 
-TEST_F(ExpandedAPIFullRunFixture, SubcatchStats_AllSubcatchments) {
+TEST_F(ExpandedAPIStatsFixture, SubcatchStats_AllSubcatchments) {
     int n = swmm_getCount(swmm_SUBCATCH);
     ASSERT_EQ(n, 7);
     for (int i = 0; i < n; ++i) {
@@ -733,7 +743,7 @@ TEST_F(ExpandedAPIFullRunFixture, SubcatchStats_AllSubcatchments) {
     }
 }
 
-TEST_F(ExpandedAPIFullRunFixture, SubcatchStats_InvalidIndex) {
+TEST_F(ExpandedAPIStatsFixture, SubcatchStats_InvalidIndex) {
     swmm_SubcatchStats stats = {};
     int err = swmm_getSubcatchStats(-1, &stats);
     EXPECT_NE(err, 0);
@@ -744,7 +754,7 @@ TEST_F(ExpandedAPIFullRunFixture, SubcatchStats_InvalidIndex) {
 
 // --- Node statistics ---
 
-TEST_F(ExpandedAPIFullRunFixture, NodeStats_AllFields) {
+TEST_F(ExpandedAPIStatsFixture, NodeStats_AllFields) {
     swmm_NodeStats stats = {};
     ASSERT_EQ(swmm_getNodeStats(0, &stats), 0);
     EXPECT_GE(stats.avgDepth, 0.0);
@@ -761,7 +771,7 @@ TEST_F(ExpandedAPIFullRunFixture, NodeStats_AllFields) {
     EXPECT_GE(stats.maxPondedVol, 0.0);
 }
 
-TEST_F(ExpandedAPIFullRunFixture, NodeStats_AllNodes) {
+TEST_F(ExpandedAPIStatsFixture, NodeStats_AllNodes) {
     int n = swmm_getCount(swmm_NODE);
     ASSERT_EQ(n, 12);
     for (int i = 0; i < n; ++i) {
@@ -771,7 +781,7 @@ TEST_F(ExpandedAPIFullRunFixture, NodeStats_AllNodes) {
     }
 }
 
-TEST_F(ExpandedAPIFullRunFixture, NodeStats_MaxDepthDateIsValid) {
+TEST_F(ExpandedAPIStatsFixture, NodeStats_MaxDepthDateIsValid) {
     swmm_NodeStats stats = {};
     ASSERT_EQ(swmm_getNodeStats(0, &stats), 0);
     if (stats.maxDepth > 0.0) {
@@ -780,7 +790,7 @@ TEST_F(ExpandedAPIFullRunFixture, NodeStats_MaxDepthDateIsValid) {
     }
 }
 
-TEST_F(ExpandedAPIFullRunFixture, NodeStats_InvalidIndex) {
+TEST_F(ExpandedAPIStatsFixture, NodeStats_InvalidIndex) {
     swmm_NodeStats stats = {};
     int err = swmm_getNodeStats(-1, &stats);
     EXPECT_NE(err, 0);
@@ -788,7 +798,7 @@ TEST_F(ExpandedAPIFullRunFixture, NodeStats_InvalidIndex) {
 
 // --- Link statistics ---
 
-TEST_F(ExpandedAPIFullRunFixture, LinkStats_AllFields) {
+TEST_F(ExpandedAPIStatsFixture, LinkStats_AllFields) {
     swmm_LinkStats stats = {};
     ASSERT_EQ(swmm_getLinkStats(0, &stats), 0);
     EXPECT_GE(stats.maxFlow, 0.0);
@@ -804,7 +814,7 @@ TEST_F(ExpandedAPIFullRunFixture, LinkStats_AllFields) {
     EXPECT_GE(stats.flowTurns, 0);
 }
 
-TEST_F(ExpandedAPIFullRunFixture, LinkStats_AllLinks) {
+TEST_F(ExpandedAPIStatsFixture, LinkStats_AllLinks) {
     int n = swmm_getCount(swmm_LINK);
     ASSERT_EQ(n, 11);
     for (int i = 0; i < n; ++i) {
@@ -814,7 +824,7 @@ TEST_F(ExpandedAPIFullRunFixture, LinkStats_AllLinks) {
     }
 }
 
-TEST_F(ExpandedAPIFullRunFixture, LinkStats_FlowClassArray) {
+TEST_F(ExpandedAPIStatsFixture, LinkStats_FlowClassArray) {
     swmm_LinkStats stats = {};
     ASSERT_EQ(swmm_getLinkStats(0, &stats), 0);
     // Verify time-in-flow-class array has valid values
@@ -826,7 +836,7 @@ TEST_F(ExpandedAPIFullRunFixture, LinkStats_FlowClassArray) {
     }
 }
 
-TEST_F(ExpandedAPIFullRunFixture, LinkStats_MaxFlowDateValid) {
+TEST_F(ExpandedAPIStatsFixture, LinkStats_MaxFlowDateValid) {
     swmm_LinkStats stats = {};
     ASSERT_EQ(swmm_getLinkStats(0, &stats), 0);
     if (stats.maxFlow > 0.0) {
@@ -834,7 +844,7 @@ TEST_F(ExpandedAPIFullRunFixture, LinkStats_MaxFlowDateValid) {
     }
 }
 
-TEST_F(ExpandedAPIFullRunFixture, LinkStats_InvalidIndex) {
+TEST_F(ExpandedAPIStatsFixture, LinkStats_InvalidIndex) {
     swmm_LinkStats stats = {};
     int err = swmm_getLinkStats(-1, &stats);
     EXPECT_NE(err, 0);
@@ -842,7 +852,7 @@ TEST_F(ExpandedAPIFullRunFixture, LinkStats_InvalidIndex) {
 
 // --- Outfall statistics ---
 
-TEST_F(ExpandedAPIFullRunFixture, OutfallStats_O1) {
+TEST_F(ExpandedAPIStatsFixture, OutfallStats_O1) {
     int o1 = swmm_getIndex(swmm_NODE, "O1");
     ASSERT_GE(o1, 0);
 
@@ -864,7 +874,24 @@ TEST_F(ExpandedAPIFullRunFixture, OutfallStats_O1) {
     }
 }
 
-// --- System routing totals ---
+// ============================================================================
+//  8b. System totals and mass balance (valid AFTER swmm_end — uses globals)
+// ============================================================================
+
+class ExpandedAPIFullRunFixture : public ::testing::Test {
+protected:
+    void SetUp() override {
+        ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0);
+        ASSERT_EQ(swmm_start(/*saveFlag=*/1), 0);
+        double elapsed = 1.0;
+        while (elapsed > 0.0)
+            ASSERT_EQ(swmm_step(&elapsed), 0);
+        ASSERT_EQ(swmm_end(), 0);
+    }
+    void TearDown() override {
+        swmm_close();
+    }
+};
 
 TEST_F(ExpandedAPIFullRunFixture, SystemRoutingTotals_AllFields) {
     swmm_RoutingTotals totals = {};

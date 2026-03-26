@@ -994,15 +994,15 @@ WARN_LOGFILE           =
 # spaces. See also FILE_PATTERNS and EXTENSION_MAPPING
 # Note: If this tag is empty the current directory is searched.
 
-INPUT                  = ../src/legacy/engine \
+INPUT                  = ../README.md \
+                         ../src/legacy/engine \
                          ../src/legacy/output \
                          ../src/engine \
                          ../src/solver \
                          ../src/output \
-                         ../include/openswmm \
+                         ../include \
                          ./images/*.png \
                          ./manuals/user/figures/*.png \
-                         ../README.md \
                          ./Updates.md \
                          ./authors.md \
                          ./manuals/manuals.md \

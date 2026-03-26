@@ -1,0 +1,129 @@
+name: Documentation
+
+on:
+  push:
+    branches: [master, develop]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [master, develop]
+  workflow_dispatch:
+
+# Allow only one concurrent deployment.  Do NOT cancel in-progress runs so
+# that production deployments always complete.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 1 – Build Python (Sphinx) documentation
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  build_python_docs:
+    name: Build Python Bindings Docs (Sphinx)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Sphinx and theme dependencies
+        run: |
+          pip install \
+            "sphinx>=7.0" \
+            "pydata-sphinx-theme>=0.15.0" \
+            "myst-parser>=3.0" \
+            "sphinx-autodoc-typehints>=2.0" \
+            numpy
+
+      - name: Build Sphinx HTML docs
+        # conf.py adds python/ to sys.path and installs the Cython stub-file
+        # finder, so no compiled extensions or package installation is needed.
+        run: |
+          sphinx-build -b html python/docs python/docs/_build/html
+
+      - name: Upload Python docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-docs
+          path: python/docs/_build/html/
+          retention-days: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 2 – Build C/C++ documentation (Doxygen)
+#   Runs after the Python docs build per the documented deployment order.
+# ─────────────────────────────────────────────────────────────────────────────
+  build_doxygen_docs:
+    name: Build C/C++ Engine Docs (Doxygen)
+    needs: build_python_docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Doxygen and Graphviz
+        run: sudo apt-get install -y doxygen graphviz
+
+      - name: Build Doxygen HTML docs
+        working-directory: docs
+        run: doxygen Doxyfile
+
+      - name: Upload Doxygen docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: doxygen-docs
+          path: docs/html/
+          retention-days: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 3 – Merge both doc sets and deploy to GitHub Pages
+#   Final site layout:
+#     /          → Doxygen C/C++ engine docs (main entry point)
+#     /python/   → Sphinx openswmm Python bindings docs
+# ─────────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: [build_python_docs, build_doxygen_docs]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Download Doxygen docs
+        uses: actions/download-artifact@v4
+        with:
+          name: doxygen-docs
+          path: site/
+
+      - name: Download Python docs
+        uses: actions/download-artifact@v4
+        with:
+          name: python-docs
+          path: site/python/
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload combined site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+

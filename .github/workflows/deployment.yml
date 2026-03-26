@@ -1,0 +1,196 @@
+name: Deployment
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+env:
+  VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  OMP_NUM_THREADS: 1
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────
+  #  Build release binaries
+  # ──────────────────────────────────────────────────────────────────────
+  build:
+    name: "Build (${{ matrix.alias }})"
+    permissions: write-all
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            alias: Linux-x64
+            cmake_preset: Linux
+            shell_ext: .sh
+            vcpkg_triplet: x64-linux
+            cmake_osx_arch: ""
+
+          - os: macos-latest
+            alias: macOS-arm64
+            cmake_preset: Darwin
+            shell_ext: .sh
+            vcpkg_triplet: arm64-osx
+            cmake_osx_arch: arm64
+
+          - os: windows-latest
+            alias: Windows-x64
+            cmake_preset: Windows
+            shell_ext: .bat
+            vcpkg_triplet: x64-windows
+            cmake_osx_arch: ""
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout vcpkg
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: 2025.02.14
+          path: vcpkg
+
+      - name: Install OpenMP (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          .\bootstrap-vcpkg${{ matrix.shell_ext }}
+          .\vcpkg.exe integrate install
+
+      - name: Bootstrap vcpkg (Unix)
+        if: runner.os != 'Windows'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          ./bootstrap-vcpkg${{ matrix.shell_ext }}
+          chmod +x vcpkg
+
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Configure (Release)
+        run: >
+          cmake
+          --preset=${{ matrix.cmake_preset }}
+          -B build-${{ matrix.vcpkg_triplet }}
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
+
+      - name: Build and package
+        run: cmake --build build-${{ matrix.vcpkg_triplet }} --target package --config Release
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.vcpkg_triplet }}
+          path: |
+            build-${{ matrix.vcpkg_triplet }}/*.tar.gz
+            build-${{ matrix.vcpkg_triplet }}/*.zip
+
+  # ──────────────────────────────────────────────────────────────────────
+  #  Python wheels
+  # ──────────────────────────────────────────────────────────────────────
+  wheels:
+    name: "Python Wheels (${{ matrix.alias }})"
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            alias: Linux-x64
+            vcpkg_triplet: x64-linux
+            cmake_osx_arch: ""
+
+          - os: macos-13
+            alias: macOS-x64
+            vcpkg_triplet: x64-osx
+            cmake_osx_arch: x86_64
+
+          - os: macos-latest
+            alias: macOS-arm64
+            vcpkg_triplet: arm64-osx
+            cmake_osx_arch: arm64
+
+          - os: windows-latest
+            alias: Windows-x64
+            vcpkg_triplet: x64-windows
+            cmake_osx_arch: ""
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install OpenMP and Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp ninja
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python requirements
+        working-directory: python
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.23.2
+        with:
+          package-dir: ./python
+          output-dir: ./python/wheelhouse
+        env:
+          CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
+          CIBW_BEFORE_TEST: "pip install -r {package}/requirements.txt && pip install ninja"
+          CIBW_BUILD_VERBOSITY: 1
+          CIBW_BEFORE_BUILD_LINUX: pip install ninja
+          CIBW_BEFORE_BUILD_MACOS: brew install ninja libomp
+          CIBW_REPAIR_WHEEL_COMMAND: >-
+            ${{ matrix.os == 'ubuntu-latest'
+              && 'auditwheel repair -w {dest_dir} {wheel}'
+              || '' }}
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.vcpkg_triplet }}
+          path: python/wheelhouse/*.whl
+
+  # ──────────────────────────────────────────────────────────────────────
+  #  Create GitHub Release
+  # ──────────────────────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, wheels]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/**/*

@@ -170,35 +170,39 @@ python -m pytest -v tests
 
 ## Python Usage Examples
 
+End-to-end modeling workflows via a Python API
+
+- Creating model instances
+- Adding objects 
+- Parameterizing model
+- Runtime coupling and feedback
+- Saving model instance to file
+- Saving hotstart files
+- etc.
+
+Check out the documentation for the [API](python/index.html) 
+
+
 ```python
-from openswmm import solver
-from openswmm.solver import Solver
-from openswmm.output import Output
+from openswmm.engine import Solver, Nodes, Links, Subcatchments
 
-# Context manager (recommended)
-with Solver(inp_file="model.inp") as swmm:
-    swmm.start()
-    swmm.time_stride = 600
+with Solver("model.inp", "model.rpt", "model.out") as solver:
+    solver.start(save_results=True)
 
-    for elapsed_time, current_datetime in swmm:
-        print(current_datetime)
+    nodes = Nodes(solver)
+    links = Links(solver)
+    subcatchments = Subcatchments(solver)
 
-# Manual lifecycle control
-swmm = Solver(inp_file="model.inp")
-swmm.initialize()
+    while solver.step() > 0:
+        # access current time-step values
+        depth = nodes["Node1"].depth
+        flow  = links["Conduit1"].flow
 
-for elapsed_time, current_datetime in swmm:
-    print(current_datetime)
-
-swmm.finalize()
-
-# Read output
-output = Output(output_file="model.out")
-flow = output.get_link_timeseries(
-    element_index="C1",
-    attribute=output.LinkAttribute.FLOW_RATE,
-)
+    solver.end()
+    solver.report()
 ```
+
+
 
 ## Libraries Built
 

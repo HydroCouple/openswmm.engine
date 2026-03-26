@@ -14,8 +14,7 @@
             "host": true
         },
         {
-            "name": "gtest",
-            "features": ["gmock"]
+            "name": "gtest"
         },
         {
             "name": "benchmark"
