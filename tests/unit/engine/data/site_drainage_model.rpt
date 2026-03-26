@@ -19,7 +19,7 @@
   Surcharge Method ......... EXTRAN
   Starting Date ............ 01/01/1998 00:00:00
   Ending Date .............. 01/02/1998 06:00:00
-  Antecedent Dry Days ...... 0.0
+  Antecedent Dry Days ...... 5.0
   Report Time Step ......... 00:05:00
   Wet Time Step ............ 00:01:00
   Dry Time Step ............ 00:05:00
@@ -33,26 +33,26 @@
   **************************        Volume         Depth
   Runoff Quantity Continuity     acre-feet        inches
   **************************     ---------       -------
-  Total Precipitation ......         8.742         3.627
+  Total Precipitation ......         6.829         2.834
   Evaporation Loss .........         0.000         0.000
-  Infiltration Loss ........         8.742         3.627
-  Surface Runoff ...........         0.000         0.000
-  Final Storage ............         0.000         0.000
-  Continuity Error (%) .....        -0.001
+  Infiltration Loss ........         2.148         0.891
+  Surface Runoff ...........         4.619         1.917
+  Final Storage ............         0.062         0.026
+  Continuity Error (%) .....        -0.003
   
   
   **************************           TSS
   Runoff Quality Continuity           lbs
   **************************    ----------
   Initial Buildup ..........         0.000
-  Surface Buildup ..........       405.340
+  Surface Buildup ..........       455.370
   Wet Deposition ...........         0.000
   Sweeping Removal .........         0.000
   Infiltration Loss ........         0.000
   BMP Removal ..............         0.000
-  Surface Runoff ...........         0.002
-  Remaining Buildup ........         0.516
-  Continuity Error (%) .....        99.872
+  Surface Runoff ...........       473.263
+  Remaining Buildup ........         0.182
+  Continuity Error (%) .....        -3.969
   
   
   **************************        Volume        Volume
@@ -117,13 +117,13 @@
                            Precip      Runon       Evap      Infil     Runoff     Runoff     Runoff      Runoff   Runoff   Coeff
   Subcatchment                 in         in         in         in         in         in         in    10^6 gal      CFS
   ------------------------------------------------------------------------------------------------------------------------------
-  S1                         3.63       0.00       0.00       0.00       0.00       0.00       0.00        0.00     0.01   0.000
-  S2                         3.63       0.00       0.00       0.00       0.00       0.00       0.00        0.00     0.03   0.000
-  S3                         3.63       0.00       0.00       0.00       0.00       0.00       0.00        0.00     0.02   0.000
-  S4                         3.63       0.00       0.00       0.00       0.00       0.00       0.00        0.00     0.02   0.000
-  S5                         3.63       0.00       0.00       0.00       0.00       0.00       0.00        0.00     0.02   0.000
-  S6                         3.63       0.00       0.00       0.00       0.00       0.00       0.00        0.00     0.01   0.000
-  S7                         3.63       0.00       0.00       0.00       0.00       0.00       0.00        0.00     0.00   0.000
+  S1                         2.83       0.00       0.00       0.00       0.00       0.00       1.91        0.24    15.89   0.674
+  S2                         2.83       0.00       0.00       0.00       0.00       0.00       2.04        0.26    17.70   0.719
+  S3                         2.83       0.00       0.00       0.00       0.00       0.00       1.56        0.16    11.33   0.550
+  S4                         2.83       0.00       0.00       0.00       0.00       0.00       1.77        0.33    22.78   0.625
+  S5                         2.83       0.00       0.00       0.00       0.00       0.00       2.54        0.33    21.51   0.897
+  S6                         2.83       0.00       0.00       0.00       0.00       0.00       2.69        0.14     9.05   0.949
+  S7                         2.83       0.00       0.00       0.00       0.00       0.00       0.74        0.05     4.54   0.260
   
   
   ****************************
@@ -134,15 +134,15 @@
                                  TSS
   Subcatchment                   lbs
   ----------------------------------
-  S1                           0.000
-  S2                           0.001
-  S3                           0.000
-  S4                           0.001
-  S5                           0.000
-  S6                           0.000
+  S1                          61.075
+  S2                          58.367
+  S3                          31.999
+  S4                          39.712
+  S5                         260.792
+  S6                          21.318
   S7                           0.000
   ----------------------------------
-  System                       0.002
+  System                     473.263
   
   
   ******************
@@ -283,6 +283,6 @@
   
   
 
-  Analysis begun on:  Thu Mar 26 02:55:07 2026
-  Analysis ended on:  Thu Mar 26 02:55:07 2026
-  Total elapsed time: < 1 sec
+  Analysis begun on:  Thu Mar 26 05:45:08 2026
+  Analysis ended on:  Thu Mar 26 05:45:09 2026
+  Total elapsed time: 00:00:01

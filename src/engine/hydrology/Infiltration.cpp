@@ -17,7 +17,7 @@
 namespace openswmm {
 namespace infil {
 
-static constexpr double TINY = 1.0e-6;
+static constexpr double TINY = 1.0e-10;  // Matches legacy ZERO = 1.E-10 (consts.h)
 
 // ============================================================================
 // Horton
@@ -32,7 +32,9 @@ void horton_init(HortonState& state, double f0, double fmin,
     state.f0    = f0 / ucf_rain;
     state.fmin  = fmin / ucf_rain;
     state.decay = decay / 3600.0;     // 1/hr → 1/sec (time-only, unit-system independent)
-    state.regen = regen / 3600.0;
+    // regen parameter is drying time in days (matching legacy infil.c line 350)
+    // Legacy: regen = -log(1.0 - 0.98) / p[3] / SECperDAY
+    state.regen = (regen > 0.0) ? -std::log(1.0 - 0.98) / regen / ucf::SEC_PER_DAY : 0.0;
     state.Fmax  = (Fmax > 0.0) ? Fmax / ucf_depth : 0.0;  // in/mm → ft (0 = unlimited)
     state.tp    = 0.0;
     state.Fe    = 0.0;
@@ -55,66 +57,85 @@ double horton_getInfil(HortonState& state, double precip, double depth, double d
         return 0.0;
     }
 
-    // Wet period
-    double df = state.f0 - state.fmin;
-    double kd = state.decay;
-    double tlim = (kd > 0.0) ? 16.0 / kd : 1.0e10;
+    // Wet period — matching legacy infil.c horton_getInfil() exactly
+    double f0   = state.f0;     // InfilFactor applied at call-site when monthly patterns are resolved
+    double fmin = state.fmin;   // InfilFactor applied at call-site when monthly patterns are resolved
+    double df   = f0 - fmin;
+    double kd   = state.decay;
+    double Fmax = state.Fmax;
+    double tp   = state.tp;
+    double kr   = state.regen;  // Recovery factor applied at call-site via ClimateState.recovery_factor
 
-    // Cumulative infiltration at start of step
-    double Fp;
-    if (state.tp >= tlim) {
-        Fp = state.fmin * state.tp + (kd > 0.0 ? df / kd : 0.0);
-    } else {
-        Fp = state.fmin * state.tp +
-             (kd > 0.0 ? df / kd * (1.0 - std::exp(-kd * state.tp)) : 0.0);
+    // Special cases: no infiltration or constant infiltration
+    if (df < 0.0 || kd < 0.0 || kr < 0.0) return 0.0;
+    if (df == 0.0 || kd == 0.0) {
+        double fp = f0;
+        if (fp > ia) fp = ia;
+        return std::max(0.0, fp);
     }
 
-    // Cumulative infiltration at end of step
-    double t1 = state.tp + dt;
-    double F1;
-    if (t1 >= tlim) {
-        F1 = state.fmin * t1 + (kd > 0.0 ? df / kd : 0.0);
-    } else {
-        F1 = state.fmin * t1 +
-             (kd > 0.0 ? df / kd * (1.0 - std::exp(-kd * t1)) : 0.0);
-    }
+    double fp = 0.0;
+    double tlim = 16.0 / kd;
 
-    // Average rate over timestep
-    double fp = (F1 - Fp) / dt;
+    if (ia > TINY) {
+        // Compute average infiltration rate over timestep
+        double t1 = tp + dt;
+        double Fp, F1;
+        if (tp >= tlim) {
+            Fp = fmin * tp + df / kd;
+            F1 = Fp + fmin * dt;
+        } else {
+            Fp = fmin * tp + df / kd * (1.0 - std::exp(-kd * tp));
+            F1 = fmin * t1 + df / kd * (1.0 - std::exp(-kd * t1));
+        }
+        fp = (F1 - Fp) / dt;
+        fp = std::max(fp, fmin);  // Floor at fmin (matching legacy line 443)
 
-    // Capacity-limited: if available water < infiltration capacity
-    if (ia < fp) {
-        // Find equivalent time tp such that f(tp) = ia
-        // Using Newton-Raphson
-        if (kd > 0.0 && df > 0.0) {
-            double tp_new = state.tp;
+        // Limit infiltration rate to available water
+        if (fp > ia) fp = ia;
+
+        // Update cumulative time tp
+        if (t1 > tlim) {
+            tp = t1;
+        } else if (fp < ia) {
+            // Infiltration capacity not exhausted
+            tp = t1;
+        } else {
+            // Infiltration limited by available water — Newton-Raphson
+            // to find tp where F(tp) matches actual infiltrated volume
+            F1 = Fp + fp * dt;
+            tp = tp + dt / 2.0;
             for (int iter = 0; iter < 20; ++iter) {
-                double FF = state.fmin * tp_new + df / kd * (1.0 - std::exp(-kd * tp_new)) - (Fp + ia * dt);
-                double FF1 = state.fmin + df * std::exp(-kd * tp_new);
-                if (std::fabs(FF1) < TINY) break;
+                double kt = std::min(60.0, kd * tp);
+                double ex = std::exp(-kt);
+                double FF = fmin * tp + df / kd * (1.0 - ex) - F1;
+                double FF1 = fmin + df * ex;
                 double r = FF / FF1;
-                tp_new -= r;
+                tp -= r;
                 if (std::fabs(r) <= 0.001 * dt) break;
             }
-            state.tp = std::max(tp_new, 0.0);
-        } else {
-            state.tp += dt;
         }
-        fp = ia;
-    } else {
-        state.tp += dt;
-    }
 
-    // Check max cumulative infiltration
-    if (state.Fmax > 0.0) {
-        state.Fe += fp * dt;
-        if (state.Fe > state.Fmax) {
-            fp -= (state.Fe - state.Fmax) / dt;
-            state.Fe = state.Fmax;
-            if (fp < 0.0) fp = 0.0;
+        // Limit cumulative infiltration to Fmax
+        if (Fmax > 0.0) {
+            if (state.Fe + fp * dt > Fmax)
+                fp = (Fmax - state.Fe) / dt;
+            fp = std::max(fp, 0.0);
+            state.Fe += fp * dt;
         }
     }
+    // Dry period with regeneration
+    else if (kr > 0.0) {
+        double r = std::exp(-kr * dt);
+        tp = 1.0 - std::exp(-kd * tp);
+        tp = -std::log(1.0 - r * tp) / kd;
 
+        if (Fmax > 0.0) {
+            state.Fe = fmin * tp + (df / kd) * (1.0 - std::exp(-kd * tp));
+        }
+    }
+
+    state.tp = tp;
     return fp;
 }
 

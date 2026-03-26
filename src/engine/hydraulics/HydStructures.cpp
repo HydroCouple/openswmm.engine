@@ -21,8 +21,68 @@ void OrificeGroup::resize(int n) { count=n; auto u=static_cast<size_t>(n); link_
 void WeirGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); weir_type.resize(u,0); c_disch1.resize(u,0); c_disch2.resize(u,0); end_con.resize(u,0); slope.resize(u,0); cd_curve.resize(u,-1); has_flap.resize(u,false); }
 void OutletGroup::resize(int n)  { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); curve_idx.resize(u,-1); q_coeff.resize(u,0); q_expon.resize(u,1); }
 
-void StructureSolver::init(SimulationContext& /*ctx*/) {
-    // TODO: scan links, group by type, populate SoA groups
+void StructureSolver::init(SimulationContext& ctx) {
+    // Scan links and group by type, populating SoA groups.
+    // Matching legacy link.c initialization pattern.
+    int n_pumps = 0, n_orifices = 0, n_weirs = 0, n_outlets = 0;
+
+    // First pass: count
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        auto uj = static_cast<size_t>(j);
+        switch (ctx.links.type[uj]) {
+            case LinkType::PUMP:    ++n_pumps; break;
+            case LinkType::ORIFICE: ++n_orifices; break;
+            case LinkType::WEIR:    ++n_weirs; break;
+            case LinkType::OUTLET:  ++n_outlets; break;
+            default: break;
+        }
+    }
+
+    pumps_.resize(n_pumps);
+    orifices_.resize(n_orifices);
+    weirs_.resize(n_weirs);
+    outlets_.resize(n_outlets);
+
+    // Second pass: populate
+    int ip = 0, io = 0, iw = 0, ix = 0;
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        auto uj = static_cast<size_t>(j);
+        switch (ctx.links.type[uj]) {
+            case LinkType::PUMP: {
+                auto uk = static_cast<size_t>(ip);
+                pumps_.link_idx[uk] = j;
+                pumps_.curve_idx[uk] = ctx.links.pump_curve[uj];
+                pumps_.speed[uk] = ctx.links.setting[uj];
+                ++ip;
+                break;
+            }
+            case LinkType::ORIFICE: {
+                auto uk = static_cast<size_t>(io);
+                orifices_.link_idx[uk] = j;
+                orifices_.c_orifice[uk] = ctx.links.cd[uj];
+                orifices_.has_flap[uk] = ctx.links.has_flap_gate[uj];
+                ++io;
+                break;
+            }
+            case LinkType::WEIR: {
+                auto uk = static_cast<size_t>(iw);
+                weirs_.link_idx[uk] = j;
+                weirs_.c_disch1[uk] = ctx.links.cd[uj];
+                weirs_.has_flap[uk] = ctx.links.has_flap_gate[uj];
+                ++iw;
+                break;
+            }
+            case LinkType::OUTLET: {
+                auto uk = static_cast<size_t>(ix);
+                outlets_.link_idx[uk] = j;
+                outlets_.q_coeff[uk] = ctx.links.cd[uj];
+                outlets_.q_expon[uk] = ctx.links.param2[uj];
+                ++ix;
+                break;
+            }
+            default: break;
+        }
+    }
 }
 
 // ============================================================================
@@ -61,22 +121,34 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx) {
 
         double q = 0.0;
         int ct = pumps_.curve_type[uk];
+        int ci = pumps_.curve_idx[uk];
+        auto uci = static_cast<size_t>(ci);
 
         switch (ct) {
-            case 1: // Volume-based
-            case 2: // Depth-based
-                // TODO: q = table_lookup(curve, depth_or_volume)
+            case 1: // Volume-based: Q = f(volume)
+                if (ci >= 0 && uci < ctx.tables.tables.size()) {
+                    double vol = nodes.volume[un1];
+                    q = table_lookup_cursor(ctx.tables.tables[uci], vol);
+                }
+                break;
+            case 2: // Depth-based: Q = f(depth)
+                if (ci >= 0 && uci < ctx.tables.tables.size()) {
+                    q = table_lookup_cursor(ctx.tables.tables[uci], depth);
+                }
                 break;
             case 3: // Head-based with speed
             case 5: {
                 double s = links.setting[uj];
                 double h = (s > 0.0) ? std::max(head / (s * s), 0.0) : 0.0;
-                // TODO: q = table_lookup(curve, h) * s
-                (void)h;
+                if (ci >= 0 && uci < ctx.tables.tables.size()) {
+                    q = table_lookup_cursor(ctx.tables.tables[uci], h) * s;
+                }
                 break;
             }
-            case 4: // Depth-based with dQ/dH
-                // TODO: q = table_lookup(curve, depth)
+            case 4: // Depth-based: Q = f(depth)
+                if (ci >= 0 && uci < ctx.tables.tables.size()) {
+                    q = table_lookup_cursor(ctx.tables.tables[uci], depth);
+                }
                 break;
             case 6: // Ideal pump
                 q = nodes.inflow[un1];
@@ -228,8 +300,12 @@ void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
 
         double q;
         if (outlets_.curve_idx[uk] >= 0) {
-            // TODO: q = table_lookup(curve, head)
-            q = 0.0;
+            auto uci = static_cast<size_t>(outlets_.curve_idx[uk]);
+            if (uci < ctx.tables.tables.size()) {
+                q = table_lookup_cursor(ctx.tables.tables[uci], head);
+            } else {
+                q = 0.0;
+            }
         } else {
             q = outlets_.q_coeff[uk] * std::pow(head, outlets_.q_expon[uk]);
         }

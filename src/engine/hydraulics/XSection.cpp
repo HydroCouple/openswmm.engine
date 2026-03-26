@@ -618,6 +618,14 @@ double getRofY(const XSectParams& xs, double y) {
         case XSectShape::PARABOLIC:    return parab_getRofY(xs, y);
         case XSectShape::POWERFUNC:    return powerfunc_getRofY(xs, y);
 
+        case XSectShape::RECT_CLOSED:
+        case XSectShape::RECT_OPEN: {
+            if (y <= 0.0) return 0.0;
+            double a = y * xs.w_max;
+            double p = xs.w_max + 2.0 * y;
+            return (p > 0.0) ? a / p : 0.0;
+        }
+
         // Default: compute R = A / P via getRofA(getAofY(y))
         default:
             return getRofA(xs, getAofY(xs, y));

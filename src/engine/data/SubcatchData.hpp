@@ -19,6 +19,7 @@
 #define OPENSWMM_ENGINE_SUBCATCH_DATA_HPP
 
 #include <vector>
+#include <string>
 #include <cstdint>
 
 namespace openswmm {
@@ -54,6 +55,13 @@ struct SubcatchData {
      * @see Legacy: Subcatch[i].outSubcatch
      */
     std::vector<int>    outlet_subcatch;
+
+    /**
+     * @brief Outlet name string for deferred resolution.
+     * @details Stored during parsing so PostParseResolver can re-resolve
+     *          outlet_node / outlet_subcatch when sections appear out of order.
+     */
+    std::vector<std::string> outlet_name;
 
     /**
      * @brief Rain gage index for this subcatchment.
@@ -120,6 +128,27 @@ struct SubcatchData {
      * @see Legacy: Subcatch[i].subArea[PERV].dStore
      */
     std::vector<double> ds_perv;
+
+    // -----------------------------------------------------------------------
+    // Inter-subarea routing (from [SUBAREAS] section)
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Inter-subarea routing mode.
+     * @details 0 = TO_OUTLET (all runoff goes to outlet),
+     *          1 = TO_IMPERV (pervious → impervious),
+     *          2 = TO_PERV   (impervious → pervious).
+     * @see Legacy: Subcatch[i].subArea[k].routeTo
+     */
+    std::vector<int>    subarea_routing;
+
+    /**
+     * @brief Fraction of runoff routed between subareas (0–1).
+     * @details The remainder (1 - pct_routed) goes to the outlet.
+     *          fOutlet = 1 - pct_routed for the routed subarea.
+     * @see Legacy: Subcatch[i].subArea[k].fOutlet = 1 - pctRouted
+     */
+    std::vector<double> pct_routed;
 
     // -----------------------------------------------------------------------
     // Infiltration parameters (per subcatchment)
@@ -304,6 +333,7 @@ struct SubcatchData {
 
         outlet_node.assign(un, -1);
         outlet_subcatch.assign(un, -1);
+        outlet_name.resize(un);
         gage.assign(un, -1);
         area.assign(un, 0.0);
         width.assign(un, 0.0);
@@ -315,6 +345,8 @@ struct SubcatchData {
         n_perv.assign(un, 0.1);
         ds_imperv.assign(un, 0.0);
         ds_perv.assign(un, 0.0);
+        subarea_routing.assign(un, 0);  // TO_OUTLET
+        pct_routed.assign(un, 0.0);
 
         infil_model.assign(un, 0);
         infil_p1.assign(un, 0.0);

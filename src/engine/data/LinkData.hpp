@@ -284,6 +284,13 @@ struct LinkData {
     /** @brief Rated capacity or parameter 2 (weir side slopes, orifice area, etc.). */
     std::vector<double>     param2;
 
+    /**
+     * @brief Orifice open/close rate (fraction per second).
+     * @details Controls how fast setting transitions between 0 and 1.
+     *          0 = instantaneous. @see Legacy: Orifice[k].orate
+     */
+    std::vector<double>     orate;
+
     // -----------------------------------------------------------------------
     // State variables — updated each timestep
     // -----------------------------------------------------------------------
@@ -365,6 +372,24 @@ struct LinkData {
      */
     std::vector<double>     stat_time_surcharged;
 
+    /**
+     * @brief Per-link flow classification step counts.
+     * @details Flat 2D: [link * N_FLOW_CLASSES + class], where N_FLOW_CLASSES = 7.
+     *          Indexed by FlowClass enum (DRY=0..DN_CRITICAL=6).
+     * @see Legacy: LinkStats[i].timeInFlowClass[]
+     */
+    static constexpr int N_FLOW_CLASSES = 7;
+    std::vector<long> stat_flow_class;
+
+    /**
+     * @brief Cumulative pollutant loads transported through each link.
+     * @details Flat 2D: [link * n_pollutants + p].
+     *          Resized by resize_loads() after pollutant count is known.
+     * @see Legacy: Link[i].totalLoad[p]
+     */
+    std::vector<double>     stat_total_load;
+    int                     stat_n_pollutants = 0;
+
     // -----------------------------------------------------------------------
     // Capacity management
     // -----------------------------------------------------------------------
@@ -415,6 +440,7 @@ struct LinkData {
         crest_height.assign(un, 0.0);
         cd.assign(un, 0.0);
         param2.assign(un, 0.0);
+        orate.assign(un, 0.0);
 
         flow.assign(un, 0.0);
         depth.assign(un, 0.0);
@@ -431,6 +457,19 @@ struct LinkData {
         stat_max_veloc.assign(un, 0.0);
         stat_max_filling.assign(un, 0.0);
         stat_time_surcharged.assign(un, 0.0);
+        stat_flow_class.assign(un * N_FLOW_CLASSES, 0L);
+    }
+
+    /**
+     * @brief Resize pollutant load arrays after pollutant count is known.
+     */
+    void resize_loads(int n_pollutants) {
+        stat_n_pollutants = n_pollutants;
+        if (n_pollutants > 0) {
+            auto total = static_cast<std::size_t>(count()) *
+                         static_cast<std::size_t>(n_pollutants);
+            stat_total_load.assign(total, 0.0);
+        }
     }
 
     void save_state() noexcept {

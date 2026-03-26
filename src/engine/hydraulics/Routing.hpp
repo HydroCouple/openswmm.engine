@@ -23,6 +23,7 @@
 #include "XSectBatch.hpp"
 #include "KinematicWave.hpp"
 #include "DynamicWave.hpp"
+#include "Divider.hpp"
 
 namespace openswmm {
 
@@ -93,6 +94,7 @@ private:
     XSectGroups groups_;
     kinwave::KWSolver kw_solver_;
     dynwave::DWSolver dw_solver_;
+    divider::DividerSoA dividers_;
 
     /// Save old hydraulic states before routing.
     void saveOldStates(SimulationContext& ctx);

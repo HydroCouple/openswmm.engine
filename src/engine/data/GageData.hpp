@@ -164,6 +164,21 @@ struct GageData {
     std::vector<bool>           is_raining;
 
     // -----------------------------------------------------------------------
+    // Past-rain history (for control rules — GAGE_RAIN_PAST)
+    // -----------------------------------------------------------------------
+
+    static constexpr int MAXPASTRAIN = 48; ///< Max past hours tracked per gage
+
+    /** @brief Flat 2D: [gage * MAXPASTRAIN + hour]. Hourly rain totals. */
+    std::vector<double>         past_rain;
+
+    /** @brief Per-gage accumulator for the current partial hour. */
+    std::vector<double>         past_rain_accum;
+
+    /** @brief Per-gage time (seconds) of last past-rain shift. */
+    std::vector<double>         past_rain_time;
+
+    // -----------------------------------------------------------------------
     // Capacity management
     // -----------------------------------------------------------------------
 
@@ -187,6 +202,10 @@ struct GageData {
         api_rainfall.assign(un, -1.0);  // -1.0 means no API override
         next_rain_date.assign(un, 0.0);
         is_raining.assign(un, false);
+
+        past_rain.assign(un * MAXPASTRAIN, 0.0);
+        past_rain_accum.assign(un, 0.0);
+        past_rain_time.assign(un, 0.0);
     }
 
     void reset_state() noexcept {
@@ -194,6 +213,9 @@ struct GageData {
         std::fill(next_rainfall.begin(), next_rainfall.end(), 0.0);
         std::fill(api_rainfall.begin(),  api_rainfall.end(),  -1.0); // -1 = no override
         std::fill(is_raining.begin(),    is_raining.end(),    false);
+        std::fill(past_rain.begin(),     past_rain.end(),     0.0);
+        std::fill(past_rain_accum.begin(), past_rain_accum.end(), 0.0);
+        std::fill(past_rain_time.begin(),  past_rain_time.end(),  0.0);
     }
 };
 

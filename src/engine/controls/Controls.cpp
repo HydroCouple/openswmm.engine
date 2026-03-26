@@ -10,6 +10,7 @@
 
 #include "Controls.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/DateTime.hpp"
 #include "../hydraulics/XSectBatch.hpp"
 #include "../hydraulics/Link.hpp"
 #include "../data/TableData.hpp"
@@ -325,7 +326,7 @@ bool ControlEngine::evaluatePremise(const SimulationContext& ctx,
                 return getNamedVariableValue(name, ctx, current_time);
             });
     } else {
-        lhs = getVariableValue(ctx, p.lhs_var, p.lhs_idx, current_time);
+        lhs = getVariableValue(ctx, p.lhs_var, p.lhs_idx, current_time, p.lhs_param);
     }
     if (lhs == MISSING) return false;
 
@@ -384,7 +385,7 @@ bool ControlEngine::compareTimes(double lhs, CompareOp op, double rhs,
 
 double ControlEngine::getVariableValue(const SimulationContext& ctx,
                                         ConditionVar var, int idx,
-                                        double current_time) const {
+                                        double current_time, int param) const {
     auto ui = static_cast<size_t>(idx);
 
     switch (var) {
@@ -448,27 +449,29 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
 
         case ConditionVar::GAGE_RAIN:
             return (idx >= 0 && idx < ctx.n_gages()) ? ctx.gages.rainfall[ui] : MISSING;
-        case ConditionVar::GAGE_RAIN_PAST:
-            // TODO: gage::getPastRain(gage_idx, n_hours)
-            return (idx >= 0 && idx < ctx.n_gages()) ? ctx.gages.rainfall[ui] : MISSING;
+        case ConditionVar::GAGE_RAIN_PAST: {
+            if (idx < 0 || idx >= ctx.n_gages()) return MISSING;
+            int hours = (param > 0 && param <= GageData::MAXPASTRAIN) ? param : 1;
+            double total = 0.0;
+            auto base = ui * static_cast<std::size_t>(GageData::MAXPASTRAIN);
+            for (int h = 0; h < hours; ++h)
+                total += ctx.gages.past_rain[base + static_cast<std::size_t>(h)];
+            return total;
+        }
 
         case ConditionVar::SIM_TIME:      return current_time;
         case ConditionVar::SIM_DATE:      return ctx.current_date;
         case ConditionVar::CLOCK_TIME: {
-            double frac = ctx.current_date - std::floor(ctx.current_date);
-            return frac * 24.0;
+            int ch, cm, cs;
+            datetime::decodeTime(ctx.current_date, ch, cm, cs);
+            return static_cast<double>(ch) + cm / 60.0 + cs / 3600.0;
         }
         case ConditionVar::SIM_DAY:
             return static_cast<double>((static_cast<int>(std::floor(ctx.current_date)) % 7) + 1);
-        case ConditionVar::SIM_MONTH: {
-            int doy = static_cast<int>(std::floor(ctx.current_date)) % 365;
-            static const int md[] = {0,31,59,90,120,151,181,212,243,273,304,334,365};
-            for (int m = 0; m < 12; ++m)
-                if (doy < md[m+1]) return static_cast<double>(m + 1);
-            return 12.0;
-        }
+        case ConditionVar::SIM_MONTH:
+            return static_cast<double>(datetime::monthOfYear(ctx.current_date));
         case ConditionVar::SIM_DAYOFYEAR:
-            return static_cast<double>((static_cast<int>(std::floor(ctx.current_date)) % 365) + 1);
+            return static_cast<double>(datetime::dayOfYear(ctx.current_date));
     }
     return MISSING;
 }
@@ -602,7 +605,9 @@ static int simAttribute(const std::string& attr) {
 /// Fills out cv (condition variable type) and obj_idx (object index).
 static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
                                  const SimulationContext& ctx,
-                                 ConditionVar& cv, int& obj_idx) {
+                                 ConditionVar& cv, int& obj_idx,
+                                 int& extra_param) {
+    extra_param = 0;
     if (k >= static_cast<int>(toks.size())) return false;
     std::string obj_type = to_upper(toks[static_cast<size_t>(k)]);
 
@@ -641,11 +646,7 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
             double nh = 0.0;
             if (!tryParseDouble(attr, nh) || nh < 1.0) return false;
             cv = ConditionVar::GAGE_RAIN_PAST;
-            // Store n-hours in obj_idx (overload: gage_idx encoded differently)
-            // Actually, for GAGE_RAIN_PAST we need both gage index and n-hours.
-            // We'll use obj_idx as gage index; the n-hours is stored in rhs field
-            // of a different mechanism. For simplicity, store gage idx; the
-            // attribute captures the hours via the GAGE_RAIN_PAST enum.
+            extra_param = static_cast<int>(nh);
         }
         k += 3;
         return true;
@@ -758,10 +759,12 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 // Parse LHS variable
                 ConditionVar lhs_cv;
                 int lhs_idx = -1;
-                if (!parsePremiseVariable(toks, k, ctx, lhs_cv, lhs_idx))
+                int lhs_param = 0;
+                if (!parsePremiseVariable(toks, k, ctx, lhs_cv, lhs_idx, lhs_param))
                     return -1;
                 prem.lhs_var = lhs_cv;
                 prem.lhs_idx = lhs_idx;
+                prem.lhs_param = lhs_param;
 
                 // Parse relational operator
                 if (k >= static_cast<int>(toks.size())) return -1;
@@ -777,7 +780,8 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 int saved_k = k;
                 ConditionVar rhs_cv;
                 int rhs_idx = -1;
-                if (parsePremiseVariable(toks, k, ctx, rhs_cv, rhs_idx)) {
+                int rhs_param = 0;
+                if (parsePremiseVariable(toks, k, ctx, rhs_cv, rhs_idx, rhs_param)) {
                     prem.rhs_is_variable = true;
                     prem.rhs_var = rhs_cv;
                     prem.rhs_idx = rhs_idx;

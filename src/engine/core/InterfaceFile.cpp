@@ -24,6 +24,8 @@
 
 #include "InterfaceFile.hpp"
 #include "SimulationContext.hpp"
+#include "DateTime.hpp"
+#include "UnitConversion.hpp"
 
 #include <cstring>
 #include <cstdlib>
@@ -127,9 +129,15 @@ int InterfaceManager::readFileHeader(SimulationContext& ctx) {
     if (!std::fgets(line, MAXLINE, infile_)) return -1;
     if (std::sscanf(line, "%s %s", s1, s2) < 2) return -1;
     if (std::strncmp(s1, "FLOW", 4) != 0) return -1;
-    // Store flow units index (for unit conversion)
-    // TODO: map s2 to FlowUnits enum for conversion factor
+    // Map flow unit string to FlowUnits enum index (matching legacy iface.c)
+    static const char* flow_words[] = {"CFS","GPM","MGD","CMS","LPS","MLD"};
     iface_flow_units_ = 0;
+    for (int fi = 0; fi < 6; ++fi) {
+        if (std::strncmp(s2, flow_words[fi], 3) == 0) {
+            iface_flow_units_ = fi;
+            break;
+        }
+    }
 
     // Initialize pollutant mapping: project pollutant -> interface file column
     int n_polluts = ctx.n_pollutants();
@@ -212,7 +220,10 @@ bool InterfaceManager::readNextPeriod() {
         if (!tok) return false;
         auto base = ui * static_cast<std::size_t>(n_values_per_node_);
         data_.new_values[base] = std::atof(tok);
-        // TODO: apply flow unit conversion factor (Qcf[IfaceFlowUnits])
+        // Convert interface flow from interface file units to CFS (internal)
+        // Legacy: newQual[0] /= Qcf[IfaceFlowUnits]  (iface.c readNewIfaceValues)
+        if (iface_flow_units_ >= 0 && iface_flow_units_ <= 5)
+            data_.new_values[base] /= ucf::Qcf[iface_flow_units_];
 
         // Parse pollutant values
         for (int j = 1; j <= n_iface_polluts_; ++j) {
@@ -220,18 +231,12 @@ bool InterfaceManager::readNextPeriod() {
             if (!tok) return false;
             data_.new_values[base + static_cast<std::size_t>(j)] = std::atof(tok);
         }
-    }
 
-    // Encode the date/time as decimal days (simple Julian approximation)
-    // In a full implementation, use datetime_encodeDate + datetime_encodeTime
-    // For now, store as a simple day count for interpolation
-    // (The actual date is parsed from the last node's line — all nodes share same date)
-    // Since we parsed yr/mon/day/hr/mn/sec from the last line read:
-    // A simplified encoding: days since epoch
-    // This matches the pattern used in the legacy code.
-    // TODO: use proper datetime encoding matching legacy datetime.c
-    // For now, use a simplified Julian day:
-    // new_time_ = JulianDate(yr, mon, day) + hr/24.0 + mn/1440.0 + sec/86400.0
+        // Encode the date/time as decimal days using DateTime.hpp
+        // All nodes share the same date — last iteration's value is used
+        new_time_ = datetime::encodeDate(yr, mon, day)
+                  + datetime::encodeTime(hr, mn, sec);
+    }
 
     return true;
 }
@@ -315,13 +320,11 @@ void InterfaceManager::writeOutfallResults(const SimulationContext& ctx,
                                             double current_time) {
     if (!outfile_) return;
 
-    // Encode current_time as date components
-    // (simplified — full implementation uses datetime_decodeDate/Time)
-    // For now, write the time as raw seconds since start
-    int yr = 2000, mon = 1, day = 1, hr = 0, mn = 0, sec = 0;
-
-    // TODO: decode current_time (decimal days) into yr/mon/day/hr/min/sec
-    // using proper datetime routines
+    // Decode current_time (Julian decimal days) into yr/mon/day/hr/min/sec
+    // using DateTime.hpp — matching legacy datetime_decodeDate/Time
+    int yr, mon, day, hr, mn, sec;
+    datetime::decodeDate(current_time, yr, mon, day);
+    datetime::decodeTime(current_time, hr, mn, sec);
 
     for (int i = 0; i < ctx.n_nodes(); ++i) {
         auto ui = static_cast<std::size_t>(i);
@@ -339,7 +342,13 @@ void InterfaceManager::writeOutfallResults(const SimulationContext& ctx,
         std::fprintf(outfile_, " %-10f", ctx.nodes.inflow[ui]);
 
         // Write pollutant concentrations
-        // TODO: write quality values when quality arrays are accessible
+        int np = ctx.n_pollutants();
+        for (int p = 0; p < np; ++p) {
+            auto qi = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+            double conc = (qi < ctx.pollutants.node_conc.size())
+                          ? ctx.pollutants.node_conc[qi] : 0.0;
+            std::fprintf(outfile_, " %-10f", conc);
+        }
     }
 }
 
@@ -361,12 +370,17 @@ void InterfaceManager::writeFileHeader(const SimulationContext& ctx) {
     int n_polluts = ctx.n_pollutants();
     std::fprintf(outfile_, "\n%-4d - number of constituents as listed below:",
                  n_polluts + 1);
-    std::fprintf(outfile_, "\nFLOW CFS");  // TODO: use actual flow units
+    static const char* flow_words[] = {"CFS","GPM","MGD","CMS","LPS","MLD"};
+    int fu = static_cast<int>(ctx.options.flow_units);
+    if (fu < 0 || fu > 5) fu = 0;
+    std::fprintf(outfile_, "\nFLOW %s", flow_words[fu]);
 
     // Write pollutant names
     for (int i = 0; i < n_polluts; ++i) {
         const std::string& pname = ctx.pollutant_names.names()[static_cast<std::size_t>(i)];
-        std::fprintf(outfile_, "\n%s MG/L", pname.c_str());  // TODO: actual units
+        // Pollutant concentration units (matching legacy: MG/L, UG/L, #/L)
+        // Default to MG/L; full implementation would read from PollutantData
+        std::fprintf(outfile_, "\n%s MG/L", pname.c_str());
     }
 
     // Count outlet nodes

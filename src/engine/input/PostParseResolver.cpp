@@ -47,6 +47,8 @@ void resolve_cross_references(SimulationContext& ctx) {
     if (n_polluts > 0) {
         ctx.pollutants.resize_pollutants(n_polluts);
         ctx.pollutants.resize_quality(n_nodes, n_links, n_subcatch);
+        ctx.nodes.resize_loads(n_polluts);
+        ctx.links.resize_loads(n_polluts);
     }
 
     // Spatial coordinate arrays
@@ -99,6 +101,41 @@ void resolve_cross_references(SimulationContext& ctx) {
     }
 
     // -------------------------------------------------------------------------
+    // Subcatchment outlet re-resolution
+    // -------------------------------------------------------------------------
+    // If SUBCATCHMENTS parsed before JUNCTIONS/OUTFALLS, outlet_node will be -1.
+    // Re-resolve using the stored outlet_name string.
+    for (int s = 0; s < n_subcatch; ++s) {
+        auto us = static_cast<std::size_t>(s);
+        if (us >= ctx.subcatches.outlet_name.size()) continue;
+        const auto& name = ctx.subcatches.outlet_name[us];
+        if (name.empty()) continue;
+
+        // Already resolved during parsing — validate it
+        if (ctx.subcatches.outlet_node[us] >= 0 &&
+            ctx.subcatches.outlet_node[us] < n_nodes) {
+            continue;
+        }
+        if (ctx.subcatches.outlet_subcatch[us] >= 0 &&
+            ctx.subcatches.outlet_subcatch[us] < n_subcatch) {
+            continue;
+        }
+
+        // Try node first, then subcatchment
+        int node_idx = ctx.node_names.find(name);
+        if (node_idx >= 0) {
+            ctx.subcatches.outlet_node[us] = node_idx;
+            ctx.subcatches.outlet_subcatch[us] = -1;
+        } else {
+            int sub_idx = ctx.subcatch_names.find(name);
+            if (sub_idx >= 0) {
+                ctx.subcatches.outlet_subcatch[us] = sub_idx;
+                ctx.subcatches.outlet_node[us] = -1;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Subcatchment gage re-resolution
     // -------------------------------------------------------------------------
     // If SUBCATCHMENTS parsed before RAINGAGES, gage indices may be -1.
@@ -109,6 +146,18 @@ void resolve_cross_references(SimulationContext& ctx) {
         int gi = ctx.subcatches.gage[us];
         if (gi < 0 || gi >= n_gages) {
             ctx.subcatches.gage[us] = -1;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Storage curve name resolution
+    // -------------------------------------------------------------------------
+    for (int i = 0; i < n_nodes; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (ctx.nodes.type[ui] == NodeType::STORAGE &&
+            ctx.nodes.storage_curve[ui] < 0 &&
+            !ctx.nodes.storage_curve_name[ui].empty()) {
+            ctx.nodes.storage_curve[ui] = ctx.table_names.find(ctx.nodes.storage_curve_name[ui]);
         }
     }
 
@@ -174,6 +223,26 @@ void resolve_cross_references(SimulationContext& ctx) {
             ctx.subcatches.coverage.resize(total, 0.0);
         }
         ctx.subcatches.coverage_n_landuses = n_landuses;
+    }
+
+    // -------------------------------------------------------------------------
+    // Divider link and curve re-resolution
+    // -------------------------------------------------------------------------
+    for (int i = 0; i < n_nodes; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (ctx.nodes.type[ui] != NodeType::DIVIDER) continue;
+
+        // Re-resolve diversion link name → index
+        if (ctx.nodes.divider_link[ui] < 0 &&
+            !ctx.nodes.divider_link_name[ui].empty()) {
+            ctx.nodes.divider_link[ui] = ctx.link_names.find(ctx.nodes.divider_link_name[ui]);
+        }
+
+        // Re-resolve diversion curve name → index (TABULAR dividers)
+        if (ctx.nodes.divider_curve[ui] < 0 &&
+            !ctx.nodes.divider_curve_name[ui].empty()) {
+            ctx.nodes.divider_curve[ui] = ctx.table_names.find(ctx.nodes.divider_curve_name[ui]);
+        }
     }
 
     // -------------------------------------------------------------------------

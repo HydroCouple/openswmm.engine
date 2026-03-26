@@ -66,19 +66,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Modern feature options with namespacing
-option(OPENSWMM_BUILD_TESTS    "Build Google Test unit + regression tests" OFF)
+option(OPENSWMM_BUILD_TESTS    "Build Google Test unit + regression tests" ON)
 option(OPENSWMM_BUILD_BENCHMARKS "Build Google Benchmark performance tests" OFF)
 option(OPENSWMM_INSTALL        "Install openswmm libraries" ON)
-option(OPENSWMM_BUILD_PYTHON   "Build Python bindings" OFF)
+option(OPENSWMM_BUILD_PYTHON   "Build Python bindings" ON)
 
-# Backwards compatibility aliases
-option(OPENSWMMCORE_BUILD_TESTS "Build tests (deprecated: use OPENSWMM_BUILD_TESTS)" OFF)
-option(OPENSWMMCORE_INSTALL     "Install OpenSWMMCore (deprecated)" ON)
-
-# Merge legacy options into new names
-if(OPENSWMMCORE_BUILD_TESTS)
-    set(OPENSWMM_BUILD_TESTS ON)
-endif()
 
 # Include essential modules
 include(CMakePackageConfigHelpers)

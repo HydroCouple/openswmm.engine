@@ -84,6 +84,7 @@ static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
     };
     grow(ctx.subcatches.outlet_node,          -1);
     grow(ctx.subcatches.outlet_subcatch,      -1);
+    grow(ctx.subcatches.outlet_name,          std::string{});
     grow(ctx.subcatches.gage,                 -1);
     grow(ctx.subcatches.area,                 0.0);
     grow(ctx.subcatches.width,                0.0);
@@ -95,6 +96,8 @@ static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.subcatches.n_perv,               0.1);
     grow(ctx.subcatches.ds_imperv,            0.0);
     grow(ctx.subcatches.ds_perv,              0.0);
+    grow(ctx.subcatches.subarea_routing,       0);    // 0 = TO_OUTLET
+    grow(ctx.subcatches.pct_routed,            0.0);
     grow(ctx.subcatches.infil_model,           0);
     grow(ctx.subcatches.infil_p1,              0.0);
     grow(ctx.subcatches.infil_p2,              0.0);
@@ -154,6 +157,8 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
         ctx.subcatches.gage[idx] = ctx.gage_names.find(tok[1]);
 
         // Outlet: could be a node or another subcatchment
+        // Store name for deferred resolution in PostParseResolver
+        ctx.subcatches.outlet_name[idx] = tok[2];
         int node_idx = ctx.node_names.find(tok[2]);
         if (node_idx >= 0) {
             ctx.subcatches.outlet_node[idx] = node_idx;
@@ -193,6 +198,24 @@ void handle_subareas(SimulationContext& ctx, const std::vector<std::string>& lin
 
         // PctZero → fraction of impervious with no depression storage
         ctx.subcatches.frac_imperv_no_store[idx] = to_double(tok[5]) / 100.0;
+
+        // RouteTo: OUTLET (0), IMPERV (1), or PERV (2)
+        if (tok.size() > 6) {
+            std::string rt = Tokenizer::to_upper(tok[6]);
+            if (rt == "IMPERV")       ctx.subcatches.subarea_routing[idx] = 1;
+            else if (rt == "PERV")    ctx.subcatches.subarea_routing[idx] = 2;
+            else                      ctx.subcatches.subarea_routing[idx] = 0; // OUTLET
+        }
+
+        // PctRouted (default 100%)
+        if (tok.size() > 7) {
+            ctx.subcatches.pct_routed[idx] = to_double(tok[7]) / 100.0;
+        } else if (tok.size() > 6) {
+            // If RouteTo specified but no PctRouted, default to 100%
+            std::string rt = Tokenizer::to_upper(tok[6]);
+            if (rt == "IMPERV" || rt == "PERV")
+                ctx.subcatches.pct_routed[idx] = 1.0;
+        }
     }
 }
 

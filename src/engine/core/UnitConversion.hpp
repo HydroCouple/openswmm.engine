@@ -80,6 +80,14 @@ static constexpr double Qcf[6] = {
 };
 
 // ============================================================================
+// Convenience constants — common fixed conversions not unit-system dependent
+// ============================================================================
+
+static constexpr double ACRES_TO_FT2 = 43560.0;     ///< 1 acre = 43560 ft²
+static constexpr double FT3_TO_MGAL  = 7.48052e-6;  ///< ft³ → million gallons
+static constexpr double SEC_PER_DAY  = 86400.0;     ///< seconds per day
+
+// ============================================================================
 // UCF function — matching legacy UCF()
 // ============================================================================
 

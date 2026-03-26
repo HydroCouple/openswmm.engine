@@ -38,6 +38,7 @@
 
 #include "../Tokenizer.hpp"
 #include "../../core/SimulationContext.hpp"
+#include "../../core/DateTime.hpp"
 #include "../../data/TableData.hpp"
 
 #include <charconv>
@@ -59,7 +60,7 @@ static double to_double(std::string_view sv, double def = 0.0) noexcept {
 // Parse a SWMM date+time pair → decimal days (Julian date, SWMM epoch)
 // date: MM/DD/YYYY  time: HH:MM or H:MM:SS
 static double parse_datetime(std::string_view date_sv, std::string_view time_sv) noexcept {
-    // Reuse the same algorithm from OptionsHandler inline
+    // Parse date MM/DD/YYYY
     unsigned m = 1, d = 1, y = 2000;
     const char* p   = date_sv.data();
     const char* end = date_sv.data() + date_sv.size();
@@ -71,17 +72,11 @@ static double parse_datetime(std::string_view date_sv, std::string_view time_sv)
     if (ru(m) && p < end && *p == '/' && (++p) && ru(d) &&
         p < end && *p == '/' && (++p) && ru(y)) {}
 
-    // Julian date (SWMM epoch: days since 31 Dec 1899)
-    int im = static_cast<int>(m), id = static_cast<int>(d), iy = static_cast<int>(y);
-    if (im < 3) { im += 12; --iy; }
-    int a = iy / 100;
-    int b = 2 - a + a / 4;
-    long jdn = static_cast<long>(365.25 * (iy + 4716))
-             + static_cast<long>(30.6001 * (im + 1))
-             + id + b - 1524;
-    double julian = static_cast<double>(jdn - 2415018L);
+    double julian = datetime::encodeDate(static_cast<int>(y),
+                                         static_cast<int>(m),
+                                         static_cast<int>(d));
 
-    // Add time as fractional days
+    // Parse time HH:MM[:SS] and add as fractional days
     unsigned th = 0, tm2 = 0;
     double ts = 0.0;
     const char* tp   = time_sv.data();
@@ -100,7 +95,9 @@ static double parse_datetime(std::string_view date_sv, std::string_view time_sv)
         if (tp < tend && *tp == ':') { ++tp; rut(tm2); }
         if (tp < tend && *tp == ':') { ++tp; rdt(ts);  }
     }
-    julian += (th * 3600.0 + tm2 * 60.0 + ts) / 86400.0;
+    julian += datetime::encodeTime(static_cast<int>(th),
+                                   static_cast<int>(tm2),
+                                   static_cast<int>(ts));
     return julian;
 }
 
@@ -182,7 +179,11 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
             rut(th);
             if (tp < tend && *tp == ':') { ++tp; rut(tm); }
             if (tp < tend && *tp == ':') { ++tp; rdt(ts); }
-            time_frac = (th * 3600.0 + tm * 60.0 + ts) / 86400.0;
+            // Use integer arithmetic matching legacy datetime_encodeTime()
+            // to produce identical floating-point time fractions
+            time_frac = datetime::encodeTime(static_cast<int>(th),
+                                             static_cast<int>(tm),
+                                             static_cast<int>(ts));
 
             // If the time wraps back to 0 (midnight) and we already have
             // data, increment the day

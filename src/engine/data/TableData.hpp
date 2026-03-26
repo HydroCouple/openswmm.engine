@@ -181,6 +181,58 @@ inline double table_lookup_cursor(Table& tbl, double x_query) noexcept {
     return tbl.y[idx] + t * (tbl.y[idx + 1] - tbl.y[idx]);
 }
 
+/**
+ * @brief Piecewise-constant (step function) table lookup with cursor.
+ *
+ * @details Returns y[idx] where x[idx] <= x_query < x[idx+1].
+ *          No interpolation — the value is held constant until the next
+ *          table entry. This is the correct behavior for rain time series
+ *          where each entry represents the value for the following interval.
+ *
+ * @param tbl      Table to look up (cursor is modified in-place).
+ * @param x_query  The independent variable value to look up.
+ * @returns        Step-function y value (no interpolation).
+ *
+ * @see Legacy reference: gage.c — gage_setState() uses step-function logic
+ */
+inline double table_step_cursor(Table& tbl, double x_query) noexcept {
+    const int n = static_cast<int>(tbl.x.size());
+    if (n == 0) return 0.0;
+    if (n == 1) return tbl.y[0];
+
+    // Before first entry → 0 (no rain before first recorded value)
+    if (x_query < tbl.x[0]) {
+        tbl.cursor.index     = 0;
+        tbl.cursor.direction = +1;
+        return 0.0;
+    }
+
+    // At or past last entry → return last value.
+    // The caller (Gage.cpp) handles the rain interval cutoff and returns 0
+    // after entry_time + rainInterval. This allows the last entry's value to
+    // be used for its full recording interval before going to zero.
+    if (x_query >= tbl.x[n - 1]) {
+        tbl.cursor.index     = n - 1;
+        tbl.cursor.direction = -1;
+        return tbl.y[n - 1];
+    }
+
+    // Seek to the interval containing x_query: x[idx] <= x_query < x[idx+1]
+    int idx = std::clamp(tbl.cursor.index, 0, n - 2);
+
+    while (idx < n - 1 && tbl.x[idx + 1] <= x_query) {
+        ++idx;
+        tbl.cursor.direction = +1;
+    }
+    while (idx > 0 && tbl.x[idx] > x_query) {
+        --idx;
+        tbl.cursor.direction = -1;
+    }
+
+    tbl.cursor.index = idx;
+    return tbl.y[idx];
+}
+
 // ============================================================================
 // TableData — SoA collection of all tables
 // ============================================================================

@@ -10,6 +10,7 @@
 
 #include "Inflow.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/DateTime.hpp"
 #include "../data/TableData.hpp"
 #include <cmath>
 #include <algorithm>
@@ -157,32 +158,26 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
 
     // ---- Extract date components from decimal days ----
     // Legacy uses datetime_monthOfYear, datetime_dayOfWeek, datetime_hourOfDay.
-    // We replicate those calculations from the absolute date (Julian days).
+    // We use the centralized DateTime.hpp functions.
     //
     // For the legacy SWMM calendar:
     //   month = monthOfYear(aDate) - 1      (0-based, 0=Jan)
     //   day   = dayOfWeek(aDate) - 1         (0-based, 0=Sun)
     //   hour  = hourOfDay(aDate)             (0-based, 0-23)
 
-    int total_days = static_cast<int>(std::floor(current_date));
-    double frac = current_date - total_days;
-    int hour = static_cast<int>(frac * 24.0);
-    if (hour > 23) hour = 23;
+    int h_tmp, m_tmp, s_tmp;
+    datetime::decodeTime(current_date, h_tmp, m_tmp, s_tmp);
+    int hour = h_tmp;
 
     // Day of week: Julian day 0 is Monday.  Legacy dayOfWeek returns 1=Sun..7=Sat,
     // then subtracts 1 giving 0=Sun..6=Sat.
     // Julian day number % 7 gives: 0=Mon, 1=Tue, ... , 6=Sun
     // We need 0=Sun, so: (julianDay % 7 + 1) % 7 maps Mon(0)->1, Sun(6)->0.
+    int total_days = static_cast<int>(std::floor(current_date));
     int day = (total_days % 7 + 1) % 7;
 
-    // Month of year (approximate from day-of-year).
-    // Legacy datetime_monthOfYear returns 1-12; we need 0-11.
-    int doy = total_days % 365;
-    static const int month_start[] = {0,31,59,90,120,151,181,212,243,273,304,334,365};
-    int month = 0;
-    for (int m = 0; m < 12; ++m) {
-        if (doy < month_start[m + 1]) { month = m; break; }
-    }
+    // Month of year using DateTime API (1-based), convert to 0-based.
+    int month = datetime::monthOfYear(current_date) - 1;
 
     // ---- Batch external inflows (gather + multiply + scatter-add) ----
     for (int i = 0; i < ext_inflows_.count; ++i) {

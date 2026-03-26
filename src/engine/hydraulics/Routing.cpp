@@ -70,6 +70,28 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
         case RouteModel::STEADY:
             break;
     }
+
+    // Build divider SoA from node data
+    {
+        int nd = 0;
+        for (int i = 0; i < n_nodes; ++i)
+            if (ctx.nodes.type[static_cast<std::size_t>(i)] == NodeType::DIVIDER) ++nd;
+        dividers_.resize(nd);
+        int d = 0;
+        for (int i = 0; i < n_nodes && d < nd; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (ctx.nodes.type[ui] != NodeType::DIVIDER) continue;
+            auto ud = static_cast<std::size_t>(d);
+            dividers_.node_idx[ud]      = i;
+            dividers_.method[ud]        = static_cast<int>(ctx.nodes.divider_type[ui]);
+            dividers_.cutoff_flow[ud]   = ctx.nodes.divider_cutoff[ui];
+            dividers_.weir_cd[ud]       = ctx.nodes.divider_cd[ui];
+            dividers_.weir_max_depth[ud]= ctx.nodes.divider_max_depth[ui];
+            dividers_.table_idx[ud]     = ctx.nodes.divider_curve[ui];
+            dividers_.div_link_idx[ud]  = ctx.nodes.divider_link[ui];
+            ++d;
+        }
+    }
 }
 
 // ============================================================================
@@ -117,7 +139,7 @@ int Router::step(SimulationContext& ctx, double dt) {
                     if (v_new < 0.0) v_new = 0.0;
 
                     // Overflow check
-                    double full_vol = node::getVolume(ctx.nodes, j, ctx.nodes.full_depth[uj]);
+                    double full_vol = node::getVolume(ctx.nodes, j, ctx.nodes.full_depth[uj], &ctx.tables);
                     if (v_new > full_vol) {
                         ctx.nodes.overflow[uj] = (v_new - full_vol) / dt;
                         v_new = full_vol;
@@ -154,7 +176,7 @@ int Router::step(SimulationContext& ctx, double dt) {
     }
 
     // 5. Compute divider flows (P8-G02)
-    // divider::computeDividerFlows(ctx, dividers_);  // TODO: add dividers_ member
+    divider::computeDividerFlows(ctx, dividers_);
 
     // 6. Update link final states (depth, volume)
     updateLinkStates(ctx);

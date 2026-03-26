@@ -55,6 +55,7 @@
 #include "../hydraulics/Exfiltration.hpp"
 #include "../hydraulics/Inlet.hpp"
 #include "../hydraulics/Culvert.hpp"
+#include "../hydraulics/HydStructures.hpp"
 #include "InterfaceFile.hpp"
 
 #include <functional>
@@ -229,6 +230,7 @@ private:
     rdii::RDIISolver             rdii_;         ///< RDII (unit hydrograph convolution)
     exfil::ExfilSolver           exfil_;        ///< Storage node exfiltration
     inlet::InletSolver           inlet_;        ///< Street inlet capture
+    hydstruct::StructureSolver  hydstruct_;    ///< Pumps, orifices, weirs, outlets
     iface::InterfaceManager      iface_;        ///< Routing interface file I/O
     std::vector<gage::GageState> gage_states_;  ///< Per-gage state (SoA)
 
@@ -238,11 +240,122 @@ private:
     EngineCallbacks callbacks_;   ///< Registered callback bundle
     int save_results_ = 0;        ///< Whether to save binary results
 
-    /// Initialize all computational modules after model is loaded.
+    // -----------------------------------------------------------------------
+    // Initialization sub-functions (called by init_modules)
+    // -----------------------------------------------------------------------
+
+    /** @brief Initialize all computational modules after model is loaded. */
     void init_modules() noexcept;
 
+    /** @brief Initialize hydrology solvers: runoff, snow, groundwater, LID. */
+    void initHydrology() noexcept;
+
+    /** @brief Initialize hydraulic routing: router, exfiltration, inlets, culverts. */
+    void initHydraulics() noexcept;
+
+    /** @brief Initialize water quality: landuse solver, surface quality, mass balance. */
+    void initQuality() noexcept;
+
+    /** @brief Initialize node/link geometry: crown elevations, full volumes. */
+    void initGeometry() noexcept;
+
+    /** @brief Initialize mass balance: record initial storage volumes. */
+    void initMassBalance() noexcept;
+
     // -----------------------------------------------------------------------
-    // Internal helpers
+    // Step sub-functions (called by step)
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Execute Phase A: runoff sub-stepping.
+     *
+     * @details Runs multiple runoff substeps per routing step using variable
+     *          timestep control (matching legacy runoff_getTimeStep).
+     *          Updates rain gages, climate, snowmelt, runoff, infiltration,
+     *          groundwater, LIDs, quality buildup/washoff.
+     *
+     * @param dt_routing  Routing timestep (seconds).
+     */
+    void stepRunoff(double dt_routing) noexcept;
+
+    /**
+     * @brief Compute variable runoff timestep matching legacy runoff_getTimeStep().
+     *
+     * @details Selects wet_step or dry_step based on current conditions, then
+     *          shortens to align with next rain gage boundary.
+     *
+     * @param abs_time     Current absolute Julian date.
+     * @param is_raining   True if any gage has rainfall > 0.
+     * @param has_runoff   True if any subcatchment produces runoff > 0.
+     * @param has_snow     True if any subcatchment has snow depth > 0.
+     * @returns Runoff timestep in seconds.
+     */
+    double computeRunoffTimestep(double abs_time, bool is_raining,
+                                 bool has_runoff, bool has_snow) noexcept;
+
+    /**
+     * @brief Accumulate runoff mass balance totals for one substep.
+     *
+     * @param dt_runoff  Runoff substep duration (seconds).
+     */
+    void accumulateRunoffMassBalance(double dt_runoff) noexcept;
+
+    /**
+     * @brief Compute surface quality buildup and washoff for one substep.
+     *
+     * @param dt_runoff  Runoff substep duration (seconds).
+     */
+    void stepSurfaceQuality(double dt_runoff) noexcept;
+
+    /**
+     * @brief Execute groundwater computation for one substep.
+     *
+     * @param dt_runoff  Runoff substep duration (seconds).
+     */
+    void stepGroundwater(double dt_runoff) noexcept;
+
+    /**
+     * @brief Execute Phase B: hydraulic and quality routing.
+     *
+     * @details Evaluates controls, computes inflows (external, DWF, RDII),
+     *          runs hydraulic routing, inlet capture, culvert control,
+     *          exfiltration, and quality transport.
+     *
+     * @param dt_routing  Routing timestep (seconds).
+     */
+    void stepRouting(double dt_routing) noexcept;
+
+    /**
+     * @brief Update node and link statistics after routing.
+     *
+     * @param dt_routing  Routing timestep (seconds).
+     */
+    void updateStatistics(double dt_routing) noexcept;
+
+    /**
+     * @brief Update routing mass balance totals after routing.
+     *
+     * @param dt_routing  Routing timestep (seconds).
+     */
+    void updateRoutingMassBalance(double dt_routing) noexcept;
+
+    /**
+     * @brief Compute final storage volumes for runoff and routing mass balance.
+     */
+    void computeFinalStorage() noexcept;
+
+    /**
+     * @brief Compute final quality buildup mass for quality mass balance.
+     */
+    void computeFinalQualityMassBalance() noexcept;
+
+    /**
+     * @brief Post a snapshot to the IO thread if output is due.
+     */
+    void postOutputSnapshot() noexcept;
+
+    // -----------------------------------------------------------------------
+    // General helpers
     // -----------------------------------------------------------------------
 
     /** @brief Register all built-in SWMM section handlers. */

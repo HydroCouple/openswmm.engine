@@ -230,7 +230,7 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
         xnode_[ui].sumdqdh = 0.0;
 
         // Surface area at current depth
-        xnode_[ui].new_surf_area = node::getSurfArea(nodes, i, nodes.depth[ui]);
+        xnode_[ui].new_surf_area = node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables);
 
         // Reset node flows (matching legacy initNodeStates)
         nodes.inflow[ui] = 0.0;
@@ -759,7 +759,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         }
         if (nodes.overflow[ui] < FUDGE) nodes.overflow[ui] = 0.0;
     } else {
-        nodes.volume[ui] = node::getVolume(nodes, node_idx, y_new);
+        nodes.volume[ui] = node::getVolume(nodes, node_idx, y_new, &ctx.tables);
     }
 
     // --- Compute change in depth w.r.t. time (for CFL) ---

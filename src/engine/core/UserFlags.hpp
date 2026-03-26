@@ -264,11 +264,11 @@ public:
                                 const std::string& flag_name) {
         std::string key;
         key.reserve(object_type.size() + 1 + object_name.size() + 1 + flag_name.size());
-        for (const char c : object_type) key += static_cast<char>(toupper((unsigned char)c));
+        key += object_type;
         key += ':';
         key += object_name;
         key += ':';
-        for (const char c : flag_name) key += static_cast<char>(toupper((unsigned char)c));
+        key += flag_name;
         return key;
     }
 

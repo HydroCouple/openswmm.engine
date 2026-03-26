@@ -510,6 +510,29 @@ struct SimulationContext {
     } mass_balance;
 
     // =========================================================================
+    // Routing time-step statistics
+    // =========================================================================
+
+    struct RoutingStepStats {
+        double min_step  = 1.0e30; ///< Minimum routing time step used (sec)
+        double max_step  = 0.0;    ///< Maximum routing time step used (sec)
+        double sum_step  = 0.0;    ///< Sum of all routing time steps (sec)
+        long   n_steps   = 0;      ///< Total number of routing steps
+        double steady_pct = 0.0;   ///< Percent of time in steady state
+        double avg_iterations = 0.0; ///< Average iterations per step (DW only)
+
+        void update(double dt) {
+            if (dt < min_step) min_step = dt;
+            if (dt > max_step) max_step = dt;
+            sum_step += dt;
+            ++n_steps;
+        }
+        double avg_step() const {
+            return (n_steps > 0) ? sum_step / static_cast<double>(n_steps) : 0.0;
+        }
+    } routing_stats;
+
+    // =========================================================================
     // Input file path (for model write / hot start)
     // =========================================================================
 

@@ -152,6 +152,9 @@ struct NodeData {
      */
     std::vector<int>        storage_curve;
 
+    /** @brief Curve name for deferred resolution (populated during parsing). */
+    std::vector<std::string> storage_curve_name;
+
     /** @brief Functional storage area parameter A (area = A * depth^B + C). */
     std::vector<double>     storage_a;
     /** @brief Functional storage area parameter B. */
@@ -168,6 +171,34 @@ struct NodeData {
     std::vector<double>     exfil_ksat;
     /** @brief Green-Ampt initial moisture deficit for exfiltration (0-1). */
     std::vector<double>     exfil_imd;
+
+    // -----------------------------------------------------------------------
+    // Divider-specific properties (valid when type[i] == DIVIDER)
+    // -----------------------------------------------------------------------
+
+    /** @brief Divider method (DividerType enum value). */
+    std::vector<DividerType> divider_type;
+
+    /** @brief Cutoff flow for CUTOFF dividers. */
+    std::vector<double>     divider_cutoff;
+
+    /** @brief Weir discharge coefficient for WEIR dividers. */
+    std::vector<double>     divider_cd;
+
+    /** @brief Weir max depth for WEIR dividers. */
+    std::vector<double>     divider_max_depth;
+
+    /** @brief Diversion curve index for TABULAR dividers (-1 = none). */
+    std::vector<int>        divider_curve;
+
+    /** @brief Diversion link index (-1 = not set). */
+    std::vector<int>        divider_link;
+
+    /** @brief Diversion link name (for deferred resolution). */
+    std::vector<std::string> divider_link_name;
+
+    /** @brief Diversion curve name (for deferred resolution, TABULAR only). */
+    std::vector<std::string> divider_curve_name;
 
     // -----------------------------------------------------------------------
     // State variables — updated each timestep
@@ -286,6 +317,33 @@ struct NodeData {
      */
     std::vector<double>     stat_max_overflow;
 
+    /**
+     * @brief Outfall cumulative average flow (flow units × reporting periods).
+     * @see Legacy: OutfallStats[k].avgFlow
+     */
+    std::vector<double>     stat_outfall_avg_flow;
+
+    /**
+     * @brief Outfall maximum flow (project flow units).
+     * @see Legacy: OutfallStats[k].maxFlow
+     */
+    std::vector<double>     stat_outfall_max_flow;
+
+    /**
+     * @brief Outfall number of non-zero flow periods.
+     * @see Legacy: OutfallStats[k].totalPeriods
+     */
+    std::vector<long>       stat_outfall_periods;
+
+    /**
+     * @brief Cumulative pollutant loads at each node.
+     * @details Flat 2D: [node * n_pollutants + p].  Only meaningful for outfall
+     *          nodes.  Resized by resize_loads() after pollutant count is known.
+     * @see Legacy: OutfallStats[k].totalLoad[p]
+     */
+    std::vector<double>     stat_total_load;
+    int                     stat_n_pollutants = 0;
+
     // -----------------------------------------------------------------------
     // Capacity management
     // -----------------------------------------------------------------------
@@ -314,6 +372,7 @@ struct NodeData {
         outfall_has_flap_gate.assign(un, false);
 
         storage_curve.assign(un, -1);
+        storage_curve_name.resize(un);
         storage_a.assign(un, 0.0);
         storage_b.assign(un, 0.0);
         storage_c.assign(un, 0.0);
@@ -321,6 +380,15 @@ struct NodeData {
         exfil_suction.assign(un, 0.0);
         exfil_ksat.assign(un, 0.0);
         exfil_imd.assign(un, 0.0);
+
+        divider_type.assign(un, DividerType::CUTOFF);
+        divider_cutoff.assign(un, 0.0);
+        divider_cd.assign(un, 0.0);
+        divider_max_depth.assign(un, 0.0);
+        divider_curve.assign(un, -1);
+        divider_link.assign(un, -1);
+        divider_link_name.resize(un);
+        divider_curve_name.resize(un);
 
         depth.assign(un, 0.0);
         head.assign(un, 0.0);
@@ -342,6 +410,21 @@ struct NodeData {
         stat_time_flooded.assign(un, 0.0);
         stat_max_depth.assign(un, 0.0);
         stat_max_overflow.assign(un, 0.0);
+        stat_outfall_avg_flow.assign(un, 0.0);
+        stat_outfall_max_flow.assign(un, 0.0);
+        stat_outfall_periods.assign(un, 0);
+    }
+
+    /**
+     * @brief Resize pollutant load arrays after pollutant count is known.
+     */
+    void resize_loads(int n_pollutants) {
+        stat_n_pollutants = n_pollutants;
+        if (n_pollutants > 0) {
+            auto total = static_cast<std::size_t>(count()) *
+                         static_cast<std::size_t>(n_pollutants);
+            stat_total_load.assign(total, 0.0);
+        }
     }
 
     /**

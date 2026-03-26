@@ -99,6 +99,7 @@ struct Premise {
 
     ConditionVar lhs_var       = ConditionVar::NODE_DEPTH;
     int          lhs_idx       = -1;         ///< Object index (node/link/gage)
+    int          lhs_param     = 0;          ///< Extra parameter (e.g. n-hours for GAGE_RAIN_PAST)
 
     CompareOp    op            = CompareOp::EQ;
 
@@ -272,7 +273,7 @@ private:
 
     double getVariableValue(const SimulationContext& ctx,
                             ConditionVar var, int idx,
-                            double current_time) const;
+                            double current_time, int param = 0) const;
 
     bool evaluatePremise(const SimulationContext& ctx,
                          const Premise& p, double current_time, double half_step);

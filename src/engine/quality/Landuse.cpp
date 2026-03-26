@@ -9,13 +9,12 @@
  */
 
 #include "Landuse.hpp"
+#include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
 
 namespace openswmm {
 namespace landuse {
-
-static constexpr double SEC_PER_DAY = 86400.0;
 
 void SurfaceQualitySoA::resize(int n_sc, int n_poll) {
     n_subcatch = n_sc;
@@ -78,7 +77,7 @@ void LanduseSolver::computeBuildup(SurfaceQualitySoA& sq,
                                     const double* /*area*/,
                                     const double* /*curb_length*/,
                                     double dt, int n_subcatch) {
-    double dt_days = dt / SEC_PER_DAY;
+    double dt_days = dt / ucf::SEC_PER_DAY;
 
     // Batch: for each (subcatch, pollutant) — vectorisable inner loop
     for (int p = 0; p < n_pollutants_; ++p) {

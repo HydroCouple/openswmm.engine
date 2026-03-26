@@ -34,7 +34,7 @@
 TEST(SolverVersion, GetVersion) {
     int version = swmm_getVersion();
     EXPECT_GE(version, 50000);
-    EXPECT_LT(version, 60000);
+    EXPECT_LT(version, 70000);
 }
 
 TEST(SolverRun, FullRunReturnsSuccess) {

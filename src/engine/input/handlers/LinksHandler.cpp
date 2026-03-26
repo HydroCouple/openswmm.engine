@@ -271,6 +271,8 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
         const int idx = ctx.link_names.find(tok[0]);
         if (idx < 0) continue;  // Unknown link — xsection appears before conduit?
 
+        ensure_link_capacity(ctx, idx);
+
         const std::string shape_str = Tokenizer::to_upper(tok[1]);
         auto it = SHAPE_MAP.find(shape_str);
         if (it != SHAPE_MAP.end()) {

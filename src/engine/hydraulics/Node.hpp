@@ -17,6 +17,7 @@
 #define OPENSWMM_NODE_HPP
 
 #include "../data/NodeData.hpp"
+#include "../data/TableData.hpp"
 
 namespace openswmm {
 
@@ -39,7 +40,8 @@ namespace node {
  * @param depth  Water depth (ft).
  * @returns Volume (ft3).
  */
-double getVolume(const NodeData& nodes, int idx, double depth);
+double getVolume(const NodeData& nodes, int idx, double depth,
+                 TableData* tables = nullptr);
 
 /**
  * @brief Compute surface area at a given depth for a single node.
@@ -52,7 +54,8 @@ double getVolume(const NodeData& nodes, int idx, double depth);
  * @param depth  Water depth (ft).
  * @returns Surface area (ft2).
  */
-double getSurfArea(const NodeData& nodes, int idx, double depth);
+double getSurfArea(const NodeData& nodes, int idx, double depth,
+                   TableData* tables = nullptr);
 
 /**
  * @brief Get the ponded area (for overflow above rim).

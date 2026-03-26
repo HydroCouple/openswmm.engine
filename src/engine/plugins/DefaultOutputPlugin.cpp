@@ -137,7 +137,7 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     n_subcatch_ = ctx.n_subcatches();
     n_nodes_ = ctx.n_nodes();
     n_links_ = ctx.n_links();
-    n_polluts_ = 0;  // TODO: from ctx when quality is wired
+    n_polluts_ = ctx.n_pollutants();  // Pollutant count from context
 
     n_subcatch_vars_ = 8 + n_polluts_;  // rainfall..soilmoist + pollutants
     n_node_vars_ = 6 + n_polluts_;      // depth..overflow + pollutants

@@ -21,18 +21,24 @@ namespace node {
 // Per-element: getVolume
 // ============================================================================
 
-double getVolume(const NodeData& nodes, int idx, double depth) {
+double getVolume(const NodeData& nodes, int idx, double depth,
+                 TableData* tables) {
     if (depth <= 0.0) return 0.0;
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
-        double fd = nodes.full_depth[ui];
         // Functional storage: V = a0*d + a1/(a2+1) * d^(a2+1)
         // where a0 = storage_c (baseline area), a1 = storage_a, a2 = storage_b
         if (nodes.storage_curve[ui] >= 0) {
-            // Tabulated: TODO — requires TableData lookup
-            // For now use linear approximation
-            if (fd > 0.0) return nodes.storage_a[ui] * depth;
+            // Tabulated: integrate area curve to get volume
+            // Legacy: table_getArea(&Node[j].storeCurve, depth) returns surface area
+            //         Volume = integral of area from 0 to depth
+            // Use trapezoidal rule: V ≈ area(depth) * depth (same as legacy approximation)
+            auto ci = static_cast<std::size_t>(nodes.storage_curve[ui]);
+            if (tables && ci < tables->tables.size()) {
+                double area = table_lookup_cursor(tables->tables[ci], depth);
+                return area * depth;
+            }
             return 0.0;
         }
         double a0 = nodes.storage_c[ui];
@@ -55,12 +61,17 @@ double getVolume(const NodeData& nodes, int idx, double depth) {
 // Per-element: getSurfArea
 // ============================================================================
 
-double getSurfArea(const NodeData& nodes, int idx, double depth) {
+double getSurfArea(const NodeData& nodes, int idx, double depth,
+                   TableData* tables) {
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
         if (nodes.storage_curve[ui] >= 0) {
-            // Tabulated: TODO — requires TableData lookup
+            auto ci = static_cast<std::size_t>(nodes.storage_curve[ui]);
+            if (tables && ci < tables->tables.size()) {
+                double area = table_lookup_cursor(tables->tables[ci], depth);
+                return std::max(area, constants::MIN_SURFAREA);
+            }
             return constants::MIN_SURFAREA;
         }
         // Functional: area = a0 + a1 * d^a2

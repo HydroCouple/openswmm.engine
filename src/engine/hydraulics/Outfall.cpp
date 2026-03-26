@@ -10,6 +10,7 @@
 
 #include "Outfall.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/DateTime.hpp"
 #include "XSectBatch.hpp"
 #include "Link.hpp"
 
@@ -84,7 +85,9 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 int curve_idx = static_cast<int>(nodes.outfall_param[uj]);
                 if (curve_idx >= 0 && curve_idx < static_cast<int>(ctx.tables.tables.size())) {
                     // Tidal curves use hour of day as independent variable
-                    double hour = std::fmod(current_time * 24.0, 24.0);
+                    int h_tmp, m_tmp, s_tmp;
+                    datetime::decodeTime(current_time, h_tmp, m_tmp, s_tmp);
+                    double hour = static_cast<double>(h_tmp) + m_tmp / 60.0 + s_tmp / 3600.0;
                     double wse = table_lookup_cursor(ctx.tables.tables[static_cast<size_t>(curve_idx)], hour);
                     depth = std::max(0.0, wse - nodes.invert_elev[uj]);
                 }

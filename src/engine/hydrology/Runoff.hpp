@@ -2,21 +2,16 @@
  * @file Runoff.hpp
  * @brief Subcatchment runoff generation — batch-oriented nonlinear reservoir.
  *
- * @details The runoff module is designed for vectorized batch execution:
+ * @details Three subareas per subcatchment (matching legacy subcatch.c):
+ *   - IMPERV0: Impervious with zero depression storage (PctZero fraction)
+ *   - IMPERV1: Impervious with depression storage
+ *   - PERV:    Pervious with depression storage and infiltration
  *
- *   **Batch architecture:**
- *   1. Batch update rainfall at all gages
- *   2. Batch compute net precipitation for all subcatchments
- *   3. Batch compute infiltration for all pervious subareas
- *   4. Batch compute runoff via nonlinear reservoir (Manning's) for all subareas
- *   5. Batch accumulate subcatchment outflow and mass balance
+ *   Depth integration uses RK45 adaptive ODE solver (matching legacy
+ *   odesolve.c) for implicit solution of:
+ *     dd/dt = inflow - alpha * (d - Ds)^(5/3)
  *
- *   The nonlinear reservoir equation is:
- *     Q = Alpha * (D - Ds)^(5/3)
- *   where Alpha = W/(n*A) * sqrt(S), applied identically to every subarea.
- *   This is trivially vectorisable over all subcatchments.
- *
- * @note Legacy reference: src/legacy/engine/runoff.c, subcatch.c
+ * @note Legacy reference: src/legacy/engine/runoff.c, subcatch.c, odesolve.c
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
@@ -41,47 +36,40 @@ namespace runoff {
 // Constants
 // ============================================================================
 
-constexpr double MEXP = 5.0 / 3.0;   ///< Manning's exponent
+constexpr double MEXP = 5.0 / 3.0;       ///< Manning's exponent
+constexpr double ODETOL = 0.0001;         ///< ODE solver tolerance (matching legacy)
+constexpr double PHI = 1.486;             ///< Manning's US customary constant
 
 // ============================================================================
 // Per-subcatchment subarea state (SoA for vectorization)
 // ============================================================================
 
-/**
- * @brief SoA working arrays for all subcatchment subareas.
- *
- * @details Three subareas per subcatchment:
- *   [0] = impervious without depression storage (IMPERV0)
- *   [1] = impervious with depression storage (IMPERV)
- *   [2] = pervious (PERV)
- *
- *   For batch processing, all subcatchments' subareas of the same type
- *   are stored contiguously (e.g., all pervious depths together).
- */
 struct RunoffSoA {
     int n_subcatch = 0;
 
     // Per-subcatchment properties (set at init)
-    std::vector<double> area;          ///< Subcatchment area (ft2)
+    std::vector<double> area;          ///< Subcatchment area (ft²)
     std::vector<double> width;         ///< Subcatchment width (ft)
     std::vector<double> slope;         ///< Average slope (ft/ft)
     std::vector<double> imperv_pct;    ///< Impervious fraction (0-1)
+    std::vector<double> imperv0_pct;   ///< Fraction of imperv with zero dStore (0-1)
 
     // Per-subarea SoA: alpha = runoff coefficient
-    std::vector<double> alpha_imperv;  ///< Alpha for impervious (W/n * sqrt(S) / A)
-    std::vector<double> alpha_perv;    ///< Alpha for pervious
+    std::vector<double> alpha_imperv;  ///< Alpha for impervious subareas
+    std::vector<double> alpha_perv;    ///< Alpha for pervious subarea
 
     // Per-subarea SoA: depression storage (ft)
-    std::vector<double> ds_imperv;     ///< Depression storage, impervious
-    std::vector<double> ds_perv;       ///< Depression storage, pervious
+    std::vector<double> ds_imperv;     ///< Depression storage for IMPERV1
+    std::vector<double> ds_perv;       ///< Depression storage for PERV
 
     // Per-subarea SoA: Manning's n
     std::vector<double> n_imperv;      ///< Manning's n, impervious
     std::vector<double> n_perv;        ///< Manning's n, pervious
 
     // Per-subarea SoA: ponded depth (state, updated each step)
-    std::vector<double> depth_imperv;  ///< Ponded depth, impervious (ft)
-    std::vector<double> depth_perv;    ///< Ponded depth, pervious (ft)
+    std::vector<double> depth_imperv0; ///< Ponded depth, IMPERV0 (ft) — dStore=0
+    std::vector<double> depth_imperv1; ///< Ponded depth, IMPERV1 (ft) — dStore>0
+    std::vector<double> depth_perv;    ///< Ponded depth, PERV (ft)
 
     // Per-subcatchment: computed runoff (output)
     std::vector<double> runoff;        ///< Total runoff rate (cfs)
@@ -89,7 +77,7 @@ struct RunoffSoA {
     std::vector<double> infil_loss;    ///< Infiltration loss (ft3)
 
     void resize(int n);
-    void computeAlpha();  ///< Compute alpha from width, n, slope, area
+    void computeAlpha();
 };
 
 // ============================================================================
@@ -99,21 +87,9 @@ struct RunoffSoA {
 class RunoffSolver {
 public:
     void init(SimulationContext& ctx);
+    void execute(SimulationContext& ctx, double dt, double evap_rate = 0.0);
 
-    /**
-     * @brief Execute one runoff timestep for all subcatchments.
-     *
-     * @details Steps (all batch):
-     *   1. Get rainfall from gages → net precip per subcatchment
-     *   2. Compute evaporation rate
-     *   3. Batch infiltration (all pervious subareas)
-     *   4. Batch nonlinear reservoir routing (all subareas)
-     *   5. Accumulate runoff and mass balance
-     *
-     * @param ctx  Simulation context.
-     * @param dt   Runoff timestep (seconds).
-     */
-    void execute(SimulationContext& ctx, double dt);
+    const RunoffSoA& soa() const { return soa_; }
 
 private:
     RunoffSoA soa_;
@@ -125,29 +101,17 @@ private:
     std::vector<CurveNumState>  curvenum_states_;
 
     // Working buffers (reused each step, sized to n_subcatch)
-    std::vector<double> precip_;     ///< Net precipitation rate (ft/sec)
-    std::vector<double> evap_rate_;  ///< Evaporation rate (ft/sec)
-    std::vector<double> infil_rate_; ///< Infiltration rate per subcatch (ft/sec)
+    std::vector<double> precip_;
+    std::vector<double> evap_rate_;
+    std::vector<double> infil_rate_;
 
-    /// Batch nonlinear reservoir: runoff[i] = alpha[i] * max(0, depth[i]-ds[i])^(5/3)
-    static void batchNonlinearReservoir(
-        const double* __restrict__ alpha,
-        const double* __restrict__ depth,
-        const double* __restrict__ ds,
-        double*       __restrict__ runoff_rate,
-        int count
-    );
+    /// Solve dd/dt = inflow - alpha*(d-Ds)^(5/3) using RK45.
+    /// Matches legacy updatePondedDepth() + odesolve_integrate().
+    static void updatePondedDepth(double& depth, double inflow, double alpha,
+                                  double dStore, double dt);
 
-    /// Batch depth update: depth_new = depth_old + (precip - evap - infil - runoff) * dt
-    static void batchDepthUpdate(
-        double*       __restrict__ depth,
-        const double* __restrict__ precip,
-        const double* __restrict__ evap,
-        const double* __restrict__ infil,
-        const double* __restrict__ runoff,
-        double dt,
-        int count
-    );
+    /// Compute runoff rate from final depth (after ODE integration).
+    static double getRunoffRate(double depth, double dStore, double alpha);
 };
 
 } // namespace runoff

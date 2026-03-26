@@ -9,6 +9,7 @@
  */
 
 #include "Climate.hpp"
+#include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -62,15 +63,15 @@ void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
             break;
 
         case EvapMethod::MONTHLY:
-            // Convert from in/day or mm/day to ft/sec
-            state.evap_rate = state.monthly_evap[month] / 12.0 / 86400.0;
+            // Convert from in/day to ft/sec using US EVAPRATE factor
+            state.evap_rate = state.monthly_evap[month] / ucf::Ucf[ucf::EVAPRATE][0];
             break;
 
         case EvapMethod::TEMPERATURE: {
             double e_mm = hargreaves(state.latitude, day_of_year,
                                      state.temperature, state.temp_range);
-            // mm/day → ft/sec
-            state.evap_rate = e_mm / (MM_PER_INCH * 12.0) / 86400.0;
+            // mm/day → ft/sec using SI EVAPRATE factor
+            state.evap_rate = e_mm / ucf::Ucf[ucf::EVAPRATE][1];
             break;
         }
 

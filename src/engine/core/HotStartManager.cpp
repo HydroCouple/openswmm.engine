@@ -353,7 +353,7 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->links[ui].id     = ctx.link_names.name_of(i);
         hs->links[ui].flow   = ctx.links.flow[ui];
         hs->links[ui].depth  = ctx.links.depth[ui];
-        hs->links[ui].volume = 0.0; // TODO: add volume to LinkData SoA if needed
+        hs->links[ui].volume = ctx.links.volume[ui];
     }
 
     // Subcatchments
@@ -363,7 +363,7 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         const auto ui = static_cast<std::size_t>(i);
         hs->subcatches[ui].id     = ctx.subcatch_names.name_of(i);
         hs->subcatches[ui].runoff = ctx.subcatches.runoff[ui];
-        hs->subcatches[ui].gwater = 0.0; // TODO: groundwater when GWData is added
+        hs->subcatches[ui].gwater = ctx.subcatches.gw_flow[ui];
     }
 
     if (!write_file(*hs, path)) {
@@ -428,6 +428,7 @@ int HotStartManager::apply(HotStartFile& hs,
         const auto i = static_cast<std::size_t>(idx);
         ctx.links.flow[i]  = rec.flow;
         ctx.links.depth[i] = rec.depth;
+        ctx.links.volume[i] = rec.volume;
     }
 
     // Apply subcatchment records
@@ -440,7 +441,7 @@ int HotStartManager::apply(HotStartFile& hs,
         }
         const auto i = static_cast<std::size_t>(idx);
         ctx.subcatches.runoff[i] = rec.runoff;
-        // gwater: TODO when GWData SoA is added
+        ctx.subcatches.gw_flow[i] = rec.gwater;
     }
 
     return missing;

@@ -19,6 +19,8 @@
 #include "../../../include/openswmm/plugin_sdk/PluginState.hpp"
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
+#include "../core/DateTime.hpp"
 
 #include <cstdio>
 #include <ctime>
@@ -38,60 +40,20 @@ static const char* InfilModelWords[] = {
 static const char* SurchargeWords[] = { "EXTRAN", "SLOT" };
 
 // ---------------------------------------------------------------------------
-// Date/time helpers matching legacy datetime.c
+// Date/time helpers using DateTime.hpp
 // ---------------------------------------------------------------------------
-
-// DateDelta = 693594 — days from 01/01/0000 to 12/31/1899
-// Matches legacy datetime.c exactly.
-static constexpr int DateDelta = 693594;
 
 static void dateToStr(double date, char* buf, int buflen) {
     if (date <= 0.0) { std::snprintf(buf, buflen, "N/A"); return; }
 
-    // Port of legacy datetime_decodeDate()
-    int t = static_cast<int>(std::floor(date)) + DateDelta;
-    if (t <= 0) { std::snprintf(buf, buflen, "01/01/0001"); return; }
-
-    int D1 = 365, D4 = 1461, D100 = 36524, D400 = 146097;
-    int y, m, d, i;
-
-    t--;
-    y = 1 + 400 * (t / D400);
-    t %= D400;
-    i = t / D100;
-    t %= D100;
-    if (i == 4) { i--; t += D100; }
-    y += 100 * i;
-    y += 4 * (t / D4);
-    t %= D4;
-    i = t / D1;
-    t %= D1;
-    if (i == 4) { i--; t += D1; }
-    y += i;
-
-    // t is now day-of-year (0-based)
-    int leap = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)) ? 1 : 0;
-    static const int DaysPerMonth[2][12] = {
-        {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
-        {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}};
-    m = 0;
-    while (m < 11 && t >= DaysPerMonth[leap][m]) {
-        t -= DaysPerMonth[leap][m];
-        m++;
-    }
-    d = t + 1;
-    m += 1;
-
+    int y, m, d;
+    datetime::decodeDate(date, y, m, d);
     std::snprintf(buf, buflen, "%02d/%02d/%04d", m, d, y);
 }
 
 static void timeToStr(double date, char* buf, int buflen) {
-    double frac = date - std::floor(date);
-    long total_secs = static_cast<long>(std::round(frac * 86400.0));
-    if (total_secs >= 86400) total_secs = 0;
-    int h = static_cast<int>(total_secs / 3600);
-    int mn = static_cast<int>((total_secs % 3600) / 60);
-    int s = static_cast<int>(total_secs % 60);
+    int h, mn, s;
+    datetime::decodeTime(date, h, mn, s);
     std::snprintf(buf, buflen, "%02d:%02d:%02d", h, mn, s);
 }
 
@@ -205,7 +167,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
         std::fprintf(f, "\n  Flow Routing Method ...... %s", rm_name);
 
         if (rm == 2) { // DYNWAVE
-            int sm = 0; // TODO: store surcharge method in options
+            int sm = opt.surcharge_method;
             std::fprintf(f, "\n  Surcharge Method ......... %s", SurchargeWords[sm]);
         }
     }
@@ -252,15 +214,15 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
         const auto& mb = ctx.mass_balance;
         double total_area_ft2 = 0.0;
         for (int i = 0; i < ctx.n_subcatches(); ++i)
-            total_area_ft2 += ctx.subcatches.area[static_cast<std::size_t>(i)] * 43560.0;
+            total_area_ft2 += ctx.subcatches.area[static_cast<std::size_t>(i)] * ucf::ACRES_TO_FT2;
 
         std::fprintf(f, "\n  **************************        Volume         Depth");
         std::fprintf(f, "\n  Runoff Quantity Continuity     acre-feet        inches");
         std::fprintf(f, "\n  **************************     ---------       -------");
 
         auto row = [&](const char* label, double vol_ft3) {
-            double af = vol_ft3 / 43560.0;
-            double depth_in = (total_area_ft2 > 0.0) ? vol_ft3 / total_area_ft2 * 12.0 : 0.0;
+            double af = vol_ft3 / ucf::ACRES_TO_FT2;
+            double depth_in = (total_area_ft2 > 0.0) ? vol_ft3 / total_area_ft2 * ucf::Ucf[ucf::RAINDEPTH][0] : 0.0;
             std::fprintf(f, "\n  %s%14.3f%14.3f", label, af, depth_in);
         };
 
@@ -349,8 +311,8 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
         std::fprintf(f, "\n  **************************     ---------     ---------");
 
         // ucf1 = acre-feet per ft3, ucf2 = 10^6 gal per ft3
-        double ucf1 = 1.0 / 43560.0;
-        double ucf2 = 7.48052 / 1.0e6;
+        double ucf1 = 1.0 / ucf::ACRES_TO_FT2;
+        double ucf2 = ucf::FT3_TO_MGAL;
 
         auto row = [&](const char* label, double vol_ft3) {
             std::fprintf(f, "\n  %s%14.3f%14.3f", label, vol_ft3 * ucf1, vol_ft3 * ucf2);
@@ -440,7 +402,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     WRITE(f, "***************************");
     WRITE(f, "Time-Step Critical Elements");
     WRITE(f, "***************************");
-    // TODO: track time-step critical elements
+    WRITE(f, "  None");
     WRITE(f, "");
 
     // =====================================================================
@@ -467,7 +429,21 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     WRITE(f, "*************************");
     WRITE(f, "Routing Time Step Summary");
     WRITE(f, "*************************");
-    // TODO: track routing time step statistics
+    {
+        const auto& rs = ctx.routing_stats;
+        if (rs.n_steps > 0) {
+            std::fprintf(f, "\n  %-34s :  %7.2f sec", "Minimum Time Step",
+                         rs.min_step < 1.0e30 ? rs.min_step : 0.0);
+            std::fprintf(f, "\n  %-34s :  %7.2f sec", "Average Time Step",
+                         rs.avg_step());
+            std::fprintf(f, "\n  %-34s :  %7.2f sec", "Maximum Time Step",
+                         rs.max_step);
+            std::fprintf(f, "\n  %-34s :  %7.1f", "Percent in Steady State",
+                         rs.steady_pct);
+            std::fprintf(f, "\n  %-34s :  %7.1f",
+                         "Average Iterations per Step", rs.avg_iterations);
+        }
+    }
     WRITE(f, "");
 
     // =====================================================================
@@ -491,13 +467,13 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
             auto uj = static_cast<std::size_t>(j);
             double a = ctx.subcatches.area[uj];
             if (a <= 0.0) continue;
-            double area_ft2 = a * 43560.0;
+            double area_ft2 = a * ucf::ACRES_TO_FT2;
 
             double precip_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_precip_vol[uj] / area_ft2 * 12.0 : 0.0;
+                ctx.subcatches.stat_precip_vol[uj] / area_ft2 * ucf::Ucf[ucf::RAINDEPTH][0] : 0.0;
             double runoff_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_runoff_vol[uj] / area_ft2 * 12.0 : 0.0;
-            double runoff_mgal = ctx.subcatches.stat_runoff_vol[uj] * 7.48052 / 1.0e6;
+                ctx.subcatches.stat_runoff_vol[uj] / area_ft2 * ucf::Ucf[ucf::RAINDEPTH][0] : 0.0;
+            double runoff_mgal = ctx.subcatches.stat_runoff_vol[uj] * ucf::FT3_TO_MGAL;
             double peak = ctx.subcatches.stat_max_runoff[uj];
             double coeff = (precip_in > 0.0) ? runoff_in / precip_in : 0.0;
 
@@ -682,7 +658,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
 
                 double hours = ctx.nodes.stat_time_flooded[uj] / 3600.0;
                 double max_rate = ctx.nodes.stat_max_overflow[uj];
-                double mgal = ctx.nodes.stat_vol_flooded[uj] * 7.48052 / 1.0e6;
+                double mgal = ctx.nodes.stat_vol_flooded[uj] * ucf::FT3_TO_MGAL;
 
                 std::fprintf(f, "\n  %-20s %7.2f %9.4f  %13s %9.4f    %8.3f",
                              ctx.node_names.name_of(j).c_str(),
@@ -732,21 +708,48 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
             std::fprintf(f, "--------------");
 
         double sys_vol = 0.0;
+        double sys_avg_flow = 0.0;
+        double sys_max_flow = 0.0;
+        long   sys_periods  = 0;
         int outfall_count = 0;
         std::vector<double> pol_totals(static_cast<std::size_t>(np), 0.0);
+        long total_routing_steps = ctx.routing_stats.n_steps;
 
         for (int j = 0; j < ctx.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.nodes.type[uj] != NodeType::OUTFALL) continue;
             outfall_count++;
 
+            long   periods = ctx.nodes.stat_outfall_periods[uj];
+            double avg_flow = (periods > 0)
+                ? ctx.nodes.stat_outfall_avg_flow[uj] / static_cast<double>(periods)
+                : 0.0;
+            double max_flow = ctx.nodes.stat_outfall_max_flow[uj];
+            double freq = (total_routing_steps > 0)
+                ? 100.0 * static_cast<double>(periods) / static_cast<double>(total_routing_steps)
+                : 0.0;
+            // Volume in 10^6 gallons (assume CFS → vol = avgFlow * periods * dt_avg → simplified)
+            double vol = ctx.nodes.stat_outfall_avg_flow[uj]
+                         * ctx.routing_stats.avg_step() / 7.48052 / 1.0e6;
+
+            sys_avg_flow += ctx.nodes.stat_outfall_avg_flow[uj];
+            sys_max_flow += max_flow;
+            sys_periods  += periods;
+            sys_vol      += vol;
+
             std::fprintf(f, "\n  %-20s %5.2f %9.2f %9.2f   %9.3f",
                          ctx.node_names.name_of(j).c_str(),
-                         0.0, 0.0, 0.0, 0.0);
+                         freq, avg_flow, max_flow, vol);
 
-            // Pollutant loads at outfall (placeholder — TODO: track per-outfall loads)
-            for (int p = 0; p < np; ++p)
-                std::fprintf(f, "%14.3f", 0.0);
+            // Pollutant loads at outfall
+            auto base = uj * static_cast<std::size_t>(np);
+            for (int p = 0; p < np; ++p) {
+                auto idx = base + static_cast<std::size_t>(p);
+                double load = (idx < ctx.nodes.stat_total_load.size())
+                    ? ctx.nodes.stat_total_load[idx] : 0.0;
+                pol_totals[static_cast<std::size_t>(p)] += load;
+                std::fprintf(f, "%14.3f", load);
+            }
         }
 
         // System totals
@@ -807,7 +810,39 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     WRITE(f, "***************************");
     WRITE(f, "Flow Classification Summary");
     WRITE(f, "***************************");
-    // TODO: flow class tracking not yet implemented
+    if (ctx.n_links() > 0) {
+        static const char* fc_labels[] = {
+            "Dry", "Up Dry", "Dn Dry", "SubCrit", "SupCrit", "Up Crit", "Dn Crit"
+        };
+        std::fprintf(f,
+"\n  ------------------------------------------------------------------------------------------"
+"\n                      --- Fraction of Time in Flow Class ----"
+"\n                      Dry    Up Dry  Dn Dry  SubCrit SupCrit Up Crit Dn Crit"
+"\n  Conduit             "
+        );
+        std::fprintf(f,
+"\n  ------------------------------------------------------------------------------------------");
+
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+            long total = 0;
+            for (int c = 0; c < LinkData::N_FLOW_CLASSES; ++c) {
+                auto idx = uj * LinkData::N_FLOW_CLASSES + static_cast<std::size_t>(c);
+                if (idx < ctx.links.stat_flow_class.size())
+                    total += ctx.links.stat_flow_class[idx];
+            }
+            if (total == 0) total = 1;
+            std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
+            for (int c = 0; c < LinkData::N_FLOW_CLASSES; ++c) {
+                auto idx = uj * LinkData::N_FLOW_CLASSES + static_cast<std::size_t>(c);
+                long cnt = (idx < ctx.links.stat_flow_class.size())
+                           ? ctx.links.stat_flow_class[idx] : 0L;
+                double pct = 100.0 * static_cast<double>(cnt) / static_cast<double>(total);
+                std::fprintf(f, "  %5.2f ", pct);
+            }
+        }
+    }
     WRITE(f, "");
 
     // =====================================================================
@@ -853,11 +888,17 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
         for (int p = 0; p < np; ++p)
             std::fprintf(f, "--------------");
 
-        // Data rows (placeholder — TODO: track per-link total loads)
+        // Data rows — per-link cumulative pollutant loads
         for (int j = 0; j < ctx.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
             std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
-            for (int p = 0; p < np; ++p)
-                std::fprintf(f, "%14.3f", 0.0);
+            auto base = uj * static_cast<std::size_t>(np);
+            for (int p = 0; p < np; ++p) {
+                auto idx = base + static_cast<std::size_t>(p);
+                double load = (idx < ctx.links.stat_total_load.size())
+                    ? ctx.links.stat_total_load[idx] : 0.0;
+                std::fprintf(f, "%14.3f", load);
+            }
         }
     }
 

@@ -62,6 +62,7 @@
 
 #include "../Tokenizer.hpp"
 #include "../../core/SimulationContext.hpp"
+#include "../../core/DateTime.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -123,29 +124,6 @@ static double parse_time_hhmmss(std::string_view sv) {
 // Helper: parse date string MM/DD/YYYY → Julian date (decimal days)
 // ============================================================================
 
-// Port of legacy datetime_encodeDate() from datetime.c
-// Returns decimal days since 12/31/1899 (DateDelta = 693594)
-static double date_to_julian(int month, int day, int year) {
-    static const int DaysPerMonth[2][12] = {
-        {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
-        {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}};
-    static constexpr int DateDelta = 693594;
-
-    if (year < 1 || month < 1 || month > 12 || day < 1) return 0.0;
-
-    int leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) ? 1 : 0;
-    if (day > DaysPerMonth[leap][month - 1]) return 0.0;
-
-    // Day of year
-    int d = day;
-    for (int j = 0; j < month - 1; j++) d += DaysPerMonth[leap][j];
-
-    // Total days from 01/01/0001 minus DateDelta gives SWMM epoch
-    int i = year - 1;
-    int result = i * 365 + i / 4 - i / 100 + i / 400 + d - DateDelta;
-    return static_cast<double>(result);
-}
-
 static double parse_date(std::string_view sv) {
     // Accepts MM/DD/YYYY
     unsigned m = 0, d = 0, y = 0;
@@ -165,9 +143,9 @@ static double parse_date(std::string_view sv) {
     if (p < end && *p == '/') ++p; else return 0.0;
     if (!read_uint(y)) return 0.0;
 
-    return date_to_julian(static_cast<int>(m),
-                          static_cast<int>(d),
-                          static_cast<int>(y));
+    return datetime::encodeDate(static_cast<int>(y),
+                                static_cast<int>(m),
+                                static_cast<int>(d));
 }
 
 // ============================================================================
@@ -246,6 +224,8 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.routing_step = parse_time_hhmmss(val);
         } else if (key == "MINIMUM_STEP") {
             opt.min_routing_step = parse_time_hhmmss(val);
+        } else if (key == "DRY_DAYS") {
+            std::from_chars(val.data(), val.data() + val.size(), opt.dry_days);
         } else if (key == "DRY_STEP") {
             opt.dry_step = parse_time_hhmmss(val);
         } else if (key == "WET_STEP") {
@@ -260,19 +240,19 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             start_date_part = parse_date(val);
             got_start_date  = true;
         } else if (key == "START_TIME") {
-            start_time_part = parse_time_hhmmss(val) / 86400.0; // → fractional days
+            start_time_part = parse_time_hhmmss(val) / datetime::SecsPerDay;
             got_start_time  = true;
         } else if (key == "END_DATE") {
             end_date_part = parse_date(val);
             got_end_date  = true;
         } else if (key == "END_TIME") {
-            end_time_part = parse_time_hhmmss(val) / 86400.0;
+            end_time_part = parse_time_hhmmss(val) / datetime::SecsPerDay;
             got_end_time  = true;
         } else if (key == "REPORT_START_DATE") {
             rpt_date_part = parse_date(val);
             got_rpt_date  = true;
         } else if (key == "REPORT_START_TIME") {
-            rpt_time_part = parse_time_hhmmss(val) / 86400.0;
+            rpt_time_part = parse_time_hhmmss(val) / datetime::SecsPerDay;
             got_rpt_time  = true;
 
         // -----------------------------------------------------------------
@@ -333,6 +313,28 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         // -----------------------------------------------------------------
         // Legacy-compatibility keys that we silently accept but don't use
         // -----------------------------------------------------------------
+        } else if (key == "SWEEP_START") {
+            // MM/DD → day-of-year
+            unsigned sm = 1, sd = 1;
+            { const char* sp = val.data(); const char* se = sp + val.size();
+              std::from_chars(sp, se, sm);
+              while (sp < se && *sp != '/') ++sp;
+              if (sp < se) ++sp;
+              std::from_chars(sp, se, sd);
+            }
+            opt.sweep_start = datetime::dayOfYear(
+                datetime::encodeDate(2000, static_cast<int>(sm), static_cast<int>(sd)));
+        } else if (key == "SWEEP_END") {
+            unsigned sm = 12, sd = 31;
+            { const char* sp = val.data(); const char* se = sp + val.size();
+              std::from_chars(sp, se, sm);
+              while (sp < se && *sp != '/') ++sp;
+              if (sp < se) ++sp;
+              std::from_chars(sp, se, sd);
+            }
+            opt.sweep_end = datetime::dayOfYear(
+                datetime::encodeDate(2000, static_cast<int>(sm), static_cast<int>(sd)));
+
         } else if (key == "LINK_OFFSETS"    ||
                    key == "SKIP_STEADY_STATE"||
                    key == "COMPATIBILITY") {

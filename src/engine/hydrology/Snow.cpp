@@ -9,6 +9,7 @@
  */
 
 #include "Snow.hpp"
+#include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -69,20 +70,21 @@ void SnowSolver::batchRainOnSnowMelt(double temp, double wind, double gamma,
                                       double ea, double rainfall,
                                       double* melt, int count) {
     // Rain-on-snow formula (legacy: getRainmelt)
-    // Only applies when rainfall > 0.02 in/hr = 0.02/43200 ft/sec
-    constexpr double RAIN_THRESHOLD = 0.02 / 43200.0;
+    // Only applies when rainfall > 0.02 in/hr converted to ft/sec
+    const double ucf_rain_us = ucf::Ucf[ucf::RAINFALL][0]; // US: in/hr ↔ ft/sec
+    const double RAIN_THRESHOLD = 0.02 / ucf_rain_us;
     if (rainfall <= RAIN_THRESHOLD) {
         std::fill(melt, melt + count, 0.0);
         return;
     }
 
-    double rain_in_hr = rainfall * 43200.0;  // ft/sec → in/hr
+    double rain_in_hr = rainfall * ucf_rain_us;  // ft/sec → in/hr
     double uadj = 0.006 * wind;
     double t1 = temp - 32.0;
     double t2 = 7.5 * gamma * uadj;
     double t3 = 8.5 * uadj * (ea - 0.18);
     double smelt_in_hr = t1 * (0.001167 + t2 + 0.007 * rain_in_hr) + t3;
-    double smelt = smelt_in_hr / 43200.0;  // in/hr → ft/sec
+    double smelt = smelt_in_hr / ucf_rain_us;  // in/hr → ft/sec
     if (smelt < 0.0) smelt = 0.0;
 
     // Broadcast same melt rate to all subareas (uniform climate)
@@ -121,7 +123,7 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
     }
 
     // 3. Compute melt rate — choose degree-day or rain-on-snow
-    constexpr double RAIN_THRESHOLD = 0.02 / 43200.0;
+    const double RAIN_THRESHOLD = 0.02 / ucf::Ucf[ucf::RAINFALL][0];
     if (rainfall > RAIN_THRESHOLD) {
         // Rain-on-snow for all subareas
         batchRainOnSnowMelt(temp, wind, 0.0, 0.0, rainfall,

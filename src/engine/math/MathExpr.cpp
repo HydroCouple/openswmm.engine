@@ -235,9 +235,17 @@ double evaluate(const Expression& expr,
 }
 
 double evaluate(const Expression& expr, const double* vars, int n_vars) {
-    return evaluate(expr, [&](const std::string& /*name*/) -> double {
-        // TODO: map name to index via a lookup table
-        (void)vars; (void)n_vars;
+    // Use var_idx on each VARIABLE token to index directly into the vars array.
+    // Matching legacy mathexpr.c where variables are resolved by index.
+    return evaluate(expr, [vars, n_vars, &expr](const std::string& name) -> double {
+        // Find the token with this var_name and use its var_idx
+        for (const auto& tok : expr.postfix) {
+            if (tok.type == TokenType::VARIABLE && tok.var_name == name) {
+                if (tok.var_idx >= 0 && tok.var_idx < n_vars)
+                    return vars[tok.var_idx];
+                break;
+            }
+        }
         return 0.0;
     });
 }

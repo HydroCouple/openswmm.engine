@@ -132,6 +132,12 @@ struct SimulationOptions {
     /** @brief Courant factor for variable time stepping (0 = fixed step). */
     double variable_step = 0.0;
 
+    /** @brief Street sweeping start day-of-year (1-365). 0 = not set. */
+    int sweep_start = 1;
+
+    /** @brief Street sweeping end day-of-year (1-365). 0 = not set. */
+    int sweep_end = 365;
+
     // -----------------------------------------------------------------------
     // Flow and routing
     // -----------------------------------------------------------------------
@@ -154,6 +160,9 @@ struct SimulationOptions {
 
     /** @brief Maximum number of flow routing iterations (dynamic wave). */
     int max_trials = 8;
+
+    /** @brief Surcharge method: 0=EXTRAN, 1=SLOT. @see Legacy: SurchargeMethod */
+    int surcharge_method = 0;
 
     /** @brief Convergence head tolerance in project length units. */
     double head_tol = 0.0015;

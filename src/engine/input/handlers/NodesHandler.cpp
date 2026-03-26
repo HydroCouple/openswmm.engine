@@ -182,17 +182,54 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
 void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 2) continue;
+        if (tok.size() < 4) continue;
 
         const std::string& name = tok[0];
         int idx = ctx.node_names.find(name);
         if (idx < 0) idx = ctx.node_names.add(name);
 
         ensure_node_capacity(ctx, idx);
+        auto ui = static_cast<std::size_t>(idx);
 
-        ctx.nodes.type[idx]        = NodeType::DIVIDER;
-        ctx.nodes.invert_elev[idx] = to_double(tok[1]);
-        if (tok.size() > 3) ctx.nodes.full_depth[idx] = to_double(tok[3]);
+        ctx.nodes.type[ui]        = NodeType::DIVIDER;
+        ctx.nodes.invert_elev[ui] = to_double(tok[1]);
+
+        // tok[2] = diversion link name (resolved in post-parse)
+        // Store link name for deferred resolution
+        const std::string& div_link_name = tok[2];
+        ctx.nodes.divider_link_name[ui] = div_link_name;
+        int dl = ctx.link_names.find(div_link_name);
+        ctx.nodes.divider_link[ui] = dl; // may be -1 if not yet parsed
+
+        // tok[3] = divider type
+        const std::string dtype = Tokenizer::to_upper(tok[3]);
+        if (dtype == "CUTOFF") {
+            ctx.nodes.divider_type[ui] = DividerType::CUTOFF;
+            if (tok.size() > 4) ctx.nodes.divider_cutoff[ui] = to_double(tok[4]);
+        } else if (dtype == "OVERFLOW") {
+            ctx.nodes.divider_type[ui] = DividerType::OVERFLOW_DIV;
+        } else if (dtype == "TABULAR") {
+            ctx.nodes.divider_type[ui] = DividerType::TABULAR;
+            // tok[4] = curve name (deferred)
+            if (tok.size() > 4) {
+                ctx.nodes.divider_curve_name[ui] = tok[4];
+                int ci = ctx.table_names.find(tok[4]);
+                ctx.nodes.divider_curve[ui] = ci; // may be -1
+            }
+        } else if (dtype == "WEIR") {
+            ctx.nodes.divider_type[ui] = DividerType::WEIR;
+            if (tok.size() > 4) ctx.nodes.divider_cutoff[ui] = to_double(tok[4]);
+            if (tok.size() > 5) ctx.nodes.divider_cd[ui]     = to_double(tok[5]);
+            if (tok.size() > 6) ctx.nodes.divider_max_depth[ui] = to_double(tok[6]);
+        }
+
+        // MaxDepth after type-specific fields
+        int md_offset = 5;
+        if (dtype == "CUTOFF" || dtype == "OVERFLOW") md_offset = 5;
+        else if (dtype == "TABULAR") md_offset = 5;
+        else if (dtype == "WEIR") md_offset = 7;
+        if (static_cast<int>(tok.size()) > md_offset)
+            ctx.nodes.full_depth[ui] = to_double(tok[md_offset]);
     }
 }
 
@@ -221,9 +258,9 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
 
         if (shape == "TABULAR") {
             // Next token is curve name — resolve to index in post-parse pass
-            // For now store -1 (resolved later)
             ctx.nodes.storage_curve[idx] = -1;
-            // TODO: store curve name for deferred resolution
+            if (tok.size() > 5)
+                ctx.nodes.storage_curve_name[idx] = tok[5];
         } else if (shape == "FUNCTIONAL") {
             // A1, A2, A0
             if (tok.size() > 5) ctx.nodes.storage_a[idx] = to_double(tok[5]);

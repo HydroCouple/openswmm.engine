@@ -996,8 +996,7 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_end(void)
             stats_report();
         }
 
-        // --- close all computing systems
-        stats_close();
+        // --- close all computing systems (stats deferred to swmm_close)
         massbal_close();
         if (!IgnoreRainfall)
             rain_close();
@@ -1035,6 +1034,7 @@ void EXPORT_OPENSWMMCORE_SOLVER_API swmm_writeLine(const char *line)
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_close()
 {
+    stats_close();
     if (Fout.file)
         output_close();
     if (IsOpenFlag)
@@ -1125,7 +1125,7 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getErrorFromCode(int errorCode, char *ou
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getCount(int objType)
 {
     if (!IsOpenFlag)
-        return ERR_API_NOT_OPEN;
+        return 0;
     if (objType < swmm_GAGE || objType >= swmm_SYSTEM)
         return ERR_API_OBJECT_TYPE;
     return Nobjects[objType];
@@ -1141,6 +1141,10 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getName(int objType, int index, char *na
     name[0] = '\0';
     if (!IsOpenFlag)
         return ERR_API_NOT_OPEN;
+    if (objType < GAGE || objType >= MAX_OBJ_TYPES)
+        return ERR_API_OBJECT_TYPE;
+    if (index < 0 || index >= Nobjects[objType])
+        return ERR_API_OBJECT_INDEX;
 
     switch (objType)
     {
