@@ -16,7 +16,7 @@ env:
 jobs:
   unit_test:
     name: Build and unit test
-    runs-on: windows-2019
+    runs-on: windows-latest
     environment: testing
     defaults:
       run:
