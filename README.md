@@ -67,6 +67,143 @@ A comprehensive, domain-split C API replaces the monolithic legacy interface:
 - **Variable Speed Pumps** — Type5 pump curves with speed scaling.
 - **New Storage Shapes** — Conical and pyramidal shapes with elliptical/rectangular bases.
 
+### Input File Extensions
+
+The new engine extends the standard SWMM `.inp` format with several new sections while remaining fully backward-compatible with existing input files. Below is a complete `.inp` snippet demonstrating all new features:
+
+```ini
+;; =======================================================================
+;; EXTENSION OPTIONS — new and custom keys in [OPTIONS]
+;; =======================================================================
+;; Standard SWMM options work as before.  Any unrecognized key is stored
+;; in an extension map accessible at runtime via the C/Python API.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2024
+START_TIME           00:00:00
+END_DATE             01/02/2024
+END_TIME             00:00:00
+ROUTING_STEP         00:00:30
+REPORT_STEP          00:05:00
+
+;; New built-in option (v6.0.0)
+CRS                  EPSG:4326
+
+;; Extension options — stored automatically, readable by plugins
+MY_STABILITY_FACTOR  1.05
+PLUGIN_LOG_LEVEL     DEBUG
+
+
+;; =======================================================================
+;; USER FLAGS — typed custom metadata on any model object
+;; =======================================================================
+;; Define a schema of flag names with type and default value.
+;; Supported types: BOOLEAN, INTEGER, REAL, STRING.
+
+[USER_FLAGS]
+;;Name              Type      Default   Description
+INSPECTED           BOOLEAN   NO        "Has the asset been field-inspected?"
+PRIORITY            INTEGER   0         "Maintenance priority (0=none, 1=low, 5=critical)"
+ROUGHNESS_ADJ       REAL      1.0       "Roughness calibration multiplier"
+ASSET_ID            STRING    ""        "External asset management system ID"
+
+;; Assign flag values to individual objects.
+;; ObjectType can be NODE, LINK, SUBCATCHMENT, or GAGE.
+
+[USER_FLAG_VALUES]
+;;ObjectType   ObjectName   FlagName        Value
+NODE           J1           INSPECTED       YES
+NODE           J1           PRIORITY        3
+NODE           J2           ASSET_ID        "AM-00412"
+LINK           C1           ROUGHNESS_ADJ   1.12
+LINK           C1           INSPECTED       YES
+LINK           C2           PRIORITY        1
+SUBCATCHMENT   S1           INSPECTED       NO
+SUBCATCHMENT   S1           ASSET_ID        "AM-00501"
+
+
+;; =======================================================================
+;; PLUGINS — load output/report plugins at runtime
+;; =======================================================================
+;; Each line: <shared-library-path>  [arg1  arg2  ...]
+;; The first token is the path to a .so / .dylib / .dll.
+;; Remaining tokens are passed to the plugin's initialize() method.
+
+[PLUGINS]
+;; Write time-series results to HDF5 instead of (or alongside) the .out file
+./plugins/hdf5_output.so      file="results.h5"  compress=9
+
+;; Write a custom CSV summary report after simulation
+./plugins/csv_report.dylib    file="summary.csv"  delimiter=","
+
+;; Multiple plugins can be loaded — they run concurrently on the I/O thread
+./plugins/netcdf_output.so    file="results.nc"   variables="depth,flow"
+```
+
+#### How Each Feature Works
+
+**Extension Options** — Any keyword the parser does not recognize in `[OPTIONS]` is stored in `options.ext_options` and can be read at runtime:
+
+```python
+# Python
+val = solver.get_option("MY_STABILITY_FACTOR")   # "1.05"
+```
+
+```c
+/* C API */
+char buf[256];
+swmm_options_get(engine, "MY_STABILITY_FACTOR", buf, sizeof(buf));
+```
+
+**User Flags** — Flags attach structured metadata to objects for asset management, calibration tracking, or custom workflows. Plugins can read them during `validate()` or `prepare()` from the `SimulationContext`.
+
+**Plugins** — Shared libraries loaded from the `[PLUGINS]` section implement one or both of:
+
+| Interface | Purpose | Thread |
+|---|---|---|
+| `IOutputPlugin` | Write time-series results at each reporting step | I/O thread |
+| `IReportPlugin` | Write summary statistics after simulation ends | Main thread |
+
+Each plugin library exports a single entry point:
+
+```cpp
+extern "C" openswmm::IPluginComponentInfo* openswmm_plugin_info(void);
+```
+
+The engine calls the plugin through a managed lifecycle:
+
+```
+initialize(args) → validate(ctx) → prepare(ctx) → update(snapshot)... → finalize(ctx)
+                                                   └─ write_summary(ctx)  [report plugins]
+```
+
+Output plugins receive a `SimulationSnapshot` — a read-only deep copy of simulation state safe to consume on the I/O thread while the main simulation advances.
+
+**Custom Sections** — Plugins and embedders can also register handlers for entirely new `.inp` sections via the C++ `SectionRegistry` API:
+
+```cpp
+engine.registry().register_custom("MY_CUSTOM_DATA",
+    [](SimulationContext& ctx, const std::vector<std::string>& lines) {
+        for (const auto& line : lines) {
+            // parse and store in ctx or plugin-managed storage
+        }
+    });
+```
+
+This allows the `.inp` to contain:
+
+```ini
+[MY_CUSTOM_DATA]
+;;ID     Param1   Param2
+OBJ_1    42.0     enabled
+OBJ_2    17.5     disabled
+```
+
+The two built-in plugins (`DefaultOutputPlugin` for `.out` and `DefaultReportPlugin` for `.rpt`) are always available and require no `[PLUGINS]` entry. The Plugin SDK headers are in `include/openswmm/plugin_sdk/`.
+
 ### Testing & Quality
 
 - **Google Test** — All unit tests migrated from Boost.Test to Google Test 1.15.2.
