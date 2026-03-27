@@ -11,8 +11,8 @@ add_library(_solver MODULE ${_solver})
 # Link to SWMM and Python libraries
 target_link_libraries(
     _solver
-    OpenSWMMCore::openswmmcore
-    OpenSWMMCore::openswmmcore_solver
+    openswmm::common
+    openswmm::legacy::engine
 )
 
 # Specify that this is a Python extension module

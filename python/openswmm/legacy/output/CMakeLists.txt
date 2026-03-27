@@ -10,8 +10,8 @@ add_library(_output MODULE ${_output})
 # Add library
 target_link_libraries(
     _output
-    OpenSWMMCore::openswmmcore
-    OpenSWMMCore::openswmmcore_output
+    openswmm::common
+    openswmm::legacy::output
 )
 
 # Specify that this is a Python extension module
