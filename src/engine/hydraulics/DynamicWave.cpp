@@ -795,10 +795,11 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
 
         // Normal flow limitation (matching legacy checkNormalFlow + NormalFlowLtd)
         // Only applies to SUBCRITICAL/SUPERCRITICAL flow (legacy dwflow.c line 252-254)
+        // Legacy checks y1 < yFull (upstream depth only, not both ends)
         // 0=SLOPE, 1=FROUDE, 2=BOTH, 3=NEITHER
         FlowClass fc2 = links.flow_class[uj];
         int nfl = normal_flow_ltd;
-        if (nfl != 3 && !isFull && q > 0.0 &&
+        if (nfl != 3 && p_depth1[uj] < yf && q > 0.0 &&
             (fc2 == FlowClass::SUBCRITICAL || fc2 == FlowClass::SUPERCRITICAL)) {
             bool slope_check = (nfl == 0 || nfl == 2) && h1 >= h2;
             bool froude_check = (nfl == 1 || nfl == 2) && fr > 1.0;
@@ -806,7 +807,10 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
                 double r1_for_norm = (hrad1_[uj] > FUDGE) ? hrad1_[uj] : FUDGE;
                 double s1 = p_area1[uj] * std::pow(r1_for_norm, 2.0/3.0);
                 double qNorm = links.beta[uj] * s1;
-                if (links.beta[uj] > 0.0 && q > qNorm) q = qNorm;
+                if (links.beta[uj] > 0.0 && q > qNorm) {
+                    q = qNorm;
+                    links.normal_flow_limited[uj] = true;
+                }
             }
         }
 

@@ -113,6 +113,10 @@ static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.subcatches.old_runoff,           0.0);
     grow(ctx.subcatches.snowpack,             -1);
     grow(ctx.subcatches.stat_precip_vol,      0.0);
+    grow(ctx.subcatches.stat_evap_vol,        0.0);
+    grow(ctx.subcatches.stat_infil_vol,       0.0);
+    grow(ctx.subcatches.stat_imperv_vol,      0.0);
+    grow(ctx.subcatches.stat_perv_vol,        0.0);
     grow(ctx.subcatches.stat_runoff_vol,      0.0);
     grow(ctx.subcatches.stat_max_runoff,      0.0);
 }

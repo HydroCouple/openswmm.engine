@@ -469,17 +469,27 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
             if (a <= 0.0) continue;
             double area_ft2 = a * ucf::ACRES_TO_FT2;
 
+            // Convert volumes (ft3) to depth (inches) over subcatchment area
+            constexpr double FT_TO_IN = 12.0;
             double precip_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_precip_vol[uj] / area_ft2 * ucf::Ucf[ucf::RAINDEPTH][0] : 0.0;
+                ctx.subcatches.stat_precip_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
+            double evap_in = (area_ft2 > 0.0) ?
+                ctx.subcatches.stat_evap_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
+            double infil_in = (area_ft2 > 0.0) ?
+                ctx.subcatches.stat_infil_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
+            double imperv_in = (area_ft2 > 0.0) ?
+                ctx.subcatches.stat_imperv_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
+            double perv_in = (area_ft2 > 0.0) ?
+                ctx.subcatches.stat_perv_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
             double runoff_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_runoff_vol[uj] / area_ft2 * ucf::Ucf[ucf::RAINDEPTH][0] : 0.0;
+                ctx.subcatches.stat_runoff_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
             double runoff_mgal = ctx.subcatches.stat_runoff_vol[uj] * ucf::FT3_TO_MGAL;
             double peak = ctx.subcatches.stat_max_runoff[uj];
             double coeff = (precip_in > 0.0) ? runoff_in / precip_in : 0.0;
 
             std::fprintf(f, "\n  %-20s %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %11.2f %8.2f%8.3f",
                          ctx.subcatch_names.name_of(j).c_str(),
-                         precip_in, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         precip_in, 0.0, evap_in, infil_in, imperv_in, perv_in,
                          runoff_in, runoff_mgal, peak, coeff);
         }
     }
@@ -734,9 +744,9 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
             double freq = (total_routing_steps > 0)
                 ? 100.0 * static_cast<double>(periods) / static_cast<double>(total_routing_steps)
                 : 0.0;
-            // Volume in 10^6 gallons (assume CFS → vol = avgFlow * periods * dt_avg → simplified)
+            // Volume in 10^6 gallons: sum(Q)*dt gives ft3, * 7.48052 gal/ft3
             double vol = ctx.nodes.stat_outfall_avg_flow[uj]
-                         * ctx.routing_stats.avg_step() / 7.48052 / 1.0e6;
+                         * ctx.routing_stats.avg_step() * 7.48052 / 1.0e6;
 
             sys_avg_flow += ctx.nodes.stat_outfall_avg_flow[uj];
             sys_max_flow += max_flow;
@@ -821,13 +831,13 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
             "Dry", "Up Dry", "Dn Dry", "SubCrit", "SupCrit", "Up Crit", "Dn Crit"
         };
         std::fprintf(f,
-"\n  ------------------------------------------------------------------------------------------"
+"\n  ----------------------------------------------------------------------------------------------------------"
 "\n                      --- Fraction of Time in Flow Class ----"
-"\n                      Dry    Up Dry  Dn Dry  SubCrit SupCrit Up Crit Dn Crit"
+"\n                      Dry    Up Dry  Dn Dry  SubCrit SupCrit Up Crit Dn Crit Norm Ltd Inlet Ctrl"
 "\n  Conduit             "
         );
         std::fprintf(f,
-"\n  ------------------------------------------------------------------------------------------");
+"\n  ----------------------------------------------------------------------------------------------------------");
 
         for (int j = 0; j < ctx.n_links(); ++j) {
             auto uj = static_cast<std::size_t>(j);
@@ -847,6 +857,12 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
                 double pct = 100.0 * static_cast<double>(cnt) / static_cast<double>(total);
                 std::fprintf(f, "  %5.2f ", pct);
             }
+            // Norm Ltd and Inlet Ctrl columns
+            double norm_pct = 100.0 * static_cast<double>(ctx.links.stat_norm_ltd[uj])
+                              / static_cast<double>(total);
+            double inlet_pct = 100.0 * static_cast<double>(ctx.links.stat_inlet_ctrl[uj])
+                               / static_cast<double>(total);
+            std::fprintf(f, " %5.2f    %5.2f", norm_pct, inlet_pct);
         }
     }
     WRITE(f, "");

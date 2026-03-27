@@ -84,7 +84,10 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.links.has_flap_gate,     false);
     grow(ctx.links.seep_rate,         0.0);
     grow(ctx.links.culvert_code,      0);
+    grow(ctx.links.normal_flow_limited, false);
     grow(ctx.links.inlet_control,     false);
+    grow(ctx.links.stat_norm_ltd,     0L);
+    grow(ctx.links.stat_inlet_ctrl,   0L);
     grow(ctx.links.dqdh,              0.0);
     grow(ctx.links.pump_curve,        -1);
     grow(ctx.links.pump_init_state,   false);

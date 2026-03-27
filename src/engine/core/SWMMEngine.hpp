@@ -237,6 +237,12 @@ private:
     std::string rpt_path_;  ///< Report file path
     std::string out_path_;  ///< Binary output file path
 
+    // Runoff clock (matching legacy OldRunoffTime / NewRunoffTime)
+    // Runoff advances on its own timestep (300 sec wet, 3600 sec dry);
+    // lateral flows are linearly interpolated between runoff boundaries.
+    double old_runoff_time_ = 0.0;  ///< Previous runoff boundary (seconds from start)
+    double new_runoff_time_ = 0.0;  ///< Next runoff boundary (seconds from start)
+
     EngineCallbacks callbacks_;   ///< Registered callback bundle
     int save_results_ = 0;        ///< Whether to save binary results
 

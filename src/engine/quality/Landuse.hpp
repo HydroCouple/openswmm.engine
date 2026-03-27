@@ -82,15 +82,24 @@ struct WashoffParams {
 
 struct SurfaceQualitySoA {
     int n_subcatch = 0;
+    int n_landuses = 0;
     int n_pollutants = 0;
 
-    /// Buildup mass [subcatch * n_pollutants + pollutant] (mass units)
+    /// Per-landuse buildup: [subcatch * n_landuses * n_pollutants + lu * n_pollutants + p]
+    /// Matches legacy Subcatch[j].landFactor[lu].buildup[p] (mass per normalizer unit)
     std::vector<double> buildup;
 
     /// Washoff concentration [subcatch * n_pollutants + pollutant] (mass/vol)
     std::vector<double> washoff_conc;
 
-    void resize(int n_sc, int n_poll);
+    /// Index into buildup array for (subcatch, landuse, pollutant)
+    std::size_t bu_idx(int sc, int lu, int p) const {
+        return static_cast<std::size_t>(sc) * static_cast<std::size_t>(n_landuses * n_pollutants)
+             + static_cast<std::size_t>(lu) * static_cast<std::size_t>(n_pollutants)
+             + static_cast<std::size_t>(p);
+    }
+
+    void resize(int n_sc, int n_lu, int n_poll);
 };
 
 // ============================================================================

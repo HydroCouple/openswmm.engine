@@ -224,6 +224,10 @@ struct SubcatchData {
      * @see Legacy: SubcatchStats[i].precip
      */
     std::vector<double> stat_precip_vol;
+    std::vector<double> stat_evap_vol;     ///< Cumulative evaporation volume (ft3)
+    std::vector<double> stat_infil_vol;    ///< Cumulative infiltration volume (ft3)
+    std::vector<double> stat_imperv_vol;   ///< Cumulative impervious runoff volume (ft3)
+    std::vector<double> stat_perv_vol;     ///< Cumulative pervious runoff volume (ft3)
 
     /**
      * @brief Total runoff volume (project volume units).
@@ -364,6 +368,10 @@ struct SubcatchData {
         old_runoff.assign(un, 0.0);
 
         stat_precip_vol.assign(un, 0.0);
+        stat_evap_vol.assign(un, 0.0);
+        stat_infil_vol.assign(un, 0.0);
+        stat_imperv_vol.assign(un, 0.0);
+        stat_perv_vol.assign(un, 0.0);
         stat_runoff_vol.assign(un, 0.0);
         stat_max_runoff.assign(un, 0.0);
 

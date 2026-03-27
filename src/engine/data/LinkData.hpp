@@ -315,6 +315,10 @@ struct LinkData {
      */
     std::vector<int>        culvert_code;
 
+    /// True if normal flow limitation was applied this step.
+    /// @see Legacy: Link[j].normalFlow
+    std::vector<bool>       normal_flow_limited;
+
     /**
      * @brief True if inlet control governs for this culvert link.
      * @see Legacy: Link[j].inletControl
@@ -436,6 +440,8 @@ struct LinkData {
      */
     static constexpr int N_FLOW_CLASSES = 7;
     std::vector<long> stat_flow_class;
+    std::vector<long> stat_norm_ltd;      ///< Count of steps with normal flow limiting
+    std::vector<long> stat_inlet_ctrl;    ///< Count of steps with inlet control
 
     /**
      * @brief Cumulative pollutant loads transported through each link.
@@ -522,6 +528,9 @@ struct LinkData {
         stat_max_filling.assign(un, 0.0);
         stat_time_surcharged.assign(un, 0.0);
         stat_flow_class.assign(un * N_FLOW_CLASSES, 0L);
+        stat_norm_ltd.assign(un, 0L);
+        stat_inlet_ctrl.assign(un, 0L);
+        normal_flow_limited.assign(un, false);
     }
 
     /**

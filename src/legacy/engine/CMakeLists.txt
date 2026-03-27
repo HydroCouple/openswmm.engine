@@ -67,16 +67,19 @@ elseif(UNIX)
 endif()
 
 # Generate export header
+# NOTE: File name and macro names must match what openswmm_solver.h expects:
+#   #include "openswmmcore_solver_export.h"   → EXPORT_FILE_NAME
+#   EXPORT_OPENSWMMCORE_SOLVER_API            → EXPORT_MACRO_NAME
 include(GenerateExportHeader)
 generate_export_header(openswmm_legacy_engine
-    BASE_NAME        openswmm_legacy_engine
-    EXPORT_MACRO_NAME OPENSWMM_LEGACY_ENGINE_EXPORT
-    EXPORT_FILE_NAME openswmm_legacy_engine_export.h
-    STATIC_DEFINE    OPENSWMM_LEGACY_ENGINE_STATIC
+    BASE_NAME        openswmmcore_solver
+    EXPORT_MACRO_NAME EXPORT_OPENSWMMCORE_SOLVER_API
+    EXPORT_FILE_NAME openswmmcore_solver_export.h
+    STATIC_DEFINE    SHARED_EXPORTS_BUILT_AS_STATIC
 )
 
 # Copy generated export header to the canonical include location
-file(COPY ${CMAKE_CURRENT_BINARY_DIR}/openswmm_legacy_engine_export.h
+file(COPY ${CMAKE_CURRENT_BINARY_DIR}/openswmmcore_solver_export.h
     DESTINATION ${PROJECT_SOURCE_DIR}/include/openswmm/legacy/engine
 )
 

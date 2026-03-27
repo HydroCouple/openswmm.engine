@@ -442,12 +442,19 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         soa_.runoff[ui] = newRunoff;
 
         // Write back to SimulationContext
-        // Note: infil_loss stores area-averaged rate (over total area),
-        // so the mass balance in SWMMEngine must multiply by full area
-        // (not by f_perv again, since the averaging already accounts for it).
         ctx.subcatches.runoff[ui]     = newRunoff;
         ctx.subcatches.evap_loss[ui]  = evapLoss;
         ctx.subcatches.infil_loss[ui] = infilLoss;
+
+        // Accumulate per-subcatchment statistics (matching legacy stats_updateSubcatchStats)
+        ctx.subcatches.stat_evap_vol[ui]  += Vevap;
+        ctx.subcatches.stat_infil_vol[ui] += Vinfil;
+        // Impervious runoff: IMPERV0 + IMPERV1 subarea contributions
+        double area_i0 = total_area * f0;
+        double area_i1 = total_area * f1;
+        double area_pv = total_area * fp;
+        ctx.subcatches.stat_imperv_vol[ui] += (runoff0 * area_i0 + runoff1 * area_i1) * dt;
+        ctx.subcatches.stat_perv_vol[ui]   += runoff_p * area_pv * dt;
 
         // Route runoff to outlet node
         int out_node = ctx.subcatches.outlet_node[ui];

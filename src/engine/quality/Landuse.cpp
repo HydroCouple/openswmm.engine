@@ -16,12 +16,12 @@
 namespace openswmm {
 namespace landuse {
 
-void SurfaceQualitySoA::resize(int n_sc, int n_poll) {
+void SurfaceQualitySoA::resize(int n_sc, int n_lu, int n_poll) {
     n_subcatch = n_sc;
+    n_landuses = n_lu;
     n_pollutants = n_poll;
-    auto total = static_cast<size_t>(n_sc * n_poll);
-    buildup.assign(total, 0.0);
-    washoff_conc.assign(total, 0.0);
+    buildup.assign(static_cast<size_t>(n_sc * n_lu * n_poll), 0.0);
+    washoff_conc.assign(static_cast<size_t>(n_sc * n_poll), 0.0);
 }
 
 void LanduseSolver::init(int n_landuses, int n_pollutants) {

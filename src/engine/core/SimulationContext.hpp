@@ -496,8 +496,9 @@ struct SimulationContext {
             qual_routing_init = std::move(qri);
             qual_routing_final = std::move(qrfi);
             qual_routing_reacted = std::move(qrr);
-            // Zero out the quality vectors
-            for (auto* v : {&qual_init_buildup, &qual_final_buildup,
+            // Zero out the quality vectors (except init_buildup which is
+            // computed once during initQuality and must survive reset)
+            for (auto* v : {&qual_final_buildup,
                             &qual_surface_buildup, &qual_wet_deposition,
                             &qual_sweeping, &qual_bmp_removal,
                             &qual_infil_loss, &qual_runoff_load,
