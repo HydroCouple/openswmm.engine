@@ -13,26 +13,26 @@
 function(add_engine_cython_module name pyx_file)
     set(target "engine_${name}")
 
-    # Build the Cython-generated .cxx manually so we can pass --module-name.
-    # This is necessary because the legacy package also has modules with the
-    # same base name (e.g. both have _solver.pyx).  Using the prefixed target
-    # name for the output file avoids Ninja dependency collisions, while
-    # --module-name ensures Cython emits the correct PyInit_<name> symbol.
+    # Build the Cython-generated .cxx in a unique subdirectory so its
+    # filename matches the module name (Cython derives PyInit_<name> from
+    # the output filename stem).  This avoids collisions with identically-
+    # named legacy modules (e.g. both packages have _solver.pyx) while
+    # ensuring the correct PyInit_ symbol is emitted.
     set(_pyx_abs "${CMAKE_CURRENT_SOURCE_DIR}/${pyx_file}")
-    set(_cxx_out "${CMAKE_CURRENT_BINARY_DIR}/${target}.cxx")
+    set(_gen_dir "${CMAKE_CURRENT_BINARY_DIR}/engine_cython")
+    file(MAKE_DIRECTORY ${_gen_dir})
+    set(_cxx_out "${_gen_dir}/${name}.cxx")
 
     add_custom_command(
         OUTPUT  ${_cxx_out}
         COMMAND ${CYTHON_EXECUTABLE}
                 --cplus
-                --module-name openswmm.engine.${name}
                 --include-dir ${CMAKE_CURRENT_SOURCE_DIR}
-                --include-dir ${Python3_INCLUDE_DIRS}
                 -3
                 ${_pyx_abs}
                 --output-file ${_cxx_out}
         DEPENDS ${_pyx_abs}
-        COMMENT "Cythonizing ${pyx_file} -> ${target}.cxx (module ${name})"
+        COMMENT "Cythonizing ${pyx_file} (module ${name})"
         VERBATIM
     )
 

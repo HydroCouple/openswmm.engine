@@ -76,10 +76,9 @@ set_target_properties(openswmm_engine PROPERTIES
     OUTPUT_NAME   "openswmm.engine"
     VERSION       ${PROJECT_VERSION}
     SOVERSION     ${PROJECT_VERSION_MAJOR}
-    WINDOWS_EXPORT_ALL_SYMBOLS ON
-    CXX_VISIBILITY_PRESET      default
-    C_VISIBILITY_PRESET        default
-    VISIBILITY_INLINES_HIDDEN  OFF
+    CXX_VISIBILITY_PRESET      hidden
+    C_VISIBILITY_PRESET        hidden
+    VISIBILITY_INLINES_HIDDEN  ON
 )
 
 # ---- C++ standard ----
