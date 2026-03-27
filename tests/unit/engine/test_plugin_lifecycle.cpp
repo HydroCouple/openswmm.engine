@@ -20,6 +20,9 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <string>
+
 #include <openswmm/plugin_sdk/PluginState.hpp>
 
 #include "../../src/engine/plugins/DefaultOutputPlugin.hpp"
@@ -35,7 +38,13 @@ using openswmm::PluginFactory;
 using openswmm::SimulationContext;
 using openswmm::SimulationSnapshot;
 
+namespace fs = std::filesystem;
+
 namespace {
+
+// Cross-platform temporary directory (resolves to /tmp on Unix,
+// %TEMP% on Windows).
+static const std::string TMP = (fs::temp_directory_path() / "").string();
 
 // ============================================================================
 // PluginState transition validation
@@ -104,25 +113,25 @@ protected:
 };
 
 TEST_F(DefaultOutputPluginTest, ConstructorSetsLoadedState) {
-    DefaultOutputPlugin p("/tmp/test.out");
+    DefaultOutputPlugin p((TMP + "test.out").c_str());
     EXPECT_EQ(p.state(), PluginState::LOADED);
 }
 
 TEST_F(DefaultOutputPluginTest, InitializeTransitionsToInitialized) {
-    DefaultOutputPlugin p("/tmp/test.out");
+    DefaultOutputPlugin p((TMP + "test.out").c_str());
     EXPECT_EQ(p.initialize({}, nullptr), 0);
     EXPECT_EQ(p.state(), PluginState::INITIALIZED);
 }
 
 TEST_F(DefaultOutputPluginTest, ValidateTransitionsToValidated) {
-    DefaultOutputPlugin p("/tmp/test.out");
+    DefaultOutputPlugin p((TMP + "test.out").c_str());
     p.initialize({}, nullptr);
     EXPECT_EQ(p.validate(ctx), 0);
     EXPECT_EQ(p.state(), PluginState::VALIDATED);
 }
 
 TEST_F(DefaultOutputPluginTest, PrepareTransitionsToPrepared) {
-    DefaultOutputPlugin p("/tmp/test.out");
+    DefaultOutputPlugin p((TMP + "test.out").c_str());
     p.initialize({}, nullptr);
     p.validate(ctx);
     EXPECT_EQ(p.prepare(ctx), 0);
@@ -130,7 +139,7 @@ TEST_F(DefaultOutputPluginTest, PrepareTransitionsToPrepared) {
 }
 
 TEST_F(DefaultOutputPluginTest, UpdateTransitionsToUpdating) {
-    DefaultOutputPlugin p("/tmp/test.out");
+    DefaultOutputPlugin p((TMP + "test.out").c_str());
     p.initialize({}, nullptr);
     p.validate(ctx);
     p.prepare(ctx);
@@ -139,7 +148,7 @@ TEST_F(DefaultOutputPluginTest, UpdateTransitionsToUpdating) {
 }
 
 TEST_F(DefaultOutputPluginTest, MultipleUpdatesIncrementStepCount) {
-    DefaultOutputPlugin p("/tmp/test.out");
+    DefaultOutputPlugin p((TMP + "test.out").c_str());
     p.initialize({}, nullptr);
     p.validate(ctx);
     p.prepare(ctx);
@@ -153,7 +162,7 @@ TEST_F(DefaultOutputPluginTest, MultipleUpdatesIncrementStepCount) {
 }
 
 TEST_F(DefaultOutputPluginTest, FinalizeTransitionsToFinalized) {
-    DefaultOutputPlugin p("/tmp/test.out");
+    DefaultOutputPlugin p((TMP + "test.out").c_str());
     p.initialize({}, nullptr);
     p.validate(ctx);
     p.prepare(ctx);
@@ -163,7 +172,7 @@ TEST_F(DefaultOutputPluginTest, FinalizeTransitionsToFinalized) {
 }
 
 TEST_F(DefaultOutputPluginTest, FullLifecycleReturnsAllZero) {
-    DefaultOutputPlugin p("/tmp/test.out");
+    DefaultOutputPlugin p((TMP + "test.out").c_str());
     EXPECT_EQ(p.initialize({}, nullptr), 0);
     EXPECT_EQ(p.validate(ctx),           0);
     EXPECT_EQ(p.prepare(ctx),            0);
@@ -174,7 +183,7 @@ TEST_F(DefaultOutputPluginTest, FullLifecycleReturnsAllZero) {
 }
 
 TEST_F(DefaultOutputPluginTest, PrepareResetsStepCountAfterReinit) {
-    DefaultOutputPlugin p("/tmp/test.out");
+    DefaultOutputPlugin p((TMP + "test.out").c_str());
     p.initialize({}, nullptr);
     p.validate(ctx);
     p.prepare(ctx);
@@ -190,7 +199,7 @@ TEST_F(DefaultOutputPluginTest, PrepareResetsStepCountAfterReinit) {
 }
 
 TEST_F(DefaultOutputPluginTest, LastErrorMessageIsNotNull) {
-    DefaultOutputPlugin p("/tmp/test.out");
+    DefaultOutputPlugin p((TMP + "test.out").c_str());
     EXPECT_NE(p.last_error_message(), nullptr);
 }
 
@@ -205,25 +214,25 @@ protected:
 };
 
 TEST_F(DefaultReportPluginTest, ConstructorSetsLoadedState) {
-    DefaultReportPlugin p("/tmp/test.rpt");
+    DefaultReportPlugin p((TMP + "test.rpt").c_str());
     EXPECT_EQ(p.state(), PluginState::LOADED);
 }
 
 TEST_F(DefaultReportPluginTest, InitializeTransitionsToInitialized) {
-    DefaultReportPlugin p("/tmp/test.rpt");
+    DefaultReportPlugin p((TMP + "test.rpt").c_str());
     EXPECT_EQ(p.initialize({}, nullptr), 0);
     EXPECT_EQ(p.state(), PluginState::INITIALIZED);
 }
 
 TEST_F(DefaultReportPluginTest, ValidateTransitionsToValidated) {
-    DefaultReportPlugin p("/tmp/test.rpt");
+    DefaultReportPlugin p((TMP + "test.rpt").c_str());
     p.initialize({}, nullptr);
     EXPECT_EQ(p.validate(ctx), 0);
     EXPECT_EQ(p.state(), PluginState::VALIDATED);
 }
 
 TEST_F(DefaultReportPluginTest, PrepareTransitionsToPrepared) {
-    DefaultReportPlugin p("/tmp/test.rpt");
+    DefaultReportPlugin p((TMP + "test.rpt").c_str());
     p.initialize({}, nullptr);
     p.validate(ctx);
     EXPECT_EQ(p.prepare(ctx), 0);
@@ -231,7 +240,7 @@ TEST_F(DefaultReportPluginTest, PrepareTransitionsToPrepared) {
 }
 
 TEST_F(DefaultReportPluginTest, UpdateTransitionsToUpdating) {
-    DefaultReportPlugin p("/tmp/test.rpt");
+    DefaultReportPlugin p((TMP + "test.rpt").c_str());
     p.initialize({}, nullptr);
     p.validate(ctx);
     p.prepare(ctx);
@@ -240,7 +249,7 @@ TEST_F(DefaultReportPluginTest, UpdateTransitionsToUpdating) {
 }
 
 TEST_F(DefaultReportPluginTest, FinalizeTransitionsToFinalized) {
-    DefaultReportPlugin p("/tmp/test.rpt");
+    DefaultReportPlugin p((TMP + "test.rpt").c_str());
     p.initialize({}, nullptr);
     p.validate(ctx);
     p.prepare(ctx);
@@ -250,7 +259,7 @@ TEST_F(DefaultReportPluginTest, FinalizeTransitionsToFinalized) {
 }
 
 TEST_F(DefaultReportPluginTest, WriteSummaryReturnsZero) {
-    DefaultReportPlugin p("/tmp/test.rpt");
+    DefaultReportPlugin p((TMP + "test.rpt").c_str());
     p.initialize({}, nullptr);
     p.validate(ctx);
     p.prepare(ctx);
@@ -259,7 +268,7 @@ TEST_F(DefaultReportPluginTest, WriteSummaryReturnsZero) {
 }
 
 TEST_F(DefaultReportPluginTest, FullLifecycleReturnsAllZero) {
-    DefaultReportPlugin p("/tmp/test.rpt");
+    DefaultReportPlugin p((TMP + "test.rpt").c_str());
     EXPECT_EQ(p.initialize({}, nullptr), 0);
     EXPECT_EQ(p.validate(ctx),           0);
     EXPECT_EQ(p.prepare(ctx),            0);
@@ -270,7 +279,7 @@ TEST_F(DefaultReportPluginTest, FullLifecycleReturnsAllZero) {
 }
 
 TEST_F(DefaultReportPluginTest, LastErrorMessageIsNotNull) {
-    DefaultReportPlugin p("/tmp/test.rpt");
+    DefaultReportPlugin p((TMP + "test.rpt").c_str());
     EXPECT_NE(p.last_error_message(), nullptr);
 }
 
@@ -294,7 +303,7 @@ TEST_F(PluginFactoryLifecycleTest, EmptyFactoryHasNoPlugins) {
 
 TEST_F(PluginFactoryLifecycleTest, AddOutputPluginIncrementsCount) {
     PluginFactory factory;
-    auto* p = new DefaultOutputPlugin("/tmp/a.out");
+    auto* p = new DefaultOutputPlugin((TMP + "a.out").c_str());
     factory.add_output_plugin(p);
     EXPECT_EQ(factory.plugin_count(), 1);
     EXPECT_FALSE(factory.empty());
@@ -303,7 +312,7 @@ TEST_F(PluginFactoryLifecycleTest, AddOutputPluginIncrementsCount) {
 
 TEST_F(PluginFactoryLifecycleTest, AddReportPluginIncrementsCount) {
     PluginFactory factory;
-    auto* p = new DefaultReportPlugin("/tmp/a.rpt");
+    auto* p = new DefaultReportPlugin((TMP + "a.rpt").c_str());
     factory.add_report_plugin(p);
     EXPECT_EQ(factory.plugin_count(), 1);
     EXPECT_EQ(factory.report_plugins().size(), 1u);
@@ -311,15 +320,15 @@ TEST_F(PluginFactoryLifecycleTest, AddReportPluginIncrementsCount) {
 
 TEST_F(PluginFactoryLifecycleTest, AddBothPluginTypes) {
     PluginFactory factory;
-    factory.add_output_plugin(new DefaultOutputPlugin("/tmp/a.out"));
-    factory.add_report_plugin(new DefaultReportPlugin("/tmp/a.rpt"));
+    factory.add_output_plugin(new DefaultOutputPlugin((TMP + "a.out").c_str()));
+    factory.add_report_plugin(new DefaultReportPlugin((TMP + "a.rpt").c_str()));
     EXPECT_EQ(factory.plugin_count(), 2);
 }
 
 TEST_F(PluginFactoryLifecycleTest, PrepareAllDispatchesToValidatedPlugins) {
     PluginFactory factory;
-    auto* op = new DefaultOutputPlugin("/tmp/a.out");
-    auto* rp = new DefaultReportPlugin("/tmp/a.rpt");
+    auto* op = new DefaultOutputPlugin((TMP + "a.out").c_str());
+    auto* rp = new DefaultReportPlugin((TMP + "a.rpt").c_str());
 
     // Manually drive to VALIDATED state (as SWMMEngine::open() does)
     op->initialize({}, nullptr);
@@ -339,7 +348,7 @@ TEST_F(PluginFactoryLifecycleTest, PrepareAllSkipsUnvalidatedPlugins) {
     PluginFactory factory;
 
     // Output plugin manually initialized but NOT validated
-    auto* op = new DefaultOutputPlugin("/tmp/a.out");
+    auto* op = new DefaultOutputPlugin((TMP + "a.out").c_str());
     op->initialize({}, nullptr);
     // state == INITIALIZED, not VALIDATED → prepare_all should skip it
 
@@ -351,7 +360,7 @@ TEST_F(PluginFactoryLifecycleTest, PrepareAllSkipsUnvalidatedPlugins) {
 
 TEST_F(PluginFactoryLifecycleTest, UpdateAllDispatchesToPreparedPlugins) {
     PluginFactory factory;
-    auto* op = new DefaultOutputPlugin("/tmp/a.out");
+    auto* op = new DefaultOutputPlugin((TMP + "a.out").c_str());
 
     op->initialize({}, nullptr);
     op->validate(ctx);
@@ -365,7 +374,7 @@ TEST_F(PluginFactoryLifecycleTest, UpdateAllDispatchesToPreparedPlugins) {
 
 TEST_F(PluginFactoryLifecycleTest, UpdateAllSkipsUnpreparedPlugins) {
     PluginFactory factory;
-    auto* op = new DefaultOutputPlugin("/tmp/a.out");
+    auto* op = new DefaultOutputPlugin((TMP + "a.out").c_str());
     // state == LOADED — should not receive update_all
 
     factory.add_output_plugin(op);
@@ -375,8 +384,8 @@ TEST_F(PluginFactoryLifecycleTest, UpdateAllSkipsUnpreparedPlugins) {
 
 TEST_F(PluginFactoryLifecycleTest, FinalizeAllDispatchesToAllPlugins) {
     PluginFactory factory;
-    auto* op = new DefaultOutputPlugin("/tmp/a.out");
-    auto* rp = new DefaultReportPlugin("/tmp/a.rpt");
+    auto* op = new DefaultOutputPlugin((TMP + "a.out").c_str());
+    auto* rp = new DefaultReportPlugin((TMP + "a.rpt").c_str());
 
     op->initialize({}, nullptr);
     op->validate(ctx);
@@ -395,7 +404,7 @@ TEST_F(PluginFactoryLifecycleTest, FinalizeAllDispatchesToAllPlugins) {
 
 TEST_F(PluginFactoryLifecycleTest, WriteSummaryAllDispatchesToReportPlugins) {
     PluginFactory factory;
-    auto* rp = new DefaultReportPlugin("/tmp/a.rpt");
+    auto* rp = new DefaultReportPlugin((TMP + "a.rpt").c_str());
 
     rp->initialize({}, nullptr);
     rp->validate(ctx);
@@ -411,8 +420,8 @@ TEST_F(PluginFactoryLifecycleTest, WriteSummaryAllDispatchesToReportPlugins) {
 
 TEST_F(PluginFactoryLifecycleTest, FullLifecycleViaFactory) {
     PluginFactory factory;
-    auto* op = new DefaultOutputPlugin("/tmp/b.out");
-    auto* rp = new DefaultReportPlugin("/tmp/b.rpt");
+    auto* op = new DefaultOutputPlugin((TMP + "b.out").c_str());
+    auto* rp = new DefaultReportPlugin((TMP + "b.rpt").c_str());
 
     // SWMMEngine::open() pattern: inject and immediately init+validate
     op->initialize({}, nullptr);
@@ -444,8 +453,8 @@ TEST_F(PluginFactoryLifecycleTest, FullLifecycleViaFactory) {
 
 TEST_F(PluginFactoryLifecycleTest, UnloadAllClearsPlugins) {
     PluginFactory factory;
-    factory.add_output_plugin(new DefaultOutputPlugin("/tmp/c.out"));
-    factory.add_report_plugin(new DefaultReportPlugin("/tmp/c.rpt"));
+    factory.add_output_plugin(new DefaultOutputPlugin((TMP + "c.out").c_str()));
+    factory.add_report_plugin(new DefaultReportPlugin((TMP + "c.rpt").c_str()));
     EXPECT_FALSE(factory.empty());
 
     factory.unload_all();
