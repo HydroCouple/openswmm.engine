@@ -168,39 +168,199 @@ python -m pip install .
 python -m pytest -v tests
 ```
 
-## Python Usage Examples
+## Python Usage
 
-End-to-end modeling workflows via a Python API
+The `openswmm` package provides Cython bindings for the full C API.
+Domain objects are constructed by passing an active `Solver` instance.
 
-- Creating model instances
-- Adding objects 
-- Parameterizing model
-- Runtime coupling and feedback
-- Saving model instance to file
-- Saving hotstart files
-- etc.
-
-Check out the documentation for the [API](python/index.html) 
-
+### Running a Simulation
 
 ```python
-from openswmm.engine import Solver, Nodes, Links, Subcatchments
+from openswmm.engine import Solver, Nodes, Links, Subcatchments, Gages
 
-with Solver("model.inp", "model.rpt", "model.out") as solver:
-    solver.start(save_results=True)
+# Context manager handles open/initialize/start and end/report/close/destroy
+with Solver("model.inp", "model.rpt", "model.out") as s:
+    nodes = Nodes(s)
+    links = Links(s)
+    subcatchments = Subcatchments(s)
+    gages = Gages(s)
 
-    nodes = Nodes(solver)
-    links = Links(solver)
-    subcatchments = Subcatchments(solver)
+    while s.step():
+        # Per-element access by name or integer index
+        depth  = nodes.get_depth("J1")
+        flow   = links.get_flow("C1")
+        runoff = subcatchments.get_runoff("S1")
 
-    while solver.step() > 0:
-        # access current time-step values
-        depth = nodes["Node1"].depth
-        flow  = links["Conduit1"].flow
+        # NumPy bulk access (single memcpy — fast)
+        all_depths = nodes.get_depths_bulk()       # shape (n_nodes,)
+        all_flows  = links.get_flows_bulk()         # shape (n_links,)
 
-    solver.end()
-    solver.report()
+        # Runtime forcing
+        nodes.set_lateral_inflow("J2", 0.5)
+        gages.set_rainfall(0, 25.4)
 ```
+
+### Advanced Forcing with Persistence
+
+```python
+from openswmm.engine import Solver, Nodes, Forcing, ForcingMode, ForcingTarget
+
+with Solver("model.inp", "model.rpt", "model.out") as s:
+    nodes   = Nodes(s)
+    forcing = Forcing(s)
+
+    j1 = nodes.get_index("J1")
+
+    # Apply a persistent lateral inflow (held every step until cleared)
+    forcing.node_lat_inflow(j1, 1.5, ForcingMode.REPLACE, persist=True)
+
+    # Additive forcing (added to model-computed value)
+    forcing.gage_rainfall(0, 10.0, ForcingMode.ADD, persist=True)
+
+    while s.step():
+        pass
+
+    # Clear specific object or all forcing
+    forcing.clear(ForcingTarget.NODE, j1)
+    forcing.clear_all()
+```
+
+### Programmatic Model Building (No .inp File)
+
+```python
+from openswmm.engine import (
+    ModelBuilder, Nodes, Links,
+    NodeType, LinkType, XSectShape,
+)
+
+m = ModelBuilder()
+
+# Add objects
+m.add_node("J1", NodeType.JUNCTION)
+m.add_node("J2", NodeType.JUNCTION)
+m.add_node("OUT1", NodeType.OUTFALL)
+m.add_link("C1", LinkType.CONDUIT)
+m.add_link("C2", LinkType.CONDUIT)
+
+# Set geometry
+m.set_node_invert(0, 10.0)
+m.set_node_invert(1, 8.0)
+m.set_node_invert(2, 5.0)
+m.set_link_nodes(0, 0, 1)        # C1: J1 -> J2
+m.set_link_nodes(1, 1, 2)        # C2: J2 -> OUT1
+m.set_link_length(0, 400.0)
+m.set_link_length(1, 400.0)
+m.set_link_roughness(0, 0.013)
+m.set_link_roughness(1, 0.013)
+m.set_link_xsect(0, XSectShape.CIRCULAR, 1.0)
+m.set_link_xsect(1, XSectShape.CIRCULAR, 1.0)
+
+# Set simulation options
+m.set_option("FLOW_UNITS", "CFS")
+m.set_option("ROUTING_MODEL", "DYNWAVE")
+m.set_option("START_DATE", "01/01/2024")
+m.set_option("END_DATE", "01/02/2024")
+
+# Validate, finalize, and simulate
+m.validate()
+m.finalize()
+
+solver = m.to_solver()
+solver.start()
+while solver.step():
+    pass
+solver.end()
+
+# Optionally write to .inp for inspection
+m.write("generated_model.inp")
+
+solver.destroy()
+```
+
+### Reading Binary Output Files
+
+```python
+from openswmm.engine import OutputReader, OutNodeVar, OutLinkVar
+
+with OutputReader("model.out") as out:
+    # Query metadata
+    print(f"Nodes: {out.get_node_count()}")
+    print(f"Links: {out.get_link_count()}")
+    print(f"Periods: {out.get_period_count()}")
+    print(f"Report step: {out.get_report_step()} sec")
+
+    # List object IDs
+    for i in range(out.get_node_count()):
+        print(f"  Node {i}: {out.get_node_id(i)}")
+
+    # Read all node depths at each reporting period
+    for t in range(out.get_period_count()):
+        depths = out.get_node_result(t, OutNodeVar.DEPTH)     # float32 array
+        flows  = out.get_link_result(t, OutLinkVar.FLOW)      # float32 array
+        print(f"  Period {t}: max depth = {depths.max():.3f}")
+
+    # Time series for a single node
+    node_depths = out.get_node_series(
+        node_idx=0,
+        var=OutNodeVar.DEPTH,
+        start_period=0,
+        end_period=out.get_period_count() - 1,
+    )
+```
+
+### Hot Start Save and Restore
+
+```python
+from openswmm.engine import Solver, HotStart
+
+# Run part of a simulation and save state
+with Solver("model.inp", "model.rpt", "model.out") as s:
+    for _ in range(100):
+        if not s.step():
+            break
+    HotStart.save(s, "checkpoint.hsf")
+
+# Later: restore from hot start
+hs = HotStart.open("checkpoint.hsf")
+
+# Optionally modify state before applying
+hs.set_node_depth("J1", 2.5)
+
+with Solver("model.inp", "model.rpt", "model2.out") as s2:
+    hs.apply(s2)
+    while s2.step():
+        pass
+
+hs.close()
+```
+
+### Mass Balance and Statistics
+
+```python
+from openswmm.engine import Solver, MassBalance, Statistics, RunoffTotal
+
+with Solver("model.inp", "model.rpt", "model.out") as s:
+    while s.step():
+        pass
+
+    mb = MassBalance(s)
+    stats = Statistics(s)
+
+    # Continuity errors
+    print(f"Runoff error: {mb.get_runoff_continuity_error():.4f}%")
+    print(f"Routing error: {mb.get_routing_continuity_error():.4f}%")
+
+    # Cumulative totals
+    precip = mb.get_runoff_total(RunoffTotal.RAINFALL)
+    runoff = mb.get_runoff_total(RunoffTotal.RUNOFF)
+    print(f"Total precip: {precip:.2f}, Total runoff: {runoff:.2f}")
+
+    # Per-object statistics
+    print(f"Node 0 max depth: {stats.node_max_depth(0):.3f}")
+    print(f"Link 0 max flow:  {stats.link_max_flow(0):.3f}")
+```
+
+For the full API reference, see the [documentation](https://hydrocouple.github.io/openswmm.engine).
 
 
 
