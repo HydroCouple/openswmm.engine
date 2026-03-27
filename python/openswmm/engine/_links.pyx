@@ -397,7 +397,7 @@ class Links:
         """
         cdef int i = self._resolve(idx)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bint v = 0
+        cdef int v = 0
         _check(swmm_link_get_closed(h, i, &v))
         return bool(v)
 
@@ -491,7 +491,7 @@ class Links:
         """
         cdef int i = self._resolve(idx)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bint v = 0
+        cdef int v = 0
         _check(swmm_link_get_pump_init_state(h, i, &v))
         return bool(v)
 
@@ -616,7 +616,7 @@ class Links:
         """
         cdef int i = self._resolve(idx)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bint v = 0
+        cdef int v = 0
         _check(swmm_link_get_flap_gate(h, i, &v))
         return bool(v)
 
