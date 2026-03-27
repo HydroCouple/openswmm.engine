@@ -57,9 +57,6 @@ class Nodes:
     def __init__(self, solver):
         self._solver = solver
 
-    cdef SWMM_Engine _handle(self):
-        return <SWMM_Engine><size_t>self._solver.handle
-
     def _resolve(self, idx) -> int:
         """Resolve *idx* to an integer index.
 
@@ -67,8 +64,9 @@ class Nodes:
         :returns: Integer index.
         :raises KeyError: If a string ID is not found.
         """
+        cdef int i
         if isinstance(idx, str):
-            cdef int i = self.get_index(idx)
+            i = self.get_index(idx)
             if i < 0:
                 raise KeyError(f"Node '{idx}' not found")
             return i

@@ -47,8 +47,9 @@ class Pollutants:
         :returns: Integer index.
         :raises KeyError: If a string ID is not found.
         """
+        cdef int i
         if isinstance(idx, str):
-            cdef int i = self.get_index(idx)
+            i = self.get_index(idx)
             if i < 0:
                 raise KeyError(f"Pollutant '{idx}' not found")
             return i
@@ -56,10 +57,13 @@ class Pollutants:
 
     def _resolve_node(self, idx) -> int:
         """Resolve a node index (int) or node ID (str) to an integer index."""
+        cdef SWMM_Engine h
+        cdef bytes b
+        cdef int i
         if isinstance(idx, str):
-            cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-            cdef bytes b = idx.encode('utf-8')
-            cdef int i = swmm_node_index(h, b)
+            h = <SWMM_Engine><size_t>self._solver.handle
+            b = idx.encode('utf-8')
+            i = swmm_node_index(h, b)
             if i < 0:
                 raise KeyError(f"Node '{idx}' not found")
             return i
@@ -67,10 +71,13 @@ class Pollutants:
 
     def _resolve_link(self, idx) -> int:
         """Resolve a link index (int) or link ID (str) to an integer index."""
+        cdef SWMM_Engine h
+        cdef bytes b
+        cdef int i
         if isinstance(idx, str):
-            cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-            cdef bytes b = idx.encode('utf-8')
-            cdef int i = swmm_link_index(h, b)
+            h = <SWMM_Engine><size_t>self._solver.handle
+            b = idx.encode('utf-8')
+            i = swmm_link_index(h, b)
             if i < 0:
                 raise KeyError(f"Link '{idx}' not found")
             return i

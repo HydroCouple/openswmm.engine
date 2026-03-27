@@ -54,8 +54,9 @@ class Gages:
         :returns: Integer index.
         :raises KeyError: If a string ID is not found.
         """
+        cdef int i
         if isinstance(idx, str):
-            cdef int i = self.get_index(idx)
+            i = self.get_index(idx)
             if i < 0:
                 raise KeyError(f"Gage '{idx}' not found")
             return i

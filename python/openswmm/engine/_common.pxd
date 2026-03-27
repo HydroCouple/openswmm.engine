@@ -577,8 +577,9 @@ cdef extern from "openswmm_forcing.h":
 # --- Shared helper ---
 cdef inline void _check(int code) except *:
     """Raise EngineError if code != 0."""
+    cdef const char* msg
     if code != 0:
-        cdef const char* msg = swmm_error_message(code)
+        msg = swmm_error_message(code)
         raise RuntimeError(
             msg.decode('utf-8') if msg != NULL else f"SWMM error {code}"
         )

@@ -58,9 +58,10 @@ class EngineError(Exception):
     """
 
     def __init__(self, int code, str message=""):
+        cdef const char* msg
         self.code = code
         if not message:
-            cdef const char* msg = swmm_error_message(code)
+            msg = swmm_error_message(code)
             message = msg.decode('utf-8') if msg != NULL else f"Error {code}"
         self.message = message
         super().__init__(self.message)
