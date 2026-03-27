@@ -41,6 +41,10 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
             ${PROJECT_SOURCE_DIR}/src/engine
     )
 
+    if(MSVC)
+        target_compile_options(${TEST_NAME} PRIVATE /EHsc)
+    endif()
+
     set_target_properties(${TEST_NAME} PROPERTIES
         CXX_STANDARD 20
         CXX_STANDARD_REQUIRED ON

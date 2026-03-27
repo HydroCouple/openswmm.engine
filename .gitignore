@@ -6,7 +6,24 @@
 .settings/
 
 build/
+build-*/
 nrtests/
 upload/
 
 *_export.h
+docs/html/
+
+# add python ignore files and file types
+python/build/
+python/dist/
+python/OpenSWMMCore.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info
+*.manifest
+*.spec  
+

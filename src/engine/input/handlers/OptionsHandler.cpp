@@ -227,7 +227,7 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "MINIMUM_STEP") {
             opt.min_routing_step = parse_time_hhmmss(val);
         } else if (key == "DRY_DAYS") {
-            std::from_chars(val.data(), val.data() + val.size(), opt.dry_days);
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), opt.dry_days);
         } else if (key == "DRY_STEP") {
             opt.dry_step = parse_time_hhmmss(val);
         } else if (key == "WET_STEP") {

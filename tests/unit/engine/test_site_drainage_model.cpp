@@ -240,7 +240,6 @@ TEST_F(SiteDrainageModelTest, FlowsProducedDuringSimulation) {
     int o1 = swmm_node_index(engine_, "O1");
     ASSERT_GE(o1, 0);
 
-    double max_outfall_flow = 0.0;
     double max_link_flow = 0.0;
     double elapsed = 0.0;
 
@@ -582,7 +581,7 @@ TEST_F(SiteDrainageModelTest, ErrorReporting) {
     // Error message should be non-empty
     const char* msg = swmm_get_last_error_msg(engine_);
     EXPECT_NE(msg, nullptr);
-    if (msg) EXPECT_GT(strlen(msg), 0u);
+    if (msg) { EXPECT_GT(strlen(msg), 0u); }
 }
 
 // ---------------------------------------------------------------------------

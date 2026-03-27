@@ -59,13 +59,6 @@ static double to_double(std::string_view sv, double def = 0.0) noexcept {
     return v;
 }
 
-/// Return true if \p sv looks like a numeric value (starts with digit or sign).
-static bool is_numeric(std::string_view sv) noexcept {
-    if (sv.empty()) return false;
-    char c = sv[0];
-    return (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.';
-}
-
 /// Map a pattern type keyword to its integer code.
 static int parse_pattern_type(std::string_view sv) noexcept {
     std::string upper(sv);
