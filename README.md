@@ -72,9 +72,7 @@ A comprehensive, domain-split C API replaces the monolithic legacy interface:
 The new engine extends the standard SWMM `.inp` format with several new sections while remaining fully backward-compatible with existing input files. Below is a complete `.inp` snippet demonstrating all new features:
 
 ```ini
-;; =======================================================================
 ;; EXTENSION OPTIONS — new and custom keys in [OPTIONS]
-;; =======================================================================
 ;; Standard SWMM options work as before.  Any unrecognized key is stored
 ;; in an extension map accessible at runtime via the C/Python API.
 
@@ -97,18 +95,16 @@ MY_STABILITY_FACTOR  1.05
 PLUGIN_LOG_LEVEL     DEBUG
 
 
-;; =======================================================================
 ;; USER FLAGS — typed custom metadata on any model object
-;; =======================================================================
 ;; Define a schema of flag names with type and default value.
 ;; Supported types: BOOLEAN, INTEGER, REAL, STRING.
 
 [USER_FLAGS]
 ;;Name              Type      Default   Description
-INSPECTED           BOOLEAN   NO        "Has the asset been field-inspected?"
-PRIORITY            INTEGER   0         "Maintenance priority (0=none, 1=low, 5=critical)"
-ROUGHNESS_ADJ       REAL      1.0       "Roughness calibration multiplier"
-ASSET_ID            STRING    ""        "External asset management system ID"
+INSPECTED           BOOLEAN   NO        'Has the asset been field-inspected?'
+PRIORITY            INTEGER   0         'Maintenance priority (0=none, 1=low, 5=critical)'
+ROUGHNESS_ADJ       REAL      1.0       'Roughness calibration multiplier'
+ASSET_ID            STRING    ""        'External asset management system ID'
 
 ;; Assign flag values to individual objects.
 ;; ObjectType can be NODE, LINK, SUBCATCHMENT, or GAGE.
@@ -125,9 +121,7 @@ SUBCATCHMENT   S1           INSPECTED       NO
 SUBCATCHMENT   S1           ASSET_ID        "AM-00501"
 
 
-;; =======================================================================
 ;; PLUGINS — load output/report plugins at runtime
-;; =======================================================================
 ;; Each line: <shared-library-path>  [arg1  arg2  ...]
 ;; The first token is the path to a .so / .dylib / .dll.
 ;; Remaining tokens are passed to the plugin's initialize() method.
