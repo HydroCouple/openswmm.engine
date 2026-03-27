@@ -38,7 +38,18 @@ function(add_engine_cython_module name pyx_file)
 
     add_library(${target} MODULE ${_cxx_out})
 
-    set_target_properties(${target} PROPERTIES OUTPUT_NAME ${name})
+    set_target_properties(${target} PROPERTIES
+        OUTPUT_NAME ${name}
+        CXX_VISIBILITY_PRESET default
+        C_VISIBILITY_PRESET default
+        VISIBILITY_INLINES_HIDDEN OFF
+    )
+
+    # Python extension entry points (PyInit_*) must remain exported even when
+    # the global preset enables -fvisibility=hidden.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${target} PRIVATE -fvisibility=default)
+    endif()
 
     target_link_libraries(${target}
         openswmm::engine

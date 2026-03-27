@@ -17,6 +17,19 @@ target_link_libraries(
 # Specify that this is a Python extension module
 python_extension_module(_output)
 
+set_target_properties(_output
+    PROPERTIES
+        CXX_VISIBILITY_PRESET default
+        C_VISIBILITY_PRESET default
+        VISIBILITY_INLINES_HIDDEN OFF
+)
+
+# Ensure PyInit__output is exported when global flags include
+# -fvisibility=hidden.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(_output PRIVATE -fvisibility=default)
+endif()
+
 if(APPLE)
     set(INSTALL_LIB_ROOT "@loader_path;@rpath;@loader_path/../../../../..;${OUTFILE_BUILD_DIR}")
     set(BUILD_LIB_ROOT "@loader_path;@rpath;${OUTFILE_BUILD_DIR}")

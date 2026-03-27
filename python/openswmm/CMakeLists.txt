@@ -16,6 +16,18 @@ set_target_properties(_openswmm
 
 python_extension_module(_openswmm)
 
+set_target_properties(_openswmm
+    PROPERTIES
+        CXX_VISIBILITY_PRESET default
+        C_VISIBILITY_PRESET default
+        VISIBILITY_INLINES_HIDDEN OFF
+)
+
+# Keep PyInit__openswmm exported with global hidden visibility flags.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(_openswmm PRIVATE -fvisibility=default)
+endif()
+
 # Install the openswmmcore module
 install(TARGETS _openswmm LIBRARY DESTINATION openswmm)
 

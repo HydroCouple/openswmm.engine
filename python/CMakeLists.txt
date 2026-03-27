@@ -47,6 +47,19 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # ============================================================================
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(PythonExtensions REQUIRED)
+
+# Refresh cached Cython executable path each configure. This avoids stale
+# references to deleted pip-build-env temp directories when re-running
+# `pip install .` in the same source tree.
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -c "import shutil; print(shutil.which('cython') or '')"
+    OUTPUT_VARIABLE _CYTHON_EXE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if(_CYTHON_EXE)
+    set(CYTHON_EXECUTABLE "${_CYTHON_EXE}" CACHE FILEPATH "Path to cython executable" FORCE)
+endif()
+
 find_package(Cython REQUIRED)
 
 # NumPy include directory (needed by Cython modules that cimport numpy)
