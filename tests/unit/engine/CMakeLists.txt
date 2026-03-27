@@ -55,6 +55,7 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
         COMMAND $<TARGET_FILE:${TEST_NAME}>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
     )
+    set_tests_properties(${TEST_NAME} PROPERTIES LABELS "unit")
 
     # Copy to bin directory for convenience
     add_custom_command(TARGET ${TEST_NAME} POST_BUILD

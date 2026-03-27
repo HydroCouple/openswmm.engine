@@ -66,10 +66,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Modern feature options with namespacing
-option(OPENSWMM_BUILD_TESTS    "Build Google Test unit + regression tests" ON)
-option(OPENSWMM_BUILD_BENCHMARKS "Build Google Benchmark performance tests" OFF)
-option(OPENSWMM_INSTALL        "Install openswmm libraries" ON)
-option(OPENSWMM_BUILD_PYTHON   "Build Python bindings" OFF)
+option(OPENSWMM_BUILD_TESTS       "Build all tests (unit + regression). Convenience flag." ON)
+option(OPENSWMM_BUILD_UNIT_TESTS  "Build unit tests only" OFF)
+option(OPENSWMM_BUILD_REGRESSION_TESTS "Build regression tests only" OFF)
+option(OPENSWMM_BUILD_BENCHMARKS  "Build Google Benchmark performance tests" OFF)
+option(OPENSWMM_INSTALL           "Install openswmm libraries" ON)
+option(OPENSWMM_BUILD_PYTHON      "Build Python bindings" OFF)
+
+# OPENSWMM_BUILD_TESTS is a convenience flag that enables both unit and regression
+if(OPENSWMM_BUILD_TESTS)
+    set(OPENSWMM_BUILD_UNIT_TESTS ON CACHE BOOL "" FORCE)
+    set(OPENSWMM_BUILD_REGRESSION_TESTS ON CACHE BOOL "" FORCE)
+endif()
 
 # Include essential modules
 include(CMakePackageConfigHelpers)
@@ -128,8 +136,8 @@ install(
     FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
 )
 
-# Add testing subdirectory conditionally
-if(OPENSWMM_BUILD_TESTS)
+# Add testing subdirectories conditionally
+if(OPENSWMM_BUILD_UNIT_TESTS OR OPENSWMM_BUILD_REGRESSION_TESTS)
     enable_testing()
     find_package(GTest CONFIG REQUIRED)
     add_subdirectory(tests)

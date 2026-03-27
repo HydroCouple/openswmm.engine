@@ -90,14 +90,15 @@ jobs:
           cmake
           --preset=${{ matrix.cmake_preset }}-debug
           -B build-${{ matrix.vcpkg_triplet }}
-          -DOPENSWMM_BUILD_TESTS=ON
+          -DOPENSWMM_BUILD_TESTS=OFF
+          -DOPENSWMM_BUILD_UNIT_TESTS=ON
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
       - name: Build
         run: cmake --build build-${{ matrix.vcpkg_triplet }} --config Debug
 
       - name: Unit tests
-        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug --output-on-failure
+        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit --output-on-failure
 
       - name: Package
         run: cmake --build build-${{ matrix.vcpkg_triplet }} --target package

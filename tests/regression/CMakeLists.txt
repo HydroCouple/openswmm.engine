@@ -38,6 +38,10 @@ target_include_directories(test_engine_regression
         ${PROJECT_SOURCE_DIR}/include
 )
 
+if(MSVC)
+    target_compile_options(test_engine_regression PRIVATE /EHsc)
+endif()
+
 set_target_properties(test_engine_regression PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
@@ -50,6 +54,7 @@ add_test(
             --gtest_filter="RegressionTest/RegressionTest*"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
 )
+set_tests_properties(regression_example1 PROPERTIES LABELS "regression")
 
 add_custom_command(TARGET test_engine_regression POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
