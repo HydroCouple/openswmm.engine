@@ -9,7 +9,7 @@ import unittest
 from datetime import datetime
 
 from tests.data import solver as example_solver_data
-from openswmmcore import solver
+from openswmm import solver
 
 
 class TestSolverVersion(unittest.TestCase):

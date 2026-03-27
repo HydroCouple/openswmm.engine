@@ -9,8 +9,8 @@ import unittest
 from datetime import datetime
 
 from tests.data import output as example_output_data
-from openswmmcore import output
-from python.output import Output, SWMMOutputException
+from openswmm import output
+from openswmm.legacy.output import Output, SWMMOutputException
 
 
 # ---------------------------------------------------------------------------
