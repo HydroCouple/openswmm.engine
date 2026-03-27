@@ -82,7 +82,7 @@ cdef class HotStart:
         _check(swmm_hotstart_open(b, &h))
         if h == NULL:
             raise IOError(f"Cannot open hot start file: {path}")
-        obj = cls.__new__(cls)
+        cdef HotStart obj = cls.__new__(cls)
         obj._handle = h
         return obj
 

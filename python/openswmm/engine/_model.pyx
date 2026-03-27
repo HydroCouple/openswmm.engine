@@ -188,7 +188,7 @@ cdef class ModelBuilder:
         :returns: A new :class:`Solver` wrapping this model's engine.
         :rtype: Solver
         """
-        s = Solver.__new__(Solver)
+        cdef Solver s = Solver.__new__(Solver)
         s._handle = self._handle
         s._elapsed = 0.0
         s._inp = ""
