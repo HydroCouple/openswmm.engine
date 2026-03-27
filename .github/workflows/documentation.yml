@@ -2,10 +2,10 @@ name: Documentation
 
 on:
   push:
-    branches: [master, develop]
+    branches: [main, develop]
     tags: ["v*.*.*"]
   pull_request:
-    branches: [master, develop]
+    branches: [main, develop]
   workflow_dispatch:
 
 # Allow only one concurrent deployment.  Do NOT cancel in-progress runs so
@@ -92,7 +92,6 @@ jobs:
 # ─────────────────────────────────────────────────────────────────────────────
   deploy:
     name: Deploy to GitHub Pages
-    if: github.event_name != 'pull_request'
     needs: [build_python_docs, build_doxygen_docs]
     runs-on: ubuntu-latest
     permissions:
