@@ -13,7 +13,7 @@ from libc.stdlib cimport free, malloc
 # external imports
 
 # local python and cython imports
-from ..solver import (
+from ..engine import (
     decode_swmm_datetime,
 )
 

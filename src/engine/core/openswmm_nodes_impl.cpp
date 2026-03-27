@@ -213,7 +213,12 @@ SWMM_ENGINE_API int swmm_node_set_lateral_inflow(SWMM_Engine engine, int idx, do
     auto& ctx = to_engine(engine)->context();
     CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    ctx.nodes.lat_flow[static_cast<std::size_t>(idx)] = flow;
+    auto uidx = static_cast<std::size_t>(idx);
+    if (uidx >= ctx.nodes.user_lat_flow.size()) {
+        // Lazily resize if not yet allocated (e.g. hot-started context)
+        ctx.nodes.user_lat_flow.resize(ctx.nodes.lat_flow.size(), 0.0);
+    }
+    ctx.nodes.user_lat_flow[uidx] = flow;
     return SWMM_OK;
 }
 

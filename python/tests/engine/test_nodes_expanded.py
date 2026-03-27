@@ -82,16 +82,18 @@ class TestNodesHydraulicState:
 
 
 class TestNodesGeometrySetters:
-    """Node geometry property writes."""
+    """Node geometry property writes (requires OPENED state, not STARTED)."""
 
-    def test_set_invert_elev(self, nodes):
-        nodes.set_invert_elev(0, 100.5)
-        v = nodes.get_invert_elev(0)
+    def test_set_invert_elev(self, opened_solver):
+        n = Nodes(opened_solver)
+        n.set_invert_elev(0, 100.5)
+        v = n.get_invert_elev(0)
         assert abs(v - 100.5) < 1e-6
 
-    def test_set_pond_area(self, nodes):
-        nodes.set_pond_area(0, 500.0)
-        v = nodes.get_ponded_area(0)
+    def test_set_pond_area(self, opened_solver):
+        n = Nodes(opened_solver)
+        n.set_pond_area(0, 500.0)
+        v = n.get_ponded_area(0)
         assert abs(v - 500.0) < 1e-6
 
 

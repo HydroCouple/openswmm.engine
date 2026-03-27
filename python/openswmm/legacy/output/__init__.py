@@ -9,19 +9,16 @@ This subpackage provides the :class:`Output` class for reading SWMM
 access.
 """
 
-try:
-    from ._output import (
-        UnitSystem,
-        FlowUnits,
-        ConcentrationUnits,
-        ElementType,
-        TimeAttribute,
-        SubcatchAttribute,
-        NodeAttribute,
-        LinkAttribute,
-        SystemAttribute,
-        SWMMOutputException,
-        Output,
-    )
-except ImportError:
-    pass
+from ._output import (
+    UnitSystem,
+    FlowUnits,
+    ConcentrationUnits,
+    ElementType,
+    TimeAttribute,
+    SubcatchAttribute,
+    NodeAttribute,
+    LinkAttribute,
+    SystemAttribute,
+    SWMMOutputException,
+    Output,
+)

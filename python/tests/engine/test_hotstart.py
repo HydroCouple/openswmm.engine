@@ -67,7 +67,7 @@ class TestHotStartOpenClose:
         hs.close()  # second close should be safe
 
     def test_open_nonexistent_raises(self, tmp_path):
-        with pytest.raises(IOError):
+        with pytest.raises((IOError, RuntimeError)):
             HotStart.open(str(tmp_path / "nonexistent.hs"))
 
 

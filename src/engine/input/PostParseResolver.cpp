@@ -66,6 +66,15 @@ void resolve_cross_references(SimulationContext& ctx) {
     if (ctx.spatial.subcatch_x.size() < us) ctx.spatial.subcatch_x.resize(us, 0.0);
     if (ctx.spatial.subcatch_y.size() < us) ctx.spatial.subcatch_y.resize(us, 0.0);
 
+    const auto ug = static_cast<std::size_t>(n_gages);
+    if (ctx.spatial.gage_x.size() < ug) ctx.spatial.gage_x.resize(ug, 0.0);
+    if (ctx.spatial.gage_y.size() < ug) ctx.spatial.gage_y.resize(ug, 0.0);
+
+    if (ctx.spatial.link_vertices_x.size() < ul) ctx.spatial.link_vertices_x.resize(ul);
+    if (ctx.spatial.link_vertices_y.size() < ul) ctx.spatial.link_vertices_y.resize(ul);
+    if (ctx.spatial.subcatch_polygon_x.size() < us) ctx.spatial.subcatch_polygon_x.resize(us);
+    if (ctx.spatial.subcatch_polygon_y.size() < us) ctx.spatial.subcatch_polygon_y.resize(us);
+
     // -------------------------------------------------------------------------
     // Timeseries date offset resolution
     // -------------------------------------------------------------------------

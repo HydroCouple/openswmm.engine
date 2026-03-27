@@ -229,6 +229,15 @@ struct NodeData {
     std::vector<double>     lat_flow;
 
     /**
+     * @brief User-forced lateral inflow set via the API (project flow units).
+     *
+     * Unlike lat_flow, this is not cleared between routing steps.  The
+     * value persists until the user explicitly changes it and is added
+     * to lat_flow at each routing step.
+     */
+    std::vector<double>     user_lat_flow;
+
+    /**
      * @brief Current total inflow to the node (project flow units).
      * @see Legacy: Node[i].inflow
      */
@@ -409,6 +418,7 @@ struct NodeData {
         head.assign(un, 0.0);
         volume.assign(un, 0.0);
         lat_flow.assign(un, 0.0);
+        user_lat_flow.assign(un, 0.0);
         inflow.assign(un, 0.0);
         outflow.assign(un, 0.0);
         overflow.assign(un, 0.0);

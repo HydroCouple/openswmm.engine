@@ -556,6 +556,14 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             ctx_.nodes.lat_flow[static_cast<std::size_t>(out_node)] += q;
         }
     }
+
+    // Add user-forced lateral inflows (set via API) to lat_flow
+    if (!ctx_.nodes.user_lat_flow.empty()) {
+        for (int j = 0; j < ctx_.n_nodes(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            ctx_.nodes.lat_flow[uj] += ctx_.nodes.user_lat_flow[uj];
+        }
+    }
 }
 
 // ============================================================================
@@ -1186,11 +1194,16 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     }
 
     // Wet weather inflow (from runoff scattered to nodes as lateral flow)
+    // and external inflow (user-forced via API)
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (ctx_.nodes.lat_flow[uj] > 0.0) {
-            ctx_.mass_balance.routing_wet_weather +=
-                ctx_.nodes.lat_flow[uj] * dt_routing;
+        double user_q = (!ctx_.nodes.user_lat_flow.empty()) ? ctx_.nodes.user_lat_flow[uj] : 0.0;
+        double runoff_q = ctx_.nodes.lat_flow[uj] - user_q;
+        if (runoff_q > 0.0) {
+            ctx_.mass_balance.routing_wet_weather += runoff_q * dt_routing;
+        }
+        if (user_q > 0.0) {
+            ctx_.mass_balance.routing_external += user_q * dt_routing;
         }
     }
 

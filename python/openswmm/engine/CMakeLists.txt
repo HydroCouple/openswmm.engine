@@ -13,11 +13,11 @@
 function(add_engine_cython_module name pyx_file)
     set(target "engine_${name}")
 
-    add_cython_target(${target} ${pyx_file} CXX PY3)
-    add_library(${target} MODULE ${${target}})
+    # Use the original module name for Cython so it generates the correct
+    # PyInit_<name> function.  The CMake library target stays prefixed.
+    add_cython_target(${name} ${pyx_file} CXX PY3)
+    add_library(${target} MODULE ${${name}})
 
-    # The Python module file must be named after the original module, not
-    # the prefixed CMake target.
     set_target_properties(${target} PROPERTIES OUTPUT_NAME ${name})
 
     target_link_libraries(${target}
