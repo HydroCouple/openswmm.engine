@@ -79,7 +79,10 @@ set_target_properties(openswmm_engine PROPERTIES
     CXX_VISIBILITY_PRESET      default
     C_VISIBILITY_PRESET        default
     VISIBILITY_INLINES_HIDDEN  OFF
-    WINDOWS_EXPORT_ALL_SYMBOLS ON
+    # Use explicit export macros instead of CMake auto-export scanning.
+    # Auto-export invokes __create_def on object files and is brittle on
+    # Windows CI toolchains.
+    WINDOWS_EXPORT_ALL_SYMBOLS OFF
 )
 
 # ---- C++ standard ----
