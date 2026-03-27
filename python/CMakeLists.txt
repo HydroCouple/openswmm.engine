@@ -49,6 +49,18 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(PythonExtensions REQUIRED)
 find_package(Cython REQUIRED)
 
+# NumPy include directory (needed by Cython modules that cimport numpy)
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -c "import numpy; print(numpy.get_include())"
+    OUTPUT_VARIABLE NUMPY_INCLUDE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE NUMPY_RESULT
+)
+if(NOT NUMPY_RESULT EQUAL 0)
+    message(FATAL_ERROR "Could not determine NumPy include directory")
+endif()
+message(STATUS "NumPy include dir: ${NUMPY_INCLUDE_DIR}")
+
 # scikit-build module suffix
 if(SKBUILD)
     message(STATUS "Building with scikit-build (SOABI=${SKBUILD_SOABI})")

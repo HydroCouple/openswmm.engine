@@ -26,6 +26,7 @@ function(add_engine_cython_module name pyx_file)
 
     target_include_directories(${target}
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+        PRIVATE ${NUMPY_INCLUDE_DIR}
     )
 
     python_extension_module(${target})

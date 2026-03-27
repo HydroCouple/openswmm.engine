@@ -41,4 +41,5 @@ target_include_directories(
     _output
     PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${NUMPY_INCLUDE_DIR}
 )
