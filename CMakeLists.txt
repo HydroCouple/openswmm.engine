@@ -69,8 +69,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(OPENSWMM_BUILD_TESTS    "Build Google Test unit + regression tests" ON)
 option(OPENSWMM_BUILD_BENCHMARKS "Build Google Benchmark performance tests" OFF)
 option(OPENSWMM_INSTALL        "Install openswmm libraries" ON)
-option(OPENSWMM_BUILD_PYTHON   "Build Python bindings" ON)
-
+option(OPENSWMM_BUILD_PYTHON   "Build Python bindings" OFF)
 
 # Include essential modules
 include(CMakePackageConfigHelpers)

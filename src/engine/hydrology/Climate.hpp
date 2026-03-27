@@ -72,7 +72,12 @@ struct ClimateState {
 
     EvapMethod evap_method = EvapMethod::CONSTANT;
 
+    // Monthly adjustment for infiltration capacity (scales f0/fmin/Ks)
+    // @see Legacy: InfilFactor (set from hydcon adjustment pattern)
+    double infil_factor = 1.0;
+
     // Recovery factor for infiltration models
+    // @see Legacy: Evap.recoveryFactor (set from recovery adjustment pattern)
     double recovery_factor = 1.0;
 };
 

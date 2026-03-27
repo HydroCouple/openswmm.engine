@@ -31,18 +31,35 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
     int n_nodes = ctx.n_nodes();
 
     // Build XSectParams array from ctx.links SoA fields
+    // NOTE: LinkData::XsectShape (legacy ordering: CIRCULAR=0) must be
+    //       translated to XSectBatch::XSectShape (DUMMY=0, CIRCULAR=1).
+    //       The batch enum prepends DUMMY=0, so batch_shape = link_shape + 1
+    //       for all standard shapes (CIRCULAR through STREET_XSECT).
+    //       LinkData::DUMMY(22) maps to XSectBatch::DUMMY(0).
+    auto translateShape = [](XsectShape link_shape) -> int {
+        if (link_shape == XsectShape::DUMMY)
+            return static_cast<int>(XSectShape::DUMMY);  // 0
+        return static_cast<int>(link_shape) + 1;
+    };
+
     std::vector<XSectParams> xsect_params(static_cast<std::size_t>(n_links));
     for (int j = 0; j < n_links; ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
 
         auto& xs = xsect_params[uj];
-        xs.type   = static_cast<int>(ctx.links.xsect_shape[uj]);
+        xs.type   = translateShape(ctx.links.xsect_shape[uj]);
         xs.y_full = ctx.links.xsect_y_full[uj];
         xs.a_full = ctx.links.xsect_a_full[uj];
         xs.w_max  = ctx.links.xsect_w_max[uj];
         xs.r_full = ctx.links.xsect_r_full[uj];
         xs.s_full = ctx.links.xsect_s_full[uj];
+
+        // Shape-specific parameters for batch kernels
+        xs.y_bot  = ctx.links.xsect_y_bot[uj];   // bottom width (TRAP), bottom depth (FILLED_CIRC)
+        xs.a_bot  = ctx.links.xsect_a_bot[uj];   // bottom area
+        xs.s_bot  = ctx.links.xsect_s_bot[uj];   // side slope (TRAP), C-factor (FORCE_MAIN)
+        xs.r_bot  = ctx.links.xsect_r_bot[uj];   // side slope2, wetted perimeter
 
         // Compute full-depth properties if not already set
         if (xs.a_full == 0.0 && xs.y_full > 0.0) {
@@ -53,6 +70,44 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             ctx.links.xsect_r_full[uj] = xs.r_full;
             ctx.links.xsect_s_full[uj] = xs.s_full;
             ctx.links.xsect_w_max[uj]  = xs.w_max;
+        }
+    }
+
+    // Compute modified conduit lengths for CFL stability
+    // (matching legacy conduit_getLengthFactor in link.c)
+    {
+        static constexpr double PHI     = 1.486;   // Manning US units
+        static constexpr double GRAVITY = 32.2;
+        double route_step = ctx.options.routing_step;
+        double lengthening_step = ctx.options.lengthening_step;
+        double tStep = (lengthening_step > 0.0)
+                        ? std::min(route_step, lengthening_step)
+                        : route_step;
+
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] != LinkType::CONDUIT) {
+                ctx.links.mod_length[uj] = ctx.links.length[uj];
+                continue;
+            }
+
+            double L = ctx.links.length[uj];
+            if (L <= 0.0) { ctx.links.mod_length[uj] = L; continue; }
+
+            double yFull = ctx.links.xsect_y_full[uj];
+            double aFull = ctx.links.xsect_a_full[uj];
+            double sFull = ctx.links.xsect_s_full[uj];
+            double n_rough = ctx.links.roughness[uj];
+            double slope_abs = std::fabs(ctx.links.slope[uj]);
+
+            if (aFull > 0.0 && n_rough > 0.0 && slope_abs > 0.0) {
+                double vFull = PHI / n_rough * sFull * std::sqrt(slope_abs) / aFull;
+                double ratio = (std::sqrt(GRAVITY * yFull) + vFull) * tStep / L;
+                double factor = (ratio > 1.0) ? ratio : 1.0;
+                ctx.links.mod_length[uj] = factor * L;
+            } else {
+                ctx.links.mod_length[uj] = L;
+            }
         }
     }
 
@@ -102,8 +157,8 @@ int Router::step(SimulationContext& ctx, double dt) {
     // 1. Save old states
     saveOldStates(ctx);
 
-    // 2. Init node flows from laterals
-    initNodeFlows(ctx);
+    // 2. Init node flows from laterals and losses
+    initNodeFlows(ctx, dt);
 
     // 3. Set outfall boundary depths (P8-G03)
     outfall::setAllOutfallDepths(ctx, ctx.current_date);
@@ -205,18 +260,23 @@ void Router::saveOldStates(SimulationContext& ctx) {
     ctx.links.save_state();
 }
 
-void Router::initNodeFlows(SimulationContext& ctx) {
+void Router::initNodeFlows(SimulationContext& ctx, double dt) {
     auto& nodes = ctx.nodes;
     int n = ctx.n_nodes();
     for (int i = 0; i < n; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        nodes.inflow[ui] = 0.0;
-        nodes.overflow[ui] = 0.0;
 
-        // Add lateral inflows
-        double lat = nodes.lat_flow[ui];
-        if (lat >= 0.0) {
-            nodes.inflow[ui] += lat;
+        // Initialize inflow from lateral flow and outflow from losses
+        // (matching legacy node.c node_initFlows lines 320-321)
+        nodes.inflow[ui]  = nodes.lat_flow[ui];
+        nodes.outflow[ui] = nodes.losses[ui];
+
+        // Set overflow from excess stored volume
+        // (matching legacy node.c node_initFlows lines 324-326)
+        if (nodes.volume[ui] > nodes.full_volume[ui] && dt > 0.0) {
+            nodes.overflow[ui] = (nodes.volume[ui] - nodes.full_volume[ui]) / dt;
+        } else {
+            nodes.overflow[ui] = 0.0;
         }
     }
 }

@@ -67,6 +67,7 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.links.xsect_curve,       -1);
     grow(ctx.links.roughness,         0.013);
     grow(ctx.links.length,            0.0);
+    grow(ctx.links.mod_length,        0.0);
     grow(ctx.links.slope,             0.0);
     grow(ctx.links.barrels,           1);
     grow(ctx.links.beta,              0.0);
@@ -104,6 +105,29 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.links.stat_max_veloc,    0.0);
     grow(ctx.links.stat_max_filling,  0.0);
     grow(ctx.links.stat_time_surcharged, 0.0);
+
+    // Cross-section extended params (used by handle_xsections and PostParseResolver)
+    grow(ctx.links.xsect_y_bot,       0.0);
+    grow(ctx.links.xsect_a_bot,       0.0);
+    grow(ctx.links.xsect_s_bot,       0.0);
+    grow(ctx.links.xsect_r_bot,       0.0);
+    grow(ctx.links.xsect_s_max,       0.0);
+    grow(ctx.links.xsect_yw_max,      0.0);
+
+    // Computed hydraulic properties (set by PostParseResolver)
+    grow(ctx.links.rough_factor,      0.0);
+    grow(ctx.links.q_max,             0.0);
+
+    // Orifice opening rate (used by control rule transitions)
+    grow(ctx.links.orate,             0.0);
+
+    // Statistics: flow classification flat array
+    // [link_idx * N_FLOW_CLASSES + class_idx]
+    {
+        const auto nfc = n * static_cast<std::size_t>(LinkData::N_FLOW_CLASSES);
+        if (ctx.links.stat_flow_class.size() < nfc)
+            ctx.links.stat_flow_class.resize(nfc, 0.0);
+    }
 }
 
 // ============================================================================
@@ -258,9 +282,14 @@ static const std::unordered_map<std::string, XsectShape> SHAPE_MAP = {
     {"SEMIELLIPTICAL",  XsectShape::SEMIELLIPTICAL},
     {"BASKETHANDLE",    XsectShape::BASKETHANDLE},
     {"SEMICIRCULAR",    XsectShape::SEMICIRCULAR},
+    {"RECT_TRIANGULAR", XsectShape::RECT_TRIANG},
+    {"RECT_TRIANG",     XsectShape::RECT_TRIANG},
+    {"RECT_ROUND",      XsectShape::RECT_ROUND},
     {"IRREGULAR",       XsectShape::IRREGULAR},
     {"CUSTOM",          XsectShape::CUSTOM},
     {"FORCE_MAIN",      XsectShape::FORCE_MAIN},
+    {"STREET",          XsectShape::STREET_XSECT},
+    {"DUMMY",           XsectShape::DUMMY},
 };
 
 void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& lines) {
@@ -281,8 +310,27 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
 
         // Geom1 = full depth (diameter for circular, etc.)
         if (tok.size() > 2) ctx.links.xsect_y_full[idx] = to_double(tok[2]);
-        // Geom2, Geom3, Geom4 are shape-specific — store in w_max for now
+
+        // Geom2 = width or second parameter (shape-dependent)
         if (tok.size() > 3) ctx.links.xsect_w_max[idx]  = to_double(tok[3]);
+
+        // Geom3 = third shape parameter (triangle depth, side slope, etc.)
+        if (tok.size() > 4) ctx.links.xsect_y_bot[idx]  = to_double(tok[4]);
+
+        // Geom4 = fourth shape parameter (rBot, etc.)
+        if (tok.size() > 5) ctx.links.xsect_r_bot[idx]  = to_double(tok[5]);
+
+        // Barrels (number of identical conduits, default 1)
+        if (tok.size() > 6) {
+            int barrels = static_cast<int>(to_double(tok[6]));
+            if (barrels > 0) ctx.links.barrels[idx] = barrels;
+        }
+
+        // Culvert code (optional, token 7)
+        if (tok.size() > 7) {
+            int cc = static_cast<int>(to_double(tok[7]));
+            if (cc > 0) ctx.links.culvert_code[idx] = cc;
+        }
     }
 }
 

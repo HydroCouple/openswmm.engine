@@ -74,6 +74,7 @@
 #include "../data/InflowData.hpp"
 #include "../data/InfraData.hpp"
 #include "../data/HydrologyData.hpp"
+#include "../data/ForcingData.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -340,6 +341,20 @@ struct SimulationContext {
     UserFlags user_flags;
 
     // =========================================================================
+    // Runtime forcing data
+    // =========================================================================
+
+    /**
+     * @brief Per-element runtime forcing state (lateral inflows, head
+     *        boundaries, rainfall, evap, link settings, quality mass fluxes).
+     * @details Set via swmm_forcing_*() API. Applied by applyForcings() in
+     *          the step loop. Auto-cleared by clear_reset_entries() at end
+     *          of each step (for RESET-persistence entries).
+     * @see ForcingData.hpp, openswmm_forcing.h
+     */
+    ForcingData forcing;
+
+    // =========================================================================
     // Plugin specifications (from [PLUGINS] section)
     // =========================================================================
 
@@ -406,6 +421,9 @@ struct SimulationContext {
         double routing_seep_loss     = 0.0;
         double routing_init_storage  = 0.0;
         double routing_final_storage = 0.0;
+
+        // User-forced volumes (diagnostic — subset of routing_external)
+        double routing_forcing_inflow = 0.0; ///< Cumulative user-forced lateral inflow (ft3)
 
         // Per-step accumulators (reset each step for reporting)
         double step_flooding  = 0.0;
@@ -579,9 +597,10 @@ struct SimulationContext {
         pollutant_names.clear();
         table_names.clear();
 
-        // Clear spatial and flags
+        // Clear spatial, flags, and forcing
         spatial    = SpatialFrame{};
         user_flags.clear();
+        forcing    = ForcingData{};
     }
 
     /**

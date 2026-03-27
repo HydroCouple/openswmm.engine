@@ -64,6 +64,10 @@ void RunoffSoA::resize(int n) {
     depth_imperv1.assign(un, 0.0);
     depth_perv.assign(un, 0.0);
 
+    old_runoff_imperv0.assign(un, 0.0);
+    old_runoff_imperv1.assign(un, 0.0);
+    old_runoff_perv.assign(un, 0.0);
+
     runoff.assign(un, 0.0);
     evap_loss.assign(un, 0.0);
     infil_loss.assign(un, 0.0);
@@ -140,8 +144,11 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow,
 
 double RunoffSolver::getRunoffRate(double depth, double dStore, double alpha) {
     double excess = depth - dStore;
-    if (excess > 0.0 && alpha > 0.0)
-        return alpha * std::pow(excess, MEXP);
+    if (excess > 0.0) {
+        if (alpha > 0.0)
+            return alpha * std::pow(excess, MEXP);
+        // N=0 case is handled in processSubarea via instant drain
+    }
     return 0.0;
 }
 
@@ -178,8 +185,15 @@ void RunoffSolver::init(SimulationContext& ctx) {
         auto ui = static_cast<std::size_t>(i);
         int im = ctx.subcatches.infil_model[ui];
         switch (im) {
-            case 0: case 1:
+            case 0:
                 infil_model_ = InfilModel::HORTON;
+                infil::horton_init(horton_states_[ui],
+                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
+                    ctx.subcatches.infil_p3[ui], ctx.subcatches.infil_p4[ui],
+                    ctx.subcatches.infil_p5[ui], ctx.options);
+                break;
+            case 1:
+                infil_model_ = InfilModel::MOD_HORTON;
                 infil::horton_init(horton_states_[ui],
                     ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
                     ctx.subcatches.infil_p3[ui], ctx.subcatches.infil_p4[ui],
@@ -204,7 +218,8 @@ void RunoffSolver::init(SimulationContext& ctx) {
 // Execute — one runoff timestep for ALL subcatchments
 // ============================================================================
 
-void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_in) {
+void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_in,
+                           double infil_factor, double recovery_factor) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
 
@@ -260,9 +275,10 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         double Voutflow = 0.0;  // Total runoff volume (ft³)
 
         // Helper: process one subarea following legacy getSubareaRunoff() exactly.
-        // Args: depth, alpha, dStore, subareaFrac, isPervious
+        // Args: depth, alpha, dStore, subareaFrac, isPervious, runon
         auto processSubarea = [&](double& depth, double alpha, double dStore,
-                                  double frac, bool isPervious) -> double {
+                                  double frac, bool isPervious,
+                                  double runon_in = 0.0) -> double {
             if (frac <= 0.0) return 0.0;
             double subarea_area = total_area * frac;
 
@@ -280,31 +296,49 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 // Legacy: infil_getInfil(j, tStep, precip, subarea->inflow, depth)
                 //   → horton_getInfil(state, tStep, precip + runon, depth)
                 // subarea->inflow here is the runon from other subareas (0 for OUTLET routing).
-                double runon = 0.0;  // runon from inter-subarea routing
-                // Inter-subarea routing: if impervious routes to pervious,
-                // the pervious subarea receives runon from impervious subareas.
-                // This uses the PREVIOUS internal runoff values (set by getRunon)
-                // which are stored in subarea inflow accumulators.
-                // runon is added to inflow for infiltration calculation.
-                // (runon accumulated below after all subareas are processed)
+                double runon = runon_in;  // runon from inter-subarea routing
+                // Apply monthly infiltration and recovery factors
+                // (matching legacy infil.c: InfilFactor scales f0/fmin/Ks,
+                //  Evap.recoveryFactor scales regen/kr)
                 switch (infil_model_) {
                     case InfilModel::HORTON:
-                        infil = infil::horton_getInfil(horton_states_[ui],
-                                    precip + runon, depth, dt);
+                    case InfilModel::MOD_HORTON: {
+                        auto& hs = horton_states_[ui];
+                        double save_f0 = hs.f0, save_fmin = hs.fmin, save_regen = hs.regen;
+                        hs.f0   *= infil_factor;
+                        hs.fmin *= infil_factor;
+                        hs.regen *= recovery_factor;
+                        infil = (infil_model_ == InfilModel::HORTON)
+                            ? infil::horton_getInfil(hs, precip + runon, depth, dt)
+                            : infil::modHorton_getInfil(hs, precip + runon, depth, dt);
+                        hs.f0 = save_f0; hs.fmin = save_fmin; hs.regen = save_regen;
                         break;
-                    case InfilModel::GREEN_AMPT:
-                        infil = infil::grnampt_getInfil(grnampt_states_[ui],
-                                    precip + runon, depth, dt);
+                    }
+                    case InfilModel::GREEN_AMPT: {
+                        auto& gs = grnampt_states_[ui];
+                        double save_Ks = gs.Ks;
+                        gs.Ks *= infil_factor;
+                        // Recovery factor applied to Lu-based recovery rate
+                        // (legacy infil.c line 708: kr = lu/90000 * recoveryFactor)
+                        double save_Lu = gs.Lu;
+                        gs.Lu *= recovery_factor;
+                        infil = infil::grnampt_getInfil(gs, precip + runon, depth, dt);
+                        gs.Ks = save_Ks; gs.Lu = save_Lu;
                         break;
-                    case InfilModel::CURVE_NUM:
-                        infil = infil::curvenum_getInfil(curvenum_states_[ui],
-                                    precip + runon, depth, dt);
+                    }
+                    case InfilModel::CURVE_NUM: {
+                        auto& cs = curvenum_states_[ui];
+                        double save_regen = cs.regen;
+                        cs.regen *= recovery_factor;
+                        infil = infil::curvenum_getInfil(cs, precip + runon, depth, dt);
+                        cs.regen = save_regen;
                         break;
+                    }
                 }
             }
 
             // Step 3.4: Accumulate inflow and moisture (legacy lines 930-931)
-            double inflow = precip;  // + runon (when inter-subarea routing wired)
+            double inflow = precip + runon_in;  // precip + inter-subarea runon
             surfMoisture += inflow;
 
             // Step 3.5: Update mass balance volumes (legacy lines 934-937)
@@ -321,11 +355,22 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 // Step 3.7: Subtract losses from inflow before ODE (legacy line 954)
                 double net_inflow = inflow - surfEvap - infil;
 
-                // Step 3.8: Integrate ponded depth via ODE (legacy line 955)
-                updatePondedDepth(depth, net_inflow, alpha, dStore, dt);
+                // Step 3.8: N=0 instant drain — drain all excess above depression storage
+                // (matching legacy: when N=0, alpha=0, excess drains instantly)
+                if (alpha == 0.0) {
+                    depth += net_inflow * dt;
+                    if (depth > dStore) {
+                        runoff_rate = (depth - dStore) / dt;
+                        depth = dStore;
+                    }
+                    if (depth < 0.0) depth = 0.0;
+                } else {
+                    // Step 3.8b: Integrate ponded depth via ODE (legacy line 955)
+                    updatePondedDepth(depth, net_inflow, alpha, dStore, dt);
 
-                // Step 3.9: Compute runoff from final depth (legacy line 959)
-                runoff_rate = getRunoffRate(depth, dStore, alpha);
+                    // Step 3.9: Compute runoff from final depth (legacy line 959)
+                    runoff_rate = getRunoffRate(depth, dStore, alpha);
+                }
             }
 
             // Step 3.10: Accumulate outlet volume (legacy line 964)
@@ -348,14 +393,43 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             return runoff_rate;
         };
 
-        // Process all 3 subareas (matching legacy loop: IMPERV0, IMPERV1, PERV)
-        double runoff0  = processSubarea(soa_.depth_imperv0[ui], alpha_i, 0.0,
-                                         f0, false);
-        double runoff1  = processSubarea(soa_.depth_imperv1[ui], alpha_i,
-                                         soa_.ds_imperv[ui], f1, false);
-        double runoff_p = processSubarea(soa_.depth_perv[ui], alpha_p,
-                                         soa_.ds_perv[ui], fp, true);
+        // --- Inter-subarea routing: compute runon from previous step ---
+        // (matching legacy subcatch_getRunon)
+        // route_mode: 0=TO_OUTLET, 1=TO_IMPERV (perv→imperv), 2=TO_PERV (imperv→perv)
+        int route_mode = ctx.subcatches.subarea_routing[ui];
+        double pct = ctx.subcatches.pct_routed[ui];
+        double runon_imperv = 0.0;  // additional inflow to imperv subareas (ft/sec)
+        double runon_perv   = 0.0;  // additional inflow to pervious subarea (ft/sec)
 
+        if (route_mode == 2 && fp > 0.0) {
+            // IMPERV → PERV: route fraction of imperv runoff to pervious
+            double q1 = soa_.old_runoff_imperv0[ui] * f0;  // area-wtd rate
+            double q2 = soa_.old_runoff_imperv1[ui] * f1;
+            double q  = q1 + q2;
+            runon_perv = q * pct / fp;  // distribute over pervious area fraction
+        }
+        else if (route_mode == 1 && f1 > 0.0) {
+            // PERV → IMPERV: route fraction of perv runoff to impervious
+            double q = soa_.old_runoff_perv[ui] * fp;  // area-wtd rate
+            runon_imperv = q * pct / f1;  // distribute over IMPERV1 area fraction
+        }
+
+        // Process all 3 subareas (matching legacy loop: IMPERV0, IMPERV1, PERV)
+        // IMPERV0 never receives runon (zero depression storage area)
+        double runoff0  = processSubarea(soa_.depth_imperv0[ui], alpha_i, 0.0,
+                                         f0, false, 0.0);
+        // IMPERV1 receives runon from pervious when route_mode==TO_IMPERV
+        double runoff1  = processSubarea(soa_.depth_imperv1[ui], alpha_i,
+                                         soa_.ds_imperv[ui], f1, false, runon_imperv);
+        // PERV receives runon from impervious when route_mode==TO_PERV
+        double runoff_p = processSubarea(soa_.depth_perv[ui], alpha_p,
+                                         soa_.ds_perv[ui], fp, true, runon_perv);
+
+
+        // Save per-subarea runoff for next step's inter-subarea routing
+        soa_.old_runoff_imperv0[ui] = runoff0;
+        soa_.old_runoff_imperv1[ui] = runoff1;
+        soa_.old_runoff_perv[ui]    = runoff_p;
 
         // ----- Step 4: Compute loss rates and net runoff -----
         // Matches legacy lines 700-709.

@@ -480,11 +480,15 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *pat
                     RECORDSIZE;
         }
     }
-    // If error close the binary file
+    // If error close the binary file (but don't free the handle --
+    // the caller owns it and will call SMO_close)
     if (errorcode > 400)
     {
         set_error(p_data->error_handle, errorcode);
-        SMO_close(&p_handle);
+        if (p_data->file != NULL) {
+            fclose(p_data->file);
+            p_data->file = NULL;
+        }
     }
 
     return errorcode;

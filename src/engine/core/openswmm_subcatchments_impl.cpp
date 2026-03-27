@@ -65,6 +65,7 @@ SWMM_ENGINE_API int swmm_subcatch_add(SWMM_Engine engine, const char* id) {
 SWMM_ENGINE_API int swmm_subcatch_set_outlet(SWMM_Engine engine, int idx, int node_idx) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.outlet_node[static_cast<std::size_t>(idx)] = node_idx;
     return SWMM_OK;
@@ -73,6 +74,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_outlet(SWMM_Engine engine, int idx, int no
 SWMM_ENGINE_API int swmm_subcatch_set_area(SWMM_Engine engine, int idx, double area) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.area[static_cast<std::size_t>(idx)] = area;
     return SWMM_OK;
@@ -81,6 +83,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_area(SWMM_Engine engine, int idx, double a
 SWMM_ENGINE_API int swmm_subcatch_set_width(SWMM_Engine engine, int idx, double width) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.width[static_cast<std::size_t>(idx)] = width;
     return SWMM_OK;
@@ -89,6 +92,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_width(SWMM_Engine engine, int idx, double 
 SWMM_ENGINE_API int swmm_subcatch_set_slope(SWMM_Engine engine, int idx, double slope) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.slope[static_cast<std::size_t>(idx)] = slope;
     return SWMM_OK;
@@ -97,6 +101,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_slope(SWMM_Engine engine, int idx, double 
 SWMM_ENGINE_API int swmm_subcatch_set_imperv_pct(SWMM_Engine engine, int idx, double pct) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.frac_imperv[static_cast<std::size_t>(idx)] = pct / 100.0;
     return SWMM_OK;
@@ -105,6 +110,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_imperv_pct(SWMM_Engine engine, int idx, do
 SWMM_ENGINE_API int swmm_subcatch_set_n_imperv(SWMM_Engine engine, int idx, double n) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.n_imperv[static_cast<std::size_t>(idx)] = n;
     return SWMM_OK;
@@ -113,6 +119,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_n_imperv(SWMM_Engine engine, int idx, doub
 SWMM_ENGINE_API int swmm_subcatch_set_n_perv(SWMM_Engine engine, int idx, double n) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.n_perv[static_cast<std::size_t>(idx)] = n;
     return SWMM_OK;
@@ -121,6 +128,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_n_perv(SWMM_Engine engine, int idx, double
 SWMM_ENGINE_API int swmm_subcatch_set_ds_imperv(SWMM_Engine engine, int idx, double ds) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.ds_imperv[static_cast<std::size_t>(idx)] = ds;
     return SWMM_OK;
@@ -129,6 +137,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_ds_imperv(SWMM_Engine engine, int idx, dou
 SWMM_ENGINE_API int swmm_subcatch_set_ds_perv(SWMM_Engine engine, int idx, double ds) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.ds_perv[static_cast<std::size_t>(idx)] = ds;
     return SWMM_OK;
@@ -137,6 +146,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_ds_perv(SWMM_Engine engine, int idx, doubl
 SWMM_ENGINE_API int swmm_subcatch_set_gage(SWMM_Engine engine, int idx, int gage_idx) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.gage[static_cast<std::size_t>(idx)] = gage_idx;
     return SWMM_OK;
@@ -151,6 +161,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_horton(SWMM_Engine engine, int idx,
                                                      double decay, double dry_time) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     auto uidx = static_cast<std::size_t>(idx);
     ctx.subcatches.infil_model[uidx] = 0; // HORTON
@@ -166,6 +177,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_green_ampt(SWMM_Engine engine, int i
                                                          double initial_deficit) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     auto uidx = static_cast<std::size_t>(idx);
     ctx.subcatches.infil_model[uidx] = 2; // GREEN_AMPT
@@ -179,6 +191,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_curve_number(SWMM_Engine engine, int
                                                            double cn) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     auto uidx = static_cast<std::size_t>(idx);
     ctx.subcatches.infil_model[uidx] = 4; // CURVE_NUMBER
@@ -273,6 +286,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_gage(SWMM_Engine engine, int idx, int* gag
 SWMM_ENGINE_API int swmm_subcatch_set_outlet_subcatch(SWMM_Engine engine, int idx, int sc_idx) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.outlet_subcatch[static_cast<std::size_t>(idx)] = sc_idx;
     return SWMM_OK;
@@ -368,6 +382,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_stat_max_runoff(SWMM_Engine engine, int id
 SWMM_ENGINE_API int swmm_subcatch_set_coverage(SWMM_Engine engine, int sc_idx, int lu_idx, double fraction) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(sc_idx >= 0 && sc_idx < ctx.n_subcatches());
     CHECK_INDEX(lu_idx >= 0 && lu_idx < ctx.n_landuses());
 
@@ -464,6 +479,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_infil(SWMM_Engine engine, int idx, double*
 SWMM_ENGINE_API int swmm_subcatch_set_rainfall(SWMM_Engine engine, int idx, double rainfall) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.rainfall[static_cast<std::size_t>(idx)] = rainfall;
     return SWMM_OK;

@@ -59,10 +59,22 @@ struct SnowSoA {
     // Per subcatchment × 3 subareas: parameters
     std::vector<double> tbase;    ///< Base melt temperature (deg F)
     std::vector<double> dhm;      ///< Degree-day melt factor (ft/deg-F/sec)
+    std::vector<double> dhmin;    ///< Min melt coeff (winter solstice) (ft/deg-F/sec)
+    std::vector<double> dhmax;    ///< Max melt coeff (summer solstice) (ft/deg-F/sec)
     std::vector<double> fwfrac;   ///< Free water capacity fraction
+
+    // Per subcatchment × 3 subareas: area fractions
+    std::vector<double> fArea;    ///< Fraction of total area for each subarea
 
     // Per subcatchment: area fractions
     std::vector<double> snn;      ///< Plowable fraction of impervious area
+
+    // Per subcatchment: plowing parameters
+    std::vector<double> weplow;   ///< Depth at which plowing begins (ft)
+    std::vector<double> sfrac;    ///< Plowing fractions [subcatch * 5 + i]
+                                  ///<   [0]=removed, [1]=to imperv, [2]=to perv,
+                                  ///<   [3]=immediate melt, [4]=to other subcatch
+    std::vector<int>    to_subcatch; ///< Target subcatchment for plowed snow
 
     // Global parameters
     double tipm = 0.5;            ///< ATI weighting factor
@@ -95,8 +107,29 @@ public:
      * @param wind Wind speed (mph, scalar — broadcast).
      * @param rainfall Current rainfall rate (ft/sec, scalar — broadcast).
      */
+    /**
+     * @param gamma Psychrometric constant from climate (deg F^-1).
+     * @param ea    Saturation vapor pressure from climate (in Hg).
+     */
     void execute(SimulationContext& ctx, double dt,
-                 double temp, double wind, double rainfall);
+                 double temp, double wind, double rainfall,
+                 double gamma = 0.0, double ea = 0.0);
+
+    /**
+     * @brief Update seasonal melt coefficients based on day of year.
+     * @param day_of_year  Day of year (1-365).
+     * @note Legacy reference: snow.c — snow_setMeltCoeffs()
+     */
+    void setMeltCoeffs(int day_of_year);
+
+    /**
+     * @brief Snow plowing — redistribute excess snow between subareas.
+     * @param ctx  Simulation context (for subcatchment areas).
+     * @param dt   Timestep (seconds).
+     * @param snowfall  Snowfall rate (ft/sec).
+     * @note Legacy reference: snow.c — snow_plowSnow()
+     */
+    void plowSnow(SimulationContext& ctx, double dt, double snowfall);
 
     SnowSoA& state() { return soa_; }
 

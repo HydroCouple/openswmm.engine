@@ -196,9 +196,9 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
 
         } else if (key == "INFILTRATION") {
             const std::string iv = norm(val);
-            if      (iv == "HORTON"         || iv == "MODIFIED_HORTON")
+            if      (iv == "HORTON")
                 opt.infiltration = InfiltrationModel::HORTON;
-            else if (iv == "MOD_HORTON")
+            else if (iv == "MOD_HORTON" || iv == "MODIFIED_HORTON")
                 opt.infiltration = InfiltrationModel::MOD_HORTON;
             else if (iv == "GREEN_AMPT"     || iv == "MODIFIED_GREEN_AMPT")
                 opt.infiltration = InfiltrationModel::GREEN_AMPT;
@@ -265,9 +265,13 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "HEAD_TOLERANCE") {
             std::from_chars(val.data(), val.data() + val.size(), opt.head_tol);
         } else if (key == "SYS_FLOW_TOL") {
-            std::from_chars(val.data(), val.data() + val.size(), opt.sys_flow_tol);
+            double pct = 0.0;
+            std::from_chars(val.data(), val.data() + val.size(), pct);
+            opt.sys_flow_tol = pct / 100.0;  // input is percent, store as fraction
         } else if (key == "LAT_FLOW_TOL") {
-            std::from_chars(val.data(), val.data() + val.size(), opt.lat_flow_tol);
+            double pct = 0.0;
+            std::from_chars(val.data(), val.data() + val.size(), pct);
+            opt.lat_flow_tol = pct / 100.0;  // input is percent, store as fraction
 
         } else if (key == "VARIABLE_STEP") {
             std::from_chars(val.data(), val.data() + val.size(), opt.variable_step);
@@ -335,8 +339,46 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.sweep_end = datetime::dayOfYear(
                 datetime::encodeDate(2000, static_cast<int>(sm), static_cast<int>(sd)));
 
-        } else if (key == "LINK_OFFSETS"    ||
-                   key == "SKIP_STEADY_STATE"||
+        } else if (key == "NORMAL_FLOW_LIMITED") {
+            const std::string nv = norm(val);
+            if      (nv == "SLOPE")   opt.normal_flow_ltd = 0;
+            else if (nv == "FROUDE")  opt.normal_flow_ltd = 1;
+            else if (nv == "BOTH")    opt.normal_flow_ltd = 2;
+            else if (nv == "NEITHER") opt.normal_flow_ltd = 3;
+
+        } else if (key == "FORCE_MAIN_EQUATION") {
+            const std::string fv = norm(val);
+            if      (fv == "H-W" || fv == "HW" || fv == "HAZEN-WILLIAMS")
+                opt.force_main_eqn = 0;
+            else if (fv == "D-W" || fv == "DW" || fv == "DARCY-WEISBACH")
+                opt.force_main_eqn = 1;
+
+        } else if (key == "INERTIAL_DAMPING") {
+            const std::string iv = norm(val);
+            if      (iv == "NONE")    opt.inertial_damping = 0;
+            else if (iv == "PARTIAL") opt.inertial_damping = 1;
+            else if (iv == "FULL")    opt.inertial_damping = 2;
+
+        } else if (key == "SURCHARGE_METHOD") {
+            const std::string sv = norm(val);
+            if      (sv == "EXTRAN") opt.surcharge_method = 0;
+            else if (sv == "SLOT")   opt.surcharge_method = 1;
+
+        } else if (key == "LINK_OFFSETS") {
+            const std::string lv = norm(val);
+            if      (lv == "DEPTH")     opt.link_offsets = 0;
+            else if (lv == "ELEVATION") opt.link_offsets = 1;
+
+        } else if (key == "MIN_SLOPE") {
+            std::from_chars(val.data(), val.data() + val.size(), opt.min_slope);
+
+        } else if (key == "MIN_SURFAREA") {
+            std::from_chars(val.data(), val.data() + val.size(), opt.min_surf_area);
+
+        } else if (key == "LENGTHENING_STEP") {
+            std::from_chars(val.data(), val.data() + val.size(), opt.lengthening_step);
+
+        } else if (key == "SKIP_STEADY_STATE" ||
                    key == "COMPATIBILITY") {
             // no-op; recognized but unused in new engine
 

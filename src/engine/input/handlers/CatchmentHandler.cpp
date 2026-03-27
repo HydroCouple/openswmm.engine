@@ -111,6 +111,7 @@ static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.subcatches.ponded_depth,         0.0);
     grow(ctx.subcatches.gw_flow,             0.0);
     grow(ctx.subcatches.old_runoff,           0.0);
+    grow(ctx.subcatches.snowpack,             -1);
     grow(ctx.subcatches.stat_precip_vol,      0.0);
     grow(ctx.subcatches.stat_runoff_vol,      0.0);
     grow(ctx.subcatches.stat_max_runoff,      0.0);
@@ -135,6 +136,16 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.gages.api_rainfall,  -1.0);  // -1 = no API override
     grow(ctx.gages.next_rain_date,0.0);
     grow(ctx.gages.is_raining,    false);
+
+    // Past-rain tracking (used by updateAllGages for controls past-rain)
+    grow(ctx.gages.past_rain_accum, 0.0);
+    grow(ctx.gages.past_rain_time,  0.0);
+    // past_rain is a flat 2-D array: [gage * MAXPASTRAIN + hour]
+    {
+        const auto nr = n * static_cast<std::size_t>(GageData::MAXPASTRAIN);
+        if (ctx.gages.past_rain.size() < nr)
+            ctx.gages.past_rain.resize(nr, 0.0);
+    }
 }
 
 // ============================================================================

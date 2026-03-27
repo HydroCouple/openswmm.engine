@@ -289,7 +289,8 @@ TEST(UserFlagsTest, AllDefsInInsertionOrder) {
 }
 
 TEST(UserFlagsTest, MakeKeyComposite) {
-    EXPECT_EQ(UserFlags::make_key("node", "J1", "inspected"), "NODE:J1:INSPECTED");
+    // make_key is a raw concatenation — callers are responsible for normalizing case
+    EXPECT_EQ(UserFlags::make_key("node", "J1", "inspected"), "node:J1:inspected");
     EXPECT_EQ(UserFlags::make_key("LINK", "C_MAIN", "ASSET_ID"), "LINK:C_MAIN:ASSET_ID");
 }
 

@@ -73,6 +73,7 @@ SWMM_ENGINE_API int swmm_link_set_nodes(SWMM_Engine engine, int idx,
                                          int from_node_idx, int to_node_idx) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.node1[static_cast<std::size_t>(idx)] = from_node_idx;
     ctx.links.node2[static_cast<std::size_t>(idx)] = to_node_idx;
@@ -102,6 +103,7 @@ SWMM_ENGINE_API int swmm_link_get_to_node(SWMM_Engine engine, int idx, int* node
 SWMM_ENGINE_API int swmm_link_set_length(SWMM_Engine engine, int idx, double length) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.length[static_cast<std::size_t>(idx)] = length;
     return SWMM_OK;
@@ -110,6 +112,7 @@ SWMM_ENGINE_API int swmm_link_set_length(SWMM_Engine engine, int idx, double len
 SWMM_ENGINE_API int swmm_link_set_roughness(SWMM_Engine engine, int idx, double n) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.roughness[static_cast<std::size_t>(idx)] = n;
     return SWMM_OK;
@@ -118,6 +121,7 @@ SWMM_ENGINE_API int swmm_link_set_roughness(SWMM_Engine engine, int idx, double 
 SWMM_ENGINE_API int swmm_link_set_offset_up(SWMM_Engine engine, int idx, double offset) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.offset1[static_cast<std::size_t>(idx)] = offset;
     return SWMM_OK;
@@ -126,6 +130,7 @@ SWMM_ENGINE_API int swmm_link_set_offset_up(SWMM_Engine engine, int idx, double 
 SWMM_ENGINE_API int swmm_link_set_offset_dn(SWMM_Engine engine, int idx, double offset) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.offset2[static_cast<std::size_t>(idx)] = offset;
     return SWMM_OK;
@@ -134,6 +139,7 @@ SWMM_ENGINE_API int swmm_link_set_offset_dn(SWMM_Engine engine, int idx, double 
 SWMM_ENGINE_API int swmm_link_set_initial_flow(SWMM_Engine engine, int idx, double flow) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_INITIAL_COND(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.flow[static_cast<std::size_t>(idx)] = flow;
     return SWMM_OK;
@@ -142,6 +148,7 @@ SWMM_ENGINE_API int swmm_link_set_initial_flow(SWMM_Engine engine, int idx, doub
 SWMM_ENGINE_API int swmm_link_set_max_flow(SWMM_Engine engine, int idx, double flow) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.q_limit[static_cast<std::size_t>(idx)] = flow;
     return SWMM_OK;
@@ -156,6 +163,7 @@ SWMM_ENGINE_API int swmm_link_set_xsect(SWMM_Engine engine, int idx,
                                           double geom3, double geom4) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     auto uidx = static_cast<std::size_t>(idx);
 
@@ -264,6 +272,7 @@ SWMM_ENGINE_API int swmm_link_get_flow(SWMM_Engine engine, int idx, double* flow
 SWMM_ENGINE_API int swmm_link_set_flow(SWMM_Engine engine, int idx, double flow) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.flow[static_cast<std::size_t>(idx)] = flow;
     return SWMM_OK;
@@ -324,6 +333,7 @@ SWMM_ENGINE_API int swmm_link_get_volume(SWMM_Engine engine, int idx, double* vo
 SWMM_ENGINE_API int swmm_link_set_control_setting(SWMM_Engine engine, int idx, double setting) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.setting[static_cast<std::size_t>(idx)] = setting;
     return SWMM_OK;
@@ -340,6 +350,7 @@ SWMM_ENGINE_API int swmm_link_get_control_setting(SWMM_Engine engine, int idx, d
 SWMM_ENGINE_API int swmm_link_set_target_setting(SWMM_Engine engine, int idx, double setting) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.target_setting[static_cast<std::size_t>(idx)] = setting;
     return SWMM_OK;
@@ -356,6 +367,7 @@ SWMM_ENGINE_API int swmm_link_get_target_setting(SWMM_Engine engine, int idx, do
 SWMM_ENGINE_API int swmm_link_set_closed(SWMM_Engine engine, int idx, int closed) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.is_closed[static_cast<std::size_t>(idx)] = (closed != 0);
     return SWMM_OK;
@@ -411,6 +423,7 @@ SWMM_ENGINE_API int swmm_link_get_depths_bulk(SWMM_Engine engine, double* buf, i
 SWMM_ENGINE_API int swmm_link_set_flows_bulk(SWMM_Engine engine, const double* buf, int count) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_links());
     std::copy(buf, buf + n, ctx.links.flow.begin());
@@ -440,6 +453,7 @@ SWMM_ENGINE_API int swmm_link_get_quality_bulk(SWMM_Engine engine, int pollutant
 SWMM_ENGINE_API int swmm_link_set_pump_curve(SWMM_Engine engine, int idx, int curve_idx) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.pump_curve[static_cast<std::size_t>(idx)] = curve_idx;
     return SWMM_OK;
@@ -456,6 +470,7 @@ SWMM_ENGINE_API int swmm_link_get_pump_curve(SWMM_Engine engine, int idx, int* c
 SWMM_ENGINE_API int swmm_link_set_pump_init_state(SWMM_Engine engine, int idx, int on) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_INITIAL_COND(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.pump_init_state[static_cast<std::size_t>(idx)] = (on != 0);
     return SWMM_OK;
@@ -476,6 +491,7 @@ SWMM_ENGINE_API int swmm_link_get_pump_init_state(SWMM_Engine engine, int idx, i
 SWMM_ENGINE_API int swmm_link_set_crest_height(SWMM_Engine engine, int idx, double h) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.crest_height[static_cast<std::size_t>(idx)] = h;
     return SWMM_OK;
@@ -492,6 +508,7 @@ SWMM_ENGINE_API int swmm_link_get_crest_height(SWMM_Engine engine, int idx, doub
 SWMM_ENGINE_API int swmm_link_set_discharge_coeff(SWMM_Engine engine, int idx, double cd) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.cd[static_cast<std::size_t>(idx)] = cd;
     return SWMM_OK;
@@ -508,6 +525,7 @@ SWMM_ENGINE_API int swmm_link_get_discharge_coeff(SWMM_Engine engine, int idx, d
 SWMM_ENGINE_API int swmm_link_set_end_contractions(SWMM_Engine engine, int idx, double n) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.param2[static_cast<std::size_t>(idx)] = n;
     return SWMM_OK;
@@ -528,6 +546,7 @@ SWMM_ENGINE_API int swmm_link_get_end_contractions(SWMM_Engine engine, int idx, 
 SWMM_ENGINE_API int swmm_link_set_loss_coeff(SWMM_Engine engine, int idx, double inlet, double outlet, double avg) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     auto uidx = static_cast<std::size_t>(idx);
     ctx.links.loss_inlet[uidx]  = inlet;
@@ -550,6 +569,7 @@ SWMM_ENGINE_API int swmm_link_get_loss_coeff(SWMM_Engine engine, int idx, double
 SWMM_ENGINE_API int swmm_link_set_flap_gate(SWMM_Engine engine, int idx, int has_gate) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.has_flap_gate[static_cast<std::size_t>(idx)] = (has_gate != 0);
     return SWMM_OK;
@@ -566,6 +586,7 @@ SWMM_ENGINE_API int swmm_link_get_flap_gate(SWMM_Engine engine, int idx, int* ha
 SWMM_ENGINE_API int swmm_link_set_seep_rate(SWMM_Engine engine, int idx, double rate) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.seep_rate[static_cast<std::size_t>(idx)] = rate;
     return SWMM_OK;
@@ -582,6 +603,7 @@ SWMM_ENGINE_API int swmm_link_get_seep_rate(SWMM_Engine engine, int idx, double*
 SWMM_ENGINE_API int swmm_link_set_culvert_code(SWMM_Engine engine, int idx, int code) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.culvert_code[static_cast<std::size_t>(idx)] = code;
     return SWMM_OK;
@@ -598,6 +620,7 @@ SWMM_ENGINE_API int swmm_link_get_culvert_code(SWMM_Engine engine, int idx, int*
 SWMM_ENGINE_API int swmm_link_set_barrels(SWMM_Engine engine, int idx, int n) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.barrels[static_cast<std::size_t>(idx)] = n;
     return SWMM_OK;

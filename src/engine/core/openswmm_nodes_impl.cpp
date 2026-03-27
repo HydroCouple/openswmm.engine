@@ -66,12 +66,13 @@ SWMM_ENGINE_API int swmm_node_add(SWMM_Engine engine, const char* id, int type) 
 }
 
 // ============================================================================
-// Geometry setters (BUILDING or OPENED)
+// Geometry setters (BUILDING or OPENED only)
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_node_set_invert_elev(SWMM_Engine engine, int idx, double elev) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.invert_elev[static_cast<std::size_t>(idx)] = elev;
     return SWMM_OK;
@@ -80,6 +81,7 @@ SWMM_ENGINE_API int swmm_node_set_invert_elev(SWMM_Engine engine, int idx, doubl
 SWMM_ENGINE_API int swmm_node_set_max_depth(SWMM_Engine engine, int idx, double depth) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.full_depth[static_cast<std::size_t>(idx)] = depth;
     return SWMM_OK;
@@ -88,6 +90,7 @@ SWMM_ENGINE_API int swmm_node_set_max_depth(SWMM_Engine engine, int idx, double 
 SWMM_ENGINE_API int swmm_node_set_surcharge_depth(SWMM_Engine engine, int idx, double depth) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.sur_depth[static_cast<std::size_t>(idx)] = depth;
     return SWMM_OK;
@@ -96,6 +99,7 @@ SWMM_ENGINE_API int swmm_node_set_surcharge_depth(SWMM_Engine engine, int idx, d
 SWMM_ENGINE_API int swmm_node_set_pond_area(SWMM_Engine engine, int idx, double area) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.ponded_area[static_cast<std::size_t>(idx)] = area;
     return SWMM_OK;
@@ -104,6 +108,7 @@ SWMM_ENGINE_API int swmm_node_set_pond_area(SWMM_Engine engine, int idx, double 
 SWMM_ENGINE_API int swmm_node_set_initial_depth(SWMM_Engine engine, int idx, double depth) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_INITIAL_COND(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.depth[static_cast<std::size_t>(idx)] = depth;
     return SWMM_OK;
@@ -152,6 +157,7 @@ SWMM_ENGINE_API int swmm_node_get_depth(SWMM_Engine engine, int idx, double* dep
 SWMM_ENGINE_API int swmm_node_set_depth(SWMM_Engine engine, int idx, double depth) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.depth[static_cast<std::size_t>(idx)] = depth;
     return SWMM_OK;
@@ -199,12 +205,13 @@ SWMM_ENGINE_API int swmm_node_get_inflow(SWMM_Engine engine, int idx, double* in
 }
 
 // ============================================================================
-// Runtime forcing (RUNNING state)
+// Runtime forcing (RUNNING state only)
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_node_set_lateral_inflow(SWMM_Engine engine, int idx, double flow) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.lat_flow[static_cast<std::size_t>(idx)] = flow;
     return SWMM_OK;
@@ -213,6 +220,7 @@ SWMM_ENGINE_API int swmm_node_set_lateral_inflow(SWMM_Engine engine, int idx, do
 SWMM_ENGINE_API int swmm_node_set_head_boundary(SWMM_Engine engine, int idx, double head) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     auto uidx = static_cast<std::size_t>(idx);
     if (ctx.nodes.type[uidx] != openswmm::NodeType::OUTFALL)
@@ -282,6 +290,7 @@ SWMM_ENGINE_API int swmm_node_get_overflows_bulk(SWMM_Engine engine, double* buf
 SWMM_ENGINE_API int swmm_node_set_depths_bulk(SWMM_Engine engine, const double* buf, int count) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_nodes());
     std::copy(buf, buf + n, ctx.nodes.depth.begin());
@@ -291,6 +300,7 @@ SWMM_ENGINE_API int swmm_node_set_depths_bulk(SWMM_Engine engine, const double* 
 SWMM_ENGINE_API int swmm_node_set_lat_inflows_bulk(SWMM_Engine engine, const double* buf, int count) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_nodes());
     std::copy(buf, buf + n, ctx.nodes.lat_flow.begin());
@@ -320,6 +330,7 @@ SWMM_ENGINE_API int swmm_node_get_quality_bulk(SWMM_Engine engine, int pollutant
 SWMM_ENGINE_API int swmm_node_set_storage_curve(SWMM_Engine engine, int idx, int curve_idx) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.storage_curve[static_cast<std::size_t>(idx)] = curve_idx;
     return SWMM_OK;
@@ -336,6 +347,7 @@ SWMM_ENGINE_API int swmm_node_get_storage_curve(SWMM_Engine engine, int idx, int
 SWMM_ENGINE_API int swmm_node_set_storage_functional(SWMM_Engine engine, int idx, double a, double b, double c) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     auto uidx = static_cast<std::size_t>(idx);
     ctx.nodes.storage_a[uidx] = a;
@@ -358,6 +370,7 @@ SWMM_ENGINE_API int swmm_node_get_storage_functional(SWMM_Engine engine, int idx
 SWMM_ENGINE_API int swmm_node_set_storage_seep_rate(SWMM_Engine engine, int idx, double rate) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.storage_seep_rate[static_cast<std::size_t>(idx)] = rate;
     return SWMM_OK;
@@ -374,6 +387,7 @@ SWMM_ENGINE_API int swmm_node_get_storage_seep_rate(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_node_set_exfil_params(SWMM_Engine engine, int idx, double suction, double ksat, double imd) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     auto uidx = static_cast<std::size_t>(idx);
     ctx.nodes.exfil_suction[uidx] = suction;
@@ -400,6 +414,7 @@ SWMM_ENGINE_API int swmm_node_get_exfil_params(SWMM_Engine engine, int idx, doub
 SWMM_ENGINE_API int swmm_node_set_outfall_type(SWMM_Engine engine, int idx, int type) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.outfall_type[static_cast<std::size_t>(idx)] = static_cast<openswmm::OutfallType>(type);
     return SWMM_OK;
@@ -416,6 +431,7 @@ SWMM_ENGINE_API int swmm_node_get_outfall_type(SWMM_Engine engine, int idx, int*
 SWMM_ENGINE_API int swmm_node_set_outfall_stage(SWMM_Engine engine, int idx, double stage) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     auto uidx = static_cast<std::size_t>(idx);
     ctx.nodes.outfall_param[uidx] = stage;
@@ -426,6 +442,7 @@ SWMM_ENGINE_API int swmm_node_set_outfall_stage(SWMM_Engine engine, int idx, dou
 SWMM_ENGINE_API int swmm_node_set_outfall_tidal(SWMM_Engine engine, int idx, int curve_idx) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     auto uidx = static_cast<std::size_t>(idx);
     ctx.nodes.outfall_param[uidx] = static_cast<double>(curve_idx);
@@ -436,6 +453,7 @@ SWMM_ENGINE_API int swmm_node_set_outfall_tidal(SWMM_Engine engine, int idx, int
 SWMM_ENGINE_API int swmm_node_set_outfall_timeseries(SWMM_Engine engine, int idx, int ts_idx) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     auto uidx = static_cast<std::size_t>(idx);
     ctx.nodes.outfall_param[uidx] = static_cast<double>(ts_idx);
@@ -454,6 +472,7 @@ SWMM_ENGINE_API int swmm_node_get_outfall_param(SWMM_Engine engine, int idx, dou
 SWMM_ENGINE_API int swmm_node_set_outfall_flap_gate(SWMM_Engine engine, int idx, int has_gate) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.outfall_has_flap_gate[static_cast<std::size_t>(idx)] = (has_gate != 0);
     return SWMM_OK;

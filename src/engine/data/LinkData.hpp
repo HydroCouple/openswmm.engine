@@ -66,9 +66,13 @@ enum class XsectShape : int16_t {
     SEMIELLIPTICAL   = 13,
     BASKETHANDLE     = 14,
     SEMICIRCULAR     = 15,
-    IRREGULAR        = 16,  ///< User-supplied shape curve
-    CUSTOM           = 17,  ///< Shape from CURVE_SHAPE table
-    FORCE_MAIN       = 18   ///< Circular force main (Hazen-Williams or D-W)
+    RECT_TRIANG      = 16,  ///< Rectangular-triangular bottom
+    RECT_ROUND       = 17,  ///< Rectangular-round bottom
+    IRREGULAR        = 18,  ///< User-supplied shape curve
+    CUSTOM           = 19,  ///< Shape from CURVE_SHAPE table
+    FORCE_MAIN       = 20,  ///< Circular force main (Hazen-Williams or D-W)
+    STREET_XSECT     = 21,  ///< Street cross-section
+    DUMMY            = 22   ///< Dummy (no geometry)
 };
 
 /**
@@ -173,6 +177,15 @@ struct LinkData {
     /** @brief Conduit slope (rise/run, dimensionless). */
     std::vector<double>     slope;
 
+    /**
+     * @brief Modified conduit length for CFL stability (project length units).
+     * @details Computed as lengthFactor * length where lengthFactor >= 1.0.
+     *          Short conduits are virtually lengthened to satisfy the Courant
+     *          criterion at full-flow conditions.
+     * @see Legacy: Conduit[k].modLength
+     */
+    std::vector<double>     mod_length;
+
     /** @brief Number of identical barrels (conduits only, default 1). */
     std::vector<int>        barrels;
 
@@ -206,6 +219,49 @@ struct LinkData {
      * @see Legacy: Link[j].xsect.sFull
      */
     std::vector<double>     xsect_s_full;
+
+    /**
+     * @brief Maximum section factor (at depth of max conveyance).
+     * @see Legacy: Link[j].xsect.sMax
+     */
+    std::vector<double>     xsect_s_max;
+
+    /**
+     * @brief Maximum flow rate at sMax: q_max = xsect_s_max * beta.
+     * @see Legacy: Conduit[k].qMax
+     */
+    std::vector<double>     q_max;
+
+    /**
+     * @brief Bottom depth for FILLED_CIRCULAR, RECT_TRIANG, RECT_ROUND shapes.
+     * @see Legacy: Link[j].xsect.yBot
+     */
+    std::vector<double>     xsect_y_bot;
+
+    /**
+     * @brief Bottom area for FILLED_CIRCULAR, RECT_TRIANG shapes.
+     * @see Legacy: Link[j].xsect.aBot
+     */
+    std::vector<double>     xsect_a_bot;
+
+    /**
+     * @brief Multi-purpose shape param: side slope (RECT_TRIANG), C-factor (FORCE_MAIN),
+     *        number of open sides (RECT_OPEN), etc.
+     * @see Legacy: Link[j].xsect.sBot
+     */
+    std::vector<double>     xsect_s_bot;
+
+    /**
+     * @brief Multi-purpose shape param: wall length (RECT_TRIANG), wetted perimeter (FILLED_CIRCULAR).
+     * @see Legacy: Link[j].xsect.rBot
+     */
+    std::vector<double>     xsect_r_bot;
+
+    /**
+     * @brief Depth at maximum width.
+     * @see Legacy: Link[j].xsect.ywMax
+     */
+    std::vector<double>     xsect_yw_max;
 
     /**
      * @brief Current link setting (0-1 for pumps/orifices/weirs, 1.0 default for conduits).
@@ -415,12 +471,20 @@ struct LinkData {
         roughness.assign(un, 0.01);
         length.assign(un, 0.0);
         slope.assign(un, 0.0);
+        mod_length.assign(un, 0.0);
         barrels.assign(un, 1);
         beta.assign(un, 0.0);
         rough_factor.assign(un, 0.0);
         q_full.assign(un, 0.0);
         xsect_r_full.assign(un, 0.0);
         xsect_s_full.assign(un, 0.0);
+        xsect_s_max.assign(un, 0.0);
+        q_max.assign(un, 0.0);
+        xsect_y_bot.assign(un, 0.0);
+        xsect_a_bot.assign(un, 0.0);
+        xsect_s_bot.assign(un, 0.0);
+        xsect_r_bot.assign(un, 0.0);
+        xsect_yw_max.assign(un, 0.0);
         setting.assign(un, 1.0);
         target_setting.assign(un, 1.0);
         direction.assign(un, 1);

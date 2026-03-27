@@ -254,5 +254,6 @@ SWMM_ENGINE_API int swmm_get_routing_step(SWMM_Engine engine, double* dt);
 #include "openswmm_quality.h"
 #include "openswmm_statistics.h"
 #include "openswmm_output.h"
+#include "openswmm_forcing.h"
 
 #endif /* OPENSWMM_ENGINE_H */

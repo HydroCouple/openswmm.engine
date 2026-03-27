@@ -181,10 +181,8 @@
         },
         {
             "name": "Windows-debug",
-            "configurePreset": "Windows-debug",
-            "targets": [
-                "package"
-            ]
+            "description": "Build all targets for debugging on Windows",
+            "configurePreset": "Windows-debug"
         },
         {
             "name": "Linux",
@@ -195,10 +193,8 @@
         },
         {
             "name": "Linux-debug",
-            "configurePreset": "Linux-debug",
-            "targets": [
-                "package"
-            ]
+            "description": "Build all targets for debugging on Linux",
+            "configurePreset": "Linux-debug"
         },
         {
             "name": "Darwin",
@@ -209,10 +205,8 @@
         },
         {
             "name": "Darwin-debug",
-            "configurePreset": "Darwin-debug",
-            "targets": [
-                "package"
-            ]
+            "description": "Build all targets for debugging on macOS",
+            "configurePreset": "Darwin-debug"
         }
     ]
 }

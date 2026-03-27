@@ -151,6 +151,22 @@ private:
     // Per-link area from previous iteration (for unsteady term)
     std::vector<double> area_old_;
 
+    // Per-link surface area contributions to upstream/downstream nodes
+    // (matching legacy Link[].surfArea1/surfArea2 from dwflow.c findSurfArea)
+    std::vector<double> surf_area1_;   ///< Surface area at upstream node (ft²)
+    std::vector<double> surf_area2_;   ///< Surface area at downstream node (ft²)
+
+    // Per-link upstream geometry (for proper weighted hyd. radius)
+    std::vector<double> hrad1_;        ///< Hydraulic radius at upstream depth
+    std::vector<double> width1_;       ///< Top width at upstream depth
+    std::vector<double> width2_;       ///< Top width at downstream depth
+
+    // Per-link head values (persisted from computeLinkGeometry for solveMomentumBatch,
+    // may be modified by flow classification for UP_CRITICAL/DN_CRITICAL cases)
+    std::vector<double> h1_;           ///< Head at upstream node (possibly modified)
+    std::vector<double> h2_;           ///< Head at downstream node (possibly modified)
+    std::vector<double> fasnh_;        ///< Fraction between normal & critical depth
+
     // Internal methods
     void initNodeStates(SimulationContext& ctx);
     void computeLinkGeometry(SimulationContext& ctx);

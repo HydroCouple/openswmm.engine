@@ -805,29 +805,95 @@ double getAmax(const XSectParams& xs) {
 
 double getYcrit(const XSectParams& xs, double q) {
     if (q <= 0.0) return 0.0;
-    // S_crit = Q / (1.49 * sqrt(S0))  — but we need S_crit = Q * n / (1.49 * sqrt(S0))
-    // Actually: critical depth where Froude = 1:  Q^2 * T / (g * A^3) = 1
-    // Use bisection on y in [0, y_full]
-    static constexpr double GRAVITY = 32.174;  // ft/s^2
-    double q2 = q * q;
+    // Matching legacy xsect_getYcrit in xsect.c
+    static constexpr double GRAVITY = 32.2;
+    double q2g = q * q / GRAVITY;
 
-    double y_lo = 0.0, y_hi = xs.y_full;
-    for (int iter = 0; iter < 50; ++iter) {
-        double y_mid = (y_lo + y_hi) / 2.0;
-        double a = getAofY(xs, y_mid);
-        double w = getWofY(xs, y_mid);
-        if (a <= 0.0 || w <= 0.0) {
-            y_lo = y_mid;
-            continue;
+    if (q2g == 0.0) return 0.0;
+
+    double y;
+    auto shape = static_cast<XSectShape>(xs.type);
+
+    switch (shape) {
+        case XSectShape::DUMMY:
+            return 0.0;
+
+        case XSectShape::RECT_OPEN:
+        case XSectShape::RECT_CLOSED:
+            // Analytical: y = (q²/g / w²)^(1/3)
+            y = std::pow(q2g / (xs.w_max * xs.w_max), 1.0 / 3.0);
+            break;
+
+        case XSectShape::TRIANGULAR:
+            // Analytical: y = (2 * q²/g / s²)^(1/5) where s = side slope
+            y = std::pow(2.0 * q2g / (xs.s_bot * xs.s_bot), 1.0 / 5.0);
+            break;
+
+        case XSectShape::PARABOLIC:
+            // Analytical: y = (27/32 * q²/g / rBot²)^(1/4)
+            y = std::pow(27.0 / 32.0 * q2g / (xs.r_bot * xs.r_bot), 1.0 / 4.0);
+            break;
+
+        case XSectShape::POWERFUNC:
+            y = 1.0 / (2.0 * xs.s_bot + 3.0);
+            y = std::pow(q2g * (xs.s_bot + 1.0) / (xs.r_bot * xs.r_bot), y);
+            break;
+
+        default: {
+            // Numerical: interval enumeration matching legacy getYcritEnum.
+            // Divide depth range into 25 increments, find where Q_crit crosses Q.
+            constexpr int N_INC = 25;
+            double dy = xs.y_full / N_INC;
+            if (dy <= 0.0) return 0.0;
+
+            // Initial estimate: equivalent circular approximation
+            double y0 = 1.01 * std::pow(q2g / xs.y_full, 0.25);
+            if (y0 >= xs.y_full) y0 = 0.97 * xs.y_full;
+            int i0 = static_cast<int>(y0 / dy);
+            if (i0 < 0) i0 = 0;
+            if (i0 > N_INC) i0 = N_INC;
+
+            // Compute Q_crit at depth = i*dy: Q_c = A * sqrt(g*A/W)
+            auto qCritAt = [&](double depth) -> double {
+                if (depth <= 0.0) return 0.0;
+                double a = getAofY(xs, depth);
+                double w = getWofY(xs, depth);
+                if (a <= 0.0 || w <= 0.0) return 0.0;
+                return a * std::sqrt(GRAVITY * a / w);
+            };
+
+            double q0 = qCritAt(i0 * dy);
+            y = xs.y_full;  // default if not found
+
+            if (q0 < q) {
+                // Search upward
+                for (int i = i0 + 1; i <= N_INC; ++i) {
+                    double qc = qCritAt(i * dy);
+                    if (qc >= q) {
+                        // Linear interpolation
+                        y = ((q - q0) / (qc - q0) + static_cast<double>(i - 1)) * dy;
+                        break;
+                    }
+                    q0 = qc;
+                }
+            } else {
+                // Search downward
+                for (int i = i0 - 1; i >= 0; --i) {
+                    double qc = qCritAt(i * dy);
+                    if (qc <= q) {
+                        // Linear interpolation
+                        y = (static_cast<double>(i) + (q - qc) / (q0 - qc)) * dy;
+                        break;
+                    }
+                    q0 = qc;
+                }
+            }
+            break;
         }
-        double fr2 = q2 * w / (GRAVITY * a * a * a);
-        if (fr2 > 1.0)
-            y_lo = y_mid;
-        else
-            y_hi = y_mid;
-        if ((y_hi - y_lo) < TINY * xs.y_full) break;
     }
-    return (y_lo + y_hi) / 2.0;
+
+    // Do not allow yCritical > yFull
+    return std::min(y, xs.y_full);
 }
 
 // ============================================================================

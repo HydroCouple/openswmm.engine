@@ -358,6 +358,19 @@ private:
     // General helpers
     // -----------------------------------------------------------------------
 
+    /**
+     * @brief Apply user-injected runtime forcings to SoA arrays.
+     *
+     * @details Called at the start of each routing step (after save_state,
+     *          before computations). Writes forcing values into lat_flow,
+     *          outfall_param, rainfall, setting, etc. per the forcing mode
+     *          (OVERRIDE or ADD). Also accumulates forcing volumes into the
+     *          mass balance diagnostic accumulator.
+     *
+     * @param dt  Routing timestep (seconds) — for mass balance accumulation.
+     */
+    void applyForcings(double dt) noexcept;
+
     /** @brief Register all built-in SWMM section handlers. */
     void register_builtin_handlers();
 

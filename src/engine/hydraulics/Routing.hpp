@@ -99,8 +99,8 @@ private:
     /// Save old hydraulic states before routing.
     void saveOldStates(SimulationContext& ctx);
 
-    /// Initialise node inflows from lateral flows.
-    void initNodeFlows(SimulationContext& ctx);
+    /// Initialise node inflows from lateral flows and losses.
+    void initNodeFlows(SimulationContext& ctx, double dt);
 
     /// Update final link states (depth, volume) after routing.
     void updateLinkStates(SimulationContext& ctx);

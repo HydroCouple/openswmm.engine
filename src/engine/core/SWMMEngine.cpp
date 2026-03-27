@@ -327,6 +327,9 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     ctx_.mass_balance.step_dw_inflow = 0.0;
     ctx_.mass_balance.step_gw_inflow = 0.0;
 
+    // ---- Apply user-injected runtime forcings ----
+    applyForcings(dt_next);
+
     // ---- Full simulation pipeline (matching legacy swmm_step order) ----
     // Reference: swmm5.c::execRouting() → runoff_execute() + routing_execute()
 
@@ -336,6 +339,9 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     updateRoutingMassBalance(dt_next);
     computeFinalStorage();
     computeFinalQualityMassBalance();
+
+    // ---- Clear auto-reset forcings ----
+    ctx_.forcing.clear_reset_entries();
 
     // Advance clock
     hydraulics::TimestepController::advance(ctx_, dt_next);
@@ -418,7 +424,8 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // A4. Runoff (batch nonlinear reservoir -- vectorisable)
         //     Includes infiltration, writes runoff to ctx.subcatches.runoff,
         //     scatters to ctx.nodes.lat_flow, updates mass balance
-        runoff_.execute(ctx_, dt_runoff, climate_.evap_rate);
+        runoff_.execute(ctx_, dt_runoff, climate_.evap_rate,
+                        climate_.infil_factor, climate_.recovery_factor);
 
         // Update state flags for next timestep selection (matching legacy)
         has_runoff = false;
@@ -999,6 +1006,16 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             ctx_.nodes.stat_vol_flooded[uj] += ctx_.nodes.overflow[uj] * dt_routing;
         }
 
+        // Node inflow statistics (matching legacy stats_updateNodeStats)
+        double lat = ctx_.nodes.lat_flow[uj];
+        double total_inflow = ctx_.nodes.inflow[uj];
+        if (std::fabs(lat) > ctx_.nodes.stat_max_lat_inflow[uj])
+            ctx_.nodes.stat_max_lat_inflow[uj] = std::fabs(lat);
+        if (total_inflow > ctx_.nodes.stat_max_total_inflow[uj])
+            ctx_.nodes.stat_max_total_inflow[uj] = total_inflow;
+        ctx_.nodes.stat_lat_inflow_vol[uj]   += std::fabs(lat) * dt_routing;
+        ctx_.nodes.stat_total_inflow_vol[uj] += total_inflow * dt_routing;
+
         // Outfall statistics
         if (ctx_.nodes.type[uj] == NodeType::OUTFALL) {
             double qi = ctx_.nodes.inflow[uj];
@@ -1032,16 +1049,21 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         ctx_.links.stat_vol_flow[uj] += q * dt_routing;
 
         // Velocity (flow / cross-sectional area)
-        // Approximate area from depth and full-depth ratio applied to full area
-        double y_full = ctx_.links.xsect_y_full[uj];
-        double a_full = ctx_.links.xsect_a_full[uj];
-        double d = ctx_.links.depth[uj];
-        double area = (y_full > 0.0) ? a_full * (d / y_full) : 0.0;
+        // Use actual cross-section area from link volume and length
+        // (link volume = area_avg * length * barrels, set by DW solver)
+        double length = ctx_.links.mod_length[uj];
+        if (length <= 0.0) length = ctx_.links.length[uj];
+        int barrels = std::max(ctx_.links.barrels[uj], 1);
+        double area = (length > 0.0 && barrels > 0)
+                    ? ctx_.links.volume[uj] / (length * barrels)
+                    : 0.0;
         double vel = (area > 0.0001) ? q / area : 0.0;
         if (vel > ctx_.links.stat_max_veloc[uj])
             ctx_.links.stat_max_veloc[uj] = vel;
 
         // Filling ratio (depth / full depth)
+        double y_full = ctx_.links.xsect_y_full[uj];
+        double d = ctx_.links.depth[uj];
         double filling = (y_full > 0.0) ? d / y_full : 0.0;
         if (filling > ctx_.links.stat_max_filling[uj])
             ctx_.links.stat_max_filling[uj] = filling;
@@ -1412,6 +1434,107 @@ int SWMMEngine::close() noexcept {
 }
 
 // ============================================================================
+// applyForcings — inject user-specified runtime forcing values
+// ============================================================================
+
+void SWMMEngine::applyForcings(double dt) noexcept {
+    auto& f = ctx_.forcing;
+
+    // ---- Node lateral inflow forcing ----
+    for (int i = 0; i < ctx_.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (f.node_lat_inflow_mode[ui] == ForcingMode::OVERRIDE) {
+            ctx_.nodes.lat_flow[ui] = f.node_lat_inflow_value[ui];
+            ctx_.mass_balance.routing_forcing_inflow += f.node_lat_inflow_value[ui] * dt;
+        } else if (f.node_lat_inflow_mode[ui] == ForcingMode::ADD) {
+            ctx_.nodes.lat_flow[ui] += f.node_lat_inflow_value[ui];
+            ctx_.mass_balance.routing_forcing_inflow += f.node_lat_inflow_value[ui] * dt;
+        }
+    }
+
+    // ---- Node head boundary forcing (outfalls only) ----
+    for (int i = 0; i < ctx_.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (f.node_head_boundary_mode[ui] == ForcingMode::NONE) continue;
+        if (ctx_.nodes.type[ui] != NodeType::OUTFALL) continue;
+        ctx_.nodes.outfall_param[ui] = f.node_head_boundary_value[ui];
+        ctx_.nodes.outfall_type[ui]  = OutfallType::FIXED;
+    }
+
+    // ---- Gage rainfall forcing (before runoff substeps read gages) ----
+    for (int g = 0; g < ctx_.n_gages(); ++g) {
+        auto ug = static_cast<std::size_t>(g);
+        if (f.gage_rainfall_mode[ug] == ForcingMode::OVERRIDE) {
+            ctx_.gages.rainfall[ug] = f.gage_rainfall_value[ug];
+        } else if (f.gage_rainfall_mode[ug] == ForcingMode::ADD) {
+            ctx_.gages.rainfall[ug] += f.gage_rainfall_value[ug];
+        }
+    }
+
+    // ---- Subcatchment rainfall forcing (bypasses gage lookup) ----
+    for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (f.subcatch_rainfall_mode[ui] == ForcingMode::OVERRIDE) {
+            ctx_.subcatches.rainfall[ui] = f.subcatch_rainfall_value[ui];
+        } else if (f.subcatch_rainfall_mode[ui] == ForcingMode::ADD) {
+            ctx_.subcatches.rainfall[ui] += f.subcatch_rainfall_value[ui];
+        }
+    }
+
+    // ---- Subcatchment evaporation forcing ----
+    // (applied here; runoff solver will use subcatches.evap_rate if set)
+    for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (f.subcatch_evap_mode[ui] == ForcingMode::OVERRIDE) {
+            ctx_.subcatches.evap_loss[ui] = f.subcatch_evap_value[ui];
+        } else if (f.subcatch_evap_mode[ui] == ForcingMode::ADD) {
+            ctx_.subcatches.evap_loss[ui] += f.subcatch_evap_value[ui];
+        }
+    }
+
+    // ---- Link setting forcing (pump/orifice/weir control override) ----
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (f.link_setting_mode[uj] == ForcingMode::OVERRIDE) {
+            ctx_.links.setting[uj]        = f.link_setting_value[uj];
+            ctx_.links.target_setting[uj] = f.link_setting_value[uj];
+        } else if (f.link_setting_mode[uj] == ForcingMode::ADD) {
+            ctx_.links.setting[uj]        += f.link_setting_value[uj];
+            ctx_.links.target_setting[uj]  = ctx_.links.setting[uj];
+        }
+    }
+
+    // ---- Link flow forcing ----
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (f.link_flow_mode[uj] == ForcingMode::OVERRIDE) {
+            ctx_.links.flow[uj] = f.link_flow_value[uj];
+        } else if (f.link_flow_mode[uj] == ForcingMode::ADD) {
+            ctx_.links.flow[uj] += f.link_flow_value[uj];
+        }
+    }
+
+    // ---- Node quality mass flux forcing ----
+    // Forced quality is injected into node_conc (mixing concentration).
+    // For ADD mode, mass_rate is converted to concentration: C += mass_rate * dt / volume.
+    // For OVERRIDE mode, the concentration is set directly.
+    int np = ctx_.n_pollutants();
+    if (np > 0) {
+        for (int i = 0; i < ctx_.n_nodes(); ++i) {
+            for (int p = 0; p < np; ++p) {
+                auto flat = static_cast<std::size_t>(i) * static_cast<std::size_t>(np)
+                          + static_cast<std::size_t>(p);
+                if (f.node_quality_mode[flat] == ForcingMode::OVERRIDE) {
+                    ctx_.pollutants.node_conc[flat] = f.node_quality_value[flat];
+                } else if (f.node_quality_mode[flat] == ForcingMode::ADD) {
+                    ctx_.pollutants.node_conc[flat] += f.node_quality_value[flat];
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Callback registration
 // ============================================================================
 
@@ -1480,6 +1603,11 @@ void SWMMEngine::init_modules() noexcept {
     initQuality();
     initGeometry();
     initMassBalance();
+
+    // Allocate forcing arrays to match object counts
+    ctx_.forcing.resize(ctx_.n_nodes(), ctx_.n_links(),
+                        ctx_.n_subcatches(), ctx_.n_gages(),
+                        ctx_.n_pollutants());
 }
 
 // ============================================================================

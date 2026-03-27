@@ -102,8 +102,9 @@ struct SimulationOptions {
     // Time control
     // -----------------------------------------------------------------------
 
-    /** @brief Simulation start date/time (decimal days, Julian date). */
-    double start_date = 0.0;
+    /** @brief Simulation start date/time (decimal days, Julian date).
+     *  @details Legacy default: Jan 1, 2004 = datetime_encodeDate(2004,1,1). */
+    double start_date = 2453006.0;  // Jan 1, 2004 Julian date (legacy default)
 
     /** @brief Simulation end date/time (decimal days, Julian date). */
     double end_date = 0.0;
@@ -111,8 +112,8 @@ struct SimulationOptions {
     /** @brief Report start date/time. */
     double report_start = 0.0;
 
-    /** @brief Hydraulic routing timestep in seconds. */
-    double routing_step = 30.0;
+    /** @brief Hydraulic routing timestep in seconds. Legacy default: 20. */
+    double routing_step = 20.0;
 
     /** @brief Minimum routing timestep in seconds (CFL floor). */
     double min_routing_step = 0.5;
@@ -129,8 +130,16 @@ struct SimulationOptions {
     /** @brief Antecedent dry days. */
     double dry_days = 0.0;
 
-    /** @brief Courant factor for variable time stepping (0 = fixed step). */
-    double variable_step = 0.0;
+    /** @brief Courant factor for variable time stepping (0 = fixed step).
+     *  @details Legacy default: 0.75 (enabled). */
+    double variable_step = 0.75;
+
+    /**
+     * @brief Conduit lengthening timestep (seconds, 0 = use routing_step).
+     * @details Used to compute modified conduit lengths for CFL stability.
+     * @see Legacy: LengtheningStep
+     */
+    double lengthening_step = 0.0;
 
     /** @brief Street sweeping start day-of-year (1-365). 0 = not set. */
     int sweep_start = 1;
@@ -145,8 +154,8 @@ struct SimulationOptions {
     /** @brief Flow units system. */
     FlowUnits flow_units = FlowUnits::CFS;
 
-    /** @brief Routing method. */
-    RoutingModel routing_model = RoutingModel::KINWAVE;
+    /** @brief Routing method. Legacy default: DYNWAVE. */
+    RoutingModel routing_model = RoutingModel::DYNWAVE;
 
     /** @brief Infiltration method for subcatchments. */
     InfiltrationModel infiltration = InfiltrationModel::HORTON;
@@ -164,14 +173,39 @@ struct SimulationOptions {
     /** @brief Surcharge method: 0=EXTRAN, 1=SLOT. @see Legacy: SurchargeMethod */
     int surcharge_method = 0;
 
-    /** @brief Convergence head tolerance in project length units. */
-    double head_tol = 0.0015;
+    /** @brief Normal flow limitation: 0=SLOPE, 1=FROUDE, 2=BOTH, 3=NEITHER.
+     *  @see Legacy: NormalFlowLtd */
+    int normal_flow_ltd = 2;  // BOTH (legacy default)
 
-    /** @brief Surcharge head tolerance. */
-    double sys_flow_tol = 5.0;
+    /** @brief Force main equation: 0=Hazen-Williams, 1=Darcy-Weisbach.
+     *  @see Legacy: ForceMainEqn */
+    int force_main_eqn = 0;
 
-    /** @brief Lateral inflow tolerance. */
-    double lat_flow_tol = 5.0;
+    /** @brief Inertial damping: 0=NONE, 1=PARTIAL, 2=FULL.
+     *  @see Legacy: InertDamping */
+    int inertial_damping = 1;  // PARTIAL (legacy default)
+
+    /** @brief Link offset mode: 0=DEPTH_OFFSET, 1=ELEV_OFFSET.
+     *  @see Legacy: LinkOffsets */
+    int link_offsets = 0;  // DEPTH_OFFSET (legacy default)
+
+    /** @brief Minimum conduit slope (ft/ft). @see Legacy: MinSlope */
+    double min_slope = 0.0;
+
+    /** @brief Minimum node surface area (ft²). @see Legacy: MinSurfArea */
+    double min_surf_area = 0.0;  // 0 = use MIN_SURFAREA constant
+
+    /** @brief Convergence head tolerance in project length units.
+     *  @details Legacy default: 0.0 (sentinel → runtime default 0.005 ft). */
+    double head_tol = 0.005;
+
+    /** @brief System flow tolerance (fraction, e.g., 0.05 = 5%).
+     *  @details Legacy default: 0.05. Input is in percent, divided by 100. */
+    double sys_flow_tol = 0.05;
+
+    /** @brief Lateral inflow tolerance (fraction, e.g., 0.05 = 5%).
+     *  @details Legacy default: 0.05. Input is in percent, divided by 100. */
+    double lat_flow_tol = 0.05;
 
     // -----------------------------------------------------------------------
     // System settings

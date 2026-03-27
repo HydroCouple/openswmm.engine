@@ -71,6 +71,12 @@ struct RunoffSoA {
     std::vector<double> depth_imperv1; ///< Ponded depth, IMPERV1 (ft) — dStore>0
     std::vector<double> depth_perv;    ///< Ponded depth, PERV (ft)
 
+    // Per-subarea SoA: previous-step runoff rates (ft/sec, area-averaged)
+    // Used for inter-subarea routing (legacy subcatch_getRunon)
+    std::vector<double> old_runoff_imperv0; ///< Previous IMPERV0 runoff (ft/sec)
+    std::vector<double> old_runoff_imperv1; ///< Previous IMPERV1 runoff (ft/sec)
+    std::vector<double> old_runoff_perv;    ///< Previous PERV runoff (ft/sec)
+
     // Per-subcatchment: computed runoff (output)
     std::vector<double> runoff;        ///< Total runoff rate (cfs)
     std::vector<double> evap_loss;     ///< Evaporation loss (ft3)
@@ -87,7 +93,12 @@ struct RunoffSoA {
 class RunoffSolver {
 public:
     void init(SimulationContext& ctx);
-    void execute(SimulationContext& ctx, double dt, double evap_rate = 0.0);
+    /**
+     * @param infil_factor    Monthly infiltration rate multiplier (default 1.0).
+     * @param recovery_factor Monthly soil recovery multiplier (default 1.0).
+     */
+    void execute(SimulationContext& ctx, double dt, double evap_rate = 0.0,
+                 double infil_factor = 1.0, double recovery_factor = 1.0);
 
     const RunoffSoA& soa() const { return soa_; }
 

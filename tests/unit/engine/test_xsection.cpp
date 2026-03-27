@@ -398,6 +398,219 @@ TEST_F(XSectBatchTest, FullDepthGivesFullArea) {
 // Batch with many links of one shape (vectorisation validation)
 // ============================================================================
 
+// ============================================================================
+// Per-element: RECT_OPEN
+// ============================================================================
+
+static XSectParams make_rect_open(double height, double width) {
+    XSectParams xs;
+    double p[4] = {height, width, 0, 0};
+    xsect::setParams(xs, static_cast<int>(XSectShape::RECT_OPEN), p, 1.0);
+    return xs;
+}
+
+TEST(XSectionRectOpen, FullAreaExact) {
+    auto xs = make_rect_open(3.0, 4.0);
+    EXPECT_NEAR(xs.a_full, 12.0, 1e-10);
+}
+
+TEST(XSectionRectOpen, AreaLinearInDepth) {
+    auto xs = make_rect_open(3.0, 4.0);
+    EXPECT_NEAR(xsect::getAofY(xs, 1.5), 6.0, 1e-10);
+}
+
+TEST(XSectionRectOpen, WidthConstant) {
+    auto xs = make_rect_open(3.0, 4.0);
+    EXPECT_NEAR(xsect::getWofY(xs, 1.0), 4.0, 1e-10);
+    EXPECT_NEAR(xsect::getWofY(xs, 2.0), 4.0, 1e-10);
+}
+
+TEST(XSectionRectOpen, IsOpenShape) {
+    EXPECT_TRUE(xsect::isOpen(static_cast<int>(XSectShape::RECT_OPEN)));
+}
+
+TEST(XSectionRectOpen, DepthFromAreaExact) {
+    auto xs = make_rect_open(3.0, 4.0);
+    // A = w * y → y = A / w
+    EXPECT_NEAR(xsect::getYofA(xs, 6.0), 1.5, 1e-10);
+}
+
+// ============================================================================
+// Per-element: PARABOLIC
+// ============================================================================
+
+static XSectParams make_parabolic(double depth, double top_width) {
+    XSectParams xs;
+    double p[4] = {depth, top_width, 0, 0};
+    xsect::setParams(xs, static_cast<int>(XSectShape::PARABOLIC), p, 1.0);
+    return xs;
+}
+
+TEST(XSectionParabolic, FullAreaExact) {
+    auto xs = make_parabolic(2.0, 6.0);
+    // Parabolic full area: A = (2/3) * width * depth
+    EXPECT_NEAR(xs.a_full, (2.0 / 3.0) * 6.0 * 2.0, 1e-6);
+}
+
+TEST(XSectionParabolic, AreaAtZeroDepth) {
+    auto xs = make_parabolic(2.0, 6.0);
+    EXPECT_DOUBLE_EQ(xsect::getAofY(xs, 0.0), 0.0);
+}
+
+TEST(XSectionParabolic, AreaAtFullDepth) {
+    auto xs = make_parabolic(2.0, 6.0);
+    double a = xsect::getAofY(xs, 2.0);
+    EXPECT_NEAR(a, xs.a_full, 0.01 * xs.a_full);
+}
+
+TEST(XSectionParabolic, AreaMonotonic) {
+    auto xs = make_parabolic(3.0, 8.0);
+    double prev = 0.0;
+    for (double y = 0.0; y <= 3.0; y += 0.1) {
+        double a = xsect::getAofY(xs, y);
+        EXPECT_GE(a, prev) << "Area should increase with depth at y=" << y;
+        prev = a;
+    }
+}
+
+TEST(XSectionParabolic, IsOpenShape) {
+    EXPECT_TRUE(xsect::isOpen(static_cast<int>(XSectShape::PARABOLIC)));
+}
+
+TEST(XSectionParabolic, DepthFromAreaRoundTrip) {
+    auto xs = make_parabolic(3.0, 8.0);
+    double y_orig = 1.5;
+    double a = xsect::getAofY(xs, y_orig);
+    double y_back = xsect::getYofA(xs, a);
+    EXPECT_NEAR(y_back, y_orig, 0.05);
+}
+
+// ============================================================================
+// Per-element: POWERFUNC (power function shape)
+// ============================================================================
+
+static XSectParams make_powerfunc(double depth, double top_width, double exponent) {
+    XSectParams xs;
+    double p[4] = {depth, top_width, exponent, 0};
+    xsect::setParams(xs, static_cast<int>(XSectShape::POWERFUNC), p, 1.0);
+    return xs;
+}
+
+TEST(XSectionPowerFunc, AreaAtZeroDepth) {
+    auto xs = make_powerfunc(2.0, 5.0, 2.0);
+    EXPECT_DOUBLE_EQ(xsect::getAofY(xs, 0.0), 0.0);
+}
+
+TEST(XSectionPowerFunc, AreaAtFullDepth) {
+    auto xs = make_powerfunc(2.0, 5.0, 2.0);
+    double a = xsect::getAofY(xs, 2.0);
+    EXPECT_NEAR(a, xs.a_full, 0.01 * xs.a_full);
+}
+
+TEST(XSectionPowerFunc, AreaMonotonic) {
+    auto xs = make_powerfunc(3.0, 6.0, 1.5);
+    double prev = 0.0;
+    for (double y = 0.0; y <= 3.0; y += 0.1) {
+        double a = xsect::getAofY(xs, y);
+        EXPECT_GE(a, prev) << "Area should increase with depth at y=" << y;
+        prev = a;
+    }
+}
+
+TEST(XSectionPowerFunc, IsOpenShape) {
+    EXPECT_TRUE(xsect::isOpen(static_cast<int>(XSectShape::POWERFUNC)));
+}
+
+// ============================================================================
+// Circular numerical precision tests (routing-critical)
+// ============================================================================
+
+TEST(XSectionCircularPrecision, AreaAtQuarterFull) {
+    auto xs = make_circular(4.0);  // D=4ft
+    double y = 1.0;  // quarter full
+    double a = xsect::getAofY(xs, y);
+
+    // Analytical: A = R²(θ - sinθcosθ) where θ = acos(1 - y/R)
+    double R = 2.0;
+    double theta = std::acos(1.0 - y / R);
+    double analytical = R * R * (theta - std::sin(theta) * std::cos(theta));
+
+    EXPECT_NEAR(a, analytical, 0.01 * analytical);
+}
+
+TEST(XSectionCircularPrecision, HydRadVsAnalytical) {
+    auto xs = make_circular(4.0);
+    // At y/D = 0.8:
+    double y = 3.2;
+    double a = xsect::getAofY(xs, y);
+    double r = xsect::getRofY(xs, y);
+    double w = xsect::getWofY(xs, y);
+
+    // For a circular pipe: P = 2*R*θ, R_hyd = A/P
+    // where θ = acos(1 - y/R)
+    double R = 2.0;
+    double theta = std::acos(1.0 - y / R);
+    double P = 2.0 * R * theta;
+    double analytical_hrad = a / P;
+
+    EXPECT_NEAR(r, analytical_hrad, 0.02 * analytical_hrad)
+        << "Hydraulic radius at y/D=0.8 should match analytical";
+}
+
+TEST(XSectionCircularPrecision, WidthVsAnalytical) {
+    auto xs = make_circular(4.0);  // D=4ft
+    double y = 1.5;  // y/D = 0.375
+    double w = xsect::getWofY(xs, y);
+
+    // Analytical: W = 2*sqrt(R² - (R-y)²)
+    double R = 2.0;
+    double analytical = 2.0 * std::sqrt(R * R - (R - y) * (R - y));
+
+    EXPECT_NEAR(w, analytical, 0.01 * analytical);
+}
+
+TEST(XSectionCircularPrecision, SectionFactorProfile) {
+    // Verify section factor increases monotonically up to ~93% full
+    auto xs = make_circular(3.0);
+    double prev_s = 0.0;
+
+    for (double frac = 0.05; frac <= 0.90; frac += 0.05) {
+        double y = xs.y_full * frac;
+        double a = xsect::getAofY(xs, y);
+        double s = xsect::getSofA(xs, a);
+
+        EXPECT_GE(s, prev_s) << "Section factor should increase up to ~93% at frac=" << frac;
+        prev_s = s;
+    }
+}
+
+// ============================================================================
+// Cross-section symmetry checks
+// ============================================================================
+
+TEST(XSectionSymmetry, TrapezoidalSymmetricSlopes) {
+    // Symmetric trapezoidal (m1 = m2) should give same area as formula
+    auto xs = make_trapezoidal(3.0, 4.0, 2.0, 2.0);
+    double y = 1.5;
+    double a = xsect::getAofY(xs, y);
+    // A = (b + m*y) * y  for symmetric m1=m2=m
+    double expected = (4.0 + 2.0 * y) * y;
+    EXPECT_NEAR(a, expected, 1e-10);
+}
+
+TEST(XSectionSymmetry, CircularHalfDepthRatio) {
+    // At half depth, A/Afull = 0.5 for a circle (exact)
+    for (double D : {1.0, 2.0, 3.5, 5.0, 10.0}) {
+        auto xs = make_circular(D);
+        double a_half = xsect::getAofY(xs, D / 2.0);
+        EXPECT_NEAR(a_half / xs.a_full, 0.5, 0.01) << "D=" << D;
+    }
+}
+
+// ============================================================================
+// Batch with many links of one shape (vectorisation validation)
+// ============================================================================
+
 TEST(XSectBatchLarge, CircularBatch1000) {
     constexpr int N = 1000;
     std::vector<XSectParams> params(N);

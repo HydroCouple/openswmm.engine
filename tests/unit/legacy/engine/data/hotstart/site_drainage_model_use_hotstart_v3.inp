@@ -55,7 +55,7 @@ DRY_ONLY         NO
 [RAINGAGES]
 ;;Name           Format    Interval SCF      Source    
 ;;-------------- --------- ------ ------ ----------
-RainGage         VOLUME    0:05     1.0      TIMESERIES 2-yr            
+RainGage         VOLUME    0:06     1.0      TIMESERIES 2-yr            
 
 [SUBCATCHMENTS]
 ;;Name           Rain Gage        Outlet           Area     %Imperv  Width    %Slope   CurbLen  SnowPack        

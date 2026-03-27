@@ -27,9 +27,10 @@ struct SimulationOptions;
 // ============================================================================
 
 enum class InfilModel : int {
-    HORTON     = 0,
-    GREEN_AMPT = 1,
-    CURVE_NUM  = 2
+    HORTON      = 0,
+    MOD_HORTON  = 1,   ///< Modified Horton: linear decay fp = f0 - kd * Fe
+    GREEN_AMPT  = 2,
+    CURVE_NUM   = 3
 };
 
 // ============================================================================
@@ -44,6 +45,7 @@ struct HortonState {
     double Fmax    = 0.0;   ///< Max cumulative infiltration (ft)
     double tp      = 0.0;   ///< Cumulative infiltration time (sec)
     double Fe      = 0.0;   ///< Cumulative excess infiltration (ft)
+    double Fmh     = 0.0;   ///< Cumulative infiltration for Modified Horton (ft)
 };
 
 // ============================================================================
@@ -59,6 +61,7 @@ struct GreenAmptState {
     double Fu      = 0.0;   ///< Upper zone saturation volume (ft)
     double Fumax   = 0.0;   ///< Max upper zone saturation (ft)
     double Lu      = 0.0;   ///< Upper zone depth (ft)
+    double T       = 0.0;   ///< Inter-event timer (sec, counts down)
     bool   saturated = false; ///< True when surface is saturated
 };
 
@@ -69,9 +72,11 @@ struct GreenAmptState {
 struct CurveNumState {
     double Smax    = 0.0;   ///< Max retention S = (1000/CN - 10)/12 (ft)
     double S       = 0.0;   ///< Current retention (ft)
+    double Se      = 0.0;   ///< Effective retention at event start (ft)
     double P       = 0.0;   ///< Cumulative precipitation (ft)
     double F       = 0.0;   ///< Cumulative infiltration (ft)
-    double regen   = 0.0;   ///< Regeneration rate
+    double f       = 0.0;   ///< Previous infiltration rate (ft/sec)
+    double regen   = 0.0;   ///< Regeneration rate (1/sec)
     double T       = 0.0;   ///< Time since last rainfall (sec)
     double Tmax    = 0.0;   ///< Inter-event time (sec)
 };
@@ -92,6 +97,22 @@ namespace infil {
  * @returns Infiltration rate (ft/sec).
  */
 double horton_getInfil(HortonState& state, double precip, double depth, double dt);
+
+/**
+ * @brief Compute Modified Horton infiltration rate for one timestep.
+ *
+ * Modified Horton uses a linear decay formula: fp = f0 - kd * Fe
+ * instead of the exponential decay of standard Horton.
+ *
+ * @param state   [in/out] Horton state for this subcatchment.
+ * @param precip  Rainfall rate (ft/sec).
+ * @param depth   Ponded depth (ft).
+ * @param dt      Timestep (seconds).
+ * @returns Infiltration rate (ft/sec).
+ *
+ * @note Legacy reference: infil.c — modHorton_getInfil()
+ */
+double modHorton_getInfil(HortonState& state, double precip, double depth, double dt);
 
 /**
  * @brief Compute Green-Ampt infiltration rate.

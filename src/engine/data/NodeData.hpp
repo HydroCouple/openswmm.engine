@@ -323,6 +323,21 @@ struct NodeData {
      */
     std::vector<double>     stat_outfall_avg_flow;
 
+    /// Maximum lateral inflow at each node (project flow units).
+    /// @see Legacy: NodeStats[i].maxLatFlow
+    std::vector<double>     stat_max_lat_inflow;
+
+    /// Maximum total inflow at each node (project flow units).
+    /// @see Legacy: NodeStats[i].maxInflow
+    std::vector<double>     stat_max_total_inflow;
+
+    /// Cumulative lateral inflow volume at each node (ft3).
+    /// @see Legacy: NodeStats[i].totLatFlow
+    std::vector<double>     stat_lat_inflow_vol;
+
+    /// Cumulative total inflow volume at each node (ft3).
+    std::vector<double>     stat_total_inflow_vol;
+
     /**
      * @brief Outfall maximum flow (project flow units).
      * @see Legacy: OutfallStats[k].maxFlow
@@ -410,6 +425,10 @@ struct NodeData {
         stat_time_flooded.assign(un, 0.0);
         stat_max_depth.assign(un, 0.0);
         stat_max_overflow.assign(un, 0.0);
+        stat_max_lat_inflow.assign(un, 0.0);
+        stat_max_total_inflow.assign(un, 0.0);
+        stat_lat_inflow_vol.assign(un, 0.0);
+        stat_total_inflow_vol.assign(un, 0.0);
         stat_outfall_avg_flow.assign(un, 0.0);
         stat_outfall_max_flow.assign(un, 0.0);
         stat_outfall_periods.assign(un, 0);

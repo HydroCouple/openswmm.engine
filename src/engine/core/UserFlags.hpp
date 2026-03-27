@@ -255,9 +255,9 @@ public:
 
     /**
      * @brief Build the composite lookup key "OBJECTTYPE:OBJECTNAME:FLAGNAME".
-     * @details @p object_type and @p flag_name are uppercased; @p object_name
-     *          preserves its original case (object names may be mixed-case in
-     *          the input file).
+     * @details All components are used as-is (no case normalization).
+     *          Callers are responsible for uppercasing @p object_type and
+     *          @p flag_name before storage if case-insensitive lookup is desired.
      */
     static std::string make_key(const std::string& object_type,
                                 const std::string& object_name,

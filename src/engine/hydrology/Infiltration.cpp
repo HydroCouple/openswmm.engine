@@ -140,6 +140,67 @@ double horton_getInfil(HortonState& state, double precip, double depth, double d
 }
 
 // ============================================================================
+// Modified Horton — linear decay: fp = f0 - kd * Fe
+// Matching legacy infil.c modHorton_getInfil() exactly
+// ============================================================================
+
+double modHorton_getInfil(HortonState& state, double precip, double depth, double dt) {
+    double f  = 0.0;
+    double f0   = state.f0;
+    double fmin = state.fmin;
+    double df   = f0 - fmin;
+    double kd   = state.decay;
+    double kr   = state.regen;
+
+    // Special cases: no infiltration or constant infiltration
+    if (df < 0.0 || kd < 0.0 || kr < 0.0) return 0.0;
+    if (df == 0.0 || kd == 0.0) {
+        double fp = f0;
+        double fa = precip + depth / dt;
+        if (fp > fa) fp = fa;
+        return std::max(0.0, fp);
+    }
+
+    // Available water rate (ft/sec)
+    double fa = precip + depth / dt;
+
+    if (fa > TINY) {
+        // Saturated condition check
+        if (state.Fmax > 0.0 && state.Fe >= state.Fmax) return 0.0;
+
+        // Modified Horton potential infiltration: linear decay
+        double fp = f0 - kd * state.Fe;
+        fp = std::max(fp, fmin);
+
+        // Actual infiltration limited by available water
+        f = std::min(fa, fp);
+
+        // Limit cumulative infiltration to Fmax
+        if (state.Fmax > 0.0) {
+            if (state.Fmh + f * dt > state.Fmax)
+                f = (state.Fmax - state.Fmh) / dt;
+            f = std::max(f, 0.0);
+            state.Fmh += f * dt;
+        }
+
+        // Update cumulative excess infiltration (above fmin)
+        state.Fe += std::max(f - fmin, 0.0) * dt;
+        if (state.Fmax > 0.0)
+            state.Fe = std::min(state.Fe, state.Fmax);
+    }
+    // Dry period — exponential recovery
+    else if (kr > 0.0) {
+        double decay_factor = std::exp(-kr * dt);
+        state.Fe  *= decay_factor;
+        state.Fe   = std::max(state.Fe, 0.0);
+        state.Fmh *= decay_factor;
+        state.Fmh  = std::max(state.Fmh, 0.0);
+    }
+
+    return f;
+}
+
+// ============================================================================
 // Green-Ampt
 // ============================================================================
 
@@ -154,7 +215,7 @@ void grnampt_init(GreenAmptState& state, double S, double Ks, double IMD,
     state.F      = 0.0;
     state.Lu     = 4.0 * std::sqrt(state.Ks * ucf_rain) / ucf_depth;
     state.Fumax  = state.IMDmax * state.Lu;
-    state.Fu     = state.Fumax;
+    state.Fu     = 0.0;  // Legacy: starts dry (empty upper zone = max storage)
     state.saturated = false;
 }
 
@@ -175,48 +236,82 @@ static double grnampt_getF2(double F1, double Ks, double c1, double dt) {
 }
 
 double grnampt_getInfil(GreenAmptState& state, double precip, double depth, double dt) {
+    // Matching legacy infil.c grnampt_getInfil + grnampt_getUnsatInfil + grnampt_getSatInfil
     double ia = precip + depth / dt;
+    double lu = state.Lu;
+    double Fumax = state.Fumax;  // InfilFactor applied at call-site to Ks/Lu
+
+    // Decrement inter-event timer (matching legacy line 672)
+    state.T -= dt;
 
     if (ia <= 0.0) {
-        // Dry period — recovery
-        if (state.Lu > 0.0) {
-            double kr = state.Lu / 90000.0;  // recovery rate
-            state.Fu -= kr * dt;
+        // Dry period — recovery (matching legacy grnampt_getUnsatInfil lines 705-727)
+        if (lu > 0.0 && Fumax > 0.0) {
+            double kr = lu / 90000.0;  // recoveryFactor applied at call-site to Lu
+            double dF = kr * Fumax * dt;
+            state.F  -= dF;
+            state.Fu -= dF;
+            if (state.F < 0.0) state.F = 0.0;
             if (state.Fu < 0.0) state.Fu = 0.0;
-            state.IMD = state.IMDmax * (1.0 - state.Fu / state.Fumax);
+
+            // Inter-event reset: when timer expires, reset IMD and F
+            // (matching legacy line 721-725)
+            if (state.T <= 0.0) {
+                state.IMD = (Fumax > 0.0 && lu > 0.0)
+                    ? (Fumax - state.Fu) / lu : state.IMDmax;
+                state.F = 0.0;
+            }
         }
         state.saturated = false;
         return 0.0;
     }
 
-    // Check if surface saturation occurs
+    // --- Wet period ---
     double c1 = (state.S + depth) * state.IMD;
 
     if (!state.saturated) {
-        // Unsaturated: infiltrate at rainfall rate
+        // Unsaturated path (matching legacy grnampt_getUnsatInfil)
         if (ia <= state.Ks) {
-            state.F += ia * dt;
-            state.Fu = std::min(state.Fu + ia * dt, state.Fumax);
+            // Light rain: infiltrate all
+            state.F  += ia * dt;
+            state.Fu  = std::min(state.Fu + ia * dt, Fumax);
+
+            // Inter-event reset for standard Green-Ampt when timer expires
+            // (matching legacy line 736: only GREEN_AMPT, not MOD_GREEN_AMPT)
+            if (state.T <= 0.0) {
+                state.IMD = (Fumax > 0.0 && lu > 0.0)
+                    ? (Fumax - state.Fu) / lu : state.IMDmax;
+                state.F = 0.0;
+            }
             return ia;
         }
+
+        // Heavy rain: renew inter-event timer
+        // (matching legacy line 745: T = 5400 / lu / recoveryFactor)
+        if (lu > 0.0) state.T = 5400.0 / lu;
+
         // Check if saturation occurs this step
         double Fs = (c1 > 0.0 && ia > state.Ks)
                     ? state.Ks * c1 / (ia - state.Ks) : 1.0e10;
         if (state.F + ia * dt <= Fs) {
-            state.F += ia * dt;
-            state.Fu = std::min(state.Fu + ia * dt, state.Fumax);
+            state.F  += ia * dt;
+            state.Fu  = std::min(state.Fu + ia * dt, Fumax);
             return ia;
         }
         state.saturated = true;
     }
 
-    // Saturated: solve Green-Ampt equation
+    // Saturated path: renew timer
+    if (lu > 0.0) state.T = 5400.0 / lu;
+
+    // Solve Green-Ampt equation
     double F2 = grnampt_getF2(state.F, state.Ks, c1, dt);
     double fp = (F2 - state.F) / dt;
     fp = std::min(fp, ia);
+    fp = std::max(fp, 0.0);
 
-    state.F = F2;
-    state.Fu = std::min(state.Fu + fp * dt, state.Fumax);
+    state.F  = F2;
+    state.Fu = std::min(state.Fu + fp * dt, Fumax);
     return fp;
 }
 
@@ -224,56 +319,89 @@ double grnampt_getInfil(GreenAmptState& state, double precip, double depth, doub
 // SCS Curve Number
 // ============================================================================
 
-void curvenum_init(CurveNumState& state, double CN, double regen) {
-    // SCS formula always produces inches regardless of unit system
-    state.Smax = (1000.0 / CN - 10.0) / ucf::Ucf[ucf::RAINDEPTH][0];  // inches → feet
+void curvenum_init(CurveNumState& state, double CN, double regen_days) {
+    // SCS formula: S in inches, then convert to feet (always /12)
+    // Legacy: infil->Smax = (1000.0/CN - 10.0) / 12.0
+    if (CN < 10.0) CN = 10.0;
+    if (CN > 99.0) CN = 99.0;
+    state.Smax = (1000.0 / CN - 10.0) / 12.0;  // inches → feet (hardcoded /12)
     state.S    = state.Smax;
+    state.Se   = state.Smax;
     state.P    = 0.0;
     state.F    = 0.0;
-    state.regen = regen;
+    state.f    = 0.0;
+    // Legacy: regen = 1.0 / (dryingTime_days * SECperDAY)
+    constexpr double SEC_PER_DAY = 86400.0;
+    state.regen = (regen_days > 0.0) ? 1.0 / (regen_days * SEC_PER_DAY) : 0.0;
     state.T    = 0.0;
-    state.Tmax = (regen > 0.0) ? 0.06 / regen : 1.0e10;
+    state.Tmax = (state.regen > 0.0) ? 0.06 / state.regen : 1.0e10;
 }
 
 double curvenum_getInfil(CurveNumState& state, double precip, double depth, double dt) {
-    double ia = precip + depth / dt;
+    // Matches legacy infil.c::curvenum_getInfil() exactly
+    constexpr double MIN_TOTAL_DEPTH = 0.0001; // ft
+    double fa = precip + depth / dt;  // max available rate
+    double f1 = 0.0;
 
-    if (ia <= 0.0) {
-        // Dry period — recovery
-        state.T += dt;
+    // --- Case where there is rainfall ---
+    if (precip > TINY) {
+        // Check if new rain event
         if (state.T >= state.Tmax) {
-            // New event — reset
-            state.P = 0.0;
-            state.F = 0.0;
-            state.S = state.Smax;
-        } else if (state.regen > 0.0) {
-            state.S += state.regen * state.Smax * dt;
-            if (state.S > state.Smax) state.S = state.Smax;
+            state.P  = 0.0;
+            state.F  = 0.0;
+            state.f  = 0.0;
+            state.Se = state.S;  // Use CURRENT S (not Smax) as event start retention
         }
-        return 0.0;
+        state.T = 0.0;
+
+        // Update cumulative precip
+        state.P += precip * dt;
+
+        // Find potential new cumulative infiltration
+        double F1 = state.P * (1.0 - state.P / (state.P + state.Se));
+
+        // Compute potential infiltration rate
+        f1 = (F1 - state.F) / dt;
+        if (f1 < 0.0 || state.S <= 0.0) f1 = 0.0;
+    }
+    // --- Case of no rainfall ---
+    else {
+        // If there is ponded water, use previous infil rate
+        if (depth > MIN_TOTAL_DEPTH && state.S > 0.0) {
+            f1 = state.f;
+            if (f1 * dt > state.S) f1 = state.S / dt;
+        }
+        // Otherwise update inter-event time
+        else {
+            state.T += dt;
+        }
     }
 
-    state.T = 0.0;  // reset dry-period timer
+    // --- If there is some infiltration ---
+    if (f1 > 0.0) {
+        // Limit to max available rate
+        f1 = std::min(f1, fa);
+        f1 = std::max(f1, 0.0);
 
-    // Cumulative precipitation
-    double P1 = state.P;
-    state.P += ia * dt;
-    double P2 = state.P;
+        // Update actual cumulative infiltration
+        state.F += f1 * dt;
 
-    double Se = state.S;
-    if (Se <= 0.0) return 0.0;
+        // Deplete retention capacity S (legacy line 1014)
+        if (state.regen > 0.0) {
+            state.S -= f1 * dt;
+            if (state.S < 0.0) state.S = 0.0;
+        }
+    }
+    // --- Otherwise regenerate capacity ---
+    else {
+        // Legacy line 1022: S += regen * Smax * tstep * recoveryFactor
+        // recoveryFactor is applied at call-site
+        state.S += state.regen * state.Smax * dt;
+        if (state.S > state.Smax) state.S = state.Smax;
+    }
 
-    // Cumulative infiltration at P1 and P2
-    // F(P) = P * (1 - P/(P+Se))  or equivalently  F = P - P^2/(P+Se)
-    double F1 = (P1 > 0.0) ? P1 - P1 * P1 / (P1 + Se) : 0.0;
-    double F2 = P2 - P2 * P2 / (P2 + Se);
-
-    double fp = (F2 - F1) / dt;
-    fp = std::min(fp, ia);
-    fp = std::max(fp, 0.0);
-
-    state.F = F2;
-    return fp;
+    state.f = f1;
+    return f1;
 }
 
 } // namespace infil

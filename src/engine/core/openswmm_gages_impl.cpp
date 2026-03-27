@@ -65,6 +65,7 @@ SWMM_ENGINE_API int swmm_gage_add(SWMM_Engine engine, const char* id) {
 SWMM_ENGINE_API int swmm_gage_set_rain_type(SWMM_Engine engine, int idx, int type) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     if (type < 0 || type > 2) return SWMM_ERR_BADPARAM;
     ctx.gages.rain_type[static_cast<std::size_t>(idx)] = type;
@@ -74,6 +75,7 @@ SWMM_ENGINE_API int swmm_gage_set_rain_type(SWMM_Engine engine, int idx, int typ
 SWMM_ENGINE_API int swmm_gage_set_rain_interval(SWMM_Engine engine, int idx, double seconds) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     ctx.gages.interval_sec[static_cast<std::size_t>(idx)] = static_cast<int>(seconds);
     return SWMM_OK;
@@ -82,6 +84,7 @@ SWMM_ENGINE_API int swmm_gage_set_rain_interval(SWMM_Engine engine, int idx, dou
 SWMM_ENGINE_API int swmm_gage_set_data_source(SWMM_Engine engine, int idx, int source) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     ctx.gages.source[static_cast<std::size_t>(idx)] = static_cast<openswmm::RainSource>(source);
     return SWMM_OK;
@@ -91,6 +94,7 @@ SWMM_ENGINE_API int swmm_gage_set_timeseries(SWMM_Engine engine, int idx, const 
     CHECK_HANDLE(engine);
     if (!ts_id) return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     int ts_idx = ctx.table_names.find(ts_id);
     if (ts_idx < 0) return SWMM_ERR_BADPARAM;
@@ -104,6 +108,7 @@ SWMM_ENGINE_API int swmm_gage_set_filename(SWMM_Engine engine, int idx, const ch
     CHECK_HANDLE(engine);
     if (!path) return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     auto uidx = static_cast<std::size_t>(idx);
     ctx.gages.file_path[uidx] = path;
@@ -147,6 +152,7 @@ SWMM_ENGINE_API int swmm_gage_get_rainfall(SWMM_Engine engine, int idx, double* 
 SWMM_ENGINE_API int swmm_gage_set_rainfall(SWMM_Engine engine, int idx, double rainfall) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     ctx.gages.rainfall[static_cast<std::size_t>(idx)] = rainfall;
     return SWMM_OK;

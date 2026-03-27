@@ -602,9 +602,15 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
             const char* node_type_words[] = {"JUNCTION", "OUTFALL", "DIVIDER", "STORAGE"};
             const char* nt_str = (nt >= 0 && nt <= 3) ? node_type_words[nt] : "JUNCTION";
 
+            double max_lat  = ctx.nodes.stat_max_lat_inflow[uj];
+            double max_tot  = ctx.nodes.stat_max_total_inflow[uj];
+            // Convert ft3 → 10^6 gallons (1 ft3 = 7.48052 gal)
+            constexpr double FT3_TO_MG = 7.48052e-6;
+            double vol_lat  = ctx.nodes.stat_lat_inflow_vol[uj]  * FT3_TO_MG;
+            double vol_tot  = ctx.nodes.stat_total_inflow_vol[uj] * FT3_TO_MG;
             std::fprintf(f, "\n  %-20s %-9s %8.2f %8.2f  %13s %11.3f %11.3f %9.3f",
                          ctx.node_names.name_of(j).c_str(), nt_str,
-                         0.0, 0.0, "", 0.0, 0.0, 0.0);
+                         max_lat, max_tot, "", vol_lat, vol_tot, 0.0);
         }
     }
 

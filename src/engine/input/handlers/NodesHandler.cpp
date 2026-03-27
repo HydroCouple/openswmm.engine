@@ -97,6 +97,13 @@ static void ensure_node_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.nodes.stat_time_flooded,  0.0);
     grow(ctx.nodes.stat_max_depth,     0.0);
     grow(ctx.nodes.stat_max_overflow,  0.0);
+    grow(ctx.nodes.stat_max_lat_inflow,   0.0);
+    grow(ctx.nodes.stat_max_total_inflow, 0.0);
+    grow(ctx.nodes.stat_lat_inflow_vol,   0.0);
+    grow(ctx.nodes.stat_total_inflow_vol, 0.0);
+    grow(ctx.nodes.stat_outfall_avg_flow, 0.0);
+    grow(ctx.nodes.stat_outfall_max_flow, 0.0);
+    grow(ctx.nodes.stat_outfall_periods,  0L);
 }
 
 // Ensure spatial arrays are large enough
