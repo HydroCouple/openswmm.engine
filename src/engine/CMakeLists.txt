@@ -79,6 +79,7 @@ set_target_properties(openswmm_engine PROPERTIES
     CXX_VISIBILITY_PRESET      default
     C_VISIBILITY_PRESET        default
     VISIBILITY_INLINES_HIDDEN  OFF
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
 # ---- C++ standard ----
