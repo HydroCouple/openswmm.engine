@@ -16,7 +16,7 @@
 set(SWMM_OUT_PUBLIC_HEADERS
     ${PROJECT_SOURCE_DIR}/include/openswmm/legacy/output/openswmm_output.h
     ${PROJECT_SOURCE_DIR}/include/openswmm/legacy/output/openswmm_output_enums.h
-    ${PROJECT_SOURCE_DIR}/include/openswmm/legacy/output/openswmm_output_export.h
+    ${CMAKE_CURRENT_BINARY_DIR}/openswmm_output_export.h
 )
 
 add_library(openswmm_legacy_output SHARED
@@ -37,16 +37,19 @@ set_target_properties(openswmm_legacy_output
 )
 
 # Generate export header
+# NOTE: File name and macro names must match what openswmm_output.h expects:
+#   #include "openswmm_output_export.h"    → EXPORT_FILE_NAME
+#   EXPORT_OPENSWMMCORE_OUTPUT_API         → EXPORT_MACRO_NAME
 include(GenerateExportHeader)
 generate_export_header(openswmm_legacy_output
-    BASE_NAME        openswmm_legacy_output
-    EXPORT_MACRO_NAME OPENSWMM_LEGACY_OUTPUT_EXPORT
-    EXPORT_FILE_NAME openswmm_legacy_output_export.h
-    STATIC_DEFINE    OPENSWMM_LEGACY_OUTPUT_STATIC
+    BASE_NAME        openswmmcore_output
+    EXPORT_MACRO_NAME EXPORT_OPENSWMMCORE_OUTPUT_API
+    EXPORT_FILE_NAME openswmm_output_export.h
+    STATIC_DEFINE    SHARED_EXPORTS_BUILT_AS_STATIC
 )
 
 # Copy generated export header to the canonical include location
-file(COPY ${CMAKE_CURRENT_BINARY_DIR}/openswmm_legacy_output_export.h
+file(COPY ${CMAKE_CURRENT_BINARY_DIR}/openswmm_output_export.h
     DESTINATION ${PROJECT_SOURCE_DIR}/include/openswmm/legacy/output
 )
 
