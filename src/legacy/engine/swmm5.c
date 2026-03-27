@@ -2754,7 +2754,17 @@ static void getAbsolutePath(const char *fname, char *absPath, size_t size)
 #ifdef OS_WINDOWS
         GetFullPathName((LPCSTR)fname, (DWORD)size, (LPSTR)absPath, NULL);
 #else
-        realpath(fname, absPath);
+        {
+            // realpath() can write up to PATH_MAX (4096) bytes, which may
+            // exceed the size of absPath.  Passing NULL lets libc allocate
+            // a sufficiently large buffer (POSIX.1-2008).
+            char *resolved = realpath(fname, NULL);
+            if (resolved)
+            {
+                sstrncpy(absPath, resolved, size);
+                free(resolved);
+            }
+        }
 #endif
     }
 

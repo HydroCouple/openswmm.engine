@@ -22,6 +22,14 @@ find_package(GTest CONFIG REQUIRED)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Platform-specific RPATH so the test executable can find shared libraries
+# at runtime (mirrors the legacy test configuration).
+if(APPLE)
+    set(LIB_ROOT "@loader_path;@rpath;@executable_path;@loader_path/../lib;@rpath/../lib;@executable_path/../lib;@executable_path/$CMAKE_BUILD_TYPE")
+elseif(UNIX)
+    set(LIB_ROOT "$ORIGIN;$ORIGIN/../lib;$ORIGIN/$CMAKE_BUILD_TYPE")
+endif()
+
 # Helper function to create a unit test executable
 function(add_gtest_unit TEST_NAME SOURCE_FILE)
     add_executable(${TEST_NAME} ${SOURCE_FILE})
@@ -48,6 +56,8 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
     set_target_properties(${TEST_NAME} PROPERTIES
         CXX_STANDARD 20
         CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
     )
 
     add_test(
@@ -56,13 +66,6 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
     )
     set_tests_properties(${TEST_NAME} PROPERTIES LABELS "unit")
-
-    # Copy to bin directory for convenience
-    add_custom_command(TARGET ${TEST_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy
-            $<TARGET_FILE:${TEST_NAME}>
-            ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:${TEST_NAME}>
-    )
 endfunction()
 
 # ---- Unit test targets ----

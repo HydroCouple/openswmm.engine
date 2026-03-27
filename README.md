@@ -9,10 +9,10 @@
 [![Issues](https://img.shields.io/github/issues/HydroCouple/openswmm.engine)](https://github.com/HydroCouple/openswmm.engine/issues)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-| Python Bindings | |
-|---|---|
-| [![PyPI](https://img.shields.io/pypi/v/openswmm.svg)](https://pypi.org/project/openswmm) | [![Downloads](https://pepy.tech/badge/openswmm)](https://pepy.tech/project/openswmm) |
-| [![Python](https://img.shields.io/pypi/pyversions/openswmm.svg)](https://pypi.org/project/openswmm) | [![Wheel](https://img.shields.io/pypi/wheel/openswmm.svg)](https://pypi.org/project/openswmm) |
+[![PyPI](https://img.shields.io/pypi/v/openswmm.svg)](https://pypi.org/project/openswmm)
+[![Downloads](https://pepy.tech/badge/openswmm)](https://pepy.tech/project/openswmm)
+[![Python](https://img.shields.io/pypi/pyversions/openswmm.svg)](https://pypi.org/project/openswmm)
+[![Wheel](https://img.shields.io/pypi/wheel/openswmm.svg)](https://pypi.org/project/openswmm)
 
 ---
 
