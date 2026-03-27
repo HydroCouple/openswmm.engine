@@ -9,10 +9,10 @@
 **Caleb Buahin, Ph.D.** — Lead Developer & Maintainer
 *Formerly Research Engineer, U.S. Environmental Protection Agency, Office of Research and Development, Center for Environmental Solutions and Emergency Response*
 
-**Scott Jeffers, Ph.D. ** - Technical Support and Outreach
+**Scott Jeffers, Ph.D.** - Technical Support and Outreach
 *Scott single handedly converted the legacy SWMM documentation into the web format that you see here and has been a great resource in this open source effort*
 
-***Corinne Wiesner-Friedman, Ph.D.** — Developer & Documentation & Technical Reviewer*
+**Corinne Wiesner-Friedman, Ph.D.** — Developer & Documentation & Technical Reviewer*
 *Formerly Research Engineer, U.S. Environmental Protection Agency, Office of Research and Development, Center for Environmental Solutions and Emergency Response*
 ---
 

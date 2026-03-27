@@ -218,7 +218,7 @@ with Solver("model.inp", "model.rpt", "model.out") as solver:
 
 API documentation is auto-generated with Doxygen and deployed to GitHub Pages:
 
-**[OpenSWMM Engine API Documentation](https://hydrocouple.github.io/OpenSWMMCore)**
+**[OpenSWMM Engine API Documentation](https://hydrocouple.github.io/openswmm.engine)**
 
 The documentation includes:
 - Full C API reference with parameter descriptions and usage notes

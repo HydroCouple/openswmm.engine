@@ -61,7 +61,7 @@ PROJECT_BRIEF          = "Data-oriented, plugin-extensible SWMM Engine (6.0.0-al
 # pixels and the maximum width should not exceed 200 pixels. Doxygen will copy
 # the logo to the output directory.
 
-PROJECT_LOGO           = ./images/hydrocouple_logo.png
+PROJECT_LOGO           = ./Images/hydrocouple_logo.png
 
 # With the PROJECT_ICON tag one can specify an icon that is included in the tabs
 # when the HTML document is shown. Doxygen will copy the logo to the output
@@ -1948,7 +1948,7 @@ MATHJAX_VERSION        = MathJax_3
 # The default value is: HTML-CSS.
 # This tag requires that the tag USE_MATHJAX is set to YES.
 
-MATHJAX_FORMAT         = HTML-CSS
+MATHJAX_FORMAT         = chtml
 
 # When MathJax is enabled you need to specify the location relative to the HTML
 # output directory using the MATHJAX_RELPATH option. The destination directory
@@ -1962,7 +1962,7 @@ MATHJAX_FORMAT         = HTML-CSS
 # - in case of MathJax version 3: https://cdn.jsdelivr.net/npm/mathjax@3
 # This tag requires that the tag USE_MATHJAX is set to YES.
 
-MATHJAX_RELPATH        = http://cdn.mathjax.org/mathjax/latest
+MATHJAX_RELPATH        = https://cdn.jsdelivr.net/npm/mathjax@3/es5/
 
 # The MATHJAX_EXTENSIONS tag can be used to specify one or more MathJax
 # extension names that should be enabled during MathJax rendering. For example
