@@ -21,6 +21,7 @@
 
 #include "../../../include/openswmm/plugin_sdk/IReportPlugin.hpp"
 
+#include <ctime>
 #include <string>
 
 namespace openswmm {

@@ -37,6 +37,10 @@ target_link_libraries(
         openswmm_legacy_output
     )
 
+if(MSVC)
+    target_compile_options(test_output PRIVATE /EHsc)
+endif()
+
 set_target_properties(
     test_output
     PROPERTIES

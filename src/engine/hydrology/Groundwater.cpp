@@ -54,11 +54,11 @@ void GWSolver::init(int n_subcatch) {
 // ============================================================================
 
 void GWSolver::batchUpperPerc(
-    const double* __restrict__ theta,
-    const double* __restrict__ field_cap,
-    const double* __restrict__ k_sat,
-    const double* __restrict__ k_slope,
-    double*       __restrict__ perc,
+    const double* OPENSWMM_RESTRICT theta,
+    const double* OPENSWMM_RESTRICT field_cap,
+    const double* OPENSWMM_RESTRICT k_sat,
+    const double* OPENSWMM_RESTRICT k_slope,
+    double*       OPENSWMM_RESTRICT perc,
     int count
 ) {
     // Unsaturated conductivity: K = Ks * exp(k_slope * (θ - porosity))
@@ -81,13 +81,13 @@ void GWSolver::batchUpperPerc(
 // ============================================================================
 
 void GWSolver::batchGWFlow(
-    const double* __restrict__ lower_depth,
-    const double* __restrict__ h_star,
-    const double* __restrict__ a1, const double* __restrict__ b1,
-    const double* __restrict__ a2, const double* __restrict__ b2,
-    const double* __restrict__ a3,
-    const double* __restrict__ sw_head,
-    double*       __restrict__ gw_flow,
+    const double* OPENSWMM_RESTRICT lower_depth,
+    const double* OPENSWMM_RESTRICT h_star,
+    const double* OPENSWMM_RESTRICT a1, const double* OPENSWMM_RESTRICT b1,
+    const double* OPENSWMM_RESTRICT a2, const double* OPENSWMM_RESTRICT b2,
+    const double* OPENSWMM_RESTRICT a3,
+    const double* OPENSWMM_RESTRICT sw_head,
+    double*       OPENSWMM_RESTRICT gw_flow,
     int count
 ) {
     // Q = a1*(H-H*)^b1 - a2*(Hsw-H*)^b2 + a3*H*Hsw

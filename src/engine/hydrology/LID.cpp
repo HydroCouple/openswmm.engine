@@ -17,8 +17,8 @@
 namespace openswmm {
 namespace lid {
 
-static constexpr double STOPTOL = 0.00328;  // 1 mm in ft — integration tolerance
-static constexpr double MINFLOW = 2.3e-8;   // 0.001 in/hr in ft/sec
+// static constexpr double STOPTOL = 0.00328;  // 1 mm in ft — integration tolerance
+// static constexpr double MINFLOW = 2.3e-8;   // 0.001 in/hr in ft/sec
 
 void LIDGroupSoA::resize(int n) {
     count = n;
@@ -775,9 +775,6 @@ void LIDSolver::batchRoofDisconFlux(LIDGroupSoA& g, double rainfall,
         // --- evaporation (surface only, pervFrac = 1.0) ---
         double surfaceEvap = std::min(evap_rate, surfaceDepth / dt);
         surfaceEvap = std::max(0.0, surfaceEvap);
-
-        // --- no soil infiltration for roof disconnection ---
-        double surfaceInfil = 0.0;
 
         // --- surface outflow ---
         double surfaceOutflow = 0.0;

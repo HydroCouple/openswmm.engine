@@ -64,6 +64,8 @@
 #include "../../core/SimulationContext.hpp"
 #include "../../core/DateTime.hpp"
 
+#include "../../core/charconv_compat.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <cstring>
@@ -84,7 +86,7 @@ static double parse_time_hhmmss(std::string_view sv) {
     //   N          → N (seconds, floating point)
 
     double val = 0.0;
-    auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), val);
+    auto [ptr, ec] = openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), val);
     if (ec == std::errc{} && ptr == sv.data() + sv.size()) {
         return val;  // plain number = seconds
     }
@@ -102,7 +104,7 @@ static double parse_time_hhmmss(std::string_view sv) {
         return true;
     };
     auto read_double = [&](double& out) -> bool {
-        auto [np, nec] = std::from_chars(p, end, out);
+        auto [np, nec] = openswmm::from_chars_double(p, end, out);
         if (nec != std::errc{}) return false;
         p = np;
         return true;
@@ -260,25 +262,25 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         // -----------------------------------------------------------------
         } else if (key == "MAX_TRIALS") {
             double d = 0.0;
-            std::from_chars(val.data(), val.data() + val.size(), d);
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), d);
             opt.max_trials = static_cast<int>(d);
         } else if (key == "HEAD_TOLERANCE") {
-            std::from_chars(val.data(), val.data() + val.size(), opt.head_tol);
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), opt.head_tol);
         } else if (key == "SYS_FLOW_TOL") {
             double pct = 0.0;
-            std::from_chars(val.data(), val.data() + val.size(), pct);
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), pct);
             opt.sys_flow_tol = pct / 100.0;  // input is percent, store as fraction
         } else if (key == "LAT_FLOW_TOL") {
             double pct = 0.0;
-            std::from_chars(val.data(), val.data() + val.size(), pct);
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), pct);
             opt.lat_flow_tol = pct / 100.0;  // input is percent, store as fraction
 
         } else if (key == "VARIABLE_STEP") {
-            std::from_chars(val.data(), val.data() + val.size(), opt.variable_step);
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), opt.variable_step);
 
         } else if (key == "THREADS") {
             double d = 0.0;
-            std::from_chars(val.data(), val.data() + val.size(), d);
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), d);
             opt.num_threads = static_cast<int>(d);
 
         // -----------------------------------------------------------------
@@ -370,13 +372,13 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             else if (lv == "ELEVATION") opt.link_offsets = 1;
 
         } else if (key == "MIN_SLOPE") {
-            std::from_chars(val.data(), val.data() + val.size(), opt.min_slope);
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), opt.min_slope);
 
         } else if (key == "MIN_SURFAREA") {
-            std::from_chars(val.data(), val.data() + val.size(), opt.min_surf_area);
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), opt.min_surf_area);
 
         } else if (key == "LENGTHENING_STEP") {
-            std::from_chars(val.data(), val.data() + val.size(), opt.lengthening_step);
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), opt.lengthening_step);
 
         } else if (key == "SKIP_STEADY_STATE" ||
                    key == "COMPATIBILITY") {

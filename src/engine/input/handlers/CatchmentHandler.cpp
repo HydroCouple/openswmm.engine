@@ -36,6 +36,8 @@
 #include "../../data/SubcatchData.hpp"
 #include "../../data/GageData.hpp"
 
+#include "../../core/charconv_compat.hpp"
+
 #include <charconv>
 #include <string>
 
@@ -47,7 +49,7 @@ namespace openswmm::input {
 
 static double to_double(std::string_view sv, double def = 0.0) noexcept {
     double v = def;
-    std::from_chars(sv.data(), sv.data() + sv.size(), v);
+    openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), v);
     return v;
 }
 
@@ -63,13 +65,13 @@ static double parse_hhmmss_seconds(std::string_view sv) noexcept {
         p = np; return true;
     };
     auto read_d = [&](double& out) {
-        auto [np, ec] = std::from_chars(p, end, out);
+        auto [np, ec] = openswmm::from_chars_double(p, end, out);
         if (ec != std::errc{}) return false;
         p = np; return true;
     };
     if (!read_u(h)) {
         double plain = 0.0;
-        std::from_chars(sv.data(), sv.data() + sv.size(), plain);
+        openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), plain);
         return plain;
     }
     if (p < end && *p == ':') { ++p; read_u(m); }

@@ -1092,6 +1092,7 @@ void  getDdDt(double t, double* d, double* dddt)
 //           for the subarea whose runoff is being computed.
 //
 {
+    (void)t;
     double ix = theSubarea->inflow;
     double rx = *d - Dstore;
     if ( rx < 0.0 )

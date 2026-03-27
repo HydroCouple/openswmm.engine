@@ -645,7 +645,7 @@ We have only touched the surface of SWMM's capabilities. Some additional feature
 You can find more information on these and other features in the remaining chapters of this manual.
  
 ## CHAPTER 3 - SWMM’S CONCEPTUAL MODEL {#user_manual_chapter_3}
-________________________________________
+---
 
 This chapter discusses how SWMM models the objects and operational parameters that constitute a stormwater drainage system. Details about how this information is entered into the program are presented in later chapters. An overview is also given on the computational methods that SWMM uses to simulate the hydrology, hydraulics and water quality behavior of a drainage system.
 
@@ -3589,34 +3589,34 @@ Program
 Enter the full path name to the program that will be launched when the tool is selected. You can click the   button to bring up a standard Windows file selection dialog from which you can search for the tool’s executable file name.
 
 Working Directory
-This field contains the name of the directory that will be used as the working directory when the tool is launched. You can click the   button to bring up a standard directory selection dialog from which you can search for the desired directory. You can also enter the macro symbol $PROJDIR to utilize the current SWMM project’s directory or $SWMMDIR to use the directory where the SWMM 5 executable resides. Either of these macros can also be inserted into the Working Directory field by selecting its name in the list of macros provided on the dialog and then clicking the   button. This field can be left blank, in which case the system’s current directory will be used.
+This field contains the name of the directory that will be used as the working directory when the tool is launched. You can click the   button to bring up a standard directory selection dialog from which you can search for the desired directory. You can also enter the macro symbol `$PROJDIR` to utilize the current SWMM project’s directory or `$SWMMDIR` to use the directory where the SWMM 5 executable resides. Either of these macros can also be inserted into the Working Directory field by selecting its name in the list of macros provided on the dialog and then clicking the   button. This field can be left blank, in which case the system’s current directory will be used.
 
 Parameters
 This field contains the list of command line arguments that the tool’s executable program expects to see when it is launched. Multiple parameters can be entered as long as they are separated by spaces. A number of special macro symbols have been pre-defined, as listed in the Macros list box of the dialog, to simplify the process of listing the command line parameters. When one of these macro symbols is inserted into the list of parameters, it will be expanded to its true value when the tool is launched. A specific macro symbol can either be typed into the Parameters field or be selected from the Macros list (by clicking on it) and then added to the parameter list by clicking the   button. The available macro symbols and their meanings are:
 
-$PROJDIR    The directory where the current SWMM project file resides.
-$SWMMDIR    The directory where the SWMM 5 executable is installed.
-$INPFILE    The name of a temporary file containing the current project’s data that is created just before the tool is launched.
-$RPTFILE    The name of a temporary file that is created just before the tool is launched and can be displayed after the tool closes by using the Report >> Status command from the main SWMM menu.
-$OUTFILE    The name of a temporary file to which the tool can write simulation results in the same format used by SWMM 5, which can then be displayed after the tool closes in the same fashion as if a SWMM run were made.
-$RIFFILE    The name of the Runoff Interface File, as specified in the Interface Files page of the Simulation Options dialog, to which runoff simulation results were saved from a previous SWMM run (see Sections 8.1 and 11.7).
+`$PROJDIR`    The directory where the current SWMM project file resides.
+`$SWMMDIR`    The directory where the SWMM 5 executable is installed.
+`$INPFILE`    The name of a temporary file containing the current project’s data that is created just before the tool is launched.
+`$RPTFILE`    The name of a temporary file that is created just before the tool is launched and can be displayed after the tool closes by using the Report >> Status command from the main SWMM menu.
+`$OUTFILE`    The name of a temporary file to which the tool can write simulation results in the same format used by SWMM 5, which can then be displayed after the tool closes in the same fashion as if a SWMM run were made.
+`$RIFFILE`    The name of the Runoff Interface File, as specified in the Interface Files page of the Simulation Options dialog, to which runoff simulation results were saved from a previous SWMM run (see Sections 8.1 and 11.7).
 
 As an example of how the macro expansion works, consider the entries in the Tool Properties dialog shown previously. This Spreadsheet Editor tool will launch Microsoft Excel and pass it the name of the SWMM input data file to be opened by Excel. SWMM will issue the following command line to do this
-C:\Program Files (x86)\Microsoft Office\Office12\EXCEL.EXE $INPFILE
-where the string $INPFILE will be replaced by the name of the temporary file that SWMM creates internally that contains the current project’s data.
+`C:\Program Files (x86)\Microsoft Office\Office12\EXCEL.EXE $INPFILE`
+where the string `$INPFILE` will be replaced by the name of the temporary file that SWMM creates internally that contains the current project’s data.
 
 Disable SWMM while executing
-Check this option if SWMM should be hidden and disabled while the tool is executing. Normally you will need to employ this option if the tool produces a modified input file or output file, such as when the $INPFILE or $OUTFILE macros are used as command line parameters. When this option is enabled, SWMM’s main window will be hidden from view until the tool is terminated.
+Check this option if SWMM should be hidden and disabled while the tool is executing. Normally you will need to employ this option if the tool produces a modified input file or output file, such as when the `$INPFILE` or `$OUTFILE` macros are used as command line parameters. When this option is enabled, SWMM’s main window will be hidden from view until the tool is terminated.
 
 Update SWMM after closing
-Check this option if SWMM should be updated after the tool finishes executing. This option can only be selected if the option to disable SWMM while the tool is executing was first selected. Updating can occur in two ways. If the $INPFILE macro was used as a command line parameter for the tool and the corresponding temporary input file produced by SWMM was updated by the tool, then the current project’s data will be replaced with the data contained in the updated temporary input file. If the $OUTFILE macro was used as a command line parameter, and its corresponding file is found to contain a valid set of output results after the tool closes, then the contents of this file will be used to display simulation results within the SWMM workspace.
+Check this option if SWMM should be updated after the tool finishes executing. This option can only be selected if the option to disable SWMM while the tool is executing was first selected. Updating can occur in two ways. If the `$INPFILE` macro was used as a command line parameter for the tool and the corresponding temporary input file produced by SWMM was updated by the tool, then the current project’s data will be replaced with the data contained in the updated temporary input file. If the `$OUTFILE` macro was used as a command line parameter, and its corresponding file is found to contain a valid set of output results after the tool closes, then the contents of this file will be used to display simulation results within the SWMM workspace.
 
 Generally speaking, the suppliers of third-party tools will provide instructions on what settings should be used in the Tool Properties dialog to properly register their tool with SWMM.
 
  
-## APPENDIX A - USEFUL TABLES
+## APPENDIX A - USEFUL TABLES {#user_manual_appendix_a}
 
-A.1 Units of Measurement {#user_manual_appendix_tbl_a_1}
+### A.1 Units of Measurement {#user_manual_appendix_tbl_a_1}
 
 | **PARAMETER**                | **US CUSTOMARY**                                   | **SI METRIC**                                |
 |------------------------------|---------------------------------------------------|---------------------------------------------|
@@ -3650,7 +3650,7 @@ A.1 Units of Measurement {#user_manual_appendix_tbl_a_1}
 | Volume                       | cubic feet                                        | cubic meters                                |
 | Width                        | feet                                              | meters                                      |
 
-| **Soil Texture Class** | **K (in/hr)** | **$\psi$ (in)** | **$\phi$ (fraction)** | **FC (fraction)** | **WP (fraction)** |
+| **Soil Texture Class** | **K (in/hr)** | **\f$\psi\f$ (in)** | **\f$\phi\f$ (fraction)** | **FC (fraction)** | **WP (fraction)** |
 |-------------------------|---------------|-------------|-------------------|-------------------|-------------------|
 | Sand                   | 4.74          | 1.93        | 0.437             | 0.062             | 0.024             |
 | Loamy Sand             | 1.18          | 2.40        | 0.437             | 0.105             | 0.047             |
@@ -3664,20 +3664,21 @@ A.1 Units of Measurement {#user_manual_appendix_tbl_a_1}
 | Silty Clay             | 0.02          | 11.42       | 0.479             | 0.371             | 0.251             |
 | Clay                   | 0.01          | 12.60       | 0.475             | 0.378             | 0.265             |
 
-K    =   saturated hydraulic conductivity, in/hr <br>
-$\psi$    =   suction head, in. <br>
-$\phi$    =   porosity, fraction <br>
-FC    =   field capacity, fraction <br>
-WP    =   wilting point, fraction <br>
+- K = saturated hydraulic conductivity, in/hr
+- \f$\psi\f$ = suction head, in.
+- \f$\phi\f$ = porosity, fraction
+- FC = field capacity, fraction
+- WP = wilting point, fraction
 
 Source: Rawls, W.J. et al., (1983). J. Hyd. Engr., 109:1316. <br>
 
-Note:    The following relation between $\psi$ and K can be derived
-from this table:
-            $\psi$ = 3.23 K-0.328    (R2 = 0.9) <br>
+**Note:** The following relation between \f$\psi\f$ and K can be derived from this table:
+
+\f$\psi = 3.23 \, K^{-0.328} \quad (R^{2} = 0.9)\f$
 
 
-A.3 NRCS Hydrologic Soil Group Definitions {#user_manual_appendix_tbl_a_3}
+
+### A.3 NRCS Hydrologic Soil Group Definitions {#user_manual_appendix_tbl_a_3}
 
 | **Group** | **Meaning**                                                                                                           | **Saturated Hydraulic Conductivity (in/hr)** |
 |-----------|-----------------------------------------------------------------------------------------------------------------------|---------------------------------------------|
@@ -3689,7 +3690,7 @@ A.3 NRCS Hydrologic Soil Group Definitions {#user_manual_appendix_tbl_a_3}
 Source: *Hydrology National Engineering Handbook, Chapter 7, Natural Resources Conservation Service, U.S. Department of Agriculture, January 2009.*
 
 
-A.4 SCS Curve Numbers¹
+### A.4 SCS Curve Numbers {#user_manual_appendix_tbl_a_4}
 
 | **Land Use Description**                              | **Hydrologic Soil Group** | **A** | **B** | **C** | **D** |
 |-------------------------------------------------------|---------------------------|-------|-------|-------|-------|
@@ -3730,7 +3731,7 @@ A.4 SCS Curve Numbers¹
 Source: SCS Urban Hydrology for Small Watersheds, 2nd Ed., (TR-55), June 1986.
 
 
-A.5 Depression Storage {#user_manual_appendix_tbl_a_5}
+### A.5 Depression Storage {#user_manual_appendix_tbl_a_5}
 
 | **Surface Type**       | **Depression Storage (inches)** |
 |-------------------------|---------------------------------|
@@ -3741,7 +3742,7 @@ A.5 Depression Storage {#user_manual_appendix_tbl_a_5}
 
 Source:    ASCE, (1992). Design & Construction of Urban Stormwater Management Systems, New York, NY.
 
-A.6 Manning’s Coefficient (n) – Overland Flow {#user_manual_appendix_tbl_a_6}
+### A.6 Manning’s Coefficient (n) – Overland Flow {#user_manual_appendix_tbl_a_6}
 
 | **Surface**                     | **n**   |
 |---------------------------------|---------|
@@ -3769,7 +3770,7 @@ A.6 Manning’s Coefficient (n) – Overland Flow {#user_manual_appendix_tbl_a_6
 
 Source:    McCuen, R. et al. (1996), Hydrology, FHWA-SA-96-067, Federal Highway Administration, Washington, DC
 
-A.7 Manning’s Coefficient (n) – Closed Conduits {#user_manual_appendix_tbl_a_7}
+### A.7 Manning’s Coefficient (n) – Closed Conduits {#user_manual_appendix_tbl_a_7}
 
 | **Conduit Material**            | **n**               |
 |----------------------------------|---------------------|
@@ -3793,7 +3794,7 @@ A.7 Manning’s Coefficient (n) – Closed Conduits {#user_manual_appendix_tbl_a
 Source:    ASCE (1982). Gravity Sanitary Sewer Design and Construction, ASCE Manual of Practice No. 60, New York, NY.
 
  
-A.8 Manning’s Coefficient (n) – Open Channels {#user_manual_appendix_tbl_a_8}
+### A.8 Manning’s Coefficient (n) – Open Channels {#user_manual_appendix_tbl_a_8}
 
 | **Channel Type**                | **n**           |
 |----------------------------------|-----------------|
@@ -3815,7 +3816,7 @@ A.8 Manning’s Coefficient (n) – Open Channels {#user_manual_appendix_tbl_a_8
 Source:    ASCE (1982). Gravity Sanitary Sewer Design and Construction, ASCE Manual of Practice No. 60, New York, NY.
 
 
-A.9 Water Quality Characteristics of Urban Runoff {#user_manual_appendix_tbl_a_9}
+### A.9 Water Quality Characteristics of Urban Runoff {#user_manual_appendix_tbl_a_9}
 
 | **Constituent** | **Event Mean Concentration** |
 |------------------|-----------------------------|
@@ -3833,7 +3834,7 @@ A.9 Water Quality Characteristics of Urban Runoff {#user_manual_appendix_tbl_a_9
 Source: U.S. Environmental Protection Agency. (1983). Results of the Nationwide Urban Runoff Program (NURP), Vol. 1, NTIS PB 84-185552), Water Planning Division, Washington, DC.
 
 
-A.10 Culvert Code Numbers {#user_manual_appendix_tbl_a_10}
+### A.10 Culvert Code Numbers {#user_manual_appendix_tbl_a_10}
 
 
 | **Culvert Type**                                   | **Code** | **Description**                                   |
@@ -3897,7 +3898,7 @@ A.10 Culvert Code Numbers {#user_manual_appendix_tbl_a_10}
 |                                                    | 57       | Slope tapered, more favorable edges              |
 
  
-A.11 Culvert Entrance Loss Coefficients {#user_manual_appendix_tbl_a_11}
+### A.11 Culvert Entrance Loss Coefficients {#user_manual_appendix_tbl_a_11}
 
 | **Type of Structure and Design of Entrance**                     | **Coefficient** |
 |-------------------------------------------------------------------|-----------------|
@@ -3937,7 +3938,7 @@ A.11 Culvert Entrance Loss Coefficients {#user_manual_appendix_tbl_a_11}
 
 Source: Federal Highway Administration (2005). Hydraulic Design of Highway Culverts, Publication No. FHWA-NHI-01-020. 
 
-A.12 Standard Elliptical Pipe Sizes {#user_manual_appendix_tbl_a_12}
+### A.12 Standard Elliptical Pipe Sizes {#user_manual_appendix_tbl_a_12}
 
 
 | **Code** | **Minor Axis (in)** | **Major Axis (in)** | **Minor Axis (mm)** | **Major Axis (mm)** |
@@ -3971,9 +3972,9 @@ A.12 Standard Elliptical Pipe Sizes {#user_manual_appendix_tbl_a_12}
 Source: Concrete Pipe Design Manual, American Concrete Pipe Association, 2011 (www.concrete-pipe.org).
 
  
-A.13 Standard Arch Pipe Sizes {#user_manual_appendix_tbl_a_13}
+### A.13 Standard Arch Pipe Sizes {#user_manual_appendix_tbl_a_13}
 
-### Concrete Arch Pipes
+#### Concrete Arch Pipes {#user_manual_appendix_tbl_a_13_concrete}
 
 | **Code** | **Rise (in)** | **Span (in)** | **Rise (mm)** | **Span (mm)** |
 |----------|---------------|---------------|---------------|---------------|
@@ -3996,7 +3997,7 @@ A.13 Standard Arch Pipe Sizes {#user_manual_appendix_tbl_a_13}
 | 17       | 106.5         | 168.75        | 2705          | 4286          |
 
 
-### Corrugated Steel, 2-2/3 x 1/2" Corrugation
+#### Corrugated Steel, 2-2/3 x 1/2" Corrugation {#user_manual_appendix_tbl_a_13_cs_small}
 
 | **Code** | **Rise (in)** | **Span (in)** | **Rise (mm)** | **Span (mm)** |
 |----------|---------------|---------------|---------------|---------------|
@@ -4014,7 +4015,7 @@ A.13 Standard Arch Pipe Sizes {#user_manual_appendix_tbl_a_13}
 | 29       | 57            | 83            | 1448          | 2108          |
 
 
-### Corrugated Steel, 3 x 1" Corrugation
+#### Corrugated Steel, 3 x 1" Corrugation {#user_manual_appendix_tbl_a_13_cs_large}
 
 | **Code** | **Rise (in)** | **Span (in)** | **Rise (mm)** | **Span (mm)** |
 |----------|---------------|---------------|---------------|---------------|
@@ -4034,7 +4035,7 @@ A.13 Standard Arch Pipe Sizes {#user_manual_appendix_tbl_a_13}
 | 43       | 87            | 137           | 2210          | 3480          |
 | 44       | 91            | 142           | 2311          | 3607          |
  
-### Structural Plate, 18" Corner Radius
+#### Structural Plate, 18" Corner Radius {#user_manual_appendix_tbl_a_13_sp18}
 
 | **Code** | **Rise (in)** | **Span (in)** | **Rise (mm)** | **Span (mm)** |
 |----------|---------------|---------------|---------------|---------------|
@@ -4074,7 +4075,7 @@ A.13 Standard Arch Pipe Sizes {#user_manual_appendix_tbl_a_13}
 | 78       | 121           | 199           | 3073          | 5055          |
 
  
-### Structural Plate, 31" Corner Radius
+#### Structural Plate, 31" Corner Radius {#user_manual_appendix_tbl_a_13_sp31}
 
 | **Code** | **Rise (in)** | **Span (in)** | **Rise (mm)** | **Span (mm)** |
 |----------|---------------|---------------|---------------|---------------|
@@ -4107,7 +4108,7 @@ Source: Modern Sewer Design (Fourth Edition), American Iron and Steel Institute,
 
 
 ## APPENDIX B - VISUAL OBJECT PROPERTIES {#user_manual_appendix_b}
-________________________________________
+---
 
 ### B.1 Rain Gage Properties {#user_manual_appendix_b_1}
 
@@ -4356,7 +4357,7 @@ ________________________________________
 
 ---
 
-## 7. Outlet Properties
+### B.17 Outlet Properties {#user_manual_appendix_b_17}
 
 | **Property**       | **Description**                                                                                                                                                                                                 |
 |---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -4369,14 +4370,14 @@ ________________________________________
 | **Flap Gate**      | **YES** if the outlet has a flap gate that prevents backflow, **NO** otherwise.                                                                                                                                 |
 | **Rating Curve**   | Method of defining flow (Q) as a function of depth or head (y) across the outlet: <br> - **FUNCTIONAL/DEPTH**: Uses a power function (Q = Ay^B) where y is the depth of water above the outlet’s opening at the inlet node. <br> - **FUNCTIONAL/HEAD**: Uses the same power function except y is the difference in head across the outlet’s nodes. <br> - **TABULAR/DEPTH**: Uses a tabulated curve of flow versus depth of water above the outlet’s opening at the inlet node. <br> - **TABULAR/HEAD**: Uses a tabulated curve of flow versus the difference in head across the outlet’s nodes. |
 
-### 7.1 FUNCTIONAL (Used Only for a Functional Rating Curve)
+#### FUNCTIONAL (Used Only for a Functional Rating Curve)
 
 | **Property**       | **Description**                                                                                                                                                                                                 |
 |---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Coefficient**    | Coefficient (A) for the functional relationship between depth or head and flow rate.                                                                                                                            |
 | **Exponent**       | Exponent (B) used for the functional relationship between depth or head and flow rate.                                                                                                                          |
 
-### 7.2 TABULAR (Used Only for a Tabular Rating Curve)
+#### TABULAR (Used Only for a Tabular Rating Curve)
 
 | **Property**       | **Description**                                                                                                                                                                                                 |
 |---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -4384,7 +4385,7 @@ ________________________________________
 
 ---
 
-## 8. Map Label Properties
+### B.18 Map Label Properties {#user_manual_appendix_b_18}
 
 | **Property**       | **Description**                                                                                                                                                                                                 |
 |---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -5822,16 +5823,15 @@ Select this tab to provide parameters that describe how rainfall will be reduced
 If a grid cell is left empty its corresponding parameter value is assumed to be 0. Right-clicking over a data entry grid will make a popup Edit menu appear. It contains commands to cut, copy, and paste text to or from selected cells in the grid.
 
 
-COMMAND LINE SWMM
-________________________________________
+## APPENDIX D - COMMAND LINE SWMM {#user_manual_appendix_d}
 
-    General Instructions
+### D.1 General Instructions
 
 EPA SWMM can also be run as a console application from the command line within a DOS window. In this case the study area data are placed into a text file and results are written to a text file. The command line for running SWMM in this fashion is:
 runswmm inpfile rptfile outfile
 where inpfile is the name of the input file, rptfile is the name of the output report file, and outfile is the name of an optional binary output file. The latter stores all time series results in a special binary format that will require a separate post-processor program for viewing. If no binary output file name is supplied then all time series results will appear in the report file. As written, the above command assumes that you are working in the directory in which EPA SWMM was installed or that this directory has been added to the PATH variable in your user profile. Otherwise full pathnames for the runswmm executable and the files on the command line must be used. 
 
-    Input File Format
+### D.2 Input File Format
 
 The input file for command line SWMM has the same format as the project file used by the Windows version of the program. Figure D-1 illustrates an example SWMM 5 input file. It is organized in sections, where each section begins with a keyword enclosed in brackets. The various section keywords are listed below.
 
@@ -5898,12 +5898,9 @@ The input file for command line SWMM has the same format as the project file use
 
 
  
-Figure D 1 Example SWMM project file
+*Figure D-1 Example SWMM project file*
 
-
- 
-
-Figure D-1 Example SWMM project file (continued from previous page).
+*Figure D-1 Example SWMM project file (continued from previous page).*
 
 
 
@@ -5916,7 +5913,7 @@ An option is available in the [OPTIONS] section to choose flow units from among 
 
 A detailed description of the data in each section of the input file will now be given. Each section description begins on a new page. When listing the format of a line of data, mandatory keywords are shown in boldface while optional items appear in parentheses. A list of keywords separated by a slash (YES/NO) means that only one of the words should appear in the data line.
  
-Section:    [TITLE]
+#### Section: [TITLE]
 
 Purpose:
 Attaches a descriptive title to the project being analyzed.
@@ -5925,7 +5922,7 @@ Format:
 Any number of lines may be entered. The first line will be used as a page header in the output report.
 
  
-Section:    [OPTIONS]
+#### Section: [OPTIONS]
 
 Purpose:
 Provides values for various analysis options.
@@ -6019,7 +6016,7 @@ THREADS is the number of parallel computing threads to use for dynamic wave flow
 CRS specifies a Coordinate Reference System for the model geometry, given as an EPSG code (e.g. `EPSG:4326`) or a PROJ string. This value is stored in `SimulationOptions::crs` and is available through the C API via `swmm_spatial_get_crs()`. When a CRS is set, all coordinate and polygon data in the `[COORDINATES]`, `[VERTICES]`, and `[POLYGONS]` sections are assumed to be in that reference system.
 
 Any option keyword not recognized by the parser is stored in an extension-options map as a key–value string pair (the key is upper-cased). A non-fatal warning is issued for each unrecognised key. Extension options can be queried at runtime with `swmm_options_get_ext()` and set with `swmm_options_set_ext()`. This allows plugins and coupled models to receive configuration through the `[OPTIONS]` section. 
-Section:    [REPORT]
+#### Section: [REPORT]
 
 Purpose:
 Describes the contents of the report file that is produced.
@@ -6046,7 +6043,7 @@ NODES gives a list of nodes whose results are to be reported. The default is NON
 LINKS gives a list of links whose results are to be reported. The default is NONE.
 LID specifies that the LID control Name in subcatchment Subcatch should have a detailed performance report for it written to file Fname.
 The SUBCATCHMENTS, NODES, LINKS, and LID lines can be repeated multiple times. 
-Section:    [FILES]
+#### Section: [FILES]
 
 Purpose:
 Identifies optional interface files used or saved by a run.
@@ -6067,7 +6064,7 @@ Refer to Section 11.7 for a description of interface files. Rainfall, Runoff, an
 Enclose the external file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file. 
 
  
-Section:    [RAINGAGES]
+#### Section: [RAINGAGES]
 
 Purpose:
 Identifies each rain gage that provides rainfall data for the study area.
@@ -6093,7 +6090,7 @@ The station name and depth units entries are only required when using a user-pre
 **New in OpenSWMM v6:** A multi-column CSV rain file can be referenced by appending a colon and column name to the file path, e.g. `FILE "rain.csv:EAST_GAGE"`. The engine opens the CSV, locates the column whose header matches the given name, and reads the rainfall values from that column. This allows a single CSV file to supply data for multiple rain gages.
 
  
-Section:    [EVAPORATION]
+#### Section: [EVAPORATION]
 
 Purpose:
 Specifies how daily potential evaporation rates vary with time for the study area.
@@ -6126,7 +6123,7 @@ RECOVERY identifies an optional monthly time pattern of multipliers used to modi
 DRY_ONLY determines if evaporation only occurs during periods with no precipitation. The default is NO.
 The evaporation rates provided in this section are potential rates. The actual amount of water evaporated will depend on the amount available as a simulation progresses.
  
-Section:    [TEMPERATURE]
+#### Section: [TEMPERATURE]
 
 Purpose:    
 Specifies daily air temperatures, monthly wind speed, and various snowmelt parameters for the study area. Required only when snowmelt is being modeled or when evaporation rates are computed from daily temperatures or are read from an external climate file.
@@ -6166,7 +6163,7 @@ Wind speed can be specified either by monthly average values or by the same Clim
 Separate Areal Depletion Curves (ADC) can be defined for impervious and pervious subareas. The ADC parameters will default to 1.0 (meaning no depletion) if no data are supplied for a particular type of subarea.
 
  
-Section:    [ADJUSTMENTS]
+#### Section: [ADJUSTMENTS]
 
 Purpose:
 Specifies optional monthly adjustments to be made to temperature, evaporation rate, rainfall intensity and hydraulic conductivity in each time period of a simulation.
@@ -6188,7 +6185,7 @@ The same adjustment is applied for each time period within a given month and is 
 
 
  
-Section:    [SUBCATCHMENTS]
+#### Section: [SUBCATCHMENTS]
 
 Purpose:
 Identifies each subcatchment within the study area. Subcatchments are land area units which generate runoff from rainfall.
@@ -6208,7 +6205,7 @@ Clength    total curb length (any length units) used to describe pollutant build
 Spack    optional name of a snow pack object (from the [SNOWPACKS] section) that characterizes snow accumulation and melting over the subcatchment.
 
  
-Section:    [SUBAREAS]
+#### Section: [SUBAREAS]
 
 Purpose:
 Supplies information about pervious and impervious areas for each subcatchment. Each subcatchment can consist of a pervious subarea, an impervious subarea with depression storage, and an impervious subarea without depression storage.
@@ -6226,7 +6223,7 @@ Sperv    depression storage for the pervious subarea (inches or mm).
 RouteTo    IMPERVIOUS if pervious area runoff runs onto impervious area,  PERVIOUS if impervious runoff runs onto pervious area, or OUTLET if both areas drain to the subcatchment's outlet (default = OUTLET).
 %Routed    percent of runoff routed from one type of area to another (default = 100).
  
-Section:    [INFILTRATION]
+#### Section: [INFILTRATION]
 
 Purpose:
 Supplies infiltration parameters for each subcatchment. Rainfall lost to infiltration only occurs over the pervious subarea of a subcatchment.
@@ -6252,7 +6249,7 @@ For Curve-Number Infiltration:
 p1    SCS Curve Number.
 p2    no longer used.
 p3    time it takes for a fully saturated soil to dry (days). 
-Section:    [LID_CONTROLS]
+#### Section: [LID_CONTROLS]
 
 Purpose:
 Defines scale-independent LID controls that can be deployed within subcatchments.
@@ -6363,7 +6360,7 @@ Swale  VS
 Swale  SURFACE  24  0  0.2  3  5
 
  
-Section:    [LID_USAGE]
+#### Section: [LID_USAGE]
 
 Purpose:
 Deploys LID controls within specific subcatchment areas.
@@ -6402,7 +6399,7 @@ S1  RB14  34  12  0  0  17  1
 S2  Swale  1  10000  50  0  0  0  “swale.rpt”
 
  
-Section:    [AQUIFERS]
+#### Section: [AQUIFERS]
 
 Purpose:
 Supplies parameters for each unconfined groundwater aquifer in the study area. Aquifers consist of two zones – a lower saturated zone and an upper unsaturated zone with a moving boundary between the two.
@@ -6428,7 +6425,7 @@ Epat    name of optional monthly time pattern used to adjust the upper zone evap
 Remarks:
 Local values for Ebot, Egw, and Umc can be assigned to specific subcatchments in the [GROUNDWATER] section.
  
-Section:    [GROUNDWATER]
+#### Section: [GROUNDWATER]
 
 Purpose:
 Supplies parameters that determine the rate of groundwater flow between the aquifer underneath a subcatchment and a node of the conveyance system.
@@ -6465,7 +6462,7 @@ Hgw   =     height of saturated zone above the bottom of the aquifer (ft or m),
 Hsw   =    height of surface water at the receiving node above the aquifer bottom (ft or m),
 Hcb   =    height of the channel bottom above the aquifer bottom (ft or m).
  
-Section:    [GWF]
+#### Section: [GWF]
 
 Purpose:
 Defines custom groundwater flow equations for specific subcatchments.
@@ -6502,7 +6499,7 @@ Subcatch1 LATERAL 0.001*Hgw + 0.05*(Hgw–5)*STEP(Hgw–5)
 
 ;Constant seepage rate to deep aquifer
 Subactch1  DEEP  0.002 
-Section:    [SNOWPACKS]
+#### Section: [SNOWPACKS]
 
 Purpose:
 Specifies parameters that govern how snowfall accumulates and melts on the plowable, impervious and pervious surfaces of subcatchments.
@@ -6539,7 +6536,7 @@ The REMOVAL line describes how snow removed from the plowable area is transferre
 
 
  
-Section:    [JUNCTIONS]
+#### Section: [JUNCTIONS]
 
 Purpose:
 Identifies each junction node of the drainage system.  Junctions are points in space where channels and pipes connect together. For sewer systems they can be either connection fittings or manholes.
@@ -6562,7 +6559,7 @@ Surface ponding can only occur when Apond is non-zero and the ALLOW_PONDING anal
 
 
  
-Section:    [OUTFALLS]
+#### Section: [OUTFALLS]
 
 Purpose:
 Identifies each outfall node (i.e., final downstream boundary) of the drainage system and the corresponding water stage elevation.  Only one link can be incident on an outfall node. 
@@ -6588,7 +6585,7 @@ RouteTo    optional name of a subcatchment that receives the outfall's discharge
 
 
  
-Section:    [DIVIDERS]
+#### Section: [DIVIDERS]
 
 Purpose:
 Identifies each flow divider node of the drainage system. Flow dividers are junctions with exactly two outflow conduits where the total outflow is divided between the two in a prescribed manner.
@@ -6622,7 +6619,7 @@ Divider nodes are only active under the Steady Flow or Kinematic Wave analysis o
 
 
  
-Section:    [STORAGE]
+#### Section: [STORAGE]
 
 Purpose:
 Identifies each storage node of the drainage system. Storage nodes can have any shape as specified by a surface area versus water depth relation.
@@ -6666,7 +6663,7 @@ PYRAMIDAL
 
 The parameters Psi, Ksat, and IMD need only be supplied if seepage loss through the soil at the bottom and sloped sides of the storage unit should be considered. They are the same Green-Ampt infiltration parameters described in the [INFILTRATION] section. If Ksat is zero then no seepage occurs while if IMD is zero then seepage occurs at a constant rate equal to Ksat. Otherwise seepage rate will vary with storage depth.
  
-Section:    [CONDUITS]
+#### Section: [CONDUITS]
 
 Purpose:
 Identifies each conduit link of the drainage system. Conduits are pipes or channels that convey water from one node to another.
@@ -6691,7 +6688,7 @@ The figure below illustrates the meaning of the Z1 and Z2 parameters.
 These offsets are expressed as a relative distance above the node invert if the LINK_OFFSETS option is set to DEPTH (the default) or as an absolute elevation if it is set to ELEVATION. 
 
 
-Section:    [PUMPS]
+#### Section: [PUMPS]
 
 Purpose:
 Identifies each pump link of the drainage system.
@@ -6713,7 +6710,7 @@ See Section 3.2 for a description of the different types of pumps available.
 
 
  
-Section:    [ORIFICES]
+#### Section: [ORIFICES]
 
 Purpose:
 Identifies each orifice link of the drainage system. An orifice link serves to limit the flow exiting a node and is often used to model flow diversions and storage node outlets.
@@ -6743,7 +6740,7 @@ The geometry of an orifice’s opening must be described in the [XSECTIONS] sect
 
 
  
-Section:    [WEIRS]
+#### Section: [WEIRS]
 
 Purpose:
 Identifies each weir link of the drainage system. Weirs are used to model flow diversions and storage node outlets.
@@ -6781,7 +6778,7 @@ The ROADWAY weir is a broad crested rectangular weir used model roadway crossing
 
 
  
-Section:    [OUTLETS]
+#### Section: [OUTLETS]
 
 Purpose:
 Identifies each outlet flow control device of the drainage system. These are devices used to model outflows from storage units or flow diversions that have a user-defined relation between flow rate and water depth.
@@ -6806,7 +6803,7 @@ C1, C2    coefficient and exponent, respectively, of a power function that relat
 (i.e.,  Q=C1H^C2 where H  is either depth or head).
 Gated    YES if a flap gate prevents reverse flow, NO if not (default is NO).
 
-Section:    [XSECTIONS]
+#### Section: [XSECTIONS]
 
 Purpose:
 Provides cross-section geometric data for conduit and regulator links of the drainage system.
@@ -6867,7 +6864,7 @@ An IRREGULAR cross-section is used to model an open channel whose geometry is de
 A STREET cross-section is used to model street conduits and inlet flow capture (see the [INLETS] and [INLETS_USAGE] sections).
 The Culvert code number is used only for closed conduits acting as culverts that should be analyzed for inlet control conditions using the FHWA HDS-5 methodology.
  
-Section:    [TRANSECTS]
+#### Section: [TRANSECTS]
 
 Purpose:
 Describes the cross-section geometry of natural channels or conduits with irregular shapes following the HEC-2 data format.
@@ -6902,7 +6899,7 @@ There should be one X1 line for each transect. Any number of GR lines may follow
 The station that defines the left overbank boundary on the X1 line must correspond to one of the station entries on the GR lines that follow. The same holds true for the right overbank boundary. If there is no match, a warning will be issued and the program will assume that no overbank area exists.
 The meander modifier is applied to all conduits that use this particular transect for their cross section. It assumes that the length supplied for these conduits is that of the longer main channel. SWMM will use the shorter overbank length in its calculations while increasing the main channel roughness to account for its longer length.
  
-Section:    [STREETS]
+#### Section: [STREETS]
 
 Purpose:
 Describes the cross-section geometry of conduits that represent streets.
@@ -6927,7 +6924,7 @@ Remarks:
  
 
 If the street has no depressed gutter (a = 0) then the gutter width entry is ignored. If the street has no backing then the three backing parameters can be omitted.
-Section:    [INLETS]
+#### Section: [INLETS]
 
 Purpose:
 Defines inlet structure designs used to capture street and channel flow that are sent to below ground sewers.
@@ -6979,7 +6976,7 @@ InletType2  CURB   4  0.5  HORIZONTAL
 ; A custom inlet using Curve1 as its capture curve
 InletType3  CUSTOM  Curve1
  
-Section:    [INLET_USAGE]
+#### Section: [INLET_USAGE]
 
 Purpose:
 Assigns inlet structures to specific street and open channel conduits.
@@ -7004,7 +7001,7 @@ Only the first three parameters are required. The default number of inlets is 1 
 A Qmax value of 0 indicates that the inlet has no flow restriction.
 The local gutter depression applies only over the length of the inlet unlike the continuous depression for a STREET cross section which exists over the full curb length.
 The default inlet placement is AUTOMATIC, meaning that the program uses the network topography to determine whether an inlet operates on-grade or on-sag. On-grade means the inlet is located on a continuous grade. On-sag means the inlet is located at a sag or sump point where all adjacent conduits slope towards the inlet leaving no place for water to flow except into the inlet.
-Section:    [LOSSES]
+#### Section: [LOSSES]
 
 Purpose:
 Specifies minor head loss coefficients, flap gates, and seepage rates for conduits.
@@ -7027,7 +7024,7 @@ Only enter data for conduits that actually have minor losses, flap valves, or se
 
 
  
-Section:    [CONTROLS]
+#### Section: [CONTROLS]
 
 Purpose:
 Determines how pumps and regulators will be adjusted based on simulation time or conditions at specific nodes and links.
@@ -7057,7 +7054,7 @@ value            a priority value (e.g., a number from 1 to 5).
 Remarks:
 Please refer to Section C.3 for a complete description of the control rule format plus examples of different types of rule statements.
  
-Section:    [POLLUTANTS]
+#### Section: [POLLUTANTS]
 
 Purpose:
 Identifies the pollutants being analyzed.
@@ -7082,7 +7079,7 @@ FLOW  is a reserved word and cannot be used to name a pollutant.
 Parameters Sflag through Cinit can be omitted if they assume their default values. If there is no co-pollutant but non-default values for Cdwf or Cinit, then enter an asterisk (*) for the co-pollutant name.
 When pollutant X has a co-pollutant Y, it means that fraction CoFract of pollutant Y’s runoff concentration is added to pollutant X’s runoff concentration when wash off from a subcatchment is computed.
 The dry weather flow concentration can be overridden for any specific node of the conveyance system by editing the node’s Inflows property (see the [INFLOWS] section). 
-Section:    [LANDUSES]
+#### Section: [LANDUSES]
 
 Purpose:
 Identifies the various categories of land uses within the drainage area. Each subcatchment area can be assigned a different mix of land uses. Each land use can be subjected to a different street sweeping schedule. Land uses are only used in conjunction with pollutant buildup and wash off.
@@ -7096,7 +7093,7 @@ SweepInterval    days between street sweeping.
 Availability    fraction of pollutant buildup available for removal by street sweeping.
 LastSweep        days since last sweeping at the start of the simulation.
  
-Section:    [COVERAGES]
+#### Section: [COVERAGES]
 
 Purpose:
 Specifies the percentage of a subcatchment’s area that is covered by each category of land use.
@@ -7117,7 +7114,7 @@ If no land uses are associated with a subcatchment then no pollutants will appea
 
 
  
-Section:    [LOADINGS]
+#### Section: [LOADINGS]
 
 Purpose:
 Specifies the pollutant buildup that exists on each subcatchment at the start of a simulation.
@@ -7136,7 +7133,7 @@ If an initial buildup is not specified for a pollutant, then its initial buildup
 
 
  
-Section:    [BUILDUP]
+#### Section: [BUILDUP]
 
 Purpose:
 Specifies the rate at which pollutants build up over different land uses between rain events.
@@ -7164,7 +7161,7 @@ EXT    External    See below
 
 For the EXT buildup function, C1 is the maximum possible buildup (mass per area or curb length), C2 is a scaling factor, and C3 is the name of a Time Series that contains buildup rates (as mass per area or curb length per day) as a function of time.
  
-Section:    [WASHOFF]
+#### Section: [WASHOFF]
 
 Purpose:
 Specifies the rate at which pollutants are washed off from different land uses during rain events.
@@ -7195,7 +7192,7 @@ The buildup parameter in the Exponential function is the current total buildup o
 
 
  
-Section:    [TREATMENT]
+#### Section: [TREATMENT]
 
 Purpose:
 Specifies the degree of treatment received by pollutants at specific nodes of the drainage system.
@@ -7246,7 +7243,7 @@ Node23  Lead  R = 0.2 * R_TSS
 
 
  
-Section:    [INFLOWS]
+#### Section: [INFLOWS]
 
 Purpose:
 Specifies external hydrographs and pollutographs that enter the drainage system at specific nodes.
@@ -7285,7 +7282,7 @@ NODE65  BOD  N65BOD  MASS  126
 ; FLOW_176 scaled at 0.5 plus a baseline flow of 12.7
 ; adjusted by pattern FlowPat
 N176  FLOW  FLOW_176  FLOW  1.0  0.5  12.7  FlowPat 
-Section:    [DWF]
+#### Section: [DWF]
 
 Purpose:
 Specifies dry weather flow and its quality entering the drainage system at specific nodes.
@@ -7307,7 +7304,7 @@ The patterns can be any combination of monthly, daily, hourly and weekend hourly
 
 
  
-Section:    [RDII]
+#### Section: [RDII]
 
 Purpose:
 Specifies the parameters that describe rainfall-dependent infiltration and inflow (RDII) entering the drainage system at specific nodes.
@@ -7322,7 +7319,7 @@ SewerArea    area of the sewershed that contributes RDII to the node (acres or h
 
 
  
-Section:    [HYDROGRAPHS]
+#### Section: [HYDROGRAPHS]
 
 Purpose:
 Specifies the shapes of the triangular unit hydrographs that determine the amount of rainfall-dependent infiltration and inflow (RDII) entering the drainage system.
@@ -7359,7 +7356,7 @@ UH101  ALL LONG   0.033 10.0 2.0
 UH101  JUL SHORT  0.033 0.5  2.0
 UH101  JUL MEDIUM 0.011 2.0  2.0
  
-Section:    [CURVES]
+#### Section: [CURVES]
 
 Purpose:
 Describes a relationship between two variables in tabular format. 
@@ -7413,7 +7410,7 @@ PC2  6  0
 
 
  
-Section:    [TIMESERIES]
+#### Section: [TIMESERIES]
 
 Purpose:
 Describes how a quantity varies over time.
@@ -7464,7 +7461,7 @@ HY1  32:10 0  34.0 57  35.33 85  48.67 24  50 0
 
       
  
-Section:    [PATTERNS]
+#### Section: [PATTERNS]
 
 Purpose:
 Specifies time patterns of dry weather flow or quality in the form of adjustment factors applied as multipliers to baseline values.
@@ -7498,7 +7495,7 @@ H1         1.1 1.2 1.3 1.5 1.1 1.0
 H1         0.9 0.8 0.7 0.6 0.5 0.5
 H1         0.5 0.5 0.5 0.5 0.5 0.5  
 
-    Map Data Section
+### D.3 Map Data Section
 
 SWMM’s graphical user interface (GUI) can display a schematic map of the drainage area being analyzed. This map displays subcatchments as polygons, nodes as circles, links as polylines, and rain gages as bitmap symbols. In addition it can display text labels and a backdrop image, such as a street map. The GUI has tools for drawing, editing, moving, and displaying these map elements.
 
@@ -7515,14 +7512,13 @@ SWMM's map data are organized into the following seven sections:
 Figure D-2 displays a sample map and Figure D-3 the data that describes it. Note that only one link, 3, has interior vertices which give it a curved shape. Also observe that this map’s coordinate system has no units, so that the positions of its objects may not necessarily coincide to their real-world locations. 
 
  
-Figure D 2 Example study area map
+*Figure D-2 Example study area map*
 
- 
-Figure D 3 Data for example study area map
+*Figure D-3 Data for example study area map*
 A detailed description of each map data section will now be given. Remember that map data are only used as a visualization aid for SWMM’s GUI and they play no role in any of the runoff or routing computations. Map data are not needed for running the command line version of SWMM.
-________________________________________
+---
 
-Section:    [MAP]
+#### Section: [MAP]
 
 Purpose:
     Provides dimensions and distance units for the map.
@@ -7536,9 +7532,9 @@ X1    lower-left X coordinate of full map extent
 Y1    lower-left  Y coordinate of full map extent
 X2    upper-right X coordinate of full map extent
 Y2    upper-right Y coordinate of full map extent
-________________________________________
+---
 
-Section:    [COORDINATES]
+#### Section: [COORDINATES]
 
 Purpose:
     Assigns X,Y coordinates to drainage system nodes.
@@ -7550,13 +7546,13 @@ Parameters:
 Node    name of node.
 Xcoord    horizontal coordinate relative to origin in lower left of map.
 Ycoord    vertical coordinate relative to origin in lower left of map.
-________________________________________
+---
 
 
 
 
 
-Section:    [VERTICES]
+#### Section: [VERTICES]
 
 Purpose:
     Assigns X,Y coordinates to interior vertex points of curved drainage system links.
@@ -7573,9 +7569,9 @@ Remarks:
 Include a separate line for each interior vertex of the link, ordered from the inlet node to the outlet node.
 
 Straight-line links have no interior vertices and therefore are not listed in this section.
-________________________________________
+---
 
-Section:    [POLYGONS]
+#### Section: [POLYGONS]
 
 Purpose:
 Assigns X,Y coordinates to  vertex points of polygons that define a subcatchment boundary.
@@ -7590,11 +7586,11 @@ Ycoord    vertical coordinate of vertex relative to origin in lower left of map.
 
 Remarks:
 Include a separate line for each vertex of the subcatchment polygon, ordered in a consistent clockwise or counter-clockwise sequence.
-________________________________________
+---
 
 
 
-Section:    [SYMBOLS]
+#### Section: [SYMBOLS]
 
 Purpose:
     Assigns X,Y coordinates to rain gage symbols.
@@ -7606,9 +7602,9 @@ Remarks:
 Gage    name of rain gage.
 Xcoord    horizontal coordinate relative to origin in lower left of map.
 Ycoord    vertical coordinate relative to origin in lower left of map.
-________________________________________
+---
 
-Section:    [LABELS]
+#### Section: [LABELS]
 
 Purpose:
     Assigns X,Y coordinates to user-defined map labels.
@@ -7630,8 +7626,8 @@ Remarks:
 Use of the anchor node feature will prevent the label from moving outside the viewing area when the map is zoomed in on. 
 
 If no font information is provided then a default font is used to draw the label.
-________________________________________
-Section:    [BACKDROP]
+---
+#### Section: [BACKDROP]
 
 Purpose:
     Specifies file name and coordinates of map’s backdrop image.
@@ -7671,8 +7667,7 @@ Y2    upper-right Y coordinate of backdrop image
 
 
 
-ERROR AND WARNING MESSAGES
-________________________________________
+## APPENDIX E - ERROR AND WARNING MESSAGES {#user_manual_appendix_e}
 
 ERROR 101:     memory allocation error.
 There is not enough physical memory in the computer to analyze the study area.

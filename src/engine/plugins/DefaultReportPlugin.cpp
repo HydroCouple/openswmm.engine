@@ -827,9 +827,6 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     WRITE(f, "Flow Classification Summary");
     WRITE(f, "***************************");
     if (ctx.n_links() > 0) {
-        static const char* fc_labels[] = {
-            "Dry", "Up Dry", "Dn Dry", "SubCrit", "SupCrit", "Up Crit", "Dn Crit"
-        };
         std::fprintf(f,
 "\n  ----------------------------------------------------------------------------------------------------------"
 "\n                      --- Fraction of Time in Flow Class ----"

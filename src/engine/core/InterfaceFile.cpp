@@ -32,6 +32,13 @@
 #include <cmath>
 #include <algorithm>
 
+// Portable strtok: MSVC deprecates strtok in favour of strtok_s
+#ifdef _MSC_VER
+#  define OPENSWMM_STRTOK(str, delim, ctx) strtok_s((str), (delim), (ctx))
+#else
+#  define OPENSWMM_STRTOK(str, delim, ctx) strtok((str), (delim))
+#endif
+
 namespace openswmm {
 namespace iface {
 
@@ -203,20 +210,22 @@ bool InterfaceManager::readNextPeriod() {
         if (!std::fgets(line, MAXLINE, infile_)) return false;
 
         // Parse: NodeName YYYY MM DD HH MM SS Flow [Pollut1] [Pollut2] ...
-        char* tok = std::strtok(line, " \t\n\r");
+        char* strtok_ctx = nullptr;
+        (void)strtok_ctx;  // used only on MSVC
+        char* tok = OPENSWMM_STRTOK(line, " \t\n\r", &strtok_ctx);
         if (!tok) return false;
 
         // Parse date/time components
         int yr = 0, mon = 0, day = 0, hr = 0, mn = 0, sec = 0;
-        tok = std::strtok(nullptr, " \t\n\r"); if (!tok) return false; yr  = std::atoi(tok);
-        tok = std::strtok(nullptr, " \t\n\r"); if (!tok) return false; mon = std::atoi(tok);
-        tok = std::strtok(nullptr, " \t\n\r"); if (!tok) return false; day = std::atoi(tok);
-        tok = std::strtok(nullptr, " \t\n\r"); if (!tok) return false; hr  = std::atoi(tok);
-        tok = std::strtok(nullptr, " \t\n\r"); if (!tok) return false; mn  = std::atoi(tok);
-        tok = std::strtok(nullptr, " \t\n\r"); if (!tok) return false; sec = std::atoi(tok);
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx); if (!tok) return false; yr  = std::atoi(tok);
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx); if (!tok) return false; mon = std::atoi(tok);
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx); if (!tok) return false; day = std::atoi(tok);
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx); if (!tok) return false; hr  = std::atoi(tok);
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx); if (!tok) return false; mn  = std::atoi(tok);
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx); if (!tok) return false; sec = std::atoi(tok);
 
         // Parse flow value
-        tok = std::strtok(nullptr, " \t\n\r");
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx);
         if (!tok) return false;
         auto base = ui * static_cast<std::size_t>(n_values_per_node_);
         data_.new_values[base] = std::atof(tok);
@@ -227,7 +236,7 @@ bool InterfaceManager::readNextPeriod() {
 
         // Parse pollutant values
         for (int j = 1; j <= n_iface_polluts_; ++j) {
-            tok = std::strtok(nullptr, " \t\n\r");
+            tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx);
             if (!tok) return false;
             data_.new_values[base + static_cast<std::size_t>(j)] = std::atof(tok);
         }

@@ -1339,6 +1339,7 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValueExpanded(int objType, int proper
  */
 int setGageValue(int property, int index, int subIndex, double value)
 {
+    (void)subIndex;
     if (index < 0 || index >= Nobjects[GAGE])
         return ERR_API_OBJECT_INDEX;
 
@@ -1362,6 +1363,7 @@ int setGageValue(int property, int index, int subIndex, double value)
  */
 int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, double value)
 {
+    (void)subIndex;
 
     if (IsOpenFlag == FALSE)
     {
@@ -1474,6 +1476,7 @@ int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, 
  */
 int setNodeValue(int property, int index, int subIndex, int pollutantIndex, double value)
 {
+    (void)subIndex;
 
     TNode *node = NULL;
 
@@ -1669,7 +1672,6 @@ int setLinkValue(int property, int index, int subIndex, int pollutantIndex, doub
             }
             else
                 return ERR_API_PROPERTY_VALUE;
-            return 0;
         case swmm_LINK_HAS_FLAPGATE:
             Link[index].hasFlapGate = (value > 0.0);
             return 0;
@@ -1892,6 +1894,7 @@ static double getSubcatchValue(int property, int index, int subIndex, int pollut
  */
 static double getNodeValue(int property, int index, int subIndex, int pollutantIndex)
 {
+    (void)subIndex;
     TNode *node;
     if (index < 0 || index >= Nobjects[NODE])
         return 0;
@@ -1946,6 +1949,7 @@ static double getNodeValue(int property, int index, int subIndex, int pollutantI
  */
 static double getLinkValue(int property, int index, int subIndex, int pollutantIndex)
 {
+    (void)subIndex;
     TLink *link;
     if (index < 0 || index >= Nobjects[LINK])
         return 0;

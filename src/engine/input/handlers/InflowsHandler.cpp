@@ -41,6 +41,8 @@
 #include "../../core/SimulationContext.hpp"
 #include "../../data/InflowData.hpp"
 
+#include "../../core/charconv_compat.hpp"
+
 #include <charconv>
 #include <string>
 #include <algorithm>
@@ -53,7 +55,7 @@ namespace openswmm::input {
 
 static double to_double(std::string_view sv, double def = 0.0) noexcept {
     double v = def;
-    std::from_chars(sv.data(), sv.data() + sv.size(), v);
+    openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), v);
     return v;
 }
 

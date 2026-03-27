@@ -346,7 +346,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_init(SMO_Handle *p_handle)
  */
 int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *path)
 {
-    int i, err, errorcode = 0;
+    int err, errorcode = 0;
     F_OFF offset;
 
     data_t *p_data;
@@ -1255,7 +1255,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValues(
     int *length
 )
 {
-    int i, errorcode = 0;
+    int errorcode = 0;
     F_OFF offset;
 
     data_t *p_data;
@@ -1676,6 +1676,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkResult(SMO_Handle p_handle, int pe
 int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemResult(SMO_Handle p_handle, int periodIndex,
                                                int dummyIndex, float **outValueArray, int *arrayLength)
 {
+    (void)dummyIndex;
     int errorcode = 0;
     float *temp = NULL;
     F_OFF offset;
@@ -1766,6 +1767,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_checkError(SMO_Handle p_handle, char **ms
  */
 void errorLookup(int errcode, char *dest_msg, int dest_len)
 {
+    (void)dest_len;
     char msg[ERR_MAXMSG];
 
     switch (errcode)

@@ -34,6 +34,14 @@
 #ifndef OPENSWMM_ENGINE_SIMD_HPP
 #define OPENSWMM_ENGINE_SIMD_HPP
 
+#ifndef OPENSWMM_RESTRICT
+#  if defined(_MSC_VER)
+#    define OPENSWMM_RESTRICT __restrict
+#  else
+#    define OPENSWMM_RESTRICT __restrict__
+#  endif
+#endif
+
 #include <cstddef>
 #include <cmath>
 #include <algorithm>
@@ -73,9 +81,9 @@ namespace openswmm::simd {
  * @note Arrays may not alias each other (undefined behavior if they do).
  */
 inline void add(
-    const double* __restrict__ a,
-    const double* __restrict__ b,
-    double*       __restrict__ dst,
+    const double* OPENSWMM_RESTRICT a,
+    const double* OPENSWMM_RESTRICT b,
+    double*       OPENSWMM_RESTRICT dst,
     std::size_t                n
 ) noexcept {
 #if defined(OPENSWMM_SIMD_AVX2)
@@ -105,9 +113,9 @@ inline void add(
  * @brief Element-wise multiplication: dst[i] = a[i] * b[i]
  */
 inline void multiply(
-    const double* __restrict__ a,
-    const double* __restrict__ b,
-    double*       __restrict__ dst,
+    const double* OPENSWMM_RESTRICT a,
+    const double* OPENSWMM_RESTRICT b,
+    double*       OPENSWMM_RESTRICT dst,
     std::size_t                n
 ) noexcept {
 #if defined(OPENSWMM_SIMD_AVX2)
@@ -212,8 +220,8 @@ inline void clamp(double* a, double lo, double hi, std::size_t n) noexcept {
  * @returns  Sum of element-wise products.
  */
 inline double dot(
-    const double* __restrict__ a,
-    const double* __restrict__ b,
+    const double* OPENSWMM_RESTRICT a,
+    const double* OPENSWMM_RESTRICT b,
     std::size_t                n
 ) noexcept {
     double result = 0.0;

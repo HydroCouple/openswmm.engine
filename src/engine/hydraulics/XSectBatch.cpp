@@ -112,10 +112,10 @@ const ShapeGroup* XSectGroups::findGroup(XSectShape shape) const {
 namespace xsect_batch {
 
 void area_circular(
-    const double* __restrict__ depth,
-    const double* __restrict__ y_full,
-    const double* __restrict__ a_full,
-    double*       __restrict__ area,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT a_full,
+    double*       OPENSWMM_RESTRICT area,
     int count
 ) {
     // Vectorisable: all same table, pure arithmetic interpolation
@@ -153,9 +153,9 @@ void area_circular(
 }
 
 void area_rect(
-    const double* __restrict__ depth,
-    const double* __restrict__ w_max,
-    double*       __restrict__ area,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT w_max,
+    double*       OPENSWMM_RESTRICT area,
     int count
 ) {
     // Trivially vectorisable: area = depth * w_max — use explicit SIMD multiply.
@@ -163,10 +163,10 @@ void area_rect(
 }
 
 void area_trapezoidal(
-    const double* __restrict__ depth,
-    const double* __restrict__ y_bot,
-    const double* __restrict__ s_bot,
-    double*       __restrict__ area,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT y_bot,
+    const double* OPENSWMM_RESTRICT s_bot,
+    double*       OPENSWMM_RESTRICT area,
     int count
 ) {
     // area = (y_bot + s_bot * depth) * depth
@@ -180,9 +180,9 @@ void area_trapezoidal(
 }
 
 void area_triangular(
-    const double* __restrict__ depth,
-    const double* __restrict__ s_bot,
-    double*       __restrict__ area,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT s_bot,
+    double*       OPENSWMM_RESTRICT area,
     int count
 ) {
     // area = s_bot * depth^2
@@ -196,9 +196,9 @@ void area_triangular(
 }
 
 void area_parabolic(
-    const double* __restrict__ depth,
-    const double* __restrict__ r_bot,
-    double*       __restrict__ area,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT r_bot,
+    double*       OPENSWMM_RESTRICT area,
     int count
 ) {
     // area = (4/3) * r_bot * depth^(3/2)
@@ -209,10 +209,10 @@ void area_parabolic(
 }
 
 void area_powerfunc(
-    const double* __restrict__ depth,
-    const double* __restrict__ s_bot,
-    const double* __restrict__ r_bot,
-    double*       __restrict__ area,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT s_bot,
+    const double* OPENSWMM_RESTRICT r_bot,
+    double*       OPENSWMM_RESTRICT area,
     int count
 ) {
     // area = r_bot * depth^(s_bot+1)
@@ -222,12 +222,12 @@ void area_powerfunc(
 }
 
 void area_tabulated(
-    const double* __restrict__ depth,
-    const double* __restrict__ y_full,
-    const double* __restrict__ a_full,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT a_full,
     const double* table,
     int            table_size,
-    double*       __restrict__ area,
+    double*       OPENSWMM_RESTRICT area,
     int count
 ) {
     const double delta = 1.0 / static_cast<double>(table_size - 1);
@@ -259,12 +259,12 @@ void area_tabulated(
 }
 
 void area_inv_tabulated(
-    const double* __restrict__ depth,
-    const double* __restrict__ y_full,
-    const double* __restrict__ a_full,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT a_full,
     const double* table,
     int            table_size,
-    double*       __restrict__ area,
+    double*       OPENSWMM_RESTRICT area,
     int count
 ) {
     // For shapes where area table is Y vs A (inverted), use invLookup
@@ -282,10 +282,10 @@ void area_inv_tabulated(
 // ============================================================================
 
 void hydrad_circular(
-    const double* __restrict__ depth,
-    const double* __restrict__ y_full,
-    const double* __restrict__ r_full,
-    double*       __restrict__ hydrad,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT r_full,
+    double*       OPENSWMM_RESTRICT hydrad,
     int count
 ) {
     const double* table = xsect_tables::R_Circ;
@@ -319,11 +319,11 @@ void hydrad_circular(
 }
 
 void hydrad_trapezoidal(
-    const double* __restrict__ depth,
-    const double* __restrict__ y_bot,
-    const double* __restrict__ s_bot,
-    const double* __restrict__ r_bot,
-    double*       __restrict__ hydrad,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT y_bot,
+    const double* OPENSWMM_RESTRICT s_bot,
+    const double* OPENSWMM_RESTRICT r_bot,
+    double*       OPENSWMM_RESTRICT hydrad,
     int count
 ) {
     // R = A / P = (y_bot + s_bot*d)*d / (y_bot + d*r_bot)
@@ -340,10 +340,10 @@ void hydrad_trapezoidal(
 }
 
 void hydrad_triangular(
-    const double* __restrict__ depth,
-    const double* __restrict__ s_bot,
-    const double* __restrict__ r_bot,
-    double*       __restrict__ hydrad,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT s_bot,
+    const double* OPENSWMM_RESTRICT r_bot,
+    double*       OPENSWMM_RESTRICT hydrad,
     int count
 ) {
     // R = (s_bot*y) / (2*r_bot)
@@ -356,9 +356,9 @@ void hydrad_triangular(
 }
 
 void hydrad_rect(
-    const double* __restrict__ depth,
-    const double* __restrict__ w_max,
-    double*       __restrict__ hydrad,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT w_max,
+    double*       OPENSWMM_RESTRICT hydrad,
     int count
 ) {
     // R = (w*d) / (w + 2*d)
@@ -373,12 +373,12 @@ void hydrad_rect(
 }
 
 void hydrad_tabulated(
-    const double* __restrict__ depth,
-    const double* __restrict__ y_full,
-    const double* __restrict__ r_full,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT r_full,
     const double* table,
     int            table_size,
-    double*       __restrict__ hydrad,
+    double*       OPENSWMM_RESTRICT hydrad,
     int count
 ) {
     const double inv_delta = static_cast<double>(table_size - 1);
@@ -414,10 +414,10 @@ void hydrad_tabulated(
 // ============================================================================
 
 void width_circular(
-    const double* __restrict__ depth,
-    const double* __restrict__ y_full,
-    const double* __restrict__ w_max,
-    double*       __restrict__ width,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT w_max,
+    double*       OPENSWMM_RESTRICT width,
     int count
 ) {
     const double* table = xsect_tables::W_Circ;
@@ -448,10 +448,10 @@ void width_circular(
 }
 
 void width_trapezoidal(
-    const double* __restrict__ depth,
-    const double* __restrict__ y_bot,
-    const double* __restrict__ s_bot,
-    double*       __restrict__ width,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT y_bot,
+    const double* OPENSWMM_RESTRICT s_bot,
+    double*       OPENSWMM_RESTRICT width,
     int count
 ) {
     // W = y_bot + 2*s_bot*depth
@@ -464,9 +464,9 @@ void width_trapezoidal(
 }
 
 void width_triangular(
-    const double* __restrict__ depth,
-    const double* __restrict__ s_bot,
-    double*       __restrict__ width,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT s_bot,
+    double*       OPENSWMM_RESTRICT width,
     int count
 ) {
     // W = 2*s_bot*depth
@@ -479,8 +479,8 @@ void width_triangular(
 }
 
 void width_rect(
-    const double* __restrict__ w_max,
-    double*       __restrict__ width,
+    const double* OPENSWMM_RESTRICT w_max,
+    double*       OPENSWMM_RESTRICT width,
     int count
 ) {
     for (int k = 0; k < count; ++k) {
@@ -489,12 +489,12 @@ void width_rect(
 }
 
 void width_tabulated(
-    const double* __restrict__ depth,
-    const double* __restrict__ y_full,
-    const double* __restrict__ w_max,
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT w_max,
     const double* table,
     int            table_size,
-    double*       __restrict__ width,
+    double*       OPENSWMM_RESTRICT width,
     int count
 ) {
     const double inv_delta = static_cast<double>(table_size - 1);

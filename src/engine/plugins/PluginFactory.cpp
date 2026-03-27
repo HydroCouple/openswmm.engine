@@ -169,7 +169,6 @@ int PluginFactory::initialize_all(SimulationContext& /*ctx*/) {
 
     for (std::size_t i = 0; i < output_plugins_.size(); ++i) {
         IOutputPlugin* p = output_plugins_[i];
-        const auto& lib = libs_[0];  // info for this plugin
         // Find the matching lib entry for this plugin
         const std::vector<std::string>& args =
             (i < init_args_.size()) ? init_args_[i] : std::vector<std::string>{};

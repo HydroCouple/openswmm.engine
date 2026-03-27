@@ -2,11 +2,11 @@
 
 **Open Storm Water Management Model — Next-Generation Computational Engine**
 
-[![Unit Testing](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/unit_testing.yml)
-[![Regression Testing](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/regression_testing.yml/badge.svg)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/regression_testing.yml)
-[![Documentation](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/documentation.yml/badge.svg)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/documentation.yml)
-[![Deployment](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/deployment.yml/badge.svg)](https://github.com/HydroCouple/OpenSWMMCore/actions/workflows/deployment.yml)
-[![Issues](https://img.shields.io/github/issues/HydroCouple/OpenSWMMCore)](https://github.com/HydroCouple/OpenSWMMCore/issues)
+[![Unit Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml)
+[![Regression Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/regression_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/regression_testing.yml)
+[![Documentation](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml)
+[![Deployment](https://github.com/HydroCouple/openswmm.engine/actions/workflows/deployment.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/deployment.yml)
+[![Issues](https://img.shields.io/github/issues/HydroCouple/openswmm.engine)](https://github.com/HydroCouple/openswmm.engine/issues)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 | Python Bindings | |
@@ -79,7 +79,7 @@ A comprehensive, domain-split C API replaces the monolithic legacy interface:
 ## Project Structure
 
 ```
-OpenSWMMCore/
+openswmm.engine/
 ├── include/openswmm/
 │   ├── engine/           # New engine public C API headers (19 headers)
 │   └── legacy/           # Legacy SWMM 5.x public headers
@@ -117,8 +117,8 @@ OpenSWMMCore/
 
 ```bash
 # Clone the repository
-git clone https://github.com/HydroCouple/OpenSWMMCore.git
-cd OpenSWMMCore
+git clone https://github.com/HydroCouple/openswmm.engine.git
+cd openswmm.engine
 
 # Bootstrap vcpkg (for test dependencies)
 git clone https://github.com/microsoft/vcpkg.git

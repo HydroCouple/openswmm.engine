@@ -38,6 +38,10 @@ function(add_solver_test TEST_NAME SOURCE_FILE)
             openswmm_legacy_output
     )
 
+    if(MSVC)
+        target_compile_options(${TEST_NAME} PRIVATE /EHsc)
+    endif()
+
     set_target_properties(${TEST_NAME}
         PROPERTIES
             CXX_STANDARD 20

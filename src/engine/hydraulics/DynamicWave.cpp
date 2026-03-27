@@ -526,14 +526,14 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     }
 
     // ---- STEP D: Batch compute areas and hyd-rad from (modified) depths ----
-    double* __restrict__ p_d1  = depth1_.data();
-    double* __restrict__ p_d2  = depth2_.data();
-    double* __restrict__ p_dm  = depth_mid_.data();
-    double* __restrict__ p_a1  = area1_.data();
-    double* __restrict__ p_a2  = area2_.data();
-    double* __restrict__ p_am  = area_mid_.data();
-    double* __restrict__ p_hm  = hrad_mid_.data();
-    double* __restrict__ p_wm  = width_mid_.data();
+    double* OPENSWMM_RESTRICT p_d1  = depth1_.data();
+    double* OPENSWMM_RESTRICT p_d2  = depth2_.data();
+    double* OPENSWMM_RESTRICT p_dm  = depth_mid_.data();
+    double* OPENSWMM_RESTRICT p_a1  = area1_.data();
+    double* OPENSWMM_RESTRICT p_a2  = area2_.data();
+    double* OPENSWMM_RESTRICT p_am  = area_mid_.data();
+    double* OPENSWMM_RESTRICT p_hm  = hrad_mid_.data();
+    double* OPENSWMM_RESTRICT p_wm  = width_mid_.data();
 
     groups_->computeAreas(p_d1, p_a1, n_links_);
     groups_->computeAreas(p_d2, p_a2, n_links_);
@@ -591,22 +591,22 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
 
     // Restrict-qualified local pointers to internal arrays for vectorisation hints.
     // The compiler can assume these do not alias each other or the ctx arrays.
-    double* __restrict__ p_area_mid  = area_mid_.data();
-    double* __restrict__ p_area1     = area1_.data();
-    double* __restrict__ p_area2     = area2_.data();
-    double* __restrict__ p_hrad_mid  = hrad_mid_.data();
-    double* __restrict__ p_width_mid = width_mid_.data();
-    double* __restrict__ p_depth1    = depth1_.data();
-    double* __restrict__ p_depth2    = depth2_.data();
-    double* __restrict__ p_depth_mid = depth_mid_.data();
-    double* __restrict__ p_velocity  = velocity_.data();
-    double* __restrict__ p_froude    = froude_.data();
-    double* __restrict__ p_sigma     = sigma_.data();
-    double* __restrict__ p_dqdh      = dqdh_.data();
-    double* __restrict__ p_new_flow  = new_flow_.data();
-    double* __restrict__ p_area_old  = area_old_.data();
-    double* __restrict__ p_h1        = h1_.data();
-    double* __restrict__ p_h2        = h2_.data();
+    double* OPENSWMM_RESTRICT p_area_mid  = area_mid_.data();
+    double* OPENSWMM_RESTRICT p_area1     = area1_.data();
+    double* OPENSWMM_RESTRICT p_area2     = area2_.data();
+    double* OPENSWMM_RESTRICT p_hrad_mid  = hrad_mid_.data();
+    double* OPENSWMM_RESTRICT p_width_mid = width_mid_.data();
+    double* OPENSWMM_RESTRICT p_depth1    = depth1_.data();
+    double* OPENSWMM_RESTRICT p_depth2    = depth2_.data();
+    double* OPENSWMM_RESTRICT p_depth_mid = depth_mid_.data();
+    double* OPENSWMM_RESTRICT p_velocity  = velocity_.data();
+    double* OPENSWMM_RESTRICT p_froude    = froude_.data();
+    double* OPENSWMM_RESTRICT p_sigma     = sigma_.data();
+    double* OPENSWMM_RESTRICT p_dqdh      = dqdh_.data();
+    double* OPENSWMM_RESTRICT p_new_flow  = new_flow_.data();
+    double* OPENSWMM_RESTRICT p_area_old  = area_old_.data();
+    double* OPENSWMM_RESTRICT p_h1        = h1_.data();
+    double* OPENSWMM_RESTRICT p_h2        = h2_.data();
 
     // Hoist options outside parallel region for OpenMP data sharing
     const int normal_flow_ltd = ctx.options.normal_flow_ltd;

@@ -41,6 +41,8 @@
 #include "../../core/DateTime.hpp"
 #include "../../data/TableData.hpp"
 
+#include "../../core/charconv_compat.hpp"
+
 #include <charconv>
 #include <string>
 #include <unordered_map>
@@ -53,7 +55,7 @@ namespace openswmm::input {
 
 static double to_double(std::string_view sv, double def = 0.0) noexcept {
     double v = def;
-    std::from_chars(sv.data(), sv.data() + sv.size(), v);
+    openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), v);
     return v;
 }
 
@@ -87,7 +89,7 @@ static double parse_datetime(std::string_view date_sv, std::string_view time_sv)
         tp = np; return true;
     };
     auto rdt = [&](double& out) {
-        auto [np, ec] = std::from_chars(tp, tend, out);
+        auto [np, ec] = openswmm::from_chars_double(tp, tend, out);
         if (ec != std::errc{}) return false;
         tp = np; return true;
     };
@@ -172,7 +174,7 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
                 tp = np;
             };
             auto rdt = [&](double& out) {
-                auto [np, ec] = std::from_chars(tp, tend, out);
+                auto [np, ec] = openswmm::from_chars_double(tp, tend, out);
                 if (ec != std::errc{}) return;
                 tp = np;
             };

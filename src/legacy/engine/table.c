@@ -848,9 +848,9 @@ int table_parseFileLine(char* line, TTable* table, double* x, double* y)
 //
 {
     int   n = 0;
-    char  *s1,
-          *s2,
-          *s3;
+    char  *s1 = NULL,
+          *s2 = NULL,
+          *s3 = NULL;
 
     char* tStr;              // time as string
     char* yStr;              // value as string

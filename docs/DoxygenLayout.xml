@@ -12,8 +12,7 @@
       <tab type="user" title="Quality Reference Manual" visible="yes" url="@ref quality_reference_manual"/>
     </tab>
     <tab type="usergroup" visible="yes" title="Developer Docs" url="">
-      <tab type="user" title="Refactoring Strategy" visible="yes" url="@ref refactoring_strategy"/>
-      <tab type="user" title="Implementation Plan" visible="yes" url="@ref implementation_plan"/>
+      <tab type="user" title="Python API" visible="yes" url="python"/>
     </tab>
     <tab type="user" title="Authors" visible="yes" url="@ref authors"/>
     <tab type="pages" visible="yes" title="" intro=""/>

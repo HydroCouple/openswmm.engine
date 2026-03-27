@@ -26,6 +26,14 @@
 #ifndef OPENSWMM_GROUNDWATER_HPP
 #define OPENSWMM_GROUNDWATER_HPP
 
+#ifndef OPENSWMM_RESTRICT
+#  if defined(_MSC_VER)
+#    define OPENSWMM_RESTRICT __restrict
+#  else
+#    define OPENSWMM_RESTRICT __restrict__
+#  endif
+#endif
+
 #include <vector>
 
 namespace openswmm {
@@ -106,23 +114,23 @@ private:
 
     /// Batch upper zone percolation — VECTORISABLE
     static void batchUpperPerc(
-        const double* __restrict__ theta,
-        const double* __restrict__ field_cap,
-        const double* __restrict__ k_sat,
-        const double* __restrict__ k_slope,
-        double*       __restrict__ perc,
+        const double* OPENSWMM_RESTRICT theta,
+        const double* OPENSWMM_RESTRICT field_cap,
+        const double* OPENSWMM_RESTRICT k_sat,
+        const double* OPENSWMM_RESTRICT k_slope,
+        double*       OPENSWMM_RESTRICT perc,
         int count
     );
 
     /// Batch lateral GW flow — VECTORISABLE
     static void batchGWFlow(
-        const double* __restrict__ lower_depth,
-        const double* __restrict__ h_star,
-        const double* __restrict__ a1, const double* __restrict__ b1,
-        const double* __restrict__ a2, const double* __restrict__ b2,
-        const double* __restrict__ a3,
-        const double* __restrict__ sw_head,
-        double*       __restrict__ gw_flow,
+        const double* OPENSWMM_RESTRICT lower_depth,
+        const double* OPENSWMM_RESTRICT h_star,
+        const double* OPENSWMM_RESTRICT a1, const double* OPENSWMM_RESTRICT b1,
+        const double* OPENSWMM_RESTRICT a2, const double* OPENSWMM_RESTRICT b2,
+        const double* OPENSWMM_RESTRICT a3,
+        const double* OPENSWMM_RESTRICT sw_head,
+        double*       OPENSWMM_RESTRICT gw_flow,
         int count
     );
 };

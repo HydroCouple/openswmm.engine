@@ -13,6 +13,8 @@
 #include "Tokenizer.hpp"
 
 #include <algorithm>
+#include "../core/charconv_compat.hpp"
+
 #include <cctype>
 #include <charconv>
 #include <cstring>
@@ -162,7 +164,7 @@ bool Tokenizer::is_numeric(std::string_view sv) noexcept {
 
     // Use std::from_chars to check validity (no allocations, locale-independent)
     double val;
-    auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), val);
+    auto [ptr, ec] = openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), val);
     return ec == std::errc{} && ptr == sv.data() + sv.size();
 }
 

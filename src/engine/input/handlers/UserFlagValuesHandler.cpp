@@ -17,6 +17,8 @@
 #include "../../core/SimulationContext.hpp"
 #include "../../core/UserFlags.hpp"
 
+#include "../../core/charconv_compat.hpp"
+
 #include <charconv>
 
 namespace openswmm::input {
@@ -57,7 +59,7 @@ void handle_user_flag_values(SimulationContext& ctx,
 
             case UserFlagType::REAL: {
                 double v = 0.0;
-                std::from_chars(raw_val.data(), raw_val.data() + raw_val.size(), v);
+                openswmm::from_chars_double(raw_val.data(), raw_val.data() + raw_val.size(), v);
                 value = v;
                 break;
             }
