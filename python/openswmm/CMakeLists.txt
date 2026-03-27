@@ -29,3 +29,20 @@ target_include_directories(
 # Add subdirectories
 add_subdirectory(legacy)
 add_subdirectory(engine)
+
+# ---------------------------------------------------------------------------
+# Install shared libraries alongside the Cython extensions so that
+# @loader_path / $ORIGIN RPATH entries resolve at runtime.
+# ---------------------------------------------------------------------------
+install(TARGETS openswmm_engine
+    LIBRARY DESTINATION openswmm/engine
+    RUNTIME DESTINATION openswmm/engine   # Windows DLLs
+)
+install(TARGETS openswmm_legacy_engine
+    LIBRARY DESTINATION openswmm/legacy/engine
+    RUNTIME DESTINATION openswmm/legacy/engine
+)
+install(TARGETS openswmm_legacy_output
+    LIBRARY DESTINATION openswmm/legacy/output
+    RUNTIME DESTINATION openswmm/legacy/output
+)
