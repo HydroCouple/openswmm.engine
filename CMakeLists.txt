@@ -193,10 +193,23 @@ add_subdirectory(src)
 # enabled as part of a top-level CMake build:
 #   cmake -DOPENSWMM_BUILD_PYTHON=ON ..
 if(OPENSWMM_BUILD_PYTHON)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
-    find_package(PythonExtensions REQUIRED)
-    find_package(Cython REQUIRED)
-    add_subdirectory(python/openswmm)
+    # Discover Python and extension-building dependencies without making them
+    # hard requirements for a plain C/C++ build. If any of these packages are
+    # missing, the Python bindings will be skipped with a warning instead of
+    # causing CMake configuration to fail.
+    find_package(Python3 QUIET COMPONENTS Interpreter Development.Module)
+    find_package(PythonExtensions QUIET)
+    find_package(Cython QUIET)
+
+    if(Python3_FOUND AND PythonExtensions_FOUND AND Cython_FOUND)
+        add_subdirectory(python/openswmm)
+    else()
+        message(WARNING
+            "OPENSWMM_BUILD_PYTHON is enabled, but required Python build "
+            "dependencies (Python3, PythonExtensions, Cython) were not found. "
+            "Skipping build of Python bindings."
+        )
+    endif()
 endif()
 
 # Simplified CPack
