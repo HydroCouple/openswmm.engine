@@ -1,11 +1,5 @@
 include_guard(GLOBAL)
 
-# Try standard OpenMP detection first
-find_package(OpenMP QUIET)
-if(OpenMP_FOUND)
-    return()
-endif()
-
 # Apple-specific: try Homebrew locations
 if(APPLE AND NOT OpenMP_FOUND)
     message(STATUS "Searching for Homebrew OpenMP...")
