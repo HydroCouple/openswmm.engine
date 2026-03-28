@@ -39,7 +39,9 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
             GTest::gtest
             GTest::gtest_main
             GTest::gmock
-            openswmm_engine
+            # On MSVC, link against the internal static library so tests can
+            # call non-exported C++ symbols without per-test source tracking.
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
             openswmm_legacy_engine
     )
 
@@ -86,13 +88,6 @@ add_gtest_unit(test_engine_section_registry  test_section_registry.cpp)
 add_gtest_unit(test_engine_crs               test_crs.cpp)
 add_gtest_unit(test_engine_xsection          test_xsection.cpp)
 
-# xsection tests exercise internal hydraulics helpers that are not exported
-# from the engine DLL on Windows.
-target_sources(test_engine_xsection PRIVATE
-    ${PROJECT_SOURCE_DIR}/src/engine/hydraulics/XSection.cpp
-    ${PROJECT_SOURCE_DIR}/src/engine/hydraulics/XSectBatch.cpp
-)
-
 add_gtest_unit(test_engine_infiltration     test_infiltration.cpp)
 add_gtest_unit(test_engine_runoff           test_runoff.cpp)
 add_gtest_unit(test_engine_snow             test_snow.cpp)
@@ -100,36 +95,3 @@ add_gtest_unit(test_engine_climate          test_climate.cpp)
 add_gtest_unit(test_engine_groundwater      test_groundwater.cpp)
 add_gtest_unit(test_engine_routing          test_routing.cpp)
 add_gtest_unit(test_engine_site_drainage    test_site_drainage_model.cpp)
-
-# On Windows, these tests call internal C++ symbols from engine namespaces
-# (not the exported C API). Build the relevant implementation units directly
-# into the test executables to avoid DLL export/link issues.
-if(MSVC)
-    target_sources(test_engine_infiltration PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/engine/hydrology/Infiltration.cpp
-        ${PROJECT_SOURCE_DIR}/src/engine/math/OdeSolver.cpp
-        ${PROJECT_SOURCE_DIR}/src/engine/math/FindRoot.cpp
-    )
-
-    target_sources(test_engine_runoff PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/engine/hydrology/Runoff.cpp
-        ${PROJECT_SOURCE_DIR}/src/engine/math/OdeSolver.cpp
-    )
-
-    target_sources(test_engine_climate PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/engine/hydrology/Climate.cpp
-    )
-
-    target_sources(test_engine_snow PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/engine/hydrology/Snow.cpp
-    )
-
-    target_sources(test_engine_groundwater PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/engine/hydrology/Groundwater.cpp
-    )
-
-    target_sources(test_engine_routing PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/engine/hydraulics/XSection.cpp
-        ${PROJECT_SOURCE_DIR}/src/engine/hydraulics/XSectBatch.cpp
-    )
-endif()

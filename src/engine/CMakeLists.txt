@@ -200,3 +200,44 @@ add_custom_command(TARGET openswmm_engine POST_BUILD
         $<TARGET_FILE:openswmm_engine>
         ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:openswmm_engine>
 )
+
+# ---- Internal static library for MSVC unit tests ----
+# On Windows, unit tests that exercise internal (non-exported) C++ symbols
+# cannot link against the shared DLL since WINDOWS_EXPORT_ALL_SYMBOLS is OFF.
+# We build a matching STATIC library with OPENSWMM_ENGINE_STATIC defined so
+# SWMM_ENGINE_API resolves to nothing, making all symbols directly available.
+# This avoids fragile per-test target_sources tracking of transitive deps.
+if(MSVC AND OPENSWMM_BUILD_UNIT_TESTS)
+    add_library(openswmm_engine_internal STATIC ${OPENSWMM_ENGINE_SOURCES})
+    add_library(openswmm::engine_internal ALIAS openswmm_engine_internal)
+
+    target_compile_features(openswmm_engine_internal PUBLIC cxx_std_20)
+    target_compile_definitions(openswmm_engine_internal
+        PUBLIC  OPENSWMM_ENGINE_STATIC
+        PRIVATE SWMM_OS_WINDOWS
+    )
+
+    target_include_directories(openswmm_engine_internal
+        PUBLIC
+            $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+            $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include/openswmm/engine>
+            $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include/openswmm/plugin_sdk>
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    target_link_libraries(openswmm_engine_internal
+        PUBLIC  openswmmcore
+        PRIVATE Threads::Threads
+    )
+
+    if(OpenMP_FOUND OR TARGET OpenMP::OpenMP_CXX)
+        target_link_libraries(openswmm_engine_internal PRIVATE OpenMP::OpenMP_CXX)
+        target_compile_definitions(openswmm_engine_internal PRIVATE SWMM_USE_OPENMP)
+    endif()
+
+    target_compile_options(openswmm_engine_internal PRIVATE /arch:AVX2)
+
+    message(STATUS "OpenSWMM Engine: internal STATIC library enabled for MSVC unit tests")
+endif()

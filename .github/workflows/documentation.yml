@@ -5,7 +5,7 @@ on:
     branches: [main, develop]
     tags: ["v*.*.*"]
   pull_request:
-    branches: [main, develop]
+    branches: [main]
   workflow_dispatch:
 
 # Allow only one concurrent deployment.  Do NOT cancel in-progress runs so
