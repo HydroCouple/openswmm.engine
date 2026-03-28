@@ -18,7 +18,9 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   engine:
     name: "C++ Engine (${{ matrix.alias }})"
-    permissions: write-all
+    permissions:
+      contents: read
+      actions: write
     strategy:
       fail-fast: false
       matrix:
