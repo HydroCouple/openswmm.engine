@@ -29,6 +29,13 @@ set(OPENSWMM_BUILD_REGRESSION_TESTS OFF CACHE BOOL "" FORCE)
 set(OPENSWMM_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(OPENSWMM_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
 
+# Disable WINDOWS_EXPORT_ALL_SYMBOLS globally.  When ON, CMake adds a
+# pre-link step (cmake -E __create_def) that cannot parse /GL (LTCG)
+# object files, causing "unrecognized file format" errors on Windows CI.
+# Each shared library that needs DLL exports uses explicit
+# __declspec(dllexport) via generate_export_header() instead.
+set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS OFF)
+
 add_subdirectory(
     "${CMAKE_CURRENT_SOURCE_DIR}/.."
     "${CMAKE_BINARY_DIR}/parent_build"

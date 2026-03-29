@@ -62,6 +62,15 @@ function(add_engine_cython_module name pyx_file)
 
     python_extension_module(${target})
 
+    # scikit-build's python_extension_module() sets /EXPORT:PyInit_<target>
+    # on MSVC, but our target is "engine_<name>" while Cython emits
+    # PyInit_<name> (from the output filename).  Override to match.
+    if(MSVC)
+        set_target_properties(${target} PROPERTIES LINK_FLAGS
+            "/EXPORT:PyInit_${name}"
+        )
+    endif()
+
     # RPATH so the extension can find the shared engine library at runtime
     if(APPLE)
         set_target_properties(${target} PROPERTIES

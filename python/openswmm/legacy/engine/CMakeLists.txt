@@ -32,11 +32,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(APPLE)
-    set(INSTALL_LIB_ROOT "@loader_path;@rpath;@loader_path/../../../../..;${SOLVER_BUILD_DIR}")
-    set(BUILD_LIB_ROOT "@loader_path;@rpath;${SOLVER_BUILD_DIR}")
+    set(INSTALL_LIB_ROOT "@loader_path;@rpath;@loader_path/../../../../..")
+    set(BUILD_LIB_ROOT "@loader_path;@rpath")
 elseif(UNIX)
-    set(INSTALL_LIB_ROOT "$ORIGIN;$ORIGIN/../../../../..;${SOLVER_BUILD_DIR}")
-    set(BUILD_LIB_ROOT "$ORIGIN;${SOLVER_BUILD_DIR}")
+    set(INSTALL_LIB_ROOT "$ORIGIN;$ORIGIN/../../../../..")
+    set(BUILD_LIB_ROOT "$ORIGIN")
 endif()
 
 # Set up rpath

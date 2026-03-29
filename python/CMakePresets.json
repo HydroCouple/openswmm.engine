@@ -24,7 +24,10 @@
                 "CMAKE_C_FLAGS": "/O2 /GL /fp:precise /W4",
                 "CMAKE_CXX_FLAGS": "/O2 /GL /fp:precise /W4",
                 "CMAKE_EXE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
+                "CMAKE_SHARED_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
+                "CMAKE_MODULE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+                "CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS": "OFF",
                 "CMAKE_C_FLAGS_RELEASE": "/O2 /GL /fp:precise /W4",
                 "CMAKE_CXX_FLAGS_RELEASE": "/O2 /GL /fp:precise /W4",
                 "CMAKE_C_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise",
@@ -66,6 +69,8 @@
                 "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -Wall -Wextra -ffloat-store",
                 "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -Wall -Wextra -ffloat-store",
                 "CMAKE_EXE_LINKER_FLAGS": "-Wl,--gc-sections -flto",
+                "CMAKE_SHARED_LINKER_FLAGS": "-Wl,--gc-sections -flto",
+                "CMAKE_MODULE_LINKER_FLAGS": "-Wl,--gc-sections -flto",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
                 "CMAKE_C_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -Wall -Wextra -ffloat-store",
                 "CMAKE_CXX_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -Wall -Wextra -ffloat-store",
@@ -111,10 +116,10 @@
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
                 "CMAKE_C_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
                 "CMAKE_CXX_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
-                "CMAKE_SHARED_LINKER_FLAGS": "-twolevel_namespace -undefined dynamic_lookup",
+                "CMAKE_SHARED_LINKER_FLAGS": "-flto -twolevel_namespace -undefined dynamic_lookup",
+                "CMAKE_MODULE_LINKER_FLAGS": "-flto -undefined dynamic_lookup",
                 "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
-                "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64"
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math"
             },
             "condition": {
                 "type": "equals",
@@ -134,9 +139,9 @@
                 "CMAKE_EXE_LINKER_FLAGS": "-g",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
                 "CMAKE_SHARED_LINKER_FLAGS": "-twolevel_namespace -undefined dynamic_lookup",
+                "CMAKE_MODULE_LINKER_FLAGS": "-undefined dynamic_lookup",
                 "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
-                "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64"
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math"
             },
             "condition": {
                 "type": "equals",

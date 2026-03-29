@@ -54,6 +54,8 @@ setup(
     long_description_content_type="text/markdown",
     cmake_args=[
         f"--preset={_cmake_preset()}",
+        *([f"-DCMAKE_OSX_ARCHITECTURES={os.environ['CMAKE_OSX_ARCHITECTURES']}"]
+          if "CMAKE_OSX_ARCHITECTURES" in os.environ else []),
         *os.getenv("OPENSWMM_CMAKE_ARGS", "").split(),
     ],
     include_package_data=True,

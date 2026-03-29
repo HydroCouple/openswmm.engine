@@ -3,9 +3,9 @@
 **Open Storm Water Management Model — Next-Generation Computational Engine**
 
 [![Unit Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml)
-[![Regression Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/regression_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/regression_testing.yml)
+<!-- [![Regression Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/regression_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/regression_testing.yml) -->
 [![Documentation](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml)
-[![Deployment](https://github.com/HydroCouple/openswmm.engine/actions/workflows/deployment.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/deployment.yml)
+<!-- [![Deployment](https://github.com/HydroCouple/openswmm.engine/actions/workflows/deployment.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/deployment.yml) -->
 [![Issues](https://img.shields.io/github/issues/HydroCouple/openswmm.engine)](https://github.com/HydroCouple/openswmm.engine/issues)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -66,6 +66,24 @@ A comprehensive, domain-split C API replaces the monolithic legacy interface:
 - **HEC-22 Inlet Analysis** — Street inlet capture, grate and curb inlets (from SWMM 5.2).
 - **Variable Speed Pumps** — Type5 pump curves with speed scaling.
 - **New Storage Shapes** — Conical and pyramidal shapes with elliptical/rectangular bases.
+
+### Process Formulation Enhancements
+
+The following physics-based improvements are being designed for backward-compatible integration. Each addresses a known simplification in the current SWMM formulation.
+
+- **Spatially Explicit Overland Flow & Groundwater** — SWMM currently has one-way feedback between hydrology and hydraulics: flooded nodes pond over a user-specified area and are reintroduced locally. In reality, surcharge flows traverse the terrain and may re-enter the network at a downstream node. The new module couples a 2D overland flow grid with the 1D pipe network, enabling spatially explicit green infrastructure placement, terrain-routed surcharge, and lateral groundwater flow exchanges, etc.
+
+- **Dynamic Preissmann Slot** — Standard SWMM uses a fixed-width slot for pressurized conduit transitions, which can cause numerical instability at the open-channel/pressure interface. A dynamic slot formulation smooths the transition with a geometry-dependent slot width, improving stability for rapidly filling/draining conduits.
+
+- **Spatially Explicit Inlets** — Current inlets are attributes of conduits, limiting bypass routing and preventing backflow or series-inlet configurations. The redesign promotes inlets to mode-switching junction nodes that actively capture street flow when the gutter spread exceeds a threshold and revert to passive junctions otherwise.
+
+- **LID as Storage Nodes** — Current LID units lack hydraulic feedback: no backpressure from the drainage network, no bidirectional flow, and no control-structure integration. The redesign maps LID layers (surface, media, gravel) onto an extended storage node using a reduced-physics kinematic Richards ODE — a simplified 1D formulation that captures gravity-driven percolation and capillary redistribution between discrete layers without the computational cost of a full 3D variably-saturated solver. This provides physically meaningful moisture dynamics while remaining compatible with SWMM's routing timestep, and enables elevation-mapped underdrain links with full network coupling.
+
+- **Physics-Based Initial Abstraction Recovery** — SWMM's seasonal RTK calibration for RDII confounds infrastructure leakage fraction with soil moisture state, requiring 12 monthly parameter sets. The new formulation tracks initial abstraction capacity as an exponential decay/recovery process. During dry periods, available capacity recovers with additive time-based and temperature-dependent rate components:
+
+  $$IA_{avail}(t+\Delta t) = IA_{max} - \bigl(IA_{max} - IA_{avail}(t)\bigr) \cdot e^{-k_{rec}(T)\,\Delta t}, \qquad k_{rec}(T) = k_0 + k_T \cdot e^{\,\theta\,(T - T_{ref})}$$
+
+  The base rate $k_0$ captures gravity drainage and capillary redistribution that occur regardless of temperature, while $k_T \cdot e^{\theta(T-T_{ref})}$ captures thermally-driven evapotranspiration. During storms, capacity is depleted: $IA_{avail}(t+\Delta t) = IA_{avail}(t) \cdot e^{-k_{dep}\,\Delta P}$. Recovery is suppressed when $T < T_{freeze}$, producing emergent seasonal variation (high winter RDII, low summer RDII) from a single RTK set per sewershed — no monthly parameter tables required.
 
 ### Input File Extensions
 

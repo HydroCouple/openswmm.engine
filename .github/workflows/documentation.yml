@@ -2,7 +2,7 @@ name: Documentation
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, swmm6_rel]
     tags: ["v*.*.*"]
   pull_request:
     branches: [main]
