@@ -162,6 +162,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      - name: Clean stale build cache
+        run: python -c "import shutil, os; shutil.rmtree('python/_skbuild', ignore_errors=True)"
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.23.2
         with:
@@ -181,12 +184,14 @@ jobs:
           CIBW_TEST_REQUIRES: pytest numpy
           CIBW_TEST_COMMAND: pytest {package}/tests -v --import-mode=importlib
 
-      - name: Upload wheels
+      - name: Upload Python wheels
+        if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: wheels-${{ matrix.vcpkg_triplet }}
-          path: python/wheelhouse/*.whl
-
+          name: python-wheels-${{ matrix.vcpkg_triplet }}
+          path: |
+            python/wheelhouse/*.whl
+            python/dist/*.whl
   # ──────────────────────────────────────────────────────────────────────
   #  Create GitHub Release
   # ──────────────────────────────────────────────────────────────────────

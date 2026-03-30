@@ -17,6 +17,7 @@ docs/html/
 python/build/
 python/dist/
 python/OpenSWMMCore.egg-info/
+python/_skbuild/
 __pycache__/
 *.pyc
 *.pyo

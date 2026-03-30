@@ -32,26 +32,26 @@ jobs:
             vcpkg_triplet: x64-linux
             cmake_osx_arch: ""
 
-          - os: macos-latest
-            alias: macOS-arm64
-            cmake_preset: Darwin
-            shell_ext: .sh
-            vcpkg_triplet: arm64-osx
-            cmake_osx_arch: arm64
+          # - os: macos-latest
+          #   alias: macOS-arm64
+          #   cmake_preset: Darwin
+          #   shell_ext: .sh
+          #   vcpkg_triplet: arm64-osx
+          #   cmake_osx_arch: arm64
 
-          - os: macos-15-intel
-            alias: macOS-x64
-            cmake_preset: Darwin
-            shell_ext: .sh
-            vcpkg_triplet: x64-osx
-            cmake_osx_arch: x86_64
+          # - os: macos-15-intel
+          #   alias: macOS-x64
+          #   cmake_preset: Darwin
+          #   shell_ext: .sh
+          #   vcpkg_triplet: x64-osx
+          #   cmake_osx_arch: x86_64
 
-          - os: windows-latest
-            alias: Windows-x64
-            cmake_preset: Windows
-            shell_ext: .bat
-            vcpkg_triplet: x64-windows
-            cmake_osx_arch: ""
+          # - os: windows-latest
+          #   alias: Windows-x64
+          #   cmake_preset: Windows
+          #   shell_ext: .bat
+          #   vcpkg_triplet: x64-windows
+          #   cmake_osx_arch: ""
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -136,20 +136,20 @@ jobs:
             vcpkg_triplet: x64-linux
             cmake_osx_arch: ""
 
-          - os: macos-latest
-            alias: macOS-arm64
-            vcpkg_triplet: arm64-osx
-            cmake_osx_arch: arm64
+          # - os: macos-latest
+          #   alias: macOS-arm64
+          #   vcpkg_triplet: arm64-osx
+          #   cmake_osx_arch: arm64
 
-          - os: macos-15-intel
-            alias: macOS-x64
-            vcpkg_triplet: x64-osx
-            cmake_osx_arch: x86_64
+          # - os: macos-15-intel
+          #   alias: macOS-x64
+          #   vcpkg_triplet: x64-osx
+          #   cmake_osx_arch: x86_64
 
-          - os: windows-latest
-            alias: Windows-x64
-            vcpkg_triplet: x64-windows
-            cmake_osx_arch: ""
+          # - os: windows-latest
+          #   alias: Windows-x64
+          #   vcpkg_triplet: x64-windows
+          #   cmake_osx_arch: ""
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -189,37 +189,6 @@ jobs:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
         run: python -m pip install .
 
-      - name: Diagnose installed extensions
-        if: runner.os == 'Linux'
-        run: |
-          echo "=== Installed .so files ==="
-          find $(python -c "import site; print(site.getsitepackages()[0])")/openswmm -name '*.so' | head -20
-          echo ""
-          echo "=== engine/_solver symbol check ==="
-          SOLVER_SO=$(find $(python -c "import site; print(site.getsitepackages()[0])")/openswmm/engine -name '_solver*.so' 2>/dev/null | head -1)
-          if [ -n "$SOLVER_SO" ]; then
-            echo "Found: $SOLVER_SO"
-            echo "--- nm dynamic symbols (PyInit) ---"
-            nm -D "$SOLVER_SO" 2>/dev/null | grep -i pyinit || echo "NO PyInit symbols in dynamic table"
-            echo "--- nm all symbols (PyInit) ---"
-            nm "$SOLVER_SO" 2>/dev/null | grep -i pyinit || echo "NO PyInit symbols at all"
-            echo "--- file type ---"
-            file "$SOLVER_SO"
-            echo "--- readelf dynamic symbols ---"
-            readelf -Ws "$SOLVER_SO" 2>/dev/null | grep -i pyinit || echo "NO PyInit in readelf"
-          else
-            echo "ERROR: No _solver*.so found in engine directory!"
-            echo "Contents of engine dir:"
-            ls -la $(python -c "import site; print(site.getsitepackages()[0])")/openswmm/engine/
-          fi
-          echo ""
-          echo "=== legacy/_solver symbol check ==="
-          LEGACY_SO=$(find $(python -c "import site; print(site.getsitepackages()[0])")/openswmm/legacy/engine -name '_solver*.so' 2>/dev/null | head -1)
-          if [ -n "$LEGACY_SO" ]; then
-            echo "Found: $LEGACY_SO"
-            nm -D "$LEGACY_SO" 2>/dev/null | grep -i pyinit || echo "NO PyInit symbols"
-          fi
-
       - name: Run Python tests
         env:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
@@ -229,6 +198,9 @@ jobs:
           mv openswmm openswmm_src
           python -m pytest -v tests
           mv openswmm_src openswmm
+
+      - name: Clean stale build cache
+        run: python -c "import shutil, os; shutil.rmtree('python/_skbuild', ignore_errors=True)"
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.23.2
