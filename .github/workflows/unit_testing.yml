@@ -199,11 +199,18 @@ jobs:
           python -m pytest -v tests
           mv openswmm_src openswmm
 
-      - name: Build wheel
+      - name: Build wheel (Windows)
+        if: runner.os == 'Windows'
+        working-directory: python
+        env:
+          CMAKE_GENERATOR: "Visual Studio 17 2022"
+        run: python setup.py bdist_wheel
+
+      - name: Build wheel (Unix)
+        if: runner.os != 'Windows'
         working-directory: python
         env:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-          CMAKE_GENERATOR: ${{ runner.os == 'Windows' && 'Visual Studio 17 2022' || '' }}
         run: python setup.py bdist_wheel
 
       - name: Upload Python wheel
