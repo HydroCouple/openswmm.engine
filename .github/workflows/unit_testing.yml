@@ -189,6 +189,37 @@ jobs:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
         run: python -m pip install .
 
+      - name: Diagnose installed extensions
+        if: runner.os == 'Linux'
+        run: |
+          echo "=== Installed .so files ==="
+          find $(python -c "import site; print(site.getsitepackages()[0])")/openswmm -name '*.so' | head -20
+          echo ""
+          echo "=== engine/_solver symbol check ==="
+          SOLVER_SO=$(find $(python -c "import site; print(site.getsitepackages()[0])")/openswmm/engine -name '_solver*.so' 2>/dev/null | head -1)
+          if [ -n "$SOLVER_SO" ]; then
+            echo "Found: $SOLVER_SO"
+            echo "--- nm dynamic symbols (PyInit) ---"
+            nm -D "$SOLVER_SO" 2>/dev/null | grep -i pyinit || echo "NO PyInit symbols in dynamic table"
+            echo "--- nm all symbols (PyInit) ---"
+            nm "$SOLVER_SO" 2>/dev/null | grep -i pyinit || echo "NO PyInit symbols at all"
+            echo "--- file type ---"
+            file "$SOLVER_SO"
+            echo "--- readelf dynamic symbols ---"
+            readelf -Ws "$SOLVER_SO" 2>/dev/null | grep -i pyinit || echo "NO PyInit in readelf"
+          else
+            echo "ERROR: No _solver*.so found in engine directory!"
+            echo "Contents of engine dir:"
+            ls -la $(python -c "import site; print(site.getsitepackages()[0])")/openswmm/engine/
+          fi
+          echo ""
+          echo "=== legacy/_solver symbol check ==="
+          LEGACY_SO=$(find $(python -c "import site; print(site.getsitepackages()[0])")/openswmm/legacy/engine -name '_solver*.so' 2>/dev/null | head -1)
+          if [ -n "$LEGACY_SO" ]; then
+            echo "Found: $LEGACY_SO"
+            nm -D "$LEGACY_SO" 2>/dev/null | grep -i pyinit || echo "NO PyInit symbols"
+          fi
+
       - name: Run Python tests
         env:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
