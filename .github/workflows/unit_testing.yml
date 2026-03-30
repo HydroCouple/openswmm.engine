@@ -39,6 +39,13 @@ jobs:
             vcpkg_triplet: arm64-osx
             cmake_osx_arch: arm64
 
+          - os: macos-15-intel
+            alias: macOS-x64
+            cmake_preset: Darwin
+            shell_ext: .sh
+            vcpkg_triplet: x64-osx
+            cmake_osx_arch: x86_64
+
           - os: windows-latest
             alias: Windows-x64
             cmake_preset: Windows
@@ -134,6 +141,11 @@ jobs:
             vcpkg_triplet: arm64-osx
             cmake_osx_arch: arm64
 
+          - os: macos-15-intel
+            alias: macOS-x64
+            vcpkg_triplet: x64-osx
+            cmake_osx_arch: x86_64
+
           - os: windows-latest
             alias: Windows-x64
             vcpkg_triplet: x64-windows
@@ -202,7 +214,7 @@ jobs:
           CIBW_ENVIRONMENT_WINDOWS: CMAKE_GENERATOR="Visual Studio 17 2022"
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: auditwheel repair -w {dest_dir} {wheel}
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
-          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: delvewheel repair -w {dest_dir} {wheel}
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
           CIBW_TEST_REQUIRES: pytest numpy
           CIBW_TEST_COMMAND: pytest {package}/tests -v --import-mode=importlib
 

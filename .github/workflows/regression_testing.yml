@@ -29,7 +29,21 @@ jobs:
             cmake_preset: Windows
             shell_ext: .bat
             vcpkg_triplet: x64-windows
-            cmake_osx_arch: ""
+            cmake_osx_arch: "" 
+          
+          - os: macos-latest
+            alias: macOS-arm64
+            cmake_preset: Darwin
+            shell_ext: .sh
+            vcpkg_triplet: arm64-osx
+            cmake_osx_arch: arm64
+
+          - os: macos-15-intel
+            alias: macOS-x64
+            cmake_preset: Darwin
+            shell_ext: .sh
+            vcpkg_triplet: x64-osx
+            cmake_osx_arch: x86_64
 
     runs-on: ${{ matrix.os }}
     steps:
