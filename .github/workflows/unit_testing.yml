@@ -194,10 +194,10 @@ jobs:
           output-dir: ./python/wheelhouse
         env:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-          CIBW_BUILD_VERBOSITY: 1
+          CIBW_BUILD_VERBOSITY: 3
           CIBW_BEFORE_BUILD_LINUX: pip install ninja
           CIBW_BEFORE_BUILD_MACOS: brew install ninja libomp && pip install delocate
-          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0 CMAKE_OSX_DEPLOYMENT_TARGET=15.0
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0 CMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
           CIBW_BEFORE_BUILD_WINDOWS: pip install delvewheel
           CIBW_ENVIRONMENT_WINDOWS: CMAKE_GENERATOR="Visual Studio 17 2022"
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: auditwheel repair -w {dest_dir} {wheel}

@@ -58,5 +58,7 @@ setup(
           if "CMAKE_OSX_ARCHITECTURES" in os.environ else []),
         *os.getenv("OPENSWMM_CMAKE_ARGS", "").split(),
     ],
-    include_package_data=True,
+    package_data={
+        "": ["*.pxd", "*.pyx", "*.pyi"],
+    },
 )

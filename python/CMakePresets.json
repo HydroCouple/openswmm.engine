@@ -112,7 +112,7 @@
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
                 "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
-                "CMAKE_EXE_LINKER_FLAGS": "-Wl, -flto",
+                "CMAKE_EXE_LINKER_FLAGS": "-flto",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
                 "CMAKE_C_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
                 "CMAKE_CXX_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
