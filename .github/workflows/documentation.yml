@@ -92,7 +92,7 @@ jobs:
 # ─────────────────────────────────────────────────────────────────────────────
   deploy:
     name: Deploy to GitHub Pages
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/swmm6_rel')
     needs: [build_python_docs, build_doxygen_docs]
     runs-on: ubuntu-latest
     permissions:
