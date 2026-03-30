@@ -59,6 +59,6 @@ setup(
         *os.getenv("OPENSWMM_CMAKE_ARGS", "").split(),
     ],
     package_data={
-        "": ["*.pxd", "*.pyx", "*.pyi"],
+        "": ["*.pxd", "*.pyx", "*.pyi", "*.so", "*.pyd", "*.dll", "*.dylib"],
     },
 )
