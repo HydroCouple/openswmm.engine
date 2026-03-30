@@ -66,12 +66,20 @@ function(add_engine_cython_module name pyx_file)
 
     python_extension_module(${target})
 
-    # scikit-build's python_extension_module() sets /EXPORT:PyInit_<target>
-    # on MSVC, but our target is "engine_<name>" while Cython emits
-    # PyInit_<name> (from the output filename).  Override to match.
+    # scikit-build's python_extension_module() generates an export list based
+    # on the TARGET name (engine_<name>), but Cython emits PyInit_<name>
+    # (from the output filename).  The mismatch causes PyInit_<name> to be
+    # localized on Linux (version script) and missing on Windows (/EXPORT).
+    # Override the link flags to export the correct symbol on each platform.
     if(MSVC)
         set_target_properties(${target} PROPERTIES LINK_FLAGS
             "/EXPORT:PyInit_${name}"
+        )
+    elseif(UNIX AND NOT APPLE)
+        set(_export_map "${CMAKE_CURRENT_BINARY_DIR}/${name}_exports.map")
+        file(WRITE ${_export_map} "{ global: PyInit_${name}; local: *; };\n")
+        set_target_properties(${target} PROPERTIES LINK_FLAGS
+            "-Wl,--version-script=${_export_map}"
         )
     endif()
 

@@ -2,22 +2,25 @@
     "version": 3,
     "configurePresets": [
         {
-            "name": "default-debug",
-            "generator": "Ninja", 
+            "name": "base",
+            "hidden": true,
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES"
+            }
+        },
+        {
+            "name": "base-debug",
+            "hidden": true,
+            "inherits": "base",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
         {
-            "name": "default",
-            "generator": "Ninja",
-            "cacheVariables": {
-            }
-        },
-        {
             "name": "Windows",
-            "inherits": "default",
-            "description": "Windows build using Visual Studio generator",
+            "inherits": "base",
+            "description": "Windows release build",
             "generator": "Visual Studio 17 2022",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
@@ -26,12 +29,7 @@
                 "CMAKE_EXE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
                 "CMAKE_SHARED_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
                 "CMAKE_MODULE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-                "CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS": "OFF",
-                "CMAKE_C_FLAGS_RELEASE": "/O2 /GL /fp:precise /W4",
-                "CMAKE_CXX_FLAGS_RELEASE": "/O2 /GL /fp:precise /W4",
-                "CMAKE_C_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise",
-                "CMAKE_CXX_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise" 
+                "CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS": "OFF"
             },
             "condition": {
                 "type": "equals",
@@ -41,17 +39,13 @@
         },
         {
             "name": "Windows-debug",
-            "inherits": "default-debug",
-            "description": "Windows build for debugging using Visual Studio generator",
+            "inherits": "base-debug",
+            "description": "Windows debug build",
             "generator": "Visual Studio 17 2022",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_C_FLAGS": "/Zi /Od /DDEBUG /W4 /fp:precise",
                 "CMAKE_CXX_FLAGS": "/Zi /Od /DDEBUG /W4 /fp:precise",
-                "CMAKE_EXE_LINKER_FLAGS": "/DEBUG",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-                "CMAKE_C_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise",
-                "CMAKE_CXX_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise"
+                "CMAKE_EXE_LINKER_FLAGS": "/DEBUG"
             },
             "condition": {
                 "type": "equals",
@@ -61,21 +55,15 @@
         },
         {
             "name": "Linux",
-            "inherits": "default",
-            "description": "Linux build using Ninja generator",
-            "generator": "Ninja",
+            "inherits": "base",
+            "description": "Linux release build",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS": "-O2 -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -ffloat-store",
-                "CMAKE_CXX_FLAGS": "-O2 -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -ffloat-store",
+                "CMAKE_C_FLAGS": "-O2 -fdata-sections -ffunction-sections -fno-fast-math -ffp-contract=off -fexcess-precision=standard -ffloat-store -Wall -Wextra",
+                "CMAKE_CXX_FLAGS": "-O2 -fdata-sections -ffunction-sections -fno-fast-math -ffp-contract=off -fexcess-precision=standard -ffloat-store -Wall -Wextra",
                 "CMAKE_EXE_LINKER_FLAGS": "-Wl,--gc-sections",
                 "CMAKE_SHARED_LINKER_FLAGS": "-Wl,--gc-sections",
-                "CMAKE_MODULE_LINKER_FLAGS": "-Wl,--export-dynamic",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-                "CMAKE_C_FLAGS_RELEASE": "-O2 -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -ffloat-store",
-                "CMAKE_CXX_FLAGS_RELEASE": "-O2 -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -ffloat-store",
-                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -ffloat-store",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -ffloat-store"
+                "CMAKE_MODULE_LINKER_FLAGS": ""
             },
             "condition": {
                 "type": "equals",
@@ -85,17 +73,12 @@
         },
         {
             "name": "Linux-debug",
-            "inherits": "default-debug",
-            "description": "Linux build for debugging using Ninja generator",
-            "generator": "Ninja",
+            "inherits": "base-debug",
+            "description": "Linux debug build",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -ffloat-store",
-                "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -ffloat-store",
-                "CMAKE_EXE_LINKER_FLAGS": "-g",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -ffloat-store",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -ffloat-store"
+                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -fno-fast-math -ffp-contract=off -fexcess-precision=standard -ffloat-store -Wall -Wextra",
+                "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -fno-fast-math -ffp-contract=off -fexcess-precision=standard -ffloat-store -Wall -Wextra",
+                "CMAKE_EXE_LINKER_FLAGS": "-g"
             },
             "condition": {
                 "type": "equals",
@@ -105,21 +88,15 @@
         },
         {
             "name": "Darwin",
-            "inherits": "default",
-            "description": "macOS build using XCode generator",
-            "generator": "Ninja",
+            "inherits": "base",
+            "description": "macOS release build",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
-                "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
+                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
+                "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
                 "CMAKE_EXE_LINKER_FLAGS": "-flto",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-                "CMAKE_C_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
-                "CMAKE_CXX_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
                 "CMAKE_SHARED_LINKER_FLAGS": "-flto -twolevel_namespace -undefined dynamic_lookup",
-                "CMAKE_MODULE_LINKER_FLAGS": "-flto -undefined dynamic_lookup",
-                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math"
+                "CMAKE_MODULE_LINKER_FLAGS": "-flto -undefined dynamic_lookup"
             },
             "condition": {
                 "type": "equals",
@@ -129,19 +106,14 @@
         },
         {
             "name": "Darwin-debug",
-            "inherits": "default-debug",
-            "description": "macOS build for debugging using Ninja generator",
-            "generator": "Ninja",
+            "inherits": "base-debug",
+            "description": "macOS debug build",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
-                "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
+                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
+                "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
                 "CMAKE_EXE_LINKER_FLAGS": "-g",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
                 "CMAKE_SHARED_LINKER_FLAGS": "-twolevel_namespace -undefined dynamic_lookup",
-                "CMAKE_MODULE_LINKER_FLAGS": "-undefined dynamic_lookup",
-                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math"
+                "CMAKE_MODULE_LINKER_FLAGS": "-undefined dynamic_lookup"
             },
             "condition": {
                 "type": "equals",
@@ -152,57 +124,31 @@
     ],
     "buildPresets": [
         {
-            "name": "default",
-            "hidden": true,
-            "configurePreset": "default"
-        },
-        {
-            "name": "default-debug",
-            "hidden": true,
-            "configurePreset": "default-debug"
-        },
-        {
             "name": "Windows",
             "configurePreset": "Windows",
-            "targets": [
-                "package"
-            ]
+            "targets": ["package"]
         },
         {
             "name": "Windows-debug",
-            "configurePreset": "Windows-debug",
-            "targets": [
-                "package"
-            ]
+            "configurePreset": "Windows-debug"
         },
         {
-
             "name": "Linux",
             "configurePreset": "Linux",
-            "targets": [
-                "package"
-            ]
+            "targets": ["package"]
         },
         {
             "name": "Linux-debug",
-            "configurePreset": "Linux-debug",
-            "targets": [
-                "package"
-            ]
+            "configurePreset": "Linux-debug"
         },
         {
             "name": "Darwin",
             "configurePreset": "Darwin",
-            "targets": [
-                "package"
-            ]
+            "targets": ["package"]
         },
         {
             "name": "Darwin-debug",
-            "configurePreset": "Darwin-debug",
-            "targets": [
-                "package"
-            ]
+            "configurePreset": "Darwin-debug"
         }
     ]
 }
