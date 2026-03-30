@@ -102,7 +102,7 @@ cmake.minimum-version = "3.21"
 # ============================================================================
 [tool.cibuildwheel]
 build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
-skip  = "*-musllinux_*"
+skip  = "*-musllinux_* *-win32 *-manylinux_i686"
 
 [tool.cibuildwheel.linux]
 before-all = "yum install -y ninja-build || apt-get install -y ninja-build"
