@@ -32,26 +32,26 @@ jobs:
             vcpkg_triplet: x64-linux
             cmake_osx_arch: ""
 
-          # - os: macos-latest
-          #   alias: macOS-arm64
-          #   cmake_preset: Darwin
-          #   shell_ext: .sh
-          #   vcpkg_triplet: arm64-osx
-          #   cmake_osx_arch: arm64
+          - os: macos-latest
+            alias: macOS-arm64
+            cmake_preset: Darwin
+            shell_ext: .sh
+            vcpkg_triplet: arm64-osx
+            cmake_osx_arch: arm64
 
-          # - os: macos-15-intel
-          #   alias: macOS-x64
-          #   cmake_preset: Darwin
-          #   shell_ext: .sh
-          #   vcpkg_triplet: x64-osx
-          #   cmake_osx_arch: x86_64
+          - os: macos-15-intel
+            alias: macOS-x64
+            cmake_preset: Darwin
+            shell_ext: .sh
+            vcpkg_triplet: x64-osx
+            cmake_osx_arch: x86_64
 
-          # - os: windows-latest
-          #   alias: Windows-x64
-          #   cmake_preset: Windows
-          #   shell_ext: .bat
-          #   vcpkg_triplet: x64-windows
-          #   cmake_osx_arch: ""
+          - os: windows-latest
+            alias: Windows-x64
+            cmake_preset: Windows
+            shell_ext: .bat
+            vcpkg_triplet: x64-windows
+            cmake_osx_arch: ""
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -136,20 +136,20 @@ jobs:
             vcpkg_triplet: x64-linux
             cmake_osx_arch: ""
 
-          # - os: macos-latest
-          #   alias: macOS-arm64
-          #   vcpkg_triplet: arm64-osx
-          #   cmake_osx_arch: arm64
+          - os: macos-latest
+            alias: macOS-arm64
+            vcpkg_triplet: arm64-osx
+            cmake_osx_arch: arm64
 
-          # - os: macos-15-intel
-          #   alias: macOS-x64
-          #   vcpkg_triplet: x64-osx
-          #   cmake_osx_arch: x86_64
+          - os: macos-15-intel
+            alias: macOS-x64
+            vcpkg_triplet: x64-osx
+            cmake_osx_arch: x86_64
 
-          # - os: windows-latest
-          #   alias: Windows-x64
-          #   vcpkg_triplet: x64-windows
-          #   cmake_osx_arch: ""
+          - os: windows-latest
+            alias: Windows-x64
+            vcpkg_triplet: x64-windows
+            cmake_osx_arch: ""
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -199,33 +199,16 @@ jobs:
           python -m pytest -v tests
           mv openswmm_src openswmm
 
-      - name: Clean stale build cache
-        run: python -c "import shutil, os; shutil.rmtree('python/_skbuild', ignore_errors=True)"
-
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v2.23.2
-        with:
-          package-dir: ./python
-          output-dir: ./python/wheelhouse
+      - name: Build wheel
+        working-directory: python
         env:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-          CIBW_BUILD_VERBOSITY: 3
-          CIBW_BEFORE_BUILD_LINUX: pip install ninja
-          CIBW_BEFORE_BUILD_MACOS: brew install ninja libomp && pip install delocate
-          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0 CMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
-          CIBW_BEFORE_BUILD_WINDOWS: pip install delvewheel
-          CIBW_ENVIRONMENT_WINDOWS: CMAKE_GENERATOR="Visual Studio 17 2022"
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: auditwheel repair -w {dest_dir} {wheel}
-          CIBW_REPAIR_WHEEL_COMMAND_MACOS: delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
-          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
-          CIBW_TEST_REQUIRES: pytest numpy
-          CIBW_TEST_COMMAND: pytest {package}/tests -v --import-mode=importlib
+          CMAKE_GENERATOR: ${{ runner.os == 'Windows' && 'Visual Studio 17 2022' || '' }}
+        run: python setup.py bdist_wheel
 
-      - name: Upload Python wheels
+      - name: Upload Python wheel
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: python-wheels-${{ matrix.vcpkg_triplet }}
-          path: |
-            python/wheelhouse/*.whl
-            python/dist/*.whl
+          name: python-wheel-${{ matrix.vcpkg_triplet }}
+          path: python/dist/*.whl
