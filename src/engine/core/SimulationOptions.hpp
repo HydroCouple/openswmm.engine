@@ -13,7 +13,7 @@
  * - `crs`: Coordinate reference system (EPSG code or PROJ string). R06.
  * - `ext_options`: Key-value map for unknown/extension option keys. R05.
  *
- * @defgroup engine_core Core Engine
+ * @defgroup engine_core Core Engine The core engine module, including lifecycle management, simulation options, and shared utilities.
  * @ingroup  new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>

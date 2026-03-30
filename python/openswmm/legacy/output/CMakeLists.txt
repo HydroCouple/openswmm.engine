@@ -25,9 +25,10 @@ set_target_properties(_output
 )
 
 # Ensure PyInit__output is exported when global flags include
-# -fvisibility=hidden.
+# -fvisibility=hidden.  -fno-lto prevents LTO from stripping it.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(_output PRIVATE -fvisibility=default)
+    target_compile_options(_output PRIVATE -fvisibility=default -fno-lto)
+    target_link_options(_output PRIVATE -fno-lto)
 endif()
 
 if(APPLE)

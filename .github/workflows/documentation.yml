@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -49,7 +49,7 @@ jobs:
           sphinx-build -b html python/docs python/docs/_build/html
 
       - name: Upload Python docs artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: python-docs
           path: python/docs/_build/html/
@@ -68,7 +68,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Doxygen and Graphviz
         run: sudo apt-get install -y doxygen graphviz
@@ -78,7 +78,7 @@ jobs:
         run: doxygen Doxyfile
 
       - name: Upload Doxygen docs artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: doxygen-docs
           path: docs/html/
@@ -105,13 +105,13 @@ jobs:
 
     steps:
       - name: Download Doxygen docs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: doxygen-docs
           path: site/
 
       - name: Download Python docs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: python-docs
           path: site/python/
@@ -120,11 +120,11 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Upload combined site artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: site/
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 

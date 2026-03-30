@@ -49,10 +49,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout vcpkg
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: microsoft/vcpkg
           ref: 2025.02.14
@@ -81,7 +81,7 @@ jobs:
           chmod +x vcpkg
 
       - name: Export GitHub Actions cache variables
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
@@ -107,7 +107,7 @@ jobs:
 
       - name: Upload build artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: engine-${{ matrix.vcpkg_triplet }}
           path: |
@@ -142,7 +142,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install OpenMP and Ninja (macOS)
         if: runner.os == 'macOS'
@@ -202,13 +202,13 @@ jobs:
           CIBW_ENVIRONMENT_WINDOWS: CMAKE_GENERATOR="Visual Studio 17 2022"
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: auditwheel repair -w {dest_dir} {wheel}
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
-          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: delvewheel repair -w {dest_dir} {wheel}
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: delvewheel repair --add-path {package}/openswmm/engine;{package}/openswmm/legacy/engine;{package}/openswmm/legacy/output -w {dest_dir} {wheel}
           CIBW_TEST_REQUIRES: pytest numpy
           CIBW_TEST_COMMAND: pytest {package}/tests -v
 
       - name: Upload Python wheels
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: python-wheels-${{ matrix.vcpkg_triplet }}
           path: |

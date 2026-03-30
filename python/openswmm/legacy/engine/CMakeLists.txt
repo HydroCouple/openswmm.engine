@@ -26,9 +26,10 @@ set_target_properties(_solver
 )
 
 # Ensure PyInit__solver is exported when global flags include
-# -fvisibility=hidden.
+# -fvisibility=hidden.  -fno-lto prevents LTO from stripping it.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(_solver PRIVATE -fvisibility=default)
+    target_compile_options(_solver PRIVATE -fvisibility=default -fno-lto)
+    target_link_options(_solver PRIVATE -fno-lto)
 endif()
 
 if(APPLE)

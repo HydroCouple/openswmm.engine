@@ -47,8 +47,12 @@ function(add_engine_cython_module name pyx_file)
 
     # Python extension entry points (PyInit_*) must remain exported even when
     # the global preset enables -fvisibility=hidden.
+    # -fno-lto: GCC/Clang LTO treats PyInit_* as dead code because nothing
+    # inside the module calls it (Python loads it via dlsym).  Disable LTO
+    # for Cython wrappers — it provides no measurable benefit here.
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(${target} PRIVATE -fvisibility=default)
+        target_compile_options(${target} PRIVATE -fvisibility=default -fno-lto)
+        target_link_options(${target} PRIVATE -fno-lto)
     endif()
 
     target_link_libraries(${target}

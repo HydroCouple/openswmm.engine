@@ -24,8 +24,10 @@ set_target_properties(_openswmm
 )
 
 # Keep PyInit__openswmm exported with global hidden visibility flags.
+# -fno-lto prevents GCC/Clang LTO from stripping the PyInit symbol.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(_openswmm PRIVATE -fvisibility=default)
+    target_compile_options(_openswmm PRIVATE -fvisibility=default -fno-lto)
+    target_link_options(_openswmm PRIVATE -fno-lto)
 endif()
 
 # Install the openswmmcore module

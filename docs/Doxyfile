@@ -1983,7 +1983,7 @@ MATHJAX_EXTENSIONS     = ams
 # example see the documentation.
 # This tag requires that the tag USE_MATHJAX is set to YES.
 
-MATHJAX_CODEFILE       =
+MATHJAX_CODEFILE       = ./custom/mathjax-config.js
 
 # When the SEARCHENGINE tag is enabled Doxygen will generate a search box for
 # the HTML output. The underlying search engine uses JavaScript and DHTML and
