@@ -71,8 +71,8 @@ struct RDIIGroupSoA {
     std::vector<UHResponseData> uh_data;
 
     std::vector<int>    rain_interval;  ///< Rain processing interval (sec) per group
-    std::vector<double> rain_accum;     ///< Accumulated rainfall depth within current interval
     std::vector<double> time_accum;     ///< Accumulated time (sec) within current interval
+    std::vector<double> rain_at_start;  ///< Rainfall (in/hr) captured at start of interval
 
     void resize(int n);
 };

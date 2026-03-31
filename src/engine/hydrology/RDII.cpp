@@ -27,8 +27,8 @@ void RDIIGroupSoA::resize(int n) {
     area.assign(un, 0.0);
     uh_data.resize(un * 3);  // 3 responses per group
     rain_interval.assign(un, 300);
-    rain_accum.assign(un, 0.0);
     time_accum.assign(un, 0.0);
+    rain_at_start.assign(un, 0.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -231,13 +231,24 @@ static double applyIA(const UnitHydParams& uh, UHResponseData& rd,
 static void updateDryPeriod(UHResponseData& rd, double rainDepth,
                             int rainInterval) {
     if (rainDepth > 0.0) {
-        rd.has_past_rain = 1;
+        // If previous dry period was long enough, begin a new RDII event
+        // by clearing the buffer and resetting period to 0
+        // (matching legacy rdii.c lines 1278-1286)
+        if (rd.dry_seconds >=
+            static_cast<long>(rainInterval) * rd.max_periods) {
+            for (int i = 0; i < rd.max_periods; ++i)
+                rd.past_rain[static_cast<size_t>(i)] = 0.0;
+            rd.period = 0;
+        }
         rd.dry_seconds = 0;
+        rd.has_past_rain = 1;
     } else {
         rd.dry_seconds += rainInterval;
         if (rd.dry_seconds >=
-            static_cast<long>(rd.max_periods) * rainInterval) {
+            static_cast<long>(rainInterval) * rd.max_periods) {
             rd.has_past_rain = 0;
+        } else {
+            rd.has_past_rain = 1;
         }
     }
 }
@@ -263,6 +274,12 @@ void RDIISolver::computeAll(SimulationContext& ctx, double rainfall,
 
         int ri = groups_.rain_interval[ug];
 
+        // Capture rainfall at start of each interval (matching legacy
+        // gage_setState at gageDate, which is the interval start time).
+        if (groups_.time_accum[ug] == 0.0) {
+            groups_.rain_at_start[ug] = rainfall;
+        }
+
         // Track elapsed time within current rain interval
         groups_.time_accum[ug] += dt;
 
@@ -271,11 +288,12 @@ void RDIISolver::computeAll(SimulationContext& ctx, double rainfall,
             // Not yet at rain interval boundary — continue with existing
             // convolution from buffer for continuous RDII output.
         } else {
-            // Full interval elapsed — compute rainfall depth in one step
-            // matching legacy: rainDepth = Gage[g].rainfall * rainInterval / 3600
-            // This avoids floating-point accumulation error from summing
-            // many small dt increments.
-            double rainDepth = rainfall * static_cast<double>(ri) / 3600.0;
+            // Full interval elapsed — compute rainfall depth using the
+            // rainfall rate captured at the START of the interval (matching
+            // legacy: gage_setState(g, gageDate) where gageDate is the
+            // interval start time).
+            double rainDepth = groups_.rain_at_start[ug]
+                             * static_cast<double>(ri) / 3600.0;
             groups_.time_accum[ug] = 0.0;
 
             // Store into per-response buffers with IA subtraction

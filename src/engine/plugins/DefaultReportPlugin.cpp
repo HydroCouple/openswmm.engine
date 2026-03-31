@@ -536,26 +536,53 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     // =====================================================================
     if (has_gw) {
         const auto& mb = ctx.mass_balance;
-        double total_area_ft2 = 0.0;
-        for (int i = 0; i < ctx.n_subcatches(); ++i)
-            total_area_ft2 += ctx.subcatches.area[static_cast<std::size_t>(i)] * ucf::ACRES_TO_FT2;
+
+        // Compute total GW area (ft²) for depth conversion
+        double gw_area_ft2 = 0.0;
+        for (int i = 0; i < ctx.n_subcatches(); ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (ctx.subcatches.gw_aquifer[ui] >= 0)
+                gw_area_ft2 += ctx.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+        }
+        if (gw_area_ft2 <= 0.0) gw_area_ft2 = 1.0;
+
+        // Volume conversion: ft³ → acre-ft (multiply by UCF(LANDAREA) for US)
+        // Legacy: totals->x * UCF(LENGTH) * UCF(LANDAREA) — for US = x * 1.0 * 2.2957e-5
+        double ucf_vol = 1.0 / ucf::ACRES_TO_FT2; // ft³ → acre-ft
+        // Depth conversion: ft³ / gwArea → ft → inches (multiply by UCF(RAINDEPTH))
+        double ucf_dep = ucf::Ucf[ucf::RAINDEPTH][0]; // ft → in = 12.0
 
         std::fprintf(f, "\n  **************************        Volume         Depth");
         std::fprintf(f, "\n  Groundwater Continuity         acre-feet        inches");
         std::fprintf(f, "\n  **************************     ---------       -------");
 
-        // Note: these fields would need proper GW mass balance tracking in the engine
-        // For now, write zeros for fields not yet tracked
-        std::fprintf(f, "\n  Initial Storage ..........%14.3f%14.3f", 0.0, 0.0);
-        std::fprintf(f, "\n  Infiltration .............%14.3f%14.3f", 0.0, 0.0);
-        std::fprintf(f, "\n  Upper Zone ET ............%14.3f%14.3f", 0.0, 0.0);
-        std::fprintf(f, "\n  Lower Zone ET ............%14.3f%14.3f", 0.0, 0.0);
-        std::fprintf(f, "\n  Deep Percolation .........%14.3f%14.3f", 0.0, 0.0);
-        std::fprintf(f, "\n  Groundwater Flow .........%14.3f%14.3f",
-            ctx.mass_balance.routing_gw_inflow / ucf::ACRES_TO_FT2,
-            ctx.mass_balance.routing_gw_inflow * ucf::FT3_TO_MGAL);
-        std::fprintf(f, "\n  Final Storage ............%14.3f%14.3f", 0.0, 0.0);
-        std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", 0.0);
+        auto gwRow = [&](const char* label, double vol_ft3) {
+            std::fprintf(f, "\n  %s%14.3f%14.3f",
+                label, vol_ft3 * ucf_vol,
+                vol_ft3 / gw_area_ft2 * ucf_dep);
+        };
+
+        gwRow("Initial Storage ..........", mb.gw_init_storage);
+        gwRow("Infiltration .............", mb.gw_infil);
+        gwRow("Upper Zone ET ............", mb.gw_upper_evap);
+        gwRow("Lower Zone ET ............", mb.gw_lower_evap);
+        gwRow("Deep Percolation .........", mb.gw_lower_perc);
+        gwRow("Groundwater Flow .........", mb.gw_lateral_flow);
+        gwRow("Final Storage ............", mb.gw_final_storage);
+
+        // Continuity error
+        double totalIn  = mb.gw_infil + mb.gw_init_storage;
+        double totalOut = mb.gw_upper_evap + mb.gw_lower_evap + mb.gw_lower_perc
+                        + mb.gw_lateral_flow + mb.gw_final_storage;
+        double pctError = 0.0;
+        if (std::fabs(totalIn - totalOut) < 1.0)
+            pctError = 0.0;
+        else if (totalIn > 0.0)
+            pctError = 100.0 * (1.0 - totalOut / totalIn);
+        else if (totalOut > 0.0)
+            pctError = 100.0 * (totalIn / totalOut - 1.0);
+
+        std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", pctError);
 
         WRITE(f, "");
         WRITE(f, "");

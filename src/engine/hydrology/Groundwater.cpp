@@ -9,6 +9,8 @@
  */
 
 #include "Groundwater.hpp"
+#include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
 #include "../math/SIMD.hpp"
 #include <cmath>
 #include <algorithm>
@@ -123,7 +125,7 @@ void GWSolver::batchGWFlow(
 // Execute — all subcatchments batch
 // ============================================================================
 
-void GWSolver::execute(SimulationContext& /*ctx*/, double dt, double max_evap,
+void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
                        const double* infil_rate, const double* sw_head) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
@@ -212,6 +214,25 @@ void GWSolver::execute(SimulationContext& /*ctx*/, double dt, double max_evap,
         soa_.theta[ui] = std::min(soa_.theta[ui], soa_.porosity[ui]);
         soa_.lower_depth[ui] = std::max(soa_.lower_depth[ui], 0.0);
         soa_.lower_depth[ui] = std::min(soa_.lower_depth[ui], soa_.total_depth[ui]);
+    }
+
+    // 6. Accumulate GW mass balance totals (matching legacy updateMassBal)
+    // Legacy stores volumes as ft³ = rate (ft/sec) × area (ft²) × dt (sec)
+    // We accumulate per-subcatchment contributions using subcatch area
+    auto& mb = ctx.mass_balance;
+    for (int i = 0; i < n; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (soa_.total_depth[ui] <= 0.0) continue; // skip subcatches without GW
+
+        // Subcatchment area in ft² (from SubcatchData.area which is in acres)
+        double area = ctx.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+        double ft2sec = area * dt;
+
+        mb.gw_infil        += infil_rate[i] * ft2sec;
+        mb.gw_upper_evap   += soa_.upper_evap[ui] * ft2sec;
+        mb.gw_lower_evap   += soa_.lower_evap[ui] * ft2sec;
+        mb.gw_lower_perc   += soa_.deep_loss[ui] * ft2sec;
+        mb.gw_lateral_flow += soa_.gw_flow[ui] * ft2sec;
     }
 }
 

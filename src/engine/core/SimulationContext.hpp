@@ -442,6 +442,16 @@ struct SimulationContext {
         // User-forced volumes (diagnostic — subset of routing_external)
         double routing_forcing_inflow = 0.0; ///< Cumulative user-forced lateral inflow (ft3)
 
+        // Groundwater mass balance totals (all in feet — depth per unit area)
+        // Matches legacy TGwaterTotals
+        double gw_infil         = 0.0; ///< Cumulative infiltration to GW (ft)
+        double gw_upper_evap    = 0.0; ///< Cumulative upper zone evaporation (ft)
+        double gw_lower_evap    = 0.0; ///< Cumulative lower zone evaporation (ft)
+        double gw_lower_perc    = 0.0; ///< Cumulative deep percolation (ft)
+        double gw_lateral_flow  = 0.0; ///< Cumulative lateral GW flow (ft)
+        double gw_init_storage  = 0.0; ///< Initial GW storage (ft)
+        double gw_final_storage = 0.0; ///< Final GW storage (ft)
+
         // Per-step accumulators (reset each step for reporting)
         double step_flooding     = 0.0;
         double step_outflow      = 0.0;

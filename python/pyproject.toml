@@ -86,10 +86,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage    = "https://github.com/cbuahin/OpenSWMMCore"
-Repository  = "https://github.com/cbuahin/OpenSWMMCore"
-"Bug Tracker" = "https://github.com/cbuahin/OpenSWMMCore/issues"
-Changelog   = "https://github.com/cbuahin/OpenSWMMCore/blob/main/CHANGELOG.md"
+Homepage    = "https://github.com/hydrocouple/openswmm.engine/python"
+Repository  = "https://github.com/hydrocouple/openswmm.engine"
+"Bug Tracker" = "https://github.com/hydrocouple/openswmm.engine/issues"
+Changelog   = "https://github.com/hydrocouple/openswmm.engine/blob/main/CHANGELOG.md"
 
 # ============================================================================
 # scikit-build configuration

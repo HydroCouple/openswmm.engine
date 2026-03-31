@@ -214,7 +214,7 @@ endif()
 
 # Simplified CPack
 set(CPACK_PACKAGE_NAME "openswmm-engine")
-set(CPACK_GENERATOR "ZIP" "TGZ")
+set(CPACK_GENERATOR "ZIP")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_FILE_NAME "openswmm-engine-${OPENSWMM_FULL_VERSION}")
 set(CPACK_PACKAGE_VENDOR "https://hydrocouple.org")

@@ -880,24 +880,38 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
  * @param dt_runoff  Runoff substep duration (seconds).
  */
 void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
-    // Get surface water head at each node for GW coupling
-    std::vector<double> sw_head(static_cast<std::size_t>(ctx_.n_nodes()));
-    for (int j = 0; j < ctx_.n_nodes(); ++j) {
-        auto uj = static_cast<std::size_t>(j);
-        sw_head[uj] = ctx_.nodes.depth[uj] + ctx_.nodes.invert_elev[uj];
-    }
-    std::vector<double> infil(static_cast<std::size_t>(ctx_.n_subcatches()), 0.0);
-    groundwater_.execute(ctx_, dt_runoff, climate_.evap_rate,
-                         infil.data(), sw_head.data());
-    // Scatter GW lateral flow to nodes (P8-G08)
-    for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+    int ns = ctx_.n_subcatches();
+
+    // Build per-subcatchment sw_head from each subcatch's GW receiving node
+    // (gw_node is the node that receives GW lateral flow, may differ from
+    //  outlet_node which receives surface runoff)
+    std::vector<double> sw_head(static_cast<std::size_t>(ns), 0.0);
+    for (int i = 0; i < ns; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        int out = ctx_.subcatches.outlet_node[ui];
-        if (out >= 0 && out < ctx_.n_nodes()) {
-            ctx_.nodes.lat_flow[static_cast<std::size_t>(out)] +=
-                groundwater_.state().gw_flow[ui];
-            ctx_.mass_balance.routing_gw_inflow +=
-                groundwater_.state().gw_flow[ui] * dt_runoff;
+        int gw_node = ctx_.subcatches.gw_node[ui];
+        if (gw_node < 0) gw_node = ctx_.subcatches.outlet_node[ui];
+        if (gw_node >= 0 && gw_node < ctx_.n_nodes()) {
+            auto un = static_cast<std::size_t>(gw_node);
+            sw_head[ui] = ctx_.nodes.depth[un] + ctx_.nodes.invert_elev[un];
+        }
+    }
+
+    // Pass actual infiltration rate to groundwater (upper zone percolation input)
+    groundwater_.execute(ctx_, dt_runoff, climate_.evap_rate,
+                         ctx_.subcatches.infil_loss.data(), sw_head.data());
+
+    // Scatter GW lateral flow to nodes (P8-G08)
+    for (int i = 0; i < ns; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        // GW flow goes to gw_node, not outlet_node
+        int gw_node = ctx_.subcatches.gw_node[ui];
+        if (gw_node < 0) gw_node = ctx_.subcatches.outlet_node[ui];
+        if (gw_node >= 0 && gw_node < ctx_.n_nodes()) {
+            double q = groundwater_.state().gw_flow[ui];
+            if (q > 0.0) {
+                ctx_.nodes.lat_flow[static_cast<std::size_t>(gw_node)] += q;
+                ctx_.mass_balance.routing_gw_inflow += q * dt_runoff;
+            }
         }
     }
 }
@@ -1552,6 +1566,23 @@ int SWMMEngine::end() noexcept {
         return SWMM_ERR_WRONG_STATE;
     }
 
+    // Compute final GW storage for mass balance reporting
+    {
+        auto& gw = groundwater_.state();
+        ctx_.mass_balance.gw_final_storage = 0.0;
+        for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (gw.total_depth[ui] <= 0.0) continue;
+            double upper_d = gw.total_depth[ui] - gw.lower_depth[ui];
+            double vol = gw.theta[ui] * upper_d + gw.porosity[ui] * gw.lower_depth[ui];
+            double area = ctx_.subcatches.area[ui] * 43560.0;
+            ctx_.mass_balance.gw_final_storage += vol * area;
+        }
+    }
+
+    // Build routing time step histogram for report
+    ctx_.routing_stats.build_histogram();
+
     // Phase 5: drain and join the IO thread (all writes must complete first)
     io_thread_.stop();
 
@@ -1875,10 +1906,72 @@ void SWMMEngine::initHydrology() noexcept {
     // 4. Snow solver
     snow_.init(ctx_.n_subcatches());
 
-    // 5. Groundwater solver
-    groundwater_.init(ctx_.n_subcatches());
+    // 5. Climate: transfer evaporation data from options to climate state
+    {
+        int evap_type = ctx_.options.evap_type;
+        if (evap_type == 0) {
+            // CONSTANT
+            climate_.evap_method = climate::EvapMethod::CONSTANT;
+            climate_.evap_rate = ctx_.options.evap_values[0]
+                               / ucf::Ucf[ucf::EVAPRATE][0];
+        } else if (evap_type == 1) {
+            // MONTHLY
+            climate_.evap_method = climate::EvapMethod::MONTHLY;
+            for (int i = 0; i < 12; ++i)
+                climate_.monthly_evap[i] = ctx_.options.evap_values[i];
+        } else if (evap_type == 2) {
+            climate_.evap_method = climate::EvapMethod::TIMESERIES;
+        } else if (evap_type == 3) {
+            climate_.evap_method = climate::EvapMethod::TEMPERATURE;
+        } else if (evap_type == 4) {
+            climate_.evap_method = climate::EvapMethod::PAN;
+        }
+    }
 
-    // 6. LID solver
+    // 6. Groundwater solver: init and populate from parsed aquifer/GW data
+    groundwater_.init(ctx_.n_subcatches());
+    {
+        auto& gw = groundwater_.state();
+        int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
+        for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            int aq_idx = ctx_.subcatches.gw_aquifer[ui];
+            if (aq_idx < 0) continue;
+            auto uaq = static_cast<std::size_t>(aq_idx);
+
+            // Copy aquifer properties
+            gw.porosity[ui]         = ctx_.aquifers.porosity[uaq];
+            gw.field_cap[ui]        = ctx_.aquifers.field_capacity[uaq];
+            gw.wilt_point[ui]       = ctx_.aquifers.wilting_point[uaq];
+            gw.k_sat[ui]            = ctx_.aquifers.conductivity[uaq]
+                                      / ucf::Ucf[ucf::RAINFALL][unit_sys];
+            gw.k_slope[ui]          = ctx_.aquifers.conduct_slope[uaq];
+            gw.tension_slope[ui]    = ctx_.aquifers.tension_slope[uaq];
+            gw.upper_evap_frac[ui]  = ctx_.aquifers.upper_evap[uaq];
+            gw.lower_evap_depth[ui] = ctx_.aquifers.lower_evap[uaq]
+                                      / ucf::Ucf[ucf::LENGTH][unit_sys];
+            gw.lower_loss_coeff[ui] = ctx_.aquifers.lower_loss[uaq];
+            gw.total_depth[ui]      = (ctx_.subcatches.gw_surf_elev[ui]
+                                       - ctx_.aquifers.bottom_elev[uaq])
+                                      / ucf::Ucf[ucf::LENGTH][unit_sys];
+
+            // Copy GW lateral flow coefficients
+            gw.a1[ui]     = ctx_.subcatches.gw_a1[ui];
+            gw.b1[ui]     = ctx_.subcatches.gw_b1[ui];
+            gw.a2[ui]     = ctx_.subcatches.gw_a2[ui];
+            gw.b2[ui]     = ctx_.subcatches.gw_b2[ui];
+            gw.a3[ui]     = ctx_.subcatches.gw_a3[ui];
+            gw.h_star[ui] = ctx_.subcatches.gw_hstar[ui]
+                            / ucf::Ucf[ucf::LENGTH][unit_sys];
+
+            // Initial conditions from aquifer
+            gw.theta[ui]      = ctx_.aquifers.upper_moist[uaq];
+            gw.lower_depth[ui] = ctx_.aquifers.water_table_elev[uaq]
+                                 / ucf::Ucf[ucf::LENGTH][unit_sys];
+        }
+    }
+
+    // 7. LID solver
     lid_.init(ctx_);
 }
 
@@ -2078,6 +2171,21 @@ void SWMMEngine::initMassBalance() noexcept {
         auto uj = static_cast<std::size_t>(j);
         ctx_.mass_balance.runoff_init_store +=
             ctx_.subcatches.ponded_depth[uj] * ctx_.subcatches.area[uj];
+    }
+
+    // Record initial groundwater storage
+    // Legacy: GwaterTotals.initStorage += gwater_getVolume(j) * Subcatch[j].area
+    // gwater_getVolume = theta * upperDepth + porosity * lowerDepth
+    {
+        auto& gw = groundwater_.state();
+        for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (gw.total_depth[ui] <= 0.0) continue;
+            double upper_d = gw.total_depth[ui] - gw.lower_depth[ui];
+            double vol = gw.theta[ui] * upper_d + gw.porosity[ui] * gw.lower_depth[ui];
+            double area = ctx_.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+            ctx_.mass_balance.gw_init_storage += vol * area;
+        }
     }
 }
 
