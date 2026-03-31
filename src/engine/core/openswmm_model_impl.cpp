@@ -112,6 +112,62 @@ SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_pat
 }
 
 // ============================================================================
+// Title / notes access
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_title_get_count(SWMM_Engine engine, int* count) {
+    CHECK_HANDLE(engine);
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = static_cast<int>(to_engine(engine)->context().title_notes.size());
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_title_get_line(SWMM_Engine engine,
+                                          int index, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& notes = to_engine(engine)->context().title_notes;
+    if (index < 0 || index >= static_cast<int>(notes.size()))
+        return SWMM_ERR_BADPARAM;
+    std::strncpy(buf, notes[static_cast<std::size_t>(index)].c_str(),
+                 static_cast<std::size_t>(buflen - 1));
+    buf[buflen - 1] = '\0';
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_title_add_line(SWMM_Engine engine, const char* line) {
+    CHECK_HANDLE(engine);
+    if (!line) return SWMM_ERR_BADPARAM;
+    to_engine(engine)->context().title_notes.emplace_back(line);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_title_set(SWMM_Engine engine, const char* text) {
+    CHECK_HANDLE(engine);
+    if (!text) return SWMM_ERR_BADPARAM;
+    auto& notes = to_engine(engine)->context().title_notes;
+    notes.clear();
+    std::string input(text);
+    std::size_t pos = 0;
+    while (pos < input.size()) {
+        auto nl = input.find('\n', pos);
+        if (nl == std::string::npos) {
+            notes.push_back(input.substr(pos));
+            break;
+        }
+        notes.push_back(input.substr(pos, nl - pos));
+        pos = nl + 1;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_title_clear(SWMM_Engine engine) {
+    CHECK_HANDLE(engine);
+    to_engine(engine)->context().title_notes.clear();
+    return SWMM_OK;
+}
+
+// ============================================================================
 // OPTIONS access
 // ============================================================================
 

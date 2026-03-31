@@ -110,6 +110,11 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.links.stat_max_veloc,    0.0);
     grow(ctx.links.stat_max_filling,  0.0);
     grow(ctx.links.stat_time_surcharged, 0.0);
+    grow(ctx.links.stat_max_flow_date,    0.0);
+    grow(ctx.links.stat_time_full_upstream,  0.0);
+    grow(ctx.links.stat_time_full_dnstream,  0.0);
+    grow(ctx.links.stat_time_full_both,      0.0);
+    grow(ctx.links.stat_time_capacity_limited, 0.0);
 
     // Cross-section extended params (used by handle_xsections and PostParseResolver)
     grow(ctx.links.xsect_y_bot,       0.0);

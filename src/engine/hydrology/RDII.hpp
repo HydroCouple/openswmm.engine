@@ -39,17 +39,40 @@ struct UnitHydParams {
     double iaInit[12][3] = {}; ///< Initial IA used
 };
 
+/// Per-response (SHORT/MEDIUM/LONG) unit hydrograph data.
+/// Legacy equivalent: TUHData uh[3] inside TUHGroup.
+struct UHResponseData {
+    std::vector<double> past_rain;      ///< circular buffer of past rainfall depths
+    std::vector<int>    past_month;     ///< month for each past rainfall entry
+    int    period      = 0;             ///< current buffer write position
+    int    max_periods = 0;             ///< buffer capacity
+    int    has_past_rain = 0;           ///< true if any non-zero past rain
+    double ia_used     = 0.0;           ///< initial abstraction used so far
+    long   dry_seconds = 0;             ///< seconds since last non-zero rainfall
+
+    void allocate(int n) {
+        max_periods = n;
+        past_rain.assign(static_cast<std::size_t>(n), 0.0);
+        past_month.assign(static_cast<std::size_t>(n), 0);
+        period = 0;
+        has_past_rain = 0;
+        ia_used = 0.0;
+        dry_seconds = static_cast<long>(n) * 300 + 1; // start dry
+    }
+};
+
 struct RDIIGroupSoA {
     int count = 0;
     std::vector<int>    node_idx;       ///< Target node index
     std::vector<int>    uh_idx;         ///< Unit hydrograph parameter index
-    std::vector<double> area;           ///< Contributing area (ft2)
+    std::vector<double> area;           ///< Contributing area (acres, project units)
 
-    // Circular buffer of past rainfall (per group)
-    std::vector<std::vector<double>> past_rain;   ///< [group][period]
-    std::vector<std::vector<int>>    past_month;  ///< [group][period]
-    std::vector<int>    period;         ///< Current period index
-    std::vector<int>    max_periods;    ///< Buffer size
+    /// Per-response data: [group * 3 + response]
+    std::vector<UHResponseData> uh_data;
+
+    std::vector<int>    rain_interval;  ///< Rain processing interval (sec) per group
+    std::vector<double> rain_accum;     ///< Accumulated rainfall depth within current interval
+    std::vector<double> time_accum;     ///< Accumulated time (sec) within current interval
 
     void resize(int n);
 };

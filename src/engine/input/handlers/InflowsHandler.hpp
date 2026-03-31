@@ -30,6 +30,9 @@ void handle_dwf(SimulationContext& ctx, const std::vector<std::string>& lines);
 /** @brief Parse [RDII] into RDIIAssignData. */
 void handle_rdii(SimulationContext& ctx, const std::vector<std::string>& lines);
 
+/** @brief Parse [HYDROGRAPHS] into UnitHydData. */
+void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& lines);
+
 } /* namespace openswmm::input */
 
 #endif /* OPENSWMM_ENGINE_INFLOWS_HANDLER_HPP */

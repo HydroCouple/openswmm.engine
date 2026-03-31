@@ -196,4 +196,61 @@ void handle_rdii(SimulationContext& ctx, const std::vector<std::string>& lines) 
     }
 }
 
+// ============================================================================
+// handle_hydrographs()
+// ============================================================================
+// [HYDROGRAPHS] section format:
+//   UHgroup  RainGage             (gage assignment line)
+//   UHgroup  Month  Response  R  T  K  [Dmax  Drecov  Dinit]
+//
+// Where Month is 1-12 or "All", Response is "Short"/"Medium"/"Long".
+// ============================================================================
+
+void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.size() < 2) continue;
+
+        const std::string& uh_name = tok[0];
+
+        // If only 2 tokens: UHgroup  RainGage (gage assignment line)
+        if (tok.size() == 2) {
+            ctx.unit_hyds.add_gage(uh_name, tok[1]);
+            continue;
+        }
+
+        // Otherwise: UHgroup  Month  Response  R  T  K  [Dmax  Drecov  Dinit]
+        if (tok.size() < 6) continue;
+
+        // Parse month: "All" → -1, or numeric 1-12 → 0-based (0-11)
+        int month = -1;
+        std::string month_upper = Tokenizer::to_upper(tok[1]);
+        if (month_upper != "ALL") {
+            month = static_cast<int>(to_double(tok[1])) - 1;
+            if (month < 0 || month > 11) month = -1;
+        }
+
+        // Parse response type: Short=0, Medium=1, Long=2
+        int response = -1;
+        std::string resp_upper = Tokenizer::to_upper(tok[2]);
+        if (resp_upper == "SHORT")       response = 0;
+        else if (resp_upper == "MEDIUM") response = 1;
+        else if (resp_upper == "LONG")   response = 2;
+        if (response < 0) continue;
+
+        UnitHydEntry entry;
+        entry.name     = uh_name;
+        entry.month    = month;
+        entry.response = response;
+        entry.r        = to_double(tok[3]);
+        entry.t        = to_double(tok[4]);  // hours
+        entry.k        = to_double(tok[5]);  // tBase/tPeak ratio
+        entry.dmax     = (tok.size() > 6) ? to_double(tok[6]) : 0.0;
+        entry.drecov   = (tok.size() > 7) ? to_double(tok[7]) : 0.0;
+        entry.dinit    = (tok.size() > 8) ? to_double(tok[8]) : 0.0;
+
+        ctx.unit_hyds.add(entry);
+    }
+}
+
 } /* namespace openswmm::input */

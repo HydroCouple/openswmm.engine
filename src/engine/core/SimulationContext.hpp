@@ -60,6 +60,7 @@
 #ifndef OPENSWMM_ENGINE_SIMULATION_CONTEXT_HPP
 #define OPENSWMM_ENGINE_SIMULATION_CONTEXT_HPP
 
+#include <cmath>
 #include "../data/GageData.hpp"
 #include "../data/LinkData.hpp"
 #include "../data/NameIndex.hpp"
@@ -146,6 +147,21 @@ struct SimulationContext {
 
     /** @brief Current lifecycle state of the engine. */
     EngineState state = EngineState::CREATED;
+
+    // =========================================================================
+    // Project title / notes
+    // =========================================================================
+
+    /**
+     * @brief Project title and notes (from [TITLE] section).
+     *
+     * @details Each entry is one line of free-form text from the [TITLE]
+     *          section of the .inp file. Lines beginning with ";;" (comments)
+     *          are stripped by the input reader before reaching the handler.
+     *
+     * @see Legacy: Title[MAXTITLE] in globals.h (limited to 3 lines)
+     */
+    std::vector<std::string> title_notes;
 
     // =========================================================================
     // Options & configuration
@@ -295,6 +311,7 @@ struct SimulationContext {
     ExtInflowData    ext_inflows;
     DwfData          dwf_inflows;
     RDIIAssignData   rdii_assigns;
+    UnitHydData      unit_hyds;      ///< Parsed [HYDROGRAPHS] data
     PatternData      patterns;
 
     // =========================================================================
@@ -426,10 +443,12 @@ struct SimulationContext {
         double routing_forcing_inflow = 0.0; ///< Cumulative user-forced lateral inflow (ft3)
 
         // Per-step accumulators (reset each step for reporting)
-        double step_flooding  = 0.0;
-        double step_outflow   = 0.0;
-        double step_dw_inflow = 0.0;
-        double step_gw_inflow = 0.0;
+        double step_flooding     = 0.0;
+        double step_outflow      = 0.0;
+        double step_dw_inflow    = 0.0;
+        double step_gw_inflow    = 0.0;
+        double step_rdii_inflow  = 0.0;
+        double step_ext_inflow   = 0.0;
 
         // Quality mass balance (per-pollutant, in mass units)
         std::vector<double> qual_init_buildup;   ///< Initial buildup mass
@@ -538,7 +557,15 @@ struct SimulationContext {
         double sum_step  = 0.0;    ///< Sum of all routing time steps (sec)
         long   n_steps   = 0;      ///< Total number of routing steps
         double steady_pct = 0.0;   ///< Percent of time in steady state
-        double avg_iterations = 0.0; ///< Average iterations per step (DW only)
+
+        /// Number of time step histogram bins (matching legacy TIMELEVELS=5).
+        static constexpr int N_TIME_BINS = 5;
+        long   step_counts[N_TIME_BINS + 1] = {};   ///< Histogram bin counts
+        double step_intervals[N_TIME_BINS + 1] = {}; ///< Histogram bin edges
+
+        /// Non-convergence and iteration tracking
+        long   n_non_converged = 0;   ///< Steps that didn't converge
+        double sum_iterations  = 0.0; ///< Sum of iterations for averaging
 
         void update(double dt) {
             if (dt < min_step) min_step = dt;
@@ -546,8 +573,46 @@ struct SimulationContext {
             sum_step += dt;
             ++n_steps;
         }
+
+        /// Record iteration count for a routing step
+        void update_iterations(int iters, bool converged) {
+            sum_iterations += iters;
+            if (!converged) ++n_non_converged;
+        }
+
+        /// Build histogram bin edges (call once after simulation, before report)
+        void build_histogram() {
+            if (n_steps == 0 || max_step <= 0.0) return;
+            double hi = max_step;
+            double lo = (min_step < 1.0e30) ? min_step : 0.0;
+            if (lo <= 0.0) lo = hi;
+            step_intervals[0] = hi;
+            for (int i = 1; i <= N_TIME_BINS; ++i)
+                step_intervals[i] = step_intervals[i-1] / std::pow(hi/lo, 1.0/N_TIME_BINS);
+            step_intervals[N_TIME_BINS] = lo;
+        }
+
+        /// Add a step to the histogram (call during simulation or post-process)
+        void record_step_bin(double dt) {
+            for (int i = 0; i < N_TIME_BINS; ++i) {
+                if (dt >= step_intervals[i+1]) {
+                    step_counts[i]++;
+                    return;
+                }
+            }
+            step_counts[N_TIME_BINS - 1]++;
+        }
+
         double avg_step() const {
             return (n_steps > 0) ? sum_step / static_cast<double>(n_steps) : 0.0;
+        }
+
+        double pct_non_converged() const {
+            return (n_steps > 0) ? 100.0 * static_cast<double>(n_non_converged) / static_cast<double>(n_steps) : 0.0;
+        }
+
+        double computed_avg_iterations() const {
+            return (n_steps > 0) ? sum_iterations / static_cast<double>(n_steps) : 0.0;
         }
     } routing_stats;
 
@@ -581,6 +646,7 @@ struct SimulationContext {
         error_code = 0;
         warning_code = 0;
         error_message.clear();
+        title_notes.clear();
 
         // Clear SoA stores
         nodes      = NodeData{};

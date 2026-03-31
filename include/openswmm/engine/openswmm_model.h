@@ -93,6 +93,64 @@ SWMM_ENGINE_API int swmm_finalize_model(SWMM_Engine engine);
 SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_path);
 
 /* =========================================================================
+ * Title / notes access
+ * ========================================================================= */
+
+/**
+ * @brief Get the number of title/note lines in the [TITLE] section.
+ *
+ * @param engine  Engine handle.
+ * @param count   [out] Number of title lines.
+ * @returns SWMM_OK on success.
+ */
+SWMM_ENGINE_API int swmm_title_get_count(SWMM_Engine engine, int* count);
+
+/**
+ * @brief Get a specific title/note line by index.
+ *
+ * @param engine  Engine handle.
+ * @param index   Zero-based line index.
+ * @param buf     Caller-allocated buffer for the line text.
+ * @param buflen  Size of buf in bytes.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if index out of range.
+ */
+SWMM_ENGINE_API int swmm_title_get_line(
+    SWMM_Engine engine,
+    int         index,
+    char*       buf,
+    int         buflen
+);
+
+/**
+ * @brief Add a new line to the end of the [TITLE] section.
+ *
+ * @param engine  Engine handle.
+ * @param line    Null-terminated string to append.
+ * @returns SWMM_OK on success.
+ */
+SWMM_ENGINE_API int swmm_title_add_line(SWMM_Engine engine, const char* line);
+
+/**
+ * @brief Replace all title/note lines with a single block of text.
+ *
+ * @details The text is split on newline characters ('\\n') to form
+ *          individual title lines. Any existing title lines are cleared.
+ *
+ * @param engine  Engine handle.
+ * @param text    Null-terminated text (may contain '\\n' separators).
+ * @returns SWMM_OK on success.
+ */
+SWMM_ENGINE_API int swmm_title_set(SWMM_Engine engine, const char* text);
+
+/**
+ * @brief Remove all lines from the [TITLE] section.
+ *
+ * @param engine  Engine handle.
+ * @returns SWMM_OK on success.
+ */
+SWMM_ENGINE_API int swmm_title_clear(SWMM_Engine engine);
+
+/* =========================================================================
  * OPTIONS access
  * ========================================================================= */
 

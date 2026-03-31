@@ -21,6 +21,7 @@
 #include <vector>
 #include "../hydraulics/TimestepController.hpp"
 #include "../input/InputReader.hpp"
+#include "../input/handlers/TitleHandler.hpp"
 #include "../input/handlers/OptionsHandler.hpp"
 #include "../input/handlers/NodesHandler.hpp"
 #include "../input/handlers/LinksHandler.hpp"
@@ -84,6 +85,7 @@ void SWMMEngine::register_builtin_handlers() {
     // Additional handlers (JUNCTIONS, CONDUITS, etc.) are registered as
     // they are implemented in subsequent phases.
 
+    registry_.register_builtin("TITLE",   input::handle_title);
     registry_.register_builtin("OPTIONS", input::handle_options);
 
     // Placeholder lambdas for sections that are parsed but not yet implemented.
@@ -129,6 +131,7 @@ void SWMMEngine::register_builtin_handlers() {
     registry_.register_builtin("INFLOWS",       input::handle_inflows);
     registry_.register_builtin("DWF",           input::handle_dwf);
     registry_.register_builtin("RDII",          input::handle_rdii);
+    registry_.register_builtin("HYDROGRAPHS",  input::handle_hydrographs);
     registry_.register_builtin("LOADINGS",      input::handle_loadings);
     registry_.register_builtin("PATTERNS",      input::handle_patterns);
 
@@ -322,10 +325,12 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     ctx_.save_state();
 
     // Reset per-step mass balance accumulators (matching legacy massbal_initTimeStepTotals)
-    ctx_.mass_balance.step_flooding  = 0.0;
-    ctx_.mass_balance.step_outflow   = 0.0;
-    ctx_.mass_balance.step_dw_inflow = 0.0;
-    ctx_.mass_balance.step_gw_inflow = 0.0;
+    ctx_.mass_balance.step_flooding     = 0.0;
+    ctx_.mass_balance.step_outflow      = 0.0;
+    ctx_.mass_balance.step_dw_inflow    = 0.0;
+    ctx_.mass_balance.step_gw_inflow    = 0.0;
+    ctx_.mass_balance.step_rdii_inflow  = 0.0;
+    ctx_.mass_balance.step_ext_inflow   = 0.0;
 
     // ---- Apply user-injected runtime forcings ----
     applyForcings(dt_next);
@@ -1030,13 +1035,31 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
     // B6. Update statistics (P8-G11)
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (ctx_.nodes.depth[uj] > ctx_.nodes.stat_max_depth[uj])
-            ctx_.nodes.stat_max_depth[uj] = ctx_.nodes.depth[uj];
-        if (ctx_.nodes.overflow[uj] > ctx_.nodes.stat_max_overflow[uj])
+        // Depth statistics
+        double cur_depth = ctx_.nodes.depth[uj];
+        ctx_.nodes.stat_sum_depth[uj] += cur_depth;
+        if (cur_depth > ctx_.nodes.stat_max_depth[uj]) {
+            ctx_.nodes.stat_max_depth[uj] = cur_depth;
+            ctx_.nodes.stat_max_depth_date[uj] = ctx_.current_date;
+        }
+        if (cur_depth > ctx_.nodes.stat_max_rpt_depth[uj])
+            ctx_.nodes.stat_max_rpt_depth[uj] = cur_depth;
+        if (ctx_.nodes.overflow[uj] > ctx_.nodes.stat_max_overflow[uj]) {
             ctx_.nodes.stat_max_overflow[uj] = ctx_.nodes.overflow[uj];
+            ctx_.nodes.stat_max_overflow_date[uj] = ctx_.current_date;
+        }
         if (ctx_.nodes.overflow[uj] > 0.0) {
             ctx_.nodes.stat_time_flooded[uj] += dt_routing;
             ctx_.nodes.stat_vol_flooded[uj] += ctx_.nodes.overflow[uj] * dt_routing;
+        }
+
+        // Node surcharge tracking
+        double full_d = ctx_.nodes.full_depth[uj];
+        if (full_d > 0.0 && cur_depth > full_d) {
+            ctx_.nodes.stat_time_surcharged[uj] += dt_routing;
+            double surcharge_h = cur_depth - full_d;
+            if (surcharge_h > ctx_.nodes.stat_max_surcharge_height[uj])
+                ctx_.nodes.stat_max_surcharge_height[uj] = surcharge_h;
         }
 
         // Node inflow statistics (matching legacy stats_updateNodeStats)
@@ -1044,8 +1067,10 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         double total_inflow = ctx_.nodes.inflow[uj];
         if (std::fabs(lat) > ctx_.nodes.stat_max_lat_inflow[uj])
             ctx_.nodes.stat_max_lat_inflow[uj] = std::fabs(lat);
-        if (total_inflow > ctx_.nodes.stat_max_total_inflow[uj])
+        if (total_inflow > ctx_.nodes.stat_max_total_inflow[uj]) {
             ctx_.nodes.stat_max_total_inflow[uj] = total_inflow;
+            ctx_.nodes.stat_max_inflow_date[uj] = ctx_.current_date;
+        }
         ctx_.nodes.stat_lat_inflow_vol[uj]   += std::fabs(lat) * dt_routing;
         ctx_.nodes.stat_total_inflow_vol[uj] += total_inflow * dt_routing;
 
@@ -1075,8 +1100,10 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         double q = std::fabs(ctx_.links.flow[uj]);
-        if (q > ctx_.links.stat_max_flow[uj])
+        if (q > ctx_.links.stat_max_flow[uj]) {
             ctx_.links.stat_max_flow[uj] = q;
+            ctx_.links.stat_max_flow_date[uj] = ctx_.current_date;
+        }
 
         // Volume conveyed
         ctx_.links.stat_vol_flow[uj] += q * dt_routing;
@@ -1104,6 +1131,29 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         // Surcharge duration tracking
         if (d >= y_full && y_full > 0.0)
             ctx_.links.stat_time_surcharged[uj] += dt_routing;
+
+        // Conduit surcharge detail tracking (upstream/downstream/both)
+        if (ctx_.links.type[uj] == LinkType::CONDUIT && y_full > 0.0) {
+            int n1 = ctx_.links.node1[uj];
+            int n2 = ctx_.links.node2[uj];
+            bool up_full = false, dn_full = false;
+            if (n1 >= 0 && n1 < ctx_.n_nodes()) {
+                auto un1 = static_cast<std::size_t>(n1);
+                double elev1 = ctx_.nodes.invert_elev[un1] + ctx_.links.offset1[uj] + y_full;
+                up_full = (ctx_.nodes.head[un1] >= elev1);
+            }
+            if (n2 >= 0 && n2 < ctx_.n_nodes()) {
+                auto un2 = static_cast<std::size_t>(n2);
+                double elev2 = ctx_.nodes.invert_elev[un2] + ctx_.links.offset2[uj] + y_full;
+                dn_full = (ctx_.nodes.head[un2] >= elev2);
+            }
+            if (up_full) ctx_.links.stat_time_full_upstream[uj] += dt_routing;
+            if (dn_full) ctx_.links.stat_time_full_dnstream[uj] += dt_routing;
+            if (up_full && dn_full) ctx_.links.stat_time_full_both[uj] += dt_routing;
+            // Capacity limited: flow exceeds full normal flow
+            if (q > ctx_.links.q_full[uj] && ctx_.links.q_full[uj] > 0.0)
+                ctx_.links.stat_time_capacity_limited[uj] += dt_routing;
+        }
 
         // Flow classification counter
         int fc = static_cast<int>(ctx_.links.flow_class[uj]);
@@ -1156,7 +1206,12 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     //     Accumulate ALL flow paths matching legacy massbal_updateRoutingTotals
     ctx_.mass_balance.step_flooding  = 0.0;
     ctx_.mass_balance.step_outflow   = 0.0;
-    ctx_.mass_balance.step_dw_inflow = 0.0;
+
+    // Accumulate DWF, RDII, and external inflow volumes from step accumulators
+    // (step accumulators are set during Inflow::computeAll / RDIISolver::computeAll)
+    ctx_.mass_balance.routing_dry_weather += ctx_.mass_balance.step_dw_inflow * dt_routing;
+    ctx_.mass_balance.routing_rdii        += ctx_.mass_balance.step_rdii_inflow * dt_routing;
+    ctx_.mass_balance.routing_external    += ctx_.mass_balance.step_ext_inflow * dt_routing;
 
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
@@ -1193,17 +1248,32 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         }
     }
 
-    // Wet weather inflow (from runoff scattered to nodes as lateral flow)
-    // and external inflow (user-forced via API)
-    for (int j = 0; j < ctx_.n_nodes(); ++j) {
-        auto uj = static_cast<std::size_t>(j);
-        double user_q = (!ctx_.nodes.user_lat_flow.empty()) ? ctx_.nodes.user_lat_flow[uj] : 0.0;
-        double runoff_q = ctx_.nodes.lat_flow[uj] - user_q;
+    // Wet weather inflow: total lateral flow minus DWF, RDII, and external
+    // contributions (which were already tracked above from step accumulators).
+    {
+        double total_lat = 0.0;
+        for (int j = 0; j < ctx_.n_nodes(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx_.nodes.lat_flow[uj] > 0.0)
+                total_lat += ctx_.nodes.lat_flow[uj];
+        }
+        double non_runoff = ctx_.mass_balance.step_dw_inflow
+                          + ctx_.mass_balance.step_rdii_inflow
+                          + ctx_.mass_balance.step_ext_inflow;
+        double runoff_q = total_lat - non_runoff;
         if (runoff_q > 0.0) {
             ctx_.mass_balance.routing_wet_weather += runoff_q * dt_routing;
         }
-        if (user_q > 0.0) {
-            ctx_.mass_balance.routing_external += user_q * dt_routing;
+
+        // User-forced inflows (API-set lateral flows, separate from file-based ext inflows)
+        if (!ctx_.nodes.user_lat_flow.empty()) {
+            for (int j = 0; j < ctx_.n_nodes(); ++j) {
+                auto uj = static_cast<std::size_t>(j);
+                double user_q = ctx_.nodes.user_lat_flow[uj];
+                if (user_q > 0.0) {
+                    ctx_.mass_balance.routing_forcing_inflow += user_q * dt_routing;
+                }
+            }
         }
     }
 

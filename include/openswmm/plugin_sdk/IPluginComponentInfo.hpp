@@ -1,4 +1,4 @@
-/**
+ /**
  * @file IPluginComponentInfo.hpp
  * @brief Interface that describes a plugin component — metadata and factory methods.
  *

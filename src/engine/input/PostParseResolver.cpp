@@ -11,11 +11,105 @@
 
 #include "PostParseResolver.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/DateTime.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <string>
 #include <utility>
 
 namespace openswmm::input {
+
+// -------------------------------------------------------------------------
+// Load external FILE timeseries from disk
+// -------------------------------------------------------------------------
+// Parses standard SWMM timeseries .dat files with format:
+//   ;;comments
+//   MM/DD/YYYY  H:MM  value
+//   MM/DD/YYYY  H:MM  value
+//   ...
+// Fields may be tab or space delimited.
+// -------------------------------------------------------------------------
+static void load_external_timeseries_files(SimulationContext& ctx, const std::string& inp_dir) {
+    for (std::size_t t = 0; t < ctx.tables.tables.size(); ++t) {
+        auto& tbl = ctx.tables.tables[t];
+        if (tbl.type != TableType::TIMESERIES) continue;
+
+        // Check for FILE: prefix in table id
+        if (tbl.id.size() < 6 || tbl.id.substr(0, 5) != "FILE:") continue;
+
+        std::string file_path = tbl.id.substr(5);
+
+        // Strip optional :column suffix (e.g. "FILE:path.dat:ColName")
+        auto colon_pos = file_path.rfind(':');
+        // Only strip if it's not a drive letter (e.g. "C:\path")
+        if (colon_pos != std::string::npos && colon_pos > 1) {
+            file_path = file_path.substr(0, colon_pos);
+        }
+
+        // Strip surrounding quotes if present
+        if (file_path.size() >= 2 && file_path.front() == '"' && file_path.back() == '"')
+            file_path = file_path.substr(1, file_path.size() - 2);
+
+        // Resolve relative paths against INP file directory
+        if (!file_path.empty() && file_path[0] != '/' && file_path[0] != '\\') {
+            // Not an absolute path — prepend INP directory
+            if (!inp_dir.empty())
+                file_path = inp_dir + "/" + file_path;
+        }
+
+        // Open the file
+        FILE* fp = std::fopen(file_path.c_str(), "r");
+        if (!fp) {
+            // Try original path without modification
+            fp = std::fopen(tbl.id.substr(5).c_str(), "r");
+            if (!fp) continue; // Skip silently — legacy also reports ERROR 361
+        }
+
+        // Reserve estimated capacity (large files can be millions of lines)
+        tbl.x.reserve(100000);
+        tbl.y.reserve(100000);
+
+        char line[256];
+        while (std::fgets(line, sizeof(line), fp)) {
+            // Skip comments and empty lines
+            if (line[0] == ';' || line[0] == '\n' || line[0] == '\r') continue;
+
+            // Parse: date  time  value
+            // Format: MM/DD/YYYY  H:MM  value  (tab or space delimited)
+            int month = 0, day = 0, year = 0;
+            int hour = 0, minute = 0;
+            double value = 0.0;
+
+            // Try tab-delimited first, then space-delimited
+            char date_str[32] = {}, time_str[32] = {};
+            int fields = std::sscanf(line, "%31s %31s %lf", date_str, time_str, &value);
+            if (fields < 3) continue;
+
+            // Parse date: MM/DD/YYYY
+            if (std::sscanf(date_str, "%d/%d/%d", &month, &day, &year) != 3) continue;
+
+            // Parse time: H:MM or HH:MM or H:MM:SS
+            int second = 0;
+            if (std::sscanf(time_str, "%d:%d:%d", &hour, &minute, &second) < 2) continue;
+
+            double dt = datetime::encodeDate(year, month, day)
+                      + datetime::encodeTime(hour, minute, second);
+
+            tbl.x.push_back(dt);
+            tbl.y.push_back(value);
+        }
+        std::fclose(fp);
+
+        // Shrink to fit
+        tbl.x.shrink_to_fit();
+        tbl.y.shrink_to_fit();
+
+        // Clear the FILE: prefix from id now that data is loaded
+        // (table name was already registered under its proper name)
+    }
+}
 
 void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
@@ -74,6 +168,23 @@ void resolve_cross_references(SimulationContext& ctx) {
     if (ctx.spatial.link_vertices_y.size() < ul) ctx.spatial.link_vertices_y.resize(ul);
     if (ctx.spatial.subcatch_polygon_x.size() < us) ctx.spatial.subcatch_polygon_x.resize(us);
     if (ctx.spatial.subcatch_polygon_y.size() < us) ctx.spatial.subcatch_polygon_y.resize(us);
+
+    // -------------------------------------------------------------------------
+    // Load external FILE-referenced timeseries from disk
+    // -------------------------------------------------------------------------
+    // Timeseries with FILE references (e.g., rainfall .dat files) need to be
+    // loaded into memory before any date offset or gage resolution.
+    {
+        std::string inp_dir;
+        if (!ctx.inp_file_path.empty()) {
+            auto pos = ctx.inp_file_path.find_last_of("/\\");
+            if (pos != std::string::npos)
+                inp_dir = ctx.inp_file_path.substr(0, pos);
+            else
+                inp_dir = ".";
+        }
+        load_external_timeseries_files(ctx, inp_dir);
+    }
 
     // -------------------------------------------------------------------------
     // Timeseries date offset resolution

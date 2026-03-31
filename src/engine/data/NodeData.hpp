@@ -326,6 +326,33 @@ struct NodeData {
      */
     std::vector<double>     stat_max_overflow;
 
+    /** @brief Date/time when maximum overflow occurred (Julian date). */
+    std::vector<double>     stat_max_overflow_date;
+
+    /// Cumulative depth for computing average (project length units × seconds).
+    /// @see Legacy: NodeStats[i].avgDepth
+    std::vector<double>     stat_sum_depth;
+
+    /// Date/time when maximum depth occurred (Julian date).
+    /// @see Legacy: NodeStats[i].maxDepthDate
+    std::vector<double>     stat_max_depth_date;
+
+    /// Maximum reported depth (used for output-step max tracking).
+    /// @see Legacy: NodeStats[i].maxRptDepth
+    std::vector<double>     stat_max_rpt_depth;
+
+    /// Date/time when maximum total inflow occurred (Julian date).
+    /// @see Legacy: NodeStats[i].maxInflowDate
+    std::vector<double>     stat_max_inflow_date;
+
+    /// Total time node was surcharged (seconds).
+    /// @see Legacy: NodeStats[i].timeSurcharged
+    std::vector<double>     stat_time_surcharged;
+
+    /// Maximum surcharge height above crown (project length units).
+    /// @see Legacy: NodeStats[i].maxDepth - Node[i].fullDepth
+    std::vector<double>     stat_max_surcharge_height;
+
     /**
      * @brief Outfall cumulative average flow (flow units × reporting periods).
      * @see Legacy: OutfallStats[k].avgFlow
@@ -435,6 +462,13 @@ struct NodeData {
         stat_time_flooded.assign(un, 0.0);
         stat_max_depth.assign(un, 0.0);
         stat_max_overflow.assign(un, 0.0);
+        stat_max_overflow_date.assign(un, 0.0);
+        stat_sum_depth.assign(un, 0.0);
+        stat_max_depth_date.assign(un, 0.0);
+        stat_max_rpt_depth.assign(un, 0.0);
+        stat_max_inflow_date.assign(un, 0.0);
+        stat_time_surcharged.assign(un, 0.0);
+        stat_max_surcharge_height.assign(un, 0.0);
         stat_max_lat_inflow.assign(un, 0.0);
         stat_max_total_inflow.assign(un, 0.0);
         stat_lat_inflow_vol.assign(un, 0.0);

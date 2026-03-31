@@ -443,6 +443,26 @@ struct LinkData {
     std::vector<long> stat_norm_ltd;      ///< Count of steps with normal flow limiting
     std::vector<long> stat_inlet_ctrl;    ///< Count of steps with inlet control
 
+    /// Date/time when maximum flow occurred (Julian date).
+    /// @see Legacy: LinkStats[i].maxFlowDate
+    std::vector<double>     stat_max_flow_date;
+
+    /// Time of upstream surcharge (seconds).
+    /// @see Legacy: LinkStats[i].timeFullUpstream
+    std::vector<double>     stat_time_full_upstream;
+
+    /// Time of downstream surcharge (seconds).
+    /// @see Legacy: LinkStats[i].timeFullDnstream
+    std::vector<double>     stat_time_full_dnstream;
+
+    /// Time both ends surcharged (seconds).
+    /// @see Legacy: LinkStats[i].timeFullFlow
+    std::vector<double>     stat_time_full_both;
+
+    /// Time above full normal flow (seconds).
+    /// @see Legacy: LinkStats[i].timeCapacityLimited
+    std::vector<double>     stat_time_capacity_limited;
+
     /**
      * @brief Cumulative pollutant loads transported through each link.
      * @details Flat 2D: [link * n_pollutants + p].
@@ -530,6 +550,11 @@ struct LinkData {
         stat_flow_class.assign(un * N_FLOW_CLASSES, 0L);
         stat_norm_ltd.assign(un, 0L);
         stat_inlet_ctrl.assign(un, 0L);
+        stat_max_flow_date.assign(un, 0.0);
+        stat_time_full_upstream.assign(un, 0.0);
+        stat_time_full_dnstream.assign(un, 0.0);
+        stat_time_full_both.assign(un, 0.0);
+        stat_time_capacity_limited.assign(un, 0.0);
         normal_flow_limited.assign(un, false);
     }
 

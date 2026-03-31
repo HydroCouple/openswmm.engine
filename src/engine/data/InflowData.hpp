@@ -89,6 +89,40 @@ struct RDIIAssignData {
 };
 
 // ============================================================================
+// Unit Hydrograph data (from [HYDROGRAPHS] section)
+// ============================================================================
+
+struct UnitHydEntry {
+    std::string name;       ///< UH group name
+    std::string gage_name;  ///< Associated rain gage name
+    int month;              ///< Month index (0-11, or -1 for ALL)
+    int response;           ///< 0=SHORT, 1=MEDIUM, 2=LONG
+    double r;               ///< Fraction of rainfall volume
+    double t;               ///< Time to peak (hours)
+    double k;               ///< Recession limb ratio (tBase/tPeak)
+    double dmax;            ///< Max initial abstraction depth
+    double drecov;          ///< IA recovery rate
+    double dinit;           ///< Initial IA used
+};
+
+struct UnitHydData {
+    int count() const { return static_cast<int>(entries.size()); }
+
+    std::vector<UnitHydEntry> entries;
+
+    /// Rain gage names associated with each UH group (name → gage name)
+    std::vector<std::string> gage_assignments; ///< UH group names
+    std::vector<std::string> gage_names;       ///< Assigned rain gage names
+
+    void add_gage(const std::string& uh_name, const std::string& gage) {
+        gage_assignments.push_back(uh_name);
+        gage_names.push_back(gage);
+    }
+
+    void add(const UnitHydEntry& e) { entries.push_back(e); }
+};
+
+// ============================================================================
 // Time patterns (from [PATTERNS] section)
 // ============================================================================
 
