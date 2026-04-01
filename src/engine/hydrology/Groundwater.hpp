@@ -71,6 +71,9 @@ struct GWSoA {
     std::vector<double> theta;        ///< Upper zone moisture content (0-φ)
     std::vector<double> lower_depth;  ///< Lower zone depth (ft)
 
+    // State
+    std::vector<double> old_flow;     ///< Previous step GW flow (for trapezoidal avg)
+
     // Outputs
     std::vector<double> gw_flow;      ///< Lateral GW flow to node (cfs)
     std::vector<double> upper_evap;   ///< Upper zone evap (ft3/sec)

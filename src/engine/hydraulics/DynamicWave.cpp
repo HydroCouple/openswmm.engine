@@ -170,6 +170,9 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups) {
     h1_.resize(ul, 0.0);
     h2_.resize(ul, 0.0);
     fasnh_.resize(ul, 1.0);
+    wcap_d1_.resize(ul, 0.0);
+    wcap_d2_.resize(ul, 0.0);
+    wcap_dm_.resize(ul, 0.0);
 }
 
 // ============================================================================
@@ -347,13 +350,11 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     //  widths at crown of closed conduits). Use temporary arrays so the real
     //  depths are preserved for area/momentum computation.
     if (surcharge_method != SurchargeMethod::SLOT) {
-        // Build width-capped depth copies
-        thread_local std::vector<double> wd1, wd2, wdm;
+        // Build width-capped depth copies using pre-allocated buffers
         auto nl = static_cast<std::size_t>(n_links_);
-        wd1.resize(nl); wd2.resize(nl); wdm.resize(nl);
-        std::copy(depth1_.begin(), depth1_.begin() + nl, wd1.begin());
-        std::copy(depth2_.begin(), depth2_.begin() + nl, wd2.begin());
-        std::copy(depth_mid_.begin(), depth_mid_.begin() + nl, wdm.begin());
+        std::copy(depth1_.begin(), depth1_.begin() + nl, wcap_d1_.begin());
+        std::copy(depth2_.begin(), depth2_.begin() + nl, wcap_d2_.begin());
+        std::copy(depth_mid_.begin(), depth_mid_.begin() + nl, wcap_dm_.begin());
         for (int ci = 0; ci < n_conduits_; ++ci) {
             int j = conduit_idx_[static_cast<std::size_t>(ci)];
             auto uj = static_cast<std::size_t>(j);
@@ -365,14 +366,14 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                             shape == XsectShape::PARABOLIC);
             if (!is_open && yf > 0.0) {
                 double yCap = EXTRAN_CROWN_CUTOFF * yf;
-                if (wd1[uj] >= yCap) wd1[uj] = yCap;
-                if (wd2[uj] >= yCap) wd2[uj] = yCap;
-                if (wdm[uj] >= yCap) wdm[uj] = yCap;
+                if (wcap_d1_[uj] >= yCap) wcap_d1_[uj] = yCap;
+                if (wcap_d2_[uj] >= yCap) wcap_d2_[uj] = yCap;
+                if (wcap_dm_[uj] >= yCap) wcap_dm_[uj] = yCap;
             }
         }
-        groups_->computeWidths(wd1.data(), width1_.data(), n_links_);
-        groups_->computeWidths(wd2.data(), width2_.data(), n_links_);
-        groups_->computeWidths(wdm.data(), width_mid_.data(), n_links_);
+        groups_->computeWidths(wcap_d1_.data(), width1_.data(), n_links_);
+        groups_->computeWidths(wcap_d2_.data(), width2_.data(), n_links_);
+        groups_->computeWidths(wcap_dm_.data(), width_mid_.data(), n_links_);
     } else {
         groups_->computeWidths(depth1_.data(), width1_.data(), n_links_);
         groups_->computeWidths(depth2_.data(), width2_.data(), n_links_);
@@ -666,7 +667,7 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
     // dynwave.c::findLinkFlows). Each thread computes flow for a subset
     // of conduits — no cross-link data dependencies exist.
 #if defined(SWMM_USE_OPENMP)
-#pragma omp parallel for num_threads(num_threads_) schedule(dynamic, 64) default(none) \
+#pragma omp parallel for num_threads(num_threads_) schedule(static) default(none) \
     shared(ctx, links, nodes, p_area_mid, p_area1, p_area2, p_hrad_mid, p_width_mid, \
            p_depth1, p_depth2, p_depth_mid, p_velocity, p_froude, p_sigma, \
            p_dqdh, p_new_flow, p_area_old, p_h1, p_h2, dt, step, normal_flow_ltd, inert_damping)

@@ -9,6 +9,7 @@
  */
 
 #include "Climate.hpp"
+#include "../core/Constants.hpp"
 #include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
@@ -16,7 +17,7 @@
 namespace openswmm {
 namespace climate {
 
-static constexpr double PI = 3.141592654;
+using constants::PI;
 
 double hargreaves(double latitude, int day_of_year, double t_avg, double t_range) {
     double a = 2.0 * PI / 365.0;

@@ -70,7 +70,8 @@ public:
      * @param dt   Routing timestep (seconds).
      * @returns Number of solver iterations used.
      */
-    int step(SimulationContext& ctx, double dt);
+    int step(SimulationContext& ctx, double dt,
+             dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn = nullptr);
 
     /**
      * @brief Compute adaptive timestep (DW only).

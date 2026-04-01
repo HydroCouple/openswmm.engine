@@ -11,6 +11,7 @@
 #include "Inflow.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
+#include "../core/UnitConversion.hpp"
 #include "../data/TableData.hpp"
 #include <cmath>
 #include <algorithm>
@@ -119,7 +120,16 @@ void InflowSolver::init(SimulationContext& ctx) {
     for (int i = 0; i < nd; ++i) {
         auto ui = static_cast<std::size_t>(i);
         dwf_inflows_.node_idx[ui]  = ctx.dwf_inflows.node_idx[ui];
-        dwf_inflows_.avg_value[ui] = ctx.dwf_inflows.avg_value[ui];
+
+        // Convert avg_value from display flow units to CFS
+        // (matching legacy inflow_readDwfInflow: x /= UCF(FLOW))
+        double avg_val = ctx.dwf_inflows.avg_value[ui];
+        const auto& constituent = ctx.dwf_inflows.constituent[ui];
+        if (constituent == "FLOW" || constituent == "flow" || constituent == "Flow") {
+            int fu = static_cast<int>(ctx.options.flow_units);
+            avg_val /= ucf::Qcf[fu];
+        }
+        dwf_inflows_.avg_value[ui] = avg_val;
 
         // Resolve up to 4 pattern names to indices, then sort by pattern type.
         // Legacy inflow_initDwfInflow() reorders patterns into:

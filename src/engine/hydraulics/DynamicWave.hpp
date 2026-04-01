@@ -143,6 +143,9 @@ private:
     // Pre-built conduit index list for skipping non-conduits in inner loops
     std::vector<int> conduit_idx_;
 
+    // Pre-allocated width-capping buffers (avoids thread_local per-call allocation)
+    std::vector<double> wcap_d1_, wcap_d2_, wcap_dm_;
+
     // Per-node working state
     std::vector<DWNodeState> xnode_;
 

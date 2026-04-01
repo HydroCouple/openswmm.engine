@@ -74,6 +74,7 @@
 #include "../data/QualityData.hpp"
 #include "../data/InflowData.hpp"
 #include "../data/InfraData.hpp"
+#include "../hydraulics/Transect.hpp"
 #include "../data/HydrologyData.hpp"
 #include "../data/ForcingData.hpp"
 
@@ -319,6 +320,8 @@ struct SimulationContext {
     // =========================================================================
 
     TransectStore    transects;
+    /// Built transect geometry tables (indexed same as transects).
+    std::vector<transect::TransectData> transect_tables;
     StreetStore      streets;
     InletStore       inlets;
     InletUsageStore  inlet_usages;

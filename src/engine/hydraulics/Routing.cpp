@@ -10,6 +10,7 @@
  */
 
 #include "Routing.hpp"
+#include "../core/Constants.hpp"
 #include "Outfall.hpp"
 #include "Divider.hpp"
 #include "Node.hpp"
@@ -76,8 +77,8 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
     // Compute modified conduit lengths for CFL stability
     // (matching legacy conduit_getLengthFactor in link.c)
     {
-        static constexpr double PHI     = 1.486;   // Manning US units
-        static constexpr double GRAVITY = 32.2;
+        using constants::PHI;
+        using constants::GRAVITY;
         double route_step = ctx.options.routing_step;
         double lengthening_step = ctx.options.lengthening_step;
         double tStep = (lengthening_step > 0.0)
@@ -113,6 +114,9 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 
     // Build shape-grouped batch index
     groups_.build(xsect_params.data(), n_links);
+
+    // Attach transect tables for IRREGULAR cross-sections
+    groups_.attachTransectTables(ctx);
 
     // Init solvers
     switch (model_) {
@@ -153,7 +157,8 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 // Step
 // ============================================================================
 
-int Router::step(SimulationContext& ctx, double dt) {
+int Router::step(SimulationContext& ctx, double dt,
+                 dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn) {
     // 1. Save old states
     saveOldStates(ctx);
 
@@ -218,7 +223,7 @@ int Router::step(SimulationContext& ctx, double dt) {
             break;
 
         case RouteModel::DYNWAVE:
-            iters = dw_solver_.execute(ctx, dt);
+            iters = dw_solver_.execute(ctx, dt, non_conduit_fn);
             break;
 
         case RouteModel::STEADY:

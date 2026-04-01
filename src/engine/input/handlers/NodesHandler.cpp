@@ -121,6 +121,7 @@ static void ensure_node_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.nodes.stat_max_total_inflow, 0.0);
     grow(ctx.nodes.stat_lat_inflow_vol,   0.0);
     grow(ctx.nodes.stat_total_inflow_vol, 0.0);
+    grow(ctx.nodes.stat_total_outflow_vol, 0.0);
     grow(ctx.nodes.stat_outfall_avg_flow, 0.0);
     grow(ctx.nodes.stat_outfall_max_flow, 0.0);
     grow(ctx.nodes.stat_outfall_periods,  0L);

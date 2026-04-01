@@ -34,16 +34,20 @@ namespace openswmm {
 
 void ShapeGroup::resize(int n) {
     count = n;
-    link_idx.resize(static_cast<std::size_t>(n));
-    y_full.resize(static_cast<std::size_t>(n));
-    a_full.resize(static_cast<std::size_t>(n));
-    r_full.resize(static_cast<std::size_t>(n));
-    s_full.resize(static_cast<std::size_t>(n));
-    w_max.resize(static_cast<std::size_t>(n));
-    y_bot.resize(static_cast<std::size_t>(n));
-    a_bot.resize(static_cast<std::size_t>(n));
-    s_bot.resize(static_cast<std::size_t>(n));
-    r_bot.resize(static_cast<std::size_t>(n));
+    auto un = static_cast<std::size_t>(n);
+    link_idx.resize(un);
+    y_full.resize(un);
+    a_full.resize(un);
+    r_full.resize(un);
+    s_full.resize(un);
+    w_max.resize(un);
+    y_bot.resize(un);
+    a_bot.resize(un);
+    s_bot.resize(un);
+    r_bot.resize(un);
+    // Pre-allocate working buffers for hot loop
+    buf_d.resize(un);
+    buf_r.resize(un);
 }
 
 // ============================================================================
@@ -95,6 +99,37 @@ void XSectGroups::build(const XSectParams* params, int n_links) {
         g.a_bot[uc]  = params[i].a_bot;
         g.s_bot[uc]  = params[i].s_bot;
         g.r_bot[uc]  = params[i].r_bot;
+    }
+}
+
+void XSectGroups::attachTransectTables(const SimulationContext& ctx) {
+    for (auto& g : groups_) {
+        if (g.shape != XSectShape::IRREGULAR || g.count == 0) continue;
+
+        auto uc = static_cast<std::size_t>(g.count);
+        g.area_tables.resize(uc, nullptr);
+        g.hrad_tables.resize(uc, nullptr);
+        g.width_tables.resize(uc, nullptr);
+        g.transect_tbl_size = transect::N_TRANSECT_TBL;
+
+        for (int k = 0; k < g.count; ++k) {
+            auto uk = static_cast<std::size_t>(k);
+            int link_j = g.link_idx[uk];
+            auto uj = static_cast<std::size_t>(link_j);
+
+            int ci = ctx.links.xsect_curve[uj];
+            if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
+                const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
+                g.area_tables[uk]  = td.area_tbl;
+                g.hrad_tables[uk]  = td.hrad_tbl;
+                g.width_tables[uk] = td.width_tbl;
+                // Update full-depth properties from transect
+                g.y_full[uk] = td.y_full;
+                g.a_full[uk] = td.a_full;
+                g.r_full[uk] = td.r_full;
+                g.w_max[uk]  = td.w_max;
+            }
+        }
     }
 }
 
@@ -274,6 +309,37 @@ void area_inv_tabulated(
         double y_norm = y / y_full[k];
         if (y_norm > 1.0) y_norm = 1.0;
         area[k] = a_full[k] * xsect::invLookup(y_norm, table, table_size);
+    }
+}
+
+/// Per-link tabulated lookup (for IRREGULAR shapes where each link has its own table).
+void perlink_tabulated(
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT scale,      // a_full, r_full, or w_max
+    const double* const* tables,                 // per-link table pointers
+    int            table_size,
+    double*       OPENSWMM_RESTRICT result,
+    int count
+) {
+    const double inv_delta = static_cast<double>(table_size - 1);
+    const double delta = 1.0 / inv_delta;
+
+    for (int k = 0; k < count; ++k) {
+        double y = depth[k];
+        if (y <= 0.0) { result[k] = 0.0; continue; }
+        if (!tables[k]) { result[k] = 0.0; continue; }
+
+        double y_norm = y / y_full[k];
+        if (y_norm >= 1.0) { result[k] = scale[k]; continue; }
+
+        int i = static_cast<int>(y_norm * inv_delta);
+        if (i >= table_size - 1) { result[k] = scale[k]; continue; }
+
+        const double* tbl = tables[k];
+        double t_val = tbl[i] + (y_norm - i * delta) * (tbl[i + 1] - tbl[i]) * inv_delta;
+        if (t_val < 0.0) t_val = 0.0;
+        result[k] = scale[k] * t_val;
     }
 }
 
@@ -613,57 +679,65 @@ void XSectGroups::computeAreas(const double* depths, double* areas, int /*n_link
     for (const auto& g : groups_) {
         if (g.count == 0) continue;
 
-        // Gather depths into contiguous buffer
-        std::vector<double> local_d(static_cast<std::size_t>(g.count));
-        std::vector<double> local_a(static_cast<std::size_t>(g.count));
-        gather_depths(g, depths, local_d.data());
+        // Use pre-allocated buffers (no allocation in hot path)
+        double* local_d = g.buf_d.data();
+        double* local_a = g.buf_r.data();
+        gather_depths(g, depths, local_d);
 
         switch (g.shape) {
             case XSectShape::CIRCULAR:
             case XSectShape::FORCE_MAIN:
-                xsect_batch::area_circular(local_d.data(), g.y_full.data(),
-                                           g.a_full.data(), local_a.data(), g.count);
+                xsect_batch::area_circular(local_d, g.y_full.data(),
+                                           g.a_full.data(), local_a, g.count);
                 break;
 
             case XSectShape::RECT_CLOSED:
             case XSectShape::RECT_OPEN:
-                xsect_batch::area_rect(local_d.data(), g.w_max.data(),
-                                       local_a.data(), g.count);
+                xsect_batch::area_rect(local_d, g.w_max.data(),
+                                       local_a, g.count);
                 break;
 
             case XSectShape::TRAPEZOIDAL:
-                xsect_batch::area_trapezoidal(local_d.data(), g.y_bot.data(),
-                                              g.s_bot.data(), local_a.data(), g.count);
+                xsect_batch::area_trapezoidal(local_d, g.y_bot.data(),
+                                              g.s_bot.data(), local_a, g.count);
                 break;
 
             case XSectShape::TRIANGULAR:
-                xsect_batch::area_triangular(local_d.data(), g.s_bot.data(),
-                                             local_a.data(), g.count);
+                xsect_batch::area_triangular(local_d, g.s_bot.data(),
+                                             local_a, g.count);
                 break;
 
             case XSectShape::PARABOLIC:
-                xsect_batch::area_parabolic(local_d.data(), g.r_bot.data(),
-                                            local_a.data(), g.count);
+                xsect_batch::area_parabolic(local_d, g.r_bot.data(),
+                                            local_a, g.count);
                 break;
 
             case XSectShape::POWERFUNC:
-                xsect_batch::area_powerfunc(local_d.data(), g.s_bot.data(),
-                                            g.r_bot.data(), local_a.data(), g.count);
+                xsect_batch::area_powerfunc(local_d, g.s_bot.data(),
+                                            g.r_bot.data(), local_a, g.count);
+                break;
+
+            case XSectShape::IRREGULAR:
+                if (!g.area_tables.empty()) {
+                    xsect_batch::perlink_tabulated(local_d, g.y_full.data(),
+                                                    g.a_full.data(), g.area_tables.data(),
+                                                    g.transect_tbl_size, local_a, g.count);
+                }
                 break;
 
             default: {
                 // Check tabulated shapes
                 auto tbl = area_table_for(g.shape);
                 if (tbl.data) {
-                    xsect_batch::area_tabulated(local_d.data(), g.y_full.data(),
+                    xsect_batch::area_tabulated(local_d, g.y_full.data(),
                                                 g.a_full.data(), tbl.data, tbl.size,
-                                                local_a.data(), g.count);
+                                                local_a, g.count);
                 } else {
                     auto inv = area_inv_table_for(g.shape);
                     if (inv.data) {
-                        xsect_batch::area_inv_tabulated(local_d.data(), g.y_full.data(),
+                        xsect_batch::area_inv_tabulated(local_d, g.y_full.data(),
                                                          g.a_full.data(), inv.data, inv.size,
-                                                         local_a.data(), g.count);
+                                                         local_a, g.count);
                     } else {
                         // Fallback: per-element using XSection.hpp
                         for (int k = 0; k < g.count; ++k) {
@@ -684,7 +758,7 @@ void XSectGroups::computeAreas(const double* depths, double* areas, int /*n_link
             }
         }
 
-        scatter_results(g, local_a.data(), areas);
+        scatter_results(g, local_a, areas);
     }
 }
 
@@ -696,42 +770,49 @@ void XSectGroups::computeHydRad(const double* depths, double* hydrad, int /*n_li
     for (const auto& g : groups_) {
         if (g.count == 0) continue;
 
-        std::vector<double> local_d(static_cast<std::size_t>(g.count));
-        std::vector<double> local_r(static_cast<std::size_t>(g.count));
-        gather_depths(g, depths, local_d.data());
+        double* local_d = g.buf_d.data();
+        double* local_r = g.buf_r.data();
+        gather_depths(g, depths, local_d);
 
         switch (g.shape) {
             case XSectShape::CIRCULAR:
             case XSectShape::FORCE_MAIN:
-                xsect_batch::hydrad_circular(local_d.data(), g.y_full.data(),
-                                             g.r_full.data(), local_r.data(), g.count);
+                xsect_batch::hydrad_circular(local_d, g.y_full.data(),
+                                             g.r_full.data(), local_r, g.count);
                 break;
 
             case XSectShape::RECT_CLOSED:
             case XSectShape::RECT_OPEN:
-                xsect_batch::hydrad_rect(local_d.data(), g.w_max.data(),
-                                         local_r.data(), g.count);
+                xsect_batch::hydrad_rect(local_d, g.w_max.data(),
+                                         local_r, g.count);
                 break;
 
             case XSectShape::TRAPEZOIDAL:
-                xsect_batch::hydrad_trapezoidal(local_d.data(), g.y_bot.data(),
+                xsect_batch::hydrad_trapezoidal(local_d, g.y_bot.data(),
                                                 g.s_bot.data(), g.r_bot.data(),
-                                                local_r.data(), g.count);
+                                                local_r, g.count);
                 break;
 
             case XSectShape::TRIANGULAR:
-                xsect_batch::hydrad_triangular(local_d.data(), g.s_bot.data(),
-                                               g.r_bot.data(), local_r.data(), g.count);
+                xsect_batch::hydrad_triangular(local_d, g.s_bot.data(),
+                                               g.r_bot.data(), local_r, g.count);
+                break;
+
+            case XSectShape::IRREGULAR:
+                if (!g.hrad_tables.empty()) {
+                    xsect_batch::perlink_tabulated(local_d, g.y_full.data(),
+                                                    g.r_full.data(), g.hrad_tables.data(),
+                                                    g.transect_tbl_size, local_r, g.count);
+                }
                 break;
 
             default: {
                 auto tbl = hydrad_table_for(g.shape);
                 if (tbl.data) {
-                    xsect_batch::hydrad_tabulated(local_d.data(), g.y_full.data(),
+                    xsect_batch::hydrad_tabulated(local_d, g.y_full.data(),
                                                   g.r_full.data(), tbl.data, tbl.size,
-                                                  local_r.data(), g.count);
+                                                  local_r, g.count);
                 } else {
-                    // Fallback: per-element
                     for (int k = 0; k < g.count; ++k) {
                         XSectParams xs;
                         xs.type = static_cast<int>(g.shape);
@@ -749,7 +830,7 @@ void XSectGroups::computeHydRad(const double* depths, double* hydrad, int /*n_li
             }
         }
 
-        scatter_results(g, local_r.data(), hydrad);
+        scatter_results(g, local_r, hydrad);
     }
 }
 
@@ -761,38 +842,46 @@ void XSectGroups::computeWidths(const double* depths, double* widths, int /*n_li
     for (const auto& g : groups_) {
         if (g.count == 0) continue;
 
-        std::vector<double> local_d(static_cast<std::size_t>(g.count));
-        std::vector<double> local_w(static_cast<std::size_t>(g.count));
-        gather_depths(g, depths, local_d.data());
+        double* local_d = g.buf_d.data();
+        double* local_w = g.buf_r.data();
+        gather_depths(g, depths, local_d);
 
         switch (g.shape) {
             case XSectShape::CIRCULAR:
             case XSectShape::FORCE_MAIN:
-                xsect_batch::width_circular(local_d.data(), g.y_full.data(),
-                                            g.w_max.data(), local_w.data(), g.count);
+                xsect_batch::width_circular(local_d, g.y_full.data(),
+                                            g.w_max.data(), local_w, g.count);
                 break;
 
             case XSectShape::RECT_CLOSED:
             case XSectShape::RECT_OPEN:
-                xsect_batch::width_rect(g.w_max.data(), local_w.data(), g.count);
+                xsect_batch::width_rect(g.w_max.data(), local_w, g.count);
                 break;
 
             case XSectShape::TRAPEZOIDAL:
-                xsect_batch::width_trapezoidal(local_d.data(), g.y_bot.data(),
-                                               g.s_bot.data(), local_w.data(), g.count);
+                xsect_batch::width_trapezoidal(local_d, g.y_bot.data(),
+                                               g.s_bot.data(), local_w, g.count);
                 break;
 
             case XSectShape::TRIANGULAR:
-                xsect_batch::width_triangular(local_d.data(), g.s_bot.data(),
-                                              local_w.data(), g.count);
+                xsect_batch::width_triangular(local_d, g.s_bot.data(),
+                                              local_w, g.count);
+                break;
+
+            case XSectShape::IRREGULAR:
+                if (!g.width_tables.empty()) {
+                    xsect_batch::perlink_tabulated(local_d, g.y_full.data(),
+                                                    g.w_max.data(), g.width_tables.data(),
+                                                    g.transect_tbl_size, local_w, g.count);
+                }
                 break;
 
             default: {
                 auto tbl = width_table_for(g.shape);
                 if (tbl.data) {
-                    xsect_batch::width_tabulated(local_d.data(), g.y_full.data(),
+                    xsect_batch::width_tabulated(local_d, g.y_full.data(),
                                                  g.w_max.data(), tbl.data, tbl.size,
-                                                 local_w.data(), g.count);
+                                                 local_w, g.count);
                 } else {
                     for (int k = 0; k < g.count; ++k) {
                         XSectParams xs;
@@ -809,7 +898,7 @@ void XSectGroups::computeWidths(const double* depths, double* widths, int /*n_li
             }
         }
 
-        scatter_results(g, local_w.data(), widths);
+        scatter_results(g, local_w, widths);
     }
 }
 

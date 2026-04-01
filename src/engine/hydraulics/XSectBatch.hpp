@@ -170,6 +170,17 @@ struct ShapeGroup {
     std::vector<double> s_bot;
     std::vector<double> r_bot;
 
+    // Per-link transect table pointers (IRREGULAR shapes only)
+    // Each pointer → a normalized table of N_TRANSECT_TBL entries.
+    std::vector<const double*> area_tables;   ///< Per-link area table
+    std::vector<const double*> hrad_tables;   ///< Per-link hyd-rad table
+    std::vector<const double*> width_tables;  ///< Per-link width table
+    int transect_tbl_size = 0;                ///< Table size (same for all)
+
+    // Pre-allocated working buffers (avoids per-call allocation in hot loop)
+    mutable std::vector<double> buf_d;   ///< Gather buffer for depths
+    mutable std::vector<double> buf_r;   ///< Scatter buffer for results
+
     /// Resize all arrays to n elements.
     void resize(int n);
 };
@@ -202,6 +213,17 @@ public:
      * @param ctx  SimulationContext (must have links populated).
      */
     void build(const SimulationContext& ctx);
+
+    /**
+     * @brief Attach transect tables to the IRREGULAR shape group.
+     *
+     * @details Must be called after build() when IRREGULAR shapes exist.
+     *          Populates per-link area/hrad/width table pointers from
+     *          the precomputed transect tables in the context.
+     *
+     * @param ctx  SimulationContext with transect_tables populated.
+     */
+    void attachTransectTables(const SimulationContext& ctx);
 
     /**
      * @brief Build shape groups from an array of XSectParams.

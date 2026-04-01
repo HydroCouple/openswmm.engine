@@ -16,6 +16,7 @@
 #ifndef OPENSWMM_NODE_HPP
 #define OPENSWMM_NODE_HPP
 
+#include "../core/Constants.hpp"
 #include "../data/NodeData.hpp"
 #include "../data/TableData.hpp"
 
@@ -141,16 +142,7 @@ void computeOverflows(const double* new_volume, const double* full_volume,
 
 } // namespace node
 
-// ============================================================================
-// Constants
-// ============================================================================
-
-namespace constants {
-    constexpr double GRAVITY       = 32.2;       ///< ft/s^2
-    constexpr double PHI           = 1.486;      ///< Manning's units factor (US)
-    constexpr double FUDGE         = 0.0001;     ///< Minimum depth/area threshold (ft)
-    constexpr double MIN_SURFAREA  = 12.566;     ///< 4*pi sq ft ≈ 4-ft diameter manhole
-} // namespace constants
+// Constants now consolidated in core/Constants.hpp
 
 } // namespace openswmm
 

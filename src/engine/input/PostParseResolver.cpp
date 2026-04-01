@@ -10,6 +10,7 @@
  */
 
 #include "PostParseResolver.hpp"
+#include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
 #include <algorithm>
@@ -286,10 +287,13 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Pump curve name resolution
     // -------------------------------------------------------------------------
-    // pump_curve is stored as -1 during parsing if the pump section
-    // appears before the curves section. Re-resolve here.
-    // (Full implementation requires storing unresolved names in a side-table;
-    //  for now, pumps parsed in order will have been resolved inline.)
+    for (int j = 0; j < n_links; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] != LinkType::PUMP) continue;
+        if (ctx.links.pump_curve[uj] >= 0) continue; // already resolved
+        if (ctx.links.pump_curve_name[uj].empty()) continue;
+        ctx.links.pump_curve[uj] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
+    }
 
     // -------------------------------------------------------------------------
     // Node init_depth → head initialisation
@@ -392,11 +396,74 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Link cross-section derived properties
     // -------------------------------------------------------------------------
-    // Constants matching legacy consts.h
-    constexpr double PI      = 3.14159265358979;
-    constexpr double GRAVITY = 32.2;
-    constexpr double PHI     = 1.486;
-    constexpr double MIN_DELTA_Z = 0.001;
+    // -------------------------------------------------------------------------
+    // Non-conduit link offset conversion (ELEVATION → DEPTH)
+    // -------------------------------------------------------------------------
+    // The conduit pass below skips non-conduit links (length==0). We need a
+    // separate pass for pumps, orifices, weirs, outlets.
+    if (ctx.options.link_offsets == 1) { // ELEV_OFFSET
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+            int n1 = ctx.links.node1[uj];
+            int n2 = ctx.links.node2[uj];
+            if (n1 >= 0 && n1 < n_nodes) {
+                ctx.links.offset1[uj] = std::max(0.0,
+                    ctx.links.offset1[uj] - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)]);
+            }
+            if (n2 >= 0 && n2 < n_nodes) {
+                ctx.links.offset2[uj] = std::max(0.0,
+                    ctx.links.offset2[uj] - ctx.nodes.invert_elev[static_cast<std::size_t>(n2)]);
+            }
+            // Also convert crest_height for weirs/orifices
+            if (ctx.links.type[uj] == LinkType::WEIR ||
+                ctx.links.type[uj] == LinkType::ORIFICE) {
+                if (n1 >= 0 && n1 < n_nodes) {
+                    ctx.links.crest_height[uj] = std::max(0.0,
+                        ctx.links.crest_height[uj] - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)]);
+                }
+            }
+        }
+    }
+
+    // Build transect geometry tables for IRREGULAR cross-sections.
+    // Each TransectStore entry → TransectData with precomputed area/width/hrad tables.
+    {
+        int nt = ctx.transects.count();
+        ctx.transect_tables.resize(static_cast<std::size_t>(nt));
+        for (int t = 0; t < nt; ++t) {
+            auto ut = static_cast<std::size_t>(t);
+            auto& td = ctx.transect_tables[ut];
+            td.name      = ctx.transects.names[ut];
+            td.n_left    = ctx.transects.n_left[ut];
+            td.n_right   = ctx.transects.n_right[ut];
+            td.n_channel = ctx.transects.n_channel[ut];
+            td.stations  = ctx.transects.stations[ut];
+            td.elevations = ctx.transects.elevations[ut];
+            td.x_left_bank  = ctx.transects.x_left_bank[ut];
+            td.x_right_bank = ctx.transects.x_right_bank[ut];
+            transect::buildTables(td);
+        }
+        // Resolve IRREGULAR link xsect_curve indices to transect table indices
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.xsect_shape[uj] != XsectShape::IRREGULAR) continue;
+            int ci = ctx.links.xsect_curve[uj];
+            if (ci >= 0 && ci < nt) {
+                const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
+                ctx.links.xsect_y_full[uj] = td.y_full;
+                ctx.links.xsect_a_full[uj] = td.a_full;
+                ctx.links.xsect_r_full[uj] = td.r_full;
+                ctx.links.xsect_w_max[uj]  = td.w_max;
+            }
+        }
+    }
+
+    // Use global constants
+    using constants::PI;
+    using constants::GRAVITY;
+    using constants::PHI;
+    using constants::MIN_DELTA_Z;
 
     // Compute full-flow properties from cross-section geometry
     // (matches legacy xsect_setParams in xsect.c)
@@ -616,9 +683,32 @@ void resolve_cross_references(SimulationContext& ctx) {
             break;
         }
 
-        default:
-            // For IRREGULAR, CUSTOM, POWER, RECT_ROUND — placeholder
-            // These need shape table lookups (TODO: implement fully)
+        case XsectShape::IRREGULAR: {
+            // Properties already set from transect tables above
+            int ci = ctx.links.xsect_curve[uj];
+            if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
+                const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
+                a_full = td.a_full;
+                r_full = td.r_full;
+                w_max  = td.w_max;
+                y_full = td.y_full;
+                s_full = a_full * std::pow(r_full, 2.0/3.0);
+                s_max  = s_full;
+                yw_max = y_full;
+            } else {
+                // Fallback if transect not resolved
+                a_full = w_max * y_full;
+                double p_def = 2.0 * y_full + w_max;
+                r_full = (p_def > 0.0) ? a_full / p_def : 0.0;
+                s_full = a_full * std::pow(r_full, 2.0/3.0);
+                s_max  = s_full;
+                yw_max = y_full;
+            }
+            break;
+        }
+
+        default: {
+            // CUSTOM, POWER, RECT_ROUND etc.
             a_full = w_max * y_full;
             double p_def = 2.0 * y_full + w_max;
             r_full = (p_def > 0.0) ? a_full / p_def : 0.0;
@@ -626,6 +716,7 @@ void resolve_cross_references(SimulationContext& ctx) {
             s_max  = s_full;
             yw_max = y_full;
             break;
+        }
         }
 
         ctx.links.xsect_a_full[uj] = a_full;
