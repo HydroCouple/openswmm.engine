@@ -878,17 +878,13 @@ void resolve_cross_references(SimulationContext& ctx) {
 
         ctx.links.slope[uj] = slope;
 
-        // Reverse conduit direction for adverse slope under DW routing
-        if (ctx.options.routing_model == RoutingModel::DYNWAVE && slope < 0.0 &&
-            ctx.links.xsect_a_full[uj] > 0.0) {
-            // Swap nodes
-            std::swap(ctx.links.node1[uj], ctx.links.node2[uj]);
-            std::swap(ctx.links.offset1[uj], ctx.links.offset2[uj]);
-            std::swap(ctx.links.loss_inlet[uj], ctx.links.loss_outlet[uj]);
-            ctx.links.slope[uj] = -slope;
-            ctx.links.direction[uj] *= -1;
-            ctx.links.q0[uj] = -ctx.links.q0[uj];
-        }
+        // Note: adverse slope reversal is NOT applied here.
+        // The DW momentum solver handles adverse slopes naturally through the
+        // St. Venant equations. Reversing conduit direction changes the network
+        // topology and can cause incorrect flow patterns at CSO regulators.
+        // The legacy engine reverses but the node connections for non-conduit
+        // links (orifices, weirs) are NOT reversed, creating inconsistencies.
+        // Keeping original direction matches the user's intent.
     }
 
     // -------------------------------------------------------------------------
