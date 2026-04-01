@@ -94,5 +94,84 @@ void buildTables(TransectData& td) {
     }
 }
 
+void buildCustomTables(TransectData& td, double y_full,
+                       const double* curve_x, const double* curve_y, int n_pts) {
+    if (n_pts < 2 || y_full <= 0.0) return;
+
+    td.y_full = y_full;
+
+    // Find max width from curve (curve_y gives normalized width, 0-1+)
+    double w_max_norm = 0.0;
+    for (int i = 0; i < n_pts; ++i) {
+        if (curve_y[i] > w_max_norm) w_max_norm = curve_y[i];
+    }
+    // In SWMM CUSTOM shapes, curve is depth/yFull vs width/wMax.
+    // wMax is the maximum physical width. We approximate from the curve.
+    // The actual wMax = w_max_norm * y_full is a rough estimate;
+    // the curve normalization means w_max_norm should be ~1.0 at the widest point.
+    td.w_max = w_max_norm * y_full;  // Will be refined below
+
+    // Helper: interpolate width from curve at normalized depth y_norm
+    auto interp_width = [&](double y_norm) -> double {
+        if (y_norm <= curve_x[0]) return curve_y[0];
+        if (y_norm >= curve_x[n_pts - 1]) return curve_y[n_pts - 1];
+        for (int i = 1; i < n_pts; ++i) {
+            if (y_norm <= curve_x[i]) {
+                double dx = curve_x[i] - curve_x[i - 1];
+                if (dx <= 0.0) return curve_y[i];
+                double t = (y_norm - curve_x[i - 1]) / dx;
+                return curve_y[i - 1] + t * (curve_y[i] - curve_y[i - 1]);
+            }
+        }
+        return curve_y[n_pts - 1];
+    };
+
+    // Build tables at N_TRANSECT_TBL equal depth increments
+    double dd = 1.0 / static_cast<double>(N_TRANSECT_TBL - 1);
+    double cum_area = 0.0;
+    double max_width = 0.0;
+
+    for (int d = 0; d < N_TRANSECT_TBL; ++d) {
+        double y_norm = d * dd;
+        double w_norm = interp_width(y_norm);
+        double w = w_norm * y_full;  // Physical width (temporary scale)
+
+        td.width_tbl[d] = w;
+        if (w > max_width) max_width = w;
+
+        // Accumulate area by trapezoidal integration
+        if (d > 0) {
+            double w_prev = td.width_tbl[d - 1];
+            double dy = dd * y_full;
+            cum_area += 0.5 * (w_prev + w) * dy;
+        }
+        td.area_tbl[d] = cum_area;
+
+        // Hydraulic radius: R = A / P (approximate P from cumulative perimeter)
+        double p = 0.0;
+        for (int k = 1; k <= d; ++k) {
+            double dw = std::fabs(td.width_tbl[k] - td.width_tbl[k - 1]) / 2.0;
+            double dy = dd * y_full;
+            p += 2.0 * std::sqrt(dy * dy + dw * dw);
+        }
+        td.hrad_tbl[d] = (p > 0.0) ? td.area_tbl[d] / p : 0.0;
+    }
+
+    td.a_full = cum_area;
+    td.w_max  = max_width;
+    td.r_full = (td.a_full > 0.0) ? td.hrad_tbl[N_TRANSECT_TBL - 1] : 0.0;
+
+    // Normalize tables
+    if (td.a_full > 0.0) {
+        for (int d = 0; d < N_TRANSECT_TBL; ++d) td.area_tbl[d] /= td.a_full;
+    }
+    if (td.r_full > 0.0) {
+        for (int d = 0; d < N_TRANSECT_TBL; ++d) td.hrad_tbl[d] /= td.r_full;
+    }
+    if (td.w_max > 0.0) {
+        for (int d = 0; d < N_TRANSECT_TBL; ++d) td.width_tbl[d] /= td.w_max;
+    }
+}
+
 } // namespace transect
 } // namespace openswmm

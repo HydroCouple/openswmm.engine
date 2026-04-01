@@ -63,6 +63,22 @@ struct TransectData {
  */
 void buildTables(TransectData& td);
 
+/**
+ * @brief Build tabulated geometry from a CUSTOM shape curve.
+ *
+ * @details The shape curve defines normalized (y/yFull) vs (width/wMax).
+ *          This function integrates area and computes hyd-radius tables
+ *          that can be used by XSectBatch's per-link lookup kernel.
+ *
+ * @param td        [out] TransectData to populate (tables and full properties).
+ * @param y_full    Full depth of the cross-section.
+ * @param curve_x   Normalized depth values (y/yFull) from shape curve.
+ * @param curve_y   Normalized width values (w/wMax) from shape curve.
+ * @param n_pts     Number of curve points.
+ */
+void buildCustomTables(TransectData& td, double y_full,
+                       const double* curve_x, const double* curve_y, int n_pts);
+
 } // namespace transect
 } // namespace openswmm
 

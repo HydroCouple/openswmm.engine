@@ -104,7 +104,8 @@ void XSectGroups::build(const XSectParams* params, int n_links) {
 
 void XSectGroups::attachTransectTables(const SimulationContext& ctx) {
     for (auto& g : groups_) {
-        if (g.shape != XSectShape::IRREGULAR || g.count == 0) continue;
+        if ((g.shape != XSectShape::IRREGULAR && g.shape != XSectShape::CUSTOM) ||
+            g.count == 0) continue;
 
         auto uc = static_cast<std::size_t>(g.count);
         g.area_tables.resize(uc, nullptr);
@@ -718,6 +719,7 @@ void XSectGroups::computeAreas(const double* depths, double* areas, int /*n_link
                 break;
 
             case XSectShape::IRREGULAR:
+            case XSectShape::CUSTOM:
                 if (!g.area_tables.empty()) {
                     xsect_batch::perlink_tabulated(local_d, g.y_full.data(),
                                                     g.a_full.data(), g.area_tables.data(),
@@ -799,6 +801,7 @@ void XSectGroups::computeHydRad(const double* depths, double* hydrad, int /*n_li
                 break;
 
             case XSectShape::IRREGULAR:
+            case XSectShape::CUSTOM:
                 if (!g.hrad_tables.empty()) {
                     xsect_batch::perlink_tabulated(local_d, g.y_full.data(),
                                                     g.r_full.data(), g.hrad_tables.data(),
@@ -869,6 +872,7 @@ void XSectGroups::computeWidths(const double* depths, double* widths, int /*n_li
                 break;
 
             case XSectShape::IRREGULAR:
+            case XSectShape::CUSTOM:
                 if (!g.width_tables.empty()) {
                     xsect_batch::perlink_tabulated(local_d, g.y_full.data(),
                                                     g.w_max.data(), g.width_tables.data(),

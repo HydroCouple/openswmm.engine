@@ -469,6 +469,87 @@ void resolve_cross_references(SimulationContext& ctx) {
         }
     }
 
+    // Resolve CUSTOM shape curves — these use [CURVES] Shape type entries
+    // that define normalized (depth/yFull, width/wMax) relationships.
+    {
+        int n_tables = static_cast<int>(ctx.tables.tables.size());
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.xsect_shape[uj] != XsectShape::CUSTOM) continue;
+
+            const auto& cname = ctx.links.pump_curve_name[uj];
+            if (cname.empty()) continue;
+
+            // Find curve by name in tables
+            int ci = ctx.table_names.find(cname);
+            if (ci >= 0 && ci < n_tables) {
+                ctx.links.xsect_curve[uj] = ci;
+
+                // Compute full-depth properties from shape curve
+                // The curve gives normalized (y/yFull) vs (w/wMax).
+                // At y/yFull = 1.0, w/wMax should be 0 (top of shape).
+                // Integrate area using trapezoidal rule.
+                const auto& tbl = ctx.tables.tables[static_cast<std::size_t>(ci)];
+                double y_full = ctx.links.xsect_y_full[uj];
+                if (y_full <= 0.0 || tbl.x.size() < 2) continue;
+
+                // Find max width from curve (typically at y_norm ~0.5)
+                double w_max_norm = 0.0;
+                for (std::size_t i = 0; i < tbl.y.size(); ++i) {
+                    if (tbl.y[i] > w_max_norm) w_max_norm = tbl.y[i];
+                }
+                // wMax is stored in tbl.y as normalized values, but the actual
+                // wMax comes from integrating the shape. For CUSTOM, legacy
+                // computes wMax = max width from the curve.
+                // The curve x = depth/yFull, y = width/wMax (normalized)
+                // We need to find wMax. For now, use y_full as width scale
+                // (CUSTOM shapes typically define width relative to y_full).
+                double w_max = w_max_norm * y_full; // approximate
+
+                // Compute area by integrating width curve
+                double a_full = 0.0;
+                for (std::size_t i = 1; i < tbl.x.size(); ++i) {
+                    double dy = (tbl.x[i] - tbl.x[i-1]) * y_full;
+                    double w_avg = 0.5 * (tbl.y[i] + tbl.y[i-1]) * w_max;
+                    a_full += w_avg * dy;
+                }
+
+                // Compute wetted perimeter at full depth (approximate)
+                double p_full = 0.0;
+                for (std::size_t i = 1; i < tbl.x.size(); ++i) {
+                    double dy = (tbl.x[i] - tbl.x[i-1]) * y_full;
+                    double dw = (tbl.y[i] - tbl.y[i-1]) * w_max / 2.0;
+                    p_full += 2.0 * std::sqrt(dy * dy + dw * dw);
+                }
+                double r_full = (p_full > 0.0) ? a_full / p_full : 0.0;
+
+                ctx.links.xsect_a_full[uj] = a_full;
+                ctx.links.xsect_r_full[uj] = r_full;
+                ctx.links.xsect_w_max[uj]  = w_max;
+
+                // Build CUSTOM table as a TransectData for XSectBatch lookup
+                // Store offset = nt + index in supplementary vector
+                transect::TransectData ctd;
+                ctd.name = cname;
+                ctd.y_full = y_full;
+                ctd.a_full = a_full;
+                ctd.r_full = r_full;
+                ctd.w_max  = w_max;
+                transect::buildCustomTables(ctd, y_full,
+                    tbl.x.data(), tbl.y.data(), static_cast<int>(tbl.x.size()));
+                // Update link properties from built table
+                ctx.links.xsect_a_full[uj] = ctd.a_full;
+                ctx.links.xsect_r_full[uj] = ctd.r_full;
+                ctx.links.xsect_w_max[uj]  = ctd.w_max;
+                // Store table; use negative xsect_curve for CUSTOM
+                // (offset into transect_tables by nt + custom_index)
+                int custom_idx = static_cast<int>(ctx.transect_tables.size());
+                ctx.transect_tables.push_back(std::move(ctd));
+                ctx.links.xsect_curve[uj] = custom_idx;
+            }
+        }
+    }
+
     // Use global constants
     using constants::PI;
     using constants::GRAVITY;
@@ -689,6 +770,17 @@ void resolve_cross_references(SimulationContext& ctx) {
             constexpr double RT_ALFMAX = 0.98;
             double a_max = RT_ALFMAX * a_full;
             s_max = a_max * std::pow(r_full, 2.0/3.0); // approx
+            yw_max = y_full;
+            break;
+        }
+
+        case XsectShape::CUSTOM: {
+            // Properties already set from CUSTOM shape curve above
+            a_full = ctx.links.xsect_a_full[uj];
+            r_full = ctx.links.xsect_r_full[uj];
+            w_max  = ctx.links.xsect_w_max[uj];
+            s_full = a_full * std::pow(std::max(r_full, 1e-10), 2.0/3.0);
+            s_max  = s_full;
             yw_max = y_full;
             break;
         }

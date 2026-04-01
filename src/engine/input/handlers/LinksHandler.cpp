@@ -357,19 +357,28 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
         }
 
         // IRREGULAR shapes: tok[2] is transect name, not a dimension.
-        // Store the name for deferred resolution (TRANSECTS section may not be parsed yet).
+        // CUSTOM shapes: tok[2] = y_full, tok[3] = shape curve name.
+        // Both need deferred resolution (TRANSECTS/CURVES may not be parsed yet).
         if (ctx.links.xsect_shape[idx] == XsectShape::IRREGULAR) {
             if (tok.size() > 2) {
                 ctx.links.pump_curve_name[idx] = tok[2]; // Reuse field for transect name
-                ctx.links.xsect_curve[idx] = -1; // Will be resolved in PostParseResolver
+                ctx.links.xsect_curve[idx] = -1;
+            }
+        } else if (ctx.links.xsect_shape[idx] == XsectShape::CUSTOM) {
+            if (tok.size() > 2) ctx.links.xsect_y_full[idx] = to_double(tok[2]);
+            if (tok.size() > 3) {
+                ctx.links.pump_curve_name[idx] = tok[3]; // Shape curve name
+                ctx.links.xsect_curve[idx] = -1;
             }
         } else {
             // Geom1 = full depth (diameter for circular, etc.)
             if (tok.size() > 2) ctx.links.xsect_y_full[idx] = to_double(tok[2]);
         }
 
-        // Geom2 = width or second parameter (shape-dependent)
-        if (tok.size() > 3) ctx.links.xsect_w_max[idx]  = to_double(tok[3]);
+        // Geom2 = width or second parameter (shape-dependent, skip for CUSTOM)
+        if (ctx.links.xsect_shape[idx] != XsectShape::CUSTOM) {
+            if (tok.size() > 3) ctx.links.xsect_w_max[idx]  = to_double(tok[3]);
+        }
 
         // Geom3 = third shape parameter (triangle depth, side slope, etc.)
         if (tok.size() > 4) ctx.links.xsect_y_bot[idx]  = to_double(tok[4]);
