@@ -38,6 +38,7 @@
 #include "Node.hpp"
 #include "XSectBatch.hpp"
 #include "ForceMain.hpp"
+#include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../math/SIMD.hpp"
 
@@ -55,8 +56,8 @@ static inline int omp_get_max_threads() { return 1; }
 namespace openswmm {
 namespace dynwave {
 
-static constexpr double GRAVITY = 32.2;
-static constexpr double FUDGE   = 0.0001;
+using constants::GRAVITY;
+using constants::FUDGE;
 
 // ============================================================================
 // Preissmann slot helpers (matching legacy dwflow.c)
@@ -100,10 +101,8 @@ double DWSolver::getSlotWidth(double y, double y_full, double w_max,
         return w_max * 0.5423 * std::exp(-std::pow(yNorm, 2.4));
     }
 
-    // EXTRAN method: use fixed narrow slot when surcharged
-    if (yNorm >= EXTRAN_CROWN_CUTOFF) {
-        return y_full * SLOT_WIDTH_FACTOR;  // y_full / 1000
-    }
+    // EXTRAN method: no slot — surcharge uses dQ/dH in node depth solver.
+    // Legacy getSlotWidth() returns 0.0 when SurchargeMethod != SLOT.
     return 0.0;
 }
 
@@ -195,28 +194,49 @@ void DWSolver::setNumThreads(int n) {
 // Main execute -- Picard iteration
 // ============================================================================
 
-int DWSolver::execute(SimulationContext& ctx, double dt) {
+int DWSolver::execute(SimulationContext& ctx, double dt,
+                      DWSolver::NonConduitFlowFunc non_conduit_fn) {
     int steps = 0;
     bool converged = false;
+
+    // Build conduit index list once (lazy init)
+    if (conduit_idx_.empty() && n_links_ > 0) {
+        conduit_idx_.reserve(static_cast<std::size_t>(n_links_));
+        for (int j = 0; j < n_links_; ++j) {
+            if (ctx.links.type[static_cast<std::size_t>(j)] == LinkType::CONDUIT)
+                conduit_idx_.push_back(j);
+        }
+        n_conduits_ = static_cast<int>(conduit_idx_.size());
+    }
+
+    // Save area_mid from PREVIOUS TIMESTEP for the unsteady momentum term.
+    // This must happen ONCE per timestep, BEFORE the iteration loop, matching
+    // legacy dynwave.c:280 which sets a2 = a1 in initRoutingStep().
+    // area_mid_ still holds the final midpoint areas from the previous timestep.
+    std::copy(area_mid_.begin(), area_mid_.end(), area_old_.begin());
 
     while (steps < max_trials) {
         initNodeStates(ctx);
 
-        // Save area from previous iteration for unsteady term
-        if (steps == 0) {
-            std::copy(area_mid_.begin(), area_mid_.end(), area_old_.begin());
-        }
-
         // Step 1: batch compute ALL cross-section geometry (with slot overrides)
         computeLinkGeometry(ctx);
 
-        // Step 2: batch solve momentum for ALL links
+        // Step 2: batch solve momentum for ALL conduit links
         solveMomentumBatch(ctx, dt, steps);
 
         // Step 3: scatter link flows to nodes
-        updateNodeFlows(ctx);
+        // When non_conduit_fn is active, only scatter conduits here;
+        // non-conduit flows will be scattered by the callback in Step 4.
+        updateNodeFlows(ctx, /*conduits_only=*/ non_conduit_fn != nullptr);
 
-        // Step 4: update node depths, check convergence
+        // Step 4: compute non-conduit flows (pumps, orifices, weirs, outlets)
+        //         INSIDE the iteration loop, matching legacy dynwave.c:370-399
+        //         findLinkFlows() which calls findNonConduitFlow() per iteration.
+        if (non_conduit_fn) {
+            non_conduit_fn(ctx, dt, steps);
+        }
+
+        // Step 5: update node depths, check convergence
         converged = updateNodeDepths(ctx, dt, steps);
         steps++;
 
@@ -289,10 +309,10 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
-    // ---- STEP A: Compute raw depths and heads per link ----
-    for (int j = 0; j < n_links_; ++j) {
+    // ---- STEP A: Compute raw depths and heads per conduit link ----
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
-        if (links.type[uj] != LinkType::CONDUIT) continue;
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
@@ -321,23 +341,51 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         fasnh_[uj] = 1.0;
     }
 
-    // ---- STEP B: Batch widths from RAW depths (needed for surface area) ----
-    groups_->computeWidths(depth1_.data(), width1_.data(), n_links_);
-    groups_->computeWidths(depth2_.data(), width2_.data(), n_links_);
-    groups_->computeWidths(depth_mid_.data(), width_mid_.data(), n_links_);
+    // ---- STEP B: Batch widths from depths (needed for surface area) ----
+    // For EXTRAN mode, cap depth at CrownCutoff * yFull for width computation
+    // (matching legacy getWidth() which caps at CrownCutoff to avoid near-zero
+    //  widths at crown of closed conduits). Use temporary arrays so the real
+    //  depths are preserved for area/momentum computation.
+    if (surcharge_method != SurchargeMethod::SLOT) {
+        // Build width-capped depth copies
+        thread_local std::vector<double> wd1, wd2, wdm;
+        auto nl = static_cast<std::size_t>(n_links_);
+        wd1.resize(nl); wd2.resize(nl); wdm.resize(nl);
+        std::copy(depth1_.begin(), depth1_.begin() + nl, wd1.begin());
+        std::copy(depth2_.begin(), depth2_.begin() + nl, wd2.begin());
+        std::copy(depth_mid_.begin(), depth_mid_.begin() + nl, wdm.begin());
+        for (int ci = 0; ci < n_conduits_; ++ci) {
+            int j = conduit_idx_[static_cast<std::size_t>(ci)];
+            auto uj = static_cast<std::size_t>(j);
+            double yf = links.xsect_y_full[uj];
+            XsectShape shape = links.xsect_shape[uj];
+            bool is_open = (shape == XsectShape::RECT_OPEN ||
+                            shape == XsectShape::TRAPEZOIDAL ||
+                            shape == XsectShape::TRIANGULAR ||
+                            shape == XsectShape::PARABOLIC);
+            if (!is_open && yf > 0.0) {
+                double yCap = EXTRAN_CROWN_CUTOFF * yf;
+                if (wd1[uj] >= yCap) wd1[uj] = yCap;
+                if (wd2[uj] >= yCap) wd2[uj] = yCap;
+                if (wdm[uj] >= yCap) wdm[uj] = yCap;
+            }
+        }
+        groups_->computeWidths(wd1.data(), width1_.data(), n_links_);
+        groups_->computeWidths(wd2.data(), width2_.data(), n_links_);
+        groups_->computeWidths(wdm.data(), width_mid_.data(), n_links_);
+    } else {
+        groups_->computeWidths(depth1_.data(), width1_.data(), n_links_);
+        groups_->computeWidths(depth2_.data(), width2_.data(), n_links_);
+        groups_->computeWidths(depth_mid_.data(), width_mid_.data(), n_links_);
+    }
 
-    // ---- STEP C: Flow classification + surface area (per-link, scalar) ----
+    // ---- STEP C: Flow classification + surface area (conduits only) ----
     // Matches legacy dwflow.c findSurfArea + getFlowClass.
     // Only links with offsets can trigger non-SUBCRITICAL classification,
     // so the expensive getYnorm/getYcrit are rarely needed.
-    for (int j = 0; j < n_links_; ++j) {
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
-        if (links.type[uj] != LinkType::CONDUIT) {
-            surf_area1_[uj] = 0.0;
-            surf_area2_[uj] = 0.0;
-            links.flow_class[uj] = FlowClass::DRY;
-            continue;
-        }
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
@@ -541,10 +589,10 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     groups_->computeHydRad(p_dm, p_hm, n_links_);
     groups_->computeWidths(p_dm, p_wm, n_links_);
 
-    // ---- STEP E: Preissmann slot overrides ----
-    for (int j = 0; j < n_links_; ++j) {
+    // ---- STEP E: Preissmann slot overrides (conduits only) ----
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
-        if (links.type[uj] != LinkType::CONDUIT) continue;
 
         double yf = links.xsect_y_full[uj];
         double af = links.xsect_a_full[uj];
@@ -571,11 +619,11 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         }
     }
 
-    // ---- STEP F: Upstream hyd-rad and slot override ----
+    // ---- STEP F: Upstream hyd-rad and slot override (conduits only) ----
     groups_->computeHydRad(p_d1, hrad1_.data(), n_links_);
-    for (int j = 0; j < n_links_; ++j) {
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
-        if (links.type[uj] != LinkType::CONDUIT) continue;
         if (depth1_[uj] > links.xsect_y_full[uj])
             hrad1_[uj] = links.xsect_r_full[uj];
     }
@@ -619,7 +667,7 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
     // of conduits — no cross-link data dependencies exist.
 #if defined(SWMM_USE_OPENMP)
 #pragma omp parallel for num_threads(num_threads_) schedule(dynamic, 64) default(none) \
-    shared(links, nodes, p_area_mid, p_area1, p_area2, p_hrad_mid, p_width_mid, \
+    shared(ctx, links, nodes, p_area_mid, p_area1, p_area2, p_hrad_mid, p_width_mid, \
            p_depth1, p_depth2, p_depth_mid, p_velocity, p_froude, p_sigma, \
            p_dqdh, p_new_flow, p_area_old, p_h1, p_h2, dt, step, normal_flow_ltd, inert_damping)
 #endif
@@ -666,8 +714,8 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
 
         // --- Velocity (clamped) ---
         double v = qLast / aMid;
-        if (std::fabs(v) > MAXVELOCITY)
-            v = (v > 0.0) ? MAXVELOCITY : -MAXVELOCITY;
+        if (std::fabs(v) > MAX_VELOCITY)
+            v = (v > 0.0) ? MAX_VELOCITY : -MAX_VELOCITY;
         p_velocity[uj] = v;
 
         // --- Froude number ---
@@ -799,15 +847,31 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
         // 0=SLOPE, 1=FROUDE, 2=BOTH, 3=NEITHER
         FlowClass fc2 = links.flow_class[uj];
         int nfl = normal_flow_ltd;
-        if (nfl != 3 && p_depth1[uj] < yf && q > 0.0 &&
+        // Normal flow limiting (matching legacy checkNormalFlow in dwflow.c:634-683)
+        if (nfl != 3 && p_depth1[uj] < yf &&
             (fc2 == FlowClass::SUBCRITICAL || fc2 == FlowClass::SUPERCRITICAL)) {
-            bool slope_check = (nfl == 0 || nfl == 2) && h1 >= h2;
-            bool froude_check = (nfl == 1 || nfl == 2) && fr > 1.0;
+            int n1l = links.node1[uj], n2l = links.node2[uj];
+            bool hasOutfall = false;
+            if (n1l >= 0 && n2l >= 0) {
+                hasOutfall = (ctx.nodes.type[static_cast<std::size_t>(n1l)] == NodeType::OUTFALL ||
+                              ctx.nodes.type[static_cast<std::size_t>(n2l)] == NodeType::OUTFALL);
+            }
+            // Slope check: water surface slope < conduit slope when y1 < y2
+            // (matching legacy: "if (y1 < y2) check = TRUE")
+            bool slope_check = (nfl == 0 || nfl == 2 || hasOutfall) &&
+                               (p_depth1[uj] < p_depth2[uj]);
+            // Froude check at upstream end (matching legacy: f1 >= 1.0)
+            bool froude_check = false;
+            if (!slope_check && (nfl == 1 || nfl == 2) && !hasOutfall) {
+                if (p_depth1[uj] > FUDGE && p_depth2[uj] > FUDGE) {
+                    froude_check = (fr >= 1.0);
+                }
+            }
             if (slope_check || froude_check) {
                 double r1_for_norm = (hrad1_[uj] > FUDGE) ? hrad1_[uj] : FUDGE;
                 double s1 = p_area1[uj] * std::pow(r1_for_norm, 2.0/3.0);
                 double qNorm = links.beta[uj] * s1;
-                if (links.beta[uj] > 0.0 && q > qNorm) {
+                if (qNorm < q) {
                     q = qNorm;
                     links.normal_flow_limited[uj] = true;
                 }
@@ -857,12 +921,16 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
 // updateNodeFlows -- scatter link flows to nodes (matching legacy)
 // ============================================================================
 
-void DWSolver::updateNodeFlows(SimulationContext& ctx) {
+void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
     for (int j = 0; j < n_links_; ++j) {
         auto uj = static_cast<std::size_t>(j);
+
+        // When non-conduit callback is active, skip non-conduits here
+        // (they will be handled by the callback to avoid double-counting)
+        if (conduits_only && links.type[uj] != LinkType::CONDUIT) continue;
 
         // Apply computed flow
         links.flow[uj] = new_flow_[uj];
@@ -1109,10 +1177,13 @@ double DWSolver::getRoutingStep(const SimulationContext& ctx,
 
     double dt_min = fixed_step;
 
-    // Link-based CFL
+    // Link-based CFL (matching legacy getLinkStep with CourantFactor per-link)
     for (int j = 0; j < n_links_; ++j) {
         double t = getLinkStep(ctx, j);
-        if (t > 0.0 && t < dt_min) dt_min = t;
+        if (t <= 0.0) continue;
+        // Apply Courant factor per-link (matching legacy dynwave.c line 856)
+        t *= courant_factor;
+        if (t < dt_min) dt_min = t;
     }
 
     // Node-based CFL (matching legacy getNodeStep)
@@ -1135,13 +1206,11 @@ double DWSolver::getRoutingStep(const SimulationContext& ctx,
         if (t > 0.0 && t < dt_min) dt_min = t;
     }
 
-    // Apply Courant factor (matching legacy dynwave.c line 860)
-    if (courant_factor > 0.0 && courant_factor < 1.0) {
-        dt_min *= courant_factor;
-    }
-
-    dt_min = std::max(dt_min, MINTIMESTEP);
-    // Round to milliseconds
+    // Apply user's minimum step (from MINIMUM_STEP option, typically 0.5 sec)
+    double min_step = ctx.options.min_routing_step;
+    if (min_step < MIN_TIMESTEP) min_step = MIN_TIMESTEP;
+    dt_min = std::max(dt_min, min_step);
+    // Round to milliseconds for deterministic behavior
     dt_min = std::floor(1000.0 * dt_min) / 1000.0;
     return dt_min;
 }
@@ -1174,7 +1243,7 @@ double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
     }
 
     t *= fr / (1.0 + fr);  // Froude-based CFL factor
-    return t;              // CourantFactor applied in getRoutingStep caller
+    return t;              // CourantFactor applied per-link in getRoutingStep
 }
 
 } // namespace dynwave

@@ -294,6 +294,15 @@ struct LinkData {
     /** @brief Initial pump on/off state. */
     std::vector<bool>       pump_init_state;
 
+    /** @brief Pump startup depth (ft). */
+    std::vector<double>     pump_startup;
+
+    /** @brief Pump shutoff depth (ft). */
+    std::vector<double>     pump_shutoff;
+
+    /** @brief Pump curve name (for deferred resolution). */
+    std::vector<std::string> pump_curve_name;
+
     // -----------------------------------------------------------------------
     // Conduit loss coefficients
     // -----------------------------------------------------------------------
@@ -340,6 +349,9 @@ struct LinkData {
 
     /** @brief Discharge coefficient (dimensionless). */
     std::vector<double>     cd;
+
+    /** @brief Parameter 1 (orifice type: 0=BOTTOM, 1=SIDE; weir type encoding). */
+    std::vector<double>     param1;
 
     /** @brief Rated capacity or parameter 2 (weir side slopes, orifice area, etc.). */
     std::vector<double>     param2;
@@ -526,9 +538,13 @@ struct LinkData {
 
         pump_curve.assign(un, -1);
         pump_init_state.assign(un, false);
+        pump_startup.assign(un, 0.0);
+        pump_shutoff.assign(un, 0.0);
+        pump_curve_name.resize(un);
 
         crest_height.assign(un, 0.0);
         cd.assign(un, 0.0);
+        param1.assign(un, 0.0);
         param2.assign(un, 0.0);
         orate.assign(un, 0.0);
 

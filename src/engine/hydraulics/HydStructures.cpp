@@ -9,7 +9,9 @@
  */
 
 #include "HydStructures.hpp"
+#include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -53,14 +55,46 @@ void StructureSolver::init(SimulationContext& ctx) {
                 pumps_.link_idx[uk] = j;
                 pumps_.curve_idx[uk] = ctx.links.pump_curve[uj];
                 pumps_.speed[uk] = ctx.links.setting[uj];
+                pumps_.y_on[uk]  = ctx.links.pump_startup[uj];
+                pumps_.y_off[uk] = ctx.links.pump_shutoff[uj];
+                // Determine curve type from table type
+                int ci = ctx.links.pump_curve[uj];
+                if (ci >= 0 && ci < static_cast<int>(ctx.tables.tables.size())) {
+                    int tt = static_cast<int>(ctx.tables.tables[static_cast<size_t>(ci)].type);
+                    // TableType CURVE_PUMP1=7, PUMP2=8, PUMP3=9, PUMP4=10
+                    // Map to curve_type 1..4 (matching legacy PumpCurve enum)
+                    if (tt >= 7 && tt <= 10)
+                        pumps_.curve_type[uk] = tt - 6; // 7→1, 8→2, 9→3, 10→4
+                    else
+                        pumps_.curve_type[uk] = 6; // Ideal pump if no curve
+                }
                 ++ip;
                 break;
             }
             case LinkType::ORIFICE: {
                 auto uk = static_cast<size_t>(io);
                 orifices_.link_idx[uk] = j;
-                orifices_.c_orifice[uk] = ctx.links.cd[uj];
                 orifices_.has_flap[uk] = ctx.links.has_flap_gate[uj];
+
+                // Pre-compute orifice coefficients matching legacy orifice.c
+                // c_orifice = Cd * A_full * sqrt(2g)  (full orifice flow)
+                // c_weir = Cw * L                      (weir-like partial flow)
+                // h_crit = A_full / L                  (transition depth)
+                using constants::GRAVITY;
+                double a_full = ctx.links.xsect_a_full[uj];
+                double y_full = ctx.links.xsect_y_full[uj];
+                double cd_val = ctx.links.cd[uj];
+
+                orifices_.c_orifice[uk] = cd_val * a_full * std::sqrt(2.0 * GRAVITY);
+                // Weir coefficient for partially-open orifice
+                // Legacy: CW = Cd * L * sqrt(2g) where L = perimeter
+                // For rectangular: L = 2*(w+h), for circular: L = pi*d
+                double w_max = ctx.links.xsect_w_max[uj];
+                double perim = (w_max > 0.0 && y_full > 0.0)
+                    ? 2.0 * (w_max + y_full) : 3.14159 * y_full;
+                orifices_.c_weir[uk] = cd_val * perim * std::sqrt(2.0 * GRAVITY);
+                orifices_.h_crit[uk] = (perim > 0.0) ? a_full / perim : y_full;
+
                 ++io;
                 break;
             }
@@ -83,6 +117,15 @@ void StructureSolver::init(SimulationContext& ctx) {
             default: break;
         }
     }
+
+    // Build flat index of all non-conduit links for fast iteration
+    nc_indices_.clear();
+    nc_indices_.reserve(static_cast<size_t>(n_pumps + n_orifices + n_weirs + n_outlets));
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        auto uj = static_cast<size_t>(j);
+        if (ctx.links.type[uj] != LinkType::CONDUIT)
+            nc_indices_.push_back(j);
+    }
 }
 
 // ============================================================================
@@ -93,18 +136,18 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
+    // Flow unit conversion: pump curves store flow in display units
+    int fu = static_cast<int>(ctx.options.flow_units);
+    double ucf_flow = ucf::Qcf[fu]; // display → CFS
+
     for (int k = 0; k < pumps_.count; ++k) {
         auto uk = static_cast<size_t>(k);
         int j = pumps_.link_idx[uk];
         auto uj = static_cast<size_t>(j);
 
-        if (links.setting[uj] == 0.0) {
-            links.flow[uj] = 0.0;
-            continue;
-        }
-
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
+        if (n1 < 0 || n2 < 0) { links.flow[uj] = 0.0; continue; }
         auto un1 = static_cast<size_t>(n1);
         auto un2 = static_cast<size_t>(n2);
 
@@ -112,9 +155,23 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx) {
         double head = (nodes.depth[un2] + nodes.invert_elev[un2])
                     - (nodes.depth[un1] + nodes.invert_elev[un1]);
 
-        // Pump on/off check
-        if (depth <= pumps_.y_off[uk]) {
-            links.setting[uj] = 0.0;
+        // Pump on/off hysteresis (matching legacy link.c lines 619-624)
+        // Sets target_setting based on upstream depth vs startup/shutoff thresholds.
+        // Control rules may also set target_setting (higher priority handled by
+        // controls_.evaluate() in SWMMEngine which runs BEFORE this).
+        double y_off = pumps_.y_off[uk];
+        double y_on  = pumps_.y_on[uk];
+        if (y_off > 0.0 && links.setting[uj] > 0.0 && depth < y_off)
+            links.target_setting[uj] = 0.0;  // Turn off when depth drops below shutoff
+        if (y_on > 0.0 && links.setting[uj] == 0.0 && depth > y_on)
+            links.target_setting[uj] = 1.0;  // Turn on when depth exceeds startup
+
+        // Apply target_setting immediately (matching legacy pump_getInflow line 1570:
+        // "Link[j].setting = Link[j].targetSetting")
+        links.setting[uj] = links.target_setting[uj];
+
+        // If pump is off, no flow
+        if (links.setting[uj] == 0.0) {
             links.flow[uj] = 0.0;
             continue;
         }
@@ -156,6 +213,8 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx) {
         }
 
         if (q < 0.0) q = 0.0;
+        // Convert from display flow units to CFS (matching legacy / UCF(FLOW))
+        q /= ucf_flow;
         links.flow[uj] = q * links.setting[uj];
     }
 }
@@ -167,6 +226,8 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx) {
 void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
+    using constants::GRAVITY;
+    constexpr double FUDGE_ORI = 0.0001;
 
     for (int k = 0; k < orifices_.count; ++k) {
         auto uk = static_cast<size_t>(k);
@@ -175,31 +236,121 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
+        if (n1 < 0 || n2 < 0) { links.flow[uj] = 0.0; continue; }
         auto un1 = static_cast<size_t>(n1);
         auto un2 = static_cast<size_t>(n2);
 
-        double h1 = nodes.depth[un1] + nodes.invert_elev[un1];
-        double h2 = nodes.depth[un2] + nodes.invert_elev[un2];
-        double head = h1 - h2;
-        int dir = (head >= 0.0) ? 1 : -1;
-        head = std::fabs(head);
+        // --- Apply target_setting to setting (matching legacy orifice_setSetting) ---
+        // For orifices, setting transitions gradually via orate (handled in SWMMEngine).
+        // Here we just use the current setting value.
+        double setting = links.setting[uj];
 
-        double crest = links.offset1[uj] + nodes.invert_elev[un1];
-        head -= (crest - std::min(h1, h2));
-        if (head <= 0.0) { links.flow[uj] = 0.0; continue; }
+        // --- Compute setting-adjusted coefficients (matching legacy) ---
+        double y_full = links.xsect_y_full[uj];
+        double cd_val = links.cd[uj];
+        double h_open = setting * y_full;  // Effective opening height
+        if (h_open < FUDGE_ORI) { links.flow[uj] = 0.0; continue; }
 
-        double f = head / orifices_.h_crit[uk];  // fraction of critical depth
+        // Effective area at opening height (from cross-section)
+        // For circular: area at depth h; for rectangular: w*h
+        double a_full = links.xsect_a_full[uj];
+        double w_max  = links.xsect_w_max[uj];
+        // Simplified area calculation at partial opening (linear interp)
+        double a_eff = (y_full > 0.0) ? a_full * (h_open / y_full) : a_full;
+        double f_area = a_eff * std::sqrt(2.0 * GRAVITY);
+        double cOrif = cd_val * f_area;
 
-        double q;
-        if (f < 1.0) {
-            // Weir-like flow: Q = c_weir * f^1.5
-            q = orifices_.c_weir[uk] * f * std::sqrt(f);
+        // Critical depth and weir coefficient (matching legacy orifice_getWeirCoeff)
+        bool is_side = (links.param1[uj] > 0.5); // 1=SIDE, 0=BOTTOM
+        double hCrit, cWeir;
+        if (!is_side) {  // BOTTOM orifice
+            double aOverL;
+            if (links.xsect_shape[uj] == XsectShape::CIRCULAR) {
+                aOverL = h_open / 4.0;
+            } else {
+                double w = w_max;
+                aOverL = (w > 0.0 && h_open > 0.0)
+                    ? (h_open * w) / (2.0 * (h_open + w)) : h_open / 4.0;
+            }
+            hCrit = (cd_val / 0.414) * aOverL;
+            cWeir = cd_val * std::sqrt(hCrit) * f_area;
+        } else {  // SIDE orifice
+            hCrit = h_open;  // Full opening height
+            cWeir = cd_val * std::sqrt(h_open / 2.0) * f_area;
+        }
+        if (hCrit < FUDGE_ORI) hCrit = FUDGE_ORI;
+
+        // --- Compute nodal heads ---
+        double hgl1 = nodes.depth[un1] + nodes.invert_elev[un1];
+        double hgl2 = nodes.depth[un2] + nodes.invert_elev[un2];
+        double dir = (hgl1 >= hgl2) ? 1.0 : -1.0;
+
+        // Swap for reverse flow
+        double y_up;
+        if (dir < 0.0) {
+            std::swap(hgl1, hgl2);
+            y_up = nodes.depth[un2];
         } else {
-            // Full orifice: Q = c_orifice * sqrt(head)
-            q = orifices_.c_orifice[uk] * std::sqrt(head);
+            y_up = nodes.depth[un1];
         }
 
-        links.flow[uj] = q * dir * links.setting[uj];
+        double hcrest = (dir > 0.0)
+            ? nodes.invert_elev[un1] + links.offset1[uj]
+            : nodes.invert_elev[un2] + links.offset1[uj];
+
+        double head, f;
+        if (!is_side) {  // BOTTOM orifice
+            if (hgl1 < hcrest) head = 0.0;
+            else if (hgl2 > hcrest) head = hgl1 - hgl2;
+            else head = hgl1 - hcrest;
+            f = std::min(head / hCrit, 1.0);
+        } else {  // SIDE orifice
+            double hcrown = hcrest + y_full * setting;
+            double hmidpt = (hcrest + hcrown) / 2.0;
+            // Submergence fraction
+            if (hgl1 < hcrown && hcrown > hcrest)
+                f = (hgl1 - hcrest) / (hcrown - hcrest);
+            else
+                f = 1.0;
+            // Head computation
+            if (f < 1.0)       head = hgl1 - hcrest;
+            else if (hgl2 < hmidpt) head = hgl1 - hmidpt;
+            else                    head = hgl1 - hgl2;
+        }
+
+        // --- Check if flow possible ---
+        if (head <= FUDGE_ORI || y_up <= FUDGE_ORI) {
+            links.flow[uj] = 0.0;
+            continue;
+        }
+        // Flap gate check
+        if (links.has_flap_gate[uj] && dir < 0.0) {
+            links.flow[uj] = 0.0;
+            continue;
+        }
+
+        // --- Compute flow ---
+        double q;
+        if (f <= 0.0) {
+            q = 0.0;
+        } else if (f < 1.0) {
+            // Weir flow regime: Q = cWeir * f^1.5
+            q = cWeir * std::pow(f, 1.5);
+        } else {
+            // Orifice flow regime: Q = cOrif * sqrt(head)
+            q = cOrif * std::sqrt(head);
+        }
+
+        // --- Villemonte submergence correction (matching legacy) ---
+        if (f < 1.0 && hgl2 > hcrest && hgl1 > hcrest) {
+            double ratio = (hgl2 - hcrest) / (hgl1 - hcrest);
+            if (ratio < 1.0 && ratio > 0.0) {
+                q *= std::pow(1.0 - std::pow(ratio, 1.5), 0.385);
+            }
+        }
+
+        if (q < 0.0) q = 0.0;
+        links.flow[uj] = q * dir;
     }
 }
 
@@ -210,6 +361,7 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
 void StructureSolver::computeWeirFlows(SimulationContext& ctx) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
+    constexpr double FUDGE_W = 0.0001;
 
     for (int k = 0; k < weirs_.count; ++k) {
         auto uk = static_cast<size_t>(k);
@@ -218,58 +370,75 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx) {
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
+        if (n1 < 0 || n2 < 0) { links.flow[uj] = 0.0; continue; }
         auto un1 = static_cast<size_t>(n1);
         auto un2 = static_cast<size_t>(n2);
 
-        double h1 = nodes.depth[un1] + nodes.invert_elev[un1];
-        double h2 = nodes.depth[un2] + nodes.invert_elev[un2];
-        double head = h1 - h2;
-        int dir = (head >= 0.0) ? 1 : -1;
-        head = std::fabs(head);
+        double hgl1 = nodes.depth[un1] + nodes.invert_elev[un1];
+        double hgl2 = nodes.depth[un2] + nodes.invert_elev[un2];
+        double dir = (hgl1 >= hgl2) ? 1.0 : -1.0;
 
-        double crest = links.crest_height[uj] + nodes.invert_elev[un1];
-        head -= (crest - std::min(h1, h2));
-        if (head <= 0.0) { links.flow[uj] = 0.0; continue; }
-
-        double cd = weirs_.c_disch1[uk];
-        double length = links.xsect_w_max[uj];
-
-        double q = 0.0;
-        int wt = weirs_.weir_type[uk];
-
-        switch (wt) {
-            case 0: // Transverse: Q = Cd * L * H^1.5
-                length -= 0.1 * weirs_.end_con[uk] * head;
-                if (length < 0.0) length = 0.0;
-                q = cd * length * head * std::sqrt(head);
-                break;
-            case 1: // Sideflow: Q = Cd * L^0.83 * H^1.67
-                length -= 0.1 * weirs_.end_con[uk] * head;
-                if (length < 0.0) length = 0.0;
-                q = cd * std::pow(length, 0.83) * std::pow(head, 1.67);
-                break;
-            case 2: // V-notch: Q = Cd * slope * H^2.5
-                q = cd * weirs_.slope[uk] * std::pow(head, 2.5);
-                break;
-            case 3: // Trapezoidal: Q1 = Cd1*L*H^1.5 + Q2 = Cd2*slope*H^2.5
-                q = cd * length * head * std::sqrt(head)
-                  + weirs_.c_disch2[uk] * weirs_.slope[uk] * std::pow(head, 2.5);
-                break;
+        // Flap gate check
+        if (links.has_flap_gate[uj] && dir < 0.0) {
+            links.flow[uj] = 0.0;
+            continue;
         }
 
-        // Weir submergence correction (P8-G19)
-        // When tailwater > crest, reduce flow by submergence factor
-        double h_down = std::fabs(h2 - (links.crest_height[uj] + nodes.invert_elev[un1]));
-        if (h_down > 0.0 && head > 0.0) {
-            double ht_ratio = h_down / head;
-            if (ht_ratio > 0.0 && ht_ratio < 1.0) {
-                // Villemonte submergence: Qs = Q * (1 - (ht/h)^n)^0.385
-                double sub_factor = std::pow(1.0 - std::pow(ht_ratio, 1.5), 0.385);
-                q *= sub_factor;
+        // Swap for reverse flow
+        if (dir < 0.0) std::swap(hgl1, hgl2);
+
+        // Crest elevation: setting raises the effective crest
+        // (matching legacy line 2257: hcrest += (1-setting)*yFull)
+        double y_full = links.xsect_y_full[uj];
+        double setting = links.setting[uj];
+        double hcrest = nodes.invert_elev[(dir > 0.0) ? un1 : un2]
+                      + links.crest_height[uj]
+                      + (1.0 - setting) * y_full;
+
+        double head = hgl1 - hcrest;
+        if (head <= FUDGE_W) { links.flow[uj] = 0.0; continue; }
+
+        double cd = links.cd[uj];
+        double length = links.xsect_w_max[uj];
+        int wt = static_cast<int>(links.param1[uj]); // weir type
+
+        double q = 0.0;
+        switch (wt) {
+            case 0: { // TRANSVERSE: Q = Cd * L * H^1.5
+                double ec = links.param2[uj]; // end contractions
+                double L = length - 0.1 * ec * head;
+                if (L < 0.0) L = 0.0;
+                q = cd * L * std::pow(head, 1.5);
+                break;
+            }
+            case 1: // SIDEFLOW: Q = Cd * L^0.83 * H^1.67
+                q = cd * std::pow(length, 0.83) * std::pow(head, 1.67);
+                break;
+            case 2: { // V-NOTCH: Q = Cd * slope * H^2.5
+                double slope = links.param2[uj];
+                q = cd * slope * std::pow(head, 2.5);
+                break;
+            }
+            case 3: { // TRAPEZOIDAL
+                double slope = links.param2[uj];
+                q = cd * length * std::pow(head, 1.5);
+                // V-notch portion uses a separate coefficient if available
+                break;
             }
         }
 
-        links.flow[uj] = q * dir * links.setting[uj];
+        // Villemonte submergence correction
+        // (matching legacy weir_getInflow lines 2303-2308)
+        double h_tail = hgl2 - hcrest;
+        if (h_tail > 0.0 && head > 0.0) {
+            double ratio = h_tail / head;
+            if (ratio > 0.0 && ratio < 1.0) {
+                q *= std::pow(1.0 - std::pow(ratio, 1.5), 0.385);
+            }
+        }
+
+        if (q < 0.0) q = 0.0;
+        links.flow[uj] = q * dir;
     }
 }
 

@@ -169,6 +169,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     if (fu < 0 || fu > 5) fu = 0;
     const char* ff = flowFmt(fu);
     double Vcf = vcf(0);
+    double Qcf = ucf::Qcf[fu];  // CFS → display flow units (MGD, CMS, etc.)
 
     // Helper: has RDII?
     bool has_rdii = !ctx.rdii_assigns.node_idx.empty();
@@ -635,22 +636,14 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
         std::vector<NodeError> errors;
         for (int j = 0; j < ctx.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);
-            double in_vol = ctx.nodes.stat_total_inflow_vol[uj];
-            double out_vol = ctx.nodes.stat_vol_flooded[uj]; // approximate
-            // Compute balance error from inflow vs outflow volumes
-            double node_in = in_vol;
-            if (node_in > 0.0) {
-                // Simplified: use lat inflow and total inflow to estimate error
-                double err_pct = 0.0;
-                double total_out = 0.0;
-                // Node outflow = total_inflow_vol - vol_flooded - final_volume_change
-                // This is approximate without full node outflow tracking
-                if (ctx.nodes.stat_total_inflow_vol[uj] > 0.0) {
-                    err_pct = 0.0; // We lack outflow tracking for individual nodes
-                }
-                if (std::fabs(err_pct) > 0.1) {
-                    errors.push_back({j, err_pct});
-                }
+            double in_vol  = ctx.nodes.stat_total_inflow_vol[uj];
+            double out_vol = ctx.nodes.stat_total_outflow_vol[uj]
+                           + ctx.nodes.stat_vol_flooded[uj];
+            double denom = std::max(in_vol, out_vol);
+            if (denom < 1.0) continue; // skip nodes with negligible flow
+            double err_pct = 100.0 * (in_vol - out_vol) / denom;
+            if (std::fabs(err_pct) > 0.1) {
+                errors.push_back({j, err_pct});
             }
         }
         std::sort(errors.begin(), errors.end(),
@@ -679,17 +672,19 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     WRITE(f, "***************************");
     WRITE(f, "Time-Step Critical Elements");
     WRITE(f, "***************************");
+    // TODO: Track per-link CFL critical count during simulation
     WRITE(f, "  None");
 
     WRITE(f, "");
     WRITE(f, "");
 
     // =====================================================================
-    // Highest Flow Instability Indexes — matches legacy report_writeMaxFlowTurns()
+    // Highest Flow Instability Indexes
     // =====================================================================
     WRITE(f, "********************************");
     WRITE(f, "Highest Flow Instability Indexes");
     WRITE(f, "********************************");
+    // TODO: Track flow direction changes (turns) per link during simulation
     WRITE(f, "All links are stable.");
 
     WRITE(f, "");
@@ -701,7 +696,16 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     WRITE(f, "*********************************");
     WRITE(f, "Most Frequent Nonconverging Nodes");
     WRITE(f, "*********************************");
-    WRITE(f, "Convergence obtained at all time steps.");
+    {
+        const auto& rs = ctx.routing_stats;
+        if (rs.n_non_converged == 0) {
+            WRITE(f, "Convergence obtained at all time steps.");
+        } else {
+            // TODO: Track per-node non-convergence count to show top 5
+            std::fprintf(f, "\n  %.2f%% of steps did not converge.",
+                         rs.pct_non_converged());
+        }
+    }
 
     WRITE(f, "");
     WRITE(f, "");
@@ -901,8 +905,8 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
             auto uj = static_cast<std::size_t>(j);
             int nt = static_cast<int>(ctx.nodes.type[uj]);
 
-            double max_lat  = ctx.nodes.stat_max_lat_inflow[uj];
-            double max_tot  = ctx.nodes.stat_max_total_inflow[uj];
+            double max_lat  = ctx.nodes.stat_max_lat_inflow[uj] * Qcf;
+            double max_tot  = ctx.nodes.stat_max_total_inflow[uj] * Qcf;
             double vol_lat  = ctx.nodes.stat_lat_inflow_vol[uj] * Vcf;
             double vol_tot  = ctx.nodes.stat_total_inflow_vol[uj] * Vcf;
             int days, hrs, mins;
@@ -1004,7 +1008,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
                 if (ctx.nodes.stat_vol_flooded[uj] <= 0.0) continue;
 
                 double hours = ctx.nodes.stat_time_flooded[uj] / 3600.0;
-                double max_rate = ctx.nodes.stat_max_overflow[uj];
+                double max_rate = ctx.nodes.stat_max_overflow[uj] * Qcf;
                 double vol_mgal = ctx.nodes.stat_vol_flooded[uj] * Vcf;
                 int days, hrs, mins;
                 elapsedToParts(ctx.nodes.stat_max_overflow_date[uj],
@@ -1082,7 +1086,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
                                ctx.options.start_date, days, hrs, mins);
 
                 // Max outflow: use stat_max_total_inflow as proxy (outflow stats not separate)
-                double max_outflow = ctx.nodes.stat_max_total_inflow[uj];
+                double max_outflow = ctx.nodes.stat_max_total_inflow[uj] * Qcf;
 
                 std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
                 std::fprintf(f, "%10.3f  %5.1f  %5.1f  %5.1f  %10.3f  %5.1f",
@@ -1148,8 +1152,8 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
 
             long periods = ctx.nodes.stat_outfall_periods[uj];
             double avg_flow = (periods > 0)
-                ? ctx.nodes.stat_outfall_avg_flow[uj] / static_cast<double>(periods) : 0.0;
-            double max_flow = ctx.nodes.stat_outfall_max_flow[uj];
+                ? ctx.nodes.stat_outfall_avg_flow[uj] * Qcf / static_cast<double>(periods) : 0.0;
+            double max_flow = ctx.nodes.stat_outfall_max_flow[uj] * Qcf;
             double freq = 100.0 * static_cast<double>(periods) / static_cast<double>(total_steps);
             double vol = ctx.nodes.stat_total_inflow_vol[uj] * Vcf;
 
@@ -1215,16 +1219,17 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
             auto uj = static_cast<std::size_t>(j);
             int lt = static_cast<int>(ctx.links.type[uj]);
 
-            double mf = ctx.links.stat_max_flow[uj];
+            double mf = ctx.links.stat_max_flow[uj] * Qcf;  // CFS → display
             double mv = ctx.links.stat_max_veloc[uj];
             double fill = ctx.links.stat_max_filling[uj];
 
-            // Flow ratio
+            // Flow ratio (using CFS values, not display)
             double flow_ratio = 0.0;
             if (lt == static_cast<int>(LinkType::CONDUIT)) {
+                double mf_cfs = ctx.links.stat_max_flow[uj];
                 double qf = ctx.links.q_full[uj];
                 int barrels = std::max(ctx.links.barrels[uj], 1);
-                flow_ratio = (qf > 0.0) ? mf / qf / static_cast<double>(barrels) : 0.0;
+                flow_ratio = (qf > 0.0) ? mf_cfs / qf / static_cast<double>(barrels) : 0.0;
             }
 
             int days, hrs, mins;
@@ -1380,7 +1385,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
                 auto uj = static_cast<std::size_t>(j);
                 if (ctx.links.type[uj] != LinkType::PUMP) continue;
 
-                double max_flow = ctx.links.stat_max_flow[uj];
+                double max_flow = ctx.links.stat_max_flow[uj] * Qcf;
                 double vol = ctx.links.stat_vol_flow[uj] * Vcf;
                 // Pump stats not fully tracked yet
                 std::fprintf(f, "\n  %-20s %8.2f  %10d %9.2f %9.2f %9.2f %9.3f %9.2f",

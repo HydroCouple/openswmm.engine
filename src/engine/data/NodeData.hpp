@@ -374,6 +374,10 @@ struct NodeData {
     /// Cumulative total inflow volume at each node (ft3).
     std::vector<double>     stat_total_inflow_vol;
 
+    /// Cumulative total outflow volume at each node (ft3).
+    /// @see Legacy: NodeOutflow[j]
+    std::vector<double>     stat_total_outflow_vol;
+
     /**
      * @brief Outfall maximum flow (project flow units).
      * @see Legacy: OutfallStats[k].maxFlow
@@ -473,6 +477,7 @@ struct NodeData {
         stat_max_total_inflow.assign(un, 0.0);
         stat_lat_inflow_vol.assign(un, 0.0);
         stat_total_inflow_vol.assign(un, 0.0);
+        stat_total_outflow_vol.assign(un, 0.0);
         stat_outfall_avg_flow.assign(un, 0.0);
         stat_outfall_max_flow.assign(un, 0.0);
         stat_outfall_periods.assign(un, 0);
@@ -503,20 +508,30 @@ struct NodeData {
         }
     }
 
-    /** @brief Zero all state variables (for a cold start). */
+    /** @brief Reset state variables, applying init_depth from input.
+     *
+     * @details Matches legacy node_initState() which sets oldDepth = initDepth
+     *          and computes initial volume from depth. Flows and inflows are
+     *          zeroed for a cold start.
+     */
     void reset_state() noexcept {
         const auto n = depth.size();
-        std::fill(depth.begin(),    depth.end(),    0.0);
-        std::fill(head.begin(),     head.end(),     0.0);
+        // Apply initial depths from input (matching legacy node_initState)
+        for (std::size_t i = 0; i < n; ++i) {
+            depth[i]     = init_depth[i];
+            old_depth[i] = init_depth[i];
+            head[i]      = invert_elev[i] + init_depth[i];
+        }
+        // Volumes must be computed from init_depth by caller (needs table data)
         std::fill(volume.begin(),   volume.end(),   0.0);
+        std::fill(old_volume.begin(), old_volume.end(), 0.0);
+        // Zero flows
         std::fill(lat_flow.begin(), lat_flow.end(), 0.0);
         std::fill(inflow.begin(),   inflow.end(),   0.0);
         std::fill(outflow.begin(),  outflow.end(),  0.0);
         std::fill(overflow.begin(), overflow.end(), 0.0);
         std::fill(losses.begin(),   losses.end(),   0.0);
         std::fill(old_net_inflow.begin(), old_net_inflow.end(), 0.0);
-        std::fill(old_depth.begin(),    old_depth.end(),    0.0);
-        std::fill(old_volume.begin(),   old_volume.end(),   0.0);
         std::fill(old_lat_flow.begin(), old_lat_flow.end(), 0.0);
         (void)n;
     }

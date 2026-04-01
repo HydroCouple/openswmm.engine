@@ -34,19 +34,19 @@ TEST(DWConstants, OmegaDefault) {
 }
 
 TEST(DWConstants, HeadToleranceDefault) {
-    EXPECT_DOUBLE_EQ(DEFAULT_HEADTOL, 0.005);
+    EXPECT_DOUBLE_EQ(DEFAULT_HEAD_TOL, 0.005);
 }
 
 TEST(DWConstants, MaxTrialsDefault) {
-    EXPECT_EQ(DEFAULT_MAXTRIALS, 8);
+    EXPECT_EQ(DEFAULT_MAX_TRIALS, 8);
 }
 
 TEST(DWConstants, MaxVelocity) {
-    EXPECT_DOUBLE_EQ(MAXVELOCITY, 50.0);
+    EXPECT_DOUBLE_EQ(MAX_VELOCITY, 50.0);
 }
 
 TEST(DWConstants, MinTimestep) {
-    EXPECT_DOUBLE_EQ(MINTIMESTEP, 0.001);
+    EXPECT_DOUBLE_EQ(MIN_TIMESTEP, 0.001);
 }
 
 TEST(DWConstants, ExtranCrownCutoff) {
@@ -104,8 +104,8 @@ TEST(DWSolver, InitSetsParametersCorrectly) {
 
 TEST(DWSolver, DefaultParametersMatchLegacy) {
     DWSolver solver;
-    EXPECT_DOUBLE_EQ(solver.head_tol, DEFAULT_HEADTOL);
-    EXPECT_EQ(solver.max_trials, DEFAULT_MAXTRIALS);
+    EXPECT_DOUBLE_EQ(solver.head_tol, DEFAULT_HEAD_TOL);
+    EXPECT_EQ(solver.max_trials, DEFAULT_MAX_TRIALS);
     EXPECT_DOUBLE_EQ(solver.omega, OMEGA);
     EXPECT_EQ(solver.surcharge_method, SurchargeMethod::EXTRAN);
 }

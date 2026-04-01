@@ -68,6 +68,7 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.links.xsect_w_max,       0.0);
     grow(ctx.links.xsect_curve,       -1);
     grow(ctx.links.roughness,         0.013);
+    grow(ctx.links.param1,            0.0);
     grow(ctx.links.length,            0.0);
     grow(ctx.links.mod_length,        0.0);
     grow(ctx.links.slope,             0.0);
@@ -93,6 +94,9 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.links.dqdh,              0.0);
     grow(ctx.links.pump_curve,        -1);
     grow(ctx.links.pump_init_state,   false);
+    grow(ctx.links.pump_startup,      0.0);
+    grow(ctx.links.pump_shutoff,      0.0);
+    if (ctx.links.pump_curve_name.size() < n) ctx.links.pump_curve_name.resize(n);
     grow(ctx.links.crest_height,      0.0);
     grow(ctx.links.cd,                0.0);
     grow(ctx.links.param2,            0.0);
@@ -187,12 +191,24 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
         ctx.links.type[idx]  = LinkType::PUMP;
         ctx.links.node1[idx] = ctx.node_names.find(tok[1]);
         ctx.links.node2[idx] = ctx.node_names.find(tok[2]);
-        // tok[3]: pump curve name — resolved in post-parse pass
+        // tok[3]: pump curve name — store for deferred resolution
+        if (tok.size() > 3) {
+            ctx.links.pump_curve_name[idx] = tok[3];
+            ctx.links.pump_curve[idx] = ctx.table_names.find(tok[3]);
+        }
         // tok[4]: init status (ON/OFF)
         if (tok.size() > 4) {
             ctx.links.pump_init_state[idx] =
                 Tokenizer::to_upper(tok[4]) == "ON";
+            double init_val = ctx.links.pump_init_state[idx] ? 1.0 : 0.0;
+            ctx.links.setting[idx]        = init_val;
+            ctx.links.target_setting[idx] = init_val;
         }
+        // tok[5]: startup depth, tok[6]: shutoff depth
+        if (tok.size() > 5)
+            ctx.links.pump_startup[idx] = to_double(tok[5]);
+        if (tok.size() > 6)
+            ctx.links.pump_shutoff[idx] = to_double(tok[6]);
     }
 }
 
@@ -214,9 +230,19 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
         ctx.links.type[idx]         = LinkType::ORIFICE;
         ctx.links.node1[idx]        = ctx.node_names.find(tok[1]);
         ctx.links.node2[idx]        = ctx.node_names.find(tok[2]);
-        // tok[3]: SIDE or BOTTOM
-        if (tok.size() > 4) ctx.links.crest_height[idx] = to_double(tok[4]);
-        if (tok.size() > 5) ctx.links.cd[idx]           = to_double(tok[5]);
+        // tok[3]: SIDE or BOTTOM → store in param1 (0=BOTTOM, 1=SIDE)
+        if (tok.size() > 3) {
+            std::string otype = Tokenizer::to_upper(tok[3]);
+            ctx.links.param1[idx] = (otype == "SIDE") ? 1.0 : 0.0;
+        }
+        // tok[4]: offset (height above invert)
+        if (tok.size() > 4) ctx.links.offset1[idx]      = to_double(tok[4]);
+        // tok[5]: discharge coefficient
+        if (tok.size() > 5) ctx.links.cd[idx]            = to_double(tok[5]);
+        // tok[6]: flap gate (YES/NO)
+        if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::to_upper(tok[6]) == "YES";
+        // tok[7]: open/close time (seconds)
+        if (tok.size() > 7) ctx.links.orate[idx]         = to_double(tok[7]);
     }
 }
 
@@ -238,10 +264,22 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
         ctx.links.type[idx]  = LinkType::WEIR;
         ctx.links.node1[idx] = ctx.node_names.find(tok[1]);
         ctx.links.node2[idx] = ctx.node_names.find(tok[2]);
-        // tok[3]: weir type (TRANSVERSE, SIDEFLOW, V-NOTCH, TRAPEZOIDAL)
+        // tok[3]: weir type (TRANSVERSE=0, SIDEFLOW=1, V-NOTCH=2, TRAPEZOIDAL=3)
+        if (tok.size() > 3) {
+            std::string wtype = Tokenizer::to_upper(tok[3]);
+            if (wtype == "TRANSVERSE")  ctx.links.param1[idx] = 0.0;
+            else if (wtype == "SIDEFLOW") ctx.links.param1[idx] = 1.0;
+            else if (wtype == "V-NOTCH") ctx.links.param1[idx] = 2.0;
+            else if (wtype == "TRAPEZOIDAL") ctx.links.param1[idx] = 3.0;
+        }
+        // tok[4]: crest height (above invert)
         if (tok.size() > 4) ctx.links.crest_height[idx] = to_double(tok[4]);
+        // tok[5]: discharge coefficient
         if (tok.size() > 5) ctx.links.cd[idx]           = to_double(tok[5]);
-        if (tok.size() > 6) ctx.links.param2[idx]        = to_double(tok[6]);
+        // tok[6]: flap gate (YES/NO)
+        if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::to_upper(tok[6]) == "YES";
+        // tok[7]: end contractions
+        if (tok.size() > 7) ctx.links.param2[idx]       = to_double(tok[7]);
     }
 }
 

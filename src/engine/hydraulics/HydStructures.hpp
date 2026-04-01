@@ -119,11 +119,15 @@ public:
      */
     void computeAllFlows(SimulationContext& ctx, double dt);
 
+    /// @brief Get pre-built list of all non-conduit link indices.
+    const std::vector<int>& nonConduitIndices() const noexcept { return nc_indices_; }
+
 private:
     PumpGroup    pumps_;
     OrificeGroup orifices_;
     WeirGroup    weirs_;
     OutletGroup  outlets_;
+    std::vector<int> nc_indices_;   ///< All non-conduit link indices
 
     /// Batch pump flow — vectorisable curve lookups
     void computePumpFlows(SimulationContext& ctx);

@@ -29,8 +29,10 @@
 #define OPENSWMM_DYNAMIC_WAVE_HPP
 
 #include "XSectBatch.hpp"
+#include "../core/Constants.hpp"
 #include "../data/NodeData.hpp"
 #include "../data/LinkData.hpp"
+#include <functional>
 #include <vector>
 
 namespace openswmm {
@@ -40,17 +42,19 @@ struct SimulationContext;
 namespace dynwave {
 
 // ============================================================================
-// Constants (matching legacy)
+// Constants — imported from global Constants.hpp
 // ============================================================================
 
-constexpr double OMEGA               = 0.5;       ///< Picard under-relaxation
-constexpr double DEFAULT_HEADTOL     = 0.005;     ///< Convergence tolerance (ft)
-constexpr int    DEFAULT_MAXTRIALS   = 8;          ///< Max Picard iterations
-constexpr double MAXVELOCITY         = 50.0;      ///< Velocity limiter (ft/s)
-constexpr double MINTIMESTEP         = 0.001;      ///< Minimum timestep (s)
-constexpr double EXTRAN_CROWN_CUTOFF = 0.96;       ///< EXTRAN surcharge fraction
-constexpr double SLOT_CROWN_CUTOFF   = 0.985257;   ///< Preissmann slot crown cutoff
-constexpr double SLOT_WIDTH_FACTOR   = 0.001;       ///< Slot width = y_full * this factor
+using constants::OMEGA;
+using constants::DEFAULT_HEAD_TOL;
+using constants::DEFAULT_MAX_TRIALS;
+using constants::MAX_VELOCITY;
+using constants::MIN_TIMESTEP;
+using constants::EXTRAN_CROWN_CUTOFF;
+using constants::SLOT_CROWN_CUTOFF;
+using constants::SLOT_WIDTH_FACTOR;
+using constants::FUDGE;
+using constants::MIN_SURFAREA;
 
 // ============================================================================
 // Per-node extended state for DW iterations
@@ -102,14 +106,21 @@ public:
      */
     void setNumThreads(int n);
 
+    /// Callback for computing non-conduit link flows inside the Picard loop.
+    /// Parameters: (ctx, dt, picard_step) where step=0 is first iteration.
+    using NonConduitFlowFunc = std::function<void(SimulationContext&, double, int)>;
+
     /**
      * @brief Execute one DW routing timestep.
      *
      * @param ctx  Simulation context.
      * @param dt   Timestep (seconds).
+     * @param non_conduit_fn  Optional callback to compute pump/orifice/weir/outlet
+     *                        flows inside the Picard iteration loop (matching legacy).
      * @returns Number of Picard iterations used.
      */
-    int execute(SimulationContext& ctx, double dt);
+    int execute(SimulationContext& ctx, double dt,
+                NonConduitFlowFunc non_conduit_fn = nullptr);
 
     /**
      * @brief Compute CFL-based variable timestep.
@@ -117,16 +128,20 @@ public:
     double getRoutingStep(const SimulationContext& ctx,
                           double fixed_step, double courant_factor) const;
 
-    double head_tol   = DEFAULT_HEADTOL;
-    int    max_trials = DEFAULT_MAXTRIALS;
+    double head_tol   = DEFAULT_HEAD_TOL;
+    int    max_trials = DEFAULT_MAX_TRIALS;
     double omega      = OMEGA;
     SurchargeMethod surcharge_method = SurchargeMethod::EXTRAN;
 
 private:
     int n_nodes_ = 0;
     int n_links_ = 0;
+    int n_conduits_ = 0;
     int num_threads_ = 1;  ///< OpenMP thread count for parallel loops
     const XSectGroups* groups_ = nullptr;
+
+    // Pre-built conduit index list for skipping non-conduits in inner loops
+    std::vector<int> conduit_idx_;
 
     // Per-node working state
     std::vector<DWNodeState> xnode_;
@@ -171,7 +186,7 @@ private:
     void initNodeStates(SimulationContext& ctx);
     void computeLinkGeometry(SimulationContext& ctx);
     void solveMomentumBatch(SimulationContext& ctx, double dt, int step);
-    void updateNodeFlows(SimulationContext& ctx);
+    void updateNodeFlows(SimulationContext& ctx, bool conduits_only = false);
     bool updateNodeDepths(SimulationContext& ctx, double dt, int step);
     void setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int step);
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;

@@ -15,6 +15,7 @@
 #include "SimulationContext.hpp"
 #include "UnitConversion.hpp"
 #include "../hydraulics/Link.hpp"
+#include "../hydraulics/Node.hpp"
 #include "../hydraulics/ForceMain.hpp"
 #include <cmath>
 #include <algorithm>
@@ -243,7 +244,25 @@ int SWMMEngine::initialize() noexcept {
     }
 
     // Apply initial depths/flows from input (all defaults already in NodeData etc.)
+    // reset_state() applies init_depth to depth/old_depth/head but volumes need
+    // separate computation using node geometry tables.
     ctx_.reset_state();
+
+    // Compute initial volumes from init_depth (matching legacy node_initState)
+    for (int i = 0; i < ctx_.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        double d = ctx_.nodes.init_depth[ui];
+        if (d > 0.0) {
+            double vol = node::getVolume(ctx_.nodes, i, d, &ctx_.tables);
+            ctx_.nodes.volume[ui] = vol;
+            ctx_.nodes.old_volume[ui] = vol;
+        }
+        // Compute full volume for surcharge detection
+        double fd = ctx_.nodes.full_depth[ui];
+        if (fd > 0.0) {
+            ctx_.nodes.full_volume[ui] = node::getVolume(ctx_.nodes, i, fd, &ctx_.tables);
+        }
+    }
 
     // Initialize output timer
     ctx_.dt_output_remaining = ctx_.options.report_step;
@@ -305,9 +324,12 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         return SWMM_OK;
     }
 
-    // Compute next explicit timestep
-    // (dt_cfl: use max routing step until DynamicWave is implemented)
-    const double dt_cfl = ctx_.options.routing_step;
+    // Compute next explicit timestep using CFL-based adaptive stepping
+    double dt_cfl = ctx_.options.routing_step;
+    if (ctx_.options.variable_step > 0.0) {
+        dt_cfl = router_.getAdaptiveStep(ctx_, ctx_.options.routing_step,
+                                          ctx_.options.variable_step);
+    }
     const double dt_next = hydraulics::TimestepController::compute_next(ctx_, dt_cfl);
 
     // Fire step-begin callback
@@ -885,14 +907,19 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
     // Build per-subcatchment sw_head from each subcatch's GW receiving node
     // (gw_node is the node that receives GW lateral flow, may differ from
     //  outlet_node which receives surface runoff)
+    // Build per-subcatchment sw_head relative to aquifer bottom
+    // Legacy: Hsw = Node[n].newDepth + Node[n].invertElev - GW->bottomElev
     std::vector<double> sw_head(static_cast<std::size_t>(ns), 0.0);
     for (int i = 0; i < ns; ++i) {
         auto ui = static_cast<std::size_t>(i);
+        int aq_idx = ctx_.subcatches.gw_aquifer[ui];
+        if (aq_idx < 0) continue;
         int gw_node = ctx_.subcatches.gw_node[ui];
         if (gw_node < 0) gw_node = ctx_.subcatches.outlet_node[ui];
         if (gw_node >= 0 && gw_node < ctx_.n_nodes()) {
             auto un = static_cast<std::size_t>(gw_node);
-            sw_head[ui] = ctx_.nodes.depth[un] + ctx_.nodes.invert_elev[un];
+            double bottom_elev = ctx_.aquifers.bottom_elev[static_cast<std::size_t>(aq_idx)];
+            sw_head[ui] = ctx_.nodes.depth[un] + ctx_.nodes.invert_elev[un] - bottom_elev;
         }
     }
 
@@ -901,16 +928,19 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
                          ctx_.subcatches.infil_loss.data(), sw_head.data());
 
     // Scatter GW lateral flow to nodes (P8-G08)
+    // GW flow is in ft/sec (rate per unit area).
+    // Convert to CFS: q_cfs = gw_flow * area_ft2
     for (int i = 0; i < ns; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        // GW flow goes to gw_node, not outlet_node
         int gw_node = ctx_.subcatches.gw_node[ui];
         if (gw_node < 0) gw_node = ctx_.subcatches.outlet_node[ui];
         if (gw_node >= 0 && gw_node < ctx_.n_nodes()) {
-            double q = groundwater_.state().gw_flow[ui];
-            if (q > 0.0) {
-                ctx_.nodes.lat_flow[static_cast<std::size_t>(gw_node)] += q;
-                ctx_.mass_balance.routing_gw_inflow += q * dt_runoff;
+            double gw_rate = groundwater_.state().gw_flow[ui]; // ft/sec
+            if (gw_rate > 0.0) {
+                double area_ft2 = ctx_.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+                double q_cfs = gw_rate * area_ft2; // ft³/sec
+                ctx_.nodes.lat_flow[static_cast<std::size_t>(gw_node)] += q_cfs;
+                ctx_.mass_balance.routing_gw_inflow += q_cfs * dt_runoff;
             }
         }
     }
@@ -991,7 +1021,61 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     // B3. Hydraulic routing (batch xsect geometry → batch momentum)
     //     Includes: conduit flow, pump/orifice/weir/outlet flow,
     //     divider logic, outfall boundary conditions
-    router_.step(ctx_, dt_routing);
+    // Pass non-conduit flow callback so pumps/orifices/weirs/outlets are
+    // computed INSIDE the DW Picard iteration loop (matching legacy findLinkFlows).
+    // The callback applies under-relaxation for iterations > 0, matching legacy
+    // findNonConduitFlow() lines 435-438 in dynwave.c.
+    constexpr double OMEGA_NC = 0.5; // under-relaxation for non-conduit flows
+    // Pre-fetch the non-conduit index list (built once at init)
+    const auto& nc_idx = hydstruct_.nonConduitIndices();
+    auto non_conduit_fn = [this, &nc_idx](SimulationContext& ctx, double dt, int step) {
+        auto& links = ctx.links;
+
+        // Save previous iteration flows for under-relaxation
+        // Only save non-conduit flows (much smaller than iterating all links)
+        thread_local std::vector<double> q_prev;
+        q_prev.resize(nc_idx.size());
+        for (std::size_t k = 0; k < nc_idx.size(); ++k) {
+            q_prev[k] = links.flow[static_cast<std::size_t>(nc_idx[k])];
+        }
+
+        // Compute all non-conduit link flows (sets links.flow for non-conduits)
+        hydstruct_.computeAllFlows(ctx, dt);
+
+        // Apply under-relaxation and scatter to nodes
+        for (std::size_t k = 0; k < nc_idx.size(); ++k) {
+            int j = nc_idx[k];
+            auto uj = static_cast<std::size_t>(j);
+
+            double q_new = links.flow[uj];
+            double q_last = q_prev[k];
+
+            // Under-relaxation for iterations > 0 (matching legacy dynwave.c:435-438)
+            // Pumps are exempt from under-relaxation
+            if (step > 0 && links.type[uj] != LinkType::PUMP) {
+                q_new = (1.0 - 0.5) * q_last + 0.5 * q_new;
+                // Don't allow flow to change direction without first being ~0
+                if (q_new * q_last < 0.0)
+                    q_new = 0.001 * (q_new >= 0.0 ? 1.0 : -1.0);
+            }
+            links.flow[uj] = q_new;
+
+            // Scatter to node inflow/outflow (matching legacy updateNodeFlows)
+            int n1 = links.node1[uj], n2 = links.node2[uj];
+            if (n1 < 0 || n2 < 0) continue;
+            auto un1 = static_cast<std::size_t>(n1);
+            auto un2 = static_cast<std::size_t>(n2);
+            if (q_new >= 0.0) {
+                ctx.nodes.outflow[un1] += q_new;
+                ctx.nodes.inflow[un2]  += q_new;
+            } else {
+                ctx.nodes.inflow[un1]  -= q_new;
+                ctx.nodes.outflow[un2] -= q_new;
+            }
+        }
+    };
+    int iters = router_.step(ctx_, dt_routing, non_conduit_fn);
+    ctx_.routing_stats.update_iterations(iters, iters < ctx_.options.max_trials);
 
     // B3a. Inlet capture (street inlet HEC-22 calculations)
     inlet_.computeAll(ctx_, dt_routing);
@@ -1018,8 +1102,8 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     // B3c. Exfiltration (storage node Green-Ampt seepage)
     exfil_.computeAll(ctx_, dt_routing);
 
-    // B4. Non-conduit link flows (P8-G02 dividers, pumps, orifices, weirs, outlets)
-    hydstruct_.computeAllFlows(ctx_, dt_routing);
+    // B4. Non-conduit link flows are now computed inside the DW Picard loop
+    //     via the non_conduit_fn callback passed to router_.step().
 
     // B4a. Write outfall results to interface file (if output is active)
     iface_.writeOutfallResults(ctx_, ctx_.current_date);
@@ -1087,6 +1171,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         }
         ctx_.nodes.stat_lat_inflow_vol[uj]   += std::fabs(lat) * dt_routing;
         ctx_.nodes.stat_total_inflow_vol[uj] += total_inflow * dt_routing;
+        ctx_.nodes.stat_total_outflow_vol[uj] += ctx_.nodes.outflow[uj] * dt_routing;
 
         // Outfall statistics
         if (ctx_.nodes.type[uj] == NodeType::OUTFALL) {
@@ -1869,10 +1954,13 @@ void SWMMEngine::initHydraulics() noexcept {
     // 10a. RDII solver: initialize unit hydrograph groups
     rdii_.init(ctx_);
 
-    // 10b. Exfiltration solver: initialize Green-Ampt state for storage nodes
+    // 10b. Non-conduit hydraulic structures (pumps, orifices, weirs, outlets)
+    hydstruct_.init(ctx_);
+
+    // 10c. Exfiltration solver: initialize Green-Ampt state for storage nodes
     exfil_.init(ctx_);
 
-    // 10c. Inlet solver: initialize street inlet data
+    // 10d. Inlet solver: initialize street inlet data
     inlet_.init(ctx_);
 
     // 10d. Interface file manager: initialize (files opened later in start())
@@ -1943,14 +2031,17 @@ void SWMMEngine::initHydrology() noexcept {
             gw.porosity[ui]         = ctx_.aquifers.porosity[uaq];
             gw.field_cap[ui]        = ctx_.aquifers.field_capacity[uaq];
             gw.wilt_point[ui]       = ctx_.aquifers.wilting_point[uaq];
+            // All conversions match legacy gwater.c line 170-182
             gw.k_sat[ui]            = ctx_.aquifers.conductivity[uaq]
                                       / ucf::Ucf[ucf::RAINFALL][unit_sys];
             gw.k_slope[ui]          = ctx_.aquifers.conduct_slope[uaq];
-            gw.tension_slope[ui]    = ctx_.aquifers.tension_slope[uaq];
+            gw.tension_slope[ui]    = ctx_.aquifers.tension_slope[uaq]
+                                      / ucf::Ucf[ucf::LENGTH][unit_sys];
             gw.upper_evap_frac[ui]  = ctx_.aquifers.upper_evap[uaq];
             gw.lower_evap_depth[ui] = ctx_.aquifers.lower_evap[uaq]
                                       / ucf::Ucf[ucf::LENGTH][unit_sys];
-            gw.lower_loss_coeff[ui] = ctx_.aquifers.lower_loss[uaq];
+            gw.lower_loss_coeff[ui] = ctx_.aquifers.lower_loss[uaq]
+                                      / ucf::Ucf[ucf::RAINFALL][unit_sys];
             gw.total_depth[ui]      = (ctx_.subcatches.gw_surf_elev[ui]
                                        - ctx_.aquifers.bottom_elev[uaq])
                                       / ucf::Ucf[ucf::LENGTH][unit_sys];
