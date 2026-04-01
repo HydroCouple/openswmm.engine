@@ -506,34 +506,17 @@ void resolve_cross_references(SimulationContext& ctx) {
                 // (CUSTOM shapes typically define width relative to y_full).
                 double w_max = w_max_norm * y_full; // approximate
 
-                // Compute area by integrating width curve
-                double a_full = 0.0;
-                for (std::size_t i = 1; i < tbl.x.size(); ++i) {
-                    double dy = (tbl.x[i] - tbl.x[i-1]) * y_full;
-                    double w_avg = 0.5 * (tbl.y[i] + tbl.y[i-1]) * w_max;
-                    a_full += w_avg * dy;
-                }
-
-                // Compute wetted perimeter at full depth (approximate)
-                double p_full = 0.0;
-                for (std::size_t i = 1; i < tbl.x.size(); ++i) {
-                    double dy = (tbl.x[i] - tbl.x[i-1]) * y_full;
-                    double dw = (tbl.y[i] - tbl.y[i-1]) * w_max / 2.0;
-                    p_full += 2.0 * std::sqrt(dy * dy + dw * dw);
-                }
-                double r_full = (p_full > 0.0) ? a_full / p_full : 0.0;
-
-                ctx.links.xsect_a_full[uj] = a_full;
-                ctx.links.xsect_r_full[uj] = r_full;
-                ctx.links.xsect_w_max[uj]  = w_max;
+                // Physical width = curve_y * y_full (curve_y IS width/yFull, not width/wMax)
+                // buildCustomTables will compute correct a_full/r_full/w_max
+                ctx.links.xsect_w_max[uj] = w_max; // Initial estimate, refined below
 
                 // Build CUSTOM table as a TransectData for XSectBatch lookup
                 // Store offset = nt + index in supplementary vector
                 transect::TransectData ctd;
                 ctd.name = cname;
                 ctd.y_full = y_full;
-                ctd.a_full = a_full;
-                ctd.r_full = r_full;
+                ctd.a_full = 0.0; // Computed by buildCustomTables
+                ctd.r_full = 0.0;
                 ctd.w_max  = w_max;
                 transect::buildCustomTables(ctd, y_full,
                     tbl.x.data(), tbl.y.data(), static_cast<int>(tbl.x.size()));
