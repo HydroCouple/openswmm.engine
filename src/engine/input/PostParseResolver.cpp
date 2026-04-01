@@ -444,10 +444,20 @@ void resolve_cross_references(SimulationContext& ctx) {
             td.x_right_bank = ctx.transects.x_right_bank[ut];
             transect::buildTables(td);
         }
-        // Resolve IRREGULAR link xsect_curve indices to transect table indices
+        // Resolve IRREGULAR link transect names → indices, then set properties
         for (int j = 0; j < n_links; ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.links.xsect_shape[uj] != XsectShape::IRREGULAR) continue;
+            // Resolve transect name (stored in pump_curve_name as temp field)
+            const auto& tname = ctx.links.pump_curve_name[uj];
+            if (!tname.empty()) {
+                for (int t = 0; t < nt; ++t) {
+                    if (ctx.transects.names[static_cast<std::size_t>(t)] == tname) {
+                        ctx.links.xsect_curve[uj] = t;
+                        break;
+                    }
+                }
+            }
             int ci = ctx.links.xsect_curve[uj];
             if (ci >= 0 && ci < nt) {
                 const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];

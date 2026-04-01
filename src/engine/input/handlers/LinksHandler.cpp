@@ -356,19 +356,12 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
             ctx.links.xsect_shape[idx] = it->second;
         }
 
-        // IRREGULAR shapes: tok[2] is transect name, not a dimension
+        // IRREGULAR shapes: tok[2] is transect name, not a dimension.
+        // Store the name for deferred resolution (TRANSECTS section may not be parsed yet).
         if (ctx.links.xsect_shape[idx] == XsectShape::IRREGULAR) {
             if (tok.size() > 2) {
-                // Find transect index by name
-                int ti = -1;
-                for (int t = 0; t < ctx.transects.count(); ++t) {
-                    if (ctx.transects.names[static_cast<std::size_t>(t)] == tok[2]) {
-                        ti = t;
-                        break;
-                    }
-                }
-                ctx.links.xsect_curve[idx] = ti;
-                // y_full will be set from transect tables in PostParseResolver
+                ctx.links.pump_curve_name[idx] = tok[2]; // Reuse field for transect name
+                ctx.links.xsect_curve[idx] = -1; // Will be resolved in PostParseResolver
             }
         } else {
             // Geom1 = full depth (diameter for circular, etc.)
