@@ -40,7 +40,7 @@
  * #include <openswmm/engine/openswmm_engine.h>
  *
  * SWMM_Engine e = swmm_engine_create();
- * swmm_engine_open(e, "model.inp", "model.rpt", "model.out");
+ * swmm_engine_open(e, "model.inp", "model.rpt", "model.out", NULL);
  * swmm_engine_initialize(e);
  * swmm_engine_start(e, 1);
  *
@@ -169,9 +169,20 @@ typedef enum SWMM_ObjectType {
 /** @brief Create a new engine instance (SWMM_STATE_CREATED). */
 SWMM_ENGINE_API SWMM_Engine swmm_engine_create(void);
 
-/** @brief Open and parse a SWMM input file; load plugins → SWMM_STATE_OPENED. */
+/**
+ * @brief Open and parse a SWMM input file; load plugins → SWMM_STATE_OPENED.
+ *
+ * @param engine          Engine handle.
+ * @param inp             Path to the input file.
+ * @param rpt             Path to the report file, or NULL.
+ * @param out             Path to the binary output file, or NULL.
+ * @param input_plugin_lib Path to a shared library (.so/.dylib/.dll) that
+ *                         provides an IInputPlugin via openswmm_plugin_info().
+ *                         Pass NULL to use the built-in .inp reader.
+ */
 SWMM_ENGINE_API int swmm_engine_open(SWMM_Engine engine,
-                                      const char* inp, const char* rpt, const char* out);
+                                      const char* inp, const char* rpt, const char* out,
+                                      const char* input_plugin_lib);
 
 /** @brief Initialize the simulation → SWMM_STATE_INITIALIZED. */
 SWMM_ENGINE_API int swmm_engine_initialize(SWMM_Engine engine);
@@ -196,6 +207,45 @@ SWMM_ENGINE_API void swmm_engine_destroy(SWMM_Engine engine);
 
 /** @brief Query the current engine lifecycle state. */
 SWMM_ENGINE_API int swmm_engine_get_state(SWMM_Engine engine, int* state);
+
+/* =========================================================================
+ * Convenience run functions
+ * ========================================================================= */
+
+/**
+ * @brief Run a complete simulation to completion.
+ *
+ * @details Creates an engine, then chains:
+ *          open → initialize → start → step loop → end → report → close → destroy.
+ *          Mirrors the legacy swmm_run() function.
+ *
+ * @param inp              Path to SWMM input file (.inp).
+ * @param rpt              Path to report file (.rpt), or NULL to skip reporting.
+ * @param out              Path to binary output file (.out), or NULL.
+ * @param input_plugin_lib Path to input plugin library, or NULL for built-in .inp reader.
+ * @returns                SWMM_OK (0) on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_engine_run(const char* inp, const char* rpt, const char* out,
+                                     const char* input_plugin_lib);
+
+/**
+ * @brief Run a complete simulation with a progress callback.
+ *
+ * @details Same as swmm_engine_run() but registers a progress callback
+ *          before starting the simulation loop.
+ *
+ * @param inp              Path to SWMM input file (.inp).
+ * @param rpt              Path to report file (.rpt), or NULL to skip reporting.
+ * @param out              Path to binary output file (.out), or NULL.
+ * @param input_plugin_lib Path to input plugin library, or NULL for built-in .inp reader.
+ * @param callback         Progress callback (may be NULL).
+ * @param user_data        Opaque pointer passed through to the callback.
+ * @returns                SWMM_OK (0) on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_engine_run_with_callback(
+    const char* inp, const char* rpt, const char* out,
+    const char* input_plugin_lib,
+    SWMM_ProgressCallback callback, void* user_data);
 
 /* =========================================================================
  * Callback registration

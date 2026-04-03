@@ -41,67 +41,13 @@
 #include "../../core/DateTime.hpp"
 #include "../../data/TableData.hpp"
 
-#include "../../core/charconv_compat.hpp"
+#include "../InputParseUtils.hpp"
 
 #include <charconv>
 #include <string>
 #include <unordered_map>
 
 namespace openswmm::input {
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-static double to_double(std::string_view sv, double def = 0.0) noexcept {
-    double v = def;
-    openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), v);
-    return v;
-}
-
-// Parse a SWMM date+time pair → decimal days (Julian date, SWMM epoch)
-// date: MM/DD/YYYY  time: HH:MM or H:MM:SS
-static double parse_datetime(std::string_view date_sv, std::string_view time_sv) noexcept {
-    // Parse date MM/DD/YYYY
-    unsigned m = 1, d = 1, y = 2000;
-    const char* p   = date_sv.data();
-    const char* end = date_sv.data() + date_sv.size();
-    auto ru = [&](unsigned& out) {
-        auto [np, ec] = std::from_chars(p, end, out);
-        if (ec != std::errc{}) return false;
-        p = np; return true;
-    };
-    if (ru(m) && p < end && *p == '/' && (++p) && ru(d) &&
-        p < end && *p == '/' && (++p) && ru(y)) {}
-
-    double julian = datetime::encodeDate(static_cast<int>(y),
-                                         static_cast<int>(m),
-                                         static_cast<int>(d));
-
-    // Parse time HH:MM[:SS] and add as fractional days
-    unsigned th = 0, tm2 = 0;
-    double ts = 0.0;
-    const char* tp   = time_sv.data();
-    const char* tend = time_sv.data() + time_sv.size();
-    auto rut = [&](unsigned& out) {
-        auto [np, ec] = std::from_chars(tp, tend, out);
-        if (ec != std::errc{}) return false;
-        tp = np; return true;
-    };
-    auto rdt = [&](double& out) {
-        auto [np, ec] = openswmm::from_chars_double(tp, tend, out);
-        if (ec != std::errc{}) return false;
-        tp = np; return true;
-    };
-    if (rut(th)) {
-        if (tp < tend && *tp == ':') { ++tp; rut(tm2); }
-        if (tp < tend && *tp == ':') { ++tp; rdt(ts);  }
-    }
-    julian += datetime::encodeTime(static_cast<int>(th),
-                                   static_cast<int>(tm2),
-                                   static_cast<int>(ts));
-    return julian;
-}
 
 // ============================================================================
 // handle_timeseries()

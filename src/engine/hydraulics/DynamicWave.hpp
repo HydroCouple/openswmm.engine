@@ -146,6 +146,9 @@ private:
     // Pre-allocated width-capping buffers (avoids thread_local per-call allocation)
     std::vector<double> wcap_d1_, wcap_d2_, wcap_dm_;
 
+    // Variable timestep state (matching legacy VariableStep in dynwave.c)
+    mutable double variable_step_ = 0.0;
+
     // Per-node working state
     std::vector<DWNodeState> xnode_;
 
@@ -193,6 +196,11 @@ private:
     bool updateNodeDepths(SimulationContext& ctx, double dt, int step);
     void setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int step);
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;
+
+public:
+    /// Access per-node working state (for non-conduit surfarea/dqdh scatter).
+    DWNodeState& nodeState(int idx) { return xnode_[static_cast<std::size_t>(idx)]; }
+private:
 
     // Preissmann slot helpers (matching legacy dwflow.c)
     double getSlotWidth(double y, double y_full, double w_max, XsectShape shape) const;

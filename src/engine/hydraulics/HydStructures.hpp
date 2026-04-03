@@ -130,7 +130,7 @@ private:
     std::vector<int> nc_indices_;   ///< All non-conduit link indices
 
     /// Batch pump flow — vectorisable curve lookups
-    void computePumpFlows(SimulationContext& ctx);
+    void computePumpFlows(SimulationContext& ctx, double dt);
 
     /// Batch orifice flow — Q = Cd*A*sqrt(2gH), vectorisable
     void computeOrificeFlows(SimulationContext& ctx);

@@ -40,8 +40,43 @@
 namespace openswmm {
 
 /* Forward declarations */
+class IInputPlugin;
 class IOutputPlugin;
 class IReportPlugin;
+
+/**
+ * @brief Identifies a plugin capability.
+ *
+ * @details Retained for use in discovery results and filtering.
+ *          A single plugin may support multiple types — use the
+ *          has_input() / has_output() / has_report() capability
+ *          queries on IPluginComponentInfo instead of assuming
+ *          a plugin has only one type.
+ *
+ * @ingroup engine_plugin_sdk
+ */
+enum class PluginType {
+    INPUT,   ///< Reads model data into SimulationContext
+    OUTPUT,  ///< Writes time-series results during simulation
+    REPORT   ///< Writes summary statistics post-simulation
+};
+
+/**
+ * @brief Registration information for plugin activation.
+ *
+ * @details Contains fields that a license manager, deployment tool,
+ *          or host application may supply to activate a plugin.
+ *          Plugins that require registration gate their factory methods
+ *          behind a successful register_plugin() call.
+ *
+ * @ingroup engine_plugin_sdk
+ */
+struct RegistrationInfo {
+    std::string license_key;   ///< License key or activation token (may be empty for open plugins)
+    std::string organization;  ///< Registering organization name
+    std::string contact_email; ///< Contact email for the registrant
+    std::string deployment_id; ///< Unique deployment or instance ID
+};
 
 /**
  * @brief Describes a plugin component: metadata, capabilities, and factory methods.
@@ -126,27 +161,81 @@ public:
     // -----------------------------------------------------------------------
 
     /**
-     * @brief Returns true if this plugin provides an IOutputPlugin instance.
-     * @details An output plugin writes simulation result time series to a file
-     *          or data store during simulation (via the IO thread).
+     * @brief True if this plugin can create an IInputPlugin.
+     * @details The PluginFactory checks this before calling create_input_plugin().
      */
-    virtual bool provides_output() const = 0;
+    virtual bool has_input() const noexcept { return false; }
 
     /**
-     * @brief Returns true if this plugin provides an IReportPlugin instance.
-     * @details A report plugin writes summary statistics at the end of a
-     *          simulation run.
+     * @brief True if this plugin can create an IOutputPlugin.
+     * @details The PluginFactory checks this before calling create_output_plugin().
      */
-    virtual bool provides_report() const = 0;
+    virtual bool has_output() const noexcept { return false; }
+
+    /**
+     * @brief True if this plugin can create an IReportPlugin.
+     * @details The PluginFactory checks this before calling create_report_plugin().
+     */
+    virtual bool has_report() const noexcept { return false; }
+
+    // -----------------------------------------------------------------------
+    // Registration
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Register the plugin with the provided registration information.
+     *
+     * @details Override this to implement registration logic (license validation,
+     *          activation token checks, etc.). The default implementation
+     *          accepts any registration and returns true.
+     *
+     * @param info  Registration information.
+     * @returns true if registration succeeded, false otherwise.
+     */
+    virtual bool register_plugin(const RegistrationInfo& info) {
+        (void)info;
+        return true;
+    }
+
+    /**
+     * @brief Check whether the plugin is currently registered.
+     *
+     * @details Override this to report registration status. Plugins that do
+     *          not require registration should return true (the default).
+     *
+     * @returns true if the plugin is registered and ready to use.
+     */
+    virtual bool registered() const noexcept { return true; }
+
+    /**
+     * @brief Get the current registration information.
+     *
+     * @details Returns the info passed to the most recent successful
+     *          register_plugin() call. The default returns an empty struct.
+     *
+     * @returns Registration information (valid only if registered() is true).
+     */
+    virtual RegistrationInfo registration_info() const { return {}; }
 
     // -----------------------------------------------------------------------
     // Factory methods
     // -----------------------------------------------------------------------
 
     /**
+     * @brief Create a new IInputPlugin instance.
+     *
+     * @details The PluginFactory calls this when has_input() returns true.
+     *          The returned pointer is owned by the caller (PluginFactory).
+     *          The factory will call delete on it during cleanup.
+     *
+     * @returns New IInputPlugin instance, or nullptr if not supported.
+     */
+    virtual IInputPlugin* create_input_plugin() const { return nullptr; }
+
+    /**
      * @brief Create a new IOutputPlugin instance.
      *
-     * @details The PluginFactory calls this if provides_output() returns true.
+     * @details The PluginFactory calls this when has_output() returns true.
      *          The returned pointer is owned by the caller (PluginFactory).
      *          The factory will call delete on it during cleanup.
      *
@@ -157,7 +246,7 @@ public:
     /**
      * @brief Create a new IReportPlugin instance.
      *
-     * @details The PluginFactory calls this if provides_report() returns true.
+     * @details The PluginFactory calls this when has_report() returns true.
      *
      * @returns New IReportPlugin instance, or nullptr if not supported.
      */

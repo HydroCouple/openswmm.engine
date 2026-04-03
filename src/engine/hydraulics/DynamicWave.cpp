@@ -36,6 +36,7 @@
 
 #include "DynamicWave.hpp"
 #include "Node.hpp"
+#include "Outfall.hpp"
 #include "XSectBatch.hpp"
 #include "ForceMain.hpp"
 #include "../core/Constants.hpp"
@@ -220,6 +221,10 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
 
     while (steps < max_trials) {
         initNodeStates(ctx);
+
+        // Step 0: Update outfall boundary depths each iteration
+        // (matching legacy findNodeDepths line 592: link_setOutfallDepth per iteration)
+        openswmm::outfall::setAllOutfallDepths(ctx, ctx.current_date);
 
         // Step 1: batch compute ALL cross-section geometry (with slot overrides)
         computeLinkGeometry(ctx);
@@ -719,10 +724,18 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
             v = (v > 0.0) ? MAX_VELOCITY : -MAX_VELOCITY;
         p_velocity[uj] = v;
 
-        // --- Froude number ---
+        // --- Froude number (matching legacy link_getFroude) ---
         double wMid = p_width_mid[uj];
-        double dh = (wMid > FUDGE) ? aMid / wMid : 0.0;
-        double fr = (dh > 0.0) ? std::fabs(v) / std::sqrt(GRAVITY * dh) : 0.0;
+        double fr = 0.0;
+        // Legacy: return 0 for empty links or closed conduits that are full
+        if (p_depth_mid[uj] <= FUDGE) {
+            fr = 0.0;
+        } else if (isFull) {
+            fr = 0.0;  // Closed conduit at full depth → Froude = 0 (legacy link_getFroude)
+        } else {
+            double dh = (wMid > FUDGE) ? aMid / wMid : 0.0;
+            fr = (dh > 0.0) ? std::fabs(v) / std::sqrt(GRAVITY * dh) : 0.0;
+        }
         p_froude[uj] = fr;
 
         // Reclassify SUBCRITICAL → SUPERCRITICAL when Froude > 1
@@ -1022,12 +1035,16 @@ bool DWSolver::updateNodeDepths(SimulationContext& ctx, double dt, int step) {
     }
 
     // Sequential convergence check (matching legacy: separate pass after parallel region)
+    int n_unconverged = 0;
     for (int i = 0; i < n_nodes_; ++i) {
         auto ui = static_cast<std::size_t>(i);
         if (nodes.type[ui] == NodeType::OUTFALL) continue;
-        if (!xnode_[ui].converged) return false;
+        if (!xnode_[ui].converged) n_unconverged++;
     }
-    return true;
+
+    // (convergence diagnostic removed)
+
+    return (n_unconverged == 0);
 }
 
 // ============================================================================
@@ -1176,6 +1193,13 @@ double DWSolver::getRoutingStep(const SimulationContext& ctx,
                                  double fixed_step, double courant_factor) const {
     if (courant_factor <= 0.0) return fixed_step;
 
+    // On first call (no flows yet), use minimum step (matching legacy line 201-204:
+    // "if (VariableStep == 0.0) VariableStep = MinRouteStep")
+    if (variable_step_ <= 0.0) {
+        variable_step_ = std::max(ctx.options.min_routing_step, MIN_TIMESTEP);
+        return variable_step_;
+    }
+
     double dt_min = fixed_step;
 
     // Link-based CFL (matching legacy getLinkStep with CourantFactor per-link)
@@ -1220,19 +1244,21 @@ double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
     auto uj = static_cast<std::size_t>(link_idx);
     if (ctx.links.type[uj] != LinkType::CONDUIT) return 1.0e10;
 
-    double q = std::fabs(ctx.links.flow[uj]);
+    // Match legacy getLinkStep (dynwave.c lines 846-856):
+    // q = |newFlow| / barrels (per-barrel flow)
+    int barrels = std::max(ctx.links.barrels[uj], 1);
+    double q = std::fabs(ctx.links.flow[uj]) / static_cast<double>(barrels);
     if (q <= FUDGE) return 1.0e10;
 
+    // Legacy: Conduit[k].a1 (midpoint area from solver, per barrel)
     double a = area_mid_[uj];
     if (a <= FUDGE) return 1.0e10;
 
     double fr = froude_[uj];
     if (fr <= 0.01) return 1.0e10;
 
-    double vol = ctx.links.volume[uj];
-    int barrels = ctx.links.barrels[uj];
-    if (barrels > 1) vol /= static_cast<double>(barrels);
-
+    // Legacy: t = newVolume / barrels / q
+    double vol = ctx.links.volume[uj] / static_cast<double>(barrels);
     double t = vol / q;
 
     // Apply modified length factor for short conduits / culverts

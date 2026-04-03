@@ -95,3 +95,32 @@ add_gtest_unit(test_engine_climate          test_climate.cpp)
 add_gtest_unit(test_engine_groundwater      test_groundwater.cpp)
 add_gtest_unit(test_engine_routing          test_routing.cpp)
 add_gtest_unit(test_engine_site_drainage    test_site_drainage_model.cpp)
+
+# GeoPackage tests (only if the library is built)
+if(OPENSWMM_WITH_GEOPACKAGE)
+    add_executable(test_engine_geopackage test_geopackage.cpp)
+    target_link_libraries(test_engine_geopackage
+        PRIVATE
+            GTest::gtest GTest::gtest_main GTest::gmock
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+            openswmm_legacy_engine
+    )
+    target_include_directories(test_engine_geopackage
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+    add_test(
+        NAME    test_engine_geopackage
+        COMMAND $<TARGET_FILE:test_engine_geopackage>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage PROPERTIES LABELS "unit")
+endif()

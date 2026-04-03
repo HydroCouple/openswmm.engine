@@ -66,9 +66,10 @@ struct ClimateState {
     double monthly_evap[12] = {};
 
     // Monthly adjustment factors
-    double adjust_evap[12] = {1,1,1,1,1,1,1,1,1,1,1,1};
-    double adjust_temp[12] = {0,0,0,0,0,0,0,0,0,0,0,0};
-    double adjust_rain[12] = {1,1,1,1,1,1,1,1,1,1,1,1};
+    double adjust_evap[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
+    double adjust_temp[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};
+    double adjust_rain[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
+    double adjust_hydcon[12] = {1,1,1,1,1,1,1,1,1,1,1,1}; ///< Infiltration conductivity multipliers
 
     EvapMethod evap_method = EvapMethod::CONSTANT;
 

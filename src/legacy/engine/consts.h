@@ -17,7 +17,7 @@
 #ifndef CONSTS_H
 #define CONSTS_H
 
-#include "version.h"
+#include "legacy_version.h"
 
 /*!
  * \defgroup SWMM_Constants SWMM Constants, Variables, and Local and API Functions

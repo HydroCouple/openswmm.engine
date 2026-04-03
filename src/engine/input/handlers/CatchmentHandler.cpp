@@ -36,48 +36,12 @@
 #include "../../data/SubcatchData.hpp"
 #include "../../data/GageData.hpp"
 
-#include "../../core/charconv_compat.hpp"
+#include "../InputParseUtils.hpp"
 
 #include <charconv>
 #include <string>
 
 namespace openswmm::input {
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-static double to_double(std::string_view sv, double def = 0.0) noexcept {
-    double v = def;
-    openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), v);
-    return v;
-}
-
-static double parse_hhmmss_seconds(std::string_view sv) noexcept {
-    // Accept HH:MM or H:MM:SS or plain seconds
-    unsigned h = 0, m = 0;
-    double   s = 0.0;
-    const char* p   = sv.data();
-    const char* end = sv.data() + sv.size();
-    auto read_u = [&](unsigned& out) {
-        auto [np, ec] = std::from_chars(p, end, out);
-        if (ec != std::errc{}) return false;
-        p = np; return true;
-    };
-    auto read_d = [&](double& out) {
-        auto [np, ec] = openswmm::from_chars_double(p, end, out);
-        if (ec != std::errc{}) return false;
-        p = np; return true;
-    };
-    if (!read_u(h)) {
-        double plain = 0.0;
-        openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), plain);
-        return plain;
-    }
-    if (p < end && *p == ':') { ++p; read_u(m); }
-    if (p < end && *p == ':') { ++p; read_d(s); }
-    return h * 3600.0 + m * 60.0 + s;
-}
 
 static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
     const auto n = static_cast<std::size_t>(idx + 1);
@@ -114,6 +78,16 @@ static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.subcatches.gw_flow,             0.0);
     grow(ctx.subcatches.old_runoff,           0.0);
     grow(ctx.subcatches.snowpack,             -1);
+    grow(ctx.subcatches.gw_aquifer,           -1);
+    grow(ctx.subcatches.gw_node,             -1);
+    grow(ctx.subcatches.gw_surf_elev,         0.0);
+    grow(ctx.subcatches.gw_a1,                0.0);
+    grow(ctx.subcatches.gw_b1,                0.0);
+    grow(ctx.subcatches.gw_a2,                0.0);
+    grow(ctx.subcatches.gw_b2,                0.0);
+    grow(ctx.subcatches.gw_a3,                0.0);
+    grow(ctx.subcatches.gw_tw,                0.0);
+    grow(ctx.subcatches.gw_hstar,             0.0);
     grow(ctx.subcatches.stat_precip_vol,      0.0);
     grow(ctx.subcatches.stat_evap_vol,        0.0);
     grow(ctx.subcatches.stat_infil_vol,       0.0);
@@ -285,7 +259,7 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
 
         // Interval: HH:MM or seconds
         ctx.gages.interval_sec[idx] =
-            static_cast<int>(parse_hhmmss_seconds(tok[2]));
+            static_cast<int>(parse_time_seconds(tok[2]));
 
         // Snow correction factor
         ctx.gages.snow_factor[idx] = to_double(tok[3], 1.0);

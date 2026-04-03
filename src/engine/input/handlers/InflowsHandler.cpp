@@ -41,23 +41,13 @@
 #include "../../core/SimulationContext.hpp"
 #include "../../data/InflowData.hpp"
 
-#include "../../core/charconv_compat.hpp"
+#include "../InputParseUtils.hpp"
 
 #include <charconv>
 #include <string>
 #include <algorithm>
 
 namespace openswmm::input {
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-static double to_double(std::string_view sv, double def = 0.0) noexcept {
-    double v = def;
-    openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), v);
-    return v;
-}
 
 /// Map a pattern type keyword to its integer code.
 static int parse_pattern_type(std::string_view sv) noexcept {

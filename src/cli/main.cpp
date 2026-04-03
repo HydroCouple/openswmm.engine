@@ -75,7 +75,7 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Open input file ----
-    int err = swmm_engine_open(engine, inp_file, rpt_file, out_file);
+    int err = swmm_engine_open(engine, inp_file, rpt_file, out_file, nullptr);
     if (err != SWMM_OK) {
         std::printf("Error opening input file: %s\n", swmm_get_last_error_msg(engine));
         swmm_engine_destroy(engine);

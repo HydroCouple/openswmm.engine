@@ -21,21 +21,9 @@
 #include <algorithm>
 #include <vector>
 #include "../hydraulics/TimestepController.hpp"
-#include "../input/InputReader.hpp"
-#include "../input/handlers/TitleHandler.hpp"
-#include "../input/handlers/OptionsHandler.hpp"
-#include "../input/handlers/NodesHandler.hpp"
-#include "../input/handlers/LinksHandler.hpp"
-#include "../input/handlers/CatchmentHandler.hpp"
-#include "../input/handlers/TablesHandler.hpp"
-#include "../input/handlers/UserFlagsHandler.hpp"
-#include "../input/handlers/UserFlagValuesHandler.hpp"
-#include "../input/handlers/PluginsHandler.hpp"
-#include "../input/handlers/InflowsHandler.hpp"
-#include "../input/handlers/QualityHandler.hpp"
-#include "../input/handlers/HydrologyHandler.hpp"
-#include "../input/handlers/ControlsHandler.hpp"
 #include "../input/PostParseResolver.hpp"
+#include "../plugins/DefaultInputPlugin.hpp"
+#include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
 #include "../plugins/DefaultOutputPlugin.hpp"
 #include "../plugins/DefaultReportPlugin.hpp"
 
@@ -67,7 +55,6 @@ SWMMEngine::SWMMEngine()
     : io_thread_(plugins_)   // IOThread needs a PluginFactory& at construction
 {
     ctx_.state = EngineState::CREATED;
-    register_builtin_handlers();
 }
 
 SWMMEngine::~SWMMEngine() {
@@ -78,105 +65,13 @@ SWMMEngine::~SWMMEngine() {
 }
 
 // ============================================================================
-// register_builtin_handlers()
-// ============================================================================
-
-void SWMMEngine::register_builtin_handlers() {
-    // Phase 3: [OPTIONS] is the first fully-implemented built-in handler.
-    // Additional handlers (JUNCTIONS, CONDUITS, etc.) are registered as
-    // they are implemented in subsequent phases.
-
-    registry_.register_builtin("TITLE",   input::handle_title);
-    registry_.register_builtin("OPTIONS", input::handle_options);
-
-    // Placeholder lambdas for sections that are parsed but not yet implemented.
-    // These prevent "unknown section" warnings while the handlers are built out.
-    // Each will be replaced with a real handler in Phase 3.
-
-    auto noop = [](SimulationContext&, const std::vector<std::string>&) {};
-
-    // Node sections — real handlers
-    registry_.register_builtin("JUNCTIONS",    input::handle_junctions);
-    registry_.register_builtin("OUTFALLS",     input::handle_outfalls);
-    registry_.register_builtin("DIVIDERS",     input::handle_dividers);
-    registry_.register_builtin("STORAGE",      input::handle_storage);
-    registry_.register_builtin("COORDINATES",  input::handle_coordinates);
-
-    // Link sections — real handlers
-    registry_.register_builtin("CONDUITS",     input::handle_conduits);
-    registry_.register_builtin("PUMPS",        input::handle_pumps);
-    registry_.register_builtin("ORIFICES",     input::handle_orifices);
-    registry_.register_builtin("WEIRS",        input::handle_weirs);
-    registry_.register_builtin("OUTLETS",      input::handle_outlets);
-    registry_.register_builtin("XSECTIONS",    input::handle_xsections);
-    registry_.register_builtin("TRANSECTS",    input::handle_transects);
-    registry_.register_builtin("LOSSES",       input::handle_losses);
-
-    // Catchment sections
-    registry_.register_builtin("SUBCATCHMENTS", input::handle_subcatchments);
-    registry_.register_builtin("SUBAREAS",      input::handle_subareas);
-    registry_.register_builtin("INFILTRATION",  input::handle_infiltration);
-    registry_.register_builtin("LID_CONTROLS",  input::handle_lid_controls);
-    registry_.register_builtin("LID_USAGE",     input::handle_lid_usage);
-    registry_.register_builtin("AQUIFERS",      input::handle_aquifers);
-    registry_.register_builtin("GROUNDWATER",   input::handle_groundwater);
-    registry_.register_builtin("GWF",           input::handle_gwf);
-
-    // Rain / climate
-    registry_.register_builtin("RAINGAGES",     input::handle_raingages);
-    registry_.register_builtin("EVAPORATION",   input::handle_evaporation);
-    registry_.register_builtin("TEMPERATURE",   input::handle_temperature);
-    registry_.register_builtin("SNOWPACKS",     input::handle_snowpacks);
-
-    // Inflows / loading
-    registry_.register_builtin("INFLOWS",       input::handle_inflows);
-    registry_.register_builtin("DWF",           input::handle_dwf);
-    registry_.register_builtin("RDII",          input::handle_rdii);
-    registry_.register_builtin("HYDROGRAPHS",  input::handle_hydrographs);
-    registry_.register_builtin("LOADINGS",      input::handle_loadings);
-    registry_.register_builtin("PATTERNS",      input::handle_patterns);
-
-    // Tables
-    registry_.register_builtin("CURVES",        input::handle_curves);
-    registry_.register_builtin("TIMESERIES",    input::handle_timeseries);
-
-    // Water quality
-    registry_.register_builtin("POLLUTANTS",    input::handle_pollutants);
-    registry_.register_builtin("LANDUSES",      input::handle_landuses);
-    registry_.register_builtin("COVERAGES",     input::handle_coverages);
-    registry_.register_builtin("BUILDUP",       input::handle_buildup);
-    registry_.register_builtin("WASHOFF",       input::handle_washoff);
-    registry_.register_builtin("TREATMENT",     input::handle_treatment);
-    registry_.register_builtin("MIXING",        noop);
-
-    // Control / map / reporting
-    registry_.register_builtin("CONTROLS",      input::handle_controls);
-    registry_.register_builtin("VERTICES",      noop);
-    registry_.register_builtin("POLYGONS",      noop);
-    registry_.register_builtin("SYMBOLS",       noop);
-    registry_.register_builtin("LABELS",        noop);
-    registry_.register_builtin("BACKDROP",      noop);
-    registry_.register_builtin("MAP",           noop);
-    registry_.register_builtin("TAGS",          noop);
-    registry_.register_builtin("PROFILE",       noop);
-    registry_.register_builtin("REPORT",        input::handle_report);
-    registry_.register_builtin("FILES",         noop);
-    registry_.register_builtin("ADJUSTMENTS",   noop);
-    registry_.register_builtin("EVENTS",        noop);
-
-    // New in 6.0.0
-    registry_.register_builtin("USER_FLAGS",       input::handle_user_flags);        // R28 schema
-    registry_.register_builtin("USER_FLAG_VALUES", input::handle_user_flag_values);  // R28 values
-    registry_.register_builtin("PLUGINS",          input::handle_plugins);           // Phase 4 R12
-}
-
-// ============================================================================
 // open()
 // ============================================================================
 
 int SWMMEngine::open(const char* inp_path,
                      const char* rpt_path,
-                     const char* out_path) noexcept {
+                     const char* out_path,
+                     const char* input_plugin_lib) noexcept {
     if (ctx_.state != EngineState::CREATED &&
         ctx_.state != EngineState::CLOSED) {
         set_error(SWMM_ERR_WRONG_STATE,
@@ -190,14 +85,37 @@ int SWMMEngine::open(const char* inp_path,
     rpt_path_ = rpt_path ? rpt_path : "";
     out_path_ = out_path ? out_path : "";
 
-    // Parse the input file
-    input::InputReader reader(registry_);
-    if (!reader.read(inp_path ? inp_path : "", ctx_)) {
+    // Resolve input plugin: path, id:version, or fall back to default
+    if (plugins_.input_plugins().empty()) {
+        if (input_plugin_lib && input_plugin_lib[0] != '\0') {
+            auto warn_cb = [this](const std::string& msg) {
+                emit_warning(SWMM_ERR_PLUGIN, msg.c_str());
+            };
+            IPluginComponentInfo* info = plugins_.find_component(
+                input_plugin_lib, warn_cb);
+            if (info && info->has_input()) {
+                IInputPlugin* ip = info->create_input_plugin();
+                if (ip) {
+                    ip->initialize({}, info);
+                    plugins_.add_input_plugin(ip);
+                }
+            }
+        }
+        // Fall back to built-in .inp reader
+        if (plugins_.input_plugins().empty()) {
+            auto* ip = new DefaultInputPlugin();
+            ip->initialize({}, nullptr);
+            plugins_.add_input_plugin(ip);
+        }
+    }
+
+    auto* input_plugin = plugins_.input_plugins().front();
+    if (input_plugin->read(inp_path ? inp_path : "", ctx_) != 0) {
         return ctx_.error_code != 0 ? ctx_.error_code : SWMM_ERR_PARSE;
     }
 
-    // Warn about unknown sections
-    for (const auto& tag : reader.skipped_sections()) {
+    // Warn about unknown/skipped sections
+    for (const auto& tag : input_plugin->skipped_sections()) {
         emit_warning(100,
             ("Unknown input section [" + tag + "] — skipped").c_str());
     }
@@ -1028,7 +946,8 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     constexpr double OMEGA_NC = 0.5; // under-relaxation for non-conduit flows
     // Pre-fetch the non-conduit index list (built once at init)
     const auto& nc_idx = hydstruct_.nonConduitIndices();
-    auto non_conduit_fn = [this, &nc_idx](SimulationContext& ctx, double dt, int step) {
+    auto& dw = router_.dwSolver();
+    auto non_conduit_fn = [this, &nc_idx, &dw](SimulationContext& ctx, double dt, int step) {
         auto& links = ctx.links;
 
         // Save previous iteration flows for under-relaxation
@@ -1072,6 +991,37 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                 ctx.nodes.inflow[un1]  -= q_new;
                 ctx.nodes.outflow[un2] -= q_new;
             }
+
+            // Non-conduit dqdh (matching legacy orifice_getFlow / weir_getFlow)
+            // Orifice: dqdh = Q/(2*head) for orifice mode, 1.5*Q/(f*hCrit) for weir mode
+            // Weir: not typically computed
+            // For simplicity, use Q/(2*max(head,FUDGE)) as approximate dqdh
+            double dqdh = 0.0;
+            if (std::fabs(q_new) > 0.0001) {
+                double h1_abs = ctx.nodes.depth[un1] + ctx.nodes.invert_elev[un1];
+                double h2_abs = ctx.nodes.depth[un2] + ctx.nodes.invert_elev[un2];
+                double dh = std::fabs(h1_abs - h2_abs);
+                if (dh > 0.001) dqdh = std::fabs(q_new) / (2.0 * dh);
+            }
+
+            // Scatter dqdh to nodes (matching legacy updateNodeFlows lines 566-575)
+            dw.nodeState(n1).sumdqdh += dqdh;
+            dw.nodeState(n2).sumdqdh += dqdh;
+
+            // Non-conduit surface area (matching legacy findNonConduitSurfArea)
+            // Orifices: surfArea = equivalent_length * width_at_depth / 2
+            // Weirs/outlets: 0 (SWMM4 compatibility)
+            double sa = 0.0;
+            if (links.type[uj] == LinkType::ORIFICE) {
+                // Legacy: surfArea = xsect_getAofY(xsect, yFull*setting) for BOTTOM
+                //         or width*length for SIDE. Approximate:
+                sa = links.xsect_a_full[uj] * links.setting[uj];
+            }
+            double sa1 = sa / 2.0, sa2 = sa / 2.0;
+            if (ctx.nodes.type[un1] == NodeType::STORAGE) sa1 = 0.0;
+            if (ctx.nodes.type[un2] == NodeType::STORAGE) sa2 = 0.0;
+            dw.nodeState(n1).new_surf_area += sa1;
+            dw.nodeState(n2).new_surf_area += sa2;
         }
     };
     int iters = router_.step(ctx_, dt_routing, non_conduit_fn);

@@ -1,39 +1,35 @@
 /**
  * @file PluginFactory.hpp
- * @brief Plugin loader and lifecycle manager (Phase 4, R14).
+ * @brief Plugin loader, auto-discovery, and lifecycle manager.
  *
  * @details PluginFactory owns all dynamically loaded plugin libraries.
  * It is responsible for:
  *
- *  1. **Loading** shared libraries via dlopen/LoadLibrary and resolving
- *     the `openswmm_plugin_info` symbol to get an IPluginComponentInfo*.
+ *  1. **Auto-discovery** — On construction, scans the engine library directory
+ *     and subdirectories (plugins/, components/) for compatible shared libraries
+ *     that export `openswmm_plugin_info`. Discovered libraries are registered
+ *     in a component registry keyed by `"id:version"`.
  *
- *  2. **Instantiating** IOutputPlugin and/or IReportPlugin via the factory
- *     methods on IPluginComponentInfo.
+ *  2. **Resolution** — Given a string that is either a file path or an
+ *     `"id"` / `"id:version"` identifier, resolves it to an IPluginComponentInfo.
  *
- *  3. **Lifecycle dispatch** — calling initialize(), validate(), prepare(),
- *     finalize(), and (for IReportPlugin) write_summary() on all loaded
- *     plugin instances in registration order.
+ *  3. **Instantiation** — Creates IInputPlugin, IOutputPlugin, or IReportPlugin
+ *     instances via factory methods on IPluginComponentInfo.
  *
- *  4. **Cleanup** — dlclose() on all library handles at destruction.
+ *  4. **Lifecycle dispatch** — Calls initialize(), validate(), prepare(),
+ *     finalize(), and write_summary() on all loaded plugin instances.
+ *
+ *  5. **Cleanup** — dlclose() on all library handles at destruction.
  *
  * ### Threading
  *
  * All lifecycle methods except update() run on the main simulation thread.
- * update() is called from the IO thread (via IOThread). PluginFactory does
- * NOT directly call update() — that is done by the IOThread.
- *
- * ### Error handling
- *
- * If a plugin's lifecycle method returns non-zero, the plugin is transitioned
- * to PluginState::ERROR and a warning is emitted. Non-error plugins continue.
- * If ALL plugins error, the factory returns the last error code.
+ * update() is called from the IO thread (via IOThread).
  *
  * @see IPluginComponentInfo.hpp
+ * @see IInputPlugin.hpp
  * @see IOutputPlugin.hpp
  * @see IReportPlugin.hpp
- * @see src/engine/output/IOThread.hpp
- * @see docs/MASTER_IMPLEMENTATION_PLAN.md Phase 4
  * @ingroup engine_plugins
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
@@ -46,32 +42,43 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <functional>
 
-// Forward declarations — avoid pulling in full plugin SDK in every TU
+// Forward declarations
 namespace openswmm {
     class IPluginComponentInfo;
+    class IInputPlugin;
     class IOutputPlugin;
     class IReportPlugin;
     struct SimulationContext;
     struct SimulationSnapshot;
     struct PluginSpec;
+    enum class PluginType;
 }
 
 namespace openswmm {
 
 /**
- * @brief Manages all dynamically loaded plugins for one engine instance.
+ * @brief Manages plugin discovery, loading, and lifecycle for one engine instance.
  *
  * @details One PluginFactory per SWMMEngine instance (NOT a singleton).
- *          This allows multiple concurrent engine instances (e.g. Monte Carlo
- *          runs) to each have their own independent plugin set.
+ *          On construction, auto-discovers compatible plugin libraries in
+ *          standard search directories.
  *
  * @ingroup engine_plugins
  */
 class PluginFactory {
 public:
-    PluginFactory() = default;
+    /**
+     * @brief Construct and auto-discover plugins in standard directories.
+     *
+     * @details Scans the engine library directory and subdirectories
+     *          (plugins/, components/) for shared libraries that export
+     *          `openswmm_plugin_info`. Discovered libraries are registered
+     *          in the component registry but plugin instances are NOT created.
+     */
+    PluginFactory();
     ~PluginFactory();
 
     // Non-copyable, movable
@@ -81,21 +88,80 @@ public:
     PluginFactory& operator=(PluginFactory&&) noexcept = default;
 
     // -----------------------------------------------------------------------
-    // Loading
+    // Discovery and resolution
     // -----------------------------------------------------------------------
 
     /**
-     * @brief Load all plugins listed in the given specs.
+     * @brief Scan standard directories for compatible plugin libraries.
      *
-     * @details For each spec: dlopen(spec.path), resolve
-     *          `openswmm_plugin_info`, call create_output_plugin() /
-     *          create_report_plugin(). Specs with load errors are skipped
-     *          with a warning; they do not abort the whole load.
+     * @details Called automatically by the constructor. Can be called again
+     *          to re-scan (e.g., after plugins are installed at runtime).
+     *          Scans: engine library dir, <dir>/plugins/, <dir>/components/.
      *
-     * @param specs       Plugin specs parsed from [PLUGINS].
-     * @param warn_cb     Optional callback to report per-plugin load errors.
-     *                    Signature: void(const std::string& message).
-     * @returns Number of successfully loaded plugins.
+     * @param warn_cb  Optional callback for per-library load warnings.
+     */
+    void discover(std::function<void(const std::string&)> warn_cb = {});
+
+    /**
+     * @brief Load a single shared library and register it in the component registry.
+     *
+     * @param path     Path to the shared library.
+     * @param warn_cb  Optional warning callback.
+     * @returns        Pointer to the IPluginComponentInfo, or nullptr on failure.
+     */
+    IPluginComponentInfo* load_library(
+        const std::string& path,
+        std::function<void(const std::string&)> warn_cb = {}
+    );
+
+    /**
+     * @brief Resolve a plugin identifier to its component info.
+     *
+     * @details Resolution logic:
+     *          1. If the string looks like a file path (contains '/' or '\\',
+     *             or ends in .so/.dylib/.dll), load it directly.
+     *          2. Otherwise, parse as "id:version" or "id" and look up in
+     *             the component registry. If no version is specified, returns
+     *             the first match found.
+     *
+     * @param id_or_path  File path or "id" or "id:version" string.
+     * @param warn_cb     Optional warning callback.
+     * @returns           Pointer to IPluginComponentInfo, or nullptr if not found.
+     */
+    IPluginComponentInfo* find_component(
+        const std::string& id_or_path,
+        std::function<void(const std::string&)> warn_cb = {}
+    );
+
+    /**
+     * @brief List all discovered component info entries.
+     *
+     * @details Returns entries from the component registry. Each entry has
+     *          id, version, capabilities, and the IPluginComponentInfo pointer.
+     */
+    struct ComponentEntry {
+        std::string            id;
+        std::string            version;
+        bool                   has_input  = false;
+        bool                   has_output = false;
+        bool                   has_report = false;
+        IPluginComponentInfo*  info = nullptr;
+    };
+    std::vector<ComponentEntry> discovered_components() const;
+
+    // -----------------------------------------------------------------------
+    // Loading (from specs or explicit paths)
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Load plugins from a list of specs (from [PLUGINS] section).
+     *
+     * @details For each spec, resolves spec.path via find_component(), then
+     *          creates plugin instances based on plugin_type.
+     *
+     * @param specs    Plugin specs (path + init_args).
+     * @param warn_cb  Optional warning callback.
+     * @returns        Number of successfully loaded plugins.
      */
     int load_plugins(
         const std::vector<PluginSpec>& specs,
@@ -106,108 +172,75 @@ public:
     // Lifecycle dispatch (main thread — call in order)
     // -----------------------------------------------------------------------
 
-    /**
-     * @brief Call initialize() on all output and report plugins.
-     * @param ctx  Simulation context (for metadata).
-     * @returns 0 on success; last non-zero error code if any plugin failed.
-     */
     int initialize_all(SimulationContext& ctx);
-
-    /**
-     * @brief Call validate() on all plugins.
-     */
     int validate_all(SimulationContext& ctx);
-
-    /**
-     * @brief Call prepare() on all plugins (open output files, write headers).
-     */
     int prepare_all(SimulationContext& ctx);
-
-    /**
-     * @brief Deliver a snapshot to all output AND report plugins.
-     *
-     * @details Called from the IO thread at each output boundary.
-     *          Only plugins in PREPARED or UPDATING state receive the update.
-     *
-     * @param snapshot  Read-only simulation state snapshot.
-     * @returns 0 on success; last non-zero error code if any plugin failed.
-     */
     int update_all(const SimulationSnapshot& snapshot);
-
-    /**
-     * @brief Call finalize() on all plugins.
-     *
-     * @details Called from the main thread after the IO thread has been joined.
-     */
     int finalize_all(SimulationContext& ctx);
-
-    /**
-     * @brief Call write_summary() on all report plugins.
-     *
-     * @details Called after finalize_all(), during SWMMEngine::report().
-     */
     int write_summary_all(SimulationContext& ctx);
 
     // -----------------------------------------------------------------------
     // Introspection
     // -----------------------------------------------------------------------
 
-    /** @brief All loaded output plugin instances. */
-    const std::vector<IOutputPlugin*>& output_plugins() const noexcept {
-        return output_plugins_;
-    }
+    const std::vector<IInputPlugin*>&  input_plugins()  const noexcept { return input_plugins_; }
+    const std::vector<IOutputPlugin*>& output_plugins() const noexcept { return output_plugins_; }
+    const std::vector<IReportPlugin*>& report_plugins() const noexcept { return report_plugins_; }
 
-    /** @brief All loaded report plugin instances. */
-    const std::vector<IReportPlugin*>& report_plugins() const noexcept {
-        return report_plugins_;
-    }
-
-    /** @brief Total number of loaded plugins (output + report). */
     int plugin_count() const noexcept {
-        return static_cast<int>(output_plugins_.size() + report_plugins_.size());
+        return static_cast<int>(input_plugins_.size() + output_plugins_.size() + report_plugins_.size());
     }
 
-    /** @brief True if no plugins have been loaded. */
     bool empty() const noexcept { return plugin_count() == 0; }
 
-    /** @brief Unload all plugins and close library handles. */
     void unload_all();
 
-    /**
-     * @brief Inject a pre-created output plugin instance (takes ownership).
-     *
-     * @details Used by SWMMEngine to register the DefaultOutputPlugin without
-     *          going through the [PLUGINS] / dlopen path.
-     * @param plugin  Heap-allocated instance; PluginFactory will delete it.
-     * @param args    Init args (empty for built-in plugins).
-     */
-    void add_output_plugin(IOutputPlugin* plugin,
-                           std::vector<std::string> args = {});
+    // -----------------------------------------------------------------------
+    // Plugin injection (for built-in / programmatic plugins)
+    // -----------------------------------------------------------------------
 
-    /**
-     * @brief Inject a pre-created report plugin instance (takes ownership).
-     */
+    void add_output_plugin(IOutputPlugin* plugin, std::vector<std::string> args = {});
     void add_report_plugin(IReportPlugin* plugin);
+    void add_input_plugin(IInputPlugin* plugin);
 
 private:
     // -----------------------------------------------------------------------
-    // Internal library handle record
+    // Internal types
     // -----------------------------------------------------------------------
 
     struct LibEntry {
-        void*                  handle = nullptr;  ///< dlopen / LoadLibrary handle
-        IPluginComponentInfo*  info   = nullptr;  ///< Component info (not owned — lives in lib)
-        std::string            path;              ///< Original library path (for error messages)
+        void*                  handle = nullptr;
+        IPluginComponentInfo*  info   = nullptr;
+        std::string            path;
     };
 
-    std::vector<LibEntry>        libs_;            ///< One per loaded shared library
-    std::vector<IOutputPlugin*>  output_plugins_;  ///< Owned instances
-    std::vector<IReportPlugin*>  report_plugins_;  ///< Owned instances
-    std::vector<std::vector<std::string>> init_args_; ///< init_args[i] matches output_plugins_[i]
+    // -----------------------------------------------------------------------
+    // Component registry
+    // -----------------------------------------------------------------------
+
+    /// Key: "id:version", Value: index into libs_
+    std::unordered_map<std::string, std::size_t> registry_;
 
     // -----------------------------------------------------------------------
-    // Platform-specific helpers
+    // Plugin storage
     // -----------------------------------------------------------------------
+
+    std::vector<LibEntry>        libs_;
+    std::vector<IInputPlugin*>   input_plugins_;
+    std::vector<IOutputPlugin*>  output_plugins_;
+    std::vector<IReportPlugin*>  report_plugins_;
+    std::vector<std::vector<std::string>> init_args_;
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    void scan_directory(const std::string& dir_path,
+                        std::function<void(const std::string&)> warn_cb);
+
+    static bool is_file_path(const std::string& str);
+    static bool is_shared_library(const std::string& filename);
+    static std::string get_library_directory();
 
     static void* platform_load(const std::string& path);
     static void  platform_unload(void* handle) noexcept;

@@ -108,10 +108,15 @@ protected:
         std::string rpt = "/tmp/regression_new.rpt";
         std::string out = "/tmp/regression_new.out";
 
+        // Full run first — mirrors how RunLegacy uses swmm_run()
+        int err = swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr);
+        ASSERT_EQ(err, 0) << "New engine run failed";
+
+        // Re-open and step through to read per-timestep results
         SWMM_Engine e = swmm_engine_create();
         ASSERT_NE(e, nullptr);
 
-        int err = swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str());
+        err = swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr);
         ASSERT_EQ(err, 0) << "New engine open failed: " << swmm_get_last_error_msg(e);
 
         err = swmm_engine_initialize(e);

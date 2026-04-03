@@ -24,8 +24,9 @@
 
 #define FMT03 " There are errors.\n"
 #define FMT04 " There are warnings.\n"
+#include "legacy_version.h"
 #define FMT08 \
-  "\n  EPA STORM WATER MANAGEMENT MODEL - VERSION 5.2 (Build 5.2.4)"
+  "\n  EPA STORM WATER MANAGEMENT MODEL - VERSION " LEGACY_SWMM_VERSION_FULL
 #define FMT09 \
   "\n  ------------------------------------------------------------"
 #define FMT10 "\n"

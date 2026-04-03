@@ -18,7 +18,7 @@
  * @code{.c}
  * // ---- Save a hot start ----
  * SWMM_Engine e = swmm_engine_create();
- * swmm_engine_open(e, "warmup.inp", "warmup.rpt", "warmup.out");
+ * swmm_engine_open(e, "warmup.inp", "warmup.rpt", "warmup.out", NULL);
  * swmm_engine_initialize(e);
  * swmm_engine_start(e, 0);
  * double t = 0.0;
@@ -33,7 +33,7 @@
  * swmm_hotstart_open("warmup.hs", &hs);
  *
  * SWMM_Engine e2 = swmm_engine_create();
- * swmm_engine_open(e2, "storm.inp", "storm.rpt", "storm.out");
+ * swmm_engine_open(e2, "storm.inp", "storm.rpt", "storm.out", NULL);
  * swmm_engine_initialize(e2);
  * swmm_hotstart_apply(e2, hs);   // warnings issued for missing objects
  *

@@ -72,7 +72,7 @@
 #include "../../data/SubcatchData.hpp"
 #include "../../data/HydrologyData.hpp"
 
-#include "../../core/charconv_compat.hpp"
+#include "../InputParseUtils.hpp"
 
 #include <charconv>
 #include <string>
@@ -80,22 +80,6 @@
 #include <array>
 
 namespace openswmm::input {
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-static double to_double(std::string_view sv, double def = 0.0) noexcept {
-    double v = def;
-    openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), v);
-    return v;
-}
-
-static int to_int(std::string_view sv, int def = 0) noexcept {
-    int v = def;
-    std::from_chars(sv.data(), sv.data() + sv.size(), v);
-    return v;
-}
 
 static void ensure_snowpack_capacity(SnowpackStore& sp, int idx) {
     const auto n = static_cast<std::size_t>(idx + 1);

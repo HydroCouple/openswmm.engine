@@ -37,7 +37,6 @@
 #define OPENSWMM_ENGINE_SWMM_ENGINE_HPP
 
 #include "SimulationContext.hpp"
-#include "../input/SectionRegistry.hpp"
 #include "../plugins/PluginFactory.hpp"
 #include "../output/IOThread.hpp"
 #include "../hydraulics/Routing.hpp"
@@ -114,14 +113,17 @@ public:
      * @details Reads the .inp file, allocates all object arrays, and applies
      *          initial conditions. Transitions to OPENED state on success.
      *
-     * @param inp_path  Path to the .inp input file.
-     * @param rpt_path  Path for the report output file (empty = no report).
-     * @param out_path  Path for the binary output file (empty = no binary out).
+     * @param inp_path          Path to the input file.
+     * @param rpt_path          Path for the report output file (NULL = no report).
+     * @param out_path          Path for the binary output file (NULL = no binary out).
+     * @param input_plugin_lib  Path to shared library providing an IInputPlugin,
+     *                          or NULL to use the built-in .inp reader.
      * @returns SWMM_OK or an error code.
      */
     int open(const char* inp_path,
              const char* rpt_path,
-             const char* out_path) noexcept;
+             const char* out_path,
+             const char* input_plugin_lib = nullptr) noexcept;
 
     /**
      * @brief Apply initial conditions and prepare the engine for stepping.
@@ -199,11 +201,6 @@ public:
         return ctx_.error_message.c_str();
     }
 
-    // =========================================================================
-    // SectionRegistry access (for custom section registration via C API)
-    // =========================================================================
-
-    input::SectionRegistry& registry() noexcept { return registry_; }
 
 private:
     // -----------------------------------------------------------------------
@@ -211,7 +208,6 @@ private:
     // -----------------------------------------------------------------------
 
     SimulationContext      ctx_;        ///< All simulation data (SoA + options)
-    input::SectionRegistry registry_;  ///< Input section dispatch table
     PluginFactory          plugins_;   ///< Phase 4: plugin loader + lifecycle
     IOThread               io_thread_; ///< Phase 5: writer thread
 
@@ -376,9 +372,6 @@ private:
      * @param dt  Routing timestep (seconds) — for mass balance accumulation.
      */
     void applyForcings(double dt) noexcept;
-
-    /** @brief Register all built-in SWMM section handlers. */
-    void register_builtin_handlers();
 
     /** @brief Set a fatal error on the context and transition to ERROR_STATE. */
     void set_error(int code, const char* message) noexcept;

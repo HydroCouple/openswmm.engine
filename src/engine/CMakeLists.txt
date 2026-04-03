@@ -26,7 +26,7 @@
 
 cmake_minimum_required(VERSION 3.21)
 
-# Collect all source files
+# Collect all source files (excluding geopackage — built as a separate library)
 file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.cpp
@@ -40,6 +40,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
     plugins/*.cpp
     math/*.cpp
 )
+list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
 
 file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -54,6 +55,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     plugins/*.hpp
     math/*.hpp
 )
+list(FILTER OPENSWMM_ENGINE_HEADERS EXCLUDE REGEX "input/geopackage/.*")
 
 # ---- Library target ----
 # NOTE: If there are no .cpp files yet (skeleton phase), use a placeholder.
@@ -240,4 +242,12 @@ if(MSVC AND OPENSWMM_BUILD_UNIT_TESTS)
     target_compile_options(openswmm_engine_internal PRIVATE /arch:AVX2)
 
     message(STATUS "OpenSWMM Engine: internal STATIC library enabled for MSVC unit tests")
+endif()
+
+# ---- Optional GeoPackage I/O library ----
+if(OPENSWMM_WITH_GEOPACKAGE)
+    add_subdirectory(input/geopackage)
+    message(STATUS "OpenSWMM Engine: GeoPackage I/O library enabled")
+else()
+    message(STATUS "OpenSWMM Engine: GeoPackage I/O disabled (set -DOPENSWMM_WITH_GEOPACKAGE=ON to enable)")
 endif()

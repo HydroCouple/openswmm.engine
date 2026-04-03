@@ -61,22 +61,12 @@
 #include "../../data/PollutantData.hpp"
 #include "../../data/QualityData.hpp"
 
-#include "../../core/charconv_compat.hpp"
+#include "../InputParseUtils.hpp"
 
 #include <charconv>
 #include <string>
 
 namespace openswmm::input {
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-static double to_double(std::string_view sv, double def = 0.0) noexcept {
-    double v = def;
-    openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), v);
-    return v;
-}
 
 // ============================================================================
 // handle_pollutants()

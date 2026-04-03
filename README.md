@@ -56,13 +56,16 @@ A comprehensive, domain-split C API replaces the monolithic legacy interface:
 | `openswmm_callbacks.h` | Progress, warning, and step callbacks |
 | `openswmm_hotstart.h` | Hot start file save/load/modify |
 | `openswmm_statistics.h` | Node, link, and subcatchment statistics |
+| `openswmm_geopackage.h` | GeoPackage I/O — observed data, result queries (optional) |
 
 ### Additional Features
 
 - **Hot Start API** — Save, load, modify, and query hot start files through a transparent C ABI.
 - **CRS Support** — Coordinate reference system specification via OPTIONS for spatial data.
 - **User Flags** — Custom USER_FLAGS section for user-defined metadata on objects.
-- **Plugin SDK** — Header-only development kit for building output/report plugins.
+- **GeoPackage I/O** — Optional SQLite-based spatial persistence for model definitions, simulation results, observed data, and network topology (see [GeoPackage](#geopackage-io) below).
+- **Input Plugin Interface** — `IInputPlugin` allows alternative file formats (GeoPackage, HDF5, databases) to replace the `.inp` text format. Plugins implement `read()` and `write()` and are discovered via `IPluginComponentInfo`.
+- **Plugin SDK** — Header-only development kit for building input/output/report plugins. Plugins advertise capabilities via `has_input()`, `has_output()`, `has_report()` booleans and support optional registration.
 - **HEC-22 Inlet Analysis** — Street inlet capture, grate and curb inlets (from SWMM 5.2).
 - **Variable Speed Pumps** — Type5 pump curves with speed scaling.
 - **New Storage Shapes** — Conical and pyramidal shapes with elliptical/rectangular bases.
@@ -216,6 +219,73 @@ OBJ_2    17.5     disabled
 
 The two built-in plugins (`DefaultOutputPlugin` for `.out` and `DefaultReportPlugin` for `.rpt`) are always available and require no `[PLUGINS]` entry. The Plugin SDK headers are in `include/openswmm/plugin_sdk/`.
 
+### GeoPackage I/O
+
+The optional `openswmm_geopackage` library provides OGC GeoPackage (SQLite + spatial extensions) as an alternative to the text `.inp` and binary `.out` formats. A single `.gpkg` file serves as a complete project container:
+
+- **Model input** — Nodes (POINT), links (LINESTRING), subcatchments (MULTIPOLYGON), rain gages, options, curves, timeseries, patterns, pollutants, and transects stored as GeoPackage feature and attribute tables with full CRS support.
+- **Network topology** — Explicit `node_links` and `subcatch_routing` tables enable SQL-based graph traversal (upstream traces, contributing area, connectivity validation) via recursive CTEs.
+- **Multi-run results** — Multiple simulation runs coexist in one file, each keyed by `simulation_id` with engine version recorded. Per-timestep results and summary statistics are stored in a relational timeseries model inspired by the Observations Data Model (ODM).
+- **Observed / sensor data** — Independent measured timeseries for calibration workflows. Series can be linked to model objects for sim-vs-observed comparison and goodness-of-fit queries.
+
+The library is built when `OPENSWMM_WITH_GEOPACKAGE=ON` and requires SQLite3:
+
+```bash
+cmake -B build -DOPENSWMM_WITH_GEOPACKAGE=ON -DOPENSWMM_BUILD_TESTS=ON
+cmake --build build
+```
+
+#### Plugin Architecture
+
+GeoPackage I/O is implemented as three plugins behind a single `IPluginComponentInfo`:
+
+| Plugin | Interface | Role |
+|--------|-----------|------|
+| `GeoPackageInputPlugin` | `IInputPlugin` | Read/write model definitions (`.gpkg` replaces `.inp`) |
+| `GeoPackageOutputPlugin` | `IOutputPlugin` | Write per-timestep results during simulation |
+| `GeoPackageReportPlugin` | `IReportPlugin` | Write summary statistics and continuity errors |
+
+The plugin is discoverable via the standard `openswmm_plugin_info()` C export and advertises all three capabilities (`has_input()`, `has_output()`, `has_report()` all return `true`). Registration is supported via `register_plugin()` / `registered()` on the `IPluginComponentInfo` interface.
+
+#### C API for External Consumers
+
+The `openswmm_geopackage.h` C API provides read access to models, results, and topology, plus read-write access to observed data with bulk vector operations and transaction support:
+
+```c
+#include <openswmm/engine/openswmm_geopackage.h>
+
+SWMM_Gpkg gpkg = swmm_gpkg_open("model.gpkg");
+
+// Read model metadata
+int nodes = swmm_gpkg_node_count(gpkg, "run_1");
+
+// Bulk-read simulation results
+double times[1000], values[1000];
+int n = swmm_gpkg_read_result_ts(gpkg, "run_1", "NODE", "J1",
+                                  "depth", times, values, 1000);
+
+// Read summary statistics
+double max_depth;
+swmm_gpkg_read_summary(gpkg, "run_1", "NODE", "J1", "max_depth", &max_depth);
+
+// Import observed data (bulk write in a transaction for speed)
+swmm_gpkg_begin(gpkg);
+int sid = swmm_gpkg_create_observed_series(gpkg, "USGS_flow",
+             "flow", "LINK", "C1", "USGS NWIS", "CMS");
+const char* ts[] = {"2026-01-15T08:00:00Z", "2026-01-15T09:00:00Z"};
+double vals[] = {1.5, 2.3};
+swmm_gpkg_write_observed_values(gpkg, sid, ts, vals, NULL, 2);
+swmm_gpkg_commit(gpkg);
+
+// Read observed data back
+double read_vals[100];
+int count = swmm_gpkg_read_observed_values(gpkg, sid, NULL, 0,
+                                            read_vals, 100);
+
+swmm_gpkg_close(gpkg);
+```
+
+
 ### Testing & Quality
 
 - **Google Test** — All unit tests migrated from Boost.Test to Google Test 1.15.2.
@@ -234,6 +304,7 @@ openswmm.engine/
 │   └── legacy/           # Legacy SWMM 5.x public headers
 ├── src/
 │   ├── engine/           # New C++20 engine implementation
+│   │   └── input/geopackage/  # Optional GeoPackage I/O library
 │   ├── legacy/engine/    # Original EPA SWMM 5.x solver (preserved unmodified)
 │   ├── legacy/output/    # Original binary output reader
 │   ├── plugin_sdk/       # Header-only plugin development kit
@@ -283,6 +354,10 @@ cmake --build build --config Release
 # Build with tests enabled
 cmake --preset=<platform>-debug -B build-debug -DOPENSWMM_BUILD_TESTS=ON
 cmake --build build-debug --config Debug
+
+# Build with optional GeoPackage I/O support
+cmake --preset=<platform> -B build -DOPENSWMM_WITH_GEOPACKAGE=ON
+cmake --build build --config Release
 ```
 
 ### Running Tests
@@ -520,6 +595,7 @@ For the full API reference, see the [documentation](https://hydrocouple.github.i
 | `openswmm_legacy_engine` | Original EPA SWMM 5.x solver (shared library) |
 | `openswmm_legacy_output` | Original SWMM binary output reader (shared library) |
 | `openswmm_engine` | New refactored C++20 engine (shared library) |
+| `openswmm_geopackage` | GeoPackage I/O (static library, optional — requires SQLite3) |
 | `openswmm_plugin_sdk` | Header-only plugin SDK (INTERFACE library) |
 | `openswmm_cli` | Command-line executable |
 

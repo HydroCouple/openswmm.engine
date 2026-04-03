@@ -22,9 +22,8 @@
 #include <benchmark/benchmark.h>
 #include <string>
 
-// TODO Phase 7 (when engines are implemented):
-// #include <openswmm/legacy/engine/openswmm_solver.h>
-// #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/legacy/engine/openswmm_solver.h>
+#include <openswmm/engine/openswmm_engine.h>
 
 static const char* EXAMPLE1_INP = "data/Example1.inp";
 static const char* LARGE_INP    = "data/LargeCity.inp";
@@ -40,8 +39,8 @@ static const char* LARGE_INP    = "data/LargeCity.inp";
  */
 static void BM_LegacyEngine_Example1(benchmark::State& state) {
     for (auto _ : state) {
-        // swmm_run(EXAMPLE1_INP, "/tmp/bench_legacy.rpt", "/tmp/bench_legacy.out");
-        benchmark::DoNotOptimize(0);
+        int err = swmm_run(EXAMPLE1_INP, "/tmp/bench_legacy.rpt", "/tmp/bench_legacy.out");
+        benchmark::DoNotOptimize(err);
     }
     state.SetLabel("legacy engine, Example1.inp");
 }
@@ -55,8 +54,8 @@ BENCHMARK(BM_LegacyEngine_Example1)
  */
 static void BM_LegacyEngine_LargeCity(benchmark::State& state) {
     for (auto _ : state) {
-        // swmm_run(LARGE_INP, "/tmp/bench_legacy_large.rpt", "/tmp/bench_legacy_large.out");
-        benchmark::DoNotOptimize(0);
+        int err = swmm_run(LARGE_INP, "/tmp/bench_legacy_large.rpt", "/tmp/bench_legacy_large.out");
+        benchmark::DoNotOptimize(err);
     }
     state.SetLabel("legacy engine, LargeCity.inp");
 }
@@ -74,16 +73,8 @@ BENCHMARK(BM_LegacyEngine_LargeCity)
  */
 static void BM_NewEngine_Example1(benchmark::State& state) {
     for (auto _ : state) {
-        // auto e = swmm_engine_create();
-        // swmm_engine_open(e, EXAMPLE1_INP, "/tmp/bench_new.rpt", "/tmp/bench_new.out");
-        // swmm_engine_initialize(e);
-        // swmm_engine_start(e, 1);
-        // double t = 0.0;
-        // while (swmm_engine_step(e, &t) == 0 && t > 0.0) {}
-        // swmm_engine_end(e);
-        // swmm_engine_close(e);
-        // swmm_engine_destroy(e);
-        benchmark::DoNotOptimize(0);
+        int err = swmm_engine_run(EXAMPLE1_INP, "/tmp/bench_new.rpt", "/tmp/bench_new.out", nullptr);
+        benchmark::DoNotOptimize(err);
     }
     state.SetLabel("new engine, Example1.inp");
 }
@@ -97,7 +88,8 @@ BENCHMARK(BM_NewEngine_Example1)
  */
 static void BM_NewEngine_LargeCity(benchmark::State& state) {
     for (auto _ : state) {
-        benchmark::DoNotOptimize(0);
+        int err = swmm_engine_run(LARGE_INP, "/tmp/bench_new_large.rpt", "/tmp/bench_new_large.out", nullptr);
+        benchmark::DoNotOptimize(err);
     }
     state.SetLabel("new engine, LargeCity.inp");
 }

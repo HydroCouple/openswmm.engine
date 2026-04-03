@@ -328,6 +328,45 @@ struct SimulationContext {
     ControlRuleStore control_rules;
 
     // =========================================================================
+    // Events (from [EVENTS] section)
+    // =========================================================================
+
+    /**
+     * @brief Event time periods for event-based analysis/reporting.
+     * @details Each pair is {start, end} in DateTime (decimal days).
+     * @see Legacy: TEvent in objects.h
+     */
+    struct Event {
+        double start = 0.0;  ///< Event start (DateTime decimal days)
+        double end   = 0.0;  ///< Event end (DateTime decimal days)
+    };
+    std::vector<Event> events;
+
+    // =========================================================================
+    // Subcatchment adjustment patterns (from [ADJUSTMENTS] section)
+    // =========================================================================
+
+    /**
+     * @brief Monthly climate adjustment factors from [ADJUSTMENTS] section.
+     * @details Copied into ClimateState during initialize(). Stored here so
+     *          that input parsing populates them without accessing SWMMEngine.
+     * @see Legacy: Adjust struct (temp[], evap[], rain[], hydcon[])
+     */
+    double adjust_temp[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};
+    double adjust_evap[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
+    double adjust_rain[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
+    double adjust_hydcon[12] = {1,1,1,1,1,1,1,1,1,1,1,1};
+
+    /**
+     * @brief Per-subcatchment pattern indices for N-PERV, DSTORE, INFIL adjustments.
+     * @details Index into ctx.table_names / pattern tables. -1 = no pattern.
+     * @see Legacy: Subcatch[i].nPervPattern, dStorePattern, infilPattern
+     */
+    std::vector<int> subcatch_n_perv_pattern;
+    std::vector<int> subcatch_d_store_pattern;
+    std::vector<int> subcatch_infil_pattern;
+
+    // =========================================================================
     // Hydrology data (snowpacks, aquifers, LID)
     // =========================================================================
 
@@ -359,6 +398,20 @@ struct SimulationContext {
      * @see UserFlags.hpp
      */
     UserFlags user_flags;
+
+    // =========================================================================
+    // Object tags (from [TAGS] section)
+    // =========================================================================
+
+    /**
+     * @brief Tags assigned to objects for categorization/filtering.
+     * @details Parsed from the [TAGS] section. Format: ObjectType  Name  Tag
+     *          Used by GUI tools for filtering; preserved through read/write.
+     * @see Legacy: s_TAG section in enums.h (GUI-only in legacy SWMM)
+     */
+    std::unordered_map<std::string, std::string> node_tags;
+    std::unordered_map<std::string, std::string> link_tags;
+    std::unordered_map<std::string, std::string> subcatch_tags;
 
     // =========================================================================
     // Runtime forcing data
@@ -405,6 +458,24 @@ struct SimulationContext {
      * @brief Human-readable message for the last error/warning.
      */
     std::string error_message;
+
+    /**
+     * @brief Accumulated warning messages written to report file.
+     * @details Matches legacy behavior where warnings are collected during
+     *          validation and written after the title section in the .rpt file.
+     *          Format: "WARNING NN: description for ObjectID"
+     * @see Legacy: report_writeWarningMsg() in report.c
+     */
+    std::vector<std::string> warnings;
+
+    /**
+     * @brief Accumulated error messages written to report file.
+     * @details Matches legacy behavior where errors are collected during
+     *          parsing/validation and written to the .rpt file.
+     *          Format: "ERROR NNN: description for ObjectID"
+     * @see Legacy: report_writeErrorMsg() in report.c
+     */
+    std::vector<std::string> errors;
 
     // =========================================================================
     // Mass balance accumulators (SoA — vectorisable batch updates)
@@ -659,6 +730,8 @@ struct SimulationContext {
         error_code = 0;
         warning_code = 0;
         error_message.clear();
+        warnings.clear();
+        errors.clear();
         title_notes.clear();
 
         // Clear SoA stores
@@ -677,9 +750,20 @@ struct SimulationContext {
         pollutant_names.clear();
         table_names.clear();
 
-        // Clear spatial, flags, and forcing
+        // Clear spatial, flags, tags, events, and forcing
         spatial    = SpatialFrame{};
         user_flags.clear();
+        node_tags.clear();
+        link_tags.clear();
+        subcatch_tags.clear();
+        events.clear();
+        std::fill(std::begin(adjust_temp), std::end(adjust_temp), 0.0);
+        std::fill(std::begin(adjust_evap), std::end(adjust_evap), 1.0);
+        std::fill(std::begin(adjust_rain), std::end(adjust_rain), 1.0);
+        std::fill(std::begin(adjust_hydcon), std::end(adjust_hydcon), 1.0);
+        subcatch_n_perv_pattern.clear();
+        subcatch_d_store_pattern.clear();
+        subcatch_infil_pattern.clear();
         forcing    = ForcingData{};
     }
 

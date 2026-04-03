@@ -22,6 +22,8 @@
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 
+#include <version.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
@@ -187,16 +189,20 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     // =====================================================================
     // Title — matches legacy FMT01
     // =====================================================================
-    std::fprintf(f, "\n  EPA STORM WATER MANAGEMENT MODEL - VERSION 5.2 (Build 5.2.4)");
-    std::fprintf(f, "\n  ------------------------------------------------------------");
+    std::fprintf(f, "\n  OPENSWMM ENGINE - VERSION %s", OPENSWMM_VERSION_FULL);
+    std::fprintf(f, "\n  -------------------------------------------");
 
     // [TITLE] content
     for (const auto& line : ctx.title_notes)
         std::fprintf(f, "\n  %s", line.c_str());
 
-    // Warnings (if any stored in context)
-    if (!ctx.error_message.empty())
-        std::fprintf(f, "\n  %s", ctx.error_message.c_str());
+    // Errors — matches legacy report_writeErrorMsg() format
+    for (const auto& err : ctx.errors)
+        std::fprintf(f, "\n  %s", err.c_str());
+
+    // Warnings — matches legacy report_writeWarningMsg() format
+    for (const auto& warn : ctx.warnings)
+        std::fprintf(f, "\n  %s", warn.c_str());
 
     // =====================================================================
     // Element Count — matches legacy inputrpt_writeInput()

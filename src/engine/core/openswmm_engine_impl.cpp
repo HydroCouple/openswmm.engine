@@ -27,9 +27,10 @@ SWMM_ENGINE_API SWMM_Engine swmm_engine_create(void) {
 }
 
 SWMM_ENGINE_API int swmm_engine_open(SWMM_Engine engine,
-                                      const char* inp, const char* rpt, const char* out) {
+                                      const char* inp, const char* rpt, const char* out,
+                                      const char* input_plugin_lib) {
     CHECK_HANDLE(engine);
-    return to_engine(engine)->open(inp, rpt, out);
+    return to_engine(engine)->open(inp, rpt, out, input_plugin_lib);
 }
 
 SWMM_ENGINE_API int swmm_engine_initialize(SWMM_Engine engine) {
@@ -70,6 +71,54 @@ SWMM_ENGINE_API int swmm_engine_get_state(SWMM_Engine engine, int* state) {
     CHECK_HANDLE(engine);
     if (state) *state = static_cast<int>(to_engine(engine)->context().state);
     return SWMM_OK;
+}
+
+// ============================================================================
+// Convenience run functions
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_engine_run_with_callback(
+    const char* inp, const char* rpt, const char* out,
+    const char* input_plugin_lib,
+    SWMM_ProgressCallback callback, void* user_data)
+{
+    SWMM_Engine e = swmm_engine_create();
+    if (!e) return SWMM_ERR_NOMEM;
+
+    int err = SWMM_OK;
+
+    // Register progress callback before running
+    if (callback) {
+        swmm_set_progress_callback(e, callback, user_data);
+    }
+
+    err = swmm_engine_open(e, inp, rpt, out, input_plugin_lib);
+    if (err != SWMM_OK) { swmm_engine_destroy(e); return err; }
+
+    err = swmm_engine_initialize(e);
+    if (err != SWMM_OK) { swmm_engine_close(e); swmm_engine_destroy(e); return err; }
+
+    err = swmm_engine_start(e, 1);
+    if (err != SWMM_OK) { swmm_engine_close(e); swmm_engine_destroy(e); return err; }
+
+    double elapsed = 0.0;
+    do {
+        err = swmm_engine_step(e, &elapsed);
+    } while (elapsed > 0.0 && err == SWMM_OK);
+
+    swmm_engine_end(e);
+    swmm_engine_report(e);
+    swmm_engine_close(e);
+
+    if (err == SWMM_OK) err = swmm_get_last_error(e);
+
+    swmm_engine_destroy(e);
+    return err;
+}
+
+SWMM_ENGINE_API int swmm_engine_run(const char* inp, const char* rpt, const char* out,
+                                     const char* input_plugin_lib) {
+    return swmm_engine_run_with_callback(inp, rpt, out, input_plugin_lib, nullptr, nullptr);
 }
 
 // ============================================================================

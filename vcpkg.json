@@ -20,6 +20,17 @@
             "name": "benchmark"
         }
     ],
+    "features": {
+        "geopackage": {
+            "description": "GeoPackage I/O support (SQLite-based spatial model persistence)",
+            "dependencies": [
+                {
+                    "name": "sqlite3",
+                    "features": ["rtree"]
+                }
+            ]
+        }
+    },
     "overrides": [
         {
             "name": "gtest",

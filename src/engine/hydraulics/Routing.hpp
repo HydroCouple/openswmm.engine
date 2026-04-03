@@ -90,6 +90,9 @@ public:
     /// Set the DWSolver OpenMP thread count (delegates to DWSolver::setNumThreads).
     void setDWNumThreads(int n) { dw_solver_.setNumThreads(n); }
 
+    /// Access the DW solver (for non-conduit node state scatter).
+    dynwave::DWSolver& dwSolver() { return dw_solver_; }
+
 private:
     RouteModel model_ = RouteModel::DYNWAVE;
     XSectGroups groups_;

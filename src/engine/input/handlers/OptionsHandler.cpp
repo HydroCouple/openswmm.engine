@@ -64,7 +64,7 @@
 #include "../../core/SimulationContext.hpp"
 #include "../../core/DateTime.hpp"
 
-#include "../../core/charconv_compat.hpp"
+#include "../InputParseUtils.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -74,81 +74,6 @@
 #include <vector>
 
 namespace openswmm::input {
-
-// ============================================================================
-// Helper: parse HH:MM:SS or decimal seconds → seconds
-// ============================================================================
-
-static double parse_time_hhmmss(std::string_view sv) {
-    // Accepts:
-    //   HH:MM:SS   → hours*3600 + min*60 + sec
-    //   MM:SS      → min*60 + sec
-    //   N          → N (seconds, floating point)
-
-    double val = 0.0;
-    auto [ptr, ec] = openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), val);
-    if (ec == std::errc{} && ptr == sv.data() + sv.size()) {
-        return val;  // plain number = seconds
-    }
-
-    // Try HH:MM:SS or MM:SS
-    unsigned h = 0, m = 0;
-    double s = 0.0;
-    const char* p = sv.data();
-    const char* end = sv.data() + sv.size();
-
-    auto read_uint = [&](unsigned& out) -> bool {
-        auto [np, nec] = std::from_chars(p, end, out);
-        if (nec != std::errc{}) return false;
-        p = np;
-        return true;
-    };
-    auto read_double = [&](double& out) -> bool {
-        auto [np, nec] = openswmm::from_chars_double(p, end, out);
-        if (nec != std::errc{}) return false;
-        p = np;
-        return true;
-    };
-
-    if (!read_uint(h)) return 0.0;
-    if (p < end && *p == ':') {
-        ++p;
-        if (!read_uint(m)) return static_cast<double>(h);
-        if (p < end && *p == ':') {
-            ++p;
-            if (!read_double(s)) return h * 3600.0 + m * 60.0;
-        }
-    }
-    return h * 3600.0 + m * 60.0 + s;
-}
-
-// ============================================================================
-// Helper: parse date string MM/DD/YYYY → Julian date (decimal days)
-// ============================================================================
-
-static double parse_date(std::string_view sv) {
-    // Accepts MM/DD/YYYY
-    unsigned m = 0, d = 0, y = 0;
-    const char* p = sv.data();
-    const char* end = sv.data() + sv.size();
-
-    auto read_uint = [&](unsigned& out) -> bool {
-        auto [np, ec] = std::from_chars(p, end, out);
-        if (ec != std::errc{}) return false;
-        p = np;
-        return true;
-    };
-
-    if (!read_uint(m)) return 0.0;
-    if (p < end && *p == '/') ++p; else return 0.0;
-    if (!read_uint(d)) return 0.0;
-    if (p < end && *p == '/') ++p; else return 0.0;
-    if (!read_uint(y)) return 0.0;
-
-    return datetime::encodeDate(static_cast<int>(y),
-                                static_cast<int>(m),
-                                static_cast<int>(d));
-}
 
 // ============================================================================
 // Helper: normalize uppercase key
@@ -223,17 +148,17 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         // Timesteps
         // -----------------------------------------------------------------
         } else if (key == "ROUTING_STEP") {
-            opt.routing_step = parse_time_hhmmss(val);
+            opt.routing_step = parse_time_seconds(val);
         } else if (key == "MINIMUM_STEP") {
-            opt.min_routing_step = parse_time_hhmmss(val);
+            opt.min_routing_step = parse_time_seconds(val);
         } else if (key == "DRY_DAYS") {
             openswmm::from_chars_double(val.data(), val.data() + val.size(), opt.dry_days);
         } else if (key == "DRY_STEP") {
-            opt.dry_step = parse_time_hhmmss(val);
+            opt.dry_step = parse_time_seconds(val);
         } else if (key == "WET_STEP") {
-            opt.wet_step = parse_time_hhmmss(val);
+            opt.wet_step = parse_time_seconds(val);
         } else if (key == "REPORT_STEP") {
-            opt.report_step = parse_time_hhmmss(val);
+            opt.report_step = parse_time_seconds(val);
 
         // -----------------------------------------------------------------
         // Simulation dates / times
@@ -242,19 +167,19 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             start_date_part = parse_date(val);
             got_start_date  = true;
         } else if (key == "START_TIME") {
-            start_time_part = parse_time_hhmmss(val) / datetime::SecsPerDay;
+            start_time_part = parse_time_seconds(val) / datetime::SecsPerDay;
             got_start_time  = true;
         } else if (key == "END_DATE") {
             end_date_part = parse_date(val);
             got_end_date  = true;
         } else if (key == "END_TIME") {
-            end_time_part = parse_time_hhmmss(val) / datetime::SecsPerDay;
+            end_time_part = parse_time_seconds(val) / datetime::SecsPerDay;
             got_end_time  = true;
         } else if (key == "REPORT_START_DATE") {
             rpt_date_part = parse_date(val);
             got_rpt_date  = true;
         } else if (key == "REPORT_START_TIME") {
-            rpt_time_part = parse_time_hhmmss(val) / datetime::SecsPerDay;
+            rpt_time_part = parse_time_seconds(val) / datetime::SecsPerDay;
             got_rpt_time  = true;
 
         // -----------------------------------------------------------------

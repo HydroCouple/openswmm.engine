@@ -35,6 +35,18 @@ else()
     add_compile_definitions(NO_OPENMP)
 endif()
 
+# Legacy SWMM version (independent of the OpenSWMM Engine version)
+set(LEGACY_SWMM_VERSION_MAJOR 5)
+set(LEGACY_SWMM_VERSION_MINOR 3)
+set(LEGACY_SWMM_VERSION_PATCH 0)
+set(LEGACY_SWMM_VERSION "${LEGACY_SWMM_VERSION_MAJOR}.${LEGACY_SWMM_VERSION_MINOR}.${LEGACY_SWMM_VERSION_PATCH}")
+set(LEGACY_SWMM_VERSION_FULL "${LEGACY_SWMM_VERSION} (Build ${LEGACY_SWMM_VERSION})")
+
+configure_file(
+    ${PROJECT_SOURCE_DIR}/include/openswmm/legacy/engine/legacy_version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/legacy_version.h
+)
+
 # Public header (canonical location after Phase 1 relocation)
 set(SWMM_PUBLIC_HEADERS
     ${PROJECT_SOURCE_DIR}/include/openswmm/legacy/engine/openswmm_solver.h

@@ -132,7 +132,7 @@ void StructureSolver::init(SimulationContext& ctx) {
 // Batch pump flow
 // ============================================================================
 
-void StructureSolver::computePumpFlows(SimulationContext& ctx) {
+void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
@@ -215,7 +215,28 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx) {
         if (q < 0.0) q = 0.0;
         // Convert from display flow units to CFS (matching legacy / UCF(FLOW))
         q /= ucf_flow;
-        links.flow[uj] = q * links.setting[uj];
+        q *= links.setting[uj];
+
+        // Limit pump flow to prevent inlet node from going dry
+        // (matching legacy getModPumpFlow in dynwave.c lines 445-486)
+        if (q > 0.0) {
+            if (nodes.type[un1] == NodeType::STORAGE) {
+                // Storage node: don't let volume go negative
+                double max_q = nodes.volume[un1] / dt + nodes.inflow[un1];
+                if (q > max_q && max_q > 0.0) q = max_q;
+            } else {
+                // Non-storage: check if pumping would make depth negative
+                double net_inflow = nodes.inflow[un1] - nodes.outflow[un1] - q;
+                double net_vol = 0.5 * (nodes.old_net_inflow[un1] + net_inflow) * dt;
+                // Approximate surface area at current depth
+                double surf = constants::MIN_SURFAREA; // junction default
+                if (surf < constants::MIN_SURFAREA) surf = constants::MIN_SURFAREA;
+                double y_new = nodes.old_depth[un1] + net_vol / surf;
+                if (y_new <= 0.0) q = std::max(nodes.inflow[un1], 0.0);
+            }
+        }
+
+        links.flow[uj] = q;
     }
 }
 
@@ -395,6 +416,7 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx) {
                       + links.crest_height[uj]
                       + (1.0 - setting) * y_full;
 
+        double hcrown = hcrest + y_full * setting;
         double head = hgl1 - hcrest;
         if (head <= FUDGE_W) { links.flow[uj] = 0.0; continue; }
 
@@ -403,37 +425,61 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx) {
         int wt = static_cast<int>(links.param1[uj]); // weir type
 
         double q = 0.0;
-        switch (wt) {
-            case 0: { // TRANSVERSE: Q = Cd * L * H^1.5
-                double ec = links.param2[uj]; // end contractions
-                double L = length - 0.1 * ec * head;
-                if (L < 0.0) L = 0.0;
-                q = cd * L * std::pow(head, 1.5);
-                break;
-            }
-            case 1: // SIDEFLOW: Q = Cd * L^0.83 * H^1.67
-                q = cd * std::pow(length, 0.83) * std::pow(head, 1.67);
-                break;
-            case 2: { // V-NOTCH: Q = Cd * slope * H^2.5
-                double slope = links.param2[uj];
-                q = cd * slope * std::pow(head, 2.5);
-                break;
-            }
-            case 3: { // TRAPEZOIDAL
-                double slope = links.param2[uj];
-                q = cd * length * std::pow(head, 1.5);
-                // V-notch portion uses a separate coefficient if available
-                break;
-            }
-        }
 
-        // Villemonte submergence correction
-        // (matching legacy weir_getInflow lines 2303-2308)
-        double h_tail = hgl2 - hcrest;
-        if (h_tail > 0.0 && head > 0.0) {
-            double ratio = h_tail / head;
-            if (ratio > 0.0 && ratio < 1.0) {
-                q *= std::pow(1.0 - std::pow(ratio, 1.5), 0.385);
+        // --- Surcharge check (matching legacy weir_getInflow lines 2285-2301)
+        // When water exceeds crown and weir can surcharge, use orifice equation
+        // with coefficient derived from weir flow at full opening.
+        if (hgl1 >= hcrown && y_full > 0.0 && setting > 0.0) {
+            // Compute cSurcharge: evaluate weir flow at full opening height,
+            // then derive equivalent orifice coeff (matching legacy weir_setSetting)
+            double h_full = setting * y_full;
+            double q_full = 0.0;
+            switch (wt) {
+                case 0: q_full = cd * length * std::pow(h_full, 1.5); break;
+                case 1: q_full = cd * std::pow(length, 0.83) * std::pow(h_full, 1.67); break;
+                case 2: q_full = cd * links.param2[uj] * std::pow(h_full, 2.5); break;
+                case 3: q_full = cd * length * std::pow(h_full, 1.5); break;
+            }
+            double h_half = h_full / 2.0;
+            double c_surcharge = (h_half > 0.0) ? q_full / std::sqrt(h_half) : 0.0;
+
+            // Orifice-mode head (matching legacy lines 2290-2292)
+            double y_mid = (hcrest + hcrown) / 2.0;
+            double h_orif = (hgl2 < y_mid) ? hgl1 - y_mid : hgl1 - hgl2;
+            if (h_orif < 0.0) h_orif = 0.0;
+
+            q = c_surcharge * std::sqrt(h_orif);
+        } else {
+            // --- Normal weir flow
+            switch (wt) {
+                case 0: { // TRANSVERSE: Q = Cd * L * H^1.5
+                    double ec = links.param2[uj]; // end contractions
+                    double L = length - 0.1 * ec * head;
+                    if (L < 0.0) L = 0.0;
+                    q = cd * L * std::pow(head, 1.5);
+                    break;
+                }
+                case 1: // SIDEFLOW: Q = Cd * L^0.83 * H^1.67
+                    q = cd * std::pow(length, 0.83) * std::pow(head, 1.67);
+                    break;
+                case 2: { // V-NOTCH: Q = Cd * slope * H^2.5
+                    double slope = links.param2[uj];
+                    q = cd * slope * std::pow(head, 2.5);
+                    break;
+                }
+                case 3: { // TRAPEZOIDAL
+                    q = cd * length * std::pow(head, 1.5);
+                    break;
+                }
+            }
+
+            // Villemonte submergence correction
+            double h_tail = hgl2 - hcrest;
+            if (h_tail > 0.0 && head > 0.0) {
+                double ratio = h_tail / head;
+                if (ratio > 0.0 && ratio < 1.0) {
+                    q *= std::pow(1.0 - std::pow(ratio, 1.5), 0.385);
+                }
             }
         }
 
@@ -487,8 +533,8 @@ void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
 // Main dispatch
 // ============================================================================
 
-void StructureSolver::computeAllFlows(SimulationContext& ctx, double /*dt*/) {
-    if (pumps_.count > 0)    computePumpFlows(ctx);
+void StructureSolver::computeAllFlows(SimulationContext& ctx, double dt) {
+    if (pumps_.count > 0)    computePumpFlows(ctx, dt);
     if (orifices_.count > 0) computeOrificeFlows(ctx);
     if (weirs_.count > 0)    computeWeirFlows(ctx);
     if (outlets_.count > 0)  computeOutletFlows(ctx);

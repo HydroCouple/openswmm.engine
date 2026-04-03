@@ -98,78 +98,118 @@ void buildCustomTables(TransectData& td, double y_full,
                        const double* curve_x, const double* curve_y, int n_pts) {
     if (n_pts < 2 || y_full <= 0.0) return;
 
+    // ================================================================
+    // Match legacy shape.c computeShapeTables() EXACTLY.
+    // Work entirely in normalized space (unit height). Scale at end.
+    //
+    // curve_x = depth/yFull (0 to 1), curve_y = width/yFull (normalized)
+    // ================================================================
+
     td.y_full = y_full;
 
-    // Find max width from curve (curve_y gives normalized width, 0-1+)
-    double w_max_norm = 0.0;
-    for (int i = 0; i < n_pts; ++i) {
-        if (curve_y[i] > w_max_norm) w_max_norm = curve_y[i];
-    }
-    // In SWMM CUSTOM shapes, curve is depth/yFull vs width/wMax.
-    // wMax is the maximum physical width. We approximate from the curve.
-    // The actual wMax = w_max_norm * y_full is a rough estimate;
-    // the curve normalization means w_max_norm should be ~1.0 at the widest point.
-    td.w_max = w_max_norm * y_full;  // Will be refined below
+    // --- Get first curve entry; ensure it starts at (0, 0) ---
+    double y1 = curve_x[0], w1 = curve_y[0];
+    double y2, w2;
+    int ci = 1; // cursor into curve
+    double wMax = w1;
 
-    // Helper: interpolate width from curve at normalized depth y_norm
-    auto interp_width = [&](double y_norm) -> double {
-        if (y_norm <= curve_x[0]) return curve_y[0];
-        if (y_norm >= curve_x[n_pts - 1]) return curve_y[n_pts - 1];
-        for (int i = 1; i < n_pts; ++i) {
-            if (y_norm <= curve_x[i]) {
-                double dx = curve_x[i] - curve_x[i - 1];
-                if (dx <= 0.0) return curve_y[i];
-                double t = (y_norm - curve_x[i - 1]) / dx;
-                return curve_y[i - 1] + t * (curve_y[i] - curve_y[i - 1]);
+    if (y1 != 0.0) {
+        y2 = y1; w2 = w1;
+        y1 = 0.0; w1 = 0.0;
+    } else {
+        if (ci < n_pts) {
+            y2 = curve_x[ci]; w2 = curve_y[ci]; ci++;
+            if (w2 > wMax) wMax = w2;
+        } else return;
+    }
+
+    // --- Build tables at N_TRANSECT_TBL equal increments ---
+    int n = N_TRANSECT_TBL - 1;
+    double dd = 1.0 / static_cast<double>(n);
+    double Ptotal = w1;  // initial perimeter = bottom width
+    double Atotal = 0.0;
+
+    td.width_tbl[0] = w1;
+    td.area_tbl[0]  = 0.0;
+    td.hrad_tbl[0]  = 0.0;
+
+    double y = 0.0, w = w1;
+
+    for (int d = 1; d <= n; ++d) {
+        double yLast = y;
+        double wLast = w;
+        y += dd;
+
+        // Clamp to 1.0
+        if (std::fabs(y - 1.0) < 1.0e-6) y = 1.0;
+
+        // Advance to next curve interval if needed
+        while (y > y2 && ci < n_pts) {
+            // Interpolate at interval boundary
+            y1 = y2; w1 = w2;
+            y2 = curve_x[ci]; w2 = curve_y[ci]; ci++;
+            if (y2 > 1.0) y2 = 1.0;
+            if (w2 > wMax) wMax = w2;
+
+            // Add partial area/perimeter from yLast to y1
+            if (y1 > yLast) {
+                double wMid = wLast + (w1 - wLast) * (y1 - yLast) / (y1 - yLast + 1e-30);
+                Atotal += 0.5 * (wLast + wMid) * (y1 - yLast);
+                double dw_half = std::fabs(wMid - wLast) / 2.0;
+                double dy_seg = y1 - yLast;
+                Ptotal += 2.0 * std::sqrt(dy_seg * dy_seg + dw_half * dw_half);
+                yLast = y1;
+                wLast = w1;
             }
         }
-        return curve_y[n_pts - 1];
-    };
 
-    // Build tables at N_TRANSECT_TBL equal depth increments
-    double dd = 1.0 / static_cast<double>(N_TRANSECT_TBL - 1);
-    double cum_area = 0.0;
-    double max_width = 0.0;
+        // Interpolate width at depth y
+        if (y2 > y1) {
+            w = w1 + (w2 - w1) * (y - y1) / (y2 - y1);
+        } else {
+            w = w2;
+        }
+        if (w > wMax) wMax = w;
 
-    for (int d = 0; d < N_TRANSECT_TBL; ++d) {
-        double y_norm = d * dd;
-        double w_norm = interp_width(y_norm);
-        double w = w_norm * y_full;  // Physical width (temporary scale)
+        // Area increment: trapezoidal rule
+        Atotal += 0.5 * (wLast + w) * (y - yLast);
+
+        // Perimeter increment
+        double dw_half = std::fabs(w - wLast) / 2.0;
+        double dy_seg = y - yLast;
+        Ptotal += 2.0 * std::sqrt(dy_seg * dy_seg + dw_half * dw_half);
+
+        // Add top width to perimeter at y = 1.0 (matching legacy shape.c line 163)
+        if (y >= 1.0) {
+            Ptotal += w;
+        }
 
         td.width_tbl[d] = w;
-        if (w > max_width) max_width = w;
-
-        // Accumulate area by trapezoidal integration
-        if (d > 0) {
-            double w_prev = td.width_tbl[d - 1];
-            double dy = dd * y_full;
-            cum_area += 0.5 * (w_prev + w) * dy;
-        }
-        td.area_tbl[d] = cum_area;
-
-        // Hydraulic radius: R = A / P (approximate P from cumulative perimeter)
-        double p = 0.0;
-        for (int k = 1; k <= d; ++k) {
-            double dw = std::fabs(td.width_tbl[k] - td.width_tbl[k - 1]) / 2.0;
-            double dy = dd * y_full;
-            p += 2.0 * std::sqrt(dy * dy + dw * dw);
-        }
-        td.hrad_tbl[d] = (p > 0.0) ? td.area_tbl[d] / p : 0.0;
+        td.area_tbl[d]  = Atotal;
+        td.hrad_tbl[d]  = (Ptotal > 0.0) ? Atotal / Ptotal : 0.0;
     }
 
-    td.a_full = cum_area;
-    td.w_max  = max_width;
-    td.r_full = (td.a_full > 0.0) ? td.hrad_tbl[N_TRANSECT_TBL - 1] : 0.0;
+    // --- Full-depth properties (in normalized space) ---
+    double aFull = td.area_tbl[n];
+    double rFull = td.hrad_tbl[n];
 
-    // Normalize tables
-    if (td.a_full > 0.0) {
-        for (int d = 0; d < N_TRANSECT_TBL; ++d) td.area_tbl[d] /= td.a_full;
+    // --- Scale to physical units (matching legacy xsect.c lines 681-683) ---
+    // aFull_physical = aFull_normalized * yFull^2
+    // rFull_physical = rFull_normalized * yFull
+    // wMax_physical  = wMax_normalized * yFull
+    td.a_full = aFull * y_full * y_full;
+    td.r_full = rFull * y_full;
+    td.w_max  = wMax * y_full;
+
+    // --- Normalize tables (matching legacy normalizeShapeTables) ---
+    if (aFull > 0.0) {
+        for (int d = 0; d <= n; ++d) td.area_tbl[d] /= aFull;
     }
-    if (td.r_full > 0.0) {
-        for (int d = 0; d < N_TRANSECT_TBL; ++d) td.hrad_tbl[d] /= td.r_full;
+    if (rFull > 0.0) {
+        for (int d = 0; d <= n; ++d) td.hrad_tbl[d] /= rFull;
     }
-    if (td.w_max > 0.0) {
-        for (int d = 0; d < N_TRANSECT_TBL; ++d) td.width_tbl[d] /= td.w_max;
+    if (wMax > 0.0) {
+        for (int d = 0; d <= n; ++d) td.width_tbl[d] /= wMax;
     }
 }
 

@@ -106,6 +106,28 @@ struct SpatialFrame {
     bool is_geographic = false;
 
     // -----------------------------------------------------------------------
+    // Map extents (from [MAP] DIMENSIONS)
+    // -----------------------------------------------------------------------
+
+    /** @brief Map extent minimum X (left). */
+    double map_x1 = 0.0;
+
+    /** @brief Map extent minimum Y (bottom). */
+    double map_y1 = 0.0;
+
+    /** @brief Map extent maximum X (right). */
+    double map_x2 = 0.0;
+
+    /** @brief Map extent maximum Y (top). */
+    double map_y2 = 0.0;
+
+    /**
+     * @brief Map units string from [MAP] UNITS keyword.
+     * @details Typically NONE, FEET, METERS, or DEGREES.
+     */
+    std::string map_units;
+
+    // -----------------------------------------------------------------------
     // Node coordinates (indexed parallel to NodeData)
     // -----------------------------------------------------------------------
 
