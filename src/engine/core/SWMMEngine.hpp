@@ -57,6 +57,10 @@
 #include "../hydraulics/HydStructures.hpp"
 #include "InterfaceFile.hpp"
 
+#ifdef OPENSWMM_HAS_2D
+#include "../2d/SurfaceRouter2D.hpp"
+#endif
+
 #include <functional>
 #include <memory>
 #include <string>
@@ -201,6 +205,12 @@ public:
         return ctx_.error_message.c_str();
     }
 
+#ifdef OPENSWMM_HAS_2D
+    /** @brief Access the 2D surface router (for C API delegation). */
+    twoD::SurfaceRouter2D&       surfaceRouter2D()       noexcept { return surface_router_; }
+    const twoD::SurfaceRouter2D& surfaceRouter2D() const noexcept { return surface_router_; }
+#endif
+
 
 private:
     // -----------------------------------------------------------------------
@@ -229,6 +239,10 @@ private:
     hydstruct::StructureSolver  hydstruct_;    ///< Pumps, orifices, weirs, outlets
     iface::InterfaceManager      iface_;        ///< Routing interface file I/O
     std::vector<gage::GageState> gage_states_;  ///< Per-gage state (SoA)
+
+#ifdef OPENSWMM_HAS_2D
+    twoD::SurfaceRouter2D        surface_router_; ///< Optional 2D surface routing solver
+#endif
 
     std::string rpt_path_;  ///< Report file path
     std::string out_path_;  ///< Binary output file path

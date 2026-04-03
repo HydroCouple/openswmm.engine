@@ -96,6 +96,44 @@ add_gtest_unit(test_engine_groundwater      test_groundwater.cpp)
 add_gtest_unit(test_engine_routing          test_routing.cpp)
 add_gtest_unit(test_engine_site_drainage    test_site_drainage_model.cpp)
 
+# 2D surface routing tests — geometry, gradients, flux, parsing
+# These tests exercise the non-CVODE portions of the 2D module and
+# can be built without SUNDIALS by compiling the needed sources directly.
+set(TEST_2D_SOURCES
+    test_2d_surface_routing.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/mesh/MeshBuilder.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/mesh/VertexReconstruction.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/solver/SurfaceFluxCalculator.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/input/SectionHandlers2D.cpp
+)
+add_executable(test_engine_2d_surface ${TEST_2D_SOURCES})
+target_link_libraries(test_engine_2d_surface
+    PRIVATE
+        GTest::gtest GTest::gtest_main GTest::gmock
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+        openswmm_legacy_engine
+)
+target_include_directories(test_engine_2d_surface
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+if(MSVC)
+    target_compile_options(test_engine_2d_surface PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_2d_surface PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+add_test(
+    NAME    test_engine_2d_surface
+    COMMAND $<TARGET_FILE:test_engine_2d_surface>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_2d_surface PROPERTIES LABELS "unit")
+
 # GeoPackage tests (only if the library is built)
 if(OPENSWMM_WITH_GEOPACKAGE)
     add_executable(test_engine_geopackage test_geopackage.cpp)

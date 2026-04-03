@@ -244,6 +244,43 @@ if(MSVC AND OPENSWMM_BUILD_UNIT_TESTS)
     message(STATUS "OpenSWMM Engine: internal STATIC library enabled for MSVC unit tests")
 endif()
 
+# ---- Optional 2D Surface Routing Module ----
+if(OPENSWMM_BUILD_2D)
+    # Collect 2D source files (non-CVODE sources are always compiled)
+    file(GLOB_RECURSE OPENSWMM_2D_SOURCES
+        RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+        2d/data/*.cpp
+        2d/mesh/*.cpp
+        2d/solver/SurfaceFluxCalculator.cpp
+        2d/coupling/*.cpp
+        2d/input/*.cpp
+        2d/SurfaceRouter2D.cpp
+        2d/api/*.cpp
+    )
+
+    # CVODE wrapper requires SUNDIALS
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/CvodeSurfaceSolver.cpp)
+
+    target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
+
+    # Find SUNDIALS (CVODE) via vcpkg or system install
+    find_package(SUNDIALS REQUIRED COMPONENTS cvode)
+    target_link_libraries(openswmm_engine PRIVATE SUNDIALS::cvode)
+
+    target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAS_2D=1)
+
+    # Also add to the internal static library for MSVC unit tests
+    if(TARGET openswmm_engine_internal)
+        target_sources(openswmm_engine_internal PRIVATE ${OPENSWMM_2D_SOURCES})
+        target_link_libraries(openswmm_engine_internal PRIVATE SUNDIALS::cvode)
+        target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAS_2D=1)
+    endif()
+
+    message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (SUNDIALS/CVODE)")
+else()
+    message(STATUS "OpenSWMM Engine: 2D surface routing disabled (set -DOPENSWMM_BUILD_2D=ON to enable)")
+endif()
+
 # ---- Optional GeoPackage I/O library ----
 if(OPENSWMM_WITH_GEOPACKAGE)
     add_subdirectory(input/geopackage)

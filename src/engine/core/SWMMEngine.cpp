@@ -248,6 +248,13 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         dt_cfl = router_.getAdaptiveStep(ctx_, ctx_.options.routing_step,
                                           ctx_.options.variable_step);
     }
+#ifdef OPENSWMM_HAS_2D
+    // Optionally constrain dt by 2D CFL hint (prevents coupling interval too large)
+    if (surface_router_.isActive()) {
+        double dt_cfl_2d = surface_router_.computeCflHint(ctx_);
+        dt_cfl = std::min(dt_cfl, dt_cfl_2d);
+    }
+#endif
     const double dt_next = hydraulics::TimestepController::compute_next(ctx_, dt_cfl);
 
     // Fire step-begin callback
@@ -936,6 +943,13 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     // B2b. Interface file inflows (from upstream model coupling)
     iface_.readInflows(ctx_, ctx_.current_date);
 
+#ifdef OPENSWMM_HAS_2D
+    // B2c. Pre-routing: update outfall boundary heads from 2D surface state.
+    //      Must happen after setOutfallDepths() (called inside router_.step)
+    //      but the 2D pre-routing hook modifies outfall heads from 2D state.
+    surface_router_.updateOutfallsPreRouting(ctx_);
+#endif
+
     // B3. Hydraulic routing (batch xsect geometry → batch momentum)
     //     Includes: conduit flow, pump/orifice/weir/outlet flow,
     //     divider logic, outfall boundary conditions
@@ -1026,6 +1040,13 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     };
     int iters = router_.step(ctx_, dt_routing, non_conduit_fn);
     ctx_.routing_stats.update_iterations(iters, iters < ctx_.options.max_trials);
+
+#ifdef OPENSWMM_HAS_2D
+    // B3+. Post-routing: compute 2D↔1D coupling exchange, update rainfall,
+    //      advance CVODE solver, transfer outfall discharges to 2D cells.
+    surface_router_.advancePostRouting(ctx_, dt_routing,
+                                        ctx_.elapsed_time - ctx_.start_time);
+#endif
 
     // B3a. Inlet capture (street inlet HEC-22 calculations)
     inlet_.computeAll(ctx_, dt_routing);
@@ -1618,6 +1639,11 @@ int SWMMEngine::end() noexcept {
     // Build routing time step histogram for report
     ctx_.routing_stats.build_histogram();
 
+#ifdef OPENSWMM_HAS_2D
+    // Finalize 2D surface routing module (release CVODE resources)
+    surface_router_.finalize();
+#endif
+
     // Phase 5: drain and join the IO thread (all writes must complete first)
     io_thread_.stop();
 
@@ -1865,6 +1891,13 @@ void SWMMEngine::initHydraulics() noexcept {
     if (ctx_.options.routing_model == RoutingModel::KINWAVE) rm = RouteModel::KINWAVE;
     else if (ctx_.options.routing_model == RoutingModel::STEADY) rm = RouteModel::STEADY;
     router_.init(ctx_, rm);
+
+#ifdef OPENSWMM_HAS_2D
+    // 1a. Initialize optional 2D surface routing module.
+    //     Builds mesh topology, vertex stencils, resolves coupling maps,
+    //     suppresses ponding at coupled nodes, and initializes CVODE.
+    surface_router_.initialize(ctx_);
+#endif
 
     // 1b. Configure OpenMP thread count from THREADS option.
     //     0 = use all available; N = use min(N, available).
