@@ -49,6 +49,7 @@
 #include "../hydrology/LID.hpp"
 #include "../hydrology/Inflow.hpp"
 #include "../hydrology/RDII.hpp"
+#include "../hydrology/AMM.hpp"
 #include "../quality/QualityRouting.hpp"
 #include "../quality/Landuse.hpp"
 #include "../controls/Controls.hpp"
@@ -236,6 +237,7 @@ private:
     controls::ControlEngine      controls_;     ///< Control rule evaluation
     inflow::InflowSolver         inflow_;       ///< External + DWF inflows
     rdii::RDIISolver             rdii_;         ///< RDII (unit hydrograph convolution)
+    amm::AMMSolver               amm_;          ///< AMM (antecedent moisture model)
     exfil::ExfilSolver           exfil_;        ///< Storage node exfiltration
     inlet::InletSolver           inlet_;        ///< Street inlet capture
     std::vector<int>             culvert_links_;///< Pre-built culvert link indices (avoid per-timestep alloc)

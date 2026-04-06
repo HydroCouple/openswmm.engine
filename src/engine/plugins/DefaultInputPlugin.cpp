@@ -93,6 +93,7 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("DWF",           input::handle_dwf);
     registry_.register_builtin("RDII",          input::handle_rdii);
     registry_.register_builtin("HYDROGRAPHS",  input::handle_hydrographs);
+    registry_.register_builtin("AMM",           input::handle_amm);
     registry_.register_builtin("LOADINGS",      input::handle_loadings);
     registry_.register_builtin("PATTERNS",      input::handle_patterns);
 

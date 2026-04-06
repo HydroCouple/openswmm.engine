@@ -313,6 +313,7 @@ struct SimulationContext {
     DwfData          dwf_inflows;
     RDIIAssignData   rdii_assigns;
     UnitHydData      unit_hyds;      ///< Parsed [HYDROGRAPHS] data
+    AMMAssignData    amm_assigns;
     PatternData      patterns;
 
     // =========================================================================

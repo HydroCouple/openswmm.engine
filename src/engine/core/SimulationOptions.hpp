@@ -36,6 +36,17 @@ namespace openswmm {
 // ============================================================================
 
 /**
+ * @brief RDII computation method.
+ *
+ * RTK uses the traditional 3-triangle unit hydrograph convolution.
+ * AMM uses the Antecedent Moisture Model (Edgren et al., JWMM C525).
+ */
+enum class RdiiMethod : int {
+    RTK = 0,  ///< Traditional RTK unit hydrograph (default)
+    AMM = 1   ///< Antecedent Moisture Model
+};
+
+/**
  * @brief Flow unit systems.
  * @see Legacy: FlowUnitsType in enums.h
  */
@@ -292,6 +303,9 @@ struct SimulationOptions {
 
     /** @brief Ignore RDII. */
     bool ignore_rdii = false;
+
+    /** @brief RDII computation method (RTK or AMM). */
+    RdiiMethod rdii_method = RdiiMethod::RTK;
 
     /** @brief Ignore routing. */
     bool ignore_routing = false;

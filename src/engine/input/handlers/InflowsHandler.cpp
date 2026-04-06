@@ -46,6 +46,7 @@
 #include <charconv>
 #include <string>
 #include <algorithm>
+#include <unordered_map>
 
 namespace openswmm::input {
 
@@ -212,7 +213,7 @@ void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& 
         // Otherwise: UHgroup  Month  Response  R  T  K  [Dmax  Drecov  Dinit]
         if (tok.size() < 6) continue;
 
-        // Parse month: "All" → -1, or numeric 1-12 → 0-based (0-11)
+        // Parse month: "All" -> -1, or numeric 1-12 -> 0-based (0-11)
         int month = -1;
         std::string month_upper = Tokenizer::to_upper(tok[1]);
         if (month_upper != "ALL") {
@@ -240,6 +241,93 @@ void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& 
         entry.dinit    = (tok.size() > 8) ? to_double(tok[8]) : 0.0;
 
         ctx.unit_hyds.add(entry);
+    }
+}
+
+// ============================================================================
+// handle_amm()
+// ============================================================================
+/**
+ * @brief Parse the [AMM] section.
+ *
+ * Two line formats are accepted:
+ *
+ * ### Assignment line (3 tokens) — assigns an AMM component to a node
+ * ```
+ * ;; Node  AMMgroup  SewerArea
+ * J1       Fast      1000.0
+ * ```
+ *
+ * ### Parameter line (first token == component name, second token == keyword)
+ * ```
+ * ;; CompName  Keyword  Values...
+ * Fast  PARAMS      0.10  1800  3600  28800  0.05  0.01  35.0  75.0  604800
+ * Fast  BASEFLOW    0.10  1800  3600  0.03   0.01  35.0  75.0  604800
+ * Fast  AREA        5.0
+ * ```
+ *
+ * PARAMS keyword fields (9): RD PAT HHL AMHL coldSHCF hotSHCF coldTemp hotTemp TAT
+ * BASEFLOW keyword fields (8): RD PAT HHL coldR hotR coldTemp hotTemp TAT
+ * AREA keyword fields (1): ContributingArea
+ */
+void handle_amm(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    // Two-pass: first collect component parameter definitions, then assignments.
+
+    // Pass 1: scan all lines for PARAMS / BASEFLOW / AREA keywords
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.size() < 2) continue;
+
+        std::string kw = tok[1];
+        std::transform(kw.begin(), kw.end(), kw.begin(), ::toupper);
+
+        if (kw == "PARAMS" && tok.size() >= 11) {
+            auto& p = ctx.amm_assigns.component_defs[tok[0]];
+            p.RD        = to_double(tok[2]);
+            p.PAT       = to_double(tok[3]);
+            p.HHL       = to_double(tok[4]);
+            p.AMHL      = to_double(tok[5]);
+            p.cold_SHCF = to_double(tok[6]);
+            p.hot_SHCF  = to_double(tok[7]);
+            p.cold_temp = to_double(tok[8]);
+            p.hot_temp  = to_double(tok[9]);
+            p.TAT       = to_double(tok[10]);
+            p.is_baseflow = false;
+        }
+        else if (kw == "BASEFLOW" && tok.size() >= 10) {
+            auto& p = ctx.amm_assigns.component_defs[tok[0]];
+            p.RD        = to_double(tok[2]);
+            p.PAT       = to_double(tok[3]);
+            p.HHL       = to_double(tok[4]);
+            p.cold_R    = to_double(tok[5]);
+            p.hot_R     = to_double(tok[6]);
+            p.cold_temp = to_double(tok[7]);
+            p.hot_temp  = to_double(tok[8]);
+            p.TAT       = to_double(tok[9]);
+            p.is_baseflow = true;
+        }
+        else if (kw == "AREA" && tok.size() >= 3) {
+            ctx.amm_assigns.component_defs[tok[0]].area = to_double(tok[2]);
+        }
+    }
+
+    // Pass 2: scan for assignment lines (Node  CompName  SewerArea)
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.size() < 3) continue;
+
+        // Skip parameter definition lines (second token is a keyword)
+        std::string kw = tok[1];
+        std::transform(kw.begin(), kw.end(), kw.begin(), ::toupper);
+        if (kw == "PARAMS" || kw == "BASEFLOW" || kw == "AREA") continue;
+
+        const int node_idx = ctx.node_names.find(tok[0]);
+        if (node_idx < 0) continue;
+
+        const std::string& amm_name = tok[1];
+        double sewer_area = to_double(tok[2]);
+
+        ctx.amm_assigns.add(node_idx, amm_name, sewer_area);
     }
 }
 

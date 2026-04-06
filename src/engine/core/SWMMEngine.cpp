@@ -1220,6 +1220,17 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         rdii_.applyRdiiInflows(ctx_);
     }
 
+    // B2a2. RDII inflows (antecedent moisture model) — AMM method
+    if (ctx_.options.rdii_method == RdiiMethod::AMM && amm_.componentCount() > 0) {
+        double avg_rainfall = 0.0;
+        for (int g = 0; g < ctx_.n_gages(); ++g) {
+            avg_rainfall += ctx_.gages.rainfall[static_cast<std::size_t>(g)];
+        }
+        if (ctx_.n_gages() > 0) avg_rainfall /= ctx_.n_gages();
+        double air_temp = climate_.temperature;   // current air temperature (deg F)
+        amm_.computeAll(ctx_, avg_rainfall, air_temp, dt_routing);
+    }
+
     // B2b. Interface file inflows (from upstream model coupling)
     iface_.readInflows(ctx_, ctx_.current_date);
 
@@ -2445,6 +2456,9 @@ void SWMMEngine::initHydraulics() noexcept {
 
     // 10a. RDII solver: initialize unit hydrograph groups
     rdii_.init(ctx_);
+
+    // 10a2. AMM solver: initialize antecedent moisture model groups
+    amm_.init(ctx_);
 
     // 10b. Non-conduit hydraulic structures (pumps, orifices, weirs, outlets)
     hydstruct_.init(ctx_);

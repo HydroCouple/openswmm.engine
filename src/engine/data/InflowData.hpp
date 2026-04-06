@@ -17,6 +17,7 @@
 
 #include <vector>
 #include <string>
+#include <unordered_map>
 
 namespace openswmm {
 
@@ -89,6 +90,7 @@ struct RDIIAssignData {
 };
 
 // ============================================================================
+// ============================================================================
 // Unit Hydrograph data (from [HYDROGRAPHS] section)
 // ============================================================================
 
@@ -120,6 +122,44 @@ struct UnitHydData {
     }
 
     void add(const UnitHydEntry& e) { entries.push_back(e); }
+};
+
+// ============================================================================
+// AMM assignments (from [AMM] section)
+// ============================================================================
+
+struct AMMAssignData {
+    int count() const { return static_cast<int>(node_idx.size()); }
+
+    std::vector<int>         node_idx;    ///< Target node
+    std::vector<std::string> amm_name;    ///< AMM component group name
+    std::vector<double>      sewer_area;  ///< Tributary sewer area
+
+    void add(int ni, const std::string& name, double area) {
+        node_idx.push_back(ni); amm_name.push_back(name);
+        sewer_area.push_back(area);
+    }
+
+    /// Raw component parameter definition (parsed from [AMM] section).
+    /// Transferred to AMMSolver::addComponentParams() during init().
+    struct ComponentDef {
+        double area      = 0.0;
+        double RD        = 0.0;
+        double PAT       = 0.0;
+        double HHL       = 3600.0;
+        double AMHL      = 28800.0;
+        double cold_SHCF = 0.0;
+        double hot_SHCF  = 0.0;
+        double cold_temp = 30.0;
+        double hot_temp  = 70.0;
+        double TAT       = 0.0;
+        bool   is_baseflow = false;
+        double cold_R    = 0.0;
+        double hot_R     = 0.0;
+    };
+
+    /// Map: component name → parsed parameters (populated by handle_amm).
+    std::unordered_map<std::string, ComponentDef> component_defs;
 };
 
 // ============================================================================
