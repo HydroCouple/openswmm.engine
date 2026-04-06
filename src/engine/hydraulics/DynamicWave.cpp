@@ -39,6 +39,7 @@
 #include "Outfall.hpp"
 #include "XSectBatch.hpp"
 #include "ForceMain.hpp"
+#include "Culvert.hpp"
 #include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../math/SIMD.hpp"
@@ -163,6 +164,7 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups) {
     dqdh_.resize(ul, 0.0);
     new_flow_.resize(ul, 0.0);
     area_old_.resize(ul, 0.0);
+    bypassed_.resize(ul, false);
     surf_area1_.resize(ul, 0.0);
     surf_area2_.resize(ul, 0.0);
     hrad1_.resize(ul, 0.0);
@@ -219,6 +221,10 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
     // area_mid_ still holds the final midpoint areas from the previous timestep.
     std::copy(area_mid_.begin(), area_mid_.end(), area_old_.begin());
 
+    // Clear bypass flags at the start of each timestep
+    // (matching legacy initRoutingStep: Link[i].bypassed = FALSE)
+    std::fill(bypassed_.begin(), bypassed_.end(), false);
+
     while (steps < max_trials) {
         initNodeStates(ctx);
 
@@ -248,7 +254,13 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         converged = updateNodeDepths(ctx, dt, steps);
         steps++;
 
-        if (steps > 1 && converged) break;
+        if (steps > 1) {
+            if (converged) break;
+
+            // Mark links whose both end nodes converged so they can be
+            // skipped in the next iteration (matching legacy findBypassedLinks)
+            findBypassedLinks(ctx);
+        }
     }
 
     return steps;
@@ -277,6 +289,21 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
         } else {
             nodes.outflow[ui] -= lat;
         }
+    }
+}
+
+// ============================================================================
+// findBypassedLinks -- skip converged links in next iteration
+// (matching legacy dynwave.c::findBypassedLinks)
+// ============================================================================
+
+void DWSolver::findBypassedLinks(const SimulationContext& ctx) {
+    const auto& links = ctx.links;
+    for (int j = 0; j < n_links_; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        auto un1 = static_cast<std::size_t>(links.node1[uj]);
+        auto un2 = static_cast<std::size_t>(links.node2[uj]);
+        bypassed_[uj] = xnode_[un1].converged && xnode_[un2].converged;
     }
 }
 
@@ -679,7 +706,7 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
 #endif
     for (int j = 0; j < n_links_; ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (links.type[uj] != LinkType::CONDUIT) {
+        if (links.type[uj] != LinkType::CONDUIT || bypassed_[uj]) {
             p_new_flow[uj] = links.flow[uj];
             p_dqdh[uj] = 0.0;
             continue;
@@ -714,7 +741,8 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
             p_froude[uj] = 0.0;
             p_new_flow[uj] = 0.0;
             links.depth[uj] = std::min(p_depth_mid[uj], yf);
-            links.volume[uj] = p_area_mid[uj] * length * barrels_d;
+            // Use actual conduit length for volume (matching legacy: link_getLength(j))
+            links.volume[uj] = p_area_mid[uj] * links.length[uj] * barrels_d;
             continue;
         }
 
@@ -744,15 +772,13 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
             links.flow_class[uj] = FlowClass::SUPERCRITICAL;
 
         // --- Inertial damping sigma ---
+        // Froude-based sigma is computed first and used for upstream weighting
+        // (rho), THEN the InertDamping override is applied (matching legacy
+        // dwflow.c ordering: sigma for rho on line 192, then override on 200).
         double sig;
         if (fr <= 0.5)      sig = 1.0;
         else if (fr >= 1.0) sig = 0.0;
         else                sig = 2.0 * (1.0 - fr);
-
-        // Apply global InertDamping override (matching legacy dwflow.c lines 200-202)
-        if      (inert_damping == 0) sig = 1.0;  // NO_DAMPING
-        else if (inert_damping == 2) sig = 0.0;  // FULL_DAMPING
-        // else PARTIAL (1): keep Froude-based sigma from above
 
         // Determine if shape is open
         XsectShape shape = links.xsect_shape[uj];
@@ -761,17 +787,13 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
                         shape == XsectShape::TRIANGULAR ||
                         shape == XsectShape::PARABOLIC);
 
-        // Use full inertial damping if closed conduit is surcharged
-        // (matching legacy: sigma = 0 when full and not open)
-        if (isFull && !is_open) sig = 0.0;
-        p_sigma[uj] = sig;
-
         // --- Head values (from computeLinkGeometry, possibly modified by flow class) ---
         double h1 = p_h1[uj];
         double h2 = p_h2[uj];
 
         // --- Upstream weighting (R. Dickinson's slope weighting) ---
-        // Use actual upstream hrad (matching legacy: r1 = getHydRad(xsect, y1))
+        // Use Froude-based sigma for rho BEFORE InertDamping override
+        // (matching legacy order: rho = sigma line 192, THEN override line 200)
         double r1_val = hrad1_[uj];
         double rho = 1.0;
         if (!isFull && qLast > 0.0 && h1 >= h2) rho = sig;
@@ -779,25 +801,34 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
         double rWtd = r1_val + (rMid - r1_val) * rho;
         if (rWtd < FUDGE) rWtd = FUDGE;
 
+        // Now apply global InertDamping override (matching legacy dwflow.c lines 200-202)
+        if      (inert_damping == 0) sig = 1.0;  // NO_DAMPING
+        else if (inert_damping == 2) sig = 0.0;  // FULL_DAMPING
+        // else PARTIAL (1): keep Froude-based sigma from above
+
+        // Use full inertial damping if closed conduit is surcharged
+        // (matching legacy: sigma = 0 when full and not open)
+        if (isFull && !is_open) sig = 0.0;
+        p_sigma[uj] = sig;
+
         // --- Momentum terms ---
-        // dq1: friction slope
+        // dq1: friction slope (linearized: dt * g * Sf / |v|)
+        // The implicit treatment of friction puts dq1 in the denominator,
+        // so dq1 = dt * g * Sf_linearized where Sf is divided by |v| for the
+        // implicit formulation (matching legacy dwflow.c).
         double dq1;
         if (shape == XsectShape::FORCE_MAIN && isFull) {
-            // Force main friction (P8-G10): use Hazen-Williams or Darcy-Weisbach
-            // The force main coefficient (HW-C or DW roughness height) is stored
-            // in links.roughness[] which is repurposed for force main conduits.
-            // Default to Hazen-Williams; Darcy-Weisbach used when roughness < 1.0
-            // (HW coefficients are typically 100-150, DW roughness is << 1)
+            // Force main friction: use rMid (matching legacy dwflow.c line 211)
             double fm_coeff = links.roughness[uj];
             double sf;
             if (fm_coeff < 1.0) {
-                // Darcy-Weisbach: roughness is pipe roughness height (ft)
-                sf = forcemain::getFricSlope_DW(v, rWtd, fm_coeff);
+                sf = forcemain::getFricSlope_DW(v, rMid, fm_coeff);
             } else {
-                // Hazen-Williams: roughness is C coefficient
-                sf = forcemain::getFricSlope_HW(v, rWtd, fm_coeff);
+                sf = forcemain::getFricSlope_HW(v, rMid, fm_coeff);
             }
-            dq1 = dt * GRAVITY * sf;
+            // Linearize: dq1 = dt * g * Sf / |v| (matching legacy implicit form)
+            double absv = std::fabs(v);
+            dq1 = (absv > FUDGE) ? dt * GRAVITY * sf / absv : 0.0;
         } else {
             // Standard Manning friction
             double r43 = std::pow(rWtd, 4.0 / 3.0);
@@ -810,9 +841,11 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
         double dq2 = dt * GRAVITY * aWtd * (h2 - h1) / length;
 
         // dq3: unsteady acceleration (if sigma > 0)
+        // Clamp area_old to FUDGE (matching legacy: aOld = MAX(aOld, FUDGE))
+        double aOld = std::max(p_area_old[uj], FUDGE);
         double dq3 = 0.0;
         if (sig > 0.0) {
-            dq3 = 2.0 * v * (aMid - p_area_old[uj]) * sig;
+            dq3 = 2.0 * v * (aMid - aOld) * sig;
         }
 
         // dq4: convective acceleration (if sigma > 0)
@@ -838,12 +871,13 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
 
         // --- 6. evaporation and seepage momentum correction ---
         // (matching legacy dwflow.c line 233: dq6 = lossRate * 2.5 * dt * v / length)
+        // seep_rate is per-barrel; no barrels multiplier here (per-barrel equation)
         double dq6 = 0.0;
         {
             double conduit_length = links.length[uj];
-            double loss_rate = links.seep_rate[uj];  // evap computed separately
+            double loss_rate = links.seep_rate[uj];
             if (loss_rate > 0.0 && conduit_length > 0.0) {
-                dq6 = loss_rate * barrels_d * 2.5 * dt * v / conduit_length;
+                dq6 = loss_rate * 2.5 * dt * v / conduit_length;
             }
         }
 
@@ -855,39 +889,59 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
         // dQ/dH for node depth update
         p_dqdh[uj] = (1.0 / denom) * GRAVITY * dt * aWtd / length * barrels_d;
 
-        // Normal flow limitation (matching legacy checkNormalFlow + NormalFlowLtd)
-        // Only applies to SUBCRITICAL/SUPERCRITICAL flow (legacy dwflow.c line 252-254)
-        // Legacy checks y1 < yFull (upstream depth only, not both ends)
-        // 0=SLOPE, 1=FROUDE, 2=BOTH, 3=NEITHER
-        FlowClass fc2 = links.flow_class[uj];
-        int nfl = normal_flow_ltd;
-        // Normal flow limiting (matching legacy checkNormalFlow in dwflow.c:634-683)
-        if (nfl != 3 && p_depth1[uj] < yf &&
-            (fc2 == FlowClass::SUBCRITICAL || fc2 == FlowClass::SUPERCRITICAL)) {
-            int n1l = links.node1[uj], n2l = links.node2[uj];
-            bool hasOutfall = false;
-            if (n1l >= 0 && n2l >= 0) {
-                hasOutfall = (ctx.nodes.type[static_cast<std::size_t>(n1l)] == NodeType::OUTFALL ||
-                              ctx.nodes.type[static_cast<std::size_t>(n2l)] == NodeType::OUTFALL);
-            }
-            // Slope check: water surface slope < conduit slope when y1 < y2
-            // (matching legacy: "if (y1 < y2) check = TRUE")
-            bool slope_check = (nfl == 0 || nfl == 2 || hasOutfall) &&
-                               (p_depth1[uj] < p_depth2[uj]);
-            // Froude check at upstream end (matching legacy: f1 >= 1.0)
-            bool froude_check = false;
-            if (!slope_check && (nfl == 1 || nfl == 2) && !hasOutfall) {
-                if (p_depth1[uj] > FUDGE && p_depth2[uj] > FUDGE) {
-                    froude_check = (fr >= 1.0);
+        // --- Inlet control and normal flow limiting (legacy dwflow.c lines 238-261) ---
+        // Only apply to positive flow (matching legacy: "if (q > 0.0)")
+        links.inlet_control[uj] = false;
+        links.normal_flow_limited[uj] = false;
+        if (q > 0.0) {
+            // Check for inlet-controlled culvert flow (matching legacy dwflow.c line 245)
+            if (links.culvert_code[uj] > 0 && !isFull) {
+                double dqdh_culv = 0.0;
+                double q_inlet = culvert::getInflow(
+                    q, h1, yf, links.xsect_a_full[uj],
+                    links.slope[uj], links.culvert_code[uj], dqdh_culv);
+                if (q_inlet < q) {
+                    q = q_inlet;
+                    links.inlet_control[uj] = true;
                 }
             }
-            if (slope_check || froude_check) {
-                double r1_for_norm = (hrad1_[uj] > FUDGE) ? hrad1_[uj] : FUDGE;
-                double s1 = p_area1[uj] * std::pow(r1_for_norm, 2.0/3.0);
-                double qNorm = links.beta[uj] * s1;
-                if (qNorm < q) {
-                    q = qNorm;
-                    links.normal_flow_limited[uj] = true;
+            // Normal flow limitation (matching legacy checkNormalFlow + NormalFlowLtd)
+            // 0=SLOPE, 1=FROUDE, 2=BOTH, 3=NEITHER
+            else {
+                FlowClass fc2 = links.flow_class[uj];
+                int nfl = normal_flow_ltd;
+                if (nfl != 3 && p_depth1[uj] < yf &&
+                    (fc2 == FlowClass::SUBCRITICAL || fc2 == FlowClass::SUPERCRITICAL)) {
+                    int n1l = links.node1[uj], n2l = links.node2[uj];
+                    bool hasOutfall = false;
+                    if (n1l >= 0 && n2l >= 0) {
+                        hasOutfall = (ctx.nodes.type[static_cast<std::size_t>(n1l)] == NodeType::OUTFALL ||
+                                      ctx.nodes.type[static_cast<std::size_t>(n2l)] == NodeType::OUTFALL);
+                    }
+                    // Slope check: y1 < y2 (matching legacy)
+                    bool slope_check = (nfl == 0 || nfl == 2 || hasOutfall) &&
+                                       (p_depth1[uj] < p_depth2[uj]);
+                    // Froude check at upstream end: compute f1 = Froude(q/a1, y1)
+                    // (matching legacy: f1 = link_getFroude(j, q/a1, y1), NOT midpoint Froude)
+                    bool froude_check = false;
+                    if (!slope_check && (nfl == 1 || nfl == 2) && !hasOutfall) {
+                        if (p_depth1[uj] > FUDGE && p_depth2[uj] > FUDGE) {
+                            double v1 = q / p_area1[uj];
+                            double w1 = width1_[uj];
+                            double dh1 = (w1 > FUDGE) ? p_area1[uj] / w1 : 0.0;
+                            double f1 = (dh1 > 0.0) ? std::fabs(v1) / std::sqrt(GRAVITY * dh1) : 0.0;
+                            froude_check = (f1 >= 1.0);
+                        }
+                    }
+                    if (slope_check || froude_check) {
+                        double r1_for_norm = (hrad1_[uj] > FUDGE) ? hrad1_[uj] : FUDGE;
+                        double s1 = p_area1[uj] * std::pow(r1_for_norm, 2.0/3.0);
+                        double qNorm = links.beta[uj] * s1;
+                        if (qNorm < q) {
+                            q = qNorm;
+                            links.normal_flow_limited[uj] = true;
+                        }
+                    }
                 }
             }
         }
@@ -905,10 +959,21 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
                 q = ((q > 0.0) ? 1.0 : -1.0) * links.q_limit[uj];
         }
 
-        // --- Flap gate check: prevent reverse flow (matching legacy) ---
+        // --- Flap gate check (matching legacy link_setFlapGate) ---
+        // Check link's own flap gate, accounting for direction (+1 or -1)
         if (links.has_flap_gate[uj]) {
-            // node1 is upstream; if flow is negative (reverse), zero it
-            if (q < 0.0) q = 0.0;
+            if (q * static_cast<double>(links.direction[uj]) < 0.0) q = 0.0;
+        }
+        // Check outfall node flap gates (matching legacy link_setFlapGate lines 665-670)
+        if (q < 0.0 && n2 >= 0 &&
+            nodes.type[un2] == NodeType::OUTFALL &&
+            nodes.outfall_has_flap_gate[un2]) {
+            q = 0.0;
+        }
+        if (q > 0.0 && n1 >= 0 &&
+            nodes.type[un1] == NodeType::OUTFALL &&
+            nodes.outfall_has_flap_gate[un1]) {
+            q = 0.0;
         }
 
         // --- Do not allow flow out of a dry node (legacy dwflow.c) ---
@@ -921,8 +986,10 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
         // Update link depth and volume
         links.depth[uj] = std::min(p_depth_mid[uj], yf);
         double aMidAvg = (p_area1[uj] + p_area2[uj]) / 2.0;
-        // Slot can have aMid > aFull, so do NOT clamp (matching legacy)
-        links.volume[uj] = aMidAvg * length * barrels_d;
+        // Use actual conduit length for volume (matching legacy: link_getLength(j))
+        // NOT mod_length, which is only for the momentum equation
+        double actual_length = links.length[uj];
+        links.volume[uj] = aMidAvg * actual_length * barrels_d;
     }
 
     // NOTE: area_old_ is set once at the start of execute() (step==0) to preserve
@@ -979,7 +1046,8 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
 
         // Add conduit evap/seepage loss to node outflows (matching legacy lines 542-558)
         if (links.type[uj] == LinkType::CONDUIT) {
-            double conduit_loss = links.seep_rate[uj] * static_cast<double>(std::max(links.barrels[uj], 1));
+            double conduit_loss = (links.evap_loss_rate[uj] + links.seep_loss_rate[uj])
+                                  * static_cast<double>(std::max(links.barrels[uj], 1));
             if (conduit_loss > 0.0) {
                 // Split loss between nodes unless one is an outfall
                 if (nodes.type[un1] != NodeType::OUTFALL &&

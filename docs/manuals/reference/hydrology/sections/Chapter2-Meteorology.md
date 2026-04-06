@@ -76,7 +76,7 @@ time is a function of the catchment response to rainfall input. Small,
 steep, smooth, impervious catchments have fast response times, while
 large, flat, pervious catchments have slower response times. As a
 generality, shorter time increment data are preferable to longer time
-increment data, but for a large (e.g., 10 mi^2^ or 26 km^2^)
+increment data, but for a large (e.g., 10 mi<sup>2</sup> or 26 km<sup>2</sup>)
 subcatchment (coarse schematization), even the hourly inputs usually
 used for continuous simulation may be appropriate. Rainfall data with
 intervals larger than 1-hour (such as average daily rainfall or
@@ -135,7 +135,7 @@ values may be able to place highly spatially and temporally variable
 rainfall data into a time series format easily input to SWMM (e.g.,
 Hoblit and Curtis, 2002; Meeneghan et al., 2002, 2003; Vallabhaneni,
 2002). Radar data are spatially averaged over uniform grid cells of 1
-km^2^ or larger and therefore each cell would cover a number of runoff
+km<sup>2</sup> or larger and therefore each cell would cover a number of runoff
 subcatchments. In this case one could simply use a separate Rain Gage
 object for each grid cell that overlaps the study area, and assign the
 nearest cell as the subcatchment's source of rainfall data. A more
@@ -761,7 +761,7 @@ standard time zone. These are listed in Table 2-14. Note that time zone
 boundaries are very irregular and often are quite displaced from what
 might be expected on the basis of the local longitude, e.g., most of
 Alaska is much further west than the standard meridian for Alaska time
-of 135^o^W. The longitude correction is readily computed as
+of 135<sup>o</sup>W. The longitude correction is readily computed as
 
 $$\Delta T_{LONG} = 4\frac{minutes}{degree}(\theta - SM)$$ (2-4)
 
@@ -792,19 +792,19 @@ occur are *H*<sub>min</sub> = *H*<sub>SR</sub> and *H*<sub>max</sub> = *H*<sub>S
 
 | **Time Zone** | **Example Cities** | **Standard Meridian** |
 |---------------|-------------------|----------------------|
-| Newfoundland Std. Time | St. Johns's, Newfoundland | 52.5^a^ |
+| Newfoundland Std. Time | St. Johns's, Newfoundland | 52.5<sup>a</sup> |
 | Atlantic Std. Time | Halifax, Nova Scotia<br>San Juan, Puerto Rico | 60 |
 | Eastern Std. Time | New York, New York<br>Toronto, Ontario | 75 |
-| Central Std. Time | Chicago, Illinois<br>Winnipeg, Manitoba<br>Saskatoon, Saskatchewan^b^ | 90 |
+| Central Std. Time | Chicago, Illinois<br>Winnipeg, Manitoba<br>Saskatoon, Saskatchewan<sup>b</sup> | 90 |
 | Mountain Std. Time | Denver, Colorado<br>Edmonton, Alberta | 105 |
 | Pacific Std. Time | San Francisco, California<br>Vancouver, British Columbia<br>Whitehorse, Yukon | 120 |
 | Alaska Std. Time | Anchorage, Alaska | 135 |
 | Aleutian Std. Time | Atka, Alaska | 150 |
 | Hawaiian Std. Time | Honolulu, Hawaii | |
 
-^a^The time zone of the island of Newfoundland is offset one half hour from other zones.
+<sup>a</sup>The time zone of the island of Newfoundland is offset one half hour from other zones.
 
-^b^Saskatchewan summer time is Mountain, winter is Central.
+<sup>b</sup>Saskatchewan summer time is Mountain, winter is Central.
 
 The temperature *T* at any hour *H* of the day can now be computed as
 follows:

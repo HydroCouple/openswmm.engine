@@ -438,12 +438,12 @@ back to the user's choice of unit system.
 | Depth | feet | meters |
 | Elevation | feet | meters |
 | Evaporation | inches/day | millimeters/day |
-| Flow Rate | cubic feet/sec (cfs)<br>gallons/min (gpm)<br>10^6^ gallons/day (mgd) | cubic meters/sec (cms)<br>liters/sec (lps)<br>10^6^ liters/day (mld) |
+| Flow Rate | cubic feet/sec (cfs)<br>gallons/min (gpm)<br>10<sup>6</sup> gallons/day (mgd) | cubic meters/sec (cms)<br>liters/sec (lps)<br>10<sup>6</sup> liters/day (mld) |
 | Hydraulic Conductivity | inches/hour | millimeters/hour |
 | Hydraulic Head | feet | meters |
 | Infiltration Rate | inches/hour | millimeters/hour |
 | Length | feet | meters |
-| Manning's n | seconds/meter^1/3^ | seconds/meter^1/3^ |
+| Manning's n | seconds/meter<sup>1/3</sup> | seconds/meter<sup>1/3</sup> |
 | Pollutant Buildup | mass/acre | mass/hectare |
 | Pollutant Concentration | milligrams/liter (mg/L)<br>micrograms/liter (μg/L)<br>organism counts/liter | milligrams/liter (mg/L)<br>micrograms/liter (μg/L)<br>organism counts/liter |
 | Rainfall Intensity | inches/hour | millimeters/hour |

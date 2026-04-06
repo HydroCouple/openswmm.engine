@@ -126,6 +126,15 @@ void computeFroude(const LinkData& links, const double* velocity, double* froude
  */
 void computeAllConveyance(LinkData& links);
 
+/**
+ * @brief Translate LinkData::XsectShape to batch XSectShape int code.
+ *
+ * @details The two enums have different orderings. This function provides
+ *          a safe mapping for use wherever XSectParams.type is set from
+ *          LinkData::xsect_shape.
+ */
+int translateShape(XsectShape link_shape);
+
 } // namespace link
 
 } // namespace openswmm

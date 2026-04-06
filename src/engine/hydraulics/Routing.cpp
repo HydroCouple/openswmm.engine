@@ -14,6 +14,7 @@
 #include "Outfall.hpp"
 #include "Divider.hpp"
 #include "Node.hpp"
+#include "Link.hpp"
 #include "../core/SimulationContext.hpp"
 
 #include <cmath>
@@ -56,6 +57,9 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             case XsectShape::SEMICIRCULAR:    return static_cast<int>(XSectShape::SEMICIRCULAR);
             case XsectShape::RECT_TRIANG:     return static_cast<int>(XSectShape::RECT_TRIANG);
             case XsectShape::RECT_ROUND:      return static_cast<int>(XSectShape::RECT_ROUND);
+            case XsectShape::HORIZ_ELLIPSE:   return static_cast<int>(XSectShape::HORIZ_ELLIPSE);
+            case XsectShape::VERT_ELLIPSE:    return static_cast<int>(XSectShape::VERT_ELLIPSE);
+            case XsectShape::ARCH:            return static_cast<int>(XSectShape::ARCH);
             case XsectShape::IRREGULAR:       return static_cast<int>(XSectShape::IRREGULAR);
             case XsectShape::CUSTOM:          return static_cast<int>(XSectShape::CUSTOM);
             case XsectShape::FORCE_MAIN:      return static_cast<int>(XSectShape::FORCE_MAIN);
@@ -134,6 +138,33 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
         }
     }
 
+    // Recompute conveyance properties accounting for lengthening
+    // (legacy conduit_validate adjusts slope and roughness before computing
+    //  beta, roughFactor, qFull when conduit is lengthened)
+    {
+        using constants::PHI;
+        using constants::GRAVITY;
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+
+            double L = ctx.links.length[uj];
+            double modL = ctx.links.mod_length[uj];
+            if (L <= 0.0 || modL <= L) continue;  // not lengthened
+
+            double factor = modL / L;
+            double slope_abs = std::fabs(ctx.links.slope[uj]) / factor;
+            double roughness = ctx.links.roughness[uj] / std::sqrt(factor);
+
+            // Update conveyance with adjusted slope and roughness
+            double beta = PHI * std::sqrt(slope_abs) / roughness;
+            ctx.links.beta[uj] = beta;
+            ctx.links.rough_factor[uj] = GRAVITY * (roughness / PHI) * (roughness / PHI);
+            ctx.links.q_full[uj] = ctx.links.xsect_s_full[uj] * beta;
+            ctx.links.q_max[uj]  = ctx.links.xsect_s_max[uj] * beta;
+        }
+    }
+
     // Build shape-grouped batch index
     groups_.build(xsect_params.data(), n_links);
 
@@ -180,12 +211,16 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 // ============================================================================
 
 int Router::step(SimulationContext& ctx, double dt,
+                 double evap_rate,
                  dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn) {
     // 1. Save old states
     saveOldStates(ctx);
 
-    // 2. Init node flows from laterals and losses
-    initNodeFlows(ctx, dt);
+    // 2. Init node flows from laterals and losses (includes storage evap)
+    initNodeFlows(ctx, dt, evap_rate);
+
+    // 2b. Compute conduit evaporation and seepage loss rates
+    computeConduitLosses(ctx, dt, evap_rate);
 
     // 3. Set outfall boundary depths (P8-G03)
     outfall::setAllOutfallDepths(ctx, ctx.current_date);
@@ -287,11 +322,47 @@ void Router::saveOldStates(SimulationContext& ctx) {
     ctx.links.save_state();
 }
 
-void Router::initNodeFlows(SimulationContext& ctx, double dt) {
+void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) {
     auto& nodes = ctx.nodes;
     int n = ctx.n_nodes();
     for (int i = 0; i < n; ++i) {
         auto ui = static_cast<std::size_t>(i);
+
+        // Compute storage node losses (evaporation + seepage)
+        // (matching legacy node.c storage_getLosses)
+        double loss_rate = 0.0;
+        if (nodes.type[ui] == NodeType::STORAGE) {
+            double stor_evap_rate = evap_rate * nodes.storage_evap_frac[ui];
+
+            if (stor_evap_rate > 0.0 || nodes.storage_seep_rate[ui] > 0.0) {
+                double depth = nodes.depth[ui];
+                double area = node::getSurfArea(nodes, i, depth, &ctx.tables);
+
+                // Evaporation rate over surface area (cfs)
+                double evap_cfs = 0.0;
+                if (nodes.volume[ui] > constants::FUDGE)
+                    evap_cfs = area * stor_evap_rate;
+
+                // TODO: exfiltration via Green-Ampt (nodes.exfil_*)
+                double exfil_cfs = 0.0;
+
+                // Total loss cannot exceed stored volume
+                double total_loss = (evap_cfs + exfil_cfs) * dt;
+                if (total_loss > nodes.volume[ui] && total_loss > 0.0) {
+                    double ratio = nodes.volume[ui] / total_loss;
+                    evap_cfs  *= ratio;
+                    exfil_cfs *= ratio;
+                }
+
+                nodes.storage_evap_loss[ui]  = evap_cfs * dt;
+                nodes.storage_exfil_loss[ui] = exfil_cfs * dt;
+                loss_rate = evap_cfs + exfil_cfs;
+            } else {
+                nodes.storage_evap_loss[ui]  = 0.0;
+                nodes.storage_exfil_loss[ui] = 0.0;
+            }
+        }
+        nodes.losses[ui] = loss_rate;
 
         // Initialize inflow from lateral flow and outflow from losses
         // (matching legacy node.c node_initFlows lines 320-321)
@@ -305,6 +376,82 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt) {
         } else {
             nodes.overflow[ui] = 0.0;
         }
+    }
+}
+
+// ============================================================================
+// computeConduitLosses — evaporation and seepage from conduits
+// (matching legacy link.c conduit_getLossRate)
+// ============================================================================
+
+void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap_rate) {
+    auto& links = ctx.links;
+    int n = ctx.n_links();
+    static int dbg_count = 0;
+    if (dbg_count < 3) {
+        std::fprintf(stderr, "DBG conduitLosses: evap_rate=%.10e n_links=%d dt=%.1f\n",
+                     evap_rate, n, dt);
+        ++dbg_count;
+    }
+
+    for (int j = 0; j < n; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (links.type[uj] != LinkType::CONDUIT) continue;
+
+        double depth = 0.5 * (links.old_depth[uj] + links.depth[uj]);
+        double evap_loss = 0.0;
+        double seep_loss = 0.0;
+
+        if (depth > constants::FUDGE) {
+            double length = links.length[uj];
+            int batch_shape = link::translateShape(links.xsect_shape[uj]);
+
+            // Evaporation for open conduits only
+            if (xsect::isOpen(batch_shape) && evap_rate > 0.0) {
+                XSectParams xs{};
+                xs.type   = batch_shape;
+                xs.y_full = links.xsect_y_full[uj];
+                xs.a_full = links.xsect_a_full[uj];
+                xs.w_max  = links.xsect_w_max[uj];
+                double top_width = xsect::getWofY(xs, depth);
+                evap_loss = top_width * length * evap_rate;
+            }
+
+            // Seepage loss
+            if (links.seep_rate[uj] > 0.0) {
+                XSectParams xs{};
+                xs.type   = batch_shape;
+                xs.y_full = links.xsect_y_full[uj];
+                xs.a_full = links.xsect_a_full[uj];
+                xs.w_max  = links.xsect_w_max[uj];
+                xs.yw_max = links.xsect_yw_max[uj];
+
+                double d_seep = depth;
+                // Limit depth to depth at max width (matching legacy)
+                if (batch_shape == static_cast<int>(XSectShape::RECT_CLOSED))
+                    ; // use wMax directly
+                else if (d_seep >= xs.yw_max)
+                    d_seep = xs.yw_max;
+                double width = xsect::getWofY(xs, d_seep);
+                seep_loss = links.seep_rate[uj] * width * length;
+            }
+
+            // Limit total to available volume (DW) or flow (other models)
+            double total = evap_loss + seep_loss;
+            if (total > 0.0) {
+                double q_avail = (model_ == RouteModel::DYNWAVE)
+                    ? links.volume[uj] / dt
+                    : std::fabs(links.flow[uj]);
+                if (total > q_avail && q_avail >= 0.0) {
+                    double ratio = q_avail / total;
+                    evap_loss *= ratio;
+                    seep_loss *= ratio;
+                }
+            }
+        }
+
+        links.evap_loss_rate[uj] = evap_loss;
+        links.seep_loss_rate[uj] = seep_loss;
     }
 }
 

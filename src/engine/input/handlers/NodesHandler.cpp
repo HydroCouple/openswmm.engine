@@ -68,6 +68,9 @@ static void ensure_node_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.nodes.storage_b,          0.0);
     grow(ctx.nodes.storage_c,          0.0);
     grow(ctx.nodes.storage_seep_rate,  0.0);
+    grow(ctx.nodes.storage_evap_frac,  0.0);
+    grow(ctx.nodes.storage_evap_loss,  0.0);
+    grow(ctx.nodes.storage_exfil_loss, 0.0);
     grow(ctx.nodes.exfil_suction,      0.0);
     grow(ctx.nodes.exfil_ksat,         0.0);
     grow(ctx.nodes.exfil_imd,          0.0);
@@ -290,6 +293,8 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
         const int param_offset = (shape == "TABULAR") ? 6 : 8;
         if (static_cast<int>(tok.size()) > param_offset)
             ctx.nodes.sur_depth[idx] = to_double(tok[param_offset]);
+        if (static_cast<int>(tok.size()) > param_offset + 1)
+            ctx.nodes.storage_evap_frac[idx] = to_double(tok[param_offset + 1]);
         if (static_cast<int>(tok.size()) > param_offset + 2)
             ctx.nodes.storage_seep_rate[idx] = to_double(tok[param_offset + 2]);
     }

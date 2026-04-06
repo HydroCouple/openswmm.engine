@@ -58,7 +58,7 @@ where:
 *q* = runoff rate (ft/s)
 
 Note that the fluxes *i, e, f,* and *q* are expressed as flow rates per
-unit area (cfs/ft^2^ = ft/s).
+unit area (cfs/ft<sup>2</sup> = ft/s).
 
 Assuming that flow across the subcatchment's surface behaves as if it
 were uniform flow within a rectangular channel of width *W* (ft), height
@@ -69,7 +69,7 @@ $$Q = \frac{1.49}{n}S^{1/2}R_{x}^{2/3}A_{x}$$ (3-2)
 
 Here *n* is a surface roughness coefficient, *S* the apparent or average
 slope of the subcatchment (ft/ft), *A_x* the area across the
-subcatchment's width through which the runoff flows (ft^2^), and *R_x*
+subcatchment's width through which the runoff flows (ft<sup>2</sup>), and *R_x*
 is the hydraulic radius associated with this area (ft). Referring to
 Figures 3-1 and 3-2, *A_x* is a rectangular area with width *W* and
 height *d - d_s*. Because *W* will always be much larger than *d* it
@@ -182,7 +182,7 @@ $$\alpha_{I} = \frac{1.49WS^{1/2}}{\left( A_{2} + A_{3} \right)n_{I}}$$ for both
 
 where *n_P* is the roughness for the pervious area, *n_I* is the
 roughness for both impervious areas, and *A_i* is the surface area
-(ft^2^) associated with sub-area *i.*
+(ft<sup>2</sup>) associated with sub-area *i.*
 
 The reason that the same *α* applies to both impervious subareas even
 though their areas are different arises from how the *W/A* term is
@@ -223,7 +223,7 @@ b. Use a standard fifth-order Runge-Kutta integration routine with adaptive step
    $$\frac{\partial d}{\partial t} = i_x - \alpha d_x^{5/3}$$
    for *d* over the time step Δ*t_x*. Here *d_x* = *d* - *d_s* for *d* > *d_s* and is 0 otherwise while *α* is *α_P* (Equation 3-8) if the subarea is pervious or is *α_I* (Equation 3-9) if the subarea is impervious.
 
-c. Compute the runoff per unit area *q* at the end of the time step: *q* = *αd_x*^5/3^ where *α* and *d_x* are defined as above.
+c. Compute the runoff per unit area *q* at the end of the time step: *q* = *αd_x*<sup>5/3</sup> where *α* and *d_x* are defined as above.
 
 Recall that the depression storage *d_s* can have different user-supplied values for subareas A1 (pervious) and A2 (impervious) while it is zero by definition for subarea A3. Also note that initially at time zero the ponded depth *d* on each subarea of each subcatchment is zero.
 
@@ -1113,7 +1113,7 @@ storage has been filled as:
 $$Q = CiA$$ (3-16)
 
 where *C* is a runoff coefficient, *i* is the rainfall rate (ft/s), and
-*A* is the subcatchment area (ft^2^). If infiltration over the pervious
+*A* is the subcatchment area (ft<sup>2</sup>). If infiltration over the pervious
 area is considered then
 
 $$Q = \left\lbrack Ci + (1 - C)max(0,\ i - f) \right\rbrack A$$ (3-17)

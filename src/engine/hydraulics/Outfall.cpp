@@ -20,12 +20,37 @@
 namespace openswmm {
 namespace outfall {
 
-/// Translate LinkData::XsectShape (CIRCULAR=0) to batch XSectShape (CIRCULAR=1).
-/// The batch enum prepends DUMMY=0, shifting all standard shapes by 1.
+/// Translate LinkData::XsectShape to batch XSectShape (different enum orderings).
 static int translateShape(XsectShape link_shape) {
-    if (link_shape == XsectShape::DUMMY)
-        return static_cast<int>(XSectShape::DUMMY);  // 0
-    return static_cast<int>(link_shape) + 1;
+    switch (link_shape) {
+        case XsectShape::CIRCULAR:        return static_cast<int>(XSectShape::CIRCULAR);
+        case XsectShape::FILLED_CIRCULAR: return static_cast<int>(XSectShape::FILLED_CIRCULAR);
+        case XsectShape::RECT_CLOSED:     return static_cast<int>(XSectShape::RECT_CLOSED);
+        case XsectShape::RECT_OPEN:       return static_cast<int>(XSectShape::RECT_OPEN);
+        case XsectShape::TRAPEZOIDAL:     return static_cast<int>(XSectShape::TRAPEZOIDAL);
+        case XsectShape::TRIANGULAR:      return static_cast<int>(XSectShape::TRIANGULAR);
+        case XsectShape::PARABOLIC:       return static_cast<int>(XSectShape::PARABOLIC);
+        case XsectShape::POWER:           return static_cast<int>(XSectShape::POWERFUNC);
+        case XsectShape::MODBASKETHANDLE: return static_cast<int>(XSectShape::MOD_BASKET);
+        case XsectShape::EGGSHAPED:       return static_cast<int>(XSectShape::EGGSHAPED);
+        case XsectShape::HORSESHOE:       return static_cast<int>(XSectShape::HORSESHOE);
+        case XsectShape::GOTHIC:          return static_cast<int>(XSectShape::GOTHIC);
+        case XsectShape::CATENARY:        return static_cast<int>(XSectShape::CATENARY);
+        case XsectShape::SEMIELLIPTICAL:  return static_cast<int>(XSectShape::SEMIELLIPTICAL);
+        case XsectShape::BASKETHANDLE:    return static_cast<int>(XSectShape::BASKETHANDLE);
+        case XsectShape::SEMICIRCULAR:    return static_cast<int>(XSectShape::SEMICIRCULAR);
+        case XsectShape::RECT_TRIANG:     return static_cast<int>(XSectShape::RECT_TRIANG);
+        case XsectShape::RECT_ROUND:      return static_cast<int>(XSectShape::RECT_ROUND);
+        case XsectShape::HORIZ_ELLIPSE:   return static_cast<int>(XSectShape::HORIZ_ELLIPSE);
+        case XsectShape::VERT_ELLIPSE:    return static_cast<int>(XSectShape::VERT_ELLIPSE);
+        case XsectShape::ARCH:            return static_cast<int>(XSectShape::ARCH);
+        case XsectShape::IRREGULAR:       return static_cast<int>(XSectShape::IRREGULAR);
+        case XsectShape::CUSTOM:          return static_cast<int>(XSectShape::CUSTOM);
+        case XsectShape::FORCE_MAIN:      return static_cast<int>(XSectShape::FORCE_MAIN);
+        case XsectShape::STREET_XSECT:    return static_cast<int>(XSectShape::STREET_XSECT);
+        case XsectShape::DUMMY:           return static_cast<int>(XSectShape::DUMMY);
+        default:                          return static_cast<int>(XSectShape::DUMMY);
+    }
 }
 
 /// Build XSectParams from link SoA data for a conduit (with shape translation).

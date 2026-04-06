@@ -1006,12 +1006,10 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                 ctx.nodes.outflow[un2] -= q_new;
             }
 
-            // Non-conduit dqdh (matching legacy orifice_getFlow / weir_getFlow)
-            // Orifice: dqdh = Q/(2*head) for orifice mode, 1.5*Q/(f*hCrit) for weir mode
-            // Weir: not typically computed
-            // For simplicity, use Q/(2*max(head,FUDGE)) as approximate dqdh
-            double dqdh = 0.0;
-            if (std::fabs(q_new) > 0.0001) {
+             // Non-conduit dqdh — orifices compute their own in computeOrificeFlows;
+            // for other types, approximate as Q/(2*head).
+            double dqdh = links.dqdh[uj];
+            if (dqdh == 0.0 && std::fabs(q_new) > 0.0001) {
                 double h1_abs = ctx.nodes.depth[un1] + ctx.nodes.invert_elev[un1];
                 double h2_abs = ctx.nodes.depth[un2] + ctx.nodes.invert_elev[un2];
                 double dh = std::fabs(h1_abs - h2_abs);
@@ -1038,14 +1036,13 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
             dw.nodeState(n2).new_surf_area += sa2;
         }
     };
-    int iters = router_.step(ctx_, dt_routing, non_conduit_fn);
+    int iters = router_.step(ctx_, dt_routing, climate_.evap_rate, non_conduit_fn);
     ctx_.routing_stats.update_iterations(iters, iters < ctx_.options.max_trials);
 
 #ifdef OPENSWMM_HAS_2D
     // B3+. Post-routing: compute 2D↔1D coupling exchange, update rainfall,
     //      advance CVODE solver, transfer outfall discharges to 2D cells.
-    surface_router_.advancePostRouting(ctx_, dt_routing,
-                                        ctx_.elapsed_time - ctx_.start_time);
+    surface_router_.advancePostRouting(ctx_, dt_routing, ctx_.current_time);
 #endif
 
     // B3a. Inlet capture (street inlet HEC-22 calculations)
@@ -1309,12 +1306,15 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         ctx_.mass_balance.routing_evap_loss += ctx_.nodes.losses[uj] * dt_routing;
     }
 
-    // Accumulate link seepage/evaporation losses
+    // Accumulate link evaporation and seepage losses
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (ctx_.links.type[uj] == LinkType::CONDUIT) {
+            int barrels = std::max(ctx_.links.barrels[uj], 1);
+            ctx_.mass_balance.routing_evap_loss +=
+                ctx_.links.evap_loss_rate[uj] * barrels * dt_routing;
             ctx_.mass_balance.routing_seep_loss +=
-                ctx_.links.seep_rate[uj] * dt_routing;
+                ctx_.links.seep_loss_rate[uj] * barrels * dt_routing;
         }
     }
 
@@ -1485,12 +1485,13 @@ void SWMMEngine::postOutputSnapshot() noexcept {
         if (save_results_ && !plugins_.empty()) {
             // Build a SimulationSnapshot from the current context
             SimulationSnapshot snap;
-            snap.sim_time         = ctx_.current_time;
+            snap.sim_time         = ctx_.current_date;
             snap.node_count       = ctx_.n_nodes();
             snap.link_count       = ctx_.n_links();
             snap.subcatch_count   = ctx_.n_subcatches();
             snap.gage_count       = ctx_.n_gages();
             snap.pollut_count     = ctx_.n_pollutants();
+            snap.flow_units_code  = static_cast<int>(ctx_.options.flow_units);
 
             // Copy node state
             snap.nodes.depth          = ctx_.nodes.depth;
@@ -1500,24 +1501,37 @@ void SWMMEngine::postOutputSnapshot() noexcept {
             snap.nodes.total_inflow   = ctx_.nodes.inflow;
             snap.nodes.overflow       = ctx_.nodes.overflow;
 
-            // Copy link state
+            // Copy link state (apply direction to flow/velocity for display)
             snap.links.flow     = ctx_.links.flow;
             snap.links.depth    = ctx_.links.depth;
+            snap.links.volume   = ctx_.links.volume;
 
-            // Compute link velocity and capacity for snapshot
+            // Compute link velocity, capacity, and apply direction
             {
                 const int nL = ctx_.n_links();
                 snap.links.velocity.resize(static_cast<std::size_t>(nL));
                 snap.links.capacity.resize(static_cast<std::size_t>(nL));
                 for (int j = 0; j < nL; ++j) {
                     auto uj = static_cast<std::size_t>(j);
-                    double q = std::fabs(ctx_.links.flow[uj]);
+                    double q = ctx_.links.flow[uj];
                     double y_full = ctx_.links.xsect_y_full[uj];
                     double a_full = ctx_.links.xsect_a_full[uj];
                     double d = ctx_.links.depth[uj];
                     double area = (y_full > 0.0) ? a_full * (d / y_full) : 0.0;
-                    snap.links.velocity[uj] = (area > 0.0001) ? q / area : 0.0;
-                    snap.links.capacity[uj] = (y_full > 0.0) ? d / y_full : 0.0;
+                    double veloc = (area > 0.0001) ? std::fabs(q) / area : 0.0;
+
+                    // Apply link direction (matching legacy link_getResults)
+                    int dir = ctx_.links.direction[uj];
+                    snap.links.flow[uj]     = q * dir;
+                    snap.links.velocity[uj] = veloc * dir;
+
+                    // Capacity: conduits use depth ratio, non-conduits use setting
+                    auto lt = ctx_.links.type[uj];
+                    if (lt == LinkType::CONDUIT) {
+                        snap.links.capacity[uj] = (y_full > 0.0) ? d / y_full : 0.0;
+                    } else {
+                        snap.links.capacity[uj] = ctx_.links.setting[uj];
+                    }
                 }
             }
 
@@ -1528,30 +1542,16 @@ void SWMMEngine::postOutputSnapshot() noexcept {
             snap.subcatch.runoff   = ctx_.subcatches.runoff;
             snap.subcatch.gw_flow  = ctx_.subcatches.gw_flow;
 
-            // System-level results
-            snap.sys_temperature = climate_.temperature;
-
-            // Average rainfall over all gages
+            // Per-subcatch snow depth (from snow pack state)
             {
-                double total_rain = 0.0;
-                for (int g = 0; g < ctx_.n_gages(); ++g)
-                    total_rain += ctx_.gages.rainfall[static_cast<std::size_t>(g)];
-                snap.sys_rainfall = (ctx_.n_gages() > 0)
-                    ? total_rain / ctx_.n_gages() : 0.0;
-            }
-
-            // Area-weighted average snow depth across all subcatchments
-            {
-                double total_snow = 0.0;
-                double total_area = 0.0;
+                const int nS = ctx_.n_subcatches();
+                snap.subcatch.snow_depth.resize(static_cast<std::size_t>(nS), 0.0);
                 const auto& soa = snow_.state();
-                for (int s = 0; s < ctx_.n_subcatches(); ++s) {
+                for (int s = 0; s < nS; ++s) {
                     auto us = static_cast<std::size_t>(s);
                     if (ctx_.subcatches.snowpack[us] < 0) continue;
-                    double a = ctx_.subcatches.area[us];
                     double fi = ctx_.subcatches.frac_imperv[us];
                     double sn = (us < soa.snn.size()) ? soa.snn[us] : 0.0;
-                    // Subarea fractions: plowable, impervious, pervious
                     double fArea[3] = { sn * fi, (1.0 - sn) * fi, 1.0 - fi };
                     int base = s * snow::N_SUBAREAS;
                     double sd = 0.0;
@@ -1560,30 +1560,63 @@ void SWMMEngine::postOutputSnapshot() noexcept {
                         if (uk < soa.wsnow.size())
                             sd += soa.wsnow[uk] * fArea[k];
                     }
-                    total_snow += sd * a;
+                    snap.subcatch.snow_depth[us] = sd;
+                }
+            }
+
+            // System-level results
+            snap.sys_temperature = climate_.temperature;
+
+            // Area-weighted average rainfall across subcatchments
+            // (matching legacy output_saveSubcatchResults accumulation)
+            {
+                double total_rain = 0.0;
+                double total_area = 0.0;
+                for (int s = 0; s < ctx_.n_subcatches(); ++s) {
+                    auto us = static_cast<std::size_t>(s);
+                    double a = ctx_.subcatches.area[us];
+                    total_rain += ctx_.subcatches.rainfall[us] * a;
+                    total_area += a;
+                }
+                snap.sys_rainfall = (total_area > 0.0)
+                    ? total_rain / total_area : 0.0;
+            }
+
+            // Area-weighted average snow depth across all subcatchments
+            {
+                double total_snow = 0.0;
+                double total_area = 0.0;
+                for (int s = 0; s < ctx_.n_subcatches(); ++s) {
+                    auto us = static_cast<std::size_t>(s);
+                    double a = ctx_.subcatches.area[us];
+                    total_snow += snap.subcatch.snow_depth[us] * a;
                     total_area += a;
                 }
                 snap.sys_snow_depth = (total_area > 0.0) ? total_snow / total_area : 0.0;
             }
-            snap.sys_pet        = climate_.evap_rate;
+            snap.sys_pet = climate_.evap_rate;
 
-            // Sum system totals from subcatchments and nodes
+            // Area-weighted averages of evap and infil; total runoff
             {
                 double tot_evap = 0.0, tot_infil = 0.0, tot_runoff = 0.0;
+                double total_area = 0.0;
                 for (int i = 0; i < ctx_.n_subcatches(); ++i) {
                     auto ui = static_cast<std::size_t>(i);
-                    tot_evap   += ctx_.subcatches.evap_loss[ui];
-                    tot_infil  += ctx_.subcatches.infil_loss[ui];
+                    double a = ctx_.subcatches.area[ui];
+                    tot_evap   += ctx_.subcatches.evap_loss[ui] * a;
+                    tot_infil  += ctx_.subcatches.infil_loss[ui] * a;
                     tot_runoff += ctx_.subcatches.runoff[ui];
+                    total_area += a;
                 }
-                snap.sys_evap   = tot_evap;
-                snap.sys_infil  = tot_infil;
+                snap.sys_evap   = (total_area > 0.0) ? tot_evap / total_area : 0.0;
+                snap.sys_infil  = (total_area > 0.0) ? tot_infil / total_area : 0.0;
                 snap.sys_runoff = tot_runoff;
             }
 
             snap.sys_dw_inflow  = ctx_.mass_balance.step_dw_inflow;
             snap.sys_gw_inflow  = ctx_.mass_balance.step_gw_inflow;
-            snap.sys_lat_inflow = 0.0;  // RDII + external (accumulated in mass balance)
+            snap.sys_ii_inflow  = ctx_.mass_balance.step_rdii_inflow;
+            snap.sys_ext_inflow = ctx_.mass_balance.step_ext_inflow;
             snap.sys_flooding   = ctx_.mass_balance.step_flooding;
             snap.sys_outflow    = ctx_.mass_balance.step_outflow;
 
@@ -1917,12 +1950,10 @@ void SWMMEngine::initHydraulics() noexcept {
         }
     }
 
-    // Batch compute conduit conveyance: beta, rough_factor, q_full
-    // (pure array arithmetic over all conduits — vectorisable)
-    // link::computeAllConveyance is declared in hydraulics/Link.hpp
-    // which is included via SWMMEngine.hpp → Routing.hpp → Link.hpp
-    // Use fully qualified name:
-    link::computeAllConveyance(ctx_.links);
+    // NOTE: Conduit conveyance (beta, rough_factor, q_full) is computed in
+    // PostParseResolver and then adjusted for conduit lengthening in
+    // Routing::init(). Do not recompute here as it would overwrite the
+    // lengthening adjustments.
 
     // 8. Controls: rules can be added via:
     //    a) Parsed from [CONTROLS] section text (needs rule parser)

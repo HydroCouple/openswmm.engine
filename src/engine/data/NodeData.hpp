@@ -165,6 +165,15 @@ struct NodeData {
     /** @brief Seepage rate from storage node (project units/day). */
     std::vector<double>     storage_seep_rate;
 
+    /** @brief Fraction of potential evaporation realized at storage node (0-1). */
+    std::vector<double>     storage_evap_frac;
+
+    /** @brief Storage node evaporation loss this timestep (ft3). */
+    std::vector<double>     storage_evap_loss;
+
+    /** @brief Storage node exfiltration loss this timestep (ft3). */
+    std::vector<double>     storage_exfil_loss;
+
     /** @brief Green-Ampt suction head for exfiltration (in or mm, converted to ft). */
     std::vector<double>     exfil_suction;
     /** @brief Green-Ampt saturated hydraulic conductivity for exfiltration (in/hr or mm/hr, converted to ft/sec). */
@@ -432,6 +441,9 @@ struct NodeData {
         storage_b.assign(un, 0.0);
         storage_c.assign(un, 0.0);
         storage_seep_rate.assign(un, 0.0);
+        storage_evap_frac.assign(un, 0.0);
+        storage_evap_loss.assign(un, 0.0);
+        storage_exfil_loss.assign(un, 0.0);
         exfil_suction.assign(un, 0.0);
         exfil_ksat.assign(un, 0.0);
         exfil_imd.assign(un, 0.0);

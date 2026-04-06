@@ -83,14 +83,25 @@ private:
     int                 n_subcatch_vars_ = 0;
     int                 n_node_vars_ = 0;
     int                 n_link_vars_ = 0;
+    int                 flow_units_code_ = 0;
     long                id_start_pos_     = 0;
     long                input_start_pos_  = 0;
     long                output_start_pos_ = 0;
     int                 n_periods_  = 0;
 
+    // Unit conversion factors (internal → display), computed once in prepare()
+    double ucf_rainfall_  = 1.0;
+    double ucf_raindepth_ = 1.0;
+    double ucf_evaprate_  = 1.0;
+    double ucf_length_    = 1.0;
+    double ucf_landarea_  = 1.0;
+    double ucf_volume_    = 1.0;
+    double ucf_flow_      = 1.0;
+    int    unit_system_   = 0;     // 0=US, 1=SI
+
     static constexpr int MAGIC_NUMBER = 516114522;
     static constexpr int VERSION      = 52001;     // SWMM 5.2.001
-    static constexpr int MAX_SYS_RESULTS = 14;
+    static constexpr int MAX_SYS_RESULTS = 15;
 
     void writeHeader(const SimulationContext& ctx);
     void writeID(const char* id);

@@ -422,7 +422,7 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
             if (ctx.links.type[ui] != LinkType::CONDUIT) return MISSING;
             {
                 XSectParams xs;
-                xs.type = static_cast<int>(ctx.links.xsect_shape[ui]);
+                xs.type = link::translateShape(ctx.links.xsect_shape[ui]);
                 xs.y_full = ctx.links.xsect_y_full[ui];
                 xs.a_full = ctx.links.xsect_a_full[ui];
                 xs.w_max = ctx.links.xsect_w_max[ui];

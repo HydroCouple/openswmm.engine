@@ -49,7 +49,8 @@ static const char* XsectShapeWords[] = {
     "TRAPEZOIDAL", "TRIANGULAR", "PARABOLIC", "POWER",
     "MOD_BASKET", "EGG", "HORSESHOE", "GOTHIC",
     "CATENARY", "SEMI_ELLIPTIC", "BASKETHANDLE", "SEMI_CIRCULAR",
-    "RECT_TRIANG", "RECT_ROUND", "IRREGULAR", "CUSTOM",
+    "RECT_TRIANG", "RECT_ROUND", "HORIZ_ELLIPSE", "VERT_ELLIPSE",
+    "ARCH", "IRREGULAR", "CUSTOM",
     "FORCE_MAIN", "STREET", "DUMMY"
 };
 
@@ -127,6 +128,15 @@ DefaultReportPlugin::DefaultReportPlugin(std::string rpt_path)
     , state_(PluginState::LOADED)
 {}
 
+DefaultReportPlugin::~DefaultReportPlugin() {
+    if (file_) {
+        std::fprintf(file_, "\n\n  [Report interrupted — simulation did not complete normally]\n");
+        std::fflush(file_);
+        std::fclose(file_);
+        file_ = nullptr;
+    }
+}
+
 int DefaultReportPlugin::initialize(const std::vector<std::string>& /*init_args*/,
                                     const IPluginComponentInfo* /*info*/) {
     state_ = PluginState::INITIALIZED;
@@ -138,8 +148,20 @@ int DefaultReportPlugin::validate(const SimulationContext& /*ctx*/) {
     return 0;
 }
 
-int DefaultReportPlugin::prepare(const SimulationContext& /*ctx*/) {
+int DefaultReportPlugin::prepare(const SimulationContext& ctx) {
     std::time(&wall_start_);
+
+    // Open the report file early and write preamble (title, input summaries,
+    // analysis options) so they are available immediately — even if the
+    // simulation crashes before write_summary() is called.
+    if (!rpt_path_.empty()) {
+        file_ = std::fopen(rpt_path_.c_str(), "w");
+        if (file_) {
+            write_preamble(file_, ctx);
+            std::fflush(file_);
+        }
+    }
+
     state_ = PluginState::PREPARED;
     return 0;
 }
@@ -149,29 +171,70 @@ int DefaultReportPlugin::update(const SimulationSnapshot& /*snapshot*/) {
     return 0;
 }
 
-int DefaultReportPlugin::finalize(const SimulationContext& /*ctx*/) {
+int DefaultReportPlugin::finalize(const SimulationContext& ctx) {
+    // Flush any errors/warnings that accumulated during the simulation.
+    // This ensures they are persisted even if write_summary() never runs.
+    if (file_) {
+        for (std::size_t i = errors_written_; i < ctx.errors.size(); ++i)
+            std::fprintf(file_, "\n  %s", ctx.errors[i].c_str());
+        errors_written_ = ctx.errors.size();
+
+        for (std::size_t i = warnings_written_; i < ctx.warnings.size(); ++i)
+            std::fprintf(file_, "\n  %s", ctx.warnings[i].c_str());
+        warnings_written_ = ctx.warnings.size();
+
+        std::fflush(file_);
+    }
+
     state_ = PluginState::FINALIZED;
     return 0;
 }
 
 // ---------------------------------------------------------------------------
-// write_summary — replicates legacy report.c + statsrpt.c + inputrpt.c format
+// write_summary — coordinator for progressive report writing
 // ---------------------------------------------------------------------------
 
 int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     if (rpt_path_.empty()) return 0;
 
-    FILE* f = std::fopen(rpt_path_.c_str(), "w");
-    if (!f) return -1;
+    FILE* f = file_;
 
+    if (!f) {
+        // Fallback: prepare() was not called or file open failed.
+        // Write the entire report monolithically.
+        f = std::fopen(rpt_path_.c_str(), "w");
+        if (!f) return -1;
+        write_preamble(f, ctx);
+
+        // Write all errors/warnings
+        for (const auto& err : ctx.errors)
+            std::fprintf(f, "\n  %s", err.c_str());
+        for (const auto& warn : ctx.warnings)
+            std::fprintf(f, "\n  %s", warn.c_str());
+    }
+
+    // Write result sections (continuity, statistics, summaries)
+    write_results(f, ctx);
+
+    // Write analysis timing and close
+    write_timing(f);
+
+    std::fclose(f);
+    file_ = nullptr;
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// write_preamble — title, input summaries, analysis options
+// ---------------------------------------------------------------------------
+
+void DefaultReportPlugin::write_preamble(std::FILE* f,
+                                          const SimulationContext& ctx) {
     char ds[32], ts[16], buf[64];
     const auto& opt = ctx.options;
 
     int fu = static_cast<int>(opt.flow_units);
     if (fu < 0 || fu > 5) fu = 0;
-    const char* ff = flowFmt(fu);
-    double Vcf = vcf(0);
-    double Qcf = ucf::Qcf[fu];  // CFS → display flow units (MGD, CMS, etc.)
 
     // Helper: has RDII?
     bool has_rdii = !ctx.rdii_assigns.node_idx.empty();
@@ -199,10 +262,12 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     // Errors — matches legacy report_writeErrorMsg() format
     for (const auto& err : ctx.errors)
         std::fprintf(f, "\n  %s", err.c_str());
+    errors_written_ = ctx.errors.size();
 
     // Warnings — matches legacy report_writeWarningMsg() format
     for (const auto& warn : ctx.warnings)
         std::fprintf(f, "\n  %s", warn.c_str());
+    warnings_written_ = ctx.warnings.size();
 
     // =====================================================================
     // Element Count — matches legacy inputrpt_writeInput()
@@ -381,12 +446,13 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
             std::fprintf(f,
                 "\n  ---------------------------------------------------------------------------------------");
 
+            double Qcf_pre = ucf::Qcf[fu];
             for (int i = 0; i < ctx.n_links(); ++i) {
                 auto ui = static_cast<std::size_t>(i);
                 if (ctx.links.type[ui] != LinkType::CONDUIT) continue;
 
                 int shape = static_cast<int>(ctx.links.xsect_shape[ui]);
-                const char* shape_str = (shape >= 0 && shape <= 22) ?
+                const char* shape_str = (shape >= 0 && shape <= 25) ?
                     XsectShapeWords[shape] : "CIRCULAR";
 
                 std::fprintf(f, "\n  %-16s %-16s %8.2f %8.2f %8.2f %8.2f      %3d %8.2f",
@@ -397,7 +463,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
                     ctx.links.xsect_r_full[ui],
                     ctx.links.xsect_w_max[ui],
                     ctx.links.barrels[ui],
-                    ctx.links.q_full[ui]);
+                    ctx.links.q_full[ui] * Qcf_pre);
             }
             WRITE(f, "");
             WRITE(f, "");
@@ -480,6 +546,30 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
 
     WRITE(f, "");
     WRITE(f, "");
+}
+
+// ---------------------------------------------------------------------------
+// write_results — simulation result sections (continuity, stats, summaries)
+// ---------------------------------------------------------------------------
+
+void DefaultReportPlugin::write_results(std::FILE* f,
+                                         const SimulationContext& ctx) {
+    const auto& opt = ctx.options;
+
+    int fu = static_cast<int>(opt.flow_units);
+    if (fu < 0 || fu > 5) fu = 0;
+    const char* ff = flowFmt(fu);
+    double Vcf = vcf(0);
+    double Qcf = ucf::Qcf[fu];
+
+    bool has_rdii = !ctx.rdii_assigns.node_idx.empty();
+    bool has_gw = false;
+    for (int j = 0; j < ctx.n_subcatches(); ++j) {
+        if (ctx.subcatches.gw_aquifer[static_cast<std::size_t>(j)] >= 0) {
+            has_gw = true;
+            break;
+        }
+    }
 
     // =====================================================================
     // RDII Continuity — matches legacy report_writeRdiiError()
@@ -1403,7 +1493,13 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
             WRITE(f, "");
         }
     }
+}
 
+// ---------------------------------------------------------------------------
+// write_timing — analysis timing section
+// ---------------------------------------------------------------------------
+
+void DefaultReportPlugin::write_timing(std::FILE* f) {
     // =====================================================================
     // Analysis Timing — matches legacy report_writeRunTime()
     // =====================================================================
@@ -1444,9 +1540,6 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
         }
         std::fprintf(f, "\n");
     }
-
-    std::fclose(f);
-    return 0;
 }
 
 } /* namespace openswmm */

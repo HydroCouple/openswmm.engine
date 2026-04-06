@@ -50,9 +50,10 @@ struct NodeSnapshot {
  * @ingroup engine_plugins
  */
 struct LinkSnapshot {
-    std::vector<double> flow;       ///< Flow rate [project flow units]
-    std::vector<double> depth;      ///< Water depth [project length units]
-    std::vector<double> velocity;   ///< Mean velocity [project length/time]
+    std::vector<double> flow;       ///< Flow rate [internal flow units]
+    std::vector<double> depth;      ///< Water depth [internal length units]
+    std::vector<double> velocity;   ///< Mean velocity [internal length/time]
+    std::vector<double> volume;     ///< Link volume [internal volume units]
     std::vector<double> capacity;   ///< Full-flow capacity fraction [0, 1]
 };
 
@@ -61,12 +62,13 @@ struct LinkSnapshot {
  * @ingroup engine_plugins
  */
 struct SubcatchSnapshot {
-    std::vector<double> rainfall;   ///< Rainfall rate [project rate units]
-    std::vector<double> evap;       ///< Evaporation [project rate units]
-    std::vector<double> infil;      ///< Infiltration [project rate units]
-    std::vector<double> runoff;     ///< Surface runoff [project flow units]
-    std::vector<double> gw_flow;    ///< Groundwater outflow [project flow units]
-    std::vector<double> gw_elev;    ///< Groundwater elevation [project length units]
+    std::vector<double> rainfall;   ///< Rainfall rate [internal rate units]
+    std::vector<double> snow_depth; ///< Snow depth [internal length units]
+    std::vector<double> evap;       ///< Evaporation [internal rate units]
+    std::vector<double> infil;      ///< Infiltration [internal rate units]
+    std::vector<double> runoff;     ///< Surface runoff [internal flow units]
+    std::vector<double> gw_flow;    ///< Groundwater outflow [internal flow units]
+    std::vector<double> gw_elev;    ///< Groundwater elevation [internal length units]
     std::vector<double> soil_moist; ///< Soil moisture [-]
 };
 
@@ -92,7 +94,7 @@ struct SimulationSnapshot {
     // Timing
     // -----------------------------------------------------------------------
 
-    /** @brief Simulation time of this snapshot (decimal days / Julian date). */
+    /** @brief Simulation date/time (SWMM DateTime: days since 12/31/1899). */
     double sim_time = 0.0;
 
     /** @brief Wall-clock Unix timestamp when snapshot was taken. */
@@ -132,7 +134,8 @@ struct SimulationSnapshot {
     double sys_runoff         = 0.0;  ///< Total runoff flow
     double sys_dw_inflow      = 0.0;  ///< Total dry weather inflow
     double sys_gw_inflow      = 0.0;  ///< Total groundwater inflow
-    double sys_lat_inflow     = 0.0;  ///< Total lateral inflow (RDII + external)
+    double sys_ii_inflow      = 0.0;  ///< Total RDII inflow
+    double sys_ext_inflow     = 0.0;  ///< Total external inflow
     double sys_flooding       = 0.0;  ///< Total flooding
     double sys_outflow        = 0.0;  ///< Total outflow
     double sys_storage        = 0.0;  ///< Total storage volume
@@ -188,6 +191,9 @@ struct SimulationSnapshot {
 
     /** @brief Length unit string (e.g., "FEET", "METERS"). */
     const char* length_units = nullptr;
+
+    /** @brief Flow units code (FlowUnits enum value: 0=CFS, 3=CMS, etc.). */
+    int flow_units_code = 0;
 };
 
 } /* namespace openswmm */

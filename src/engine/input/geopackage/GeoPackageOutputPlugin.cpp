@@ -9,6 +9,7 @@
 #include "GeoPackageWriter.hpp"
 
 #include "core/SimulationContext.hpp"
+#include "core/UnitConversion.hpp"
 #include <openswmm/plugin_sdk/SimulationSnapshot.hpp>
 
 #include <version.h>
@@ -61,6 +62,15 @@ int GeoPackageOutputPlugin::prepare(const SimulationContext& ctx) {
 
         populate_default_variables(db_.get());
 
+        // Compute unit conversion factors once
+        unit_system_   = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+        ucf_rainfall_  = ucf::UCF(ucf::RAINFALL,  ctx.options);
+        ucf_raindepth_ = ucf::UCF(ucf::RAINDEPTH, ctx.options);
+        ucf_evaprate_  = ucf::UCF(ucf::EVAPRATE,  ctx.options);
+        ucf_length_    = ucf::UCF(ucf::LENGTH,    ctx.options);
+        ucf_volume_    = ucf::UCF(ucf::VOLUME,    ctx.options);
+        ucf_flow_      = ucf::UCF(ucf::FLOW,      ctx.options);
+
         // Cache variable IDs
         auto var_stmt = gpkg::prepare(db_.get(), "SELECT variable_id, name, object_type FROM variables");
         while (sqlite3_step(var_stmt.get()) == SQLITE_ROW) {
@@ -89,52 +99,260 @@ int GeoPackageOutputPlugin::update(const SimulationSnapshot& snapshot) {
     try {
         double sim_time = snapshot.sim_time;
 
-        // Buffer node results
-        for (int i = 0; i < snapshot.node_count; ++i) {
-            std::string name = (snapshot.node_ids && i < (int)snapshot.node_ids->size())
-                ? (*snapshot.node_ids)[i] : std::to_string(i);
-            int vid = lookup_variable("depth", "NODE");
-            if (vid >= 0 && i < (int)snapshot.nodes.depth.size())
-                buffer_.push_back({"NODE", name, vid, sim_time, snapshot.nodes.depth[i]});
-            vid = lookup_variable("head", "NODE");
-            if (vid >= 0 && i < (int)snapshot.nodes.head.size())
-                buffer_.push_back({"NODE", name, vid, sim_time, snapshot.nodes.head[i]});
-            vid = lookup_variable("volume", "NODE");
-            if (vid >= 0 && i < (int)snapshot.nodes.volume.size())
-                buffer_.push_back({"NODE", name, vid, sim_time, snapshot.nodes.volume[i]});
-            vid = lookup_variable("lateral_inflow", "NODE");
-            if (vid >= 0 && i < (int)snapshot.nodes.lateral_inflow.size())
-                buffer_.push_back({"NODE", name, vid, sim_time, snapshot.nodes.lateral_inflow[i]});
-            vid = lookup_variable("overflow", "NODE");
-            if (vid >= 0 && i < (int)snapshot.nodes.overflow.size())
-                buffer_.push_back({"NODE", name, vid, sim_time, snapshot.nodes.overflow[i]});
-        }
-
-        // Buffer link results
-        for (int i = 0; i < snapshot.link_count; ++i) {
-            std::string name = (snapshot.link_ids && i < (int)snapshot.link_ids->size())
-                ? (*snapshot.link_ids)[i] : std::to_string(i);
-            int vid = lookup_variable("flow", "LINK");
-            if (vid >= 0 && i < (int)snapshot.links.flow.size())
-                buffer_.push_back({"LINK", name, vid, sim_time, snapshot.links.flow[i]});
-            vid = lookup_variable("depth", "LINK");
-            if (vid >= 0 && i < (int)snapshot.links.depth.size())
-                buffer_.push_back({"LINK", name, vid, sim_time, snapshot.links.depth[i]});
-            vid = lookup_variable("velocity", "LINK");
-            if (vid >= 0 && i < (int)snapshot.links.velocity.size())
-                buffer_.push_back({"LINK", name, vid, sim_time, snapshot.links.velocity[i]});
-        }
-
-        // Buffer subcatchment results
+        // -------------------------------------------------------------------
+        // Subcatchment results
+        // rainfall, snow_depth, evap_loss, infil_loss, runoff, gw_flow,
+        // gw_elev, soil_moist + pollutant washoff
+        // -------------------------------------------------------------------
         for (int i = 0; i < snapshot.subcatch_count; ++i) {
+            auto ui = static_cast<std::size_t>(i);
             std::string name = (snapshot.subcatch_ids && i < (int)snapshot.subcatch_ids->size())
                 ? (*snapshot.subcatch_ids)[i] : std::to_string(i);
-            int vid = lookup_variable("rainfall", "SUBCATCH");
-            if (vid >= 0 && i < (int)snapshot.subcatch.rainfall.size())
-                buffer_.push_back({"SUBCATCH", name, vid, sim_time, snapshot.subcatch.rainfall[i]});
+
+            int vid;
+            vid = lookup_variable("rainfall", "SUBCATCH");
+            if (vid >= 0 && ui < snapshot.subcatch.rainfall.size())
+                buffer_.push_back({"SUBCATCH", name, vid, sim_time,
+                    snapshot.subcatch.rainfall[ui] * ucf_rainfall_});
+
+            vid = lookup_variable("snow_depth", "SUBCATCH");
+            if (vid >= 0 && ui < snapshot.subcatch.snow_depth.size())
+                buffer_.push_back({"SUBCATCH", name, vid, sim_time,
+                    snapshot.subcatch.snow_depth[ui] * ucf_raindepth_});
+
+            vid = lookup_variable("evap_loss", "SUBCATCH");
+            if (vid >= 0 && ui < snapshot.subcatch.evap.size())
+                buffer_.push_back({"SUBCATCH", name, vid, sim_time,
+                    snapshot.subcatch.evap[ui] * ucf_evaprate_});
+
+            vid = lookup_variable("infil_loss", "SUBCATCH");
+            if (vid >= 0 && ui < snapshot.subcatch.infil.size())
+                buffer_.push_back({"SUBCATCH", name, vid, sim_time,
+                    snapshot.subcatch.infil[ui] * ucf_rainfall_});
+
             vid = lookup_variable("runoff", "SUBCATCH");
-            if (vid >= 0 && i < (int)snapshot.subcatch.runoff.size())
-                buffer_.push_back({"SUBCATCH", name, vid, sim_time, snapshot.subcatch.runoff[i]});
+            if (vid >= 0 && ui < snapshot.subcatch.runoff.size())
+                buffer_.push_back({"SUBCATCH", name, vid, sim_time,
+                    snapshot.subcatch.runoff[ui] * ucf_flow_});
+
+            vid = lookup_variable("gw_flow", "SUBCATCH");
+            if (vid >= 0 && ui < snapshot.subcatch.gw_flow.size())
+                buffer_.push_back({"SUBCATCH", name, vid, sim_time,
+                    snapshot.subcatch.gw_flow[ui] * ucf_flow_});
+
+            vid = lookup_variable("gw_elev", "SUBCATCH");
+            if (vid >= 0 && ui < snapshot.subcatch.gw_elev.size())
+                buffer_.push_back({"SUBCATCH", name, vid, sim_time,
+                    snapshot.subcatch.gw_elev[ui] * ucf_length_});
+
+            vid = lookup_variable("soil_moist", "SUBCATCH");
+            if (vid >= 0 && ui < snapshot.subcatch.soil_moist.size())
+                buffer_.push_back({"SUBCATCH", name, vid, sim_time,
+                    snapshot.subcatch.soil_moist[ui]});
+
+            // Pollutant washoff concentrations
+            for (int p = 0; p < snapshot.pollut_count; ++p) {
+                auto qi = ui * static_cast<std::size_t>(snapshot.pollut_count) + static_cast<std::size_t>(p);
+                if (qi < snapshot.subcatch_quality.size() && snapshot.pollut_names) {
+                    std::string pname = (*snapshot.pollut_names)[p];
+                    vid = lookup_variable(pname, "SUBCATCH");
+                    if (vid >= 0)
+                        buffer_.push_back({"SUBCATCH", name, vid, sim_time,
+                            snapshot.subcatch_quality[qi]});
+                }
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // Node results
+        // depth, head, volume, lateral_inflow, total_inflow, overflow
+        // + pollutant concentrations
+        // -------------------------------------------------------------------
+        for (int i = 0; i < snapshot.node_count; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            std::string name = (snapshot.node_ids && i < (int)snapshot.node_ids->size())
+                ? (*snapshot.node_ids)[i] : std::to_string(i);
+
+            int vid;
+            vid = lookup_variable("depth", "NODE");
+            if (vid >= 0 && ui < snapshot.nodes.depth.size())
+                buffer_.push_back({"NODE", name, vid, sim_time,
+                    snapshot.nodes.depth[ui] * ucf_length_});
+
+            vid = lookup_variable("head", "NODE");
+            if (vid >= 0 && ui < snapshot.nodes.head.size())
+                buffer_.push_back({"NODE", name, vid, sim_time,
+                    snapshot.nodes.head[ui] * ucf_length_});
+
+            vid = lookup_variable("volume", "NODE");
+            if (vid >= 0 && ui < snapshot.nodes.volume.size())
+                buffer_.push_back({"NODE", name, vid, sim_time,
+                    snapshot.nodes.volume[ui] * ucf_volume_});
+
+            vid = lookup_variable("lateral_inflow", "NODE");
+            if (vid >= 0 && ui < snapshot.nodes.lateral_inflow.size())
+                buffer_.push_back({"NODE", name, vid, sim_time,
+                    snapshot.nodes.lateral_inflow[ui] * ucf_flow_});
+
+            vid = lookup_variable("total_inflow", "NODE");
+            if (vid >= 0 && ui < snapshot.nodes.total_inflow.size())
+                buffer_.push_back({"NODE", name, vid, sim_time,
+                    snapshot.nodes.total_inflow[ui] * ucf_flow_});
+
+            vid = lookup_variable("overflow", "NODE");
+            if (vid >= 0 && ui < snapshot.nodes.overflow.size())
+                buffer_.push_back({"NODE", name, vid, sim_time,
+                    snapshot.nodes.overflow[ui] * ucf_flow_});
+
+            // Pollutant concentrations
+            for (int p = 0; p < snapshot.pollut_count; ++p) {
+                auto qi = ui * static_cast<std::size_t>(snapshot.pollut_count) + static_cast<std::size_t>(p);
+                if (qi < snapshot.node_quality.size() && snapshot.pollut_names) {
+                    std::string pname = (*snapshot.pollut_names)[p];
+                    vid = lookup_variable(pname, "NODE");
+                    if (vid >= 0)
+                        buffer_.push_back({"NODE", name, vid, sim_time,
+                            snapshot.node_quality[qi]});
+                }
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // Link results
+        // flow, depth, velocity, volume, capacity + pollutant concentrations
+        // Direction already applied in snapshot builder.
+        // -------------------------------------------------------------------
+        for (int i = 0; i < snapshot.link_count; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            std::string name = (snapshot.link_ids && i < (int)snapshot.link_ids->size())
+                ? (*snapshot.link_ids)[i] : std::to_string(i);
+
+            int vid;
+            vid = lookup_variable("flow", "LINK");
+            if (vid >= 0 && ui < snapshot.links.flow.size())
+                buffer_.push_back({"LINK", name, vid, sim_time,
+                    snapshot.links.flow[ui] * ucf_flow_});
+
+            vid = lookup_variable("depth", "LINK");
+            if (vid >= 0 && ui < snapshot.links.depth.size())
+                buffer_.push_back({"LINK", name, vid, sim_time,
+                    snapshot.links.depth[ui] * ucf_length_});
+
+            vid = lookup_variable("velocity", "LINK");
+            if (vid >= 0 && ui < snapshot.links.velocity.size())
+                buffer_.push_back({"LINK", name, vid, sim_time,
+                    snapshot.links.velocity[ui] * ucf_length_});
+
+            vid = lookup_variable("volume", "LINK");
+            if (vid >= 0 && ui < snapshot.links.volume.size())
+                buffer_.push_back({"LINK", name, vid, sim_time,
+                    snapshot.links.volume[ui] * ucf_volume_});
+
+            vid = lookup_variable("capacity", "LINK");
+            if (vid >= 0 && ui < snapshot.links.capacity.size())
+                buffer_.push_back({"LINK", name, vid, sim_time,
+                    snapshot.links.capacity[ui]});
+
+            // Pollutant concentrations
+            for (int p = 0; p < snapshot.pollut_count; ++p) {
+                auto qi = ui * static_cast<std::size_t>(snapshot.pollut_count) + static_cast<std::size_t>(p);
+                if (qi < snapshot.link_quality.size() && snapshot.pollut_names) {
+                    std::string pname = (*snapshot.pollut_names)[p];
+                    vid = lookup_variable(pname, "LINK");
+                    if (vid >= 0)
+                        buffer_.push_back({"LINK", name, vid, sim_time,
+                            snapshot.link_quality[qi]});
+                }
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // System-level results (matching DefaultOutputPlugin order)
+        // -------------------------------------------------------------------
+        {
+            int vid;
+
+            // Temperature — convert °F → °C for SI
+            vid = lookup_variable("air_temp", "SYSTEM");
+            if (vid >= 0) {
+                double temp = (unit_system_ == 0)
+                    ? snapshot.sys_temperature
+                    : (5.0 / 9.0) * (snapshot.sys_temperature - 32.0);
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time, temp});
+            }
+
+            vid = lookup_variable("rainfall", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_rainfall * ucf_rainfall_});
+
+            vid = lookup_variable("snow_depth", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_snow_depth * ucf_raindepth_});
+
+            vid = lookup_variable("infil", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_infil * ucf_rainfall_});
+
+            vid = lookup_variable("runoff", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_runoff * ucf_flow_});
+
+            vid = lookup_variable("dw_inflow", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_dw_inflow * ucf_flow_});
+
+            vid = lookup_variable("gw_inflow", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_gw_inflow * ucf_flow_});
+
+            vid = lookup_variable("ii_inflow", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_ii_inflow * ucf_flow_});
+
+            vid = lookup_variable("ext_inflow", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_ext_inflow * ucf_flow_});
+
+            vid = lookup_variable("total_inflow", "SYSTEM");
+            if (vid >= 0) {
+                double total = (snapshot.sys_runoff + snapshot.sys_dw_inflow +
+                                snapshot.sys_gw_inflow + snapshot.sys_ii_inflow +
+                                snapshot.sys_ext_inflow) * ucf_flow_;
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time, total});
+            }
+
+            vid = lookup_variable("flooding", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_flooding * ucf_flow_});
+
+            vid = lookup_variable("outflow", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_outflow * ucf_flow_});
+
+            vid = lookup_variable("storage", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_storage * ucf_volume_});
+
+            vid = lookup_variable("evap", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_evap * ucf_evaprate_});
+
+            vid = lookup_variable("pet", "SYSTEM");
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_pet * ucf_evaprate_});
         }
 
         if (buffer_.size() >= FLUSH_THRESHOLD)

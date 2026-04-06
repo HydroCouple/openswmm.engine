@@ -172,6 +172,9 @@ private:
     // Per-link area from previous iteration (for unsteady term)
     std::vector<double> area_old_;
 
+    // Per-link bypass flag (true when both end nodes converged; skip momentum solve)
+    std::vector<bool> bypassed_;
+
     // Per-link surface area contributions to upstream/downstream nodes
     // (matching legacy Link[].surfArea1/surfArea2 from dwflow.c findSurfArea)
     std::vector<double> surf_area1_;   ///< Surface area at upstream node (ft²)
@@ -190,6 +193,7 @@ private:
 
     // Internal methods
     void initNodeStates(SimulationContext& ctx);
+    void findBypassedLinks(const SimulationContext& ctx);
     void computeLinkGeometry(SimulationContext& ctx);
     void solveMomentumBatch(SimulationContext& ctx, double dt, int step);
     void updateNodeFlows(SimulationContext& ctx, bool conduits_only = false);

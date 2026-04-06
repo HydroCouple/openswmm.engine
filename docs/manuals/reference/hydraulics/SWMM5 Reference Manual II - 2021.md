@@ -397,7 +397,7 @@ conduits shapes [91](#_Toc484690431)](#_Toc484690431)
 [Table 6‑2 Kindsvater-Carter constants for rectangular weir coefficient
 [118](#_Toc484690434)](#_Toc484690434)
 
-[Table 6‑3 Rectangular broad-crested weir coefficients (ft^1/2^/sec)
+[Table 6‑3 Rectangular broad-crested weir coefficients (ft<sup>1/2</sup>/sec)
 [119](#_Toc484690435)](#_Toc484690435)
 
 [Table 6‑4 Formulas for flow derivatives of various types of weirs
@@ -472,246 +472,125 @@ shapes [129](#_Toc484690437)](#_Toc484690437)
 
 # List of Symbols
 
-  ----------------------------------------------------------------------------------------------
-  *A*                           cross section flow area within a conduit (ft^2^)
-  ----------------------------- ----------------------------------------------------------------
-  $$\overline{A}$$              average cross section flow area along a conduit (ft^2^)
 
-  $$\overline{\overline{A}}$$   average cross section flow area along a conduit over a time
-                                period (ft^2^)
+| Symbol | Description |
+| --- | --- |
+| *A* | cross section flow area within a conduit (ft<sup>2</sup>) |
+| $\overline{A}$ | average cross section flow area along a conduit (ft<sup>2</sup>) |
+| $\overline{\overline{A}}$ | average cross section flow area along a conduit over a time period (ft<sup>2</sup>) |
+| *A<sub>full</sub>* | full cross section area of a conduit (ft<sup>2</sup>) |
+| *A<sub>max</sub>* | cross section area at depth where a conduit's section factor is a maximum (ft<sup>2</sup>) |
+| *A<sub>O</sub>* | area of an orifice opening (ft<sup>2</sup>) |
+| *A<sub>SP</sub>* | surface area of water ponded above a node (ft<sup>2</sup>) |
+| *A<sub>S</sub>* | surface area of a node and its connected links (ft<sup>2</sup>) |
+| *A<sub>SL</sub>* | surface area of flow within a link (ft<sup>2</sup>) |
+| *A<sub>S</sub><sup>last</sup | surface area of a node the last time it was not surcharged (ft<sup>2</sup>) |
+| *A<sub>Smin</sub>* | minimum surface area associated with a node (ft<sup>2</sup>) |
+| *A<sub>SN</sub>* | surface area associated with a storage node (ft<sup>2</sup>) |
+| *A<sub>W</sub>* | area of a weir opening (ft<sup>2</sup>) |
+| *b* | bottom or top width (depending on shape) of a conduit's cross section (ft) |
+| *c* | wave celerity (ft/sec) |
+| *c<sub>I</sub>* | inlet control constant for submerged culverts |
+| *c<sub>W</sub>* | coefficient for a weir-type flow divider (ft<sup>1/2</sup>/sec) |
+| *C<sub>d</sub>* | orifice discharge coefficient (dimensionless) |
+| *C<sub>HW</sub>* | Hazen-Williams C-factor coefficient (dimensionless) |
+| *C<sub>O</sub>* | equivalent orifice constant for a surcharged weir (ft<sup>5/2</sup>/sec) |
+| *Cr* | Courant number (dimensionless) |
+| *C<sub>w</sub>* | weir coefficient (ft<sup>1/2</sup>/sec) |
+| *D* | circular pipe diameter (ft) |
+| *e<sub>t</sub>* | potential evaporation rate at time *t* (ft/sec) |
+| *E* | elevation of a node's invert (ft) |
+| *E<sub>C</sub>* | specific head at critical depth (ft) |
+| *f* | Darcy-Weisbach friction factor (dimensionless) |
+| *f<sub>C</sub>* | monthly climate adjustment factor (dimensionless) |
+| *f<sub>E</sub>* | storage node evaporation factor (dimensionless) |
+| *f<sub>S</sub>* | weir submergence adjustment factor (dimensionless) |
+| *F* | cumulative depth of infiltrated water (ft) |
+| *Fr* | Froude number (dimensionless) |
+| *g* | acceleration of gravity (ft/sec<sup>2</sup>) |
+| *h<sub>L</sub>* | minor head loss per unit length of a conduit (ft/ft) |
+| *h<sub>W</sub>* | height of the opening for a weir-type flow divider node (ft) |
+| *H* | hydraulic head (ft) |
+| *H<sub>crown</sub>* | elevation of the crown of the highest conduit at a node (ft) |
+| *H<sub>e</sub>* | effective head seen by an orifice or weir (ft) |
+| *H<sub>IS</sub>* | minimum head at a culvert's inlet for it to be submerged (ft) |
+| *H<sub>IU</sub>* | maximum head at a culvert's inlet for it to be unsubmerged (ft) |
+| *H<sub>max</sub>* | maximum head at a node before flooding occurs (ft) |
+| *H<sub>Outfall</sub>* | head assigned to an outfall node (ft) |
+| *K* | cross section flow conductance (cfs) (equal to $nAR^{2/3}$) |
+| *K<sub>I</sub>* | inlet control constant for unsubmerged culverts |
+| *K<sub>m</sub>* | minor loss coefficient (dimensionless) |
+| *K<sub>S</sub>* | soil saturated hydraulic conductivity (ft/sec) |
+| *L* | conduit length or weir crest length (ft) |
+| *L<sub>e</sub>* | effective weir crest length (ft) |
+| *M<sub>I</sub>* | inlet control exponent for unsubmerged culverts |
+| *n* | Manning roughness coefficient (sec/m<sup>1/3</sup>) |
+| *P* | wetted perimeter of a conduit's cross section (ft) |
+| *q<sub>E</sub>* | uniformly distributed evaporation rate along a channel (cfs/ft) |
+| *q<sub>L</sub>* | total uniformly distributed outflow rate along a conduit (cfs/ft) |
+| *q<sub>MIN</sub>* | minimum flow needed to activate a flow divider node (cfs) |
+| *q<sub>S</sub>* | uniformly distributed seepage rate along a conduit (cfs/ft) |
+| *q<sub>SN</sub>* | seepage rate per unit area for a storage node (cfs/ft<sup>2</sup>) |
+| *Q* | flow rate within a conduit, pump, or regulator link (cfs) |
+| *Q<sub>div</sub>* | flow rate diverted to a second outflow conduit from a flow divider node (cfs) |
+| *Q<sub>EN</sub>* | evaporation loss rate from a storage unit node (cfs) |
+| *Q<sub>full</sub>* | normal uniform flow rate for a full conduit (cfs) |
+| *Q<sub>IC</sub>* | culvert flow rate under inlet control (cfs) |
+| *Q<sub>in</sub>* | total inflow rate to a node (cfs) |
+| *Q<sub>LN</sub>* | total loss rate from a storage unit node (cfs) |
+| *Q<sub>norm</sub>* | normal uniform flow rate (cfs) |
+| *Q<sub>out</sub>* | total outflow rate leaving a node (cfs) |
+| *Q<sub>ovfl</sub>* | excess flow that overflows a node (cfs) |
+| ${\overline{Q}}_{net}$ | average net inflow minus outflow over a time step (cfs) |
+| *Q<sub>SN</sub>* | seepage loss rate from a storage node (cfs) |
+| *R* | hydraulic radius of flow cross section in a conduit (ft) |
+| $\overline{R}$ | average hydraulic radius of flow cross sections along a conduit (ft) |
+| *Re* | Reynolds number (dimensionless) |
+| *R<sub>full</sub>* | hydraulic radius of a conduit cross section when full (ft) |
+| *s* | seepage rate per unit area for a conduit (ft/sec) |
+| *Scf* | culvert slope correction factor |
+| *S<sub>f</sub>* | friction slope (ft/ft) |
+| *S<sub>0</sub>* | conduit slope (ft/ft) |
+| *t* | time (sec) |
+| *U* | flow velocity at a point along a conduit (ft/sec) |
+| $\overline{U}$ | average flow velocity along a conduit (ft/sec) |
+| *V* | node assembly volume (ft<sup>3</sup>) |
+| *V<sub>P</sub>* | ponded volume (ft<sup>3</sup>) |
+| *V<sub>N</sub>* | storage node volume (ft<sup>3</sup>) |
+| *V<sub>Nfull</sub>* | volume of a storage node when full (ft<sup>3</sup>) |
+| *W* | top width of the water surface at a point along a conduit (ft) |
+| $\overline{W}$ | average top width of the water surface along a conduit (ft) |
+| *W<sub>max</sub>* | maximum width of a conduit cross section (ft) |
+| *x* | horizontal distance (ft) |
+| *y* | vertical distance (ft) |
+| *y<sub>I</sub>* | inlet control constant for submerged culverts |
+| *Y* | depth of flow within a conduit or of water in a storage unit (ft) |
+| $\overline{Y}$ | average depth of flow along a conduit (ft) |
+| *Y<sub>c</sub>* | critical depth within a conduit at a given flow rate (ft) |
+| *Y<sub>full</sub>* | full depth of a conduit, orifice opening or weir height (ft) |
+| *Y<sub>N</sub>* | normal flow depth (ft) |
+| *Y\** | smaller of the critical and normal flow depth in a conduit (ft) |
+| *Z* | elevation of a conduit's invert (ft) |
+| *Z<sub>O</sub>* | elevation of the bottom of an orifice's opening (ft) |
+| *Z<sub>W</sub>* | elevation of a weir's crest in its lowest position (ft) |
+| *α* | generic coefficient |
+| *β* | the square root of a conduit's slope divided by its roughness |
+| *∆t* | time step (sec) |
+| *ε* | convergence tolerance |
+| $\epsilon$ | Darcy-Weisbach roughness length (ft) |
+| *γ* | exponent in power law cross section shape |
+| *η* | Manning's roughness coefficient (sec/ft<sup>1/3</sup>) $\left( equal\ to\ \frac{n}{1.486} \right)$ |
+| *σ* | inertial damping factor |
+| *θ* | time weighting factor, relaxation factor, or subtended angle |
+| *φ* | distance weighting factor |
+| *θ<sub>d</sub>* | soil moisture deficit (dimensionless) |
+| *μ* | kinematic viscosity (ft<sup>2</sup>/sec) |
+| *ω* | pump speed setting or degree to which a regulator is opened |
+| $\psi_{S}$ | soil capillary suction head (ft) |
+| *Ψ* | conduit section factor (equal to $AR^{2/3}$) (ft<sup>8/3</sup>) |
+| *Ψ<sub>full</sub>* | section factor of a conduit at full depth (ft<sup>8/3</sup>) |
+| *Ψ<sub>max</sub>* | maximum section factor for a conduit (ft<sup>8/3</sup>) |
 
-  *A~full~*                     full cross section area of a conduit (ft^2^)
-
-  *A~max~*                      cross section area at depth where a conduit's section factor is
-                                a maximum (ft^2^)
-
-  *A~O~*                        area of an orifice opening (ft^2^)
-
-  *A~SP~*                       surface area of water ponded above a node (ft^2^)
-
-  *A~S~*                        surface area of a node and its connected links (ft^2^)
-
-  *A~SL~*                       surface area of flow within a link (ft^2^)
-
-  *A~S~^last^*                  surface area of a node the last time it was not surcharged
-                                (ft^2^)
-
-  *A~Smin~*                     minimum surface area associated with a node (ft^2^)
-
-  *A~SN~*                       surface area associated with a storage node (ft^2^)
-
-  *A~W~*                        area of a weir opening (ft^2^)
-
-  *b*                           bottom or top width (depending on shape) of a conduit's cross
-                                section (ft)
-
-  *c*                           wave celerity (ft/sec)
-
-  *c~I~*                        inlet control constant for submerged culverts
-
-  *c~W~*                        coefficient for a weir-type flow divider (ft^1/2^/sec)
-
-  *C~d~*                        orifice discharge coefficient (dimensionless)
-
-  *C~HW~*                       Hazen-Williams C-factor coefficient (dimensionless)
-
-  *C~O~*                        equivalent orifice constant for a surcharged weir (ft^5/2^/sec)
-
-  *Cr*                          Courant number (dimensionless)
-
-  *C~w~*                        weir coefficient (ft^1/2^/sec)
-
-  *D*                           circular pipe diameter (ft)
-
-  *e~t~*                        potential evaporation rate at time *t* (ft/sec)
-
-  *E*                           elevation of a node's invert (ft)
-
-  *E~C~*                        specific head at critical depth (ft)
-
-  *f*                           Darcy-Weisbach friction factor (dimensionless)
-
-  *f~C~*                        monthly climate adjustment factor (dimensionless)
-
-  *f~E~*                        storage node evaporation factor (dimensionless)
-
-  *f~S~*                        weir submergence adjustment factor (dimensionless)
-
-  *F*                           cumulative depth of infiltrated water (ft)
-
-  *Fr*                          Froude number (dimensionless)
-
-  *g*                           acceleration of gravity (ft/sec^2^)
-
-  *h~L~*                        minor head loss per unit length of a conduit (ft/ft)
-
-  *h~W~*                        height of the opening for a weir-type flow divider node (ft)
-
-  *H*                           hydraulic head (ft)
-
-  *H~crown~*                    elevation of the crown of the highest conduit at a node (ft)
-
-  *H~e~*                        effective head seen by an orifice or weir (ft)
-
-  *H~IS~*                       minimum head at a culvert's inlet for it to be submerged (ft)
-
-  *H~IU~*                       maximum head at a culvert's inlet for it to be unsubmerged (ft)
-
-  *H~max~*                      maximum head at a node before flooding occurs (ft)
-
-  *H~Outfall~*                  head assigned to an outfall node (ft)
-
-  *K*                           cross section flow conductance (cfs) (equal to $nAR^{2/3}$)
-
-  *K~I~*                        inlet control constant for unsubmerged culverts
-
-  *K~m~*                        minor loss coefficient (dimensionless)
-
-  *K~S~*                        soil saturated hydraulic conductivity (ft/sec)
-
-  *L*                           conduit length or weir crest length (ft)
-
-  *L~e~*                        effective weir crest length (ft)
-
-  *M~I~*                        inlet control exponent for unsubmerged culverts
-
-  *n*                           Manning roughness coefficient (sec/m^1/3^)
-
-  *P*                           wetted perimeter of a conduit's cross section (ft)
-
-  *q~E~*                        uniformly distributed evaporation rate along a channel (cfs/ft)
-
-  *q~L~*                        total uniformly distributed outflow rate along a conduit
-                                (cfs/ft)
-
-  *q~MIN~*                      minimum flow needed to activate a flow divider node (cfs)
-
-  *q~S~*                        uniformly distributed seepage rate along a conduit (cfs/ft)
-
-  *q~SN~*                       seepage rate per unit area for a storage node (cfs/ft^2^)
-
-  *Q*                           flow rate within a conduit, pump, or regulator link (cfs)
-
-  *Q~div~*                      flow rate diverted to a second outflow conduit from a flow
-                                divider node (cfs)
-
-  *Q~EN~*                       evaporation loss rate from a storage unit node (cfs)
-
-  *Q~full~*                     normal uniform flow rate for a full conduit (cfs)
-
-  *Q~IC~*                       culvert flow rate under inlet control (cfs)
-
-  *Q~in~*                       total inflow rate to a node (cfs)
-
-  *Q~LN~*                       total loss rate from a storage unit node (cfs)
-
-  *Q~norm~*                     normal uniform flow rate (cfs)
-
-  *Q~out~*                      total outflow rate leaving a node (cfs)
-
-  *Q~ovfl~*                     excess flow that overflows a node (cfs)
-
-  $${\overline{Q}}_{net}$$      average net inflow minus outflow over a time step (cfs)
-
-  *Q~SN~*                       seepage loss rate from a storage node (cfs)
-
-  *R*                           hydraulic radius of flow cross section in a conduit (ft)
-
-  $$\overline{R}$$              average hydraulic radius of flow cross sections along a conduit
-                                (ft)
-
-  *Re*                          Reynolds number (dimensionless)
-
-  *R~full~*                     hydraulic radius of a conduit cross section when full (ft)
-
-  *s*                           seepage rate per unit area for a conduit (ft/sec)
-
-  *Scf*                         culvert slope correction factor
-
-  *S~f~*                        friction slope (ft/ft)
-
-  *S~0~*                        conduit slope (ft/ft)
-
-  *t*                           time (sec)
-
-  *U*                           flow velocity at a point along a conduit (ft/sec)
-
-  $$\overline{U}$$              average flow velocity along a conduit (ft/sec)
-
-  *V*                           node assembly volume (ft^3^)
-
-  *V~P~*                        ponded volume (ft^3^)
-
-  *V~N~*                        storage node volume (ft^3^)
-
-  *V~Nfull~*                    volume of a storage node when full (ft^3^)
-
-  *W*                           top width of the water surface at a point along a conduit (ft)
-
-  $$\overline{W}$$              average top width of the water surface along a conduit (ft)
-
-  *W~max~*                      maximum width of a conduit cross section (ft)
-
-  *x*                           horizontal distance (ft)
-
-  *y*                           vertical distance (ft)
-
-  *y~I~*                        inlet control constant for submerged culverts
-
-  *Y*                           depth of flow within a conduit or of water in a storage unit
-                                (ft)
-
-  $$\overline{Y}$$              average depth of flow along a conduit (ft)
-
-  *Y~c~*                        critical depth within a conduit at a given flow rate (ft)
-
-  *Y~full~*                     full depth of a conduit, orifice opening or weir height (ft)
-
-  *Y~N~*                        normal flow depth (ft)
-
-  *Y\**                         smaller of the critical and normal flow depth in a conduit (ft)
-
-  *Z*                           elevation of a conduit's invert (ft)
-
-  *Z~O~*                        elevation of the bottom of an orifice's opening (ft)
-
-  *Z~W~*                        elevation of a weir's crest in its lowest position (ft)
-
-  *α*                           generic coefficient
-
-  *β*                           the square root of a conduit's slope divided by its roughness
-
-  *∆t*                          time step (sec)
-
-  *ε*                           convergence tolerance
-
-  $$\epsilon$$                  Darcy-Weisbach roughness length (ft)
-
-  *γ*                           exponent in power law cross section shape
-
-  *η*                           Manning's roughness coefficient (sec/ft^1/3^)
-                                $\left( equal\ to\ \frac{n}{1.486} \right)$
-
-  *σ*                           inertial damping factor
-
-  *θ*                           time weighting factor, relaxation factor, or subtended angle
-
-  *φ*                           distance weighting factor
-
-  *θ~d~*                        soil moisture deficit (dimensionless)
-
-  *μ*                           kinematic viscosity (ft^2^/sec)
-
-  *ω*                           pump speed setting or degree to which a regulator is opened
-
-  $$\psi_{S}$$                  soil capillary suction head (ft)
-
-  *Ψ*                           conduit section factor (equal to $AR^{2/3}$) (ft^8/3^)
-
-  *Ψ~full~*                     section factor of a conduit at full depth (ft^8/3^)
-
-  *Ψ~max~*                      maximum section factor for a conduit (ft^8/3^)
-  ----------------------------------------------------------------------------------------------
 
 # - SWMM Overview
 
@@ -1079,32 +958,22 @@ are computed and reported. This process is represented mathematically
 with the following general set of equations that are solved at each time
 step as the simulation unfolds:
 
-  ------------------------------------------------------------------------
-        $$X_{t} = f(X_{t - 1},I_{t},P)$$                             (1-1)
-  ----- ---------------------------------------------------------- -------
-        $$Y_{t} = g(X_{t},P)$$                                       (1-2)
 
-  ------------------------------------------------------------------------
+$$X_{t} = f(X_{t - 1},I_{t},P) \qquad \text{(1-1)}$$
+
+$$Y_{t} = g(X_{t},P) \qquad \text{(1-2)}$$
 
 where
 
-  -----------------------------------------------------------------------------
-  *X~t~*   =   a vector of state variables at time *t*,
-  -------- --- ----------------------------------------------------------------
-  *Y~t~*   =   a vector of output variables at time *t*,
+| Symbol | | Description |
+| --- | --- | --- |
+| *X<sub>t</sub>* | = | a vector of state variables at time *t* |
+| *Y<sub>t</sub>* | = | a vector of output variables at time *t* |
+| *I<sub>t</sub>* | = | a vector of inputs at time *t* |
+| *P* | = | a vector of constant parameters |
+| *f* | = | a vector-valued state transition function |
+| *g* | = | a vector-valued output transform function |
 
-  *I~t~*   =   a vector of inputs at time *t*,
-
-  *P*      =   a vector of constant parameters,
-
-  *f*      =   a vector-valued state transition function,
-
-  *g*      =   a vector-valued output transform function,
-  -----------------------------------------------------------------------------
-
-Figure 1-4 depicts the simulation process in block diagram fashion.
-
-<figure>
 <img src="VolumeII/media/media/image4.png" style="width:6.5in;height:2.48611in"
 alt="StateTransition.png" />
 <figcaption><p><span id="_Toc401645530"
@@ -1112,7 +981,7 @@ class="anchor"></span><strong>Figure 1‑4 Block diagram of SWMM's state
 transition process</strong></p></figcaption>
 </figure>
 
-The variables that make up the state vector *X~t~* are listed in Table
+The variables that make up the state vector *X<sub>t</sub>* are listed in Table
 1-3. This is a surprisingly small number given the comprehensive nature
 of SWMM. All other quantities can be computed from these variables,
 external inputs, and fixed input parameters. The meaning of some of the
@@ -1126,10 +995,10 @@ discussed in other sections of this set of manuals.
 | Runoff         | *d*          | Depth of runoff on a            | 0          |
 |                |              | subcatchment surface            |            |
 +----------------+--------------+---------------------------------+------------+
-| Infiltration\* | *t~p~*       | Equivalent time on the Horton   | 0          |
+| Infiltration\* | *t<sub>p</sub>*       | Equivalent time on the Horton   | 0          |
 |                |              | curve                           |            |
 |                +--------------+---------------------------------+------------+
-|                | *F~e~*       | Cumulative excess infiltration  | 0          |
+|                | *F<sub>e</sub>*       | Cumulative excess infiltration  | 0          |
 |                |              | volume                          |            |
 |                +--------------+---------------------------------+------------+
 |                | *Fu*         | Upper zone moisture content     | 0          |
@@ -1143,10 +1012,10 @@ discussed in other sections of this set of manuals.
 |                | *S*          | Soil moisture storage capacity  | User       |
 |                |              | remaining                       | supplied   |
 +----------------+--------------+---------------------------------+------------+
-| Groundwater    | *θ~u~*       | Unsaturated zone moisture       | User       |
+| Groundwater    | *θ<sub>u</sub>*       | Unsaturated zone moisture       | User       |
 |                |              | content                         | supplied   |
 |                +--------------+---------------------------------+------------+
-|                | *d~L~*       | Depth of saturated zone         | User       |
+|                | *d<sub>L</sub>*       | Depth of saturated zone         | User       |
 |                |              |                                 | supplied   |
 +----------------+--------------+---------------------------------+------------+
 | Snowmelt       | *wsnow*      | Snow pack depth                 | User       |
@@ -1169,19 +1038,19 @@ discussed in other sections of this set of manuals.
 |                | *A*          | Flow area in a link             | Inferred   |
 |                |              |                                 | from *Q*   |
 +----------------+--------------+---------------------------------+------------+
-| Water Quality  | *t~sweep~*   | Time since a subcatchment was   | User       |
+| Water Quality  | *t<sub>sweep</sub>*   | Time since a subcatchment was   | User       |
 |                |              | last swept                      | supplied   |
 |                +--------------+---------------------------------+------------+
-|                | *m~B~*       | Pollutant buildup on            | User       |
+|                | *m<sub>B</sub>*       | Pollutant buildup on            | User       |
 |                |              | subcatchment surface            | supplied   |
 |                +--------------+---------------------------------+------------+
-|                | *m~P~*       | Pollutant mass ponded on        | 0          |
+|                | *m<sub>P</sub>*       | Pollutant mass ponded on        | 0          |
 |                |              | subcatchment                    |            |
 |                +--------------+---------------------------------+------------+
-|                | *c~N~*       | Concentration of pollutant at a | User       |
+|                | *c<sub>N</sub>*       | Concentration of pollutant at a | User       |
 |                |              | node                            | supplied   |
 |                +--------------+---------------------------------+------------+
-|                | *c~L~*       | Concentration of pollutant in a | User       |
+|                | *c<sub>L</sub>*       | Concentration of pollutant in a | User       |
 |                |              | link                            | supplied   |
 +----------------+--------------+---------------------------------+------------+
 
@@ -1190,7 +1059,7 @@ discussed in other sections of this set of manuals.
 \*Only a sub-set of these variables is used, depending on the user's
 choice of infiltration method.
 
-Examples of user-supplied input variables *I~t~* that produce changes to
+Examples of user-supplied input variables *I<sub>t</sub>* that produce changes to
 these state variables include:
 
 - meteorological conditions, such as precipitation, air temperature,
@@ -1206,7 +1075,7 @@ these state variables include:
 
 - control settings for pumps and regulators.
 
-The output vector *Y~t~* that SWMM computes from its updated state
+The output vector *Y<sub>t</sub>* that SWMM computes from its updated state
 variables contains such reportable quantities as:
 
 - runoff flow rate and pollutant concentrations from each subcatchment
@@ -1245,7 +1114,7 @@ The process begins by reading a description of each object and its
 parameters from an input file whose format is described in the SWMM 5
 Users Manual (US EPA, 2010). Next the values of all state variables are
 initialized, as is the current simulation time (T), runoff time
-(T~roff~), and reporting time (T~rpt~).
+(T<sub>roff</sub>), and reporting time (T<sub>rpt</sub>).
 
 <figure>
 <img src="VolumeII/media/media/image5.png" style="width:6.5in;height:8.14097in"
@@ -1256,8 +1125,8 @@ procedure</strong></p></figcaption>
 </figure>
 
 The program then enters a loop that first determines the time T1 at the
-end of the current routing time step (∆T~rout~). If the current runoff
-time T~roff~ is less than T1, then new runoff calculations are
+end of the current routing time step (∆T<sub>rout</sub>). If the current runoff
+time T<sub>roff</sub> is less than T1, then new runoff calculations are
 repeatedly made and the runoff time updated until it equals or exceeds
 time T1. Each set of runoff calculations accounts for any precipitation,
 evaporation, snowmelt, infiltration, ground water seepage, overland
@@ -1271,8 +1140,8 @@ velocity in each conduit, the water elevation at each node, the pumping
 rate for each pump, and the water level and volume in each storage unit.
 In addition, new values for the concentrations of all pollutants at each
 node and within each conduit are computed. Next a check is made to see
-if the current reporting time T~rpt~ falls within the interval from T to
-T1. If it does, then a new set of output results at time T~rpt~ are
+if the current reporting time T<sub>rpt</sub> falls within the interval from T to
+T1. If it does, then a new set of output results at time T<sub>rpt</sub> are
 interpolated from the results at times T and T1 and are saved to an
 output file. The reporting time is also advanced by the reporting time
 step ∆T~rpt.~ The simulation time T is then updated to T1 and the
@@ -1330,8 +1199,8 @@ the unit of length and seconds as the unit of time.
 |                        |                      | (cms)                |
 |                        | gallons/min (gpm)    |                      |
 |                        |                      | liters/sec (lps)     |
-|                        | 10^6^ gallons/day    |                      |
-|                        | (mgd)                | 10^6^ liters/day     |
+|                        | 10<sup>6</sup> gallons/day    |                      |
+|                        | (mgd)                | 10<sup>6</sup> liters/day     |
 |                        |                      | (mld)                |
 +------------------------+----------------------+----------------------+
 | Hydraulic Conductivity | inches/hour          | millimeters/hour     |
@@ -1342,7 +1211,7 @@ the unit of length and seconds as the unit of time.
 +------------------------+----------------------+----------------------+
 | Length                 | feet                 | meters               |
 +------------------------+----------------------+----------------------+
-| Manning's n            | seconds/meter^1/3^   | seconds/meter^1/3^   |
+| Manning's n            | seconds/meter<sup>1/3</sup>   | seconds/meter<sup>1/3</sup>   |
 +------------------------+----------------------+----------------------+
 | Pollutant Buildup      | mass/acre            | mass/hectare         |
 +------------------------+----------------------+----------------------+
@@ -1550,21 +1419,18 @@ The required input parameters for a conduit link are:
   each end of the conduit. Then from the      
   diagram on the right:                       
 
-  ----------------------------------------------------------------------------------------------------------------------
 
-  --------------------------------------------------------------------------
-        $$\mathrm{\Delta}x = \sqrt{L^{2} - \mathrm{\Delta}y^{2}}$$   (2-1)
-  ----- ------------------------------------------------------------ -------
 
-  --------------------------------------------------------------------------
+$$\mathrm{\Delta}x = \sqrt{L^{2} - \mathrm{\Delta}y^{2}} \qquad \text{(2-1)}$$
 
-and the conduit slope *S~0~* is:
 
-  ------------------------------------------------------------------------
-        $$S_{0} = \frac{\mathrm{\Delta}y}{\mathrm{\Delta}x}$$      (2-2)
-  ----- ---------------------------------------------------------- -------
 
-  ------------------------------------------------------------------------
+and the conduit slope *S<sub>0</sub>* is:
+
+
+$$S_{0} = \frac{\mathrm{\Delta}y}{\mathrm{\Delta}x} \qquad \text{(2-2)}$$
+
+
 
 SWMM does not allow a slope of 0. Therefore it imposes a minimum value
 of 0.001 ft on *∆y*. It also allows the user to set a non-zero value for
@@ -1744,42 +1610,28 @@ hydrograph shape. This behavior is depicted in Figure 2-2 from Miller
 100-foot wide rectangular channel of 1% slope with a Manning's *n* of
 0.06.
 
-  -----------------------------------------------------------------------
   **Feature**                **Dynamic Wave**       **Kinematic Wave**
-  ----------------------- ----------------------- -----------------------
-  Network topology          branched and looped        branched only
 
-  Flow splits                       yes           with flow divider nodes
+|  |  |  |
+| --- | --- | --- |
+| Network topology | branched and looped | branched only |
+| Flow splits | yes | with flow divider nodes |
+| Adverse slopes | yes | no |
+| Invert offsets | yes | ignored |
+| Pumping | yes | only from storage nodes |
+| Weirs and orifices | yes | only from storage nodes |
+| Ponded overflows | yes | yes |
+| Lateral seepage | yes | yes |
+| Evaporation | yes | yes |
+| Minor losses | yes | no |
+| Culvert analysis | yes | no |
+| Hydrograph attenuation | yes | no |
+| Backwater effects | yes | no |
+| Surcharge / | yes | no |
+| Pressurization |  |  |
+| Reverse flow | yes | no |
+| Tidal effects | yes | no |
 
-  Adverse slopes                    yes                     no
-
-  Invert offsets                    yes                   ignored
-
-  Pumping                           yes           only from storage nodes
-
-  Weirs and orifices                yes           only from storage nodes
-
-  Ponded overflows                  yes                     yes
-
-  Lateral seepage                   yes                     yes
-
-  Evaporation                       yes                     yes
-
-  Minor losses                      yes                     no
-
-  Culvert analysis                  yes                     no
-
-  Hydrograph attenuation            yes                     no
-
-  Backwater effects                 yes                     no
-
-  Surcharge /                       yes                     no
-  Pressurization                                  
-
-  Reverse flow                      yes                     no
-
-  Tidal effects                     yes                     no
-  -----------------------------------------------------------------------
 
   : []{#_Toc484690417 .anchor}**Table 2‑1 Features and limitations of
   dynamic wave and kinematic wave solutions**
@@ -1895,35 +1747,29 @@ The conservation of mass and momentum for unsteady free surface flow
 through a channel or pipe are known as the St. Venant equations and can
 be expressed as:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial A}{\partial t} + \frac{\partial Q}{\partial x} = 0$$                                                                           Continuity      (3-1)
-  ----- ----------------------------------------------------------------------------------------------------------------------------------------------- ------------- -------
-                                                                                                                                                                      
 
-        $$\frac{\partial Q}{\partial t} + \frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} + gA\frac{\partial H}{\partial x} + gAS_{f} = 0$$   Momentum        (3-2)
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{\partial A}{\partial t} + \frac{\partial Q}{\partial x} = 0 \qquad \text{Continuity} \qquad \text{(3-1)}$$
+
+|  |  |  |  |
+| --- | --- | --- | --- |
+|  | $\frac{\partial Q}{\partial t} + \frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} + gA\frac{\partial H}{\partial x} + gAS_{f} = 0$ | Momentum | (3-2) |
+
 
 where
 
-  ----------------------------------------------------------------------------
   *x*      =   distance (ft)
-  -------- --- ---------------------------------------------------------------
-  *t*      =   time (sec)
 
-  *A*      =   flow cross-sectional area (ft^2^)
+|  |  |  |
+| --- | --- | --- |
+| *t* | = | time (sec) |
+| *A* | = | flow cross-sectional area (ft<sup>2</sup>) |
+| *Q* | = | flow rate (cfs) |
+| *H* | = | hydraulic head of water in the conduit (*Z + Y*) (ft) |
+| *Z* | = | conduit invert elevation (ft) |
+| *Y* | = | conduit water depth (ft) |
+| *S<sub>f< | /sub | >*   =   friction slope (head loss per unit length) |
+| *g* | = | acceleration of gravity (ft/sec<sup>2</sup>) |
 
-  *Q*      =   flow rate (cfs)
-
-  *H*      =   hydraulic head of water in the conduit (*Z + Y*) (ft)
-
-  *Z*      =   conduit invert elevation (ft)
-
-  *Y*      =   conduit water depth (ft)
-
-  *S~f~*   =   friction slope (head loss per unit length)
-
-  *g*      =   acceleration of gravity (ft/sec^2^)
-  ----------------------------------------------------------------------------
 
 The derivation of these equations can be found in standard texts such as
 Henderson (1966), Cunge et al. (1980) and French (1985). The assumptions
@@ -1938,27 +1784,26 @@ on which they are based are:
 4.  boundary friction can be represented in the same manner as for
     steady flow.
 
-The friction slope *S~f~* can be expressed in terms of the Manning
+The friction slope *S<sub>f</sub>* can be expressed in terms of the Manning
 equation used to model steady uniform flow:
 
-  -----------------------------------------------------------------------------------
-        $$S_{f} = \left( \frac{n}{1.486} \right)^{2}\frac{Q|U|}{AR^{4/3}}$$   (3-3)
-  ----- --------------------------------------------------------------------- -------
 
-  -----------------------------------------------------------------------------------
+$$S_{f} = \left( \frac{n}{1.486} \right)^{2}\frac{Q|U|}{AR^{4/3}} \qquad \text{(3-3)}$$
+
+
 
 where
 
-  -------------------------------------------------------------------------
-  *n*   =   the Manning roughness coefficient (sec/m^1/3^)
-  ----- --- ---------------------------------------------------------------
-  *R*   =   the hydraulic radius of the flow cross-section (ft)
+  *n*   =   the Manning roughness coefficient (sec/m<sup>1/3</sup>)
 
-  *U*   =   flow velocity, equal to $\frac{Q}{A}$ (ft/sec).
-  -------------------------------------------------------------------------
+|  |  |  |
+| --- | --- | --- |
+| *R* | = | the hydraulic radius of the flow cross-section (ft) |
+| *U* | = | flow velocity, equal to $\frac{Q}{A}$ (ft/sec). |
 
-and 1.486 converts from m^1/3^ to ft^1/3^. Use of the absolute value
-sign on the velocity term makes *S~f~* a directional quantity (since *Q*
+
+and 1.486 converts from m<sup>1/3</sup> to ft<sup>1/3</sup>. Use of the absolute value
+sign on the velocity term makes *S<sub>f</sub>* a directional quantity (since *Q*
 can be either positive or negative) and ensures that the frictional
 force always opposes the flow. Manning roughness coefficients for wide
 range of channel surfaces and pipe materials can be found in Appendix G.
@@ -1975,11 +1820,10 @@ The continuity equation 3-1 can be combined with the momentum equation
 3-2 to produce the following form of the momentum equation for a conduit
 (see sidebar below for details):
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial Q}{\partial t} = 2U\frac{\partial A}{\partial t} + U^{2}\frac{\partial A}{\partial x} - gA\frac{\partial H}{\partial x} - gAS_{f}$$                 (3-4)
-  ----- ------------------------------------------------------------------------------------------------------------------------------------------------------ ------------- -------
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{\partial Q}{\partial t} = 2U\frac{\partial A}{\partial t} + U^{2}\frac{\partial A}{\partial x} - gA\frac{\partial H}{\partial x} - gAS_{f} \qquad \text{(3-4)}$$
+
+
 
 While this equation can be used to compute the time trajectory of flow
 in a conduit, another relationship is needed to do likewise for heads.
@@ -2006,37 +1850,35 @@ each link connected to it. Conservation of flow for the assembly
 requires that the change in volume with respect to time equal the
 difference between inflow and outflow. In equation terms:
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial V}{\partial t} = \frac{\partial V}{\partial H}\frac{\partial H}{\partial t} = A_{S}\frac{\partial H}{\partial t} = \sum_{}^{}Q$$   (3-5)
-  ----- --------------------------------------------------------------------------------------------------------------------------------------------------- -------
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{\partial V}{\partial t} = \frac{\partial V}{\partial H}\frac{\partial H}{\partial t} = A_{S}\frac{\partial H}{\partial t} = \sum_{}^{}Q \qquad \text{(3-5)}$$
+
+
 
 where:
 
-  ----------------------------------------------------------------------------
-  *V*      =   node assembly volume (ft^3^)
-  -------- --- ---------------------------------------------------------------
-  *A~S~*   =   node assembly surface area (ft^2^)
+  *V*      =   node assembly volume (ft<sup>3</sup>)
 
-  *ΣQ*     =   net flow into the node assembly (inflow -- outflow) (cfs)
-  ----------------------------------------------------------------------------
+|  |  |  |
+| --- | --- | --- |
+| *A<sub>S< | /sub | >*   =   node assembly surface area (ft<sup>2</sup>) |
+| *ΣQ* | = | net flow into the node assembly (inflow -- outflow) (cfs) |
+
 
 The $\sum_{}^{}Q$ term includes the flow in the conduits connected to
 the node as well as any externally imposed inflows such as wet weather
 runoff or dry weather sanitary flow.
 
 Each node assembly's surface area consists of the node's storage surface
-area *A~SN~* (if it's a storage node) plus the surface area contributed
+area *A<sub>SN</sub>* (if it's a storage node) plus the surface area contributed
 by the links connected to it, $\sum_{}^{}A_{SL}$, where *A~SL\ ~*is the
 surface area contributed by a connecting link. Thus the node continuity
 equation can be written as:
 
-  -------------------------------------------------------------------------------------------------
-        $$\frac{\partial H}{\partial t} = \frac{\sum_{}^{}Q}{A_{SN} + \sum_{}^{}A_{SL}}$$   (3-6)
-  ----- ----------------------------------------------------------------------------------- -------
 
-  -------------------------------------------------------------------------------------------------
+$$\frac{\partial H}{\partial t} = \frac{\sum_{}^{}Q}{A_{SN} + \sum_{}^{}A_{SL}} \qquad \text{(3-6)}$$
+
+
 
 The flow depth at the end of a conduit connected to a node can be
 computed as the difference between the head at the node and the invert
@@ -2058,87 +1900,70 @@ subsequent chapters of this manual.
 The spatial and temporal derivatives in equations 3-4 and 3-6 can be
 replaced with the following finite difference approximations:
 
-  --------------------------------------------------------------------------------------------------------
-        $$\frac{\partial A}{\partial x} = \frac{\left( A_{2} - A_{1} \right)}{L}$$                 (3-7)
-  ----- ---------------------------------------------------------------------------- ------------- -------
 
-  --------------------------------------------------------------------------------------------------------
+$$\frac{\partial A}{\partial x} = \frac{\left( A_{2} - A_{1} \right)}{L} \qquad \text{(3-7)}$$
 
-  --------------------------------------------------------------------------------------------------------
-        $$\frac{\partial H}{\partial x} = \frac{\left( H_{2} - H_{1} \right)}{L}$$                 (3-8)
-  ----- ---------------------------------------------------------------------------- ------------- -------
 
-  --------------------------------------------------------------------------------------------------------
 
-  ----------------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial A}{\partial t} = \frac{\mathrm{\Delta}\overline{A}}{\mathrm{\Delta}t}$$                 (3-9)
-  ----- ------------------------------------------------------------------------------------------ ------------- -------
 
-  ----------------------------------------------------------------------------------------------------------------------
+$$\frac{\partial H}{\partial x} = \frac{\left( H_{2} - H_{1} \right)}{L} \qquad \text{(3-8)}$$
 
-  ------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial Q}{\partial t} = \frac{\mathrm{\Delta}Q}{\mathrm{\Delta}t}$$                 (3-10)
-  ----- ------------------------------------------------------------------------------- ------------- --------
 
-  ------------------------------------------------------------------------------------------------------------
 
-  ------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial H}{\partial t} = \frac{\mathrm{\Delta}H}{\mathrm{\Delta}t}$$                 (3-11)
-  ----- ------------------------------------------------------------------------------- ------------- --------
 
-  ------------------------------------------------------------------------------------------------------------
+$$\frac{\partial A}{\partial t} = \frac{\mathrm{\Delta}\overline{A}}{\mathrm{\Delta}t} \qquad \text{(3-9)}$$
+
+
+
+
+$$\frac{\partial Q}{\partial t} = \frac{\mathrm{\Delta}Q}{\mathrm{\Delta}t} \qquad \text{(3-10)}$$
+
+
+
+
+$$\frac{\partial H}{\partial t} = \frac{\mathrm{\Delta}H}{\mathrm{\Delta}t} \qquad \text{(3-11)}$$
+
+
 
 where
 
-  ----------------------------------------------------------------------------------------------------------
-  *A~1~*                =   flow area at the upstream end of the conduit (ft^2^)
-  --------------------- --- --------------------------------------------------------------------------------
-  *A~2~*                =   flow area at the downstream end of the conduit (ft^2^)
+  *A<sub>1</sub>*                =   flow area at the upstream end of the conduit (ft<sup>2</sup>)
 
-  *H~1~*                =   hydraulic head at the upstream end of the conduit (ft)
+|  |  |  |
+| --- | --- | --- |
+| *A<sub>2</sub>* |  | =   flow area at the downstream end of the conduit (ft<sup>2</sup>) |
+| *H<sub>1</sub>* |  | =   hydraulic head at the upstream end of the conduit (ft) |
+| *H<sub>2</sub>* |  | =   hydraulic head at the downstream end of the conduit (ft) |
+| *L* | = | conduit length (ft) |
+| *∆t* | = | time step (sec) |
+| *∆*$\ \overline{A}$ | = | change in average flow area, $\left( {\overline{A}}^{t + \mathrm{\Delta}t} - {\overline{A}}^{\ t} \right)$, over time step *∆t* (ft<sup>2</sup>) |
+| *∆Q* | = | change in conduit flow, $\left( Q^{t + \mathrm{\Delta}t} - Q^{t} \right)$, over time step *∆t* (cfs) |
+| *∆H* | = | change in nodal head, $\left( H^{t + \mathrm{\Delta}t} - H^{t} \right)$, over time step *∆t* (ft). |
 
-  *H~2~*                =   hydraulic head at the downstream end of the conduit (ft)
-
-  *L*                   =   conduit length (ft)
-
-  *∆t*                  =   time step (sec)
-
-  *∆*$\ \overline{A}$   =   change in average flow area,
-                            $\left( {\overline{A}}^{t + \mathrm{\Delta}t} - {\overline{A}}^{\ t} \right)$,
-                            over time step *∆t* (ft^2^)
-
-  *∆Q*                  =   change in conduit flow, $\left( Q^{t + \mathrm{\Delta}t} - Q^{t} \right)$, over
-                            time step *∆t* (cfs)
-
-  *∆H*                  =   change in nodal head, $\left( H^{t + \mathrm{\Delta}t} - H^{t} \right)$, over
-                            time step *∆t* (ft).
-  ----------------------------------------------------------------------------------------------------------
 
 with the superscripts referring to time periods.
 
 Substituting these finite difference approximations into the link
-momentum Equation 3-4, replacing *S~f~* with Equation 3-3, and replacing
+momentum Equation 3-4, replacing *S<sub>f</sub>* with Equation 3-3, and replacing
 *A, U*, and *R* with their average values over the conduit length (as
 indicated by over scores) allows the finite difference form of the link
 momentum equation to be written as:
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{\mathrm{\Delta}Q}{\mathrm{\Delta}t} = 2\overline{U}\frac{\mathrm{\Delta}\overline{A}}{\mathrm{\Delta}t} + {\overline{U}}^{2}\frac{\left( A_{2} - A_{1} \right)}{L} - g\overline{A}\frac{\left( H_{2} - H_{1} \right)}{L} - g\eta^{2}\frac{Q\left| \overline{U} \right|}{{\overline{R}}^{4/3}}$$   (3-12)
-  ----- --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ---------
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{\mathrm{\Delta}Q}{\mathrm{\Delta}t} = 2\overline{U}\frac{\mathrm{\Delta}\overline{A}}{\mathrm{\Delta}t} + {\overline{U}}^{2}\frac{\left( A_{2} - A_{1} \right)}{L} - g\overline{A}\frac{\left( H_{2} - H_{1} \right)}{L} - g\eta^{2}\frac{Q\left| \overline{U} \right|}{{\overline{R}}^{4/3}} \qquad \text{(3-12)}$$
+
+
 
 where $\eta = \frac{n}{1.486}$. Average values for *A, U*, and *R* can
-be approximated using the heads *H~1~* and *H~2~* as described later on
+be approximated using the heads *H<sub>1</sub>* and *H<sub>2</sub>* as described later on
 in section 3.3.1.
 
 The finite difference form of the nodal continuity equation 3-6 is:
 
-  --------------------------------------------------------------------------------------------------------------
-        $$\frac{\mathrm{\Delta}H}{\mathrm{\Delta}t} = \frac{\sum_{}^{}Q}{A_{SN} + \sum_{}^{}A_{SL}}$$   (3-13)
-  ----- ----------------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------------
+$$\frac{\mathrm{\Delta}H}{\mathrm{\Delta}t} = \frac{\sum_{}^{}Q}{A_{SN} + \sum_{}^{}A_{SL}} \qquad \text{(3-13)}$$
+
+
 
 Previous versions of SWMM used an explicit forward Euler method (or more
 precisely the two-step Modified Euler method) to solve Equation 3-12,
@@ -2151,37 +1976,38 @@ SWMM 5 uses an implicit backwards Euler method instead to provide
 improved stability (Ascher and Petzold, 1998). Under this scheme
 Equation 3-12 is re-written as:
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------
-       $$Q^{t + \mathrm{\Delta}t} = \frac{Q^{t} + {\mathrm{\Delta}Q}_{inertia} + {\mathrm{\Delta}Q}_{pressure}}{1 + {\mathrm{\Delta}Q}_{friction}}$$   (3-14)
-  ---- ----------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$Q^{t + \mathrm{\Delta}t} = \frac{Q^{t} + {\mathrm{\Delta}Q}_{inertia} + {\mathrm{\Delta}Q}_{pressure}}{1 + {\mathrm{\Delta}Q}_{friction}} \qquad \text{(3-14)}$$
+
+
 
 where
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $${\mathrm{\Delta}Q}_{inertia} = 2\overline{U}\left( {\overline{A}}^{t + \mathrm{\Delta}t} - {\overline{A}}^{\ t} \right) + {\overline{U}}^{2}\frac{\left( A_{2} - A_{1} \right)}{L}\Delta t$$   (Inertial Term)      (3-14a)
-  ----- ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ ------------------ ---------
-        $${\mathrm{\Delta}Q}_{pressure} = - g\overline{A}\frac{\left( H_{2} - H_{1} \right)}{L}\Delta t$$                                                                                                (Pressure Term)      (3-14b)
 
-        $${\mathrm{\Delta}Q}_{friction} = g\eta^{2}\frac{\left| \overline{U} \right|\Delta t}{{\overline{R}}^{4/3}}$$                                                                                    (Friction Term)      (3-14c)
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$${\mathrm{\Delta}Q}_{inertia} = 2\overline{U}\left( {\overline{A}}^{t + \mathrm{\Delta}t} - {\overline{A}}^{\ t} \right) + {\overline{U}}^{2}\frac{\left( A_{2} - A_{1} \right)}{L}\Delta t \qquad \text{(Inertial Term)} \qquad \text{(3-14a)}$$
+
+|  |  |  |  |
+| --- | --- | --- | --- |
+|  | ${\mathrm{\Delta}Q}_{pressure} = - g\overline{A}\frac{\left( H_{2} - H_{1} \right)}{L}\Delta t$ | (Pressure Term) | (3-14b) |
+|  | ${\mathrm{\Delta}Q}_{friction} = g\eta^{2}\frac{\left| \overline{U} \right|\Delta t}{{\overline{R}}^{4/3}}$ | (Friction Term) | (3-14c) |
+
 
 and now *H* and the quantities *A*, $\overline{A}$, $\overline{U}$, and
 $\overline{R}$ derived from it are all evaluated at the new time *t+∆t*.
 The finite difference form of the nodal continuity equation 3-12 can be
 expressed as:
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-       $$H^{t + \mathrm{\Delta}t} = H^{t} + \frac{\frac{\Delta t}{2}\left( \sum_{}^{}{Q^{t} + \sum_{}^{}Q^{t + \mathrm{\Delta}t}} \right)}{\left( A_{SN} + \sum_{}^{}A_{SL} \right)^{t + \mathrm{\Delta}t}}$$   for non-outfall       (3-15a)
+
+$$H^{t + \mathrm{\Delta}t} = H^{t} + \frac{\frac{\Delta t}{2}\left( \sum_{}^{}{Q^{t} + \sum_{}^{}Q^{t + \mathrm{\Delta}t}} \right)}{\left( A_{SN} + \sum_{}^{}A_{SL} \right)^{t + \mathrm{\Delta}t}} \qquad \text{for non-outfall} \qquad \text{(3-15a)}$$
+
                                                                                                                                                                                                                 nodes              
-  ---- -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ------------------ ----------
-                                                                                                                                                                                                                                   
 
-       $$H^{t + \mathrm{\Delta}t} = H_{Outfall}$$                                                                                                                                                               for outfall nodes     (3-15b)
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|  |  |  |  |
+| --- | --- | --- | --- |
+|  | $H^{t + \mathrm{\Delta}t} = H_{Outfall}$ | for outfall nodes | (3-15b) |
 
-*H~Outfall~* is a user-supplied value that sets the head at a terminal
+
+*H<sub>Outfall</sub>* is a user-supplied value that sets the head at a terminal
 outfall node. It can be a constant value, a value extracted from a
 user-supplied time series, or the elevation of the critical or normal
 flow depth in the connecting conduit. For the latter option, critical or
@@ -2206,9 +2032,9 @@ computation time.
 Evaluation of the flow updating formula 3-14 requires values for the
 average area ($\overline{A}$), hydraulic radius ($\overline{R}$), and
 velocity ($\overline{U}$) for the conduit in question. These values are
-computed using heads *H~1~* and *H~2~* belonging to the most recently
-computed head estimates *H^last^* at either end of the conduit. The flow
-depth *Y~1~* at the upstream end of the conduit is computed as:
+computed using heads *H<sub>1</sub>* and *H<sub>2</sub>* belonging to the most recently
+computed head estimates *H<sup>last</sup>* at either end of the conduit. The flow
+depth *Y<sub>1</sub>* at the upstream end of the conduit is computed as:
 
 +----+----------------------------------+----------------------------------------------+--------+
 |    | $$Y_{1} = \left\{ \begin{matrix} | $$for\ H_{1} \leq Z_{1}$$                    | (3-16) |
@@ -2218,9 +2044,9 @@ depth *Y~1~* at the upstream end of the conduit is computed as:
 |    | \end{matrix} \right.\ $$         | $$for\ H_{1} > {Z_{1} + Y}_{full}$$          |        |
 +====+==================================+==============================================+========+
 
-where Z*~1~* is the elevation of the invert of the upstream end of the
-conduit and *Y~full~* is the full depth of the conduit. A similar
-expression using *H~2~* and *Z~2~* applies to *Y~2~* at the downstream
+where Z*<sub>1</sub>* is the elevation of the invert of the upstream end of the
+conduit and *Y<sub>full</sub>* is the full depth of the conduit. A similar
+expression using *H<sub>2</sub>* and *Z<sub>2</sub>* applies to *Y<sub>2</sub>* at the downstream
 end of the conduit.
 
 Values of $\overline{A}$ and $\overline{R}$ are computed from the
@@ -2228,20 +2054,19 @@ conduit's cross section geometry at the average flow depth
 $\frac{\overline{Y} = \left( Y_{1} + Y_{2} \right)}{2}$. Formulas for
 doing so are described in Chapter 5 of this manual. The average velocity
 $\overline{U}$ is found by dividing the most current flow value
-*Q^last^* by the average area $\overline{A}$.
+*Q<sup>last</sup>* by the average area $\overline{A}$.
 
 In addition, the average area and hydraulic radius used in the pressure
 and friction terms of equation 3-14 are upstream weighted to reflect how
 close a conduit's flow is to being supercritical. Supercritical flow is
 influenced only by upstream conditions (i.e., wave disturbances
 propagate only in the downstream direction). The weight is derived from
-the Froude number *Fr* for *Q^last^*:
+the Froude number *Fr* for *Q<sup>last</sup>*:
 
-  -------------------------------------------------------------------------------------------------------
-       $$Fr = \frac{\left| \overline{U} \right|}{\sqrt{g\frac{\overline{A}}{\overline{W}}}}$$   (3-17)
-  ---- ---------------------------------------------------------------------------------------- ---------
 
-  -------------------------------------------------------------------------------------------------------
+$$Fr = \frac{\left| \overline{U} \right|}{\sqrt{g\frac{\overline{A}}{\overline{W}}}} \qquad \text{(3-17)}$$
+
+
 
 where $\overline{W}$ is the top water surface width at the average depth
 $\overline{Y}$. (*Fr* is set to 0 for closed conduits flowing full). A
@@ -2258,33 +2083,32 @@ factor *σ* is then computed as:
 It is used to modify the average area in Equation 3-14b and the average
 hydraulic radius in Equation 3-14c as follows:
 
-  ------------------------------------------------------------------------------------------
-       $${\overline{A}}' = A_{1} + \ \sigma\left( \overline{A} - A_{1} \right)$$      (3-19)
-  ---- --------------------------------------------------------------------------- ---------
-                                                                                   
 
-       $${\overline{R}}' = R_{1} + \ \sigma\left( \overline{R} - R_{1} \right)$$      (3-20)
-  ------------------------------------------------------------------------------------------
+$${\overline{A}}' = A_{1} + \ \sigma\left( \overline{A} - A_{1} \right) \qquad \text{(3-19)}$$
 
-where *A~1~* and *R~1~* are the flow area and hydraulic radius,
-respectively, based on the upstream flow depth *Y~1~*.
+|  |  |  |
+| --- | --- | --- |
+|  | ${\overline{R}}' = R_{1} + \ \sigma\left( \overline{R} - R_{1} \right)$ | (3-20) |
+
+
+where *A<sub>1</sub>* and *R<sub>1</sub>* are the flow area and hydraulic radius,
+respectively, based on the upstream flow depth *Y<sub>1</sub>*.
 
 ### 3.3.2 Surface Area Calculations
 
 Under normal conditions the surface area that a conduit contributes to
-its upstream node (*A~SL1~*) is the average top width of the water
+its upstream node (*A<sub>SL1</sub>*) is the average top width of the water
 surface over the upstream half of the conduit times half of the
 conduit's length. In equation form:
 
-  ------------------------------------------------------------------------------------------------------------
-        $$A_{SL1} = \left( \frac{W\left( Y_{1} \right) + \ W(\overline{Y})}{2} \right)\frac{L}{2}$$   (3-21)
-  ----- --------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------
+$$A_{SL1} = \left( \frac{W\left( Y_{1} \right) + \ W(\overline{Y})}{2} \right)\frac{L}{2} \qquad \text{(3-21)}$$
+
+
 
 where *W(Y)* is the flow cross-section top width at a given flow depth
 *Y* and $\overline{Y} = \frac{\left( Y_{1} + Y_{2} \right)}{2}$. A
-similar expression applies to the downstream surface area *A~SL2~*.
+similar expression applies to the downstream surface area *A<sub>SL2</sub>*.
 *W(Y)* is computed from the conduit's cross-section geometry as
 described in Chapter 5.
 
@@ -2328,18 +2152,17 @@ discussed in Chapter 5 of this manual.
 
 Finally, to guard against the nodal head change formula 3-15 from
 becoming unbounded as surface area becomes vanishingly small, a global
-minimum surface area *A~Smin~* is imposed as follows:
+minimum surface area *A<sub>Smin</sub>* is imposed as follows:
 
-  -----------------------------------------------------------------------------------
-        $$A_{S} = max\left( A_{Smin},\ A_{SN} + \sum_{}^{}A_{SL} \right)$$   (3-22)
-  ----- -------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------
+$$A_{S} = max\left( A_{Smin},\ A_{SN} + \sum_{}^{}A_{SL} \right) \qquad \text{(3-22)}$$
+
+
 
 Its default value is 12.56 sq ft (i.e., the area of a 4-ft diameter
 manhole) which can be overridden by the user. This is strictly a
 computational device and does not add volume to a junction node (where
-*A~SN~ = 0*) nor change it into a storage node.
+*A<sub>SN</sub> = 0*) nor change it into a storage node.
 
 ![Pipe.bmp](VolumeII/media/media/image12.png){width="5.666666666666667in"
 height="2.622649825021872in"}
@@ -2353,35 +2176,35 @@ dynamic wave analysis**
 +-------------------------+-------------------------+--------------------------------------------------------------+
 | **Condition**           | **Criteria**            | **Adjustments**                                              |
 +=========================+=========================+:=============================================================+
-| Upstream Dry            | *Y~1~ = 0*              | *A~SL1~ = 0* if $H_{2} \leq Z_{1}$                           |
+| Upstream Dry            | *Y<sub>1</sub> = 0*              | *A<sub>SL1</sub> = 0* if $H_{2} \leq Z_{1}$                           |
 |                         |                         |                                                              |
-|                         | *Z~1~ \> E~1~*          | otherwise use Upstream Critical adjustment                   |
+|                         | *Z<sub>1</sub> \> E<sub>1</sub>*          | otherwise use Upstream Critical adjustment                   |
 +-------------------------+-------------------------+--------------------------------------------------------------+
-| Downstream Dry          | *Y~2~ = 0*              | *A~SL2~ = 0* if $H_{1} \leq Z_{2}$                           |
+| Downstream Dry          | *Y<sub>2</sub> = 0*              | *A<sub>SL2</sub> = 0* if $H_{1} \leq Z_{2}$                           |
 |                         |                         |                                                              |
-|                         | *Z~2~ \> E~2~*          | otherwise use Downstream Critical adjustment                 |
+|                         | *Z<sub>2</sub> \> E<sub>2</sub>*          | otherwise use Downstream Critical adjustment                 |
 +-------------------------+-------------------------+--------------------------------------------------------------+
-| Upstream Critical       | *Q \< 0*                | *Y~1~ = Y\**                                                 |
+| Upstream Critical       | *Q \< 0*                | *Y<sub>1</sub> = Y\**                                                 |
 |                         |                         |                                                              |
-|                         | *Z~1~ \> E~1~*          | *H~1~ = Y\* + Z~1~*                                          |
+|                         | *Z<sub>1</sub> \> E<sub>1</sub>*          | *H<sub>1</sub> = Y\* + Z<sub>1</sub>*                                          |
 |                         |                         |                                                              |
-|                         | *H~1~ -- Z~1~ \< Y\**   | *A~SL1~ = 0*                                                 |
+|                         | *H<sub>1</sub> -- Z<sub>1</sub> \< Y\**   | *A<sub>SL1</sub> = 0*                                                 |
 |                         |                         |                                                              |
 |                         |                         | $$A_{SL2} = L\frac{\left( \overline{W} + W_{2} \right)}{2}$$ |
 +-------------------------+-------------------------+--------------------------------------------------------------+
-| Downstream Critical     | *Q \> 0*                | *Y~2~ = Y\**                                                 |
+| Downstream Critical     | *Q \> 0*                | *Y<sub>2</sub> = Y\**                                                 |
 |                         |                         |                                                              |
-|                         | *Z~2~ \> E~2~*          | *H~2~ = Y\* + Z~2~*                                          |
+|                         | *Z<sub>2</sub> \> E<sub>2</sub>*          | *H<sub>2</sub> = Y\* + Z<sub>2</sub>*                                          |
 |                         |                         |                                                              |
-|                         | *H~2~ -- Z~2~ \< Y\**   | *A~SL2~ = 0*                                                 |
+|                         | *H<sub>2</sub> -- Z<sub>2</sub> \< Y\**   | *A<sub>SL2</sub> = 0*                                                 |
 |                         |                         |                                                              |
 |                         |                         | $$A_{SL1} = L\frac{\left( \overline{W} + W_{1} \right)}{2}$$ |
 +-------------------------+-------------------------+--------------------------------------------------------------+
 | Notes:                                                                                                           |
 |                                                                                                                  |
-| 1.  *E~1~* = upstream node invert elevation, *E~2~* = downstream node invert elevation.                          |
+| 1.  *E<sub>1</sub>* = upstream node invert elevation, *E<sub>2</sub>* = downstream node invert elevation.                          |
 |                                                                                                                  |
-| 2.  *Z~1\ ~*= upstream conduit invert elevation, *Z~2~* = downstream conduit invert elevation.                   |
+| 2.  *Z~1\ ~*= upstream conduit invert elevation, *Z<sub>2</sub>* = downstream conduit invert elevation.                   |
 |                                                                                                                  |
 | 3\. *Y\** = smaller of critical depth and normal depth at current conduit flow rate.                             |
 |                                                                                                                  |
@@ -2437,15 +2260,14 @@ this check:
 The last criterion can be limited to just slope, just Froude number or
 either slope or Froude number as a program option. When all of these
 criteria are satisfied the flow is limited to be no greater than that
-found by the Manning equation (*Q~norm~*) using upstream conditions:
+found by the Manning equation (*Q<sub>norm</sub>*) using upstream conditions:
 
-  --------------------------------------------------------------------------
-        $$Q_{norm} = \frac{1.49}{n}A_{1}R_{1}^{2/3}\sqrt{S_{0}}$$   (3-23)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$Q_{norm} = \frac{1.49}{n}A_{1}R_{1}^{2/3}\sqrt{S_{0}} \qquad \text{(3-23)}$$
 
-where *S~0~* is the conduit slope. Two other flow limiting conditions
+
+
+where *S<sub>0</sub>* is the conduit slope. Two other flow limiting conditions
 are also checked. If the conduit was assigned an upper flow limit then
 the flow is not allowed to exceed that value. If the conduit contains a
 flap gate and the computed flow is negative then the flow is set to 0.
@@ -2474,11 +2296,10 @@ inflow and outflow at the node. Thus $\frac{\partial V}{\partial t}$ in
 the flow continuity Equation 3-5 is 0 and the surcharged nodal
 continuity condition becomes:
 
-  -------------------------------------------------------------------------
-        $$\sum_{}^{}Q = 0$$                                        (3-24)
-  ----- ---------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------
+$$\sum_{}^{}Q = 0 \qquad \text{(3-24)}$$
+
+
 
 By itself, this equation is insufficient to update nodal heads at the
 new time step since it only contains flows. In addition, because the
@@ -2489,20 +2310,18 @@ the surcharged nodes after a flow solution has been reached.
 To enforce the surcharge flow continuity condition, it can be expressed
 in the form of a perturbation equation:
 
-  ---------------------------------------------------------------------------------------------------------------
-        $$\sum_{}^{}\left\lbrack Q + \frac{\partial Q}{\partial H}\mathrm{\Delta}H \right\rbrack = 0$$   (3-25)
-  ----- ------------------------------------------------------------------------------------------------ --------
 
-  ---------------------------------------------------------------------------------------------------------------
+$$\sum_{}^{}\left\lbrack Q + \frac{\partial Q}{\partial H}\mathrm{\Delta}H \right\rbrack = 0 \qquad \text{(3-25)}$$
+
+
 
 where *∆H* is the adjustment to the node's head that must be made to
 achieve a flow balance. Solving for *∆H* yields:
 
-  -----------------------------------------------------------------------------------------------------
-        $$\mathrm{\Delta}H = \frac{- \sum_{}^{}Q}{\sum_{}^{}\frac{\partial Q}{\partial H}}$$   (3-26)
-  ----- -------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------
+$$\mathrm{\Delta}H = \frac{- \sum_{}^{}Q}{\sum_{}^{}\frac{\partial Q}{\partial H}} \qquad \text{(3-26)}$$
+
+
 
 where the summations are made over all conduits that are connected to
 the node in question.
@@ -2511,11 +2330,10 @@ The gradient of flow in a conduit with respect to the head at either end
 node can be evaluated by differentiating the flow updating equation 3-14
 resulting in:
 
-  --------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial Q}{\partial H} = \frac{\frac{- g\overline{A}\mathrm{\Delta}t}{L}}{1 + \mathrm{\Delta}Q_{friction}}$$   (3-27)
-  ----- ----------------------------------------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{\partial Q}{\partial H} = \frac{\frac{- g\overline{A}\mathrm{\Delta}t}{L}}{1 + \mathrm{\Delta}Q_{friction}} \qquad \text{(3-27)}$$
+
+
 
 The numerator of $\frac{\partial Q}{\partial H}$ has a negative sign in
 front of it because when evaluating ΣQ flow directed out of a node is
@@ -2529,33 +2347,27 @@ Hardy Cross method for pressurized water distribution networks (Bhave,
 To accommodate node surcharging, Step 4 of the iterative process that
 updates a node's head is modified as follows. First the node is checked
 to see if it is in a surcharged state, i.e., that it is not a storage or
-outfall node and has *H^last^* greater than the top of the highest
-connecting conduit *H~crown~*. If it is not surcharged then Equation
+outfall node and has *H<sup>last</sup>* greater than the top of the highest
+connecting conduit *H<sub>crown</sub>*. If it is not surcharged then Equation
 3-15 is used as before to update its head. Otherwise the following
-modified form of Equation 3-26 is used to estimate the new head *H^new^*
+modified form of Equation 3-26 is used to estimate the new head *H<sup>new</sup>*
 for time *t + ∆t*:
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-       $$H^{new} = H^{last} + \frac{\alpha\sum_{}^{}Q^{new}}{(1 - \beta)\sum_{}^{}\left( \frac{\partial Q}{\partial H} \right)^{last} + \frac{\beta A_{S}^{last}}{\mathrm{\Delta}t}}$$   (3-28)
-  ---- --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$H^{new} = H^{last} + \frac{\alpha\sum_{}^{}Q^{new}}{(1 - \beta)\sum_{}^{}\left( \frac{\partial Q}{\partial H} \right)^{last} + \frac{\beta A_{S}^{last}}{\mathrm{\Delta}t}} \qquad \text{(3-28)}$$
+
+
 
 where
 
-  ---------------------------------------------------------------------------------------------------
-  *α*                =   0.6 for upstream terminal nodes with only outflow links and 1.0 otherwise
-  ------------------ --- ----------------------------------------------------------------------------
-  *β*                =   $exp( - 15.0f_{H})$
-
-  *f~H~*             =   $$\frac{\left( H^{last} - E \right)}{\left( H_{crown} - E \right) - \ 1}$$
-
-  *H~crown~*         =   elevation of the crown of the node's highest connecting flowing conduit (ft)
-
-  *E*                =   elevation of the node's invert (ft)
-
-  $$A_{S}^{last}$$   =   surface area of the node the last time it was not surcharged (ft^2^)
-  ---------------------------------------------------------------------------------------------------
+| Symbol | | Description |
+| --- | --- | --- |
+| *α* | = | 0.6 for upstream terminal nodes with only outflow links and 1.0 otherwise |
+| *β* | = | $exp( - 15.0f_{H})$ |
+| *f<sub>H</sub>* | = | $\frac{\left( H^{last} - E \right)}{\left( H_{crown} - E \right) - \ 1}$ |
+| *H<sub>crown</sub>* | = | elevation of the crown of the node's highest connecting flowing conduit (ft) |
+| *E* | = | elevation of the node's invert (ft) |
+| $A_{S}^{last}$ | = | surface area of the node the last time it was not surcharged (ft<sup>2</sup>) |
 
 The *α* factor is used to reduce oscillations in head at upstream
 terminal nodes that have only outflow links (Roesner et al., 1992). The
@@ -2571,7 +2383,7 @@ from Step 3 of the solution procedure. The
 $\frac{\partial Q}{\partial H}$ values are those that were last
 evaluated at Step 2. And finally, empirical testing has shown that more
 robust performance is obtained when under-relaxation is not applied to
-*H^new^* at Step 5 of the solution procedure when surcharging occurs.
+*H<sup>new</sup>* at Step 5 of the solution procedure when surcharging occurs.
 
 ### 3.3.6 Preissmann Slot
 
@@ -2590,7 +2402,7 @@ to the surcharge algorithm.
 In theory the width of the slot should be determined based on having the
 celerity of an open channel gravity wave equal the speed of a pressure
 wave affected by the compressibility of the elastic pipe wall. This
-would result in a slot width *w~slot~* equal to:
+would result in a slot width *w<sub>slot</sub>* equal to:
 
 > $w_{slot} = gA/c^{2}$ (3-29)
 
@@ -2610,17 +2422,17 @@ is given by:
 > $\frac{w_{slot}}{W_{\max}} = 0.5423\exp\left( - \left( \frac{Y}{Y_{full}} \right)^{2.4} \right)$
 > (3-30)
 
-where *W~max~* is the conduit's maximum width, *Y~full~* is its full
+where *W<sub>max</sub>* is the conduit's maximum width, *Y<sub>full</sub>* is its full
 depth, and Y is depth of flow. This equation applies to
 $\frac{Y}{Y_{full}}$ values between 0.985257 and 1.7. Below this range
-the slot is not used while above it the slot width relative to *W~max~*
+the slot is not used while above it the slot width relative to *W<sub>max</sub>*
 is clamped at 0.01. The range's lower limit was chosen so that the width
 computed from equation 3-30 is the same as the width across a circular
 pipe at that flow depth. This helps produce a smooth transition between
 open channel and pressurized flow regimes.
 
 When the slot method is employed, equation 3-16 is modified so that *Y*
-is no longer limited by *Y~full~*. When *Y* reaches the limit at which
+is no longer limited by *Y<sub>full</sub>*. When *Y* reaches the limit at which
 the slot formula applies, its resulting width is used to compute the
 surface area that a conduit contributes to its end nodes as described in
 Section 3.3.2. It also contributes to the conduit's flow area when it
@@ -2629,11 +2441,11 @@ hydraulic radius.
 
 ### 3.3.7 Flooding and Ponding
 
-Each non-outfall node is assigned a maximum allowable head *H~max~* by
+Each non-outfall node is assigned a maximum allowable head *H<sub>max</sub>* by
 the user. It consists of both a maximum free water surface elevation
 that can exist at the node plus an optional "surcharge" depth that
 allows for pressurization. For example, if the node were a manhole
-junction *H~max~* would typically be the ground surface elevation. If it
+junction *H<sub>max</sub>* would typically be the ground surface elevation. If it
 were a storage unit it would be the water surface elevation when the
 unit is full. For a junction between natural channels it would be the
 top of the highest channel. For a fitting that connects pipe segments
@@ -2643,17 +2455,16 @@ to the fitting junction so that the connected pipes can pressurize if
 need be. A manhole junction might also be assigned a surcharge depth if
 it has a bolted cover.
 
-Normally when the new head estimate *H^new^* at a node computed at Step
-5 of the iterative solution process exceeds *H~max~* it is set equal to
-*H~max~* and the node becomes flooded. The overflow rate *Q~ovfl~*
+Normally when the new head estimate *H<sup>new</sup>* at a node computed at Step
+5 of the iterative solution process exceeds *H<sub>max</sub>* it is set equal to
+*H<sub>max</sub>* and the node becomes flooded. The overflow rate *Q<sub>ovfl</sub>*
 associated with this condition is the average net flow rate (inflow --
 outflow) seen by the node over the current time step:
 
-  --------------------------------------------------------------------------------------------------------
-        $$Q_{ovfl} = 0.5\left( \sum_{}^{}{Q^{t} + \sum_{}^{}Q^{t + \mathrm{\Delta}t}} \right)$$   (3-31)
-  ----- ----------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------
+$$Q_{ovfl} = 0.5\left( \sum_{}^{}{Q^{t} + \sum_{}^{}Q^{t + \mathrm{\Delta}t}} \right) \qquad \text{(3-31)}$$
+
+
 
 This flow is then lost from the system, the same as the flow entering a
 terminal outfall node.
@@ -2661,14 +2472,14 @@ terminal outfall node.
 The option exists for a junction node with no surcharge depth (and thus
 always maintaining a free surface) to have excess flooded water pond
 atop the node (see Figure 3-4). In this case the user assigns the node a
-"ponded area" parameter, *A~P~*, that creates a virtual storage area on
-top of the node and *H^new^* is no longer limited to *H~max~* . When
-*H^new^* exceeds *H~max~* the ponded node is treated as a normal storage
+"ponded area" parameter, *A<sub>P</sub>*, that creates a virtual storage area on
+top of the node and *H<sup>new</sup>* is no longer limited to *H<sub>max</sub>* . When
+*H<sup>new</sup>* exceeds *H<sub>max</sub>* the ponded node is treated as a normal storage
 node whose head is updated using the normal, non-surcharge formula
-Equation 3-15 with *A~SN~ = A~P~*. The only exception to this is when
-the node transitions between having a head below *H~max~* to a flooded
-head above *H~max~* (or vice versa) within a time step. In this case the
-updated head is restricted to be just a small value above *H~max~* (or
+Equation 3-15 with *A<sub>SN</sub> = A<sub>P</sub>*. The only exception to this is when
+the node transitions between having a head below *H<sub>max</sub>* to a flooded
+head above *H<sub>max</sub>* (or vice versa) within a time step. In this case the
+updated head is restricted to be just a small value above *H<sub>max</sub>* (or
 below it in the opposite case) to avoid wide swings in head during the
 transition.
 
@@ -2759,27 +2570,24 @@ time step be no longer than the time it takes for a dynamic wave to
 travel the length of the conduit (Cunge et al., 1980). This is known as
 the Courant-Friedrichs-Lewy (CFL) condition and can be expressed as:
 
-  ------------------------------------------------------------------------------------
-        $$\mathrm{\Delta}t \leq \frac{L}{\left| \overline{U} + c \right|}$$   (3-30)
-  ----- --------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------
+$$\mathrm{\Delta}t \leq \frac{L}{\left| \overline{U} + c \right|} \qquad \text{(3-30)}$$
+
+
 
 where *c* is the wave celerity given by:
 
-  -------------------------------------------------------------------------
-        $$c = \sqrt{g\frac{\overline{A}}{\overline{W}}}$$          (3-31)
-  ----- ---------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------
+$$c = \sqrt{g\frac{\overline{A}}{\overline{W}}} \qquad \text{(3-31)}$$
+
+
 
 An equivalent form of this condition can be written as:
 
-  ------------------------------------------------------------------------------------------------------------------
-        $$\mathrm{\Delta}t \leq \frac{L}{\left| \overline{U} \right|}\left( \frac{Fr}{1 + Fr} \right)Cr$$   (3-32)
-  ----- --------------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------------
+$$\mathrm{\Delta}t \leq \frac{L}{\left| \overline{U} \right|}\left( \frac{Fr}{1 + Fr} \right)Cr \qquad \text{(3-32)}$$
+
+
 
 where *Fr* is the flow's Froude number (see Equation 3-17) and *Cr* is
 the Courant number. The latter serves as an adjustment parameter that
@@ -2794,7 +2602,7 @@ Thus the CFL condition would still apply but perhaps not as strictly (by
 allowing one to use a *Cr* value greater than 1).
 
 One can estimate a *∆t* for each conduit by using the conduit's full
-depth *Y~full~* in place of $\frac{\overline{A}}{\overline{W}}$ in
+depth *Y<sub>full</sub>* in place of $\frac{\overline{A}}{\overline{W}}$ in
 Equation 3-31 and ignoring the velocity in Equation 3-30. The solution
 time step would then be determined by the conduit with the smallest
 value of $\frac{L}{\sqrt{gY_{full}}}$ . Short conduits lead to small
@@ -2807,35 +2615,32 @@ An option is available to artificially lengthen short conduits so that
 the CFL condition for a given user-supplied time step *∆t* is met. The
 modified length $L'$ is given by
 
-  -------------------------------------------------------------------------------------------------------------------------------
-        $$L' = max\left\{ L,\ \mathrm{\Delta}t\left( \sqrt{gY_{full}\ } + \frac{Q_{full}}{A_{full}} \right) \right\}$$   (3-33)
-  ----- ---------------------------------------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------------------------------
+$$L' = max\left\{ L,\ \mathrm{\Delta}t\left( \sqrt{gY_{full}\ } + \frac{Q_{full}}{A_{full}} \right) \right\} \qquad \text{(3-33)}$$
 
-where *Q~full~* is the Manning's normal flow value (Equation 3-23)
-evaluated at full depth *Y~full\ ~*and *A~full~* is the flow area at
+
+
+where *Q<sub>full</sub>* is the Manning's normal flow value (Equation 3-23)
+evaluated at full depth *Y~full\ ~*and *A<sub>full</sub>* is the flow area at
 full depth. This modified length is used in place of the original length
 in the equations presented in section 3.4. To make the artificially
 lengthened conduit have a flow resistance equivalent to the original
-length, its slope *S~0~* and roughness coefficient *n* are adjusted so
+length, its slope *S<sub>0</sub>* and roughness coefficient *n* are adjusted so
 that the Manning equation produces an equal head loss across both the
 original and lengthened conduit for any given flow. The modified slope
 $S_{0}'$ for the lengthened conduit is:
 
-  -------------------------------------------------------------------------
-        $$S_{0}' = S_{0}\sqrt{\frac{L}{L'}}$$                      (3-34)
-  ----- ---------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------
+$$S_{0}' = S_{0}\sqrt{\frac{L}{L'}} \qquad \text{(3-34)}$$
+
+
 
 while its modified roughness $n'$ is:
 
-  -------------------------------------------------------------------------
-        $$n' = n\sqrt{\frac{L}{L'}}$$                              (3-35)
-  ----- ---------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------
+$$n' = n\sqrt{\frac{L}{L'}} \qquad \text{(3-35)}$$
+
+
 
 The conduit lengthening option is applied to all conduits whenever the
 user supplies a non-zero value for the "lengthening" time step to be
@@ -2844,28 +2649,22 @@ the computational time step used to solve the dynamic wave equations.
 
 Another option available in SWMM 5 is to have the program use a variable
 computational time step that is adjusted throughout the simulation. The
-user supplies values of the smallest allowable time step (*∆t~min~*),
-the largest allowable time step (*∆t~max~*) and a desired Courant number
+user supplies values of the smallest allowable time step (*∆t<sub>min</sub>*),
+the largest allowable time step (*∆t<sub>max</sub>*) and a desired Courant number
 (*Cr*) to be met. At any time *t*, the next time step is computed from
 the smaller of:
 
 1.  The smallest value of
 
-  ------------------------------------------------------------------------------------------
         $$\frac{L}{\left| \overline{U} \right|}\left( \frac{Fr}{1 + Fr} \right)Cr$$   
-  ----- ----------------------------------------------------------------------------- ------
 
-  ------------------------------------------------------------------------------------------
 
 > for all conduits with non-negligible Fr.
 
 2.  The smallest value of
 
-  ----------------------------------------------------------------------------------
         $$\frac{0.25\left( H_{crown} - E \right)}{{\mathrm{\Delta}H}^{t}}$$   
-  ----- --------------------------------------------------------------------- ------
 
-  ----------------------------------------------------------------------------------
 
 > for all non-outfall nodes that are not surcharged.
 
@@ -2873,8 +2672,8 @@ The second condition guards against an excessive change in node head
 over a single time step. Both conditions are evaluated using the flow
 and head solutions found at time *t* (${\mathrm{\Delta}H}^{t}$ is the
 change in head found from the prior time step). The resulting time step
-is not allowed to be less than *∆t~min~* nor greater than *∆t~max~*. The
-initial time step used at time 0 is *∆t~min~*.
+is not allowed to be less than *∆t<sub>min</sub>* nor greater than *∆t<sub>max</sub>*. The
+initial time step used at time 0 is *∆t<sub>min</sub>*.
 
 To illustrate these concepts consider a 2 ft x 2 ft rectangular conduit
 that is 2,000 ft long with a 0.05% slope and has a Manning's roughness
@@ -2946,33 +2745,31 @@ The kinematic wave model for unsteady flow in a channel or pipe is
 derived from the same St. Venant equations for conservation of mass and
 momentum that were used for dynamic wave analysis:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial A}{\partial t} + \frac{\partial Q}{\partial x} = 0$$                                                                           Continuity      (4-1)
-  ----- ----------------------------------------------------------------------------------------------------------------------------------------------- ------------- -------
-                                                                                                                                                                      
 
-        $$\frac{\partial Q}{\partial t} + \frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} + gA\frac{\partial H}{\partial x} + gAS_{f} = 0$$   Momentum        (4-2)
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{\partial A}{\partial t} + \frac{\partial Q}{\partial x} = 0 \qquad \text{Continuity} \qquad \text{(4-1)}$$
+
+|  |  |  |  |
+| --- | --- | --- | --- |
+|  | $\frac{\partial Q}{\partial t} + \frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} + gA\frac{\partial H}{\partial x} + gAS_{f} = 0$ | Momentum | (4-2) |
+
 
 where all variables were defined previously in Chapter 3. Expressing
 head *H* as *Z + Y* (invert elevation plus flow depth) and recognizing
 that $\frac{\partial Z}{\partial x = {- S}_{0}}$ (the conduit's slope)
 allows one to write the momentum equation as:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial Q}{\partial t} + \frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} + gA\frac{\partial Y}{\partial x} = gA(S_{0} - S_{f})$$                 (4-3)
-  ----- ----------------------------------------------------------------------------------------------------------------------------------------------------- ------------- -------
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{\partial Q}{\partial t} + \frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} + gA\frac{\partial Y}{\partial x} = gA(S_{0} - S_{f}) \qquad \text{(4-3)}$$
+
+
 
 If one assumes that the terms on the left hand side of Equation 4-3 are
 negligible one is left with the relation:
 
-  -------------------------------------------------------------------------
-        $$S_{0} = S_{f}$$                                           (4-4)
-  ----- --------------------------------------------- ------------- -------
 
-  -------------------------------------------------------------------------
+$$S_{0} = S_{f} \qquad \text{(4-4)}$$
+
+
 
 Having the conduit's bottom slope equal the friction slope implies that
 the fluid motion caused by gravity is balanced by the frictional
@@ -2980,11 +2777,10 @@ resistance to flow. Using the Manning equation to represent the friction
 slope allows one to represent the relationship between flow rate *Q* and
 flow area *A* with Manning's equation for steady uniform flow:
 
-  -------------------------------------------------------------------------
-        $$Q = \frac{AR^{2/3}\sqrt{S_{0}}}{\eta}$$                   (4-5)
-  ----- --------------------------------------------- ------------- -------
 
-  -------------------------------------------------------------------------
+$$Q = \frac{AR^{2/3}\sqrt{S_{0}}}{\eta} \qquad \text{(4-5)}$$
+
+
 
 where the hydraulic radius *R* is an implicit function of flow area *A*
 for a specific conduit cross-sectional shape. (*R* is defined as area
@@ -2994,11 +2790,10 @@ depth which can be inferred from the flow area *A*.)
 By defining $\beta = \frac{\sqrt{S_{0}}}{\eta}$ and $\Psi = AR^{2/3}$
 the Manning equation can be expressed as:
 
-  -------------------------------------------------------------------------
-        $$Q = \beta\Psi(A)$$                                        (4-6)
-  ----- ----------------------------------------------------------- -------
 
-  -------------------------------------------------------------------------
+$$Q = \beta\Psi(A) \qquad \text{(4-6)}$$
+
+
 
 *Ψ* is known as the section factor (Chow, 1959) and is a function of the
 flow area and conduit geometry. For some closed conduit shapes, such as
@@ -3034,9 +2829,9 @@ The continuity equation 4-1 is solved along a space-time grid depicted
 in Figure 4-2. A weighted Wendroff implicit finite difference scheme
 (Smith, 1978) is used to re-express the equation as:
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{(1 - \theta)\left( A_{1}^{t + \Delta t} - A_{1}^{t} \right) + \theta\left( A_{2}^{t + \Delta t} - A_{2}^{t} \right)}{\Delta t} + \frac{(1 - \phi)\left( Q_{2}^{t} - Q_{1}^{t} \right) + \phi\left( Q_{2}^{t + \Delta t} - Q_{1}^{t + \Delta t} \right)}{L} = 0$$   (4-7)
-  ----- -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- -------
+
+$$\frac{(1 - \theta)\left( A_{1}^{t + \Delta t} - A_{1}^{t} \right) + \theta\left( A_{2}^{t + \Delta t} - A_{2}^{t} \right)}{\Delta t} + \frac{(1 - \phi)\left( Q_{2}^{t} - Q_{1}^{t} \right) + \phi\left( Q_{2}^{t + \Delta t} - Q_{1}^{t + \Delta t} \right)}{L} = 0 \qquad \text{(4-7)}$$
+
 
   ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -3067,20 +2862,20 @@ The Manning equation 4-6 can be substituted into Equation 4-7 which
 after some rearrangement results in the following nonlinear equation
 with single unknown $A_{2}^{t + \Delta t}$:
 
-  -----------------------------------------------------------------------------------------------------------------------------------------
-        $$f\left( A_{2}^{t + \Delta t} \right) = \beta\Psi\left( A_{2}^{t + \Delta t} \right) + C1A_{2}^{t + \Delta t} + C2 = 0$$   (4-8)
-  ----- --------------------------------------------------------------------------------------------------------------------------- -------
 
-  -----------------------------------------------------------------------------------------------------------------------------------------
+$$f\left( A_{2}^{t + \Delta t} \right) = \beta\Psi\left( A_{2}^{t + \Delta t} \right) + C1A_{2}^{t + \Delta t} + C2 = 0 \qquad \text{(4-8)}$$
+
+
 
 where the constants C1 and C2 are given by:
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$C1 = \frac{L\theta}{\Delta t\phi}$$                                                                                                                                                                                            (4-9)
-  ----- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
-        $$C2 = \frac{L}{\Delta t\phi}\left\lbrack (1 - \theta)\left( A_{1}^{t + \Delta t} - A_{1}^{t} \right) - \theta A_{2}^{t} \right\rbrack + \frac{1 - \phi}{\phi}\left( Q_{2}^{t} - Q_{1}^{t} \right) - Q_{1}^{t + \Delta t}$$     (4-10)
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$C1 = \frac{L\theta}{\Delta t\phi} \qquad \text{(4-9)}$$
+
+|  |  |  |
+| --- | --- | --- |
+|  | $C2 = \frac{L}{\Delta t\phi}\left\lbrack (1 - \theta)\left( A_{1}^{t + \Delta t} - A_{1}^{t} \right) - \theta A_{2}^{t} \right\rbrack + \frac{1 - \phi}{\phi}\left( Q_{2}^{t} - Q_{1}^{t} \right) - Q_{1}^{t + \Delta t}$ | (4-10) |
+
 
 After solving 4-8 for $A_{2}^{t + \Delta t}$ equation 4-6 can then be
 used to find the corresponding flow $Q_{2}^{t + \Delta t}$.
@@ -3090,16 +2885,16 @@ Newton-Raphson methods (Press et al., 1992) with both *θ* and *φ* set to
 0.6. As a first step, a bracket
 $\left\lbrack A_{LOW},\ A_{HIGH} \right\rbrack$ is sought where
 $f(A_{LOW})$ and $f(A_{HIGH})$ are of opposite sign. For conduit shapes
-whose section factor has a maximum value at an area *A~max~* below
-*A~full~* (such as the circular conduit of Figure 4-1), these two areas
+whose section factor has a maximum value at an area *A<sub>max</sub>* below
+*A<sub>full</sub>* (such as the circular conduit of Figure 4-1), these two areas
 are tried first. If these areas do not form a valid bracket then *0* to
-*A~max~* is used. For shapes whose section factor always increases with
-increasing area, *0* to *A~full~* is used.
+*A<sub>max</sub>* is used. For shapes whose section factor always increases with
+increasing area, *0* to *A<sub>full</sub>* is used.
 
 If a valid bracket is found then the procedure described in Appendix A,
 "*Newton-Raphson-Bisection Root Finding Method*", is used to find
 $A_{2}^{t + \Delta t}$. Its initial estimate is $A_{2}^{t}$ and a
-convergence tolerance *ε* of 0.1 percent of *A~full~* is used. The
+convergence tolerance *ε* of 0.1 percent of *A<sub>full</sub>* is used. The
 derivative of *f(A)* required by the method is
 $f'(A) = \beta\Psi'(A) + C1$ where $\Psi'(A)$ is the derivative of the
 section factor with respect to area *A*. If
@@ -3153,23 +2948,19 @@ treated as a regular junction node under dynamic wave analysis.
 There are four types of flow dividers available, defined by the manner
 in which inflows are diverted:
 
-  -----------------------------------------------------------------------
   *Cutoff          diverts all inflow above a user-supplied cutoff value
-  Divider:*        *q~MIN~*.
-  ---------------- ------------------------------------------------------
-  *Overflow        diverts all inflow above the flow capacity
-  Divider:*        $Q_{full} = \beta\Psi(A_{full})$ of the non-diversion
-                   conduit
+  Divider:*        *q<sub>MIN</sub>*.
 
-  *Tabular         uses a pre-defined table that expresses diverted flow
-  Divider:*        as a function of total inflow.
+|  |  |
+| --- | --- |
+| *Overflow | diverts all inflow above the flow capacity |
+| Divider:* | $Q_{full} = \beta\Psi(A_{full})$ of the non-diversion conduit |
+| *Tabular | uses a pre-defined table that expresses diverted flow |
+| Divider:* | as a function of total inflow. |
+| *Weir Divider:* | diverts inflow above a minimum *q<sub>MIN</sub>* as flow over a weir of full height *h<sub>W</sub>* with discharge coefficient *c<sub>W</sub>*. |
 
-  *Weir Divider:*  diverts inflow above a minimum *q~MIN~* as flow over a
-                   weir of full height *h~W~* with discharge coefficient
-                   *c~W~*.
-  -----------------------------------------------------------------------
 
-The diverted flow for a weir divider node with total inflow of *Q~in~*
+The diverted flow for a weir divider node with total inflow of *Q<sub>in</sub>*
 is computed as:
 
 +---+------------------------------------+-------------------------------------------+--------+
@@ -3185,10 +2976,10 @@ $f = \frac{\left( Q_{in} - q_{MIN} \right)}{\left( q_{MAX} - q_{MIN} \right)}$.
 
 When the next conduit in sorted order is selected for routing analysis,
 its upstream node is checked to see if it is a divider node. If it is,
-then depending on its type, the diverted flow *Q~div~* is calculated
-from the node's total inflow *Q~in~*. If the conduit is the node's
+then depending on its type, the diverted flow *Q<sub>div</sub>* is calculated
+from the node's total inflow *Q<sub>in</sub>*. If the conduit is the node's
 diversion link, then its inflow $Q_{1}^{t + \mathrm{\Delta}t}$ is set
-equal to *Q~div~*. Otherwise its inflow is set to $Q_{in} - Q_{div}$.
+equal to *Q<sub>div</sub>*. Otherwise its inflow is set to $Q_{in} - Q_{div}$.
 
 ### 4.3.4 Storage Nodes
 
@@ -3204,24 +2995,22 @@ links) are updated after all conduits have been analyzed.
 Storage node updating is carried out using the following mass balance
 equation:
 
-  --------------------------------------------------------------------------
-        $$\frac{dV_{N}}{dt} = Q_{in} - Q_{out}$$                    (4-12)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$\frac{dV_{N}}{dt} = Q_{in} - Q_{out} \qquad \text{(4-12)}$$
 
-*V~N~* is the volume of stored water in the node, *Q~in~* is the total
-rate of inflow to the node and *Q~out~* is the total rate of outflow
+
+
+*V<sub>N</sub>* is the volume of stored water in the node, *Q<sub>in</sub>* is the total
+rate of inflow to the node and *Q<sub>out</sub>* is the total rate of outflow
 from the node. Replacing $\frac{dV_{N}}{dt}$ with its finite difference
 equivalent and using the average flow rates over the time step being
 updated produces the following expression for
 $V_{N}^{t + \mathrm{\Delta}t}$:
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$V_{N}^{t + \mathrm{\Delta}t} = V_{N}^{t} + 0.5\left( Q_{in}^{t} + Q_{in}^{t + \mathrm{\Delta}t} \right)\mathrm{\Delta}t - 0.5\left( Q_{out}^{t} + Q_{out}^{t + \mathrm{\Delta}t} \right)\mathrm{\Delta}t$$   (4-13)
-  ----- -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$V_{N}^{t + \mathrm{\Delta}t} = V_{N}^{t} + 0.5\left( Q_{in}^{t} + Q_{in}^{t + \mathrm{\Delta}t} \right)\mathrm{\Delta}t - 0.5\left( Q_{out}^{t} + Q_{out}^{t + \mathrm{\Delta}t} \right)\mathrm{\Delta}t \qquad \text{(4-13)}$$
+
+
 
 Once $V_{N}^{t + \mathrm{\Delta}t}$ is known the corresponding water
 surface elevation *H* can be found from the storage node's invert
@@ -3230,31 +3019,29 @@ depth. A more detailed discussion of how this is done is provided in
 Chapter 5.
 
 Equation 4-13 can be re-written with all of the known values grouped
-together in a constant *C~N~* as follows:
+together in a constant *C<sub>N</sub>* as follows:
 
-  ---------------------------------------------------------------------------------------------
-        $$V_{N}^{t + \mathrm{\Delta}t} = C_{N} - 0.5Q_{out}^{t + \mathrm{\Delta}t}$$   (4-14)
-  ----- ------------------------------------------------------------------------------ --------
 
-  ---------------------------------------------------------------------------------------------
+$$V_{N}^{t + \mathrm{\Delta}t} = C_{N} - 0.5Q_{out}^{t + \mathrm{\Delta}t} \qquad \text{(4-14)}$$
 
-where *C~N~* is
 
-  -----------------------------------------------------------------------------------------------------------------------------------
-        $$C_{N} = V_{N}^{t} + 0.5\left( Q_{in}^{t} - Q_{out}^{t} + Q_{in}^{t + \mathrm{\Delta}t} \right)\mathrm{\Delta}t$$   (4-15)
-  ----- -------------------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------------------
+where *C<sub>N</sub>* is
+
+
+$$C_{N} = V_{N}^{t} + 0.5\left( Q_{in}^{t} - Q_{out}^{t} + Q_{in}^{t + \mathrm{\Delta}t} \right)\mathrm{\Delta}t \qquad \text{(4-15)}$$
+
+
 
 and contains the known volumes and flows from time *t* as well as the
 known inflow to the storage node at time *t + ∆t*.
 
 $Q_{out}^{t + \mathrm{\Delta}t}$ will be a function of the storage
 unit's water surface elevation *H*. For a conduit outflow link, the flow
-at its upstream end that contributes to *Q~out~* will be determined by
+at its upstream end that contributes to *Q<sub>out</sub>* will be determined by
 its upstream flow area via Equation 4-6: $Q_{1} = \beta\Psi(A_{1})$. The
-upstream flow area *A~1~* is determined by the conduit's upstream water
-depth where it meets the storage node. This depth, *Y~1~*, is given by:
+upstream flow area *A<sub>1</sub>* is determined by the conduit's upstream water
+depth where it meets the storage node. This depth, *Y<sub>1</sub>*, is given by:
 
 +----+----------------------------------+----------------------------------------------+--------+
 |    | $$Y_{1} = \left\{ \begin{matrix} | $$for\ H \leq Z_{1}$$                        | (4-16) |
@@ -3264,8 +3051,8 @@ depth where it meets the storage node. This depth, *Y~1~*, is given by:
 |    | \end{matrix} \right.\ $$         | $$for\ H > {Z_{1} + Y}_{full}$$              |        |
 +====+==================================+==============================================+========+
 
-where *Z~1~* is the elevation of the conduit's upstream invert and
-*Y~full~* is the conduit's full depth. A similar situation exists for
+where *Z<sub>1</sub>* is the elevation of the conduit's upstream invert and
+*Y<sub>full</sub>* is the conduit's full depth. A similar situation exists for
 other types of outflow links, such as pumps, orifices, and weirs as will
 be discussed later in Chapter 6. As an example, the flow through an
 orifice varies as the square root of the head across it:
@@ -3280,23 +3067,21 @@ The hydraulic head at storage nodes is updated one more time after all
 link flows at the end of a time step of size *∆t* have been found. First
 a new volume for the node is found from:
 
-  ----------------------------------------------------------------------------------------------------
-        $$V_{N}^{t + \mathrm{\Delta}t} = V_{N}^{t} + {\overline{Q}}_{net}\mathrm{\Delta}t$$   (4-17)
-  ----- ------------------------------------------------------------------------------------- --------
 
-  ----------------------------------------------------------------------------------------------------
+$$V_{N}^{t + \mathrm{\Delta}t} = V_{N}^{t} + {\overline{Q}}_{net}\mathrm{\Delta}t \qquad \text{(4-17)}$$
+
+
 
 ${\overline{Q}}_{net}$ is the average net inflow to the node between
 times *t* and *t + ∆t* :
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $${\overline{Q}}_{net} = \ 0.5\left( Q_{in}^{t} + Q_{in}^{t + \mathrm{\Delta}t} \right) - 0.5\left( Q_{out}^{t} + Q_{out}^{t + \mathrm{\Delta}t} \right)$$   (4-18)
-  ----- ------------------------------------------------------------------------------------------------------------------------------------------------------------ --------
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$${\overline{Q}}_{net} = \ 0.5\left( Q_{in}^{t} + Q_{in}^{t + \mathrm{\Delta}t} \right) - 0.5\left( Q_{out}^{t} + Q_{out}^{t + \mathrm{\Delta}t} \right) \qquad \text{(4-18)}$$
 
-with *Q~in~* being the total inflow entering the node from all upstream
-links plus any external sources (such as runoff flow) and *Q~out~* being
+
+
+with *Q<sub>in</sub>* being the total inflow entering the node from all upstream
+links plus any external sources (such as runoff flow) and *Q<sub>out</sub>* being
 the total flow rate in the links leaving the node. Then the new head at
 the node, $H^{t + \mathrm{\Delta}t}$, can be found from the node's curve
 of surface area versus depth as described in Chapter 5.
@@ -3326,23 +3111,21 @@ what the outflow links can handle will be lost from the system. For
 non-storage, non-terminal nodes the flooded overflow rate at time *t +
 ∆t* would be:
 
-  --------------------------------------------------------------------------------------
-        $$Q_{ovfl}^{t + \mathrm{\Delta}t} = \ max(0,\ {\overline{Q}}_{net})$$   (4-19)
-  ----- ----------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------
+$$Q_{ovfl}^{t + \mathrm{\Delta}t} = \ max(0,\ {\overline{Q}}_{net}) \qquad \text{(4-19)}$$
+
+
 
 where ${\overline{Q}}_{net}$ is given by Equation 4-18. For storage
 nodes it would be:
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$Q_{ovfl}^{t + \mathrm{\Delta}t} = \ max\left( 0,\ \ \ {\overline{Q}}_{net} - \frac{\left( V_{Nfull} - V_{N}^{t} \right)}{\mathrm{\Delta}t} \right)$$   (4-20)
-  ----- -------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$Q_{ovfl}^{t + \mathrm{\Delta}t} = \ max\left( 0,\ \ \ {\overline{Q}}_{net} - \frac{\left( V_{Nfull} - V_{N}^{t} \right)}{\mathrm{\Delta}t} \right) \qquad \text{(4-20)}$$
+
+
 
 where $V_{Nfull}$ is the volume of the storage node when full. When
-*Q~ovfl~* is non-zero, the head at the node is set equal to its
+*Q<sub>ovfl</sub>* is non-zero, the head at the node is set equal to its
 elevation at full depth for reporting purposes.
 
 As with dynamic wave analysis, the option exists for a junction or
@@ -3351,26 +3134,24 @@ at the node and then released as external inflow during the next time
 step. The node's "ponded area" parameter is used to indicate that
 ponding is allowed if it is assigned a non-zero value (and does not
 enter into any computations). In this case, the node's ponded volume
-*V~P~* is kept track of as the simulation unfolds. Its initial value is
+*V<sub>P</sub>* is kept track of as the simulation unfolds. Its initial value is
 0. At time *t + ∆t* it is updated as follows:
 
-  --------------------------------------------------------------------------------------------------------------------------------
-        $$V_{P}^{t + \mathrm{\Delta}t} = \ max\left( 0,\ \ \ V_{P}^{t} + {\overline{Q}}_{net}\mathrm{\Delta}t \right)$$   (4-21)
-  ----- ----------------------------------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------------------------------
+$$V_{P}^{t + \mathrm{\Delta}t} = \ max\left( 0,\ \ \ V_{P}^{t} + {\overline{Q}}_{net}\mathrm{\Delta}t \right) \qquad \text{(4-21)}$$
+
+
 
 The overflow reported for the time period is given by:
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$Q_{ovfl}^{t + \mathrm{\Delta}t} = \ max\left( 0,\ \ \ \frac{\left( V_{P}^{t + \mathrm{\Delta}t} - V_{P}^{t} \right)}{\mathrm{\Delta}t} \right)$$   (4-22)
-  ----- ---------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$Q_{ovfl}^{t + \mathrm{\Delta}t} = \ max\left( 0,\ \ \ \frac{\left( V_{P}^{t + \mathrm{\Delta}t} - V_{P}^{t} \right)}{\mathrm{\Delta}t} \right) \qquad \text{(4-22)}$$
+
+
 
 The flow added to the node's total inflow at the start of the next time
 period is $\frac{V_{P}^{t + \mathrm{\Delta}t}}{\mathrm{\Delta}t}$. And
-for reporting purposes, anytime *V~P~* is greater than 0 the node's head
+for reporting purposes, anytime *V<sub>P</sub>* is greater than 0 the node's head
 is set equal to the elevation at full depth.
 
 ## 4.4 Numerical Stability
@@ -3423,37 +3204,30 @@ The hydraulic modeling procedures described in chapters 3 and 4 require
 calculation of several cross-section geometric properties for partially
 full conduits. These include the following functions:
 
-  --------------------------------------------------------------------------
   *A(Y)*    flow area *A* as a function of flow depth *Y*
-  --------- ----------------------------------------------------------------
-  *W(Y)*    top width *W* as a function of flow depth *Y*
 
-  *R(Y)*    hydraulic radius *R* as a function of flow depth *Y*
+|  |  |
+| --- | --- |
+| *W(Y)* | top width *W* as a function of flow depth *Y* |
+| *R(Y)* | hydraulic radius *R* as a function of flow depth *Y* |
+| *Y(A)* | flow depth *Y* as a function of flow area *A* |
+| *Ψ(A)* | section factor *Ψ* as a function of flow area *A* |
+| *Ψ'(A)* | derivative of section factor *Ψ* with respect to area *A* |
+| *A(Ψ)* | flow area *A* as a function of section factor *Ψ* |
 
-  *Y(A)*    flow depth *Y* as a function of flow area *A*
-
-  *Ψ(A)*    section factor *Ψ* as a function of flow area *A*
-
-  *Ψ'(A)*   derivative of section factor *Ψ* with respect to area *A*
-
-  *A(Ψ)*    flow area *A* as a function of section factor *Ψ*
-  --------------------------------------------------------------------------
 
 as well as the following constants used in evaluating these functions:
 
-  ---------------------------------------------------------------------------
-  *A~full~*   area at full depth
-  ----------- ---------------------------------------------------------------
-  *W~max~*    maximum width
+  *A<sub>full</sub>*   area at full depth
 
-  *R~full~*   hydraulic radius at full depth
+|  |  |
+| --- | --- |
+| *W<sub>max</ | sub>*    maximum width |
+| *R<sub>full< | /sub>*   hydraulic radius at full depth |
+| *Ψ<sub>full< | /sub>*   section factor at full depth |
+| *Ψ<sub>max</ | sub>*    maximum section factor |
+| *A<sub>max</ | sub>*    area corresponding to *Ψ<sub>max</sub>*. |
 
-  *Ψ~full~*   section factor at full depth
-
-  *Ψ~max~*    maximum section factor
-
-  *A~max~*    area corresponding to *Ψ~max~*.
-  ---------------------------------------------------------------------------
 
 This chapter describes how these properties are computed for the wide
 range of conduit shapes, both standard and irregular, included in SWMM.
@@ -3479,7 +3253,7 @@ SWMM can analyze the following standard open channel shapes:
 
 - Triangular with side slope *s*
 
-- Parabolic with top width *b* at full depth *Y~full~*.
+- Parabolic with top width *b* at full depth *Y<sub>full</sub>*.
 
 Table 5-1 lists the formulas used to compute the geometric properties of
 these shapes that are functions of water depth *Y*: A(Y), *W(Y),* and
@@ -3528,30 +3302,27 @@ channel shapes as functions of flow area**
 
 The section factor *Ψ* for each of these shapes is given by:
 
-  -------------------------------------------------------------------------
-        $$\Psi(A) = A{R(A)}^{2/3}$$                                 (5-1)
-  ----- ----------------------------------------------------------- -------
 
-  -------------------------------------------------------------------------
+$$\Psi(A) = A{R(A)}^{2/3} \qquad \text{(5-1)}$$
+
+
 
 With the exception of the parabolic shape, its derivative with respect
 to area *A* is:
 
-  -------------------------------------------------------------------------
-        $$\Psi'(A) = (\frac{5}{3} - \frac{2}{3}P'R)R^{2/3}$$        (5-2)
-  ----- ----------------------------------------------------------- -------
 
-  -------------------------------------------------------------------------
+$$\Psi'(A) = (\frac{5}{3} - \frac{2}{3}P'R)R^{2/3} \qquad \text{(5-2)}$$
+
+
 
 where *P'* and *R* are evaluated at the desired value of *A*. For
 parabolic channels the section factor derivative is computed using the
 difference formula:
 
-  ----------------------------------------------------------------------------------------
-        $$\Psi'(A) = \frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A}$$   (5-3)
-  ----- -------------------------------------------------------------------------- -------
 
-  ----------------------------------------------------------------------------------------
+$$\Psi'(A) = \frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A} \qquad \text{(5-3)}$$
+
+
 
 where *∆A* is 0.1% of the full cross section area.
 
@@ -3559,15 +3330,14 @@ In addition to the four open sections just described SWMM can also
 analyze a cross section whose side wall shape is described by the power
 law function:
 
-  -------------------------------------------------------------------------
-        $$y = \alpha x^{\frac{1}{\gamma}}$$                         (5-4)
-  ----- ----------------------------------------------------------- -------
 
-  -------------------------------------------------------------------------
+$$y = \alpha x^{\frac{1}{\gamma}} \qquad \text{(5-4)}$$
+
+
 
 where *x* is horizontal distance from the centerline, *y* is vertical
 distance, 1/γ is an exponent and α is a constant. To use this shape the
-user supplies values for 1/γ, the full depth *Y~full~* and the top width
+user supplies values for 1/γ, the full depth *Y<sub>full</sub>* and the top width
 when full *b* (see Figure 5-1). Note that the parabolic shape is a
 special case of this power function shape where 1/γ equals 2.
 
@@ -3583,15 +3353,14 @@ With this shape it is more convenient to work with water surface width
 *W* as a function of water depth *Y*, which can be done by re-expressing
 Equation 5-4 as:
 
-  -------------------------------------------------------------------------
-        $$W = cY^{\gamma}$$                                         (5-5)
-  ----- ----------------------------------------------------------- -------
 
-  -------------------------------------------------------------------------
+$$W = cY^{\gamma} \qquad \text{(5-5)}$$
 
-where *c* is another constant. Since *W* = *b* at *Y* = *Y~full~*, the
+
+
+where *c* is another constant. Since *W* = *b* at *Y* = *Y<sub>full</sub>*, the
 constant *c* equals $\frac{b}{Y_{full}^{\gamma}}$ . The full area
-*A~full~* is $\frac{bY_{full}}{(\gamma + 1)}$. Table 5-3 lists the
+*A<sub>full</sub>* is $\frac{bY_{full}}{(\gamma + 1)}$. Table 5-3 lists the
 expressions used to compute the geometric properties for partially full
 power law shapes. The wetted perimeter *P* table entry is evaluated by
 approximating each of the curved sides of the shape by a series of 50
@@ -3636,12 +3405,13 @@ by:
 : []{#_Toc484690421 .anchor}**Table 5‑3 Geometric properties for the
 power law shape**
 
-  ----------------------------------------------------------------------------------------------------
-        $$\Psi_{full} = A_{full}\left( \frac{A_{full}}{P_{full}} \right)^{2/3}$$                 (5-6)
-  ----- -------------------------------------------------------------------------------------- -------
-        $$\Psi_{\max} = {0.97A}_{full}\left( \frac{{0.97A}_{full}}{P_{\max}} \right)^{2/3}$$     (5-7)
 
-  ----------------------------------------------------------------------------------------------------
+$$\Psi_{full} = A_{full}\left( \frac{A_{full}}{P_{full}} \right)^{2/3} \qquad \text{(5-6)}$$
+
+|  |  |  |
+| --- | --- | --- |
+|  | $\Psi_{\max} = {0.97A}_{full}\left( \frac{{0.97A}_{full}}{P_{\max}} \right)^{2/3}$ | (5-7) |
+
 
 where $A_{full} = bY_{full}$, $P_{full} = 2\left( b + Y_{full} \right)$,
 and $P_{\max} = b + 2\left( 0.97Y_{full} \right)$.
@@ -3651,28 +3421,27 @@ closed rectangular hydraulic radius and section factor are computed in
 the same fashion as for the open rectangular shape described in section
 5.2.1. Above this point the hydraulic radius at a given depth *Y* is:
 
-  -------------------------------------------------------------------------
-        $$R(Y) = \frac{A(Y)}{P(Y)}$$                                (5-8)
-  ----- ----------------------------------------------------------- -------
 
-  -------------------------------------------------------------------------
+$$R(Y) = \frac{A(Y)}{P(Y)} \qquad \text{(5-8)}$$
+
+
 
 where
 
-  ------------------------------------------------------------------------------------------
-        $$P(Y) = 2Y + b + b\frac{\left( \frac{Y}{Y_{full} - 0.97} \right)}{0.03}$$   (5-9)
-  ----- ---------------------------------------------------------------------------- -------
 
-  ------------------------------------------------------------------------------------------
+$$P(Y) = 2Y + b + b\frac{\left( \frac{Y}{Y_{full} - 0.97} \right)}{0.03} \qquad \text{(5-9)}$$
+
+
 
 and the section factor and its derivative at a given flow area *A* are:
 
-  ------------------------------------------------------------------------------------------------------------------------------------------
-        $$\Psi(A) = \Psi_{\max} - \frac{\left( \Psi_{\max} - \Psi_{full} \right)\left( \frac{A}{A_{full} - 0.97} \right)}{0.03}$$     (5-10)
-  ----- --------------------------------------------------------------------------------------------------------------------------- --------
-        $$\Psi'(A) = \frac{\left( \Psi_{full} - \Psi_{\max} \right)}{\left( 0.03A_{full} \right)}$$                                   (5-11)
 
-  ------------------------------------------------------------------------------------------------------------------------------------------
+$$\Psi(A) = \Psi_{\max} - \frac{\left( \Psi_{\max} - \Psi_{full} \right)\left( \frac{A}{A_{full} - 0.97} \right)}{0.03} \qquad \text{(5-10)}$$
+
+|  |  |  |
+| --- | --- | --- |
+|  | $\Psi'(A) = \frac{\left( \Psi_{full} - \Psi_{\max} \right)}{\left( 0.03A_{full} \right)}$ | (5-11) |
+
 
 ### 5.1.3 Circular Shape
 
@@ -3682,37 +3451,32 @@ trigonometric functions that are time consuming to compute. Thus for
 reasons of efficiency SWMM uses a set of lookup tables that are based on
 those published by Chow (1959). The tables consist of the following:
 
-  -----------------------------------------------------------------------------
-  *A~tbl\ :~*   *A/A~full\ ~* as a function of *Y/Y~full~*
-  ------------- ---------------------------------------------------------------
-  *W~tbl\ :~*   *W/W~max~* as a function of *Y/Y~full~*
+  *A~tbl\ :~*   *A/A~full\ ~* as a function of *Y/Y<sub>full</sub>*
 
-  *R~tbl\ :~*   *R/R~full~* as a function of *Y/Y~full~*
+|  |  |
+| --- | --- |
+| *W~tbl\ :~* | *W/W<sub>max</sub>* as a function of *Y/Y<sub>full</sub>* |
+| *R~tbl\ :~* | *R/R<sub>full</sub>* as a function of *Y/Y<sub>full</sub>* |
+| *Y~tbl\ :~* | *Y/Y<sub>full</sub>* as a function of *A/A<sub>full</sub>* |
+| *Ψ~tbl\ :~* | *Ψ/Ψ<sub>full</sub>* as a function of *A/A<sub>full</sub>* |
 
-  *Y~tbl\ :~*   *Y/Y~full~* as a function of *A/A~full~*
 
-  *Ψ~tbl\ :~*   *Ψ/Ψ~full~* as a function of *A/A~full~*
-  -----------------------------------------------------------------------------
-
-Each table consists of 51 equally spaced values of *Y/Y~full~* or
-*A/A~full~* between 0 and 1. They are graphed in Figures 5-2 and 5-3 and
+Each table consists of 51 equally spaced values of *Y/Y<sub>full</sub>* or
+*A/A<sub>full</sub>* between 0 and 1. They are graphed in Figures 5-2 and 5-3 and
 are listed in Appendix C. The normalizing factors used in the tables are
 for full flow conditions $\left( Y = Y_{full} \right)$ whose formulas
 are listed in Table 5-4.
 
-  -----------------------------------------------------------------------
   **Property**             **Value**
-  ------------------------ ----------------------------------------------
-  Depth                    $$Y_{full}$$
 
-  Area                     $A_{full} = 0.7854Y_{full}^{2}$,
+|  |  |
+| --- | --- |
+| Depth | $Y_{full}$ |
+| Area | $A_{full} = 0.7854Y_{full}^{2}$, |
+| Maximum Width | $W_{\max} = Y_{full}$ |
+| Hydraulic Radius | $R_{full} = 0.25Y_{full}$ |
+| Section Factor | $\Psi_{full} = A_{full}R_{full}^{2/3}$ |
 
-  Maximum Width            $$W_{\max} = Y_{full}$$
-
-  Hydraulic Radius         $$R_{full} = 0.25Y_{full}$$
-
-  Section Factor           $$\Psi_{full} = A_{full}R_{full}^{2/3}$$
-  -----------------------------------------------------------------------
 
   : []{#_Toc484690422 .anchor}**Table 5‑4 Geometric properties of a full
   circular cross section**
@@ -3737,21 +3501,20 @@ To find *A*, *W*, or *R* for a given *Y* one first evaluates
 $i = \left( \frac{Y}{Y_{full}} \right)(N - 1)$ rounded down to the
 nearest integer value where *N* = 51, linearly interpolates the
 appropriate table between the entries at index *i* and *i+1*, and then
-multiplies by the appropriate normalizing factor (either *A~full~*,
-*Y~full~*, or *R~full~*). A similar procedure is used to evaluate *Y* or
-*Ψ* as a function of *A* normalized by *A~full~*. The section factor
+multiplies by the appropriate normalizing factor (either *A<sub>full</sub>*,
+*Y<sub>full</sub>*, or *R<sub>full</sub>*). A similar procedure is used to evaluate *Y* or
+*Ψ* as a function of *A* normalized by *A<sub>full</sub>*. The section factor
 derivative is determined directly from the *Ψ~tbl\ ~* as follows:
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\Psi'(A) = \left( \Psi_{tbl}\lbrack i + 1\rbrack - \Psi_{tbl}\lbrack i\rbrack \right)(N - 1)\left( \frac{\Psi_{full}}{A_{full}} \right)$$   (5-12)
-  ----- --------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\Psi'(A) = \left( \Psi_{tbl}\lbrack i + 1\rbrack - \Psi_{tbl}\lbrack i\rbrack \right)(N - 1)\left( \frac{\Psi_{full}}{A_{full}} \right) \qquad \text{(5-12)}$$
+
+
 
 where *i* is the integer value of
 $\left( \frac{A}{A_{full}} \right)(N - 1)$ for *N* = 51. For added
 accuracy, analytical functions are used to compute *Y,* *Ψ,* and *Ψ'*
-for areas below 4% of *A~full~*. They are described in the side bar
+for areas below 4% of *A<sub>full</sub>*. They are described in the side bar
 entitled "*Analytical Functions for Circular Cross Sections*".
 
 ### 5.1.4 Ellipsoid and Arch Shapes
@@ -3759,8 +3522,8 @@ entitled "*Analytical Functions for Circular Cross Sections*".
 Figure 5-4 depicts standard ellipsoid and arch sewer pipe cross
 sectional shapes. Next to circular pipes these are the most commonly
 used shapes for newly installed sewers and culverts. Each shape is
-defined by its "rise" which is its full depth *Y~full~*, and its "span"
-which is its maximum width *W~max~*. The vertical and horizontal
+defined by its "rise" which is its full depth *Y<sub>full</sub>*, and its "span"
+which is its maximum width *W<sub>max</sub>*. The vertical and horizontal
 ellipsoids have the same shape but rotated by 90 degrees (the span of
 one is the rise of the other and vice versa).
 
@@ -3780,18 +3543,18 @@ Institute, 1999). The standard ellipsoid and arch pipe sizes are
 tabulated in Appendixes D and E, respectively. Each size is
 characterized by its rise, span, full area, and full hydraulic radius.
 Users can either select from one of these standard sizes or supply their
-own values for rise *Y~full~* and span *W~max~*, both in feet. In the
-latter case the corresponding full area *A~full~* and hydraulic radius
-*R~full~* are estimated using the formulas in Table 5-5.
+own values for rise *Y<sub>full</sub>* and span *W<sub>max</sub>*, both in feet. In the
+latter case the corresponding full area *A<sub>full</sub>* and hydraulic radius
+*R<sub>full</sub>* are estimated using the formulas in Table 5-5.
 
-  -----------------------------------------------------------------------------
   **Property**              **Ellipsoid Shape**           **Arch Shape**
-  ----------------------- ------------------------ ----------------------------
-  Full Area $A_{full}$     $$1.2692Y_{full}^{2}$$   $$0.7879Y_{full}W_{\max}$$
 
-  Full Hydraulic Radius      $$0.3061Y_{full}$$         $$0.2991Y_{full}$$
-  $R_{full}$                                       
-  -----------------------------------------------------------------------------
+|  |  |  |
+| --- | --- | --- |
+| Full Area $A_{full}$ | $1.2692Y_{full}^{2}$ | $0.7879Y_{full}W_{\max}$ |
+| Full Hydraulic Radius | $0.3061Y_{full}$ | $0.2991Y_{full}$ |
+| $R_{full}$ |  |  |
+
 
   : []{#_Toc484690423 .anchor}**Table 5‑5 Full area and hydraulic radius
   of custom ellipsoid and arch pipe sections**
@@ -3801,43 +3564,42 @@ the following tables for both the ellipsoid and arch shapes (only a
 single set of tables is needed for the two ellipsoid shapes since they
 are just rotated versions of one another):
 
-  ------------------------------------------------------------------------------
-  *A~tbl\ :~*   *A/A~full\ ~* as a function of *Y/Y~full~*
-  ------------- ----------------------------------------------------------------
-  *W~tbl\ :~*   *W/W~max~* as a function of *Y/Y~full~*
+  *A~tbl\ :~*   *A/A~full\ ~* as a function of *Y/Y<sub>full</sub>*
 
-  *R~tbl\ :~*   *R/R~full~* as a function of *Y/Y~full~*
-  ------------------------------------------------------------------------------
+|  |  |
+| --- | --- |
+| *W~tbl\ :~* | *W/W<sub>max</sub>* as a function of *Y/Y<sub>full</sub>* |
+| *R~tbl\ :~* | *R/R<sub>full</sub>* as a function of *Y/Y<sub>full</sub>* |
+
 
 Each table contains entries for *N =* 26 equally spaced values of
-*Y/Y~full~* between 0 and 1. The tables for ellipsoid pipes are in
+*Y/Y<sub>full</sub>* between 0 and 1. The tables for ellipsoid pipes are in
 Appendix D and those for arch pipes are in Appendix E. To find *A*, *W*,
 or *R* for a given *Y* one first determines the integer portion of
 $(N - 1)\left( \frac{Y}{Y_{full}} \right)$, linearly interpolates the
 appropriate table between the entries at this and the next higher index,
 and then multiplies by the appropriate normalizing factor (either
-*A~full~*, *W~max~*, or *R~full~*).
+*A<sub>full</sub>*, *W<sub>max</sub>*, or *R<sub>full</sub>*).
 
 To find the depth associated with a given area *Y(A)*, a bisection (or
 interval halving) procedure is first used on the appropriate (either
-ellipsoid or arch) area table *A~tbl~* to find the position *i* so that
+ellipsoid or arch) area table *A<sub>tbl</sub>* to find the position *i* so that
 $A_{tbl}\lbrack i\rbrack \leq \frac{A}{A_{full} \leq A_{tbl}\lbrack i + 1\rbrack}$.
 Then the desired depth *Y* is interpolated from this position in the
 table using the following expression with *N* = 26:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$Y(A) = \frac{Y_{full}}{(N - 1)}\left( i + \frac{\left( \frac{A}{A_{full} - A_{tbl}\lbrack i\rbrack} \right)}{\left( A_{tbl}\lbrack i + 1\rbrack - A_{tbl}\lbrack i\rbrack \right)} \right)$$   (5-14)
-  ----- ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ --------
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$Y(A) = \frac{Y_{full}}{(N - 1)}\left( i + \frac{\left( \frac{A}{A_{full} - A_{tbl}\lbrack i\rbrack} \right)}{\left( A_{tbl}\lbrack i + 1\rbrack - A_{tbl}\lbrack i\rbrack \right)} \right) \qquad \text{(5-14)}$$
+
+
 
 The following steps are used to find the section factor associated with
 a given area *Ψ(A):*
 
 1.  Use the aforementioned procedure to find the depth *Y* corresponding
-    to area *A* from the appropriate *A~tbl~*.
+    to area *A* from the appropriate *A<sub>tbl</sub>*.
 
-2.  Use the shape's hydraulic radius table *R~tbl~* to find the
+2.  Use the shape's hydraulic radius table *R<sub>tbl</sub>* to find the
     hydraulic radius *R* for this depth.
 
 3.  Compute the section factor as: $\Psi(A) = AR^{2/3}$.
@@ -3845,11 +3607,10 @@ a given area *Ψ(A):*
 The section factor derivative for a given area *Ψ'(A)* is found using
 the following central difference equation:
 
-  ------------------------------------------------------------------------------------------------------------------------------------
-        $$\Psi'(A) = \frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A}\ \ where\ \mathrm{\Delta}A = 0.001A_{full}$$   (5-15)
-  ----- --------------------------------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------------------------------
+$$\Psi'(A) = \frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A}\ \ where\ \mathrm{\Delta}A = 0.001A_{full} \qquad \text{(5-15)}$$
+
+
 
 ### 5.1.5 Older Masonry Sewer Shapes
 
@@ -3861,9 +3622,9 @@ information and drawings found in Metcalf and Eddy (1914) and Davis
 tables discussed previously for circular cross sections (see section
 5.2.3). The number of entries *N* in each table for each shape is listed
 in Table 5-6. The full tables are provided in Appendix F. The values of
-*A~full~, R~full~*, and *W~max~* used to normalize the entries in the
+*A<sub>full</sub>, R<sub>full</sub>*, and *W<sub>max</sub>* used to normalize the entries in the
 tables for each shape are listed in Table 5-7. The full section factor
-*Ψ~full~* used to normalize the section factor table is computed as
+*Ψ<sub>full</sub>* used to normalize the section factor table is computed as
 $A_{full}R_{full}^{2/3}$ .
 
 ![OldShapes.png](VolumeII/media/media/image27.png){width="4.834008092738408in"
@@ -3872,52 +3633,43 @@ height="2.510767716535433in"}
 []{#_Toc484694728 .anchor}**Figure 5‑5 Masonry sewer shapes**
 
   --------------------------------------------------------------------------------------------
-  **Shape**          ***A~tbl~***   ***R~tbl~***   ***W~tbl~***   ***Y~tbl~***   ***Ψ~tbl~***
-  ----------------- -------------- -------------- -------------- -------------- --------------
-  Basket Handle           26             26             26             51             51
+  **Shape**          ***A<sub>tbl</sub>***   ***R<sub>tbl</sub>***   ***W<sub>tbl</sub>***   ***Y<sub>tbl</sub>***   ***Ψ<sub>tbl</sub>***
 
-  Egg                     26             26             26             51             51
+|  |  |  |  |  |  |
+| --- | --- | --- | --- | --- | --- |
+| Basket Handle | 26 | 26 | 26 | 51 | 51 |
+| Egg | 26 | 26 | 26 | 51 | 51 |
+| Horseshoe | 26 | 26 | 26 | 51 | 51 |
+| Catenary | \- | \- | 21 | 51 | 51 |
+| Gothic | \- | \- | 21 | 51 | 51 |
+| Semi-Circular | \- | \- | 21 | 51 | 51 |
+| Semi-Elliptical | \- | \- | 21 | 51 | 51 |
 
-  Horseshoe               26             26             26             51             51
-
-  Catenary                \-             \-             21             51             51
-
-  Gothic                  \-             \-             21             51             51
-
-  Semi-Circular           \-             \-             21             51             51
-
-  Semi-Elliptical         \-             \-             21             51             51
-  --------------------------------------------------------------------------------------------
 
   : []{#_Toc484690424 .anchor}**Table 5‑6 Number of entries in geometric
   property tables for masonry sewer shapes**
 
-  -----------------------------------------------------------------------------------------------------------------------------
-  **Shape**         ***A~full~***                ***R~full~***             ***W~max~***            ***Ψ~max~***
-  ----------------- ---------------------------- ------------------------- ----------------------- ----------------------------
-  Basket Handle     $${0.7862\ Y}_{full}^{2}$$   $$0.2464\ Y_{full}$$      $$0.944{\ Y}_{full}$$   $$1.06078{\ \Psi}_{full}$$
+  **Shape**         ***A<sub>full</sub>***                ***R<sub>full</sub>***             ***W<sub>max</sub>***            ***Ψ<sub>max</sub>***
 
-  Egg               $$0.5105\ Y_{full}^{2}$$     $$0.1931{\ Y}_{full}$$    $$0.667\ Y_{full}$$     $$1.065\ \Psi_{full}$$
+|  |  |  |  |  |
+| --- | --- | --- | --- | --- |
+| Basket Handle | ${0.7862\ Y}_{full}^{2}$ | $0.2464\ Y_{full}$ | $0.944{\ Y}_{full}$ | $1.06078{\ \Psi}_{full}$ |
+| Egg | $0.5105\ Y_{full}^{2}$ | $0.1931{\ Y}_{full}$ | $0.667\ Y_{full}$ | $1.065\ \Psi_{full}$ |
+| Horseshoe | $0.8293\ Y_{full}^{2}$ | $0.2538{\ Y}_{full}$ | $Y_{full}$ | $1.077\ \Psi_{full}$ |
+| Catenary | $0.70277\ Y_{full}^{2}$ | ${0.23172\ Y}_{full}$ | $0.9\ Y_{full}$ | $1.05\ \Psi_{full}$ |
+| Gothic | $0.6554\ Y_{full}^{2}$ | $0.2269\ Y_{full}$ | $0.84\ Y_{full}$ | $1.065\ \Psi_{full}$ |
+| Semi-Circular | $1.2697\ Y_{full}^{2}$ | $0.2946{\ Y}_{full}$ | $1.64{\ Y}_{full}$ | $1.06637\ \Psi_{full}$ |
+| Semi-Elliptical | ${0.785\ Y}_{full}^{2}$ | $0.242\ Y_{full}$ | $Y_{full}$ | $1.045\ \Psi_{full}$ |
 
-  Horseshoe         $$0.8293\ Y_{full}^{2}$$     $$0.2538{\ Y}_{full}$$    $$Y_{full}$$            $$1.077\ \Psi_{full}$$
-
-  Catenary          $$0.70277\ Y_{full}^{2}$$    $${0.23172\ Y}_{full}$$   $$0.9\ Y_{full}$$       $$1.05\ \Psi_{full}$$
-
-  Gothic            $$0.6554\ Y_{full}^{2}$$     $$0.2269\ Y_{full}$$      $$0.84\ Y_{full}$$      $$1.065\ \Psi_{full}$$
-
-  Semi-Circular     $$1.2697\ Y_{full}^{2}$$     $$0.2946{\ Y}_{full}$$    $$1.64{\ Y}_{full}$$    $$1.06637\ \Psi_{full}$$
-
-  Semi-Elliptical   $${0.785\ Y}_{full}^{2}$$    $$0.242\ Y_{full}$$       $$Y_{full}$$            $$1.045\ \Psi_{full}$$
-  -----------------------------------------------------------------------------------------------------------------------------
 
   : []{#_Toc484690425 .anchor}**Table 5‑7 Geometric parameters of
   masonry sewer sections**
 
 The tables are used in the same manner as the ones for a circular shape
 to directly evaluate *A(Y), W(Y), R(Y), Y(A), Ψ(A),* and *Ψ'(A).* For
-the shapes that do not have an *A~tbl~*, *A(Y)* is determined using the
-inverse lookup method on the *Y~tbl~* described in section 5.2.4 for
-ellipsoids and arches. For shapes without an *R~tbl~*, *R(Y)* is found
+the shapes that do not have an *A<sub>tbl</sub>*, *A(Y)* is determined using the
+inverse lookup method on the *Y<sub>tbl</sub>* described in section 5.2.4 for
+ellipsoids and arches. For shapes without an *R<sub>tbl</sub>*, *R(Y)* is found
 by first finding *A(Y)* as just described, then finding *Ψ(A)* for the
 resulting area *A*, and finally
 evaluating$\left( \frac{\Psi}{A} \right)^{3/2}$. Equation 5-15 is used
@@ -3941,43 +3693,39 @@ shapes</strong></p></figcaption>
 [Sediment Filled Circular Shape]{.underline}
 
 This is a circular cross section that is partially filled with immobile
-sediment to a specified depth *Y~btm~*. (This filled depth remains
+sediment to a specified depth *Y<sub>btm</sub>*. (This filled depth remains
 constant -- SWMM does not model how it might change over time due to
 sediment transport processes.) The depth available for flow is
 $Y_{full} - Y_{btm}$. To compute the geometric properties of this shape
 one first uses the circular shape functions to compute the area
-*A~btm~*, top width *W~btm~*, and hydraulic radius R*~btm~* at a depth
-of *Y~btm~* for the full circular shape with diameter *Y~full~*. The
-wetted perimeter at this depth, *P~btm~*, is $\frac{A_{btm}}{R_{btm}}$ .
+*A<sub>btm</sub>*, top width *W<sub>btm</sub>*, and hydraulic radius R*<sub>btm</sub>* at a depth
+of *Y<sub>btm</sub>* for the full circular shape with diameter *Y<sub>full</sub>*. The
+wetted perimeter at this depth, *P<sub>btm</sub>*, is $\frac{A_{btm}}{R_{btm}}$ .
 Then the expressions listed in Table 5-8 can be used to find the section
-properties for a specific flow depth *Y* above *Y~btm~* or area *A*
-above *A~btm~* .
+properties for a specific flow depth *Y* above *Y<sub>btm</sub>* or area *A*
+above *A<sub>btm</sub>* .
 
-  -------------------------------------------------------------------------------------------------------------------------------------------
   **Property**   **Value Based on Full Circular Shape Functions**
-  -------------- ----------------------------------------------------------------------------------------------------------------------------
-  *A(Y)*         $$A\left( Y + Y_{btm} \right) - A_{btm}$$
 
-  *W(Y)*         $$W(Y + Y_{btm})$$
+|  |  |
+| --- | --- |
+| *A(Y)* | $A\left( Y + Y_{btm} \right) - A_{btm}$ |
+| *W(Y)* | $W(Y + Y_{btm})$ |
+| *R(Y)* | $\frac{A\left( Y + Y_{btm} \right) - A_{btm}}{\left( \frac{A(Y + Y_{btm})}{R(Y + Y_{btm}}) \right) - P_{btm} + W_{btm}}$ |
+| *Y(A)* | $Y\left( A + A_{btm} \right) - Y_{btm}$ |
+| *Ψ(A)* | $A{R(\mathrm{\Delta}Y)}^{2/3}\ \ where\ \mathrm{\Delta}Y = Y\left( A + A_{btm} \right) - Y_{btm}$ |
+| *Ψ'(A)* | $\frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A}\ \ where\ \Delta A = 0.001(A_{full} - A_{btm})$ |
 
-  *R(Y)*         $$\frac{A\left( Y + Y_{btm} \right) - A_{btm}}{\left( \frac{A(Y + Y_{btm})}{R(Y + Y_{btm}}) \right) - P_{btm} + W_{btm}}$$
-
-  *Y(A)*         $$Y\left( A + A_{btm} \right) - Y_{btm}$$
-
-  *Ψ(A)*         $$A{R(\mathrm{\Delta}Y)}^{2/3}\ \ where\ \mathrm{\Delta}Y = Y\left( A + A_{btm} \right) - Y_{btm}$$
-
-  *Ψ'(A)*        $$\frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A}\ \ where\ \Delta A = 0.001(A_{full} - A_{btm})$$
-  -------------------------------------------------------------------------------------------------------------------------------------------
 
   : []{#_Toc484690426 .anchor}**Table 5‑8 Geometric properties for a
   sediment filled circular cross section**
 
 [Rectangular-Triangular Shape]{.underline}
 
-This shape consists of a triangular bottom section of height *Y~btm~*
+This shape consists of a triangular bottom section of height *Y<sub>btm</sub>*
 connected to a closed rectangular top section of width *b* and height
-*Y~full~* -- *Y~btm~*. The slope of the triangular section's sidewalls
-*s* is $\frac{b}{2Y_{btm}}$ . For depths below *Y~btm~* (or areas below
+*Y<sub>full</sub>* -- *Y<sub>btm</sub>*. The slope of the triangular section's sidewalls
+*s* is $\frac{b}{2Y_{btm}}$ . For depths below *Y<sub>btm</sub>* (or areas below
 $Y_{btm}\frac{b}{2}$) the geometric properties are computed in the same
 manner as for the open triangular shape of section 5.2.1. At higher
 depths (or areas) the methods used for the closed rectangular shape of
@@ -3988,7 +3736,7 @@ filled triangular section. The applicable formulas are listed in Table
 [Rectangular-Round Shape]{.underline}
 
 This composite shape consists of a closed rectangular top with a rounded
-bottom section. It has full height *Y~full~*, top width *b*, and bottom
+bottom section. It has full height *Y<sub>full</sub>*, top width *b*, and bottom
 radius of curvature *r* (see Figure 5-6). Table 5-10 lists the
 parameters used to compute the section's properties whose formulas are
 given in Table 5-11.
@@ -4038,61 +3786,52 @@ section of a rectangular-triangular shape**
 
 The modified basket handle shape is the reverse of the rectangular-round
 shape with a rectangular bottom section below a rounded top section. It
-has full height *Y~full~*, bottom width *b*, and top section radius of
+has full height *Y<sub>full</sub>*, bottom width *b*, and top section radius of
 curvature *r* (see Figure 5-6). The central angle *θ* formed by the
 rounded top section is:
 
-  --------------------------------------------------------------------------
-        $$\theta = 2\sin^{- 1}\left( \frac{b}{2r} \right)$$         (5-14)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$\theta = 2\sin^{- 1}\left( \frac{b}{2r} \right) \qquad \text{(5-14)}$$
 
-The depth *Y~btm~* of the bottom rectangular section is:
 
-  ------------------------------------------------------------------------------------------------
-        $$Y_{btm} = Y_{full} - r\left( 1 - cos\left( \frac{\theta}{2} \right) \right)$$   (5-15)
-  ----- --------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------
+The depth *Y<sub>btm</sub>* of the bottom rectangular section is:
 
-and its area *A~btm~* is *bY~btm~* . The shape's full area *A~full~* is:
 
-  ----------------------------------------------------------------------------------------------
-        $$A_{full} = A_{btm} + \frac{r^{2}}{\left\{ 2(\theta - sin\theta) \right\}}$$   (5-16)
-  ----- ------------------------------------------------------------------------------- --------
+$$Y_{btm} = Y_{full} - r\left( 1 - cos\left( \frac{\theta}{2} \right) \right) \qquad \text{(5-15)}$$
 
-  ----------------------------------------------------------------------------------------------
 
-For depths up to *Y~btm~* and areas up to *A~btm~* the open rectangular
+
+and its area *A<sub>btm</sub>* is *bY<sub>btm</sub>* . The shape's full area *A<sub>full</sub>* is:
+
+
+$$A_{full} = A_{btm} + \frac{r^{2}}{\left\{ 2(\theta - sin\theta) \right\}} \qquad \text{(5-16)}$$
+
+
+
+For depths up to *Y<sub>btm</sub>* and areas up to *A<sub>btm</sub>* the open rectangular
 shape functions of Tables 5-1 and 5-2, respectively, are used to compute
 the modified basket handle's section properties. For depths and areas
 above this the functions listed in Table 5-12 are used.
 
-  -----------------------------------------------------------------------------------------------------------------------------------
   **Parameter**                **Value**
-  ---------------------------- ------------------------------------------------------------------------------------------------------
-  Central Angle *θ*            $$2\sin^{- 1}\left( \frac{b}{2r} \right)$$
 
-  Bottom Section Height        $$r\left( 1 - cos\left( \frac{\theta}{2} \right) \right)$$
-  *Y~btm~*                     
+|  |  |
+| --- | --- |
+| Central Angle *θ* | $2\sin^{- 1}\left( \frac{b}{2r} \right)$ |
+| Bottom Section Height | $r\left( 1 - cos\left( \frac{\theta}{2} \right) \right)$ |
+| *Y<sub>btm</sub>* |  |
+| Bottom Section Area *A<sub>bt | m</sub>* $\left( \frac{r^{2}}{2} \right)\left( \theta - sin(\theta) \right)$ |
+| Full Area *A<sub>full</sub>* | $b\left( Y_{full} - Y_{btm} \right) + A_{btm}$ |
+| Full Hydraulic Radius | $\frac{A_{full}}{\left\{ r\theta + 2\left( Y_{full} - Y_{btm} \right) + b \right\}}$ |
+| *R<sub>full</sub>* |  |
+| Full Section Factor | $A_{full}R_{full}^{2/3}$ |
+| *Ψ<sub>full</sub>* |  |
+| Maximum Hydraulic Radius | $\frac{0.98A_{full}}{\left\{ r\theta + \frac{2\left( 0.98A_{full} - A_{btm} \right)}{b} \right\}}$ |
+| *R<sub>max</sub>* |  |
+| Maximum Section Factor | $0.98A_{full}R_{\max}^{2/3}$ |
+| *Ψ<sub>max</sub>* |  |
 
-  Bottom Section Area *A~btm~* $$\left( \frac{r^{2}}{2} \right)\left( \theta - sin(\theta) \right)$$
-
-  Full Area *A~full~*          $$b\left( Y_{full} - Y_{btm} \right) + A_{btm}$$
-
-  Full Hydraulic Radius        $$\frac{A_{full}}{\left\{ r\theta + 2\left( Y_{full} - Y_{btm} \right) + b \right\}}$$
-  *R~full~*                    
-
-  Full Section Factor          $$A_{full}R_{full}^{2/3}$$
-  *Ψ~full~*                    
-
-  Maximum Hydraulic Radius     $$\frac{0.98A_{full}}{\left\{ r\theta + \frac{2\left( 0.98A_{full} - A_{btm} \right)}{b} \right\}}$$
-  *R~max~*                     
-
-  Maximum Section Factor       $$0.98A_{full}R_{\max}^{2/3}$$
-  *Ψ~max~*                     
-  -----------------------------------------------------------------------------------------------------------------------------------
 
   : []{#_Toc484690428 .anchor}**Table 5‑10 Geometric parameters for
   rectangular-round shapes**
@@ -4142,25 +3881,19 @@ above this the functions listed in Table 5-12 are used.
 : []{#_Toc484690429 .anchor}**Table 5‑11 Geometric properties for
 rectangular--round shapes**
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------
   **Property**   **Expression**
-  -------------- ----------------------------------------------------------------------------------------------------------------------------------------------------
-  *A(Y)*         $$A_{full} - \left( \frac{r^{2}}{2} \right)(\phi - sin\phi)\ \ where\ \phi = 2\cos^{- 1}\left( 1 - \frac{\left( Y_{full} - Y \right)}{r} \right)$$
 
-  *W(Y)*         $$2\sqrt{\left( Y_{full} - Y \right)\left( 2r - \left( Y_{full} - Y \right) \right)}$$
+|  |  |
+| --- | --- |
+| *A(Y)* | $A_{full} - \left( \frac{r^{2}}{2} \right)(\phi - sin\phi)\ \ where\ \phi = 2\cos^{- 1}\left( 1 - \frac{\left( Y_{full} - Y \right)}{r} \right)$ |
+| *W(Y)* | $2\sqrt{\left( Y_{full} - Y \right)\left( 2r - \left( Y_{full} - Y \right) \right)}$ |
+| *R(Y)* | $R\left( A(Y) \right)\ using\ R(A)function\ below$ |
+| *Y(A)* | $Y_{full} - Y\left( A_{full} - A \right)\ \ using\ Y(A)for\ circular\ shape\ with\ Y_{full} = 2r$ |
+| *P(A)* | $(\theta - \phi)r + 2\left( Y_{full} - Y(A) \right) + b\ \ where\ \phi = 2\cos^{- 1}\left( 1 - \frac{\left( Y_{full} - Y(A) \right)}{r} \right)$ |
+| *R(A)* | $\frac{A}{P(A)}$ |
+| $\Psi(A)$ | $A{R(A)}^{2/3}$ |
+| $\Psi'(A)$ | $\frac{\left\{ \Psi(A + \Delta A) - \Psi(A - \Delta A) \right\}}{(2\Delta A)}\ \ where\ \Delta A = 0.001A_{full}$ |
 
-  *R(Y)*         $$R\left( A(Y) \right)\ using\ R(A)function\ below$$
-
-  *Y(A)*         $$Y_{full} - Y\left( A_{full} - A \right)\ \ using\ Y(A)for\ circular\ shape\ with\ Y_{full} = 2r$$
-
-  *P(A)*         $$(\theta - \phi)r + 2\left( Y_{full} - Y(A) \right) + b\ \ where\ \phi = 2\cos^{- 1}\left( 1 - \frac{\left( Y_{full} - Y(A) \right)}{r} \right)$$
-
-  *R(A)*         $$\frac{A}{P(A)}$$
-
-  $$\Psi(A)$$    $$A{R(A)}^{2/3}$$
-
-  $$\Psi'(A)$$   $$\frac{\left\{ \Psi(A + \Delta A) - \Psi(A - \Delta A) \right\}}{(2\Delta A)}\ \ where\ \Delta A = 0.001A_{full}$$
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
   : []{#_Toc484690430 .anchor}**Table 5‑12 Properties in the rounded top
   section of a modified basket handle shape**
@@ -4173,27 +3906,22 @@ where the section factor and hence the Manning equation flow rate is a
 maximum (see Sections 4.2 and 4.3.2). Below this point the section
 factor is an increasing function of area, after which it decreases until
 the conduit becomes full. Table 5-13 lists the ratio of the area at
-maximum flow (denoted as *A~max~*) to the full area (*A~full~*) for the
+maximum flow (denoted as *A<sub>max</sub>*) to the full area (*A<sub>full</sub>*) for the
 standard closed conduit shapes recognized by SWMM. For open shapes
-*A~max~* is the same as *A~full~*.
+*A<sub>max</sub>* is the same as *A<sub>full</sub>*.
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
   **Shape**             $$\frac{\mathbf{A}_{\mathbf{\max}}}{\mathbf{A}_{\mathbf{full}}}$$  **Shape**                 $$\frac{\mathbf{A}_{\mathbf{\max}}}{\mathbf{A}_{\mathbf{full}}}$$
-  -------------------- ------------------------------------------------------------------- ------------------------ -------------------------------------------------------------------
-  Rectangular                                         0.97                                 Circular                                               0.9756
 
-  Elliptical                                          0.96                                 Arch                                                    0.92
+|  |  |  |  |
+| --- | --- | --- | --- |
+| Rectangular | 0.97 | Circular | 0.9756 |
+| Elliptical | 0.96 | Arch | 0.92 |
+| Basket Handle | 0.96 | Egg | 0.96 |
+| Horseshoe | 0.96 | Catenary | 0.98 |
+| Gothic | 0.96 | Semi-Circular | 0.96 |
+| Semi-Elliptical | 0.98 | Rectangular-Triangular | 0.98 |
+| Rectangular-Round | 0.98 | Modified Basket Handle | 0.96 |
 
-  Basket Handle                                       0.96                                 Egg                                                     0.96
-
-  Horseshoe                                           0.96                                 Catenary                                                0.98
-
-  Gothic                                              0.96                                 Semi-Circular                                           0.96
-
-  Semi-Elliptical                                     0.98                                 Rectangular-Triangular                                  0.98
-
-  Rectangular-Round                                   0.98                                 Modified Basket Handle                                  0.96
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
   : []{#_Toc484690431 .anchor}**Table 5‑13 Area at maximum flow to full
   area for standard closed conduits shapes**
@@ -4205,42 +3933,38 @@ a given normal flow rate *Q* from its associated section factor *Ψ*,
 where $\Psi = \frac{Q\sqrt{S_{0}}}{\eta}$. For circular shapes and the
 seven masonry sewer shapes discussed in section 5.2.5 the following
 "reverse" lookup method is used with the shape's *Ψ* versus *A* table
-(*Ψ~tbl~*) to determine *A* given *Ψ*.
+(*Ψ<sub>tbl</sub>*) to determine *A* given *Ψ*.
 
 Let *Ψ\** be the section factor value whose area is sought and let *N*
-be the number of entries in *Ψ~tbl~*. First the interval in the table
+be the number of entries in *Ψ<sub>tbl</sub>*. First the interval in the table
 that brackets $\frac{\Psi^{*}}{\Psi_{full}}$ is located. Since these are
-all closed shapes, there will be a table entry index *i~max~* after
+all closed shapes, there will be a table entry index *i<sub>max</sub>* after
 which the $\frac{\Psi}{\Psi_{full}}$ values begin to decrease. If
-$\frac{\Psi^{*}}{\Psi_{full}}$ is between *Ψ~tbl~*\[*i~max~*\] and
-*Ψ~tbl~*\[*N*\] then this portion of the table is examined to find the
+$\frac{\Psi^{*}}{\Psi_{full}}$ is between *Ψ<sub>tbl</sub>*\[*i<sub>max</sub>*\] and
+*Ψ<sub>tbl</sub>*\[*N*\] then this portion of the table is examined to find the
 index *i\** so that $\frac{\Psi^{*}}{\Psi_{full}}$ is between
-*Ψ~tbl~*\[*i\**\] and *Ψ~tbl~*\[*i\*+1*\]. Otherwise a bisection search
-is used between index 0 and *i~max~* to find the interval starting at
+*Ψ<sub>tbl</sub>*\[*i\**\] and *Ψ<sub>tbl</sub>*\[*i\*+1*\]. Otherwise a bisection search
+is used between index 0 and *i<sub>max</sub>* to find the interval starting at
 *i\** that brackets $\frac{\Psi^{*}}{\Psi_{full}}$. Then the area *A\**
 corresponding to *Ψ\** is computed as:
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$A^{*} = \frac{A_{full}}{(N - 1)}\left( i^{*} + \frac{\left( \Psi^{*} - \Psi_{tbl}\left\lbrack i^{*} \right\rbrack \right)}{\left( \Psi_{tbl}\left\lbrack i^{*} + 1 \right\rbrack - \Psi_{tbl}\left\lbrack i^{*} \right\rbrack \right)} \right)$$   (5-17)
-  ----- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$A^{*} = \frac{A_{full}}{(N - 1)}\left( i^{*} + \frac{\left( \Psi^{*} - \Psi_{tbl}\left\lbrack i^{*} \right\rbrack \right)}{\left( \Psi_{tbl}\left\lbrack i^{*} + 1 \right\rbrack - \Psi_{tbl}\left\lbrack i^{*} \right\rbrack \right)} \right) \qquad \text{(5-17)}$$
+
+
 
 For all other shapes the Newton-Raphson-Bisection method (see Appendix
 A) is used to find the solution of
 
-  --------------------------------------------------------------------------
         $f(A) = \Psi(A) - \Psi^{*} = 0$                             (5-18)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
 
 where *Ψ\** is the section factor value whose corresponding area is
 sought. The derivative of *f(A)* required by the method is the shape's
-*Ψ'(A)* function. If the shape is closed with *A~max~ \< A~full~* and
-*Ψ\** is between *Ψ~full~* and *Ψ~max~* then the search interval is
-\[*A~full~, A~max~*\]. Otherwise it is \[0, *A~max~*\]. The convergence
-criterion is 0.01 percent of *A~full~* .
+*Ψ'(A)* function. If the shape is closed with *A<sub>max</sub> \< A<sub>full</sub>* and
+*Ψ\** is between *Ψ<sub>full</sub>* and *Ψ<sub>max</sub>* then the search interval is
+\[*A<sub>full</sub>, A<sub>max</sub>*\]. Otherwise it is \[0, *A<sub>max</sub>*\]. The convergence
+criterion is 0.01 percent of *A<sub>full</sub>* .
 
 ## 5.2 Custom Conduit Shapes
 
@@ -4254,7 +3978,7 @@ table of width versus height is shown in Figure 5-7.
 
 +--------------------------------------------------------------------------+---------------------------------------------------------------------------+
 | ![ShapeCurve2.png](VolumeII/media/media/image29.png){width="2.50034886264217in" |   ----------------------------------------------------------------------- |
-| height="2.375331364829396in"}                                            |    ***Y/Y~full~***   ***W/Y~full~***   ***Y/Y~full~***   ***W/Y~full~***  |
+| height="2.375331364829396in"}                                            |    ***Y/Y<sub>full</sub>***   ***W/Y<sub>full</sub>***   ***Y/Y<sub>full</sub>***   ***W/Y<sub>full</sub>***  |
 |                                                                          |   ----------------- ----------------- ----------------- ----------------- |
 |                                                                          |         0.00              0.000             0.56              0.928       |
 |                                                                          |                                                                           |
@@ -4277,42 +4001,42 @@ segment shown**
 
 The flow area *A*, top width *W* and hydraulic radius *R* of a custom
 shape are pre-computed at 51 equally spaced vertical values between 0
-and 1 along the shape curve and stored in tables *A~tbl~, W~tbl~*, and
-*R~tbl~*, respectively. The tables are constructed by analyzing each
+and 1 along the shape curve and stored in tables *A<sub>tbl</sub>, W<sub>tbl</sub>*, and
+*R<sub>tbl</sub>*, respectively. The tables are constructed by analyzing each
 depth segment of size 1/50 = 0.02 starting at 0 and working upwards. As
 shown in Figure 5-7, each depth segment forms a trapezoid within the
 cross section. The area of this trapezoid is added to the shape's total
-area *A~sum~* and the length of its side walls is added to the total
-wetted perimeter *P~sum~*. If the depth segment straddles more than one
+area *A<sub>sum</sub>* and the length of its side walls is added to the total
+wetted perimeter *P<sub>sum</sub>*. If the depth segment straddles more than one
 shape curve segment, then additional trapezoids are formed at the shape
-curve's vertices, each of which contributes to *A~sum~* and *P~sum~*.
-The *A~tbl~* entry for the segment is set to *A~sum~*, the *R~tbl~*
-entry to $\frac{A_{sum}}{P_{sum}}$, and the *W~tbl~* entry to the
+curve's vertices, each of which contributes to *A<sub>sum</sub>* and *P<sub>sum</sub>*.
+The *A<sub>tbl</sub>* entry for the segment is set to *A<sub>sum</sub>*, the *R<sub>tbl</sub>*
+entry to $\frac{A_{sum}}{P_{sum}}$, and the *W<sub>tbl</sub>* entry to the
 segment's top width.
 
-When a conduit with full depth *Y~full~* is assigned a shape curve for
+When a conduit with full depth *Y<sub>full</sub>* is assigned a shape curve for
 its cross section, the curve's geometry tables are used in the same
 manner as the tables for ellipsoid and arch shapes described in section
 5.1.4 for evaluating *A(Y), W(Y)*, *R(Y),* *Y(A), Ψ(A),* and *Ψ'(A)*.
-The values of *A~full~, R~full~*, and *W~max~* used to convert the
+The values of *A<sub>full</sub>, R<sub>full</sub>*, and *W<sub>max</sub>* used to convert the
 normalized values in the tables to actual dimensions are as follows:
 
-  ----------------------------------------------------------------------------------------------------------
-        $$A_{full} = A_{tbl}\lbrack 50\rbrack Y_{full}^{2}$$                                          (5-19)
-  ----- ------------------------------------------------------------------------------------------- --------
-        $$R_{full} = R_{tbl}\lbrack 50\rbrack Y_{full}$$                                              (5-20)
 
-        $$W_{\max} = \left\{ \max_{0 \leq i \leq 50}{W_{tbl}\lbrack i\rbrack} \right\} Y_{full}$$     (5-21)
-  ----------------------------------------------------------------------------------------------------------
+$$A_{full} = A_{tbl}\lbrack 50\rbrack Y_{full}^{2} \qquad \text{(5-19)}$$
 
-The value of *A~max~*, the area of the flow depth where the section
+|  |  |  |
+| --- | --- | --- |
+|  | $R_{full} = R_{tbl}\lbrack 50\rbrack Y_{full}$ | (5-20) |
+|  | $W_{\max} = \left\{ \max_{0 \leq i \leq 50}{W_{tbl}\lbrack i\rbrack} \right\} Y_{full}$ | (5-21) |
+
+
+The value of *A<sub>max</sub>*, the area of the flow depth where the section
 factor is a maximum, is given by:
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$A_{\max} = \left\{ \max_{0 \leq i \leq 50}\left( A_{tbl}\lbrack i\rbrack{R_{tbl}\lbrack i\rbrack}^{2/3} \right) \right\} Y_{full}^{2}$$   (5-22)
-  ----- ------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------
+$$A_{\max} = \left\{ \max_{0 \leq i \leq 50}\left( A_{tbl}\lbrack i\rbrack{R_{tbl}\lbrack i\rbrack}^{2/3} \right) \right\} Y_{full}^{2} \qquad \text{(5-22)}$$
+
+
 
 The Newton-Raphson-Bisection method described in section 5.1.8 is used
 to evaluate *A(Ψ).*
@@ -4347,9 +4071,9 @@ transect</strong></p></figcaption>
 The flow area *A*, top width *W* and hydraulic radius *R* of a transect
 are pre-computed at 51 equally spaced values of flow depth relative to
 full depth $\left( \frac{Y}{Y_{full}} \right)$ and stored in tables
-*A~tbl~, W~tbl~*, and *R~tbl~*, respectively. The table values are
-normalized with respect to the full section area A*~full~*, the maximum
-width *W~max~*, and the full section hydraulic radius *R~full~*,
+*A<sub>tbl</sub>, W<sub>tbl</sub>*, and *R<sub>tbl</sub>*, respectively. The table values are
+normalized with respect to the full section area A*<sub>full</sub>*, the maximum
+width *W<sub>max</sub>*, and the full section hydraulic radius *R<sub>full</sub>*,
 respectively. These tables are used in the same manner as the tables for
 ellipsoid and arch shapes described in section 5.1.4 for evaluating
 *A(Y), W(Y)*, *R(Y)*, *Y(A), Ψ(A),* and *Ψ'(A)*. *A(Ψ)* is found using
@@ -4357,7 +4081,7 @@ the Newton-Raphson-Bisection method as described in section 5.1.8.
 
 The first step in constructing the geometric property tables for a
 transect is to find the measurement stations with the lowest and highest
-elevations. The full channel depth *Y~full~* is set equal to the
+elevations. The full channel depth *Y<sub>full</sub>* is set equal to the
 difference between these values. If necessary, a new station is added at
 either end of the transect so that both ends are at the highest
 elevation. Then all station elevation values *y* are converted to the
@@ -4410,14 +4134,14 @@ SWMM defines the geometry of a street or roadway cross-section as a
 special case of the irregular channel discussed in the previous section.
 The shape of a one-sided street cross-section is shown in Figure 5-10.
 In its most basic form it consists of a road surface with downward slope
-*S~x~* extending a distance of *T~crown~* to a vertical curb of height
-*H~curb~*. To this can be added:
+*S<sub>x</sub>* extending a distance of *T<sub>crown</sub>* to a vertical curb of height
+*H<sub>curb</sub>*. To this can be added:
 
 - an optional depressed gutter section of width *W* that extends to a
   depth "*a*" below the normal curb height
 
 - an optional backing section extending beyond the curb a distance
-  *T~back~* that rises at a slope of *S~back~* .
+  *T<sub>back</sub>* that rises at a slope of *S<sub>back</sub>* .
 
 A two sided street cross-section adds a mirror image of the one-sided
 street to the right of the street crown with the same roadway, gutter,
@@ -4454,13 +4178,12 @@ SWMM supports several common storage unit shapes, listed in Table 5-14,
 whose top surface area A can be expressed as a quadratic function of
 height Y:
 
-  --------------------------------------------------------------------------
-        $$A = a_{0} + a_{1}Y + a_{2}Y^{2}$$                         (5-23)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$A = a_{0} + a_{1}Y + a_{2}Y^{2} \qquad \text{(5-23)}$$
 
-The constants *a~0~, a~1~*, and *a~2~* depend on the shape's dimensions
+
+
+The constants *a<sub>0</sub>, a<sub>1</sub>*, and *a<sub>2</sub>* depend on the shape's dimensions
 as shown in Table 5-14.
 
 +-------------+----------------------------------------------------------------------------------+--------------------------------------------+------------------------+
@@ -4503,18 +4226,17 @@ as shown in Table 5-14.
 Dynamic wave analysis needs to know how volume *V* varies with depth
 *Y*. Integrating Equation 5-23 over depth yields:
 
-  --------------------------------------------------------------------------
-        $$V = a_{0}Y + {(a}_{1}/2)Y^{2} + (a_{2}/3)Y^{3}$$          (5-24)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$V = a_{0}Y + {(a}_{1}/2)Y^{2} + (a_{2}/3)Y^{3} \qquad \text{(5-24)}$$
+
+
 
 Kinematic wave analysis needs to know the depth associated with a given
 volume. For a cylindrical shape: $Y = V/a_{0}$, while for paraboloid
 shape: $Y = \sqrt{2V/a_{1}}$ . For the other shapes the cubic equation
 5-24 is solved numerically for *Y* given *V* using the
 Newton-Raphson-Bisection method described in Appendix A over the
-interval \[0, *Y~full~*\] with initial estimate $Y = \frac{V}{a_{0}},$
+interval \[0, *Y<sub>full</sub>*\] with initial estimate $Y = \frac{V}{a_{0}},$
 convergence tolerance of 0.001 ft and derivative given by Equation 5-23.
 
 ### 5.5.2 Functional Storage Shapes
@@ -4522,51 +4244,46 @@ convergence tolerance of 0.001 ft and derivative given by Equation 5-23.
 SWMM's functional storage shape option uses a power law to relate
 surface area to depth:
 
-  --------------------------------------------------------------------------
-        $$A = c_{0} + c_{1}Y^{c_{2}}$$                              (5-25)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$A = c_{0} + c_{1}Y^{c_{2}} \qquad \text{(5-25)}$$
 
-where *c~0~, c~1~*, and *c~2~* are user-supplied constants.
+
+
+where *c<sub>0</sub>, c<sub>1</sub>*, and *c<sub>2</sub>* are user-supplied constants.
 
 The surface area at a given depth is found directly from this equation.
 The relation between volume *V* and depth *Y* (required for dynamic wave
 analysis) is:
 
-  -------------------------------------------------------------------------------------
-        $$V = c_{0}Y + \left( \frac{c_{1}}{c_{2} + 1} \right)Y^{c_{2} + 1}$$   (5-26)
-  ----- ---------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------
+$$V = c_{0}Y + \left( \frac{c_{1}}{c_{2} + 1} \right)Y^{c_{2} + 1} \qquad \text{(5-26)}$$
+
+
 
 To find the depth associated with a given volume (required for kinematic
 wave analysis) one solves the following nonlinear equation for *Y* :
 
-  ---------------------------------------------------------------------------------------------------------------
-        $$f(Y) = V - \left( c_{0}Y + \left( \frac{c_{1}}{c_{2} + 1} \right)Y^{c_{2} + 1} \right) = 0$$   (5-27)
-  ----- ------------------------------------------------------------------------------------------------ --------
 
-  ---------------------------------------------------------------------------------------------------------------
+$$f(Y) = V - \left( c_{0}Y + \left( \frac{c_{1}}{c_{2} + 1} \right)Y^{c_{2} + 1} \right) = 0 \qquad \text{(5-27)}$$
+
+
 
 It is solved using the Newton-Raphson-Bisection method described in
-Appendix A over the interval \[0, *Y~full~*\] with initial estimate
+Appendix A over the interval \[0, *Y<sub>full</sub>*\] with initial estimate
 $Y = \frac{V}{\left( c_{0} + c_{1} \right)},$ convergence tolerance of
 0.001 ft and derivative $f'(Y)$ given by Equation 5-25.
 
 Some shapes and their coefficients that can be represented with this
 functional option include:
 
-  -----------------------------------------------------------------------
 
-  -----------------------------------------------------------------------
 
 - Shapes with vertical sides and constant surface area no matter how
   irregular in outline, including cylinders and rectangular prisms:
 
-*c~0~* = area of the base
+*c<sub>0</sub>* = area of the base
 
-*c~1~ = c~2~ = 0*.
+*c<sub>1</sub> = c<sub>2</sub> = 0*.
 
 - An open channel with a trapezoidal cross section and vertical ends:
 
@@ -4602,7 +4319,7 @@ where *A* is the surface area at height *H*.
 ### 5.5.3 Tabular Storage Shapes
 
 The shape of a storage unit can also be defined by a Storage Curve which
-is a series of user-supplied data pairs *Y~i~, A~i~* that represent the
+is a series of user-supplied data pairs *Y<sub>i</sub>, A<sub>i</sub>* that represent the
 points on a curve of surface area versus surface depth for the unit. An
 example of this type of curve is shown in Figure 5-11. It can represent
 natural depressions with irregular shaped contour intervals, spheroid
@@ -4631,11 +4348,10 @@ equivalent to finding the area under the storage curve from depth 0 to
 *Y*. This can be done by using the Trapezoidal Rule (Atkinson, 1989)
 which results in:
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$V = \frac{1}{2}\left\{ \sum_{i = 1}^{n}{\left( Y_{i} - Y_{i - 1} \right)\left( A_{i} + A_{i - 1} \right)} \right\} + \ \frac{1}{2}\left( Y - Y_{n} \right)\left( A + A_{n} \right)$$   (5-28)
-  ----- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$V = \frac{1}{2}\left\{ \sum_{i = 1}^{n}{\left( Y_{i} - Y_{i - 1} \right)\left( A_{i} + A_{i - 1} \right)} \right\} + \ \frac{1}{2}\left( Y - Y_{n} \right)\left( A + A_{n} \right) \qquad \text{(5-28)}$$
+
+
 
 where *n* is the largest data point index with $Y_{n} \leq Y$ and *A* is
 the surface area associated with depth *Y* as found from the storage
@@ -4658,15 +4374,14 @@ depth for a storage curve</strong></p></figcaption>
 The depth that corresponds to a particular volume for a storage curve
 can be found as follows. Using the trapezoidal rule, sum the volumes
 contributed by each curve segment starting from 0 until the accumulated
-volume *V~sum~* exceeds the target volume *V*. Let the data point index
+volume *V<sub>sum</sub>* exceeds the target volume *V*. Let the data point index
 at the start of this segment be denoted by *i*. Then the depth *Y* that
 results in volume *V* is:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------
-        $$Y = Y_{i} + \frac{\left\lbrack \sqrt{A_{i}^{2} + 2\alpha\left( V - V_{sum} \right)} - A_{i} \right\rbrack}{\alpha}$$   (5-29)
-  ----- ------------------------------------------------------------------------------------------------------------------------ --------
 
-  ---------------------------------------------------------------------------------------------------------------------------------------
+$$Y = Y_{i} + \frac{\left\lbrack \sqrt{A_{i}^{2} + 2\alpha\left( V - V_{sum} \right)} - A_{i} \right\rbrack}{\alpha} \qquad \text{(5-29)}$$
+
+
 
 where
 $\alpha = \frac{\left( A_{i + 1} - A_{i} \right)}{\left( Y_{i + 1} - Y_{i} \right)}$.
@@ -4691,65 +4406,58 @@ Critical depth is defined as the depth *Y* where the specific energy at
 a given flow rate *Q* is a minimum and the Froude number *Fr* equals 1
 (Chow, 1959). From the latter condition
 
-  --------------------------------------------------------------------------
-        $$Fr = \frac{U}{\sqrt{g\frac{A}{W}} = 1}$$                  (5-30)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$Fr = \frac{U}{\sqrt{g\frac{A}{W}} = 1} \qquad \text{(5-30)}$$
+
+
 
 where *U* is flow velocity and *g* is the acceleration of gravity. Since
 $U = \frac{Q}{A}$ and both area and width are functions of flow depth,
-at the critical flow depth *Y~C~* the following relation holds:
+at the critical flow depth *Y<sub>C</sub>* the following relation holds:
 
-  ------------------------------------------------------------------------------------------------
-        $$\frac{{A\left( Y_{C} \right)}^{3}}{W\left( Y_{C} \right) = \frac{Q^{2}}{g}}$$   (5-31)
-  ----- --------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------
+$$\frac{{A\left( Y_{C} \right)}^{3}}{W\left( Y_{C} \right) = \frac{Q^{2}}{g}} \qquad \text{(5-31)}$$
 
-*Y~C~* can be computed explicitly for several simple conduit shapes. The
+
+
+*Y<sub>C</sub>* can be computed explicitly for several simple conduit shapes. The
 formulas are listed in Table 5-14. Other shapes require that an
 iterative root finding procedure be applied to the following re-arranged
 form of Equation 5-29:
 
-  --------------------------------------------------------------------------
-        $$\frac{{f(Y) = A(Y)}^{3}}{W(Y) - \frac{Q^{2}}{g} = 0}$$    (5-32)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$\frac{{f(Y) = A(Y)}^{3}}{W(Y) - \frac{Q^{2}}{g} = 0} \qquad \text{(5-32)}$$
+
+
 
 Because analytical derivatives of *f(Y)* are not available for most
 shapes, derivative-free methods are used instead of the Newton-Raphson
 method. Two such methods are interval enumeration and Ridder's method
 (Press et al., 1992). Ridder's method is a variation on the method of
-false position. The user supplies a set of depths *Y~1~* and *Y~2~* that
-bracket *Y~C~* along with a stopping tolerance *ε*. The full algorithm
+false position. The user supplies a set of depths *Y<sub>1</sub>* and *Y<sub>2</sub>* that
+bracket *Y<sub>C</sub>* along with a stopping tolerance *ε*. The full algorithm
 is described in Appendix B.
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------
   **Shape**        **Formula**                                                                                             **Remarks**
-  ---------------- ------------------------------------------------------------------------------------------------------- -----------------------------------
-  Rectangular^1^   $$Y_{C} = \left( \frac{Q^{2}}{gb^{2}} \right)^{1/3}$$                                                   *b* = width
 
-  Triangular^1^    $$Y_{C} = \left( \frac{2Q^{2}}{gs^{2}} \right)^{1/5}$$                                                  *s* = side slope
+|  |  |  |
+| --- | --- | --- |
+| Rectangular<sup>1 | </sup>   $Y_{C} = \left( \frac{Q^{2}}{gb^{2}} \right)^{1/3}$ | *b* = width |
+| Triangular<sup>1< | /sup>    $Y_{C} = \left( \frac{2Q^{2}}{gs^{2}} \right)^{1/5}$ | *s* = side slope |
+| Parabolic<sup>2</ | sup>     $Y_{C} = \left( \frac{27\alpha Q^{2}}{32g} \right)^{1/4}$ | Perimeter Equation: $y = \alpha x^{2}$ |
+| Power Law<sup>2</ | sup>     $$Y_{C} = \left( \frac{(1 + \gamma)^{3}\alpha^{2\gamma}Q^{2}}{4g} \right)^{\frac{1}{(3 + 2\gamm | a)}}$$   Perimeter Equation: $y = \alpha x^{\frac{1}{\gamma}}$ |
 
-  Parabolic^2^     $$Y_{C} = \left( \frac{27\alpha Q^{2}}{32g} \right)^{1/4}$$                                             Perimeter Equation:
-                                                                                                                           $y = \alpha x^{2}$
-
-  Power Law^2^     $$Y_{C} = \left( \frac{(1 + \gamma)^{3}\alpha^{2\gamma}Q^{2}}{4g} \right)^{\frac{1}{(3 + 2\gamma)}}$$   Perimeter Equation:
-                                                                                                                           $y = \alpha x^{\frac{1}{\gamma}}$
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------
 
   : []{#_Toc484690432 .anchor}**Table 5‑14 Critical depth formulas for
   simple section shapes**
 
-^1^French (1985).
+<sup>1</sup>French (1985).
 
-^2^Swamee (1993).
+<sup>2</sup>Swamee (1993).
 
 With interval enumeration the full depth of the cross section is divided
 into *N* equal intervals (SWMM 5 currently uses *N* = 25). Given a flow
-*Q* and an initial estimate of its critical depth *Y~C~*, the following
+*Q* and an initial estimate of its critical depth *Y<sub>C</sub>*, the following
 steps are used to calculate its actual value:
 
 1.  Let *i* be the integer part of $N\frac{Y_{C}}{Y_{full}}$ and set
@@ -4783,23 +4491,22 @@ to use less iterations than Ridder's method when:
 1.  The ratio of the section's full area to that of a circular section
     of same full depth is between 0.5 and 2.0
 
-2.  The initial estimate of *Y~C~* is computed from the following
+2.  The initial estimate of *Y<sub>C</sub>* is computed from the following
     approximation for circular sections (French 1985):
 
-  -------------------------------------------------------------------------------------------------
-        $$Y_{C} = 1.01\frac{\left( \frac{Q^{2}}{g} \right)^{0.25}}{Y_{full}^{0.26}}$$   (5-33)
-  ----- ------------------------------------------------------------------------------- -----------
 
-  -------------------------------------------------------------------------------------------------
+$$Y_{C} = 1.01\frac{\left( \frac{Q^{2}}{g} \right)^{0.25}}{Y_{full}^{0.26}} \qquad \text{(5-33)}$$
+
+
 
 Therefore interval enumeration is used when the first condition listed
 above holds, with the second condition used to set the initial estimate
-of *Y~C~*. Otherwise Ridder's method is used with Equation 5-30 as the
-function whose root *Y~C~* is to be found with a convergence tolerance
-of 0.001 feet. The initial bracket \[*Y~1~ , Y~2~*\] on *Y~C~* is
+of *Y<sub>C</sub>*. Otherwise Ridder's method is used with Equation 5-30 as the
+function whose root *Y<sub>C</sub>* is to be found with a convergence tolerance
+of 0.001 feet. The initial bracket \[*Y<sub>1</sub> , Y<sub>2</sub>*\] on *Y<sub>C</sub>* is
 determined as follows:
 
-1.  Let $Y_{1/2} = 0.5Y_{full}\ $and *Y~0~* be the value computed by
+1.  Let $Y_{1/2} = 0.5Y_{full}\ $and *Y<sub>0</sub>* be the value computed by
     Equation 5-31 above.
 
 2.  Compute $Q_{0} = \sqrt{g\frac{{A(Y_{0})}^{3}}{W(Y_{0})}}$ and
@@ -4824,35 +4531,32 @@ determined as follows:
 Normal depth is defined as the flow depth that results in a given
 uniform flow rate along a conduit. When the Manning equation is used to
 describe uniform flow, the relation between flow rate *Q* and normal
-depth *Y~N~* is:
+depth *Y<sub>N</sub>* is:
 
-  ----------------------------------------------------------------------------------------
-        $$A(Y_{N}){R(Y_{N})}^{2/3} = \frac{Q\eta}{\sqrt{S_{0}}}$$                 (5-34)
-  ----- ----------------------------------------------------------- ------------- --------
 
-  ----------------------------------------------------------------------------------------
+$$A(Y_{N}){R(Y_{N})}^{2/3} = \frac{Q\eta}{\sqrt{S_{0}}} \qquad \text{(5-34)}$$
 
-where *η is* the Manning roughness expressed in US units and *S~0~* is
+
+
+where *η is* the Manning roughness expressed in US units and *S<sub>0</sub>* is
 the conduit's slope. From the definition of the section factor *Ψ*
 introduced in Chapter 4, Equation 5-32 can be written as:
 
-  --------------------------------------------------------------------------
-        $$\Psi = \frac{Q\eta}{\sqrt{S_{0}}}$$                       (5-33)
-  ----- --------------------------------------------- ------------- --------
 
-  --------------------------------------------------------------------------
+$$\Psi = \frac{Q\eta}{\sqrt{S_{0}}} \qquad \text{(5-33)}$$
 
-To find *Y~N~* for flow rate *Q* one first computes *Ψ* from Equation
+
+
+To find *Y<sub>N</sub>* for flow rate *Q* one first computes *Ψ* from Equation
 5-33, then finds the flow area *A* that produces this value of *Ψ* using
 the methods described in section 5.1.8 and finally evaluates the depth
 that produces this area using the *Y(A)* function for the particular
 shape being analyzed. In equation terms:
 
-  ------------------------------------------------------------------------------------------------------------
-        $$Y_{N} = Y\left( A\left( \Psi = \frac{Q\eta}{\sqrt{S_{0}}} \right) \right)$$                 (5-35)
-  ----- ------------------------------------------------------------------------------- ------------- --------
 
-  ------------------------------------------------------------------------------------------------------------
+$$Y_{N} = Y\left( A\left( \Psi = \frac{Q\eta}{\sqrt{S_{0}}} \right) \right) \qquad \text{(5-35)}$$
+
+
 
 # - Pumps and Regulators
 
@@ -4971,16 +4675,15 @@ wet well level (e.g., set *ω* to 1 when the level is above a startup
 depth and to 0 when below a shutoff depth). The adjusted pump flow is
 checked to insure it does not cause the water level at the inlet node to
 drop below 0 over the current time step. If the node is a storage node
-then the pumping rate cannot exceed *Q~max~* where
+then the pumping rate cannot exceed *Q<sub>max</sub>* where
 
-  ------------------------------------------------------------------------------------
-        $$Q_{\max} = Q_{in} + \frac{V_{N}}{\mathrm{\Delta}t}$$                 (6-1)
-  ----- -------------------------------------------------------- ------------- -------
 
-  ------------------------------------------------------------------------------------
+$$Q_{\max} = Q_{in} + \frac{V_{N}}{\mathrm{\Delta}t} \qquad \text{(6-1)}$$
 
-and *Q~in~* is the most recently computed total inflow to the node,
-*V~N~* is the node volume at the start of the time step, and *∆t* is the
+
+
+and *Q<sub>in</sub>* is the most recently computed total inflow to the node,
+*V<sub>N</sub>* is the node volume at the start of the time step, and *∆t* is the
 current time step interval. If the inlet node is not a storage node and
 dynamic wave analysis is being made, Equation 3-15a is used with the
 current pumping rate to estimate what the inlet node head at the end of
@@ -5016,13 +4719,12 @@ Some additional computational details regarding pumps are as follows:
 3.  SWMM computes the power consumed in kilowatt-hours by each pump over
     each time step *∆t* as:
 
-  -------------------------------------------------------------------------------------------------------------------------------
-        $$Kwh = 0.7457\left( H_{2} - H_{1} \right)\frac{Q\left( \frac{\mathrm{\Delta}t}{3600} \right)}{8.814}$$   (6-2)
-  ----- --------------------------------------------------------------------------------------------------------- ---------------
 
-  -------------------------------------------------------------------------------------------------------------------------------
+$$Kwh = 0.7457\left( H_{2} - H_{1} \right)\frac{Q\left( \frac{\mathrm{\Delta}t}{3600} \right)}{8.814} \qquad \text{(6-2)}$$
 
-> where heads *H~1~* and *H~2~* are in feet, flow *Q* is in cfs, and
+
+
+> where heads *H<sub>1</sub>* and *H<sub>2</sub>* are in feet, flow *Q* is in cfs, and
 > time step *∆t* is in seconds. The pump's wire to water efficiency is
 > not included in this calculation. The power consumption in each time
 > period is totaled up and reported for each pump in SWMM's Pumping
@@ -5092,26 +4794,25 @@ wave solution procedure with its inlet side fully submerged its flow
 rate *Q* (cfs) can be found using Torricelli's equation (Brater et al.,
 1996):
 
-  -------------------------------------------------------------------------
-        $$Q = C_{d}A_{O}\sqrt{2gH_{e}}$$                            (6-3)
-  ----- --------------------------------------------- ------------- -------
 
-  -------------------------------------------------------------------------
+$$Q = C_{d}A_{O}\sqrt{2gH_{e}} \qquad \text{(6-3)}$$
 
-where *C~d~* is a dimensionless orifice discharge coefficient, *A~O~* is
-the area of the opening (ft^2^), and *He* is the effective head seen by
+
+
+where *C<sub>d</sub>* is a dimensionless orifice discharge coefficient, *A<sub>O</sub>* is
+the area of the opening (ft<sup>2</sup>), and *He* is the effective head seen by
 the orifice (ft). The following paragraphs describe how each of these
 parameters is evaluated.
 
-[Discharge Coefficient (*C~d~*)]{.underline}
+[Discharge Coefficient (*C<sub>d</sub>*)]{.underline}
 
-The most commonly cited value for *C~d~* is 0.6 while 0.4 is recommended
+The most commonly cited value for *C<sub>d</sub>* is 0.6 while 0.4 is recommended
 for ragged edge orifices (Federal Highway Administration, 2009). Brater
 et al. (1996) review a number of experimental studies that show the
 coefficient varying between 0.59 and 0.67 depending on orifice shape,
 size, and effective head.
 
-[Area of Opening (*A~O~*)]{.underline}
+[Area of Opening (*A<sub>O</sub>*)]{.underline}
 
 The area of the orifice's opening depends on what its setting is. Let
 *ω* be the orifice setting (between 0 and 1) in place at the end of the
@@ -5134,22 +4835,22 @@ methods described in Chapter 5 to find the area of either a circular or
 rectangular cross section, depending on orifice shape, at a fraction *ω*
 of its full height.
 
-[Effective Head (*H~e~*)]{.underline}
+[Effective Head (*H<sub>e</sub>*)]{.underline}
 
 The effective head across the orifice depends on whether the water level
-on its outflow side is below the orifice opening or not. Let *H~1~* be
+on its outflow side is below the orifice opening or not. Let *H<sub>1</sub>* be
 the most recently computed head at the orifice's nominal upstream node
-and *H~2~* be the same at the nominal downstream node. For kinematic
-wave analysis, since the upstream node must be a storage node, *H~1~* is
-the water surface elevation in the storage unit while *H~2~* is the
+and *H<sub>2</sub>* be the same at the nominal downstream node. For kinematic
+wave analysis, since the upstream node must be a storage node, *H<sub>1</sub>* is
+the water surface elevation in the storage unit while *H<sub>2</sub>* is the
 invert elevation of the downstream node. If $H_{1} < H_{2}$ and the
 orifice does not have a flap gate then the head values are reversed (so
-*H~1~* has the higher value) and the computed flow will be opposite to
+*H<sub>1</sub>* has the higher value) and the computed flow will be opposite to
 the nominal downstream direction.
 
-With *H~1~* and *H~2~* established the following rules are used to
-determine the effective head across the orifice, where *Z~O~* is the
-elevation of the bottom of the orifice opening and *Y~full~* is its full
+With *H<sub>1</sub>* and *H<sub>2</sub>* established the following rules are used to
+determine the effective head across the orifice, where *Z<sub>O</sub>* is the
+elevation of the bottom of the orifice opening and *Y<sub>full</sub>* is its full
 height:
 
 1.  For a side orifice:
@@ -5170,7 +4871,7 @@ height:
 |   | \end{matrix} \right.\ $$         |                                            |       |
 +===+==================================+============================================+=======+
 
-Figure 6-2 illustrates how *H~e~* is evaluated for a side orifice.
+Figure 6-2 illustrates how *H<sub>e</sub>* is evaluated for a side orifice.
 
 ### 6.2.3 Flow Rate for Unsubmerged Inlet
 
@@ -5187,10 +4888,11 @@ below.
   --------------------------------------------------------------------------------------------------------------------------------------------------
    ![Orifice4.png](VolumeII/media/media/image46.png){width="3.518180227471566in"   ![Orifice5.png](VolumeII/media/media/image47.png){width="3.5210892388451445in"
                        height="2.440871609798775in"}                                             height="2.442891513560805in"}
-  ------------------------------------------------------------------------ -------------------------------------------------------------------------
-                          Submerged Upstream Only                                              Submerged Both Up and Downstream
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------
+|  |  |
+| --- | --- |
+| Submerged Upstream Only | Submerged Both Up and Downstream |
+
 
 []{#_Toc484694736 .anchor}**Figure 6‑2 Determination of effective head
 for an orifice**
@@ -5208,34 +4910,31 @@ inlet</strong></p></figcaption>
 For a side orifice, weir behavior occurs when the inlet water level is
 below the top of the orifice opening. Thus the threshold head *H\** is:
 
-  -------------------------------------------------------------------------
-        $$H^{*} = Z_{O} + \omega Y_{full}$$                         (6-7)
-  ----- --------------------------------------------- ------------- -------
 
-  -------------------------------------------------------------------------
+$$H^{*} = Z_{O} + \omega Y_{full} \qquad \text{(6-7)}$$
 
-When the inlet head *H~1~* is below this height the flow through the
+
+
+When the inlet head *H<sub>1</sub>* is below this height the flow through the
 orifice can be approximated by using the general weir formula:
 
-  ------------------------------------------------------------------------------
-        $$Q = C_{W}L\left( H_{1} - Z_{O} \right)^{1.5}$$                 (6-8)
-  ----- -------------------------------------------------- ------------- -------
 
-  ------------------------------------------------------------------------------
+$$Q = C_{W}L\left( H_{1} - Z_{O} \right)^{1.5} \qquad \text{(6-8)}$$
 
-where *C~W~* is a weir coefficient (ft^1/2^/sec) and *L* is the crest
+
+
+where *C<sub>W</sub>* is a weir coefficient (ft<sup>1/2</sup>/sec) and *L* is the crest
 length of the equivalent weir (ft). Equating the flow from this equation
 to that from the orifice equation 6-3 when $H_{1} = H^{*}$ and solving
-for *C~W~L* results in:
+for *C<sub>W</sub>L* results in:
 
-  -------------------------------------------------------------------------------------
-        $$C_{W}L = \frac{C_{d}A_{O}\sqrt{g}}{\omega Y_{full}}$$                 (6-9)
-  ----- --------------------------------------------------------- ------------- -------
 
-  -------------------------------------------------------------------------------------
+$$C_{W}L = \frac{C_{d}A_{O}\sqrt{g}}{\omega Y_{full}} \qquad \text{(6-9)}$$
 
-Thus whenever the upstream head *H~1~* is below *H\**, flow through the
-side orifice can be found using the weir formula 6-8 with *C~W~L* given
+
+
+Thus whenever the upstream head *H<sub>1</sub>* is below *H\**, flow through the
+side orifice can be found using the weir formula 6-8 with *C<sub>W</sub>L* given
 by Equation 6-9.
 
 [Bottom Orifices]{.underline}
@@ -5245,22 +4944,20 @@ for weir flow will be at a point where the flow through the orifice
 using both the orifice and general weir equations will be the same. In
 equation terms:
 
-  ---------------------------------------------------------------------------------------------------------------------
-        $$C_{d}A_{O}\sqrt{2g}\left( H^{*} - Z_{O} \right)^{0.5} = C_{W}L\left( H^{*} - Z_{O} \right)^{1.5}$$   (6-10)
-  ----- ------------------------------------------------------------------------------------------------------ --------
 
-  ---------------------------------------------------------------------------------------------------------------------
+$$C_{d}A_{O}\sqrt{2g}\left( H^{*} - Z_{O} \right)^{0.5} = C_{W}L\left( H^{*} - Z_{O} \right)^{1.5} \qquad \text{(6-10)}$$
+
+
 
 Solving for *H\** results in:
 
-  --------------------------------------------------------------------------
-        $$H^{*} = Z_{O} + \frac{C_{d}A_{O}\sqrt{2g}}{C_{W}L}$$      (6-11)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$H^{*} = Z_{O} + \frac{C_{d}A_{O}\sqrt{2g}}{C_{W}L} \qquad \text{(6-11)}$$
 
-In order to evaluate *H\** values for *C~W~* and *L* must be assigned.
-*C~W~* can be set to the commonly cited value of 3.33 ft^0.5^/sec used
+
+
+In order to evaluate *H\** values for *C<sub>W</sub>* and *L* must be assigned.
+*C<sub>W</sub>* can be set to the commonly cited value of 3.33 ft^0.5^/sec used
 for sharp crested weirs (Mays, 2001). *L* can be set to the
 circumference of the opening as follows:
 
@@ -5273,9 +4970,9 @@ circumference of the opening as follows:
 
 where *b* is the fixed width of the rectangular opening. Now *H\** can
 be determined for a given orifice coefficient and opening dimensions.
-Whenever the upstream head *H~1~* is below *H\**, flow through the
+Whenever the upstream head *H<sub>1</sub>* is below *H\**, flow through the
 bottom orifice can be found using the general weir formula 6-8 with
-*C~W~* = 3.33 and *L* given by Equation 6-12.
+*C<sub>W</sub>* = 3.33 and *L* given by Equation 6-12.
 
 [Tailwater Submergence Correction]{.underline}
 
@@ -5283,15 +4980,14 @@ As described later on in Section 6.3, whenever the downstream water
 level is above a weir's crest the Villemonte equation is applied to
 account for the effects of submergence (Brater et al., 1996). So when
 the general weir equation 6-8 is used to compute orifice flow and the
-downstream head *H~2~* is above the bottom of the orifice opening
-*Z~O~*, the following submergence adjustment factor *f~S~* is applied to
+downstream head *H<sub>2</sub>* is above the bottom of the orifice opening
+*Z<sub>O</sub>*, the following submergence adjustment factor *f<sub>S</sub>* is applied to
 the computed flow value:
 
-  ------------------------------------------------------------------------------------------------------------
-        $$f_{S} = \left\lbrack 1 - \left( \frac{H_{2}}{H_{1}} \right)^{1.5} \right\rbrack^{0.385}$$   (6-13)
-  ----- --------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------
+$$f_{S} = \left\lbrack 1 - \left( \frac{H_{2}}{H_{1}} \right)^{1.5} \right\rbrack^{0.385} \qquad \text{(6-13)}$$
+
+
 
 ### 6.2.4 Flap Gate Head Loss Adjustment
 
@@ -5300,16 +4996,15 @@ flow through the gate. An empirical formula for this head loss was
 derived from experiments performed at Iowa State University in the
 1930's and published by Armco (1978):
 
-  -------------------------------------------------------------------------------------------------------
-        $$\mathrm{\Delta}H = \frac{4U^{2}}{g}\exp\left( - 1.15\frac{U}{\sqrt{H_{e}}} \right)$$   (6-14)
-  ----- ---------------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------
+$$\mathrm{\Delta}H = \frac{4U^{2}}{g}\exp\left( - 1.15\frac{U}{\sqrt{H_{e}}} \right) \qquad \text{(6-14)}$$
+
+
 
 where *∆H* is the head loss added by the flap gate (ft) and *U* is the
 velocity through the orifice (ft/sec) which equals $\frac{Q}{A_{O}}$.
 After the orifice's flow is first computed without this additional head
-loss, *∆H* is computed with Equation 6-14 and subtracted from *H~e~*.
+loss, *∆H* is computed with Equation 6-14 and subtracted from *H<sub>e</sub>*.
 Then the flow is re-computed, this time using the adjusted value of
 effective head.
 
@@ -5322,7 +5017,7 @@ surface area should be zero. However in older versions of SWMM an
 orifice was represented as an equivalent pipe that contributed surface
 area to its end nodes just as a real conduit did. To maintain
 compatibility with previous versions, SWMM 5 computes a surface area
-*A~SL~* for an orifice as
+*A<sub>SL</sub>* for an orifice as
 
 +---+-------------------------------------+--------------------------------------------+--------+
 |   | $$A_{SL} = \left\{ \begin{array}{r} | for a side orifice                         | (6-15) |
@@ -5333,23 +5028,20 @@ compatibility with previous versions, SWMM 5 computes a surface area
 
 where:
 
-  -------------------------------------------------------------------------------
-  *Y~O~*      =   depth of flow through the orifice (ft), equal to
+  *Y<sub>O</sub>*      =   depth of flow through the orifice (ft), equal to
                   $\min\left( H_{1} - Z_{O}\ ,\ \omega Y_{full} \right)$
-  ----------- --- ---------------------------------------------------------------
-  *L~O~*      =   equivalent conduit length of the orifice (ft), equal to
-                  $\max\left( 2{\Delta t}_{\max}\sqrt{gY_{full}}\ ,200 \right)$
 
-  *∆t~max~*   =   maximum time step assigned by the user to the simulation (sec)
+|  |  |  |
+| --- | --- | --- |
+| *L<sub>O</sub>* | = | equivalent conduit length of the orifice (ft), equal to $\max\left( 2{\Delta t}_{\max}\sqrt{gY_{full}}\ ,200 \right)$ |
+| *∆t<sub>max</sub>* | = | maximum time step assigned by the user to the simulation (sec) |
+| *W(Y)* | = | width of orifice opening at flow depth *Y* (ft) |
+| *A(Y)* | = | area of orifice opening at flow depth *Y* (ft) |
 
-  *W(Y)*      =   width of orifice opening at flow depth *Y* (ft)
-
-  *A(Y)*      =   area of orifice opening at flow depth *Y* (ft)
-  -------------------------------------------------------------------------------
 
 *W(Y)* and *A(Y)* are evaluated using the formulas from Chapter 5 for
 either a circular or closed rectangular cross section shape. Half of
-*A~SL~* is assigned to each of the orifice's end nodes providing that
+*A<sub>SL</sub>* is assigned to each of the orifice's end nodes providing that
 the node is not a storage unit nor has its head below the orifice
 opening.
 
@@ -5359,20 +5051,18 @@ surcharged node connected to the link (see section 3.3.5). For submerged
 headwater orifices that use Equation 6-3 to compute flow rate *Q*, this
 derivative is:
 
-  --------------------------------------------------------------------------
-        $$\frac{dQ}{dH} = 0.5\frac{Q}{H_{e}}$$                      (6-16)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$\frac{dQ}{dH} = 0.5\frac{Q}{H_{e}} \qquad \text{(6-16)}$$
+
+
 
 while for unsubmerged headwater orifices that use Equation 6-8 to
 compute *Q* it is:
 
-  ------------------------------------------------------------------------------
-        $$\frac{dQ}{dH} = 1.5\frac{Q}{\left( H_{1} - Z_{O} \right)}$$   (6-17)
-  ----- --------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------
+$$\frac{dQ}{dH} = 1.5\frac{Q}{\left( H_{1} - Z_{O} \right)} \qquad \text{(6-17)}$$
+
+
 
 ### 6.2.6 Summary of Orifice Computations
 
@@ -5384,9 +5074,9 @@ be summarized as follows. At the start of a time step:
     setting using Equation 6-4.
 
 2.  If the orifice setting has changed then compute the effective area
-    of its opening *A~O~*. For side weirs use Equation 6-7 to compute
+    of its opening *A<sub>O</sub>*. For side weirs use Equation 6-7 to compute
     its critical head *H\** for weir behavior and Equation 6-9 to
-    compute its equivalent weir constant *C~W~L*. For bottom weirs, use
+    compute its equivalent weir constant *C<sub>W</sub>L*. For bottom weirs, use
     Equation 6-12 to find an equivalent weir length *L*, Equation 6-11
     to find the critical head *H\**, and set the equivalent weir
     constant to 3.33*L*.
@@ -5394,21 +5084,21 @@ be summarized as follows. At the start of a time step:
 For each iteration within a time step that requires computing flow
 through the orifice:
 
-1.  Let *H~1~* denote the most recently computed head at the orifice's
-    upstream node and *H~2~* be the same at the downstream node. (For
-    kinematic wave analysis *H~2~* is the downstream node's invert
+1.  Let *H<sub>1</sub>* denote the most recently computed head at the orifice's
+    upstream node and *H<sub>2</sub>* be the same at the downstream node. (For
+    kinematic wave analysis *H<sub>2</sub>* is the downstream node's invert
     elevation.)
 
-2.  If *H~1~ \< H~2~* reverse the values so that *H~1~* as the higher
+2.  If *H<sub>1</sub> \< H<sub>2</sub>* reverse the values so that *H<sub>1</sub>* as the higher
     head and note that reverse flow will occur. If the orifice has a
-    flap gate or *H~1~* is below the orifice opening then set its flow
+    flap gate or *H<sub>1</sub>* is below the orifice opening then set its flow
     to 0.
 
 3.  If the orifice is not submerged on its upstream side (*H1 \< H\**)
     then use Equation 6-8 to find its flow rate along with Equation 6-13
     to correct for any tailwater submergence. Otherwise use Equation 6-5
     (for side orifices) or 6-6 (for bottom orifices) to find the
-    effective head *H~e~* on the orifice and then use Equation 6-3 to
+    effective head *H<sub>e</sub>* on the orifice and then use Equation 6-3 to
     compute its flow rate.
 
 4.  If the orifice has a flap gate then use Equation 6-14 to reduce its
@@ -5493,77 +5183,70 @@ settings the crest elevation equals its lowest possible value plus 1 -
 The general equation for free flow over a transverse rectangular weir is
 (Brater et al., 1996):
 
-  --------------------------------------------------------------------------
-        $$Q = C_{W}L_{e}H_{e}^{3/2}$$                               (6-18)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$Q = C_{W}L_{e}H_{e}^{3/2} \qquad \text{(6-18)}$$
+
+
 
 and for a triangular weir is (Brater et al., 1996):
 
-  ----------------------------------------------------------------------------
-        $$Q = C_{W}\tan\left( \frac{\theta}{2} \right)H_{e}^{5/2}$$   (6-19)
-  ----- ------------------------------------------------------------- --------
 
-  ----------------------------------------------------------------------------
+$$Q = C_{W}\tan\left( \frac{\theta}{2} \right)H_{e}^{5/2} \qquad \text{(6-19)}$$
 
-In these equations *Q* is the flow rate (cfs), *L~e~* is the effective
-crest length (ft), *θ* is the slot angle of a triangular weir, *H~e~* is
-the effective head seen by the inflow side of the weir (ft), and *C~W~*
-is a weir coefficient (ft^1/2^/sec). A trapezoidal weir can be treated
+
+
+In these equations *Q* is the flow rate (cfs), *L<sub>e</sub>* is the effective
+crest length (ft), *θ* is the slot angle of a triangular weir, *H<sub>e</sub>* is
+the effective head seen by the inflow side of the weir (ft), and *C<sub>W</sub>*
+is a weir coefficient (ft<sup>1/2</sup>/sec). A trapezoidal weir can be treated
 as a combination of a rectangular weir and two half-triangular weirs
 (Featherstone and Nalluri, 1982) leading to the equations:
 
-  -------------------------------------------------------------------------
-        $$Q = Q_{R} + Q_{T}$$                                     (6-20a)
-  ----- --------------------------------------------------------- ---------
 
-  -------------------------------------------------------------------------
+$$Q = Q_{R} + Q_{T} \qquad \text{(6-20a)}$$
 
-  -------------------------------------------------------------------------
-        $$Q_{R} = C_{WR}L_{e}H_{e}^{3/2}$$                        (6-20b)
-  ----- --------------------------------------------------------- ---------
 
-  -------------------------------------------------------------------------
 
-  -------------------------------------------------------------------------
-        $$Q_{T} = C_{WT}sH_{e}^{5/2}$$                            (6-20c)
-  ----- --------------------------------------------------------- ---------
 
-  -------------------------------------------------------------------------
+$$Q_{R} = C_{WR}L_{e}H_{e}^{3/2} \qquad \text{(6-20b)}$$
+
+
+
+
+$$Q_{T} = C_{WT}sH_{e}^{5/2} \qquad \text{(6-20c)}$$
+
+
 
 where *s* is the slope (run / rise) of the trapezoidal side wall and
-*C~WR~* and *C~WT~* are the coefficients that apply to the rectangular
+*C<sub>WR</sub>* and *C<sub>WT</sub>* are the coefficients that apply to the rectangular
 and triangular portions of the weir, respectively.
 
-[Effective Head]{.underline} (*H~e~*)
+[Effective Head]{.underline} (*H<sub>e</sub>*)
 
 The effective head seen by a weir, accounting for its current setting,
 is:
 
-  --------------------------------------------------------------------------------
-        $$H_{e} = H_{1} - \left( Z_{W} + (1 - \omega)Y_{full} \right)$$   (6-21)
-  ----- ----------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------
+$$H_{e} = H_{1} - \left( Z_{W} + (1 - \omega)Y_{full} \right) \qquad \text{(6-21)}$$
 
-where *H~1~* is the higher of the heads at the weir's end nodes, *Z~W~*
+
+
+where *H<sub>1</sub>* is the higher of the heads at the weir's end nodes, *Z<sub>W</sub>*
 is the elevation of the weir's crest when fully open (i.e., when *ω* =
-1), and *Y~full~* is the full height of the weir's opening. If *H~1~*
+1), and *Y<sub>full</sub>* is the full height of the weir's opening. If *H<sub>1</sub>*
 corresponds to the downstream node of the weir then reverse flow occurs
 through the weir unless a flap gate is present in which case the flow is
 0. Flow will also be 0 if $H_{e} \leq 0.$
 
-[Effective Crest Length]{.underline} (*L~e~*)
+[Effective Crest Length]{.underline} (*L<sub>e</sub>*)
 
 The effective crest length of a rectangular weir is reduced by the
 number of end contractions as follows (Mays, 2001):
 
-  --------------------------------------------------------------------------
-        $$L_{e} = L - 0.1nH_{e}$$                                   (6-22)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$L_{e} = L - 0.1nH_{e} \qquad \text{(6-22)}$$
+
+
 
 where *L* is the actual crest length and *n* = 1 if the weir is placed
 away from one side wall, *n* = 2 if it is placed away from both side
@@ -5572,33 +5255,31 @@ Figure 6-4).
 
 When the setting *ω* for a triangular weir is less than 1 its opening
 takes the shape of a trapezoidal weir. In this case the trapezoidal weir
-equation 6-18 is used with both *C~WR~* and *C~WT~* set equal to the
+equation 6-18 is used with both *C<sub>WR</sub>* and *C<sub>WT</sub>* set equal to the
 weir's original coefficient, the side wall slope *s* set equal to
 $\tan\left( \frac{\theta}{2} \right)$ and the effective length becomes:
 
-  --------------------------------------------------------------------------
-        $$L_{e} = 2s(1 - \omega)Y_{full}$$                          (6-23)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$L_{e} = 2s(1 - \omega)Y_{full} \qquad \text{(6-23)}$$
+
+
 
 This equation is also used for a trapezoidal weir whose setting is less
 than 1.
 
-[Weir Coefficient]{.underline} (*C~W~*)
+[Weir Coefficient]{.underline} (*C<sub>W</sub>*)
 
-The standard weir coefficient *C~W~* for a sharp crested rectangular
-weir is 3.33 ft^1/2^/sec (Mays, 2001). For
+The standard weir coefficient *C<sub>W</sub>* for a sharp crested rectangular
+weir is 3.33 ft<sup>1/2</sup>/sec (Mays, 2001). For
 $\frac{H_{W}}{L} > \frac{1}{3}$ the coefficient has been found to vary
 with effective head and weir sizing and placement (Bureau of
 Reclamation, 2001). The Kindsvater-Carter method (Bureau of Reclamation,
 2001) expresses this dependence with the following formula:
 
-  --------------------------------------------------------------------------
-        $$C_{W} = c1\left( \frac{H_{W}}{Z_{W}} \right) + c2$$       (6-24)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$C_{W} = c1\left( \frac{H_{W}}{Z_{W}} \right) + c2 \qquad \text{(6-24)}$$
+
+
 
 where the constants *c1* and *c2* vary with the ratio of the crest
 length *L* to the full width *b* of the cross section in which the weir
@@ -5615,9 +5296,7 @@ crest. Above a ratio of about 2 the weir behaves as sharp-crested with a
 coefficient of 3.32. For ratios below 0.5 the coefficient approaches
 2.63.
 
-  -----------------------------------------------------------------------
-         ***L/b***        ***c1 (ft^1/2^/sec)***  ***c2 (ft^1/2^/sec)***
-  ----------------------- ----------------------- -----------------------
+         ***L/b***        ***c1 (ft<sup>1/2</sup>/sec)***  ***c2 (ft<sup>1/2</sup>/sec)***
             0.2                   -0.0087                  3.152
 
             0.4                   0.0317                   3.164
@@ -5633,14 +5312,13 @@ coefficient of 3.32. For ratios below 0.5 the coefficient approaches
             0.9                   0.3447                   3.205
 
             1.0                   0.4000                   3.220
-  -----------------------------------------------------------------------
 
   : []{#_Toc484690434 .anchor}**Table 6‑2 Kindsvater-Carter constants
   for rectangular weir coefficient**
 
-The standard value for the triangular weir coefficient *C~W~* is 2.5
-ft^1/2^/sec (Mays, 2001). Figure 6-5 shows the variation of *C~W~* (in
-ft^1/2^/sec ) with head over the weir *H~W~* (in feet) presented by
+The standard value for the triangular weir coefficient *C<sub>W</sub>* is 2.5
+ft<sup>1/2</sup>/sec (Mays, 2001). Figure 6-5 shows the variation of *C<sub>W</sub>* (in
+ft<sup>1/2</sup>/sec ) with head over the weir *H<sub>W</sub>* (in feet) presented by
 Brater and King (1976). The range of coefficients is rather small, from
 2.5 up to 2.8.
 
@@ -5693,7 +5371,7 @@ Brater and King (1976). The range of coefficients is rather small, from
 +----------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+
 
 : []{#_Toc484690435 .anchor}**Table 6‑3 Rectangular broad-crested weir
-coefficients (ft^1/2^/sec)**
+coefficients (ft<sup>1/2</sup>/sec)**
 
 ### 6.3.3 Rectangular Side Weirs
 
@@ -5705,19 +5383,18 @@ weir coefficient vary spatially. Unfortunately these approaches are too
 complex to implement in a program like SWMM. The empirical Engels
 equation (Metcalf & Eddy, Inc. 1972) is used instead:
 
-  --------------------------------------------------------------------------
-        $$Q = C_{W}L_{e}^{0.83}H_{e}^{1.67}$$                       (6-25)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$Q = C_{W}L_{e}^{0.83}H_{e}^{1.67} \qquad \text{(6-25)}$$
 
-Where flow *Q* is in cfs, length *L~e~* and head *H~e~* are in feet, and
-*C~W~* is in ft^1/2^/sec. (It should be noted that previous versions of
+
+
+Where flow *Q* is in cfs, length *L<sub>e</sub>* and head *H<sub>e</sub>* are in feet, and
+*C<sub>W</sub>* is in ft<sup>1/2</sup>/sec. (It should be noted that previous versions of
 SWMM used an incorrect form of this equation that had the exponent on
-*L~e~* equal to 1.0)
+*L<sub>e</sub>* equal to 1.0)
 
 Equation 6-25 applies to positive flow through the weir. For reverse
-flow the standard rectangular weir equation 6-18 is used. *C~W~* was
+flow the standard rectangular weir equation 6-18 is used. *C<sub>W</sub>* was
 assigned a value of 3.32 in the original Engels equation. Brunner (2014)
 notes that side weir coefficients should be lower than the typical
 values used for transverse weirs, and suggests a range of 1.5 to 2.6 for
@@ -5726,26 +5403,25 @@ weirs that model levees or roadways along natural channels.
 ### 6.3.4 Submerged Weir Flow 
 
 As shown in Figure 6-6, submerged weir flow occurs when the water level
-on the downstream side of the weir (*H~2~*) is above the crest elevation
-(*Z~W~*). Under this condition weir flow is related not only to the head
-on the upstream side of the weir (*H~1~*) but also to *H~2~* and *Z~W~*
+on the downstream side of the weir (*H<sub>2</sub>*) is above the crest elevation
+(*Z<sub>W</sub>*). Under this condition weir flow is related not only to the head
+on the upstream side of the weir (*H<sub>1</sub>*) but also to *H<sub>2</sub>* and *Z<sub>W</sub>*
 (Brater et al., 1996). These effects are commonly accounted for by
-applying an adjustment factor *f~S~* developed by Villemonte (1947) to
+applying an adjustment factor *f<sub>S</sub>* developed by Villemonte (1947) to
 the flow computed using the free flow equation:
 
-  ----------------------------------------------------------------------------------------------------------
-        $$f_{S} = \left\lbrack 1 - \left( \frac{H_{2}}{H_{1}} \right)^{n} \right\rbrack^{0.385}$$   (6-26)
-  ----- ------------------------------------------------------------------------------------------- --------
 
-  ----------------------------------------------------------------------------------------------------------
+$$f_{S} = \left\lbrack 1 - \left( \frac{H_{2}}{H_{1}} \right)^{n} \right\rbrack^{0.385} \qquad \text{(6-26)}$$
+
+
 
 where *n* is the exponent on head used in the weir flow equation and the
-heads *H~1~* and *H~2~* are in feet. For transverse rectangular weirs
+heads *H<sub>1</sub>* and *H<sub>2</sub>* are in feet. For transverse rectangular weirs
 (Equation 6-18) it is 3/2, for side weirs (Equation 6-25) it is 1.67,
 and for triangular weirs (Equation 6-19) it is 5/2. For trapezoidal
 weirs separate submergence factors are computed for the rectangular flow
-portion (*Q~R~* in Equation 6-20b with *n* = 3/2) and for the triangular
-flow portion (*Q~T~* in Equation 6-20c with *n* = 5/2).
+portion (*Q<sub>R</sub>* in Equation 6-20b with *n* = 3/2) and for the triangular
+flow portion (*Q<sub>T</sub>* in Equation 6-20c with *n* = 5/2).
 
 <figure>
 <img src="VolumeII/media/media/image51.png"
@@ -5767,42 +5443,39 @@ exceed the structure's crown elevation causing the weir to become
 surcharged (see Figure 6-6). In this case the weir acts as an orifice
 and its flow should be evaluated using the equivalent of Equation 6-3:
 
-  -----------------------------------------------------------------------------------
-        $$Q = C_{d}A_{O}\sqrt{2gH_{e}} = C_{O}\sqrt{H_{e}}$$                 (6-27)
-  ----- ------------------------------------------------------ ------------- --------
 
-  -----------------------------------------------------------------------------------
+$$Q = C_{d}A_{O}\sqrt{2gH_{e}} = C_{O}\sqrt{H_{e}} \qquad \text{(6-27)}$$
 
-where *C~O~* is an equivalent orifice constant with units of
-ft^5/2^/sec.
 
-*C~O~* can be evaluated by setting Equation 6-27 equal to the
+
+where *C<sub>O</sub>* is an equivalent orifice constant with units of
+ft<sup>5/2</sup>/sec.
+
+*C<sub>O</sub>* can be evaluated by setting Equation 6-27 equal to the
 appropriate weir equation (6-18, 6-19, 6-20, or 6-25 depending on weir
 type) evaluated at a weir head $H_{e} = {\omega Y}_{full}$for which the
 corresponding orifice head would be $\frac{{\omega Y}_{full}}{2}$. The
 result is:
 
-  ---------------------------------------------------------------------------------------------------------------------------
-        $$C_{O} = \frac{Q_{W}\left( {\omega Y}_{full} \right)}{\sqrt{\frac{{\omega Y}_{full}}{2}}}$$                 (6-28)
-  ----- ---------------------------------------------------------------------------------------------- ------------- --------
 
-  ---------------------------------------------------------------------------------------------------------------------------
+$$C_{O} = \frac{Q_{W}\left( {\omega Y}_{full} \right)}{\sqrt{\frac{{\omega Y}_{full}}{2}}} \qquad \text{(6-28)}$$
+
+
 
 where $Q_{W}\left( {\omega Y}_{full} \right)$ is the flow in cfs from
 the relevant weir equation for a head of ${\omega Y}_{full}$ feet. The
 constant *C~O\ ~* is re-evaluated each time a weir's setting changes.
 
 Thus if the user indicates that a weir is allowed to surcharge, then
-whenever the upstream head *H~1~* is above *Z~W~ + Y~full~* its flow is
-computed using Equation 6-27. The head *H~e~* to be used in this
+whenever the upstream head *H<sub>1</sub>* is above *Z<sub>W</sub> + Y<sub>full</sub>* its flow is
+computed using Equation 6-27. The head *H<sub>e</sub>* to be used in this
 equation is computed as follows. Let *H\** be the head corresponding to
 the elevation at half of the weir's opening height, i.e.:
 
-  -------------------------------------------------------------------------------------
-        $$H^{*} = Z_{W} + (1 - \omega)Y_{full} + \frac{\omega Y_{full}}{2}$$   (6-29)
-  ----- ---------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------
+$$H^{*} = Z_{W} + (1 - \omega)Y_{full} + \frac{\omega Y_{full}}{2} \qquad \text{(6-29)}$$
+
+
 
 Then
 
@@ -5821,15 +5494,14 @@ When a weir has a flap gate it adds a small amount of head loss for flow
 through the gate. The same Armco formula used for orifices is used to
 compute this head loss for weirs:
 
-  -------------------------------------------------------------------------------------------------------
-        $$\mathrm{\Delta}H = \frac{4U^{2}}{g}\exp\left( - 1.15\frac{U}{\sqrt{H_{e}}} \right)$$   (6-31)
-  ----- ---------------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------
+$$\mathrm{\Delta}H = \frac{4U^{2}}{g}\exp\left( - 1.15\frac{U}{\sqrt{H_{e}}} \right) \qquad \text{(6-31)}$$
+
+
 
 where *∆H* is the head loss added by the flap gate (ft) and *U* is the
 velocity through the weir (ft/sec). To evaluate the velocity term in
-this equation one needs to know the effective area *A~e~* of flow over
+this equation one needs to know the effective area *A<sub>e</sub>* of flow over
 the weir. This area equals
 
 +---+----------------------------------------------------------+----------------------------------+--------+
@@ -5839,17 +5511,17 @@ the weir. This area equals
 |   | \end{matrix} \right.\ $$                                 |                                  |        |
 +===+==========================================================+==================================+========+
 
-where *Y~full~* is the full height of the weir opening, *y~C~* is the
+where *Y<sub>full</sub>* is the full height of the weir opening, *y<sub>C</sub>* is the
 distance that the weir crest has been raised due to the current setting
 (equal to $(1 - \omega)Y_{full}$ ), and *A(y)* is the area of the weir
 opening at flow depth *y*. The latter quantity is found using the
 geometry functions described in Chapter 5 for either a rectangular,
-triangular, or trapezoidal shape. Knowing *A~e~*, $U = \frac{Q}{A_{e}}$,
+triangular, or trapezoidal shape. Knowing *A<sub>e</sub>*, $U = \frac{Q}{A_{e}}$,
 where the flow *Q* has been determined using the methods described in
 the previous sections.
 
 After the orifice's flow is first computed without this additional head
-loss, *∆H* is computed with Equation 6-31 and subtracted from *H~e~*.
+loss, *∆H* is computed with Equation 6-31 and subtracted from *H<sub>e</sub>*.
 Then the flow is re-computed, this time using the adjusted value of
 effective head.
 
@@ -5883,8 +5555,8 @@ head *(dQ/dH)*, used when updating the head of a surcharged end node
 : []{#_Toc484690436 .anchor}**Table 6‑4 Formulas for flow derivatives of
 various types of weirs**
 
-Note: For trapezoidal openings, *Q~R~* is the flow through the central
-rectangular portion and *Q~T~* is the flow through the triangular end
+Note: For trapezoidal openings, *Q<sub>R</sub>* is the flow through the central
+rectangular portion and *Q<sub>T</sub>* is the flow through the triangular end
 portions (see Equation 6-20).
 
 ### 6.3.8 Summary of Weir Computations
@@ -5892,20 +5564,20 @@ portions (see Equation 6-20).
 The computational steps used to compute flow through a weir link can be
 summarized as follows. If the weir is allowed to surcharge and its
 setting *ω* changes at the start of a time step then use Equation 6-28
-to compute an equivalent orifice coefficient *C~O~* to use during
+to compute an equivalent orifice coefficient *C<sub>O</sub>* to use during
 surcharge conditions. For each iteration within a time step that
 requires computing flow through the weir:
 
-1.  Let *H~1~* denote the most recently computed head at the weir's
-    upstream node and *H~2~* be the same at the downstream node. (For
-    kinematic wave analysis *H~2~* is the downstream node's invert
+1.  Let *H<sub>1</sub>* denote the most recently computed head at the weir's
+    upstream node and *H<sub>2</sub>* be the same at the downstream node. (For
+    kinematic wave analysis *H<sub>2</sub>* is the downstream node's invert
     elevation.)
 
-2.  If *H~1~ \< H~2~* reverse the values so that *H~1~* as the higher
+2.  If *H<sub>1</sub> \< H<sub>2</sub>* reverse the values so that *H<sub>1</sub>* as the higher
     head and note that reverse flow will occur. If the weir has a flap
-    gate or *H~1~* is below the weir crest then set its flow to 0.
+    gate or *H<sub>1</sub>* is below the weir crest then set its flow to 0.
 
-3.  If the head *H~1~* is above the top of the weir's opening and the
+3.  If the head *H<sub>1</sub>* is above the top of the weir's opening and the
     weir is allowed to surcharge then use the equivalent orifice
     equation 6-27 to find its flow where the effective head is found
     from Equations 6-29 and 6-30.
@@ -5968,15 +5640,14 @@ The rating curve can be defined either as an analytical power law
 function or a tabular listing of points on the curve. The analytical
 power function has the form:
 
-  --------------------------------------------------------------------------
-        $$Q = aH_{e}^{b}$$                                          (6-33)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$Q = aH_{e}^{b} \qquad \text{(6-33)}$$
 
-where *Q* is flow rate (cfs), *H~e~* is the effective head (ft), and *a*
+
+
+where *Q* is flow rate (cfs), *H<sub>e</sub>* is the effective head (ft), and *a*
 and *b* are user-supplied constants. The tabular rating curve consists
-of pairs of head (*H~e~*) and flow (*Q*) values for points that the user
+of pairs of head (*H<sub>e</sub>*) and flow (*Q*) values for points that the user
 chooses to represent the shape of the outlet's rating curve.
 
 <figure>
@@ -5990,25 +5661,25 @@ device compared to an orifice</strong></p></figcaption>
 The following steps are used whenever the flow through an outlet link
 must be computed:
 
-1.  Let *H~1~* denote the most recently computed head at the outlet's
-    upstream node and *H~2~* be the same at the downstream node. (For
-    kinematic wave analysis *H~2~* is the downstream node's invert
+1.  Let *H<sub>1</sub>* denote the most recently computed head at the outlet's
+    upstream node and *H<sub>2</sub>* be the same at the downstream node. (For
+    kinematic wave analysis *H<sub>2</sub>* is the downstream node's invert
     elevation.)
 
-2.  If *H~1~ \< H~2~* reverse the values so that *H~1~* has the higher
+2.  If *H<sub>1</sub> \< H<sub>2</sub>* reverse the values so that *H<sub>1</sub>* has the higher
     head and note that reverse flow will occur. If the outlet has a flap
-    gate or *H~1~* is below the outlet's offset elevation then set its
+    gate or *H<sub>1</sub>* is below the outlet's offset elevation then set its
     flow to 0.
 
 3.  For dynamic wave modeling, if the outlet's rating curve is based on
     head difference then compute an effective head on the outlet as
-    $H_{e} = H_{1} - max\left( H_{2},\ \ \ Z_{O} \right)$ where *Z~O~*
+    $H_{e} = H_{1} - max\left( H_{2},\ \ \ Z_{O} \right)$ where *Z<sub>O</sub>*
     is the outlet's offset elevation. Otherwise $H_{e} = H_{1} - Z_{O}$.
 
 4.  For an analytical rating curve use Equation 6-33 to compute the
     outlet's flow rate *Q*. For a tabular rating curve find the adjacent
-    head values in the table that bracket *H~e~* and use linear
-    interpolation to find a corresponding flow rate *Q*. (If *H~e~* is
+    head values in the table that bracket *H<sub>e</sub>* and use linear
+    interpolation to find a corresponding flow rate *Q*. (If *H<sub>e</sub>* is
     below the first entry in the table then use the first entry's flow
     value. If it is above the last entry then use the last entry's flow
     value.)
@@ -6042,32 +5713,28 @@ user-supplied hourly time series. The details are described in Volume I
 (Hydrology) of this reference manual. These data express the potential
 evaporation rate over the entire study area as a volumetric loss per
 unit of area per unit of time, which SWMM converts to internal units of
-cfs/ft^2^. The following expression converts the rate per unit area into
+cfs/ft<sup>2</sup>. The following expression converts the rate per unit area into
 a rate per unit length of channel (only open channels can evaporate)
 over the time period *t* to *t+∆t*:
 
-  -------------------------------------------------------------------------
-        $$q_{E} = e_{t}W\left( \overline{\overline{Y}} \right)$$    (7-1)
-  ----- ----------------------------------------------------------- -------
 
-  -------------------------------------------------------------------------
+$$q_{E} = e_{t}W\left( \overline{\overline{Y}} \right) \qquad \text{(7-1)}$$
+
+
 
 where
 
-  -----------------------------------------------------------------------------------------------
   $$q_{E}$$                     =   uniformly distributed evaporation rate along a channel
                                     (cfs/ft)
-  ----------------------------- --- -------------------------------------------------------------
-  $$e_{t}$$                     =   potential evaporation rate per unit area over the current
-                                    time period (cfs/ft^2^)
 
-  $$\overline{\overline{Y}}$$   =   average depth of flow in the channel over the current time
-                                    period (ft)
+|  |  |  |
+| --- | --- | --- |
+| $e_{t}$ | = | potential evaporation rate per unit area over the current time period (cfs/ft<sup>2</sup>) |
+| $\overline{\overline{Y}}$ | = | average depth of flow in the channel over the current time period (ft) |
+| *W(Y)* | = | width of water surface at depth of flow *Y* (ft). |
 
-  *W(Y)*                        =   width of water surface at depth of flow *Y* (ft).
-  -----------------------------------------------------------------------------------------------
 
-The program automatically extracts the appropriate rate *e~t~* from the
+The program automatically extracts the appropriate rate *e<sub>t</sub>* from the
 evaporation data source for the current time period being analyzed. The
 water surface width *W* is computed using the procedures described in
 Chapter 5 for a particular channel's cross sectional shape.
@@ -6076,11 +5743,10 @@ The average depth of flow in the channel is computed differently
 depending on the hydraulic modeling procedure used. For kinematic wave
 modeling,
 
-  ------------------------------------------------------------------------------------------------------
-        $$\overline{\overline{Y}} = \frac{\left( {Y(A}_{1}^{t}) + {Y(A}_{2}^{t} \right))}{2}$$   (7-2)
-  ----- ---------------------------------------------------------------------------------------- -------
 
-  ------------------------------------------------------------------------------------------------------
+$$\overline{\overline{Y}} = \frac{\left( {Y(A}_{1}^{t}) + {Y(A}_{2}^{t} \right))}{2} \qquad \text{(7-2)}$$
+
+
 
 where $A_{1}^{t}$ is the flow area at the upstream end of the channel
 previously computed for time *t*, $A_{2}^{t}$ is the same at the
@@ -6090,17 +5756,16 @@ procedures described in Chapter 5.
 
 For dynamic wave modeling the average channel depth is computed as:
 
-  ---------------------------------------------------------------------------------------------------------------------------------
-        $$\overline{\overline{Y}} = \frac{\left( {\overline{Y}}^{t} + {\overline{Y}}^{t + \mathrm{\Delta}t} \right)}{2}$$   (7-3)
-  ----- ------------------------------------------------------------------------------------------------------------------- -------
 
-  ---------------------------------------------------------------------------------------------------------------------------------
+$$\overline{\overline{Y}} = \frac{\left( {\overline{Y}}^{t} + {\overline{Y}}^{t + \mathrm{\Delta}t} \right)}{2} \qquad \text{(7-3)}$$
+
+
 
 where $\overline{Y} = \frac{\left( Y_{1} + Y_{2} \right)}{2}$. The
-*Y~1~* and *Y~2~* values for ${\overline{Y}}^{t + \mathrm{\Delta}t}$ are
+*Y<sub>1</sub>* and *Y<sub>2</sub>* values for ${\overline{Y}}^{t + \mathrm{\Delta}t}$ are
 evaluated with Equation 3-16 for the most recently computed nodal head
-solution *H^last^* in the iterative procedure used to solve the dynamic
-wave equations. Thus $\overline{\overline{Y}}$ and therefore *q~E~* can
+solution *H<sup>last</sup>* in the iterative procedure used to solve the dynamic
+wave equations. Thus $\overline{\overline{Y}}$ and therefore *q<sub>E</sub>* can
 change as the dynamic wave iterations unfold within a time step.
 
 [Distributed Uniform Seepage Rate]{.underline}
@@ -6116,11 +5781,10 @@ user-supplied constant seepage rate per unit area that can be different
 for each conduit. At any given time period this rate is converted to a
 uniformly distributed rate per length of conduit as follows:
 
-  -------------------------------------------------------------------------
-        $$q_{S} = sf_{c}W(\overline{\overline{Y}})$$                (7-4)
-  ----- ----------------------------------------------------------- -------
 
-  -------------------------------------------------------------------------
+$$q_{S} = sf_{c}W(\overline{\overline{Y}}) \qquad \text{(7-4)}$$
+
+
 
 where
 
@@ -6129,9 +5793,9 @@ where
 |                                     |                                    | (cfs/ft)                                                    |
 +:============================+:======+===+================================+=============================================================+
 | *s*                                 | =                                  | user-supplied seepage rate per unit area for the conduit    |
-|                                     |                                    | (cfs/ft^2^)                                                 |
+|                                     |                                    | (cfs/ft<sup>2</sup>)                                                 |
 +-------------------------------------+------------------------------------+-------------------------------------------------------------+
-| *f~c~*                              | =                                  | monthly climate adjustment factor for the current time step |
+| *f<sub>c</sub>*                              | =                                  | monthly climate adjustment factor for the current time step |
 |                                     |                                    | (dimensionless)                                             |
 +-----------------------------+-------+---+--------------------------------+-------------------------------------------------------------+
 | $$\overline{\overline{Y}}$$ | =         | average depth of flow in the conduit over the current time period (ft).                      |
@@ -6162,10 +5826,8 @@ at maximum width is as follows:
 
 - For all other shapes it is the full depth.
 
-  -----------------------------------------------------------------------
   **Shape**            **Relative     **Shape**            **Relative
                          Depth**                             Depth**
-  ----------------- ----------------- ----------------- -----------------
   Circular                0.50        Horseshoe               0.50
 
   Ellipsoid               0.48        Catenary                0.25
@@ -6175,90 +5837,83 @@ at maximum width is as follows:
   Basket Handle           0.20        Semi-Circular           0.15
 
   Egg                     0.64        Semi-Elliptical         0.15
-  -----------------------------------------------------------------------
 
   : []{#_Toc484690437 .anchor}**Table 7‑1 Relative depth at maximum
   width for select cross section shapes**
 
 [Total Uniform Loss Rate]{.underline}
 
-The total uniform outflow rate along a conduit *q~L~* is the sum of the
+The total uniform outflow rate along a conduit *q<sub>L</sub>* is the sum of the
 evaporative and seepage loss rates:
 
-  -------------------------------------------------------------------------
-        $$q_{L} = q_{E} + q_{S}$$                                   (7-5)
-  ----- ----------------------------------------------------------- -------
 
-  -------------------------------------------------------------------------
+$$q_{L} = q_{E} + q_{S} \qquad \text{(7-5)}$$
+
+
 
 Over any given time step *∆t* the total volume lost to this outflow
 cannot exceed the average volume contained in the conduit:
 
-  -------------------------------------------------------------------------
-        $$q_{L}L\mathrm{\Delta}t \leq \overline{\overline{A}}L$$    (7-6)
-  ----- ----------------------------------------------------------- -------
 
-  -------------------------------------------------------------------------
+$$q_{L}L\mathrm{\Delta}t \leq \overline{\overline{A}}L \qquad \text{(7-6)}$$
+
+
 
 where $\overline{\overline{A}}$ is the average flow area over the time
 step and *L* is the conduit length. Thus
 
-  -----------------------------------------------------------------------------------------------------
-        $$q_{L} = \min\left( q_{L},\frac{\overline{\overline{A}}}{\mathrm{\Delta}t} \right)$$   (7-7)
-  ----- --------------------------------------------------------------------------------------- -------
 
-  -----------------------------------------------------------------------------------------------------
+$$q_{L} = \min\left( q_{L},\frac{\overline{\overline{A}}}{\mathrm{\Delta}t} \right) \qquad \text{(7-7)}$$
+
+
 
 For kinematic wave analysis the average flow area over the time step
 from *t* to *t+∆t* is:
 
-  --------------------------------------------------------------------------------------------
-        $$\overline{\overline{A}} = \frac{\left( A_{1}^{t} + A_{2}^{t} \right)}{2}$$   (7-8)
-  ----- ------------------------------------------------------------------------------ -------
 
-  --------------------------------------------------------------------------------------------
+$$\overline{\overline{A}} = \frac{\left( A_{1}^{t} + A_{2}^{t} \right)}{2} \qquad \text{(7-8)}$$
+
+
 
 where $A_{1}^{t}$ is the flow area at the upstream end of the conduit
 computed for time *t* and $A_{2}^{t}$ is the same at the downstream end
 of the conduit. For dynamic wave analysis:
 
-  ---------------------------------------------------------------------------------------------------------------------------------
-        $$\overline{\overline{A}} = \frac{\left( {\overline{A}}^{t} + {\overline{A}}^{t + \mathrm{\Delta}t} \right)}{2}$$   (7-9)
-  ----- ------------------------------------------------------------------------------------------------------------------- -------
 
-  ---------------------------------------------------------------------------------------------------------------------------------
+$$\overline{\overline{A}} = \frac{\left( {\overline{A}}^{t} + {\overline{A}}^{t + \mathrm{\Delta}t} \right)}{2} \qquad \text{(7-9)}$$
+
+
 
 where
 ${\overline{A}}^{t} = \frac{\left( A\left( Y_{1} \right) + A\left( Y_{2} \right) \right)}{2}$
-for *Y~1~* and *Y~2~* computed at time *t*, with a similar expression
+for *Y<sub>1</sub>* and *Y<sub>2</sub>* computed at time *t*, with a similar expression
 used for ${\overline{A}}^{t + \mathrm{\Delta}t}$. In the latter case the
 flow depths *Y* are computed using the most recently computed nodal
 heads (see Equation 3-16) as the iterative dynamic wave solution
 unfolds.
 
-An additional constraint on *q~L~* is that it cannot be greater than the
+An additional constraint on *q<sub>L</sub>* is that it cannot be greater than the
 inflow rate $Q_{1}^{t + \Delta t}$ to the conduit under kinematic wave
-analysis or the last computed flow *Q^last^* under dynamic wave
+analysis or the last computed flow *Q<sup>last</sup>* under dynamic wave
 analysis.
 
 [Dynamic Wave Modifications]{.underline}
 
 For dynamic wave analysis, including a uniform loss rate adds an
-additional term *∆Q~lateral~* to Equation 3-14 used to update a
+additional term *∆Q<sub>lateral</sub>* to Equation 3-14 used to update a
 conduit's flow rate over a time step. The revised equation is:
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-       $$Q_{t + \Delta t} = \frac{Q_{t} + {\mathrm{\Delta}Q}_{inertia} + {\mathrm{\Delta}Q}_{pressure} + \mathrm{\Delta}Q_{lateral}}{1 + {\mathrm{\Delta}Q}_{friction}}$$   (7-10)
-  ---- -------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$Q_{t + \Delta t} = \frac{Q_{t} + {\mathrm{\Delta}Q}_{inertia} + {\mathrm{\Delta}Q}_{pressure} + \mathrm{\Delta}Q_{lateral}}{1 + {\mathrm{\Delta}Q}_{friction}} \qquad \text{(7-10)}$$
+
+
 
 where $\mathrm{\Delta}Q_{lateral} = 2.5\overline{U}q_{L}$ and all other
 *∆Q* terms were defined previously in Section 3.2. See the sidebar below
 for the derivation of this modified equation.
 
 Another modification needed when including a uniform loss rate is to add
-*q~L~L* (the total flow lost over the length of the conduit) to the
+*q<sub>L</sub>L* (the total flow lost over the length of the conduit) to the
 total outflow from the upstream node of a conduit with positive flow or
 add it to the total inflow of the downstream node of a conduit with
 negative flow. This modifies the $\sum_{}^{}Q^{t + \mathrm{\Delta}t}$
@@ -6270,31 +5925,28 @@ used to update nodal heads.
 For kinematic wave analysis, adding a uniform loss term modifies the
 original continuity equation 4-1 as follows:
 
-  ------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial A}{\partial t} + \frac{\partial Q}{\partial x} + q_{L} = 0$$                 (7-11)
-  ----- ------------------------------------------------------------------------------- ------------- --------
 
-  ------------------------------------------------------------------------------------------------------------
+$$\frac{\partial A}{\partial t} + \frac{\partial Q}{\partial x} + q_{L} = 0 \qquad \text{(7-11)}$$
 
-Carrying the *q~L~* term over into the original finite difference form
+
+
+Carrying the *q<sub>L</sub>* term over into the original finite difference form
 of this equation (Equation 4-7) produces:
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{(1 - \theta)\left( A_{1}^{t + \Delta t} - A_{1}^{t} \right) + \theta\left( A_{2}^{t + \Delta t} - A_{2}^{t} \right)}{\Delta t} + \frac{(1 - \phi)\left( Q_{2}^{t} - Q_{1}^{t} \right) + \phi\left( Q_{2}^{t + \Delta t} - Q_{1}^{t + \Delta t} \right)}{L} + q_{L} = 0$$   (7-12)
-  ----- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{(1 - \theta)\left( A_{1}^{t + \Delta t} - A_{1}^{t} \right) + \theta\left( A_{2}^{t + \Delta t} - A_{2}^{t} \right)}{\Delta t} + \frac{(1 - \phi)\left( Q_{2}^{t} - Q_{1}^{t} \right) + \phi\left( Q_{2}^{t + \Delta t} - Q_{1}^{t + \Delta t} \right)}{L} + q_{L} = 0 \qquad \text{(7-12)}$$
+
+
 
 where all notation was defined previously in Section 4.2. After
 substituting the Manning equation $Q = \beta\Psi(A)$ into this
 expression the same non-linear equation for $A_{2}^{t + \Delta t}$
 results as before (equation 4-8):
 
-  ---------------------------------------------------------------------------------------------------
-        $$\beta\Psi\left( A_{2}^{t + \Delta t} \right) + C1A_{2}^{t + \Delta t} + C2 = 0$$   (7-13)
-  ----- ------------------------------------------------------------------------------------ --------
 
-  ---------------------------------------------------------------------------------------------------
+$$\beta\Psi\left( A_{2}^{t + \Delta t} \right) + C1A_{2}^{t + \Delta t} + C2 = 0 \qquad \text{(7-13)}$$
+
+
 
 with *C1* given by Equation 4-9 and *C2* by Equation 4-10 but with the
 additional term $q_{L}\frac{L}{\phi}$ added to it.
@@ -6317,39 +5969,33 @@ The evaporation loss rate from the surface of a storage unit during a
 time period is based on the surface area in the unit at the start of the
 time period using the following equation:
 
-  --------------------------------------------------------------------------
-        $$Q_{EN} = e_{t}f_{E}A_{SN}\left( Y^{t} \right)$$           (7-14)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$Q_{EN} = e_{t}f_{E}A_{SN}\left( Y^{t} \right) \qquad \text{(7-14)}$$
+
+
 
 where
 
-  -----------------------------------------------------------------------------
   $$Q_{EN}$$   =   evaporation loss rate from a storage unit node (cfs)
-  ------------ --- ------------------------------------------------------------
-  *t*          =   starting time for the current computational time period
-                   (sec)
 
-  $$e_{t}$$    =   potential evaporation rate per unit area at time *t*
-                   (cfs/ft^2^)
+|  |  |  |
+| --- | --- | --- |
+| *t* | = | starting time for the current computational time period (sec) |
+| $e_{t}$ | = | potential evaporation rate per unit area at time *t* (cfs/ft<sup>2</sup>) |
+| *f<sub>E</sub>* | = | fraction of evaporation rate realized |
+| *Y<sup>t</sup>* | = | depth of stored water at time *t* (ft) |
+| *A<sub>SN</sub>(Y)* | = | storage unit surface area at water depth *Y* (ft). |
 
-  *f~E~*       =   fraction of evaporation rate realized
 
-  *Y^t^*       =   depth of stored water at time *t* (ft)
-
-  *A~SN~(Y)*   =   storage unit surface area at water depth *Y* (ft).
-  -----------------------------------------------------------------------------
-
-The potential evaporation rate *e~t~* is the same quantity discussed in
+The potential evaporation rate *e<sub>t</sub>* is the same quantity discussed in
 the previous section on conduit evaporation and is automatically
 retrieved from a study area's evaporation data source as the simulation
-unfolds over time. The fraction of this rate realized, *f~E~*, is a
+unfolds over time. The fraction of this rate realized, *f<sub>E</sub>*, is a
 user-supplied value for each storage unit that allows the rate to be
 adjusted for specific local conditions. It would normally be 1.0 but
 could be 0 if the storage unit has a roof over it. The depth of stored
 water *Y~t\ ~*is the difference between the water surface elevation
-*H^t^* at time *t* and the storage unit's invert elevation *E*. The
+*H<sup>t</sup>* at time *t* and the storage unit's invert elevation *E*. The
 *A(Y)* function represents the user-supplied curve of surface area
 versus depth as described in Section 5.4.
 
@@ -6360,36 +6006,30 @@ ponded water into the native soil beneath the unit. The Green-Ampt soil
 infiltration method is used to compute the rate of seepage per unit area
 over time. Its fundamental formula is:
 
-  ----------------------------------------------------------------------------------------------------------------------
-        $$q_{SN} = K_{S}f_{C}\left\lbrack 1 + \frac{\left( \psi_{S} + d \right)\theta_{d}}{F} \right\rbrack$$   (7-15)
-  ----- ------------------------------------------------------------------------------------------------------- --------
 
-  ----------------------------------------------------------------------------------------------------------------------
+$$q_{SN} = K_{S}f_{C}\left\lbrack 1 + \frac{\left( \psi_{S} + d \right)\theta_{d}}{F} \right\rbrack \qquad \text{(7-15)}$$
+
+
 
 where
 
-  --------------------------------------------------------------------------------
-  *q~SN~*        =   seepage rate per unit area from the storage unit node
-                     (cfs/ft^2^)
-  -------------- --- -------------------------------------------------------------
-  *K~S~*         =   soil saturated hydraulic conductivity (ft/sec)
+  *q<sub>SN</sub>*        =   seepage rate per unit area from the storage unit node
+                     (cfs/ft<sup>2</sup>)
 
-  *f~C~*         =   monthly climate adjustment factor for the current time step
-                     (dimensionless)
+|  |  |  |
+| --- | --- | --- |
+| *K<sub>S</sub>* | = | soil saturated hydraulic conductivity (ft/sec) |
+| *f<sub>C</sub>* | = | monthly climate adjustment factor for the current time step (dimensionless) |
+| *d* | = | depth of stored water above the area undergoing seepage (ft) |
+| $\psi_{S}$ | = | soil capillary suction head (ft) |
+| *θ<sub>d</sub>* | = | soil moisture deficit (dimensionless) |
+| *F* | = | cumulative depth of infiltrated water (ft). |
 
-  *d*            =   depth of stored water above the area undergoing seepage (ft)
-
-  $$\psi_{S}$$   =   soil capillary suction head (ft)
-
-  *θ~d~*         =   soil moisture deficit (dimensionless)
-
-  *F*            =   cumulative depth of infiltrated water (ft).
-  --------------------------------------------------------------------------------
 
 The monthly seepage adjustment factor is the same user-supplied set of
 multipliers used for conduit seepage described previously for equation
-7-4. *K~S~, ψ~S~*, and the initial value of *θ~d~* are all parameters
-associated with the Green-Ampt model. Both *θ~d~* and *F* are modified
+7-4. *K<sub>S</sub>, ψ<sub>S</sub>*, and the initial value of *θ<sub>d</sub>* are all parameters
+associated with the Green-Ampt model. Both *θ<sub>d</sub>* and *F* are modified
 by the model over time. Equation 7-15 makes the seepage rate dependent
 on the ratio of stored water depth to cumulative infiltrated depth, both
 of which will vary over time
@@ -6399,9 +6039,9 @@ model are covered in Chapter 4 of Volume I (Hydrology) of this manual.
 The only difference when using it for a storage unit is that the
 quantity $\psi_{s}$ in the original formulation is replaced with
 $\psi_{s} + d$. Volume I also provides guidance on selecting values of
-*K~S~*, $\psi_{s}$, and an initial *θ~d\ ~* based on soil type. If
+*K<sub>S</sub>*, $\psi_{s}$, and an initial *θ~d\ ~* based on soil type. If
 either $\psi_{s}$ or *θ~d\ ~*are 0 then SWMM assumes a constant seepage
-rate equal to *K~S~* that is independent of storage depth. If *K~S~* is
+rate equal to *K<sub>S</sub>* that is independent of storage depth. If *K<sub>S</sub>* is
 0 then no seepage occurs.
 
 The depth of water to use in the Green-Ampt formula will vary across the
@@ -6409,33 +6049,26 @@ top surface of a storage unit if it has sloped sides as shown in Figure
 7-1. SWMM accounts for this by applying the Green-Ampt infiltration
 method independently to two separate seepage areas -- one for water in
 contact with the flat bottom portion of the unit and a second for water
-in contact with the sloped sides. The total seepage loss rate *Q~SN~*
+in contact with the sloped sides. The total seepage loss rate *Q<sub>SN</sub>*
 (in cfs) can be expressed as:
 
-  ------------------------------------------------------------------------------------------------------------
-        $$Q_{SN} = q_{btm}\left( d_{btm} \right)A_{btm} + q_{side}\left( d_{side} \right)A_{side}$$   (7-16)
-  ----- --------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------
+$$Q_{SN} = q_{btm}\left( d_{btm} \right)A_{btm} + q_{side}\left( d_{side} \right)A_{side} \qquad \text{(7-16)}$$
+
+
 
 where:
 
-  -----------------------------------------------------------------------------
-  *d~btm~*    =   depth of stored water above bottom of unit (ft)
-  ----------- --- -------------------------------------------------------------
-  *q~btm~*    =   Green-Ampt infiltration rate based on *d = d~btm~*
-                  (cfs/ft^2^)
+  *d<sub>btm</sub>*    =   depth of stored water above bottom of unit (ft)
 
-  *A~btm~*    =   surface area over which bottom seepage occurs (ft^2^)
+|  |  |  |
+| --- | --- | --- |
+| *q<sub>btm</sub>* | = | Green-Ampt infiltration rate based on *d = d<sub>btm</sub>* (cfs/ft<sup>2</sup>) |
+| *A<sub>btm</sub>* | = | surface area over which bottom seepage occurs (ft<sup>2</sup>) |
+| *d<sub>side</sub>* | = | average depth of stored water above sloped sides of unit (ft) |
+| *q<sub>side</sub>* | = | Green-Ampt infiltration rate based on *d = d<sub>side</sub>* (cfs/ft<sup>2</sup>) |
+| *A<sub>side</sub>* | = | surface area of sloped sides over which seepage occurs (ft<sup>2</sup>). |
 
-  *d~side~*   =   average depth of stored water above sloped sides of unit (ft)
-
-  *q~side~*   =   Green-Ampt infiltration rate based on *d = d~side~*
-                  (cfs/ft^2^)
-
-  *A~side~*   =   surface area of sloped sides over which seepage occurs
-                  (ft^2^).
-  -----------------------------------------------------------------------------
 
 <figure>
 <img src="VolumeII/media/media/image53.png"
@@ -6446,7 +6079,7 @@ seepage in storage units</strong></p></figcaption>
 </figure>
 
 As noted previously, the depth above the bottom of the storage unit
-(*d~btm~*) is $Y^{t} = H^{t} - E$. The bottom surface area is found from
+(*d<sub>btm</sub>*) is $Y^{t} = H^{t} - E$. The bottom surface area is found from
 the unit's storage curve at a depth of 0 (see Section 5.4 for a
 discussion of storage curves). The average depth above the sloped sides
 is computed as:
@@ -6460,49 +6093,46 @@ is computed as:
 |   |                                                      | for $Y^{t} > d_{\max}$              |        |
 +===+======================================================+=====================================+========+
 
-where *d~min~* is the storage depth where the sloped sides begin and
-*d~max~* is the depth where it ends (see Figure 7-1). Both of these
+where *d<sub>min</sub>* is the storage depth where the sloped sides begin and
+*d<sub>max</sub>* is the depth where it ends (see Figure 7-1). Both of these
 depths can be found from the storage unit's storage curve. The effective
 area over which vertical seepage through the sloped sides occurs is
 computed as:
 
-  --------------------------------------------------------------------------------------------------------------
-        $$A_{side} = min\left\{ A\left( Y^{t} \right),\ A\left( d_{\max} \right) \right\} - A_{btm}$$   (7-18)
-  ----- ----------------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------------
+$$A_{side} = min\left\{ A\left( Y^{t} \right),\ A\left( d_{\max} \right) \right\} - A_{btm} \qquad \text{(7-18)}$$
+
+
 
 [Total Storage Loss]{.underline}
 
-The total loss rate from a storage unit node, *Q~LN~* (in cfs), over a
+The total loss rate from a storage unit node, *Q<sub>LN</sub>* (in cfs), over a
 given time step is
 
-  --------------------------------------------------------------------------
-        $$Q_{LN} = Q_{EN} + Q_{SN}$$                                (7-19)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$Q_{LN} = Q_{EN} + Q_{SN} \qquad \text{(7-19)}$$
 
-*Q~LN~* is not allowed exceed the volume of water in storage at the
+
+
+*Q<sub>LN</sub>* is not allowed exceed the volume of water in storage at the
 start of the current time step:
 
-  -----------------------------------------------------------------------------------------------------------
-        $$Q_{LN} = min\left\{ Q_{LN},\frac{V_{N}\left( Y^{t} \right)}{\mathrm{\Delta}t} \right\}$$   (7-20)
-  ----- -------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------
+$$Q_{LN} = min\left\{ Q_{LN},\frac{V_{N}\left( Y^{t} \right)}{\mathrm{\Delta}t} \right\} \qquad \text{(7-20)}$$
 
-where *V~N~(Y)* is the storage unit's volume at depth *Y* (see section
+
+
+where *V<sub>N</sub>(Y)* is the storage unit's volume at depth *Y* (see section
 5.4 for how it is computed) and *∆t* is the size of the current time
 step.
 
-For a given storage node, *Q~LN~* is computed once at the start of the
+For a given storage node, *Q<sub>LN</sub>* is computed once at the start of the
 current time step based on the known stored water level. For dynamic
 wave analysis it is subtracted from the
 $\sum_{}^{}Q^{t + \mathrm{\Delta}t}$ term of Equation 3-15a (i.e., is
 treated as a nodal outflow) each time the node's head is updated at step
 4 of the solution procedure described in Section 3.2. For kinematic wave
-analysis, after all link flows have been found, *Q~LN~* is added to the
+analysis, after all link flows have been found, *Q<sub>LN</sub>* is added to the
 node's total outflow at the end of the time step (see Equation 4-18)
 which is used to update the node's volume and subsequently its hydraulic
 head (see Section 4.3.5).
@@ -6519,29 +6149,27 @@ losses most frequently considered in stormwater conveyance networks.
 A minor loss is represented as the product of a loss coefficient and the
 local velocity head for a specific location *i* along a conduit:
 
-  --------------------------------------------------------------------------
-        $$\mathrm{\Delta}H_{L} = K_{m,i}\frac{U_{i}^{2}}{2g}$$      (7-21)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$\mathrm{\Delta}H_{L} = K_{m,i}\frac{U_{i}^{2}}{2g} \qquad \text{(7-21)}$$
 
-where $\mathrm{\Delta}H_{L}$ is the minor head loss (ft), *K~m~,~i~* is
-a loss coefficient, and *U~i~* is flow velocity (ft/sec). The location
+
+
+where $\mathrm{\Delta}H_{L}$ is the minor head loss (ft), *K<sub>m</sub>,<sub>i</sub>* is
+a loss coefficient, and *U<sub>i</sub>* is flow velocity (ft/sec). The location
 index *i* is 1 for an entrance loss based on the conduit's upstream
 velocity, 2 for an exit loss based on its downstream velocity, or 3 for
 an average loss based on its average velocity.
 
 Minor losses can be included in the St. Venant momentum equation for a
-conduit by treating them as a loss per unit length, *h~L~*, in the same
-way that the friction slope *S~f~* is treated. This modified version of
+conduit by treating them as a loss per unit length, *h<sub>L</sub>*, in the same
+way that the friction slope *S<sub>f</sub>* is treated. This modified version of
 the momentum equation (originally equation 3-2 with uniform lateral
-outflow rate *q~L~* included) is:
+outflow rate *q<sub>L</sub>* included) is:
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial Q}{\partial t} + \frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} + gA\frac{\partial H}{\partial x} + gAS_{f} - U\frac{q_{L}}{2} + gAh_{L} = 0$$   (7-22)
-  ----- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{\partial Q}{\partial t} + \frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} + gA\frac{\partial H}{\partial x} + gAS_{f} - U\frac{q_{L}}{2} + gAh_{L} = 0 \qquad \text{(7-22)}$$
+
+
 
 where $h_{L} = \frac{\sum_{i = 1}^{3}{K_{m,i}U_{i}^{2}}}{(2gL)}$ with
 *L* being the conduit length.
@@ -6599,35 +6227,32 @@ For dynamic wave hydraulics the finite difference form of equation 7-22
 can be found by following the same derivation used earlier in Section
 3.2. This results in:
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{\mathrm{\Delta}Q}{\mathrm{\Delta}t} = 2\overline{U}\frac{\mathrm{\Delta}\overline{A}}{\mathrm{\Delta}t} + {\overline{U}}^{2}\frac{\left( A_{2} - A_{1} \right)}{L} - g\overline{A}\frac{\left( H_{2} - H_{1} \right)}{L} - g\eta^{2}\frac{Q\left| \overline{U} \right|}{{\overline{R}}^{4/3}} + 2.5\overline{U}q_{L} - \frac{Q\sum_{i = 1}^{3}{K_{m,i}\left| U_{i} \right|}}{2L}$$   (7-23)
-  ----- -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{\mathrm{\Delta}Q}{\mathrm{\Delta}t} = 2\overline{U}\frac{\mathrm{\Delta}\overline{A}}{\mathrm{\Delta}t} + {\overline{U}}^{2}\frac{\left( A_{2} - A_{1} \right)}{L} - g\overline{A}\frac{\left( H_{2} - H_{1} \right)}{L} - g\eta^{2}\frac{Q\left| \overline{U} \right|}{{\overline{R}}^{4/3}} + 2.5\overline{U}q_{L} - \frac{Q\sum_{i = 1}^{3}{K_{m,i}\left| U_{i} \right|}}{2L} \qquad \text{(7-23)}$$
+
+
 
 After re-arranging terms, the following revised form of the flow
 updating equation 3-14 used in step 2 of the dynamic wave solution
 procedure of Section 3.2 is:
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-       $$Q_{t + \Delta t} = \frac{Q_{t} + {\mathrm{\Delta}Q}_{inertia} + {\mathrm{\Delta}Q}_{pressure} + \mathrm{\Delta}Q_{lateral}}{1 + {\mathrm{\Delta}Q}_{friction} + \mathrm{\Delta}Q_{loss}}$$   (7-24)
-  ---- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$Q_{t + \Delta t} = \frac{Q_{t} + {\mathrm{\Delta}Q}_{inertia} + {\mathrm{\Delta}Q}_{pressure} + \mathrm{\Delta}Q_{lateral}}{1 + {\mathrm{\Delta}Q}_{friction} + \mathrm{\Delta}Q_{loss}} \qquad \text{(7-24)}$$
+
+
 
 where
 
-  -----------------------------------------------------------------------------------------------------------------------
-        $$\mathrm{\Delta}Q_{loss} = \frac{\mathrm{\Delta}t}{2L}\sum_{i = 1}^{3}{K_{m,i}\left| U_{i} \right|}$$   (7-25)
-  ----- -------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------
+$$\mathrm{\Delta}Q_{loss} = \frac{\mathrm{\Delta}t}{2L}\sum_{i = 1}^{3}{K_{m,i}\left| U_{i} \right|} \qquad \text{(7-25)}$$
+
+
 
 and all other *∆Q* terms are as defined previously in Sections 3.2 and
 7.1.1. Minor losses are not computed for kinematic wave analysis since
 it uses a simplified version of the momentum equation that only accounts
 for gravitational and friction forces. Frost (2006) provides guidance on
-selecting values for the loss coefficient *K~m~*.
+selecting values for the loss coefficient *K<sub>m</sub>*.
 
 ## 7.3 Force Mains
 
@@ -6642,25 +6267,23 @@ Manning equation continues to be used.
 The standard form of the Hazen-Williams equation in US units is (Clark
 et al., 1977):
 
-  --------------------------------------------------------------------------
-        $$U = 1.318C_{HW}R_{full}^{0.63}S_{f}^{0.54}$$              (7-26)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$U = 1.318C_{HW}R_{full}^{0.63}S_{f}^{0.54} \qquad \text{(7-26)}$$
 
-where *U* is velocity (ft/sec), *R~full~* is the full pipe hydraulic
-radius (ft), *S~f~* is the friction slope (head loss per unit length)
-(ft/ft), and *C~HW~* is the user-supplied Hazen-Williams C-factor
+
+
+where *U* is velocity (ft/sec), *R<sub>full</sub>* is the full pipe hydraulic
+radius (ft), *S<sub>f</sub>* is the friction slope (head loss per unit length)
+(ft/ft), and *C<sub>HW</sub>* is the user-supplied Hazen-Williams C-factor
 coefficient. Typical values of the C-factor are listed in Table 7-3.
 
-Solving Equation 7-26 for *S~f~* and putting the result in a form
+Solving Equation 7-26 for *S<sub>f</sub>* and putting the result in a form
 similar to the Manning equation (see Equation 3-3) gives:
 
-  -------------------------------------------------------------------------------------------
-        $$S_{f} = \frac{0.6|U|^{0.852}Q}{C_{HW}^{1.852}A_{full}R_{full}^{1.667}}$$   (7-27)
-  ----- ---------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------
+$$S_{f} = \frac{0.6|U|^{0.852}Q}{C_{HW}^{1.852}A_{full}R_{full}^{1.667}} \qquad \text{(7-27)}$$
+
+
 
 +-----------------+----------------+-----------------+----------------+
 | **Pipe          | **C-factor**   | **Pipe          | **C-Factor**   |
@@ -6691,16 +6314,15 @@ similar to the Manning equation (see Equation 3-3) gives:
 : []{#_Toc484690439 .anchor}**Table 7‑3 Hazen-Williams C-factors for
 different pipe materials**
 
-This expression replaces the Manning formula for *S~f~* when a force
+This expression replaces the Manning formula for *S<sub>f</sub>* when a force
 main flows full. As a result, the friction term in the equation used to
 update the conduit's flow in the iterative dynamic wave solution
 procedure (Equation 3-14) becomes:
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $${\mathrm{\Delta}Q}_{friction} = 0.6g\frac{\left| \overline{U} \right|^{0.852}\Delta t}{C_{HW}^{1.852}R_{full}^{1.667}}$$                      (7-28)
-  ----- ---------------------------------------------------------------------------------------------------------------------------- ------------------ --------
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------
+$${\mathrm{\Delta}Q}_{friction} = 0.6g\frac{\left| \overline{U} \right|^{0.852}\Delta t}{C_{HW}^{1.852}R_{full}^{1.667}} \qquad \text{(7-28)}$$
+
+
 
 where $\overline{U} = \frac{Q^{last}}{A_{full}}$.
 
@@ -6709,55 +6331,50 @@ where $\overline{U} = \frac{Q^{last}}{A_{full}}$.
 The standard form of the Darcy-Weisbach head loss equation is (Clark et
 al., 1977):
 
-  --------------------------------------------------------------------------
-        $$S_{f} = \frac{fU^{2}}{2gD}$$                              (7-29)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$S_{f} = \frac{fU^{2}}{2gD} \qquad \text{(7-29)}$$
 
-where *S~f~* is the friction slope (head loss per unit length) (ft/ft),
+
+
+where *S<sub>f</sub>* is the friction slope (head loss per unit length) (ft/ft),
 *U* is flow velocity (ft/sec), *D* is pipe diameter (ft), and *f* is a
 dimensionless friction factor. Noting that $D = 4R_{full}$ for a
 circular pipe allows this equation to be expressed in a form similar to
 the Manning formula:
 
-  --------------------------------------------------------------------------
-        $$S_{f} = \frac{f|U|Q}{8gA_{full}R_{full}}$$                (7-30)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$S_{f} = \frac{f|U|Q}{8gA_{full}R_{full}} \qquad \text{(7-30)}$$
+
+
 
 As a result, the friction term in the equation used to update a
 pressurized force main's flow in the iterative dynamic wave solution
 procedure (Equation 3-14) becomes:
 
-  ------------------------------------------------------------------------------------------------------------------------------
-        $${\mathrm{\Delta}Q}_{friction} = \frac{f\left| \overline{U} \right|\Delta t}{8R_{full}}$$                      (7-31)
-  ----- -------------------------------------------------------------------------------------------- ------------------ --------
 
-  ------------------------------------------------------------------------------------------------------------------------------
+$${\mathrm{\Delta}Q}_{friction} = \frac{f\left| \overline{U} \right|\Delta t}{8R_{full}} \qquad \text{(7-31)}$$
+
+
 
 The friction factor *f* can be determined graphically from the Moody
 diagram as a function of the flow's Reynolds number (*Re*) and the
 pipe's relative roughness (Bhave, 1991). For laminar flow (Re ≥ 2000)
 the friction factor is:
 
-  --------------------------------------------------------------------------
-        $$f = \frac{64}{Re}$$                                       (7-32)
-  ----- ---------------------------------------- ------------------ --------
 
-  --------------------------------------------------------------------------
+$$f = \frac{64}{Re} \qquad \text{(7-32)}$$
+
+
 
 where $Re = \frac{D\left| \overline{U} \right|}{\mu}$ with *μ* being the
-kinematic viscosity of water taken as 1.1×10^-5^ ft^2^/sec. For
+kinematic viscosity of water taken as 1.1×10^-5^ ft<sup>2</sup>/sec. For
 transition and rough turbulent flow (*Re* ≥ 4000) the Swamee and Jain
 approximation to the Colebrook-White formula is used (Bhave, 1991):
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$f = \frac{0.25}{\left\lbrack \log\left( \frac{\epsilon}{3.7D} + \frac{5.74}{{Re}^{0.9}} \right) \right\rbrack^{2}}$$                      (7-33)
-  ----- ------------------------------------------------------------------------------------------------------------------------ ------------------ --------
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------
+$$f = \frac{0.25}{\left\lbrack \log\left( \frac{\epsilon}{3.7D} + \frac{5.74}{{Re}^{0.9}} \right) \right\rbrack^{2}} \qquad \text{(7-33)}$$
+
+
 
 where $\epsilon$ is the equivalent surface roughness height (ft) of the
 pipe wall as supplied by the user. This roughness height serves the same
@@ -6767,17 +6384,14 @@ C-factor. Typical values for different pipe materials are given in Table
 the friction factor at *Re* = 2000 (equal to 0.032) and that at *Re* =
 4000 (which will also depend on $\frac{\epsilon}{D}$).
 
-  -------------------------------------------------------------------------------
   **Material**       $\mathbf{\epsilon}$  **Material**       $\mathbf{\epsilon}$
                         **(inches)**                            **(inches)**
-  ----------------- --------------------- ----------------- ---------------------
   Concrete              0.012 -- 0.12     Asphalted Cast           0.0048
                                           Iron              
 
   Cast Iron                 0.010         Welded Steel             0.0018
 
   Galvanized iron           0.006         PVC                      0.00006
-  -------------------------------------------------------------------------------
 
   : []{#_Toc484690440 .anchor}**Table 7‑4 Darcy-Weisbach roughness
   heights for different pipe materials**
@@ -6796,45 +6410,40 @@ conditions for a friction slope equal to the pipe's bottom slope.
 When the Manning full normal flow is equated to the Hazen-Williams
 formula flow the result is:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\left( \frac{1.486}{n} \right)^{2}R_{full}^{4/3}S_{O} = \left( 1.318C_{HW}R_{full}^{0.63}S_{O}^{0.54} \right)^{2}$$                      (7-34)
-  ----- ----------------------------------------------------------------------------------------------------------------------- ------------------ --------
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\left( \frac{1.486}{n} \right)^{2}R_{full}^{4/3}S_{O} = \left( 1.318C_{HW}R_{full}^{0.63}S_{O}^{0.54} \right)^{2} \qquad \text{(7-34)}$$
 
-where *S~O~* is the pipe's bottom slope (ft/ft), *R~full~* is in feet,
-and *n* has units of sec/m^1/3^. Expressing *R~full~* as $\frac{D}{4}$
+
+
+where *S<sub>O</sub>* is the pipe's bottom slope (ft/ft), *R<sub>full</sub>* is in feet,
+and *n* has units of sec/m<sup>1/3</sup>. Expressing *R<sub>full</sub>* as $\frac{D}{4}$
 and solving for *n* gives:
 
-  -----------------------------------------------------------------------------------------------------
-        $$n = \frac{1.067\left( \frac{D}{S_{O}} \right)^{0.04}}{C_{HW}}$$                      (7-35)
-  ----- ------------------------------------------------------------------- ------------------ --------
 
-  -----------------------------------------------------------------------------------------------------
+$$n = \frac{1.067\left( \frac{D}{S_{O}} \right)^{0.04}}{C_{HW}} \qquad \text{(7-35)}$$
+
+
 
 Doing the same for the Darcy-Weisbach formula produces:
 
-  -----------------------------------------------------------------------------------------------------------------------------------
-        $$\left( \frac{1.486}{n} \right)^{2}R_{full}^{4/3}S_{O} = \frac{2gDS_{O}}{f(\epsilon,\infty)}$$                      (7-36)
-  ----- ------------------------------------------------------------------------------------------------- ------------------ --------
 
-  -----------------------------------------------------------------------------------------------------------------------------------
+$$\left( \frac{1.486}{n} \right)^{2}R_{full}^{4/3}S_{O} = \frac{2gDS_{O}}{f(\epsilon,\infty)} \qquad \text{(7-36)}$$
+
+
 
 where
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------
-        $$f(\epsilon,\infty) = \frac{0.25}{\left\lbrack \log\left( \frac{\epsilon}{3.7D} \right) \right\rbrack^{2}}$$                      (7-37)
-  ----- --------------------------------------------------------------------------------------------------------------- ------------------ --------
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------
+$$f(\epsilon,\infty) = \frac{0.25}{\left\lbrack \log\left( \frac{\epsilon}{3.7D} \right) \right\rbrack^{2}} \qquad \text{(7-37)}$$
 
-Expressing *R~full~* as $\frac{D}{4}$ and solving for *n* gives:
 
-  ----------------------------------------------------------------------------------------
-        $$n = \sqrt{\frac{f(\epsilon,\infty)}{185}}D^{1/6}$$                      (7-38)
-  ----- ------------------------------------------------------ ------------------ --------
 
-  ----------------------------------------------------------------------------------------
+Expressing *R<sub>full</sub>* as $\frac{D}{4}$ and solving for *n* gives:
+
+
+$$n = \sqrt{\frac{f(\epsilon,\infty)}{185}}D^{1/6} \qquad \text{(7-38)}$$
+
+
 
 To summarize, when flowing full under dynamic wave analysis, a pipe
 designated as a force main uses Equation 7-28 (for Hazen-Williams) or
@@ -6889,9 +6498,9 @@ Under inlet control, a rating curve establishes the relationship between
 culvert flow rate and inlet head. The shape of the curve varies
 depending on the culvert's shape, material, and geometry of its inlet
 opening. Figure 7-3 shows a typical inlet control rating curve in
-normalized form, where inlet headwater depth (*Y~1~*) is normalized by
-the full barrel depth (*Y~full~*) and flow rate (*Q*) is normalized by
-$A_{full}\sqrt{Y_{full}}$ where *A~full~* is the full cross-section area
+normalized form, where inlet headwater depth (*Y<sub>1</sub>*) is normalized by
+the full barrel depth (*Y<sub>full</sub>*) and flow rate (*Q*) is normalized by
+$A_{full}\sqrt{Y_{full}}$ where *A<sub>full</sub>* is the full cross-section area
 of the barrel. When the inlet is submerged it performs as an orifice
 while when unsubmerged it performs as a weir.
 
@@ -6918,169 +6527,150 @@ unsubmerged and submerged portions of each curve.
 The FHWA procedures identify two types of unsubmerged curves used to
 compute inlet control for a culvert. The form 1 equation is:
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{H_{1} - Z_{1}}{Y_{full}} = \frac{E_{C}}{Y_{full}} + K_{I}\left\lbrack \frac{Q_{IC}}{A_{full}\sqrt{Y_{full}}} \right\rbrack^{M_{I}} + ScfS_{O}$$   (7-39)
-  ----- --------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{H_{1} - Z_{1}}{Y_{full}} = \frac{E_{C}}{Y_{full}} + K_{I}\left\lbrack \frac{Q_{IC}}{A_{full}\sqrt{Y_{full}}} \right\rbrack^{M_{I}} + ScfS_{O} \qquad \text{(7-39)}$$
+
+
 
 while the form 2 equation is:
 
-  ------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{H_{1} - Z_{1}}{Y_{full}} = K_{I}\left\lbrack \frac{Q_{IC}}{A_{full}\sqrt{Y_{full}}} \right\rbrack^{M_{I}}$$   (7-40)
-  ----- --------------------------------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{H_{1} - Z_{1}}{Y_{full}} = K_{I}\left\lbrack \frac{Q_{IC}}{A_{full}\sqrt{Y_{full}}} \right\rbrack^{M_{I}} \qquad \text{(7-40)}$$
+
+
 
 The following definitions apply to these equations:
 
-  -----------------------------------------------------------------------------
-  *H~1~*      =   hydraulic head at the inlet node of the culvert link (ft)
-  ----------- --- -------------------------------------------------------------
-  *Z~1~*      =   elevation of the culvert invert at its inlet end (ft)
+  *H<sub>1</sub>*      =   hydraulic head at the inlet node of the culvert link (ft)
 
-  *Q~IC~*     =   inlet controlled flow rate through the culvert (cfs)
+|  |  |  |
+| --- | --- | --- |
+| *Z<sub>1</sub>* | = | elevation of the culvert invert at its inlet end (ft) |
+| *Q<sub>IC</sub>* | = | inlet controlled flow rate through the culvert (cfs) |
+| *E<sub>C</sub>* | = | specific head at critical depth for flow *Q<sub>IC</sub>* (ft) |
+| *Y<sub>full</sub>* | = | full depth of the culvert barrel (ft) |
+| *A<sub>full</sub>* | = | full area of the culvert barrel cross section (ft<sup>2</sup>) |
+| *S<sub>O</sub>* | = | culvert barrel slope (ft/ft) |
+| *Scf* | = | slope correction factor (0.7 for mitered inlets and -0.5 for all others) |
+| *K<sub>I</sub>, | = | constants from Table H-2 for corresponding culvert type in |
+| M<sub>I</sub>* |  | Table H-1. |
 
-  *E~C~*      =   specific head at critical depth for flow *Q~IC~* (ft)
-
-  *Y~full~*   =   full depth of the culvert barrel (ft)
-
-  *A~full~*   =   full area of the culvert barrel cross section (ft^2^)
-
-  *S~O~*      =   culvert barrel slope (ft/ft)
-
-  *Scf*       =   slope correction factor (0.7 for mitered inlets and -0.5 for
-                  all others)
-
-  *K~I~,      =   constants from Table H-2 for corresponding culvert type in
-  M~I~*           Table H-1.
-  -----------------------------------------------------------------------------
 
 Table H-2 also specifies which equation is used for each type of
-culvert. It should be noted that *K~I~* has a factor of
+culvert. It should be noted that *K<sub>I</sub>* has a factor of
 $g^{\frac{- M_{I}}{2}}$ embedded in it so that equations 7-39 and 7-40
 are dimensionally consistent.
 
-The form 2 equation can be solved directly to determine *Q~IC~* for a
-given inlet head *H~1~*:
+The form 2 equation can be solved directly to determine *Q<sub>IC</sub>* for a
+given inlet head *H<sub>1</sub>*:
 
-  -------------------------------------------------------------------------------------------------------------------------
-        $$Q_{IC} = A_{full}\sqrt{Y_{full}}\left( \frac{H_{1} - Z_{1}}{K_{I}Y_{full}} \right)^{\frac{1}{M_{I}}}$$   (7-41)
-  ----- ---------------------------------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------------------------
+$$Q_{IC} = A_{full}\sqrt{Y_{full}}\left( \frac{H_{1} - Z_{1}}{K_{I}Y_{full}} \right)^{\frac{1}{M_{I}}} \qquad \text{(7-41)}$$
+
+
 
 For the form 1 equation, the specific head at critical depth is defined
 as:
 
-  --------------------------------------------------------------------------
-        $$E_{C} = Y_{C} + \frac{U_{C}^{2}}{2g}$$                    (7-42)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$E_{C} = Y_{C} + \frac{U_{C}^{2}}{2g} \qquad \text{(7-42)}$$
 
-where *Y~C~* is the critical depth for flow *Q~IC~* and *U~C~* is the
+
+
+where *Y<sub>C</sub>* is the critical depth for flow *Q<sub>IC</sub>* and *U<sub>C</sub>* is the
 velocity at this depth. From the definition of critical depth given by
 Equation 5-28 in Section 5.5.1:
 
-  -------------------------------------------------------------------------------------
-        $$U_{C}^{2} = g\frac{A\left( Y_{C} \right)}{W\left( Y_{C} \right)}$$   (7-43)
-  ----- ---------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------
+$$U_{C}^{2} = g\frac{A\left( Y_{C} \right)}{W\left( Y_{C} \right)} \qquad \text{(7-43)}$$
+
+
 
 and from Equation 5-29:
 
-  --------------------------------------------------------------------------------------------------------------
-        $$Q_{IC} = A\left( Y_{C} \right)\sqrt{g\frac{A\left( Y_{C} \right)}{W\left( Y_{C} \right)}}$$   (7-44)
-  ----- ----------------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------------
+$$Q_{IC} = A\left( Y_{C} \right)\sqrt{g\frac{A\left( Y_{C} \right)}{W\left( Y_{C} \right)}} \qquad \text{(7-44)}$$
+
+
 
 The area *A* and top width *W* values in these equations are evaluated
-at flow depth *Y~C~* using the methods described in Chapter 5 that
+at flow depth *Y<sub>C</sub>* using the methods described in Chapter 5 that
 depend on the culvert's shape and dimensions.
 
 Substituting these relations into the form 1 equation 7-39 results in
-the following nonlinear equation in the single unknown *Y~C~* :
+the following nonlinear equation in the single unknown *Y<sub>C</sub>* :
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{Y_{C}}{Y_{full}} = \frac{H_{1} - Z_{1} - \frac{Y_{HC}}{2}}{Y_{full}} - K_{I}\left\lbrack \frac{A\left( Y_{C} \right)}{A_{full}}\sqrt{g\frac{Y_{HC}}{Y_{full}}} \right\rbrack^{M_{I}} - ScfS_{O}$$   (7-45)
-  ----- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{Y_{C}}{Y_{full}} = \frac{H_{1} - Z_{1} - \frac{Y_{HC}}{2}}{Y_{full}} - K_{I}\left\lbrack \frac{A\left( Y_{C} \right)}{A_{full}}\sqrt{g\frac{Y_{HC}}{Y_{full}}} \right\rbrack^{M_{I}} - ScfS_{O} \qquad \text{(7-45)}$$
+
+
 
 where $Y_{HC}$ is the critical hydraulic depth defined as
 $\frac{A\left( Y_{C} \right)}{W\left( Y_{C} \right)}$. This equation is
 solved using Ridder's root finding method (see Appendix B) with an
-initial bracket on *Y~C~* of 10 to 100 percent of *H~1~ -- Z~1~* and a
-stopping tolerance of 0.001 ft. After *Y~C~* is found the corresponding
-inlet control flow rate *Q~IC~* can be computed using Equation 7-44.
+initial bracket on *Y<sub>C</sub>* of 10 to 100 percent of *H<sub>1</sub> -- Z<sub>1</sub>* and a
+stopping tolerance of 0.001 ft. After *Y<sub>C</sub>* is found the corresponding
+inlet control flow rate *Q<sub>IC</sub>* can be computed using Equation 7-44.
 
 ### 7.4.3 Submerged Inlet Control Curve
 
 The FHWA equation for inlet control of a culvert whose inlet is
 submerged is:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{H_{1} - Z_{1}}{Y_{full}} = c_{I}\left\lbrack \frac{Q_{IC}}{A_{full}\sqrt{Y_{full}}} \right\rbrack^{2} + y_{I} + ScfS_{O}$$   (7-46)
-  ----- ------------------------------------------------------------------------------------------------------------------------------------ --------
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{H_{1} - Z_{1}}{Y_{full}} = c_{I}\left\lbrack \frac{Q_{IC}}{A_{full}\sqrt{Y_{full}}} \right\rbrack^{2} + y_{I} + ScfS_{O} \qquad \text{(7-46)}$$
 
-where *c~I~* and *y~I~* are constants from Table H-2 for a particular
-culvert type in Table H-1. The *c~I~* constant has a factor of
+
+
+where *c<sub>I</sub>* and *y<sub>I</sub>* are constants from Table H-2 for a particular
+culvert type in Table H-1. The *c<sub>I</sub>* constant has a factor of
 $\frac{1}{g}$ embedded in it so that equation 7-46 is dimensionally
-consistent. Solving this expression for *Q~IC~* results in:
+consistent. Solving this expression for *Q<sub>IC</sub>* results in:
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$Q_{IC} = \left\lbrack \left( \frac{1}{c_{I}} \right)\left( \frac{H_{1} - Z_{1}}{Y_{full}} - y_{I} - ScfS_{O} \right) \right\rbrack^{\frac{1}{2}}A_{full}\sqrt{Y_{full}}$$   (7-47)
-  ----- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$Q_{IC} = \left\lbrack \left( \frac{1}{c_{I}} \right)\left( \frac{H_{1} - Z_{1}}{Y_{full}} - y_{I} - ScfS_{O} \right) \right\rbrack^{\frac{1}{2}}A_{full}\sqrt{Y_{full}} \qquad \text{(7-47)}$$
+
+
 
 ### 7.4.4 Inlet Control Transition Zone 
 
 The FHWA procedure states that the submerged inlet control equation
 should be used for values of
 $\frac{Q_{IC}}{\left( A_{full}\sqrt{Y_{full}} \right)}$ above 4.0.
-Converting this into a condition on *H~1~* results in:
+Converting this into a condition on *H<sub>1</sub>* results in:
 
-  -------------------------------------------------------------------------------------------------
-        $$H_{1} > {H_{IS} = Z}_{1} + Y_{full}\left( 16c_{I} + y_{I} + ScfS_{O} \right)$$   (7-48)
-  ----- ---------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------
+$$H_{1} > {H_{IS} = Z}_{1} + Y_{full}\left( 16c_{I} + y_{I} + ScfS_{O} \right) \qquad \text{(7-48)}$$
+
+
 
 When this condition is satisfied SWMM uses the submerged portion of the
-inlet control curve to compute the inlet control flow rate *Q~IC~*.
+inlet control curve to compute the inlet control flow rate *Q<sub>IC</sub>*.
 
 FHWA states that the unsubmerged inlet control equation applies for
 $\frac{Q_{IC}}{\left( A_{full}\sqrt{Y_{full}} \right)}$ values below
-3.5. This is difficult to convert to an a priori limit on *H~1~* because
-of the *E~C~* term in the form 1 unsubmerged equation. Therefore SWMM
+3.5. This is difficult to convert to an a priori limit on *H<sub>1</sub>* because
+of the *E<sub>C</sub>* term in the form 1 unsubmerged equation. Therefore SWMM
 uses an arbitrary criterion of
 
-  --------------------------------------------------------------------------
-        $$H_{1} < {H_{IU} = Z}_{1} + 0.95Y_{full}$$                 (7-49)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$H_{1} < {H_{IU} = Z}_{1} + 0.95Y_{full} \qquad \text{(7-49)}$$
+
+
 
 to determine if the unsubmerged inlet control equations should be used.
 
-When *H~1~* is between *H~IU~* and *H~IS~* linear interpolation is used
-to compute *Q~IC~* as follows:
+When *H<sub>1</sub>* is between *H<sub>IU</sub>* and *H<sub>IS</sub>* linear interpolation is used
+to compute *Q<sub>IC</sub>* as follows:
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$Q_{IC} = Q_{IC}\left( H_{IU} \right) + \left( Q_{IC}\left( H_{IS} \right) - Q_{IC}\left( H_{IU} \right) \right)\frac{\left( H_{1} - H_{IU} \right)}{\left( H_{IS} - H_{IU} \right)}$$   (7-50)
-  ----- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$Q_{IC} = Q_{IC}\left( H_{IU} \right) + \left( Q_{IC}\left( H_{IS} \right) - Q_{IC}\left( H_{IU} \right) \right)\frac{\left( H_{1} - H_{IU} \right)}{\left( H_{IS} - H_{IU} \right)} \qquad \text{(7-50)}$$
+
+
 
 where $Q_{IC}\left( H_{IU} \right)$ is the flow from the unsubmerged
-equation for a head of *H~IU~* and $Q_{IC}\left( H_{IS} \right)$ is the
-flow from the submerged equation for a head of *H~IS~*.
+equation for a head of *H<sub>IU</sub>* and $Q_{IC}\left( H_{IS} \right)$ is the
+flow from the submerged equation for a head of *H<sub>IS</sub>*.
 
 ### 7.4.5 Flow Derivatives
 
@@ -7090,15 +6680,14 @@ the head of a surcharged end node (see section 3.3.5). The derivatives
 for the various methods of computing an inlet control flow limit are as
 follows:
 
-  ---------------------------------------------------------------------------------------------------------------
-        $$\frac{dQ_{IC}}{dH_{1}} = \left\{ \begin{matrix}                                                (7-51)
-        \frac{Q_{IC}}{M_{I}H_{1}} & unsubmerged \\                                                       
-        \frac{0.5A_{full}^{2}}{c_{I}Q_{IC}} & submerged \\                                               
-        \frac{Q_{IC}\left( H_{1S} \right) - Q_{IC}\left( H_{1U} \right)}{H_{1S} - H_{1U}} & transition   
-        \end{matrix} \right.\ $$                                                                         
-  ----- ------------------------------------------------------------------------------------------------ --------
 
-  ---------------------------------------------------------------------------------------------------------------
+$$\frac{dQ_{IC}}{dH_{1}} = \left\{ \begin{matrix}
+\frac{Q_{IC}}{M_{I}H_{1}} & unsubmerged \\
+\frac{0.5A_{full}^{2}}{c_{I}Q_{IC}} & submerged \\
+\frac{Q_{IC}\left( H_{1S} \right) - Q_{IC}\left( H_{1U} \right)}{H_{1S} - H_{1U}} & transition
+\end{matrix} \right.\ \qquad \text{(7-51)}$$
+
+
 
 ### 7.4.6 Summary of Culvert Analysis
 
@@ -7110,12 +6699,12 @@ analysis:
     This represents an outlet control condition.
 
 2.  If the conduit is not flowing full at both ends, a flow limit
-    *Q~IC~* due to inlet control is computed. Equations 7-41 or 7-45 are
-    used if the head *H~1~* at the culvert's inlet node is below
-    *H~1U~*, Equation 7-47 is used if *H~1~* is above *H~1S~*, or
-    Equation 7-50 is used if *H~1~* is in between these limits.
+    *Q<sub>IC</sub>* due to inlet control is computed. Equations 7-41 or 7-45 are
+    used if the head *H<sub>1</sub>* at the culvert's inlet node is below
+    *H<sub>1U</sub>*, Equation 7-47 is used if *H<sub>1</sub>* is above *H<sub>1S</sub>*, or
+    Equation 7-50 is used if *H<sub>1</sub>* is in between these limits.
 
-3.  If *Q~IC~* is less than *Q* then it is replaced with *Q~IC~* and
+3.  If *Q<sub>IC</sub>* is less than *Q* then it is replaced with *Q<sub>IC</sub>* and
     Equation 7-51 is used to compute the conduit's flow derivative with
     respect to head.
 
@@ -7149,20 +6738,19 @@ of a culvert with a roadway weir</strong></p></figcaption>
 The standard transverse rectangular weir equation can be used to compute
 the flow across a roadway weir as follows: (FHWA, 2012):
 
-  --------------------------------------------------------------------------
-        $$Q = {f_{S}C}_{W}LH^{3/2}$$                                (7-52)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$Q = {f_{S}C}_{W}LH^{3/2} \qquad \text{(7-52)}$$
+
+
 
 where *Q* is the overtopping flow rate (cfs), *H* is the height of the
 upstream water surface above the roadway crest (ft), *L* is the length
-of the roadway crest (ft), *C~W~* is free flow weir discharge
-coefficient (ft^1/2^/sec) and *f~S~* is a submergence adjustment factor.
+of the roadway crest (ft), *C<sub>W</sub>* is free flow weir discharge
+coefficient (ft<sup>1/2</sup>/sec) and *f<sub>S</sub>* is a submergence adjustment factor.
 
-Values for the flow coefficients *C~W~* and *f~S~* have been published
+Values for the flow coefficients *C<sub>W</sub>* and *f<sub>S</sub>* have been published
 by the FHWA as functions of the headwater depth (*H*), tailwater depth
-(*h~t~*), the width of the roadway (*L~r~*), and road surface material.
+(*h<sub>t</sub>*), the width of the roadway (*L<sub>r</sub>*), and road surface material.
 The functions are shown in graphical form in Figure 7-6.
 
 <figure>
@@ -7192,7 +6780,7 @@ Unlike the other weirs discussed in Chapter 6, a roadway weir has
 neither a control setting nor a flap gate. Its flow versus head relation
 is given by equation 7-52, where the head *H* is the difference between
 the head at its inlet node and its crest elevation, the tailwater head
-*h~t~* is the difference between its outlet node head and its crest
+*h<sub>t</sub>* is the difference between its outlet node head and its crest
 elevation, and its flow coefficients are determined from the curves in
 Figure 7-6.
 
@@ -7331,63 +6919,54 @@ The flow capture efficiency of an inlet placed on-grade is affected by:
 For a standard street grate located on-grade the HEC-22 equation for
 flow capture is:
 
-  ----------------------------------------------------------------------------
-        $$Q_{c} = Q\left\{ R_{f}E_{0} + R_{s}(1 - E_{0}) \right\}$$   (7-53)
-  ----- ------------------------------------------------------------- --------
 
-  ----------------------------------------------------------------------------
+$$Q_{c} = Q\left\{ R_{f}E_{0} + R_{s}(1 - E_{0}) \right\} \qquad \text{(7-53)}$$
+
+
 
 where:
 
-  ----------------------------------------------------------------------------
-  *Q~c~*    =  captured flow (cfs)
-  -------- --- ---------------------------------------------------------------
+  *Q<sub>c</sub>*    =  captured flow (cfs)
   *Q*       =  approach flow (cfs)
 
-  *E~0~*    =  ratio of flow over the grate's width to total flow
+  *E<sub>0</sub>*    =  ratio of flow over the grate's width to total flow
 
-  *R~f~*    =  frontal capture efficiency
+  *R<sub>f</sub>*    =  frontal capture efficiency
 
-  *R~s~*    =  side capture efficiency
-  ----------------------------------------------------------------------------
+  *R<sub>s</sub>*    =  side capture efficiency
 
-The frontal capture efficiency *R~f~* is:
+The frontal capture efficiency *R<sub>f</sub>* is:
 
-  --------------------------------------------------------------------------
-        $$R_{f} = 1 - 0.09\ max(0,\ V - V_{o})$$                    (7-54)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$R_{f} = 1 - 0.09\ max(0,\ V - V_{o}) \qquad \text{(7-54)}$$
 
-while the side capture efficiency *R~s~* is:
 
-  ------------------------------------------------------------------------------
-        $$R_{s} = 1/\left\{ 1 + 0.15V^{1.8}/(S_{x}L^{2.3}) \right\}$$   (7-55)
-  ----- --------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------
+while the side capture efficiency *R<sub>s</sub>* is:
+
+
+$$R_{s} = 1/\left\{ 1 + 0.15V^{1.8}/(S_{x}L^{2.3}) \right\} \qquad \text{(7-55)}$$
+
+
 
 with:
 
-  ----------------------------------------------------------------------------
   *V*       =  velocity of flow over the grate (ft/sec)
-  -------- --- ---------------------------------------------------------------
-  *V~0~*    =  velocity at which water begins to splash over the inlet
+  *V<sub>0</sub>*    =  velocity at which water begins to splash over the inlet
                (ft/sec)
 
-  *S~x~*    =  street cross slope (ft/ft)
+  *S<sub>x</sub>*    =  street cross slope (ft/ft)
 
   *L*       =  grate length (ft)
-  ----------------------------------------------------------------------------
 
-FHWA (2009) contains curves showing how the splash-over velocity *V~0~*
+FHWA (2009) contains curves showing how the splash-over velocity *V<sub>0</sub>*
 increases with increasing grate length *L* for the common grate designs
 listed in Table 7-5. Table 7-6 contains polynomial expressions that were
 fit to these curves by UDFCD (2010) that are used by SWMM. For grates
 that do not conform to one of the listed designs the splash-over
 velocity must be supplied by the user.
 
-**Table 7-5 Description of grate inlet types^1^**
+**Table 7-5 Description of grate inlet types<sup>1</sup>**
 
 +------------+-------------------------------------------------------------+---------------------------------------------+
 | **Grate    | **Layout**                                                  | **Description**                             |
@@ -7419,15 +6998,13 @@ velocity must be supplied by the user.
 |            | height="0.39578412073490815in"}                             | longitudinal bearing bars                   |
 +------------+-------------------------------------------------------------+---------------------------------------------+
 
-^1^See FHWA (2009) for more detailed descriptions and pictures.
+<sup>1</sup>See FHWA (2009) for more detailed descriptions and pictures.
 
 **Table 7-6 Splash-over velocity for different types of grate
-inlets^1^**
+inlets<sup>1</sup>**
 
-  -----------------------------------------------------------------------
-  **Grate Type**   **Splash over velocity *V~0~* (ft/s) as a function of
+  **Grate Type**   **Splash over velocity *V<sub>0</sub>* (ft/s) as a function of
                    grate length *L* (ft)**
-  ---------------- ------------------------------------------------------
   P-50             $$V_{0} = 2.22 + 4.03L - 0.65L^{2} + 0.06L^{3}$$
 
   P-50x100         $$V_{0} = 0.74 + 2.44L - 0.27L^{2} + 0.02L^{3}$$
@@ -7441,54 +7018,48 @@ inlets^1^**
   30° Tilt Bar     $$V_{0} = 0.51 + 2.34L - 0.20L^{2} + 0.01L^{3}$$
 
   Reticuline       $$V_{0} = 0.28 + 2.28L - 0.18L^{2} + 0.01L^{3}$$
-  -----------------------------------------------------------------------
 
-^1^ Source: Denver UDFCD (2010).
+<sup>1</sup> Source: Denver UDFCD (2010).
 
 [Curb Opening Inlets]{.underline}
 
 For a curb opening inlet located on-grade, the HEC-22 equation for flow
 capture is:
 
-  -----------------------------------------------------------------------------------
-        $$Q_{c} = Q\left\{ 1 - {(1 - min(1,\ L/L_{T})\ )}^{1.8} \right\}$$   (7-56)
-  ----- -------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------
+$$Q_{c} = Q\left\{ 1 - {(1 - min(1,\ L/L_{T})\ )}^{1.8} \right\} \qquad \text{(7-56)}$$
 
-*L* is now the length of the curb opening and *L~T~* is the length at
+
+
+*L* is now the length of the curb opening and *L<sub>T</sub>* is the length at
 which complete flow capture occurs. The latter quantity is computed as:
 
-  --------------------------------------------------------------------------
-        $$L_{T} = 0.6Q^{0.42}S_{L}^{0.3}{(nS_{e})}^{- 0.6}$$        (7-57)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$L_{T} = 0.6Q^{0.42}S_{L}^{0.3}{(nS_{e})}^{- 0.6} \qquad \text{(7-57)}$$
+
+
 
 where:
 
-  ---------------------------------------------------------------------------
-  *S~L~*    =  longitudinal street slope (ft/ft)
-  -------- --- --------------------------------------------------------------
+  *S<sub>L</sub>*    =  longitudinal street slope (ft/ft)
   *n*       =  Manning's roughness coefficient for the street surface
 
-  *S~e~*    =  $$S_{x} + (\frac{a}{W)E_{0}}$$
+  *S<sub>e</sub>*    =  $$S_{x} + (\frac{a}{W)E_{0}}$$
 
   *a*       =  curb depression (ft)
 
   *W*       =  depressed gutter width (ft)
 
-  *E~0~*    =  ratio of flow over depressed gutter width to total flow
-  ---------------------------------------------------------------------------
+  *E<sub>0</sub>*    =  ratio of flow over depressed gutter width to total flow
 
-If *L \> L~T~* then complete capture is obtained.
+If *L \> L<sub>T</sub>* then complete capture is obtained.
 
-[Computing *E~0~*]{.underline}
+[Computing *E<sub>0</sub>*]{.underline}
 
 The on-grade flow capture formulas for grate and curb opening inlets
-need to know *E~o~*, the fraction of total street flow *Q* within a
+need to know *E<sub>o</sub>*, the fraction of total street flow *Q* within a
 distance *W* from the curb or as depicted in Figure 7-11, the ratio of
-*Q~W~* to *Q*. For grates this distance is the width of the grate. For
+*Q<sub>W</sub>* to *Q*. For grates this distance is the width of the grate. For
 curb openings it is the width of the depressed gutter (if present).
 
 ![CompositeStreetSection2.png](VolumeII/media/media/image71.png){width="6.290880358705162in"
@@ -7496,83 +7067,81 @@ height="2.593426290463692in"}
 
 Figure 7-11 Street cross-section divided into gutter and roadway flow
 
-HEC-22 bases its determination of *E~0~* on Izzard's form of the Manning
+HEC-22 bases its determination of *E<sub>0</sub>* on Izzard's form of the Manning
 equation that relates flow spread *T* to flow rate *Q* for a triangular
 cross-section. It is derived from the standard Manning equation by
 integrating the hydraulic radius across successive increments of street
 width. The result for US standard units is:
 
-  --------------------------------------------------------------------------
-        $$Q = (\frac{0.56}{n)S_{x}^{1.67}S_{L}^{0.5}T^{2.67}}$$     (7-58)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$Q = (\frac{0.56}{n)S_{x}^{1.67}S_{L}^{0.5}T^{2.67}} \qquad \text{(7-58)}$$
+
+
 
 (Note: the standard Manning equation has the same form except with the
 constant being 0.47.)
 
 Solving for T as a function of Q gives:
 
-  --------------------------------------------------------------------------------------------------
-        $$T = \left\lbrack \frac{Qn}{0.56S_{x}^{1.67}S_{L}^{0.5}} \right\rbrack^{0.375}$$   (7-59)
-  ----- ----------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------
+$$T = \left\lbrack \frac{Qn}{0.56S_{x}^{1.67}S_{L}^{0.5}} \right\rbrack^{0.375} \qquad \text{(7-59)}$$
+
+
 
 If the street has a uniform cross slope ($a = 0$ in Figure 7-12) then
-Equation 7-59 can be used to derive the following expression for*E~0~*:
+Equation 7-59 can be used to derive the following expression for*E<sub>0</sub>*:
 
-  --------------------------------------------------------------------------
-        $$E_{0} = 1 - {(1 - \frac{W}{T})}^{2.67}$$                  (7-60)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$E_{0} = 1 - {(1 - \frac{W}{T})}^{2.67} \qquad \text{(7-60)}$$
+
+
 
 where *T* is evaluated at a given flow rate *Q*.
 
 For a compound street cross-section with depressed curb ($a > 0$ in
-Figure 7-12), HEC-22 provides the following equation for *E~0~*:
+Figure 7-12), HEC-22 provides the following equation for *E<sub>0</sub>*:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        $$E_{0} = \frac{1}{1 + \frac{\frac{S_{W}}{S_{X}}}{\left\lbrack 1 + \frac{\frac{S_{W}}{S_{X}}}{\left( \frac{T}{W} - 1 \right)} \right\rbrack^{2.67} - 1}}$$   (7-61)
-  ----- ------------------------------------------------------------------------------------------------------------------------------------------------------------ --------
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$E_{0} = \frac{1}{1 + \frac{\frac{S_{W}}{S_{X}}}{\left\lbrack 1 + \frac{\frac{S_{W}}{S_{X}}}{\left( \frac{T}{W} - 1 \right)} \right\rbrack^{2.67} - 1}} \qquad \text{(7-61)}$$
+
+
 
 where $S_{W} = S_{X} + \frac{a}{W}$. It is not possible to solve
-directly for *E~0~* since Equation 7-59 for *T(Q)* applies only to a
+directly for *E<sub>0</sub>* since Equation 7-59 for *T(Q)* applies only to a
 triangular section of uniform slope.
 
-To solve equation 7-61 let *Q~X~* and *T~X~* denote the flow and spread,
+To solve equation 7-61 let *Q<sub>X</sub>* and *T<sub>X</sub>* denote the flow and spread,
 respectively, across the non-depressed triangular portion of the
 street's cross section. Then the following relations apply:
 
-  --------------------------------------------------------------------------
-        $$Q_{X} = Q(1 - E_{0})$$                                      (7-62)
-  ----- ----------------------------------------------------------- --------
-        $$T_{X} = T - W$$                                             (7-63)
 
-        $$\frac{T}{W} - 1 = \frac{T_{X}}{W}$$                         (7-64)
-  --------------------------------------------------------------------------
+$$Q_{X} = Q(1 - E_{0}) \qquad \text{(7-62)}$$
 
-These can be used in the following iterative procedure to find *E~0~*
+
+$$T_{X} = T - W \qquad \text{(7-63)}$$
+
+
+$$\frac{T}{W} - 1 = \frac{T_{X}}{W} \qquad \text{(7-64)}$$
+
+
+These can be used in the following iterative procedure to find *E<sub>0</sub>*
 for a particular flow rate *Q*:
 
-1.  Assume a value for *T~X~*.
+1.  Assume a value for *T<sub>X</sub>*.
 
-2.  Use Equation 7-61 to compute *E~0~*, with *T~X~/W* substituted for
+2.  Use Equation 7-61 to compute *E<sub>0</sub>*, with *T<sub>X</sub>/W* substituted for
     *T/W -- 1*.
 
-3.  Compute *Q~X~* from Equation 7-62.
+3.  Compute *Q<sub>X</sub>* from Equation 7-62.
 
-4.  Compute a new value for *T~X~* using Equation 7-59 with *Q~X~* as
+4.  Compute a new value for *T<sub>X</sub>* using Equation 7-59 with *Q<sub>X</sub>* as
     the flow rate.
 
-5.  If there is negligible change in *T~X~* then stop with the last
-    value of *E~0~* as the solution. Otherwise return to Step 2.
+5.  If there is negligible change in *T<sub>X</sub>* then stop with the last
+    value of *E<sub>0</sub>* as the solution. Otherwise return to Step 2.
 
 In cases where the width of the grate is smaller than the width *W* of
-the depressed gutter section, *E~0~* is adjusted by the ratio of the
+the depressed gutter section, *E<sub>0</sub>* is adjusted by the ratio of the
 flow area over the grate's width to the flow area over the depressed
 gutter width.
 
@@ -7606,55 +7175,47 @@ on the size of the inlet's opening and the depth of water that collects
 next to it at the street curb. At low flow depths the inlet acts as a
 weir with
 
-  --------------------------------------------------------------------------
-        $$Q_{c} = C_{W}L_{W}d^{1.5}$$                               (7-66)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$Q_{c} = C_{W}L_{W}d^{1.5} \qquad \text{(7-66)}$$
+
+
 
 while at higher depths it acts as an orifice with
 
-  --------------------------------------------------------------------------
-        $$Q_{c} = C_{O}A_{O}\sqrt{2gd}$$                            (7-67)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$Q_{c} = C_{O}A_{O}\sqrt{2gd} \qquad \text{(7-67)}$$
+
+
 
 In these equations:
 
-  ---------------------------------------------------------------------------
-  *C~W~*    =  weir coefficient (ft^0.5^/sec)
-  -------- --- --------------------------------------------------------------
-  *C~O~*    =  orifice coefficient
+  *C<sub>W</sub>*    =  weir coefficient (ft^0.5^/sec)
+  *C<sub>O</sub>*    =  orifice coefficient
 
-  *g*       =  acceleration of gravity (ft/sec^2^)
+  *g*       =  acceleration of gravity (ft/sec<sup>2</sup>)
 
-  *L~W~*    =  effective length of inlet (ft)
+  *L<sub>W</sub>*    =  effective length of inlet (ft)
 
-  *A~O~*    =  open area of inlet (ft^2^)
+  *A<sub>O</sub>*    =  open area of inlet (ft<sup>2</sup>)
 
   *d*       =  effective depth of water seen by the inlet (ft).
-  ---------------------------------------------------------------------------
 
 [Grate Inlets]{.underline}
 
 For grate inlets the following values are used in Equations 7-66 and
 7-67:
 
-  ---------------------------------------------------------------------------
-  *C~W~*    =  3.0
-  -------- --- --------------------------------------------------------------
-  *C~O~*    =  0.67
+  *C<sub>W</sub>*    =  3.0
+  *C<sub>O</sub>*    =  0.67
 
   *Lw*      =  *L + 2W*
 
-  *A~O~*    =  $$LWf_{O}$$
+  *A<sub>O</sub>*    =  $$LWf_{O}$$
 
   *d*       =  $$d_{i} - (\frac{W}{2)S_{W}}$$
-  ---------------------------------------------------------------------------
 
-where *L* is the grate's length, *W* its width, *f~O~* the ratio of open
-area to full area, and *d~i~* is the depth of water at the downstream
+where *L* is the grate's length, *W* its width, *f<sub>O</sub>* the ratio of open
+area to full area, and *d<sub>i</sub>* is the depth of water at the downstream
 node of the conduit containing the inlet. Opening ratios for several
 types of grate designs are listed in Table 7-5.
 
@@ -7668,7 +7229,7 @@ orifice flow for depths above it.
 
 For streets with uniform cross slope or for openings greater than 12
 feet in length, the values used in Equation 7-66 for weir flow are
-*C~W~* = 3.0 and *L~W~* = opening length. Otherwise, *C~W~* = 2.3 and
+*C<sub>W</sub>* = 3.0 and *L<sub>W</sub>* = opening length. Otherwise, *C<sub>W</sub>* = 2.3 and
 $L_{W} = L + 1.8W$ where *L* = opening length and *W* = width of the
 depressed gutter. The values used in Equation 7-67 for orifice flow are
 $C_{O} = 0.67$ and $A_{O} = hL$ where *h* is the height of the opening.
@@ -7696,13 +7257,12 @@ effective depths below *h* while orifice flow occurs at depths greater
 than *1.4h*. For depths in between these SWMM uses the following
 interpolation formula:
 
-  --------------------------------------------------------------------------
-        $$Q_{c} = (1 - r)Q_{weir} + rQ_{orif}$$                     (7-68)
-  ----- ----------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$Q_{c} = (1 - r)Q_{weir} + rQ_{orif} \qquad \text{(7-68)}$$
 
-where *Q~weir~* is weir flow capture at depth *h*, *Q~orif~* is orifice
+
+
+where *Q<sub>weir</sub>* is weir flow capture at depth *h*, *Q<sub>orif</sub>* is orifice
 flow capture at depth *1.4h* and $r = \frac{(d - h)}{(0.4h)}$.
 
 [Slotted Inlets]{.underline}
@@ -7710,22 +7270,19 @@ flow capture at depth *1.4h* and $r = \frac{(d - h)}{(0.4h)}$.
 For slotted inlets the variables in the weir and orifice equations 7-66
 and 7-67 are as follows:
 
-  ---------------------------------------------------------------------------
-  *C~W~*    =  2.48
-  -------- --- --------------------------------------------------------------
-  *C~O~*    =  0.8
+  *C<sub>W</sub>*    =  2.48
+  *C<sub>O</sub>*    =  0.8
 
   *Lw*      =  *L*
 
-  *A~O~*    =  $$LW$$
+  *A<sub>O</sub>*    =  $$LW$$
 
-  *d~i~*    =  $$d$$
-  ---------------------------------------------------------------------------
+  *d<sub>i</sub>*    =  $$d$$
 
 where *L* = inlet length and *W* = inlet width. Weir flow holds for
 $d \leq 0.2$ feet while orifice flow occurs for $d \geq 0.4$ feet. In
 between these values flow capture is computed using Equation 7-68 with
-*Q~weir~* as weir flow capture at depth 0.2, *Q~orif~* as orifice flow
+*Q<sub>weir</sub>* as weir flow capture at depth 0.2, *Q<sub>orif</sub>* as orifice flow
 capture at depth 0.4 and $r = \frac{(d - 0.2)}{0.2}$.
 
 [Custom Inlets]{.underline}
@@ -7757,34 +7314,30 @@ Figure 7-12 Types of channel drop inlets
 
 The flow capture equation for a drop grate inlet located on-grade is the
 same as for a street grate (see equation 7-53) except that the ratio
-*E~0~* of flow over the grate to total cross-section flow *Q* is given
+*E<sub>0</sub>* of flow over the grate to total cross-section flow *Q* is given
 by:
 
-  ---------------------------------------------------------------------------------------
-        $$E_{0} = \frac{1.486\sqrt{S_{L}}{(yW)}^{1.67}}{nQ{(W + 2y)}^{0.67}}$$   (7-69)
-  ----- ------------------------------------------------------------------------ --------
 
-  ---------------------------------------------------------------------------------------
+$$E_{0} = \frac{1.486\sqrt{S_{L}}{(yW)}^{1.67}}{nQ{(W + 2y)}^{0.67}} \qquad \text{(7-69)}$$
+
+
 
 where
 
-  ---------------------------------------------------------------------------
   *W*       =  side length of grate parallel to flow direction (ft)
-  -------- --- --------------------------------------------------------------
   *y*       =  flow depth in the channel (ft)
 
   *n*       =  channel Manning's roughness coefficient
 
-  *S~L~*    =  channel longitudinal slope (ft/ft)
-  ---------------------------------------------------------------------------
+  *S<sub>L</sub>*    =  channel longitudinal slope (ft/ft)
 
-A cross slope *S~X~* of 1% is assumed unless the grate extends across
-the entire bottom width of a trapezoidal channel. In that case *S~X~* is
+A cross slope *S<sub>X</sub>* of 1% is assumed unless the grate extends across
+the entire bottom width of a trapezoidal channel. In that case *S<sub>X</sub>* is
 taken as the slope of the channel's side wall.
 
 Drop grates located on-sag use the same weir and orifice equations (7-66
 and 7-67) as do street grates with the only difference being that for
-weir flow the effective length of the inlet's sides (*L~W~* in equation
+weir flow the effective length of the inlet's sides (*L<sub>W</sub>* in equation
 7-66) is the sum of the lengths of all four sides.
 
 [Drop Curb Inlets]{.underline}
@@ -7821,9 +7374,7 @@ solution with a convergence tolerance of *ε*:
 
 #### Section Properties of Circular Pipes
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------
-    ***Y/Y~full~***   ***A/A~full~***   ***W/W~max~***   ***R/R~full~***          ***Y/Y~full~***   ***A/A~full~***   ***W/W~max~***   ***R/R~full~***
-  ----------------- ----------------- ---------------- ----------------- ------ ----------------- ----------------- ---------------- -----------------
+    ***Y/Y<sub>full</sub>***   ***A/A<sub>full</sub>***   ***W/W<sub>max</sub>***   ***R/R<sub>full</sub>***          ***Y/Y<sub>full</sub>***   ***A/A<sub>full</sub>***   ***W/W<sub>max</sub>***   ***R/R<sub>full</sub>***
                0.00           0.00000          0.00000           0.01000                     0.52           0.52550          0.99920           1.02400
 
                0.02           0.00471          0.28000           0.05280                     0.54           0.55093          0.99680           1.04800
@@ -7875,14 +7426,11 @@ solution with a convergence tolerance of *ε*:
                0.48           0.47450          0.99920           0.97360                     1.00           1.00000          0.00000           1.00000
 
                0.50           0.50000          1.00000           1.00000                                                             
-  ----------------------------------------------------------------------------------------------------------------------------------------------------
 
   : []{#_Toc484695150 .anchor}**Table C‑1 Circular section properties as
   function of depth**
 
-  ----------------------------------------------------------------------------------------------------------------------
-    ***A/A~full~***   ***Y/Y~full~***   ***Ψ/Ψ~full~***              ***A/A~full~***   ***Y/Y~full~***   ***Ψ/Ψ~full~***
-  ----------------- ----------------- ----------------- ---------- ----------------- ----------------- -----------------
+    ***A/A<sub>full</sub>***   ***Y/Y<sub>full</sub>***   ***Ψ/Ψ<sub>full</sub>***              ***A/A<sub>full</sub>***   ***Y/Y<sub>full</sub>***   ***Ψ/Ψ<sub>full</sub>***
                0.00            0.0000           0.00000                         0.52           0.51572           0.52658
 
                0.02           0.05236           0.00529                         0.54           0.53146           0.55354
@@ -7934,7 +7482,6 @@ solution with a convergence tolerance of *ε*:
                0.48           0.48430           0.47329                         1.00            1.0000           1.00000
 
                0.50           0.50000           0.49980                                                
-  ----------------------------------------------------------------------------------------------------------------------
 
   : []{#_Toc484690441 .anchor}**Table C‑2 Circular section properties as
   function of area**
@@ -7943,10 +7490,8 @@ solution with a convergence tolerance of *ε*:
 
 []{#_Toc484695151 .anchor}
 
-  --------------------------------------------------------------------------
-   **Code**    **Minor Axis    **Major Axis    ***A~full~*     ***R~full~*
-                  (in)**          (in)**        (ft^2^)**        (ft)**
-  ---------- ---------------- -------------- --------------- ---------------
+   **Code**    **Minor Axis    **Major Axis    ***A<sub>full</sub>*     ***R<sub>full</sub>*
+                  (in)**          (in)**        (ft<sup>2</sup>)**        (ft)**
       1             14              23            1.80            0.367
 
       2             19              30            3.30            0.490
@@ -7992,7 +7537,6 @@ solution with a convergence tolerance of *ε*:
       22           106             166            99.20           2.707
 
       23           116             180           118.60           2.968
-  --------------------------------------------------------------------------
 
   : **Table D‑1 Standard elliptical pipe sizes**
 
@@ -8004,9 +7548,9 @@ ellipse.
 Source: American Concrete Pipe Association (2011).
 
 +-----------------+----------------------------------------------------+------+----------------------------------------------------+
-| ***Y/Y~full~*** | **Horizontal Ellipse**                             |      | **Vertical Ellipse**                               |
+| ***Y/Y<sub>full</sub>*** | **Horizontal Ellipse**                             |      | **Vertical Ellipse**                               |
 |                 +-----------------+----------------+-----------------+------+-----------------+----------------+-----------------+
-|                 | ***A/A~full~*** | ***W/W~max~*** | ***R/R~full~*** |      | ***A/A~full~*** | ***W/W~max~*** | ***R/R~full~*** |
+|                 | ***A/A<sub>full</sub>*** | ***W/W<sub>max</sub>*** | ***R/R<sub>full</sub>*** |      | ***A/A<sub>full</sub>*** | ***W/W<sub>max</sub>*** | ***R/R<sub>full</sub>*** |
 +================:+================:+===============:+================:+=====:+================:+===============:+================:+
 | 0.00            | 0.000           | 0.0000         | 0.0100          |      | 0.000           | 0.0000         | 0.0100          |
 +-----------------+-----------------+----------------+-----------------+------+-----------------+----------------+-----------------+
@@ -8069,8 +7613,8 @@ function of depth**
 []{#_Toc484695153 .anchor}
 
 +-------------------------------+-------------------------------+-------------------------------+---------------+---------------+
-| **Code**                      | **Rise (*Y~full~*) (in)**     | **Span (*W~max~*) (in)**      | ***A~full~*   | ***R~full~*   |
-|                               |                               |                               | (in^2^)**     | (in)**        |
+| **Code**                      | **Rise (*Y<sub>full</sub>*) (in)**     | **Span (*W<sub>max</sub>*) (in)**      | ***A<sub>full</sub>*   | ***R<sub>full</sub>*   |
+|                               |                               |                               | (in<sup>2</sup>)**     | (in)**        |
 +===============+===============+===============+===============+===============+===============+===============+===============+
 | **Concrete**                                                                                                                  |
 +-------------------------------+-------------------------------+-------------------------------+---------------+---------------+
@@ -8138,8 +7682,8 @@ function of depth**
 : **Table E‑1 Standard arch pipe sizes**
 
 +-------------------+-------------------+-------------------+-------------------+-------------------+
-| **Code**          | **Rise            | **Span (*W~max~*) | ***A~full~*       | ***R~full~*       |
-|                   | (*Y~full~*)       | (in)**            | (in^2^)**         | (in)**            |
+| **Code**          | **Rise            | **Span (*W<sub>max</sub>*) | ***A<sub>full</sub>*       | ***R<sub>full</sub>*       |
+|                   | (*Y<sub>full</sub>*)       | (in)**            | (in<sup>2</sup>)**         | (in)**            |
 |                   | (in)**            |                   |                   |                   |
 +===================+===================+===================+===================+===================+
 | **Corrugated Steel, 3 x 1\" Corrugation**                                                         |
@@ -8224,8 +7768,8 @@ function of depth**
 : **Table E‑1 Continued**
 
 +-------------------+-------------------+-------------------+-------------------+-------------------+
-| **Code**          | **Rise            | **Span (*W~max~*) | ***A~full~*       | ***R~full~*       |
-|                   | (*Y~full~*)       | (in)**            | (in^2^)**         | (in)**            |
+| **Code**          | **Rise            | **Span (*W<sub>max</sub>*) | ***A<sub>full</sub>*       | ***R<sub>full</sub>*       |
+|                   | (*Y<sub>full</sub>*)       | (in)**            | (in<sup>2</sup>)**         | (in)**            |
 |                   | (in)**            |                   |                   |                   |
 +===================+===================+===================+===================+===================+
 | **Structural Plate, 18\" Corner Radius**                                                          |
@@ -8312,9 +7856,7 @@ Source: American Iron and Steel Institute (1999).
 []{#_Toc484695154 .anchor}**Table E‑2 Arch pipe section properties as
 function of depth**
 
-  -----------------------------------------------------------------------
-   ***Y/Y~full~***   ***A/A~full~***   ***W/W~max~***    ***R/R~full~***
-  ----------------- ----------------- ----------------- -----------------
+   ***Y/Y<sub>full</sub>***   ***A/A<sub>full</sub>***   ***W/W<sub>max</sub>***    ***R/R<sub>full</sub>***
         0.00              0.000            0.0000            0.0100
 
         0.04              0.020            0.6272            0.0983
@@ -8366,14 +7908,13 @@ function of depth**
         0.96              0.995            0.3195             1.112
 
         1.00              1.000             0.000             1.000
-  -----------------------------------------------------------------------
 
 #### Section Properties of Masonry Sewers
 
 []{#_Toc484695155 .anchor}
 
 +--------------------+-----------------------------------------------------------+
-| ***Y/Y~full~***    | ***A/A~full~***                                           |
+| ***Y/Y<sub>full</sub>***    | ***A/A<sub>full</sub>***                                           |
 |                    +-------------------+-------------------+-------------------+
 |                    | **Basket Handle** | **Egg**           | **Horseshoe**     |
 +:==================:+:=================:+:=================:+:=================:+
@@ -8433,7 +7974,7 @@ function of depth**
 : **Table F‑1 Area of masonry sewers as function of depth**
 
 +--------------------+-----------------------------------------------------------+
-| ***Y/Y~full~***    | ***W/W~max~***                                            |
+| ***Y/Y<sub>full</sub>***    | ***W/W<sub>max</sub>***                                            |
 |                    +-------------------+-------------------+-------------------+
 |                    | **Basket Handle** | **Egg**           | **Horseshoe**     |
 +:==================:+:=================:+:=================:+:=================:+
@@ -8494,7 +8035,7 @@ function of depth**
 function of depth - I**
 
 +-----------------+-----------------------------------------------------------------------------+
-| ***Y/Y~full~*** | ***W/W~max~***                                                              |
+| ***Y/Y<sub>full</sub>*** | ***W/W<sub>max</sub>***                                                              |
 |                 +-----------------+-----------------+---------------------+-------------------+
 |                 | **Gothic**      | **Catenary**    | **Semi-Elliptical** | **Semi-Circular** |
 +:===============:+:===============:+:===============:+:===================:+:=================:+
@@ -8545,7 +8086,7 @@ function of depth - I**
 function of depth - II**
 
 +--------------------+-----------------------------------------------------------+
-| ***Y/Y~full~***    | ***R/R~full~***                                           |
+| ***Y/Y<sub>full</sub>***    | ***R/R<sub>full</sub>***                                           |
 |                    +-------------------+-------------------+-------------------+
 |                    | **Basket Handle** | **Egg**           | **Horseshoe**     |
 +:==================:+:=================:+:=================:+:=================:+
@@ -8606,7 +8147,7 @@ function of depth - II**
 sewers as function of depth**
 
 +--------------------+-----------------------------------------------------------+
-| ***A/A~full~***    | ***Y/Y~full~***                                           |
+| ***A/A<sub>full</sub>***    | ***Y/Y<sub>full</sub>***                                           |
 |                    +-------------------+-------------------+-------------------+
 |                    | **Basket Handle** | **Egg**           | **Horseshoe**     |
 +:==================:+:=================:+:=================:+:=================:+
@@ -8667,7 +8208,7 @@ sewers as function of depth**
 function of area - I**
 
 +--------------------+-----------------------------------------------------------+
-| ***A/A~full~***    | ***Y/Y~full~***                                           |
+| ***A/A<sub>full</sub>***    | ***Y/Y<sub>full</sub>***                                           |
 |                    +-------------------+-------------------+-------------------+
 |                    | **Basket Handle** | **Egg**           | **Horseshoe**     |
 +:==================:+:=================:+:=================:+:=================:+
@@ -8725,7 +8266,7 @@ function of area - I**
 : **Table F-5 Continued**
 
 +-----------------+-----------------------------------------------------------------------------+
-| ***A/A~full~*** | ***Y/Y~full~***                                                             |
+| ***A/A<sub>full</sub>*** | ***Y/Y<sub>full</sub>***                                                             |
 |                 +-----------------+-----------------+-------------------+---------------------+
 |                 | **Catenary**    | **Gothic**      | **Semi-Circular** | **Semi-Elliptical** |
 +:===============:+:===============:+:===============:+:=================:+:===================:+
@@ -8786,7 +8327,7 @@ function of area - I**
 function of area - II**
 
 +-----------------+-----------------------------------------------------------------------------+
-| ***A/A~full~*** | ***Y/Y~full~***                                                             |
+| ***A/A<sub>full</sub>*** | ***Y/Y<sub>full</sub>***                                                             |
 |                 +-----------------+-----------------+-------------------+---------------------+
 |                 | **Catenary**    | **Gothic**      | **Semi-Circular** | **Semi-Elliptical** |
 +:===============:+:===============:+:===============:+:=================:+:===================:+
@@ -8844,7 +8385,7 @@ function of area - II**
 : **Table F-6 Continued**
 
 +--------------------+-----------------------------------------------------------+
-| ***A/A~full~***    | ***Ψ/Ψ~full~***                                           |
+| ***A/A<sub>full</sub>***    | ***Ψ/Ψ<sub>full</sub>***                                           |
 |                    +-------------------+-------------------+-------------------+
 |                    | **Basket Handle** | **Egg**           | **Horseshoe**     |
 +:==================:+:=================:+:=================:+:=================:+
@@ -8905,7 +8446,7 @@ function of area - II**
 sewers as function of area - I**
 
 +--------------------+-----------------------------------------------------------+
-| ***A/A~full~***    | ***Ψ/Ψ~full~***                                           |
+| ***A/A<sub>full</sub>***    | ***Ψ/Ψ<sub>full</sub>***                                           |
 |                    +-------------------+-------------------+-------------------+
 |                    | **Basket Handle** | **Egg**           | **Horseshoe**     |
 +:==================:+:=================:+:=================:+:=================:+
@@ -8963,7 +8504,7 @@ sewers as function of area - I**
 : **Table F-7 Continued**
 
 +-----------------+-----------------------------------------------------------------------------+
-| ***A/A~full~*** | ***Ψ/Ψ~full~***                                                             |
+| ***A/A<sub>full</sub>*** | ***Ψ/Ψ<sub>full</sub>***                                                             |
 |                 +-----------------+-----------------+-------------------+---------------------+
 |                 | **Catenary**    | **Gothic**      | **Semi-Circular** | **Semi-Elliptical** |
 +:===============:+:===============:+:===============:+:=================:+:===================:+
@@ -9024,7 +8565,7 @@ sewers as function of area - I**
 sewers as function of area - II**
 
 +-----------------+-----------------------------------------------------------------------------+
-| ***A/A~full~*** | ***Ψ/Ψ~full~***                                                             |
+| ***A/A<sub>full</sub>*** | ***Ψ/Ψ<sub>full</sub>***                                                             |
 |                 +-----------------+-----------------+-------------------+---------------------+
 |                 | **Catenary**    | **Gothic**      | **Semi-Circular** | **Semi-Elliptical** |
 +:===============:+:===============:+:===============:+:=================:+:===================:+
@@ -9832,11 +9373,11 @@ Wiley & Sons, New York 1989.
 Bhave, P.R., *Analysis of Flow in Water Distribution Networks*,
 Technomic Publishing, Lancaster, PA, 1991.
 
-Brater, E.F. and King, H.W., *Handbook of Hydraulics*, (6^th^ edition),
+Brater, E.F. and King, H.W., *Handbook of Hydraulics*, (6<sup>th</sup> edition),
 McGraw Hill Book Company, New York, NY, 1976.
 
 Brater, E.F., King, H.W., Lindel, J.E., and Wei, C.Y., *Handbook of
-Hydraulics* (7^th^ edition), McGraw-Hill, New York, NY, 1996.
+Hydraulics* (7<sup>th</sup> edition), McGraw-Hill, New York, NY, 1996.
 
 Brunner,G.W., "Combined 1D and 2D Modeling with HEC-RAS". U.S. Army
 Corps of Engineers Hydrologic Engineering Center, October, 2014.
@@ -9870,7 +9411,7 @@ Resour. Res*., 49, 4833--4844, 2013.
 
 Faram, M.G., Stephenson, A.G. and Andoh, R.Y.G., "Vortex flow controls:
 state of the art review and application (from the catchbasin to the
-dam)", *Proceedings of the 7^th^ International Conference on Sustainable
+dam)", *Proceedings of the 7<sup>th</sup> International Conference on Sustainable
 Techniques and Strategies in Urban Water Management* (Novatech 2010),
 Lyon, France, 27 June -- 1 July, 2010.
 

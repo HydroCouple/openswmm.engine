@@ -78,6 +78,9 @@ static XsectShape parse_xsect_shape(const std::string& s) {
     if (s == "MODBASKETHANDLE") return XsectShape::MODBASKETHANDLE;
     if (s == "RECT_TRIANG")     return XsectShape::RECT_TRIANG;
     if (s == "RECT_ROUND")      return XsectShape::RECT_ROUND;
+    if (s == "HORIZ_ELLIPSE")   return XsectShape::HORIZ_ELLIPSE;
+    if (s == "VERT_ELLIPSE")    return XsectShape::VERT_ELLIPSE;
+    if (s == "ARCH")            return XsectShape::ARCH;
     return XsectShape::CIRCULAR;
 }
 

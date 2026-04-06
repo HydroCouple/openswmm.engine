@@ -436,6 +436,7 @@ void populate_default_variables(sqlite3* db) {
 
     struct VarDef { const char *name, *obj, *cat, *units, *desc; };
     static const VarDef defs[] = {
+        // --- NODE ---
         {"depth",           "NODE", "STATE", "m",    "Water depth above invert"},
         {"head",            "NODE", "STATE", "m",    "Hydraulic head"},
         {"volume",          "NODE", "STATE", "m3",   "Stored water volume"},
@@ -445,24 +446,44 @@ void populate_default_variables(sqlite3* db) {
         {"max_depth",       "NODE", "STAT",  "m",    "Maximum water depth"},
         {"max_overflow",    "NODE", "STAT",  "CMS",  "Maximum overflow rate"},
         {"time_flooded",    "NODE", "STAT",  "hours","Duration of flooding"},
+        // --- LINK ---
         {"flow",            "LINK", "STATE", "CMS",  "Flow rate"},
         {"depth",           "LINK", "STATE", "m",    "Flow depth"},
         {"velocity",        "LINK", "STATE", "m/s",  "Flow velocity"},
         {"volume",          "LINK", "STATE", "m3",   "Stored volume"},
+        {"capacity",        "LINK", "STATE", "-",    "Full-flow capacity fraction"},
         {"froude",          "LINK", "STATE", "-",    "Froude number"},
         {"max_flow",        "LINK", "STAT",  "CMS",  "Maximum flow rate"},
         {"max_velocity",    "LINK", "STAT",  "m/s",  "Maximum flow velocity"},
         {"max_filling",     "LINK", "STAT",  "frac", "Maximum depth/full depth"},
         {"time_surcharged", "LINK", "STAT",  "hours","Duration of surcharge"},
+        // --- SUBCATCH ---
         {"rainfall",        "SUBCATCH", "STATE", "mm/hr", "Rainfall intensity"},
-        {"runoff",          "SUBCATCH", "STATE", "CMS",   "Runoff flow rate"},
+        {"snow_depth",      "SUBCATCH", "STATE", "mm",    "Snow depth"},
         {"evap_loss",       "SUBCATCH", "STATE", "mm",    "Evaporation loss"},
         {"infil_loss",      "SUBCATCH", "STATE", "mm",    "Infiltration loss"},
+        {"runoff",          "SUBCATCH", "STATE", "CMS",   "Runoff flow rate"},
         {"gw_flow",         "SUBCATCH", "STATE", "CMS",   "Groundwater outflow"},
+        {"gw_elev",         "SUBCATCH", "STATE", "m",     "Groundwater elevation"},
+        {"soil_moist",      "SUBCATCH", "STATE", "-",     "Soil moisture"},
         {"precip_volume",   "SUBCATCH", "STAT",  "m3",    "Total precipitation volume"},
         {"runoff_volume",   "SUBCATCH", "STAT",  "m3",    "Total runoff volume"},
+        // --- SYSTEM ---
         {"air_temp",        "SYSTEM", "CLIMATE", "C",     "Air temperature"},
         {"rainfall",        "SYSTEM", "CLIMATE", "mm/hr", "System rainfall"},
+        {"snow_depth",      "SYSTEM", "CLIMATE", "mm",    "System snow depth"},
+        {"infil",           "SYSTEM", "STATE",   "mm/hr", "Total infiltration rate"},
+        {"runoff",          "SYSTEM", "STATE",   "CMS",   "Total runoff flow"},
+        {"dw_inflow",       "SYSTEM", "STATE",   "CMS",   "Total dry weather inflow"},
+        {"gw_inflow",       "SYSTEM", "STATE",   "CMS",   "Total groundwater inflow"},
+        {"ii_inflow",       "SYSTEM", "STATE",   "CMS",   "Total RDII inflow"},
+        {"ext_inflow",      "SYSTEM", "STATE",   "CMS",   "Total external inflow"},
+        {"total_inflow",    "SYSTEM", "STATE",   "CMS",   "Total lateral inflow"},
+        {"flooding",        "SYSTEM", "STATE",   "CMS",   "Total flooding"},
+        {"outflow",         "SYSTEM", "STATE",   "CMS",   "Total outflow"},
+        {"storage",         "SYSTEM", "STATE",   "m3",    "Total storage volume"},
+        {"evap",            "SYSTEM", "STATE",   "mm/day","Total evaporation rate"},
+        {"pet",             "SYSTEM", "STATE",   "mm/day","Potential evapotranspiration"},
     };
 
     for (const auto& v : defs) {

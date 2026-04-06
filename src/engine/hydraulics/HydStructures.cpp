@@ -12,6 +12,7 @@
 #include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
+#include "XSectBatch.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -241,7 +242,28 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
 }
 
 // ============================================================================
-// Batch orifice flow — Q = Cd*A*sqrt(2gH), VECTORISABLE
+// Helper: build XSectParams from link SoA data
+// ============================================================================
+
+static XSectParams buildXSP(const LinkData& links, std::size_t uk) {
+    XSectParams xs{};
+    auto ls = links.xsect_shape[uk];
+    xs.type = (ls == XsectShape::DUMMY) ? 0 : static_cast<int>(ls) + 1;
+    xs.y_full = links.xsect_y_full[uk];
+    xs.a_full = links.xsect_a_full[uk];
+    xs.w_max  = links.xsect_w_max[uk];
+    xs.r_full = links.xsect_r_full[uk];
+    xs.s_full = links.xsect_s_full[uk];
+    xs.s_max  = links.xsect_s_max[uk];
+    xs.y_bot  = links.xsect_y_bot[uk];
+    xs.a_bot  = links.xsect_a_bot[uk];
+    xs.s_bot  = links.xsect_s_bot[uk];
+    xs.r_bot  = links.xsect_r_bot[uk];
+    return xs;
+}
+
+// ============================================================================
+// Batch orifice flow — Q = Cd*A*sqrt(2gH), matching legacy orifice_getInflow
 // ============================================================================
 
 void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
@@ -261,23 +283,27 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
         auto un1 = static_cast<size_t>(n1);
         auto un2 = static_cast<size_t>(n2);
 
-        // --- Apply target_setting to setting (matching legacy orifice_setSetting) ---
-        // For orifices, setting transitions gradually via orate (handled in SWMMEngine).
-        // Here we just use the current setting value.
+        // --- Current setting (transitions handled by SWMMEngine) ---
         double setting = links.setting[uj];
 
-        // --- Compute setting-adjusted coefficients (matching legacy) ---
+        // --- Compute setting-adjusted coefficients ---
+        // Matching legacy orifice_setSetting():
+        //   h = setting * yFull
+        //   f_area = xsect_getAofY(xsect, h) * sqrt(2g)
+        //   cOrif = cDisch * f_area
+        //   cWeir = orifice_getWeirCoeff(j, k, h) * f_area
         double y_full = links.xsect_y_full[uj];
         double cd_val = links.cd[uj];
-        double h_open = setting * y_full;  // Effective opening height
-        if (h_open < FUDGE_ORI) { links.flow[uj] = 0.0; continue; }
+        double h_open = setting * y_full;
+        if (h_open < FUDGE_ORI) {
+            links.flow[uj] = 0.0;
+            links.depth[uj] = 0.0;
+            continue;
+        }
 
-        // Effective area at opening height (from cross-section)
-        // For circular: area at depth h; for rectangular: w*h
-        double a_full = links.xsect_a_full[uj];
-        double w_max  = links.xsect_w_max[uj];
-        // Simplified area calculation at partial opening (linear interp)
-        double a_eff = (y_full > 0.0) ? a_full * (h_open / y_full) : a_full;
+        // Use xsect::getAofY for proper cross-section area at partial opening
+        XSectParams xs = buildXSP(links, uj);
+        double a_eff = xsect::getAofY(xs, h_open);
         double f_area = a_eff * std::sqrt(2.0 * GRAVITY);
         double cOrif = cd_val * f_area;
 
@@ -289,82 +315,123 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
             if (links.xsect_shape[uj] == XsectShape::CIRCULAR) {
                 aOverL = h_open / 4.0;
             } else {
-                double w = w_max;
+                double w = links.xsect_w_max[uj];
                 aOverL = (w > 0.0 && h_open > 0.0)
                     ? (h_open * w) / (2.0 * (h_open + w)) : h_open / 4.0;
             }
             hCrit = (cd_val / 0.414) * aOverL;
             cWeir = cd_val * std::sqrt(hCrit) * f_area;
         } else {  // SIDE orifice
-            hCrit = h_open;  // Full opening height
+            hCrit = h_open;
             cWeir = cd_val * std::sqrt(h_open / 2.0) * f_area;
         }
         if (hCrit < FUDGE_ORI) hCrit = FUDGE_ORI;
 
-        // --- Compute nodal heads ---
-        double hgl1 = nodes.depth[un1] + nodes.invert_elev[un1];
-        double hgl2 = nodes.depth[un2] + nodes.invert_elev[un2];
-        double dir = (hgl1 >= hgl2) ? 1.0 : -1.0;
+        // --- Compute nodal heads (matching legacy orifice_getInflow) ---
+        double h1 = nodes.depth[un1] + nodes.invert_elev[un1];
+        double h2 = nodes.depth[un2] + nodes.invert_elev[un2];
+        double dir = (h1 >= h2) ? 1.0 : -1.0;
 
-        // Swap for reverse flow
-        double y_up;
+        double y1 = nodes.depth[un1];
         if (dir < 0.0) {
-            std::swap(hgl1, hgl2);
-            y_up = nodes.depth[un2];
-        } else {
-            y_up = nodes.depth[un1];
+            std::swap(h1, h2);
+            y1 = nodes.depth[un2];
         }
 
-        double hcrest = (dir > 0.0)
-            ? nodes.invert_elev[un1] + links.offset1[uj]
-            : nodes.invert_elev[un2] + links.offset1[uj];
+        // hcrest always uses n1 invert (link's declared upstream node)
+        double hcrest = nodes.invert_elev[un1] + links.offset1[uj];
+        double hcrown = 0.0;
 
         double head, f;
         if (!is_side) {  // BOTTOM orifice
-            if (hgl1 < hcrest) head = 0.0;
-            else if (hgl2 > hcrest) head = hgl1 - hgl2;
-            else head = hgl1 - hcrest;
+            if (h1 < hcrest) head = 0.0;
+            else if (h2 > hcrest) head = h1 - h2;
+            else head = h1 - hcrest;
             f = std::min(head / hCrit, 1.0);
         } else {  // SIDE orifice
-            double hcrown = hcrest + y_full * setting;
+            hcrown = hcrest + y_full * setting;
             double hmidpt = (hcrest + hcrown) / 2.0;
-            // Submergence fraction
-            if (hgl1 < hcrown && hcrown > hcrest)
-                f = (hgl1 - hcrest) / (hcrown - hcrest);
+            if (h1 < hcrown && hcrown > hcrest)
+                f = (h1 - hcrest) / (hcrown - hcrest);
             else
                 f = 1.0;
-            // Head computation
-            if (f < 1.0)       head = hgl1 - hcrest;
-            else if (hgl2 < hmidpt) head = hgl1 - hmidpt;
-            else                    head = hgl1 - hgl2;
+            if (f < 1.0)            head = h1 - hcrest;
+            else if (h2 < hmidpt)   head = h1 - hmidpt;
+            else                    head = h1 - h2;
         }
 
         // --- Check if flow possible ---
-        if (head <= FUDGE_ORI || y_up <= FUDGE_ORI) {
+        if (head <= FUDGE_ORI || y1 <= FUDGE_ORI) {
             links.flow[uj] = 0.0;
-            continue;
-        }
-        // Flap gate check
-        if (links.has_flap_gate[uj] && dir < 0.0) {
-            links.flow[uj] = 0.0;
+            links.depth[uj] = 0.0;
+            links.dqdh[uj] = 0.0;
             continue;
         }
 
-        // --- Compute flow ---
-        double q;
+        // Flap gate: block reverse flow
+        if (links.has_flap_gate[uj] && dir < 0.0) {
+            links.flow[uj] = 0.0;
+            links.depth[uj] = 0.0;
+            links.dqdh[uj] = 0.0;
+            continue;
+        }
+
+        // --- Determine flow class (matching legacy) ---
+        if (hcrest > h2) {
+            links.flow_class[uj] = (dir > 0.0) ? FlowClass::DN_CRITICAL : FlowClass::UP_CRITICAL;
+        } else {
+            links.flow_class[uj] = FlowClass::SUBCRITICAL;
+        }
+
+        // --- Compute flow depth (matching legacy) ---
+        double y_link = y_full * setting;
+        if (is_side) {
+            links.depth[uj] = y_link * std::max(f, 0.0);
+        } else {
+            links.depth[uj] = y_link;
+        }
+
+        // --- Compute flow (matching legacy orifice_getFlow) ---
+        double q = 0.0;
+        double dqdh = 0.0;
         if (f <= 0.0) {
             q = 0.0;
         } else if (f < 1.0) {
-            // Weir flow regime: Q = cWeir * f^1.5
             q = cWeir * std::pow(f, 1.5);
+            dqdh = 1.5 * q / (f * hCrit);
         } else {
-            // Orifice flow regime: Q = cOrif * sqrt(head)
             q = cOrif * std::sqrt(head);
+            dqdh = q / (2.0 * head);
+        }
+
+        // --- ARMCO flap gate head loss (matching legacy orifice_getFlow) ---
+        if (links.has_flap_gate[uj] && q > 0.0 && a_eff > FUDGE_ORI) {
+            double veloc = q / a_eff;
+            double hLoss = (4.0 / GRAVITY) * veloc * veloc *
+                           std::exp(-1.15 * veloc / std::sqrt(head));
+            if (f < 1.0) {
+                f = f - hLoss / hCrit;
+                if (f < 0.0) f = 0.0;
+            } else {
+                head = head - hLoss;
+                if (head < 0.0) head = 0.0;
+            }
+            // Recompute flow at adjusted head/f (matching legacy recursive call)
+            if (f <= 0.0 || head <= 0.0) {
+                q = 0.0;
+                dqdh = 0.0;
+            } else if (f < 1.0) {
+                q = cWeir * std::pow(f, 1.5);
+                dqdh = 1.5 * q / (f * hCrit);
+            } else {
+                q = cOrif * std::sqrt(head);
+                dqdh = q / (2.0 * head);
+            }
         }
 
         // --- Villemonte submergence correction (matching legacy) ---
-        if (f < 1.0 && hgl2 > hcrest && hgl1 > hcrest) {
-            double ratio = (hgl2 - hcrest) / (hgl1 - hcrest);
+        if (f < 1.0 && h2 > hcrest && h1 > hcrest) {
+            double ratio = (h2 - hcrest) / (h1 - hcrest);
             if (ratio < 1.0 && ratio > 0.0) {
                 q *= std::pow(1.0 - std::pow(ratio, 1.5), 0.385);
             }
@@ -372,6 +439,7 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
 
         if (q < 0.0) q = 0.0;
         links.flow[uj] = q * dir;
+        links.dqdh[uj] = dqdh;
     }
 }
 

@@ -66,11 +66,13 @@ public:
     /**
      * @brief Execute one routing timestep.
      *
-     * @param ctx  Simulation context (modified in place).
-     * @param dt   Routing timestep (seconds).
+     * @param ctx        Simulation context (modified in place).
+     * @param dt         Routing timestep (seconds).
+     * @param evap_rate  Current evaporation rate (ft/sec), from climate module.
      * @returns Number of solver iterations used.
      */
     int step(SimulationContext& ctx, double dt,
+             double evap_rate = 0.0,
              dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn = nullptr);
 
     /**
@@ -103,8 +105,11 @@ private:
     /// Save old hydraulic states before routing.
     void saveOldStates(SimulationContext& ctx);
 
-    /// Initialise node inflows from lateral flows and losses.
-    void initNodeFlows(SimulationContext& ctx, double dt);
+    /// Initialise node inflows from lateral flows and losses (including storage evap).
+    void initNodeFlows(SimulationContext& ctx, double dt, double evap_rate);
+
+    /// Compute conduit evaporation and seepage loss rates (per barrel).
+    void computeConduitLosses(SimulationContext& ctx, double dt, double evap_rate);
 
     /// Update final link states (depth, volume) after routing.
     void updateLinkStates(SimulationContext& ctx);

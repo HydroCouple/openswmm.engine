@@ -88,6 +88,9 @@ static const char* xsect_shape_str(XsectShape s) {
         case XsectShape::SEMICIRCULAR:    return "SEMICIRCULAR";
         case XsectShape::RECT_TRIANG:     return "RECT_TRIANG";
         case XsectShape::RECT_ROUND:      return "RECT_ROUND";
+        case XsectShape::HORIZ_ELLIPSE:   return "HORIZ_ELLIPSE";
+        case XsectShape::VERT_ELLIPSE:    return "VERT_ELLIPSE";
+        case XsectShape::ARCH:            return "ARCH";
         case XsectShape::IRREGULAR:       return "IRREGULAR";
         case XsectShape::CUSTOM:          return "CUSTOM";
         case XsectShape::FORCE_MAIN:      return "FORCE_MAIN";

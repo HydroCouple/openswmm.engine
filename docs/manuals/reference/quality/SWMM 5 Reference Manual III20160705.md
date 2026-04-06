@@ -369,7 +369,7 @@ street cleaning programs (Pitt, 1979)**
 on pollutant fractions (after Manning et al., 1977)**
 [59](#_Toc454288808)](#_Toc454288808)
 
-[**Table 4‑1 Units of the washoff coefficient *K~W~* for different
+[**Table 4‑1 Units of the washoff coefficient *K<sub>W</sub>* for different
 washoff models** [66](#_Toc454288809)](#_Toc454288809)
 
 [**Table 4‑2 Percent removals for vegetated swales and filter strips**
@@ -471,15 +471,15 @@ MTBE Methyl Tertiary Butyl Ether
 
 NADP National Atmospheric Deposition Program
 
-NH~3~-N Ammonia Nitrogen
+NH<sub>3</sub>-N Ammonia Nitrogen
 
-NH~4~ Ammonium
+NH<sub>4</sub> Ammonium
 
 Ni Nickel
 
-NO~2~ Nitrite
+NO<sub>2</sub> Nitrite
 
-NO~3~ Nitrate
+NO<sub>3</sub> Nitrate
 
 NPDES National Pollution Discharge Elimination System
 
@@ -491,7 +491,7 @@ Pb Lead
 
 PCU Platinum-Cobalt Units
 
-PO~4~ Phosphate
+PO<sub>4</sub> Phosphate
 
 RDII Rainfall Dependent Inflow and Infiltration
 
@@ -896,28 +896,20 @@ are computed and reported. This process is represented mathematically
 with the following general set of equations that are solved at each time
 step as the simulation unfolds:
 
-  ------------------------------------------------------------------------
-        $$X_{t} = f(X_{t - 1},I_{t},P)$$                             (1-1)
-  ----- ---------------------------------------------------------- -------
-        $$Y_{t} = g(X_{t},P)$$                                       (1-2)
+$$X_{t} = f(X_{t - 1},I_{t},P) \qquad \text{(1-1)}$$
 
-  ------------------------------------------------------------------------
+$$Y_{t} = g(X_{t},P) \qquad \text{(1-2)}$$
 
 where
 
-  -----------------------------------------------------------------------------
-  *X~t~*   =   a vector of state variables at time *t*,
-  -------- --- ----------------------------------------------------------------
-  *Y~t~*   =   a vector of output variables at time *t*,
-
-  *I~t~*   =   a vector of inputs at time *t*,
-
-  *P*      =   a vector of constant parameters,
-
-  *f*      =   a vector-valued state transition function,
-
-  *g*      =   a vector-valued output transform function,
-  -----------------------------------------------------------------------------
+| Symbol | | Description |
+| --- | --- | --- |
+| *X<sub>t</sub>* | = | a vector of state variables at time *t*, |
+| *Y<sub>t</sub>* | = | a vector of output variables at time *t*, |
+| *I<sub>t</sub>* | = | a vector of inputs at time *t*, |
+| *P* | = | a vector of constant parameters, |
+| *f* | = | a vector-valued state transition function, |
+| *g* | = | a vector-valued output transform function, |
 
 Figure 1-4 depicts the simulation process in block diagram fashion.
 
@@ -929,7 +921,7 @@ class="anchor"></span><strong>Figure 1‑4 Block diagram of SWMM's state
 transition process</strong></p></figcaption>
 </figure>
 
-The variables that make up the state vector *X~t~* are listed in Table
+The variables that make up the state vector *X<sub>t</sub>* are listed in Table
 1-3. This is a surprisingly small number given the comprehensive nature
 of SWMM. All other quantities can be computed from these variables,
 external inputs, and fixed input parameters. The meaning of some of the
@@ -943,10 +935,10 @@ discussed in other sections of this set of manuals.
 | Runoff         | *d*          | Depth of runoff on a            | 0          |
 |                |              | subcatchment surface            |            |
 +----------------+--------------+---------------------------------+------------+
-| Infiltration\* | *t~p~*       | Equivalent time on the Horton   | 0          |
+| Infiltration\* | *t<sub>p</sub>*       | Equivalent time on the Horton   | 0          |
 |                |              | curve                           |            |
 |                +--------------+---------------------------------+------------+
-|                | *F~e~*       | Cumulative excess infiltration  | 0          |
+|                | *F<sub>e</sub>*       | Cumulative excess infiltration  | 0          |
 |                |              | volume                          |            |
 |                +--------------+---------------------------------+------------+
 |                | *Fu*         | Upper zone moisture content     | 0          |
@@ -960,10 +952,10 @@ discussed in other sections of this set of manuals.
 |                | *S*          | Soil moisture storage capacity  | User       |
 |                |              | remaining                       | supplied   |
 +----------------+--------------+---------------------------------+------------+
-| Groundwater    | *θ~u~*       | Unsaturated zone moisture       | User       |
+| Groundwater    | *θ<sub>u</sub>*       | Unsaturated zone moisture       | User       |
 |                |              | content                         | supplied   |
 |                +--------------+---------------------------------+------------+
-|                | *d~L~*       | Depth of saturated zone         | User       |
+|                | *d<sub>L</sub>*       | Depth of saturated zone         | User       |
 |                |              |                                 | supplied   |
 +----------------+--------------+---------------------------------+------------+
 | Snowmelt       | *wsnow*      | Snow pack depth                 | User       |
@@ -986,19 +978,19 @@ discussed in other sections of this set of manuals.
 |                | *a*          | Flow area in a link             | Inferred   |
 |                |              |                                 | from *q*   |
 +----------------+--------------+---------------------------------+------------+
-| Water Quality  | *t~sweep~*   | Time since a subcatchment was   | User       |
+| Water Quality  | *t<sub>sweep</sub>*   | Time since a subcatchment was   | User       |
 |                |              | last swept                      | supplied   |
 |                +--------------+---------------------------------+------------+
-|                | *m~B~*       | Pollutant buildup on            | User       |
+|                | *m<sub>B</sub>*       | Pollutant buildup on            | User       |
 |                |              | subcatchment surface            | supplied   |
 |                +--------------+---------------------------------+------------+
-|                | *m~P~*       | Pollutant mass ponded on        | 0          |
+|                | *m<sub>P</sub>*       | Pollutant mass ponded on        | 0          |
 |                |              | subcatchment                    |            |
 |                +--------------+---------------------------------+------------+
-|                | *c~N~*       | Concentration of pollutant at a | User       |
+|                | *c<sub>N</sub>*       | Concentration of pollutant at a | User       |
 |                |              | node                            | supplied   |
 |                +--------------+---------------------------------+------------+
-|                | *c~L~*       | Concentration of pollutant in a | User       |
+|                | *c<sub>L</sub>*       | Concentration of pollutant in a | User       |
 |                |              | link                            | supplied   |
 +----------------+--------------+---------------------------------+------------+
 
@@ -1007,7 +999,7 @@ discussed in other sections of this set of manuals.
 \*Only a sub-set of these variables is used, depending on the user's
 choice of infiltration method.
 
-Examples of user-supplied input variables *I~t~* that produce changes to
+Examples of user-supplied input variables *I<sub>t</sub>* that produce changes to
 these state variables include:
 
 - meteorological conditions, such as precipitation, air temperature,
@@ -1023,7 +1015,7 @@ these state variables include:
 
 - control settings for pumps and regulators.
 
-The output vector *Y~t~* that SWMM computes from its updated state
+The output vector *Y<sub>t</sub>* that SWMM computes from its updated state
 variables contains such reportable quantities as:
 
 - runoff flow rate and pollutant concentrations from each subcatchment
@@ -1062,7 +1054,7 @@ The process begins by reading a description of each object and its
 parameters from an input file whose format is described in the SWMM 5
 Users' Manual (US EPA, 2010). Next the values of all state variables are
 initialized, as is the current simulation time (T), runoff time
-(T~roff~), and reporting time (T~rpt~).
+(T<sub>roff</sub>), and reporting time (T<sub>rpt</sub>).
 
 <figure>
 <img src="./media/media/image5.png" style="width:6.5in;height:8.14097in"
@@ -1073,8 +1065,8 @@ procedure</strong></p></figcaption>
 </figure>
 
 The program then enters a loop that first determines the time T1 at the
-end of the current routing time step (∆T~rout~). If the current runoff
-time T~roff~ is less than T1, then new runoff calculations are
+end of the current routing time step (∆T<sub>rout</sub>). If the current runoff
+time T<sub>roff</sub> is less than T1, then new runoff calculations are
 repeatedly made and the runoff time updated until it equals or exceeds
 time T1. Each set of runoff calculations accounts for any precipitation,
 evaporation, snowmelt, infiltration, ground water seepage, overland
@@ -1088,11 +1080,11 @@ velocity in each conduit, the water elevation at each node, the pumping
 rate for each pump, and the water level and volume in each storage unit.
 In addition, new values for the concentrations of all pollutants at each
 node and within each conduit are computed. Next a check is made to see
-if the current reporting time T~rpt~ falls within the interval from T to
-T1. If it does, then a new set of output results at time T~rpt~ are
+if the current reporting time T<sub>rpt</sub> falls within the interval from T to
+T1. If it does, then a new set of output results at time T<sub>rpt</sub> are
 interpolated from the results at times T and T1 and are saved to an
 output file. The reporting time is also advanced by the reporting time
-step ∆T~rpt.~ The simulation time T is then updated to T1 and the
+step ∆T<sub>rpt.</sub> The simulation time T is then updated to T1 and the
 process continues until T reaches the desired total duration. SWMM's
 Windows-based user interface provides graphical tools for building the
 aforementioned input file and for viewing the computed output.
@@ -1149,8 +1141,8 @@ the unit of length and seconds as the unit of time.
 |                        |                      | (cms)                |
 |                        | gallons/min (gpm)    |                      |
 |                        |                      | liters/sec (lps)     |
-|                        | 10^6^ gallons/day    |                      |
-|                        | (mgd)                | 10^6^ liters/day     |
+|                        | 10<sup>6</sup> gallons/day    |                      |
+|                        | (mgd)                | 10<sup>6</sup> liters/day     |
 |                        |                      | (mld)                |
 +------------------------+----------------------+----------------------+
 | Hydraulic Conductivity | inches/hour          | millimeters/hour     |
@@ -1161,7 +1153,7 @@ the unit of length and seconds as the unit of time.
 +------------------------+----------------------+----------------------+
 | Length                 | feet                 | meters               |
 +------------------------+----------------------+----------------------+
-| Manning's n            | seconds/meter^1/3^   | seconds/meter^1/3^   |
+| Manning's n            | seconds/meter<sup>1/3</sup>   | seconds/meter<sup>1/3</sup>   |
 +------------------------+----------------------+----------------------+
 | Pollutant Buildup      | mass/acre            | mass/hectare         |
 +------------------------+----------------------+----------------------+
@@ -1269,26 +1261,20 @@ lists typical pollutant loadings from different urban land uses.
 storm water runoff (US EPA, 1999)**
 
   ----------------------------------------------------------------------------------------------------------------------------
-  **Land Use**    **TSS**   **TP**   **TKN**   **NH~3~-N**   **NO~2~+NO~3~-N**   **BOD**   **COD**   **Pb**   **Zn**   **Cu**
-  -------------- --------- -------- --------- ------------- ------------------- --------- --------- -------- -------- --------
-  Commercial       1000      1.5       6.7         1.9              3.1            62        420      2.7      2.1      0.4
+  **Land Use**    **TSS**   **TP**   **TKN**   **NH<sub>3</sub>-N**   **NO<sub>2</sub>+NO<sub>3</sub>-N**   **BOD**   **COD**   **Pb**   **Zn**   **Cu**
 
-  Parking Lot       400      0.7       5.1          2               2.9            47        270      0.8      0.8      0.04
+|  |  |  |  |  |  |  |  |  |  |  |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Commercial | 1000 | 1.5 | 6.7 | 1.9 | 3.1 | 62 | 420 | 2.7 | 2.1 | 0.4 |
+| Parking Lot | 400 | 0.7 | 5.1 | 2 | 2.9 | 47 | 270 | 0.8 | 0.8 | 0.04 |
+| HDR | 420 | 1 | 4.2 | 0.8 | 2 | 27 | 170 | 0.8 | 0.7 | 0.03 |
+| MDR | 190 | 0.5 | 2.5 | 0.5 | 1.4 | 13 | 72 | 0.2 | 0.2 | 0.14 |
+| LDR | 10 | 0.04 | 0.03 | 0.02 | 0.1 | NA | NA | 0.01 | 0.04 | 0.01 |
+| Freeway | 880 | 0.9 | 7.9 | 1.5 | 4.2 | NA | NA | 4.5 | 2.1 | 0.37 |
+| Industrial | 860 | 1.3 | 3.8 | 0.2 | 1.3 | NA | NA | 2.4 | 7.3 | 0.5 |
+| Park | 3 | 0.03 | 1.5 | NA | 0.3 | NA | 2 | 0 | NA | NA |
+| Construction | 6000 | 80 | NA | NA | NA | NA | NA | NA | NA | NA |
 
-  HDR               420       1        4.2         0.8               2             27        170      0.8      0.7      0.03
-
-  MDR               190      0.5       2.5         0.5              1.4            13        72       0.2      0.2      0.14
-
-  LDR               10       0.04     0.03        0.02              0.1            NA        NA       0.01     0.04     0.01
-
-  Freeway           880      0.9       7.9         1.5              4.2            NA        NA       4.5      2.1      0.37
-
-  Industrial        860      1.3       3.8         0.2              1.3            NA        NA       2.4      7.3      0.5
-
-  Park               3       0.03      1.5         NA               0.3            NA         2        0        NA       NA
-
-  Construction     6000       80       NA          NA               NA             NA        NA        NA       NA       NA
-  ----------------------------------------------------------------------------------------------------------------------------
 
   : []{#_Toc454288793 .anchor}**Table 2‑2 Typical pollutant loadings
   from runoff by urban land use (lbs/acre-yr)**
@@ -1563,49 +1549,40 @@ variation in pollutant buildup and washoff rates within subcatchments.
 
   -----------------------------------------------------------------------------------------
   **Constituent**    **Residential**   **Commercial/Industrial**   **Roads**    **Rural**
-  ----------------- ----------------- --------------------------- ------------ ------------
-  BOD5                     34                     45                   10           18
 
-  Fecal                  87,000                 37,000              200,000      300,000
-  Coliforms^a^                                                                 
+|  |  |  |  |  |
+| --- | --- | --- | --- | --- |
+| BOD5 | 34 | 45 | 10 | 18 |
+| Fecal | 87,000 | 37,000 | 200,000 | 300,000 |
+| Coliforms<sup>a</s | up> |  |  |  |
+| NH<sub>4</sub> | 0. | 8                    2.4 |  | 0.35         0.45 |
+| NO<sub>2</sub> + N | O<sub>3</sub> | 1.7 | 6.4 | 0.07         3.5 |
+| Total Organic N | 4.3 | 4.1 | 1.22 | 7.0 |
+| Total P | 1.9 | 1.7 | 0.26 | 1.5 |
+| PO<sub>4</sub> | 0.2 | 4                   0.47 |  | 0.20         2.4 |
+| Oil & Grease | 25 | 80 | 100 | 13 |
+| Lead | 1.8 | 1.4 | 0.41 | 0.21 |
 
-  NH~4~                    0.8                    2.4                 0.35         0.45
-
-  NO~2~ + NO~3~            1.7                    6.4                 0.07         3.5
-
-  Total Organic N          4.3                    4.1                 1.22         7.0
-
-  Total P                  1.9                    1.7                 0.26         1.5
-
-  PO~4~                   0.24                   0.47                 0.20         2.4
-
-  Oil & Grease             25                     80                  100           13
-
-  Lead                     1.8                    1.4                 0.41         0.21
-  -----------------------------------------------------------------------------------------
 
   : []{#_Toc454288795 .anchor}**Table 2‑4 Potency factors for the
   Detroit metropolitan area (mg/gram)**
 
-^a^ (organisms/100ml) / (gram/L TSS)
+<sup>a</sup> (organisms/100ml) / (gram/L TSS)
 
 Source: Roesner (1982).
 
   ----------------------------------------------------------------------------------
-  **Land Use**                        **NO~3~**    **NH~4~**    **PO~4~**   **BOD**
-  ---------------------------------- ----------- ------------- ----------- ---------
-  Low Density Residential                1.5          0.4          1.1        90
+  **Land Use**                        **NO<sub>3</sub>**    **NH<sub>4</sub>**    **PO<sub>4</sub>**   **BOD**
 
-  Medium/High Density Residential        6.0          2.0          1.6        180
+|  |  |  |  |  |
+| --- | --- | --- | --- | --- |
+| Low Density Residential | 1.5 | 0.4 | 1.1 | 90 |
+| Medium/High Density Residential | 6.0 | 2.0 | 1.6 | 180 |
+| Commercial/Industrial | 10.0 | 3.2 | 2.7 | 270 |
+| Forest and Wetland | 0.1-0.18 | 0.011-0.018 | 0.04-0.07 | 11-17 |
+| Pasture | 3.6 | 0.4 | 0.27 | 60 |
+| Idle Agricultural Land | 2.0 | 0.2 | 0.16 | 30 |
 
-  Commercial/Industrial                 10.0          3.2          2.7        270
-
-  Forest and Wetland                  0.1-0.18    0.011-0.018   0.04-0.07    11-17
-
-  Pasture                                3.6          0.4         0.27        60
-
-  Idle Agricultural Land                 2.0          0.2         0.16        30
-  ----------------------------------------------------------------------------------
 
   : []{#_Toc454288796 .anchor}**Table 2‑5 Potency factors for the
   Patuxent River Basin (mg/gram)**
@@ -1671,8 +1648,8 @@ erosion, traffic, etc. make it very difficult to separate causative
 factors (James and Boregowda, 1985).
 
 +:---------------+:-----------------+:---------------:+:-----------------:+:--------------:+:--------------:+
-| **Parameter**                     | **Ft.           | **Cincinnati^b^** | **Lodi,        | **"Typical     |
-|                                   | Lauderdale^a^** |                   | NJ^c^**        | Range"^d^**    |
+| **Parameter**                     | **Ft.           | **Cincinnati<sup>b</sup>** | **Lodi,        | **"Typical     |
+|                                   | Lauderdale<sup>a</sup>** |                   | NJ<sup>c</sup>**        | Range"<sup>d</sup>**    |
 +-----------------------------------+-----------------+-------------------+----------------+----------------+
 | Acidity (pH)                      |                 |                   |                | 3-6            |
 +-----------------------------------+-----------------+-------------------+----------------+----------------+
@@ -1702,11 +1679,11 @@ factors (James and Boregowda, 1985).
 +----------------+------------------+-----------------+-------------------+----------------+----------------+
 |                | Org. N, mg/L     | 0.09-0.15       | 0.58              |                | 0.05-1.0       |
 |                |                  |                 |                   |                |                |
-|                | NH~3~-N, mg/L    | 0.01-0.04       | 1.27^e^           |                | 0.05-1.0       |
+|                | NH<sub>3</sub>-N, mg/L    | 0.01-0.04       | 1.27<sup>e</sup>           |                | 0.05-1.0       |
 |                |                  |                 |                   |                |                |
-|                | NO~2~-N, mg/L    | 0.00-0.01       | 0.08              |                | 0.2-1.5        |
+|                | NO<sub>2</sub>-N, mg/L    | 0.00-0.01       | 0.08              |                | 0.2-1.5        |
 |                |                  |                 |                   |                |                |
-|                | NO~3~-N, mg/L    | 0.12-0.73       |                   |                | 0.0-0.05       |
+|                | NO<sub>3</sub>-N, mg/L    | 0.12-0.73       |                   |                | 0.0-0.05       |
 |                |                  |                 |                   |                |                |
 |                | Total N, mg/L    | 0.29-0.84       |                   |                | 0.02-0.15      |
 |                |                  |                 |                   |                |                |
@@ -1727,15 +1704,15 @@ factors (James and Boregowda, 1985).
 +----------------+------------------+-----------------+-------------------+----------------+----------------+
 |                | Zinc, μg/L       |                 |                   | 44             |                |
 +----------------+------------------+-----------------+-------------------+----------------+----------------+
-| ^a^Range for three storms (Mattraw and Sherwood, 1977)                                                    |
+| <sup>a</sup>Range for three storms (Mattraw and Sherwood, 1977)                                                    |
 |                                                                                                           |
-| ^b^Average of 35 storms (Weibel et al., 1966)                                                             |
+| <sup>b</sup>Average of 35 storms (Weibel et al., 1966)                                                             |
 |                                                                                                           |
-| ^c^Wilbur and Hunter (1980)                                                                               |
+| <sup>c</sup>Wilbur and Hunter (1980)                                                                               |
 |                                                                                                           |
-| ^d^Brezonik (1975)                                                                                        |
+| <sup>d</sup>Brezonik (1975)                                                                                        |
 |                                                                                                           |
-| ^e^Sum of NH~3~-N, NO~2~-N, NO~3~-N                                                                       |
+| <sup>e</sup>Sum of NH<sub>3</sub>-N, NO<sub>2</sub>-N, NO<sub>3</sub>-N                                                                       |
 +-----------------------------------------------------------------------------------------------------------+
 
 : []{#_Toc454288797 .anchor}**Table 2‑6 Representative concentrations of
@@ -1907,9 +1884,9 @@ Source: ASCE-WPCF (1969)
 +------------------------------------+----------+-------------+-------------+--------------+
 | Volatile organic compounds (VOCs)  | mg/L     | \<100       | 100-400     | \>400        |
 +------------------------------------+----------+-------------+-------------+--------------+
-| Total coliform                     | #/100 mL | 10^6^-10^8^ | 10^7^-10^9^ | 10^7^-10^10^ |
+| Total coliform                     | #/100 mL | 10<sup>6</sup>-10<sup>8</sup> | 10<sup>7</sup>-10<sup>9</sup> | 10<sup>7</sup>-10<sup>10</sup> |
 +------------------------------------+----------+-------------+-------------+--------------+
-| Fecal coliform                     | #/100 mL | 10^3^-10^5^ | 10^4^-10^6^ | 10^5^-10^8^  |
+| Fecal coliform                     | #/100 mL | 10<sup>3</sup>-10<sup>5</sup> | 10<sup>4</sup>-10<sup>6</sup> | 10<sup>5</sup>-10<sup>8</sup>  |
 +------------------------------------+----------+-------------+-------------+--------------+
 
 : []{#_Toc454288799 .anchor}**Table 2‑8 Quality properties of untreated
@@ -2234,15 +2211,15 @@ Source: APWA (1969).
 +-------------------+-------------------+-------------------+-------------------+-------------------+
 | COD               | 40.0              | 40.0              | 39.0              | 40.0              |
 +-------------------+-------------------+-------------------+-------------------+-------------------+
-| Total             | 1.3 × 10^6^       | 2.7 × 10^6^       | 1.7 × 10^6^       | 1.0 × 10^6^       |
-| Coliforms^a^      |                   |                   |                   |                   |
+| Total             | 1.3 × 10<sup>6</sup>       | 2.7 × 10<sup>6</sup>       | 1.7 × 10<sup>6</sup>       | 1.0 × 10<sup>6</sup>       |
+| Coliforms<sup>a</sup>      |                   |                   |                   |                   |
 +-------------------+-------------------+-------------------+-------------------+-------------------+
 | Total N           | 0.48              | 0.61              | 0.41              | 0.43              |
 +-------------------+-------------------+-------------------+-------------------+-------------------+
-| Total PO~4~ (as   | 0.05              | 0.05              | 0.07              | 0.03              |
-| PO~4~)            |                   |                   |                   |                   |
+| Total PO<sub>4</sub> (as   | 0.05              | 0.05              | 0.07              | 0.03              |
+| PO<sub>4</sub>)            |                   |                   |                   |                   |
 +-------------------+-------------------+-------------------+-------------------+-------------------+
-| ^a^Units for coliforms are MPN/gram.                                                              |
+| <sup>a</sup>Units for coliforms are MPN/gram.                                                              |
 +---------------------------------------------------------------------------------------------------+
 
 : []{#_Toc454288805 .anchor}**Table 3‑2 Milligrams of pollutant per gram
@@ -2333,51 +2310,35 @@ These are:
 Power function buildup accumulates proportional to time raised to some
 power, until a maximum limit is achieved,
 
-  --------------------------------------------------------------------------
-         $$b = Min(B_{\max},\ K_{B}t^{N_{B}})$$                     (3-1a)
-  ------ ---------------------------------------------------------- --------
-
-  --------------------------------------------------------------------------
+$$b = Min(B_{\max},\ K_{B}t^{N_{B}}) \qquad \text{(3-1a)}$$
 
 where
 
-  ----------------------------------------------------------------------------
-  *b*        =   buildup, \[B\]
-  ---------- --- -------------------------------------------------------------
-  *t*        =   buildup time interval, days
+| Symbol | | Description |
+| --- | --- | --- |
+| *b* | = | buildup, [B] |
+| *t* | = | buildup time interval, days |
+| *B<sub>max</sub>* | = | maximum buildup possible, [B] |
+| *K<sub>B</sub>* | = | buildup rate constant, [B]-days<sup>-*N*</sup><sub>*B*</sub> |
+| *N<sub>B</sub>* | = | buildup time exponent, dimensionless |
 
-  *B~max~*   =   maximum buildup possible, \[B\]
-
-  *K~B~*     =   buildup rate constant, \[B\]-days^-*N*^*~B~*
-
-  *N~B~*     =   buildup time exponent, dimensionless
-  ----------------------------------------------------------------------------
-
-The time exponent, *N~B~,* should be ≤ 1 so that a decreasing rate of
-buildup occurs as time increases. When *N~B~* is set equal to 1, a
+The time exponent, *N<sub>B</sub>,* should be ≤ 1 so that a decreasing rate of
+buildup occurs as time increases. When *N<sub>B</sub>* is set equal to 1, a
 linear buildup function is obtained.
 
 Exponential buildup follows an exponential growth curve that approaches
 a maximum limit asymptotically,
 
-  -------------------------------------------------------------------------
-         $$b = B_{\max}\left( 1 - e^{- K_{B}t} \right)$$           (3-1b)
-  ------ --------------------------------------------------------- --------
+$$b = B_{\max}\left( 1 - e^{- K_{B}t} \right) \qquad \text{(3-1b)}$$
 
-  -------------------------------------------------------------------------
-
-where the rate constant *K~B~* now has units of days^-1^.
+where the rate constant *K<sub>B</sub>* now has units of days<sup>-1</sup>.
 
 Saturation buildup begins at a linear rate which proceeds to decline
 constantly over time until a saturation value is reached,
 
-  -------------------------------------------------------------------------
-         $$b = \frac{B_{\max}t}{\left( K_{B} + t \right)}$$        (3-1c)
-  ------ --------------------------------------------------------- --------
+$$b = \frac{B_{\max}t}{\left( K_{B} + t \right)} \qquad \text{(3-1c)}$$
 
-  -------------------------------------------------------------------------
-
-where now *K~B~* is a half saturation constant (days to reach half of
+where now *K<sub>B</sub>* is a half saturation constant (days to reach half of
 the maximum buildup).
 
 Table 3-3 summarizes the meaning and units of the coefficients used in
@@ -2387,9 +2348,9 @@ use to total mass
 
 > $$m_{B} = bNf_{LU}$$
 
-where *m~B~* = mass of buildup, *b* = mass per unit of either area or
+where *m<sub>B</sub>* = mass of buildup, *b* = mass per unit of either area or
 curb length, *N* = total area or curb length for the subcatchment in
-question, and *f~LU~* = fraction of the subcatchment's area devoted to
+question, and *f<sub>LU</sub>* = fraction of the subcatchment's area devoted to
 the land use in question.
 
 The shapes of the three functions are compared in Figure 3-3 using a
@@ -2398,8 +2359,8 @@ kg/ac in about 14 days. The Exponential and Saturation func­tions have
 clearly defined asymptotes or upper limits (2 kg/ac in this figure).
 Upper limits for linear or power function buildup may be imposed if
 desired. "Instantaneous buildup" may be easily achieved using the power
-function with *N~B~* set to 0 and *K~B~* set equal to *B~max~*. This
-would result in a constant buildup of *B~max~* which would always be
+function with *N<sub>B</sub>* set to 0 and *K<sub>B</sub>* set equal to *B<sub>max</sub>*. This
+would result in a constant buildup of *B<sub>max</sub>* which would always be
 available at the beginning of any storm event.
 
 +-----------------+-------------------------------------------------------------------------------------+
@@ -2409,10 +2370,10 @@ available at the beginning of any storm event.
 +=================+:======================================+:=====================+:=====================+
 | *Bmax*          | buildup limit \[B\]                   | buildup limit \[B\]  | buildup limit \[B\]  |
 +-----------------+---------------------------------------+----------------------+----------------------+
-| *K~B~*          | rate constant,                        | rate constant,       | ½ saturation         |
-|                 | $\lbrack B\rbrack{days}^{- \eta_{B}}$ | days^-1^             | constant, days       |
+| *K<sub>B</sub>*          | rate constant,                        | rate constant,       | ½ saturation         |
+|                 | $\lbrack B\rbrack{days}^{- \eta_{B}}$ | days<sup>-1</sup>             | constant, days       |
 +-----------------+---------------------------------------+----------------------+----------------------+
-| *N~B~*          | time exponent                         |                      |                      |
+| *N<sub>B</sub>*          | time exponent                         |                      |                      |
 +-----------------+---------------------------------------+----------------------+----------------------+
 
 : []{#_Toc454288806 .anchor}**Table 3‑3 Summary of buildup function
@@ -2433,19 +2394,19 @@ that different options may be used to accomplish the same objective
 available data to which one of the functional forms has been fit. If an
 asymptotic form is desired, either the exponential or saturation option
 may be used depending upon ease of comprehension of the parameters. For
-instance, for exponential buildup the rate constant, *K~B~*, is the
+instance, for exponential buildup the rate constant, *K<sub>B</sub>*, is the
 familiar exponential decay constant. It may be obtained from the slope
 of a semi-log plot of buildup versus time. As a numerical example, if
-its value were 0.33 day^‑1^, then it would take 7 days to reach 90
+its value were 0.33 day<sup>‑1</sup>, then it would take 7 days to reach 90
 percent of the maximum buildup, as in Figure 3-3.
 
-For saturation buildup the parameter *K~B~* has the interpretation of
+For saturation buildup the parameter *K<sub>B</sub>* has the interpretation of
 the half saturation constant, that is, the time at which buildup is half
-of the maximum (asym­ptotic) value. For instance, the *K~B~* of 1 day for
+of the maximum (asym­ptotic) value. For instance, the *K<sub>B</sub>* of 1 day for
 the saturation curve in Figure 3-3 corresponds to the time where the
 buildup reaches half the maximum amount. If the asymptotic value
-*B~max~* is known or estimated, K*~B~* may be obtained from buildup data
-from the slope of a plot of *b* versus *t* × (*B~max~* - *b*).
+*B<sub>max</sub>* is known or estimated, K*<sub>B</sub>* may be obtained from buildup data
+from the slope of a plot of *b* versus *t* × (*B<sub>max</sub>* - *b*).
 Generally, the saturation for­mulation will rise steeply (in fact,
 linearly for small *t*) and then approach the asymptote slowly.
 
@@ -2461,19 +2422,14 @@ washoff function in wet periods it is useful to know the number of days
 *t* it takes to reach a given amount of buildup *b*. This can be found
 by re-arranging Equation 3-1 as follows:
 
-  -------------------------------------------------------------------------------
-         $t = \left( \frac{b}{K_{B}} \right)^{\frac{1}{N_{B}}}$ for        (3-2a)
-         power buildup                                                   
-  ------ --------------------------------------------------------------- --------
-         $t = \frac{- ln\left( 1 - \frac{b}{B_{\max}} \right)}{K_{B}}$     (3-2b)
-         for exponential buildup                                         
+$$t = \left( \frac{b}{K_{B}} \right)^{\frac{1}{N_{B}}} \qquad \text{for power buildup} \qquad \text{(3-2a)}$$
 
-         $t = \frac{bK_{B}}{\left( B_{\max} - b \right)}$ for saturation   (3-2c)
-         buildup                                                         
-  -------------------------------------------------------------------------------
+$$t = \frac{- ln\left( 1 - \frac{b}{B_{\max}} \right)}{K_{B}} \qquad \text{for exponential buildup} \qquad \text{(3-2b)}$$
 
-Note that when *N~B~ = 0* for power buildup then buildup *b* is a
-constant value *B~max~* for all times *t*. Figure 3-4 shows how buildup
+$$t = \frac{bK_{B}}{\left( B_{\max} - b \right)} \qquad \text{for saturation buildup} \qquad \text{(3-2c)}$$
+
+Note that when *N<sub>B</sub> = 0* for power buildup then buildup *b* is a
+constant value *B<sub>max</sub>* for all times *t*. Figure 3-4 shows how buildup
 is adjusted between and after storm events. Assume that b*0* represents
 the amount of buildup present at the start of a storm event. The event
 washes off part of that buildup leaving an amount *b1* remaining.
@@ -2503,29 +2459,29 @@ quantities are known for each subcatchment:
 - *L* (the curb length of streets in the subcatchment (if used to
   normalize buildup)),
 
-- *f~LU~* ( the fraction of the subcatchment's area devoted to a
+- *f<sub>LU</sub>* ( the fraction of the subcatchment's area devoted to a
   particular land use,
 
-- *B~max~*, *K~B~,* and *N~B~* for each combination of pollutant and
+- *B<sub>max</sub>*, *K<sub>B</sub>,* and *N<sub>B</sub>* for each combination of pollutant and
   land use.
 
 Note that a pollutant's buildup constants vary by land use, not by
 subcatchment. That is, if residential land is assigned a set of buildup
 constants then those constants apply to the residential portion of all
-subcatchments. Also available is the buildup *m~B~* (in mass units) for
+subcatchments. Also available is the buildup *m<sub>B</sub>* (in mass units) for
 each pollutant on each land use in the subcatchment at the start of the
-current time period. Initially at time zero, *m~B~* is established in
+current time period. Initially at time zero, *m<sub>B</sub>* is established in
 one of two ways:
 
 1.  If the user specified an initial buildup (as mass per area) of the
-    pollutant over the entire subcatchment, then the initial *m~B~*
+    pollutant over the entire subcatchment, then the initial *m<sub>B</sub>*
     equals that buildup times the area devoted to the particular land
     use.
 
 2.  Otherwise a user-supplied antecedent dry days value is used with
     Equation 3-1 to determine an initial buildup per area (or curb
     length) with the result multiplied by the area (or curb length)
-    associated with the land use to obtain an initial mass *m~B~*.
+    associated with the land use to obtain an initial mass *m<sub>B</sub>*.
 
 The computational steps for updating the buildup of a specific
 pollutant - land use combination within a subcatchment over a single
@@ -2540,7 +2496,7 @@ time step are:
     snow is present and the current snow depth is less than 0.001 inches
     then no buildup addition occurs.
 
-3.  Convert the total mass of buildup *m~B~* to a normalized mass *b* by
+3.  Convert the total mass of buildup *m<sub>B</sub>* to a normalized mass *b* by
     dividing it by $f_{LU}A$ if buildup is normalized with respect to
     area or $f_{LU}L$ if normalized with respect to curb length.
 
@@ -2550,11 +2506,11 @@ time step are:
 5.  Add the length of the current runoff time step to *t* and use this
     value in Equation 3-1 to find an updated value for *b*.
 
-6.  Convert the new normalized buildup *b* back to total mass *m~B~* by
+6.  Convert the new normalized buildup *b* back to total mass *m<sub>B</sub>* by
     multiplying it by the normalizing factor (either $f_{LU}A$ or
     $f_{LU}L$).
 
-This process will produce a new set of pollutant mass buildups *m~B~* at
+This process will produce a new set of pollutant mass buildups *m<sub>B</sub>* at
 the end of the runoff time step for each land use within each
 subcatchment. These buildups will then be used to compute washoff loads
 (as described in Section 4) when the next wet period occurs.
@@ -2599,32 +2555,24 @@ SWMM allows pollutant buildup within a given land use area to be reduced
 by street sweeping operations. This reduction is accounted for by having
 the user supply the following set of parameters:
 
-  ---------------------------------------------------------------------------
-  *SS~1~*   =   month/day of the year when street sweeping operations start
-  --------- --- -------------------------------------------------------------
-  *SS~2~*   =   month/day of the year when street sweeping operations end
-
-  *SSI*     =   number of days between street sweeping for a given land use
-
-  *SS0*     =   number of days since the land use was last swept at the start
-                of the simulation
-
-  *SSA*     =   fraction of buildup on the land use that is available for
-                removal by sweeping
-
-  *SSE*     =   fraction of the available buildup of a pollutant on a given
-                land use that is removed by sweeping
-  ---------------------------------------------------------------------------
+| Symbol | | Description |
+| --- | --- | --- |
+| *SS<sub>1</sub>* | = | month/day of the year when street sweeping operations start |
+| *SS<sub>2</sub>* | = | month/day of the year when street sweeping operations end |
+| *SSI* | = | number of days between street sweeping for a given land use |
+| *SS0* | = | number of days since the land use was last swept at the start of the simulation |
+| *SSA* | = | fraction of buildup on the land use that is available for removal by sweeping |
+| *SSE* | = | fraction of the available buildup of a pollutant on a given land use that is removed by sweeping |
 
 The availability factor, SSA, is intended to account for the fraction of
-a land use's area that is actually "sweepable." A single set of *SS~1~*
-and *SS~2~* values is supplied for the entire study area, *SSI*, *SS0*,
+a land use's area that is actually "sweepable." A single set of *SS<sub>1</sub>*
+and *SS<sub>2</sub>* values is supplied for the entire study area, *SSI*, *SS0*,
 and *SSA* values are supplied for each land use category within the
 study area, and an SSE value is supplied for each combination of
 pollutant and land use category.
 
 +:--------------+:-------------:+:-------------:+:-------------:+:-------------:+:-------------:+:--------------:+:-------------:+:-------------:+:-------------:+:-------------:+:-------------:+:-------------:+:-------------:+:-------------:+:-------------:+
-| **Street      | **Total**     | **BOD~5~**    | **COD**       | **KN**        | **PO~4~**     | **Pesticides** | **Cd**        | **Sr**        | **Cu**        | **Ni**        | **Cr**        | **Zn**        | **Mn**        | **Pb**        | **Fe**        |
+| **Street      | **Total**     | **BOD<sub>5</sub>**    | **COD**       | **KN**        | **PO<sub>4</sub>**     | **Pesticides** | **Cd**        | **Sr**        | **Cu**        | **Ni**        | **Cr**        | **Zn**        | **Mn**        | **Pb**        | **Fe**        |
 | Cleaning      |               |               |               |               |               |                |               |               |               |               |               |               |               |               |               |
 | Program and   | **Solids**    |               |               |               |               |                |               |               |               |               |               |               |               |               |               |
 | Street        |               |               |               |               |               |                |               |               |               |               |               |               |               |               |               |
@@ -2713,8 +2661,8 @@ pollutant and land use category.
 : []{#_Toc454288807 .anchor}**Table 3‑4 Removal efficiencies from street
 cleaner path for various street cleaning programs (Pitt, 1979)**
 
-If the date of the current time step falls within *SS~1~* and *SS~2~*
-then the buildup *m~B~* found from the previous steps of Section 3.3
+If the date of the current time step falls within *SS<sub>1</sub>* and *SS<sub>2</sub>*
+then the buildup *m<sub>B</sub>* found from the previous steps of Section 3.3
 (for a specific pollutant and land use) is modified as follows:
 
 1.  If the current rainfall is above 0.001 in/hr or there is more than
@@ -2778,18 +2726,18 @@ basis of land uses for most of them.
 As an example, suppose dust and dirt (DD) is to be simulated as a
 co-pollutant and values are taken for commercial land use and from the
 "All Data" row in Table 3-5. Since the data are given as lb ·
-curb-mile^-1^ · day^-1^, linear buildup is assumed and for commercial
+curb-mile<sup>-1</sup> · day<sup>-1</sup>, linear buildup is assumed and for commercial
 land use DD buildup (average for all data) is 116 lb/(curb-mile -- day).
 Converting from pounds to milligrams (453,592 mg/lb) and mile to 1000-ft
-(5.28 1000-ft/mi) yields *K~B~* = 9.97 x 10^6^ mg/1000-ft-day in
-Equation 3-1a, and of course, *N~B~* = 1. Constituent fractions are
+(5.28 1000-ft/mi) yields *K<sub>B</sub>* = 9.97 x 10<sup>6</sup> mg/1000-ft-day in
+Equation 3-1a, and of course, *N<sub>B</sub>* = 1. Constituent fractions are
 available from the table. For instance, BOD5 as a fraction of DD for
 commercial land use would be 7.19 mg/g (or 0.00719 as a SWMM
 Co-fraction), 0.06 mg/g for total phosphorus, 0.00002 mg/g for Hg, and
 36,900 MPN/g for fecal coliforms (36.9 MPN/mg as a SWMM input
 co-fraction). Direct loading rates could be computed for each
 constituent as an alternative. For instance, for BOD5, the linear
-buildup rate would equal 9.97 x 10^6^ · 0.00719 = 3,800 mg / (1000-ft
+buildup rate would equal 9.97 x 10<sup>6</sup> · 0.00719 = 3,800 mg / (1000-ft
 curb - day).
 
 Table 4-19 on pp. 4-94, 4-95, 4-96.It must be stressed once again that
@@ -2802,7 +2750,7 @@ algorithms are usu­ally linearly proportional to buildup rates. If twice
 the quantity is avail­able at the beginning of a storm, the
 concentrations and loads will be usually be doubled. Calibration is
 probably easiest with linear buildup parameters, but it depends on the
-rate at which the limiting build­up, i.e., *B~max~*, is approached. If
+rate at which the limiting build­up, i.e., *B<sub>max</sub>*, is approached. If
 the limiting value is reached during the inter­val between most storms,
 then calibration using it will also have almost a linear effect on
 concentrations and loads.
@@ -2819,19 +2767,19 @@ concentrations and loads.
 | Accumulation    |                                                                                                   |
 | kg/curb-km/ day |                                                                                                   |
 +-----------------+---------------+-----------------+---------------+----------------+----------------+---------------+
-| Chicago^(1)^    | Mean          | 10              | 31            | 51             | 92             | 44            |
+| Chicago<sup>(1)</sup>    | Mean          | 10              | 31            | 51             | 92             | 44            |
 |                 |               |                 |               |                |                |               |
 |                 | Range         | 5-27            | 17-43         | 80-151         | 80-151         | 5-15          |
 |                 |               |                 |               |                |                |               |
 |                 | N             | 60              | 93            | 126            | 55             | 334           |
 +-----------------+---------------+-----------------+---------------+----------------+----------------+---------------+
-| Washington^(2)^ | Mean          |                |              | 38             |               | 38            |
+| Washington<sup>(2)</sup> | Mean          |                |              | 38             |               | 38            |
 |                 |               |                 |               |                |                |               |
 |                 | Range         |                |              | 10-103         |               | 10-103        |
 |                 |               |                 |               |                |                |               |
 |                 | N             |                |              | 22             |               | 22            |
 +-----------------+---------------+-----------------+---------------+----------------+----------------+---------------+
-| Multi-City^(3)^ | Mean          | 51              | 44            | 13             | 81             | 49            |
+| Multi-City<sup>(3)</sup> | Mean          | 51              | 44            | 13             | 81             | 49            |
 |                 |               |                 |               |                |                |               |
 |                 | Range         | 1-268           | 2-217         | 1-73           | 1-423          | 1-423         |
 |                 |               |                 |               |                |                |               |
@@ -2867,13 +2815,13 @@ concentrations and loads.
 |                 |               |                 |               |                |                |               |
 |                 | N             |                |              | 22             |               | 22            |
 +-----------------+---------------+-----------------+---------------+----------------+----------------+---------------+
-| NO~3~           | Mean          |                |              | 24             |               | 24            |
+| NO<sub>3</sub>           | Mean          |                |              | 24             |               | 24            |
 |                 |               |                 |               |                |                |               |
 | (mg/kg)         | Range         |                |              | 10-35          |               | 10-35         |
 |                 |               |                 |               |                |                |               |
 |                 | N             |                |              | 21             |               | 21            |
 +-----------------+---------------+-----------------+---------------+----------------+----------------+---------------+
-| NO~2~-N         | Mean          |                |              | 0              |               | 15            |
+| NO<sub>2</sub>-N         | Mean          |                |              | 0              |               | 15            |
 |                 |               |                 |               |                |                |               |
 | (mg/kg)         | Range         |                |              | 0              |               | 0             |
 |                 |               |                 |               |                |                |               |
@@ -2885,7 +2833,7 @@ concentrations and loads.
 |                 |               |                 |               |                |                |               |
 |                 | N             |                |              | 21             |               | 21            |
 +-----------------+---------------+-----------------+---------------+----------------+----------------+---------------+
-| PO~4~-P         | Mean          | 49              | 58            | 60             | 26             | 53            |
+| PO<sub>4</sub>-P         | Mean          | 49              | 58            | 60             | 26             | 53            |
 |                 |               |                 |               |                |                |               |
 | (mg/kg)         | Range         | 20-109          | 20-73         | 0-142          | 14-30          | 0-142         |
 |                 |               |                 |               |                |                |               |
@@ -2910,9 +2858,9 @@ and dirt buildup rates and on pollutant fractions (after Manning et al.,
 |               |       |                 |               |                |                |              |
 |               | N     |                |              | 22             |               | 22           |
 +---------------+-------+-----------------+---------------+----------------+----------------+--------------+
-| Asbestos      | Mean  |                |              | 126×10^6^      |               | 126×10^6^    |
+| Asbestos      | Mean  |                |              | 126×10<sup>6</sup>      |               | 126×10<sup>6</sup>    |
 |               |       |                 |               |                |                |              |
-| fibers/kg     | Range |                |              | 0-380×10^6^    |               | 0-380×10^6^  |
+| fibers/kg     | Range |                |              | 0-380×10<sup>6</sup>    |               | 0-380×10<sup>6</sup>  |
 |               |       |                 |               |                |                |              |
 |               | N     |                |              | 16             |               | 16           |
 +---------------+-------+-----------------+---------------+----------------+----------------+--------------+
@@ -3032,7 +2980,7 @@ and dirt buildup rates and on pollutant fractions (after Manning et al.,
 +---------------+-------+------------------+------------------+------------------+------------------+------------------+
 | Fecal Coli    | Geo.  | 82,500           | 38,800           | 36,900           | 30,700           | 94,700           |
 |               | Mean  |                  |                  |                  |                  |                  |
-| No./gram      |       | 26-130,000       | 1,500-10^6^      | 140-970,000      | 67-530,000       | 26-1,000,000     |
+| No./gram      |       | 26-130,000       | 1,500-10<sup>6</sup>      | 140-970,000      | 67-530,000       | 26-1,000,000     |
 |               | Range |                  |                  |                  |                  |                  |
 |               |       | 65               | 96               | 84               | 42               | 287              |
 |               | N     |                  |                  |                  |                  |                  |
@@ -3089,14 +3037,10 @@ flushed from streets using a sprinkler system. From the figure it would
 appear that an exponential relationship could be developed to describe
 washoff of the form:
 
-  ------------------------------------------------------------------------
-         $W(t) = m_{B}(0)(1 - e^{- kt})$                           (4-1)
-  ------ --------------------------------------------------------- -------
-
-  ------------------------------------------------------------------------
+$$W(t) = m_{B}(0)(1 - e^{- kt}) \qquad \text{(4-1)}$$
 
 where *W* = the cumulative mass of constituent washed off at time *t*,
-*m~B~(0)* = the initial mass of constituent on the surface at time 0,
+*m<sub>B</sub>(0)* = the initial mass of constituent on the surface at time 0,
 and *k* = a coefficient.
 
 It is clear that the coefficient, *k*, is a function of both particle
@@ -3119,46 +3063,34 @@ included in the original SWMM release (and all versions to date) that
 the rate of washoff, *w*, (e.g., mg/hr) at any time is proportional to
 the remaining pollutant buildup:
 
-  ------------------------------------------------------------------------
-         $$w = \frac{dm_{B}}{dt} = - km_{B}$$                      (4-2)
-  ------ --------------------------------------------------------- -------
-
-  ------------------------------------------------------------------------
+$$w = \frac{dm_{B}}{dt} = - km_{B} \qquad \text{(4-2)}$$
 
 It follows then that the amount of buildup *B* remaining on the surface
 after a time *t* of washoff is:
 
-  ------------------------------------------------------------------------
-         $$m_{B}(t) = m_{B}(0)e^{- kt}$$                           (4-3)
-  ------ --------------------------------------------------------- -------
-
-  ------------------------------------------------------------------------
+$$m_{B}(t) = m_{B}(0)e^{- kt} \qquad \text{(4-3)}$$
 
 This relation was first proposed by Mr. Allen J. Burdoin, a consultant
 to Metcalf and Eddy, during the original SWMM development. The
 coefficient *k* may be evaluated by assuming it is proportional to
 runoff rate:
 
-  ------------------------------------------------------------------------
-         $$k = K_{W}q$$                                            (4-4)
-  ------ --------------------------------------------------------- -------
+$$k = K_{W}q \qquad \text{(4-4)}$$
 
-  ------------------------------------------------------------------------
-
-where *K~W~* = a washoff coefficient (in^-1^) and *q* = the runoff rate
+where *K<sub>W</sub>* = a washoff coefficient (in<sup>-1</sup>) and *q* = the runoff rate
 over the subcatchment (in/hr).
 
 Burdoin assumed that one-half inch of total runoff in one hour would
 wash off 90 percent of the initial surface load, leading to the now
-familiar (in SWMM modeling circles) value of *K~W~* of 4.6 in.^-1^. (The
+familiar (in SWMM modeling circles) value of *K<sub>W</sub>* of 4.6 in.<sup>-1</sup>. (The
 actual time distribution of intensity does not affect the calculation of
-*K~W~.*) To the authors' knowledge, there are no direct measurements to
+*K<sub>W</sub>.*) To the authors' knowledge, there are no direct measurements to
 validate this assumption, which is so often employed.
 
-Sonnen (1980) estimated values for *K~W~* from sediment transport theory
-ranging from 0.052 to 6.6 in.^-1^, increasing as particle diameter
+Sonnen (1980) estimated values for *K<sub>W</sub>* from sediment transport theory
+ranging from 0.052 to 6.6 in.<sup>-1</sup>, increasing as particle diameter
 decreases, rainfall intensity decreases, and as catchment area
-decreases. He pointed out that 4.6 in.^-1^ is relatively large compared
+decreases. He pointed out that 4.6 in.<sup>-1</sup> is relatively large compared
 to most of his calculated values. Although the exponential washoff
 formulation of Equations 4-2 and 4-3 is not completely satisfactory as
 explained below, it has been verified experimentally by Nakamura (1984a,
@@ -3172,30 +3104,18 @@ concentrations as a function of time. To see this, substitute (4-4) into
 (4-2) and convert the mass rate *w* to a concentration by dividing by
 the volumetric runoff rate *qA*, where *A* is the subcatchment area:
 
-  -------------------------------------------------------------------------------------------------------
-         $$c = \frac{(\frac{dm_{B}}{dt})}{qA} = \frac{K_{W}qm_{B}}{qA} = \frac{K_{W}m_{B}}{A}$$   (4-5)
-  ------ ---------------------------------------------------------------------------------------- -------
-
-  -------------------------------------------------------------------------------------------------------
+$$c = \frac{(\frac{dm_{B}}{dt})}{qA} = \frac{K_{W}qm_{B}}{qA} = \frac{K_{W}m_{B}}{A} \qquad \text{(4-5)}$$
 
 Thus concentration *c* would decrease continually as the remaining
-buildup *m~B~* does the same over time. To avoid this behavior, the
+buildup *m<sub>B</sub>* does the same over time. To avoid this behavior, the
 relationship in (4-4) was modified to be:
 
-  ------------------------------------------------------------------------
-         $$k = K_{W}q^{N_{W}}$$                                    (4-6)
-  ------ --------------------------------------------------------- -------
+$$k = K_{W}q^{N_{W}} \qquad \text{(4-6)}$$
 
-  ------------------------------------------------------------------------
-
-where *N~W\ ~* is a washoff exponent. The resulting equation for
+where *N<sub>W</sub>* is a washoff exponent. The resulting equation for
 exponential washoff now becomes:
 
-  ------------------------------------------------------------------------
-         $$w = K_{W}q^{N_{W}}m_{B}$$                               (4-7)
-  ------ --------------------------------------------------------- -------
-
-  ------------------------------------------------------------------------
+$$w = K_{W}q^{N_{W}}m_{B} \qquad \text{(4-7)}$$
 
 with units of mass/hour.
 
@@ -3206,14 +3126,10 @@ result that load rate of sediment is proportional to flow rate raised to
 a power. For instance, sediment data from streams can usually be
 described by a sediment rating curve of the form
 
-  ------------------------------------------------------------------------
-         $$w = K_{W}Q^{N_{W}}$$                                    (4-8)
-  ------ --------------------------------------------------------- -------
-
-  ------------------------------------------------------------------------
+$$w = K_{W}Q^{N_{W}} \qquad \text{(4-8)}$$
 
 where *w* is sediment loading rate (mass/sec), *Q* is flow rate (cfs),
-and *K~W~* and *N~W\ ~* are coefficients. Due to a hysteresis effect,
+and *K<sub>W</sub>* and *N<sub>W</sub>* are coefficients. Due to a hysteresis effect,
 such relationships may vary during the passing of a flood wave, but the
 functional form is evident in many rivers, e.g., Vanoni (1975), pp.
 220-225, Graf (1971), pp. 234-241, and Simons and Senturk (1977), p.
@@ -3222,7 +3138,7 @@ of similar relationships describing sediment yield from a catchment
 e.g., Vanoni (1975), pp. 472-481.
 
 Note the similarity of Equation 4-8 to the exponential washoff function
-4-7. The presence of buildup *m~B~* in Equation 4-7 reflects the fact
+4-7. The presence of buildup *m<sub>B</sub>* in Equation 4-7 reflects the fact
 that the total quantity of sediment washed off a largely impervious
 urban area is likely to be limited to the amount built up during dry
 weather. Natural catchments and rivers from which Equation 4-8 is
@@ -3232,14 +3148,10 @@ Also note that the form of the runoff rate used in the two functions is
 different. Exponential washoff uses a normalized runoff rate, *q* in
 (inches/hr), over the total subcatchment surface (both pervious and
 impervious areas). Rating curve washoff uses the volumetric runoff rate
-*Q* in cfs, over the fraction *f~LU~* of total subcatchment area *A* (in
+*Q* in cfs, over the fraction *f<sub>LU</sub>* of total subcatchment area *A* (in
 acres) devoted to the land use being analyzed. That is,
 
-  ------------------------------------------------------------------------
-         $$Q = qf_{LU}A$$                                          (4-9)
-  ------ --------------------------------------------------------- -------
-
-  ------------------------------------------------------------------------
+$$Q = qf_{LU}A \qquad \text{(4-9)}$$
 
 The rating curve approach may be combined with constituent buildup if
 desired to limit the total mass that can be washed off. Otherwise, there
@@ -3270,15 +3182,11 @@ particularly valuable data. As a practical matter, EMCs are the most
 common parameters used to estimate nonpoint water quality loads in SWMM
 and in most other models. The EMC washoff function has the form:
 
-  -------------------------------------------------------------------------
-         $$w = K_{W}qf_{LU}A$$                                     (4-10)
-  ------ --------------------------------------------------------- --------
+$$w = K_{W}qf_{LU}A \qquad \text{(4-10)}$$
 
-  -------------------------------------------------------------------------
-
-where now *K~W~* is the EMC concentration expressed in the same
+where now *K<sub>W</sub>* is the EMC concentration expressed in the same
 volumetric units as flow rate (e.g., if the EMC is in mg/L and flow is
-in cfs then *K~W~* = EMC × 28.3 L/ft^3^). As with rating curve washoff,
+in cfs then *K<sub>W</sub>* = EMC × 28.3 L/ft<sup>3</sup>). As with rating curve washoff,
 $qf_{LU}A$ is the fraction of the total runoff rate that applies to the
 land use being analyzed. With EMC washoff all storms will have identical
 within-storm washoff concentrations. Only the loading rate will vary in
@@ -3286,7 +3194,7 @@ direct proportion to runoff rate.
 
 ### 4.2.4 Comparison of Models
 
-Table 4-1 lists the units of the washoff coefficient *K~W~* for the
+Table 4-1 lists the units of the washoff coefficient *K<sub>W</sub>* for the
 three different washoff models, assuming pollutant mass units of
 milligrams. Take note that the units of washoff rate *w* are mass/hr for
 exponential washoff and mass/sec for the other two functions. Also note
@@ -3301,16 +3209,16 @@ routing option is used.
   -----------------------------------------------------------------------
   **Model (Washoff          **US Units (flow in     **SI Units (flow in
   Units)**                        cfs)**                  cms)**
-  ----------------------- ----------------------- -----------------------
-  Exponential (mg/hr)      (in/hr)^-N^~W~ hr^-1^   (mm/hr)^-N^~W~ hr^-1^
 
-  Rating Curve (mg/sec)    (mg/sec) (cfs)^-N^~W~   (mg/sec) (cms)^-N^~W~
+|  |  |  |
+| --- | --- | --- |
+| Exponential (mg/hr) | (in/hr)<sup>-N</sup><su | b>W</sub> hr<sup>-1</sup>   (mm/hr)<sup>-N</sup><sub>W</sub> hr<sup>-1</sup> |
+| Rating Curve (mg/sec) | (mg/sec) (cfs)<sup>-N</ | sup><sub>W</sub>   (mg/sec) (cms)<sup>-N</sup><sub>W</sub> |
+| EMC (mg/sec) | mg/ft<sup>3</sup> | mg/m<sup>3</sup> |
 
-  EMC (mg/sec)                   mg/ft^3^                 mg/m^3^
-  -----------------------------------------------------------------------
 
   : []{#_Toc454288809 .anchor}**Table 4‑1 Units of the washoff
-  coefficient *K~W~* for different washoff models**
+  coefficient *K<sub>W</sub>* for different washoff models**
 
 Figure 4-2 compares the shapes of the runoff pollutgraphs for the three
 different washoff functions for an initial buildup of 20 lbs of
@@ -3321,14 +3229,14 @@ remove about 45 percent of the initial buildup. The resulting
 coefficient values are:
 
   -----------------------------------------------------------------------
-  **Function**                     ***K~W~***              ***N~W~***
-  ----------------------- ----------------------------- -----------------
-  Exponential              0.45 (in/hr)^-1.5^(hr)^-1^          1.5
+  **Function**                     ***K<sub>W</sub>***              ***N<sub>W</sub>***
 
-  Rating Curve               850 (mg/sec)(cfs)^-1.5^           1.5
+|  |  |  |
+| --- | --- | --- |
+| Exponential | 0.45 (in/hr)<sup>-1.5</sup>(h | r)<sup>-1</sup>          1.5 |
+| Rating Curve | 850 (mg/sec)(cfs)<sup>-1.5< | /sup>           1.5 |
+| EMC | 20 mg/L x 28.3 L/ft<sup>3</ | sup>            \- |
 
-  EMC                        20 mg/L × 28.3 L/ft^3^            \-
-  -----------------------------------------------------------------------
 
 <figure>
 <img src="./media/media/image13.png"
@@ -3338,16 +3246,16 @@ class="anchor"></span><strong>Figure 4‑2 Comparison of washoff
 functions</strong></p></figcaption>
 </figure>
 
-It is possible to estimate a *K~W~* for rating curve washoff that will
+It is possible to estimate a *K<sub>W</sub>* for rating curve washoff that will
 produce results roughly similar to those for exponential washoff by
-multiplying the exponential *K~W~* by an average buildup seen over a
+multiplying the exponential *K<sub>W</sub>* by an average buildup seen over a
 storm event and converting from mass/hr to mass/sec. So for this
 example, assuming an average buildup of 15 lb over the event, the result
 is:
 
 > $$K_{W,\ RC} = 0.45 \times 15\ lb\  \times 454000\ (\frac{mg}{lb)\  \times (\frac{1}{3600)\ (\frac{hr}{sec) \approx 850}}}$$
 
-The exponential *K~W~* value of 0.45 was selected by trial and error to
+The exponential *K<sub>W</sub>* value of 0.45 was selected by trial and error to
 achieve the target of removing 45 percent of the initial buildup.
 
 ### 4.2.5 Wet Deposition and Runon
@@ -3374,34 +3282,23 @@ pollutant and volume of the washoff stream originating from the ponded
 surface water that receives upstream run-on and direct deposition can be
 written as:
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$\frac{d\left( V_{ponded}C_{ponded} \right)}{dt} = Q_{runon}C_{runon} + Q_{ppt}C_{ppt} - C_{ponded}\left( Q_{infil} + Q_{out} \right)$$     (4-11)
-  ------ ------------------------------------------------------------------------------------------------------------------------------------------ --------
-         $$\frac{dV_{ponded}}{dt} = Q_{runon} + Q_{ppt} - Q_{infil} - Q_{evap} - Q_{out}$$                                                            (4-12)
+$$\frac{d\left( V_{ponded}C_{ponded} \right)}{dt} = Q_{runon}C_{runon} + Q_{ppt}C_{ppt} - C_{ponded}\left( Q_{infil} + Q_{out} \right) \qquad \text{(4-11)}$$
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\frac{dV_{ponded}}{dt} = Q_{runon} + Q_{ppt} - Q_{infil} - Q_{evap} - Q_{out} \qquad \text{(4-12)}$$
 
 with the variables defined as follows:
 
-  ------------------------------------------------------------------------------
-      *V~ponded~*    =   volume of water ponded over the subcatchment (ft^3^)
-  --- ------------- ---- -------------------------------------------------------
-      *C~ponded~*    =   concentration of pollutant in the ponded water (mg/L)
-
-      *Q~runon~*     =   flow rate of runon onto the subcatchment (cfs)
-
-      *C~runon~*     =   concentration of pollutant in the runon stream (mg/L)
-
-      *Q~ppt~*       =   precipitation rate (cfs)
-
-      *C~ppt~*       =   concentration of pollutant in precipitation (mg/L)
-
-      *Q~infil~*     =   infiltration rate (cfs)
-
-      *Q~evap~*      =   evaporation rate (cfs)
-
-      *Q~out~*       =   rate of runoff leaving the subcatchment (cfs).
-  ------------------------------------------------------------------------------
+| Symbol | | Description |
+| --- | --- | --- |
+| *V<sub>ponded</sub>* | = | volume of water ponded over the subcatchment (ft<sup>3</sup>) |
+| *C<sub>ponded</sub>* | = | concentration of pollutant in the ponded water (mg/L) |
+| *Q<sub>runon</sub>* | = | flow rate of runon onto the subcatchment (cfs) |
+| *C<sub>runon</sub>* | = | concentration of pollutant in the runon stream (mg/L) |
+| *Q<sub>ppt</sub>* | = | precipitation rate (cfs) |
+| *C<sub>ppt</sub>* | = | concentration of pollutant in precipitation (mg/L) |
+| *Q<sub>infil</sub>* | = | infiltration rate (cfs) |
+| *Q<sub>evap</sub>* | = | evaporation rate (cfs) |
+| *Q<sub>out</sub>* | = | rate of runoff leaving the subcatchment (cfs). |
 
 <figure>
 <img src="./media/media/image14.png"
@@ -3423,23 +3320,23 @@ Note the following:
 3.  Infiltration removes a proportional amount of mass regardless of
     constituent.
 
-4.  Evaporation removes volume but not mass causing *C~ponded~* to
+4.  Evaporation removes volume but not mass causing *C<sub>ponded</sub>* to
     increase.
 
-5.  *Q~out~* is the total runoff flow leaving the subcatchment. It can
-    be lower than the *Q~runoff~* used in the buildup washoff functions
+5.  *Q<sub>out</sub>* is the total runoff flow leaving the subcatchment. It can
+    be lower than the *Q<sub>runoff</sub>* used in the buildup washoff functions
     if internal routing between sub-areas is employed.
 
-6.  The only unknown to solve for is *C~ponded~*, since all flow rates
+6.  The only unknown to solve for is *C<sub>ponded</sub>*, since all flow rates
     and volumes are known from the runoff calculations done prior to
     washoff analysis.
 
-*W~washoff~* is the total washoff rate obtained by adding together the
+*W<sub>washoff</sub>* is the total washoff rate obtained by adding together the
 washoff rates *w* computed for the buildup on each land use. The runoff
-load from ponded surface storage, *W~ponded~*, is *Q~out~ C~ponded.~*
+load from ponded surface storage, *W<sub>ponded</sub>*, is *Q<sub>out</sub> C<sub>ponded.</sub>*
 The total mass flow rate of pollutant leaving the subcatchment,
-*W~out~*, is *W~washoff~* + *W~ponded~*. And finally, the concentration
-of pollutant in the subcatchment's runoff is *W~out~ / Q~out~*.
+*W<sub>out</sub>*, is *W<sub>washoff</sub>* + *W<sub>ponded</sub>*. And finally, the concentration
+of pollutant in the subcatchment's runoff is *W<sub>out</sub> / Q<sub>out</sub>*.
 
 Note that this scheme requires that an additional set of state variables
 be kept track of over a simulation, namely the ponded mass
@@ -3457,15 +3354,14 @@ practices are listed in Table 4-2.
 
   -----------------------------------------------------------------------
   **Constituent**          **Vegetated Swales**      **Buffer Strips**
-  ----------------------- ----------------------- -----------------------
-  Total Nitrogen                  0 -- 25                20 -- 60
 
-  Total Phosphorus               29 -- 45                20 -- 60
+|  |  |  |
+| --- | --- | --- |
+| Total Nitrogen | 0 -- 25 | 20 -- 60 |
+| Total Phosphorus | 29 -- 45 | 20 -- 60 |
+| Suspended Solids | 60 -- 83 | 20 -- 80 |
+| Heavy Metals | 35 | 20 - 80 |
 
-  Suspended Solids               60 -- 83                20 -- 80
-
-  Heavy Metals                      35                    20 - 80
-  -----------------------------------------------------------------------
 
   : []{#_Toc454288810 .anchor}**Table 4‑2 Percent removals for vegetated
   swales and filter strips**
@@ -3477,37 +3373,25 @@ category of land use. For washoff of surface buildup, they are applied
 separately to the washoff rate computed for each pollutant in each land
 use in a given subcatchment:
 
-  -----------------------------------------------------------------------
-         $$W_{washoff} = \sum_{j}^{}{w_{jp}(1 - R_{jp})}$$         4-13
-  ------ --------------------------------------------------------- ------
+$$W_{washoff} = \sum_{j}^{}{w_{jp}(1 - R_{jp})} \qquad \text{(4-13)}$$
 
-  -----------------------------------------------------------------------
-
-where *W~washoff~* is the total washoff rate (mass/sec) from buildup of
-pollutant *p* over the subcatchment, *w~jp~* is the washoff rate of
-pollutant *p* over land use *j* in the subcatchment*,* and *R~jp~* is
+where *W<sub>washoff</sub>* is the total washoff rate (mass/sec) from buildup of
+pollutant *p* over the subcatchment, *w<sub>jp</sub>* is the washoff rate of
+pollutant *p* over land use *j* in the subcatchment*,* and *R<sub>jp</sub>* is
 the BMP removal factor for pollutant p and land use j.
 
 For the pollutant load from rainfall/runon across the entire
 subcatchment (and therefore all land uses) an area weighted average
 removal factor is used:
 
-  ---------------------------------------------------------------------------------
-         $$R_{avg,p} = \frac{\sum_{j}^{}{R_{jp}A_{j}}}{\sum_{j}^{}A_{j}}$$   4-14
-  ------ ------------------------------------------------------------------- ------
+$$R_{avg,p} = \frac{\sum_{j}^{}{R_{jp}A_{j}}}{\sum_{j}^{}A_{j}} \qquad \text{(4-14)}$$
 
-  ---------------------------------------------------------------------------------
+where *A<sub>j</sub>* is the area of land use *j* in the subcatchment. Thus
+*W<sub>ponded</sub>* for pollutant *p* in the subcatchment becomes:
 
-where *A~j~* is the area of land use *j* in the subcatchment. Thus
-*W~ponded~* for pollutant *p* in the subcatchment becomes:
+$$W_{ponded} = Q_{out}C_{ponded}(1 - R_{avg,p}) \qquad \text{(4-15)}$$
 
-  ------------------------------------------------------------------------
-         $$W_{ponded} = Q_{out}C_{ponded}(1 - R_{avg,p})$$          4-15
-  ------ ---------------------------------------------------------- ------
-
-  ------------------------------------------------------------------------
-
-where it is understood that *Q~out~* and *C~ponded~* refer to the
+where it is understood that *Q<sub>out</sub>* and *C<sub>ponded</sub>* refer to the
 pollutant and subcatchment of interest.
 
 ## 4.3 Computational Steps
@@ -3529,36 +3413,27 @@ from washoff of dry deposition buildup. The following quantities are
 known for each subcatchment, pollutant, and user-defined land use at the
 start of the current time step of length *∆t*:
 
-  ------------------------------------------------------------------------------
-       *K~W~,*       washoff coefficients for each pollutant -- land use
-       *N~W~*        combination
-  ---- ------------- -----------------------------------------------------------
-       *R~jp~*       BMP removal factor for each pollutant -- land use
-                     combination
-
-       *A*           subcatchment area (acres)
-
-       $$f_{LUj}$$   fraction of subcatchment area occupied by each land use *j*
-
-       *q*           runoff rate per unit area before any internal re-routing is
-                     made (in/hr)
-
-       $$m_{Bjp}$$   mass of buildup of each pollutant *p* on each land use area
-                     *j* of the subcatchment
-  ------------------------------------------------------------------------------
+| Symbol | Description |
+| --- | --- |
+| *K<sub>W</sub>*, *N<sub>W</sub>* | washoff coefficients for each pollutant -- land use combination |
+| *R<sub>jp</sub>* | BMP removal factor for each pollutant -- land use combination |
+| *A* | subcatchment area (acres) |
+| $f_{LUj}$ | fraction of subcatchment area occupied by each land use *j* |
+| *q* | runoff rate per unit area before any internal re-routing is made (in/hr) |
+| $m_{Bjp}$ | mass of buildup of each pollutant *p* on each land use area *j* of the subcatchment |
 
 The computational steps for finding the washoff rate from pollutant
 buildup on a particular subcatchment at the current time step are:
 
 1.  Initialize the washoff rate of each pollutant *p* over the entire
-    subcatchment, *W~washoff,p~*, to 0.
+    subcatchment, *W<sub>washoff,p</sub>*, to 0.
 
 2.  For each combination of pollutant *p* and land use *j* do the
     following:
 
     a.  If the runoff rate *q* is less than 0.001 in/hr or if buildup is
         being modeled and its current value is zero then the washoff
-        rate *w~jp~* = 0.
+        rate *w<sub>jp</sub>* = 0.
 
     b.  Otherwise use the appropriate washoff function (Equation 4-7,
         4-8, or 4-10) to find the washoff rate $w_{jp}$ for each
@@ -3572,13 +3447,13 @@ buildup on a particular subcatchment at the current time step are:
         $w_{jp} = w_{jp}(1 - R_{jp})$.
 
     e.  Add the washoff rate for this land use to the total rate
-        *W~washoff,p~* for the subcatchment:
+        *W<sub>washoff,p</sub>* for the subcatchment:
         $W_{washoff,p} = W_{washoff,p} + w_{jp}$.
 
 3.  After all land uses and pollutants have been evaluated, increase the
     total washoff rate of pollutant *p* by the amount contributed by any
     co-pollutant *k*:
-    $W_{washoff,p} = W_{washoff,p} + f_{pk}W_{washoff,k}$ where *f~pk~*
+    $W_{washoff,p} = W_{washoff,p} + f_{pk}W_{washoff,k}$ where *f<sub>pk</sub>*
     is the co-pollutant fraction.
 
 ### 4.3.2 Washoff Load from Rainfall/Runon
@@ -3589,35 +3464,22 @@ total washoff load from a given subcatchment. The following quantities
 are known for each subcatchment and pollutant at the start of the
 current time step of length *∆t* seconds:
 
-  ------------------------------------------------------------------------------
-       *Q~ppt~*     precipitation rate over the subcatchment (cfs)
-  ---- ------------ ------------------------------------------------------------
-       *C~ppt~*     concentration of pollutant in precipitation (mass/ft^3^)
+| Symbol | Description |
+| --- | --- |
+| *Q<sub>ppt</sub>* | precipitation rate over the subcatchment (cfs) |
+| *C<sub>ppt</sub>* | concentration of pollutant in precipitation (mass/ft<sup>3</sup>) |
+| *Q<sub>runon</sub>* | rate of runon flow onto the subcatchment (cfs) |
+| *W<sub>runon</sub>* | rate of mass flow of pollutant in runon to subcatchment (mass/sec) |
+| *Q<sub>out</sub>* | flow rate of runoff leaving the subcatchment (cfs) |
+| *d<sub>1</sub>* | depth of ponded water over the subcatchment at the start of the time step (ft) |
+| *d<sub>2</sub>* | depth of ponded water over the subcatchment at the end of the time step (ft) |
+| *m<sub>P</sub>* | mass of ponded pollutant over the subcatchment at the start of the time step |
+| *R<sub>avg</sub>* | area averaged BMP removal factor for the pollutant |
+| *A* | area of the subcatchment (ft<sup>2</sup>) |
 
-       *Q~runon~*   rate of runon flow onto the subcatchment (cfs)
-
-       *W~runon~*   rate of mass flow of pollutant in runon to subcatchment
-                    (mass/sec)
-
-       *Q~out~*     flow rate of runoff leaving the subcatchment (cfs)
-
-       *d~1~*       depth of ponded water over the subcatchment at the start of
-                    the time step (ft)
-
-       *d~2~*       depth of ponded water over the subcatchment at the end of
-                    the time step (ft)
-
-       *m~P~*       mass of ponded pollutant over the subcatchment at the start
-                    of the time step
-
-       *R~avg~*     area averaged BMP removal factor for the pollutant
-
-       *A*          area of the subcatchment (ft^2^)
-  ------------------------------------------------------------------------------
-
-*Q~ppt~, Q~runon~, Q~out~*, *d~1~* and *d~2~* are known from the runoff
+*Q<sub>ppt</sub>, Q<sub>runon</sub>, Q<sub>out</sub>*, *d<sub>1</sub>* and *d<sub>2</sub>* are known from the runoff
 calculation that has already been made for the current time step.
-*W~runon~* was also evaluated by summing the products of runoff flow and
+*W<sub>runon</sub>* was also evaluated by summing the products of runoff flow and
 concentration from the previous time step for each of the upstream
 subcatchments that send their runoff to the subcatchment being analyzed.
 
@@ -3642,34 +3504,26 @@ from rainfall/runon is washed off a given subcatchment.
 
 Note that the effects of mass lost to infiltration and volume loss due
 to evaporation are implicitly accounted for in step 5 where the
-end-of-time step volume *d~2~A* is used to find the mass of pollutant
+end-of-time step volume *d<sub>2</sub>A* is used to find the mass of pollutant
 remaining on the subcatchment.
 
 ### 4.3.3 Total Washoff Load and Concentration
 
 The final phase of the calculation adds together the two mass flow
-streams to arrive at a total washoff loading rate, *W~out\ ~*for the
+streams to arrive at a total washoff loading rate, *W<sub>out</sub>*for the
 subcatchment and pollutant being analyzed:
 
-  -----------------------------------------------------------------------
-         $$W_{out} = W_{washoff} + W_{ponded}$$                    4-16
-  ------ --------------------------------------------------------- ------
-
-  -----------------------------------------------------------------------
+$$W_{out} = W_{washoff} + W_{ponded} \qquad \text{(4-16)}$$
 
 The concentration of pollutant in the subcatchment's outflow runoff at
 the end of the current time step is then:
 
-  -----------------------------------------------------------------------
-         $$C_{out} = \frac{W_{out}}{28.3Q_{out}}$$                 4-17
-  ------ --------------------------------------------------------- ------
-
-  -----------------------------------------------------------------------
+$$C_{out} = \frac{W_{out}}{28.3Q_{out}} \qquad \text{(4-17)}$$
 
 with units of mass//L. If the subcatchment in question sends its runoff
-to another subcatchment then *W~out~* becomes part of *W~runon~* for the
+to another subcatchment then *W<sub>out</sub>* becomes part of *W<sub>runon</sub>* for the
 receiving subcatchment at the subsequent time step. If the runoff is
-sent to a node of the conveyance network then *W~out~*, along with any
+sent to a node of the conveyance network then *W<sub>out</sub>*, along with any
 other pollutant inflow loads from other subcatchments or external
 sources (such as dry weather flows and user-supplied inflows), become
 inputs to SWMM's quality routing routine which is described in the next
@@ -3684,24 +3538,24 @@ determine representative estimates there is no substitute for field data
 collected for the site in question.
 
 Results from sediment transport theory can be used to provide guidance
-for the magnitude of parameters *K~W~* and *N~W\ ~* used for exponential
-and rating curve washoff. Values of the exponent *N~W~* range between
+for the magnitude of parameters *K<sub>W</sub>* and *N<sub>W</sub>* used for exponential
+and rating curve washoff. Values of the exponent *N<sub>W</sub>* range between
 1.1 and 2.6 for rivers and sediment yield from catchments, with most
 values near 2.0. Typically, the exponent tends to decrease (approach
 1.0) at high flow rates (Vanoni, 1975, p. 476), indicating a constant
 concentration (not a function of flow). In SWMM, constituent
-concentrations will follow runoff rates better if *N~W\ ~* is higher. A
-reasonable first guess for *N~W~* would appear to be in the range of
+concentrations will follow runoff rates better if *N<sub>W</sub>* is higher. A
+reasonable first guess for *N<sub>W</sub>* would appear to be in the range of
 1.5-2.5.
 
-Values of *K~W~* are much harder to infer from the sediment rating curve
+Values of *K<sub>W</sub>* are much harder to infer from the sediment rating curve
 data since the latter vary in nature by almost five orders of magnitude.
 The issue is further complicated by the fact that Equation ‎4-7 includes
-the quantity remaining to be washed off, *m~B~*, which decreases
+the quantity remaining to be washed off, *m<sub>B</sub>*, which decreases
 steadily during an event. At this point it will suffice to say that
-values of *K~W~* between 1.0 and 10 (U.S. units) appear to give
+values of *K<sub>W</sub>* between 1.0 and 10 (U.S. units) appear to give
 concentrations in the range of most observed values in urban runoff.
-Both *K~W~* and *N~W~* may be varied in order to calibrate the model to
+Both *K<sub>W</sub>* and *N<sub>W</sub>* may be varied in order to calibrate the model to
 observed data.
 
 The preceding discussion assumes that urban runoff quality constituents
@@ -3709,21 +3563,21 @@ will behave in some manner similar to "sediment" of sediment transport
 theory. Since many constituents are in particulate form the assumption
 may not be too bad. If the concentration of a dissolved constituent is
 observed to decrease strongly with increasing flow rate, a value of
-*N~W\ ~* \< 1.0 could be used.
+*N<sub>W</sub>* \< 1.0 could be used.
 
 Although the development has ignored the physics of rainfall energy in
 eroding particles, the runoff rate, *q*, in Equation 4-7 closely follows
 rainfall intensity. Hence, to some degree at least, greater washoff will
 be experienced with greater rainfall rates. As an option, soil erosion
-literature could be surveyed to infer a value of *N~W~* if erosion is
+literature could be surveyed to infer a value of *N<sub>W</sub>* if erosion is
 proportional to rainfall intensity to a power.
 
-Figure 4-4 illustrates the effect that different values of *K~W~* and
-*N~W~* can have on the washoff rate as runoff rate varies during a storm
+Figure 4-4 illustrates the effect that different values of *K<sub>W</sub>* and
+*N<sub>W</sub>* can have on the washoff rate as runoff rate varies during a storm
 event. The results are for an initial buildup load of 1000 mg on a 1
-acre catchment. By varying *N~W~* especially, the shape of the curve may
+acre catchment. By varying *N<sub>W</sub>* especially, the shape of the curve may
 be varied to match local data. Also note the hysteresis effect that the
-decreasing level of *m~B~* has on washoff for the triangular hydrograph.
+decreasing level of *m<sub>B</sub>* has on washoff for the triangular hydrograph.
 Washoff is higher for flows on the ascending limb of the hydrograph
 because there is higher buildup available and lower during the
 descending limb since there is less buildup present.
@@ -3749,7 +3603,7 @@ made by Avellaneda et al. (2009). Estimating washoff parameters by
 minimizing the sum of squared differences between the observed and
 predicted suspended solids concentrations for each of 22 different storm
 events on a 7.4 acre parking lot resulted in a coefficient of variation
-(CV or standard deviation / mean) for *K~W~* of 1.8. (The CV for *N~W~*
+(CV or standard deviation / mean) for *K<sub>W</sub>* of 1.8. (The CV for *N<sub>W</sub>*
 was only 0.2). Such variability presents problems in selecting a single
 set of values that will generate reliable pollutographs in future
 simulations.
@@ -3768,9 +3622,9 @@ buildup model and exponential washoff model for high-density residential
 land use.
 
 +------------------+----------------------------------------+-------------------------+-----------------------------------------+
-| **Pollutant^1^** | **Buildup**                            | **Washoff**             | **Calibration Results (kg/ac/yr)**      |
+| **Pollutant<sup>1</sup>** | **Buildup**                            | **Washoff**             | **Calibration Results (kg/ac/yr)**      |
 |                  +--------------+------------+------------+------------+------------+------------+----------------+-----------+
-|                  | ***B~max~*** | ***K~B~*** | ***N~B~*** | ***K~W~*** | ***N~W~*** | **Target** | **Calibrated** | **Error** |
+|                  | ***B<sub>max</sub>*** | ***K<sub>B</sub>*** | ***N<sub>B</sub>*** | ***K<sub>W</sub>*** | ***N<sub>W</sub>*** | **Target** | **Calibrated** | **Error** |
 +==================+:============:+:==========:+:==========:+:==========:+:==========:+:==========:+:==============:+:=========:+
 | TP               | 4.75         | 0.031      | 0.42       | 0.71       | 1.37       | 0.45       | 0.449          | 0.2%      |
 +------------------+--------------+------------+------------+------------+------------+------------+----------------+-----------+
@@ -3784,7 +3638,7 @@ land use.
 : []{#_Toc454288811 .anchor}**Table 4‑3 Buildup/washoff calibration
 against annual loading rate for high-density residential land use**
 
-^1^TP = total phosphorus, TSS = total suspended solids, TN = total
+<sup>1</sup>TP = total phosphorus, TSS = total suspended solids, TN = total
 nitrogen and Zn = zinc.
 
 Source: Tetra Tech (2010).
@@ -3796,15 +3650,15 @@ of storm events as the buildup supply becomes depleted. The rating curve
 washoff model will work better when the load versus flow data plot as a
 straight line on log-log axes. On the basis of the previous discussion
 of rating curves based on sediment data, it is expected that the
-exponent, *N~W~*, would be in the range of 1.5 to 3.0 for constituents
+exponent, *N<sub>W</sub>*, would be in the range of 1.5 to 3.0 for constituents
 that behave like particulates. For dissolved constituents, the exponent
 will tend to be less than 1.0 since concentration often decreases as
 flow increases, and concentration is proportional to flow to the power
-*N~W~* - 1. (Constant concentration would use *N~W~* = 1.0.) Much more
-variability is expected for *K~W~*. The rating curve method is generally
+*N<sub>W</sub>* - 1. (Constant concentration would use *N<sub>W</sub>* = 1.0.) Much more
+variability is expected for *K<sub>W</sub>*. The rating curve method is generally
 easiest to use when only total runoff volumes and pollutant loads are
 available for calibration. In this case a pure regression approach
-should suffice to determine parameters *K~W~* and *N~W~*.
+should suffice to determine parameters *K<sub>W</sub>* and *N<sub>W</sub>*.
 
 As a part of the NPDES stormwater permitting program and as a result of
 many special studies, there are numerous sources of local event mean
@@ -3997,15 +3851,11 @@ The one-dimensional transport of dissolved constituents along the length
 of a conduit (a pipe or natural channel) is described by the following
 conservation of mass equation (Martin and McCutcheon, 1999):
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$\frac{\partial c}{\partial t} = - \frac{\partial(uc)}{\partial x} + \frac{\partial}{\partial x}\left( D\frac{\partial c}{dx} \right) + r(c)$$   (5-1)
-  ------ ------------------------------------------------------------------------------------------------------------------------------------------------- -------
+$$\frac{\partial c}{\partial t} = - \frac{\partial(uc)}{\partial x} + \frac{\partial}{\partial x}\left( D\frac{\partial c}{dx} \right) + r(c) \qquad \text{(5-1)}$$
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-where *c* = constituent concentration (ML^-3^), *u* = longitudinal
-velocity (LT^-1^), *D* = longitudinal dispersion coefficient (L^2^/T),
-*r(c)* = reaction rate term (ML^-3^T^-1^)), *x* = longitudinal distance
+where *c* = constituent concentration (ML<sup>-3</sup>), *u* = longitudinal
+velocity (LT<sup>-1</sup>), *D* = longitudinal dispersion coefficient (L<sup>2</sup>/T),
+*r(c)* = reaction rate term (ML<sup>-3</sup>T<sup>-1</sup>)), *x* = longitudinal distance
 (L), and *t* = time (T). Note that *c* is a continuous function of both
 distance *x* and time *t*. In general, c can be a vector of constituents
 in which case a separate Equation 5-1 would apply for each constituent
@@ -4027,31 +3877,23 @@ associated with it the instantaneous concentration is simply the
 instantaneous flow weighted average concentration of all inflows that
 the junction receives:
 
-  ------------------------------------------------------------------------------------------------------------------------------
-         $$c_{Nj} = \frac{\sum_{i \rightarrow j}^{}{c_{L2i}q_{2i} + W_{j}}}{\sum_{i \rightarrow j}^{}q_{2i} + Q_{j}}$$   (5-2)
-  ------ --------------------------------------------------------------------------------------------------------------- -------
+$$c_{Nj} = \frac{\sum_{i \rightarrow j}^{}{c_{L2i}q_{2i} + W_{j}}}{\sum_{i \rightarrow j}^{}q_{2i} + Q_{j}} \qquad \text{(5-2)}$$
 
-  ------------------------------------------------------------------------------------------------------------------------------
-
-where *c~Nj~* is the concentration at node *j*, *c~L2i~* is the
-concentration at the end of link *i* that connects to node *j*, *q~2i~*
-is the flow rate at the end of link *i*, *W~j~* is the mass flow rate of
-any direct external source of constituent to node *j*, *Q~j~* is the
+where *c<sub>Nj</sub>* is the concentration at node *j*, *c<sub>L2i</sub>* is the
+concentration at the end of link *i* that connects to node *j*, *q<sub>2i</sub>*
+is the flow rate at the end of link *i*, *W<sub>j</sub>* is the mass flow rate of
+any direct external source of constituent to node *j*, *Q<sub>j</sub>* is the
 flow rate of the external source, and the summations are over all links
 that have flow directed into node *j*. For a storage node where it is
 assumed that the contents of the stored volume are completely mixed, the
 uniform concentration within the node is governed by the following
 conservation of mass equation:
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$\frac{d(V_{Nj}c_{Nj})}{dt} = \sum_{i \rightarrow j}^{}{c_{L2i}q_{2i} - \sum_{j \rightarrow k}^{}{c_{Nj}q_{1k} + W_{j} - V_{Nj}r(c_{Nj})}}$$   (5-3)
-  ------ ----------------------------------------------------------------------------------------------------------------------------------------------- -------
+$$\frac{d(V_{Nj}c_{Nj})}{dt} = \sum_{i \rightarrow j}^{}{c_{L2i}q_{2i} - \sum_{j \rightarrow k}^{}{c_{Nj}q_{1k} + W_{j} - V_{Nj}r(c_{Nj})}} \qquad \text{(5-3)}$$
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-where *V~Nj~* is the volume of water stored at node *j*, *q~2i~* is the
-flow at the end of a link *i* directed into node *j*, *q~1k\ ~* is the
-flow at the start of a link *k* directed out of node *j*, *W~j~* is the
+where *V<sub>Nj</sub>* is the volume of water stored at node *j*, *q<sub>2i</sub>* is the
+flow at the end of a link *i* directed into node *j*, *q<sub>1k</sub>* is the
+flow at the start of a link *k* directed out of node *j*, *W<sub>j</sub>* is the
 mass flow rate of any direct external source into node *j*, and *r* is a
 reaction rate term.
 
@@ -4076,42 +3918,34 @@ concentration along the length of a conduit. Equations 5-1 and 5-3 are
 replaced with the conservation of mass equation for a completely mixed
 reactor (either a conduit or storage node)
 
-  ---------------------------------------------------------------------------
-         $$\frac{d(Vc)}{dt} = {C_{in}Q}_{in} - cQ_{out} - \ Vr(c)$$   (5-4)
-  ------ ------------------------------------------------------------ -------
-
-  ---------------------------------------------------------------------------
+$$\frac{d(Vc)}{dt} = {C_{in}Q}_{in} - cQ_{out} - \ Vr(c) \qquad \text{(5-4)}$$
 
 where *V* is the volume within the reactor, *c* is the concentration
-within the reactor, *C~in~* is the concentration of any inflow to the
-reactor, *Q~in~* is the volumetric flow rate of this inflow, *Q~out~* is
+within the reactor, *C<sub>in</sub>* is the concentration of any inflow to the
+reactor, *Q<sub>in</sub>* is the volumetric flow rate of this inflow, *Q<sub>out</sub>* is
 the volumetric flow rate leaving the reactor, and *r(c)* is a function
 that determines the rate of loss due to reaction.
 
 Medina et al. (1981) present an analytical solution to Equation 5-4
 under the assumptions that:
 
-1.  *C~in~, Q~in~,* and *Q~out~*, are constant over a solution time step
+1.  *C<sub>in</sub>, Q<sub>in</sub>,* and *Q<sub>out</sub>*, are constant over a solution time step
     *t* to *t* + ∆*t,*
 
 2.  *V* is represented by an average value over the time step,
 
-3.  $r(c) = K_{1}c$, where *K~1~* is a first-order reaction constant.
+3.  $r(c) = K_{1}c$, where *K<sub>1</sub>* is a first-order reaction constant.
 
 Under these conditions the concentration within the conduit or storage
 node at the end of a time step *∆t* can be expressed as:
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$c(t + \mathrm{\Delta}t) = c(t)e^{- \propto \mathrm{\Delta}t} + \frac{{C_{in}Q}_{in}}{\propto \overline{V}}\left( 1 - e^{- \propto \mathrm{\Delta}t} \right)$$   (5-5)
-  ------ ----------------------------------------------------------------------------------------------------------------------------------------------------------------- -------
-
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$c(t + \mathrm{\Delta}t) = c(t)e^{- \propto \mathrm{\Delta}t} + \frac{{C_{in}Q}_{in}}{\propto \overline{V}}\left( 1 - e^{- \propto \mathrm{\Delta}t} \right) \qquad \text{(5-5)}$$
 
 where
 $\propto = K_{1} + \left( Q_{out} + \frac{\mathrm{\Delta}V}{\mathrm{\Delta}t} \right)/\overline{V}$,
 $\mathrm{\Delta}V = V(t + \mathrm{\Delta}t) - \ V(t)$, and
 $\overline{V} = 0.5\left\lbrack V(t + \mathrm{\Delta}t) + V(t) \right\rbrack$.
-Note that values of *Q~in~*, *Q~ou~*~t~ and both the initial and final
+Note that values of *Q<sub>in</sub>*, *Q<sub>out</sub>* and both the initial and final
 volumes *V* are known from having already routed flow through the
 conveyance network over the period *t* to *t +* *∆t*.
 
@@ -4123,11 +3957,7 @@ a relatively large, rapid loss of volume causes α to become negative.
 To avoid these issues, SWMM 5 uses a simpler form of the mixing equation
 which looks as follows:
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$c(t + \mathrm{\Delta}t) = \left\lbrack c(t)V(t)e^{- K_{1}\mathrm{\Delta}t} + C_{in}Q_{in}\mathrm{\Delta}t \right\rbrack/(V(t) + Q_{in}\mathrm{\Delta}t)$$   (5-6)
-  ------ ------------------------------------------------------------------------------------------------------------------------------------------------------------- -------
-
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$c(t + \mathrm{\Delta}t) = \left\lbrack c(t)V(t)e^{- K_{1}\mathrm{\Delta}t} + C_{in}Q_{in}\mathrm{\Delta}t \right\rbrack/(V(t) + Q_{in}\mathrm{\Delta}t) \qquad \text{(5-6)}$$
 
 This equation makes the new concentration in the "reactor" equal the
 original mass left after any reaction has occurred plus the mass
@@ -4141,8 +3971,8 @@ acceptable results.
 
 Figure 5-2 compares the results obtained by the two equations (5-5 and
 5-6) at the end of a 1-mile stretch of pipeline that receives time
-varying runoff at its upstream end (*Q~in~* and *C~in~* in the figure)
-and has a decay coefficient of 10 days^-1^. The pipeline consists of
+varying runoff at its upstream end (*Q<sub>in</sub>* and *C<sub>in</sub>* in the figure)
+and has a decay coefficient of 10 days<sup>-1</sup>. The pipeline consists of
 seven 800-foot sections of 18" pipe at a 0.5 percent slope. The routing
 time step was 30 seconds. For this particular example the difference
 between the equations is insignificant.
@@ -4188,32 +4018,25 @@ routing.
 The following quantities are therefore known for each pollutant and each
 network link:
 
-  ----------------------------------------------------------------------------
-  *Q~L1~(t+∆t)*   =   flow rate entering the link at time *t+∆t* (cfs)
-  --------------- --- --------------------------------------------------------
-  *Q~L2~(t+∆t)*   =   flow rate exiting the link at time *t+∆t* (cfs)
-
-  *V~L~(t)*       =   the volume of water stored in the link at time t (ft^3^)
-
-  *c~L~(t)*       =   the concentration of the pollutant in the link at time t
-                      (mass/ft^3^)
-  ----------------------------------------------------------------------------
+| Symbol | | Description |
+| --- | --- | --- |
+| *Q<sub>L1</sub>(t+∆t)* | = | flow rate entering the link at time *t+∆t* (cfs) |
+| *Q<sub>L2</sub>(t+∆t)* | = | flow rate exiting the link at time *t+∆t* (cfs) |
+| *V<sub>L</sub>(t)* | = | the volume of water stored in the link at time t (ft<sup>3</sup>) |
+| *c<sub>L</sub>(t)* | = | the concentration of the pollutant in the link at time t (mass/ft<sup>3</sup>) |
 
 In addition, the following quantities are known for each pollutant at
 each node of the network at time *t*:
 
-  ------------------------------------------------------------------------
-  *V~N~(t)*   =   the volume of water stored at the node (ft^3^)
-  ----------- --- --------------------------------------------------------
-  *c~N~(t)*   =   the concentration of the pollutant at the node at time t
-                  (mass/ft^3^)
-
-  ------------------------------------------------------------------------
+| Symbol | | Description |
+| --- | --- | --- |
+| *V<sub>N</sub>(t)* | = | the volume of water stored at the node (ft<sup>3</sup>) |
+| *c<sub>N</sub>(t)* | = | the concentration of the pollutant at the node at time t (mass/ft<sup>3</sup>) |
 
 Note that for computational purposes, concentration is expressed as
-mass/ft^3^. After computations are completed, they are converted back to
+mass/ft<sup>3</sup>. After computations are completed, they are converted back to
 mass/L for reporting purposes. The objective is to compute values of
-*c~L~* for each link and *c~N~* for each node at time *t+∆t*.
+*c<sub>L</sub>* for each link and *c<sub>N</sub>* for each node at time *t+∆t*.
 
 Using Equation 5-6 as its mixing equation for both conduit links and
 storage nodes, SWMM 5 carries out the following three step process to
@@ -4227,24 +4050,24 @@ network at the end of each flow routing time step:
     and RDII flows, all evaluated at time *t*. To this is added the mass
     loads from all links (pipes, channels, pumps, etc.) that flow into
     the node. These are computed by multiplying the current outflow rate
-    of the inflowing link (*Q~L2~(t+∆t))* by the link's current
-    pollutant concentration (*c~L~(t))*.
+    of the inflowing link (*Q<sub>L2</sub>(t+∆t))* by the link's current
+    pollutant concentration (*c<sub>L</sub>(t))*.
 
 2.  Then a new concentration is computed for each node in the network.
     If the node is a non-storage node, the concentration is simply the
     cumulative mass flow rate divided by the cumulative inflow rate
     (Equation 5-2 above). For a storage node, Equation 5-6 is used to
-    compute a new mixture concentration *c~N~(t+∆t)* where *Qin* is the
+    compute a new mixture concentration *c<sub>N</sub>(t+∆t)* where *Qin* is the
     cumulative inflow rate from step 1 and *Cin* is step 1's cumulative
     mass inflow divided by *Qin*.
 
 3.  Finally, Equation 5-6 is applied to determine a new concentration
-    for each pollutant in each conduit, *c~L~(t+∆t)*. In this equation,
+    for each pollutant in each conduit, *c<sub>L</sub>(t+∆t)*. In this equation,
     *Qin* is the flow rate sent into conduit from its upstream node,
-    *Q~L1~(t+∆t),* and *Cin* is the newly updated concentration of this
-    node, *c~N~(t+∆t),* found in step 2. For links that have no volume
-    (pumps, regulators, and dummy conduits) *c~L~(t+∆t)* is set equal to
-    the upstream node concentration *c~N~(t+∆t)*.
+    *Q<sub>L1</sub>(t+∆t),* and *Cin* is the newly updated concentration of this
+    node, *c<sub>N</sub>(t+∆t),* found in step 2. For links that have no volume
+    (pumps, regulators, and dummy conduits) *c<sub>L</sub>(t+∆t)* is set equal to
+    the upstream node concentration *c<sub>N</sub>(t+∆t)*.
 
 Certain modifications must be made to this basic procedure to handle the
 following special conditions.
@@ -4258,35 +4081,27 @@ be approximated through the first order decay process). Thus when
 evaporation occurs pollutant concentrations will increase. SWMM computes
 this increase as a multiplier$f_{evap}$:
 
-  ------------------------------------------------------------------------
-         $$f_{evap} = 1 + V_{evap}(t)/V(t)$$                       (5-7)
-  ------ --------------------------------------------------------- -------
-
-  ------------------------------------------------------------------------
+$$f_{evap} = 1 + V_{evap}(t)/V(t) \qquad \text{(5-7)}$$
 
 where $V_{evap}(t)$ is the volume lost to evaporation over the time step
-and $V(t)$ is either *V~N~(t)* for a storage node at Step 2 or *V~L~(t)*
+and $V(t)$ is either *V<sub>N</sub>(t)* for a storage node at Step 2 or *V<sub>L</sub>(t)*
 for a conduit link at Step 3. This multiplier is then used to adjust the
-concentration *c~N~(t)* before Step 2 is carried out for a storage node
-or *c~L~(t)* before Step 3 is carried out for a conduit link.
+concentration *c<sub>N</sub>(t)* before Step 2 is carried out for a storage node
+or *c<sub>L</sub>(t)* before Step 3 is carried out for a conduit link.
 
 [Dynamic Wave Flow Routing]{.underline}
 
 When SWMM's Dynamic Wave flow routing option (see Volume II) is used
 there is only one flow rate associated with each conduit, so that
-*Q~L1~* and *Q~L2~* have the same values. This might suggest that there
+*Q<sub>L1</sub>* and *Q<sub>L2</sub>* have the same values. This might suggest that there
 would be no volume change within the conduit over a time step. However
 the routing process actually does produce a change in volume due to
 changes in flow depths at either end of the conduit. To make the flow
-rates consistent with this volume change, the value of *Q~L1~* is
+rates consistent with this volume change, the value of *Q<sub>L1</sub>* is
 adjusted by an amount ∆$Q_{L1}$ found from the following flow balance
 equation:
 
-  ---------------------------------------------------------------------------------------------------
-         $$\mathrm{\Delta}Q_{L1} = V_{L}(t + \mathrm{\Delta}t) + V_{losses}(t) - V_{L}(t)$$   (5-8)
-  ------ ------------------------------------------------------------------------------------ -------
-
-  ---------------------------------------------------------------------------------------------------
+$$\mathrm{\Delta}Q_{L1} = V_{L}(t + \mathrm{\Delta}t) + V_{losses}(t) - V_{L}(t) \qquad \text{(5-8)}$$
 
 where $V_{losses}(t)$ is the volume of evaporation and seepage loss over
 the time period $\mathrm{\Delta}t$.
@@ -4300,11 +4115,7 @@ time step. So there is no mixing of the previous contents with new
 inflow from the upstream node. Thus Step 3 of the basic water quality
 routing procedure becomes:
 
-  -------------------------------------------------------------------------------------------------------------------
-         $$c_{L}(t + \mathrm{\Delta}t) = f_{evap}c_{N}(t + \mathrm{\Delta}t)exp( - K_{1}\mathrm{\Delta}t)$$   (5-9)
-  ------ ---------------------------------------------------------------------------------------------------- -------
-
-  -------------------------------------------------------------------------------------------------------------------
+$$c_{L}(t + \mathrm{\Delta}t) = f_{evap}c_{N}(t + \mathrm{\Delta}t)exp( - K_{1}\mathrm{\Delta}t) \qquad \text{(5-9)}$$
 
 where $c_{N}(t + \mathrm{\Delta}t)$ is the newly computed concentration
 at the conduit's upstream node.
@@ -4352,55 +4163,25 @@ inferred from median EMC numbers in the BMP database table 5-2.
 
   ---------------------------------------------------------------------------
   **Process**        **Definition**                   **Example BMPs**
-  ------------------ -------------------------------- -----------------------
-  Sedimentation      Gravitational settling of        Ponds, wetlands,
-                     suspended particles from the     vaults, and tanks.
-                     water column.                    
 
-  Flotation          Separation of particulates with  Oil-water separators,
-                     a specific gravity less than     density separators,
-                     water (e.g., trash, oil and      dissolved-air
-                     grease).                         flotation.
+|  |  |  |
+| --- | --- | --- |
+| Sedimentation | Gravitational settling of suspended particles from the water column. | Ponds, wetlands, vaults, and tanks. |
+| Flotation | Separation of particulates with a specific gravity less than water (e.g., trash, oil and grease). | Oil-water separators, density separators, dissolved-air flotation. |
+| Filtration | Removal of particulates by passing water through a porous medium like sand, gravel, soil, etc. | Sand filters, screens, and bar racks. |
+| Infiltration | Allowing captured runoff to infiltrate into the ground reducing both runoff volume and loadings of particulates and dissolved nutrients and heavy metals. | Infiltration basins, ponds, and constructed wetlands. |
+| Adsorption | Binding of contaminants to clay particles, vegetation or certain filter media. | Infiltration systems, sand filters with iron oxide, constructed wetlands. |
+| Biological Uptake | Uptake of nutrients by aquatic | Ponds and wetlands. |
+| and Conversion | plants and microorganisms; conversion of organics to less harmful compounds by bacteria and other organisms. |  |
+| Chemical Treatment | Chemicals used to promote settling and filtration. Disinfectants used to treat combined sewer overflows. | Ponds, wetlands, rapid mixing devices. |
+| Natural | Chemical decomposition or | Ponds and wetlands. |
+| Degradation | conversion to a gaseous state by |  |
+| (volatilization, | natural processes. |  |
+| hydrolysis, |  |  |
+| photolysis) |  |  |
+| Hydrodynamic | Uses the physics of flowing | Swirl concentrators, |
+| Separation | water to create a swirling vortex to remove both settleable particulates and flotables. | secondary current devices, oil-water separators. |
 
-  Filtration         Removal of particulates by       Sand filters, screens,
-                     passing water through a porous   and bar racks.
-                     medium like sand, gravel, soil,  
-                     etc.                             
-
-  Infiltration       Allowing captured runoff to      Infiltration basins,
-                     infiltrate into the ground       ponds, and constructed
-                     reducing both runoff volume and  wetlands.
-                     loadings of particulates and     
-                     dissolved nutrients and heavy    
-                     metals.                          
-
-  Adsorption         Binding of contaminants to clay  Infiltration systems,
-                     particles, vegetation or certain sand filters with iron
-                     filter media.                    oxide, constructed
-                                                      wetlands.
-
-  Biological Uptake  Uptake of nutrients by aquatic   Ponds and wetlands.
-  and Conversion     plants and microorganisms;       
-                     conversion of organics to less   
-                     harmful compounds by bacteria    
-                     and other organisms.             
-
-  Chemical Treatment Chemicals used to promote        Ponds, wetlands, rapid
-                     settling and filtration.         mixing devices.
-                     Disinfectants used to treat      
-                     combined sewer overflows.        
-
-  Natural            Chemical decomposition or        Ponds and wetlands.
-  Degradation        conversion to a gaseous state by 
-  (volatilization,   natural processes.               
-  hydrolysis,                                         
-  photolysis)                                         
-
-  Hydrodynamic       Uses the physics of flowing      Swirl concentrators,
-  Separation         water to create a swirling       secondary current
-                     vortex to remove both settleable devices, oil-water
-                     particulates and flotables.      separators.
-  ---------------------------------------------------------------------------
 
   : []{#_Toc454288814 .anchor}**Table 5‑1 Treatment processes used by
   various types of BMPs**
@@ -4437,7 +4218,7 @@ inferred from median EMC numbers in the BMP database table 5-2.
 +-----------------+--------+---------+--------+---------+--------+---------+--------+---------+--------+---------+
 | TKN, mg/L       | 0.96   | 0.57    | 1.49   | 1.61    | 1.28   | 1.05    | 0.95   | 1.01    | 1.59   | 1.48    |
 +-----------------+--------+---------+--------+---------+--------+---------+--------+---------+--------+---------+
-| NO~X~, mg/L     | 0.33   | 0.51    | 0.55   | 0.36    | 0.43   | 0.18    | 0.24   | 0.08    | 0.41   | 0.41    |
+| NO<sub>X</sub>, mg/L     | 0.33   | 0.51    | 0.55   | 0.36    | 0.43   | 0.18    | 0.24   | 0.08    | 0.41   | 0.41    |
 +-----------------+--------+---------+--------+---------+--------+---------+--------+---------+--------+---------+
 
 : []{#_Toc454288815 .anchor}**Table 5‑2 Median inlet and outlet EMCs for
@@ -4450,21 +4231,17 @@ Statistical Addendum: TSS, Bacteria, Nutrients, and Metals", July 2012
 
   --------------------------------------------------------------------------
   **Pollutant**                   **Sand Filter**  **Ponds**   **Wetlands**
-  ------------------------------- --------------- ----------- --------------
-  Total Suspended Solids                85            84            73
 
-  Total Phosphorus                      77            50            38
+|  |  |  |  |
+| --- | --- | --- | --- |
+| Total Suspended Solids | 85 | 84 | 73 |
+| Total Phosphorus | 77 | 50 | 38 |
+| Particulate Phosphorus | 91 | 91 | 69 |
+| Dissolved Phosphorus | 60 | 0 | 0 |
+| Total Nitrogen | 35 | 30 | 30 |
+| Zinc and Copper | 50 | 70 | 70 |
+| Bacteria | 80 | 60 | 60 |
 
-  Particulate Phosphorus                91            91            69
-
-  Dissolved Phosphorus                  60             0            0
-
-  Total Nitrogen                        35            30            30
-
-  Zinc and Copper                       50            70            70
-
-  Bacteria                              80            60            60
-  --------------------------------------------------------------------------
 
   : []{#_Toc454288816 .anchor}**Table 5‑3 Median pollutant removal
   percentages for select stormwater BMPs**
@@ -4495,40 +4272,25 @@ The effect of treatment for a particular pollutant at a particular node
 can be expressed mathematically using one of the following general
 expressions (some specific examples will be presented later on):
 
-  -----------------------------------------------------------------------------------------
-         $$c(t + \mathrm{\Delta}t) = c(\mathbf{C},\ \mathbf{R},\ \mathbf{H})\ $$   (5-10)
-  ------ ------------------------------------------------------------------------- --------
+$$c(t + \mathrm{\Delta}t) = c(\mathbf{C},\ \mathbf{R},\ \mathbf{H}) \qquad \text{(5-10)}$$
 
-  -----------------------------------------------------------------------------------------
-
-  -----------------------------------------------------------------------------------------------------------------------------------------------------
-         $$c(t + \mathrm{\Delta}t) = \left( 1 - r\left( \mathbf{C},\ \mathbf{R},\ \mathbf{H} \right) \right)C_{in}(t + \mathrm{\Delta}t)\ $$   (5-11)
-  ------ ------------------------------------------------------------------------------------------------------------------------------------- --------
-
-  -----------------------------------------------------------------------------------------------------------------------------------------------------
+$$c(t + \mathrm{\Delta}t) = \left( 1 - r\left( \mathbf{C},\ \mathbf{R},\ \mathbf{H} \right) \right)C_{in}(t + \mathrm{\Delta}t) \qquad \text{(5-11)}$$
 
 where:
 
   -----------------------------------------------------------------------------------------------
       $$c$$                          =   nodal pollutant concentration after treatment is applied
-  --- ------------------------------ --- --------------------------------------------------------
-      $$C_{in}$$                     =   pollutant concentration in the node's inflow stream
 
-      $$c(\ldots)$$                  =   concentration-based treatment function
+|  |  |  |  |
+| --- | --- | --- | --- |
+|  | $C_{in}$ | = | pollutant concentration in the node's inflow stream |
+|  | $c(\ldots)$ | = | concentration-based treatment function |
+|  | $r(\ldots)$ | = | removal-based treatment function |
+|  | $\mathbf{C}$ | = | vector of nodal pollutant concentrations before treatment is applied |
+|  | $\mathbf{C}_{\mathbf{in}}$ | = | vector of pollutant concentrations in the node's inflow stream |
+|  | $\mathbf{R}$ | = | vector of fractional removals resulting from treatment |
+|  | $\mathbf{H}$ | = | vector of hydraulic variables at the current time step*.* |
 
-      $$r(\ldots)$$                  =   removal-based treatment function
-
-      $$\mathbf{C}$$                 =   vector of nodal pollutant concentrations before
-                                         treatment is applied
-
-      $$\mathbf{C}_{\mathbf{in}}$$   =   vector of pollutant concentrations in the node's inflow
-                                         stream
-
-      $$\mathbf{R}$$                 =   vector of fractional removals resulting from treatment
-
-      $$\mathbf{H}$$                 =   vector of hydraulic variables at the current time
-                                         step*.*
-  -----------------------------------------------------------------------------------------------
 
 Note that if treatment is made a function of pollutant concentrations,
 then for concentration-based treatment these represent the
@@ -4542,29 +4304,21 @@ include the following:
 
   ----------------------------------------------------------------------------
       ***FLOW***    flow rate into the node in user defined flow units
-  --- ------------- ----------------------------------------------------------
-      ***DEPTH***   average water depth in the node over the time step (ft or
-                    m)
 
-      ***AREA***    average surface area of the node over the time step (ft^2^
-                    or m^2^)
+|  |  |  |
+| --- | --- | --- |
+|  | ***DEPTH*** | average water depth in the node over the time step (ft or m) |
+|  | ***AREA*** | average surface area of the node over the time step (ft<sup>2</sup> or m<sup>2</sup>) |
+|  | ***DT*** | current routing time step (seconds) |
+|  | ***HRT*** | hydraulic residence time of water in a storage node (hours). |
 
-      ***DT***      current routing time step (seconds)
-
-      ***HRT***     hydraulic residence time of water in a storage node
-                    (hours).
-  ----------------------------------------------------------------------------
 
 The hydraulic residence time is the average time that water has spent
 within a completely mixed storage node. It is continuously updated for
 each storage node as the simulation progresses by evaluating the
 following expression:
 
-  -------------------------------------------------------------------------------------------------------------------------------
-         $$\theta(t + \mathrm{\Delta}t) = (\theta(t) + \mathrm{\Delta}t)\frac{V(t)}{V(t) + Q_{in}\mathrm{\Delta}t}\ $$   (5-12)
-  ------ --------------------------------------------------------------------------------------------------------------- --------
-
-  -------------------------------------------------------------------------------------------------------------------------------
+$$\theta(t + \mathrm{\Delta}t) = (\theta(t) + \mathrm{\Delta}t)\frac{V(t)}{V(t) + Q_{in}\mathrm{\Delta}t} \qquad \text{(5-12)}$$
 
 where $\theta(t)$ is the hydraulic residence time at time *t* in
 seconds, $V(t)$ is the cubic feet of stored water at time t, $Q_{in}$ is
@@ -4585,7 +4339,7 @@ expression:
 4.  If a pollutant with a global first order decay coefficient is
     assigned a treatment expression at some storage node then the
     treatment expression takes precedence (i.e., the decay coefficient
-    *K~1~* in Equation 5-6 is set to 0).
+    *K<sub>1</sub>* in Equation 5-6 is set to 0).
 
 5.  Co-pollutants do not automatically receive an equivalent amount of
     co-treatment as their dependent pollutant receives.
@@ -4657,22 +4411,14 @@ This is a first-order model with background concentration made popular
 by Kadlec and Knight (1996) for long-term treatment performance of
 wetlands. The general model can be expressed as:
 
-  ----------------------------------------------------------------------------------------
-         $$c - C^{*} = \left( C_{in} - C^{*} \right)exp( - \frac{k\theta}{d})$$   (5-13)
-  ------ ------------------------------------------------------------------------ --------
-
-  ----------------------------------------------------------------------------------------
+$$c - C^{*} = \left( C_{in} - C^{*} \right)exp( - \frac{k\theta}{d}) \qquad \text{(5-13)}$$
 
 where $C^{*}$ is a constant residual concentration that always remains,
 *k* is a rate coefficient with units of length/time, *θ* is the
 hydraulic residence time, and *d* is water depth. This equation can be
 re-arranged into a removal function as follows:
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$r = 1 - \frac{c}{C_{in}} = \left\lbrack 1 - \exp\left( - \frac{k\theta}{d} \right) \right\rbrack\left\lbrack 1 - \frac{C^{*}}{C_{in}} \right\rbrack$$   (5-14)
-  ------ --------------------------------------------------------------------------------------------------------------------------------------------------------- --------
-
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$r = 1 - \frac{c}{C_{in}} = \left\lbrack 1 - \exp\left( - \frac{k\theta}{d} \right) \right\rbrack\left\lbrack 1 - \frac{C^{*}}{C_{in}} \right\rbrack \qquad \text{(5-14)}$$
 
 The corresponding SWMM removal expression of some pollutant X with *k* =
 0.02 (ft/hr) and $C^{*}$ = 20 would look as follows:
@@ -4686,28 +4432,20 @@ inflow concentration is below the residual concentration.
 [Gravity Settling]{.underline}
 
 Consider a size range of suspended particles with average settling
-velocity *u~i~*. During a quiescent period of time *∆t* within a storage
+velocity *u<sub>i</sub>*. During a quiescent period of time *∆t* within a storage
 volume the fraction of these particles that will settle out is
 $u_{i}\mathrm{\Delta}t/d$ where *d* is the water depth. Summing over all
 particle size ranges leads to the following expression for the change in
 TSS concentration *ΔC* during a time step *Δt*:
 
-  -------------------------------------------------------------------------------------------------------------
-         $$\mathrm{\Delta}c = c(t)\sum_{i}^{}{f_{i}u_{i}}\left( \frac{\mathrm{\Delta}t}{d} \right)$$   (5-15)
-  ------ --------------------------------------------------------------------------------------------- --------
-
-  -------------------------------------------------------------------------------------------------------------
+$$\mathrm{\Delta}c = c(t)\sum_{i}^{}{f_{i}u_{i}}\left( \frac{\mathrm{\Delta}t}{d} \right) \qquad \text{(5-15)}$$
 
 where $f_{i}$ is the fraction of particles with settling velocity
 $u_{i}$. Because $\sum_{}^{}{f_{i}u_{i}}$ is generally not known, it can
 be replaced with a fitting parameter *k* and in the limit Equation 5-15
 becomes:
 
-  -------------------------------------------------------------------------
-         $$\frac{\partial c}{\partial t} = - \frac{k}{d}c(t)$$     (5-16)
-  ------ --------------------------------------------------------- --------
-
-  -------------------------------------------------------------------------
+$$\frac{\partial c}{\partial t} = - \frac{k}{d}c(t) \qquad \text{(5-16)}$$
 
 Note that *k* has units of velocity (length/time) and can be thought of
 as a representative settling velocity for the particles that make up the
@@ -4716,11 +4454,7 @@ total suspended solids in solution. Integrating 5-16 between times *t*
 solids *C\** that is non-settleable leads to the following expression
 for $c(t + \mathrm{\Delta}t)$:
 
-  ----------------------------------------------------------------------------------------------------------------------
-         $$c(t + \mathrm{\Delta}t) = C^{*} + \left( c(t) - C^{*} \right)exp( - \frac{k\mathrm{\Delta}t}{d})$$   (5-17)
-  ------ ------------------------------------------------------------------------------------------------------ --------
-
-  ----------------------------------------------------------------------------------------------------------------------
+$$c(t + \mathrm{\Delta}t) = C^{*} + \left( c(t) - C^{*} \right)exp( - \frac{k\mathrm{\Delta}t}{d}) \qquad \text{(5-17)}$$
 
 For particular values of *C\** = 20 and *k* = 0.01 ft/hr this equation
 would be represented by the following treatment expression for a
@@ -4912,10 +4646,11 @@ underdrain system if present.
   ---------------------------------------------------------------------------------------------------------
    ![planter.bmp](./VolumeIII/media/media/image31.png){width="2.8232895888014in"    ![](./VolumeIII/media/media/image32.png)
                       height="2.941583552055993in"}                     
-  --------------------------------------------------------------------- -----------------------------------
-                                 **(A)**                                              **(B)**
 
-  ---------------------------------------------------------------------------------------------------------
+|  |  |
+| --- | --- |
+| **(A)** | **(B)** |
+
 
   : []{#_Toc454288777 .anchor}**Figure 6‑1 A typical bio-retention
   cell**
@@ -4942,55 +4677,55 @@ the inflow and the outflow water flux rates that the layer sees,
 expressed as volume per unit area per unit time. These equations can be
 written as follows:
 
-  ---------------------------------------------------------------------------------------------------------------------------
-        $$\phi_{1}\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1}$$   Surface Layer               (6-1)
-  ----- ----------------------------------------------------------------------------------- ------------------------- -------
-        $$D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{1} - e_{2} - f_{2}$$              Soil Layer                  (6-2)
 
-        $$\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{2} - {e_{3} - f}_{3} - q_{3}$$     Storage Layer               (6-3)
-  ---------------------------------------------------------------------------------------------------------------------------
+$$\phi_{1}\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1} \qquad \text{Surface Layer} \qquad \text{(6-1)}$$
+
+
+$$D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{1} - e_{2} - f_{2} \qquad \text{Soil Layer} \qquad \text{(6-2)}$$
+
+
+$$\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{2} - {e_{3} - f}_{3} - q_{3} \qquad \text{Storage Layer} \qquad \text{(6-3)}$$
+
 
 where:
 
-  ----------------------------------------------------------------------------------
-  *d~1~*          =  depth of water stored on the surface (ft),
-  -------------- --- ---------------------------------------------------------------
-  *θ~2~*          =  soil layer moisture content (volume of water / total volume of
+  *d<sub>1</sub>*          =  depth of water stored on the surface (ft),
+  *θ<sub>2</sub>*          =  soil layer moisture content (volume of water / total volume of
                      soil),
 
-  *d~3~*          =  depth of water in the storage layer (ft),
+  *d<sub>3</sub>*          =  depth of water in the storage layer (ft),
 
                      
 
   *i*             =  precipitation rate falling directly on the surface layer
                      (ft/sec),
 
-  *q~0~*          =  inflow to the surface layer from runoff captured from other
+  *q<sub>0</sub>*          =  inflow to the surface layer from runoff captured from other
                      areas (ft/sec),
 
                      
 
-  *q~1~*          =  surface layer runoff or overflow rate (ft/sec),
+  *q<sub>1</sub>*          =  surface layer runoff or overflow rate (ft/sec),
 
-  *q~3~*          =  storage layer underdrain outflow rate (ft/sec),
-
-                     
-
-  *e~1~*          =  surface ET rate (ft/sec),
-
-  *e~2~*          =  soil layer ET rate (ft/sec),
-
-  *e~3~*          =  storage layer ET rate (ft/sec),
+  *q<sub>3</sub>*          =  storage layer underdrain outflow rate (ft/sec),
 
                      
 
-  *f~1~*          =  infiltration rate of surface water into the soil layer
+  *e<sub>1</sub>*          =  surface ET rate (ft/sec),
+
+  *e<sub>2</sub>*          =  soil layer ET rate (ft/sec),
+
+  *e<sub>3</sub>*          =  storage layer ET rate (ft/sec),
+
+                     
+
+  *f<sub>1</sub>*          =  infiltration rate of surface water into the soil layer
                      (ft/sec),
 
-  *f~2~*          =  percolation rate of water through the soil layer into the
+  *f<sub>2</sub>*          =  percolation rate of water through the soil layer into the
                      storage layer (ft/sec),
 
-  *f~3~*          =  exfiltration rate of water from the storage layer into native
+  *f<sub>3</sub>*          =  exfiltration rate of water from the storage layer into native
                      soil (ft/sec),
 
                      
@@ -5006,68 +4741,57 @@ where:
 
                      
 
-  *D~1~*          =  freeboard height for surface ponding (ft) (used later on),
+  *D<sub>1</sub>*          =  freeboard height for surface ponding (ft) (used later on),
 
-  *D~2~*          =  thickness of the soil layer (ft),
+  *D<sub>2</sub>*          =  thickness of the soil layer (ft),
 
-  *D~3~*          =  thickness of the storage layer (ft) (used later on).
-  ----------------------------------------------------------------------------------
+  *D<sub>3</sub>*          =  thickness of the storage layer (ft) (used later on).
 
 The flux terms (*q, e,* and *f*) in these equations are functions of the
-current water content in the various layers (*d~1~, θ~2~,* and *d~3~*)
+current water content in the various layers (*d<sub>1</sub>, θ<sub>2</sub>,* and *d<sub>3</sub>*)
 and specific site and soil characteristics. This set of coupled
 equations can be solved numerically at each runoff time step to
-determine how an inflow hydrograph to the LID unit (*i + q~0~*) is
-converted into hydrographs for surface runoff (*q~1~*), underdrain
-outflow (*q~3~*), and exfiltration into the surrounding native soil
-(*f~3~*). As applied to a bio-retention cell, this generic model is
+determine how an inflow hydrograph to the LID unit (*i + q<sub>0</sub>*) is
+converted into hydrographs for surface runoff (*q<sub>1</sub>*), underdrain
+outflow (*q<sub>3</sub>*), and exfiltration into the surrounding native soil
+(*f<sub>3</sub>*). As applied to a bio-retention cell, this generic model is
 similar in spirit to the RECARGA model developed at the University of
 Wisconsin -- Madison (Atchison and Severson, 2004) for rain gardens with
 no gravel storage zone. How each of the flux terms in Equations 6-1 to
 6-3 is computed will now be discussed.
 
-[Surface Inflow (*i + q~0~*)]{.underline}
+[Surface Inflow (*i + q<sub>0</sub>*)]{.underline}
 
 Inflow to the surface layer comes from both direct rainfall (*i*) and
 runoff from impervious areas captured by the bio-retention cell
-(*q~0~*). Within each runoff time step these values are provided by
+(*q<sub>0</sub>*). Within each runoff time step these values are provided by
 SWMM's runoff computation as described in Chapter 3 of Volume I of this
 manual.
 
-[Surface Infiltration (*f~1~*)]{.underline}
+[Surface Infiltration (*f<sub>1</sub>*)]{.underline}
 
-The infiltration of surface water into the soil layer, *f~1~*, can be
+The infiltration of surface water into the soil layer, *f<sub>1</sub>*, can be
 modeled with the Green-Ampt equation:
 
-  -----------------------------------------------------------------------------------------------------------------------
-         $$f_{1} = K_{2S}\left( 1 + \frac{\left( \phi_{2} - \theta_{20} \right)(d_{1} + \psi_{2})}{F} \right)$$   (6-4)
-  ------ -------------------------------------------------------------------------------------------------------- -------
-
-  -----------------------------------------------------------------------------------------------------------------------
+$$f_{1} = K_{2S}\left( 1 + \frac{\left( \phi_{2} - \theta_{20} \right)(d_{1} + \psi_{2})}{F} \right) \qquad \text{(6-4)}$$
 
 where
 
-  ----------------------------------------------------------------------------
-  *f~1~*     =  infiltration rate (ft/sec),
-  --------- --- --------------------------------------------------------------
-  *K~2S~*    =  soil's saturated hydraulic conductivity (ft/sec)
-
-  *θ~20~*    =  moisture content at the top of the soil layer (fraction),
-
-  *ψ~2~*     =  suction head at the infiltration wetting front formed in the
-                soil (ft)
-
-  *F*        =  cumulative infiltration volume per unit area over a storm
-                event (ft)
-  ----------------------------------------------------------------------------
+| Symbol | | Description |
+| --- | --- | --- |
+| *f<sub>1</sub>* | = | infiltration rate (ft/sec), |
+| *K<sub>2S</sub>* | = | soil's saturated hydraulic conductivity (ft/sec) |
+| *θ<sub>20</sub>* | = | moisture content at the top of the soil layer (fraction), |
+| *ψ<sub>2</sub>* | = | suction head at the infiltration wetting front formed in the soil (ft) |
+| *F* | = | cumulative infiltration volume per unit area over a storm event (ft) |
 
 This equation applies only after a saturated condition develops at the
-top of the soil zone. Prior to this all inflow (*i + q~0~*) infiltrates.
-The initial value of *θ~20~* for a dry soil would be its residual
+top of the soil zone. Prior to this all inflow (*i + q<sub>0</sub>*) infiltrates.
+The initial value of *θ<sub>20</sub>* for a dry soil would be its residual
 moisture content or its wilting point. It increases after each rainfall
 event, then decreases during dry periods. The details of implementing
 the Green-Ampt model over successive time steps are described in Chapter
-4 of Volume I of this manual. The properties *K~2S~*, *φ~2~*, and *ψ~2~*
+4 of Volume I of this manual. The properties *K<sub>2S</sub>*, *φ<sub>2</sub>*, and *ψ<sub>2</sub>*
 for the bio-retention cell's amended soil can be different from those of
 the site's natural soil. This can produce a different infiltration rate
 into the LID unit when compared to that for rest of the subcatchment.
@@ -5081,100 +4805,95 @@ The calculation proceeds from the surface layer downwards, where any
 un-used potential ET is made available to the next lower layer. So at
 any time *t*:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$e_{1} = min\left\lbrack E_{0}(t),\ \frac{d_{1}}{\Delta t} \right\rbrack$$                                                                  (6-5)
-  ------ -------------------------------------------------------------------------------------------------------------------------------------- -----------
-         $$e_{2} = min\left\lbrack E_{0}(t) - e_{1}\ ,\frac{\left( \theta_{2} - \theta_{WP} \right)D_{2}}{\mathrm{\Delta}t} \right\rbrack$$           (6-6)
 
-         $$e_{3} = \left\{ \begin{aligned}                                                                                                            (6-7)
-         \min\left\lbrack E_{0}(t) - e_{1} - e_{2}\ ,\ \frac{\phi_{3}d_{3}}{\mathrm{\Delta}t} \right\rbrack,\ \ \  & \theta_{2} < \phi_{2} \\   
-         0,\ \  & \theta_{2} \geq \phi_{2}                                                                                                      
-         \end{aligned} \right.\ $$                                                                                                              
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+$$e_{1} = min\left\lbrack E_{0}(t),\ \frac{d_{1}}{\Delta t} \right\rbrack \qquad \text{(6-5)}$$
+
+
+$$e_{2} = min\left\lbrack E_{0}(t) - e_{1}\ ,\frac{\left( \theta_{2} - \theta_{WP} \right)D_{2}}{\mathrm{\Delta}t} \right\rbrack \qquad \text{(6-6)}$$
+
+
+$$e_{3} = \left\{ \begin{aligned}
+\min\left\lbrack E_{0}(t) - e_{1} - e_{2}\ ,\ \frac{\phi_{3}d_{3}}{\mathrm{\Delta}t} \right\rbrack,\ \ \  & \theta_{2} < \phi_{2} \\
+0,\ \  & \theta_{2} \geq \phi_{2}
+\end{aligned} \right.\ \qquad \text{(6-7)}$$
+
 
 where $E_{0}(t)$ is the potential ET rate that applies for time *t*,
 *∆t* is the time step used to numerically evaluate the governing flow
 balance equations 6-1 to 6-3, and $\theta_{WP}$ is the user-supplied
 wilting point soil moisture content. A soil's wilting point is the
 moisture content below which plants can no longer extract water from the
-soil. Thus when the soil moisture *θ~2~* reaches the wilting point there
+soil. Thus when the soil moisture *θ<sub>2</sub>* reaches the wilting point there
 is no contribution to ET from the soil layer.
 
 Note how ET from each layer is limited by the amount of potential ET
 remaining and the amount of water stored in the layer. In addition:
 
-- *e~3~* is zero when the soil zone becomes saturated.
+- *e<sub>3</sub>* is zero when the soil zone becomes saturated.
 
-- *e~2~* and *e~3~* are zero during periods with surface infiltration
+- *e<sub>2</sub>* and *e<sub>3</sub>* are zero during periods with surface infiltration
   ($f_{1} > 0$) since it is assumed that the resulting vapor pressure
   will be high enough to prevent any ET from occurring.
 
-[Soil Percolation (*f~2~*)]{.underline}
+[Soil Percolation (*f<sub>2</sub>*)]{.underline}
 
 The rate of percolation of water through the soil layer into the storage
-layer below it (*f~2~)* can be modeled using Darcy's Law in the same
+layer below it (*f<sub>2</sub>)* can be modeled using Darcy's Law in the same
 manner used in SWMM's existing groundwater module (see Chapter 5 of
 Volume I). The resulting equation for this flux is:
 
-  ------------------------------------------------------------------------------------------------------------------------
-         $$f_{2} = \left\{ \begin{aligned}                                                                         (6-8)
-         K_{2S}\exp\left( - HCO\left( \phi_{2} - \theta_{2} \right) \right),\ \ \  & \theta_{2} > \theta_{FC} \\   
-         0,\ \  & \theta_{2} \leq \theta_{FC}                                                                      
-         \end{aligned} \right.\ $$                                                                                 
-  ------ --------------------------------------------------------------------------------------------------------- -------
 
-  ------------------------------------------------------------------------------------------------------------------------
+$$f_{2} = \left\{ \begin{aligned}
+K_{2S}\exp\left( - HCO\left( \phi_{2} - \theta_{2} \right) \right),\ \ \  & \theta_{2} > \theta_{FC} \\
+0,\ \  & \theta_{2} \leq \theta_{FC}
+\end{aligned} \right.\ \qquad \text{(6-8)}$$
 
-where *K~2S~* is the soil's saturated hydraulic conductivity (ft/sec),
+
+
+where *K<sub>2S</sub>* is the soil's saturated hydraulic conductivity (ft/sec),
 *HCO* is a decay constant derived from moisture retention curve data
 that describes how conductivity decreases with decreasing moisture
-content, and *θ~FC~* is the soil's field capacity moisture content. The
+content, and *θ<sub>FC</sub>* is the soil's field capacity moisture content. The
 same expression for unsaturated soil percolation is used in SWMM's
-groundwater module. When the moisture content *θ~2~* drops below the
-field capacity moisture level *θ~FC~* then the percolation rate becomes
+groundwater module. When the moisture content *θ<sub>2</sub>* drops below the
+field capacity moisture level *θ<sub>FC</sub>* then the percolation rate becomes
 zero. This limit is in accordance with the concept of field capacity as
 the drainable soil water that cannot be removed by gravity alone
 (Hillel, 1982, p. 243).
 
-[Bottom Exfiltration (*f~3~*)]{.underline}
+[Bottom Exfiltration (*f<sub>3</sub>*)]{.underline}
 
 The exfiltration rate from the bottom of the storage zone into native
 soil would normally depend on the depth of stored water and the moisture
 profile of the soil beneath the LID unit. Since the latter is not known,
 SWMM assumes that the exfiltration rate $f_{3}$ is simply the
 user-supplied saturated hydraulic conductivity of the native soil
-beneath the LID unit, *K~3S~*. Setting *K~3S\ ~*to zero indicates that
+beneath the LID unit, *K<sub>3S</sub>*. Setting *K<sub>3S</sub>*to zero indicates that
 the bio-retention cell has an impermeable bottom.
 
-[Underdrain Flow (*q~3~*)]{.underline}
+[Underdrain Flow (*q<sub>3</sub>*)]{.underline}
 
 Because the hydraulics of perforated pipe underdrains can be complicated
 (see van Schilfgaarde 1974) SWMM uses a simple empirical power law to
-model underdrain outflow *q~3\ ~*:
+model underdrain outflow *q<sub>3</sub>*:
 
-  ------------------------------------------------------------------------
-         $$q_{3} = C_{3D}\left( h_{3} \right)^{\eta_{3D}}$$        (6-9)
-  ------ --------------------------------------------------------- -------
 
-  ------------------------------------------------------------------------
+$$q_{3} = C_{3D}\left( h_{3} \right)^{\eta_{3D}} \qquad \text{(6-9)}$$
+
+
 
 where
 
-  ---------------------------------------------------------------------------
-  *h~3~*     =  hydraulic head seen by underdrain, (ft)
-  --------- --- -------------------------------------------------------------
-  *C~3D~*    =  underdrain discharge coefficient
+  *h<sub>3</sub>*     =  hydraulic head seen by underdrain, (ft)
+  *C<sub>3D</sub>*    =  underdrain discharge coefficient
                 ($\frac{{ft}^{- (\eta_{3D} - 1)}}{\sec}$)
 
-  *η~3D~*    =  underdrain discharge exponent
-  ---------------------------------------------------------------------------
+  *η<sub>3D</sub>*    =  underdrain discharge exponent
 
-The hydraulic head *h~3~* seen by the underdrain varies with the height
+The hydraulic head *h<sub>3</sub>* seen by the underdrain varies with the height
 of water above it in the following fashion:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
          $h_{3} = 0$                                                                                                                              for $d_{3} \leq D_{3D}$
-  ------ ---------------------------------------------------------------------------------------------------------------------------------------- ---------------------------------------
          $$h_{3} = d_{3} - D_{3D}$$                                                                                                               for $D_{3D} < d_{3} < D_{3}$
 
          $$h_{3} = \left( D_{3} - D_{3D} \right) + \frac{\left( \theta_{2} - \theta_{FC} \right)}{\left( \phi_{2} - \theta_{FC} \right)D_{2}}$$   for $d_{3} = D_{3}$ and
@@ -5182,35 +4901,33 @@ of water above it in the following fashion:
 
          $$h_{3} = \left( D_{3} - D_{3D} \right) + D_{2} + d_{1}$$                                                                                for $d_{3} = D_{3}$ and
                                                                                                                                                   $\theta_{2} = \phi_{2}$
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-where *D~3D~* is the height of drain opening above bottom of storage
+where *D<sub>3D</sub>* is the height of drain opening above bottom of storage
 layer (ft) and $\theta_{FC}$ is the soil layer's field capacity moisture
 content below which water does not drain freely from the soil.
 
-Underdrains introduce three additional parameters *C~3D~, η~3D~,* and
-*D~3D~*, into the description of a bio-retention cell. There is no
+Underdrains introduce three additional parameters *C<sub>3D</sub>, η<sub>3D</sub>,* and
+*D<sub>3D</sub>*, into the description of a bio-retention cell. There is no
 underdrain flow until the depth of water in the storage layer reaches
-the drain offset height. Choosing a value of 0.5 for *η~3D~* makes the
+the drain offset height. Choosing a value of 0.5 for *η<sub>3D</sub>* makes the
 drain flow formula equivalent to the standard orifice equation, where
-*C~3D~* incorporates both the normal orifice discharge coefficient and
-available flow area. Setting *C~3D~* to zero indicates that no
+*C<sub>3D</sub>* incorporates both the normal orifice discharge coefficient and
+available flow area. Setting *C<sub>3D</sub>* to zero indicates that no
 underdrain is present. The flow rate computed with Equation 6-9 should
 be considered a maximum potential value. The actual underdrain flow at
 any time step will be the smaller of this value and the amount of water
 available to the underdrain.
 
-[Surface Runoff (*q~1~*)]{.underline}
+[Surface Runoff (*q<sub>1</sub>*)]{.underline}
 
 It is assumed that any ponded surface water in excess of the maximum
-freeboard (or depression storage) height *D~1~* becomes immediate
+freeboard (or depression storage) height *D<sub>1</sub>* becomes immediate
 overflow. Therefore:
 
-  ---------------------------------------------------------------------------------------------------------------------
-         $$q_{1} = max\left\lbrack \frac{\left( d_{1} - D_{1} \right)}{\mathrm{\Delta}t},\ 0 \right\rbrack$$   (6-10)
-  ------ ----------------------------------------------------------------------------------------------------- --------
 
-  ---------------------------------------------------------------------------------------------------------------------
+$$q_{1} = max\left\lbrack \frac{\left( d_{1} - D_{1} \right)}{\mathrm{\Delta}t},\ 0 \right\rbrack \qquad \text{(6-10)}$$
+
+
 
 [Flux Limits]{.underline}
 
@@ -5219,75 +4936,70 @@ insure that at any given time step the moisture levels in the soil and
 storage layers do not go negative nor exceed the layer's capacity. These
 limits are evaluated in the order listed below.
 
-1.  The soil percolation rate *f~2~* is limited by the amount of
+1.  The soil percolation rate *f<sub>2</sub>* is limited by the amount of
     drainable water currently in the soil layer plus the net amount of
     water added to it over the time step:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$f_{2} = min\left\lbrack \frac{f_{2}\ ,\left( \theta_{2} - \theta_{FC} \right)D_{2}}{\mathrm{\Delta}t} + f_{1} - e_{2} \right\rbrack$$   (6-11)
-  ------ ----------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+$$f_{2} = min\left\lbrack \frac{f_{2}\ ,\left( \theta_{2} - \theta_{FC} \right)D_{2}}{\mathrm{\Delta}t} + f_{1} - e_{2} \right\rbrack \qquad \text{(6-11)}$$
 
-2.  The storage exfiltration rate *f~3~* is limited by the amount of
+
+
+2.  The storage exfiltration rate *f<sub>3</sub>* is limited by the amount of
     water currently in the storage layer plus the net amount of water
     added to it over the time step:
 
-  --------------------------------------------------------------------------------------------------------------------------
-         $$f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{2} - e_{3} \right\rbrack$$   (6-12)
-  ------ ---------------------------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------------------------
+$$f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{2} - e_{3} \right\rbrack \qquad \text{(6-12)}$$
 
-3.  When an underdrain is used, the drain flow *q~3~* is limited by the
+
+
+3.  When an underdrain is used, the drain flow *q<sub>3</sub>* is limited by the
     amount of water stored above the drain offset plus any excess inflow
     from the soil layer that remains after storage exfiltration is
     accounted for:
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{2} - f_{3} - e_{3} \right\rbrack$$   (6-13)
-  ------ -------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{2} - f_{3} - e_{3} \right\rbrack \qquad \text{(6-13)}$$
+
+
 
 4.  The soil percolation rate is also limited by the amount of unused
     volume in the storage layer plus the net amount of water removed
     from storage over the time step.
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$f_{2} = min\left\lbrack \frac{f_{2}\ ,{\left( D_{3} - d_{3} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{3} + q_{3} + e_{3} \right\rbrack$$   (6-14)
-  ------ ------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------
+$$f_{2} = min\left\lbrack \frac{f_{2}\ ,{\left( D_{3} - d_{3} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{3} + q_{3} + e_{3} \right\rbrack \qquad \text{(6-14)}$$
 
-5.  The rate *f~1~* at which water can infiltrate into the soil layer is
+
+
+5.  The rate *f<sub>1</sub>* at which water can infiltrate into the soil layer is
     limited by the amount of empty pore space available plus the volume
     removed by drainage and evaporation over the time step.
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$f_{1} = min\left\lbrack \frac{f_{1}\ ,{\left( \phi_{2} - \theta_{2} \right)D}_{2}}{\mathrm{\Delta}t} + f_{2} + e_{2} \right\rbrack$$   (6-15)
-  ------ ---------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------
+$$f_{1} = min\left\lbrack \frac{f_{1}\ ,{\left( \phi_{2} - \theta_{2} \right)D}_{2}}{\mathrm{\Delta}t} + f_{2} + e_{2} \right\rbrack \qquad \text{(6-15)}$$
 
-When the unit becomes completely saturated (i.e., *θ~2~ = φ~2~* and
-*d~3~ = D~3~*) then the vertical flux of water through both the soil and
+
+
+When the unit becomes completely saturated (i.e., *θ<sub>2</sub> = φ<sub>2</sub>* and
+*d<sub>3</sub> = D<sub>3</sub>*) then the vertical flux of water through both the soil and
 storage layers has to be the same since there is a common fully wetted
 interface between them. For this special case, if
 $f_{2} > f_{3} + q_{3}$ then $f_{2} = f_{3} + q_{3}$. Otherwise
 $f_{3} = min\left\lbrack f_{3}\ ,f_{2} \right\rbrack$ and
 $q_{3} = max\left\lbrack f_{3} - f_{2}\ ,0 \right\rbrack.$ In addition
-the surface infiltration rate *f~1~* cannot exceed the adjusted soil
+the surface infiltration rate *f<sub>1</sub>* cannot exceed the adjusted soil
 percolation rate: $f_{1} = min\left\lbrack f_{1},f_{2} \right\rbrack$.
 (Note that because the unit is saturated no sub-surface ET occurs and
 therefore does not influence these limits.)
 
 It is worth noting that this simple representation of a bio-retention
 cell uses a total of 15 user-supplied parameters in its description: two
-surface layer parameters (*φ~1~, D~1~*) seven soil layer parameters
-(*φ~2~, θ~FC~, θ~WP~, K~2S~, ψ~2~, HCO, D~2~*), three storage layer
-parameters *(φ~3~, K~3S~*, *D~3~)* and three underdrain parameters
-(*C~3D~, η~3D~*, *D~3D~*). The six constants that define the soil
+surface layer parameters (*φ<sub>1</sub>, D<sub>1</sub>*) seven soil layer parameters
+(*φ<sub>2</sub>, θ<sub>FC</sub>, θ<sub>WP</sub>, K<sub>2S</sub>, ψ<sub>2</sub>, HCO, D<sub>2</sub>*), three storage layer
+parameters *(φ<sub>3</sub>, K<sub>3S</sub>*, *D<sub>3</sub>)* and three underdrain parameters
+(*C<sub>3D</sub>, η<sub>3D</sub>*, *D<sub>3D</sub>*). The six constants that define the soil
 layer's moisture limits
 ($\phi_{2},\ {\psi_{2},\ \theta}_{FC},\ \theta_{WP}$) and hydraulic
 conductivity ($K_{2S},\ HCO$) are the same parameters used for
@@ -5310,18 +5022,18 @@ disconnection, and vegetative swales in that order.
 SWMM defines a rain garden as a bio-retention cell without a storage
 layer. Its governing equations are therefore:
 
-  ----------------------------------------------------------------------------------------------------------------------------
-        $$\phi_{1}\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1}$$   Surface Layer               (6-16)
-  ----- ----------------------------------------------------------------------------------- ------------------------- --------
-        $$D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{1} - e_{2} - f_{2}$$              Soil Layer                  (6-17)
 
-  ----------------------------------------------------------------------------------------------------------------------------
+$$\phi_{1}\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1} \qquad \text{Surface Layer} \qquad \text{(6-16)}$$
 
-The nominal soil percolation rate *f~2~* is computed via Equation 6-8.
+
+$$D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{1} - e_{2} - f_{2} \qquad \text{Soil Layer} \qquad \text{(6-17)}$$
+
+
+The nominal soil percolation rate *f<sub>2</sub>* is computed via Equation 6-8.
 It is then limited to the smaller of this value, the amount of drainable
 water available in the soil layer (Equation 6-11) and the saturated
 hydraulic conductivity of the native soil beneath the rain garden
-(*K~3S~*). The remaining flux rates are computed as described earlier.
+(*K<sub>3S</sub>*). The remaining flux rates are computed as described earlier.
 
 ### 6.2.3 Green Roofs
 
@@ -5337,51 +5049,49 @@ underdrain.
 
 The governing equations for a green roof with a drainage mat would be:
 
-  --------------------------------------------------------------------------------------------------------------------
-        $$\phi_{1}\frac{\partial d_{1}}{\partial t} = i - e_{1} - f_{1} - q_{1}$$   Surface Layer               (6-18)
-  ----- --------------------------------------------------------------------------- ------------------------- --------
-        $$D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{1} - e_{2} - f_{2}$$      Soil Layer                  (6-19)
 
-        $$\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{2} - e_{3} - q_{3}$$       Drainage Mat Layer          (6-20)
-  --------------------------------------------------------------------------------------------------------------------
+$$\phi_{1}\frac{\partial d_{1}}{\partial t} = i - e_{1} - f_{1} - q_{1} \qquad \text{Surface Layer} \qquad \text{(6-18)}$$
 
-Note the absence of the captured runoff term *q~0~* in Equation 6-18
+
+$$D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{1} - e_{2} - f_{2} \qquad \text{Soil Layer} \qquad \text{(6-19)}$$
+
+
+$$\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{2} - e_{3} - q_{3} \qquad \text{Drainage Mat Layer} \qquad \text{(6-20)}$$
+
+
+Note the absence of the captured runoff term *q<sub>0</sub>* in Equation 6-18
 since a green roof would only be capturing direct rainfall. There is
-also no exfiltration term *f~3~* since the bottom of a green roof
+also no exfiltration term *f<sub>3</sub>* since the bottom of a green roof
 consists of an impermeable membrane.
 
-The runoff rate from the soil layer surface (*q~1~*) is computed using
+The runoff rate from the soil layer surface (*q<sub>1</sub>*) is computed using
 the Manning equation for uniform overland flow. Under the assumption
 that the width of the flow area is much greater than the depth of flow
 the Manning equation becomes:
 
-  -----------------------------------------------------------------------------------------------------------------------------------
-         $$q_{1} = \frac{1.49}{n_{1}}\sqrt{S_{1}}(\frac{W_{1}}{A_{1})\phi_{1}\left( d_{1} - D_{1} \right)^{\frac{5}{3}}}$$   (6-21)
-  ------ ------------------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------------------
+$$q_{1} = \frac{1.49}{n_{1}}\sqrt{S_{1}}(\frac{W_{1}}{A_{1})\phi_{1}\left( d_{1} - D_{1} \right)^{\frac{5}{3}}} \qquad \text{(6-21)}$$
+
+
 
 where
 
-  ---------------------------------------------------------------------------
-  *n~1~*    =  surface roughness coefficient,
-  -------- --- --------------------------------------------------------------
-  *S~1~*    =  surface slope (ft/ft),
+  *n<sub>1</sub>*    =  surface roughness coefficient,
+  *S<sub>1</sub>*    =  surface slope (ft/ft),
 
-  *W~1~*    =  total length along edge of the roof where runoff is collected
+  *W<sub>1</sub>*    =  total length along edge of the roof where runoff is collected
                (ft),
 
-  *D~1~*    =  surface depression storage depth (ft),
+  *D<sub>1</sub>*    =  surface depression storage depth (ft),
 
-  *A~1~*    =  roof surface area (ft^2^).
-  ---------------------------------------------------------------------------
+  *A<sub>1</sub>*    =  roof surface area (ft<sup>2</sup>).
 
 All of these surface parameters are supplied by the user as part of the
 green roof's design. The "surface" that these parameters describe is the
 surface of the soil layer. The $\frac{W_{1}}{A_{1}}$ term represents the
 length of the flow path that excess water takes before it enters the
 roof's drain system (see Figure 6-2). When the depth of ponded water
-*d~1~* is at or below the depression storage depth *D~1~* then no
+*d<sub>1</sub>* is at or below the depression storage depth *D<sub>1</sub>* then no
 surface outflow occurs.
 
 ![[]{#_Toc454288778 .anchor}**Figure 6‑2 Flow path across the surface of
@@ -5389,30 +5099,29 @@ a green roof**](./media/media/image33.png){width="3.09375in"
 height="2.2604166666666665in"}
 
 Another option for surface outflow is to have any ponded surface water
-in excess of the depression storage *D~1~* become instantaneous runoff
-using Equation 6-10. This is done by setting either *n~1~*, *S~1~*, or
-*W~1~* to zero. This may be a better choice for roofs with short flow
+in excess of the depression storage *D<sub>1</sub>* become instantaneous runoff
+using Equation 6-10. This is done by setting either *n<sub>1</sub>*, *S<sub>1</sub>*, or
+*W<sub>1</sub>* to zero. This may be a better choice for roofs with short flow
 path lengths or flat roofs that use internal roof drains.
 
-The drainage mat flow rate *q~3\ ~*in Equation 6-20 is assumed to obey
+The drainage mat flow rate *q<sub>3</sub>*in Equation 6-20 is assumed to obey
 uniform open channel flow within the channels of the mat. Thus it can be
 expressed as:
 
-  -----------------------------------------------------------------------------------------------------------------------------
-         $$q_{3} = \frac{1.49}{n_{3}}\sqrt{S_{1}}(\frac{W_{1}}{A_{1}){\phi_{3}\left( d_{3} \right)}^{\frac{5}{3}}}$$   (6-22)
-  ------ ------------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------------
+$$q_{3} = \frac{1.49}{n_{3}}\sqrt{S_{1}}(\frac{W_{1}}{A_{1}){\phi_{3}\left( d_{3} \right)}^{\frac{5}{3}}} \qquad \text{(6-22)}$$
 
-where *n~3~* is a roughness coefficient for the mat and *S~1~*, *W~1~*,
-and *A~1~* are the same slope, outflow face width, and roof surface
-area, respectively, used to evaluate surface overflow (*q~1~*).
+
+
+where *n<sub>3</sub>* is a roughness coefficient for the mat and *S<sub>1</sub>*, *W<sub>1</sub>*,
+and *A<sub>1</sub>* are the same slope, outflow face width, and roof surface
+area, respectively, used to evaluate surface overflow (*q<sub>1</sub>*).
 
 The remaining flux rates in Equations 6-18 to 6-20 are evaluated in the
 same fashion as for the bio-retention cell. In addition, the same flux
 limiting conditions for the bio-retention cell (Equations 6-11 through
 6-15) are applied to the green roof to insure that the values used for
-*f~1~*, *f~2~*, and *q~3~* maintain feasible moisture levels for the
+*f<sub>1</sub>*, *f<sub>2</sub>*, and *q<sub>3</sub>* maintain feasible moisture levels for the
 soil and drainage layers after each time step.
 
 ### 6.2.4 Infiltration Trenches
@@ -5421,59 +5130,55 @@ An infiltration trench can be represented in the same fashion as a
 bio-retention cell but having just a surface and a storage layer. The
 governing equations are:
 
-  --------------------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1}$$         Surface Layer               (6-23)
-  ----- --------------------------------------------------------------------------------- ------------------------- --------
-        $$\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{1} - {e_{3} - f}_{3} - q_{3}$$   Storage Layer               (6-24)
 
-  --------------------------------------------------------------------------------------------------------------------------
+$$\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1} \qquad \text{Surface Layer} \qquad \text{(6-23)}$$
 
-where now *f~1~* is the trench's external inflow plus any ponded surface
+
+$$\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{1} - {e_{3} - f}_{3} - q_{3} \qquad \text{Storage Layer} \qquad \text{(6-24)}$$
+
+
+where now *f<sub>1</sub>* is the trench's external inflow plus any ponded surface
 water that drains into the storage layer over the time step:
 
-  --------------------------------------------------------------------------
-         $$f_{1} = i + \ q_{0} + \frac{d_{1}}{\mathrm{\Delta}t}$$   (6-25)
-  ------ ---------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$f_{1} = i + \ q_{0} + \frac{d_{1}}{\mathrm{\Delta}t} \qquad \text{(6-25)}$$
+
+
 
 Nominal values for the remaining flux terms are evaluated in the same
-fashion as for the bio-retention cell. The surface void fraction *φ~1~*
+fashion as for the bio-retention cell. The surface void fraction *φ<sub>1</sub>*
 does not appear in the surface layer equation since a gravel-filled
 trench would have no vegetative growth above it.
 
 These nominal rates are subject to the following constraints:
 
-1.  The storage exfiltration rate *f~3~* is limited by the amount of
+1.  The storage exfiltration rate *f<sub>3</sub>* is limited by the amount of
     water currently in the storage layer plus the net amount of water
     added to it over the time step:
 
-  --------------------------------------------------------------------------------------------------------------------------
-         $$f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{1} - e_{3} \right\rbrack$$   (6-26)
-  ------ ---------------------------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------------------------
+$$f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{1} - e_{3} \right\rbrack \qquad \text{(6-26)}$$
 
-2.  When an underdrain is used, the drain flow *q~3~* is limited by the
+
+
+2.  When an underdrain is used, the drain flow *q<sub>3</sub>* is limited by the
     amount of water stored above the drain offset plus any excess inflow
     from the surface that remains after storage exfiltration is
     accounted for:
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{1} - f_{3} - e_{3} \right\rbrack$$   (6-27)
-  ------ -------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{1} - f_{3} - e_{3} \right\rbrack \qquad \text{(6-27)}$$
 
-3.  The surface inflow rate *f~1~* is limited by the amount of empty
+
+
+3.  The surface inflow rate *f<sub>1</sub>* is limited by the amount of empty
     storage layer space available plus the volume removed by
     exfiltration, underdrain flow, and evaporation over the time step:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$f_{1} = min\left\lbrack \frac{f_{1}\ ,\left( D_{3} - d_{3} \right)\phi_{3}}{\mathrm{\Delta}t} + f_{3} + q_{3} + e_{3} \right\rbrack$$   (6-28)
-  ------ ----------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+$$f_{1} = min\left\lbrack \frac{f_{1}\ ,\left( D_{3} - d_{3} \right)\phi_{3}}{\mathrm{\Delta}t} + f_{3} + q_{3} + e_{3} \right\rbrack \qquad \text{(6-28)}$$
+
+
 
 ### 6.2.5 Permeable Pavement
 
@@ -5482,12 +5187,12 @@ It consists of a pervious concrete or asphalt top layer, an optional
 sand filter or bedding layer beneath that and a gravel storage layer on
 the bottom which can contain an optional slotted pipe underdrain system.
 It introduces a new type of layer, a pavement layer (layer 4), which is
-characterized by its thickness (*D~4~*), porosity (*φ~4~*), and
-permeability *K~4~*. A block paver system would look the same but with
-an additional parameter (*F~4~*) representing the fraction of the
+characterized by its thickness (*D<sub>4</sub>*), porosity (*φ<sub>4</sub>*), and
+permeability *K<sub>4</sub>*. A block paver system would look the same but with
+an additional parameter (*F<sub>4</sub>*) representing the fraction of the
 surface area taken up by the impermeable paver blocks and where the
 porosity and permeability refer to the fine gravel used to fill the
-seams between blocks. For continuous systems *F~4~* would be 0.
+seams between blocks. For continuous systems *F<sub>4</sub>* would be 0.
 
 <figure>
 <img src="./media/media/image34.png"
@@ -5500,60 +5205,60 @@ pavement system</strong></p></figcaption>
 The governing equations for permeable pavement with a sand layer
 included are:
 
-  -----------------------------------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1}$$                        Surface Layer               (6-29)
-  ----- ------------------------------------------------------------------------------------------------ ------------------------- --------
-        $$D_{4}\left( 1 - F_{4} \right)\frac{\partial\theta_{4}}{\partial t} = f_{1} - e_{4} - f_{4}$$   Pavement Layer              (6-30)
 
-        $$D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{4} - e_{2} - f_{2}$$                           Sand Layer                  (6-31)
+$$\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1} \qquad \text{Surface Layer} \qquad \text{(6-29)}$$
 
-        $$\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{2} - {e_{3} - f}_{3} - q_{3}$$                  Storage Layer               (6-32)
-  -----------------------------------------------------------------------------------------------------------------------------------------
+
+$$D_{4}\left( 1 - F_{4} \right)\frac{\partial\theta_{4}}{\partial t} = f_{1} - e_{4} - f_{4} \qquad \text{Pavement Layer} \qquad \text{(6-30)}$$
+
+
+$$D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{4} - e_{2} - f_{2} \qquad \text{Sand Layer} \qquad \text{(6-31)}$$
+
+
+$$\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{2} - {e_{3} - f}_{3} - q_{3} \qquad \text{Storage Layer} \qquad \text{(6-32)}$$
+
 
 where $\theta_{4}$ is the moisture content of the permeable pavement
 layer, $f_{4}$ is the rate at which water drains out of the pavement
 layer, and all other terms have been defined previously. Note that when
 no sand layer is present, Equation 6-31 is removed and $f_{4}$ replaces
 $f_{2}$ in the storage layer Equation 6-32. Also, the surface void
-fraction *φ~1~* does not appear in the surface layer equation since a
+fraction *φ<sub>1</sub>* does not appear in the surface layer equation since a
 paved surface would have no vegetative growth above it.
 
 The flux terms in these equations are evaluated in the same manner as
 for the bio-retention cell with the following exceptions:
 
-1.  Evaporation of any water stored in the pavement layer, *e~4~*, would
+1.  Evaporation of any water stored in the pavement layer, *e<sub>4</sub>*, would
     proceed at the rate:
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------
-         $$e_{4} = min\left\lbrack E_{0}(t) - e_{1}\ ,\frac{\theta_{4}D_{4}\left( 1 - F_{4} \right)}{\mathrm{\Delta}t} \right\rbrack$$   (6-33)
-  ------ ------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------
+$$e_{4} = min\left\lbrack E_{0}(t) - e_{1}\ ,\frac{\theta_{4}D_{4}\left( 1 - F_{4} \right)}{\mathrm{\Delta}t} \right\rbrack \qquad \text{(6-33)}$$
 
-with *E~0~(t)* subsequently reduced by *e~4~* when ET from the layers
+
+
+with *E<sub>0</sub>(t)* subsequently reduced by *e<sub>4</sub>* when ET from the layers
 below it is evaluated.
 
 2.  The nominal flux rate from the surface layer into the pavement layer
-    (*f~1~*) is the same as for an infiltration trench:
+    (*f<sub>1</sub>*) is the same as for an infiltration trench:
 
-  --------------------------------------------------------------------------
-         $$f_{1} = i + \ q_{0} + \frac{d_{1}}{\mathrm{\Delta}t}$$   (6-34)
-  ------ ---------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------
+$$f_{1} = i + \ q_{0} + \frac{d_{1}}{\mathrm{\Delta}t} \qquad \text{(6-34)}$$
 
-3.  The nominal flux rate leaving the pavement layer (*f~4~*) is equal
-    to the pavement's permeability *K~4~*.
 
-4.  When evaluating underdrain outflow *q~3~*, once both the storage
+
+3.  The nominal flux rate leaving the pavement layer (*f<sub>4</sub>*) is equal
+    to the pavement's permeability *K<sub>4</sub>*.
+
+4.  When evaluating underdrain outflow *q<sub>3</sub>*, once both the storage
     layer and sand layer (if present) become saturated, the head on the
     underdrain becomes:
 
-  ------------------------------------------------------------------------------------------------------
-         $$h_{3} = \left( D_{3} - D_{3D} \right) + D_{2} + \frac{\theta_{4}D_{4}}{\phi_{4}}$$   (6-35)
-  ------ -------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------
+$$h_{3} = \left( D_{3} - D_{3D} \right) + D_{2} + \frac{\theta_{4}D_{4}}{\phi_{4}} \qquad \text{(6-35)}$$
+
+
 
 5.  The flux rate from the surface into the pavement is limited by the
     rate at which the pavement can accept inflow:
@@ -5561,74 +5266,67 @@ below it is evaluated.
 The following adjustments are applied to the nominal flux rates in the
 order listed so that feasible moisture levels are maintained:
 
-1.  Pavement flux rate *f~4~* :
+1.  Pavement flux rate *f<sub>4</sub>* :
 
-  ----------------------------------------------------------------------------------------------------------------------------
-         $$f_{4} = min\left\lbrack \frac{f_{4}\ ,\theta_{4}D_{4}}{\mathrm{\Delta}t} + f_{1} - e_{4} \right\rbrack$$   (6-36)
-  ------ ------------------------------------------------------------------------------------------------------------ --------
 
-  ----------------------------------------------------------------------------------------------------------------------------
+$$f_{4} = min\left\lbrack \frac{f_{4}\ ,\theta_{4}D_{4}}{\mathrm{\Delta}t} + f_{1} - e_{4} \right\rbrack \qquad \text{(6-36)}$$
 
-2.  Soil percolation rate *f~2~* :
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$f_{2} = min\left\lbrack \frac{f_{2}\ ,\left( \theta_{2} - \theta_{FC} \right)D_{2}}{\mathrm{\Delta}t} + f_{4} - e_{4} \right\rbrack$$   (6-37)
-  ------ ----------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+2.  Soil percolation rate *f<sub>2</sub>* :
 
-3.  Storage exfiltration rate *f~3~* :
 
-  --------------------------------------------------------------------------------------------------------------------------
-         $$f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{2} - e_{3} \right\rbrack$$   (6-38)
-  ------ ---------------------------------------------------------------------------------------------------------- --------
+$$f_{2} = min\left\lbrack \frac{f_{2}\ ,\left( \theta_{2} - \theta_{FC} \right)D_{2}}{\mathrm{\Delta}t} + f_{4} - e_{4} \right\rbrack \qquad \text{(6-37)}$$
 
-  --------------------------------------------------------------------------------------------------------------------------
 
-> where *f~2~ = f~4~* if there is no soil layer.
 
-4.  Underdrain flow *q~3~* (when present):
+3.  Storage exfiltration rate *f<sub>3</sub>* :
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{2} - f_{3} - e_{3} \right\rbrack$$   (6-39)
-  ------ -------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{2} - e_{3} \right\rbrack \qquad \text{(6-38)}$$
 
-> where again *f~2~ = f~4~* if there is no soil layer.
 
-5.  Pavement flux rate *f~4~* :
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+> where *f<sub>2</sub> = f<sub>4</sub>* if there is no soil layer.
+
+4.  Underdrain flow *q<sub>3</sub>* (when present):
+
+
+$$q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{2} - f_{3} - e_{3} \right\rbrack \qquad \text{(6-39)}$$
+
+
+
+> where again *f<sub>2</sub> = f<sub>4</sub>* if there is no soil layer.
+
+5.  Pavement flux rate *f<sub>4</sub>* :
+
         $\frac{f_{4} = min\lbrack f_{4}\ ,\left( \phi_{2} - \theta_{2} \right)D_{2}}{\mathrm{\Delta}t + f_{2} + e_{2}\rbrack}$             with soil layer   (6-40)
-  ----- ----------------------------------------------------------------------------------------------------------------------------- -------------------- --------
                                                                                                                                                            
 
-        $$\frac{f_{4} = min\lbrack f_{4}\ ,\left( D_{3} - d_{3} \right)\phi_{3}}{\mathrm{\Delta}t + e_{3} + f_{3} + q_{3}\rbrack}$$     without soil layer   (6-41)
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-6.  Soil percolation rate *f~2~* :
+$$\frac{f_{4} = min\lbrack f_{4}\ ,\left( D_{3} - d_{3} \right)\phi_{3}}{\mathrm{\Delta}t + e_{3} + f_{3} + q_{3}\rbrack} \qquad \text{without soil layer} \qquad \text{(6-41)}$$
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$f_{2} = min\left\lbrack \frac{f_{2}\ ,{\left( D_{3} - d_{3} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{3} + q_{3} + e_{3} \right\rbrack$$   (6-42)
-  ------ ------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------
+6.  Soil percolation rate *f<sub>2</sub>* :
 
-7.  Pavement inflow rate *f~1~* :
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$f_{1} = min\left\lbrack f_{1}\ ,\ \frac{\left( \phi_{4} - \theta_{4} \right)D_{4}\left( 1 - F_{4} \right)}{\mathrm{\Delta}t} + f_{4} + e_{4} \right\rbrack$$   (6-43)
-  ------ ---------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
+$$f_{2} = min\left\lbrack \frac{f_{2}\ ,{\left( D_{3} - d_{3} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{3} + q_{3} + e_{3} \right\rbrack \qquad \text{(6-42)}$$
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+7.  Pavement inflow rate *f<sub>1</sub>* :
+
+
+$$f_{1} = min\left\lbrack f_{1}\ ,\ \frac{\left( \phi_{4} - \theta_{4} \right)D_{4}\left( 1 - F_{4} \right)}{\mathrm{\Delta}t} + f_{4} + e_{4} \right\rbrack \qquad \text{(6-43)}$$
+
+
 
 The flux adjustments for fully saturated storage and sand layers follow
 those used for a bio-retention cell. When all of the sub-surface layers
-become saturated *(θ~2~* = *φ~2~*, *d~3~ = D~3~* and *θ~4~ = φ~4~*), and
+become saturated *(θ<sub>2</sub>* = *φ<sub>2</sub>*, *d<sub>3</sub> = D<sub>3</sub>* and *θ<sub>4</sub> = φ<sub>4</sub>*), and
 the unit is still receiving rainfall/runon then all flux rates are set
-equal to the limiting rate. The latter is the smaller of *f~1~, f~4~,
-f~2~* (if a sand layer is present), and *f~3~ + q~3~*. If the storage
+equal to the limiting rate. The latter is the smaller of *f<sub>1</sub>, f<sub>4</sub>,
+f<sub>2</sub>* (if a sand layer is present), and *f<sub>3</sub> + q<sub>3</sub>*. If the storage
 layer does not contain the limiting flux f\*, then its outflow streams
 are adjusted as follows:
 $q_{3} = min\left\lbrack q_{3}\ ,f^{*} \right\rbrack$ and
@@ -5640,59 +5338,54 @@ A rain barrel can be modeled as just a storage layer that is all void
 space with a drain valve placed above an impermeable bottom. Only a
 single continuity equation is required:
 
-  --------------------------------------------------------------------------------------------------------
-        $$\frac{\partial d_{3}}{\partial t} = f_{1} - q_{1} - q_{3}$$   Storage Layer             (6-44)
-  ----- --------------------------------------------------------------- ------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------
+$$\frac{\partial d_{3}}{\partial t} = f_{1} - q_{1} - q_{3} \qquad \text{Storage Layer} \qquad \text{(6-44)}$$
 
-where *f~1~* now represents the amount of surface inflow captured by the
+
+
+where *f<sub>1</sub>* now represents the amount of surface inflow captured by the
 barrel. Because the barrel is assumed to be covered there is no
 precipitation input and no evaporation flux. The general underdrain
 equation 6-7 would still be used to compute the barrel's drain flow
-*q~3~*. If the standard orifice equation is used to compute the drain
-outflow, then *η~3D~* in Equation 6-7 would be 0.5 and *C~3D~* would be:
+*q<sub>3</sub>*. If the standard orifice equation is used to compute the drain
+outflow, then *η<sub>3D</sub>* in Equation 6-7 would be 0.5 and *C<sub>3D</sub>* would be:
 
-  -----------------------------------------------------------------------------
-         $$C_{3D} = 0.6\left( \frac{A_{3}}{A_{1}} \right)\sqrt{2g}$$   (6-45)
-  ------ ------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------
+$$C_{3D} = 0.6\left( \frac{A_{3}}{A_{1}} \right)\sqrt{2g} \qquad \text{(6-45)}$$
 
-where *A~1~* is the surface area of the barrel, *A~3~* is the area of
-the drain valve opening (ft^2^) and *g* is the acceleration of gravity
-(i.e., 32.2 ft/sec^2^). The outflow over a time step *∆t* would be
+
+
+where *A<sub>1</sub>* is the surface area of the barrel, *A<sub>3</sub>* is the area of
+the drain valve opening (ft<sup>2</sup>) and *g* is the acceleration of gravity
+(i.e., 32.2 ft/sec<sup>2</sup>). The outflow over a time step *∆t* would be
 limited by the volume of water stored in the barrel:
 
-  --------------------------------------------------------------------------------------------------
-         $$q_{3} = min\left\lbrack q_{3}\ ,\frac{d_{3}}{\mathrm{\Delta}t} \right\rbrack$$   (6-46)
-  ------ ---------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------
+$$q_{3} = min\left\lbrack q_{3}\ ,\frac{d_{3}}{\mathrm{\Delta}t} \right\rbrack \qquad \text{(6-46)}$$
+
+
 
 SWMM allows the drain valve to be closed prior to a rainfall event and
 then opened at some stipulated number of hours after rainfall ceases. If
-the valve is closed then *q~3~* would be 0.
+the valve is closed then *q<sub>3</sub>* would be 0.
 
-The inflow to the barrel is the smaller of the external runoff *q~0~*
+The inflow to the barrel is the smaller of the external runoff *q<sub>0</sub>*
 applied to the barrel and the amount of empty storage available over the
 time step:
 
-  ---------------------------------------------------------------------------------------------------------------------------------
-         $$f_{1} = min\left\lbrack q_{0}\ ,\frac{\left( D_{3} - d_{3} \right)}{\mathrm{\Delta}t + q_{3}} \right\rbrack$$   (6-47)
-  ------ ----------------------------------------------------------------------------------------------------------------- --------
 
-  ---------------------------------------------------------------------------------------------------------------------------------
+$$f_{1} = min\left\lbrack q_{0}\ ,\frac{\left( D_{3} - d_{3} \right)}{\mathrm{\Delta}t + q_{3}} \right\rbrack \qquad \text{(6-47)}$$
 
-And finally the barrel overflows at a rate *q~1~* when the runoff
+
+
+And finally the barrel overflows at a rate *q<sub>1</sub>* when the runoff
 applied to the barrel exceeds its capacity to accept that amount of
 inflow:
 
-  -----------------------------------------------------------------------------
-         $$q_{1} = max\left\lbrack 0\ ,q_{0} - f_{1} \right\rbrack$$   (6-48)
-  ------ ------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------
+$$q_{1} = max\left\lbrack 0\ ,q_{0} - f_{1} \right\rbrack \qquad \text{(6-48)}$$
+
+
 
 ### 6.2.7 Rooftop Disconnection
 
@@ -5728,37 +5421,35 @@ disconnection</strong></p></figcaption>
 To model a rooftop in the same fashion as the other LID controls
 requires a single flow continuity equation for the roof surface:
 
-  ------------------------------------------------------------------------------------------------------------
-        $$\frac{\partial d_{1}}{\partial t} = i - e_{1} - q_{1} - q_{3}$$   Surface Layer             (6-49)
-  ----- ------------------------------------------------------------------- ------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------
+$$\frac{\partial d_{1}}{\partial t} = i - e_{1} - q_{1} - q_{3} \qquad \text{Surface Layer} \qquad \text{(6-49)}$$
 
-where now *q~3~* is interpreted as the flow rate per unit of roof area
-through the roof drain system and *q~1~* is the overflow rate from that
+
+
+where now *q<sub>3</sub>* is interpreted as the flow rate per unit of roof area
+through the roof drain system and *q<sub>1</sub>* is the overflow rate from that
 system.
 
-Evaporation from the roof surface (*e~1~*) is computed in the same
+Evaporation from the roof surface (*e<sub>1</sub>*) is computed in the same
 fashion as for the surface of a bio-retention cell (Equation 6-4). The
-nominal runoff *q~1~* from the roof's surface, prior to entering the
+nominal runoff *q<sub>1</sub>* from the roof's surface, prior to entering the
 roof gutter, is also computed the same as for a green roof. The Manning
 equation 6-21 is used if information is provided on the roof's width,
 slope, and surface roughness. However now the roughness is for the roof
 surface itself and not the growth media found on a green roof. Otherwise
 Equation 6-10 is used to convert all flow in excess of any rooftop
-depression storage (*D~1~*) into immediate runoff. The amount of flow
-through the roof drain, *q~3~*, is the smaller of the nominal *q~1~* and
-the flow capacity of the roof drain system (*q~3max~*):
+depression storage (*D<sub>1</sub>*) into immediate runoff. The amount of flow
+through the roof drain, *q<sub>3</sub>*, is the smaller of the nominal *q<sub>1</sub>* and
+the flow capacity of the roof drain system (*q<sub>3max</sub>*):
 
-  ----------------------------------------------------------------------------
-         $$q_{3} = min\left\lbrack q_{1}\ ,q_{3max} \right\rbrack$$   (6-50)
-  ------ ------------------------------------------------------------ --------
 
-  ----------------------------------------------------------------------------
+$$q_{3} = min\left\lbrack q_{1}\ ,q_{3max} \right\rbrack \qquad \text{(6-50)}$$
 
-Note that *q~3max~* is a user-supplied parameter with units of cfs per
-square foot of roof area. The actual overflow rate *q~1~* is simply the
-difference between its nominal rate and *q~3~*.
+
+
+Note that *q<sub>3max</sub>* is a user-supplied parameter with units of cfs per
+square foot of roof area. The actual overflow rate *q<sub>1</sub>* is simply the
+difference between its nominal rate and *q<sub>3</sub>*.
 
 ### 6.2.8 Vegetative Swale
 
@@ -5768,15 +5459,14 @@ another location while allowing it to infiltrate into the soil beneath
 it. It can be modeled with a single surface layer whose continuity
 equation is:
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------
-        $$A_{1}\frac{\partial d_{1}}{\partial t} = \left( i + q_{0} \right)A - (e_{1} + f_{1})A_{1} - q_{1}A$$   Surface Layer         (6-51)
-  ----- -------------------------------------------------------------------------------------------------------- --------------------- --------
 
-  ---------------------------------------------------------------------------------------------------------------------------------------------
+$$A_{1}\frac{\partial d_{1}}{\partial t} = \left( i + q_{0} \right)A - (e_{1} + f_{1})A_{1} - q_{1}A \qquad \text{Surface Layer} \qquad \text{(6-51)}$$
 
-where *A~1~* is the surface area at water depth *d~1~* and *A* is the
+
+
+where *A<sub>1</sub>* is the surface area at water depth *d<sub>1</sub>* and *A* is the
 user-supplied surface area occupied by the swale across its full height
-*D~1~*. Unlike the other LID controls that were assumed to have a
+*D<sub>1</sub>*. Unlike the other LID controls that were assumed to have a
 constant surface area throughout all layers, this equation accounts for
 a varying surface area as the depth of water in the swale changes.
 
@@ -5788,37 +5478,34 @@ class="anchor"></span><strong>Figure 6‑5 Representation of a vegetative
 swale</strong></p></figcaption>
 </figure>
 
-From simple geometry, the relation between surface area *A~1~* and depth
-of flow *d~1~* is:
+From simple geometry, the relation between surface area *A<sub>1</sub>* and depth
+of flow *d<sub>1</sub>* is:
 
-  -------------------------------------------------------------------------------------------------------------------------------------------
-        $$A_{1} = \frac{A}{W_{1}}\left\lbrack W_{1} - 2S_{X}\left( D_{1} - d_{1} \right) \right\rbrack$$                             (6-52)
-  ----- -------------------------------------------------------------------------------------------------- ------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------------------------------------------
+$$A_{1} = \frac{A}{W_{1}}\left\lbrack W_{1} - 2S_{X}\left( D_{1} - d_{1} \right) \right\rbrack \qquad \text{(6-52)}$$
 
-where *W~1~* is the width of the swale at its full height *D~1~* and
-*S~X~* is the slope (run over rise) of its trapezoidal side walls. The
-volume of water contained in the swale, *V~1~*, is the longitudinal
+
+
+where *W<sub>1</sub>* is the width of the swale at its full height *D<sub>1</sub>* and
+*S<sub>X</sub>* is the slope (run over rise) of its trapezoidal side walls. The
+volume of water contained in the swale, *V<sub>1</sub>*, is the longitudinal
 length of the swale, $\frac{A}{W_{1}}$, multiplied by the area of the
-wetted cross-section, *A~X~*:
+wetted cross-section, *A<sub>X</sub>*:
 
-  -------------------------------------------------------------------------
-         $$V_{1} = \left( \frac{A}{W_{1}} \right)A_{X}$$           (6-53)
-  ------ --------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------
+$$V_{1} = \left( \frac{A}{W_{1}} \right)A_{X} \qquad \text{(6-53)}$$
+
+
 
 The wetted cross-sectional area is:
 
-  ----------------------------------------------------------------------------
-         $$A_{X} = d_{1}\left( W_{X} + d_{1}S_{X} \right)\phi_{1}$$   (6-54)
-  ------ ------------------------------------------------------------ --------
 
-  ----------------------------------------------------------------------------
+$$A_{X} = d_{1}\left( W_{X} + d_{1}S_{X} \right)\phi_{1} \qquad \text{(6-54)}$$
 
-where *W~X~* is the width across the bottom of the swale's cross section
-(equal to $W_{1} - 2S_{X}D_{1}$) and *φ~1~* is the fraction of the
+
+
+where *W<sub>X</sub>* is the width across the bottom of the swale's cross section
+(equal to $W_{1} - 2S_{X}D_{1}$) and *φ<sub>1</sub>* is the fraction of the
 volume above the surface not occupied by vegetation.
 
 The volumetric rate of evaporation of surface water in the swale,
@@ -5826,34 +5513,32 @@ $e_{1}A_{1}$, is the smaller of the external potential ET rate,
 $E_{0}(t)A_{1}$ and the available volume of surface water over the time
 step, $\frac{V_{1}}{\mathrm{\Delta}t}$. Because the swale is assumed to
 sit on top of the subcatchment's native soil, the infiltration rate
-*f~1~* is the same value computed for the pervious area of the
+*f<sub>1</sub>* is the same value computed for the pervious area of the
 subcatchment by SWMM's runoff module (see Chapter 4 of Volume I for
 details).
 
-The swale's volumetric outflow rate, *q~1~A*, is computed using the
+The swale's volumetric outflow rate, *q<sub>1</sub>A*, is computed using the
 Manning equation:
 
-  ------------------------------------------------------------------------------------------------------------------
-        $$q_{1}A = \frac{1.49}{n_{1}}\sqrt{S_{1}}\ A_{X}\ R_{X}^{\frac{2}{3}}$$                             (6-55)
-  ----- ------------------------------------------------------------------------- ------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------------
+$$q_{1}A = \frac{1.49}{n_{1}}\sqrt{S_{1}}\ A_{X}\ R_{X}^{\frac{2}{3}} \qquad \text{(6-55)}$$
 
-where *n~1~* is the roughness of the swale's surface, *S~1~* is its
-slope in the direction of flow, and *R~X~* is its hydraulic radius (ft).
+
+
+where *n<sub>1</sub>* is the roughness of the swale's surface, *S<sub>1</sub>* is its
+slope in the direction of flow, and *R<sub>X</sub>* is its hydraulic radius (ft).
 The latter quantity is given by:
 
-  ---------------------------------------------------------------------------------------------
-         $$R_{X} = \frac{A_{X}}{\left( W_{X} + 2d_{1}\sqrt{1 + S_{X}^{2}} \right)}$$   (6-56)
-  ------ ----------------------------------------------------------------------------- --------
 
-  ---------------------------------------------------------------------------------------------
+$$R_{X} = \frac{A_{X}}{\left( W_{X} + 2d_{1}\sqrt{1 + S_{X}^{2}} \right)} \qquad \text{(6-56)}$$
+
+
 
 To summarize, the parameters required to model a vegetative swale
-include its total surface area *A*, its top width *W~1~*, its maximum
-depth *D~1~*, its surface roughness *n~1~*, its longitudinal slope
-*S~1~*, the slope of its side walls *S~x~*, and fraction of its volume
-not occupied by vegetation *φ~1~*.
+include its total surface area *A*, its top width *W<sub>1</sub>*, its maximum
+depth *D<sub>1</sub>*, its surface roughness *n<sub>1</sub>*, its longitudinal slope
+*S<sub>1</sub>*, the slope of its side walls *S<sub>x</sub>*, and fraction of its volume
+not occupied by vegetation *φ<sub>1</sub>*.
 
 ### 6.2.9 Clogging
 
@@ -5883,51 +5568,47 @@ volumes treated to completely clog the layer and assumes a linear loss
 of conductivity with number of void volumes treated, then the
 conductivity *K* at some time *t* can be estimated as:
 
-  ---------------------------------------------------------------------------
-         $$K(t) = K(0)\left( 1 - \frac{Q(t)V_{void}}{CF} \right)$$   (6-57)
-  ------ ----------------------------------------------------------- --------
 
-  ---------------------------------------------------------------------------
+$$K(t) = K(0)\left( 1 - \frac{Q(t)V_{void}}{CF} \right) \qquad \text{(6-57)}$$
 
-where *K(0)* is the initial conductivity, *V~void~* is the volume of
+
+
+where *K(0)* is the initial conductivity, *V<sub>void</sub>* is the volume of
 void space per unit area in the LID layer, and *Q(t)* is the cumulative
 inflow volume (per unit area) to the LID unit up through time *t*. The
 latter quantity can be evaluated as:
 
-  ------------------------------------------------------------------------------------
-         $$Q(t) = \int_{0}^{t}{\left( i(\tau) + q_{0}(\tau) \right)d\tau}$$   (6-58)
-  ------ -------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------
+$$Q(t) = \int_{0}^{t}{\left( i(\tau) + q_{0}(\tau) \right)d\tau} \qquad \text{(6-58)}$$
+
+
 
 where $i(\tau) + q_{0}(\tau)$ is the rainfall plus captured runoff
 inflow seen by the LID unit at time *τ*.
 
 Applying Equation 6-57 to the storage layer of an infiltration trench
-results in using the following value of *K~3S~* to evaluate the
+results in using the following value of *K<sub>3S</sub>* to evaluate the
 exfiltration rate from the bottom of the unit at time *t* (via Equation
 6-9):
 
-  ------------------------------------------------------------------------------------------------
-         $$K_{3S}(t) = K_{3S}(0)\left( 1 - \frac{Q(t)D_{3}\phi_{3}}{{CF}_{3}} \right)$$   (6-59)
-  ------ -------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------
+$$K_{3S}(t) = K_{3S}(0)\left( 1 - \frac{Q(t)D_{3}\phi_{3}}{{CF}_{3}} \right) \qquad \text{(6-59)}$$
 
-where *K~3S~(0)* is the initial saturated hydraulic conductivity of the
-soil beneath the bottom of the trench and *CF~3~* is the clogging factor
+
+
+where *K<sub>3S</sub>(0)* is the initial saturated hydraulic conductivity of the
+soil beneath the bottom of the trench and *CF<sub>3</sub>* is the clogging factor
 for the trench.
 
 Doing the same for the pavement layer of a permeable pavement unit, the
-pavement's permeability *K~4~* at time *t* would be:
+pavement's permeability *K<sub>4</sub>* at time *t* would be:
 
-  ----------------------------------------------------------------------------------------------------------------------
-         $$K_{4}(t) = K_{4}(0)\left( 1 - \frac{Q(t)D_{4}\phi_{4}\left( 1 - F_{4} \right)}{{CF}_{4}} \right)$$   (6-60)
-  ------ ------------------------------------------------------------------------------------------------------ --------
 
-  ----------------------------------------------------------------------------------------------------------------------
+$$K_{4}(t) = K_{4}(0)\left( 1 - \frac{Q(t)D_{4}\phi_{4}\left( 1 - F_{4} \right)}{{CF}_{4}} \right) \qquad \text{(6-60)}$$
 
-where *K~4~(0)* is the pavement's permeability at time 0 and *CF~4~* is
+
+
+where *K<sub>4</sub>(0)* is the pavement's permeability at time 0 and *CF<sub>4</sub>* is
 the pavement's clogging factor.
 
 This simple clogging model requires only a single user-supplied
@@ -6022,42 +5703,38 @@ four steps:
 3.  Solve the continuity equations for the new value of each layer's
     moisture level at the end of the time step.
 
-4.  Add the unit's surface runoff (*q~1~*), infiltration (*f~3~*), and
-    underdrain flow (*q~3~*) to the subcatchment's totals.
+4.  Add the unit's surface runoff (*q<sub>1</sub>*), infiltration (*f<sub>3</sub>*), and
+    underdrain flow (*q<sub>3</sub>*) to the subcatchment's totals.
 
 The process of determining the inflow to the LID unit in step 1 depends
 on whether the unit comprises only a portion of its subcatchment's area
 or if it occupies the entire subcatchment. In the former case the runoff
-rate *q~0~* treated by the unit can be computed as:
+rate *q<sub>0</sub>* treated by the unit can be computed as:
 
-  -------------------------------------------------------------------------
-         $$q_{0} = q_{imp}F_{out}R_{LID}$$                         (6-61)
-  ------ --------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------
+$$q_{0} = q_{imp}F_{out}R_{LID} \qquad \text{(6-61)}$$
+
+
 
 where
 
-  -----------------------------------------------------------------------------
-  *q~imp~*    =  total impervious area runoff rate (ft/sec),
-  ---------- --- --------------------------------------------------------------
-  *F~out~*    =  fraction of impervious area runoff routed to the
+  *q<sub>imp</sub>*    =  total impervious area runoff rate (ft/sec),
+  *F<sub>out</sub>*    =  fraction of impervious area runoff routed to the
                  subcatchment's outlet,
 
-  *R~LID~*    =  capture ratio of the LID unit.
-  -----------------------------------------------------------------------------
+  *R<sub>LID</sub>*    =  capture ratio of the LID unit.
 
-Note that *F~out~* accounts for the possibility that the user has
+Note that *F<sub>out</sub>* accounts for the possibility that the user has
 assigned some portion of the subcatchment's impervious area runoff to be
 re-routed onto its pervious area using SWMM's overland flow re-routing
 option (explained in Section 3.6 of Volume I). When there is no internal
-re-routing (or disconnecting) of impervious area *F~out~* is equal to
+re-routing (or disconnecting) of impervious area *F<sub>out</sub>* is equal to
 1.0. Also introduced is a new parameter, the LID unit's capture ratio
-*R~LID~*. It is defined as the amount of the subcatchment's impervious
+*R<sub>LID</sub>*. It is defined as the amount of the subcatchment's impervious
 area that is directly connected to the LID unit divided by the area of
 the LID unit itself.
 
-When a single LID unit occupies the entire subcatchment *q~0~* is
+When a single LID unit occupies the entire subcatchment *q<sub>0</sub>* is
 comprised of any external overland flow routed onto the subcatchment.
 Such flow can consist of runoff originating from other upstream
 subcatchments as well as any underdrain flow from other LID units routed
@@ -6075,19 +5752,18 @@ bottom to the topmost layer of the unit.
 Step 3 integrates the governing continuity equations over a single time
 step to find new values for the moisture content in each of the LID
 unit's layers. Let ***x*** be the vector of the layer moisture contents,
-where ***x*** = \[*φ~1~d~1~, D~2~θ~2~, φ~3~d~3~, D~4~(1-F~4~)θ~4~*\],
-and let ***Γ*** = \[*Γ~1~, Γ~2~, Γ~3~, Γ~4~*\] be the vector of the net
+where ***x*** = \[*φ<sub>1</sub>d<sub>1</sub>, D<sub>2</sub>θ<sub>2</sub>, φ<sub>3</sub>d<sub>3</sub>, D<sub>4</sub>(1-F<sub>4</sub>)θ<sub>4</sub>*\],
+and let ***Γ*** = \[*Γ<sub>1</sub>, Γ<sub>2</sub>, Γ<sub>3</sub>, Γ<sub>4</sub>*\] be the vector of the net
 flux (inflow minus outflow) of water through each layer (i.e., the right
 hand side value of each layer's continuity equation). If a particular
 layer *i* does not apply to a given LID unit, such as the soil layer for
-a rain barrel, then both *x~i~* and *Γ~i\ ~*would be zero. Now the flow
+a rain barrel, then both *x<sub>i</sub>* and *Γ<sub>i</sub>*would be zero. Now the flow
 continuity equations can be written more compactly as:
 
-  -----------------------------------------------------------------------------------------------------
-         $$\frac{\partial\mathbf{x}}{\partial t} = \mathbf{\Gamma}(\mathbf{x(}t\mathbf{)})$$   (6-62)
-  ------ ------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------
+$$\frac{\partial\mathbf{x}}{\partial t} = \mathbf{\Gamma}(\mathbf{x(}t\mathbf{)}) \qquad \text{(6-62)}$$
+
+
 
 where in general ***Γ*** is a nonlinear function of ***x***.
 
@@ -6095,11 +5771,10 @@ This system of equations can be solved numerically by using the
 trapezoidal method (Ascher and Petzold, 1998) to discretize them in time
 as follows:
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$\mathbf{x}(t + \mathrm{\Delta}t) = \mathbf{x}(t)\mathbf{+}\left\lbrack \Omega\mathbf{\Gamma}(\mathbf{x}(t + \mathrm{\Delta}t)\mathbf{+ (}1 - \Omega\mathbf{)\Gamma}(\mathbf{x}(t)\mathbf{)} \right\rbrack\mathbf{\mathrm{\Delta}}t$$   (6-63)
-  ------ ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\mathbf{x}(t + \mathrm{\Delta}t) = \mathbf{x}(t)\mathbf{+}\left\lbrack \Omega\mathbf{\Gamma}(\mathbf{x}(t + \mathrm{\Delta}t)\mathbf{+ (}1 - \Omega\mathbf{)\Gamma}(\mathbf{x}(t)\mathbf{)} \right\rbrack\mathbf{\mathrm{\Delta}}t \qquad \text{(6-63)}$$
+
+
 
 where *Ω =* 0.5 and ∆t is the wet hydrologic time step used for
 computing runoff. (See Section 3.5 of Volume I for a discussion of
@@ -6112,16 +5787,15 @@ levels 00start at 0.
 
 Because ***Γ**(**x**(t+∆t))* appearing on the right hand side of
 Equation 6-55 depends on the unknown new moisture content, an iterative
-method must be used to solve the equation. Let ***x**(t+∆t)^ν^* be the
+method must be used to solve the equation. Let ***x**(t+∆t)<sup>ν</sup>* be the
 estimate of ***x**(t+∆t)* at iteration *ν*, where initially
-***x**(t+∆t)^0^ = **x**(t)*. (Note that *ν* is an iteration counter, not
+***x**(t+∆t)<sup>0</sup> = **x**(t)*. (Note that *ν* is an iteration counter, not
 a power.) Then for iteration *ν+1* the new estimate of ***x**(t+∆t)* is:
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$\mathbf{x}{(t + \mathrm{\Delta}t)}^{\nu + 1}\mathbf{= x}(t)\mathbf{+}\left\lbrack \Omega\mathbf{\Gamma}(\mathbf{x}(t + \mathrm{\Delta}t)^{\nu}\mathbf{+ (}1 - \Omega\mathbf{)\Gamma}(\mathbf{x}(t)\mathbf{)} \right\rbrack\mathbf{\mathrm{\Delta}}t$$   (6-64)
-  ------ --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$$\mathbf{x}{(t + \mathrm{\Delta}t)}^{\nu + 1}\mathbf{= x}(t)\mathbf{+}\left\lbrack \Omega\mathbf{\Gamma}(\mathbf{x}(t + \mathrm{\Delta}t)^{\nu}\mathbf{+ (}1 - \Omega\mathbf{)\Gamma}(\mathbf{x}(t)\mathbf{)} \right\rbrack\mathbf{\mathrm{\Delta}}t \qquad \text{(6-64)}$$
+
+
 
 with the iterations stopping when the change in ***x**(t+∆t)* is
 sufficiently small. SWMM uses a tolerance of 0.00328 feet (or 1.0
@@ -6130,11 +5804,10 @@ millimeter) as a stopping tolerance.
 If *Ω* is chosen as 0, then Equation 6-64 becomes equivalent to the
 Euler method and thus:
 
-  -------------------------------------------------------------------------------------------------------------------------------
-         $$\mathbf{x}(t + \mathrm{\Delta}t) = \mathbf{x}(t)\mathbf{+ \Gamma}(\mathbf{x}(t))\mathbf{\mathrm{\Delta}}t$$   (6-65)
-  ------ --------------------------------------------------------------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------------------------------------------------------------
+$$\mathbf{x}(t + \mathrm{\Delta}t) = \mathbf{x}(t)\mathbf{+ \Gamma}(\mathbf{x}(t))\mathbf{\mathrm{\Delta}}t \qquad \text{(6-65)}$$
+
+
 
 which can be solved directly without resorting to any iterative scheme.
 Numerical testing has shown that the simpler Euler method works well
@@ -6146,15 +5819,12 @@ When using either Equation 6-64 or 6-65 to update the LID unit's
 moisture state at each time step, the following lower and upper physical
 limits on moisture levels must be enforced:
 
-  ------------------------------------------------------------------------
          $$0 \leq d_{1} \leq D_{1}$$                                
-  ------ ---------------------------------------------------------- ------
          $$\theta_{WP} \leq \theta_{2} \leq \phi_{2}$$              
 
          $$0 \leq d_{3} \leq D_{3}$$                                
 
          $$0 \leq \theta_{4} \leq \phi_{4}$$                        
-  ------------------------------------------------------------------------
 
 Finally, Step 4 merges the outflows from the LID unit with those of the
 subcatchment as a whole. Any infiltration into the native soil produced
@@ -6184,31 +5854,27 @@ washoff load from the non-LID portion of the subcatchment (which already
 accounts for any wet deposition) is combined with the direct rainfall
 load from the LID areas to arrive at a modified outflow concentration:
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------
-         $$C_{out} = \frac{\left\lbrack \left( C_{out}Q_{out} \right)_{non - LID} + C_{ppt}iA_{LID} \right\rbrack}{Q_{out,non - LID} + iA_{LID}}$$   (6-66)
-  ------ ------------------------------------------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------
+$$C_{out} = \frac{\left\lbrack \left( C_{out}Q_{out} \right)_{non - LID} + C_{ppt}iA_{LID} \right\rbrack}{Q_{out,non - LID} + iA_{LID}} \qquad \text{(6-66)}$$
+
+
 
 where
 
-  --------------------------------------------------------------------------------
-  *C~out~*            =  concentration of a pollutant in the subcatchment's
+  *C<sub>out</sub>*            =  concentration of a pollutant in the subcatchment's
                          outflow streams after LID treatment (mass/L),
-  ------------------ --- ---------------------------------------------------------
-  *C~out,non-LID~*    =  concentration of a pollutant in the subcatchment's
+  *C<sub>out,non-LID</sub>*    =  concentration of a pollutant in the subcatchment's
                          outflow streams prior to LID treatment (mass/L),
 
-  *Q~out,non-LID~*    =  surface runoff flow rate leaving the subcatchment prior
+  *Q<sub>out,non-LID</sub>*    =  surface runoff flow rate leaving the subcatchment prior
                          to any LID treatment (cfs),
 
-  *C~ppt~*            =  concentration of the pollutant in rainfall (mass/L),
+  *C<sub>ppt</sub>*            =  concentration of the pollutant in rainfall (mass/L),
 
   *i*                 =  rainfall rate (ft/sec),
 
-  *A~LID~*            =  total surface area of all LID units in the subcatchment
-                         (ft^2^).
-  --------------------------------------------------------------------------------
+  *A<sub>LID</sub>*            =  total surface area of all LID units in the subcatchment
+                         (ft<sup>2</sup>).
 
 The second exception is when a single LID unit occupies its entire
 subcatchment. In that case there would be no washoff load generated by
@@ -6216,14 +5882,13 @@ any non-LID surfaces and the pollutant concentration in the unit's
 outflow streams would equal that of its inflow stream. Thus for any
 particular pollutant,
 
-  -----------------------------------------------------------------------------------------------------------------------------------
-         $$C_{out} = \frac{\left( \left( \frac{W_{runon}}{28.3} \right) + C_{ppt}iA_{LID} \right)}{Q_{runon} + iA_{LID}}$$   (6-67)
-  ------ ------------------------------------------------------------------------------------------------------------------- --------
 
-  -----------------------------------------------------------------------------------------------------------------------------------
+$$C_{out} = \frac{\left( \left( \frac{W_{runon}}{28.3} \right) + C_{ppt}iA_{LID} \right)}{Q_{runon} + iA_{LID}} \qquad \text{(6-67)}$$
 
-where *Q~runon~* is the combined runoff flow rate (cfs) of all upstream
-subcatchments routed onto the LID subcatchment, *W~runon~* is the total
+
+
+where *Q<sub>runon</sub>* is the combined runoff flow rate (cfs) of all upstream
+subcatchments routed onto the LID subcatchment, *W<sub>runon</sub>* is the total
 pollutant load (mass/sec) contained in this runoff inflow, and the
 factor 28.3 converts from cubic feet to liters.
 
@@ -6266,15 +5931,13 @@ sand, clay and organic content. For example, a typical engineered soil
 might consist of 85% sand, 5% clay and 5% organic matter by weight.
 Using the SPAW calculator for this soil produces the characteristics
 listed in Table 6-3. The percolation decay constant *HCO* was estimated
-by using the calculator to compute hydraulic conductivity *K~2~* for a
+by using the calculator to compute hydraulic conductivity *K<sub>2</sub>* for a
 range of moisture contents *θ* and then regressing
 $- ln\left( \frac{K_{2}}{K_{2S}} \right)$ against $\phi_{2} - \theta$ to
 find a best-fit value for *HCO*. The equation used to estimate suction
 head was introduced in Section 4.4 of Volume I.
 
-  ------------------------------------------------------------------------------------------------------------------------------------------------------
   Organization      Manual Title           Year  URL
-  ----------------- --------------------- ------ -------------------------------------------------------------------------------------------------------
   Prince Georges    Low-Impact             1999  <http://water.epa.gov/polwaste/green/upload/lidnatl.pdf>
   County Maryland   Development Design:          
                     An Integrated Design         
@@ -6313,7 +5976,6 @@ head was introduced in Section 4.4 of Volume I.
   Department of     Design Manual                
   Environmental                                  
   Conservation                                   
-  ------------------------------------------------------------------------------------------------------------------------------------------------------
 
   : []{#_Toc454288817 .anchor}**Table 6‑1 Design manuals used as sources
   for LID parameter values**
@@ -6321,53 +5983,50 @@ head was introduced in Section 4.4 of Volume I.
 +-------------------------------------------------+--------------------+
 | **Parameter**                                   | **Range**          |
 +=================================================+:==================:+
-| Maximum Freeboard, inches (*D~1~*)              | 6 -- 12            |
+| Maximum Freeboard, inches (*D<sub>1</sub>*)              | 6 -- 12            |
 +-------------------------------------------------+--------------------+
-| Surface Void Fraction (*φ~1~*)                  | 0.8 -- 1.0         |
+| Surface Void Fraction (*φ<sub>1</sub>*)                  | 0.8 -- 1.0         |
 +-------------------------------------------------+--------------------+
-| Soil Layer Thickness, inches (*D~2~*)           | 24 -- 48           |
+| Soil Layer Thickness, inches (*D<sub>2</sub>*)           | 24 -- 48           |
 +-------------------------------------------------+--------------------+
 | Soil Properties:                                |                    |
 +-------------------------------------------------+--------------------+
-| > Porosity (*φ~2~*)                             | 0.45 -- 0.6        |
+| > Porosity (*φ<sub>2</sub>*)                             | 0.45 -- 0.6        |
 +-------------------------------------------------+--------------------+
-| > Field Capacity (*θ~FC~*)                      | 0.15 -- 0.25       |
+| > Field Capacity (*θ<sub>FC</sub>*)                      | 0.15 -- 0.25       |
 +-------------------------------------------------+--------------------+
-| > Wilting Point *(θ~WP~*)                       | 0.05 -- 0.15       |
+| > Wilting Point *(θ<sub>WP</sub>*)                       | 0.05 -- 0.15       |
 +-------------------------------------------------+--------------------+
 | > Saturated Hydraulic Conductivity, in/hr       | 2.0 -- 5.5         |
-| > (*K~2S~*)                                     |                    |
+| > (*K<sub>2S</sub>*)                                     |                    |
 +-------------------------------------------------+--------------------+
-| > Wetting Front Suction Head, inches (*ψ~2~*)   | 2 -- 4             |
+| > Wetting Front Suction Head, inches (*ψ<sub>2</sub>*)   | 2 -- 4             |
 +-------------------------------------------------+--------------------+
 | > Percolation Decay Constant (*HCO*)            | 30 -- 55           |
 +-------------------------------------------------+--------------------+
-| Storage Layer Thickness, inches (*D~3~*)        | 6 -- 36            |
+| Storage Layer Thickness, inches (*D<sub>3</sub>*)        | 6 -- 36            |
 +-------------------------------------------------+--------------------+
-| Storage Void Fraction (*φ~3~*)                  | 0.2 -- 0.4         |
+| Storage Void Fraction (*φ<sub>3</sub>*)                  | 0.2 -- 0.4         |
 +-------------------------------------------------+--------------------+
-| Capture Ratio (*R~LID~*)                        | 5 -- 15            |
+| Capture Ratio (*R<sub>LID</sub>*)                        | 5 -- 15            |
 +-------------------------------------------------+--------------------+
 
 : []{#_Toc454288818 .anchor}**Table 6‑2 Typical ranges for bio-retention
 cell parameters**
 
-  -----------------------------------------------------------------------
   **Soil Property**                                       **Value**
-  ------------------------------------------------- ---------------------
-  Porosity (*φ~2~*)                                         0.52
+  Porosity (*φ<sub>2</sub>*)                                         0.52
 
-  Field Capacity (*θ~FC~*)                                  0.15
+  Field Capacity (*θ<sub>FC</sub>*)                                  0.15
 
-  Wilting Point *(θ~WP~*)                                   0.08
+  Wilting Point *(θ<sub>WP</sub>*)                                   0.08
 
-  Saturated Hydraulic Conductivity, in/hr (*K~2S~*)          4.7
+  Saturated Hydraulic Conductivity, in/hr (*K<sub>2S</sub>*)          4.7
 
   Percolation Decay Constant (*HCO*)                        39.3
 
-  Wetting Front Suction Head, inches (*ψ~2~ =                1.9
-  3.23(K~2S~*)^-0.328^)                             
-  -----------------------------------------------------------------------
+  Wetting Front Suction Head, inches (*ψ<sub>2</sub> =                1.9
+  3.23(K<sub>2S</sub>*)<sup>-0.328</sup>)                             
 
   : []{#_Toc454288819 .anchor}**Table 6‑3 Soil characteristics for a
   typical bio-retention cell soil**
@@ -6381,36 +6040,36 @@ thickness.
 +-------------------------------------------------+--------------------+
 | **Parameter**                                   | **Range**          |
 +=================================================+:==================:+
-| Maximum Freeboard, inches (*D~1~*)              | 0 -- 3             |
+| Maximum Freeboard, inches (*D<sub>1</sub>*)              | 0 -- 3             |
 +-------------------------------------------------+--------------------+
-| Surface Void Fraction (*φ~1~*)                  | 0.8 -- 1.0         |
+| Surface Void Fraction (*φ<sub>1</sub>*)                  | 0.8 -- 1.0         |
 +-------------------------------------------------+--------------------+
-| Soil Layer Thickness, inches (*D~2~*)           | 2 -- 6             |
+| Soil Layer Thickness, inches (*D<sub>2</sub>*)           | 2 -- 6             |
 +-------------------------------------------------+--------------------+
 | Soil Parameters:                                |                    |
 +-------------------------------------------------+--------------------+
-| > Porosity (*φ~2~*)                             | 0.45 -- 0.6        |
+| > Porosity (*φ<sub>2</sub>*)                             | 0.45 -- 0.6        |
 +-------------------------------------------------+--------------------+
-| > Field Capacity (*θ~FC~*)                      | 0.3 -- 0.5         |
+| > Field Capacity (*θ<sub>FC</sub>*)                      | 0.3 -- 0.5         |
 +-------------------------------------------------+--------------------+
-| > Wilting Point (*θ~WP~*)                       | 0.05 -- 0.2        |
+| > Wilting Point (*θ<sub>WP</sub>*)                       | 0.05 -- 0.2        |
 +-------------------------------------------------+--------------------+
-| > Plant Available Water (*θ~FC~* - *θ~WP~*)     | 0.25 -- 0.3        |
+| > Plant Available Water (*θ<sub>FC</sub>* - *θ<sub>WP</sub>*)     | 0.25 -- 0.3        |
 +-------------------------------------------------+--------------------+
 | > Saturated Hydraulic Conductivity, in/hr       | 40 -- 140          |
-| > (*K~2S~*)                                     |                    |
+| > (*K<sub>2S</sub>*)                                     |                    |
 +-------------------------------------------------+--------------------+
-| > Wetting Front Suction Head, inches (*ψ~2~*)   | 2 -- 4             |
+| > Wetting Front Suction Head, inches (*ψ<sub>2</sub>*)   | 2 -- 4             |
 +-------------------------------------------------+--------------------+
 | > Percolation Parameter (*HCO*)                 | 30 -- 55           |
 +-------------------------------------------------+--------------------+
-| Drainage Layer Thickness, inches (*D~3~*)       | 0.5 -- 2           |
+| Drainage Layer Thickness, inches (*D<sub>3</sub>*)       | 0.5 -- 2           |
 +-------------------------------------------------+--------------------+
-| Drainage Layer Void Fraction (*φ~3~*)           | 0.2 -- 0.4         |
+| Drainage Layer Void Fraction (*φ<sub>3</sub>*)           | 0.2 -- 0.4         |
 +-------------------------------------------------+--------------------+
-| Drainage Layer Roughness (*n~3~*)               | 0.01 -- 0.03       |
+| Drainage Layer Roughness (*n<sub>3</sub>*)               | 0.01 -- 0.03       |
 +-------------------------------------------------+--------------------+
-| Capture Ratio (*R~LID~*)                        | 0                  |
+| Capture Ratio (*R<sub>LID</sub>*)                        | 0                  |
 +-------------------------------------------------+--------------------+
 
 : []{#_Toc454288820 .anchor}**Table 6‑4 Typical ranges for green roof
@@ -6440,21 +6099,18 @@ step is simply the difference between the captured runoff/rainfall rate
 entering through its surface and the rate of exfiltration leaving
 through its bottom (assuming no underdrain).
 
-  -----------------------------------------------------------------------
   **Parameter**                                           **Range**
-  ------------------------------------------------- ---------------------
-  Maximum Freeboard, inches (*D~1~*)                       0 -- 12
+  Maximum Freeboard, inches (*D<sub>1</sub>*)                       0 -- 12
 
-  Surface Void Fraction (*φ~1~*)                             1.0
+  Surface Void Fraction (*φ<sub>1</sub>*)                             1.0
 
-  Storage Layer Thickness, inches (*D~3~*)                36 -- 144
+  Storage Layer Thickness, inches (*D<sub>3</sub>*)                36 -- 144
 
-  Storage Void Fraction (*φ~3~*)                         0.2 -- 0.4
+  Storage Void Fraction (*φ<sub>3</sub>*)                         0.2 -- 0.4
 
   Contributing Area, acres                                 1 -- 5
 
-  Capture Ratio (*R~LID~*)                                 5 -- 20
-  -----------------------------------------------------------------------
+  Capture Ratio (*R<sub>LID</sub>*)                                 5 -- 20
 
   : []{#_Toc454288821 .anchor}**Table 6‑5 Typical ranges for
   infiltration trench parameters**
@@ -6462,7 +6118,7 @@ through its bottom (assuming no underdrain).
 ### 6.5.4 Permeable Pavement
 
 Table 6-6 lists typical parameter ranges for permeable pavement
-installations. The maximum storage height on the surface layer, *D~1~*,
+installations. The maximum storage height on the surface layer, *D<sub>1</sub>*,
 now represents the depth of depression storage on the pavement surface.
 Its suggested range is characteristic of impervious surfaces in general
 (ASCE, 1992). The pavement layer properties in the table distinguish
@@ -6481,50 +6137,50 @@ rate out of the bottom (assuming no underdrain).
 +-------------------------------------------------+--------------------+
 | **Parameter**                                   | **Range**          |
 +=================================================+:==================:+
-| Surface Depression Storage, inches (*D~1~*)     | 0 -- 0.1           |
+| Surface Depression Storage, inches (*D<sub>1</sub>*)     | 0 -- 0.1           |
 +-------------------------------------------------+--------------------+
-| Surface Void Fraction (*φ~1~*)                  | 1.0                |
+| Surface Void Fraction (*φ<sub>1</sub>*)                  | 1.0                |
 +-------------------------------------------------+--------------------+
-| Pavement Thickness, inches (*D~4~*)             | 3 -- 8             |
+| Pavement Thickness, inches (*D<sub>4</sub>*)             | 3 -- 8             |
 +-------------------------------------------------+--------------------+
 | Continuous Pavement:                            |                    |
 +-------------------------------------------------+--------------------+
-| > Porosity (*φ~4~*)                             | 0.15 -- 0.25       |
+| > Porosity (*φ<sub>4</sub>*)                             | 0.15 -- 0.25       |
 +-------------------------------------------------+--------------------+
-| > Permeability, in/hr (*K~4~*)                  | 28 -- 1750         |
+| > Permeability, in/hr (*K<sub>4</sub>*)                  | 28 -- 1750         |
 +-------------------------------------------------+--------------------+
-| > Surface Opening Fraction (*1 -- F~4~*)        | 0                  |
+| > Surface Opening Fraction (*1 -- F<sub>4</sub>*)        | 0                  |
 +-------------------------------------------------+--------------------+
 | Block Pavers:                                   |                    |
 +-------------------------------------------------+--------------------+
-| > Porosity (*φ~4~*)                             | 0.1 -- 0.4         |
+| > Porosity (*φ<sub>4</sub>*)                             | 0.1 -- 0.4         |
 +-------------------------------------------------+--------------------+
-| > Permeability, in/hr (*K~4~*)                  | 5 -- 150           |
+| > Permeability, in/hr (*K<sub>4</sub>*)                  | 5 -- 150           |
 +-------------------------------------------------+--------------------+
-| > Surface Opening Fraction (*1 -- F~4~*)        | 0.08 -- 0.10       |
+| > Surface Opening Fraction (*1 -- F<sub>4</sub>*)        | 0.08 -- 0.10       |
 +-------------------------------------------------+--------------------+
 | Sand Filter Layer:                              |                    |
 +-------------------------------------------------+--------------------+
-| > Thickness, inches (*D~2~*)                    | 8 -- 12            |
+| > Thickness, inches (*D<sub>2</sub>*)                    | 8 -- 12            |
 +-------------------------------------------------+--------------------+
-| > Porosity (*φ~2~*)                             | 0.25 -- 0.35       |
+| > Porosity (*φ<sub>2</sub>*)                             | 0.25 -- 0.35       |
 +-------------------------------------------------+--------------------+
-| > Field Capacity (*θ~FC~*)                      | 0.15 -- 0.25       |
+| > Field Capacity (*θ<sub>FC</sub>*)                      | 0.15 -- 0.25       |
 +-------------------------------------------------+--------------------+
-| > Wilting Point *(θ~WP~*)                       | 0.05 -- 0.10       |
+| > Wilting Point *(θ<sub>WP</sub>*)                       | 0.05 -- 0.10       |
 +-------------------------------------------------+--------------------+
 | > Saturated Hydraulic Conductivity, in/hr       | 5 -- 30            |
-| > (*K~2S~*)                                     |                    |
+| > (*K<sub>2S</sub>*)                                     |                    |
 +-------------------------------------------------+--------------------+
-| > Wetting Front Suction Head, inches (*ψ~2~*)   | 2 -- 4             |
+| > Wetting Front Suction Head, inches (*ψ<sub>2</sub>*)   | 2 -- 4             |
 +-------------------------------------------------+--------------------+
 | > Percolation Parameter (*HCO*)                 | 30 -- 55           |
 +-------------------------------------------------+--------------------+
-| Storage Layer Thickness, inches (*D~3~*)        | 6 -- 36            |
+| Storage Layer Thickness, inches (*D<sub>3</sub>*)        | 6 -- 36            |
 +-------------------------------------------------+--------------------+
-| Storage Void Fraction (*φ~3~*)                  | 0.2 -- 0.4         |
+| Storage Void Fraction (*φ<sub>3</sub>*)                  | 0.2 -- 0.4         |
 +-------------------------------------------------+--------------------+
-| Capture Ratio (*R~LID~*)                        | 0 -- 5             |
+| Capture Ratio (*R<sub>LID</sub>*)                        | 0 -- 5             |
 +-------------------------------------------------+--------------------+
 
 : []{#_Toc454288822 .anchor}**Table 6‑6 Typical ranges for permeable
@@ -6539,7 +6195,7 @@ landscape irrigation. Cisterns have much larger capacity, typically from
 250 to 30,000 gallons, used to harvest rainwater from both homes and
 commercial facilities for non-potable indoor use. The parameters
 required for Rain Barrels/Cisterns are the height of the storage vessel
-(*D~3~*), its volume (from which its surface area *A~LID~* can be
+(*D<sub>3</sub>*), its volume (from which its surface area *A<sub>LID</sub>* can be
 derived), its drain parameters, and possibly its drain delay time.
 
 The height and volume of the rain barrel/cistern would be determined by
@@ -6550,13 +6206,13 @@ offset of 0 and reduce the vessel height accordingly.
 The drain flow parameters can be established from the orifice equation
 (Equation 6-38). The flow exponent would be 0.5 and the flow coefficient
 would be 4.8 times the ratio of the drain diameter to the barrel
-diameter squared. The latter quantity has units of ft^0.5^/sec. To
-convert to the in^0.5^/hr (or mm^0.5^/hr) used in SWMM's input data set
+diameter squared. The latter quantity has units of ft<sup>0.5</sup>/sec. To
+convert to the in<sup>0.5</sup>/hr (or mm<sup>0.5</sup>/hr) used in SWMM's input data set
 multiply by 12,471 (or 62,768).
 
 As an example, a 2-foot diameter rain barrel with a 3/4 inch spigot
-would have a drain flow coefficient of 4.8 × (0.75 / (2×12))^2^ × 12,471
-= 58.5 in^0.5^/hr. This is high enough to drain 4 feet of captured water
+would have a drain flow coefficient of 4.8 × (0.75 / (2×12))<sup>2</sup> × 12,471
+= 58.5 in<sup>0.5</sup>/hr. This is high enough to drain 4 feet of captured water
 (94 gallons) in less than 15 minutes. A slower release rate for
 landscape irrigation can be achieved by leaving the spigot valve only
 partially open or by using a soaker hose. This action can be simulated
@@ -6573,10 +6229,10 @@ makes about homeowner behavior.
 ### 6.5.6 Rooftop Disconnection
 
 The parameters required for rooftop disconnection are the length of the
-flow path for roof runoff (the inverse of the W~1~/A~1~ term in Equation
+flow path for roof runoff (the inverse of the W<sub>1</sub>/A<sub>1</sub> term in Equation
 6-21), the roof slope, the roughness coefficient for the roof surface,
 the depression storage depth of the roof's surface, and the flow
-capacity of the roof drain system (*q~3max~*).
+capacity of the roof drain system (*q<sub>3max</sub>*).
 
 The flow path length and its slope are obtained directly from the roof's
 dimensions. Roughness coefficients for roofing material would be similar
@@ -6586,46 +6242,40 @@ this range and flat roofs having possibly higher values. The flow
 capacity of the roof's gutters in ft/sec can be estimated from the
 following equations (Beij, 1934):
 
-  ------------------------------------------------------------------------------------------------------------------------------------
          $q_{3max} = 0.52\frac{w_{g}^{2.5}}{A_{r}}$ for semicircular gutters                                                    (6-68)
-  ------ -------------------------------------------------------------------------------------------------------------------- --------
                                                                                                                               
 
          $q_{3max} = 7.75\left( \frac{d_{g}}{w_{g}} \right)^{1.6}\left( \frac{w_{g}}{L_{g}} \right)^{0.3}w_{g}^{2.5}/A_{r}$     (6-69)
          for rectangular gutters                                                                                              
-  ------------------------------------------------------------------------------------------------------------------------------------
 
-where *w~g~* is the gutter width in feet, *d~g~* is the gutter depth in
-feet, *A~r~* is the area of the roof serviced by the gutter in square
-feet, and *L~g~* is the length of the gutter in feet. To convert
-*q~3max~* to the in/hr or mm/hr required by the SWMM 5 input format,
+where *w<sub>g</sub>* is the gutter width in feet, *d<sub>g</sub>* is the gutter depth in
+feet, *A<sub>r</sub>* is the area of the roof serviced by the gutter in square
+feet, and *L<sub>g</sub>* is the length of the gutter in feet. To convert
+*q<sub>3max</sub>* to the in/hr or mm/hr required by the SWMM 5 input format,
 multiply by 43,200 or 1,097,280, respectively.
 
 ### 6.5.7 Vegetative Swales
 
 Typical values for the parameters associated with vegetative swales are
-listed in table 6-7. The top width of the swale at full depth (*W~1~*)
+listed in table 6-7. The top width of the swale at full depth (*W<sub>1</sub>*)
 equals $W_{X} + 2D_{1}S_{X}$. The maximum surface area covered by the
-swale (*A~LID~*) can be found by multiplying *W~1~* by the length of the
+swale (*A<sub>LID</sub>*) can be found by multiplying *W<sub>1</sub>* by the length of the
 swale.
 
-  -----------------------------------------------------------------------
   **Parameter**                                           **Range**
-  ------------------------------------------------- ---------------------
-  Maximum Depth, feet (*D~1~*)                           0.5 -- 2.0
+  Maximum Depth, feet (*D<sub>1</sub>*)                           0.5 -- 2.0
 
-  Surface Void Fraction (*φ~1~*)                          0.8 - 1.0
+  Surface Void Fraction (*φ<sub>1</sub>*)                          0.8 - 1.0
 
-  Bottom Width, feet (*W~X~*)                            2.0 -- 8.0
+  Bottom Width, feet (*W<sub>X</sub>*)                            2.0 -- 8.0
 
-  Surface Slope, percent (*S~1~*)                        0.5 -- 3.0
+  Surface Slope, percent (*S<sub>1</sub>*)                        0.5 -- 3.0
 
-  Side Slope, horizontal : vertical (*S~X~*)          2.5 : 1 -- 4 : 1
+  Side Slope, horizontal : vertical (*S<sub>X</sub>*)          2.5 : 1 -- 4 : 1
 
-  Surface Roughness (*n~1~*)                             0.03 -- 0.2
+  Surface Roughness (*n<sub>1</sub>*)                             0.03 -- 0.2
 
-  Capture Ratio (*R~LID~*)                                 5 -- 10
-  -----------------------------------------------------------------------
+  Capture Ratio (*R<sub>LID</sub>*)                                 5 -- 10
 
   : []{#_Toc454288823 .anchor}**Table 6‑7 Typical ranges for vegetative
   swale parameters**
@@ -6635,8 +6285,8 @@ swale.
 Underdrains are either recommended or required when the natural soil
 infiltration rate is insufficient to prevent the LID unit from flooding.
 There are three user-supplied parameters that describe underdrain flow:
-a discharge coefficient (*C~3D~*), a discharge exponent (*η~3D~*), and a
-drain offset height (*D~D3~*). While the drain offset is part of the
+a discharge coefficient (*C<sub>3D</sub>*), a discharge exponent (*η<sub>3D</sub>*), and a
+drain offset height (*D<sub>D3</sub>*). While the drain offset is part of the
 cell's physical design, the discharge coefficient and exponent must be
 inferred from the hydraulics of underdrain flow. There are several
 approaches that can be used for this:
@@ -6653,27 +6303,25 @@ approaches that can be used for this:
 To use option 1, the full flow capacity of the drain pipe can be
 computed from the Manning equation as follows:
 
-  ---------------------------------------------------------------------------------------------------
-         $$Q_{full} = \left( \frac{0.464}{n_{pipe}} \right)S_{pipe}^{0.5}D_{pipe}^{2.67}$$   (6-70)
-  ------ ----------------------------------------------------------------------------------- --------
 
-  ---------------------------------------------------------------------------------------------------
+$$Q_{full} = \left( \frac{0.464}{n_{pipe}} \right)S_{pipe}^{0.5}D_{pipe}^{2.67} \qquad \text{(6-70)}$$
 
-where *Q~full~* is the flow rate (cfs), *n~pipe~* is the roughness
-coefficient for the pipe's material, *S~pipe~* is the slope at which the
-pipe is laid (ft/ft), and *D~pipe~* is the pipe's diameter (ft). To
+
+
+where *Q<sub>full</sub>* is the flow rate (cfs), *n<sub>pipe</sub>* is the roughness
+coefficient for the pipe's material, *S<sub>pipe</sub>* is the slope at which the
+pipe is laid (ft/ft), and *D<sub>pipe</sub>* is the pipe's diameter (ft). To
 convert this value into a set of underdrain discharge parameters, set
-the drain exponent *η~3D~* to zero and the drain coefficient *C~3D~* to
+the drain exponent *η<sub>3D</sub>* to zero and the drain coefficient *C<sub>3D</sub>* to
 
-  -------------------------------------------------------------------------
-         $$C_{3D} = \frac{N_{pipe}Q_{full}}{A_{LID}}$$             (6-71)
-  ------ --------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------
+$$C_{3D} = \frac{N_{pipe}Q_{full}}{A_{LID}} \qquad \text{(6-71)}$$
 
-where *N~pipe~* is the number of drain pipes in the unit and *A~LID~* is
-the area (ft^2^) of the unit. Because *η~3D~* is zero, the units of
-*C~3D~* are ft/sec. To convert these to the in/hr or mm/hr required by
+
+
+where *N<sub>pipe</sub>* is the number of drain pipes in the unit and *A<sub>LID</sub>* is
+the area (ft<sup>2</sup>) of the unit. Because *η<sub>3D</sub>* is zero, the units of
+*C<sub>3D</sub>* are ft/sec. To convert these to the in/hr or mm/hr required by
 the SWMM 5 input format, multiply by 43,200 or 1,097,280, respectively.
 
 As an example, using this method to specify the underdrain parameters
@@ -6693,92 +6341,79 @@ height will never be used.
 For option 2, one can assume that the standard orifice equation can
 replace the underdrain flow expression Equation 6-7 so that:
 
-  -------------------------------------------------------------------------
-         $$q_{3} = C_{3D}\left( h_{3} \right)^{0.5}$$              (6-72)
-  ------ --------------------------------------------------------- --------
 
-  -------------------------------------------------------------------------
+$$q_{3} = C_{3D}\left( h_{3} \right)^{0.5} \qquad \text{(6-72)}$$
 
-where the discharge exponent *η~3D~* has been set to 0.5 and the
+
+
+where the discharge exponent *η<sub>3D</sub>* has been set to 0.5 and the
 discharge coefficient now becomes:
 
-  ----------------------------------------------------------------------------------
-         $$C_{3D} = 0.6\sqrt{2g}\left( \frac{A_{slot}}{A_{LID}} \right)$$   (6-73)
-  ------ ------------------------------------------------------------------ --------
 
-  ----------------------------------------------------------------------------------
+$$C_{3D} = 0.6\sqrt{2g}\left( \frac{A_{slot}}{A_{LID}} \right) \qquad \text{(6-73)}$$
 
-with *A~slot~* being the total area (ft^2^) of the slots in the drain
-pipe and *g* the acceleration of gravity (32.2 ft/sec^2^). Note that the
-units of *C~3D~* are ft^0.5^/sec so when used in Equation 6-63 the
-resulting underdrain flux has units of ft/sec (or cfs/ft^2^). To convert
-*C~3D~* to in^0.5^/hr, which are the US units used in the program's
-input, one would multiply by 12,471. To convert to mm^0.5^/hr for SI
+
+
+with *A<sub>slot</sub>* being the total area (ft<sup>2</sup>) of the slots in the drain
+pipe and *g* the acceleration of gravity (32.2 ft/sec<sup>2</sup>). Note that the
+units of *C<sub>3D</sub>* are ft<sup>0.5</sup>/sec so when used in Equation 6-63 the
+resulting underdrain flux has units of ft/sec (or cfs/ft<sup>2</sup>). To convert
+*C<sub>3D</sub>* to in<sup>0.5</sup>/hr, which are the US units used in the program's
+input, one would multiply by 12,471. To convert to mm<sup>0.5</sup>/hr for SI
 units, multiply by 62,852.
 
 The ratio of the total slot area to LID area can be determined from the
 dimensions of a slot, the spacing between slots along the drain pipe,
 and the spacing between individual drain pipes:
 
-  ---------------------------------------------------------------------------------------------------------------------------
-         $$\frac{A_{slot}}{A_{LID} =}\frac{N_{pipe}{N_{slot}A}_{slot}}{\left( N_{pipe} + 1 \right)\Delta_{pipe}}$$   (6-74)
-  ------ ----------------------------------------------------------------------------------------------------------- --------
 
-  ---------------------------------------------------------------------------------------------------------------------------
+$$\frac{A_{slot}}{A_{LID} =}\frac{N_{pipe}{N_{slot}A}_{slot}}{\left( N_{pipe} + 1 \right)\Delta_{pipe}} \qquad \text{(6-74)}$$
+
+
 
 where
 
-  -------------------------------------------------------------------------
-  *N~pipe~*    =  number of underdrain pipes
-  ----------- --- ---------------------------------------------------------
-  *N~slot~*    =  number of slots per length of pipe (ft^-1^)
+  *N<sub>pipe</sub>*    =  number of underdrain pipes
+  *N<sub>slot</sub>*    =  number of slots per length of pipe (ft<sup>-1</sup>)
 
-  *A~slot~*    =  area of a single slot (ft^2^)
+  *A<sub>slot</sub>*    =  area of a single slot (ft<sup>2</sup>)
 
-  *∆~pipe~*    =  spacing between pipes (ft)
-  -------------------------------------------------------------------------
+  *∆<sub>pipe</sub>*    =  spacing between pipes (ft)
 
 As an example, consider an underdrain system consisting of two slotted
-pipes with inlet area of 1 in^2^ per foot of pipe spaced 50 ft apart.
-The area ratio used to compute *C~3D~* would be:
+pipes with inlet area of 1 in<sup>2</sup> per foot of pipe spaced 50 ft apart.
+The area ratio used to compute *C<sub>3D</sub>* would be:
 
-  ----------------------------------------------------------------------------------------------------------------------
          $$\frac{A_{slot}}{A_{LID} = \frac{2 \times \left( \frac{1}{144} \right)}{(3 \times 50) = 0.0000926}}$$   
-  ------ -------------------------------------------------------------------------------------------------------- ------
 
-  ----------------------------------------------------------------------------------------------------------------------
 
-Using this value in Equation 6-64 to compute *C~3D~* produces:
+Using this value in Equation 6-64 to compute *C<sub>3D</sub>* produces:
 
-  ----------------------------------------------------------------------------------------------------------------------------------
          $C_{3D} = 0.6 \times \sqrt{64.4} \times 0.0000926 = 0.00045\ \frac{{ft}^{0.5}}{\sec} = 5.5\ \frac{{in}^{0.5}}{hr}$   
-  ------ -------------------------------------------------------------------------------------------------------------------- ------
 
-  ----------------------------------------------------------------------------------------------------------------------------------
 
 Regarding the third option for underdrain parameters, the underdrain
 flow expression can again be replaced by the standard orifice equation,
 this time applied to the discharge point of the underdrain system (such
 as the outlet of a pipe manifold fitted with a cap orifice):
 
-  ---------------------------------------------------------------------------------
-         $$C_{3D} = 0.6\sqrt{2g}\left( \frac{A_{out}}{A_{LID}} \right)$$   (6-75)
-  ------ ----------------------------------------------------------------- --------
 
-  ---------------------------------------------------------------------------------
+$$C_{3D} = 0.6\sqrt{2g}\left( \frac{A_{out}}{A_{LID}} \right) \qquad \text{(6-75)}$$
 
-where A~out~ is the cross-sectional area (ft^2^) of the outlet fitting.
+
+
+where A<sub>out</sub> is the cross-sectional area (ft<sup>2</sup>) of the outlet fitting.
 The same conversion factors described previously would be used to
-convert *C~3D\ ~*from ft^0.5^/sec to either in^0.5^/hr or mm^0.5^/hr.
+convert *C<sub>3D</sub>*from ft<sup>0.5</sup>/sec to either in<sup>0.5</sup>/hr or mm<sup>0.5</sup>/hr.
 
 Applying this approach to the previously mentioned pair of 4-inch
-diameter drain pipes servicing a 1,000 ft^2^ cell without any flow
-restriction would result in a *C~3D~* value of 10.5 in^0.5^/hr. This is
-much higher than the 5.5 in^0.5^/hr based on inlet control. Hence the
-latter number would be used for *C~3D~* under these particular
+diameter drain pipes servicing a 1,000 ft<sup>2</sup> cell without any flow
+restriction would result in a *C<sub>3D</sub>* value of 10.5 in<sup>0.5</sup>/hr. This is
+much higher than the 5.5 in<sup>0.5</sup>/hr based on inlet control. Hence the
+latter number would be used for *C<sub>3D</sub>* under these particular
 circumstances. If the two underdrain pipes were connected by a tee
 fitting to a single 4-inch diameter outflow then the discharge
-coefficient would be 5.25 in^0.5^/hr and the drain would operate under
+coefficient would be 5.25 in<sup>0.5</sup>/hr and the drain would operate under
 outlet control.
 
 ### 6.5.9 Clogging
@@ -6789,23 +6424,22 @@ clogging (i.e., reduction of infiltration rates for permeable pavement
 systems and infiltration trenches) proceeds at a constant rate
 proportional to the number of void volumes that the LID unit treats over
 time. The clogging rate constant (or clogging factor *CF*) can be
-computed from the number of years *T~clog~* it takes to fractionally
-reduce an infiltration rate to a degree *F~clog~*. For example, a CF for
+computed from the number of years *T<sub>clog</sub>* it takes to fractionally
+reduce an infiltration rate to a degree *F<sub>clog</sub>*. For example, a CF for
 permeable pavement can be estimated from:
 
-  ------------------------------------------------------------------------------------------------------------------------------
-         $${CF}_{4} = \frac{I_{a}\left( 1 + R_{LID} \right)T_{clog}}{\phi_{4}D_{4}\left( 1 - F_{4} \right)F_{clog}}$$   (6-76)
-  ------ -------------------------------------------------------------------------------------------------------------- --------
 
-  ------------------------------------------------------------------------------------------------------------------------------
+$${CF}_{4} = \frac{I_{a}\left( 1 + R_{LID} \right)T_{clog}}{\phi_{4}D_{4}\left( 1 - F_{4} \right)F_{clog}} \qquad \text{(6-76)}$$
 
-where *I~a~* is the annual volume of rainfall in inches, *R~LID~* is the
-unit's capture ratio, *φ~4~* is the porosity of the pavement layer,
-*D~4~* is the thickness of the pavement layer, and *F~4~* is the
+
+
+where *I<sub>a</sub>* is the annual volume of rainfall in inches, *R<sub>LID</sub>* is the
+unit's capture ratio, *φ<sub>4</sub>* is the porosity of the pavement layer,
+*D<sub>4</sub>* is the thickness of the pavement layer, and *F<sub>4</sub>* is the
 fraction of the surface area covered by impermeable pavers. A similar
 expression would apply to the CF of an infiltration trench's storage
 layer using the layer's porosity and thickness in the expression with
-*F~4~* set to 0.
+*F<sub>4</sub>* set to 0.
 
 For permeable pavement, the rate at which clogging proceeds depends on
 many factors, such as the type of permeable pavement system employed,
@@ -7629,7 +7263,7 @@ conveys excess water draining through the soil layer off of the roof.
 **Hydraulic Conductivity -** the rate of water movement through soil
 under a unit gradient of hydraulic head. Its value increases with
 increasing soil moisture, up to a maximum for a completely saturated
-soil (known as the saturated hydraulic conductivity or K~sat~).
+soil (known as the saturated hydraulic conductivity or K<sub>sat</sub>).
 
 **Hydraulic Residence Time -** the average time that water has spent
 within a completely mixed reactor.

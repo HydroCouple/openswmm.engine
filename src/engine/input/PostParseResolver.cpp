@@ -13,6 +13,7 @@
 #include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
+#include "../hydraulics/xsect_tables.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -541,9 +542,15 @@ void resolve_cross_references(SimulationContext& ctx) {
 
     // Compute full-flow properties from cross-section geometry
     // (matches legacy xsect_setParams in xsect.c)
+    // NOTE: Must run for ALL link types that have cross-sections (CONDUIT,
+    // ORIFICE, WEIR). Orifice/weir flow equations use xsect_a_full, y_full,
+    // and w_max from the [XSECTIONS] section — skipping them leaves a_full=0
+    // which causes zero flow for all orifices.
     for (int j = 0; j < n_links; ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+        auto lt = ctx.links.type[uj];
+        if (lt != LinkType::CONDUIT && lt != LinkType::ORIFICE &&
+            lt != LinkType::WEIR) continue;
 
         double y_full = ctx.links.xsect_y_full[uj];
         double w_max  = ctx.links.xsect_w_max[uj];
@@ -757,6 +764,75 @@ void resolve_cross_references(SimulationContext& ctx) {
             break;
         }
 
+        case XsectShape::HORIZ_ELLIPSE: {
+            // Geom1 = minor axis (height), Geom2 = major axis (width), Geom3 = size code
+            double geom2 = w_max;           // major axis or 0
+            double geom3 = ctx.links.xsect_y_bot[uj]; // size code (Geom3)
+            if (geom2 == 0.0) geom3 = y_full; // if no width, use Geom1 as code
+            if (geom3 > 0.0) {
+                // Standard ellipse pipe from lookup table
+                int idx = static_cast<int>(std::floor(geom3)) - 1;
+                if (idx >= 0 && idx < xsect_tables::NumCodesEllipse) {
+                    y_full = xsect_tables::MinorAxis_Ellipse[idx] / 12.0;
+                    w_max  = xsect_tables::MajorAxis_Ellipse[idx] / 12.0;
+                    a_full = xsect_tables::Afull_Ellipse[idx];
+                    r_full = xsect_tables::Rfull_Ellipse[idx];
+                }
+            } else {
+                // Non-standard: use empirical formulas
+                a_full = 1.2692 * y_full * y_full;
+                r_full = 0.3061 * y_full;
+            }
+            s_full = a_full * std::pow(r_full, 2.0/3.0);
+            s_max  = s_full;
+            yw_max = 0.48 * y_full;
+            break;
+        }
+
+        case XsectShape::VERT_ELLIPSE: {
+            double geom2 = w_max;
+            double geom3 = ctx.links.xsect_y_bot[uj];
+            if (geom2 == 0.0) geom3 = y_full;
+            if (geom3 > 0.0) {
+                int idx = static_cast<int>(std::floor(geom3)) - 1;
+                if (idx >= 0 && idx < xsect_tables::NumCodesEllipse) {
+                    y_full = xsect_tables::MajorAxis_Ellipse[idx] / 12.0;
+                    w_max  = xsect_tables::MinorAxis_Ellipse[idx] / 12.0;
+                    a_full = xsect_tables::Afull_Ellipse[idx];
+                    r_full = xsect_tables::Rfull_Ellipse[idx];
+                }
+            } else {
+                a_full = 1.2692 * w_max * w_max;
+                r_full = 0.3061 * w_max;
+            }
+            s_full = a_full * std::pow(r_full, 2.0/3.0);
+            s_max  = s_full;
+            yw_max = 0.48 * y_full;
+            break;
+        }
+
+        case XsectShape::ARCH: {
+            double geom2 = w_max;
+            double geom3 = ctx.links.xsect_y_bot[uj];
+            if (geom2 == 0.0) geom3 = y_full;
+            if (geom3 > 0.0) {
+                int idx = static_cast<int>(std::floor(geom3)) - 1;
+                if (idx >= 0 && idx < xsect_tables::NumCodesArch) {
+                    y_full = xsect_tables::Yfull_Arch[idx] / 12.0;
+                    w_max  = xsect_tables::Wmax_Arch[idx] / 12.0;
+                    a_full = xsect_tables::Afull_Arch[idx];
+                    r_full = xsect_tables::Rfull_Arch[idx];
+                }
+            } else {
+                a_full = 0.7879 * y_full * w_max;
+                r_full = 0.2991 * y_full;
+            }
+            s_full = a_full * std::pow(r_full, 2.0/3.0);
+            s_max  = s_full;
+            yw_max = 0.28 * y_full;
+            break;
+        }
+
         case XsectShape::CUSTOM: {
             // Properties already set from CUSTOM shape curve above
             a_full = ctx.links.xsect_a_full[uj];
@@ -804,6 +880,7 @@ void resolve_cross_references(SimulationContext& ctx) {
         }
         }
 
+        ctx.links.xsect_y_full[uj] = y_full;
         ctx.links.xsect_a_full[uj] = a_full;
         ctx.links.xsect_r_full[uj] = r_full;
         ctx.links.xsect_s_full[uj] = s_full;
@@ -861,13 +938,34 @@ void resolve_cross_references(SimulationContext& ctx) {
 
         ctx.links.slope[uj] = slope;
 
-        // Note: adverse slope reversal is NOT applied here.
-        // The DW momentum solver handles adverse slopes naturally through the
-        // St. Venant equations. Reversing conduit direction changes the network
-        // topology and can cause incorrect flow patterns at CSO regulators.
-        // The legacy engine reverses but the node connections for non-conduit
-        // links (orifices, weirs) are NOT reversed, creating inconsistencies.
-        // Keeping original direction matches the user's intent.
+        // Reverse conduit orientation for adverse slopes in DW routing
+        // (matching legacy conduit_reverse in link.c lines 1084-1089, 1160-1193)
+        // NOTE: Reversal must happen after elevation offsets are converted to
+        // depth offsets (link_offsets == ELEV_OFFSET handled above) but before
+        // the conveyance computation below. The slope sign is stored as computed
+        // so that beta = PHI*sqrt(|slope|)/n always uses positive slope.
+        // TODO: Conduit reversal is temporarily disabled pending investigation
+        // of node degree / divider link resolution ordering issues.
+        if (false && ctx.options.routing_model == RoutingModel::DYNWAVE &&
+            slope < 0.0 &&
+            ctx.links.xsect_shape[uj] != XsectShape::DUMMY) {
+
+            // Swap node1 and node2
+            std::swap(ctx.links.node1[uj], ctx.links.node2[uj]);
+
+            // Swap offsets
+            std::swap(ctx.links.offset1[uj], ctx.links.offset2[uj]);
+
+            // Swap inlet/outlet loss coefficients
+            std::swap(ctx.links.loss_inlet[uj], ctx.links.loss_outlet[uj]);
+
+            // Negate slope and direction
+            ctx.links.slope[uj] = -slope;
+            ctx.links.direction[uj] *= -1;
+
+            // Negate initial flow
+            ctx.links.q0[uj] = -ctx.links.q0[uj];
+        }
     }
 
     // -------------------------------------------------------------------------

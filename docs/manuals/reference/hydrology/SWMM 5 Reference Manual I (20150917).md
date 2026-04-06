@@ -526,15 +526,15 @@ runoff parameters.** [77](#_Toc430249144)](#_Toc430249144)
 [96](#_Toc430249150)](#_Toc430249150)
 
 [**Table 4‑5 Rate of decay of infiltration capacity for different values
-of k~d~** [97](#_Toc430249151)](#_Toc430249151)
+of k<sub>d</sub>** [97](#_Toc430249151)](#_Toc430249151)
 
-[**Table 4‑6 Representative values for f~0~**
+[**Table 4‑6 Representative values for f<sub>0</sub>**
 [98](#_Toc430249152)](#_Toc430249152)
 
 [**Table 4‑7 Green-Ampt parameters for different soil classes**
 [113](#_Toc430249153)](#_Toc430249153)
 
-[**Table 4‑8 Typical values of *θ*~dmax~ for various soil types.**
+[**Table 4‑8 Typical values of *θ*<sub>dmax</sub> for various soil types.**
 [115](#_Toc430249154)](#_Toc430249154)
 
 [**Table 4‑9 Runoff curve numbers for selected land uses**
@@ -1076,26 +1076,21 @@ $Y_{t} = g(X_{t},\ P)$ (1-2)
 
 where
 
-  -----------------------------------------------------------------------------
-  *X~t~*   =   a vector of state variables at time *t*,
-  -------- --- ----------------------------------------------------------------
-  *Y~t~*   =   a vector of output variables at time *t*,
-
-  *I~t~*   =   a vector of inputs at time *t*,
-
-  *P*      =   a vector of constant parameters,
-
-  *f*      =   a vector-valued state transition function,
-
-  *g*      =   a vector-valued output transform function.
-  -----------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *X<sub>t</sub>* | a vector of state variables at time *t*, |
+| *Y<sub>t</sub>* | a vector of output variables at time *t*, |
+| *I<sub>t</sub>* | a vector of inputs at time *t*, |
+| *P* | a vector of constant parameters, |
+| *f* | a vector-valued state transition function, |
+| *g* | a vector-valued output transform function. |
 
 Figure 1-4 depicts the simulation process in block diagram fashion.
 
 []{#_Toc426447664 .anchor}**Figure 1‑4 Block diagram of SWMM\'s state
 transition process.**
 
-The variables that make up the state vector *X~t~* are listed in Table
+The variables that make up the state vector *X<sub>t</sub>* are listed in Table
 1-3. This is a surprisingly small number given the comprehensive nature
 of SWMM. All other quantities can be computed from these variables,
 external inputs, and fixed input parameters. The meaning of some of the
@@ -1109,10 +1104,10 @@ discussed in later chapters.
 | Runoff         | *d*          | Depth of runoff on a             | 0          |
 |                |              | subcatchment surface             |            |
 +----------------+--------------+----------------------------------+------------+
-| Infiltration\* | *t~p~*       | Equivalent time on the Horton    | 0          |
+| Infiltration\* | *t<sub>p</sub>*       | Equivalent time on the Horton    | 0          |
 |                |              | curve                            |            |
 |                +--------------+----------------------------------+------------+
-|                | *F~e~*       | Cumulative excess infiltration   | 0          |
+|                | *F<sub>e</sub>*       | Cumulative excess infiltration   | 0          |
 |                |              | volume                           |            |
 |                +--------------+----------------------------------+------------+
 |                | *Fu*         | Upper zone moisture content      | 0          |
@@ -1126,13 +1121,13 @@ discussed in later chapters.
 |                | *S*          | Soil moisture storage capacity   | User       |
 |                |              | remaining                        | supplied   |
 +----------------+--------------+----------------------------------+------------+
-| Groundwater    | *θ~u~*       | Unsaturated zone moisture        | User       |
+| Groundwater    | *θ<sub>u</sub>*       | Unsaturated zone moisture        | User       |
 |                |              | content                          | supplied   |
 |                +--------------+----------------------------------+------------+
-|                | *d~L~*       | Depth of saturated zone          | User       |
+|                | *d<sub>L</sub>*       | Depth of saturated zone          | User       |
 |                |              |                                  | supplied   |
 +----------------+--------------+----------------------------------+------------+
-| Snowmelt       | *w~snow~*    | Snow pack depth                  | User       |
+| Snowmelt       | *w<sub>snow</sub>*    | Snow pack depth                  | User       |
 |                |              |                                  | supplied   |
 |                +--------------+----------------------------------+------------+
 |                | *fw*         | Snow pack free water depth       | User       |
@@ -1152,19 +1147,19 @@ discussed in later chapters.
 |                | *a*          | Flow area in a link              | Inferred   |
 |                |              |                                  | from *q*   |
 +----------------+--------------+----------------------------------+------------+
-| Water Quality  | *t~sweep~*   | Time since a subcatchment was    | User       |
+| Water Quality  | *t<sub>sweep</sub>*   | Time since a subcatchment was    | User       |
 |                |              | last swept                       | supplied   |
 |                +--------------+----------------------------------+------------+
-|                | *m~B~*       | Mass of pollutant on             | User       |
+|                | *m<sub>B</sub>*       | Mass of pollutant on             | User       |
 |                |              | subcatchment surface             | supplied   |
 |                +--------------+----------------------------------+------------+
-|                | *m~P~*       | Mass of pollutant ponded on      | 0          |
+|                | *m<sub>P</sub>*       | Mass of pollutant ponded on      | 0          |
 |                |              | subcatchment                     |            |
 |                +--------------+----------------------------------+------------+
-|                | *c~N~*       | Concentration of pollutant at a  | User       |
+|                | *c<sub>N</sub>*       | Concentration of pollutant at a  | User       |
 |                |              | node                             | supplied   |
 |                +--------------+----------------------------------+------------+
-|                | *c~L~*       | Concentration of pollutant in a  | User       |
+|                | *c<sub>L</sub>*       | Concentration of pollutant in a  | User       |
 |                |              | link                             | supplied   |
 +----------------+--------------+----------------------------------+------------+
 
@@ -1173,7 +1168,7 @@ discussed in later chapters.
 \*Only a sub-set of these variables is used, depending on the user's
 choice of infiltration method.
 
-Examples of user-supplied input variables *I~t~* that produce changes to
+Examples of user-supplied input variables *I<sub>t</sub>* that produce changes to
 these state variables include:
 
 - meteorological conditions, such as precipitation, air temperature,
@@ -1189,7 +1184,7 @@ these state variables include:
 
 - control settings for pumps and regulators.
 
-The output vector *Y~t~* that SWMM computes from its updated state
+The output vector *Y<sub>t</sub>* that SWMM computes from its updated state
 variables contains such reportable quantities as:
 
 - runoff flow rate and pollutant concentrations from each subcatchment
@@ -1228,14 +1223,14 @@ The process begins by reading a description of each object and its
 parameters from an input file whose format is described in the SWMM 5
 UsersManual (US EPA, 2010). Next the values of all state variables are
 initialized, as is the current simulation time (T), runoff time
-(T~roff~), and reporting time (T~rpt~).
+(T<sub>roff</sub>), and reporting time (T<sub>rpt</sub>).
 
 []{#_Toc426447665 .anchor}**Figure 1‑5 Flow chart of SWMM\'s simulation
 procedure.**
 
 The program then enters a loop that first determines the time T1 at the
-end of the current routing time step (∆T~rout~). If the current runoff
-time T~roff~ is less than T1, then new runoff calculations are
+end of the current routing time step (∆T<sub>rout</sub>). If the current runoff
+time T<sub>roff</sub> is less than T1, then new runoff calculations are
 repeatedly made and the runoff time updated until it equals or exceeds
 time T1. Each set of runoff calculations accounts for any precipitation,
 evaporation, snowmelt, infiltration, ground water seepage, overland
@@ -1249,11 +1244,11 @@ velocity in each conduit, the water elevation at each node, the pumping
 rate for each pump, and the water level and volume in each storage unit.
 In addition, new values for the concentrations of all pollutants at each
 node and within each conduit are computed. Next a check is made to see
-if the current reporting time T~rpt~ falls within the interval from T to
-T1. If it does, then a new set of output results at time T~rpt~ are
+if the current reporting time T<sub>rpt</sub> falls within the interval from T to
+T1. If it does, then a new set of output results at time T<sub>rpt</sub> are
 interpolated from the results at times T and T1 and are saved to an
 output file. The reporting time is also advanced by the reporting time
-step ∆T~rpt.~ The simulation time T is then updated to T1 and the
+step ∆T<sub>rpt</sub>. The simulation time T is then updated to T1 and the
 process continues until T reaches the desired total duration. SWMM's
 Windows-based user interface provides graphical tools for building the
 aforementioned input file and for viewing the computed output.
@@ -1311,8 +1306,8 @@ back to the user's choice of unit system.
 |                        |                      | (cms)                |
 |                        | gallons/min (gpm)    |                      |
 |                        |                      | liters/sec (lps)     |
-|                        | 10^6^ gallons/day    |                      |
-|                        | (mgd)                | 10^6^ liters/day     |
+|                        | 10<sup>6</sup> gallons/day    |                      |
+|                        | (mgd)                | 10<sup>6</sup> liters/day     |
 |                        |                      | (mld)                |
 +------------------------+----------------------+----------------------+
 | Hydraulic Conductivity | inches/hour          | millimeters/hour     |
@@ -1323,7 +1318,7 @@ back to the user's choice of unit system.
 +------------------------+----------------------+----------------------+
 | Length                 | feet                 | meters               |
 +------------------------+----------------------+----------------------+
-| Manning's n            | seconds/meter^1/3^   | seconds/meter^1/3^   |
+| Manning's n            | seconds/meter<sup>1/3</sup>   | seconds/meter<sup>1/3</sup>   |
 +------------------------+----------------------+----------------------+
 | Pollutant Buildup      | mass/acre            | mass/hectare         |
 +------------------------+----------------------+----------------------+
@@ -1429,7 +1424,7 @@ time is a function of the catchment response to rainfall input. Small,
 steep, smooth, impervious catchments have fast response times, while
 large, flat, pervious catchments have slower response times. As a
 generality, shorter time increment data are preferable to longer time
-increment data, but for a large (e.g., 10 mi^2^ or 26 km^2^)
+increment data, but for a large (e.g., 10 mi<sup>2</sup> or 26 km<sup>2</sup>)
 subcatchment (coarse schematization), even the hourly inputs usually
 used for continuous simulation may be appropriate. Rainfall data with
 intervals larger than 1-hour (such as average daily rainfall or
@@ -1488,16 +1483,16 @@ values may be able to place highly spatially and temporally variable
 rainfall data into a time series format easily input to SWMM (e.g.,
 Hoblit and Curtis, 2002; Meeneghan et al., 2002, 2003; Vallabhaneni,
 2002). Radar data are spatially averaged over uniform grid cells of 1
-km^2^ or larger and therefore each cell would cover a number of runoff
+km<sup>2</sup> or larger and therefore each cell would cover a number of runoff
 subcatchments. In this case one could simply use a separate Rain Gage
 object for each grid cell that overlaps the study area, and assign the
 nearest cell as the subcatchment's source of rainfall data. A more
 sophisticated approach is to define a separate Rain Gage for each
 subcatchment along with a weighting matrix ***W*** whose entries
-***w~ij~*** represent the fraction of area from subcatchment *i* that is
+***w<sub>ij</sub>*** represent the fraction of area from subcatchment *i* that is
 contained in grid cell *j*. Then at any time *t* the vector of
-subcatchment rainfalls ***I~t~*** would equal the vector of cell
-rainfall values ***R~t~*** multiplied by the weighting matrix ***W***.
+subcatchment rainfalls ***I<sub>t</sub>*** would equal the vector of cell
+rainfall values ***R<sub>t</sub>*** multiplied by the weighting matrix ***W***.
 These data for each time period could be placed in a standard SWMM
 user-prepared rainfall file for direct use by SWMM (see below).
 
@@ -1612,24 +1607,14 @@ and make sure that the data flags are included.
 Table 2.1 shows 15-minute precipitation data downloaded for station
 410427 from Austin, Texas. The column headings represent:
 
-  ------------------------------------------------------------------------
-  Station:      cooperative recording station identifier.
-  ------------- ----------------------------------------------------------
-  Date:         date and time at end of fifteen minute recording period.
-
-  QPCP:         precipitation amount in hundredths of an inch (where 9999
-                or 99999 indicates a missing value).
-
-  Measurement   if present, a flag that denotes either the start or end of
-  Flag:         an accumulation period, a deleted period or a missing
-                period.
-
-  Quality Flag: if present, a flag that indicates if the data value is
-                erroneous.
-
-  Units:        a flag indicating the precision of the recorded value
-                where HI is for hundredths and HT for tenths of an inch.
-  ------------------------------------------------------------------------
+| Field | Description |
+| :--- | :--- |
+| Station: | cooperative recording station identifier. |
+| Date: | date and time at end of fifteen minute recording period. |
+| QPCP: | precipitation amount in hundredths of an inch (where 9999 or 99999 indicates a missing value). |
+| Measurement Flag: | if present, a flag that denotes either the start or end of an accumulation period, a deleted period or a missing period. |
+| Quality Flag: | if present, a flag that indicates if the data value is erroneous. |
+| Units: | a flag indicating the precision of the recorded value where HI is for hundredths and HT for tenths of an inch. |
 
 Hourly precipitation has a similar format except that the label 'HPCP'
 (for hourly precipitation) replaces 'QPCP' and there is no Units column
@@ -1949,23 +1934,16 @@ NCDC DS3200 climate file record**
 []{#_Toc430249135 .anchor}**Table 2‑11 Layout of the data portion of an
 NCDC DS3200 climate file record**
 
-  -----------------------------------------------------------------------
-  **Field**                                                   **Width**
-  ----------------------------------------------------------- -----------
-  Day of Month                                                2
+| **Field** | **Width** |
+| --- | --- |
+| Day of Month | 2 |
+| Hour of Observation | 2 |
+| Sign of Measured Value | 1 |
+| Measured Value | 5 |
+| Quality Control Flag 1 | 1 |
+| Quality Control Flag 2 | 1 |
 
-  Hour of Observation                                         2
-
-  Sign of Measured Value                                      1
-
-  Measured Value                                              5
-
-  Quality Control Flag 1                                      1
-
-  Quality Control Flag 2                                      1
-  -----------------------------------------------------------------------
-
-  : (Repeated as many times as needed to contain one month of data).
+(Repeated as many times as needed to contain one month of data).
 
 The record layout of the Canadian DLY daily climatologic files is
 depicted in Table 2-12. The "*ELEM*" field contains 001 for daily
@@ -2092,13 +2070,11 @@ is computed only as a function of latitude and declination,
 
 where
 
-  ---------------------------------------------------------------------------
-  *h*   =   hour angle at sunrise or sunset, radians,
-  ----- --- -----------------------------------------------------------------
-  *δ*   =   earth's declination, a function of season (date), radians, and
-
-  *φ*   =   latitude of observer, radians.
-  ---------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *h* | hour angle at sunrise or sunset, radians, |
+| *δ* | earth's declination, a function of season (date), radians, and |
+| *φ* | latitude of observer, radians. |
 
 The earth's declination is provided in tables (e.g., List, 1966), but
 for programming purposes an approximate formula is used (TVA, 1972):
@@ -2132,21 +2108,17 @@ standard time zone. These are listed in Table 2-14. Note that time zone
 boundaries are very irregular and often are quite displaced from what
 might be expected on the basis of the local longitude, e.g., most of
 Alaska is much further west than the standard meridian for Alaska time
-of 135^o^W. The longitude correction is readily computed as
+of 135<sup>o</sup>W. The longitude correction is readily computed as
 
-  --------------------------------------------------------------------------------------------------------
-  $$\mathrm{\Delta}T_{LONG} = 4\frac{minutes}{degree}(\theta - SM)$$   (2-4)
-  -------------------------------------------------------------------- -----------------------------------
+$$\mathrm{\Delta}T_{LONG} = 4\frac{minutes}{degree}(\theta - SM) \qquad \text{(2-4)}$$
 
-  --------------------------------------------------------------------------------------------------------
-
-where ∆T~LONG~ = longitude correction, minutes (of time), *θ* =
+where ∆T<sub>LONG</sub> = longitude correction, minutes (of time), *θ* =
 longitude of the observer, degrees, and SM = standard meridian of the
 time zone, degrees, from Table 2-14.
 
-Note that *∆T~LONG~* can be either positive or negative, and the sign
+Note that *∆T<sub>LONG</sub>* can be either positive or negative, and the sign
 should be retained. For instance, Boston at approximately 71°W has
-*∆T~LONG~* = -16 min­utes, meaning that mean solar noon precedes EST noon
+*∆T<sub>LONG</sub>* = -16 min­utes, meaning that mean solar noon precedes EST noon
 by 16 minutes. (Mean solar time differs from true solar time by the
 neglected "equation of time.")
 
@@ -2162,15 +2134,15 @@ and the time of day of sunset is
 | > $$H_{SS} = 12 + h + \mathrm{\Delta}T_{LONG}/60$$ | (2-6)                             |
 +====================================================+===================================+
 
-From these times, the hours at which the minimum (*T~min~*) and maximum
-(*T~max~*) temperatures
+From these times, the hours at which the minimum (*T<sub>min</sub>*) and maximum
+(*T<sub>max</sub>*) temperatures
 
-occur are *H~min~ = H~SR~* and *H~max~ = H~SS~ -- 3*, respectively.
+occur are *H<sub>min</sub> = H<sub>SR</sub>* and *H<sub>max</sub> = H<sub>SS</sub> -- 3*, respectively.
 
 +-------------------------+-------------------------+-------------------------+
 | **Time Zone**           | **Example Cities**      | **Standard Meridian**   |
 +:========================+:========================+:========================+
-| Newfoundland Std. Time  | St. Johns's,            | 52.5^a^                 |
+| Newfoundland Std. Time  | St. Johns's,            | 52.5<sup>a</sup>                 |
 |                         | Newfoundland            |                         |
 +-------------------------+-------------------------+-------------------------+
 | Atlantic Std. Time      | Halifax, Nova Scotia    | 60                      |
@@ -2186,7 +2158,7 @@ occur are *H~min~ = H~SR~* and *H~max~ = H~SS~ -- 3*, respectively.
 |                         | Winnipeg, Manitoba      |                         |
 |                         |                         |                         |
 |                         | Saskatoon,              |                         |
-|                         | Saskatchewan^b^         |                         |
+|                         | Saskatchewan<sup>b</sup>         |                         |
 +-------------------------+-------------------------+-------------------------+
 | Mountain Std. Time      | Denver, Colorado        | 105                     |
 |                         |                         |                         |
@@ -2206,10 +2178,10 @@ occur are *H~min~ = H~SR~* and *H~max~ = H~SS~ -- 3*, respectively.
 |                         |                         |                         |
 | Hawaiian Std. Time      | Honolulu, Hawaii        |                         |
 +-------------------------+-------------------------+-------------------------+
-| ^a^The time zone of the island of Newfoundland is offset one half hour from |
+| <sup>a</sup>The time zone of the island of Newfoundland is offset one half hour from |
 | other zones.                                                                |
 |                                                                             |
-| ^b^Saskatchewan summer time is Mountain, winter is Central.                 |
+| <sup>b</sup>Saskatchewan summer time is Mountain, winter is Central.                 |
 +-----------------------------------------------------------------------------+
 
 : []{#_Toc430249138 .anchor}**Table 2‑14 Time zones and standard
@@ -2218,26 +2190,26 @@ meridians (degrees west longitude)**
 The temperature *T* at any hour *H* of the day can now be computed as
 follows:
 
-1.  If *H \< H~min~* then
+1.  If *H \< H<sub>min</sub>* then
 
 +----------------------------------------------------------------------------------------------------------------------------------------+--------------+
 | > $$T = T_{\min} + \frac{\mathrm{\Delta}T_{1}}{2}\ sin\left( \frac{\pi\left( H_{\min} - H \right)}{H_{\min} + 24 - H_{\max}} \right)$$ | (2-7)        |
 +========================================================================================================================================+==============+
 
-> where *∆T~1~* is the difference between the previous day's maximum
+> where *∆T<sub>1</sub>* is the difference between the previous day's maximum
 > temperature and the current day's minimum temperature.
 
-2.  If *H~min~ ≤ H ≤ H~max~* then
+2.  If *H<sub>min</sub> ≤ H ≤ H<sub>max</sub>* then
 
 +-----------------------------------------------------------------------------------------------------------------------------+--------------+
 | > $$T = T_{avg} + \frac{\mathrm{\Delta}T}{2}\ sin\left( \frac{\pi\left( H_{avg} - H \right)}{H_{\min} - H_{\max}} \right)$$ | (2-8)        |
 +=============================================================================================================================+==============+
 
-> where *T~avg~* is the average of *T~min~* and *T~max~*, *∆T* is the
-> difference between *T~max~* and *T~min~*, and *H~avg~* is the average
-> of *H~min~* and *H~max~*.
+> where *T<sub>avg</sub>* is the average of *T<sub>min</sub>* and *T<sub>max</sub>*, *∆T* is the
+> difference between *T<sub>max</sub>* and *T<sub>min</sub>*, and *H<sub>avg</sub>* is the average
+> of *H<sub>min</sub>* and *H<sub>max</sub>*.
 
-3.  If *H \> H~max~* then
+3.  If *H \> H<sub>max</sub>* then
 
 +-----------------------------------------------------------------------------------------------------------------------------------+--------------+
 | > $$T = T_{\max} - \frac{\mathrm{\Delta}T}{2}\ sin\left( \frac{\pi\left( H - H_{max} \right)}{H_{\min} + 24 - H_{\max}} \right)$$ | (2-9)        |
@@ -2316,26 +2288,19 @@ is:
 
 where:
 
-  ---------------------------------------------------------------------------
-  *E*      =   evaporation rate (mm/day)
-  -------- --- --------------------------------------------------------------
-  *R~a~*   =   water equivalent of incoming extraterrestrial radiation
-               (MJm^-2^d^-1^)
-
-  *T~r~*   =   average daily temperature range for a period of days (deg C)
-
-  *T~a~*   =   average daily temperature for a period of days (deg C)
-
-  *λ*      =   latent heat of vaporization (MJkg^-1^)
-
-           =   *2.50 -- 0.002361T~a~*
-  ---------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *E* | evaporation rate (mm/day) |
+| *R<sub>a</sub>* | water equivalent of incoming extraterrestrial radiation (MJm<sup>-2</sup>d<sup>-1</sup>) |
+| *T<sub>r</sub>* | average daily temperature range for a period of days (deg C) |
+| *T<sub>a</sub>* | average daily temperature for a period of days (deg C) |
+| *λ* | latent heat of vaporization (MJkg<sup>-1</sup>) = *2.50 -- 0.002361T<sub>a</sub>* |
 
 As noted in Hargreaves and Merkley (1998), for the equation to provide
-satisfactory results *T~r~* and *T~a~* must be averaged over a period of
+satisfactory results *T<sub>r</sub>* and *T<sub>a</sub>* must be averaged over a period of
 5 or more days. SWMM therefore uses a 7-day running average of these
 variables derived from the record of daily max-min temperatures. The
-extraterrestrial radiation R~a~ is computed as:
+extraterrestrial radiation R<sub>a</sub> is computed as:
 
 +--------------------------------------------------------------------------------------------------------------+-----------+
 | > $R_{a} = 37.6d_{r}\left( w_{s}sin(\varphi)\ sin(\delta) + cos(\varphi)\ cos(\delta)\ sin{(w}_{s} \right))$ | (2-11)    |
@@ -2343,23 +2308,13 @@ extraterrestrial radiation R~a~ is computed as:
 
 where:
 
-  -----------------------------------------------------------------------------
-  *d~r~*   =   relative earth-sun distance
-  -------- --- ----------------------------------------------------------------
-           =   $$1 + 0.033cos\left( \frac{2\pi J}{365} \right)$$
-
-  *J*      =   Julian day (1 to 365)
-
-  *w~s~*   =   sunset hour angle (radians)
-
-           =   $$\cos^{- 1}\left( - \tan{\varphi\tan{\ \delta}} \right)$$
-
-  *φ*      =   latitude (radians)
-
-  *δ*      =   solar declination (radians)
-
-           =   $$0.4093sin\left( \frac{2\pi(284 + J)}{365} \right)$$
-  -----------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *d<sub>r</sub>* | relative earth-sun distance = $1 + 0.033cos\left( \frac{2\pi J}{365} \right)$ |
+| *J* | Julian day (1 to 365) |
+| *w<sub>s</sub>* | sunset hour angle (radians) = $\cos^{- 1}\left( - \tan{\varphi\tan{\ \delta}} \right)$ |
+| *φ* | latitude (radians) |
+| *δ* | solar declination (radians) = $0.4093sin\left( \frac{2\pi(284 + J)}{365} \right)$ |
 
 ## 2.6 Wind Speed Data
 
@@ -2429,7 +2384,7 @@ subcatchment.**
 In this representation, the subcatchment experiences inflow from
 precipitation (rainfall and snowmelt) and losses from evaporation and
 infiltration. The net excess ponds atop the subcatchment surface to a
-depth *d*. Ponded water above the depression storage depth *d~s~* can
+depth *d*. Ponded water above the depression storage depth *d<sub>s</sub>* can
 become runoff outflow *q*. Depression storage accounts for initial
 rainfall abstractions such as surface ponding, interception by flat
 roofs and vegetation, and surface wetting.
@@ -2444,22 +2399,19 @@ subcatchment:
 
 where:
 
-  -----------------------------------------------------------------------
-  *i*   =      rate of rainfall + snowmelt (ft/s)
-  ----- ------ ----------------------------------------------------------
-  *e*   =      surface evaporation rate (ft/s)
-
-  *f*   =      infiltration rate (ft/s)
-
-  *q*   =      runoff rate (ft/s).
-  -----------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *i* | rate of rainfall + snowmelt (ft/s) |
+| *e* | surface evaporation rate (ft/s) |
+| *f* | infiltration rate (ft/s) |
+| *q* | runoff rate (ft/s). |
 
 Note that the fluxes *i, e, f,* and *q* are expressed as flow rates per
-unit area (cfs/ft^2^ = ft/s).
+unit area (cfs/ft<sup>2</sup> = ft/s).
 
 Assuming that flow across the subcatchment's surface behaves as if it
 were uniform flow within a rectangular channel of width *W* (ft), height
-*d--d~s~*, and slope *S*, the Manning equation can be used to express
+*d--d<sub>s</sub>*, and slope *S*, the Manning equation can be used to express
 the runoff's volumetric flow rate Q (cfs) as:
 
 +-------------------------------------------------+-----------------------------------+
@@ -2467,11 +2419,11 @@ the runoff's volumetric flow rate Q (cfs) as:
 +=================================================+===================================+
 
 Here *n* is a surface roughness coefficient, *S* the apparent or average
-slope of the subcatchment (ft/ft), *A~x~* the area across the
-subcatchment's width through which the runoff flows (ft^2^), and *R~x~*
+slope of the subcatchment (ft/ft), *A<sub>x</sub>* the area across the
+subcatchment's width through which the runoff flows (ft<sup>2</sup>), and *R<sub>x</sub>*
 is the hydraulic radius associated with this area (ft). Referring to
-Figures 3-1 and 3-2, *A~x~* is a rectangular area with width *W* and
-height *d-d~s~*. Because *W* will always be much larger than *d* it
+Figures 3-1 and 3-2, *A<sub>x</sub>* is a rectangular area with width *W* and
+height *d-d<sub>s</sub>*. Because *W* will always be much larger than *d* it
 follows that $A_{X} = W(d - d_{S})$ and $R_{X} = d - d_{S}$.
 Substituting these expressions into Equation 3-2 gives:
 
@@ -2481,7 +2433,7 @@ Substituting these expressions into Equation 3-2 gives:
 
 To obtain a runoff flow rate per unit of surface area, *q*, Equation 3-3
 is divided by the surface area of the subcatchment, *A* (which should
-not be confused with the cross-section area *A~x~* through which the
+not be confused with the cross-section area *A<sub>x</sub>* through which the
 runoff passes):
 
 +-------------------------------------------------------------------+-----------------------------------+
@@ -2502,10 +2454,10 @@ where *α* is defined as:
 +==========================================+===================================+
 
 Equation 3-5 is an ordinary nonlinear differential equation. For known
-values of *i, e, f, d~s~* and *α* it can be solved numerically over each
+values of *i, e, f, d<sub>s</sub>* and *α* it can be solved numerically over each
 time step for ponded depth *d.* Once *d* is known, values of the runoff
 rate *q* can be found from Equation 3-4. Note that Equation 3-5 only
-applies when *d* is greater than *d~s~*. When *d \<= d~s~*, runoff *q*
+applies when *d* is greater than *d<sub>s</sub>*. When *d \<= d<sub>s</sub>*, runoff *q*
 is zero and the mass balance on *d* becomes simply:
 
 +-------------------------------------------------+-----------------------------------+
@@ -2576,8 +2528,8 @@ runoff equation for each subarea individually:
 - The infiltration rate *f* is always zero for the two impervious
   subareas.
 
-- Different values of depression storage *d~s~* can be assigned to the
-  pervious (A1) and impervious area (A2), where by definition d*~s~* is
+- Different values of depression storage *d<sub>s</sub>* can be assigned to the
+  pervious (A1) and impervious area (A2), where by definition d*<sub>s</sub>* is
   zero for the impervious area with no depression storage (A3).
 
 - Different values of the Manning roughness *n* can be used for the
@@ -2597,17 +2549,17 @@ are:
 |                                                                           | and A3                          |            |
 +---------------------------------------------------------------------------+---------------------------------+------------+
 
-where *n~P~* is the roughness for the pervious area, *n~I~* is the
-roughness for both impervious areas, and *A~i~* is the surface area
-(ft^2^) associated with sub-area *i.*
+where *n<sub>P</sub>* is the roughness for the pervious area, *n<sub>I</sub>* is the
+roughness for both impervious areas, and *A<sub>i</sub>* is the surface area
+(ft<sup>2</sup>) associated with sub-area *i.*
 
 The reason that the same *α* applies to both impervious subareas even
 though their areas are different arises from how the *W/A* term is
 evaluated for the idealized arrangement shown in Figure 3-4. For area
-A2, *W~2~ = A~2~W / (A~2~ + A~3~)* so that *W~2~ / A~2~ = W / (A~2~ +
-A~3~).* For A3, *W~3~ = A~3~W / (A~2~ + A~3~)* which results in *W~3~ /
-A~3~ = W / (A~2~ + A~3~)*. Thus both types of impervious areas use the
-same factor *W / (A~2~ + A~3~)*.
+A2, *W<sub>2</sub> = A<sub>2</sub>W / (A<sub>2</sub> + A<sub>3</sub>)* so that *W<sub>2</sub> / A<sub>2</sub> = W / (A<sub>2</sub> +
+A<sub>3</sub>).* For A3, *W<sub>3</sub> = A<sub>3</sub>W / (A<sub>2</sub> + A<sub>3</sub>)* which results in *W<sub>3</sub> /
+A<sub>3</sub> = W / (A<sub>2</sub> + A<sub>3</sub>)*. Thus both types of impervious areas use the
+same factor *W / (A<sub>2</sub> + A<sub>3</sub>)*.
 
 ## 3.4 Computational Scheme
 
@@ -2634,9 +2586,9 @@ subcatchment is small and the time of concentration is a fraction of the
 rainfall interval. When using 1-hour rainfall, wet time steps of 10 min,
 15 min or longer can be used by the model, unless subcatchments are very
 small. The key concept is that the wet step should be less than or equal
-to the response time of a subcatchment. Time of concentration, t~c~, is
+to the response time of a subcatchment. Time of concentration, t<sub>c</sub>, is
 one measure of response time (Eagleson, 1970; Bedient et al., 2013);
-hence, the wet step should be no greater than t~c~. For subcatchments of
+hence, the wet step should be no greater than t<sub>c</sub>. For subcatchments of
 a few to several acres, wet steps of 1 to 5 min or longer should
 suffice. But for simulation of very small rain gardens or runoff from
 individual roofs onto lawns, for instance, values less than 1 min might
@@ -2732,7 +2684,7 @@ section 3.4 is modified as follows:
 
 1.  For each subcatchment that receives runoff from one or more other
     subcatchments, the precipitation rate *i* for each of its subareas
-    has *Q~r~ / A* added to it, where *Q~r~* is the total runoff (cfs)
+    has *Q<sub>r</sub> / A* added to it, where *Q<sub>r</sub>* is the total runoff (cfs)
     routed onto it from the contributing subcatchments, as computed at
     the end of the previous time step, and *A* is the total surface area
     of the receiving subcatchment.
@@ -2741,8 +2693,8 @@ section 3.4 is modified as follows:
     routed internally to the pervious area, the precipitation rate *i*
     for the pervious area has
     $f\left( q_{2}A_{2} + q_{3}A_{3} \right)/A_{1}$ added to it, where
-    *q~j~* is the runoff per unit area (ft/sec) from subarea *j* at the
-    end of the previous time step and *A~j~* is the area of subarea *j*.
+    *q<sub>j</sub>* is the runoff per unit area (ft/sec) from subarea *j* at the
+    end of the previous time step and *A<sub>j</sub>* is the area of subarea *j*.
 
 3.  For subcatchments where a fraction *f* of the pervious runoff is
     routed internally to the impervious area with depression storage,
@@ -2904,27 +2856,17 @@ uses taken from EPA's Rouge River Project (Kluitenberg 1994) and
 incorporated into EPA technical guidance for MS4 stormwater permitting
 in Region I (US EPA, 2014).
 
-  -----------------------------------------------------------------------
-  **Land Use**                            **Percent Impervious Area**
-  ----------------------------------- -----------------------------------
-  Commercial                                          56
-
-  Industrial                                          76
-
-  High density residential                            51
-
-  Medium density residential                          38
-
-  Low density residential                             19
-
-  Institutional                                       34
-
-  Agricultural                                         2
-
-  Forest                                              1.9
-
-  Open Urban Land                                     11
-  -----------------------------------------------------------------------
+| **Land Use** | **Percent Impervious Area** |
+| --- | --- |
+| Commercial | 56 |
+| Industrial | 76 |
+| High density residential | 51 |
+| Medium density residential | 38 |
+| Low density residential | 19 |
+| Institutional | 34 |
+| Agricultural | 2 |
+| Forest | 1.9 |
+| Open Urban Land | 11 |
 
   : []{#_Toc430249139 .anchor}**Table 3‑1 Impervious area as a
   percentage of land use.**
@@ -2967,28 +2909,13 @@ and *b* are listed in Table 3-1. Further information on the concept of
 directly connected (or "hydraulically effective") impervious areas is
 contained in the review article by Shuster et al. (2005).
 
-  --------------------------------------------------------------------------------
-   ***a***   ***b***  **Condition**
-  --------- --------- ------------------------------------------------------------
-     0.1       1.5    Average basins served by storm sewers and residential
-                      rooftops are not directly connected to sewers.
-
-     0.4       1.2    Highly connected basins with residential rooftops directly
-                      connected to storm sewers.
-
-     1.0       1.0    Totally connected basins that are completely served by storm
-                      sewers to which all impervious surfaces are directly
-                      connected.
-
-    0.04       1.7    Partly disconnected basins where more 50% of the area is
-                      served by grassy swales or roadside ditches instead of storm
-                      sewers and residential rooftops are not directly connected
-                      to sewers.
-
-    0.01       2.0    Highly disconnected basins where only a small percentage of
-                      area is served by storm sewers or has 70 percent or more
-                      draining to infiltration areas.
-  --------------------------------------------------------------------------------
+| ***a*** | ***b*** | **Condition** |
+| --- | --- | --- |
+| 0.1 | 1.5 | Average basins served by storm sewers and residential rooftops are not directly connected to sewers. |
+| 0.4 | 1.2 | Highly connected basins with residential rooftops directly connected to storm sewers. |
+| 1.0 | 1.0 | Totally connected basins that are completely served by storm sewers to which all impervious surfaces are directly connected. |
+| 0.04 | 1.7 | Partly disconnected basins where more 50% of the area is served by grassy swales or roadside ditches instead of storm sewers and residential rooftops are not directly connected to sewers. |
+| 0.01 | 2.0 | Highly disconnected basins where only a small percentage of area is served by storm sewers or has 70 percent or more draining to infiltration areas. |
 
   : []{#_Toc430249140 .anchor}**Table 3‑2 Coefficients for
   Southerland\'s EIA equations.**
@@ -2999,7 +2926,7 @@ If overland flow is visualized as running down-slope off of an
 idealized, rectangular catchment, then the width of the subcatchment is
 the physical width of overland flow. This may be seen for the idealized
 catchment shown once again in Figure 3-8 in which the lateral flow per
-unit width, *q~L~*, is computed and multiplied by the width to obtain
+unit width, *q<sub>L</sub>*, is computed and multiplied by the width to obtain
 the total inflow into the channel. (As mentioned previously, the SWMM
 channel/pipes can only receive a concentrated inflow at their inlet
 nodes, however, and do not receive inflow distributed along their
@@ -3054,7 +2981,7 @@ illustration of shape and width effects.**
 | +-----------------+-----------------+-----------------+-----------------+ | Slope = 1%                        |
 | | Shape           | A               | W               | L               | |                                   |
 | |                 |                 |                 |                 | | Imperviousness = 100%             |
-| |                 | (ft^2^)         | (ft)            | (ft)            | |                                   |
+| |                 | (ft<sup>2</sup>)         | (ft)            | (ft)            | |                                   |
 | +:================+:================+:================+:================+ | Depression Storage = 0            |
 | | A               | 40,000          | 800             | 50              | |                                   |
 | |                 |                 |                 |                 | | n = 0.02                          |
@@ -3155,7 +3082,7 @@ where:
 
 > Z = skew factor, 0.5 ≤ Z ≤ 1,
 >
-> A~m~ = larger of the two areas on each side of the channel
+> A<sub>m</sub> = larger of the two areas on each side of the channel
 >
 > A = total area.
 
@@ -3215,7 +3142,7 @@ computed as $YL$.
 Applying this approach to Subcatchment 8412 (using K = 4) produces the
 following:
 
-> X = (1.67 acres • 43,560 ft^2^/acre) / (360^2^) = 0.56
+> X = (1.67 acres • 43,560 ft<sup>2</sup>/acre) / (360<sup>2</sup>) = 0.56
 >
 > Z = 1.19 / 1.67 = 0.71
 >
@@ -3250,7 +3177,7 @@ the conditions being simulated. One would then choose the appropriate
 overland flow length, slope, and roughness for this equivalent plane.
 The Guo and Urbonas (2007) Shape Factor approach discussed in the
 previous section computes the slope of this equivalent plane as
-$\frac{S_{o}L}{(A/YL + YL)}$ where S~o~ is the slope of the drainage
+$\frac{S_{o}L}{(A/YL + YL)}$ where S<sub>o</sub> is the slope of the drainage
 channel and the other variables are as defined in Section 3.8.4.
 
 Finally, if there are clearly two different slopes to consider for the
@@ -3282,7 +3209,7 @@ of slope and Manning's *n* and calibrate with the subcatchment width.
 
 ### 3.8.7 Depression Storage
 
-Depression (retention) storage (depth *d~S~* in Figure 3-2) is a volume
+Depression (retention) storage (depth *d<sub>S</sub>* in Figure 3-2) is a volume
 that must be filled prior to the occurrence of runoff on both pervious
 and impervious areas (Viessman and Lewis, 2003). It represents a loss or
 "initial abstraction" caused by such phenomena as surface ponding,
@@ -3298,7 +3225,7 @@ restore such storage to its full capacity.
 | Source               | Ground Cover               | n                 | Range             |
 +:=====================+:===========================+:==================+:==================+
 | Crawford and Linsley | Smooth asphalt             | 0.01              |                   |
-| (1966)^a^            |                            |                   |                   |
+| (1966)<sup>a</sup>            |                            |                   |                   |
 |                      +----------------------------+-------------------+-------------------+
 |                      | Asphalt of concrete paving | 0.014             |                   |
 |                      +----------------------------+-------------------+-------------------+
@@ -3311,7 +3238,7 @@ restore such storage to its full capacity.
 |                      | Dense shrubbery and forest | 0.4               |                   |
 |                      | litter                     |                   |                   |
 +----------------------+----------------------------+-------------------+-------------------+
-| Engman (1986)^b^     | Concrete or asphalt        | 0.011             | 0.010-0.013       |
+| Engman (1986)<sup>b</sup>     | Concrete or asphalt        | 0.011             | 0.010-0.013       |
 |                      +----------------------------+-------------------+-------------------+
 |                      | Bare sand                  | 0.010             | 0.01-0.016        |
 |                      +----------------------------+-------------------+-------------------+
@@ -3327,7 +3254,7 @@ restore such storage to its full capacity.
 |                      +----------------------------+-------------------+-------------------+
 |                      | Bermuda grass              | 0.41              | 0.30-0.48         |
 +----------------------+----------------------------+-------------------+-------------------+
-| Yen (2001)^c^        | Smooth asphalt pavement    | 0.012             | 0.010-0.015       |
+| Yen (2001)<sup>c</sup>        | Smooth asphalt pavement    | 0.012             | 0.010-0.015       |
 |                      +----------------------------+-------------------+-------------------+
 |                      | Smooth impervious surface  | 0.013             | 0.011-0.015       |
 |                      +----------------------------+-------------------+-------------------+
@@ -3371,12 +3298,12 @@ restore such storage to its full capacity.
 |                      +----------------------------+-------------------+-------------------+
 |                      | Parks and lawns            | 0.075             | 0.040-0.120       |
 +----------------------+----------------------------+-------------------+-------------------+
-| ^a^Obtained by calibration of Stanford Watershed Model.                                   |
+| <sup>a</sup>Obtained by calibration of Stanford Watershed Model.                                   |
 |                                                                                           |
-| ^b^Computed by Engman (1986) by kinematic wave and storage analysis of measured           |
+| <sup>b</sup>Computed by Engman (1986) by kinematic wave and storage analysis of measured           |
 | rainfall-runoff data.                                                                     |
 |                                                                                           |
-| ^c^Computed on basis of kinematic wave analysis.                                          |
+| <sup>c</sup>Computed on basis of kinematic wave analysis.                                          |
 +-------------------------------------------------------------------------------------------+
 
 : []{#_Toc430249143 .anchor}**Table 3‑5 Estimates of Manning\'s
@@ -3400,7 +3327,7 @@ Depression storage may be derived from rainfall-runoff data for
 impervious areas by plotting runoff volume *V* (depth) as the ordinate
 against rainfall volume *P* as the abscissa for several storms. The
 rainfall intercept at zero runoff is the depth of depression storage
-*d~s~*, i.e., a regression of the form
+*d<sub>s</sub>*, i.e., a regression of the form
 
 +-------------------------------------+-----------------------------------+
 | > $$V = C\left( P - d_{S} \right)$$ | (‎3-13)                            |
@@ -3425,7 +3352,7 @@ following regression for these data:
 | > $$d_{S} = 0.303S^{0.49}$$       | (‎3-14)                            |
 +===================================+===================================+
 
-where *d~s~* is depression storage (inches) and *S* is catchment slope
+where *d<sub>s</sub>* is depression storage (inches) and *S* is catchment slope
 (percent).
 
 Viessman and Lewis (2003, p. 140) present a linear relation between
@@ -3436,7 +3363,7 @@ Baltimore, MD:
 | > $$d_{S} = 0.136 - 0.032S$$      | (‎3-15)                            |
 +===================================+===================================+
 
-where the observed values of *d~s~* ranged from 0.06 to 0.11 inches.
+where the observed values of *d<sub>s</sub>* ranged from 0.06 to 0.11 inches.
 
 Separate values of depression storage can be used for the pervious and
 impervious subareas within a subcatchment. Representative values for the
@@ -3483,41 +3410,14 @@ Sensitivity of surface runoff volume and peak flow estimates to key
 surface runoff parameters is listed in Table ‎3-6. The influence of storm
 depth is not represented in the table.
 
-  ------------------------------------------------------------------------------------------------------------
-  **Parameter**      **Typical          **Effect of              **Effect of        **Comments**
-                     effect on     [increase]{.underline}   [increase]{.underline}  
-                    hydrograph**     on runoff volume**        on runoff peak**     
-  ---------------- -------------- ------------------------ ------------------------ --------------------------
-  Area              Significant           Increase                 Increase         Less effect for a highly
-                                                                                    porous catchment
-
-  Imperviousness    Significant           Increase                 Increase         Less effect when pervious
-                                                                                    areas have low
-                                                                                    infiltration capacity.
-
-  Width            Affects shape          Decrease                 Increase         For storms of varying
-                                                                                    intensity, increasing the
-                                                                                    width tends to produce
-                                                                                    higher and earlier
-                                                                                    hydrograph peaks, a
-                                                                                    generally faster response.
-                                                                                    Only affects volume to the
-                                                                                    extent that reduced width
-                                                                                    on pervious areas provides
-                                                                                    more time for
-                                                                                    infiltration.
-
-  Slope            Affects shape          Decrease                 Increase         Same as for width, but
-                                                                                    less sensitive, since flow
-                                                                                    is proportional to square
-                                                                                    root of slope.
-
-  Roughness        Affects shape          Increase                 Decrease         Inverse effect as for
-                                                                                    width.
-
-  Depression          Moderate            Decrease                 Decrease         Significant effect only
-  storage                                                                           for low-depth storms.
-  ------------------------------------------------------------------------------------------------------------
+| **Parameter** | **Typical effect on hydrograph** | **Effect of <u>increase</u> on runoff volume** | **Effect of <u>increase</u> on runoff peak** | **Comments** |
+| --- | --- | --- | --- | --- |
+| Area | Significant | Increase | Increase | Less effect for a highly porous catchment |
+| Imperviousness | Significant | Increase | Increase | Less effect when pervious areas have low infiltration capacity. |
+| Width | Affects shape | Decrease | Increase | For storms of varying intensity, increasing the width tends to produce higher and earlier hydrograph peaks, a generally faster response. Only affects volume to the extent that reduced width on pervious areas provides more time for infiltration. |
+| Slope | Affects shape | Decrease | Increase | Same as for width, but less sensitive, since flow is proportional to square root of slope. |
+| Roughness | Affects shape | Increase | Decrease | Inverse effect as for width. |
+| Depression storage | Moderate | Decrease | Decrease | Significant effect only for low-depth storms. |
 
   : []{#_Toc430249144 .anchor}**Table 3‑6 Sensitivity of runoff volume
   and peak flow to surface runoff parameters.**
@@ -3576,7 +3476,7 @@ subcatchments so that the runoff from each can be compared more readily.
 |               | Final Capacity (in/hr)    | N/A              | 0.1              |
 |               +---------------------------+------------------+------------------+
 |               | Decay Coefficient         | N/A              | 2.0              |
-|               | (hr^-1^)                  |                  |                  |
+|               | (hr<sup>-1</sup>)                  |                  |                  |
 +---------------+---------------------------+------------------+------------------+
 | Design Storm  | Duration (hr)             | 6.0              | 6.0              |
 |               +---------------------------+------------------+------------------+
@@ -3641,7 +3541,7 @@ storage has been filled as:
 +===================================+===================================+
 
 where *C* is a runoff coefficient, *i* is the rainfall rate (ft/s), and
-*A* is the subcatchment area (ft^2^). If infiltration over the pervious
+*A* is the subcatchment area (ft<sup>2</sup>). If infiltration over the pervious
 area is considered then
 
 +-------------------------------------------------------------------+-----------------------------------+
@@ -3723,17 +3623,13 @@ where
 
 and
 
-  -----------------------------------------------------------------------
-  *R*     =     cumulative runoff volume (inches)
-  ------- ----- ---------------------------------------------------------
-  *P*     =     cumulative rainfall (inches)
-
-  *Ia*    =     initial abstraction (inches)
-
-  *S*     =     soil moisture storage capacity (inches)
-
-  *CN*    =     curve number.
-  -----------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *R* | cumulative runoff volume (inches) |
+| *P* | cumulative rainfall (inches) |
+| *Ia* | initial abstraction (inches) |
+| *S* | soil moisture storage capacity (inches) |
+| *CN* | curve number. |
 
 Using the SCS recommended initial abstraction of *0.2S* = 0.5 inches,
 the resulting SCS runoff volume is 2.04 inches. Running SWMM for a
@@ -3757,7 +3653,7 @@ UH, Clark's UH, the Espey-Altman UH, the SCS (NRCS) Dimensionless UH,
 the SCS (NRCS) Triangular UH, the Santa Barbara Urban Hydrograph, and
 the Colorado Urban Hydrograph (see Nicklow et al, 2006 for further
 details). As an example, the SCS (NRCS) triangular UH is shown in Figure
-3-13. The parameters *Q~p~* and *t~p~* are functions of the catchment's
+3-13. The parameters *Q<sub>p</sub>* and *t<sub>p</sub>* are functions of the catchment's
 time of concentration and its area.
 
 ![[]{#_Toc426447680 .anchor}**Figure 3‑13 SCS (NRCS) triangular unit
@@ -3916,30 +3812,12 @@ by consulting:
 Additional soil characterization (physics and chemical) data are
 available at the aforementioned web sites.
 
-  ---------------------------------------------------------------------------
-  **Group**   **Meaning**
-  ----------- ---------------------------------------------------------------
-  A           Low runoff potential. Soils having high infiltration rates even
-              when thoroughly wetted and consisting chiefly of deep, well to
-              excessively drained sands or gravels.
-
-  B           Soils having moderate infiltration rates when thoroughly wetted
-              and consisting chiefly of moderately deep to deep, moderately
-              well to well-drained soils with moderately fine to moderately
-              coarse textures. E.g., shallow loess, sandy loam.
-
-  C           Soils having slow infiltration rates when thoroughly wetted and
-              consisting chiefly of soils with a layer that impedes downward
-              movement of water, or soils with moderately fine to fine
-              textures. E.g., clay loams, shallow sandy loam.
-
-  D           High runoff potential. Soils having very slow infiltration
-              rates when thoroughly wetted and consisting chiefly of clay
-              soils with a high swelling potential, soils with a permanent
-              high water table, soils with a clay-pan or clay layer at or
-              near the surface, and shallow soils over nearly impervious
-              material.
-  ---------------------------------------------------------------------------
+| **Group** | **Meaning** |
+| --- | --- |
+| A | Low runoff potential. Soils having high infiltration rates even when thoroughly wetted and consisting chiefly of deep, well to excessively drained sands or gravels. |
+| B | Soils having moderate infiltration rates when thoroughly wetted and consisting chiefly of moderately deep to deep, moderately well to well-drained soils with moderately fine to moderately coarse textures. E.g., shallow loess, sandy loam. |
+| C | Soils having slow infiltration rates when thoroughly wetted and consisting chiefly of soils with a layer that impedes downward movement of water, or soils with moderately fine to fine textures. E.g., clay loams, shallow sandy loam. |
+| D | High runoff potential. Soils having very slow infiltration rates when thoroughly wetted and consisting chiefly of clay soils with a high swelling potential, soils with a permanent high water table, soils with a clay-pan or clay layer at or near the surface, and shallow soils over nearly impervious material. |
 
   : []{#_Toc430249147 .anchor}**Table 4‑1 Hydrologic soil group meanings
   (NRCS, 2009, Chapter 7)**
@@ -3998,17 +3876,13 @@ from field measurements:
 
 where:
 
-  ----------------------------------------------------------------------------
-  *f~p~*   =   infiltration capacity into soil (ft/sec)
-  -------- --- ---------------------------------------------------------------
-  *f~∞~*   =   minimum or equilibrium value of *f~p~* (at t = ∞) (ft/sec)
-
-  *f~0~*   =   maximum or initial value of *f~p~* (at t = 0) (ft/sec)
-
-  *t*      =   time from beginning of storm (sec)
-
-  *k~d~*   =   decay coefficient (sec^-1^).
-  ----------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *f<sub>p</sub>* | infiltration capacity into soil (ft/sec) |
+| *f<sub>∞</sub>* | minimum or equilibrium value of *f<sub>p</sub>* (at t = ∞) (ft/sec) |
+| *f<sub>0</sub>* | maximum or initial value of *f<sub>p</sub>* (at t = 0) (ft/sec) |
+| *t* | time from beginning of storm (sec) |
+| *k<sub>d</sub>* | decay coefficient (sec<sup>-1</sup>). |
 
 Equation 4-1 is sketched in Figure 4-2 and can be derived theoretically
 from the Richards equation under the proper set of assumptions
@@ -4021,23 +3895,21 @@ actual rainfall and infiltration capacity:
 
 where:
 
-  --------------------------------------------------------------------------
-  *f*   =   actual infiltration into the soil (ft/sec)
-  ----- --- ----------------------------------------------------------------
-  *i*   =   rainfall intensity (ft/sec).
+| Symbol | Description |
+| :--- | :--- |
+| *f* | actual infiltration into the soil (ft/sec) |
+| *i* | rainfall intensity (ft/sec). |
 
-  --------------------------------------------------------------------------
-
-  : Thus for the case illustrated in Figure 4-2 runoff would be
-  intermittent.
+Thus for the case illustrated in Figure 4-2 runoff would be
+intermittent.
 
 ![[]{#_Toc426447682 .anchor}**Figure 4‑2 The Horton infiltration
 curve**.](VolumeI/media/media/image16.png)
 
-Typical values for parameters *f~o~* and *f~∞~* are usually greater than
+Typical values for parameters *f<sub>o</sub>* and *f~∞~* are usually greater than
 typical rainfall intensities. Thus, when Equation 4-1 is used such that
-*f~p~* is a function of time only, the exponential term will cause
-*f~p~* to decrease even if rainfall intensities are very light, as
+*f<sub>p</sub>* is a function of time only, the exponential term will cause
+*f<sub>p</sub>* to decrease even if rainfall intensities are very light, as
 sketched in Figure 4-2. This results in a reduction in infiltration
 capacity regardless of the actual amount of entry of water into the
 soil.
@@ -4049,11 +3921,11 @@ used in SWMM:
 | > $$F\left( t_{p} \right) = \int_{0}^{t_{p}}{f_{p}dt = f_{\infty}t_{p} + \frac{\left( f_{0} - f_{\infty} \right)}{k_{d}}\left( 1 - e^{- k_{d}t_{p}} \right)}$$ | (4-3)      |
 +================================================================================================================================================================+============+
 
-where *F* is the cumulative infiltration capacity at time *t~p~* in
+where *F* is the cumulative infiltration capacity at time *t<sub>p</sub>* in
 feet. This function is plotted in Figure 4-3 where it is assumed that
-actual infiltration has been equal to *f~p~* over all time *t*. As noted
+actual infiltration has been equal to *f<sub>p</sub>* over all time *t*. As noted
 before, there will in fact be times when infiltration *f* is less than
-*f~p~*, so that the true cumulative infiltration will be:
+*f<sub>p</sub>*, so that the true cumulative infiltration will be:
 
 +---------------------------------------------------------------------------+-----------------------------------+
 | > $$F(t) = \int_{0}^{t}{\min\left\lbrack f_{p},\ i \right\rbrack d\tau}$$ | (4-4)                             |
@@ -4062,25 +3934,25 @@ before, there will in fact be times when infiltration *f* is less than
 ![[]{#_Toc426447683 .anchor}**Figure 4‑3 Cumulative infiltration F as
 the area under the Horton curve.**](VolumeI/media/media/image17.png)
 
-Equations 4-3 and 4-4 can thus be used to define the time *t~p~* along
-the Horton curve at which the next value of *f~p~* can be found. That
+Equations 4-3 and 4-4 can thus be used to define the time *t<sub>p</sub>* along
+the Horton curve at which the next value of *f<sub>p</sub>* can be found. That
 is, *F* is updated with the actual infiltration *f* over the current
-time step and then the following equation, with *t~p~* as the only
+time step and then the following equation, with *t<sub>p</sub>* as the only
 unknown, is solved:
 
 +----------------------------------------------------------------------------------------------------------------+------------------------+
 | > $$F = f_{\infty}t_{p} + \frac{\left( f_{0} - f_{\infty} \right)}{k_{d}}\left( 1 - e^{- k_{d}t_{p}} \right)$$ | (4-5)                  |
 +================================================================================================================+========================+
 
-Once the new *t~p~* is known, the infiltration capacity *f~p~* for the
+Once the new *t<sub>p</sub>* is known, the infiltration capacity *f<sub>p</sub>* for the
 next time step can be found from Equation 4-1.
 
-An additional optional parameter *F~max~* can be specified that limits
+An additional optional parameter *F<sub>max</sub>* can be specified that limits
 the total volume of water that can infiltrate the soil. When cumulative
 infiltration exceeds this value, saturation conditions exist, and no
 more infiltration occurs; the land surface behaves as if it were
 impermeable. Thus *F(t)* in Equation 4-4 is not allowed to exceed
-*F~max~*.
+*F<sub>max</sub>*.
 
 ### 4.2.2 Recovery of Infiltration Capacity
 
@@ -4097,24 +3969,21 @@ curve sketched in Figure 4-4:
 
 where:
 
-  ----------------------------------------------------------------------------
-  *k~r~*   =   decay coefficient for the recovery curve (sec^-1^)
-  -------- --- ---------------------------------------------------------------
-  *t~w~*   =   hypothetical projected time at which *f~p~* = *f~∞~* on the
-               recovery curve (sec).
+| Symbol | Description |
+| :--- | :--- |
+| *k<sub>r</sub>* | decay coefficient for the recovery curve (sec<sup>-1</sup>) |
+| *t<sub>w</sub>* | hypothetical projected time at which *f<sub>p</sub>* = *f<sub>∞</sub>* on the recovery curve (sec). |
 
-  ----------------------------------------------------------------------------
-
-New values of *t~p~* are then generated as indicated in Figure 4-4 as
-recovery proceeds. For example, let *t~pr~* be the *t~p~* value at which
-recovery begins with *f~r~* as the corresponding infiltration capacity.
+New values of *t<sub>p</sub>* are then generated as indicated in Figure 4-4 as
+recovery proceeds. For example, let *t<sub>pr</sub>* be the *t<sub>p</sub>* value at which
+recovery begins with *f<sub>r</sub>* as the corresponding infiltration capacity.
 According to the recovery curve,
 
 +-------------------------------------------------------------------------------------------------+-----------------------------------+
 | > $$f_{r} = f_{0} - \left( f_{0} - f_{\infty} \right)e^{- k_{r}\left( t_{pr} - t_{w} \right)}$$ | (4-7)                             |
 +=================================================================================================+===================================+
 
-one can compute *t~w~* as:
+one can compute *t<sub>w</sub>* as:
 
 +--------------------------------------------------------------------------------------------------+-----------------------------------+
 | > $$t_{w} = t_{pr} - \frac{1}{k_{r}}\ln\left( \frac{f_{0} - f_{\infty}}{f_{0} - f_{r}} \right)$$ | (4-8)                             |
@@ -4124,14 +3993,14 @@ one can compute *t~w~* as:
 infiltration capacity during dry time
 steps.**](VolumeI/media/media/image18.png)
 
-Then after a recovery time to *t~w1~* = *t~pr~* + ∆*t*, the new
-infiltration capacity *f~1~* is found from:
+Then after a recovery time to *t<sub>w1</sub>* = *t<sub>pr</sub>* + ∆*t*, the new
+infiltration capacity *f<sub>1</sub>* is found from:
 
 +-------------------------------------------------------------------------------------------------+-----------------------------------+
 | > $$f_{1} = f_{0} - \left( f_{0} - f_{\infty} \right)e^{- k_{r}\left( t_{w1} - t_{w} \right)}$$ | (4-9)                             |
 +=================================================================================================+===================================+
 
-Finally, the new equivalent time *t~p1~* on the infiltration curve from
+Finally, the new equivalent time *t<sub>p1</sub>* on the infiltration curve from
 which the infiltration process would re-start under a wet condition is:
 
 +-----------------------------------------------------------------------------------------------+-----------------------------------+
@@ -4144,9 +4013,9 @@ These steps can be combined into the following equation:
 | > $$t_{p1} = \frac{1}{k_{d}}\ln\left\lbrack 1 - e^{- k_{r}\mathrm{\Delta}t}\left( 1 - e^{- k_{d}t_{pr}} \right) \right\rbrack$$ | (4-11)                        |
 +=================================================================================================================================+===============================+
 
-On succeeding time steps, *t~p1~* may be substituted for *t~pr~*, and
-*t~p2~* substituted for *t~p1~*, etc. Note that *f~p~* has reached its
-maximum value of *f~0~* when *t~p~* = *0*.
+On succeeding time steps, *t<sub>p1</sub>* may be substituted for *t<sub>pr</sub>*, and
+*t<sub>p2</sub>* substituted for *t<sub>p1</sub>*, etc. Note that *f<sub>p</sub>* has reached its
+maximum value of *f<sub>0</sub>* when *t<sub>p</sub>* = *0*.
 
 Although this recovery method gives sensible results, it is somewhat
 unsatisfactory inasmuch as there is no dependence of infiltration
@@ -4166,17 +4035,17 @@ simulation is presented in the sidebar below.
 The parameters that a user must supply for each subcatchment for the
 Horton infiltration method are:
 
-> *f~0~* - the maximum or initial infiltration capacity (in/hr or
+> *f<sub>0</sub>* - the maximum or initial infiltration capacity (in/hr or
 > mm/hr),
 >
 > *f~∞~* - the minimum or equilibrium infiltration capacity (in/hr or
 > mm/hr),
 >
-> *k~d~* - the decay coefficient (hr^-1^),
+> *k<sub>d</sub>* - the decay coefficient (hr<sup>-1</sup>),
 >
-> *k~r~* - the regeneration coefficient (days^-1^), and, optionally,
+> *k<sub>r</sub>* - the regeneration coefficient (days<sup>-1</sup>), and, optionally,
 >
-> *F~max~* - the maximum infiltration volume (in or mm).
+> *F<sub>max</sub>* - the maximum infiltration volume (in or mm).
 
 Conversions between the user-supplied units of these parameters (such as
 in, mm or hr) and those used internally (ft and sec) are handled
@@ -4184,9 +4053,9 @@ automatically by the program.
 
 Although the Horton equation is probably the best-known of the several
 infiltration equations available, there is little to help the user
-select values of parame­ters *f~0~* and *k~d~* for a particular
+select values of parame­ters *f<sub>0</sub>* and *k<sub>d</sub>* for a particular
 application. (Fortunately, some guidance can be found for the value of
-*f~∞~*.). Since the ac­tual values of *f~0~* and *k~d~* (and often
+*f~∞~*.). Since the ac­tual values of *f<sub>0</sub>* and *k<sub>d</sub>* (and often
 *f~∞~*.) depend on the soil, vege­tation, and initial moisture content,
 ideally these parameters should be estimated using re­sults from field
 infiltrometer tests for a number of sites of the watershed and for a
@@ -4196,9 +4065,9 @@ for Georgia soils is given in Table 4-2 (Rawls et al., 1976). Horton's
 provide Horton-type decay curves on the basis of theoretical estimates.
 
 +-----------------------+--------------+--------------+---------------+
-| **Soil Type**         | **f~∞~**     | **f~o~**     | **k~d~**      |
+| **Soil Type**         | **f~∞~**     | **f<sub>o</sub>**     | **k<sub>d</sub>**      |
 |                       |              |              |               |
-|                       | **in/hr**    | **in/hr**    | **hr^-1^**    |
+|                       | **in/hr**    | **in/hr**    | **hr<sup>-1</sup>**    |
 +:======================+:============:+:============:+:=============:+
 | Alpha loamy sand      | 1.40         | 19.0         | 38.29         |
 +-----------------------+--------------+--------------+---------------+
@@ -4224,9 +4093,9 @@ provide Horton-type decay curves on the basis of theoretical estimates.
 Georgia soils (Rawls et al., 1976)**
 
 +-----------------------------+---------------+-----------+------------+
-| **Soil and Cover**          | **f~∞~**      | **f~o~**  | **k~d~**   |
+| **Soil and Cover**          | **f~∞~**      | **f<sub>o</sub>**  | **k<sub>d</sub>**   |
 |                             |               |           |            |
-|                             | **in/hr**     | **in/hr** | **hr^-1^** |
+|                             | **in/hr**     | **in/hr** | **hr<sup>-1</sup>** |
 +:============================+:=============:+:=========:+:==========:+
 | Standard agricultural       | 0.24 -- 8.9   | 11.4      | 96         |
 | (bare)                      |               |           |            |
@@ -4244,8 +4113,8 @@ Georgia soils (Rawls et al., 1976)**
 : []{#_Toc430249149 .anchor}**Table 4‑3 Horton parameters provided by
 Horton (1940)**
 
-If it is not possible to use field data to find estimates of *f~0~,
-f~∞~,* and *k~d~* for each subcatchment, the following guidelines should
+If it is not possible to use field data to find estimates of *f<sub>0</sub>,
+f~∞~,* and *k<sub>d</sub>* for each subcatchment, the following guidelines should
 be helpful. Often, NRCS data may be used directly. For instance, for the
 two upper horizons (soil layers) of Woodburn silt loam (Figure 4-1),
 saturated hydraulic conductivity is listed as 4 - 14 micrometers per
@@ -4254,15 +4123,15 @@ range in values is commonly encountered among soil survey data.
 Fortunately, the range also serves as a reminder that infiltration rates
 are notoriously variable in space as well as in time and should not be
 considered "exact." Note that saturated hydraulic conductivity is the
-more appropriate word for parameter *K~s~*, also termed "permeability"
+more appropriate word for parameter *K<sub>s</sub>*, also termed "permeability"
 on older soil survey interpretation tables.
 
 [Minimum Infiltration Capacity (*f~∞~*)]{.underline}
 
 The Horton parameter *f~∞~* is essentially equal to saturated hydraulic
-conductivity, *K~s~*, that is, *f~∞~ ≈ K~s~*. The *f~∞~* value is also
+conductivity, *K<sub>s</sub>*, that is, *f~∞~ ≈ K<sub>s</sub>*. The *f~∞~* value is also
 the limiting infiltration rate when water is ponded on the surface, at
-low depths. Generalized estimates for *K~s~* will also be discussed in
+low depths. Generalized estimates for *K<sub>s</sub>* will also be discussed in
 conjunction with the Green-Ampt infiltration method later in this
 chapter and are the best source of values for *f~∞~* in the absence of
 site-specific data.
@@ -4275,7 +4144,7 @@ is sand, loam, or clay, the *f~∞~* value should be chosen near the top,
 middle, and bottom of the range respectively. For example, the data
 sheet for Woodburn silt loam iden­tifies it as being in Hydrologic Soil
 Group B, which puts the estimate of *f~∞\ ~*into the range of 0.15 -
-0.30 in/hr (3.8 -7.6 mm/hr), much lower than the *K~s~* value dis­cussed
+0.30 in/hr (3.8 -7.6 mm/hr), much lower than the *K<sub>s</sub>* value dis­cussed
 above. Examina­tion of the texture of the layers in the soil profile
 indicates that they are silty in nature, sug­gesting that the estimate of
 the *f~∞~* value should be in the low end of the range, say 0.15 - 0.20
@@ -4302,44 +4171,44 @@ parameters.
 Soil Groups (Musgrave, 1955)**
 
 Caution should be used in applying values from Table 4-4 to sandy soils
-(group A) since reported *K~s~* values are often much higher. For
-instance, sandy soils in Florida can have *K~s~* values from 7 to 18
+(group A) since reported *K<sub>s</sub>* values are often much higher. For
+instance, sandy soils in Florida can have *K<sub>s</sub>* values from 7 to 18
 in/hr (180 - 450 mm/hr) (Carlisle et al., 1981). Unless the water table
 rises to the surface, minimum infil­tration capacity will be very high,
 and rainfall rates will almost always be less than *f~∞~*, leading to
 little or no overland flow from such soils.
 
-[Decay Coefficient (*k~d~*)]{.underline}
+[Decay Coefficient (*k<sub>d</sub>*)]{.underline}
 
 For any field infiltration test the rate of decrease (or "decay") of
 in­fil­tration capacity from the initial value depends on the initial
-moisture content. Thus the *k~d~*-value determined for the same soil
-will vary from test to test. It is postulated here that, if *f~0~* is
+moisture content. Thus the *k<sub>d</sub>*-value determined for the same soil
+will vary from test to test. It is postulated here that, if *f<sub>0</sub>* is
 always specified in relation to a particular soil moisture condition
 (e.g., dry), and for moisture contents other than this the time scale is
 changed accordingly (i.e., time "zero" is adjusted to correspond with
-the constant f~0~), then k~d~ can be considered a constant for the soil
+the constant f<sub>0</sub>), then k<sub>d</sub> can be considered a constant for the soil
 independent of initial moisture content. Put another way, this means
 that infiltration curves for the same soil, but different antecedent
 condi­tions, can be made coincident if they are moved along the time
 axis. Butler (1957) makes a similar assumption.
 
-Values of *k~d~* found in the literature (Overton and Meadows, 1976;
+Values of *k<sub>d</sub>* found in the literature (Overton and Meadows, 1976;
 Wanielista, 1978; Maidment, 1993; ASCE, 1996) range from 0.67 to 120
-hr^-1^. Nevertheless most of the values cited appear to be in the range
-3 - 6 hr^-1^. The evidence is not clear as to whether there is any
-relationship between soil texture and the *k~d~* value although several
+hr<sup>-1</sup>. Nevertheless most of the values cited appear to be in the range
+3 - 6 hr<sup>-1</sup>. The evidence is not clear as to whether there is any
+relationship between soil texture and the *k<sub>d</sub>* value although several
 pub­lished curves seem to indicate a lower value for sandy soils. If no
-field data are available, an estimate of 4 hr^-1^ could be used. Use of
+field data are available, an estimate of 4 hr<sup>-1</sup> could be used. Use of
 such an estimate implies that, under ponded conditions, the infiltra­tion
 capacity will fall 98 percent of the way towards its minimum value in
 the first hour, a not uncommon observation. Rates of decay of
-infiltration for several values of *k~d~* are shown in Table 4-5.
+infiltration for several values of *k<sub>d</sub>* are shown in Table 4-5.
 
 +--------------------+-------------------------------------------------+
-| **k~d~,**          | **Percent of decline of infiltration capacity   |
+| **k<sub>d</sub>,**          | **Percent of decline of infiltration capacity   |
 |                    | towards limiting value f~∞~ after 1 hour**      |
-| **hr^-1^**         |                                                 |
+| **hr<sup>-1</sup>**         |                                                 |
 +:==================:+:===============================================:+
 | 2                  | 76                                              |
 +--------------------+-------------------------------------------------+
@@ -4351,30 +4220,30 @@ infiltration for several values of *k~d~* are shown in Table 4-5.
 +--------------------+-------------------------------------------------+
 
 : []{#_Toc430249151 .anchor}**Table 4‑5 Rate of decay of infiltration
-capacity for different values of k~d~**
+capacity for different values of k<sub>d</sub>**
 
-[Initial Infiltration Capacity (*f~0~*)]{.underline}
+[Initial Infiltration Capacity (*f<sub>0</sub>*)]{.underline}
 
-The initial infiltration capacity, *f~0~* depends primarily on soil
+The initial infiltration capacity, *f<sub>0</sub>* depends primarily on soil
 type, initial moisture content, and surface vegetation conditions. For
 example, Linsley et al. (1982) present data that show, for a sandy loam
-soil, a 60 to 70 percent reduction in the *f~0~* value due to wet
-initial conditions. They also show that lower *f~0~* values apply for a
+soil, a 60 to 70 percent reduction in the *f<sub>0</sub>* value due to wet
+initial conditions. They also show that lower *f<sub>0</sub>* values apply for a
 loam soil than for a sandy loam soil. As to the effect of vegetation,
 Jens and McPherson (1964, pp. 20.20-20.38) list data that show that
 dense grass vegetation nearly doubles the infiltra­tion capacities over
 those measured for bare soil surfaces.
 
-For the assumption to hold that the decay coefficient *k~d~* is
-indepen­dent of initial moisture content, *f~0~* must be specified for
+For the assumption to hold that the decay coefficient *k<sub>d</sub>* is
+indepen­dent of initial moisture content, *f<sub>0</sub>* must be specified for
 the dry soil condition. For long-term continuous simulations SWMM
-automatically adjusts the effective *f~0~* value as part of the
+automatically adjusts the effective *f<sub>0</sub>* value as part of the
 infiltration capacity regeneration routine. How­ever, for a single-event
-simulation, the user must specify the *f~0~* value for the storm in
+simulation, the user must specify the *f<sub>0</sub>* value for the storm in
 question, which may be less than the value for dry soil condi­tions.
 
-Published values of *f~0~* vary depending on the soil, moisture, and
-vegeta­tion conditions for the particular test measurement. The *f~0~*
+Published values of *f<sub>0</sub>* vary depending on the soil, moisture, and
+vegeta­tion conditions for the particular test measurement. The *f<sub>0</sub>*
 values listed in Table 4-6 can be used as a rough guide. Interpolation
 between the values may be required.
 
@@ -4391,7 +4260,7 @@ between the values may be required.
 |                                                                       |
 | > Multiply values given in A by 2 (after Jens and McPherson, 1964).   |
 +-----------------------------------------------------------------------+
-| C. MOIST soils (change from dry *f~0~* value required for single      |
+| C. MOIST soils (change from dry *f<sub>0</sub>* value required for single      |
 | event simulation only):                                               |
 |                                                                       |
 | > Soils which have drained but not dried out (i.e., field capacity):  |
@@ -4403,16 +4272,16 @@ between the values may be required.
 | > 1.5-2.5.                                                            |
 +-----------------------------------------------------------------------+
 
-: []{#_Toc430249152 .anchor}**Table 4‑6 Representative values for f~0~**
+: []{#_Toc430249152 .anchor}**Table 4‑6 Representative values for f<sub>0</sub>**
 
-[Regeneration Coefficient (*k~r~*)]{.underline}
+[Regeneration Coefficient (*k<sub>r</sub>*)]{.underline}
 
 For continuous simulation, infiltration capacity will be regenerated
 (recovered) during dry weather according to Equation 4-6. Instead of
-asking the user to supply a value for *k~r~*, SWMM instead asks for an
-estimate of drying time *T~dry~* in days. This is the time it takes for
+asking the user to supply a value for *k<sub>r</sub>*, SWMM instead asks for an
+estimate of drying time *T<sub>dry</sub>* in days. This is the time it takes for
 a saturated soil to fully recover to a dry state. Drying times are
-typically longer than wetting times, implying *k~r~ \< k~d~*. On
+typically longer than wetting times, implying *k<sub>r</sub> \< k<sub>d</sub>*. On
 well-drained porous soils (e.g., medium to coarse sands), recovery of
 infiltration capacity is quite rapid and could well be complete in a
 couple of days. For heavier soils, the recovery rate is likely to be
@@ -4421,35 +4290,35 @@ the interval between a heavy storm and wilting of vegetation.
 
 The Green-Ampt method (discussed below in Section 4.4), bases its
 recovery time solely on the soil's saturated hydraulic conductivity
-*K~s~*. Adopting its approach produces the following estimate for
-*T~dry~* in days:
+*K<sub>s</sub>*. Adopting its approach produces the following estimate for
+*T<sub>dry</sub>* in days:
 
 +--------------------------------------------+-----------------------------------+
 | > $$T_{dry} = \frac{3.125}{\sqrt{K_{s}}}$$ | (4-12)                            |
 +============================================+===================================+
 
-where *K~s~* is expressed in in/hr. Thus this equation predicts a drying
-time of 2 days for a sandy soil with *K~s~* = 2.0 in/hr versus 10 days
-for a clay soil with *K~s~* of 0.1 in/hr.
+where *K<sub>s</sub>* is expressed in in/hr. Thus this equation predicts a drying
+time of 2 days for a sandy soil with *K<sub>s</sub>* = 2.0 in/hr versus 10 days
+for a clay soil with *K<sub>s</sub>* of 0.1 in/hr.
 
 Since mathematically, the exponential term in Equation 4-6 would require
 an infinite amount of time to allow infiltration capacity to return to
-its initial value *f~0~*, SWMM considers "full recovery" to occur when
+its initial value *f<sub>0</sub>*, SWMM considers "full recovery" to occur when
 98 percent of the difference between the initial and minimum capacities
-has been achieved. Thus from Equation 4-6 (for *k~r~* in days^-1^),
+has been achieved. Thus from Equation 4-6 (for *k<sub>r</sub>* in days<sup>-1</sup>),
 
 +---------------------------------------------------------------------------------------------------+-----------------------------+
 | > $$0.02\left( f_{0} - f_{\infty} \right) = \left( f_{0} - f_{\infty} \right)e^{- k_{r}T_{dry}}$$ | (4-13)                      |
 +===================================================================================================+=============================+
 
-which leads to the following estimate of *k~r~* expressed in days^-1^:
+which leads to the following estimate of *k<sub>r</sub>* expressed in days<sup>-1</sup>:
 
 +------------------------------------------------------------------+-----------------------------------+
 | > $$k_{r} = \frac{- ln(0.02)}{T_{dry}} = \frac{3.912}{T_{dry}}$$ | (4-14)                            |
 +==================================================================+===================================+
 
-This computation of *k~r~* from a user-supplied value of *T~dry~* and
-its subsequent conversion from days^-1^ to sec^-1^ is done internally by
+This computation of *k<sub>r</sub>* from a user-supplied value of *T<sub>dry</sub>* and
+its subsequent conversion from days<sup>-1</sup> to sec<sup>-1</sup> is done internally by
 SWMM.
 
 ## 4.3 Modified Horton Method
@@ -4480,7 +4349,7 @@ the original Horton method:
 where all symbols have been previously defined.
 
 As with the original Horton method, the actual infiltration rate *f* is
-the smaller of *f~p~* and the rainfall rate *i*. Integrating Equation
+the smaller of *f<sub>p</sub>* and the rainfall rate *i*. Integrating Equation
 4-15 from 0 to time t produces the following equation for the cumulative
 infiltration through time t:
 
@@ -4495,7 +4364,7 @@ gives:
 | > $$F = f_{\infty}t + \frac{f_{0} - f_{p}}{k_{d}}$$ | (4-17)                            |
 +=====================================================+===================================+
 
-and solving for *f~p~* gives:
+and solving for *f<sub>p</sub>* gives:
 
 +----------------------------------------------+-----------------------------------+
 | > $$f_{p} = f_{0} - k_{d}(F - f_{\infty}t)$$ | (4-18)                            |
@@ -4588,25 +4457,25 @@ et al., 1981).
 The Green-Ampt conceptualization of the infiltration process is one in
 which infiltrated water moves vertically downward in a saturated layer,
 beginning at the surface (Figure 4-5). In the wetted zone the moisture
-content *θ* is at saturation *θ ~s~* while the moisture content in the
-un-wetted zone is at some known initial level *θ ~i~*.
+content *θ* is at saturation *θ <sub>s</sub>* while the moisture content in the
+un-wetted zone is at some known initial level *θ <sub>i</sub>*.
 
 []{#_Toc426447685 .anchor}**Figure 4‑5 Two-zone representation of the
 Green-Ampt infiltration model (after Nicklow et al., 2006).**
 
 The water velocity within the wetted zone is given by Darcy's Law as a
-function of the saturated hydraulic conductivity *K~s~*, the capillary
-suction head along the wetting front *ψ~s~*, the depth of ponded water
+function of the saturated hydraulic conductivity *K<sub>s</sub>*, the capillary
+suction head along the wetting front *ψ<sub>s</sub>*, the depth of ponded water
 at the surface *d*, and the depth of the saturated layer below the
-surface *L~s~*:
+surface *L<sub>s</sub>*:
 
 +----------------------------------------------------------------------------------+-----------------------------------+
 | > $$f_{p} = K_{s}\left\lbrack \frac{d + L_{s} + \psi_{s}}{L_{s}} \right\rbrack$$ | (4-26)                            |
 +==================================================================================+===================================+
 
-The depth of the saturated layer *L~s~* can be expressed in terms of the
+The depth of the saturated layer *L<sub>s</sub>* can be expressed in terms of the
 cumulative infiltration, *F*, and the initial moisture deficit to be
-filled below the wetting front, *θ ~d~* = *θ ~s~ - θ~i~* as
+filled below the wetting front, *θ <sub>d</sub>* = *θ <sub>s</sub> - θ<sub>i</sub>* as
 ![](VolumeI/media/media/image20.wmf). Substituting this into Equation 4-26 and
 assuming that *d* is small compared to the other depths gives the
 Green-Ampt equation for saturated conditions:
@@ -4624,7 +4493,7 @@ will equal the rainfall intensity:
 +===================================+===================================+
 
 As time increases, one can test whether saturation has been reached by
-solving 4-27 for *F* (which will be denoted as *F~s~*) with *f~p~* set
+solving 4-27 for *F* (which will be denoted as *F<sub>s</sub>*) with *f<sub>p</sub>* set
 equal to *i* and check if this value equals or exceeds the actual
 cumulative infiltration *F*:
 
@@ -4632,20 +4501,20 @@ cumulative infiltration *F*:
 | > $$F_{s} = \frac{K_{s}\psi_{s}\theta_{d}}{i - K_{s}}$$ | (4-29)                            |
 +=========================================================+===================================+
 
-Note that there is no calculation of *F~s~* when *i \<= K~s~*, although
+Note that there is no calculation of *F<sub>s</sub>* when *i \<= K<sub>s</sub>*, although
 *F* still gets updated during such periods. Finally, in this scheme the
-actual infiltration *f* is the same as the potential value *f~p~*:
+actual infiltration *f* is the same as the potential value *f<sub>p</sub>*:
 
 +-----------------------------------+-----------------------------------+
 | > $$f = f_{p}$$                   | (4-30)                            |
 +===================================+===================================+
 
-The two equations are illustrated in Figure 4-6 for the situation *K~s~*
-= 0.25 in/hr, *ψ~s~* = 6.5 in, and *θ~d~* = 0.20. The initial, flat
+The two equations are illustrated in Figure 4-6 for the situation *K<sub>s</sub>*
+= 0.25 in/hr, *ψ<sub>s</sub>* = 6.5 in, and *θ<sub>d</sub>* = 0.20. The initial, flat
 portion of the curve corresponds to *f = i*, up to the point where *F =
-F~s~* (Equation 4-29). The remainder of the curve corresponds to the
+F<sub>s</sub>* (Equation 4-29). The remainder of the curve corresponds to the
 potential rate computed with Equation 4-27. Note that the infiltration
-rate approaches *K~s~* (0.25 in/hr) asymptotically.
+rate approaches *K<sub>s</sub>* (0.25 in/hr) asymptotically.
 
 ![[]{#_Toc426447686 .anchor}**Figure 4‑6 Illustration of infiltration
 capacity as function of cumulative infiltration for the Green-Ampt
@@ -4656,15 +4525,15 @@ Equation 4-27 shows that the infiltration capacity after surface
 saturation depends on the infiltrated volume, which in turn depends on
 the infiltration rates in previous time steps. To avoid numerical errors
 over long time steps, the integrated form of the Green-Ampt equation is
-more suitable. That is, *f~p~* is replaced by *dF/dt* and integrated to
+more suitable. That is, *f<sub>p</sub>* is replaced by *dF/dt* and integrated to
 obtain:
 
 +----------------------------------------------------------------------------------------+-----------------------------------+
 | > $$F = K_{s} + \psi_{s}\theta_{d}\ln\left( 1 + \frac{F}{\psi_{s}\theta_{d}} \right)$$ | (4-31)                            |
 +========================================================================================+===================================+
 
-If *F~1~* is the known cumulative infiltration at the start of the time
-step and *F~2~* the unknown cumulative infiltration at the end of the
+If *F<sub>1</sub>* is the known cumulative infiltration at the start of the time
+step and *F<sub>2</sub>* the unknown cumulative infiltration at the end of the
 time step then one can write:
 
 +----------------------------------------------------------------------------------+-----------------------------------+
@@ -4673,8 +4542,8 @@ time step then one can write:
 
 where
 $C = K_{s}\Delta t + F_{1} - \psi_{s}\theta_{d}\ln\left( F_{1} + \psi_{s}\theta_{d} \right)$
-is a known constant. Equation 4-32 can be solved numerically for *F~2~*.
-The average infiltration capacity *f~p~* over the time step can then be
+is a known constant. Equation 4-32 can be solved numerically for *F<sub>2</sub>*.
+The average infiltration capacity *f<sub>p</sub>* over the time step can then be
 computed as $\left( F_{2} - F_{1} \right)/\Delta t$.
 
 ### 4.4.2 Recovery of Infiltration Capacity
@@ -4692,30 +4561,30 @@ earlier.
 Infiltration is usually dominated by conditions in the uppermost layer
 of the soil. The thickness of this layer depends on the soil type; for a
 sandy soil it could be several inches, for heavy clay it would be less.
-The equation used to determine the thickness of the layer *L~u~* is:
+The equation used to determine the thickness of the layer *L<sub>u</sub>* is:
 
 +-----------------------------------+-----------------------------------+
 | > $$L_{u} = 4\sqrt{K_{s}}$$       | (4-33)                            |
 +===================================+===================================+
 
-where *L~u~* has units of inches and *K~s~* is expressed in in/hr. Thus
-for a high *K~s~* of 0.5 in/hr (12.7 mm/hr) the thickness computed by
+where *L<sub>u</sub>* has units of inches and *K<sub>s</sub>* is expressed in in/hr. Thus
+for a high *K<sub>s</sub>* of 0.5 in/hr (12.7 mm/hr) the thickness computed by
 Equation 4-33 is 2.83 inches (71.8 mm). For a soil with a low hydraulic
-conductivity, say *K~s~* = 0.1 in/hr (2.5 mm/hr), the computed thickness
+conductivity, say *K<sub>s</sub>* = 0.1 in/hr (2.5 mm/hr), the computed thickness
 is 1.26 inches (32.1 mm). This constant thickness is different from the
-saturated zone thickness *L~s~* shown in Figure 4-5 which grows over
+saturated zone thickness *L<sub>s</sub>* shown in Figure 4-5 which grows over
 time as infiltration proceeds.
 
 In the Green-Ampt model, the initial soil moisture deficit at the start
 of a rainfall event determines how much infiltration capacity is
 available during the event itself. Recall that the moisture deficit
-*θ~d~* is the difference between the saturated moisture content *θ~s~*
-and the initial moisture content *θ~i~*. During a dry period the
-moisture deficit in the upper soil zone, *θ~du~*, is regenerated, i.e.,
+*θ<sub>d</sub>* is the difference between the saturated moisture content *θ<sub>s</sub>*
+and the initial moisture content *θ<sub>i</sub>*. During a dry period the
+moisture deficit in the upper soil zone, *θ<sub>du</sub>*, is regenerated, i.e.,
 its value is increased. Thus SWMM keeps continuous track of this
-quantity. At the start of a simulation, *θ~du~* is set equal to the
-user-supplied initial value of *θ~dmax~*. During a wet period when
-infiltration occurs at a rate *f* over a time step of *∆t*, *θ~du~* is
+quantity. At the start of a simulation, *θ<sub>du</sub>* is set equal to the
+user-supplied initial value of *θ<sub>dmax</sub>*. During a wet period when
+infiltration occurs at a rate *f* over a time step of *∆t*, *θ<sub>du</sub>* is
 decreased according to:
 
 +--------------------------------------------------------------------+-----------------------------------+
@@ -4729,19 +4598,19 @@ as follows:
 | > $$\theta_{du} \leftarrow \theta_{du} + k_{r}\theta_{dmax}\Delta t$$ | (4-35)                            |
 +=======================================================================+===================================+
 
-up to a maximum possible value of *θ~dmax~* , where *k~r~* is a recovery
-constant (hr^-1^).
+up to a maximum possible value of *θ<sub>dmax</sub>* , where *k<sub>r</sub>* is a recovery
+constant (hr<sup>-1</sup>).
 
-One can assume that the recovery constant is also dependent on *K~s~*,
-such that tight, clay soils with low *K~s~* take longer to recover than
-do loose, sandy soils with high *K~s~*. The following relationship is
-used for *k~r~*:
+One can assume that the recovery constant is also dependent on *K<sub>s</sub>*,
+such that tight, clay soils with low *K<sub>s</sub>* take longer to recover than
+do loose, sandy soils with high *K<sub>s</sub>*. The following relationship is
+used for *k<sub>r</sub>*:
 
 +---------------------------------------+-----------------------------------+
 | > $$k_{r} = \frac{\sqrt{K_{s}}}{75}$$ | (4-36)                            |
 +=======================================+===================================+
 
-where the constant 75 has units of (in-hr)^1/2^. Note that the time it
+where the constant 75 has units of (in-hr)<sup>1/2</sup>. Note that the time it
 would take a fully saturated soil to recovery to its maximum capacity is
 simply:
 
@@ -4753,7 +4622,7 @@ hours (or $3.125/\sqrt{K_{s}}$ days).
 
 To complete the recovery process it is necessary to define the minimum
 amount of time that a soil must remain in recovery before any further
-rainfall would be considered as an independent event. This time *T~r~*
+rainfall would be considered as an independent event. This time *T<sub>r</sub>*
 (hr) is computed as:
 
 +-------------------------------------------------------------+-----------------------------------+
@@ -4761,11 +4630,11 @@ rainfall would be considered as an independent event. This time *T~r~*
 +=============================================================+===================================+
 
 Thus when a new period of rainfall occurs after a recovery interval of
-at least *T~r~* hours, the two-stage Green-Ampt infiltration process is
-re-started with *θ~d~* = *θ~du~* and *F* = 0. Figure 4-7 summarizes the
+at least *T<sub>r</sub>* hours, the two-stage Green-Ampt infiltration process is
+re-started with *θ<sub>d</sub>* = *θ<sub>du</sub>* and *F* = 0. Figure 4-7 summarizes the
 functional dependence of the three internally computed recovery
-parameters *L~u~*, *k~r~*, and *T~r~* on the saturated hydraulic
-conductivity *K~s~*.
+parameters *L<sub>u</sub>*, *k<sub>r</sub>*, and *T<sub>r</sub>* on the saturated hydraulic
+conductivity *K<sub>s</sub>*.
 
 ![[]{#_Toc426447687 .anchor}**Figure 4‑7 Green-Ampt recovery parameters
 as functions of hydraulic
@@ -4783,21 +4652,21 @@ single time step of a simulation is presented in the sidebar below.
 The soil parameters that a user must supply for each subcatchment for
 the Green-Ampt infiltration method are:
 
-- *K~s~* - the saturated hydraulic conductivity (in/hr or mm/hr),
+- *K<sub>s</sub>* - the saturated hydraulic conductivity (in/hr or mm/hr),
 
-- *ψ~s~* - the suction head at the wetting front (in or mm),
+- *ψ<sub>s</sub>* - the suction head at the wetting front (in or mm),
 
-- *θ~dmax~* - the maximum moisture deficit available (volume of dry
+- *θ<sub>dmax</sub>* - the maximum moisture deficit available (volume of dry
   voids per volume of soil).
 
 Conversions between the user-supplied units of these parameters (in (or
 mm) and hr) and those used internally (ft and sec) are handled
 automatically by the program.
 
-[Saturated Hydraulic Conductivity (*K~s~*)]{.underline}
+[Saturated Hydraulic Conductivity (*K<sub>s</sub>*)]{.underline}
 
 Probably the best single source for estimates of saturated hydraulic
-conductivity (*K~s~*) and suction head (*ψ~s~*) for a wide range of
+conductivity (*K<sub>s</sub>*) and suction head (*ψ<sub>s</sub>*) for a wide range of
 soils -- and one that makes use of the Green-Ampt method relatively
 attractive -- is the data by Rawls et al. (1983), shown in Table 4-7.
 These data were derived from measurements made on roughly 5000 soils
@@ -4807,19 +4676,19 @@ is considerable variation in the parameter estimates, a good first
 approximation may be made using the table. Values of hydraulic
 conductivity may also be used for estimates of the Horton parameter
 *f~∞~*. But the range of values shown for porosity and suction head (the
-authors do not provide ranges for *K~s~*) should be a warning about
+authors do not provide ranges for *K<sub>s</sub>*) should be a warning about
 placing too much faith in such generalized estimates.
 
 The NRCS Soil Survey Physical Data (see Figure 4-1) values for hydraulic
 conductivity could also be used as a preliminary estimate. A better
-guide for the *K~s~* values is as given for parameter *f~∞~* for the
+guide for the *K<sub>s</sub>* values is as given for parameter *f~∞~* for the
 Horton equation; theoreti­cally these parameters (i.e., *f~∞~* and
-*K~s~*) should be equal for the same soil. Note that, in general, the
-range of *K~s~* values encountered will be of the order of tenths of an
+*K<sub>s</sub>*) should be equal for the same soil. Note that, in general, the
+range of *K<sub>s</sub>* values encountered will be of the order of tenths of an
 inch per hour.
 
 Another source of conductivity estimates is the regression equation
-developed by Saxton and Rawls (2006) that predicts *K~s~* from the sand,
+developed by Saxton and Rawls (2006) that predicts *K<sub>s</sub>* from the sand,
 clay and organic matter content of a soil. See Section 5.5.2 of the
 Groundwater chapter for more details.
 
@@ -4833,10 +4702,10 @@ value shown.)
 | **Soil      | **Porosity,    | **Effective**  | **Wetting     | **Saturated**     |
 | Class**     | φ**            |                | Front**       |                   |
 |             |                | **Porosity,    |               | **Hydraulic**     |
-|             |                | φ*~e~*^\*^**   | **Suction     |                   |
+|             |                | φ*<sub>e</sub>*<sup>\*</sup>**   | **Suction     |                   |
 |             |                |                | Head,**       | **Conductivity,** |
 |             |                |                |               |                   |
-|             |                |                | ***ψ~s~*      | ***K~s~*          |
+|             |                |                | ***ψ<sub>s</sub>*      | ***K<sub>s</sub>*          |
 |             |                |                | (in)**        | (in/hr)**         |
 +=============+:==============:+:==============:+:=============:+:=================:+
 | Sand        | 0.437          | 0.417          | 1.95          | 4.74              |
@@ -4885,7 +4754,7 @@ value shown.)
 +-------------+----------------+----------------+---------------+-------------------+
 
 \*Effective porosity is the difference between the porosity *φ* and the
-residual moisture content *φ~r~* that remains after a saturated soil is
+residual moisture content *φ<sub>r</sub>* that remains after a saturated soil is
 allowed to drain thoroughly.
 
 Urban soils are usually highly disturbed (Pitt et al., 1999, 2001; Pitt
@@ -4902,105 +4771,97 @@ infiltrometer and/or soil physics tests can determine local infiltration
 properties, and that high spatial variability is the rule, rather than
 the exception.
 
-[Suction Head (*ψ~s~*)]{.underline}
+[Suction Head (*ψ<sub>s</sub>*)]{.underline}
 
-The suction head, *ψ~s\ ~*(also referred to as capillary tension), is
+The suction head, *ψ<sub>s</sub> *(also referred to as capillary tension), is
 perhaps the most difficult parame­ter to measure. It can be derived from
 soil moisture - conductivity data (Mein and Larsen, 1973) of the type
 shown in Figures 5-5 in Chapter 5 for groundwater. Unfortunately, such
 detailed data are rare for most soils. Fortunately the results obtained
 for Green-Ampt infiltration are not highly sensitive to the estimate of
-*ψ~s~* (Brakensiek and Onstad, 1977).
+*ψ<sub>s</sub>* (Brakensiek and Onstad, 1977).
 
 An excellent local data source can often be found in Soil Science
 departments at state universities. Tests are run on a variety of soils
 found within the state, including soil moisture versus soil tension
-data, from which *ψ~s~* can be derived. For example, Carlisle et al.
+data, from which *ψ<sub>s</sub>* can be derived. For example, Carlisle et al.
 (1981) provide such data for Florida soils along with information on
-*K~s~*, bulk density, and other physical and chemical properties.
+*K<sub>s</sub>*, bulk density, and other physical and chemical properties.
 
 Approximate values may also be found from several authors: Mein and
 Larsen (1973), Brakensiek and Onstad (1977), Clapp and Hornberger
 (1978), Chu (1978), Rawls et al. (1983). Published values vary
 considerably and conflict; however, a range of 2 to 15 inches (50 to 380
-mm) covers virtually all soil textures. But as with *K~s~*, probably the
-best single source for estimates for capillary suction (*ψ~s~*) is the
+mm) covers virtually all soil textures. But as with *K<sub>s</sub>*, probably the
+best single source for estimates for capillary suction (*ψ<sub>s</sub>*) is the
 data by Rawls et al. (1983) listed in Table 4-7. Brakensiek et al.
-(1981) noted that *ψ~s~* was highly correlated with hydraulic
+(1981) noted that *ψ<sub>s</sub>* was highly correlated with hydraulic
 conductivity over all soil classes. Using nonlinear regression on the
 average values for these two variables listed in Table 4-7 produces the
-following relationship for *K~S~* in in/hr and *ψ~s~* in inches:
+following relationship for *K<sub>S</sub>* in in/hr and *ψ<sub>s</sub>* in inches:
 
 +----------------------------------------------+-----------------------+
-| > $\psi_{s} = 3.237K_{S}^{- 0.328}$ (*R^2^*  | (4-38)                |
+| > $\psi_{s} = 3.237K_{S}^{- 0.328}$ (*R<sup>2</sup>*  | (4-38)                |
 | > = 0.9)                                     |                       |
 +==============================================+=======================+
 
-[Maximum Moisture Deficit (*θ~dmax~*)]{.underline}
+[Maximum Moisture Deficit (*θ<sub>dmax</sub>*)]{.underline}
 
-The maximum moisture deficit, *θ~dmax~* is defined as the difference
+The maximum moisture deficit, *θ<sub>dmax</sub>* is defined as the difference
 between the moisture content at saturation and at the start of the
 simulation. Because this parameter is the most sensitive of the three
 parameters for estimates of runoff from pervious areas (Brakensiek and
 Onstad, 1977), some care should be taken in deter­mining the best
-*θ~dmax~* value to use. The saturated moisture content is approximately
+*θ<sub>dmax</sub>* value to use. The saturated moisture content is approximately
 equal to the soil's porosity *φ* (i.e., the fraction of voids), assuming
 one ignores the 5 - 10% of trapped air that typically exists at
 saturation. After a saturated soil is allowed to drain thoroughly, the
-residual moisture content that remains is *φ~r~*. The effective porosity
-*φ~e~* is defined as ![](VolumeI/media/media/image23.wmf)and can be used to
-represent *θ~dmax~* for dry antecedent conditions. Typical values of
-*φ~e~* are included in the Rawls et al. (1983) data set listed in Table
+residual moisture content that remains is *φ<sub>r</sub>*. The effective porosity
+*φ<sub>e</sub>* is defined as ![](VolumeI/media/media/image23.wmf)and can be used to
+represent *θ<sub>dmax</sub>* for dry antecedent conditions. Typical values of
+*φ<sub>e</sub>* are included in the Rawls et al. (1983) data set listed in Table
 4-7.
 
 Sandy soils tend to have lower porosities than clay soils, but drain to
 lower moisture contents between storms because the water is not held so
-strongly in the soil pores. Conse­quently, values of *θ~dmax~* for dry
+strongly in the soil pores. Conse­quently, values of *θ<sub>dmax</sub>* for dry
 antecedent conditions tend to be higher for sandy soils than for clay
 soils. Table 4-8, derived from Clapp and Hornberger (1973), is another
-source of *θ~dmax~* values for various soil types.
+source of *θ<sub>dmax</sub>* values for various soil types.
 
-  -----------------------------------------------------------------------
-  Soil Texture                  Typical *θ~dmax~* at Soil Wilting Point
-  ---------------------------- ------------------------------------------
-  Sand                                            0.34
+| Soil Texture | Typical *θ<sub>dmax</sub>* at Soil Wilting Point |
+| --- | --- |
+| Sand | 0.34 |
+| Sandy Loam | 0.33 |
+| Silt Loam | 0.32 |
+| Loam | 0.31 |
+| Sandy Clay Loam | 0.26 |
+| Clay Loam | 0.24 |
+| Clay | 0.21 |
 
-  Sandy Loam                                      0.33
-
-  Silt Loam                                       0.32
-
-  Loam                                            0.31
-
-  Sandy Clay Loam                                 0.26
-
-  Clay Loam                                       0.24
-
-  Clay                                            0.21
-  -----------------------------------------------------------------------
-
-  : []{#_Toc430249154 .anchor}**Table 4‑8 Typical values of *θ*~dmax~
+  : []{#_Toc430249154 .anchor}**Table 4‑8 Typical values of *θ*<sub>dmax</sub>
   for various soil types.**
 
-These *θ~dmax~* values would be suitable for input for long term
+These *θ<sub>dmax</sub>* values would be suitable for input for long term
 continuous simulation; the soil type selected should correspond to the
 surface layer for the particu­lar sub­catchment. For single event
 simulation the values of Table 4-8 would apply only to very dry
 antecedent conditions. For moist or wet antecedent conditions lower
-values of *θ~dmax~* should be used. When estimating the particular value
+values of *θ<sub>dmax</sub>* should be used. When estimating the particular value
 it should be borne in mind that sandy soils drain more quickly than
 clayey soils, i.e., for the same time since the previous event, the
-*θ~dmax~* value for a sandy soil will be closer in value to that of
+*θ<sub>dmax</sub>* value for a sandy soil will be closer in value to that of
 Table 4-8 than it would be for a clayey soil.
 
-Another estimate for *θ~dmax~* may be based on the NRCS Soil Survey
+Another estimate for *θ<sub>dmax</sub>* may be based on the NRCS Soil Survey
 Physical Data as "Available Moisture Capacity" in/in of soil
 (dimensionless fraction), which is defined as the difference between
 field capacity and the wilting point. Thus, it is an underestimate of
-the maximum *θ~d~* value. Furthermore, Available Moisture Capacity
+the maximum *θ<sub>d</sub>* value. Furthermore, Available Moisture Capacity
 values listed may exhibit similar variability (or lack thereof) as for
 hydraulic conductivity estimates discussed earlier, but these values are
 at least specific to the soil in question. For instance, for the
-Woodburn silt loam illustrated in Figure 4-1, *θ~dmax~* might be at the
+Woodburn silt loam illustrated in Figure 4-1, *θ<sub>dmax</sub>* might be at the
 high end of the range of 0.19 -- 0.24 for the surface layer
 (considerably less than the generic value of 0.32 for silt loam in Table
 4-8 or the range of 0.394 to 0.578 given in Table 4-7).
@@ -5013,13 +4874,13 @@ expressed as:
 | > $$S = d_{wt}\theta_{dmax}$$     | (4-39)                            |
 +===================================+===================================+
 
-where *d~wt~* is the depth to the sub-surface water table. Estimates of
+where *d<sub>wt</sub>* is the depth to the sub-surface water table. Estimates of
 soil storage capacity, *S*, are available using the Curve Number method,
 discussed below. That is, *S* is a function of the curve number (Section
 4.5.4), for which a vast literature is available. If depth to water
 table is known, or if typical depths are given for a soil on its Soil
 Survey Interpretation data, then Equation 4-39 may be solved for
-*θ~dmax~*.
+*θ<sub>dmax</sub>*.
 
 ## 4.5 Curve Number Method
 
@@ -5051,12 +4912,12 @@ to relate total event runoff *Q* (in) to total event precipitation *P*
 | > $$Q = \frac{P^{2}}{P + S_{\max}}$$ | (4-40)                            |
 +======================================+===================================+
 
-where *S~max~* = the soil's maximum moisture storage capacity (inches).
-*S~max~* can also be thought of as the difference in water volume
+where *S<sub>max</sub>* = the soil's maximum moisture storage capacity (inches).
+*S<sub>max</sub>* can also be thought of as the difference in water volume
 contained in a fully saturated soil versus a fully drained soil. In this
-sense it is similar to the maximum moisture deficit parameter *θ~dmax~*
+sense it is similar to the maximum moisture deficit parameter *θ<sub>dmax</sub>*
 used in the Green-Ampt model, except it is expressed on a volumetric
-basis rather than as a fraction (see Equation 4-39). *S~max~* is derived
+basis rather than as a fraction (see Equation 4-39). *S<sub>max</sub>* is derived
 from a tabulated "curve number" *CN* that varies with soil type and
 antecedent conditions:
 
@@ -5070,11 +4931,11 @@ land covers are tabulated in the NRCS's National Engineering Handbook
 (NRCS, 2004a) and in many text books.
 
 In the formal SCS method, Equation 4-40 is written with *P* replaced by
-*P -- I~a~* where *I~a~* is an initial abstraction (in) that accounts
+*P -- I<sub>a</sub>* where *I<sub>a</sub>* is an initial abstraction (in) that accounts
 for the volume of rainfall captured by vegetative interception, filling
 of depression storage, and initial soil wetting. Because SWMM already
 accounts for these phenomena through its depression storage parameter,
-*d~p~*, this refinement is not included here.
+*d<sub>p</sub>*, this refinement is not included here.
 
 Assuming that all rainfall that does not run off is lost to infiltration
 (i.e., *P -- Q = F*), Equation 4-40 can be extended to predict total
@@ -5086,7 +4947,7 @@ Assuming that all rainfall that does not run off is lost to infiltration
 
 For a continuous model like SWMM, Equation 4-42 can be applied in an
 incremental fashion to compute an infiltration rate *f* at each time
-step. Let *P~1~* and *F~1~* be the cumulative precipitation and
+step. Let *P<sub>1</sub>* and *F<sub>1</sub>* be the cumulative precipitation and
 infiltration, respectively, at the start of the time step. At the end of
 the time step:
 
@@ -5100,12 +4961,12 @@ and
 | > $$F_{2} = P_{2} - \frac{P_{2}^{2}}{P_{2} + S_{e}}$$ | (4-44)                            |
 +=======================================================+===================================+
 
-where *P~2~* and *F~2~* are the cumulative precipitation and
+where *P<sub>2</sub>* and *F<sub>2</sub>* are the cumulative precipitation and
 infiltration values, respectively, at the end of a time step *∆t* (hr),
-*i* (in/hr) is the rainfall rate over the time step, and *S~e~* is the
+*i* (in/hr) is the rainfall rate over the time step, and *S<sub>e</sub>* is the
 moisture storage capacity at the start of the rainfall event to which
-the time step belongs. For a single event simulation, *S~e~* equals
-*S~max\ ~*but may be lower when moisture storage capacity depletion and
+the time step belongs. For a single event simulation, *S<sub>e</sub>* equals
+*S<sub>max</sub> *but may be lower when moisture storage capacity depletion and
 recovery occur over a longer simulation period as discussed in the next
 section.
 
@@ -5115,7 +4976,7 @@ The infiltration rate *f* (ft/sec) can then be computed as:
 | > $$f = \left( F_{2} - F_{1} \right)/\Delta t$$ | (4-45)                            |
 +=================================================+===================================+
 
-and the cumulative values get updated to *P~1~ = P~2~* and *F~1~ = F~2~*
+and the cumulative values get updated to *P<sub>1</sub> = P<sub>2</sub>* and *F<sub>1</sub> = F<sub>2</sub>*
 to prepare for the next time step. Note that as it stands, this model
 would not allow for any infiltration of ponded water when there is a
 period of no rainfall within an event. To overcome this limitation it is
@@ -5131,27 +4992,27 @@ storage capacity is depleted during wet periods and replenished during
 dry periods. To model this behavior with the Curve Number method, the
 variable *S* is introduced to track the remaining storage capacity
 (i.e., moisture deficit) over time. It is analogous to the state
-variable *θ~du~* used in the Green-Ampt method. Initially, *S = S~max~*.
+variable *θ<sub>du</sub>* used in the Green-Ampt method. Initially, *S = S<sub>max</sub>*.
 Whenever infiltration at rate *f* occurs over a time step *∆t*, *S* is
 reduced by *f∆t*. During a period with no infiltration *S* is assumed to
-be replenished at a rate proportional to *S~max~*:
+be replenished at a rate proportional to *S<sub>max</sub>*:
 
 +------------------------------------------------------+-----------------------------------+
 | > $$S \leftarrow S + k_{r}S_{\max}\mathrm{\Delta}t$$ | (4-46)                            |
 +======================================================+===================================+
 
-where *k~r~* is a storage capacity recovery constant (hr^-1^). This
+where *k<sub>r</sub>* is a storage capacity recovery constant (hr<sup>-1</sup>). This
 recovery expression has the same form as used in the Green-Ampt model
-and the coefficient *k~r~* has a similar meaning in both models.
+and the coefficient *k<sub>r</sub>* has a similar meaning in both models.
 
 Because the Curve Number method was originally meant to be applied to
 single, discrete rainfall events, a mechanism is needed to define when
 separate events occur. At the start of a new event, the cumulative
-variables *P* and *F* are reset to 0 and *S~e~* is set equal to the
+variables *P* and *F* are reset to 0 and *S<sub>e</sub>* is set equal to the
 current remaining storage capacity *S*. Once again borrowing from the
-Green-Ampt method, a period of *T~r~* hours without rainfall must occur
-before the next rainfall period is deemed to begin a new event. *T~r~*
-is assumed to be related to the recovery constant *k~r~* through
+Green-Ampt method, a period of *T<sub>r</sub>* hours without rainfall must occur
+before the next rainfall period is deemed to begin a new event. *T<sub>r</sub>*
+is assumed to be related to the recovery constant *k<sub>r</sub>* through
 Equation 4-25 which is repeated here:
 
 +-----------------------------------+-----------------------------------+
@@ -5175,16 +5036,16 @@ Curve Number infiltration method:
   recover to a dry state).
 
 The curve number is used to compute the maximum soil moisture storage
-capacity (*S~max~*) using Equation 4-41. The drying time *T~dry~* in
-days is used to compute the regeneration constant *k~r~* in hours^-1^
+capacity (*S<sub>max</sub>*) using Equation 4-41. The drying time *T<sub>dry</sub>* in
+days is used to compute the regeneration constant *k<sub>r</sub>* in hours<sup>-1</sup>
 as:
 
 +-----------------------------------+-----------------------------------+
 | > $$k_{r} = \frac{1}{24T_{dry}}$$ | (4-48)                            |
 +===================================+===================================+
 
-The minimum inter-event recovery time *T~r~* is then computed from
-*k~r~* using Equation 4-47.
+The minimum inter-event recovery time *T<sub>r</sub>* is then computed from
+*k<sub>r</sub>* using Equation 4-47.
 
 A highly structured method for estimating curve numbers is provided by
 the NRCS (NRCS, 2004a; McCuen, 1998, Bedient et al., 2013 and virtually
@@ -5209,7 +5070,7 @@ moisture) the following adjustments can be made to the tabulated values
 | > $${CN}_{III} = \frac{23{CN}_{II}}{10 - 0.13{CN}_{II}}$$ | (4-50)                            |
 +===========================================================+===================================+
 
-where *CN~i~* refers to the curve number for antecedent moisture
+where *CN<sub>i</sub>* refers to the curve number for antecedent moisture
 condition *i*. For long-term simulations the AMC I curve number should
 be used to allow the soil to reach its maximum possible moisture
 retention capacity during extended dry periods.
@@ -5236,7 +5097,7 @@ land uses (NRCS, 2004a)**
 +=======================+==========================+:======:+:======:+:======:+:======:+
 | Land Use Description                             | A      | B      | C      | D      |
 +--------------------------------------------------+--------+--------+--------+--------+
-| Cultivated land^1^                               |        |        |        |        |
+| Cultivated land<sup>1</sup>                               |        |        |        |        |
 +--------------------------------------------------+--------+--------+--------+--------+
 | Without conservation treatment                   | 72     | 81     | 88     | 91     |
 +--------------------------------------------------+--------+--------+--------+--------+
@@ -5256,7 +5117,7 @@ land uses (NRCS, 2004a)**
 +--------------------------------------------------+--------+--------+--------+--------+
 | Thin stand, poor cover, no mulch                 | 45     | 66     | 77     | 83     |
 +--------------------------------------------------+--------+--------+--------+--------+
-| Good cover^2^                                    | 25     | 55     | 70     | 77     |
+| Good cover<sup>2</sup>                                    | 25     | 55     | 70     | 77     |
 +--------------------------------------------------+--------+--------+--------+--------+
 | Open spaces, lawns, parks, golf courses,         |        |        |        |        |
 | cemeteries, etc.                                 |        |        |        |        |
@@ -5271,9 +5132,9 @@ land uses (NRCS, 2004a)**
 +--------------------------------------------------+--------+--------+--------+--------+
 | Industrial districts (72% impervious)            | 81     | 88     | 91     | 93     |
 +--------------------------------------------------+--------+--------+--------+--------+
-| Residential^3^                                   |        |        |        |        |
+| Residential<sup>3</sup>                                   |        |        |        |        |
 +-----------------------+--------------------------+--------+--------+--------+--------+
-| Average lot size      | Average % impervious^4^  |        |        |        |        |
+| Average lot size      | Average % impervious<sup>4</sup>  |        |        |        |        |
 +-----------------------+--------------------------+--------+--------+--------+--------+
 | 1/8 ac or less        | 65                       | 77     | 85     | 90     | 92     |
 +-----------------------+--------------------------+--------+--------+--------+--------+
@@ -5285,11 +5146,11 @@ land uses (NRCS, 2004a)**
 +-----------------------+--------------------------+--------+--------+--------+--------+
 | 1 ac                  | 20                       | 51     | 68     | 79     | 84     |
 +-----------------------+--------------------------+--------+--------+--------+--------+
-| Paved parking lots, roofs, driveways, etc.^5^    | 98     | 98     | 98     | 98     |
+| Paved parking lots, roofs, driveways, etc.<sup>5</sup>    | 98     | 98     | 98     | 98     |
 +--------------------------------------------------+--------+--------+--------+--------+
 | Streets and roads                                |        |        |        |        |
 +--------------------------------------------------+--------+--------+--------+--------+
-| Paved with curbs and storm sewers^5^             | 98     | 98     | 98     | 98     |
+| Paved with curbs and storm sewers<sup>5</sup>             | 98     | 98     | 98     | 98     |
 +--------------------------------------------------+--------+--------+--------+--------+
 | Gravel                                           | 76     | 85     | 89     | 91     |
 +--------------------------------------------------+--------+--------+--------+--------+
@@ -5301,14 +5162,14 @@ land uses (NRCS, 2004a)**
 Estimates of a soil's drying time have been discussed previously in
 conjunction with both the Horton regeneration constant in Section 4.2.4
 and the Green-Ampt recovery process in Section 4.3.2. It was suggested
-that the drying time *T~dry~* in days could be related to a soil's
-saturated hydraulic conductivity *K~s~* in in/hr as follows:
+that the drying time *T<sub>dry</sub>* in days could be related to a soil's
+saturated hydraulic conductivity *K<sub>s</sub>* in in/hr as follows:
 
 +--------------------------------------------+-----------------------------------+
 | > $$T_{dry} = \frac{3.125}{\sqrt{K_{s}}}$$ | (4-51)                            |
 +============================================+===================================+
 
-where estimates of *K~s~* based on soil type can be found from Table
+where estimates of *K<sub>s</sub>* based on soil type can be found from Table
 4-7.
 
 ## 4.6 Numerical Example
@@ -5349,7 +5210,7 @@ sections of this chapter.
 |                         +------------------------------------+-----------+
 |                         | Ultimate Capacity (in/hr)          | 0.1       |
 |                         +------------------------------------+-----------+
-|                         | Decay Coefficient (hr^-1^)         | 2.0       |
+|                         | Decay Coefficient (hr<sup>-1</sup>)         | 2.0       |
 |                         +------------------------------------+-----------+
 |                         | Drying Time (days)                 | 7.0       |
 +-------------------------+------------------------------------+-----------+
@@ -5479,47 +5340,33 @@ back-flow (bank storage) can occur into the saturated zone.
 
 This two-zone representation of surface runoff-groundwater interaction
 is modeled as follows (refer to Figure 5-1). The ground surface has a
-known elevation (relative to some fixed reference) of *E~G~* (ft) and
-the bottom of the saturated zone has a known elevation of *E~B~* (ft).
+known elevation (relative to some fixed reference) of *E<sub>G</sub>* (ft) and
+the bottom of the saturated zone has a known elevation of *E<sub>B</sub>* (ft).
 The unsaturated upper zone has a varying moisture content denoted as
 *θ*. The lower zone is completely saturated, and therefore its moisture
 content is fixed at the soil porosity *φ*. Aside from *θ*, the other
-principal unknown is *d~L~*, the depth of the saturated zone (i.e., the
+principal unknown is *d<sub>L</sub>*, the depth of the saturated zone (i.e., the
 water table depth). Because the depth from the ground surface to the
 bottom of the lower zone is fixed, the depth of the unsaturated zone
-*d~U~* is simply $E_{G} - E_{B} - d_{L}$.
+*d<sub>U</sub>* is simply $E_{G} - E_{B} - d_{L}$.
 
 The depths of the two zones and the water content of the upper zone are
 controlled by the volumetric water fluxes shown in Figure 5-1. These
 fluxes, expressed as volume per unit horizontal area per unit time (or
 ft/sec internally in SWMM), consist of the following:
 
-  ------------------------------------------------------------------------------
-  *f~I~*     =   infiltration from the subcatchment surface, which is the value
-                 computed in Chapter 4 multiplied by the fraction of pervious
-                 area *F~perv~*.
-  ---------- --- ---------------------------------------------------------------
-  *f~EU~*    =   evapotranspiration from the upper zone, which is a fixed
-                 fraction of the unused surface evaporation,
-                 $e \times F_{perv}$.
-
-  *f~U~*     =   percolation from the upper to lower zone, which depends on the
-                 upper zone moisture content *θ* and upper zone depth *d~U~*.
-
-  *f~EL~*    =   evapotranspiration from the lower zone, which is a function of
-                 the depth of the upper zone *d~U~*.
-
-  *f~L~*     =   percolation from the lower zone to deep groundwater, which
-                 depends on the lower zone depth *d~L~*.
-
-  *f~G\ ~*   =   lateral groundwater seepage to the conveyance network which
-                 depends on the lower zone depth *d~L~* as well as the water
-                 surface elevation in the receiving node.
-  ------------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *f<sub>I</sub>* | infiltration from the subcatchment surface, which is the value computed in Chapter 4 multiplied by the fraction of pervious area *F<sub>perv</sub>*. |
+| *f<sub>EU</sub>* | evapotranspiration from the upper zone, which is a fixed fraction of the unused surface evaporation, $e \times F_{perv}$. |
+| *f<sub>U</sub>* | percolation from the upper to lower zone, which depends on the upper zone moisture content *θ* and upper zone depth *d<sub>U</sub>*. |
+| *f<sub>EL</sub>* | evapotranspiration from the lower zone, which is a function of the depth of the upper zone *d<sub>U</sub>*. |
+| *f<sub>L</sub>* | percolation from the lower zone to deep groundwater, which depends on the lower zone depth *d<sub>L</sub>*. |
+| *f<sub>G</sub>* | lateral groundwater seepage to the conveyance network which depends on the lower zone depth *d<sub>L</sub>* as well as the water surface elevation in the receiving node. |
 
 Computation of these fluxes will be discussed subsequently, but keep in
 mind that they are either supplied externally or depend on the unknown
-variables *θ* , *d~U~* and *d~L~*.
+variables *θ* , *d<sub>U</sub>* and *d<sub>L</sub>*.
 
 The conservation of mass equation for the upper zone can be written as:
 
@@ -5527,8 +5374,8 @@ The conservation of mass equation for the upper zone can be written as:
 | > $$\frac{\partial V_{U}}{\partial t} = f_{UZ}$$ | (5-1)                             |
 +==================================================+===================================+
 
-where *V~U~* is the volume of water per unit area (ft) in the upper zone
-and *f~UZ~* (ft/sec) is the net influx rate to the upper zone. The
+where *V<sub>U</sub>* is the volume of water per unit area (ft) in the upper zone
+and *f<sub>UZ</sub>* (ft/sec) is the net influx rate to the upper zone. The
 latter is equal to:
 
 +---------------------------------------+-----------------------------------+
@@ -5541,8 +5388,8 @@ The conservation of mass equation for the lower zone is:
 | > $$\frac{\partial V_{L}}{\partial t} = f_{LZ}$$ | (5-3)                             |
 +==================================================+===================================+
 
-where *V~L~* is the volume of water per unit area (ft) in the lower zone
-and *f~LZ~* is the net influx rate into the lower zone given by:
+where *V<sub>L</sub>* is the volume of water per unit area (ft) in the lower zone
+and *f<sub>LZ</sub>* is the net influx rate into the lower zone given by:
 
 +-----------------------------------------------+-----------------------------------+
 | > $$f_{LZ} = f_{U} - f_{EL} - f_{L} - f_{G}$$ | (5-4)                             |
@@ -5589,12 +5436,12 @@ Substituting this into 5-7 and solving for
 +=============================================================================================================================================+=========================+
 
 Equations 5-6 and 5-9 form a system of ordinary differential equations
-in *θ* and *d~L~* that can be solved using a standard fifth-order
+in *θ* and *d<sub>L</sub>* that can be solved using a standard fifth-order
 Runge-Kutta integration routine with adaptive step size control (Press
 et al., 1992). The integration is applied over each runoff time step as
 the calculation of surface runoff unfolds (see Section 3.4). The initial
-conditions at time zero are *d~L~ = d~L0\ ~*and *θ = θ~0~* where *d~L0~*
-is the initial depth of the saturated zone and *θ~0~* is the initial
+conditions at time zero are *d<sub>L</sub> = d<sub>L0</sub>*and *θ = θ<sub>0</sub>* where *d<sub>L0</sub>*
+is the initial depth of the saturated zone and *θ<sub>0</sub>* is the initial
 moisture content of the unsaturated zone. Additional conditions that
 must be honored during each time step *∆t* are:
 
@@ -5606,7 +5453,7 @@ must be honored during each time step *∆t* are:
 
 - The upper zone moisture content cannot be less than the soil's wilting
   point moisture content nor greater than its porosity, i.e.,
-  $\theta_{WP} \leq \theta \leq \phi$ where *θ~WP~* is the sub-soil
+  $\theta_{WP} \leq \theta \leq \phi$ where *θ<sub>WP</sub>* is the sub-soil
   wilting point moisture content.
 
 - The depth of the lower layer cannot be greater than the distance from
@@ -5641,7 +5488,7 @@ the reader should be aware of:
 - No attempt is made to model the fate of any water quality constituents
   entering the groundwater system. The concentration of all pollutants
   in the water infiltrating into the subsurface zone is set to zero. One
-  can, however, assign a constant concentration to the discharge *f~G~*
+  can, however, assign a constant concentration to the discharge *f<sub>G</sub>*
   out of the saturated zone. If true quality routing through the
   subsurface region is needed, a model such as HSPF (Bicknell et
   al., 1997) might be considered.
@@ -5653,33 +5500,33 @@ over a succession of time steps one must compute the various flux terms
 that transport water into and out of the two sub-surface zones. This
 section discusses how each of these terms is modeled.
 
-### 5.3.1 Surface Infiltration (f~I~)
+### 5.3.1 Surface Infiltration (f<sub>I</sub>)
 
-The surface infiltration flux rate *f~I~* is set equal to the runoff
+The surface infiltration flux rate *f<sub>I</sub>* is set equal to the runoff
 infiltration rate *f* computed as described in Chapter 4, multiplied by
-the fraction of the subcatchment that is pervious, *F~perv~*. (The
+the fraction of the subcatchment that is pervious, *F<sub>perv</sub>*. (The
 groundwater zones extend over the entire subcatchment area while surface
 infiltration is computed only for the pervious portion of this area.)
-*f~I~* is considered a constant quantity over the current runoff time
+*f<sub>I</sub>* is considered a constant quantity over the current runoff time
 step *∆t*. However, it is not allowed to exceed a rate that would fill
 up the available pore volume of the upper unsaturated zone by the end of
-the time step. This rate *f~Imax~* can be computed as:
+the time step. This rate *f<sub>Imax</sub>* can be computed as:
 
 +----------------------------------------------------------------+-----------------------------------+
 | > $$f_{Imax} = \frac{d_{U}(\phi - \theta)}{\Delta t} + f_{U}$$ | (5-10)                            |
 +================================================================+===================================+
 
-where *f~U~* is an estimate of the percolation flux rate between the
+where *f<sub>U</sub>* is an estimate of the percolation flux rate between the
 upper and lower zones at the start of the time period and is computed
 using the equations given in Section 5.3.2 below. Thus if the
-infiltration computed from the surface runoff calculation, *f~I~,* is
-greater than *f~Imax~* then *f~I~* is set equal to *f~Imax~* and the
+infiltration computed from the surface runoff calculation, *f<sub>I</sub>,* is
+greater than *f<sub>Imax</sub>* then *f<sub>I</sub>* is set equal to *f<sub>Imax</sub>* and the
 infiltration rate used for surface runoff calculations is reduced to
-*f~I~ /F~perv~*.
+*f<sub>I</sub> /F<sub>perv</sub>*.
 
-### 5.3.2 Upper Zone Evapotranspiration (f~EU~)
+### 5.3.2 Upper Zone Evapotranspiration (f<sub>EU</sub>)
 
-Evapotranspiration (ET) from the upper zone, *f~EU~,* represents soil
+Evapotranspiration (ET) from the upper zone, *f<sub>EU</sub>,* represents soil
 moisture lost via cover vegetation and by direct evaporation from the
 pervious area of the subcatchment. This ET is a portion of the overall
 potential evaporation rate for the study area supplied externally to the
@@ -5696,8 +5543,8 @@ computed as:
 where *UEF* is a fraction of available evaporation that is apportioned
 to the upper zone, $e_{\max} = eF_{perv}$, *e* is the maximum potential
 evaporation rate (ft/s) available for the current time period supplied
-externally, *F~perv~* is the fraction of the subcatchment that is
-pervious, and *e~s~* is the evaporation loss (ft/s) seen by any rainfall
+externally, *F<sub>perv</sub>* is the fraction of the subcatchment that is
+pervious, and *e<sub>s</sub>* is the evaporation loss (ft/s) seen by any rainfall
 and ponded water on the pervious subcatchment surface. The latter is
 computed as:
 
@@ -5705,21 +5552,21 @@ computed as:
 | > $$e_{s} = {\frac{{\min{(e,}d}_{a}}{\mathrm{\Delta}t})F}_{perv}$$ | (5-12)                    |
 +====================================================================+===========================+
 
-where *d~a~* is the depth of available moisture on the pervious area of
+where *d<sub>a</sub>* is the depth of available moisture on the pervious area of
 the subcatchment (ft). The latter quantity was evaluated at Step 3b of
 the procedure used to compute surface runoff (see Section 3.4). In
-addition, *f~EU~* is set to *0* whenever the upper zone soil moisture
-drops below the wilting point or when the infiltration rate *f~I~ \> 0*
+addition, *f<sub>EU</sub>* is set to *0* whenever the upper zone soil moisture
+drops below the wilting point or when the infiltration rate *f<sub>I</sub> \> 0*
 (since it is assumed that the resulting vapor pressure will be high
 enough to prevent any evapotranspiration from the unsaturated zone).
-Note the need to adjust the surface evaporation rates by *F~perv~*
+Note the need to adjust the surface evaporation rates by *F<sub>perv</sub>*
 because although evaporation from the groundwater zone extends over the
 entire subsurface area of the subcatchment it can only be released
 through the pervious portion of the subcatchment.
 
-### 5.3.3 Lower Zone Evapotranspiration (f~EL~)
+### 5.3.3 Lower Zone Evapotranspiration (f<sub>EL</sub>)
 
-Lower zone evapotranspiration, *f~EL~*, represents the ET, or more
+Lower zone evapotranspiration, *f<sub>EL</sub>*, represents the ET, or more
 properly just the transpiration, lost from the saturated lower zone. It
 is assumed to vary in direct proportion to the distance that the water
 table sits above some reference level below which no ET can occur. In
@@ -5730,13 +5577,13 @@ equation form:
 +=========================================================+===========================+
 
 where *DEL* is the depth from the ground surface below which no lower
-zone ET is possible (ft). The *f~EL~* value computed from (5-12) is
+zone ET is possible (ft). The *f<sub>EL</sub>* value computed from (5-12) is
 constrained to be non-negative and be no greater than
 $e_{\max} - e_{s} - f_{EU}$.
 
-### 5.3.4 Percolation (f~U~)
+### 5.3.4 Percolation (f<sub>U</sub>)
 
-Percolation, *f~U~*, represents the flow of water from the unsaturated
+Percolation, *f<sub>U</sub>*, represents the flow of water from the unsaturated
 zone to the saturated zone, and apart from possible bank storage is the
 only inflow for the saturated zone. The percolation equation is
 formulated from Darcy's Law for unsaturated flow, in which the hydraulic
@@ -5749,18 +5596,13 @@ one-dimensional, vertical flow, Darcy's Law may be written as:
 
 where:
 
-  ---------------------------------------------------------------------------
-  *v*      =   velocity (specific discharge), positive in the downward
-               direction of z (ft/s),
-  -------- --- --------------------------------------------------------------
-  *z*      =   vertical coordinate with respect to the ground surface (ft),
-
-  *K(θ)*   =   hydraulic conductivity (ft/s),
-
-  *θ*      =   moisture content (dimensionless), and
-
-  *h*      =   hydraulic potential or head (ft).
-  ---------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *v* | velocity (specific discharge), positive in the downward direction of z (ft/s), |
+| *z* | vertical coordinate with respect to the ground surface (ft), |
+| *K(θ)* | hydraulic conductivity (ft/s), |
+| *θ* | moisture content (dimensionless), and |
+| *h* | hydraulic potential or head (ft). |
 
 The hydraulic potential is the sum of the elevation (gravity) and
 pressure heads,
@@ -5770,7 +5612,7 @@ pressure heads,
 +==========================================+===========================+
 
 where *ψ* = soil water tension (negative pressure head) in the
-unsaturated zone. Note that the wetting front suction, *ψ~S~*, used in
+unsaturated zone. Note that the wetting front suction, *ψ<sub>S</sub>*, used in
 the Green-Ampt equations is simply the average value of *ψ* along the
 wetting front during the infiltration process. Equating vertical
 velocity to percolation, and differentiating the hydraulic potential,
@@ -5806,7 +5648,7 @@ approximated functionally in the moisture range of interest as:
 | > $$K(\theta) = K_{s}e^{- (\phi - \theta)HCO}$$ | (5-19)                    |
 +=================================================+===========================+
 
-where *K~S~* is the saturated hydraulic conductivity (ft/s) and *HCO* is
+where *K<sub>S</sub>* is the saturated hydraulic conductivity (ft/s) and *HCO* is
 a calibration parameter. Estimates of HCO can be made from soil test
 data and some examples will be given in section 5.4 below. Substituting
 5-19 into 5-16 yields the final form of the percolation rate expression:
@@ -5816,16 +5658,16 @@ data and some examples will be given in section 5.4 below. Substituting
 +=============================================+===========================+
 
 If the moisture content *θ* is less than or equal to field capacity *θ
-~FC~*, then the percolation rate becomes zero. This limit is in
+<sub>FC</sub>*, then the percolation rate becomes zero. This limit is in
 accordance with the concept of field capacity as the drainable soil
 water that cannot be removed by gravity alone (Hillel, 1982, p. 243).
 Once *θ* drops below field capacity, it can only be further reduced by
 upper zone evapotranspiration (to a lower bound of the wilting point
 moisture content).
 
-### 5.3.4 Deep Percolation (f~L~)
+### 5.3.4 Deep Percolation (f<sub>L</sub>)
 
-Deep percolation, *f~L~*, represents a lumped sink term for
+Deep percolation, *f<sub>L</sub>*, represents a lumped sink term for
 un-quantified losses from the saturated zone. The two primary losses are
 assumed to be percolation through the confining layer and lateral
 outflow to somewhere other than the conveyance system. The arbitrarily
@@ -5836,13 +5678,13 @@ chosen equation for deep percolation is:
 +=============================================+===================================+
 
 where *DP* is a recession coefficient derived from inter-event water
-table recession curves. The dependence of *f~L~* on *d~L~* allows it to
+table recession curves. The dependence of *f<sub>L</sub>* on *d<sub>L</sub>* allows it to
 be a function of the static pressure head above the confining layer.
 
-### 5.3.5 Groundwater Discharge (f~G~)
+### 5.3.5 Groundwater Discharge (f<sub>G</sub>)
 
-Groundwater discharge, *f~G~*, (lateral flow per horizontal area of the
-groundwater region or cfs/ft^2^) represents lateral flow from the
+Groundwater discharge, *f<sub>G</sub>*, (lateral flow per horizontal area of the
+groundwater region or cfs/ft<sup>2</sup>) represents lateral flow from the
 saturated zone to elements in the conveyance system. The latter can take
 the form of an adjacent stream or channel or under-drains in the
 groundwater region, with the recognition that groundwater discharge in
@@ -5859,38 +5701,31 @@ general form:
 
 where:
 
-  -------------------------------------------------------------------------
-  *f~G~*    =   groundwater flow rate (cfs/ft^2^),
-  --------- --- -----------------------------------------------------------
-  *h~SW~*   =   height of surface water above the bottom of the groundwater
-                zone (ft),
-
-  *h\**     =   reference height above the bottom of the groundwater zone
-                (ft),
-
-  *A1, B1*  =   groundwater flow coefficient and exponent,
-
-  *A2, B2*  =   surface water flow coefficient and exponent,
-
-  *A3*      =   surface-groundwater interaction coefficient.
-  -------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *f<sub>G</sub>* | groundwater flow rate (cfs/ft<sup>2</sup>), |
+| *h<sub>SW</sub>* | height of surface water above the bottom of the groundwater zone (ft), |
+| *h\** | reference height above the bottom of the groundwater zone (ft), |
+| *A1, B1* | groundwater flow coefficient and exponent, |
+| *A2, B2* | surface water flow coefficient and exponent, |
+| *A3* | surface-groundwater interaction coefficient. |
 
 Figure 5-2 illustrates the meaning of each of the water depths used in
 this expression. The reference height *h\** is typically chosen as the
 height to the bottom of the conveyance system node, but other choices
 are possible. The coefficients *A1, A2,* and *A3* are units-dependent.
-As shown here *A1* has units of ft^(1-*B1*)^/s, *A2* has units of
-ft^(1-*B2*)^/s, while *A3* is in (ft-s)^-1^. In an actual SWMM input
+As shown here *A1* has units of ft<sup>(1-*B1*)</sup>/s, *A2* has units of
+ft<sup>(1-*B2*)</sup>/s, while *A3* is in (ft-s)<sup>-1</sup>. In an actual SWMM input
 data set the user would use coefficients that produce flow rates
 measured in cfs/ac for US units or cms/ha for metric units. SWMM
 automatically converts these input coefficients so that Equation 5-22 is
-evaluated internally using cfs/ft^2^.
+evaluated internally using cfs/ft<sup>2</sup>.
 
 The particular function form of Equation 5-22 was selected in order to
 approximate various horizontal flow conditions as will be illustrated
 later. The reference height *h\** sets the minimum elevation at which
-groundwater flow is possible (i.e., *f~G~* becomes *0* when either
-*d~L~* or h*~SW~* is below *h\**). If *h\** is not explicitly set by the
+groundwater flow is possible (i.e., *f<sub>G</sub>* becomes *0* when either
+*d<sub>L</sub>* or h*<sub>SW</sub>* is below *h\**). If *h\** is not explicitly set by the
 user it defaults to the height of the receiving node's invert as shown
 in Figure 5-2. Also note that the conveyance system node receiving
 groundwater flow need not be the same node that receives runoff from the
@@ -5900,7 +5735,7 @@ subcatchment that lies above the groundwater zones.
 groundwater flow rate.**
 
 The effects of channel water on groundwater flow can be dealt with in
-two different ways. The first option entails setting *h~SW~* (water
+two different ways. The first option entails setting *h<sub>SW</sub>* (water
 surface height in the receiving node) to a constant value greater than
 or equal to *h\** and *A2, B2* and/or *A3* to values greater than zero.
 If this method is chosen, then the user is specifying an average
@@ -5909,16 +5744,16 @@ tailwater influence over the entire run to be used at each time step.
 The second option uses the actual water surface height at the receiving
 node, as determined during the flow routing calculations for the
 conveyance system (flow routing is discussed in Volume II of this
-manual). In this case *h~SW~* can vary over time and the value used in
+manual). In this case *h<sub>SW</sub>* can vary over time and the value used in
 Equation 5-22 is the flow routing result at the start of the current
 time step.
 
-Note that when conditions warrant, the groundwater flux, *f~G~*, can be
+Note that when conditions warrant, the groundwater flux, *f<sub>G</sub>*, can be
 negative, simulating flow into the aquifer from the channel, in the
 manner of bank storage. An exception occurs when *A3 ≠ 0*, since the
 surface water -- groundwater interaction term is usually derived from
 groundwater flow models that assume unidirectional flow (examples are
-provided below). Otherwise, to ensure that negative *f~G~* values will
+provided below). Otherwise, to ensure that negative *f<sub>G</sub>* values will
 not occur, one can make *A1* greater than or equal to *A2,* *B1* greater
 than or equal to *B2*, and *A3* equal to zero. More examples of
 adjusting the flow coefficients and exponents to reproduce specific
@@ -5927,19 +5762,19 @@ physical conditions are provided in section 5.5 on Parameter Estimation.
 ### 5.3.6 User-Defined Flux Equations
 
 SWMM also has the ability to employ custom user-defined equations for
-the lateral groundwater discharge flux (*f~G~*) and the deep percolation
-flux (*f~L~*). These can be any well-formed mathematical expression
-relating *f~G~* (in cfs/acre or cms/ha) or *f~L~* (in in/hr or mm/hr) to
+the lateral groundwater discharge flux (*f<sub>G</sub>*) and the deep percolation
+flux (*f<sub>L</sub>*). These can be any well-formed mathematical expression
+relating *f<sub>G</sub>* (in cfs/acre or cms/ha) or *f<sub>L</sub>* (in in/hr or mm/hr) to
 any of several pre-defined variables. More details can be found in the
 SWMM 5 User's Manual (US EPA, 2010).
 
 For example, a two-stage linear reservoir model for lateral groundwater
 outflow could be expressed as:
 
-***f~G~* = 0.001\*Hgw + 0.05\*(Hgw--5)\*STEP(Hgw--5)**
+***f<sub>G</sub>* = 0.001\*Hgw + 0.05\*(Hgw--5)\*STEP(Hgw--5)**
 
 where **Hgw** is the pre-defined variable name used for height of the
-groundwater table (i.e., *d~L~* as used here) and **STEP** is a special
+groundwater table (i.e., *d<sub>L</sub>* as used here) and **STEP** is a special
 cutoff function pre-defined as **STEP(x)** = 0 if x \< 0 and is 1
 otherwise. The expression says that there is some small background flow
 out of the aquifer that is proportional to the height of the saturated
@@ -5949,17 +5784,17 @@ this type of behavior using just the standard discharge equation 5-21.
 
 An example for deep percolation flux might be
 
-***f~L~* = 2.5\*Hgw -- 0.1**
+***f<sub>L</sub>* = 2.5\*Hgw -- 0.1**
 
-which is equivalent to expressing *f~L~* through Darcy's Law as:
+which is equivalent to expressing *f<sub>L</sub>* through Darcy's Law as:
 
 $f_{L} = K_{c}(d_{L} - H_{c})/d_{c}$
 
-where *K~c~* is the hydraulic conductivity of the confining layer
-beneath the shallow aquifer, *d~c~* is the thickness of this layer, and
-*H~c~* is the hydraulic head below the layer. The values 2.5 and 0.1 in
+where *K<sub>c</sub>* is the hydraulic conductivity of the confining layer
+beneath the shallow aquifer, *d<sub>c</sub>* is the thickness of this layer, and
+*H<sub>c</sub>* is the hydraulic head below the layer. The values 2.5 and 0.1 in
 the user-defined expression would come from knowing specific values of
-*K~c~*, *d~c~*, and *H~c~*.
+*K<sub>c</sub>*, *d<sub>c</sub>*, and *H<sub>c</sub>*.
 
 ## 5.4 Computational Scheme
 
@@ -5975,9 +5810,9 @@ detailed steps involved are described in the sidebar below.
 Estimates of the following constants are required in order to implement
 the two-zone groundwater model:
 
-- soil moisture limits (*φ*, *θ ~FC~,* and *θ ~WP~*)
+- soil moisture limits (*φ*, *θ <sub>FC</sub>,* and *θ <sub>WP</sub>*)
 
-- percolation parameters (*K~S~, HCO,* and *DP*)
+- percolation parameters (*K<sub>S</sub>, HCO,* and *DP*)
 
 - ET coefficients (*UEF* and *DEL*)
 
@@ -6000,13 +5835,13 @@ saturation. No distinction is made here between the actual porosity and
 the apparent porosity, which includes trapped air, since no mechanism
 exists for adjusting for the latter and the difference is usually minor
 (5-10 %). Porosity is a critical parameter because of its role in
-determining moisture storage. Field capacity (*θ~FC~*) is usually
+determining moisture storage. Field capacity (*θ<sub>FC</sub>*) is usually
 considered to be the amount of water a well-drained soil holds after
 free water has drained off, or the maximum amount it can hold against
 gravity (Linsley et al., 1982; SCS, 1991). This occurs at soil moisture
 tensions of from 0.1 to 0.7 atmospheres, depending on soil texture.
 Moisture content at a tension of 1/3 atmosphere is often used. The
-wilting point (or permanent wilting point) (*θ ~WP~*), is the soil
+wilting point (or permanent wilting point) (*θ <sub>WP</sub>*), is the soil
 moisture content at which plants can no longer obtain enough moisture to
 meet transpiration requirements; they wilt and die unless water is added
 to the soil. The moisture content at a tension of 15 atmospheres is
@@ -6035,7 +5870,7 @@ field capacity and wilting point.
 +-------------------------+-------------------------+-------------------------+
 | **Soil Type**           | **Field Capacity**      | **Wilting Point**       |
 |                         |                         |                         |
-|                         | **(ft^3^/ft^3^)**       | **(ft^3^/ft^3^)**       |
+|                         | **(ft<sup>3</sup>/ft<sup>3</sup>)**       | **(ft<sup>3</sup>/ft<sup>3</sup>)**       |
 +=========================+:=======================:+:=======================:+
 | Sand                    | 0.08                    | 0.03                    |
 +-------------------------+-------------------------+-------------------------+
@@ -6061,7 +5896,7 @@ field capacity and wilting point (derived from Linsley et al., 1982)**
 +-----------------------+----------------------+----------------------+
 | **Soil Type**         | **Field Capacity**   | **Wilting Point**    |
 |                       |                      |                      |
-|                       | **(ft^3^/ft^3^)**    | **(ft^3^/ft^3^)**    |
+|                       | **(ft<sup>3</sup>/ft<sup>3</sup>)**    | **(ft<sup>3</sup>/ft<sup>3</sup>)**    |
 +=======================+:====================:+:====================:+
 | Sand                  | 0.10                 | 0.03                 |
 +-----------------------+----------------------+----------------------+
@@ -6087,8 +5922,8 @@ field capacity and wilting point (U.S. Army Corps of Engineers, 1956)**
 
 +----------------+-----------------+-----------------+-----------------+------------------+
 | **Soil Type**  | **Porosity      | **Field         | **Wilting Point | **Saturated**    |
-|                | (ft^3^/ft^3^)** | Capacity        | (ft^3^/ft^3^)** |                  |
-|                |                 | (ft^3^/ft^3^)** |                 | **Hydraulic**    |
+|                | (ft<sup>3</sup>/ft<sup>3</sup>)** | Capacity        | (ft<sup>3</sup>/ft<sup>3</sup>)** |                  |
+|                |                 | (ft<sup>3</sup>/ft<sup>3</sup>)** |                 | **Hydraulic**    |
 |                |                 |                 |                 |                  |
 |                |                 |                 |                 | **Conductivity** |
 |                |                 |                 |                 |                  |
@@ -6136,8 +5971,8 @@ classifications.
 
 +---------------------+-----------------+-----------------+-----------------+-------------------+
 | **Soil Texture      | **Porosity      | **Field         | **Wilting Point | **Saturated**     |
-| Class**             | (ft^3^/ft^3^)** | Capacity        | (ft^3^/ft^3^)** |                   |
-|                     |                 | (ft^3^/ft^3^)** |                 | **Hydraulic**     |
+| Class**             | (ft<sup>3</sup>/ft<sup>3</sup>)** | Capacity        | (ft<sup>3</sup>/ft<sup>3</sup>)** |                   |
+|                     |                 | (ft<sup>3</sup>/ft<sup>3</sup>)** |                 | **Hydraulic**     |
 |                     |                 |                 |                 |                   |
 |                     |                 |                 |                 | **Conductivity,** |
 |                     |                 |                 |                 |                   |
@@ -6237,7 +6072,7 @@ More specific soil parameter estimates can be obtained from the NRCS
 Soil Survey reports available for each county in the U.S. These were
 discussed previously in Section 4.1. An excerpt from the Physical
 Properties portion of one such report was displayed in Figure 4-1. Using
-the bulk density *ρ~b~* value provided in these reports, an estimate of
+the bulk density *ρ<sub>b</sub>* value provided in these reports, an estimate of
 the porosity can be derived from:
 
 +--------------------------------------------+-----------------------------------+
@@ -6246,18 +6081,14 @@ the porosity can be derived from:
 
 where:
 
-  ----------------------------------------------------------------------------
-  *φ*      =    porosity,
-  -------- ---- --------------------------------------------------------------
-  *ρ~b~*   =    bulk density (mass of dried soil to total volume of soil and
-                voids), g/cm^3^,
-
-  *ρ~s~*   =    soil particle density, typically in range 2.6-2.7 g/cm^3^ for
-                quartz particles.
-  ----------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *φ* | porosity, |
+| *ρ<sub>b</sub>* | bulk density (mass of dried soil to total volume of soil and voids), g/cm<sup>3</sup>, |
+| *ρ<sub>s</sub>* | soil particle density, typically in range 2.6-2.7 g/cm<sup>3</sup> for quartz particles. |
 
 As an example, the bulk density for the Woodburn silt loam listed in
-Figure 4-1 is *1.35* g/cm^3^ and using a *ρ~s~* = 2.65 g/cm^3^ in
+Figure 4-1 is *1.35* g/cm<sup>3</sup> and using a *ρ<sub>s</sub>* = 2.65 g/cm<sup>3</sup> in
 Equation 5-23 yields a *φ* *= 0.49.* This corresponds well with the
 general value of *0.501* for silt loam given in Tables 5-4 and 5-5.
 Carrying the example further, when Primary Characterization Data are
@@ -6290,15 +6121,15 @@ moisture limits of 13.7, 32.1 and 48.2 percent for the wilting point,
 field capacity, and porosity, respectively.
 
 +-----------------+--------------------------------------------------------------------------------------------------------------------------+
-| **Soil Moisture | **Equation^2^**                                                                                                          |
-| Limit^1^**      |                                                                                                                          |
+| **Soil Moisture | **Equation<sup>2</sup>**                                                                                                          |
+| Limit<sup>1</sup>**      |                                                                                                                          |
 +=================+==========================================================================================================================+
 | Wilting Point   | $\theta_{WP} = \theta_{1500t} + (0.14\theta_{1500t} - 0.02)$ where                                                       |
-| (*θ ~WP~*)      |                                                                                                                          |
+| (*θ <sub>WP</sub>*)      |                                                                                                                          |
 |                 | $$\theta_{1500t} = - 0.024S + 0.487C + 0.006OM + 0.005(S \times OM) - 0.013(C \times OM) + 0.068(S \times C) + 0.031$$   |
 +-----------------+--------------------------------------------------------------------------------------------------------------------------+
 | Field Capacity  | $\theta_{FC} = \theta_{33t} + (1.283\theta_{33t}^{2} - 0.374\theta_{33t} - 0.015)$ where                                 |
-| (*θ ~FC~*)      |                                                                                                                          |
+| (*θ <sub>FC</sub>*)      |                                                                                                                          |
 |                 | $$\theta_{33t} = - 0.251S + 0.195C + 0.011OM + 0.006(S \times OM) - 0.027(C \times OM) + 0.452(S \times C) + 0.299$$     |
 +-----------------+--------------------------------------------------------------------------------------------------------------------------+
 | Porosity (*φ*)  | $\varphi = \theta_{FC} + \theta_{(S - 33)} - 0.097S + 0.043$ where                                                       |
@@ -6311,9 +6142,9 @@ field capacity, and porosity, respectively.
 : []{#_Toc430249163 .anchor}**Table 5‑7 Regression equations for soil
 moisture limits (Saxton and Rawls, 2006)**
 
-^1^Moisture limits are fractional volumes.
+<sup>1</sup>Moisture limits are fractional volumes.
 
-^2^*S* = weight fraction of sand, *C* = weight fraction of clay, *OM* =
+<sup>2</sup>*S* = weight fraction of sand, *C* = weight fraction of clay, *OM* =
 percent organic matter.
 
 ![[]{#_Toc426447692 .anchor}**Figure 5‑4 SPAW\'s soil water
@@ -6361,7 +6192,7 @@ moisture limits from the SPAW calculator\***
 
 The two parameters that govern the percolation rate between the upper
 and lower groundwater zones are the soil's saturated hydraulic
-conductivity *K~S~* and the coefficient *HCO* that characterizes the
+conductivity *K<sub>S</sub>* and the coefficient *HCO* that characterizes the
 exponential decrease in hydraulic conductivity with decreasing moisture
 content. The most accurate way of estimating these parameters is from
 laboratory tests that measure hydraulic conductivity *K* as a function
@@ -6389,27 +6220,27 @@ class="anchor"></span><strong>Figure 5‑5 Measured hydraulic conductivity
 for three soils.</strong></p></figcaption>
 </figure>
 
-When soil data like this are available, *K~S~* and *HCO* can be
+When soil data like this are available, *K<sub>S</sub>* and *HCO* can be
 estimated by fitting Equation 5-20 to the data, i.e., fitting a straight
 line to the plot of the logarithm of *K* versus *θ. * The fits are not
 optimal over the entire data range because the fit is only performed for
 the high moisture content region between field capacity and porosity.
 
-When laboratory data are not available general estimates of *K~S~* based
+When laboratory data are not available general estimates of *K<sub>S</sub>* based
 on soil texture class can be obtained from Tables 5-3, 5-4, and 5-5.
 Another alternative is the regression equation derived by Saxton and
 Rawls (2006) from the same soils data base used to derive the moisture
-limit equations listed in Table 5-7. The equation for *K~S~* (in/hr) is:
+limit equations listed in Table 5-7. The equation for *K<sub>S</sub>* (in/hr) is:
 
 +--------------------------------------------------------+-----------------------------------+
 | > $$K_{s} = 76{(\phi - \theta_{FC})}^{(3 - \lambda)}$$ | (5-24)                            |
 +========================================================+===================================+
 
 where $\lambda = 0.262ln\left( \frac{\theta_{FC}}{\theta_{WP}} \right)$
-and *φ* = soil porosity, *θ~FC~* = field capacity and *θ~WP~* = the
+and *φ* = soil porosity, *θ<sub>FC</sub>* = field capacity and *θ<sub>WP</sub>* = the
 wilting point. This equation is also included in the SPAW soil water
 characteristics calculator described in the previous section and shown
-in Figure 5-4. The estimates of *K~S~* it produces for the different
+in Figure 5-4. The estimates of *K<sub>S</sub>* it produces for the different
 soil classes are shown in Table 5-8. For the Woodburn silt loam soil in
 Section 5.5.1, it estimates a saturated hydraulic conductivity of 0.48
 in/hr (see Figure 5-4). This value falls within the range of 0.2 - 2.0
@@ -6424,10 +6255,10 @@ relation (Campbell, 1974) as described in Saxton and Rawls (2006):
 +===========================================================================+===================================+
 
 One can then estimate a value for *HCO* that gives a best fit between
-Equation 5-19 and Equation 5-25 as *θ* ranges between *φ* and *θ~FC~*.
+Equation 5-19 and Equation 5-25 as *θ* ranges between *φ* and *θ<sub>FC</sub>*.
 Figure 5-6 shows one such fit for the soil limits associated with the
-Woodburn Silt Loam discussed earlier (*φ* = 0.482, *θ~FC~* = 0.321, and
-*θ~WP~* = 0.137). The data points come from evaluating Equation 5-25 for
+Woodburn Silt Loam discussed earlier (*φ* = 0.482, *θ<sub>FC</sub>* = 0.321, and
+*θ<sub>WP</sub>* = 0.137). The data points come from evaluating Equation 5-25 for
 a series of different moisture levels *θ*. The line of best fit that
 passes through the origin has a slope of 28.864 which would be the
 estimate of HCO for this soil.
@@ -6446,7 +6277,7 @@ the SPAW calculator to estimate the associated moisture limits, produced
 the following regression estimate for HCO:
 
 +-------------------------------------------------+--------------------+
-| > $HCO = 0.48(\% Sand) + 0.85(\% Clay)$ R^2^ =  | (5-26)             |
+| > $HCO = 0.48(\% Sand) + 0.85(\% Clay)$ R<sup>2</sup> =  | (5-26)             |
 | > 0.99                                          |                    |
 +=================================================+====================+
 
@@ -6462,31 +6293,19 @@ clay soils. If water table measurements are available, *DP* can also be
 estimated from the rate at which the water table elevation drops over a
 prolonged dry period.
 
-  ------------------------------------------------------------------------
-  **Soil Type**           **Percent Sand**    **Percent Clay**    **HCO**
-  ---------------------- ------------------- ------------------- ---------
-  Sand                           92                   5             48
-
-  Loamy sand                     82                   6             44
-
-  Sandy loam                     65                  10             40
-
-  Loam                           42                  18             35
-
-  Silt loam                      20                  20             27
-
-  Sandy clay loam                60                  28             53
-
-  Clay loam                      33                  34             45
-
-  Silty clay loam                10                  34             34
-
-  Sandy clay                     52                  42             61
-
-  Silty clay                      7                  47             43
-
-  Clay                           30                  50             57
-  ------------------------------------------------------------------------
+| **Soil Type** | **Percent Sand** | **Percent Clay** | **HCO** |
+| --- | --- | --- | --- |
+| Sand | 92 | 5 | 48 |
+| Loamy sand | 82 | 6 | 44 |
+| Sandy loam | 65 | 10 | 40 |
+| Loam | 42 | 18 | 35 |
+| Silt loam | 20 | 20 | 27 |
+| Sandy clay loam | 60 | 28 | 53 |
+| Clay loam | 33 | 34 | 45 |
+| Silty clay loam | 10 | 34 | 34 |
+| Sandy clay | 52 | 42 | 61 |
+| Silty clay | 7 | 47 | 43 |
+| Clay | 30 | 50 | 57 |
 
   : []{#_Toc430249165 .anchor}**Table 5‑9 Estimated HCO for different
   soil types**
@@ -6529,33 +6348,20 @@ vegetation in specific areas. Table 5-10 presents values of DET for
 different combinations of soil type and ground cover that were derived
 from unsaturated-saturated flow simulations (Shah et al., 2007).
 
-  -----------------------------------------------------------------------
-  **Soil Type**       **Bare Soil**       **Grass**        **Forest**
-  ----------------- ----------------- ----------------- -----------------
-  Sand                      2                 5                 8
-
-  Loamy Sand                2                 6                 9
-
-  Sandy Loam                4                 8                11
-
-  Sandy clay loam           7                10                13
-
-  Sandy clay                7                10                13
-
-  Loam                      9                12                15
-
-  Silty clay               11                14                17
-
-  Clay loam                13                17                20
-
-  Silt loam                14                17                20
-
-  Silt                     14                17                21
-
-  Silty clay loam          15                18                21
-
-  Clay loam                20                23                27
-  -----------------------------------------------------------------------
+| **Soil Type** | **Bare Soil** | **Grass** | **Forest** |
+| --- | --- | --- | --- |
+| Sand | 2 | 5 | 8 |
+| Loamy Sand | 2 | 6 | 9 |
+| Sandy Loam | 4 | 8 | 11 |
+| Sandy clay loam | 7 | 10 | 13 |
+| Sandy clay | 7 | 10 | 13 |
+| Loam | 9 | 12 | 15 |
+| Silty clay | 11 | 14 | 17 |
+| Clay loam | 13 | 17 | 20 |
+| Silt loam | 14 | 17 | 20 |
+| Silt | 14 | 17 | 21 |
+| Silty clay loam | 15 | 18 | 21 |
+| Clay loam | 20 | 23 | 27 |
 
   : []{#_Toc430249166 .anchor}**Table 5‑10 DET (in feet) for different
   soil types and land cover (Shah et al., 2007)**
@@ -6571,7 +6377,7 @@ for easy reference:
 | > $$f_{G} = A1\left( d_{L} - h^{*} \right)^{B1} - A2\left( h_{SW} - h^{*} \right)^{B2} + A3d_{L}h_{SW}$$ | (5-27)        |
 +==========================================================================================================+===============+
 
-where the heights *d~L~*, *h~SW~*, and *h\** are defined in Figure 5-2.
+where the heights *d<sub>L</sub>*, *h<sub>SW</sub>*, and *h\** are defined in Figure 5-2.
 Because of its general nature this equation can assume a variety of
 functional forms. Several specific examples will now be discussed.
 
@@ -6579,7 +6385,7 @@ functional forms. Several specific examples will now be discussed.
 
 The saturated groundwater zone can be thought of as a storage reservoir
 whose lateral outflow is linearly proportional to the water table depth
-*d~L~*. Two cases are possible -- with and without surface water
+*d<sub>L</sub>*. Two cases are possible -- with and without surface water
 interaction. Without surface water interaction, the groundwater flow
 rate is simply:
 
@@ -6615,14 +6421,14 @@ Figure 5-7 is (Bouwer, 1978, p.51):
 | > $$f_{G} = \frac{K_{S}}{2L^{2}}\left( h_{1}^{2} - h_{2}^{2} \right)$$ | (5-30)                            |
 +========================================================================+===================================+
 
-where *K~S~* is the saturated hydraulic conductivity and the other
+where *K<sub>S</sub>* is the saturated hydraulic conductivity and the other
 parameters are defined in Figure 5-7.
 
-While *h~2~* is the same as the surface water height *h~SW~*, *h~1~* is
-the [maximum]{.underline} groundwater table height. The height *d~L~*
+While *h<sub>2</sub>* is the same as the surface water height *h<sub>SW</sub>*, *h<sub>1</sub>* is
+the [maximum]{.underline} groundwater table height. The height *d<sub>L</sub>*
 that SWMM computes is only an average over the catchment. One can,
-however, assume this average is equivalent to the average of *h~1~* and
-*h~2~*, i.e.:
+however, assume this average is equivalent to the average of *h<sub>1</sub>* and
+*h<sub>2</sub>*, i.e.:
 
 +---------------------------------------+-----------------------------------+
 | > $$d_{L} = \frac{h_{1} + h_{2}}{2}$$ | (5-31)                            |
@@ -6645,10 +6451,10 @@ channel.</strong></p></figcaption>
 +=============================================================================================================+===================================+
 
 Comparing Equation 5-32 with Equation 5-27 shows that the two will be
-equivalent if *A1 = -A3* *= 2K~S~ / L^2^, A2 = 0,* *B1 = 2*, and *h\** =
+equivalent if *A1 = -A3* *= 2K<sub>S</sub> / L<sup>2</sup>, A2 = 0,* *B1 = 2*, and *h\** =
 0. Note that Equation 5-30 is only valid for unidirectional flow into
-the receiving node, but because *A3 ≠ 0*, SWMM will set *f~G~* to *0*
-should *d~L~* drop below *h~SW~*.
+the receiving node, but because *A3 ≠ 0*, SWMM will set *f<sub>G</sub>* to *0*
+should *d<sub>L</sub>* drop below *h<sub>SW</sub>*.
 
 [Hooghoudt's Equation for Tile Drainage]{.underline}
 
@@ -6660,9 +6466,9 @@ parameters is
 | > $$f_{G} = \left( 2D_{e} + m \right)4K_{S}\frac{m}{L^{2}}$$ | (5-33)                            |
 +==============================================================+===================================+
 
-where *D~e~* = effective depth of the impermeable layer below the drain
-center, and the other parameters are defined in Figure ‎5-8. *D~e~* is
-less than or equal to *b~0~* in Figure 5-8 and is a function of *b~0~*,
+where *D<sub>e</sub>* = effective depth of the impermeable layer below the drain
+center, and the other parameters are defined in Figure ‎5-8. *D<sub>e</sub>* is
+less than or equal to *b<sub>0</sub>* in Figure 5-8 and is a function of *b<sub>0</sub>*,
 drain diameter, and drain spacing *L*; the complicated relationship is
 given by Bear (1972, p. 412) and graphed by Bouwer (1978, p. 296).
 
@@ -6719,15 +6525,15 @@ $A1 = 16K_{S}/L^{2}$,
 >
 > $A3 = A1(\frac{D_{e}}{b_{0}})$,
 
-*h\** is set equal to *b~0~* and a constant value of *h~SW~* only
-slightly higher than *b~0~* is used.
+*h\** is set equal to *b<sub>0</sub>* and a constant value of *h<sub>SW</sub>* only
+slightly higher than *b<sub>0</sub>* is used.
 
-The internal units of both *A1* and *A3* are (ft-s)^-1^ while *A2* has
-units of ft/s. In terms of the program input though, where *f~G~* is
+The internal units of both *A1* and *A3* are (ft-s)<sup>-1</sup> while *A2* has
+units of ft/s. In terms of the program input though, where *f<sub>G</sub>* is
 expressed as flow per acre (or per hectare), the units on *A1* and *A3*
-would be would be ft/s/ac (or m/s/ha) and for *A2* would be ft^3^/s/ac
-(or m^3^/s/ha). Since *A3 ≠ 0*, flow back into the groundwater zone
-would not be allowed should *d~L~* drop below *b~0~*. The mathematics of
+would be would be ft/s/ac (or m/s/ha) and for *A2* would be ft<sup>3</sup>/s/ac
+(or m<sup>3</sup>/s/ha). Since *A3 ≠ 0*, flow back into the groundwater zone
+would not be allowed should *d<sub>L</sub>* drop below *b<sub>0</sub>*. The mathematics of
 drainage to ditches or circular drains is complex; several alternative
 formulations are described by van Schilfgaarde (1974).
 
@@ -6774,7 +6580,7 @@ between fully saturated and fully drained.
 |                         +------------------------------------+-----------+
 |                         | Ultimate Capacity (in/hr)          | 0.1       |
 |                         +------------------------------------+-----------+
-|                         | Decay Coefficient (hr^-1^)         | 2.0       |
+|                         | Decay Coefficient (hr<sup>-1</sup>)         | 2.0       |
 +-------------------------+------------------------------------+-----------+
 | Groundwater             | Porosity                           | 0.5       |
 |                         +------------------------------------+-----------+
@@ -7118,7 +6924,7 @@ in SWMM is presented below.
 | System;        | Driving and passing    |                |                |                |                |
 |                | lanes treated with     |                |                |                |                |
 | ADT greater    | chemicals              |                |                |                |                |
-| than 10,000^a^ |                        |                |                |                |                |
+| than 10,000<sup>a</sup> |                        |                |                |                |                |
 |                | Driving lane operable  |                |                |                |                |
 |                | at all times at        |                |                |                |                |
 |                | reduced speeds         |                |                |                |                |
@@ -7138,7 +6944,7 @@ in SWMM is presented below.
 | and 3 lanes;   | Mostly clear pavement  |                |                |                |                |
 |                | after storm stops      |                |                |                |                |
 | ADT            |                        |                |                |                |                |
-| 500-5000^a^    | Hazardous areas        |                |                |                |                |
+| 500-5000<sup>a</sup>    | Hazardous areas        |                |                |                |                |
 |                | receive treatment of   |                |                |                |                |
 |                | chemicals or abrasive  |                |                |                |                |
 |                |                        |                |                |                |                |
@@ -7150,7 +6956,7 @@ in SWMM is presented below.
 | Roads          | at least once during a |                |                |                |                |
 |                | storm                  |                |                |                |                |
 | ADT less than  |                        |                |                |                |                |
-| 500^a^         | Bare left-wheel track  |                |                |                |                |
+| 500<sup>a</sup>         | Bare left-wheel track  |                |                |                |                |
 |                | with intermittent snow |                |                |                |                |
 |                | cover                  |                |                |                |                |
 |                |                        |                |                |                |                |
@@ -7164,7 +6970,7 @@ in SWMM is presented below.
 |                | cleared as equipment   |                |                |                |                |
 |                | becomes available      |                |                |                |                |
 +----------------+------------------------+----------------+----------------+----------------+----------------+
-| ^a^ADT -- average daily traffic                                                                             |
+| <sup>a</sup>ADT -- average daily traffic                                                                             |
 +-------------------------------------------------------------------------------------------------------------+
 
 : []{#_Toc430249168 .anchor}**Table 6‑1 Guidelines for level of service
@@ -7289,19 +7095,14 @@ the melt rate *SMELT*:
 
 where
 
-  -------------------------------------------------------------------------
-  *SMELT*   =   melt rate (in/hr)
-  --------- --- -----------------------------------------------------------
-  *T~a~*    =   air temperature (° F)
-
-  *γ*       =   psychrometric constant (in Hg/° F)
-
-  *U~A~*    =   wind speed adjustment factor (in/in Hg -- hr)
-
-  *i*       =   rainfall intensity (in/hr)
-
-  *e~a~*    =   saturation vapor pressure at air temperature (in Hg).
-  -------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *SMELT* | melt rate (in/hr) |
+| *T<sub>a</sub>* | air temperature (° F) |
+| *γ* | psychrometric constant (in Hg/° F) |
+| *U<sub>A</sub>* | wind speed adjustment factor (in/in Hg -- hr) |
+| *i* | rainfall intensity (in/hr) |
+| *e<sub>a</sub>* | saturation vapor pressure at air temperature (in Hg). |
 
 The origin of the numerical constants found in Equation 6-1 is given by
 Anderson (1973), and reflect units conversions as well as U.S. customary
@@ -7312,7 +7113,7 @@ calculated as:
 | > $$\gamma = 0.000359P_{a}$$                                | (6-2)  |
 +=============================================================+========+
 
-where *P~a~* is the atmospheric pressure (in Hg). The latter, in turn,
+where *P<sub>a</sub>* is the atmospheric pressure (in Hg). The latter, in turn,
 is calculated as a function of elevation, z:
 
 +----------------------------------------------------------------------------+--------+
@@ -7320,7 +7121,7 @@ is calculated as a function of elevation, z:
 +============================================================================+========+
 
 where z is the average catchment elevation (ft). The wind adjustment
-factor, *U~A~*, accounts for turbulent transport of sensible heat and
+factor, *U<sub>A</sub>*, accounts for turbulent transport of sensible heat and
 water vapor. Anderson (1973) gives:
 
 +-------------------------------------------------------------+--------+
@@ -7331,8 +7132,8 @@ where *U* is the average wind speed 1.64 ft (0.5 m) above the snow
 surface (mi/hr). In practice, available wind data are used and are
 seldom corrected for the actual elevation of the anemometer. Section
 6.2.2 (as well as Section 2.6) discusses how wind data are supplied to
-SWMM. If no such data are available on a particular date then *U~A~* is
-set equal to *0*. Finally, the saturation vapor pressure, *e~a~*, is
+SWMM. If no such data are available on a particular date then *U<sub>A</sub>* is
+set equal to *0*. Finally, the saturation vapor pressure, *e<sub>a</sub>*, is
 given accurately by the convenient exponential approximation:
 
 +------------------------------------------------------------------------------------------+--------+
@@ -7340,7 +7141,7 @@ given accurately by the convenient exponential approximation:
 +==========================================================================================+========+
 
 During non-rain periods, melt is calculated as a linear function of the
-difference between the air temperature, *T~a~*, and a base temperature,
+difference between the air temperature, *T<sub>a</sub>*, and a base temperature,
 *Tbase*, using a degree-day or temperature-index type equation:
 
 +-------------------------------------------------------------+--------+
@@ -7349,15 +7150,12 @@ difference between the air temperature, *T~a~*, and a base temperature,
 
 where:
 
-  --------------------------------------------------------------------------
-  *SMELT*   =   melt rate (in/hr),
-  --------- --- ------------------------------------------------------------
-  *T~a~*    =   air temperature (° F)
-
-  *Tbase*   =   base melt temperature (° F)
-
-  *DHM*     =   melt coefficient (in/hr-° F)
-  --------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *SMELT* | melt rate (in/hr), |
+| *T<sub>a</sub>* | air temperature (° F) |
+| *Tbase* | base melt temperature (° F) |
+| *DHM* | melt coefficient (in/hr-° F) |
 
 Different values of *Tbase* and *DHM* may be used for each of the three
 types of snow surfaces within a subcatchment. For instance, these
@@ -7381,13 +7179,11 @@ constant over each day of the year:
 
 where
 
-  ------------------------------------------------------------------------
-  *DHMIN*    =   minimum melt coefficient, occurring Dec. 21 (in/hr-°F)
-  ---------- --- ---------------------------------------------------------
-  *DHMAX*    =   maximum melt coefficient, occurring June 21 (in/hr-°F)
-
-  *day*      =   number of the day of the year.
-  ------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *DHMIN* | minimum melt coefficient, occurring Dec. 21 (in/hr-°F) |
+| *DHMAX* | maximum melt coefficient, occurring June 21 (in/hr-°F) |
+| *day* | number of the day of the year. |
 
 No special allowance is made for leap year. However, the correct date
 (and day number) is maintained.
@@ -7410,7 +7206,7 @@ equivalent. That is, a cold content of 0.1 in. (2.5 mm) is equivalent to
 the heat required to melt 0.1 in. (2.5 mm) of snow. Following Anderson
 (1973), the heat exchange altering the cold content within each 6-hour
 period is proportional to the difference between the air temperature,
-*T~a~*, and an antecedent temperature index, *ATI*, indicative of the
+*T<sub>a</sub>*, and an antecedent temperature index, *ATI*, indicative of the
 temperature of the surface layer of the snow pack. The value of *ATI* is
 updated at the start of each time step as follows:
 
@@ -7418,7 +7214,7 @@ updated at the start of each time step as follows:
 | > $$ATI \leftarrow ATI + {TIPM}_{t}(T_{a} - ATI)$$          | (6-8)  |
 +=============================================================+========+
 
-where *TIPM~t~* is given by (Anderson, 2006):
+where *TIPM<sub>t</sub>* is given by (Anderson, 2006):
 
 +-------------------------------------------------------------+--------+
 | > $${TIPM}_{t} = 1 - {(1 - TIPM)}^{\mathrm{\Delta}t/6}$$    | (6-9)  |
@@ -7450,17 +7246,13 @@ After the antecedent temperature index is calculated, the cold content
 
 where
 
-  -------------------------------------------------------------------------
-  *∆CC*   =   change in cold content (inches water equivalent)
-  ------- --- -------------------------------------------------------------
-  *RNM*   =   ratio of negative melt coefficient to melt coefficient,
-
-  *DHM*   =   melt coefficient (in/hr-° F)
-
-  *ATI*   =   antecedent temperature index (°F)
-
-  *Δt*    =   time step (hr).
-  -------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *∆CC* | change in cold content (inches water equivalent) |
+| *RNM* | ratio of negative melt coefficient to melt coefficient, |
+| *DHM* | melt coefficient (in/hr-° F) |
+| *ATI* | antecedent temperature index (°F) |
+| *Δt* | time step (hr). |
 
 Note that the cold content is increased, (*∆CC* is positive) when the
 air temperature is less (colder) than the antecedent temperature index.
@@ -7529,7 +7321,7 @@ snow.</strong></p></figcaption>
 
 Some of the implications of different functional forms of the ADC may be
 seen in Figure ‎6-5. Since the program maintains snow quantities,
-*WSNOW*, as the depth over the total area, *A~T~*, the actual snow
+*WSNOW*, as the depth over the total area, *A<sub>T</sub>*, the actual snow
 depth, *WS*, and actual area covered, *AS*, are related by continuity:
 
 +-------------------------------------------------------------+--------+
@@ -7538,15 +7330,12 @@ depth, *WS*, and actual area covered, *AS*, are related by continuity:
 
 where:
 
-  -------------------------------------------------------------------------
-  *WSNOW*   =   depth of snow over total area (inches water equivalent)
-  --------- --- -----------------------------------------------------------
-  *A~T~*    =   total area (ft^2^),
-
-  *WS*      =   actual snow depth (inches water equivalent), and
-
-  *AS*      =   snow covered area (ft^2^).
-  -------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *WSNOW* | depth of snow over total area (inches water equivalent) |
+| *A<sub>T</sub>* | total area (ft<sup>2</sup>), |
+| *WS* | actual snow depth (inches water equivalent), and |
+| *AS* | snow covered area (ft<sup>2</sup>). |
 
 In terms of parameters shown on the ADC, this equation may be rearranged
 to read:
@@ -7749,34 +7538,18 @@ uses a **Snow Pack** object to bundle together a common set of these
 parameters that can be applied to an entire group of subcatchments. This
 helps reduce the amount of input that a user must provide.
 
-  ------------------------------------------------------------------------------
-  **Parameter**   **Meaning**                                   **Typical
-                                                                Range**
-  --------------- --------------------------------------------- ----------------
-  *SNOTMP*        dividing temperature between snowfall and     32 to 36
-                  rainfall (°F)                                 
-
-  *SCF*           rain gage snow capture factor (ratio)         1 to 2
-
-  *TIPM*          ATI weighting factor (fraction)               0.5
-
-  *RNM*           negative melt ratio (fraction)                0.6
-
-  *WEPLOW*        depth at which snow redistribution begins     0.5 to 2
-                  (inches)                                      
-
-  *Tbase*         temperature at which snow begins to melt (°F) 25 to 32
-
-  *DHMIN*         melt coefficient for December 21 (in/hr-°F)   0.001 to 0.003
-
-  *DHMAX*         melt coefficient for June 21 (in/hr-°F)       0.006 to 0.007
-
-  *SI*            depth at which surface remains 100% snow      1 to 4
-                  covered (inches)                              
-
-  *FWFRAC*        free water fraction to produce liquid runoff  0.02 to 0.10
-                  from pack                                     
-  ------------------------------------------------------------------------------
+| **Parameter** | **Meaning** | **Typical Range** |
+| --- | --- | --- |
+| *SNOTMP* | dividing temperature between snowfall and rainfall (°F) | 32 to 36 |
+| *SCF* | rain gage snow capture factor (ratio) | 1 to 2 |
+| *TIPM* | ATI weighting factor (fraction) | 0.5 |
+| *RNM* | negative melt ratio (fraction) | 0.6 |
+| *WEPLOW* | depth at which snow redistribution begins (inches) | 0.5 to 2 |
+| *Tbase* | temperature at which snow begins to melt (°F) | 25 to 32 |
+| *DHMIN* | melt coefficient for December 21 (in/hr-°F) | 0.001 to 0.003 |
+| *DHMAX* | melt coefficient for June 21 (in/hr-°F) | 0.006 to 0.007 |
+| *SI* | depth at which surface remains 100% snow covered (inches) | 1 to 4 |
+| *FWFRAC* | free water fraction to produce liquid runoff from pack | 0.02 to 0.10 |
 
   : []{#_Toc430249169 .anchor}**Table 6‑2 Summary of snowmelt parameters
   (in US customary units)**
@@ -7820,29 +7593,18 @@ some snow covered area up until the instant that all snow disappears
 *AWE* must be greater than 0 when *ASC = 0*. A curve whose *ASC* values
 are all 1.0 causes the areal depletion phenomenon to be ignored.
 
-  -----------------------------------------------------------------------
-  **Depth Ratio**                      **ASC**
-  ------------------------------------ ----------------------------------
-  0.0                                  0.10
-
-  0.1                                  0.35
-
-  0.2                                  0.53
-
-  0.3                                  0.66
-
-  0.4                                  0.75
-
-  0.5                                  0.82
-
-  0.6                                  0.87
-
-  0.7                                  0.92
-
-  0.8                                  0.95
-
-  0.9                                  0.98
-  -----------------------------------------------------------------------
+| **Depth Ratio** | **ASC** |
+| --- | --- |
+| 0.0 | 0.10 |
+| 0.1 | 0.35 |
+| 0.2 | 0.53 |
+| 0.3 | 0.66 |
+| 0.4 | 0.75 |
+| 0.5 | 0.82 |
+| 0.6 | 0.87 |
+| 0.7 | 0.92 |
+| 0.8 | 0.95 |
+| 0.9 | 0.98 |
 
   : []{#_Toc430249170 .anchor}**Table 6‑3 Typical areal depletion curve
   for natural areas**
@@ -7859,144 +7621,80 @@ list the daily temperatures and hourly precipitation, respectively, used
 in the simulation. The meteorological conditions are recorded data for
 Raleigh, NC. Neither snow removal nor areal depletion is considered.
 
-  -----------------------------------------------------------------------
-  **Parameter**                                   **Value**
-  ----------------------------------------------- -----------------------
-  Area (acres)                                    1
-
-  Width (ft)                                      140
-
-  Slope (%)                                       0.5
-
-  Percent Impervious                              100
-
-  Roughness Coefficient                           0.01
-
-  Depression Storage (in)                         0.25
-
-  Minimum Melt Coefficient (in/h/°F)              0.001
-
-  Maximum Melt Coefficient (in/h/°F)              0.006
-
-  Base Temperature (*Tbase*) (°F)                 30
-
-  Free Water Fraction (*FWFRAC*)                  0.05
-
-  Initial Snow Depth (in)                         1.0
-
-  Initial Free Water (in)                         0.2
-
-  Dividing Temperature (*SNOTMP*) (°F)            34
-
-  ATI Weighting Factor (TIPM)                     0.5
-
-  Negative Melt Ratio (RNM)                       0.6
-
-  Latitude (°)                                    42
-  -----------------------------------------------------------------------
+| **Parameter** | **Value** |
+| --- | --- |
+| Area (acres) | 1 |
+| Width (ft) | 140 |
+| Slope (%) | 0.5 |
+| Percent Impervious | 100 |
+| Roughness Coefficient | 0.01 |
+| Depression Storage (in) | 0.25 |
+| Minimum Melt Coefficient (in/h/°F) | 0.001 |
+| Maximum Melt Coefficient (in/h/°F) | 0.006 |
+| Base Temperature (*Tbase*) (°F) | 30 |
+| Free Water Fraction (*FWFRAC*) | 0.05 |
+| Initial Snow Depth (in) | 1.0 |
+| Initial Free Water (in) | 0.2 |
+| Dividing Temperature (*SNOTMP*) (°F) | 34 |
+| ATI Weighting Factor (TIPM) | 0.5 |
+| Negative Melt Ratio (RNM) | 0.6 |
+| Latitude (°) | 42 |
 
   : []{#_Toc430249171 .anchor}**Table 6‑4 Subcatchment and snow pack
   parameters for illustrative snowmelt example**
 
-  ------------------------------------------------------------------------
-  **Month/Day**      **Maximum Temperature      **Minimum Temperature
-                     (°F)**                     (°F)**
-  ------------------ -------------------------- --------------------------
-  1/24               49                         30
-
-  1/25               50                         32
-
-  1/26               46                         28
-
-  1/27               50                         27
-
-  1/28               45                         24
-
-  1/29               36                         14
-
-  1/30               46                         21
-
-  1/31               51                         22
-
-  2/1                46                         26
-
-  2/2                27                         -5
-
-  2/3                29                         -7
-
-  2/4                42                         27
-
-  2/5                46                         18
-
-  2/6                54                         19
-
-  2/7                45                         28
-
-  2/8                41                         20
-
-  2/9                51                         20
-
-  2/10               45                         25
-  ------------------------------------------------------------------------
+| **Month/Day** | **Maximum Temperature (°F)** | **Minimum Temperature (°F)** |
+| --- | --- | --- |
+| 1/24 | 49 | 30 |
+| 1/25 | 50 | 32 |
+| 1/26 | 46 | 28 |
+| 1/27 | 50 | 27 |
+| 1/28 | 45 | 24 |
+| 1/29 | 36 | 14 |
+| 1/30 | 46 | 21 |
+| 1/31 | 51 | 22 |
+| 2/1 | 46 | 26 |
+| 2/2 | 27 | -5 |
+| 2/3 | 29 | -7 |
+| 2/4 | 42 | 27 |
+| 2/5 | 46 | 18 |
+| 2/6 | 54 | 19 |
+| 2/7 | 45 | 28 |
+| 2/8 | 41 | 20 |
+| 2/9 | 51 | 20 |
+| 2/10 | 45 | 25 |
 
   : []{#_Toc430249172 .anchor}**Table 6‑5 Daily temperatures for
   illustrative snowmelt example**
 
-  -----------------------------------------------------------------------
-  **Date**                **Time**                **Precipitation (in)**
-  ----------------------- ----------------------- -----------------------
-  01/26                   04:00:00                0.26
-
-  01/29                   18:00:00                0.11
-
-  01/29                   19:00:00                0.01
-
-  01/29                   20:00:00                0.08
-
-  02/01                   23:00:00                0.02
-
-  02/02                   00:00:00                0.06
-
-  02/02                   01:00:00                0.08
-
-  02/02                   02:00:00                0.14
-
-  02/02                   03:00:00                0.19
-
-  02/02                   04:00:00                0.09
-
-  02/02                   05:00:00                0.01
-
-  02/02                   22:00:00                0.02
-
-  02/02                   23:00:00                0.06
-
-  02/03                   00:00:00                0.12
-
-  02/03                   01:00:00                0.22
-
-  02/03                   02:00:00                0.17
-
-  02/03                   03:00:00                0.05
-
-  02/03                   12:00:00                0.02
-
-  02/03                   13:00:00                0.00
-
-  02/03                   14:00:00                0.02
-
-  02/09                   00:00:00                0.01
-
-  02/09                   01:00:00                0.02
-
-  02/09                   02:00:00                0.00
-
-  02/09                   03:00:00                0.00
-
-  02/09                   04:00:00                0.00
-
-  02/09                   05:00:00                0.06
-  -----------------------------------------------------------------------
+| **Date** | **Time** | **Precipitation (in)** |
+| --- | --- | --- |
+| 01/26 | 04:00:00 | 0.26 |
+| 01/29 | 18:00:00 | 0.11 |
+| 01/29 | 19:00:00 | 0.01 |
+| 01/29 | 20:00:00 | 0.08 |
+| 02/01 | 23:00:00 | 0.02 |
+| 02/02 | 00:00:00 | 0.06 |
+| 02/02 | 01:00:00 | 0.08 |
+| 02/02 | 02:00:00 | 0.14 |
+| 02/02 | 03:00:00 | 0.19 |
+| 02/02 | 04:00:00 | 0.09 |
+| 02/02 | 05:00:00 | 0.01 |
+| 02/02 | 22:00:00 | 0.02 |
+| 02/02 | 23:00:00 | 0.06 |
+| 02/03 | 00:00:00 | 0.12 |
+| 02/03 | 01:00:00 | 0.22 |
+| 02/03 | 02:00:00 | 0.17 |
+| 02/03 | 03:00:00 | 0.05 |
+| 02/03 | 12:00:00 | 0.02 |
+| 02/03 | 13:00:00 | 0.00 |
+| 02/03 | 14:00:00 | 0.02 |
+| 02/09 | 00:00:00 | 0.01 |
+| 02/09 | 01:00:00 | 0.02 |
+| 02/09 | 02:00:00 | 0.00 |
+| 02/09 | 03:00:00 | 0.00 |
+| 02/09 | 04:00:00 | 0.00 |
+| 02/09 | 05:00:00 | 0.06 |
 
   : []{#_Toc430249173 .anchor}**Table 6‑6 Periods of precipitation for
   illustrative snowmelt example**
@@ -8136,7 +7834,7 @@ hydrograph
 *K*: the ratio of time to recession of the unit hydrograph to the time
 to peak
 
-*Q~peak~*: peak flow (per unit area) on the unit hydrograph.
+*Q<sub>peak</sub>*: peak flow (per unit area) on the unit hydrograph.
 
 []{#_Toc426447709 .anchor}**Figure 7‑2 Example of an RDII triangular
 unit hydrograph.**
@@ -8160,18 +7858,16 @@ is expressed mathematically as:
 
 where:
 
-  ---------------------------------------------------------------------------
-  *Q~t~*   =   RDII flow per unit area during time period *t*,
-  -------- --- --------------------------------------------------------------
-  *U~t~*   =   ordinate of the unit hydrograph for time period *t*,
-
-  *P~j~*   =   depth of rainfall for time period *j*.
-  ---------------------------------------------------------------------------
+| Symbol | Description |
+| :--- | :--- |
+| *Q<sub>t</sub>* | RDII flow per unit area during time period *t*, |
+| *U<sub>t</sub>* | ordinate of the unit hydrograph for time period *t*, |
+| *P<sub>j</sub>* | depth of rainfall for time period *j*. |
 
 []{#_Toc426447710 .anchor}**Figure 7‑3 Application of a unit hydrograph
 to a storm event.**
 
-The ordinate value *U~j~* for time period *j* is determined from the
+The ordinate value *U<sub>j</sub>* for time period *j* is determined from the
 shape parameters *R, T*, and *K* of the unit hydrograph as follows. One
 can write:
 
@@ -8179,21 +7875,21 @@ can write:
 | > $$U_{j} = f_{j}Q_{peak}$$       | (7-2)                             |
 +===================================+===================================+
 
-where *f~j~* is the fraction of the rising limb (or falling limb) that
+where *f<sub>j</sub>* is the fraction of the rising limb (or falling limb) that
 corresponds to time period *j*. Because the area under the unit
-hydrograph is *R*, the value of *Q~peak~* is:
+hydrograph is *R*, the value of *Q<sub>peak</sub>* is:
 
 +------------------------------------+-----------------------------------+
 | > $$Q_{peak} = \frac{2R}{T + KT}$$ | (7-3)                             |
 +====================================+===================================+
 
-Thus *U~j\ ~*can be expressed as:
+Thus *U<sub>j</sub> *can be expressed as:
 
 +--------------------------------------+-----------------------------------+
 | > $$U_{j} = \frac{2Rf_{j}}{T + KT}$$ | (7-4)                             |
 +======================================+===================================+
 
-By convention, the time *τ~j~* on the unit hydrograph base corresponding
+By convention, the time *τ<sub>j</sub>* on the unit hydrograph base corresponding
 to time period *j* is taken as the midpoint between either ends of the
 time interval:
 
@@ -8202,15 +7898,15 @@ time interval:
 +======================================+===================================+
 
 where *∆τ* is the time interval over which precipitation is recorded.
-The fraction *f~j~* is then determined as:
+The fraction *f<sub>j</sub>* is then determined as:
 
 +-------------------------------------------+-----------------------+-----------------------+
-| > $$f_{j} = \frac{\tau_{j}}{T}$$          | for *τ~j~ \<= T*      | (7-6)                 |
+| > $$f_{j} = \frac{\tau_{j}}{T}$$          | for *τ<sub>j</sub> \<= T*      | (7-6)                 |
 +===========================================+:======================+======================:+
-| > $$f_{j} = 1 - \frac{\tau_{j - T}}{KT}$$ | for *T* \< *τ~j~ \<=  | (7-7)                 |
+| > $$f_{j} = 1 - \frac{\tau_{j - T}}{KT}$$ | for *T* \< *τ<sub>j</sub> \<=  | (7-7)                 |
 |                                           | T + KT*               |                       |
 +-------------------------------------------+-----------------------+-----------------------+
-| > $$f_{j} = 0$$                           | for *τ~j~ \> T + KT*  | (7-8)                 |
+| > $$f_{j} = 0$$                           | for *τ<sub>j</sub> \> T + KT*  | (7-8)                 |
 +-------------------------------------------+-----------------------+-----------------------+
 
 Because actual RDII hydrographs have complex shapes, three different
@@ -8225,7 +7921,7 @@ has the longest *T* value. Figure 7-4 depicts how the three unit
 hydrographs are summed together to produce a total RDII hydrograph in
 response to a unit of rainfall over one unit of time. Equation 7-1 is
 still used to compute the overall RDII hydrograph to any given storm
-event, with a separate *Q~t~* computed for each of the three unit
+event, with a separate *Q<sub>t</sub>* computed for each of the three unit
 hydrographs. These are then added together to produce the total flow per
 unit area for time period *t*.
 
@@ -8240,10 +7936,10 @@ with ordinary runoff, a certain initial volume of rainfall will be
 captured by surface ponding, interception by flat roofs and vegetation,
 and surface wetting and will not contribute to RDII. This phenomenon is
 represented in SWMM by three user-supplied "initial abstraction" (*IA*)
-parameters that accompany each RDII unit hydrograph. *IA~max~* (in or
+parameters that accompany each RDII unit hydrograph. *IA<sub>max</sub>* (in or
 mm) is the maximum depth of initial abstraction capacity available for
-the sewershed. *IA~0~* (in or mm) is the amount of that capacity already
-used up at the start of the simulation. *IA~r~* (in/day or mm/day) is
+the sewershed. *IA<sub>0</sub>* (in or mm) is the amount of that capacity already
+used up at the start of the simulation. *IA<sub>r</sub>* (in/day or mm/day) is
 the rate at which capacity becomes available again during periods of no
 rainfall. During storm events, the volume of rainfall applied to the
 unit hydrograph convolution formula, Equation 7-1, is reduced by the
@@ -8283,7 +7979,7 @@ system node that receives RDII inflows:
 
 - the *R-T-K* parameters for each of three RDII unit hydrographs,
 
-- the initial abstraction parameters (*IA~max~, IA~0~*, and *IA~r~*)
+- the initial abstraction parameters (*IA<sub>max</sub>, IA<sub>0</sub>*, and *IA<sub>r</sub>*)
   associated with each RDII unit hydrograph,
 
 - the time series of rain volumes that fall on the sewershed and their
@@ -8298,8 +7994,8 @@ system node that receives RDII inflows:
 To use SWMM's RDII option a user must supply estimates of the three
 parameters (R, T, and K) that define each of three unit hydrographs for
 each node where RDII enters the sewer system. Each unit hydrograph can
-also have a set of initial abstraction parameters (Ia~0~, Ia~max~, and
-Ia~r~). SWMM also allows one to specify different sets of unit
+also have a set of initial abstraction parameters (Ia<sub>0</sub>, Ia<sub>max</sub>, and
+Ia<sub>r</sub>). SWMM also allows one to specify different sets of unit
 hydrographs and initial abstraction parameters for different months of
 the year. In addition, the area of the RDII contributing sewershed must
 also be specified.
@@ -8360,31 +8056,19 @@ the R-values of this set of unit hydrographs sum to 0.36, implying that
 36 percent of total rainfall volume winds up as RDII. To keep things
 simple, initial abstraction is not considered in this example.
 
-  -----------------------------------------------------------------------
-  **Hour**                        **Rainfall (inches)**
-  ------------------------------- ---------------------------------------
-  0:00                            0.0
-
-  1:00                            0.25
-
-  2:00                            0.5
-
-  3:00                            0.8
-
-  4:00                            0.4
-
-  5:00                            0.1
-
-  6:00                            0.0
-
-  27:00                           0.0
-
-  28:00                           0.4
-
-  29:00                           0.2
-
-  30:00                           0.0
-  -----------------------------------------------------------------------
+| **Hour** | **Rainfall (inches)** |
+| --- | --- |
+| 0:00 | 0.0 |
+| 1:00 | 0.25 |
+| 2:00 | 0.5 |
+| 3:00 | 0.8 |
+| 4:00 | 0.4 |
+| 5:00 | 0.1 |
+| 6:00 | 0.0 |
+| 27:00 | 0.0 |
+| 28:00 | 0.4 |
+| 29:00 | 0.2 |
+| 30:00 | 0.0 |
 
   : []{#_Toc430249174 .anchor}**Table 7‑1 Rainfall time series for the
   illustrative RDII example**
@@ -9270,7 +8954,7 @@ less than the curve's infiltration rate.
 **Hydraulic Conductivity -** the rate of water movement through soil
 under a unit gradient of hydraulic head. Its value increases with
 increasing soil moisture, up to a maximum for a completely saturated
-soil (known as the saturated hydraulic conductivity or K~sat~).
+soil (known as the saturated hydraulic conductivity or K<sub>sat</sub>).
 
 **Hydrograph -** a plot that shows how runoff flow varies with time.
 

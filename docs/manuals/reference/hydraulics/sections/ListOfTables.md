@@ -44,7 +44,7 @@ Table 6-1 Pump curves recognized by SWMM
 
 Table 6-2 Kindsvater-Carter constants for rectangular weir coefficient
 
-Table 6-3 Rectangular broad-crested weir coefficients (ft^1/2^/sec)
+Table 6-3 Rectangular broad-crested weir coefficients (ft<sup>1/2</sup>/sec)
 
 Table 6-4 Formulas for flow derivatives of various types of weirs
 

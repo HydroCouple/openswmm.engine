@@ -34,6 +34,8 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <cstdio>
 #include <cstdint>
 #include <cassert>
 #include <algorithm>
@@ -99,12 +101,45 @@ struct TableCursor {
  *
  * @see Legacy reference: TTable in src/solver/objects.h
  */
+/**
+ * @brief Block of rows for file-backed table boundaries/cache.
+ */
+struct TableBlock {
+    std::vector<double> x;           ///< Independent variable values
+    std::vector<double> y;           ///< Dependent values (flat: row-major, num_cols per row)
+    int                 num_cols = 1; ///< Number of value columns
+    std::size_t         file_row_start = 0; ///< Row offset in file (cache only)
+
+    std::size_t num_rows() const noexcept { return x.size(); }
+    bool        empty()    const noexcept { return x.empty(); }
+};
+
 struct Table {
     std::string         id;      ///< Table identifier (from input file)
     TableType           type;    ///< Table type (TIMESERIES, CURVE_*, etc.)
     std::vector<double> x;       ///< Independent variable (time, depth, etc.)
     std::vector<double> y;       ///< Dependent variable (flow, volume, etc.)
     TableCursor         cursor;  ///< Bidirectional lookup cursor
+
+    // ---- File-backed time series support ----
+    bool               is_file_based = false; ///< True if data is read from external file
+    std::FILE*         file_handle = nullptr;  ///< Open file handle (owned)
+    std::string        file_path;              ///< Path to external data file
+    TableBlock         first_boundary;         ///< First rows from file (for validation)
+    TableBlock         last_boundary;          ///< Last rows from file (for validation)
+    TableBlock         cache;                  ///< Sliding cache window for file lookups
+    double             dx_min  = 0.0;          ///< Minimum inter-entry x spacing
+    double             x_min   = 0.0;          ///< Minimum x value in file
+    double             x_max   = 0.0;          ///< Maximum x value in file
+    int                num_cols = 1;           ///< Number of value columns
+    std::size_t        total_rows = 0;         ///< Total data rows in file
+    std::size_t        num_cache_rows = 8192;  ///< Cache window size (rows)
+    long               data_start_offset = 0;  ///< File offset to first data row
+    std::vector<long>  row_offsets;            ///< Sparse byte-offset index into file
+    std::vector<std::string> column_ids;       ///< Column identifiers
+    std::unordered_map<std::string, int> column_map; ///< Column name → index
+
+    static constexpr std::size_t INDEX_STRIDE = 4096; ///< Rows between offset index entries
 
     /** @brief Number of data points. */
     std::size_t size() const noexcept { return x.size(); }
@@ -269,6 +304,32 @@ struct TableData {
         for (auto& t : tables) t.cursor.reset();
     }
 };
+
+// ============================================================================
+// Table validation
+// ============================================================================
+
+struct TableValidation {
+    bool valid = true;
+    std::vector<std::string> errors;
+    std::vector<std::string> warnings;
+};
+
+TableValidation validate_table(Table& tbl);
+
+// ============================================================================
+// File-backed table API
+// ============================================================================
+
+bool table_open_file(Table& tbl, std::size_t boundary_rows = 128);
+std::size_t table_load_cache(Table& tbl, std::size_t start_row);
+
+// ============================================================================
+// Multicolumn lookup API
+// ============================================================================
+
+double table_lookup_column(Table& tbl, int col_idx, double x_query);
+double table_step_column(Table& tbl, int col_idx, double x_query);
 
 } /* namespace openswmm */
 

@@ -33,7 +33,7 @@ namespace openswmm {
 class DefaultReportPlugin final : public IReportPlugin {
 public:
     explicit DefaultReportPlugin(std::string rpt_path);
-    ~DefaultReportPlugin() override = default;
+    ~DefaultReportPlugin() override;
 
     PluginState state() const noexcept override { return state_; }
 
@@ -57,6 +57,20 @@ private:
     PluginState state_      = PluginState::UNLOADED;
     std::string last_error_;
     std::time_t wall_start_ = 0;  ///< Wall-clock time when prepare() was called
+
+    // Progressive write state
+    std::FILE*  file_             = nullptr; ///< Persistent file handle (opened in prepare)
+    std::size_t warnings_written_ = 0;      ///< Warnings already written to file
+    std::size_t errors_written_   = 0;      ///< Errors already written to file
+
+    /** @brief Write title, input summaries, and analysis options. */
+    void write_preamble(std::FILE* f, const SimulationContext& ctx);
+
+    /** @brief Write simulation result sections (continuity, stats, etc.). */
+    void write_results(std::FILE* f, const SimulationContext& ctx);
+
+    /** @brief Write analysis timing section. */
+    void write_timing(std::FILE* f);
 };
 
 } /* namespace openswmm */

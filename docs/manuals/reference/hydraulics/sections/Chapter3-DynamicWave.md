@@ -284,7 +284,7 @@ Evaluation of the flow updating formula 3-14 requires values for the
 average area ($\overline{A}$), hydraulic radius ($\overline{R}$), and
 velocity ($\overline{U}$) for the conduit in question. These values are
 computed using heads *H*<sub>1</sub> and *H*<sub>2</sub> belonging to the most recently
-computed head estimates *H^last^* at either end of the conduit. The flow
+computed head estimates *H<sup>last</sup>* at either end of the conduit. The flow
 depth *Y*<sub>1</sub> at the upstream end of the conduit is computed as:
 
 $$0 \text{ for } H_{1} \leq Z_{1}$$
@@ -301,38 +301,38 @@ end of the conduit.
 > 
 > The following steps are used to update link flows and nodal heads over a given time step from *t* to *t + ∆t* for dynamic wave analysis:
 > 
-> 1. Initially let *Q^last^* and *H^last^* be the flow in each link and the head at each node, respectively, computed at time *t*. At time 0 these values are provided by the user-supplied initial conditions.
+> 1. Initially let *Q<sup>last</sup>* and *H<sup>last</sup>* be the flow in each link and the head at each node, respectively, computed at time *t*. At time 0 these values are provided by the user-supplied initial conditions.
 > 
-> 2. Solve Equation 3-14 for each link producing a new flow estimate *Q^new^* for time *t + ∆t*, basing the values of *A*, $\overline{A}$, $\overline{U}$, and $\overline{R}$ on *H^last^*.
+> 2. Solve Equation 3-14 for each link producing a new flow estimate *Q<sup>new</sup>* for time *t + ∆t*, basing the values of *A*, $\overline{A}$, $\overline{U}$, and $\overline{R}$ on *H<sup>last</sup>*.
 > 
-> 3. Combine *Q^new^* and *Q^last^* together using a relaxation factor *θ* to produce a weighted value of *Q^new^*:
+> 3. Combine *Q<sup>new</sup>* and *Q<sup>last</sup>* together using a relaxation factor *θ* to produce a weighted value of *Q<sup>new</sup>*:
 >    $$Q^{new} = (1 - \theta)Q^{last} + \theta Q^{new}$$
 > 
-> 4. Compute a value for *H^new^* at each node from Equation 3-15 using the flows *Q^new^* for *Q^t+∆t^* and the heads *H^last^* to evaluate $A_{S}^{t + \Delta t}$.
+> 4. Compute a value for *H<sup>new</sup>* at each node from Equation 3-15 using the flows *Q<sup>new</sup>* for *Q^t+∆t^* and the heads *H<sup>last</sup>* to evaluate $A_{S}^{t + \Delta t}$.
 > 
-> 5. As with flows, apply a relaxation factor to combine *H^last^* and *H^new^*:
+> 5. As with flows, apply a relaxation factor to combine *H<sup>last</sup>* and *H<sup>new</sup>*:
 >    $$H^{new} = (1 - \theta)H^{last} + \theta H^{new}$$
 > 
-> 6. If *H^new^* is close enough to *H^last^* for each node then the process stops with *Q^new^* and *H^new^* as the solution for time *t+∆t*. Otherwise, *H^last^* and *Q^last^* are set equal to *H^new^* and *Q^new^*, respectively, and the process returns to step 2.
+> 6. If *H<sup>new</sup>* is close enough to *H<sup>last</sup>* for each node then the process stops with *Q<sup>new</sup>* and *H<sup>new</sup>* as the solution for time *t+∆t*. Otherwise, *H<sup>last</sup>* and *Q<sup>last</sup>* are set equal to *H<sup>new</sup>* and *Q<sup>new</sup>*, respectively, and the process returns to step 2.
 > 
 > **Notes:**
 > - The relaxation factor *θ* is set to 0.5.
 > - The convergence tolerance and maximum number of trials can be set by the user. Their default values are 0.005 feet and 8, respectively.
-> - For links whose end node heads have already converged, steps 2 and 3 can be skipped and *Q^new^* can be set equal to *Q^last^*.
+> - For links whose end node heads have already converged, steps 2 and 3 can be skipped and *Q<sup>new</sup>* can be set equal to *Q<sup>last</sup>*.
 
 Values of $\overline{A}$ and $\overline{R}$ are computed from the
 conduit's cross section geometry at the average flow depth
 $\frac{\overline{Y} = \left( Y_{1} + Y_{2} \right)}{2}$. Formulas for
 doing so are described in Chapter 5 of this manual. The average velocity
 $\overline{U}$ is found by dividing the most current flow value
-*Q^last^* by the average area $\overline{A}$.
+*Q<sup>last</sup>* by the average area $\overline{A}$.
 
 In addition, the average area and hydraulic radius used in the pressure
 and friction terms of equation 3-14 are upstream weighted to reflect how
 close a conduit's flow is to being supercritical. Supercritical flow is
 influenced only by upstream conditions (i.e., wave disturbances
 propagate only in the downstream direction). The weight is derived from
-the Froude number *Fr* for *Q^last^*:
+the Froude number *Fr* for *Q<sup>last</sup>*:
 
 $$Fr = \frac{\left| \overline{U} \right|}{\sqrt{g\frac{\overline{A}}{\overline{W}}}}$$   (3-17)
 
@@ -555,7 +555,7 @@ Hardy Cross method for pressurized water distribution networks (Bhave,
 To accommodate node surcharging, Step 4 of the iterative process that
 updates a node's head is modified as follows. First the node is checked
 to see if it is in a surcharged state, i.e., that it is not a storage or
-outfall node and has *H^last^* greater than the top of the highest
+outfall node and has *H<sup>last</sup>* greater than the top of the highest
 connecting conduit *H*<sub>crown</sub>. If it is not surcharged then Equation
 3-15 is used as before to update its head. Otherwise the following
 modified form of Equation 3-26 is used to estimate the new head *H*<sup>new</sup>

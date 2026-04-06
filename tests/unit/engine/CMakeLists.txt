@@ -95,6 +95,7 @@ add_gtest_unit(test_engine_climate          test_climate.cpp)
 add_gtest_unit(test_engine_groundwater      test_groundwater.cpp)
 add_gtest_unit(test_engine_routing          test_routing.cpp)
 add_gtest_unit(test_engine_site_drainage    test_site_drainage_model.cpp)
+add_gtest_unit(test_engine_profile          profile_comparison.cpp)
 
 # 2D surface routing tests — geometry, gradients, flux, parsing
 # These tests exercise the non-CVODE portions of the 2D module and

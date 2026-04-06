@@ -76,6 +76,8 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.links.loss_avg,          0.0);
     grow(ctx.links.has_flap_gate,     false);
     grow(ctx.links.seep_rate,         0.0);
+    grow(ctx.links.evap_loss_rate,    0.0);
+    grow(ctx.links.seep_loss_rate,    0.0);
     grow(ctx.links.culvert_code,      0);
     grow(ctx.links.normal_flow_limited, false);
     grow(ctx.links.inlet_control,     false);
@@ -323,6 +325,9 @@ static const std::unordered_map<std::string, XsectShape> SHAPE_MAP = {
     {"RECT_TRIANGULAR", XsectShape::RECT_TRIANG},
     {"RECT_TRIANG",     XsectShape::RECT_TRIANG},
     {"RECT_ROUND",      XsectShape::RECT_ROUND},
+    {"HORIZ_ELLIPSE",   XsectShape::HORIZ_ELLIPSE},
+    {"VERT_ELLIPSE",    XsectShape::VERT_ELLIPSE},
+    {"ARCH",            XsectShape::ARCH},
     {"IRREGULAR",       XsectShape::IRREGULAR},
     {"CUSTOM",          XsectShape::CUSTOM},
     {"FORCE_MAIN",      XsectShape::FORCE_MAIN},

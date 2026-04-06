@@ -25,11 +25,11 @@ Wiley & Sons, New York 1989.
 Bhave, P.R., *Analysis of Flow in Water Distribution Networks*,
 Technomic Publishing, Lancaster, PA, 1991.
 
-Brater, E.F. and King, H.W., *Handbook of Hydraulics*, (6^th^ edition),
+Brater, E.F. and King, H.W., *Handbook of Hydraulics*, (6<sup>th</sup> edition),
 McGraw Hill Book Company, New York, NY, 1976.
 
 Brater, E.F., King, H.W., Lindel, J.E., and Wei, C.Y., *Handbook of
-Hydraulics* (7^th^ edition), McGraw-Hill, New York, NY, 1996.
+Hydraulics* (7<sup>th</sup> edition), McGraw-Hill, New York, NY, 1996.
 
 Brunner,G.W., "Combined 1D and 2D Modeling with HEC-RAS". U.S. Army
 Corps of Engineers Hydrologic Engineering Center, October, 2014.
@@ -63,7 +63,7 @@ Resour. Res*., 49, 4833--4844, 2013.
 
 Faram, M.G., Stephenson, A.G. and Andoh, R.Y.G., "Vortex flow controls:
 state of the art review and application (from the catchbasin to the
-dam)", *Proceedings of the 7^th^ International Conference on Sustainable
+dam)", *Proceedings of the 7<sup>th</sup> International Conference on Sustainable
 Techniques and Strategies in Urban Water Management* (Novatech 2010),
 Lyon, France, 27 June -- 1 July, 2010.
 

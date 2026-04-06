@@ -48,12 +48,14 @@ static const char* pN(const SimulationContext& c, int i) {
 }
 
 static const char* xsName(int s) {
+    // Indexed by LinkData::XsectShape enum values
     static const char* n[] = {
-        "DUMMY","CIRCULAR","FILLED_CIRCULAR","RECT_CLOSED","RECT_OPEN",
-        "TRAPEZOIDAL","TRIANGULAR","PARABOLIC","POWER","RECT_TRIANGULAR",
-        "RECT_ROUND","MODBASKETHANDLE","HORIZ_ELLIPSE","VERT_ELLIPSE",
-        "ARCH","EGG","HORSESHOE","GOTHIC","CATENARY","SEMIELLIPTICAL",
-        "BASKETHANDLE","SEMICIRCULAR","IRREGULAR","CUSTOM","FORCE_MAIN","STREET"
+        "CIRCULAR","FILLED_CIRCULAR","RECT_CLOSED","RECT_OPEN",
+        "TRAPEZOIDAL","TRIANGULAR","PARABOLIC","POWER","MODBASKETHANDLE",
+        "EGG","HORSESHOE","GOTHIC","CATENARY","SEMIELLIPTICAL",
+        "BASKETHANDLE","SEMICIRCULAR","RECT_TRIANGULAR","RECT_ROUND",
+        "HORIZ_ELLIPSE","VERT_ELLIPSE","ARCH",
+        "IRREGULAR","CUSTOM","FORCE_MAIN","STREET","DUMMY"
     };
     return (s>=0&&s<=25) ? n[s] : "CIRCULAR";
 }

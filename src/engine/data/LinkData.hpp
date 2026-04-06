@@ -69,11 +69,14 @@ enum class XsectShape : int16_t {
     SEMICIRCULAR     = 15,
     RECT_TRIANG      = 16,  ///< Rectangular-triangular bottom
     RECT_ROUND       = 17,  ///< Rectangular-round bottom
-    IRREGULAR        = 18,  ///< User-supplied shape curve
-    CUSTOM           = 19,  ///< Shape from CURVE_SHAPE table
-    FORCE_MAIN       = 20,  ///< Circular force main (Hazen-Williams or D-W)
-    STREET_XSECT     = 21,  ///< Street cross-section
-    DUMMY            = 22   ///< Dummy (no geometry)
+    HORIZ_ELLIPSE    = 18,  ///< Horizontal elliptical pipe
+    VERT_ELLIPSE     = 19,  ///< Vertical elliptical pipe
+    ARCH             = 20,  ///< Arch pipe
+    IRREGULAR        = 21,  ///< User-supplied shape curve
+    CUSTOM           = 22,  ///< Shape from CURVE_SHAPE table
+    FORCE_MAIN       = 23,  ///< Circular force main (Hazen-Williams or D-W)
+    STREET_XSECT     = 24,  ///< Street cross-section
+    DUMMY            = 25   ///< Dummy (no geometry)
 };
 
 /**
@@ -316,8 +319,14 @@ struct LinkData {
     std::vector<double>     loss_avg;
     /** @brief Flap gate on this conduit. @see Legacy: Link[j].hasFlapGate */
     std::vector<bool>       has_flap_gate;
-    /** @brief Seepage rate (project units). @see Legacy: Conduit[k].seepRate */
+    /** @brief User-specified seepage rate (project units). @see Legacy: Link[j].seepRate */
     std::vector<double>     seep_rate;
+
+    /** @brief Computed conduit evaporation loss rate (cfs per barrel). @see Legacy: Conduit[k].evapLossRate */
+    std::vector<double>     evap_loss_rate;
+
+    /** @brief Computed conduit seepage loss rate (cfs per barrel). @see Legacy: Conduit[k].seepLossRate */
+    std::vector<double>     seep_loss_rate;
 
     /**
      * @brief Culvert type code (1-57, 0 = not a culvert).
@@ -533,6 +542,8 @@ struct LinkData {
         loss_avg.assign(un, 0.0);
         has_flap_gate.assign(un, false);
         seep_rate.assign(un, 0.0);
+        evap_loss_rate.assign(un, 0.0);
+        seep_loss_rate.assign(un, 0.0);
         culvert_code.assign(un, 0);
         inlet_control.assign(un, false);
         dqdh.assign(un, 0.0);

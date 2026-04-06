@@ -721,12 +721,12 @@ back to the user's choice of unit system.
 | Depth | feet | meters |
 | Elevation | feet | meters |
 | Evaporation | inches/day | millimeters/day |
-| Flow Rate | cubic feet/sec (cfs)<br>gallons/min (gpm)<br>10^6^ gallons/day (mgd) | cubic meters/sec (cms)<br>liters/sec (lps)<br>10^6^ liters/day (mld) |
+| Flow Rate | cubic feet/sec (cfs)<br>gallons/min (gpm)<br>10<sup>6</sup> gallons/day (mgd) | cubic meters/sec (cms)<br>liters/sec (lps)<br>10<sup>6</sup> liters/day (mld) |
 | Hydraulic Conductivity | inches/hour | millimeters/hour |
 | Hydraulic Head | feet | meters |
 | Infiltration Rate | inches/hour | millimeters/hour |
 | Length | feet | meters |
-| Manning's n | seconds/meter^1/3^ | seconds/meter^1/3^ |
+| Manning's n | seconds/meter<sup>1/3</sup> | seconds/meter<sup>1/3</sup> |
 | Pollutant Buildup | mass/acre | mass/hectare |
 | Pollutant Concentration | milligrams/liter (mg/L)<br>micrograms/liter (μg/L)<br>organism counts/liter | milligrams/liter (mg/L)<br>micrograms/liter (μg/L)<br>organism counts/liter |
 | Rainfall Intensity | inches/hour | millimeters/hour |
@@ -817,7 +817,7 @@ time is a function of the catchment response to rainfall input. Small,
 steep, smooth, impervious catchments have fast response times, while
 large, flat, pervious catchments have slower response times. As a
 generality, shorter time increment data are preferable to longer time
-increment data, but for a large (e.g., 10 mi^2^ or 26 km^2^)
+increment data, but for a large (e.g., 10 mi<sup>2</sup> or 26 km<sup>2</sup>)
 subcatchment (coarse schematization), even the hourly inputs usually
 used for continuous simulation may be appropriate. Rainfall data with
 intervals larger than 1-hour (such as average daily rainfall or
@@ -876,7 +876,7 @@ values may be able to place highly spatially and temporally variable
 rainfall data into a time series format easily input to SWMM (e.g.,
 Hoblit and Curtis, 2002; Meeneghan et al., 2002, 2003; Vallabhaneni,
 2002). Radar data are spatially averaged over uniform grid cells of 1
-km^2^ or larger and therefore each cell would cover a number of runoff
+km<sup>2</sup> or larger and therefore each cell would cover a number of runoff
 subcatchments. In this case one could simply use a separate Rain Gage
 object for each grid cell that overlaps the study area, and assign the
 nearest cell as the subcatchment's source of rainfall data. A more
@@ -1501,7 +1501,7 @@ standard time zone. These are listed in Table 2-14. Note that time zone
 boundaries are very irregular and often are quite displaced from what
 might be expected on the basis of the local longitude, e.g., most of
 Alaska is much further west than the standard meridian for Alaska time
-of 135^o^W. The longitude correction is readily computed as
+of 135<sup>o</sup>W. The longitude correction is readily computed as
 
 $$\Delta T_{LONG} = 4\frac{minutes}{degree}(\theta - SM)$$ (2-4)
 
@@ -1532,19 +1532,19 @@ occur are *H*<sub>min</sub> = *H*<sub>SR</sub> and *H*<sub>max</sub> = *H*<sub>S
 
 | **Time Zone** | **Example Cities** | **Standard Meridian** |
 |---------------|-------------------|----------------------|
-| Newfoundland Std. Time | St. Johns's, Newfoundland | 52.5^a^ |
+| Newfoundland Std. Time | St. Johns's, Newfoundland | 52.5<sup>a</sup> |
 | Atlantic Std. Time | Halifax, Nova Scotia<br>San Juan, Puerto Rico | 60 |
 | Eastern Std. Time | New York, New York<br>Toronto, Ontario | 75 |
-| Central Std. Time | Chicago, Illinois<br>Winnipeg, Manitoba<br>Saskatoon, Saskatchewan^b^ | 90 |
+| Central Std. Time | Chicago, Illinois<br>Winnipeg, Manitoba<br>Saskatoon, Saskatchewan<sup>b</sup> | 90 |
 | Mountain Std. Time | Denver, Colorado<br>Edmonton, Alberta | 105 |
 | Pacific Std. Time | San Francisco, California<br>Vancouver, British Columbia<br>Whitehorse, Yukon | 120 |
 | Alaska Std. Time | Anchorage, Alaska | 135 |
 | Aleutian Std. Time | Atka, Alaska | 150 |
 | Hawaiian Std. Time | Honolulu, Hawaii | |
 
-^a^The time zone of the island of Newfoundland is offset one half hour from other zones.
+<sup>a</sup>The time zone of the island of Newfoundland is offset one half hour from other zones.
 
-^b^Saskatchewan summer time is Mountain, winter is Central.
+<sup>b</sup>Saskatchewan summer time is Mountain, winter is Central.
 
 The temperature *T* at any hour *H* of the day can now be computed as
 follows:
@@ -1764,7 +1764,7 @@ where:
 *q* = runoff rate (ft/s)
 
 Note that the fluxes *i, e, f,* and *q* are expressed as flow rates per
-unit area (cfs/ft^2^ = ft/s).
+unit area (cfs/ft<sup>2</sup> = ft/s).
 
 Assuming that flow across the subcatchment's surface behaves as if it
 were uniform flow within a rectangular channel of width *W* (ft), height
@@ -1775,7 +1775,7 @@ $$Q = \frac{1.49}{n}S^{1/2}R_{x}^{2/3}A_{x}$$ (3-2)
 
 Here *n* is a surface roughness coefficient, *S* the apparent or average
 slope of the subcatchment (ft/ft), *A_x* the area across the
-subcatchment's width through which the runoff flows (ft^2^), and *R_x*
+subcatchment's width through which the runoff flows (ft<sup>2</sup>), and *R_x*
 is the hydraulic radius associated with this area (ft). Referring to
 Figures 3-1 and 3-2, *A_x* is a rectangular area with width *W* and
 height *d - d_s*. Because *W* will always be much larger than *d* it
@@ -1888,7 +1888,7 @@ $$\alpha_{I} = \frac{1.49WS^{1/2}}{\left( A_{2} + A_{3} \right)n_{I}}$$ for both
 
 where *n_P* is the roughness for the pervious area, *n_I* is the
 roughness for both impervious areas, and *A_i* is the surface area
-(ft^2^) associated with sub-area *i.*
+(ft<sup>2</sup>) associated with sub-area *i.*
 
 The reason that the same *α* applies to both impervious subareas even
 though their areas are different arises from how the *W/A* term is
@@ -1929,7 +1929,7 @@ b. Use a standard fifth-order Runge-Kutta integration routine with adaptive step
    $$\frac{\partial d}{\partial t} = i_x - \alpha d_x^{5/3}$$
    for *d* over the time step Δ*t_x*. Here *d_x* = *d* - *d_s* for *d* > *d_s* and is 0 otherwise while *α* is *α_P* (Equation 3-8) if the subarea is pervious or is *α_I* (Equation 3-9) if the subarea is impervious.
 
-c. Compute the runoff per unit area *q* at the end of the time step: *q* = *αd_x*^5/3^ where *α* and *d_x* are defined as above.
+c. Compute the runoff per unit area *q* at the end of the time step: *q* = *αd_x*<sup>5/3</sup> where *α* and *d_x* are defined as above.
 
 Recall that the depression storage *d_s* can have different user-supplied values for subareas A1 (pervious) and A2 (impervious) while it is zero by definition for subarea A3. Also note that initially at time zero the ponded depth *d* on each subarea of each subcatchment is zero.
 
@@ -2819,7 +2819,7 @@ storage has been filled as:
 $$Q = CiA$$ (3-16)
 
 where *C* is a runoff coefficient, *i* is the rainfall rate (ft/s), and
-*A* is the subcatchment area (ft^2^). If infiltration over the pervious
+*A* is the subcatchment area (ft<sup>2</sup>). If infiltration over the pervious
 area is considered then
 
 $$Q = \left\lbrack Ci + (1 - C)max(0,\ i - f) \right\rbrack A$$ (3-17)
