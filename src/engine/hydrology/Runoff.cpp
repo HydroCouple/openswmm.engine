@@ -132,14 +132,14 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow,
                     *dddt = captured_inflow - outflow;
                 });
         } else {
-            if (tx < 0.0) tx = 0.0;
+            tx = std::max(tx, 0.0);
             depth += inflow * tx;
         }
     }
 
     // --- Clamp to non-negative ---
     // Matches legacy subcatch.c line 1077
-    if (depth < 0.0) depth = 0.0;
+    depth = std::max(depth, 0.0);
 }
 
 double RunoffSolver::getRunoffRate(double depth, double dStore, double alpha) {
@@ -237,7 +237,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         if (gi >= 0 && gi < ctx.n_gages())
             rain_inhr = ctx.gages.rainfall[static_cast<std::size_t>(gi)];
         precip_[ui] = rain_inhr / ucf::UCF(ucf::RAINFALL, ctx.options);
-        ctx.subcatches.rainfall[ui] = rain_inhr;
+        ctx.subcatches.rainfall[ui] = precip_[ui];  // ft/sec (internal units)
     }
 
     // ----- Step 2: Evaporation rate -----
@@ -363,7 +363,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                         runoff_rate = (depth - dStore) / dt;
                         depth = dStore;
                     }
-                    if (depth < 0.0) depth = 0.0;
+                    depth = std::max(depth, 0.0);
                 } else {
                     // Step 3.8b: Integrate ponded depth via ODE (legacy line 955)
                     updatePondedDepth(depth, net_inflow, alpha, dStore, dt);

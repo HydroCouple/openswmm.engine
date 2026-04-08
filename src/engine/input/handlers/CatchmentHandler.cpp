@@ -77,6 +77,7 @@ static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.subcatches.ponded_depth,         0.0);
     grow(ctx.subcatches.gw_flow,             0.0);
     grow(ctx.subcatches.old_runoff,           0.0);
+    grow(ctx.subcatches.old_gw_flow,          0.0);
     grow(ctx.subcatches.snowpack,             -1);
     grow(ctx.subcatches.gw_aquifer,           -1);
     grow(ctx.subcatches.gw_node,             -1);

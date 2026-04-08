@@ -91,7 +91,7 @@ void SnowSolver::batchRainOnSnowMelt(double temp, double wind, double gamma,
     double t3 = 8.5 * uadj * (ea - 0.18);
     double smelt_in_hr = t1 * (0.001167 + t2 + 0.007 * rain_in_hr) + t3;
     double smelt = smelt_in_hr / ucf_rain_us;  // in/hr → ft/sec
-    if (smelt < 0.0) smelt = 0.0;
+    smelt = std::max(smelt, 0.0);
 
     // Broadcast same melt rate to all subareas (uniform climate)
     std::fill(melt, melt + count, smelt);
@@ -182,7 +182,7 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
 
         // Limit melt to available snow
         double max_melt = soa_.wsnow[ui] / dt;
-        if (soa_.imelt[ui] > max_melt) soa_.imelt[ui] = max_melt;
+        soa_.imelt[ui] = std::min(soa_.imelt[ui], max_melt);
     }
 
     // 5. Free water routing — melt fills pack liquid capacity first
@@ -212,9 +212,9 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
     for (int i = 0; i < total; ++i) {
         auto ui = static_cast<std::size_t>(i);
         soa_.wsnow[ui] -= soa_.imelt[ui] * dt;
-        if (soa_.wsnow[ui] < 0.0) soa_.wsnow[ui] = 0.0;
+        soa_.wsnow[ui] = std::max(soa_.wsnow[ui], 0.0);
         // Free water cannot exceed remaining SWE
-        if (soa_.fw[ui] > soa_.wsnow[ui]) soa_.fw[ui] = soa_.wsnow[ui];
+        soa_.fw[ui] = std::min(soa_.fw[ui], soa_.wsnow[ui]);
     }
 }
 

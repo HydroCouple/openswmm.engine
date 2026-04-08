@@ -181,7 +181,7 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
 
         // Apply as node loss (reduce volume)
         nodes.volume[uni] -= total_loss * dt;
-        if (nodes.volume[uni] < 0.0) nodes.volume[uni] = 0.0;
+        nodes.volume[uni] = std::max(nodes.volume[uni], 0.0);
     }
 }
 

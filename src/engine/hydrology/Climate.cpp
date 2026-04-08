@@ -25,11 +25,11 @@ double hargreaves(double latitude, int day_of_year, double t_avg, double t_range
     // Convert to Celsius
     double ta = (t_avg - 32.0) * 5.0 / 9.0;
     double tr = t_range * 5.0 / 9.0;
-    if (tr < 0.0) tr = 0.0;
+    tr = std::max(tr, 0.0);
 
     // Latent heat of vaporization
     double lambda = 2.50 - 0.002361 * ta;
-    if (lambda <= 0.0) lambda = 0.01;
+    lambda = std::max(lambda, 0.01);
 
     // Relative earth-sun distance
     double dr = 1.0 + 0.033 * std::cos(a * day_of_year);
@@ -48,11 +48,11 @@ double hargreaves(double latitude, int day_of_year, double t_avg, double t_range
     // Extraterrestrial radiation (MJ/m2/day)
     double Ra = 37.6 * dr * (omega * std::sin(phi) * std::sin(delta)
                 + std::cos(phi) * std::cos(delta) * std::sin(omega));
-    if (Ra < 0.0) Ra = 0.0;
+    Ra = std::max(Ra, 0.0);
 
     // Hargreaves evapotranspiration (mm/day)
     double e = 0.0023 * Ra / lambda * std::sqrt(tr) * (ta + 17.8);
-    if (e < 0.0) e = 0.0;
+    e = std::max(e, 0.0);
 
     return e;  // mm/day
 }

@@ -944,9 +944,7 @@ void resolve_cross_references(SimulationContext& ctx) {
         // depth offsets (link_offsets == ELEV_OFFSET handled above) but before
         // the conveyance computation below. The slope sign is stored as computed
         // so that beta = PHI*sqrt(|slope|)/n always uses positive slope.
-        // TODO: Conduit reversal is temporarily disabled pending investigation
-        // of node degree / divider link resolution ordering issues.
-        if (false && ctx.options.routing_model == RoutingModel::DYNWAVE &&
+        if (ctx.options.routing_model == RoutingModel::DYNWAVE &&
             slope < 0.0 &&
             ctx.links.xsect_shape[uj] != XsectShape::DUMMY) {
 

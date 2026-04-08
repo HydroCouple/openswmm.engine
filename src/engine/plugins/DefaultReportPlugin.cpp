@@ -509,6 +509,9 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
         if (rm == 2) { // DYNWAVE
             int sm = opt.surcharge_method;
             std::fprintf(f, "\n  Surcharge Method ......... %s", SurchargeWords[sm]);
+            const char* nc_name = (opt.node_continuity == NodeContinuity::SEMI_IMPLICIT)
+                                  ? "SEMI_IMPLICIT" : "EXPLICIT";
+            std::fprintf(f, "\n  Node Continuity .......... %s", nc_name);
         }
     }
 
@@ -957,7 +960,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n  ---------------------------------------------------------------------------------");
 
         long report_steps = ctx.routing_stats.n_steps;
-        if (report_steps < 1) report_steps = 1;
+        report_steps = std::max(report_steps, 1L);
 
         for (int j = 0; j < ctx.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);
@@ -1059,7 +1062,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 double above_crown = ctx.nodes.stat_max_surcharge_height[uj];
                 double below_rim = ctx.nodes.sur_depth[uj] > 0.0 ?
                     ctx.nodes.sur_depth[uj] - ctx.nodes.stat_max_surcharge_height[uj] : 0.0;
-                if (below_rim < 0.0) below_rim = 0.0;
+                below_rim = std::max(below_rim, 0.0);
 
                 std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
                 std::fprintf(f, " %-9s", nt_str(nt));
@@ -1113,7 +1116,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 double ponded = 0.0;
                 if (static_cast<int>(opt.routing_model) == 2) {
                     ponded = (ctx.nodes.stat_max_depth[uj] - ctx.nodes.full_depth[uj]);
-                    if (ponded < 0.0) ponded = 0.0;
+                    ponded = std::max(ponded, 0.0);
                 }
 
                 std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
@@ -1152,7 +1155,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 FlowUnitWords[fu]);
 
             long report_steps = ctx.routing_stats.n_steps;
-            if (report_steps < 1) report_steps = 1;
+            report_steps = std::max(report_steps, 1L);
 
             for (int j = 0; j < ctx.n_nodes(); ++j) {
                 auto uj = static_cast<std::size_t>(j);
@@ -1170,8 +1173,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                     avg_depth / ctx.nodes.full_depth[uj] * 100.0 : 0.0;
                 double pct_max = (ctx.nodes.full_depth[uj] > 0.0) ?
                     max_depth / ctx.nodes.full_depth[uj] * 100.0 : 0.0;
-                if (pct_avg > 100.0) pct_avg = 100.0;
-                if (pct_max > 100.0) pct_max = 100.0;
+                pct_avg = std::min(pct_avg, 100.0);
+                pct_max = std::min(pct_max, 100.0);
 
                 // Volume approximation (using full_volume ratio)
                 double avg_vol = full_vol * (pct_avg / 100.0) / 1000.0;
@@ -1239,7 +1242,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         int outfall_count = 0;
         std::vector<double> pol_totals(static_cast<std::size_t>(np), 0.0);
         long total_steps = ctx.routing_stats.n_steps;
-        if (total_steps < 1) total_steps = 1;
+        total_steps = std::max(total_steps, 1L);
 
         for (int j = 0; j < ctx.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);

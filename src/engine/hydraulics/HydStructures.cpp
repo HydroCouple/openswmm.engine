@@ -213,7 +213,7 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
                 break;
         }
 
-        if (q < 0.0) q = 0.0;
+        q = std::max(q, 0.0);
         // Convert from display flow units to CFS (matching legacy / UCF(FLOW))
         q /= ucf_flow;
         q *= links.setting[uj];
@@ -231,7 +231,7 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
                 double net_vol = 0.5 * (nodes.old_net_inflow[un1] + net_inflow) * dt;
                 // Approximate surface area at current depth
                 double surf = constants::MIN_SURFAREA; // junction default
-                if (surf < constants::MIN_SURFAREA) surf = constants::MIN_SURFAREA;
+                surf = std::max(surf, constants::MIN_SURFAREA);
                 double y_new = nodes.old_depth[un1] + net_vol / surf;
                 if (y_new <= 0.0) q = std::max(nodes.inflow[un1], 0.0);
             }
@@ -325,7 +325,7 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
             hCrit = h_open;
             cWeir = cd_val * std::sqrt(h_open / 2.0) * f_area;
         }
-        if (hCrit < FUDGE_ORI) hCrit = FUDGE_ORI;
+        hCrit = std::max(hCrit, FUDGE_ORI);
 
         // --- Compute nodal heads (matching legacy orifice_getInflow) ---
         double h1 = nodes.depth[un1] + nodes.invert_elev[un1];
@@ -411,10 +411,10 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
                            std::exp(-1.15 * veloc / std::sqrt(head));
             if (f < 1.0) {
                 f = f - hLoss / hCrit;
-                if (f < 0.0) f = 0.0;
+                f = std::max(f, 0.0);
             } else {
                 head = head - hLoss;
-                if (head < 0.0) head = 0.0;
+                head = std::max(head, 0.0);
             }
             // Recompute flow at adjusted head/f (matching legacy recursive call)
             if (f <= 0.0 || head <= 0.0) {
@@ -437,7 +437,7 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
             }
         }
 
-        if (q < 0.0) q = 0.0;
+        q = std::max(q, 0.0);
         links.flow[uj] = q * dir;
         links.dqdh[uj] = dqdh;
     }
@@ -514,7 +514,7 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx) {
             // Orifice-mode head (matching legacy lines 2290-2292)
             double y_mid = (hcrest + hcrown) / 2.0;
             double h_orif = (hgl2 < y_mid) ? hgl1 - y_mid : hgl1 - hgl2;
-            if (h_orif < 0.0) h_orif = 0.0;
+            h_orif = std::max(h_orif, 0.0);
 
             q = c_surcharge * std::sqrt(h_orif);
         } else {
@@ -523,7 +523,7 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx) {
                 case 0: { // TRANSVERSE: Q = Cd * L * H^1.5
                     double ec = links.param2[uj]; // end contractions
                     double L = length - 0.1 * ec * head;
-                    if (L < 0.0) L = 0.0;
+                    L = std::max(L, 0.0);
                     q = cd * L * std::pow(head, 1.5);
                     break;
                 }
@@ -551,7 +551,7 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx) {
             }
         }
 
-        if (q < 0.0) q = 0.0;
+        q = std::max(q, 0.0);
         links.flow[uj] = q * dir;
     }
 }

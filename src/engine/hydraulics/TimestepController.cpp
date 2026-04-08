@@ -12,6 +12,7 @@
 
 #include "TimestepController.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/DateTime.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -66,7 +67,9 @@ void TimestepController::advance(
     double             dt_taken
 ) noexcept {
     ctx.current_time += dt_taken;
-    ctx.current_date  = ctx.options.start_date + ctx.current_time / SEC_PER_DAY;
+    // Use decompose-recompose arithmetic (matching legacy getDateTime)
+    // to avoid floating-point divergence from simple division.
+    ctx.current_date  = datetime::addSeconds(ctx.options.start_date, ctx.current_time);
 
     if (ctx.dt_output_remaining > 0.0) {
         ctx.dt_output_remaining -= dt_taken;

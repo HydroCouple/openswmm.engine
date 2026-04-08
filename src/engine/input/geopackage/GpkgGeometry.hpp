@@ -133,10 +133,10 @@ inline std::vector<uint8_t> encode_linestring(const std::vector<double>& xs,
     }
     double min_x = xs[0], max_x = xs[0], min_y = ys[0], max_y = ys[0];
     for (size_t i = 1; i < xs.size(); ++i) {
-        if (xs[i] < min_x) min_x = xs[i];
-        if (xs[i] > max_x) max_x = xs[i];
-        if (ys[i] < min_y) min_y = ys[i];
-        if (ys[i] > max_y) max_y = ys[i];
+        min_x = std::min(min_x, xs[i]);
+        max_x = std::max(max_x, xs[i]);
+        min_y = std::min(min_y, ys[i]);
+        max_y = std::max(max_y, ys[i]);
     }
     std::vector<uint8_t> buf;
     buf.reserve(8 + 32 + 9 + xs.size() * 16);
@@ -173,10 +173,10 @@ inline std::vector<uint8_t> encode_multipolygon(const std::vector<double>& xs,
 
     double min_x = xs[0], max_x = xs[0], min_y = ys[0], max_y = ys[0];
     for (size_t i = 1; i < xs.size(); ++i) {
-        if (xs[i] < min_x) min_x = xs[i];
-        if (xs[i] > max_x) max_x = xs[i];
-        if (ys[i] < min_y) min_y = ys[i];
-        if (ys[i] > max_y) max_y = ys[i];
+        min_x = std::min(min_x, xs[i]);
+        max_x = std::max(max_x, xs[i]);
+        min_y = std::min(min_y, ys[i]);
+        max_y = std::max(max_y, ys[i]);
     }
 
     std::vector<uint8_t> buf;

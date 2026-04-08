@@ -56,7 +56,7 @@ static int translateShape(XsectShape link_shape) {
 /// Build XSectParams from link SoA data for a conduit (with shape translation).
 static XSectParams buildXSectParams(const SimulationContext& ctx, std::size_t uk) {
     XSectParams xs{};
-    xs.type   = translateShape(ctx.links.xsect_shape[uk]);
+    xs.type   = ctx.links.xsect_batch_shape[uk];
     xs.y_full = ctx.links.xsect_y_full[uk];
     xs.a_full = ctx.links.xsect_a_full[uk];
     xs.w_max  = ctx.links.xsect_w_max[uk];

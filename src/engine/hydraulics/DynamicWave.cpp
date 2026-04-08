@@ -382,30 +382,40 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     //  widths at crown of closed conduits). Use temporary arrays so the real
     //  depths are preserved for area/momentum computation.
     if (surcharge_method != SurchargeMethod::SLOT) {
-        // Build width-capped depth copies using pre-allocated buffers
-        auto nl = static_cast<std::size_t>(n_links_);
-        std::copy(depth1_.begin(), depth1_.begin() + nl, wcap_d1_.begin());
-        std::copy(depth2_.begin(), depth2_.begin() + nl, wcap_d2_.begin());
-        std::copy(depth_mid_.begin(), depth_mid_.begin() + nl, wcap_dm_.begin());
+        // Cap depth in-place for width computation, then restore.
+        // Avoids 3 full-array std::copy operations per Picard iteration.
         for (int ci = 0; ci < n_conduits_; ++ci) {
             int j = conduit_idx_[static_cast<std::size_t>(ci)];
             auto uj = static_cast<std::size_t>(j);
             double yf = links.xsect_y_full[uj];
-            XsectShape shape = links.xsect_shape[uj];
-            bool is_open = (shape == XsectShape::RECT_OPEN ||
-                            shape == XsectShape::TRAPEZOIDAL ||
-                            shape == XsectShape::TRIANGULAR ||
-                            shape == XsectShape::PARABOLIC);
+            int bs = links.xsect_batch_shape[uj];
+            bool is_open = xsect::isOpen(bs);
             if (!is_open && yf > 0.0) {
                 double yCap = EXTRAN_CROWN_CUTOFF * yf;
-                if (wcap_d1_[uj] >= yCap) wcap_d1_[uj] = yCap;
-                if (wcap_d2_[uj] >= yCap) wcap_d2_[uj] = yCap;
-                if (wcap_dm_[uj] >= yCap) wcap_dm_[uj] = yCap;
+                // Save originals in wcap buffers (reuse as backup)
+                wcap_d1_[uj] = depth1_[uj];
+                wcap_d2_[uj] = depth2_[uj];
+                wcap_dm_[uj] = depth_mid_[uj];
+                if (depth1_[uj] >= yCap) depth1_[uj] = yCap;
+                if (depth2_[uj] >= yCap) depth2_[uj] = yCap;
+                if (depth_mid_[uj] >= yCap) depth_mid_[uj] = yCap;
             }
         }
-        groups_->computeWidths(wcap_d1_.data(), width1_.data(), n_links_);
-        groups_->computeWidths(wcap_d2_.data(), width2_.data(), n_links_);
-        groups_->computeWidths(wcap_dm_.data(), width_mid_.data(), n_links_);
+        groups_->computeWidths(depth1_.data(), width1_.data(), n_links_);
+        groups_->computeWidths(depth2_.data(), width2_.data(), n_links_);
+        groups_->computeWidths(depth_mid_.data(), width_mid_.data(), n_links_);
+        // Restore original depths from backup
+        for (int ci = 0; ci < n_conduits_; ++ci) {
+            int j = conduit_idx_[static_cast<std::size_t>(ci)];
+            auto uj = static_cast<std::size_t>(j);
+            double yf = links.xsect_y_full[uj];
+            int bs = links.xsect_batch_shape[uj];
+            if (!xsect::isOpen(bs) && yf > 0.0) {
+                depth1_[uj] = wcap_d1_[uj];
+                depth2_[uj] = wcap_d2_[uj];
+                depth_mid_[uj] = wcap_dm_[uj];
+            }
+        }
     } else {
         groups_->computeWidths(depth1_.data(), width1_.data(), n_links_);
         groups_->computeWidths(depth2_.data(), width2_.data(), n_links_);
@@ -799,7 +809,7 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
         if (!isFull && qLast > 0.0 && h1 >= h2) rho = sig;
         double aWtd = p_area1[uj] + (aMid - p_area1[uj]) * rho;
         double rWtd = r1_val + (rMid - r1_val) * rho;
-        if (rWtd < FUDGE) rWtd = FUDGE;
+        rWtd = std::max(rWtd, FUDGE);
 
         // Now apply global InertDamping override (matching legacy dwflow.c lines 200-202)
         if      (inert_damping == 0) sig = 1.0;  // NO_DAMPING
@@ -871,11 +881,12 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
 
         // --- 6. evaporation and seepage momentum correction ---
         // (matching legacy dwflow.c line 233: dq6 = lossRate * 2.5 * dt * v / length)
-        // seep_rate is per-barrel; no barrels multiplier here (per-barrel equation)
+        // Uses computed loss rates (evap + seep, already volume-limited by
+        // Routing::computeConduitLosses), matching legacy link_getLossRate().
         double dq6 = 0.0;
         {
             double conduit_length = links.length[uj];
-            double loss_rate = links.seep_rate[uj];
+            double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
             if (loss_rate > 0.0 && conduit_length > 0.0) {
                 dq6 = loss_rate * 2.5 * dt * v / conduit_length;
             }
@@ -1135,8 +1146,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
 
     nodes.overflow[ui] = 0.0;
     double surf_area = xnode_[ui].new_surf_area;
-    if (surf_area < constants::MIN_SURFAREA)
-        surf_area = constants::MIN_SURFAREA;
+    surf_area = std::max(surf_area, constants::MIN_SURFAREA);
 
     // --- Net flow volume change (trapezoidal averaging with previous step) ---
     double dQ = nodes.inflow[ui] - nodes.outflow[ui];
@@ -1163,15 +1173,44 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
 
     double y_new;
 
-    // --- Non-surcharged path: depth change based on surface area ---
-    // Also used if storage node is surcharged but has no connecting links
-    if (!is_surcharged ||
-        (nodes.type[ui] == NodeType::STORAGE && xnode_[ui].sumdqdh == 0.0)) {
+    if (node_continuity == NodeContinuity::SEMI_IMPLICIT) {
+        // =================================================================
+        // Semi-implicit unified formulation (Crank-Nicolson, theta = 0.5)
+        // =================================================================
+        // Linearise the node continuity equation with head-dependent flows:
+        //
+        //   A * dH/dt = Q_net(H)
+        //
+        // Trapezoidal (Crank-Nicolson) time integration gives:
+        //
+        //   A * dH = 0.5 * [Q_net_old + Q_net_new] * dt
+        //
+        // Linearising Q_net_new around the current head estimate:
+        //
+        //   Q_net_new ≈ Q_net + (dQ_net/dH) * dH
+        //
+        // where dQ_net/dH = sumdqdh (positive: higher head ⟶ more net
+        // outflow through connected links).  Substituting and rearranging:
+        //
+        //   dH = dV / (A - dt * sumdqdh / 2)
+        //
+        // dV already contains the trapezoidal average of old_net_inflow and
+        // current dQ, so the sumdqdh correction folds the head-dependent
+        // flow response into the same timestep.
+        //
+        // The equation unifies the free-surface and surcharged regimes:
+        // when surfArea dominates the denominator ≈ A (classic dV/A path);
+        // when the node surcharges and A shrinks, the sumdqdh term takes
+        // over, producing a smooth transition without a branch.
+        // =================================================================
 
-        double dy = dV / surf_area;
+        double denom = surf_area - 0.5 * dt * xnode_[ui].sumdqdh;
+        denom = std::max(denom, constants::MIN_SURFAREA);
+
+        double dy = dV / denom;
         y_new = y_old + dy;
 
-        // Save non-ponded surface area for use in surcharge algorithm
+        // Save non-ponded surface area (used by flooding logic and CFL)
         if (!is_ponded) {
             xnode_[ui].old_surf_area = surf_area;
         }
@@ -1186,39 +1225,68 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
             y_new = full_depth - FUDGE;
         }
     }
-    // --- Surcharged path: depth change based on dQ/dH (matching legacy) ---
     else {
-        // Apply correction factor for upstream terminal nodes
-        double corr = 1.0;
-        if (nodes.degree[ui] < 0) corr = 0.6;
+        // =================================================================
+        // Explicit (legacy) two-branch formulation
+        // =================================================================
 
-        // Allow surface area from last non-surcharged condition to influence
-        // dqdh if depth is close to crown depth (smooth transition)
-        double denom = xnode_[ui].sumdqdh;
-        if (y_last < 1.25 * yCrown && yCrown > 0.0) {
-            double f = (y_last - yCrown) / yCrown;
-            denom += (xnode_[ui].old_surf_area / dt -
-                      xnode_[ui].sumdqdh) * std::exp(-15.0 * f);
+        // --- Non-surcharged path: depth change based on surface area ---
+        // Also used if storage node is surcharged but has no connecting links
+        if (!is_surcharged ||
+            (nodes.type[ui] == NodeType::STORAGE && xnode_[ui].sumdqdh == 0.0)) {
+
+            double dy = dV / surf_area;
+            y_new = y_old + dy;
+
+            // Save non-ponded surface area for use in surcharge algorithm
+            if (!is_ponded) {
+                xnode_[ui].old_surf_area = surf_area;
+            }
+
+            // Apply under-relaxation to new depth estimate
+            if (step > 0) {
+                y_new = (1.0 - omega) * y_last + omega * y_new;
+            }
+
+            // Don't allow a ponded node to drop much below full depth
+            if (is_ponded && y_new < full_depth) {
+                y_new = full_depth - FUDGE;
+            }
         }
+        // --- Surcharged path: depth change based on dQ/dH (matching legacy) ---
+        else {
+            // Apply correction factor for upstream terminal nodes
+            double corr = 1.0;
+            if (nodes.degree[ui] < 0) corr = 0.6;
 
-        // Compute new estimate of node depth
-        double dy = 0.0;
-        if (denom != 0.0) {
-            dy = corr * dQ / denom;
-        }
-        y_new = y_last + dy;
+            // Allow surface area from last non-surcharged condition to influence
+            // dqdh if depth is close to crown depth (smooth transition)
+            double denom = xnode_[ui].sumdqdh;
+            if (y_last < 1.25 * yCrown && yCrown > 0.0) {
+                double f = (y_last - yCrown) / yCrown;
+                denom += (xnode_[ui].old_surf_area / dt -
+                          xnode_[ui].sumdqdh) * std::exp(-15.0 * f);
+            }
 
-        // Don't drop below crown
-        if (y_new < yCrown) y_new = yCrown - FUDGE;
+            // Compute new estimate of node depth
+            double dy = 0.0;
+            if (denom != 0.0) {
+                dy = corr * dQ / denom;
+            }
+            y_new = y_last + dy;
 
-        // Don't allow a newly ponded node to rise much above full depth
-        if (can_pond && y_new > full_depth) {
-            y_new = full_depth + FUDGE;
+            // Don't drop below crown
+            if (y_new < yCrown) y_new = yCrown - FUDGE;
+
+            // Don't allow a newly ponded node to rise much above full depth
+            if (can_pond && y_new > full_depth) {
+                y_new = full_depth + FUDGE;
+            }
         }
     }
 
     // --- Depth cannot be negative ---
-    if (y_new < 0.0) y_new = 0.0;
+    y_new = std::max(y_new, 0.0);
 
     // --- Determine max non-flooded depth ---
     double y_max = full_depth;
@@ -1276,7 +1344,7 @@ double DWSolver::getRoutingStep(const SimulationContext& ctx,
         if (t <= 0.0) continue;
         // Apply Courant factor per-link (matching legacy dynwave.c line 856)
         t *= courant_factor;
-        if (t < dt_min) dt_min = t;
+        dt_min = std::min(dt_min, t);
     }
 
     // Node-based CFL (matching legacy getNodeStep)
@@ -1301,7 +1369,7 @@ double DWSolver::getRoutingStep(const SimulationContext& ctx,
 
     // Apply user's minimum step (from MINIMUM_STEP option, typically 0.5 sec)
     double min_step = ctx.options.min_routing_step;
-    if (min_step < MIN_TIMESTEP) min_step = MIN_TIMESTEP;
+    min_step = std::max(min_step, MIN_TIMESTEP);
     dt_min = std::max(dt_min, min_step);
     // Round to milliseconds for deterministic behavior
     dt_min = std::floor(1000.0 * dt_min) / 1000.0;

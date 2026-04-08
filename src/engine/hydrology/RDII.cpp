@@ -24,6 +24,7 @@ void RDIIGroupSoA::resize(int n) {
     auto un = static_cast<size_t>(n);
     node_idx.assign(un, -1);
     uh_idx.assign(un, -1);
+    gage_idx.assign(un, -1);
     area.assign(un, 0.0);
     uh_data.resize(un * 3);  // 3 responses per group
     rain_interval.assign(un, 300);
@@ -138,6 +139,18 @@ void RDIISolver::init(SimulationContext& ctx) {
         }
     }
 
+    // Build UH name → gage index mapping from parsed [HYDROGRAPHS] gage lines.
+    // Legacy: each UnitHyd[j] has a rainGage field set during parsing.
+    std::unordered_map<std::string, int> uh_gage_map;
+    for (size_t gi = 0; gi < ctx.unit_hyds.gage_assignments.size(); ++gi) {
+        const auto& uh_name = ctx.unit_hyds.gage_assignments[gi];
+        const auto& gage_name = ctx.unit_hyds.gage_names[gi];
+        int gidx = ctx.gage_names.find(gage_name);
+        if (gidx >= 0) {
+            uh_gage_map[uh_name] = gidx;
+        }
+    }
+
     const auto& assigns = ctx.rdii_assigns;
     int n_assigns = assigns.count();
     if (n_assigns == 0) {
@@ -146,6 +159,7 @@ void RDIISolver::init(SimulationContext& ctx) {
     }
 
     groups_.resize(n_assigns);
+    node_rdii_flow_.assign(static_cast<size_t>(ctx.n_nodes()), 0.0);
     double wet_step = ctx.options.wet_step;
 
     for (int i = 0; i < n_assigns; ++i) {
@@ -156,6 +170,10 @@ void RDIISolver::init(SimulationContext& ctx) {
         const std::string& uh_name = assigns.uh_name[ui];
         int uh_i = findUnitHyd(uh_name);
         groups_.uh_idx[ui] = uh_i;
+
+        // Resolve per-UH rain gage (legacy: UnitHyd[j].rainGage)
+        auto git = uh_gage_map.find(uh_name);
+        groups_.gage_idx[ui] = (git != uh_gage_map.end()) ? git->second : -1;
 
         if (uh_i < 0 || uh_i >= static_cast<int>(uh_params.size())) {
             groups_.rain_interval[ui] = 300;
@@ -205,19 +223,19 @@ static double applyIA(const UnitHydParams& uh, UHResponseData& rd,
 
     // Determine unused IA
     double ia = iaMax - rd.ia_used;
-    if (ia < 0.0) ia = 0.0;
+    ia = std::max(ia, 0.0);
 
     double netRainDepth;
     if (rainDepth > 0.0) {
         // Reduce rain by unused IA
         netRainDepth = rainDepth - ia;
-        if (netRainDepth < 0.0) netRainDepth = 0.0;
+        netRainDepth = std::max(netRainDepth, 0.0);
         // Update IA used
         rd.ia_used += (rainDepth - netRainDepth);
     } else {
         // Recover IA during dry period
         rd.ia_used -= dt_sec / 86400.0 * uh.iaRecov[m][k];
-        if (rd.ia_used < 0.0) rd.ia_used = 0.0;
+        rd.ia_used = std::max(rd.ia_used, 0.0);
         netRainDepth = 0.0;
     }
     return netRainDepth;
@@ -262,9 +280,11 @@ static void updateDryPeriod(UHResponseData& rd, double rainDepth,
 // 3. Convolves past rainfall with UH ordinates
 // 4. Scatters RDII flow to nodes (area × rdii / UCF(RAINFALL))
 // ---------------------------------------------------------------------------
-void RDIISolver::computeAll(SimulationContext& ctx, double rainfall,
-                             int month, double dt) {
+void RDIISolver::computeAll(SimulationContext& ctx, int month, double dt) {
     int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+
+    // Zero the per-node RDII buffer before accumulating
+    std::fill(node_rdii_flow_.begin(), node_rdii_flow_.end(), 0.0);
 
     for (int g = 0; g < groups_.count; ++g) {
         auto ug = static_cast<size_t>(g);
@@ -273,6 +293,13 @@ void RDIISolver::computeAll(SimulationContext& ctx, double rainfall,
         const auto& uh = uh_params[static_cast<size_t>(uh_i)];
 
         int ri = groups_.rain_interval[ug];
+
+        // Read rainfall from this group's assigned gage (legacy: UnitHyd[j].rainGage)
+        int gi = groups_.gage_idx[ug];
+        double rainfall = 0.0;
+        if (gi >= 0 && gi < static_cast<int>(ctx.gages.rainfall.size())) {
+            rainfall = ctx.gages.rainfall[static_cast<size_t>(gi)];
+        }
 
         // Capture rainfall at start of each interval (matching legacy
         // gage_setState at gageDate, which is the interval start time).
@@ -355,15 +382,26 @@ void RDIISolver::computeAll(SimulationContext& ctx, double rainfall,
         double rdii_cfs = rdii_group * area_ft2
                         / ucf::Ucf[ucf::RAINFALL][unit_sys];
 
-        // Scatter to node lateral flow
+        // Buffer RDII flow per node (applied to lat_flow later via applyRdiiInflows)
         int ni = groups_.node_idx[ug];
-        if (ni >= 0 && ni < static_cast<int>(ctx.nodes.lat_flow.size())) {
-            ctx.nodes.lat_flow[static_cast<std::size_t>(ni)] += rdii_cfs;
+        if (ni >= 0 && ni < static_cast<int>(node_rdii_flow_.size())) {
+            node_rdii_flow_[static_cast<std::size_t>(ni)] += rdii_cfs;
         }
+    }
+}
 
-        // Mass balance tracking
-        if (rdii_cfs > 0.0) {
-            ctx.mass_balance.step_rdii_inflow += rdii_cfs;
+// ---------------------------------------------------------------------------
+// applyRdiiInflows — add buffered RDII flows to node lateral inflows.
+// Matching legacy addRdiiInflows() in routing.c which reads pre-computed
+// RDII from the interface file and adds to Node[j].newLatFlow.
+// ---------------------------------------------------------------------------
+void RDIISolver::applyRdiiInflows(SimulationContext& ctx) const {
+    for (int i = 0; i < static_cast<int>(node_rdii_flow_.size()); ++i) {
+        double q = node_rdii_flow_[static_cast<size_t>(i)];
+        if (q == 0.0) continue;
+        ctx.nodes.lat_flow[static_cast<size_t>(i)] += q;
+        if (q > 0.0) {
+            ctx.mass_balance.step_rdii_inflow += q;
         }
     }
 }

@@ -268,6 +268,13 @@ struct LinkData {
     std::vector<double>     xsect_yw_max;
 
     /**
+     * @brief Cached batch (XSectBatch) shape code, translated from XsectShape at init.
+     * @details Avoids per-timestep translateShape() switch dispatch.
+     *          Set once by Routing::init() or PostParseResolver.
+     */
+    std::vector<int>        xsect_batch_shape;
+
+    /**
      * @brief Current link setting (0-1 for pumps/orifices/weirs, 1.0 default for conduits).
      * @see Legacy: Link[j].setting
      */
@@ -533,6 +540,7 @@ struct LinkData {
         xsect_s_bot.assign(un, 0.0);
         xsect_r_bot.assign(un, 0.0);
         xsect_yw_max.assign(un, 0.0);
+        xsect_batch_shape.assign(un, 0);
         setting.assign(un, 1.0);
         target_setting.assign(un, 1.0);
         direction.assign(un, 1);

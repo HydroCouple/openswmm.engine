@@ -114,6 +114,21 @@ double getPastRain(const GageState& state, int hours);
  */
 void updateAllGages(SimulationContext& ctx, double current_time);
 
+/**
+ * @brief Query a gage's rainfall at a specific report date.
+ *
+ * @details Matches legacy gage_setReportRainfall(): queries the gage's
+ *          timeseries at the report time without advancing the cursor.
+ *          Returns rainfall in user units (in/hr or mm/hr).
+ *
+ * @param ctx          Simulation context.
+ * @param gage_idx     Gage index.
+ * @param report_date  Absolute Julian date to query.
+ * @returns Rainfall rate in user units (in/hr or mm/hr).
+ */
+double getReportRainfall(const SimulationContext& ctx, int gage_idx,
+                         double report_date);
+
 } // namespace gage
 } // namespace openswmm
 

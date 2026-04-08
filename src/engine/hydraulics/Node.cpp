@@ -27,20 +27,20 @@ double getVolume(const NodeData& nodes, int idx, double depth,
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
-        // Functional storage: V = a0*d + a1/(a2+1) * d^(a2+1)
-        // where a0 = storage_c (baseline area), a1 = storage_a, a2 = storage_b
+        // Clamp at fullDepth → fullVolume (matching legacy node.c lines 909-910)
+        if (depth >= nodes.full_depth[ui] && nodes.full_volume[ui] > 0.0)
+            return nodes.full_volume[ui];
+
         if (nodes.storage_curve[ui] >= 0) {
-            // Tabulated: integrate area curve to get volume
-            // Legacy: table_getArea(&Node[j].storeCurve, depth) returns surface area
-            //         Volume = integral of area from 0 to depth
-            // Use trapezoidal rule: V ≈ area(depth) * depth (same as legacy approximation)
+            // Tabulated: trapezoidal integration of area curve
+            // (matching legacy table_getStorageVolume in table.c)
             auto ci = static_cast<std::size_t>(nodes.storage_curve[ui]);
             if (tables && ci < tables->tables.size()) {
-                double area = table_lookup_cursor(tables->tables[ci], depth);
-                return area * depth;
+                return table_getStorageVolume(tables->tables[ci], depth);
             }
             return 0.0;
         }
+        // Functional: integrate A(d) = a0 + a1*d^a2 → V = a0*d + a1/(a2+1)*d^(a2+1)
         double a0 = nodes.storage_c[ui];
         double a1 = nodes.storage_a[ui];
         double a2 = nodes.storage_b[ui];
@@ -113,7 +113,7 @@ double getMaxOutflow(const NodeData& nodes, int idx, double q, double dt) {
     double full_vol = constants::MIN_SURFAREA * nodes.full_depth[ui];
     if (full_vol > 0.0) {
         double q_max = nodes.inflow[ui] + nodes.old_volume[ui] / dt;
-        if (q > q_max) q = q_max;
+        q = std::min(q, q_max);
     }
     return std::max(0.0, q);
 }

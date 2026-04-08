@@ -93,6 +93,15 @@ double getDepthFromFlow(const XSectParams& xs, double beta, double q);
  */
 double getCapacity(const XSectParams& xs, double depth);
 
+/**
+ * @brief Build XSectParams from LinkData SoA arrays.
+ *
+ * @param links  Link SoA data.
+ * @param uj     Link index (size_t).
+ * @returns Populated XSectParams struct.
+ */
+XSectParams buildXSectParams(const LinkData& links, std::size_t uj);
+
 // ============================================================================
 // Batch functions (for routing hot loop)
 // ============================================================================

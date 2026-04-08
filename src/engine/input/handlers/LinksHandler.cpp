@@ -119,6 +119,7 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.links.xsect_r_bot,       0.0);
     grow(ctx.links.xsect_s_max,       0.0);
     grow(ctx.links.xsect_yw_max,      0.0);
+    grow(ctx.links.xsect_batch_shape, 0);
 
     // Computed hydraulic properties (set by PostParseResolver)
     grow(ctx.links.rough_factor,      0.0);

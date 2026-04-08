@@ -269,6 +269,63 @@ inline double table_step_cursor(Table& tbl, double x_query) noexcept {
 }
 
 // ============================================================================
+// Storage volume by trapezoidal integration of area curve
+// ============================================================================
+
+/**
+ * @brief Compute storage volume by trapezoidal integration of an area-vs-depth
+ *        curve, matching legacy table_getStorageVolume() in table.c.
+ *
+ * @param tbl    Table with x = depth, y = surface area.
+ * @param depth  Depth to integrate to.
+ * @returns      Volume (same units as area * depth).
+ */
+inline double table_getStorageVolume(Table& tbl, double depth) noexcept {
+    const int n = static_cast<int>(tbl.x.size());
+    if (n == 0 || depth <= 0.0) return 0.0;
+
+    double x1 = tbl.x[0];
+    double a1 = tbl.y[0];
+
+    // Target below first entry — triangular approximation
+    if (depth <= x1) {
+        if (x1 < 1.0e-6) return 0.0;
+        return (a1 / x1) * depth * depth / 2.0;
+    }
+
+    // Traverse entries using end-area (trapezoidal) method
+    double v = 0.0;
+    double dx = 0.0, dy = 0.0;
+    for (int i = 1; i < n; ++i) {
+        double x2 = tbl.x[i];
+        double a2 = tbl.y[i];
+        if (x2 >= depth) {
+            // Bracketed — interpolate area at target depth
+            double frac = (x2 > x1) ? (depth - x1) / (x2 - x1) : 0.0;
+            double a = a1 + frac * (a2 - a1);
+            return v + (a1 + a) / 2.0 * (depth - x1);
+        }
+        dx = x2 - x1;
+        dy = a2 - a1;
+        v += (a1 + a2) / 2.0 * dx;
+        x1 = x2;
+        a1 = a2;
+    }
+
+    // Extrapolate beyond last entry
+    if (dx > 1.0e-6) {
+        double s = dy / dx;
+        double a = a1 + s * (depth - x1);
+        if (a < 0.0) {
+            v -= a1 * a1 / s / 2.0;
+        } else {
+            v += (a1 + a) / 2.0 * (depth - x1);
+        }
+    }
+    return v;
+}
+
+// ============================================================================
 // TableData — SoA collection of all tables
 // ============================================================================
 

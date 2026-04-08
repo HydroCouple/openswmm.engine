@@ -368,7 +368,7 @@ private:
     /**
      * @brief Post a snapshot to the IO thread if output is due.
      */
-    void postOutputSnapshot() noexcept;
+    void postOutputSnapshot(double dt_step) noexcept;
 
     // -----------------------------------------------------------------------
     // General helpers

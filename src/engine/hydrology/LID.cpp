@@ -145,7 +145,7 @@ void LIDSolver::batchBioCellFlux(LIDGroupSoA& g, double rainfall,
             ? g.soil_ksat[ui] * std::exp(g.soil_kslope[ui] * delta)
             : g.soil_ksat[ui];
         soil_infil = std::min(soil_infil, g.surf_depth[ui] / dt + inflow - surf_evap);
-        if (soil_infil < 0.0) soil_infil = 0.0;
+        soil_infil = std::max(soil_infil, 0.0);
 
         // Soil → storage percolation
         double soil_perc = (theta > g.soil_fc[ui])
@@ -169,7 +169,7 @@ void LIDSolver::batchBioCellFlux(LIDGroupSoA& g, double rainfall,
             overflow = (new_surf - g.surf_store[ui]) / dt;
             new_surf = g.surf_store[ui];
         }
-        if (new_surf < 0.0) new_surf = 0.0;
+        new_surf = std::max(new_surf, 0.0);
 
         // Update states
         g.surf_depth[ui] = new_surf;
@@ -269,7 +269,7 @@ void LIDSolver::batchSwaleFlux(LIDGroupSoA& g, double rainfall,
         // Soil infiltration
         double infil = g.soil_ksat[ui];
         infil = std::min(infil, g.surf_depth[ui] / dt + inflow - surf_evap);
-        if (infil < 0.0) infil = 0.0;
+        infil = std::max(infil, 0.0);
 
         // Manning's surface outflow: Q = (1/n) * depth^(5/3) * sqrt(slope)
         double excess = g.surf_depth[ui] - g.surf_store[ui];

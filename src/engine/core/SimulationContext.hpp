@@ -652,8 +652,8 @@ struct SimulationContext {
         double sum_iterations  = 0.0; ///< Sum of iterations for averaging
 
         void update(double dt) {
-            if (dt < min_step) min_step = dt;
-            if (dt > max_step) max_step = dt;
+            min_step = std::min(min_step, dt);
+            max_step = std::max(max_step, dt);
             sum_step += dt;
             ++n_steps;
         }
@@ -664,16 +664,29 @@ struct SimulationContext {
             if (!converged) ++n_non_converged;
         }
 
-        /// Build histogram bin edges (call once after simulation, before report)
+        /// Initialize histogram bin edges using log-scale between max and min
+        /// routing steps. Call once at simulation start (matching legacy stats.c
+        /// stats_open: intervals from RouteStep down to MinRouteStep).
+        void init_histogram(double route_step, double min_route_step) {
+            if (route_step <= 0.0) return;
+            if (min_route_step <= 0.0) min_route_step = route_step;
+            double log_hi = std::log10(route_step);
+            double log_lo = std::log10(min_route_step);
+            double delta = (log_hi - log_lo) / static_cast<double>(N_TIME_BINS);
+            step_intervals[0] = route_step;
+            for (int i = 1; i <= N_TIME_BINS; ++i)
+                step_intervals[i] = std::pow(10.0, log_hi - i * delta);
+            step_intervals[N_TIME_BINS] = min_route_step;
+        }
+
+        /// Build histogram bin edges post-hoc from observed min/max
+        /// (fallback if init_histogram was not called).
         void build_histogram() {
             if (n_steps == 0 || max_step <= 0.0) return;
             double hi = max_step;
             double lo = (min_step < 1.0e30) ? min_step : 0.0;
             if (lo <= 0.0) lo = hi;
-            step_intervals[0] = hi;
-            for (int i = 1; i <= N_TIME_BINS; ++i)
-                step_intervals[i] = step_intervals[i-1] / std::pow(hi/lo, 1.0/N_TIME_BINS);
-            step_intervals[N_TIME_BINS] = lo;
+            init_histogram(hi, lo);
         }
 
         /// Add a step to the histogram (call during simulation or post-process)

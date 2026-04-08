@@ -119,7 +119,7 @@ void buildCustomTables(TransectData& td, double y_full,
     } else {
         if (ci < n_pts) {
             y2 = curve_x[ci]; w2 = curve_y[ci]; ci++;
-            if (w2 > wMax) wMax = w2;
+            wMax = std::max(wMax, w2);
         } else return;
     }
 
@@ -148,8 +148,8 @@ void buildCustomTables(TransectData& td, double y_full,
             // Interpolate at interval boundary
             y1 = y2; w1 = w2;
             y2 = curve_x[ci]; w2 = curve_y[ci]; ci++;
-            if (y2 > 1.0) y2 = 1.0;
-            if (w2 > wMax) wMax = w2;
+            y2 = std::min(y2, 1.0);
+            wMax = std::max(wMax, w2);
 
             // Add partial area/perimeter from yLast to y1
             if (y1 > yLast) {
@@ -169,7 +169,7 @@ void buildCustomTables(TransectData& td, double y_full,
         } else {
             w = w2;
         }
-        if (w > wMax) wMax = w;
+        wMax = std::max(wMax, w);
 
         // Area increment: trapezoidal rule
         Atotal += 0.5 * (wLast + w) * (y - yLast);

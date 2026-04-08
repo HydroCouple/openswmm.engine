@@ -165,7 +165,7 @@ void area_circular(
         if (y <= 0.0) { area[k] = 0.0; continue; }
 
         double y_norm = y / y_full[k];
-        if (y_norm > 1.0) y_norm = 1.0;
+        y_norm = std::min(y_norm, 1.0);
 
         int i = static_cast<int>(y_norm * inv_delta);
         if (i >= n_items - 1) { area[k] = a_full[k]; continue; }
@@ -173,16 +173,9 @@ void area_circular(
         double x0 = i * delta;
         double x1 = (static_cast<double>(i) + 1.0) * delta;
 
-        // Linear interpolation
+        // Linear interpolation (matching legacy lookup() exactly)
         double t_val = table[i] + (y_norm - x0) * (table[i + 1] - table[i]) * inv_delta;
-
-        // Quadratic refinement for small depths
-        if (i < 2) {
-            double t2 = t_val + (y_norm - x0) * (y_norm - x1) * inv_delta * inv_delta *
-                        (table[i] / 2.0 - table[i + 1] + table[i + 2] / 2.0);
-            if (t2 > 0.0) t_val = t2;
-        }
-        if (t_val < 0.0) t_val = 0.0;
+        t_val = std::max(t_val, 0.0);
 
         area[k] = a_full[k] * t_val;
     }
@@ -274,21 +267,14 @@ void area_tabulated(
         if (y <= 0.0) { area[k] = 0.0; continue; }
 
         double y_norm = y / y_full[k];
-        if (y_norm > 1.0) y_norm = 1.0;
+        y_norm = std::min(y_norm, 1.0);
 
         int i = static_cast<int>(y_norm * inv_delta);
         if (i >= table_size - 1) { area[k] = a_full[k]; continue; }
 
         double x0 = i * delta;
-        double x1 = (static_cast<double>(i) + 1.0) * delta;
         double t_val = table[i] + (y_norm - x0) * (table[i + 1] - table[i]) * inv_delta;
-
-        if (i < 2) {
-            double t2 = t_val + (y_norm - x0) * (y_norm - x1) * inv_delta * inv_delta *
-                        (table[i] / 2.0 - table[i + 1] + table[i + 2] / 2.0);
-            if (t2 > 0.0) t_val = t2;
-        }
-        if (t_val < 0.0) t_val = 0.0;
+        t_val = std::max(t_val, 0.0);
 
         area[k] = a_full[k] * t_val;
     }
@@ -308,7 +294,7 @@ void area_inv_tabulated(
         double y = depth[k];
         if (y <= 0.0) { area[k] = 0.0; continue; }
         double y_norm = y / y_full[k];
-        if (y_norm > 1.0) y_norm = 1.0;
+        y_norm = std::min(y_norm, 1.0);
         area[k] = a_full[k] * xsect::invLookup(y_norm, table, table_size);
     }
 }
@@ -339,7 +325,7 @@ void perlink_tabulated(
 
         const double* tbl = tables[k];
         double t_val = tbl[i] + (y_norm - i * delta) * (tbl[i + 1] - tbl[i]) * inv_delta;
-        if (t_val < 0.0) t_val = 0.0;
+        t_val = std::max(t_val, 0.0);
         result[k] = scale[k] * t_val;
     }
 }
@@ -365,21 +351,14 @@ void hydrad_circular(
         if (y <= 0.0) { hydrad[k] = 0.0; continue; }
 
         double y_norm = y / y_full[k];
-        if (y_norm > 1.0) y_norm = 1.0;
+        y_norm = std::min(y_norm, 1.0);
 
         int i = static_cast<int>(y_norm * inv_delta);
         if (i >= n_items - 1) { hydrad[k] = r_full[k]; continue; }
 
         double x0 = i * delta;
-        double x1 = (static_cast<double>(i) + 1.0) * delta;
         double t_val = table[i] + (y_norm - x0) * (table[i + 1] - table[i]) * inv_delta;
-
-        if (i < 2) {
-            double t2 = t_val + (y_norm - x0) * (y_norm - x1) * inv_delta * inv_delta *
-                        (table[i] / 2.0 - table[i + 1] + table[i + 2] / 2.0);
-            if (t2 > 0.0) t_val = t2;
-        }
-        if (t_val < 0.0) t_val = 0.0;
+        t_val = std::max(t_val, 0.0);
 
         hydrad[k] = r_full[k] * t_val;
     }
@@ -456,21 +435,14 @@ void hydrad_tabulated(
         if (y <= 0.0) { hydrad[k] = 0.0; continue; }
 
         double y_norm = y / y_full[k];
-        if (y_norm > 1.0) y_norm = 1.0;
+        y_norm = std::min(y_norm, 1.0);
 
         int i = static_cast<int>(y_norm * inv_delta);
         if (i >= table_size - 1) { hydrad[k] = r_full[k]; continue; }
 
         double x0 = i * delta;
-        double x1 = (static_cast<double>(i) + 1.0) * delta;
         double t_val = table[i] + (y_norm - x0) * (table[i + 1] - table[i]) * inv_delta;
-
-        if (i < 2) {
-            double t2 = t_val + (y_norm - x0) * (y_norm - x1) * inv_delta * inv_delta *
-                        (table[i] / 2.0 - table[i + 1] + table[i + 2] / 2.0);
-            if (t2 > 0.0) t_val = t2;
-        }
-        if (t_val < 0.0) t_val = 0.0;
+        t_val = std::max(t_val, 0.0);
 
         hydrad[k] = r_full[k] * t_val;
     }
@@ -494,21 +466,14 @@ void width_circular(
 
     for (int k = 0; k < count; ++k) {
         double y_norm = depth[k] / y_full[k];
-        if (y_norm > 1.0) y_norm = 1.0;
+        y_norm = std::min(y_norm, 1.0);
 
         int i = static_cast<int>(y_norm * inv_delta);
         if (i >= n_items - 1) { width[k] = 0.0; continue; }
 
         double x0 = i * delta;
-        double x1 = (static_cast<double>(i) + 1.0) * delta;
         double t_val = table[i] + (y_norm - x0) * (table[i + 1] - table[i]) * inv_delta;
-
-        if (i < 2) {
-            double t2 = t_val + (y_norm - x0) * (y_norm - x1) * inv_delta * inv_delta *
-                        (table[i] / 2.0 - table[i + 1] + table[i + 2] / 2.0);
-            if (t2 > 0.0) t_val = t2;
-        }
-        if (t_val < 0.0) t_val = 0.0;
+        t_val = std::max(t_val, 0.0);
 
         width[k] = w_max[k] * t_val;
     }
@@ -569,21 +534,14 @@ void width_tabulated(
 
     for (int k = 0; k < count; ++k) {
         double y_norm = depth[k] / y_full[k];
-        if (y_norm > 1.0) y_norm = 1.0;
+        y_norm = std::min(y_norm, 1.0);
 
         int i = static_cast<int>(y_norm * inv_delta);
         if (i >= table_size - 1) { width[k] = 0.0; continue; }
 
         double x0 = i * delta;
-        double x1 = (static_cast<double>(i) + 1.0) * delta;
         double t_val = table[i] + (y_norm - x0) * (table[i + 1] - table[i]) * inv_delta;
-
-        if (i < 2) {
-            double t2 = t_val + (y_norm - x0) * (y_norm - x1) * inv_delta * inv_delta *
-                        (table[i] / 2.0 - table[i + 1] + table[i + 2] / 2.0);
-            if (t2 > 0.0) t_val = t2;
-        }
-        if (t_val < 0.0) t_val = 0.0;
+        t_val = std::max(t_val, 0.0);
 
         width[k] = w_max[k] * t_val;
     }

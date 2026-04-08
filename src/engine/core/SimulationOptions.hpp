@@ -79,6 +79,28 @@ enum class RunoffModel : int {
     NL_POND    = 1  ///< Non-linear reservoir (default)
 };
 
+/**
+ * @brief Node continuity formulation for depth update.
+ *
+ * @details Controls how node depths are updated in the dynamic wave solver:
+ *  - EXPLICIT: Classic two-branch formulation — separate non-surcharged
+ *    (dV/surfArea) and surcharged (EXTRAN dQ/dH) paths.
+ *  - SEMI_IMPLICIT: Unified formulation that integrates sumdqdh into the
+ *    depth update so that head changes affect inflow/outflow rates within
+ *    the same timestep. Merges surcharged and non-surcharged states into
+ *    a single equation: dy = dV / (surfArea + sumdqdh * dt).
+ *
+ * Specified in [OPTIONS] as:
+ * @code
+ * NODE_CONTINUITY  EXPLICIT       ;; default (legacy behaviour)
+ * NODE_CONTINUITY  SEMI_IMPLICIT  ;; unified semi-implicit formulation
+ * @endcode
+ */
+enum class NodeContinuity : int {
+    EXPLICIT      = 0,  ///< Classic explicit two-branch (default)
+    SEMI_IMPLICIT = 1   ///< Unified semi-implicit formulation
+};
+
 // ============================================================================
 // SimulationOptions struct
 // ============================================================================
@@ -172,6 +194,9 @@ struct SimulationOptions {
 
     /** @brief Surcharge method: 0=EXTRAN, 1=SLOT. @see Legacy: SurchargeMethod */
     int surcharge_method = 0;
+
+    /** @brief Node continuity formulation for depth update. Default: SEMI_IMPLICIT. */
+    NodeContinuity node_continuity = NodeContinuity::SEMI_IMPLICIT;
 
     /** @brief Normal flow limitation: 0=SLOPE, 1=FROUDE, 2=BOTH, 3=NEITHER.
      *  @see Legacy: NormalFlowLtd */

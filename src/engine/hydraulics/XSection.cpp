@@ -56,7 +56,7 @@ double lookup(double x, const double* table, int n_items) {
                     (table[i] / 2.0 - table[i + 1] + table[i + 2] / 2.0);
         if (y2 > 0.0) y = y2;
     }
-    if (y < 0.0) y = 0.0;
+    y = std::max(y, 0.0);
     return y;
 }
 
@@ -83,8 +83,8 @@ double invLookup(double y, const double* table, int n_items) {
     double x;
     if (dy == 0.0) x = x0;
     else x = x0 + (y - table[i]) * dx / dy;
-    if (x < 0.0) x = 0.0;
-    if (x > 1.0) x = 1.0;
+    x = std::max(x, 0.0);
+    x = std::min(x, 1.0);
     return x;
 }
 
@@ -170,7 +170,7 @@ static double parab_getPofY(const XSectParams& xs, double y) {
     double x1 = 0.0, y1 = 0.0, p = 0.0;
     do {
         double y2 = y1 + dy1;
-        if (y2 > y) y2 = y;
+        y2 = std::min(y2, y);
         double x2 = 0.5 * xs.r_bot * xs.r_bot * y2;
         double dx = x2 - x1;
         double dy = y2 - y1;
@@ -210,7 +210,7 @@ static double powerfunc_getPofY(const XSectParams& xs, double y) {
     double y1 = 0.0, x1 = 0.0;
     do {
         double y2 = y1 + dy1;
-        if (y2 > y) y2 = y;
+        y2 = std::min(y2, y);
         double x2 = h * std::pow(y2, m);
         double dx = x2 - x1;
         double dy = y2 - y1;
@@ -782,8 +782,8 @@ double getAofS(const XSectParams& xs, double s_factor) {
         if (ds == 0.0) break;
         double da = (s_factor - s) / ds;
         a += da;
-        if (a < 0.0) a = 0.0;
-        if (a > xs.a_full) a = xs.a_full;
+        a = std::max(a, 0.0);
+        a = std::min(a, xs.a_full);
         if (std::fabs(da) < TINY * xs.a_full) break;
     }
     return a;
@@ -850,8 +850,8 @@ double getYcrit(const XSectParams& xs, double q) {
             double y0 = 1.01 * std::pow(q2g / xs.y_full, 0.25);
             if (y0 >= xs.y_full) y0 = 0.97 * xs.y_full;
             int i0 = static_cast<int>(y0 / dy);
-            if (i0 < 0) i0 = 0;
-            if (i0 > N_INC) i0 = N_INC;
+            i0 = std::max(i0, 0);
+            i0 = std::min(i0, N_INC);
 
             // Compute Q_crit at depth = i*dy: Q_c = A * sqrt(g*A/W)
             auto qCritAt = [&](double depth) -> double {

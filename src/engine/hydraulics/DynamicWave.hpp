@@ -30,6 +30,7 @@
 
 #include "XSectBatch.hpp"
 #include "../core/Constants.hpp"
+#include "../core/SimulationOptions.hpp"
 #include "../data/NodeData.hpp"
 #include "../data/LinkData.hpp"
 #include <functional>
@@ -132,6 +133,7 @@ public:
     int    max_trials = DEFAULT_MAX_TRIALS;
     double omega      = OMEGA;
     SurchargeMethod surcharge_method = SurchargeMethod::EXTRAN;
+    NodeContinuity  node_continuity  = NodeContinuity::EXPLICIT;
 
 private:
     int n_nodes_ = 0;

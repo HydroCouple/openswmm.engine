@@ -97,7 +97,7 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
 
     // Newton-Raphson: solve f(a) = beta1*S(a*Afull) + C1*a + C2 = 0
     double a = (prev_a2 > TINY) ? prev_a2 : a_in_norm;
-    if (a < TINY) a = TINY;
+    a = std::max(a, TINY);
 
     int iters = 0;
     for (; iters < MAX_ITERS; ++iters) {
@@ -115,12 +115,12 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
         if (a < 0.0) a = 0.5 * (a - da);
         if (std::fabs(da) < EPSIL) break;
     }
-    if (a < 0.0) a = 0.0;
+    a = std::max(a, 0.0);
 
     // Outflow from outlet area
     double s_out = xsect::getSofA(xs, a * a_full);
     double q_out_norm = beta1 * s_out;
-    if (q_out_norm < 0.0) q_out_norm = 0.0;
+    q_out_norm = std::max(q_out_norm, 0.0);
 
     // De-normalise and store
     a_in_[ui]  = a_in_norm * a_full;

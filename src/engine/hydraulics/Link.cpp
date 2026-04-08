@@ -128,6 +128,26 @@ double getCapacity(const XSectParams& xs, double depth) {
 }
 
 // ============================================================================
+// Per-element: buildXSectParams
+// ============================================================================
+
+XSectParams buildXSectParams(const LinkData& links, std::size_t uj) {
+    XSectParams xs{};
+    xs.type   = links.xsect_batch_shape[uj];
+    xs.y_full = links.xsect_y_full[uj];
+    xs.a_full = links.xsect_a_full[uj];
+    xs.w_max  = links.xsect_w_max[uj];
+    xs.r_full = links.xsect_r_full[uj];
+    xs.s_full = links.xsect_s_full[uj];
+    xs.s_max  = links.xsect_s_max[uj];
+    xs.y_bot  = links.xsect_y_bot[uj];
+    xs.a_bot  = links.xsect_a_bot[uj];
+    xs.s_bot  = links.xsect_s_bot[uj];
+    xs.r_bot  = links.xsect_r_bot[uj];
+    return xs;
+}
+
+// ============================================================================
 // Batch: computeVelocities
 // ============================================================================
 
@@ -146,7 +166,7 @@ void computeVelocities(const LinkData& links, double* velocity) {
 
         // Build per-element XSectParams from SoA
         XSectParams xs;
-        xs.type   = translateShape(links.xsect_shape[ui]);
+        xs.type   = links.xsect_batch_shape[ui];
         xs.y_full = links.xsect_y_full[ui];
         xs.a_full = links.xsect_a_full[ui];
         xs.w_max  = links.xsect_w_max[ui];
@@ -179,7 +199,7 @@ void computeFroude(const LinkData& links, const double* velocity, double* froude
         }
 
         XSectParams xs;
-        xs.type   = translateShape(links.xsect_shape[ui]);
+        xs.type   = links.xsect_batch_shape[ui];
         xs.y_full = links.xsect_y_full[ui];
         xs.a_full = links.xsect_a_full[ui];
         xs.w_max  = links.xsect_w_max[ui];

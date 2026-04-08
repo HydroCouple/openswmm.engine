@@ -291,6 +291,11 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             if      (sv == "EXTRAN") opt.surcharge_method = 0;
             else if (sv == "SLOT")   opt.surcharge_method = 1;
 
+        } else if (key == "NODE_CONTINUITY") {
+            const std::string nc = norm(val);
+            if      (nc == "EXPLICIT")      opt.node_continuity = NodeContinuity::EXPLICIT;
+            else if (nc == "SEMI_IMPLICIT") opt.node_continuity = NodeContinuity::SEMI_IMPLICIT;
+
         } else if (key == "LINK_OFFSETS") {
             const std::string lv = norm(val);
             if      (lv == "DEPTH")     opt.link_offsets = 0;

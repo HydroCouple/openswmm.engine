@@ -179,5 +179,53 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
     }
 }
 
+double getReportRainfall(const SimulationContext& ctx, int gage_idx,
+                         double report_date) {
+    auto ug = static_cast<std::size_t>(gage_idx);
+
+    // API override
+    if (ctx.gages.api_rainfall[ug] >= 0.0) {
+        return ctx.gages.api_rainfall[ug];
+    }
+
+    // Query timeseries at report_date (matching legacy gage_setReportRainfall)
+    int ts_idx = ctx.gages.ts_index[ug];
+    if (ts_idx < 0 || ts_idx >= static_cast<int>(ctx.tables.tables.size()))
+        return 0.0;
+
+    const auto& tbl = ctx.tables.tables[static_cast<std::size_t>(ts_idx)];
+    int n = static_cast<int>(tbl.x.size());
+    int idx = tbl.cursor.index;
+    if (idx < 0 || idx >= n) return 0.0;
+
+    double interval = ctx.gages.interval_sec[ug];
+    double t = report_date + datetime::OneSecond;
+
+    double entry_start = tbl.x[static_cast<std::size_t>(idx)];
+    double entry_end = datetime::addSeconds(entry_start, interval);
+
+    double result;
+    if (t < entry_end) {
+        // Report time is within current rain interval
+        result = tbl.y[static_cast<std::size_t>(idx)];
+    } else {
+        // Check next entry
+        int next_idx = idx + 1;
+        if (next_idx < n && t >= tbl.x[static_cast<std::size_t>(next_idx)]) {
+            result = tbl.y[static_cast<std::size_t>(next_idx)];
+        } else {
+            result = 0.0; // In dry gap between entries
+        }
+    }
+
+    // Convert VOLUME to INTENSITY if needed
+    int rain_type = ctx.gages.rain_type[ug];
+    if (rain_type == 1 && interval > 0.0) {
+        result = result / (interval / 3600.0);
+    }
+
+    return result;
+}
+
 } // namespace gage
 } // namespace openswmm

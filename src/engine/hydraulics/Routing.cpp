@@ -76,6 +76,8 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 
         auto& xs = xsect_params[uj];
         xs.type   = translateShape(ctx.links.xsect_shape[uj]);
+        // Cache translated shape code to avoid per-timestep switch dispatch
+        ctx.links.xsect_batch_shape[uj] = xs.type;
         xs.y_full = ctx.links.xsect_y_full[uj];
         xs.a_full = ctx.links.xsect_a_full[uj];
         xs.w_max  = ctx.links.xsect_w_max[uj];
@@ -178,6 +180,11 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             break;
         case RouteModel::DYNWAVE:
             dw_solver_.init(n_nodes, n_links, groups_);
+            dw_solver_.head_tol = ctx.options.head_tol;
+            dw_solver_.max_trials = ctx.options.max_trials;
+            dw_solver_.surcharge_method =
+                static_cast<dynwave::SurchargeMethod>(ctx.options.surcharge_method);
+            dw_solver_.node_continuity = ctx.options.node_continuity;
             break;
         case RouteModel::STEADY:
             break;
@@ -253,7 +260,7 @@ int Router::step(SimulationContext& ctx, double dt,
                 double d1 = ctx.nodes.depth[uj];
                 for (int iter = 0; iter < 10; ++iter) {
                     double v_new = v_old + (q_in - q_out) * dt;
-                    if (v_new < 0.0) v_new = 0.0;
+                    v_new = std::max(v_new, 0.0);
 
                     // Overflow check
                     double full_vol = node::getVolume(ctx.nodes, j, ctx.nodes.full_depth[uj], &ctx.tables);
@@ -387,12 +394,6 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
 void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap_rate) {
     auto& links = ctx.links;
     int n = ctx.n_links();
-    static int dbg_count = 0;
-    if (dbg_count < 3) {
-        std::fprintf(stderr, "DBG conduitLosses: evap_rate=%.10e n_links=%d dt=%.1f\n",
-                     evap_rate, n, dt);
-        ++dbg_count;
-    }
 
     for (int j = 0; j < n; ++j) {
         auto uj = static_cast<std::size_t>(j);
@@ -404,16 +405,30 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
 
         if (depth > constants::FUDGE) {
             double length = links.length[uj];
-            int batch_shape = link::translateShape(links.xsect_shape[uj]);
+            int batch_shape = links.xsect_batch_shape[uj];
 
             // Evaporation for open conduits only
             if (xsect::isOpen(batch_shape) && evap_rate > 0.0) {
-                XSectParams xs{};
-                xs.type   = batch_shape;
-                xs.y_full = links.xsect_y_full[uj];
-                xs.a_full = links.xsect_a_full[uj];
-                xs.w_max  = links.xsect_w_max[uj];
-                double top_width = xsect::getWofY(xs, depth);
+                double top_width = 0.0;
+                // IRREGULAR/CUSTOM shapes: getWofY doesn't have transect
+                // table access in per-element mode, so use w_max scaled by
+                // depth fraction as approximation. For standard shapes, use
+                // the proper geometric dispatch.
+                if (batch_shape == static_cast<int>(XSectShape::IRREGULAR) ||
+                    batch_shape == static_cast<int>(XSectShape::CUSTOM)) {
+                    double y_full = links.xsect_y_full[uj];
+                    double w_max  = links.xsect_w_max[uj];
+                    // Linear interpolation: w ≈ w_max * (depth / y_full)
+                    // (conservative estimate for natural channels)
+                    top_width = (y_full > 0.0) ? w_max * std::min(depth / y_full, 1.0) : 0.0;
+                } else {
+                    XSectParams xs{};
+                    xs.type   = batch_shape;
+                    xs.y_full = links.xsect_y_full[uj];
+                    xs.a_full = links.xsect_a_full[uj];
+                    xs.w_max  = links.xsect_w_max[uj];
+                    top_width = xsect::getWofY(xs, depth);
+                }
                 evap_loss = top_width * length * evap_rate;
             }
 

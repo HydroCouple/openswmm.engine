@@ -65,6 +65,7 @@ struct RDIIGroupSoA {
     int count = 0;
     std::vector<int>    node_idx;       ///< Target node index
     std::vector<int>    uh_idx;         ///< Unit hydrograph parameter index
+    std::vector<int>    gage_idx;       ///< Rain gage index per UH group (legacy: UnitHyd[j].rainGage)
     std::vector<double> area;           ///< Contributing area (acres, project units)
 
     /// Per-response data: [group * 3 + response]
@@ -97,18 +98,29 @@ public:
     int findUnitHyd(const std::string& name) const;
 
     /**
-     * @brief Compute RDII inflows for all groups and add to node lat_flow.
+     * @brief Compute RDII inflows for all groups (buffered, not added to lat_flow).
      *
-     * @details Convolution: RDII = sum(pastRain[i] * r[m][k] * u(t))
-     *          The inner product is vectorisable over past periods.
+     * @details Reads per-group gage rainfall from ctx.gages.rainfall[gage_idx].
+     *          Convolution: RDII = sum(pastRain[i] * r[m][k] * u(t))
+     *          Results are stored in node_rdii_flow_ for later application.
+     *          Should be called at the wet weather step (matching legacy RdiiStep = WetStep).
      */
-    void computeAll(SimulationContext& ctx, double rainfall, int month, double dt);
+    void computeAll(SimulationContext& ctx, int month, double dt);
+
+    /**
+     * @brief Apply buffered RDII inflows to node lateral flows.
+     *
+     * @details Called during routing to add pre-computed RDII to lat_flow,
+     *          matching legacy addRdiiInflows() which reads from the RDII file.
+     */
+    void applyRdiiInflows(SimulationContext& ctx) const;
 
     std::vector<UnitHydParams> uh_params;
 
 private:
     RDIIGroupSoA groups_;
     std::unordered_map<std::string, int> uh_name_to_idx_;
+    std::vector<double> node_rdii_flow_;  ///< Buffered per-node RDII flow (CFS)
 
     /// Compute UH ordinate at time t for response k, month m.
     double uhOrdinate(const UnitHydParams& uh, int month, int response, double t) const;

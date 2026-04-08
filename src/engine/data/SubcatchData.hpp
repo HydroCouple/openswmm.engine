@@ -215,6 +215,9 @@ struct SubcatchData {
     /** @brief Runoff at the previous timestep. */
     std::vector<double> old_runoff;
 
+    /** @brief GW flow at the previous runoff evaluation (for interpolation). */
+    std::vector<double> old_gw_flow;
+
     // -----------------------------------------------------------------------
     // Cumulative statistics
     // -----------------------------------------------------------------------
@@ -366,6 +369,7 @@ struct SubcatchData {
         ponded_depth.assign(un, 0.0);
         gw_flow.assign(un, 0.0);
         old_runoff.assign(un, 0.0);
+        old_gw_flow.assign(un, 0.0);
 
         stat_precip_vol.assign(un, 0.0);
         stat_evap_vol.assign(un, 0.0);
@@ -399,6 +403,7 @@ struct SubcatchData {
         std::fill(infil_loss.begin(),   infil_loss.end(),   0.0);
         std::fill(ponded_depth.begin(), ponded_depth.end(), 0.0);
         std::fill(old_runoff.begin(),   old_runoff.end(),   0.0);
+        std::fill(old_gw_flow.begin(),  old_gw_flow.end(),  0.0);
     }
 };
 

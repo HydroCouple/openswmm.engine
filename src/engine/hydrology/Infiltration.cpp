@@ -52,7 +52,7 @@ double horton_getInfil(HortonState& state, double precip, double depth, double d
                 double x = 1.0 - std::exp(-kd * state.tp);
                 state.tp = (x > 0.0) ? -std::log(1.0 - r * x) / kd : 0.0;
             }
-            if (state.tp < 0.0) state.tp = 0.0;
+            state.tp = std::max(state.tp, 0.0);
         }
         return 0.0;
     }
@@ -70,7 +70,7 @@ double horton_getInfil(HortonState& state, double precip, double depth, double d
     if (df < 0.0 || kd < 0.0 || kr < 0.0) return 0.0;
     if (df == 0.0 || kd == 0.0) {
         double fp = f0;
-        if (fp > ia) fp = ia;
+        fp = std::min(fp, ia);
         return std::max(0.0, fp);
     }
 
@@ -92,7 +92,7 @@ double horton_getInfil(HortonState& state, double precip, double depth, double d
         fp = std::max(fp, fmin);  // Floor at fmin (matching legacy line 443)
 
         // Limit infiltration rate to available water
-        if (fp > ia) fp = ia;
+        fp = std::min(fp, ia);
 
         // Update cumulative time tp
         if (t1 > tlim) {
@@ -157,7 +157,7 @@ double modHorton_getInfil(HortonState& state, double precip, double depth, doubl
     if (df == 0.0 || kd == 0.0) {
         double fp = f0;
         double fa = precip + depth / dt;
-        if (fp > fa) fp = fa;
+        fp = std::min(fp, fa);
         return std::max(0.0, fp);
     }
 
@@ -251,8 +251,8 @@ double grnampt_getInfil(GreenAmptState& state, double precip, double depth, doub
             double dF = kr * Fumax * dt;
             state.F  -= dF;
             state.Fu -= dF;
-            if (state.F < 0.0) state.F = 0.0;
-            if (state.Fu < 0.0) state.Fu = 0.0;
+            state.F = std::max(state.F, 0.0);
+            state.Fu = std::max(state.Fu, 0.0);
 
             // Inter-event reset: when timer expires, reset IMD and F
             // (matching legacy line 721-725)
@@ -322,8 +322,8 @@ double grnampt_getInfil(GreenAmptState& state, double precip, double depth, doub
 void curvenum_init(CurveNumState& state, double CN, double regen_days) {
     // SCS formula: S in inches, then convert to feet (always /12)
     // Legacy: infil->Smax = (1000.0/CN - 10.0) / 12.0
-    if (CN < 10.0) CN = 10.0;
-    if (CN > 99.0) CN = 99.0;
+    CN = std::max(CN, 10.0);
+    CN = std::min(CN, 99.0);
     state.Smax = (1000.0 / CN - 10.0) / 12.0;  // inches → feet (hardcoded /12)
     state.S    = state.Smax;
     state.Se   = state.Smax;
@@ -389,7 +389,7 @@ double curvenum_getInfil(CurveNumState& state, double precip, double depth, doub
         // Deplete retention capacity S (legacy line 1014)
         if (state.regen > 0.0) {
             state.S -= f1 * dt;
-            if (state.S < 0.0) state.S = 0.0;
+            state.S = std::max(state.S, 0.0);
         }
     }
     // --- Otherwise regenerate capacity ---
@@ -397,7 +397,7 @@ double curvenum_getInfil(CurveNumState& state, double precip, double depth, doub
         // Legacy line 1022: S += regen * Smax * tstep * recoveryFactor
         // recoveryFactor is applied at call-site
         state.S += state.regen * state.Smax * dt;
-        if (state.S > state.Smax) state.S = state.Smax;
+        state.S = std::min(state.S, state.Smax);
     }
 
     state.f = f1;
