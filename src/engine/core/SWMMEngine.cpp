@@ -864,7 +864,7 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
     //  outlet_node which receives surface runoff)
     // Build per-subcatchment sw_head relative to aquifer bottom
     // Legacy: Hsw = Node[n].newDepth + Node[n].invertElev - GW->bottomElev
-    std::vector<double> sw_head(static_cast<std::size_t>(ns), 0.0);
+    gw_sw_head_.assign(static_cast<std::size_t>(ns), 0.0);
     for (int i = 0; i < ns; ++i) {
         auto ui = static_cast<std::size_t>(i);
         int aq_idx = ctx_.subcatches.gw_aquifer[ui];
@@ -874,13 +874,35 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
         if (gw_node >= 0 && gw_node < ctx_.n_nodes()) {
             auto un = static_cast<std::size_t>(gw_node);
             double bottom_elev = ctx_.aquifers.bottom_elev[static_cast<std::size_t>(aq_idx)];
-            sw_head[ui] = ctx_.nodes.depth[un] + ctx_.nodes.invert_elev[un] - bottom_elev;
+            gw_sw_head_[ui] = ctx_.nodes.depth[un] + ctx_.nodes.invert_elev[un] - bottom_elev;
         }
+    }
+
+    // Build per-subcatchment FracPerv and pervious evap rate
+    // Legacy: FracPerv = subcatch_getFracPerv(j)
+    //         evap (rate) = Vpevap / Area / tStep
+    //         MaxEvap = Evap.rate * FracPerv
+    //         AvailEvap = max(MaxEvap - evap, 0)
+    gw_frac_perv_.assign(static_cast<std::size_t>(ns), 0.0);
+    gw_perv_evap_.assign(static_cast<std::size_t>(ns), 0.0);
+    for (int i = 0; i < ns; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        double total_area = ctx_.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+        if (total_area <= 0.0) continue;
+        double frac_perv = 1.0 - ctx_.subcatches.frac_imperv[ui];
+        // Adjust for LID area (matching legacy subcatch_getFracPerv)
+        // LID area replaces impervious area, so effective pervious fraction
+        // increases when LIDs are present.
+        // For now, use simple pervious fraction from input.
+        gw_frac_perv_[ui] = std::max(frac_perv, 0.0);
+        // Pervious evap rate: evap_loss is total evap rate over full area (ft/sec)
+        gw_perv_evap_[ui] = ctx_.subcatches.evap_loss[ui];
     }
 
     // Pass actual infiltration rate to groundwater (upper zone percolation input)
     groundwater_.execute(ctx_, dt_runoff, climate_.evap_rate,
-                         ctx_.subcatches.infil_loss.data(), sw_head.data());
+                         ctx_.subcatches.infil_loss.data(), gw_sw_head_.data(),
+                         gw_frac_perv_.data(), gw_perv_evap_.data());
 
     // Store GW flow rates in subcatch state for Phase 2 interpolation.
     // GW flow is in ft/sec (rate per unit area).
@@ -1070,22 +1092,12 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     inlet_.computeAll(ctx_, dt_routing);
 
     // B3b. Culvert inlet control (FHWA HEC-5 equations)
-    //      Check all conduit links with culvert_code > 0
-    {
-        std::vector<int> culvert_links;
-        for (int j = 0; j < ctx_.n_links(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            if (ctx_.links.type[uj] == LinkType::CONDUIT &&
-                ctx_.links.culvert_code[uj] > 0) {
-                culvert_links.push_back(j);
-            }
-        }
-        if (!culvert_links.empty()) {
-            culvert::batchComputeInletControl(
-                culvert_links.data(),
-                static_cast<int>(culvert_links.size()),
-                ctx_);
-        }
+    //      Uses pre-built culvert_links_ (populated in initHydraulics)
+    if (!culvert_links_.empty()) {
+        culvert::batchComputeInletControl(
+            culvert_links_.data(),
+            static_cast<int>(culvert_links_.size()),
+            ctx_);
     }
 
     // B3c. Exfiltration (storage node Green-Ampt seepage)
@@ -1520,7 +1532,9 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
     // report boundary.
     if (hydraulics::TimestepController::output_due(ctx_)) {
         if (save_results_ && !plugins_.empty()) {
-            // Build a SimulationSnapshot from the current context
+            // Build a SimulationSnapshot from the current context.
+            // Vector assignments are O(n) memcpy; the I/O thread consumes
+            // and destroys the snapshot after processing.
             SimulationSnapshot snap;
             snap.sim_time         = ctx_.current_date;
             snap.node_count       = ctx_.n_nodes();
@@ -2056,6 +2070,16 @@ void SWMMEngine::initHydraulics() noexcept {
     // 10d. Inlet solver: initialize street inlet data
     inlet_.init(ctx_);
 
+    // 10d-1. Pre-build culvert link index list (avoids per-timestep heap alloc)
+    culvert_links_.clear();
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx_.links.type[uj] == LinkType::CONDUIT &&
+            ctx_.links.culvert_code[uj] > 0) {
+            culvert_links_.push_back(j);
+        }
+    }
+
     // 10d. Interface file manager: initialize (files opened later in start())
     iface_.init(ctx_);
 
@@ -2131,6 +2155,17 @@ void SWMMEngine::initHydrology() noexcept {
             gw.tension_slope[ui]    = ctx_.aquifers.tension_slope[uaq]
                                       / ucf::Ucf[ucf::LENGTH][unit_sys];
             gw.upper_evap_frac[ui]  = ctx_.aquifers.upper_evap[uaq];
+            // Resolve upper evaporation pattern name to index
+            gw.upper_evap_pat[ui] = -1;
+            const auto& pat_name = ctx_.aquifers.upper_evap_pat[uaq];
+            if (!pat_name.empty()) {
+                for (int p = 0; p < ctx_.patterns.count(); ++p) {
+                    if (ctx_.patterns.names[static_cast<std::size_t>(p)] == pat_name) {
+                        gw.upper_evap_pat[ui] = p;
+                        break;
+                    }
+                }
+            }
             gw.lower_evap_depth[ui] = ctx_.aquifers.lower_evap[uaq]
                                       / ucf::Ucf[ucf::LENGTH][unit_sys];
             gw.lower_loss_coeff[ui] = ctx_.aquifers.lower_loss[uaq]

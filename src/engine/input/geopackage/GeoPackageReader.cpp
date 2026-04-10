@@ -213,6 +213,23 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
         else if (key == "REPORT_START") ctx.options.report_start = std::stod(val);
         else if (key == "SWEEP_START") ctx.options.sweep_start = std::stoi(val);
         else if (key == "SWEEP_END") ctx.options.sweep_end = std::stoi(val);
+        else if (key == "NODE_CONTINUITY") ctx.options.node_continuity = static_cast<NodeContinuity>(std::stoi(val));
+        else if (key == "ANDERSON_ACCEL") ctx.options.anderson_accel = (std::stoi(val) != 0);
+        else if (key == "SURCHARGE_METHOD") ctx.options.surcharge_method = std::stoi(val);
+        else if (key == "INERTIAL_DAMPING") ctx.options.inertial_damping = std::stoi(val);
+        else if (key == "NORMAL_FLOW_LIMITED") ctx.options.normal_flow_ltd = std::stoi(val);
+        else if (key == "MAX_TRIALS") ctx.options.max_trials = std::stoi(val);
+        else if (key == "HEAD_TOLERANCE") ctx.options.head_tol = std::stod(val);
+        else if (key == "VARIABLE_STEP") ctx.options.variable_step = std::stod(val);
+        else if (key == "MINIMUM_STEP") ctx.options.min_routing_step = std::stod(val);
+        else if (key == "LENGTHENING_STEP") ctx.options.lengthening_step = std::stod(val);
+        else if (key == "MIN_SLOPE") ctx.options.min_slope = std::stod(val);
+        else if (key == "MIN_SURFAREA") ctx.options.min_surf_area = std::stod(val);
+        else if (key == "SYS_FLOW_TOL") ctx.options.sys_flow_tol = std::stod(val);
+        else if (key == "LAT_FLOW_TOL") ctx.options.lat_flow_tol = std::stod(val);
+        else if (key == "THREADS") ctx.options.num_threads = std::stoi(val);
+        else if (key == "DRY_DAYS") ctx.options.dry_days = std::stod(val);
+        else if (key == "IGNORE_RDII") ctx.options.ignore_rdii = (val == "YES");
         else if (key == "CRS") ctx.spatial.crs = val;
     }
 }

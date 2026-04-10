@@ -35,6 +35,12 @@ namespace constants {
 /// @see Legacy: GRAVITY in consts.h
 constexpr double GRAVITY       = 32.2;
 
+/// sqrt(GRAVITY) — precomputed to avoid per-element std::sqrt in Froude calc.
+constexpr double SQRT_GRAVITY     = 5.67450438786;  // sqrt(32.2)
+
+/// 1.0 / sqrt(GRAVITY) — multiply instead of divide in Froude computation.
+constexpr double INV_SQRT_GRAVITY = 0.17622692584;  // 1.0 / sqrt(32.2)
+
 /// Pi.
 constexpr double PI            = 3.14159265358979;
 
@@ -184,6 +190,12 @@ constexpr int    MAX_PAST_RAIN = 48;
 
 /// Number of time step histogram bins.
 constexpr int    N_TIME_BINS   = 5;
+
+/// Delphi-style date offset used by legacy datetime encoding.
+/// @see Legacy: DateDelta in datetime.c
+/// Needed for day-of-week computation: (floor(date) + DATE_DELTA) % 7
+/// gives 0=Sat with +1 → 1=Sun..7=Sat matching legacy datetime_dayOfWeek().
+constexpr int    DATE_DELTA    = 693594;
 
 } // namespace constants
 } // namespace openswmm

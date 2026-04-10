@@ -195,8 +195,19 @@ struct SimulationOptions {
     /** @brief Surcharge method: 0=EXTRAN, 1=SLOT. @see Legacy: SurchargeMethod */
     int surcharge_method = 0;
 
-    /** @brief Node continuity formulation for depth update. Default: SEMI_IMPLICIT. */
-    NodeContinuity node_continuity = NodeContinuity::SEMI_IMPLICIT;
+    /** @brief Node continuity formulation for depth update. Default: EXPLICIT (legacy). */
+    NodeContinuity node_continuity = NodeContinuity::EXPLICIT;
+
+    /** @brief Enable Anderson acceleration for Picard iteration convergence.
+     *  @details When true, uses depth-2 Anderson mixing to accelerate node
+     *           depth convergence, typically reducing iteration count by 25-50%.
+     *           Falls back to standard Picard for nodes that violate physical bounds.
+     *  @code
+     *  ANDERSON_ACCEL  YES   ;; enable Anderson acceleration
+     *  ANDERSON_ACCEL  NO    ;; standard Picard iteration (default)
+     *  @endcode
+     */
+    bool anderson_accel = false;
 
     /** @brief Normal flow limitation: 0=SLOPE, 1=FROUDE, 2=BOTH, 3=NEITHER.
      *  @see Legacy: NormalFlowLtd */

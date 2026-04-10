@@ -255,6 +255,70 @@ constexpr std::size_t lane_width() noexcept {
     return OPENSWMM_SIMD_WIDTH;
 }
 
+/**
+ * @brief Element-wise sqrt: dst[i] = sqrt(a[i]).
+ *        Written as a simple loop; compilers auto-vectorize to platform-native
+ *        SIMD (vsqrtq_f64 on ARM, _mm256_sqrt_pd on x86, etc.).
+ */
+inline void sqrt_array(
+    const double* OPENSWMM_RESTRICT a,
+    double*       OPENSWMM_RESTRICT dst,
+    std::size_t                n
+) noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC ivdep
+#endif
+    for (std::size_t i = 0; i < n; ++i) dst[i] = std::sqrt(a[i]);
+}
+
+/**
+ * @brief Element-wise fabs: dst[i] = fabs(a[i]).
+ */
+inline void fabs_array(
+    const double* OPENSWMM_RESTRICT a,
+    double*       OPENSWMM_RESTRICT dst,
+    std::size_t                n
+) noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC ivdep
+#endif
+    for (std::size_t i = 0; i < n; ++i) dst[i] = std::fabs(a[i]);
+}
+
+/**
+ * @brief Element-wise fused multiply-add: dst[i] = a[i] * b[i] + c[i].
+ */
+inline void fma_array(
+    const double* OPENSWMM_RESTRICT a,
+    const double* OPENSWMM_RESTRICT b,
+    const double* OPENSWMM_RESTRICT c,
+    double*       OPENSWMM_RESTRICT dst,
+    std::size_t                n
+) noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC ivdep
+#endif
+    for (std::size_t i = 0; i < n; ++i) dst[i] = a[i] * b[i] + c[i];
+}
+
 } /* namespace openswmm::simd */
+
+// ============================================================================
+// Fast math: pow(x, 4/3) and pow(x, 2/3) using std::cbrt
+// ============================================================================
+
+namespace openswmm::fastmath {
+
+/** @brief pow(x, 4/3) = x * cbrt(x). Much faster than std::pow(x, 4.0/3.0). */
+inline double pow4_3(double x) noexcept {
+    return x * std::cbrt(x);
+}
+
+/** @brief pow(x, 2/3) = cbrt(x²). Much faster than std::pow(x, 2.0/3.0). */
+inline double pow2_3(double x) noexcept {
+    return std::cbrt(x * x);
+}
+
+} /* namespace openswmm::fastmath */
 
 #endif /* OPENSWMM_ENGINE_SIMD_HPP */

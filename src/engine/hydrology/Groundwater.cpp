@@ -10,6 +10,7 @@
 
 #include "Groundwater.hpp"
 #include "../core/Constants.hpp"
+#include "../core/DateTime.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../math/OdeSolver.hpp"
@@ -34,6 +35,7 @@ void GWSoA::resize(int n) {
     k_slope.assign(un, 0.0);
     tension_slope.assign(un, 0.0);
     upper_evap_frac.assign(un, 0.0);
+    upper_evap_pat.assign(un, -1);
     lower_evap_depth.assign(un, 0.0);
     lower_loss_coeff.assign(un, 0.0);
     total_depth.assign(un, 0.0);
@@ -136,11 +138,15 @@ static void getFluxes(GWContext& c, double theta, double lower_depth) {
         double ucf_len = c.ucf_length;
         double t1 = (c.b1 == 0.0)
             ? c.a1 : c.a1 * std::pow((lower_depth - c.h_star) * ucf_len, c.b1);
-        double t2 = 0.0;
-        if (c.sw_head > c.h_star) {
-            t2 = (c.b2 == 0.0)
-                ? c.a2 : c.a2 * std::pow((c.sw_head - c.h_star) * ucf_len, c.b2);
-        }
+        // Legacy: if b2==0 then t2=a2 always (constant surface water term),
+        //         else if Hsw>Hstar then t2=a2*pow(...), else t2=0
+        double t2;
+        if (c.b2 == 0.0)
+            t2 = c.a2;
+        else if (c.sw_head > c.h_star)
+            t2 = c.a2 * std::pow((c.sw_head - c.h_star) * ucf_len, c.b2);
+        else
+            t2 = 0.0;
         double t3 = c.a3 * lower_depth * c.sw_head * ucf_len * ucf_len;
         c.gw_flow = (t1 - t2 + t3) / c.ucf_gwflow;
         if (c.gw_flow < 0.0 && c.a3 != 0.0) c.gw_flow = 0.0;
@@ -177,7 +183,8 @@ static void getDxDt(GWContext& c, double /*t*/, const double* x, double* dxdt) {
 // ============================================================================
 
 void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
-                       const double* infil_rate, const double* sw_head) {
+                       const double* infil_rate, const double* sw_head,
+                       const double* frac_perv, const double* perv_evap_rate) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
 
@@ -201,7 +208,17 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         c.k_sat            = soa_.k_sat[ui];
         c.k_slope          = soa_.k_slope[ui];
         c.tension_slope    = soa_.tension_slope[ui];
-        c.upper_evap_frac  = soa_.upper_evap_frac[ui];
+        // Apply monthly evaporation pattern adjustment (matching legacy getEvapRates)
+        double evap_frac = soa_.upper_evap_frac[ui];
+        int pat_idx = soa_.upper_evap_pat[ui];
+        if (pat_idx >= 0 && pat_idx < ctx.patterns.count()) {
+            int month = datetime::monthOfYear(ctx.current_date);
+            auto upat = static_cast<std::size_t>(pat_idx);
+            const auto& facs = ctx.patterns.factors[upat];
+            if (month >= 1 && month <= static_cast<int>(facs.size()))
+                evap_frac *= facs[static_cast<std::size_t>(month - 1)];
+        }
+        c.upper_evap_frac  = evap_frac;
         c.lower_evap_depth = soa_.lower_evap_depth[ui];
         c.lower_loss_coeff = soa_.lower_loss_coeff[ui];
         c.total_depth      = soa_.total_depth[ui];
@@ -209,8 +226,11 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         c.a2 = soa_.a2[ui]; c.b2 = soa_.b2[ui];
         c.a3 = soa_.a3[ui]; c.h_star = soa_.h_star[ui];
         c.infil            = infil_rate[i];
-        c.max_evap         = max_evap;
-        c.avail_evap       = max_evap; // Simplified: full evap available
+        // Match legacy: MaxEvap = Evap.rate * FracPerv
+        // AvailEvap = max(MaxEvap - pervEvapRate, 0)
+        double fp = frac_perv[i];
+        c.max_evap         = max_evap * fp;
+        c.avail_evap       = std::max(c.max_evap - perv_evap_rate[i], 0.0);
         c.sw_head          = sw_head[i];
         c.dt               = dt;
         int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
@@ -230,12 +250,24 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         // Max positive GW outflow: all water in lower zone
         c.max_gw_flow_pos = lower_d_0 * c.porosity / dt;
 
-        // Max negative GW inflow: capacity of upper zone
-        c.max_gw_flow_neg = -(c.total_depth - lower_d_0) * (c.porosity - theta_0) / dt;
+        // Max negative GW inflow: min of upper zone capacity and available node flow
+        // (matching legacy gwater.c: MaxGWFlowNeg = -MIN(capacity, nodeFlow))
+        double gw_capacity_neg = (c.total_depth - lower_d_0) * (c.porosity - theta_0) / dt;
+        int gw_node = ctx.subcatches.gw_node[ui];
+        if (gw_node < 0) gw_node = ctx.subcatches.outlet_node[ui];
+        double node_flow = 0.0;
+        if (gw_node >= 0 && gw_node < ctx.n_nodes()) {
+            auto un = static_cast<std::size_t>(gw_node);
+            double area_ft2 = ctx.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+            if (area_ft2 > 0.0)
+                node_flow = (ctx.nodes.inflow[un] + ctx.nodes.volume[un] / dt) / area_ft2;
+        }
+        c.max_gw_flow_neg = -std::min(gw_capacity_neg, node_flow);
 
         // --- Integrate ODEs via RKF45 ---
         double x[2] = { theta_0, lower_d_0 };
 
+        // Legacy ignores ODE return code; match that behavior
         ode::integrate(x, 2, 0.0, dt, GWTOL, dt,
             [&c](double t, const double* y, double* dydx) {
                 getDxDt(c, t, y, dydx);

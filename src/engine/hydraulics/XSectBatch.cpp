@@ -37,6 +37,7 @@ void ShapeGroup::resize(int n) {
     auto un = static_cast<std::size_t>(n);
     link_idx.resize(un);
     y_full.resize(un);
+    inv_y_full.resize(un);
     a_full.resize(un);
     r_full.resize(un);
     s_full.resize(un);
@@ -91,6 +92,7 @@ void XSectGroups::build(const XSectParams* params, int n_links) {
         auto uc = static_cast<std::size_t>(c);
         g.link_idx[uc] = i;
         g.y_full[uc] = params[i].y_full;
+        g.inv_y_full[uc] = (params[i].y_full > 0.0) ? 1.0 / params[i].y_full : 0.0;
         g.a_full[uc] = params[i].a_full;
         g.r_full[uc] = params[i].r_full;
         g.s_full[uc] = params[i].s_full;
@@ -126,6 +128,7 @@ void XSectGroups::attachTransectTables(const SimulationContext& ctx) {
                 g.width_tables[uk] = td.width_tbl;
                 // Update full-depth properties from transect
                 g.y_full[uk] = td.y_full;
+                g.inv_y_full[uk] = (td.y_full > 0.0) ? 1.0 / td.y_full : 0.0;
                 g.a_full[uk] = td.a_full;
                 g.r_full[uk] = td.r_full;
                 g.w_max[uk]  = td.w_max;
@@ -149,7 +152,7 @@ namespace xsect_batch {
 
 void area_circular(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT inv_y_full,
     const double* OPENSWMM_RESTRICT a_full,
     double*       OPENSWMM_RESTRICT area,
     int count
@@ -161,23 +164,13 @@ void area_circular(
     constexpr double inv_delta = static_cast<double>(n_items - 1);
 
     for (int k = 0; k < count; ++k) {
-        double y = depth[k];
-        if (y <= 0.0) { area[k] = 0.0; continue; }
-
-        double y_norm = y / y_full[k];
-        y_norm = std::min(y_norm, 1.0);
-
-        int i = static_cast<int>(y_norm * inv_delta);
-        if (i >= n_items - 1) { area[k] = a_full[k]; continue; }
+        // Branchless: clamp y_norm to [0, 1], table[0]=0 handles depth<=0 naturally
+        double y_norm = std::max(0.0, std::min(depth[k] * inv_y_full[k], 1.0));
+        int i = std::min(static_cast<int>(y_norm * inv_delta), n_items - 2);
 
         double x0 = i * delta;
-        double x1 = (static_cast<double>(i) + 1.0) * delta;
-
-        // Linear interpolation (matching legacy lookup() exactly)
         double t_val = table[i] + (y_norm - x0) * (table[i + 1] - table[i]) * inv_delta;
-        t_val = std::max(t_val, 0.0);
-
-        area[k] = a_full[k] * t_val;
+        area[k] = a_full[k] * std::max(t_val, 0.0);
     }
 }
 
@@ -230,10 +223,14 @@ void area_parabolic(
     double*       OPENSWMM_RESTRICT area,
     int count
 ) {
-    // area = (4/3) * r_bot * depth^(3/2)
+    // area = (4/3) * r_bot * depth^(3/2) — auto-vectorizable with ivdep
+    constexpr double four_thirds = 4.0 / 3.0;
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC ivdep
+#endif
     for (int k = 0; k < count; ++k) {
         double d = depth[k];
-        area[k] = (4.0 / 3.0) * r_bot[k] * d * std::sqrt(d);
+        area[k] = four_thirds * r_bot[k] * d * std::sqrt(d);
     }
 }
 
@@ -252,7 +249,7 @@ void area_powerfunc(
 
 void area_tabulated(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT inv_y_full,
     const double* OPENSWMM_RESTRICT a_full,
     const double* table,
     int            table_size,
@@ -266,7 +263,7 @@ void area_tabulated(
         double y = depth[k];
         if (y <= 0.0) { area[k] = 0.0; continue; }
 
-        double y_norm = y / y_full[k];
+        double y_norm = y * inv_y_full[k];
         y_norm = std::min(y_norm, 1.0);
 
         int i = static_cast<int>(y_norm * inv_delta);
@@ -282,7 +279,7 @@ void area_tabulated(
 
 void area_inv_tabulated(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT inv_y_full,
     const double* OPENSWMM_RESTRICT a_full,
     const double* table,
     int            table_size,
@@ -293,7 +290,7 @@ void area_inv_tabulated(
     for (int k = 0; k < count; ++k) {
         double y = depth[k];
         if (y <= 0.0) { area[k] = 0.0; continue; }
-        double y_norm = y / y_full[k];
+        double y_norm = y * inv_y_full[k];
         y_norm = std::min(y_norm, 1.0);
         area[k] = a_full[k] * xsect::invLookup(y_norm, table, table_size);
     }
@@ -302,7 +299,7 @@ void area_inv_tabulated(
 /// Per-link tabulated lookup (for IRREGULAR shapes where each link has its own table).
 void perlink_tabulated(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT inv_y_full,
     const double* OPENSWMM_RESTRICT scale,      // a_full, r_full, or w_max
     const double* const* tables,                 // per-link table pointers
     int            table_size,
@@ -317,7 +314,7 @@ void perlink_tabulated(
         if (y <= 0.0) { result[k] = 0.0; continue; }
         if (!tables[k]) { result[k] = 0.0; continue; }
 
-        double y_norm = y / y_full[k];
+        double y_norm = y * inv_y_full[k];
         if (y_norm >= 1.0) { result[k] = scale[k]; continue; }
 
         int i = static_cast<int>(y_norm * inv_delta);
@@ -336,7 +333,7 @@ void perlink_tabulated(
 
 void hydrad_circular(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT inv_y_full,
     const double* OPENSWMM_RESTRICT r_full,
     double*       OPENSWMM_RESTRICT hydrad,
     int count
@@ -347,20 +344,13 @@ void hydrad_circular(
     constexpr double delta = 1.0 / inv_delta;
 
     for (int k = 0; k < count; ++k) {
-        double y = depth[k];
-        if (y <= 0.0) { hydrad[k] = 0.0; continue; }
-
-        double y_norm = y / y_full[k];
-        y_norm = std::min(y_norm, 1.0);
-
-        int i = static_cast<int>(y_norm * inv_delta);
-        if (i >= n_items - 1) { hydrad[k] = r_full[k]; continue; }
+        // Branchless: clamp y_norm to [0, 1], table[0]=0 handles depth<=0 naturally
+        double y_norm = std::max(0.0, std::min(depth[k] * inv_y_full[k], 1.0));
+        int i = std::min(static_cast<int>(y_norm * inv_delta), n_items - 2);
 
         double x0 = i * delta;
         double t_val = table[i] + (y_norm - x0) * (table[i + 1] - table[i]) * inv_delta;
-        t_val = std::max(t_val, 0.0);
-
-        hydrad[k] = r_full[k] * t_val;
+        hydrad[k] = r_full[k] * std::max(t_val, 0.0);
     }
 }
 
@@ -420,7 +410,7 @@ void hydrad_rect(
 
 void hydrad_tabulated(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT inv_y_full,
     const double* OPENSWMM_RESTRICT r_full,
     const double* table,
     int            table_size,
@@ -434,7 +424,7 @@ void hydrad_tabulated(
         double y = depth[k];
         if (y <= 0.0) { hydrad[k] = 0.0; continue; }
 
-        double y_norm = y / y_full[k];
+        double y_norm = y * inv_y_full[k];
         y_norm = std::min(y_norm, 1.0);
 
         int i = static_cast<int>(y_norm * inv_delta);
@@ -454,7 +444,7 @@ void hydrad_tabulated(
 
 void width_circular(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT inv_y_full,
     const double* OPENSWMM_RESTRICT w_max,
     double*       OPENSWMM_RESTRICT width,
     int count
@@ -465,17 +455,13 @@ void width_circular(
     constexpr double delta = 1.0 / inv_delta;
 
     for (int k = 0; k < count; ++k) {
-        double y_norm = depth[k] / y_full[k];
-        y_norm = std::min(y_norm, 1.0);
-
-        int i = static_cast<int>(y_norm * inv_delta);
-        if (i >= n_items - 1) { width[k] = 0.0; continue; }
+        // Branchless: clamp y_norm to [0, 1]
+        double y_norm = std::max(0.0, std::min(depth[k] * inv_y_full[k], 1.0));
+        int i = std::min(static_cast<int>(y_norm * inv_delta), n_items - 2);
 
         double x0 = i * delta;
         double t_val = table[i] + (y_norm - x0) * (table[i + 1] - table[i]) * inv_delta;
-        t_val = std::max(t_val, 0.0);
-
-        width[k] = w_max[k] * t_val;
+        width[k] = w_max[k] * std::max(t_val, 0.0);
     }
 }
 
@@ -522,7 +508,7 @@ void width_rect(
 
 void width_tabulated(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT inv_y_full,
     const double* OPENSWMM_RESTRICT w_max,
     const double* table,
     int            table_size,
@@ -533,7 +519,7 @@ void width_tabulated(
     const double delta = 1.0 / inv_delta;
 
     for (int k = 0; k < count; ++k) {
-        double y_norm = depth[k] / y_full[k];
+        double y_norm = depth[k] * inv_y_full[k];
         y_norm = std::min(y_norm, 1.0);
 
         int i = static_cast<int>(y_norm * inv_delta);
@@ -646,7 +632,7 @@ void XSectGroups::computeAreas(const double* depths, double* areas, int /*n_link
         switch (g.shape) {
             case XSectShape::CIRCULAR:
             case XSectShape::FORCE_MAIN:
-                xsect_batch::area_circular(local_d, g.y_full.data(),
+                xsect_batch::area_circular(local_d, g.inv_y_full.data(),
                                            g.a_full.data(), local_a, g.count);
                 break;
 
@@ -679,7 +665,7 @@ void XSectGroups::computeAreas(const double* depths, double* areas, int /*n_link
             case XSectShape::IRREGULAR:
             case XSectShape::CUSTOM:
                 if (!g.area_tables.empty()) {
-                    xsect_batch::perlink_tabulated(local_d, g.y_full.data(),
+                    xsect_batch::perlink_tabulated(local_d, g.inv_y_full.data(),
                                                     g.a_full.data(), g.area_tables.data(),
                                                     g.transect_tbl_size, local_a, g.count);
                 }
@@ -689,13 +675,13 @@ void XSectGroups::computeAreas(const double* depths, double* areas, int /*n_link
                 // Check tabulated shapes
                 auto tbl = area_table_for(g.shape);
                 if (tbl.data) {
-                    xsect_batch::area_tabulated(local_d, g.y_full.data(),
+                    xsect_batch::area_tabulated(local_d, g.inv_y_full.data(),
                                                 g.a_full.data(), tbl.data, tbl.size,
                                                 local_a, g.count);
                 } else {
                     auto inv = area_inv_table_for(g.shape);
                     if (inv.data) {
-                        xsect_batch::area_inv_tabulated(local_d, g.y_full.data(),
+                        xsect_batch::area_inv_tabulated(local_d, g.inv_y_full.data(),
                                                          g.a_full.data(), inv.data, inv.size,
                                                          local_a, g.count);
                     } else {
@@ -737,7 +723,7 @@ void XSectGroups::computeHydRad(const double* depths, double* hydrad, int /*n_li
         switch (g.shape) {
             case XSectShape::CIRCULAR:
             case XSectShape::FORCE_MAIN:
-                xsect_batch::hydrad_circular(local_d, g.y_full.data(),
+                xsect_batch::hydrad_circular(local_d, g.inv_y_full.data(),
                                              g.r_full.data(), local_r, g.count);
                 break;
 
@@ -761,7 +747,7 @@ void XSectGroups::computeHydRad(const double* depths, double* hydrad, int /*n_li
             case XSectShape::IRREGULAR:
             case XSectShape::CUSTOM:
                 if (!g.hrad_tables.empty()) {
-                    xsect_batch::perlink_tabulated(local_d, g.y_full.data(),
+                    xsect_batch::perlink_tabulated(local_d, g.inv_y_full.data(),
                                                     g.r_full.data(), g.hrad_tables.data(),
                                                     g.transect_tbl_size, local_r, g.count);
                 }
@@ -770,7 +756,7 @@ void XSectGroups::computeHydRad(const double* depths, double* hydrad, int /*n_li
             default: {
                 auto tbl = hydrad_table_for(g.shape);
                 if (tbl.data) {
-                    xsect_batch::hydrad_tabulated(local_d, g.y_full.data(),
+                    xsect_batch::hydrad_tabulated(local_d, g.inv_y_full.data(),
                                                   g.r_full.data(), tbl.data, tbl.size,
                                                   local_r, g.count);
                 } else {
@@ -810,7 +796,7 @@ void XSectGroups::computeWidths(const double* depths, double* widths, int /*n_li
         switch (g.shape) {
             case XSectShape::CIRCULAR:
             case XSectShape::FORCE_MAIN:
-                xsect_batch::width_circular(local_d, g.y_full.data(),
+                xsect_batch::width_circular(local_d, g.inv_y_full.data(),
                                             g.w_max.data(), local_w, g.count);
                 break;
 
@@ -832,7 +818,7 @@ void XSectGroups::computeWidths(const double* depths, double* widths, int /*n_li
             case XSectShape::IRREGULAR:
             case XSectShape::CUSTOM:
                 if (!g.width_tables.empty()) {
-                    xsect_batch::perlink_tabulated(local_d, g.y_full.data(),
+                    xsect_batch::perlink_tabulated(local_d, g.inv_y_full.data(),
                                                     g.w_max.data(), g.width_tables.data(),
                                                     g.transect_tbl_size, local_w, g.count);
                 }
@@ -841,7 +827,7 @@ void XSectGroups::computeWidths(const double* depths, double* widths, int /*n_li
             default: {
                 auto tbl = width_table_for(g.shape);
                 if (tbl.data) {
-                    xsect_batch::width_tabulated(local_d, g.y_full.data(),
+                    xsect_batch::width_tabulated(local_d, g.inv_y_full.data(),
                                                  g.w_max.data(), tbl.data, tbl.size,
                                                  local_w, g.count);
                 } else {

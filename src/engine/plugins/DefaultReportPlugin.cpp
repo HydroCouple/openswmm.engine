@@ -512,6 +512,8 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
             const char* nc_name = (opt.node_continuity == NodeContinuity::SEMI_IMPLICIT)
                                   ? "SEMI_IMPLICIT" : "EXPLICIT";
             std::fprintf(f, "\n  Node Continuity .......... %s", nc_name);
+            std::fprintf(f, "\n  Anderson Acceleration .... %s",
+                         opt.anderson_accel ? "YES" : "NO");
         }
     }
 

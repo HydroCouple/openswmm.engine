@@ -296,6 +296,10 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             if      (nc == "EXPLICIT")      opt.node_continuity = NodeContinuity::EXPLICIT;
             else if (nc == "SEMI_IMPLICIT") opt.node_continuity = NodeContinuity::SEMI_IMPLICIT;
 
+        } else if (key == "ANDERSON_ACCEL") {
+            const std::string av = norm(val);
+            opt.anderson_accel = (av == "YES" || av == "TRUE" || av == "1");
+
         } else if (key == "LINK_OFFSETS") {
             const std::string lv = norm(val);
             if      (lv == "DEPTH")     opt.link_offsets = 0;

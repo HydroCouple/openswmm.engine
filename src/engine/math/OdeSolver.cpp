@@ -33,107 +33,153 @@ static constexpr double dc4 = c4 - 13525.0/55296.0;
 static constexpr double dc5 = -277.0/14336.0;
 static constexpr double dc6 = c6 - 0.25;
 
-/// One RK45 Cash-Karp step: compute y_out and error estimate.
-static void rkck(const double* y, const double* dydx, int n, double x, double h,
-                 double* y_out, double* y_err, const DerivFunc& derivs) {
-    std::vector<double> ak2(n), ak3(n), ak4(n), ak5(n), ak6(n), y_temp(n);
+// ============================================================================
+// Pre-allocated workspace matching legacy odesolve.c global arrays.
+//
+// Legacy uses file-scope globals: y[], yscal[], dydx[], yerr[], ytemp[], ak[].
+// We use a thread-local struct to remain reentrant while avoiding per-call
+// heap allocation. open/close match legacy odesolve_open/close.
+// ============================================================================
 
-    // Stage 2
-    for (int i = 0; i < n; ++i) y_temp[i] = y[i] + b21 * h * dydx[i];
-    derivs(x + a2 * h, y_temp.data(), ak2.data());
+struct OdeWorkspace {
+    int    nmax = 0;
+    double* y     = nullptr;   // internal state buffer (matches legacy y[])
+    double* yscal = nullptr;
+    double* dydx  = nullptr;
+    double* yerr  = nullptr;
+    double* ytemp = nullptr;
+    double* ak    = nullptr;   // flat n*5 (ak2..ak6) matching legacy
+};
 
-    // Stage 3
-    for (int i = 0; i < n; ++i) y_temp[i] = y[i] + h * (b31 * dydx[i] + b32 * ak2[i]);
-    derivs(x + a3 * h, y_temp.data(), ak3.data());
+static thread_local OdeWorkspace ws_;
 
-    // Stage 4
-    for (int i = 0; i < n; ++i) y_temp[i] = y[i] + h * (b41 * dydx[i] + b42 * ak2[i] + b43 * ak3[i]);
-    derivs(x + a4 * h, y_temp.data(), ak4.data());
-
-    // Stage 5
-    for (int i = 0; i < n; ++i) y_temp[i] = y[i] + h * (b51 * dydx[i] + b52 * ak2[i] + b53 * ak3[i] + b54 * ak4[i]);
-    derivs(x + a5 * h, y_temp.data(), ak5.data());
-
-    // Stage 6
-    for (int i = 0; i < n; ++i) y_temp[i] = y[i] + h * (b61 * dydx[i] + b62 * ak2[i] + b63 * ak3[i] + b64 * ak4[i] + b65 * ak5[i]);
-    derivs(x + a6 * h, y_temp.data(), ak6.data());
-
-    // 5th order solution
-    for (int i = 0; i < n; ++i)
-        y_out[i] = y[i] + h * (c1 * dydx[i] + c3 * ak3[i] + c4 * ak4[i] + c6 * ak6[i]);
-
-    // Error estimate (difference between 5th and 4th order)
-    for (int i = 0; i < n; ++i)
-        y_err[i] = h * (dc1 * dydx[i] + dc3 * ak3[i] + dc4 * ak4[i] + dc5 * ak5[i] + dc6 * ak6[i]);
+static void ensureWorkspace(int n) {
+    if (ws_.nmax >= n) return;
+    // Free old
+    std::free(ws_.y);     std::free(ws_.yscal); std::free(ws_.dydx);
+    std::free(ws_.yerr);  std::free(ws_.ytemp); std::free(ws_.ak);
+    // Allocate fresh
+    int n5 = n * 5;
+    ws_.y     = static_cast<double*>(std::calloc(n,  sizeof(double)));
+    ws_.yscal = static_cast<double*>(std::calloc(n,  sizeof(double)));
+    ws_.dydx  = static_cast<double*>(std::calloc(n,  sizeof(double)));
+    ws_.yerr  = static_cast<double*>(std::calloc(n,  sizeof(double)));
+    ws_.ytemp = static_cast<double*>(std::calloc(n,  sizeof(double)));
+    ws_.ak    = static_cast<double*>(std::calloc(n5, sizeof(double)));
+    ws_.nmax = n;
 }
 
-/// Quality-controlled RK step with adaptive step size.
-static int rkqs(double* y, double* dydx, int n, double* x, double htry,
-                double eps, const double* yscal, double* hdid, double* hnext,
-                const DerivFunc& derivs) {
-    std::vector<double> y_temp(n), y_err(n);
-    double h = htry;
-    double errmax = 0.0;
+// ============================================================================
+// rkck — One RK45 Cash-Karp step (matching legacy rkck exactly)
+// ============================================================================
 
+template<typename F>
+static void rkck(double x, int n, double h, F&& derivs) {
+    double *ak2 = ws_.ak;
+    double *ak3 = ws_.ak + n;
+    double *ak4 = ws_.ak + n*2;
+    double *ak5 = ws_.ak + n*3;
+    double *ak6 = ws_.ak + n*4;
+
+    for (int i = 0; i < n; i++)
+        ws_.ytemp[i] = ws_.y[i] + b21*h*ws_.dydx[i];
+    derivs(x+a2*h, ws_.ytemp, ak2);
+
+    for (int i = 0; i < n; i++)
+        ws_.ytemp[i] = ws_.y[i] + h*(b31*ws_.dydx[i]+b32*ak2[i]);
+    derivs(x+a3*h, ws_.ytemp, ak3);
+
+    for (int i = 0; i < n; i++)
+        ws_.ytemp[i] = ws_.y[i] + h*(b41*ws_.dydx[i]+b42*ak2[i]+b43*ak3[i]);
+    derivs(x+a4*h, ws_.ytemp, ak4);
+
+    for (int i = 0; i < n; i++)
+        ws_.ytemp[i] = ws_.y[i] + h*(b51*ws_.dydx[i]+b52*ak2[i]+b53*ak3[i]+b54*ak4[i]);
+    derivs(x+a5*h, ws_.ytemp, ak5);
+
+    for (int i = 0; i < n; i++)
+        ws_.ytemp[i] = ws_.y[i] + h*(b61*ws_.dydx[i]+b62*ak2[i]+b63*ak3[i]+b64*ak4[i]+b65*ak5[i]);
+    derivs(x+a6*h, ws_.ytemp, ak6);
+
+    for (int i = 0; i < n; i++)
+        ws_.ytemp[i] = ws_.y[i] + h*(c1*ws_.dydx[i]+c3*ak3[i]+c4*ak4[i]+c6*ak6[i]);
+
+    for (int i = 0; i < n; i++)
+        ws_.yerr[i] = h*(dc1*ws_.dydx[i]+dc3*ak3[i]+dc4*ak4[i]+dc5*ak5[i]+dc6*ak6[i]);
+}
+
+// ============================================================================
+// rkqs — Quality-controlled RK step (matching legacy rkqs exactly)
+// ============================================================================
+
+template<typename F>
+static int rkqs(double* x, int n, double htry, double eps, double* hdid,
+                double* hnext, F&& derivs) {
+    double err, errmax, h, htemp, xnew, xold = *x;
+
+    h = htry;
     for (;;) {
-        rkck(y, dydx, n, *x, h, y_temp.data(), y_err.data(), derivs);
+        rkck(xold, n, h, derivs);
 
-        // Find maximum scaled error
         errmax = 0.0;
-        for (int i = 0; i < n; ++i) {
-            double e = std::fabs(y_err[i] / yscal[i]);
-            if (e > errmax) errmax = e;
+        for (int i = 0; i < n; i++) {
+            err = std::fabs(ws_.yerr[i] / ws_.yscal[i]);
+            if (err > errmax) errmax = err;
         }
         errmax /= eps;
 
-        if (errmax <= 1.0) break;  // Step accepted
-
-        // Reduce step size
-        double htemp = SAFETY * h * std::pow(errmax, PSHRNK);
-        h = (h >= 0.0) ? std::max(htemp, 0.1 * h) : std::min(htemp, 0.1 * h);
-
-        if (*x + h == *x) return ODE_UNDERFLOW;
+        if (errmax > 1.0) {
+            htemp = SAFETY * h * std::pow(errmax, PSHRNK);
+            if (h >= 0) {
+                if (htemp > 0.1*h) h = htemp;
+                else h = 0.1*h;
+            } else {
+                if (htemp < 0.1*h) h = htemp;
+                else h = 0.1*h;
+            }
+            xnew = xold + h;
+            if (xnew == xold) return ODE_UNDERFLOW;
+            continue;
+        }
+        else {
+            if (errmax > ERRCON) *hnext = SAFETY * h * std::pow(errmax, PGROW);
+            else *hnext = 5.0 * h;
+            *x += (*hdid = h);
+            for (int i = 0; i < n; i++) ws_.y[i] = ws_.ytemp[i];
+            return ODE_OK;
+        }
     }
-
-    // Compute next step size
-    if (errmax > ERRCON)
-        *hnext = SAFETY * h * std::pow(errmax, PGROW);
-    else
-        *hnext = 5.0 * h;
-
-    *hdid = h;
-    *x += h;
-    for (int i = 0; i < n; ++i) y[i] = y_temp[i];
-    return ODE_OK;
 }
 
 // ============================================================================
-// Per-element integrator
+// integrate — matching legacy odesolve_integrate exactly
 // ============================================================================
 
-int integrate(double* y, int n, double x1, double x2,
+int integrate(double* ystart, int n, double x1, double x2,
               double eps, double h1, const DerivFunc& derivs) {
-    std::vector<double> dydx(n), yscal(n);
+    ensureWorkspace(n);
+    if (ws_.nmax < n) return ODE_TOO_MANY;
+
+    double hdid, hnext;
     double x = x1;
-    double h = (x2 > x1) ? std::fabs(h1) : -std::fabs(h1);
+    double h = h1;
 
-    for (int nstp = 0; nstp < MAXSTP; ++nstp) {
-        derivs(x, y, dydx.data());
+    for (int i = 0; i < n; i++) ws_.y[i] = ystart[i];
 
-        // Scaling for error control
-        for (int i = 0; i < n; ++i)
-            yscal[i] = std::fabs(y[i]) + std::fabs(dydx[i] * h) + TINY;
+    for (int nstp = 1; nstp <= MAXSTP; nstp++) {
+        derivs(x, ws_.y, ws_.dydx);
+        for (int i = 0; i < n; i++)
+            ws_.yscal[i] = std::fabs(ws_.y[i]) + std::fabs(ws_.dydx[i]*h) + TINY;
+        if ((x+h-x2)*(x+h-x1) > 0.0) h = x2 - x;
 
-        // Don't overshoot x2
-        if ((x + h - x2) * (x + h - x1) > 0.0) h = x2 - x;
+        int errcode = rkqs(&x, n, h, eps, &hdid, &hnext, derivs);
+        if (errcode) break;
 
-        double hdid, hnext;
-        int rc = rkqs(y, dydx.data(), n, &x, h, eps, yscal.data(), &hdid, &hnext, derivs);
-        if (rc != ODE_OK) return rc;
-
-        // Check if done
-        if ((x - x2) * (x2 - x1) >= 0.0) return ODE_OK;
-
+        if ((x-x2)*(x2-x1) >= 0.0) {
+            for (int i = 0; i < n; i++) ystart[i] = ws_.y[i];
+            return ODE_OK;
+        }
+        if (std::fabs(hnext) <= 0.0) return ODE_UNDERFLOW;
         h = hnext;
     }
     return ODE_MAX_STEPS;
@@ -146,18 +192,16 @@ int integrate(double* y, int n, double x1, double x2,
 int integrate_batch_2eq(double* y0, double* y1, int n_sys,
                         double x1, double x2, double eps, double h1,
                         const BatchDerivFunc& derivs) {
-    // For now, iterate per system. Future: vectorise RK stages across systems.
-    std::vector<double> dy0(n_sys), dy1(n_sys);
+    static thread_local std::vector<double> dy0_buf, dy1_buf;
+    dy0_buf.resize(static_cast<std::size_t>(n_sys));
+    dy1_buf.resize(static_cast<std::size_t>(n_sys));
 
-    // Simple Euler for batch (RK45 per-system is expensive; Euler matches
-    // legacy for GW when dt is small enough). TODO: upgrade to batch RK45.
     double dt = x2 - x1;
-    derivs(x1, y0, y1, dy0.data(), dy1.data(), n_sys);
+    derivs(x1, y0, y1, dy0_buf.data(), dy1_buf.data(), n_sys);
 
-    // Batch update: y += dy * dt — vectorisable
     for (int i = 0; i < n_sys; ++i) {
-        y0[i] += dy0[i] * dt;
-        y1[i] += dy1[i] * dt;
+        y0[i] += dy0_buf[i] * dt;
+        y1[i] += dy1_buf[i] * dt;
     }
 
     (void)eps; (void)h1;

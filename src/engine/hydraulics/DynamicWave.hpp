@@ -33,6 +33,7 @@
 #include "../core/SimulationOptions.hpp"
 #include "../data/NodeData.hpp"
 #include "../data/LinkData.hpp"
+#include <cstdint>
 #include <functional>
 #include <vector>
 
@@ -85,6 +86,23 @@ enum class SurchargeMethod : int {
 };
 
 /**
+ * @brief Momentum category for branch-free per-category kernel dispatch.
+ *
+ * @details Each conduit is classified once per Picard iteration (after geometry
+ *          is computed). Per-category kernels have zero shape/type/state branches
+ *          in their inner loops, enabling compiler auto-vectorization.
+ */
+enum class MomentumCategory : uint8_t {
+    SKIP_DRY          = 0,  ///< DRY/UP_DRY/DN_DRY, aMid<=FUDGE, or is_closed
+    MANNING_OPEN      = 1,  ///< Standard Manning, open channel (Froude-based sigma)
+    MANNING_CLOSED_FS = 2,  ///< Manning, closed conduit, free surface
+    MANNING_CLOSED_FULL = 3,///< Manning, closed conduit, surcharged (fr=0, sig=0)
+    FORCE_MAIN_HW     = 4,  ///< Force main, Hazen-Williams friction
+    FORCE_MAIN_DW     = 5,  ///< Force main, Darcy-Weisbach friction
+    N_CATEGORIES      = 6
+};
+
+/**
  * @brief Dynamic wave solver — operates on entire link/node system.
  *
  * @details Working arrays are allocated once at init and reused each timestep.
@@ -94,7 +112,8 @@ enum class SurchargeMethod : int {
  */
 class DWSolver {
 public:
-    void init(int n_nodes, int n_links, const XSectGroups& groups);
+    void init(int n_nodes, int n_links, const XSectGroups& groups,
+              const SimulationContext& ctx);
 
     /**
      * @brief Set the number of OpenMP threads for parallel loops.
@@ -134,6 +153,7 @@ public:
     double omega      = OMEGA;
     SurchargeMethod surcharge_method = SurchargeMethod::EXTRAN;
     NodeContinuity  node_continuity  = NodeContinuity::EXPLICIT;
+    bool   anderson_accel = false;       ///< Enable Anderson acceleration
 
 private:
     int n_nodes_ = 0;
@@ -144,6 +164,18 @@ private:
 
     // Pre-built conduit index list for skipping non-conduits in inner loops
     std::vector<int> conduit_idx_;
+
+    // Pre-computed per-link invariants (populated once at first execute, reused)
+    // Using uint8_t instead of bool to allow .data() pointer access for SIMD/restrict
+    std::vector<uint8_t> is_open_;        ///< Shape is open (RECT_OPEN/TRAP/TRI/PARA)
+    std::vector<uint8_t> is_force_main_;  ///< Shape is FORCE_MAIN
+    std::vector<uint8_t> has_losses_;     ///< Any minor loss coeff != 0
+    std::vector<double> barrels_d_;       ///< double(max(barrels, 1))
+    std::vector<double> cached_length_;   ///< max(mod_length, length)
+    std::vector<double> inv_length_;      ///< 1.0 / cached_length_
+
+    // Per-timestep constant
+    double dt_gravity_ = 0.0;            ///< dt * GRAVITY (set once per timestep)
 
     // Pre-allocated width-capping buffers (avoids thread_local per-call allocation)
     std::vector<double> wcap_d1_, wcap_d2_, wcap_dm_;
@@ -193,11 +225,30 @@ private:
     std::vector<double> h2_;           ///< Head at downstream node (possibly modified)
     std::vector<double> fasnh_;        ///< Fraction between normal & critical depth
 
+    // Anderson acceleration state (per-node, depth-2 mixing)
+    std::vector<double> aa_y_prev_;     ///< Node depths at iteration k-1
+    std::vector<double> aa_g_prev_;     ///< G(y_{k-1}) — computed depths at k-1
+    std::vector<double> aa_r_prev_;     ///< Residual r_{k-1} = G(y_{k-1}) - y_{k-1}
+
+    // Per-conduit momentum category (rebuilt each Picard iteration)
+    std::vector<MomentumCategory> category_;
+    // Per-category conduit index lists (rebuilt each iteration)
+    std::vector<int> cat_indices_[static_cast<int>(MomentumCategory::N_CATEGORIES)];
+
     // Internal methods
     void initNodeStates(SimulationContext& ctx);
     void findBypassedLinks(const SimulationContext& ctx);
     void computeLinkGeometry(SimulationContext& ctx);
     void solveMomentumBatch(SimulationContext& ctx, double dt, int step);
+    void classifyMomentumCategories(SimulationContext& ctx);
+    void processDryLinks(SimulationContext& ctx, double dt);
+    void processManningLinks(SimulationContext& ctx, double dt, int step,
+                             MomentumCategory cat);
+    void processForceMainLinks(SimulationContext& ctx, double dt, int step,
+                               MomentumCategory cat);
+    void applyFlowLimits(SimulationContext& ctx, double dt, int step,
+                         std::size_t uj, double& q, double qLast,
+                         double barrels_d, bool isFull);
     void updateNodeFlows(SimulationContext& ctx, bool conduits_only = false);
     bool updateNodeDepths(SimulationContext& ctx, double dt, int step);
     void setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int step);

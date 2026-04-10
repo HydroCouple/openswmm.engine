@@ -13,7 +13,6 @@
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 #include <cmath>
-#include <cstdio>
 #include <algorithm>
 
 namespace openswmm {
@@ -112,7 +111,6 @@ int RDIISolver::getMaxPeriods(const UnitHydParams& uh, int response,
 // init() — populate UH params from parsed data, allocate per-response buffers.
 // ---------------------------------------------------------------------------
 void RDIISolver::init(SimulationContext& ctx) {
-
     // Populate UH params from parsed [HYDROGRAPHS] data
     for (const auto& entry : ctx.unit_hyds.entries) {
         int idx = findUnitHyd(entry.name);
@@ -123,7 +121,7 @@ void RDIISolver::init(SimulationContext& ctx) {
         auto& uh = uh_params[static_cast<size_t>(idx)];
 
         double tPeak_sec = entry.t * 3600.0;
-        double tBase_sec = entry.t * entry.k * 3600.0;
+        double tBase_sec = entry.t * (1.0 + entry.k) * 3600.0;
 
         int m_start = (entry.month < 0) ? 0  : entry.month;
         int m_end   = (entry.month < 0) ? 11 : entry.month;

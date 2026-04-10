@@ -164,6 +164,9 @@ struct ShapeGroup {
     std::vector<double> s_full;     ///< Section factor at full
     std::vector<double> w_max;      ///< Max width (ft)
 
+    // Pre-computed reciprocal of y_full (avoids per-element division in kernels)
+    std::vector<double> inv_y_full;    ///< 1.0 / y_full (or 0 if y_full==0)
+
     // Multi-purpose parameters (meaning depends on shape)
     std::vector<double> y_bot;
     std::vector<double> a_bot;

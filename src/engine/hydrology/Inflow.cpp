@@ -10,6 +10,7 @@
 
 #include "Inflow.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/Constants.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../data/TableData.hpp"
@@ -20,6 +21,8 @@
 
 namespace openswmm {
 namespace inflow {
+
+using constants::DATE_DELTA;
 
 void ExtInflowSoA::resize(int n) {
     count = n;
@@ -179,12 +182,12 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
     datetime::decodeTime(current_date, h_tmp, m_tmp, s_tmp);
     int hour = h_tmp;
 
-    // Day of week: Julian day 0 is Monday.  Legacy dayOfWeek returns 1=Sun..7=Sat,
-    // then subtracts 1 giving 0=Sun..6=Sat.
-    // Julian day number % 7 gives: 0=Mon, 1=Tue, ... , 6=Sun
-    // We need 0=Sun, so: (julianDay % 7 + 1) % 7 maps Mon(0)->1, Sun(6)->0.
+    // Day of week: Legacy datetime_dayOfWeek() computes
+    //   (floor(date) + DateDelta) % 7 + 1, where 1=Sun..7=Sat.
+    // Routing.c then subtracts 1 giving 0=Sun..6=Sat.
+    // Simplified: (floor(date) + DateDelta) % 7 directly gives 0=Sun..6=Sat.
     int total_days = static_cast<int>(std::floor(current_date));
-    int day = (total_days % 7 + 1) % 7;
+    int day = (total_days + constants::DATE_DELTA) % 7;  // 0=Sun..6=Sat
 
     // Month of year using DateTime API (1-based), convert to 0-based.
     int month = datetime::monthOfYear(current_date) - 1;

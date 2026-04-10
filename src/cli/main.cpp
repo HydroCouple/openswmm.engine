@@ -118,11 +118,22 @@ int main(int argc, char* argv[]) {
             std::fflush(stdout);
         }
     }
-    std::printf("\r... %ld steps completed.                          \n", step_count);
+    std::printf("\n... %ld steps completed.\n", step_count);
 
     // ---- End and report ----
+    std::time_t t0 = std::time(nullptr);
+    std::printf("... Finalizing (end)...\n");
+    std::fflush(stdout);
     swmm_engine_end(engine);
+    std::printf("... end() took %.0f sec. Writing report...\n",
+                std::difftime(std::time(nullptr), t0));
+    std::fflush(stdout);
+
+    std::time_t t1 = std::time(nullptr);
     swmm_engine_report(engine);
+    std::printf("... report() took %.0f sec.\n",
+                std::difftime(std::time(nullptr), t1));
+    std::fflush(stdout);
 
     // ---- Close and destroy ----
     swmm_engine_close(engine);

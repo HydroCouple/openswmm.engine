@@ -72,7 +72,15 @@ A comprehensive, domain-split C API replaces the monolithic legacy interface:
 
 ### Process Formulation Enhancements
 
-The following physics-based improvements are being designed for backward-compatible integration. Each addresses a known simplification in the current SWMM formulation.
+The following physics-based and numerical improvements are available or being designed for backward-compatible integration. Each addresses a known simplification or performance limitation in the current SWMM formulation.
+
+#### Implemented
+
+- **Semi-Implicit Node Continuity** — The legacy SWMM dynamic wave solver uses a two-branch explicit scheme for node depth updates, switching abruptly between free-surface and surcharged formulations. This can cause oscillations at the surcharge transition boundary. The new `SEMI_IMPLICIT` formulation unifies both regimes into a single equation that implicitly accounts for the pressure-flow coupling via the `sumdqdh` term in the denominator. This eliminates the discontinuous branch and improves convergence stability, particularly for rapidly filling/draining systems. Enabled via `NODE_CONTINUITY  SEMI_IMPLICIT` in the `[OPTIONS]` section (default).
+
+- **Anderson Acceleration for Picard Iteration** — The standard Picard fixed-point iteration used in dynamic wave routing converges slowly for stiff surcharge transitions, often requiring 8-12 iterations. Anderson acceleration (depth-2 mixing) uses the residual history from the previous two iterates to compute an optimal linear combination, typically reducing iteration counts by 25-50%. Each saved iteration avoids the full hot path (geometry, momentum, scatter, node update), so the speedup compounds with other performance optimizations. Physical safeguards ensure non-negative depths; nodes that violate bounds fall back to standard Picard automatically. Enabled via `ANDERSON_ACCEL  YES` in the `[OPTIONS]` section (default: NO).
+
+#### In Development
 
 - **Spatially Explicit Overland Flow & Groundwater** — SWMM currently has one-way feedback between hydrology and hydraulics: flooded nodes pond over a user-specified area and are reintroduced locally. In reality, surcharge flows traverse the terrain and may re-enter the network at a downstream node. The new module couples a 2D overland flow grid with the 1D pipe network, enabling spatially explicit green infrastructure placement, terrain-routed surcharge, and lateral groundwater flow exchanges, etc.
 
@@ -108,8 +116,10 @@ END_TIME             00:00:00
 ROUTING_STEP         00:00:30
 REPORT_STEP          00:05:00
 
-;; New built-in option (v6.0.0)
+;; New built-in options (v6.0.0)
 CRS                  EPSG:4326
+NODE_CONTINUITY      SEMI_IMPLICIT
+ANDERSON_ACCEL       YES
 
 ;; Extension options — stored automatically, readable by plugins
 MY_STABILITY_FACTOR  1.05

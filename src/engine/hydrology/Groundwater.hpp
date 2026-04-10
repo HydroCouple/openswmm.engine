@@ -57,6 +57,7 @@ struct GWSoA {
     std::vector<double> k_slope;      ///< Exponential decay slope
     std::vector<double> tension_slope;
     std::vector<double> upper_evap_frac;
+    std::vector<int>    upper_evap_pat;   ///< Pattern index for monthly evap adjustment (-1 = none)
     std::vector<double> lower_evap_depth;
     std::vector<double> lower_loss_coeff;   ///< Deep percolation coeff
     std::vector<double> total_depth;        ///< Aquifer thickness (ft)
@@ -104,11 +105,14 @@ public:
      * @param ctx  Simulation context.
      * @param dt   Timestep (seconds).
      * @param max_evap  Maximum evaporation rate (ft/sec, scalar broadcast).
-     * @param infil_rate Per-subcatchment infiltration rate (ft/sec).
+     * @param infil_rate Per-subcatchment infiltration rate (ft/sec over full area).
      * @param sw_head    Per-subcatchment surface water head (ft).
+     * @param frac_perv  Per-subcatchment pervious fraction (0-1).
+     * @param perv_evap_rate Per-subcatchment pervious evap rate already exerted (ft/sec over full area).
      */
     void execute(SimulationContext& ctx, double dt, double max_evap,
-                 const double* infil_rate, const double* sw_head);
+                 const double* infil_rate, const double* sw_head,
+                 const double* frac_perv, const double* perv_evap_rate);
 
     GWSoA& state() { return soa_; }
 

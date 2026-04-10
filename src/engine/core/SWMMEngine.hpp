@@ -236,6 +236,10 @@ private:
     rdii::RDIISolver             rdii_;         ///< RDII (unit hydrograph convolution)
     exfil::ExfilSolver           exfil_;        ///< Storage node exfiltration
     inlet::InletSolver           inlet_;        ///< Street inlet capture
+    std::vector<int>             culvert_links_;///< Pre-built culvert link indices (avoid per-timestep alloc)
+    std::vector<double>          gw_sw_head_;   ///< Reusable groundwater surface-water head buffer
+    std::vector<double>          gw_frac_perv_; ///< Per-subcatch pervious fraction for GW evap
+    std::vector<double>          gw_perv_evap_; ///< Per-subcatch pervious evap rate (ft/sec)
     hydstruct::StructureSolver  hydstruct_;    ///< Pumps, orifices, weirs, outlets
     iface::InterfaceManager      iface_;        ///< Routing interface file I/O
     std::vector<gage::GageState> gage_states_;  ///< Per-gage state (SoA)

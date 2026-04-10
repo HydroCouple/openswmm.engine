@@ -28,32 +28,48 @@ double TimestepController::compute_next(
     double                   dt_cfl
 ) noexcept {
     const SimulationOptions& opt = ctx.options;
+    const double min_step = opt.min_routing_step;
 
-    // User-configured maximum routing step
-    double dt = opt.routing_step;
+    // ================================================================
+    // Matching legacy execRouting() + routing_getRoutingStep() exactly:
+    //   1. Get CFL-limited step (clamped to MinRouteStep by DW solver)
+    //   2. Adjust to not exceed simulation duration
+    //   3. Adjust to land on control rule event boundary
+    //   4. Save results when NewRoutingTime >= ReportTime (no alignment)
+    // ================================================================
 
-    // CFL-limited hydraulic step (from DynamicWave or caller-supplied value)
-    dt = std::min(dt, dt_cfl);
+    // Step 1: CFL-limited step, clamped to user's fixed routing step
+    double dt = std::min(opt.routing_step, dt_cfl);
 
-    // Time to next output boundary
-    if (ctx.dt_output_remaining > 0.0) {
-        dt = std::min(dt, ctx.dt_output_remaining);
-    }
+    // Enforce minimum floor (from [OPTIONS] MINIMUM_STEP)
+    dt = std::max(dt, min_step);
 
-    // Time to next control rule event
-    if (ctx.dt_controls_remaining > 0.0) {
-        dt = std::min(dt, ctx.dt_controls_remaining);
-    }
-
-    // Time remaining in the entire simulation
+    // Step 2: Adjust so total duration is not exceeded
+    //         (matching legacy: routingStep = (RoutingDuration - NewRoutingTime) / 1000)
     const double sim_remaining =
         (opt.end_date - ctx.current_date) * SEC_PER_DAY;
-    if (sim_remaining > 0.0) {
-        dt = std::min(dt, sim_remaining);
+    if (sim_remaining > 0.0 && dt > sim_remaining) {
+        dt = std::max(sim_remaining, 0.001);  // legacy floor: 1 msec
     }
 
-    // Enforce minimum floor
-    dt = std::max(dt, opt.min_routing_step);
+    // Step 3: Align to control rule event boundary
+    //         (matching legacy: if nextRoutingTime >= nextRuleTime, shorten)
+    if (ctx.dt_controls_remaining > 0.0 && ctx.dt_controls_remaining < dt) {
+        dt = ctx.dt_controls_remaining;
+    }
+
+    // Step 4: Align to output boundary if it falls within this step.
+    //         Legacy does NOT do this — it overshoots and saves at the
+    //         overshot time. We align when possible (remaining >= min_step)
+    //         to avoid interpolation; otherwise let the step overshoot.
+    if (ctx.dt_output_remaining > 0.0 &&
+        ctx.dt_output_remaining >= min_step &&
+        ctx.dt_output_remaining < dt) {
+        dt = ctx.dt_output_remaining;
+    }
+
+    // Final safety: never allow zero or negative
+    if (dt <= 0.0) dt = min_step;
 
     return dt;
 }

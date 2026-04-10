@@ -179,12 +179,13 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             kw_solver_.init(n_links, groups_);
             break;
         case RouteModel::DYNWAVE:
-            dw_solver_.init(n_nodes, n_links, groups_);
+            dw_solver_.init(n_nodes, n_links, groups_, ctx);
             dw_solver_.head_tol = ctx.options.head_tol;
             dw_solver_.max_trials = ctx.options.max_trials;
             dw_solver_.surcharge_method =
                 static_cast<dynwave::SurchargeMethod>(ctx.options.surcharge_method);
             dw_solver_.node_continuity = ctx.options.node_continuity;
+            dw_solver_.anderson_accel = ctx.options.anderson_accel;
             break;
         case RouteModel::STEADY:
             break;

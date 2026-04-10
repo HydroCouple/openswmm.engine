@@ -156,6 +156,23 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
     insert("REPORT_START", std::to_string(opts.report_start));
     insert("SWEEP_START", std::to_string(opts.sweep_start));
     insert("SWEEP_END", std::to_string(opts.sweep_end));
+    insert("NODE_CONTINUITY", std::to_string(static_cast<int>(opts.node_continuity)));
+    insert("ANDERSON_ACCEL", std::to_string(opts.anderson_accel ? 1 : 0));
+    insert("SURCHARGE_METHOD", std::to_string(opts.surcharge_method));
+    insert("INERTIAL_DAMPING", std::to_string(opts.inertial_damping));
+    insert("NORMAL_FLOW_LIMITED", std::to_string(opts.normal_flow_ltd));
+    insert("MAX_TRIALS", std::to_string(opts.max_trials));
+    insert("HEAD_TOLERANCE", std::to_string(opts.head_tol));
+    insert("VARIABLE_STEP", std::to_string(opts.variable_step));
+    insert("MINIMUM_STEP", std::to_string(opts.min_routing_step));
+    insert("LENGTHENING_STEP", std::to_string(opts.lengthening_step));
+    insert("MIN_SLOPE", std::to_string(opts.min_slope));
+    insert("MIN_SURFAREA", std::to_string(opts.min_surf_area));
+    insert("SYS_FLOW_TOL", std::to_string(opts.sys_flow_tol));
+    insert("LAT_FLOW_TOL", std::to_string(opts.lat_flow_tol));
+    insert("THREADS", std::to_string(opts.num_threads));
+    insert("DRY_DAYS", std::to_string(opts.dry_days));
+    insert("IGNORE_RDII", opts.ignore_rdii ? "YES" : "NO");
 
     if (!ctx.spatial.crs.empty())
         insert("CRS", ctx.spatial.crs);
