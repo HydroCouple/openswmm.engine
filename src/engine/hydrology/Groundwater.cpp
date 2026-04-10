@@ -136,15 +136,21 @@ static void getFluxes(GWContext& c, double theta, double lower_depth) {
     c.gw_flow = 0.0;
     if (lower_depth > c.h_star) {
         double ucf_len = c.ucf_length;
-        double t1 = (c.b1 == 0.0)
-            ? c.a1 : c.a1 * std::pow((lower_depth - c.h_star) * ucf_len, c.b1);
+        double hdiff1 = (lower_depth - c.h_star) * ucf_len;
+        double t1;
+        if (c.b1 == 0.0)       t1 = c.a1;
+        else if (c.b1 == 1.0)  t1 = c.a1 * hdiff1;
+        else                    t1 = c.a1 * std::pow(hdiff1, c.b1);
         // Legacy: if b2==0 then t2=a2 always (constant surface water term),
         //         else if Hsw>Hstar then t2=a2*pow(...), else t2=0
         double t2;
         if (c.b2 == 0.0)
             t2 = c.a2;
-        else if (c.sw_head > c.h_star)
-            t2 = c.a2 * std::pow((c.sw_head - c.h_star) * ucf_len, c.b2);
+        else if (c.sw_head > c.h_star) {
+            double hdiff2 = (c.sw_head - c.h_star) * ucf_len;
+            t2 = (c.b2 == 1.0) ? c.a2 * hdiff2
+                                : c.a2 * std::pow(hdiff2, c.b2);
+        }
         else
             t2 = 0.0;
         double t3 = c.a3 * lower_depth * c.sw_head * ucf_len * ucf_len;

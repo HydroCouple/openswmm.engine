@@ -183,6 +183,7 @@ struct ShapeGroup {
     // Pre-allocated working buffers (avoids per-call allocation in hot loop)
     mutable std::vector<double> buf_d;   ///< Gather buffer for depths
     mutable std::vector<double> buf_r;   ///< Scatter buffer for results
+    mutable std::vector<double> buf_r2;  ///< Second scatter buffer (for fused ops)
 
     /// Resize all arrays to n elements.
     void resize(int n);
@@ -268,6 +269,17 @@ public:
      * @param n_links Total number of links.
      */
     void computeWidths(const double* depths, double* widths, int n_links) const;
+
+    /**
+     * @brief Fused area + hydraulic radius computation (single gather/scatter).
+     *
+     * @param depths  [in]  Global depth array.
+     * @param areas   [out] Global area array.
+     * @param hydrad  [out] Global hydraulic radius array.
+     * @param n_links Total number of links.
+     */
+    void computeAreaAndHydRad(const double* depths, double* areas,
+                              double* hydrad, int n_links) const;
 
     /**
      * @brief Compute section factor for every link (from area, not depth).

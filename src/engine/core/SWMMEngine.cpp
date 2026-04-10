@@ -355,9 +355,9 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     // Runoff must catch up past the END of this routing step so that
     // infil/evap/runoff reflect the interval STARTING at the report
     // boundary. Legacy achieves this accidentally via variable timestep
-    // overshoot; we use <= to ensure the same behavior.
+    // Legacy uses strict < (runoff.c line 164: while(NewRunoffTime < nextRoutingTime))
     double next_routing_time = routing_time + dt_routing;
-    while (new_runoff_time_ <= next_routing_time) {
+    while (new_runoff_time_ < next_routing_time) {
         // Save old runoff and GW state for interpolation
         // (matching legacy subcatch_setOldState + gw oldFlow/newFlow)
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {

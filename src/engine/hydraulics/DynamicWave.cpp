@@ -346,7 +346,9 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
 
 void DWSolver::findBypassedLinks(const SimulationContext& ctx) {
     const auto& links = ctx.links;
-    for (int j = 0; j < n_links_; ++j) {
+    // Only conduits participate in momentum solving; non-conduits are never bypassed
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
         auto un1 = static_cast<std::size_t>(links.node1[uj]);
         auto un2 = static_cast<std::size_t>(links.node2[uj]);
@@ -426,43 +428,23 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     // ---- STEP B: Batch widths from depths (needed for surface area) ----
     // For EXTRAN mode, cap depth at CrownCutoff * yFull for width computation
     // (matching legacy getWidth() which caps at CrownCutoff to avoid near-zero
-    //  widths at crown of closed conduits). Use temporary arrays so the real
-    //  depths are preserved for area/momentum computation.
+    //  widths at crown of closed conduits). Copy capped depths into wcap buffers
+    //  and compute widths from those, leaving original depths untouched.
     if (surcharge_method != SurchargeMethod::SLOT) {
-        // Cap depth in-place for width computation, then restore.
-        // Avoids 3 full-array std::copy operations per Picard iteration.
         for (int ci = 0; ci < n_conduits_; ++ci) {
             int j = conduit_idx_[static_cast<std::size_t>(ci)];
             auto uj = static_cast<std::size_t>(j);
             double yf = links.xsect_y_full[uj];
             int bs = links.xsect_batch_shape[uj];
             bool is_open = xsect::isOpen(bs);
-            if (!is_open && yf > 0.0) {
-                double yCap = EXTRAN_CROWN_CUTOFF * yf;
-                // Save originals in wcap buffers (reuse as backup)
-                wcap_d1_[uj] = depth1_[uj];
-                wcap_d2_[uj] = depth2_[uj];
-                wcap_dm_[uj] = depth_mid_[uj];
-                if (depth1_[uj] >= yCap) depth1_[uj] = yCap;
-                if (depth2_[uj] >= yCap) depth2_[uj] = yCap;
-                if (depth_mid_[uj] >= yCap) depth_mid_[uj] = yCap;
-            }
+            double yCap = (!is_open && yf > 0.0) ? EXTRAN_CROWN_CUTOFF * yf : 1e30;
+            wcap_d1_[uj] = std::min(depth1_[uj], yCap);
+            wcap_d2_[uj] = std::min(depth2_[uj], yCap);
+            wcap_dm_[uj] = std::min(depth_mid_[uj], yCap);
         }
-        groups_->computeWidths(depth1_.data(), width1_.data(), n_links_);
-        groups_->computeWidths(depth2_.data(), width2_.data(), n_links_);
-        groups_->computeWidths(depth_mid_.data(), width_mid_.data(), n_links_);
-        // Restore original depths from backup
-        for (int ci = 0; ci < n_conduits_; ++ci) {
-            int j = conduit_idx_[static_cast<std::size_t>(ci)];
-            auto uj = static_cast<std::size_t>(j);
-            double yf = links.xsect_y_full[uj];
-            int bs = links.xsect_batch_shape[uj];
-            if (!xsect::isOpen(bs) && yf > 0.0) {
-                depth1_[uj] = wcap_d1_[uj];
-                depth2_[uj] = wcap_d2_[uj];
-                depth_mid_[uj] = wcap_dm_[uj];
-            }
-        }
+        groups_->computeWidths(wcap_d1_.data(), width1_.data(), n_links_);
+        groups_->computeWidths(wcap_d2_.data(), width2_.data(), n_links_);
+        groups_->computeWidths(wcap_dm_.data(), width_mid_.data(), n_links_);
     } else {
         groups_->computeWidths(depth1_.data(), width1_.data(), n_links_);
         groups_->computeWidths(depth2_.data(), width2_.data(), n_links_);
@@ -600,12 +582,12 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 h1 = z1_elev + y1;
                 double yMid = std::max(0.5 * (y1 + y2), FUDGE);
                 double w2 = width2_[uj];
-                // getWofY still needed for the new yMid (not pre-computed)
                 XSectParams xs = buildXSP(links, uj);
                 double wM = xsect::getWofY(xs, yMid);
                 surfArea2 = (wM + w2) * length * 0.5;
                 depth1_[uj] = y1;
                 depth_mid_[uj] = yMid;
+                width_mid_[uj] = wM;  // patch width for modified depth
                 h1_[uj] = h1;
                 break;
             }
@@ -623,6 +605,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 surfArea1 = (w1 + wM) * length * 0.5;
                 depth2_[uj] = y2;
                 depth_mid_[uj] = yMid;
+                width_mid_[uj] = wM;  // patch width for modified depth
                 h2_[uj] = h2;
                 break;
             }
@@ -631,12 +614,15 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 double yMid = std::max(0.5 * (FUDGE + y2), FUDGE);
                 double w1 = width1_[uj];
                 double w2 = width2_[uj];
-                double wM = width_mid_[uj];
+                double wM = width_mid_[uj];  // use current width for surface area
                 surfArea2 = (wM + w2) * length / 4.0;
                 if (links.offset1[uj] <= 0.0)
                     surfArea1 = (w1 + wM) * length / 4.0;
                 depth1_[uj] = FUDGE;
                 depth_mid_[uj] = yMid;
+                // Patch width_mid for modified depth (used by momentum solver)
+                { XSectParams xs = buildXSP(links, uj);
+                  width_mid_[uj] = xsect::getWofY(xs, yMid); }
                 break;
             }
             case FlowClass::DN_DRY: {
@@ -644,12 +630,15 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 double yMid = std::max(0.5 * (y1 + FUDGE), FUDGE);
                 double w1 = width1_[uj];
                 double w2 = width2_[uj];
-                double wM = width_mid_[uj];
+                double wM = width_mid_[uj];  // use current width for surface area
                 surfArea1 = (wM + w1) * length / 4.0;
                 if (links.offset2[uj] <= 0.0)
                     surfArea2 = (w2 + wM) * length / 4.0;
                 depth2_[uj] = FUDGE;
                 depth_mid_[uj] = yMid;
+                // Patch width_mid for modified depth (used by momentum solver)
+                { XSectParams xs = buildXSP(links, uj);
+                  width_mid_[uj] = xsect::getWofY(xs, yMid); }
                 break;
             }
             case FlowClass::DRY:
@@ -678,9 +667,10 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
 
     groups_->computeAreas(p_d1, p_a1, n_links_);
     groups_->computeAreas(p_d2, p_a2, n_links_);
-    groups_->computeAreas(p_dm, p_am, n_links_);
-    groups_->computeHydRad(p_dm, p_hm, n_links_);
-    groups_->computeWidths(p_dm, p_wm, n_links_);
+    // Fused area+hydrad for depth_mid (single gather, two kernels, two scatters)
+    groups_->computeAreaAndHydRad(p_dm, p_am, p_hm, n_links_);
+    // width_mid_ already computed in STEP B; UP/DN_CRITICAL/DRY cases
+    // patched inline in STEP C. No redundant batch recomputation needed.
 
     // ---- STEP E: Preissmann slot overrides (conduits only) ----
     for (int ci = 0; ci < n_conduits_; ++ci) {
@@ -729,8 +719,10 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
 void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
     auto& links = ctx.links;
 
-    // Pre-init all links: copy current flow, zero dqdh
-    for (int j = 0; j < n_links_; ++j) {
+    // Pre-init conduit flows: copy current flow, zero dqdh
+    // (non-conduit flows are handled by the non_conduit_fn callback)
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
         new_flow_[uj] = links.flow[uj];
         dqdh_[uj] = 0.0;
@@ -1142,12 +1134,15 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
-    for (int j = 0; j < n_links_; ++j) {
+    // When conduits_only, iterate conduit index directly (avoids checking
+    // all n_links_ and skipping non-conduits). Non-conduit flows are
+    // handled by the non_conduit_fn callback.
+    const int loop_count = conduits_only ? n_conduits_ : n_links_;
+    for (int idx = 0; idx < loop_count; ++idx) {
+        int j = conduits_only
+            ? conduit_idx_[static_cast<std::size_t>(idx)]
+            : idx;
         auto uj = static_cast<std::size_t>(j);
-
-        // When non-conduit callback is active, skip non-conduits here
-        // (they will be handled by the callback to avoid double-counting)
-        if (conduits_only && links.type[uj] != LinkType::CONDUIT) continue;
 
         // Apply computed flow
         links.flow[uj] = new_flow_[uj];
