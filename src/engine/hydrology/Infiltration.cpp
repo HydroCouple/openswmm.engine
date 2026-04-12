@@ -235,7 +235,8 @@ static double grnampt_getF2(double F1, double Ks, double c1, double dt) {
     return f2;
 }
 
-double grnampt_getInfil(GreenAmptState& state, double precip, double depth, double dt) {
+double grnampt_getInfil(GreenAmptState& state, double precip, double depth, double dt,
+                        InfilModel model_type) {
     // Matching legacy infil.c grnampt_getInfil + grnampt_getUnsatInfil + grnampt_getSatInfil
     double ia = precip + depth / dt;
     double lu = state.Lu;
@@ -255,8 +256,8 @@ double grnampt_getInfil(GreenAmptState& state, double precip, double depth, doub
             state.Fu = std::max(state.Fu, 0.0);
 
             // Inter-event reset: when timer expires, reset IMD and F
-            // (matching legacy line 721-725)
-            if (state.T <= 0.0) {
+            // Standard GA resets F; Modified GA does NOT (legacy line 736)
+            if (model_type == InfilModel::GREEN_AMPT && state.T <= 0.0) {
                 state.IMD = (Fumax > 0.0 && lu > 0.0)
                     ? (Fumax - state.Fu) / lu : state.IMDmax;
                 state.F = 0.0;

@@ -222,6 +222,25 @@ SWMM_ENGINE_API int swmm_node_set_lateral_inflow(SWMM_Engine engine, int idx, do
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_node_set_quality_mass_flux(SWMM_Engine engine, int node_idx,
+                                                     int pollutant_idx, double mass_rate) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
+    CHECK_INDEX(node_idx >= 0 && node_idx < ctx.n_nodes());
+    int np = ctx.n_pollutants();
+    CHECK_INDEX(pollutant_idx >= 0 && pollutant_idx < np);
+    auto flat = static_cast<std::size_t>(node_idx) * static_cast<std::size_t>(np)
+              + static_cast<std::size_t>(pollutant_idx);
+    if (flat >= ctx.nodes.user_conc_mass_flux.size()) {
+        // Lazily resize if not yet allocated
+        ctx.nodes.user_conc_mass_flux.resize(
+            static_cast<std::size_t>(ctx.n_nodes()) * static_cast<std::size_t>(np), 0.0);
+    }
+    ctx.nodes.user_conc_mass_flux[flat] = mass_rate;
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_node_set_head_boundary(SWMM_Engine engine, int idx, double head) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
@@ -246,7 +265,7 @@ SWMM_ENGINE_API int swmm_node_get_quality(SWMM_Engine engine, int node_idx,
     CHECK_INDEX(node_idx >= 0 && node_idx < ctx.n_nodes());
     int np = ctx.n_pollutants();
     CHECK_INDEX(pollutant_idx >= 0 && pollutant_idx < np);
-    if (conc) *conc = ctx.pollutants.node_conc[
+    if (conc) *conc = ctx.nodes.conc[
         static_cast<std::size_t>(node_idx) * static_cast<std::size_t>(np) +
         static_cast<std::size_t>(pollutant_idx)];
     return SWMM_OK;
@@ -321,7 +340,7 @@ SWMM_ENGINE_API int swmm_node_get_quality_bulk(SWMM_Engine engine, int pollutant
     CHECK_INDEX(pollutant_idx >= 0 && pollutant_idx < np);
     const int n = std::min(count, ctx.n_nodes());
     for (int i = 0; i < n; ++i) {
-        buf[i] = ctx.pollutants.node_conc[
+        buf[i] = ctx.nodes.conc[
             static_cast<std::size_t>(i) * static_cast<std::size_t>(np) +
             static_cast<std::size_t>(pollutant_idx)];
     }

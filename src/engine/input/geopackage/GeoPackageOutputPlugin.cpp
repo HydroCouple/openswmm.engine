@@ -86,6 +86,11 @@ int GeoPackageOutputPlugin::prepare(const SimulationContext& ctx) {
 
         exec(db_.get(), "PRAGMA synchronous=NORMAL");
 
+        // Cache per-object report flags for use in update()
+        subcatch_rpt_flag_ = ctx.subcatches.rpt_flag;
+        node_rpt_flag_     = ctx.nodes.rpt_flag;
+        link_rpt_flag_     = ctx.links.rpt_flag;
+
         state_ = PluginState::PREPARED;
         return 0;
     } catch (const std::exception& e) {
@@ -106,6 +111,7 @@ int GeoPackageOutputPlugin::update(const SimulationSnapshot& snapshot) {
         // -------------------------------------------------------------------
         for (int i = 0; i < snapshot.subcatch_count; ++i) {
             auto ui = static_cast<std::size_t>(i);
+            if (ui < subcatch_rpt_flag_.size() && !subcatch_rpt_flag_[ui]) continue;
             std::string name = (snapshot.subcatch_ids && i < (int)snapshot.subcatch_ids->size())
                 ? (*snapshot.subcatch_ids)[i] : std::to_string(i);
 
@@ -170,6 +176,7 @@ int GeoPackageOutputPlugin::update(const SimulationSnapshot& snapshot) {
         // -------------------------------------------------------------------
         for (int i = 0; i < snapshot.node_count; ++i) {
             auto ui = static_cast<std::size_t>(i);
+            if (ui < node_rpt_flag_.size() && !node_rpt_flag_[ui]) continue;
             std::string name = (snapshot.node_ids && i < (int)snapshot.node_ids->size())
                 ? (*snapshot.node_ids)[i] : std::to_string(i);
 
@@ -224,6 +231,7 @@ int GeoPackageOutputPlugin::update(const SimulationSnapshot& snapshot) {
         // -------------------------------------------------------------------
         for (int i = 0; i < snapshot.link_count; ++i) {
             auto ui = static_cast<std::size_t>(i);
+            if (ui < link_rpt_flag_.size() && !link_rpt_flag_[ui]) continue;
             std::string name = (snapshot.link_ids && i < (int)snapshot.link_ids->size())
                 ? (*snapshot.link_ids)[i] : std::to_string(i);
 

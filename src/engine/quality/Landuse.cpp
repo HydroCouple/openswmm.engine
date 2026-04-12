@@ -143,5 +143,32 @@ void LanduseSolver::computeWashoff(SurfaceQualitySoA& sq,
     }
 }
 
+// ============================================================================
+// Co-pollutant washoff — matches legacy landuse_getCoPollutLoad()
+// ============================================================================
+
+void LanduseSolver::applyCoPollutant(SurfaceQualitySoA& sq,
+                                      const double* runoff, const double* area,
+                                      const int* co_pollut, const double* co_frac,
+                                      int n_subcatch) {
+    if (!co_pollut || !co_frac) return;
+
+    // For each pollutant p that has a co-pollutant k:
+    //   washoff_conc[p] += co_frac[p] * washoff_conc[k]
+    // (legacy: w = Pollut[p].coFraction * washoff[k])
+    for (int p = 0; p < n_pollutants_; ++p) {
+        int k = co_pollut[p];
+        if (k < 0 || k >= n_pollutants_) continue;
+        double frac = co_frac[p];
+        if (frac <= 0.0) continue;
+
+        for (int i = 0; i < n_subcatch; ++i) {
+            auto idx_p = static_cast<size_t>(i * n_pollutants_ + p);
+            auto idx_k = static_cast<size_t>(i * n_pollutants_ + k);
+            sq.washoff_conc[idx_p] += frac * sq.washoff_conc[idx_k];
+        }
+    }
+}
+
 } // namespace landuse
 } // namespace openswmm

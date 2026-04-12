@@ -80,6 +80,7 @@ int GeoPackageReportPlugin::write_summary(const SimulationContext& ctx) {
 
         // Node statistics
         for (int i = 0; i < ctx.node_names.size(); ++i) {
+            if (!ctx.nodes.rpt_flag[static_cast<std::size_t>(i)]) continue;
             const auto& name = ctx.node_names.name_of(i);
             if (i < (int)ctx.nodes.stat_max_depth.size())
                 insert("NODE", name, "max_depth", ctx.nodes.stat_max_depth[i]);
@@ -91,6 +92,7 @@ int GeoPackageReportPlugin::write_summary(const SimulationContext& ctx) {
 
         // Link statistics
         for (int i = 0; i < ctx.link_names.size(); ++i) {
+            if (!ctx.links.rpt_flag[static_cast<std::size_t>(i)]) continue;
             const auto& name = ctx.link_names.name_of(i);
             if (i < (int)ctx.links.stat_max_flow.size())
                 insert("LINK", name, "max_flow", ctx.links.stat_max_flow[i]);
@@ -104,6 +106,7 @@ int GeoPackageReportPlugin::write_summary(const SimulationContext& ctx) {
 
         // Subcatchment statistics
         for (int i = 0; i < ctx.subcatch_names.size(); ++i) {
+            if (!ctx.subcatches.rpt_flag[static_cast<std::size_t>(i)]) continue;
             const auto& name = ctx.subcatch_names.name_of(i);
             if (i < (int)ctx.subcatches.stat_precip_vol.size())
                 insert("SUBCATCH", name, "precip_volume", ctx.subcatches.stat_precip_vol[i]);

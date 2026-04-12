@@ -239,7 +239,8 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_time, double 
         }
     }
 
-    return applyPendingActions(ctx, current_time);
+    last_action_count_ = applyPendingActions(ctx, current_time);
+    return last_action_count_;
 }
 
 // ============================================================================

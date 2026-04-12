@@ -192,8 +192,30 @@ struct SimulationOptions {
     /** @brief Maximum number of flow routing iterations (dynamic wave). */
     int max_trials = 8;
 
-    /** @brief Surcharge method: 0=EXTRAN, 1=SLOT. @see Legacy: SurchargeMethod */
+    /** @brief Surcharge method: 0=EXTRAN, 1=SLOT, 2=DYNAMIC_SLOT (DPS).
+     *  @see Legacy: SurchargeMethod
+     *  @see Sharior et al. (2023) for DYNAMIC_SLOT */
     int surcharge_method = 0;
+
+    /** @brief DPS target pressure celerity (m/s, converted to ft/s at init).
+     *  @details Controls the maximum modeled pressure wave speed. Lower values
+     *           allow larger timesteps but reduce transient fidelity.
+     *  @see Sharior et al. (2023) Eq. 7 */
+    double dps_target_celerity = 25.0;
+
+    /** @brief DPS surcharge shock parameter (dimensionless, >= 2).
+     *  @details Controls the celerity shock at the mixed-flow transition.
+     *           Larger values → initial P closer to 1 → bigger shock.
+     *           Recommended: alpha = 3.
+     *  @see Sharior et al. (2023) Eq. 23 */
+    double dps_alpha = 3.0;
+
+    /** @brief DPS decay time scale (seconds).
+     *  @details Time for Preissmann Number to decay from P_hat_0 to ~1.
+     *           Shorter r → faster transition to target celerity but potential
+     *           oscillations. Should be meaningful physical/numerical time scale.
+     *  @see Sharior et al. (2023) Eq. 22 */
+    double dps_decay_time = 0.5;
 
     /** @brief Node continuity formulation for depth update. Default: EXPLICIT (legacy). */
     NodeContinuity node_continuity = NodeContinuity::EXPLICIT;
@@ -242,6 +264,12 @@ struct SimulationOptions {
     /** @brief Lateral inflow tolerance (fraction, e.g., 0.05 = 5%).
      *  @details Legacy default: 0.05. Input is in percent, divided by 100. */
     double lat_flow_tol = 0.05;
+
+    /** @brief Skip routing when system is in steady state.
+     *  @details When true, routing is skipped if no control actions were taken,
+     *           flow error is below sys_flow_tol, and no inflows changed.
+     *  @see Legacy: SkipSteadyState */
+    bool skip_steady_state = false;
 
     // -----------------------------------------------------------------------
     // System settings
@@ -355,6 +383,9 @@ struct SimulationOptions {
     /** @brief If true, evaporation only occurs on dry days. */
     bool evap_dry_only = false;
 
+    /** @brief Monthly pan coefficients (used when evap_type == 4/FILE). */
+    double pan_coeff[12] = {1,1,1,1,1,1,1,1,1,1,1,1};
+
     // -----------------------------------------------------------------------
     // Temperature settings (from [TEMPERATURE] section)
     // -----------------------------------------------------------------------
@@ -405,14 +436,17 @@ struct SimulationOptions {
     // Report settings (from [REPORT] section)
     // -----------------------------------------------------------------------
 
-    /** @brief Subcatchment reporting: 0=NONE, 1=ALL, 2=SOME. */
-    int rpt_subcatchments = 0;
+    /** @brief TRUE if all reporting is disabled. */
+    bool rpt_disabled = false;
 
-    /** @brief Node reporting: 0=NONE, 1=ALL, 2=SOME. */
-    int rpt_nodes = 0;
+    /** @brief Subcatchment reporting: 0=NONE, 1=ALL, 2=SOME. Default ALL. */
+    int rpt_subcatchments = 1;
 
-    /** @brief Link reporting: 0=NONE, 1=ALL, 2=SOME. */
-    int rpt_links = 0;
+    /** @brief Node reporting: 0=NONE, 1=ALL, 2=SOME. Default ALL. */
+    int rpt_nodes = 1;
+
+    /** @brief Link reporting: 0=NONE, 1=ALL, 2=SOME. Default ALL. */
+    int rpt_links = 1;
 
     /** @brief Report input summary. */
     bool rpt_input = false;

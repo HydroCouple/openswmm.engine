@@ -366,6 +366,11 @@ struct SimulationContext {
     std::vector<int> subcatch_d_store_pattern;
     std::vector<int> subcatch_infil_pattern;
 
+    /// Base values for pattern-adjusted parameters (populated at init).
+    std::vector<double> base_n_perv;
+    std::vector<double> base_ds_perv;
+    bool has_subcatch_adj_patterns = false; ///< True if any pattern index >= 0
+
     // =========================================================================
     // Hydrology data (snowpacks, aquifers, LID)
     // =========================================================================
@@ -516,6 +521,9 @@ struct SimulationContext {
         // User-forced volumes (diagnostic — subset of routing_external)
         double routing_forcing_inflow = 0.0; ///< Cumulative user-forced lateral inflow (ft3)
 
+        // User-forced quality mass (diagnostic — cumulative mass injected via user_conc_mass_flux)
+        std::vector<double> routing_forcing_qual_inflow; ///< Per-pollutant cumulative user-forced quality mass
+
         // Groundwater mass balance totals (all in feet — depth per unit area)
         // Matches legacy TGwaterTotals
         double gw_infil         = 0.0; ///< Cumulative infiltration to GW (ft)
@@ -549,6 +557,9 @@ struct SimulationContext {
         std::vector<double> qual_routing_init;   ///< Initial stored quality mass
         std::vector<double> qual_routing_final;  ///< Final stored quality mass
         std::vector<double> qual_routing_reacted;///< Quality mass lost to decay
+        std::vector<double> qual_routing_ii_in;  ///< RDII quality mass inflow
+        std::vector<double> qual_routing_seep;   ///< Quality mass lost to seepage
+        std::vector<double> qual_routing_evap;   ///< Quality mass lost to evaporation
 
         void resize_quality(int n_pollutants) {
             auto np = static_cast<std::size_t>(n_pollutants);
@@ -566,6 +577,10 @@ struct SimulationContext {
             qual_routing_init.assign(np, 0.0);
             qual_routing_final.assign(np, 0.0);
             qual_routing_reacted.assign(np, 0.0);
+            qual_routing_ii_in.assign(np, 0.0);
+            qual_routing_seep.assign(np, 0.0);
+            qual_routing_evap.assign(np, 0.0);
+            routing_forcing_qual_inflow.assign(np, 0.0);
         }
 
         void reset() {
@@ -584,6 +599,10 @@ struct SimulationContext {
             auto qri = std::move(qual_routing_init);
             auto qrfi = std::move(qual_routing_final);
             auto qrr = std::move(qual_routing_reacted);
+            auto qrii = std::move(qual_routing_ii_in);
+            auto qrseep = std::move(qual_routing_seep);
+            auto qrevap = std::move(qual_routing_evap);
+            auto qrfqi = std::move(routing_forcing_qual_inflow);
             *this = MassBalance{};
             qual_init_buildup = std::move(qi);
             qual_final_buildup = std::move(qf);
@@ -599,6 +618,10 @@ struct SimulationContext {
             qual_routing_init = std::move(qri);
             qual_routing_final = std::move(qrfi);
             qual_routing_reacted = std::move(qrr);
+            qual_routing_ii_in = std::move(qrii);
+            qual_routing_seep = std::move(qrseep);
+            qual_routing_evap = std::move(qrevap);
+            routing_forcing_qual_inflow = std::move(qrfqi);
             // Zero out the quality vectors (except init_buildup which is
             // computed once during initQuality and must survive reset)
             for (auto* v : {&qual_final_buildup,
@@ -607,7 +630,11 @@ struct SimulationContext {
                             &qual_infil_loss, &qual_runoff_load,
                             &qual_routing_wet, &qual_routing_outflow,
                             &qual_routing_flood, &qual_routing_init,
-                            &qual_routing_final, &qual_routing_reacted}) {
+                            &qual_routing_final, &qual_routing_reacted,
+                            &qual_routing_ii_in,
+                            &qual_routing_seep,
+                            &qual_routing_evap,
+                            &routing_forcing_qual_inflow}) {
                 std::fill(v->begin(), v->end(), 0.0);
             }
         }
@@ -650,6 +677,7 @@ struct SimulationContext {
         /// Non-convergence and iteration tracking
         long   n_non_converged = 0;   ///< Steps that didn't converge
         double sum_iterations  = 0.0; ///< Sum of iterations for averaging
+        double max_courant     = 0.0; ///< Maximum Courant number observed
 
         void update(double dt) {
             min_step = std::min(min_step, dt);
@@ -777,6 +805,9 @@ struct SimulationContext {
         subcatch_n_perv_pattern.clear();
         subcatch_d_store_pattern.clear();
         subcatch_infil_pattern.clear();
+        base_n_perv.clear();
+        base_ds_perv.clear();
+        has_subcatch_adj_patterns = false;
         forcing    = ForcingData{};
     }
 
@@ -790,9 +821,6 @@ struct SimulationContext {
         nodes.save_state();
         links.save_state();
         subcatches.save_state();
-        if (options.quality_routing) {
-            pollutants.save_quality_state();
-        }
     }
 
     /**
@@ -806,7 +834,6 @@ struct SimulationContext {
         links.reset_state();
         subcatches.reset_state();
         gages.reset_state();
-        pollutants.reset_quality_state();
         tables.reset_cursors();
         current_time = 0.0;
         current_date = options.start_date;
@@ -830,11 +857,10 @@ struct SimulationContext {
         subcatches.resize(subcatch_names.size());
         gages.resize(gage_names.size());
         pollutants.resize_pollutants(pollutant_names.size());
-        pollutants.resize_quality(
-            node_names.size(),
-            link_names.size(),
-            subcatch_names.size()
-        );
+        int np = static_cast<int>(pollutant_names.size());
+        nodes.resize_quality(np);
+        links.resize_quality(np);
+        subcatches.resize_quality(np);
 
         // Resize spatial coordinate arrays
         spatial.node_x.assign(static_cast<std::size_t>(node_names.size()), 0.0);
@@ -853,6 +879,27 @@ struct SimulationContext {
         // Resize gage coordinates
         spatial.gage_x.assign(static_cast<std::size_t>(gage_names.size()), 0.0);
         spatial.gage_y.assign(static_cast<std::size_t>(gage_names.size()), 0.0);
+    }
+
+    /**
+     * @brief Release excess vector capacity on all owned SoA data stores.
+     *
+     * @details Called once after parsing and final sizing are complete.
+     *          During incremental parsing, vectors grow via geometric capacity
+     *          doubling. This method reclaims that excess by calling
+     *          shrink_to_fit() on every data store.
+     */
+    void shrink_all_to_fit() {
+        nodes.shrink_to_fit();
+        links.shrink_to_fit();
+        subcatches.shrink_to_fit();
+        gages.shrink_to_fit();
+        pollutants.shrink_to_fit();
+        landuses.shrink_to_fit();
+        buildup.shrink_to_fit();
+        washoff.shrink_to_fit();
+        treatment.shrink_to_fit();
+        spatial.shrink_to_fit();
     }
 
     // =========================================================================

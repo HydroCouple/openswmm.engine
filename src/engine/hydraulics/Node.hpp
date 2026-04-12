@@ -99,6 +99,17 @@ double getMaxOutflow(const NodeData& nodes, int idx, double q, double dt);
 double getOverflow(double new_volume, double full_volume, double dt);
 
 /**
+ * @brief Compute depth from volume for a single node (inverse of getVolume).
+ *
+ * @details For JUNCTION: d = V / MIN_SURFAREA.
+ *          For STORAGE functional: Newton iteration or direct inversion.
+ *          For STORAGE tabular: inverse table lookup.
+ *  @see Legacy: node_getDepth() in node.c
+ */
+double getDepth(const NodeData& nodes, int idx, double volume,
+                TableData* tables = nullptr);
+
+/**
  * @brief Compute head from depth: head = invert + depth.
  */
 inline double getHead(double invert_elev, double depth) {

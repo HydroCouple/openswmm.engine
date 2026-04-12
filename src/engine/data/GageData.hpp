@@ -208,6 +208,31 @@ struct GageData {
         past_rain_time.assign(un, 0.0);
     }
 
+    /**
+     * @brief Release excess vector capacity accumulated during parsing.
+     */
+    void shrink_to_fit() {
+        rain_type.shrink_to_fit();
+        source.shrink_to_fit();
+        ts_index.shrink_to_fit();
+        ts_name.shrink_to_fit();
+        file_path.shrink_to_fit();
+        col_name.shrink_to_fit();
+        file_format.shrink_to_fit();
+        interval_sec.shrink_to_fit();
+        snow_factor.shrink_to_fit();
+
+        rainfall.shrink_to_fit();
+        next_rainfall.shrink_to_fit();
+        api_rainfall.shrink_to_fit();
+        next_rain_date.shrink_to_fit();
+        is_raining.shrink_to_fit();
+
+        past_rain.shrink_to_fit();
+        past_rain_accum.shrink_to_fit();
+        past_rain_time.shrink_to_fit();
+    }
+
     void reset_state() noexcept {
         std::fill(rainfall.begin(),      rainfall.end(),      0.0);
         std::fill(next_rainfall.begin(), next_rainfall.end(), 0.0);

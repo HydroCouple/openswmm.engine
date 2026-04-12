@@ -18,6 +18,7 @@
 
 #include <vector>
 #include <string>
+#include "../quality/Treatment.hpp"
 
 namespace openswmm {
 
@@ -37,6 +38,12 @@ struct LanduseData {
         sweep_interval.assign(un, 0.0);
         sweep_removal.assign(un, 0.0);
         last_swept.assign(un, 0.0);
+    }
+
+    void shrink_to_fit() {
+        sweep_interval.shrink_to_fit();
+        sweep_removal.shrink_to_fit();
+        last_swept.shrink_to_fit();
     }
 };
 
@@ -64,6 +71,14 @@ struct BuildupData {
         coeff3.assign(total, 0.0);
         normalizer.assign(total, 0);
     }
+
+    void shrink_to_fit() {
+        func_type.shrink_to_fit();
+        coeff1.shrink_to_fit();
+        coeff2.shrink_to_fit();
+        coeff3.shrink_to_fit();
+        normalizer.shrink_to_fit();
+    }
 };
 
 // ============================================================================
@@ -90,6 +105,14 @@ struct WashoffData {
         sweep_effic.assign(total, 0.0);
         bmp_effic.assign(total, 0.0);
     }
+
+    void shrink_to_fit() {
+        func_type.shrink_to_fit();
+        coeff.shrink_to_fit();
+        expon.shrink_to_fit();
+        sweep_effic.shrink_to_fit();
+        bmp_effic.shrink_to_fit();
+    }
 };
 
 // ============================================================================
@@ -103,9 +126,32 @@ struct TreatmentData {
     int n_nodes = 0;
     int n_pollutants = 0;
 
+    /// Compiled treatment expressions (same indexing as expressions[])
+    std::vector<openswmm::treatment::TreatExpr> compiled;
+
+    /// Per-node flag: true if any pollutant has a treatment expression
+    std::vector<bool> has_treatment;
+
+    /// Per-node inflow concentrations (size = n_pollutants, reused each timestep)
+    std::vector<double> cin;
+
+    /// Per-node removal fractions (size = n_pollutants, reused each timestep)
+    /// -1.0 = not computed, 0-1 = computed, > 1.0 = currently being evaluated (cycle detect)
+    std::vector<double> removal;
+
     void resize(int nn, int npoll) {
         n_nodes = nn; n_pollutants = npoll;
-        expressions.assign(static_cast<std::size_t>(nn * npoll), "");
+        auto total = static_cast<std::size_t>(nn * npoll);
+        expressions.assign(total, "");
+        compiled.resize(total);
+        has_treatment.assign(static_cast<std::size_t>(nn), false);
+        cin.assign(static_cast<std::size_t>(npoll), 0.0);
+        removal.assign(static_cast<std::size_t>(npoll), -1.0);
+    }
+
+    void shrink_to_fit() {
+        expressions.shrink_to_fit();
+        compiled.shrink_to_fit();
     }
 
     bool hasAny() const {

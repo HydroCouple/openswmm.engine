@@ -217,6 +217,30 @@ struct SpatialFrame {
     bool has_2d_coupling() const noexcept {
         return !coupling_points.empty();
     }
+
+    /**
+     * @brief Release excess vector capacity accumulated during parsing.
+     */
+    void shrink_to_fit() {
+        node_x.shrink_to_fit();
+        node_y.shrink_to_fit();
+        link_x.shrink_to_fit();
+        link_y.shrink_to_fit();
+        subcatch_x.shrink_to_fit();
+        subcatch_y.shrink_to_fit();
+        gage_x.shrink_to_fit();
+        gage_y.shrink_to_fit();
+
+        link_vertices_x.shrink_to_fit();
+        for (auto& v : link_vertices_x) v.shrink_to_fit();
+        link_vertices_y.shrink_to_fit();
+        for (auto& v : link_vertices_y) v.shrink_to_fit();
+
+        subcatch_polygon_x.shrink_to_fit();
+        for (auto& v : subcatch_polygon_x) v.shrink_to_fit();
+        subcatch_polygon_y.shrink_to_fit();
+        for (auto& v : subcatch_polygon_y) v.shrink_to_fit();
+    }
 };
 
 } /* namespace openswmm */

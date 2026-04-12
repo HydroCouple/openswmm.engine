@@ -19,6 +19,9 @@
 #include "data/InflowData.hpp"
 
 #include <cmath>
+#include <string>
+
+#include "data/HydrologyData.hpp"
 
 namespace openswmm::gpkg {
 
@@ -159,6 +162,11 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
     insert("NODE_CONTINUITY", std::to_string(static_cast<int>(opts.node_continuity)));
     insert("ANDERSON_ACCEL", std::to_string(opts.anderson_accel ? 1 : 0));
     insert("SURCHARGE_METHOD", std::to_string(opts.surcharge_method));
+    if (opts.surcharge_method == 2) {
+        insert("DPS_CELERITY", std::to_string(opts.dps_target_celerity));
+        insert("DPS_ALPHA", std::to_string(opts.dps_alpha));
+        insert("DPS_DECAY_TIME", std::to_string(opts.dps_decay_time));
+    }
     insert("INERTIAL_DAMPING", std::to_string(opts.inertial_damping));
     insert("NORMAL_FLOW_LIMITED", std::to_string(opts.normal_flow_ltd));
     insert("MAX_TRIALS", std::to_string(opts.max_trials));
@@ -173,6 +181,44 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
     insert("THREADS", std::to_string(opts.num_threads));
     insert("DRY_DAYS", std::to_string(opts.dry_days));
     insert("IGNORE_RDII", opts.ignore_rdii ? "YES" : "NO");
+
+    // Report settings
+    insert("RPT_DISABLED", opts.rpt_disabled ? "YES" : "NO");
+    insert("RPT_INPUT", opts.rpt_input ? "YES" : "NO");
+    insert("RPT_CONTINUITY", opts.rpt_continuity ? "YES" : "NO");
+    insert("RPT_FLOWSTATS", opts.rpt_flowstats ? "YES" : "NO");
+    insert("RPT_CONTROLS", opts.rpt_controls ? "YES" : "NO");
+    insert("RPT_AVERAGES", opts.rpt_averages ? "YES" : "NO");
+    if (opts.rpt_subcatchments == 0) insert("RPT_SUBCATCHMENTS", "NONE");
+    else if (opts.rpt_subcatchments == 1) insert("RPT_SUBCATCHMENTS", "ALL");
+    else {
+        std::string names;
+        for (const auto& n : opts.rpt_subcatch_names) {
+            if (!names.empty()) names += ',';
+            names += n;
+        }
+        insert("RPT_SUBCATCHMENTS", names);
+    }
+    if (opts.rpt_nodes == 0) insert("RPT_NODES", "NONE");
+    else if (opts.rpt_nodes == 1) insert("RPT_NODES", "ALL");
+    else {
+        std::string names;
+        for (const auto& n : opts.rpt_node_names) {
+            if (!names.empty()) names += ',';
+            names += n;
+        }
+        insert("RPT_NODES", names);
+    }
+    if (opts.rpt_links == 0) insert("RPT_LINKS", "NONE");
+    else if (opts.rpt_links == 1) insert("RPT_LINKS", "ALL");
+    else {
+        std::string names;
+        for (const auto& n : opts.rpt_link_names) {
+            if (!names.empty()) names += ',';
+            names += n;
+        }
+        insert("RPT_LINKS", names);
+    }
 
     if (!ctx.spatial.crs.empty())
         insert("CRS", ctx.spatial.crs);
@@ -603,6 +649,191 @@ static void write_timeseries(sqlite3* db, const SimulationContext& ctx,
     }
 }
 
+// ============================================================================
+// Climate write functions
+// ============================================================================
+
+/// Serialize a fixed-size double array as comma-separated string.
+static std::string join_doubles(const double* arr, int n) {
+    std::string out;
+    for (int i = 0; i < n; ++i) {
+        if (i > 0) out += ',';
+        out += std::to_string(arr[i]);
+    }
+    return out;
+}
+
+static void write_evaporation(sqlite3* db, const SimulationContext& ctx,
+                               const std::string& sim_id) {
+    auto stmt = prepare(db,
+        "INSERT INTO evaporation (simulation_id, evap_type, evap_values, "
+        "ts_name, pan_coeff, recovery_pat, dry_only) VALUES (?,?,?,?,?,?,?)");
+
+    static const char* evap_names[] = {"CONSTANT","MONTHLY","TIMESERIES","TEMPERATURE","FILE"};
+    const auto& opts = ctx.options;
+    int et = opts.evap_type;
+    if (et < 0 || et > 4) et = 0;
+
+    bind_text(stmt.get(), 1, sim_id);
+    bind_text(stmt.get(), 2, evap_names[et]);
+    bind_text(stmt.get(), 3, join_doubles(opts.evap_values, 12));
+
+    if (!opts.evap_ts_name.empty())
+        bind_text(stmt.get(), 4, opts.evap_ts_name);
+    else
+        bind_null(stmt.get(), 4);
+
+    bind_text(stmt.get(), 5, join_doubles(opts.pan_coeff, 12));
+
+    if (!opts.evap_recovery_pat.empty())
+        bind_text(stmt.get(), 6, opts.evap_recovery_pat);
+    else
+        bind_null(stmt.get(), 6);
+
+    bind_int(stmt.get(), 7, opts.evap_dry_only ? 1 : 0);
+    sqlite3_step(stmt.get());
+}
+
+static void write_climate_settings(sqlite3* db, const SimulationContext& ctx,
+                                    const std::string& sim_id) {
+    auto stmt = prepare(db,
+        "INSERT INTO climate_settings (simulation_id, temp_source, temp_ts_name, "
+        "temp_file, temp_file_start, wind_type, wind_speed, snow_divt, snow_ati_wt, "
+        "snow_nrg_ratio, snow_lat, snow_min_melt, snow_max_melt, "
+        "adc_imperv, adc_perv) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    const auto& opts = ctx.options;
+
+    static const char* src_names[] = {"NONE", "TIMESERIES", "FILE"};
+    int ts = opts.temp_source;
+    if (ts < 0 || ts > 2) ts = 0;
+
+    bind_text(stmt.get(),   1, sim_id);
+    bind_text(stmt.get(),   2, src_names[ts]);
+
+    if (!opts.temp_ts_name.empty())
+        bind_text(stmt.get(), 3, opts.temp_ts_name);
+    else
+        bind_null(stmt.get(), 3);
+
+    if (!opts.temp_file.empty())
+        bind_text(stmt.get(), 4, opts.temp_file);
+    else
+        bind_null(stmt.get(), 4);
+
+    bind_double(stmt.get(), 5, opts.temp_file_start);
+
+    bind_text(stmt.get(),   6, opts.wind_type == 1 ? "FILE" : "MONTHLY");
+    bind_text(stmt.get(),   7, join_doubles(opts.wind_speed, 12));
+    bind_double(stmt.get(), 8, opts.snow_divt);
+    bind_double(stmt.get(), 9, opts.snow_ati_wt);
+    bind_double(stmt.get(), 10, opts.snow_nrg_ratio);
+    bind_double(stmt.get(), 11, opts.snow_lat);
+    bind_double(stmt.get(), 12, opts.snow_min_melt);
+    bind_double(stmt.get(), 13, opts.snow_max_melt);
+    bind_text(stmt.get(),   14, join_doubles(opts.adc_imperv, 10));
+    bind_text(stmt.get(),   15, join_doubles(opts.adc_perv, 10));
+    sqlite3_step(stmt.get());
+}
+
+static void write_snowpacks(sqlite3* db, const SimulationContext& ctx,
+                             const std::string& sim_id) {
+    auto stmt = prepare(db,
+        "INSERT INTO snowpacks (simulation_id, snowpack_id, surface_type, "
+        "p1, p2, p3, p4, p5, p6, p7, removal_subcatch) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+
+    for (size_t j = 0; j < ctx.snowpacks.names.size(); ++j) {
+        const auto& name = ctx.snowpacks.names[j];
+
+        // Helper to write one surface row (7-param surfaces)
+        auto write_surface7 = [&](const char* stype, const std::array<double,7>& p) {
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_text(stmt.get(), 2, name);
+            bind_text(stmt.get(), 3, stype);
+            for (int k = 0; k < 7; ++k)
+                bind_double(stmt.get(), 4 + k, p[static_cast<size_t>(k)]);
+            bind_null(stmt.get(), 11);
+            sqlite3_step(stmt.get());
+        };
+
+        if (j < ctx.snowpacks.plowable.size())
+            write_surface7("PLOWABLE", ctx.snowpacks.plowable[j]);
+        if (j < ctx.snowpacks.impervious.size())
+            write_surface7("IMPERVIOUS", ctx.snowpacks.impervious[j]);
+        if (j < ctx.snowpacks.pervious.size())
+            write_surface7("PERVIOUS", ctx.snowpacks.pervious[j]);
+
+        // REMOVAL: 6 params + optional subcatchment
+        if (j < ctx.snowpacks.removal.size()) {
+            const auto& r = ctx.snowpacks.removal[j];
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_text(stmt.get(), 2, name);
+            bind_text(stmt.get(), 3, "REMOVAL");
+            for (int k = 0; k < 6; ++k)
+                bind_double(stmt.get(), 4 + k, r[static_cast<size_t>(k)]);
+            bind_double(stmt.get(), 10, 0.0); // p7 unused
+            if (j < ctx.snowpacks.removal_subcatch.size() &&
+                !ctx.snowpacks.removal_subcatch[j].empty())
+                bind_text(stmt.get(), 11, ctx.snowpacks.removal_subcatch[j]);
+            else
+                bind_null(stmt.get(), 11);
+            sqlite3_step(stmt.get());
+        }
+    }
+}
+
+static void write_adjustments(sqlite3* db, const SimulationContext& ctx,
+                               const std::string& sim_id) {
+    // Monthly adjustments
+    {
+        auto stmt = prepare(db,
+            "INSERT INTO adjustments (simulation_id, adjust_type, adj_values) "
+            "VALUES (?,?,?)");
+
+        auto write_row = [&](const char* atype, const double* arr) {
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_text(stmt.get(), 2, atype);
+            bind_text(stmt.get(), 3, join_doubles(arr, 12));
+            sqlite3_step(stmt.get());
+        };
+
+        write_row("TEMP",    ctx.adjust_temp);
+        write_row("EVAP",    ctx.adjust_evap);
+        write_row("RAIN",    ctx.adjust_rain);
+        write_row("CONDUCT", ctx.adjust_hydcon);
+    }
+
+    // Subcatchment pattern adjustments
+    {
+        auto stmt = prepare(db,
+            "INSERT INTO subcatch_adjustments (simulation_id, subcatch_id, "
+            "adjust_type, pattern_id) VALUES (?,?,?,?)");
+
+        auto write_pat = [&](const char* atype, const std::vector<int>& pats) {
+            for (size_t i = 0; i < pats.size(); ++i) {
+                if (pats[i] < 0) continue;
+                sqlite3_reset(stmt.get());
+                sqlite3_clear_bindings(stmt.get());
+                bind_text(stmt.get(), 1, sim_id);
+                bind_text(stmt.get(), 2, ctx.subcatch_names.name_of(static_cast<int>(i)));
+                bind_text(stmt.get(), 3, atype);
+                bind_text(stmt.get(), 4, ctx.table_names.name_of(pats[i]));
+                sqlite3_step(stmt.get());
+            }
+        };
+
+        write_pat("N-PERV", ctx.subcatch_n_perv_pattern);
+        write_pat("DSTORE", ctx.subcatch_d_store_pattern);
+        write_pat("INFIL",  ctx.subcatch_infil_pattern);
+    }
+}
+
 static void write_pollutants(sqlite3* db, const SimulationContext& ctx,
                              const std::string& sim_id) {
     auto stmt = prepare(db,
@@ -656,6 +887,181 @@ static void write_patterns(sqlite3* db, const SimulationContext& ctx,
     }
 }
 
+static void write_lid_controls(sqlite3* db, const SimulationContext& ctx,
+                                const std::string& sim_id) {
+    auto stmt = prepare(db,
+        "INSERT INTO lid_controls (simulation_id, lid_id, layer_type, "
+        "p1, p2, p3, p4, p5, p6, p7) VALUES (?,?,?,?,?,?,?,?,?,?)");
+
+    for (int j = 0; j < ctx.lid_controls.count(); ++j) {
+        auto uj = static_cast<size_t>(j);
+        const auto& name = ctx.lid_controls.names[uj];
+
+        // Write type row (layer_type = the LID type code e.g. "BC")
+        auto write_row = [&](const char* layer, const double* p, int np) {
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_text(stmt.get(), 2, name);
+            bind_text(stmt.get(), 3, layer);
+            for (int k = 0; k < 7; ++k)
+                bind_double(stmt.get(), 4 + k, (k < np) ? p[k] : 0.0);
+            sqlite3_step(stmt.get());
+        };
+
+        // Type code
+        double zero = 0.0;
+        write_row(ctx.lid_controls.lid_type[uj].c_str(), &zero, 0);
+
+        if (uj < ctx.lid_controls.surface.size())
+            write_row("SURFACE", ctx.lid_controls.surface[uj].data(), 5);
+        if (uj < ctx.lid_controls.soil.size())
+            write_row("SOIL", ctx.lid_controls.soil[uj].data(), 7);
+        if (uj < ctx.lid_controls.pavement.size())
+            write_row("PAVEMENT", ctx.lid_controls.pavement[uj].data(), 6);
+        if (uj < ctx.lid_controls.storage.size())
+            write_row("STORAGE", ctx.lid_controls.storage[uj].data(), 4);
+        if (uj < ctx.lid_controls.drain.size())
+            write_row("DRAIN", ctx.lid_controls.drain[uj].data(), 6);
+        if (uj < ctx.lid_controls.drainmat.size())
+            write_row("DRAINMAT", ctx.lid_controls.drainmat[uj].data(), 3);
+    }
+}
+
+static void write_lid_usage(sqlite3* db, const SimulationContext& ctx,
+                             const std::string& sim_id) {
+    auto stmt = prepare(db,
+        "INSERT INTO lid_usage (simulation_id, subcatch_id, lid_id, number, "
+        "area, width, init_sat, from_imperv, to_perv, rpt_file, drain_to, "
+        "from_perv) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+
+    for (int j = 0; j < ctx.lid_usage.count(); ++j) {
+        auto uj = static_cast<size_t>(j);
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+
+        bind_text(stmt.get(), 1, sim_id);
+
+        int sc = ctx.lid_usage.subcatch_index[uj];
+        bind_text(stmt.get(), 2, (sc >= 0) ? ctx.subcatch_names.name_of(sc) : std::string("*"));
+
+        int li = ctx.lid_usage.lid_index[uj];
+        bind_text(stmt.get(), 3, (li >= 0 && li < ctx.lid_names.size())
+                  ? ctx.lid_names.name_of(li) : std::string("*"));
+
+        bind_int(stmt.get(), 4, ctx.lid_usage.number[uj]);
+        bind_double(stmt.get(), 5, ctx.lid_usage.area[uj]);
+        bind_double(stmt.get(), 6, ctx.lid_usage.width[uj]);
+        bind_double(stmt.get(), 7, ctx.lid_usage.init_sat[uj]);
+        bind_double(stmt.get(), 8, ctx.lid_usage.from_imperv[uj]);
+        bind_int(stmt.get(), 9, ctx.lid_usage.to_perv[uj]);
+
+        if (uj < ctx.lid_usage.rpt_file.size() && !ctx.lid_usage.rpt_file[uj].empty())
+            bind_text(stmt.get(), 10, ctx.lid_usage.rpt_file[uj]);
+        else
+            bind_null(stmt.get(), 10);
+
+        if (uj < ctx.lid_usage.drain_to.size() && !ctx.lid_usage.drain_to[uj].empty())
+            bind_text(stmt.get(), 11, ctx.lid_usage.drain_to[uj]);
+        else
+            bind_null(stmt.get(), 11);
+
+        bind_double(stmt.get(), 12, (uj < ctx.lid_usage.from_perv.size())
+                    ? ctx.lid_usage.from_perv[uj] : 0.0);
+        sqlite3_step(stmt.get());
+    }
+}
+
+static void write_rdii(sqlite3* db, const SimulationContext& ctx,
+                       const std::string& sim_id) {
+    // RDII assignments
+    if (ctx.rdii_assigns.count() > 0) {
+        auto stmt = prepare(db,
+            "INSERT INTO rdii_assignments (simulation_id, node_name, uh_name, sewer_area) "
+            "VALUES (?,?,?,?)");
+        for (int j = 0; j < ctx.rdii_assigns.count(); ++j) {
+            auto uj = static_cast<size_t>(j);
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_text(stmt.get(), 2, (ctx.rdii_assigns.node_idx[uj] >= 0 &&
+                      ctx.rdii_assigns.node_idx[uj] < ctx.node_names.size())
+                      ? ctx.node_names.name_of(ctx.rdii_assigns.node_idx[uj])
+                      : std::string("*"));
+            bind_text(stmt.get(), 3, ctx.rdii_assigns.uh_name[uj]);
+            sqlite3_bind_double(stmt.get(), 4, ctx.rdii_assigns.sewer_area[uj]);
+            sqlite3_step(stmt.get());
+        }
+    }
+
+    // Unit hydrograph gage assignments
+    if (!ctx.unit_hyds.gage_assignments.empty()) {
+        auto stmt = prepare(db,
+            "INSERT INTO unit_hydrographs (simulation_id, uh_name, gage_name) "
+            "VALUES (?,?,?)");
+        for (size_t i = 0; i < ctx.unit_hyds.gage_assignments.size(); ++i) {
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_text(stmt.get(), 2, ctx.unit_hyds.gage_assignments[i]);
+            bind_text(stmt.get(), 3, ctx.unit_hyds.gage_names[i]);
+            sqlite3_step(stmt.get());
+        }
+    }
+
+    // Unit hydrograph parameter entries
+    if (ctx.unit_hyds.count() > 0) {
+        auto stmt = prepare(db,
+            "INSERT INTO unit_hydrographs (simulation_id, uh_name, month, response, "
+            "r, t, k, dmax, drecov, dinit) VALUES (?,?,?,?,?,?,?,?,?,?)");
+        static const char* months[] = {"JAN","FEB","MAR","APR","MAY","JUN",
+                                       "JUL","AUG","SEP","OCT","NOV","DEC"};
+        static const char* responses[] = {"SHORT","MEDIUM","LONG"};
+        for (const auto& e : ctx.unit_hyds.entries) {
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_text(stmt.get(), 2, e.name);
+            bind_text(stmt.get(), 3, (e.month < 0) ? "ALL" : months[e.month]);
+            bind_text(stmt.get(), 4, responses[e.response]);
+            sqlite3_bind_double(stmt.get(), 5, e.r);
+            sqlite3_bind_double(stmt.get(), 6, e.t);
+            sqlite3_bind_double(stmt.get(), 7, e.k);
+            sqlite3_bind_double(stmt.get(), 8, e.dmax);
+            sqlite3_bind_double(stmt.get(), 9, e.drecov);
+            sqlite3_bind_double(stmt.get(), 10, e.dinit);
+            sqlite3_step(stmt.get());
+        }
+    }
+}
+
+static void write_treatment(sqlite3* db, const SimulationContext& ctx,
+                             const std::string& sim_id) {
+    if (!ctx.treatment.hasAny()) return;
+    auto stmt = prepare(db,
+        "INSERT INTO treatment (simulation_id, node_id, pollutant_id, expression) "
+        "VALUES (?,?,?,?)");
+
+    int np = ctx.treatment.n_pollutants;
+    for (int n = 0; n < ctx.treatment.n_nodes; ++n) {
+        for (int p = 0; p < np; ++p) {
+            auto idx = static_cast<size_t>(n * np + p);
+            if (idx >= ctx.treatment.expressions.size()) continue;
+            if (ctx.treatment.expressions[idx].empty()) continue;
+
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_text(stmt.get(), 2, (n >= 0 && n < ctx.node_names.size())
+                      ? ctx.node_names.name_of(n) : std::string("*"));
+            bind_text(stmt.get(), 3, (p >= 0 && p < ctx.pollutant_names.size())
+                      ? ctx.pollutant_names.name_of(p) : std::string("*"));
+            bind_text(stmt.get(), 4, ctx.treatment.expressions[idx]);
+            sqlite3_step(stmt.get());
+        }
+    }
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -692,6 +1098,14 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
     write_timeseries(db, ctx, simulation_id);
     write_pollutants(db, ctx, simulation_id);
     write_patterns(db, ctx, simulation_id);
+    write_evaporation(db, ctx, simulation_id);
+    write_climate_settings(db, ctx, simulation_id);
+    write_snowpacks(db, ctx, simulation_id);
+    write_adjustments(db, ctx, simulation_id);
+    write_lid_controls(db, ctx, simulation_id);
+    write_lid_usage(db, ctx, simulation_id);
+    write_rdii(db, ctx, simulation_id);
+    write_treatment(db, ctx, simulation_id);
 
     txn.commit();
 }

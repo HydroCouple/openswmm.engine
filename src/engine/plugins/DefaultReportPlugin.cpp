@@ -154,7 +154,7 @@ int DefaultReportPlugin::prepare(const SimulationContext& ctx) {
     // Open the report file early and write preamble (title, input summaries,
     // analysis options) so they are available immediately — even if the
     // simulation crashes before write_summary() is called.
-    if (!rpt_path_.empty()) {
+    if (!rpt_path_.empty() && !ctx.options.rpt_disabled) {
         file_ = std::fopen(rpt_path_.c_str(), "w");
         if (file_) {
             write_preamble(file_, ctx);
@@ -196,6 +196,7 @@ int DefaultReportPlugin::finalize(const SimulationContext& ctx) {
 
 int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     if (rpt_path_.empty()) return 0;
+    if (ctx.options.rpt_disabled) return 0;
 
     FILE* f = file_;
 
@@ -272,6 +273,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     // =====================================================================
     // Element Count — matches legacy inputrpt_writeInput()
     // =====================================================================
+    if (opt.rpt_input) {
     WRITE(f, "");
     WRITE(f, "*************");
     WRITE(f, "Element Count");
@@ -470,6 +472,8 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
         }
     }
 
+    } // end rpt_input
+
     // =====================================================================
     // Analysis Options — matches legacy report_writeOptions()
     // =====================================================================
@@ -579,7 +583,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // RDII Continuity — matches legacy report_writeRdiiError()
     // =====================================================================
-    if (has_rdii) {
+    if (has_rdii && opt.rpt_continuity) {
         const auto& mb = ctx.mass_balance;
         double total_area_ft2 = 0.0;
         for (int i = 0; i < ctx.n_subcatches(); ++i)
@@ -605,7 +609,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Runoff Quantity Continuity — matches legacy report_writeRunoffError()
     // =====================================================================
-    {
+    if (opt.rpt_continuity) {
         const auto& mb = ctx.mass_balance;
         double total_area_ft2 = 0.0;
         for (int i = 0; i < ctx.n_subcatches(); ++i)
@@ -636,7 +640,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Groundwater Continuity — matches legacy report_writeGwaterError()
     // =====================================================================
-    if (has_gw) {
+    if (has_gw && opt.rpt_continuity) {
         const auto& mb = ctx.mass_balance;
 
         // Compute total GW area (ft²) for depth conversion
@@ -693,7 +697,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Flow Routing Continuity — matches legacy report_writeFlowError()
     // =====================================================================
-    {
+    if (opt.rpt_continuity) {
         const auto& mb = ctx.mass_balance;
         std::fprintf(f, "\n  **************************        Volume        Volume");
         std::fprintf(f, "\n  Flow Routing Continuity        acre-feet      10^6 gal");
@@ -727,7 +731,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Highest Continuity Errors — matches legacy report_writeMaxStats()
     // =====================================================================
-    {
+    if (opt.rpt_continuity) {
         WRITE(f, "*************************");
         WRITE(f, "Highest Continuity Errors");
         WRITE(f, "*************************");
@@ -766,6 +770,11 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
     WRITE(f, "");
     WRITE(f, "");
+
+    // =====================================================================
+    // Flow statistics sections — gated by rpt_flowstats
+    // =====================================================================
+    if (opt.rpt_flowstats) {
 
     // =====================================================================
     // Time-Step Critical Elements — matches legacy report_writeMaxStats()
@@ -857,10 +866,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "");
     WRITE(f, "");
 
+    } // end rpt_flowstats
+
     // =====================================================================
     // Subcatchment Runoff Summary — matches legacy writeSubcatchRunoff()
     // =====================================================================
-    if (ctx.n_subcatches() > 0) {
+    if (ctx.n_subcatches() > 0 && opt.rpt_subcatchments != 0) {
         WRITE(f, "***************************");
         WRITE(f, "Subcatchment Runoff Summary");
         WRITE(f, "***************************");
@@ -918,7 +929,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Groundwater Summary — matches legacy writeGroundwater()
     // =====================================================================
-    if (has_gw) {
+    if (has_gw && opt.rpt_subcatchments != 0) {
         WRITE(f, "*******************");
         WRITE(f, "Groundwater Summary");
         WRITE(f, "*******************");
@@ -949,7 +960,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Node Depth Summary — matches legacy writeNodeDepths()
     // =====================================================================
-    if (ctx.n_nodes() > 0) {
+    if (ctx.n_nodes() > 0 && opt.rpt_nodes != 0) {
         WRITE(f, "******************");
         WRITE(f, "Node Depth Summary");
         WRITE(f, "******************");
@@ -987,7 +998,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Node Inflow Summary — matches legacy writeNodeFlows()
     // =====================================================================
-    if (ctx.n_nodes() > 0) {
+    if (ctx.n_nodes() > 0 && opt.rpt_nodes != 0) {
         WRITE(f, "*******************");
         WRITE(f, "Node Inflow Summary");
         WRITE(f, "*******************");
@@ -1033,7 +1044,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Node Surcharge Summary — matches legacy writeNodeSurcharge()
     // =====================================================================
-    if (static_cast<int>(opt.routing_model) == 2) { // DYNWAVE only
+    if (static_cast<int>(opt.routing_model) == 2 && opt.rpt_nodes != 0) { // DYNWAVE only
         WRITE(f, "**********************");
         WRITE(f, "Node Surcharge Summary");
         WRITE(f, "**********************");
@@ -1079,7 +1090,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Node Flooding Summary — matches legacy writeNodeFlooding()
     // =====================================================================
-    {
+    if (opt.rpt_nodes != 0) {
         bool any_flooding = false;
         for (int j = 0; j < ctx.n_nodes(); ++j)
             if (ctx.nodes.stat_vol_flooded[static_cast<std::size_t>(j)] > 0.0)
@@ -1137,7 +1148,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Storage Volume Summary — matches legacy writeStorageVolumes()
     // =====================================================================
-    {
+    if (opt.rpt_nodes != 0) {
         bool any_storage = false;
         for (int j = 0; j < ctx.n_nodes(); ++j)
             if (ctx.nodes.type[static_cast<std::size_t>(j)] == NodeType::STORAGE)
@@ -1203,7 +1214,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Outfall Loading Summary — matches legacy writeOutfallLoads()
     // =====================================================================
-    {
+    if (opt.rpt_nodes != 0) {
         int np = ctx.n_pollutants();
 
         WRITE(f, "***********************");
@@ -1303,7 +1314,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Link Flow Summary — matches legacy writeLinkFlows()
     // =====================================================================
-    if (ctx.n_links() > 0) {
+    if (ctx.n_links() > 0 && opt.rpt_links != 0) {
         WRITE(f, "********************");
         WRITE(f, "Link Flow Summary");
         WRITE(f, "********************");
@@ -1360,7 +1371,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Flow Classification Summary — matches legacy writeFlowClass()
     // =====================================================================
-    if (ctx.n_links() > 0) {
+    if (ctx.n_links() > 0 && opt.rpt_links != 0) {
         WRITE(f, "***************************");
         WRITE(f, "Flow Classification Summary");
         WRITE(f, "***************************");
@@ -1415,7 +1426,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Conduit Surcharge Summary — matches legacy writeLinkSurcharge()
     // =====================================================================
-    {
+    if (opt.rpt_links != 0) {
         bool any_surcharge = false;
         for (int j = 0; j < ctx.n_links(); ++j) {
             auto uj = static_cast<std::size_t>(j);
@@ -1464,7 +1475,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Pumping Summary — matches legacy writePumpFlows()
     // =====================================================================
-    {
+    if (opt.rpt_links != 0) {
         bool any_pump = false;
         for (int j = 0; j < ctx.n_links(); ++j)
             if (ctx.links.type[static_cast<std::size_t>(j)] == LinkType::PUMP)

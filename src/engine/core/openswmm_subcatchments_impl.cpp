@@ -496,7 +496,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_quality(SWMM_Engine engine, int subcatch_i
     CHECK_INDEX(subcatch_idx >= 0 && subcatch_idx < ctx.n_subcatches());
     int np = ctx.n_pollutants();
     CHECK_INDEX(pollutant_idx >= 0 && pollutant_idx < np);
-    if (conc) *conc = ctx.pollutants.subcatch_conc[
+    if (conc) *conc = ctx.subcatches.conc[
         static_cast<std::size_t>(subcatch_idx) * static_cast<std::size_t>(np) +
         static_cast<std::size_t>(pollutant_idx)];
     return SWMM_OK;
@@ -524,7 +524,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_quality_bulk(SWMM_Engine engine, int pollu
     CHECK_INDEX(pollutant_idx >= 0 && pollutant_idx < np);
     const int n = std::min(count, ctx.n_subcatches());
     for (int i = 0; i < n; ++i) {
-        buf[i] = ctx.pollutants.subcatch_conc[
+        buf[i] = ctx.subcatches.conc[
             static_cast<std::size_t>(i) * static_cast<std::size_t>(np) +
             static_cast<std::size_t>(pollutant_idx)];
     }

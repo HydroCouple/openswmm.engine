@@ -216,14 +216,11 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
         // Matches legacy: cf * (tsv + blv) in inflow_getExtInflow
         double q = ext_inflows_.conv_factor[ui] * (ts_val + base);
 
-        // Scatter-add to node lateral flow
+        // Write to decomposed external inflow array (assembled into lat_flow later)
         int ni = ext_inflows_.node_idx[ui];
-        if (ni >= 0 && ni < static_cast<int>(ctx.nodes.lat_flow.size())) {
-            ctx.nodes.lat_flow[static_cast<std::size_t>(ni)] += q;
+        if (ni >= 0 && ni < static_cast<int>(ctx.nodes.ext_inflow.size())) {
+            ctx.nodes.ext_inflow[static_cast<std::size_t>(ni)] += q;
         }
-
-        // Accumulate for mass balance tracking
-        if (q > 0.0) ctx.mass_balance.step_ext_inflow += q;
     }
 
     // ---- Batch DWF inflows (pattern multiply chain + scatter-add) ----
@@ -260,13 +257,11 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
 
         double q = factor * dwf_inflows_.avg_value[ui];
 
+        // Write to decomposed DWF inflow array (assembled into lat_flow later)
         int ni = dwf_inflows_.node_idx[ui];
-        if (ni >= 0 && ni < static_cast<int>(ctx.nodes.lat_flow.size())) {
-            ctx.nodes.lat_flow[static_cast<std::size_t>(ni)] += q;
+        if (ni >= 0 && ni < static_cast<int>(ctx.nodes.dwf_inflow.size())) {
+            ctx.nodes.dwf_inflow[static_cast<std::size_t>(ni)] += q;
         }
-
-        // Accumulate for mass balance tracking
-        if (q > 0.0) ctx.mass_balance.step_dw_inflow += q;
     }
 }
 

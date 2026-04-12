@@ -94,6 +94,21 @@ double getDepthFromFlow(const XSectParams& xs, double beta, double q);
 double getCapacity(const XSectParams& xs, double depth);
 
 /**
+ * @brief Compute hydraulic power dissipated in a link.
+ *
+ * @details P = gamma * Q * hL where gamma = specific weight of water,
+ *          Q = flow rate, hL = head loss across link.
+ *          hL = friction slope * length (for conduits).
+ *  @see Legacy: link_getPower() in link.c
+ *
+ * @param flow       Flow rate (ft3/s).
+ * @param head_upstream   Head at upstream node (ft).
+ * @param head_downstream Head at downstream node (ft).
+ * @returns Power (ft-lbs/s). Divide by 550 for horsepower.
+ */
+double getHydPower(double flow, double head_upstream, double head_downstream);
+
+/**
  * @brief Build XSectParams from LinkData SoA arrays.
  *
  * @param links  Link SoA data.

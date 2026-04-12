@@ -8,10 +8,11 @@
  *          directly from legacy text.h and keywords.c.
  *
  * All standard SWMM sections implemented:
- *   TITLE, OPTIONS, RAINGAGES, SUBCATCHMENTS, SUBAREAS, INFILTRATION,
+ *   TITLE, OPTIONS, EVAPORATION, TEMPERATURE, SNOWPACKS, ADJUSTMENTS,
+ *   RAINGAGES, SUBCATCHMENTS, SUBAREAS, INFILTRATION,
  *   JUNCTIONS, OUTFALLS, DIVIDERS, STORAGE, CONDUITS, PUMPS, ORIFICES,
  *   WEIRS, OUTLETS, XSECTIONS, LOSSES, TRANSECTS, STREETS, INLETS,
- *   CONTROLS, POLLUTANTS, LANDUSES, BUILDUP, WASHOFF, TREATMENT,
+ *   CONTROLS, REPORT, POLLUTANTS, LANDUSES, BUILDUP, WASHOFF, TREATMENT,
  *   INFLOWS, DWF, RDII, PATTERNS, TIMESERIES, CURVES, COORDINATES,
  *   USER_FLAGS, USER_FLAG_VALUES, PLUGINS
  *
@@ -86,8 +87,190 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     std::fprintf(f,"ROUTING_MODEL        %d\n",static_cast<int>(ctx.options.routing_model));
     std::fprintf(f,"ROUTING_STEP         %.2f\n",ctx.options.routing_step);
     std::fprintf(f,"REPORT_STEP          %.0f\n",ctx.options.report_step);
+    {static const char* sm[]={"EXTRAN","SLOT","DYNAMIC_SLOT"};
+    int smi=ctx.options.surcharge_method;
+    if(smi>=0&&smi<=2)std::fprintf(f,"SURCHARGE_METHOD     %s\n",sm[smi]);}
+    if(ctx.options.surcharge_method==2){
+    std::fprintf(f,"DPS_CELERITY         %.4f\n",ctx.options.dps_target_celerity);
+    std::fprintf(f,"DPS_ALPHA            %.4f\n",ctx.options.dps_alpha);
+    std::fprintf(f,"DPS_DECAY_TIME       %.4f\n",ctx.options.dps_decay_time);
+    }
     if(!ctx.options.crs.empty()) std::fprintf(f,"CRS                  %s\n",ctx.options.crs.c_str());
     for(const auto& kv:ctx.options.ext_options) std::fprintf(f,"%-20s %s\n",kv.first.c_str(),kv.second.c_str());
+
+    // [EVAPORATION]
+    {
+        const auto& opts = ctx.options;
+        sec(f,"EVAPORATION");
+        std::fprintf(f,";;Type       Parameters\n");
+        std::fprintf(f,";;---------- ----------\n");
+        switch (opts.evap_type) {
+            case 0:  // CONSTANT
+                std::fprintf(f,"CONSTANT     %.4f\n", opts.evap_values[0]);
+                break;
+            case 1:  // MONTHLY
+                std::fprintf(f,"MONTHLY     ");
+                for (int i = 0; i < 12; ++i)
+                    std::fprintf(f," %.4f", opts.evap_values[i]);
+                std::fprintf(f,"\n");
+                break;
+            case 2:  // TIMESERIES
+                std::fprintf(f,"TIMESERIES   %s\n", opts.evap_ts_name.c_str());
+                break;
+            case 3:  // TEMPERATURE
+                std::fprintf(f,"TEMPERATURE\n");
+                break;
+            case 4:  // FILE
+                std::fprintf(f,"FILE        ");
+                for (int i = 0; i < 12; ++i)
+                    std::fprintf(f," %.4f", opts.pan_coeff[i]);
+                std::fprintf(f,"\n");
+                break;
+        }
+        if (!opts.evap_recovery_pat.empty())
+            std::fprintf(f,"RECOVERY     %s\n", opts.evap_recovery_pat.c_str());
+        std::fprintf(f,"DRY_ONLY     %s\n", opts.evap_dry_only ? "YES" : "NO");
+    }
+
+    // [TEMPERATURE]
+    {
+        const auto& opts = ctx.options;
+        bool has_temp = (opts.temp_source > 0 || opts.wind_type > 0 ||
+                         opts.snow_divt != 34.0 || opts.snow_lat != 0.0);
+        for (int i = 0; i < 10 && !has_temp; ++i)
+            if (opts.adc_imperv[i] != 1.0 || opts.adc_perv[i] != 1.0) has_temp = true;
+        // Check monthly wind speeds
+        for (int i = 0; i < 12 && !has_temp; ++i)
+            if (opts.wind_speed[i] != 0.0) has_temp = true;
+
+        if (has_temp) {
+            sec(f,"TEMPERATURE");
+            if (opts.temp_source == 1)
+                std::fprintf(f,"TIMESERIES   %s\n", opts.temp_ts_name.c_str());
+            else if (opts.temp_source == 2) {
+                std::fprintf(f,"FILE         \"%s\"", opts.temp_file.c_str());
+                if (opts.temp_file_start > 0.0)
+                    std::fprintf(f," %.6f", opts.temp_file_start);
+                std::fprintf(f,"\n");
+            }
+
+            if (opts.wind_type == 0) {
+                std::fprintf(f,"WINDSPEED    MONTHLY");
+                for (int i = 0; i < 12; ++i)
+                    std::fprintf(f," %.4f", opts.wind_speed[i]);
+                std::fprintf(f,"\n");
+            } else {
+                std::fprintf(f,"WINDSPEED    FILE\n");
+            }
+
+            std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.6f %.6f\n",
+                         opts.snow_divt, opts.snow_ati_wt, opts.snow_nrg_ratio,
+                         opts.snow_lat, opts.snow_min_melt, opts.snow_max_melt);
+
+            std::fprintf(f,"ADC          IMPERVIOUS");
+            for (int i = 0; i < 10; ++i)
+                std::fprintf(f," %.4f", opts.adc_imperv[i]);
+            std::fprintf(f,"\n");
+            std::fprintf(f,"ADC          PERVIOUS");
+            for (int i = 0; i < 10; ++i)
+                std::fprintf(f," %.4f", opts.adc_perv[i]);
+            std::fprintf(f,"\n");
+        }
+    }
+
+    // [SNOWPACKS]
+    if (!ctx.snowpacks.names.empty()) {
+        sec(f,"SNOWPACKS");
+        std::fprintf(f,";;%-16s %-12s Parameters\n","Name","Surface");
+        std::fprintf(f,";;---------- ---------- ----------\n");
+        for (size_t j = 0; j < ctx.snowpacks.names.size(); ++j) {
+            const char* name = ctx.snowpacks.names[j].c_str();
+            if (j < ctx.snowpacks.plowable.size()) {
+                const auto& p = ctx.snowpacks.plowable[j];
+                std::fprintf(f,"%-16s PLOWABLE    ", name);
+                for (int k = 0; k < 7; ++k) std::fprintf(f," %10.4f", p[static_cast<size_t>(k)]);
+                std::fprintf(f,"\n");
+            }
+            if (j < ctx.snowpacks.impervious.size()) {
+                const auto& p = ctx.snowpacks.impervious[j];
+                std::fprintf(f,"%-16s IMPERVIOUS  ", name);
+                for (int k = 0; k < 7; ++k) std::fprintf(f," %10.4f", p[static_cast<size_t>(k)]);
+                std::fprintf(f,"\n");
+            }
+            if (j < ctx.snowpacks.pervious.size()) {
+                const auto& p = ctx.snowpacks.pervious[j];
+                std::fprintf(f,"%-16s PERVIOUS    ", name);
+                for (int k = 0; k < 7; ++k) std::fprintf(f," %10.4f", p[static_cast<size_t>(k)]);
+                std::fprintf(f,"\n");
+            }
+            if (j < ctx.snowpacks.removal.size()) {
+                const auto& r = ctx.snowpacks.removal[j];
+                bool has_removal = false;
+                for (int k = 0; k < 6; ++k)
+                    if (r[static_cast<size_t>(k)] != 0.0) { has_removal = true; break; }
+                if (has_removal) {
+                    std::fprintf(f,"%-16s REMOVAL     ", name);
+                    for (int k = 0; k < 6; ++k) std::fprintf(f," %10.4f", r[static_cast<size_t>(k)]);
+                    if (j < ctx.snowpacks.removal_subcatch.size() &&
+                        !ctx.snowpacks.removal_subcatch[j].empty())
+                        std::fprintf(f," %s", ctx.snowpacks.removal_subcatch[j].c_str());
+                    std::fprintf(f,"\n");
+                }
+            }
+        }
+    }
+
+    // [ADJUSTMENTS]
+    {
+        bool has_adj = false;
+        for (int i = 0; i < 12; ++i) {
+            if (ctx.adjust_temp[i] != 0.0 || ctx.adjust_evap[i] != 1.0 ||
+                ctx.adjust_rain[i] != 1.0 || ctx.adjust_hydcon[i] != 1.0)
+            { has_adj = true; break; }
+        }
+        for (size_t i = 0; i < ctx.subcatch_n_perv_pattern.size() && !has_adj; ++i)
+            if (ctx.subcatch_n_perv_pattern[i] >= 0) has_adj = true;
+        for (size_t i = 0; i < ctx.subcatch_d_store_pattern.size() && !has_adj; ++i)
+            if (ctx.subcatch_d_store_pattern[i] >= 0) has_adj = true;
+        for (size_t i = 0; i < ctx.subcatch_infil_pattern.size() && !has_adj; ++i)
+            if (ctx.subcatch_infil_pattern[i] >= 0) has_adj = true;
+
+        if (has_adj) {
+            sec(f,"ADJUSTMENTS");
+            auto write12 = [&](const char* key, const double* arr) {
+                std::fprintf(f,"%-12s", key);
+                for (int i = 0; i < 12; ++i)
+                    std::fprintf(f," %10.4f", arr[i]);
+                std::fprintf(f,"\n");
+            };
+            write12("TEMP",    ctx.adjust_temp);
+            write12("EVAP",    ctx.adjust_evap);
+            write12("RAIN",    ctx.adjust_rain);
+            write12("CONDUCT", ctx.adjust_hydcon);
+
+            for (size_t i = 0; i < ctx.subcatch_n_perv_pattern.size(); ++i) {
+                int pi = ctx.subcatch_n_perv_pattern[i];
+                if (pi >= 0)
+                    std::fprintf(f,"N-PERV       %-16s %s\n",
+                                 ctx.subcatch_names.name_of(static_cast<int>(i)).c_str(),
+                                 tN(ctx, pi));
+            }
+            for (size_t i = 0; i < ctx.subcatch_d_store_pattern.size(); ++i) {
+                int pi = ctx.subcatch_d_store_pattern[i];
+                if (pi >= 0)
+                    std::fprintf(f,"DSTORE       %-16s %s\n",
+                                 ctx.subcatch_names.name_of(static_cast<int>(i)).c_str(),
+                                 tN(ctx, pi));
+            }
+            for (size_t i = 0; i < ctx.subcatch_infil_pattern.size(); ++i) {
+                int pi = ctx.subcatch_infil_pattern[i];
+                if (pi >= 0)
+                    std::fprintf(f,"INFIL        %-16s %s\n",
+                                 ctx.subcatch_names.name_of(static_cast<int>(i)).c_str(),
+                                 tN(ctx, pi));
+            }
+        }
+    }
 
     // [RAINGAGES]
     if(ctx.n_gages()>0){sec(f,"RAINGAGES");
@@ -126,6 +309,115 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
         ctx.subcatches.infil_p5[u],mn);
     }}
 
+    // [LID_CONTROLS]
+    if (ctx.lid_controls.count() > 0) {
+        sec(f,"LID_CONTROLS");
+        std::fprintf(f,";;%-16s %-12s Parameters\n","Name","Type/Layer");
+        std::fprintf(f,";;---------- ---------- ----------\n");
+        for (int j = 0; j < ctx.lid_controls.count(); ++j) {
+            auto uj = static_cast<size_t>(j);
+            const char* name = ctx.lid_controls.names[uj].c_str();
+            const char* ltype = ctx.lid_controls.lid_type[uj].c_str();
+            // Type line
+            std::fprintf(f,"%-16s %s\n", name, ltype);
+            // SURFACE (5 params)
+            if (uj < ctx.lid_controls.surface.size()) {
+                const auto& p = ctx.lid_controls.surface[uj];
+                bool has = false; for (int k=0;k<5;++k) if(p[k]!=0.0){has=true;break;}
+                if (has) {
+                    std::fprintf(f,"%-16s SURFACE    ", name);
+                    for (int k=0;k<5;++k) std::fprintf(f," %10.4f",p[k]);
+                    std::fprintf(f,"\n");
+                }
+            }
+            // SOIL (7 params)
+            if (uj < ctx.lid_controls.soil.size()) {
+                const auto& p = ctx.lid_controls.soil[uj];
+                bool has = false; for (int k=0;k<7;++k) if(p[k]!=0.0){has=true;break;}
+                if (has) {
+                    std::fprintf(f,"%-16s SOIL       ", name);
+                    for (int k=0;k<7;++k) std::fprintf(f," %10.4f",p[k]);
+                    std::fprintf(f,"\n");
+                }
+            }
+            // PAVEMENT (6 params)
+            if (uj < ctx.lid_controls.pavement.size()) {
+                const auto& p = ctx.lid_controls.pavement[uj];
+                bool has = false; for (int k=0;k<6;++k) if(p[k]!=0.0){has=true;break;}
+                if (has) {
+                    std::fprintf(f,"%-16s PAVEMENT   ", name);
+                    for (int k=0;k<6;++k) std::fprintf(f," %10.4f",p[k]);
+                    std::fprintf(f,"\n");
+                }
+            }
+            // STORAGE (4 params)
+            if (uj < ctx.lid_controls.storage.size()) {
+                const auto& p = ctx.lid_controls.storage[uj];
+                bool has = false; for (int k=0;k<4;++k) if(p[k]!=0.0){has=true;break;}
+                if (has) {
+                    std::fprintf(f,"%-16s STORAGE    ", name);
+                    for (int k=0;k<4;++k) std::fprintf(f," %10.4f",p[k]);
+                    std::fprintf(f,"\n");
+                }
+            }
+            // DRAIN (6 params)
+            if (uj < ctx.lid_controls.drain.size()) {
+                const auto& p = ctx.lid_controls.drain[uj];
+                bool has = false; for (int k=0;k<6;++k) if(p[k]!=0.0){has=true;break;}
+                if (has) {
+                    std::fprintf(f,"%-16s DRAIN      ", name);
+                    for (int k=0;k<6;++k) std::fprintf(f," %10.4f",p[k]);
+                    std::fprintf(f,"\n");
+                }
+            }
+            // DRAINMAT (3 params)
+            if (uj < ctx.lid_controls.drainmat.size()) {
+                const auto& p = ctx.lid_controls.drainmat[uj];
+                bool has = false; for (int k=0;k<3;++k) if(p[k]!=0.0){has=true;break;}
+                if (has) {
+                    std::fprintf(f,"%-16s DRAINMAT   ", name);
+                    for (int k=0;k<3;++k) std::fprintf(f," %10.4f",p[k]);
+                    std::fprintf(f,"\n");
+                }
+            }
+        }
+    }
+
+    // [LID_USAGE]
+    if (ctx.lid_usage.count() > 0) {
+        sec(f,"LID_USAGE");
+        std::fprintf(f,";;%-16s %-16s %-8s %-12s %-10s %-8s %-8s %-8s %-16s %-16s %-8s\n",
+                     "Subcatch","LID","Number","Area","Width","InitSat",
+                     "FromImp","ToPerv","RptFile","DrainTo","FromPerv");
+        for (int j = 0; j < ctx.lid_usage.count(); ++j) {
+            auto uj = static_cast<size_t>(j);
+            int sc = ctx.lid_usage.subcatch_index[uj];
+            int li = ctx.lid_usage.lid_index[uj];
+            const char* sc_name = (sc >= 0) ? ctx.subcatch_names.name_of(sc).c_str() : "*";
+            const char* lid_name = (li >= 0 && li < ctx.lid_names.size())
+                                   ? ctx.lid_names.name_of(li).c_str() : "*";
+            std::fprintf(f,"%-16s %-16s %8d %12.2f %10.2f %8.2f %8.2f %8d",
+                         sc_name, lid_name,
+                         ctx.lid_usage.number[uj],
+                         ctx.lid_usage.area[uj],
+                         ctx.lid_usage.width[uj],
+                         ctx.lid_usage.init_sat[uj],
+                         ctx.lid_usage.from_imperv[uj],
+                         ctx.lid_usage.to_perv[uj]);
+            if (uj < ctx.lid_usage.rpt_file.size() && !ctx.lid_usage.rpt_file[uj].empty())
+                std::fprintf(f," %s", ctx.lid_usage.rpt_file[uj].c_str());
+            else
+                std::fprintf(f," *");
+            if (uj < ctx.lid_usage.drain_to.size() && !ctx.lid_usage.drain_to[uj].empty())
+                std::fprintf(f," %s", ctx.lid_usage.drain_to[uj].c_str());
+            else
+                std::fprintf(f," *");
+            if (uj < ctx.lid_usage.from_perv.size())
+                std::fprintf(f," %8.2f", ctx.lid_usage.from_perv[uj]);
+            std::fprintf(f,"\n");
+        }
+    }
+
     // [JUNCTIONS]
     if(hasNT(ctx,NodeType::JUNCTION)){sec(f,"JUNCTIONS");
     std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s %-12s\n","Name","Elev","MaxDepth","InitDepth","SurDepth","Aponded");
@@ -146,7 +438,55 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     if(hasNT(ctx,NodeType::DIVIDER)){sec(f,"DIVIDERS");
     std::fprintf(f,";;%-16s %-12s %-16s %-12s\n","Name","Elev","DivLink","Type");
     for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::DIVIDER)continue;
-    std::fprintf(f,"%-16s %12.4f *                CUTOFF       0 %12.4f %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u]);
+    // Resolve diversion link name
+    const char* divLinkName = "*";
+    std::string dlnStr;
+    int dlIdx = (u < ctx.nodes.divider_link.size()) ? ctx.nodes.divider_link[u] : -1;
+    if(dlIdx >= 0 && dlIdx < ctx.link_names.size()) {
+        dlnStr = ctx.link_names.name_of(dlIdx); divLinkName = dlnStr.c_str();
+    } else if(u < ctx.nodes.divider_link_name.size() && !ctx.nodes.divider_link_name[u].empty()) {
+        divLinkName = ctx.nodes.divider_link_name[u].c_str();
+    }
+    auto dtype = (u < ctx.nodes.divider_type.size()) ? ctx.nodes.divider_type[u] : DividerType::CUTOFF;
+    double cutoff = (u < ctx.nodes.divider_cutoff.size()) ? ctx.nodes.divider_cutoff[u] : 0.0;
+    switch(dtype) {
+    case DividerType::CUTOFF:
+        std::fprintf(f,"%-16s %12.4f %-16s CUTOFF   %12.4f %12.4f %12.4f %12.4f %12.4f\n",
+            ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
+            cutoff, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
+            ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
+        break;
+    case DividerType::OVERFLOW_DIV:
+        std::fprintf(f,"%-16s %12.4f %-16s OVERFLOW %12.4f %12.4f %12.4f %12.4f\n",
+            ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
+            ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
+            ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
+        break;
+    case DividerType::TABULAR: {
+        const char* curveName = "*";
+        std::string cnStr;
+        int ci = (u < ctx.nodes.divider_curve.size()) ? ctx.nodes.divider_curve[u] : -1;
+        if(ci >= 0 && ci < ctx.table_names.size()) {
+            cnStr = ctx.table_names.name_of(ci); curveName = cnStr.c_str();
+        } else if(u < ctx.nodes.divider_curve_name.size() && !ctx.nodes.divider_curve_name[u].empty()) {
+            curveName = ctx.nodes.divider_curve_name[u].c_str();
+        }
+        std::fprintf(f,"%-16s %12.4f %-16s TABULAR  %-16s %12.4f %12.4f %12.4f %12.4f\n",
+            ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
+            curveName, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
+            ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
+        break;
+    }
+    case DividerType::WEIR: {
+        double cd = (u < ctx.nodes.divider_cd.size()) ? ctx.nodes.divider_cd[u] : 0.0;
+        double maxd = (u < ctx.nodes.divider_max_depth.size()) ? ctx.nodes.divider_max_depth[u] : 0.0;
+        std::fprintf(f,"%-16s %12.4f %-16s WEIR     %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f\n",
+            ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
+            cutoff, cd, maxd, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
+            ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
+        break;
+    }
+    }
     }}
 
     // [STORAGE]
@@ -264,6 +604,26 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     std::fprintf(f,"%s\n",ctx.control_rules.rule_text[static_cast<size_t>(j)].c_str());
     }}
 
+    // [REPORT]
+    {sec(f,"REPORT");
+    std::fprintf(f,";;%-16s %s\n","Keyword","Value");
+    std::fprintf(f,"%-20s %s\n","DISABLED",ctx.options.rpt_disabled?"YES":"NO");
+    std::fprintf(f,"%-20s %s\n","INPUT",ctx.options.rpt_input?"YES":"NO");
+    std::fprintf(f,"%-20s %s\n","CONTINUITY",ctx.options.rpt_continuity?"YES":"NO");
+    std::fprintf(f,"%-20s %s\n","FLOWSTATS",ctx.options.rpt_flowstats?"YES":"NO");
+    std::fprintf(f,"%-20s %s\n","CONTROLS",ctx.options.rpt_controls?"YES":"NO");
+    std::fprintf(f,"%-20s %s\n","AVERAGES",ctx.options.rpt_averages?"YES":"NO");
+    if(ctx.options.rpt_subcatchments==0)std::fprintf(f,"%-20s %s\n","SUBCATCHMENTS","NONE");
+    else if(ctx.options.rpt_subcatchments==1)std::fprintf(f,"%-20s %s\n","SUBCATCHMENTS","ALL");
+    else for(const auto&n:ctx.options.rpt_subcatch_names)std::fprintf(f,"%-20s %s\n","SUBCATCHMENTS",n.c_str());
+    if(ctx.options.rpt_nodes==0)std::fprintf(f,"%-20s %s\n","NODES","NONE");
+    else if(ctx.options.rpt_nodes==1)std::fprintf(f,"%-20s %s\n","NODES","ALL");
+    else for(const auto&n:ctx.options.rpt_node_names)std::fprintf(f,"%-20s %s\n","NODES",n.c_str());
+    if(ctx.options.rpt_links==0)std::fprintf(f,"%-20s %s\n","LINKS","NONE");
+    else if(ctx.options.rpt_links==1)std::fprintf(f,"%-20s %s\n","LINKS","ALL");
+    else for(const auto&n:ctx.options.rpt_link_names)std::fprintf(f,"%-20s %s\n","LINKS",n.c_str());
+    }
+
     // [POLLUTANTS]
     if(ctx.n_pollutants()>0){sec(f,"POLLUTANTS");
     std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s\n","Name","Units","Crain","Cgw","Crdii","Kdecay","SnowOnly","CoPollut","CoFrac");
@@ -361,6 +721,30 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
         nN(ctx,ctx.rdii_assigns.node_idx[u]),
         ctx.rdii_assigns.uh_name[u].c_str(),
         ctx.rdii_assigns.sewer_area[u]);
+    }}
+
+    // [HYDROGRAPHS]
+    if(ctx.unit_hyds.count()>0||!ctx.unit_hyds.gage_assignments.empty()){
+    sec(f,"HYDROGRAPHS");
+    std::fprintf(f,";;%-16s %-16s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n",
+        "Name","Month/Gage","Response","R","T","K","Dmax","Drecov","Dinit");
+    // Gage assignment lines
+    for(size_t i=0;i<ctx.unit_hyds.gage_assignments.size();++i){
+    std::fprintf(f,"%-16s %s\n",
+        ctx.unit_hyds.gage_assignments[i].c_str(),
+        ctx.unit_hyds.gage_names[i].c_str());
+    }
+    // Parameter lines
+    static const char* uhMonths[]={"JAN","FEB","MAR","APR","MAY","JUN",
+                                   "JUL","AUG","SEP","OCT","NOV","DEC"};
+    static const char* uhResp[]={"SHORT","MEDIUM","LONG"};
+    for(const auto& e:ctx.unit_hyds.entries){
+    const char* mon=(e.month<0)?"ALL":uhMonths[e.month];
+    std::fprintf(f,"%-16s %-9s %-8s %8.4f %8.4f %8.4f",
+        e.name.c_str(),mon,uhResp[e.response],e.r,e.t,e.k);
+    if(e.dmax>0.0||e.drecov>0.0||e.dinit>0.0)
+        std::fprintf(f," %8.4f %8.4f %8.4f",e.dmax,e.drecov,e.dinit);
+    std::fprintf(f,"\n");
     }}
 
     // [PATTERNS]

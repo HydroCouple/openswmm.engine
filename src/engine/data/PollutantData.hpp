@@ -120,48 +120,6 @@ struct PollutantData {
     std::vector<bool>       snow_only;
 
     // -----------------------------------------------------------------------
-    // Per-node quality state — flat 2D: [node * n_pollutants + pollutant]
-    // -----------------------------------------------------------------------
-
-    /**
-     * @brief Current quality concentration at each node.
-     * @details Size = n_nodes * n_pollutants.
-     * @see Legacy: Node[i].newQual[]
-     */
-    std::vector<double>     node_conc;
-
-    /** @brief Previous-step quality at each node. */
-    std::vector<double>     node_conc_old;
-
-    // -----------------------------------------------------------------------
-    // Per-link quality state — flat 2D: [link * n_pollutants + pollutant]
-    // -----------------------------------------------------------------------
-
-    /**
-     * @brief Current quality concentration in each link.
-     * @details Size = n_links * n_pollutants.
-     * @see Legacy: Link[i].newQual[]
-     */
-    std::vector<double>     link_conc;
-
-    /** @brief Previous-step quality in each link. */
-    std::vector<double>     link_conc_old;
-
-    // -----------------------------------------------------------------------
-    // Per-subcatch quality state — flat 2D: [subcatch * n_pollutants + pollutant]
-    // -----------------------------------------------------------------------
-
-    /**
-     * @brief Current quality concentration in subcatchment runoff.
-     * @details Size = n_subcatches * n_pollutants.
-     * @see Legacy: Subcatch[i].newQual[]
-     */
-    std::vector<double>     subcatch_conc;
-
-    /** @brief Previous-step quality in subcatchment runoff. */
-    std::vector<double>     subcatch_conc_old;
-
-    // -----------------------------------------------------------------------
     // Capacity management
     // -----------------------------------------------------------------------
 
@@ -182,37 +140,18 @@ struct PollutantData {
         snow_only.assign(un, false);
     }
 
-    /**
-     * @brief Allocate per-object quality arrays.
-     *
-     * @details Called after both pollutant count and object counts are known.
-     * @param n_nodes      Number of nodes.
-     * @param n_links      Number of links.
-     * @param n_subcatches Number of subcatchments.
-     */
-    void resize_quality(int n_nodes, int n_links, int n_subcatches) {
-        const auto np = static_cast<std::size_t>(n_pollutants());
-        node_conc.assign(static_cast<std::size_t>(n_nodes) * np, 0.0);
-        node_conc_old.assign(static_cast<std::size_t>(n_nodes) * np, 0.0);
-        link_conc.assign(static_cast<std::size_t>(n_links) * np, 0.0);
-        link_conc_old.assign(static_cast<std::size_t>(n_links) * np, 0.0);
-        subcatch_conc.assign(static_cast<std::size_t>(n_subcatches) * np, 0.0);
-        subcatch_conc_old.assign(static_cast<std::size_t>(n_subcatches) * np, 0.0);
-    }
-
-    void save_quality_state() noexcept {
-        node_conc_old = node_conc;
-        link_conc_old = link_conc;
-        subcatch_conc_old = subcatch_conc;
-    }
-
-    void reset_quality_state() noexcept {
-        std::fill(node_conc.begin(),    node_conc.end(),    0.0);
-        std::fill(node_conc_old.begin(),node_conc_old.end(),0.0);
-        std::fill(link_conc.begin(),    link_conc.end(),    0.0);
-        std::fill(link_conc_old.begin(),link_conc_old.end(),0.0);
-        std::fill(subcatch_conc.begin(),    subcatch_conc.end(),    0.0);
-        std::fill(subcatch_conc_old.begin(),subcatch_conc_old.end(),0.0);
+    /** @brief Release excess vector capacity. */
+    void shrink_to_fit() {
+        units.shrink_to_fit();
+        mwt.shrink_to_fit();
+        k_decay.shrink_to_fit();
+        c_rain.shrink_to_fit();
+        c_gw.shrink_to_fit();
+        c_rdii.shrink_to_fit();
+        init_conc.shrink_to_fit();
+        co_pollut.shrink_to_fit();
+        co_frac.shrink_to_fit();
+        snow_only.shrink_to_fit();
     }
 };
 

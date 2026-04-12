@@ -18,6 +18,8 @@
 
 #include "KinematicWave.hpp"
 #include "XSectBatch.hpp"
+#include "../core/SimulationContext.hpp"
+#include "Node.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -140,31 +142,132 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
 // Main execute — batch-oriented
 // ============================================================================
 
-int KWSolver::execute(SimulationContext& /*ctx*/, double /*dt*/) {
-    // TODO: wire up to SimulationContext
-    // The structure is:
-    //
-    // 1. For each conduit link (topologically sorted):
-    //    a. Gather inflow from upstream node
-    //    b. q_in_[i] = upstream_node_outflow or lateral_inflow
-    //
-    // 2. For each conduit, solve Newton (per-conduit, grouped by shape):
-    //    solveConduit(i, xs, q_full, a_full, s_full, beta, length, dt, loss)
-    //
-    // 3. Scatter outflows to downstream nodes:
-    //    downstream_node.inflow += q_out_[i]
-    //
-    // 4. Update link state:
-    //    link.flow = q_out_[i]
-    //    link.depth = 0.5 * (yofA(a_in) + yofA(a_out))
-    //    link.volume = 0.5 * (a_in + a_out) * length * barrels
-    //
-    // The Newton solve itself is per-conduit but uses xsect::getSofA which
-    // dispatches by shape. For further optimisation, conduits could be grouped
-    // by shape and the Newton solved in shape-grouped batches where S(a) uses
-    // the same table for all conduits in the group.
+/// Build XSectParams from link SoA data (matching DynamicWave.cpp::buildXSP).
+static XSectParams buildXSP_KW(const LinkData& links, std::size_t uk) {
+    XSectParams xs{};
+    auto ls = links.xsect_shape[uk];
+    xs.type = (ls == XsectShape::DUMMY) ? 0 : static_cast<int>(ls) + 1;
+    xs.y_full = links.xsect_y_full[uk];
+    xs.a_full = links.xsect_a_full[uk];
+    xs.w_max  = links.xsect_w_max[uk];
+    xs.r_full = links.xsect_r_full[uk];
+    xs.s_full = links.xsect_s_full[uk];
+    xs.s_max  = links.xsect_s_max[uk];
+    xs.y_bot  = links.xsect_y_bot[uk];
+    xs.a_bot  = links.xsect_a_bot[uk];
+    xs.s_bot  = links.xsect_s_bot[uk];
+    xs.r_bot  = links.xsect_r_bot[uk];
+    return xs;
+}
 
-    return 0;
+int KWSolver::execute(SimulationContext& ctx, double dt) {
+    auto& links = ctx.links;
+    auto& nodes = ctx.nodes;
+    int total_iters = 0;
+    int n_solved = 0;
+
+    // Process links in topological order (upstream → downstream).
+    // If no sorted order set, fall back to natural order.
+    const auto& order = sorted_links_.empty()
+        ? [&]() -> const std::vector<int>& {
+            // Build a simple 0..n_links order as fallback
+            static thread_local std::vector<int> fallback;
+            fallback.resize(static_cast<std::size_t>(ctx.n_links()));
+            for (int j = 0; j < ctx.n_links(); ++j) fallback[static_cast<std::size_t>(j)] = j;
+            return fallback;
+          }()
+        : sorted_links_;
+
+    for (int idx = 0; idx < static_cast<int>(order.size()); ++idx) {
+        int j = order[static_cast<std::size_t>(idx)];
+        auto uj = static_cast<std::size_t>(j);
+
+        // Skip non-conduit links — pass through flow unchanged
+        if (links.type[uj] != LinkType::CONDUIT) {
+            // Non-conduit: outflow = inflow from upstream node
+            int n1 = links.node1[uj];
+            if (n1 >= 0) {
+                double q = nodes.inflow[static_cast<std::size_t>(n1)];
+                links.flow[uj] = q;
+                int n2 = links.node2[uj];
+                if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
+            }
+            continue;
+        }
+
+        // Skip dummy cross-sections
+        if (links.xsect_shape[uj] == XsectShape::DUMMY) {
+            int n1 = links.node1[uj];
+            int n2 = links.node2[uj];
+            if (n1 >= 0 && n2 >= 0) {
+                double q = nodes.inflow[static_cast<std::size_t>(n1)];
+                links.flow[uj] = q;
+                nodes.inflow[static_cast<std::size_t>(n2)] += q;
+            }
+            continue;
+        }
+
+        // Gather inflow from upstream node
+        // (matching legacy getLinkInflow: use node inflow, limited by max outflow)
+        int n1 = links.node1[uj];
+        double qin = 0.0;
+        if (n1 >= 0) {
+            auto un1 = static_cast<std::size_t>(n1);
+            qin = nodes.inflow[un1];
+            // Limit by available volume at node (prevent negative depth)
+            double q_max = node::getMaxOutflow(nodes, n1, qin, dt);
+            qin = std::min(qin, q_max);
+        }
+
+        // Divide by barrels (KW solves per barrel)
+        double barrels = static_cast<double>(std::max(links.barrels[uj], 1));
+        double qin_per_barrel = qin / barrels;
+
+        // Build XSectParams for this conduit
+        XSectParams xs = buildXSP_KW(links, uj);
+
+        double q_full = links.q_full[uj];
+        double a_full = links.xsect_a_full[uj];
+        double s_full = links.xsect_s_full[uj];
+        double beta   = links.beta[uj];
+        double length = links.mod_length[uj];
+        if (length <= 0.0) length = links.length[uj];
+
+        // Compute evaporation + seepage loss rate
+        double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
+
+        // Set inflow for this conduit
+        q_in_[uj] = qin_per_barrel;
+
+        // Solve continuity equation (Newton-Raphson)
+        int iters = solveConduit(static_cast<int>(uj), xs,
+                                  q_full, a_full, s_full,
+                                  beta, length, dt, loss_rate);
+        total_iters += iters;
+        n_solved++;
+
+        // Update link flow (multiply by barrels)
+        double qout = q_out_[uj] * barrels;
+        qin = q_in_[uj] * barrels;  // may have been capped at qFull
+        links.flow[uj] = qout;
+
+        // Update node flows
+        if (n1 >= 0) {
+            nodes.outflow[static_cast<std::size_t>(n1)] += qin;
+        }
+        int n2 = links.node2[uj];
+        if (n2 >= 0) {
+            nodes.inflow[static_cast<std::size_t>(n2)] += qout;
+        }
+
+        // Update link depth and volume from inlet/outlet areas
+        double y_in  = xsect::getYofA(xs, a_in_[uj]);
+        double y_out = xsect::getYofA(xs, a_out_[uj]);
+        links.depth[uj]  = 0.5 * (y_in + y_out);
+        links.volume[uj] = 0.5 * (a_in_[uj] + a_out_[uj]) * length * barrels;
+    }
+
+    return (n_solved > 0) ? total_iters / n_solved : 1;
 }
 
 } // namespace kinwave

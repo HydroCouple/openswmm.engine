@@ -143,6 +143,9 @@ void handle_report(SimulationContext& ctx, const std::vector<std::string>& lines
         else if (keyword == "AVERAGES") {
             ctx.options.rpt_averages = Tokenizer::parse_boolean(tok[1]);
         }
+        else if (keyword == "DISABLED") {
+            ctx.options.rpt_disabled = Tokenizer::parse_boolean(tok[1]);
+        }
     }
 }
 

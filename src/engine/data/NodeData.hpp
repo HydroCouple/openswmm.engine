@@ -142,6 +142,10 @@ struct NodeData {
     /** @brief True if the outfall has a gated flap. */
     std::vector<bool>       outfall_has_flap_gate;
 
+    /** @brief Subcatchment index to route outfall discharge to (-1 = none).
+     *  @see Legacy: Outfall[j].routeTo */
+    std::vector<int>        outfall_route_to;
+
     // -----------------------------------------------------------------------
     // Storage-specific properties (valid when type[i] == STORAGE)
     // -----------------------------------------------------------------------
@@ -246,6 +250,73 @@ struct NodeData {
      */
     std::vector<double>     user_lat_flow;
 
+    // -----------------------------------------------------------------------
+    // Decomposed lateral inflow sources
+    // Each source process writes to its own buffer.
+    // assembleLateralInflows() sums them all into lat_flow.
+    // -----------------------------------------------------------------------
+
+    /** @brief Interpolated surface runoff from subcatchments (project flow units). */
+    std::vector<double>     runoff_inflow;
+
+    /** @brief Interpolated groundwater flow from subcatchments (project flow units). */
+    std::vector<double>     gw_inflow;
+
+    /** @brief External (timeseries/baseline) inflows (project flow units). */
+    std::vector<double>     ext_inflow;
+
+    /** @brief Dry weather flow inflows (project flow units). */
+    std::vector<double>     dwf_inflow;
+
+    /** @brief RDII unit hydrograph inflows (project flow units). */
+    std::vector<double>     rdii_inflow;
+
+    /** @brief Interface file (upstream model coupling) inflows (project flow units). */
+    std::vector<double>     iface_inflow;
+
+    // -----------------------------------------------------------------------
+    // Quality mass inflow assembly arrays
+    // assembleQualityInflows() writes these; mixAtNodes() reads them.
+    // -----------------------------------------------------------------------
+
+    /** @brief Accumulated quality mass inflow rate per (node, pollutant).
+     *  @details Flat 2D: [node * n_pollutants + pollutant]. Units: mass/sec. */
+    std::vector<double>     qual_mass_in;
+
+    /** @brief Accumulated volume inflow rate per node (ft3/sec). */
+    std::vector<double>     qual_vol_in;
+
+    // -----------------------------------------------------------------------
+    // Per-node quality state — flat 2D: [node * n_pollutants + pollutant]
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Current quality concentration at each node.
+     * @details Size = n_nodes * n_pollutants.
+     * @see Legacy: Node[i].newQual[]
+     */
+    std::vector<double>     conc;
+
+    /** @brief Previous-step quality at each node. */
+    std::vector<double>     conc_old;
+
+    /** @brief Hydraulic residence time for storage nodes (seconds). */
+    std::vector<double>     hrt;
+
+    /**
+     * @brief User-forced quality mass flux at each node (mass/sec).
+     *
+     * @details Flat 2D: [node * n_pollutants + pollutant].
+     *          Unlike the transient forcing in ForcingData, this persists
+     *          until the user explicitly changes it and is applied as an
+     *          additive mass source at each routing step (analogous to
+     *          user_lat_flow for flow).
+     */
+    std::vector<double>     user_conc_mass_flux;
+
+    /** @brief Number of pollutants in the quality arrays. */
+    int                     conc_n_pollutants = 0;
+
     /**
      * @brief Current total inflow to the node (project flow units).
      * @see Legacy: Node[i].inflow
@@ -306,6 +377,14 @@ struct NodeData {
 
     /** @brief Lateral flow at the previous timestep. */
     std::vector<double>     old_lat_flow;
+
+    // -----------------------------------------------------------------------
+    // Report flag — per-object output filter
+    // -----------------------------------------------------------------------
+
+    /** @brief Whether this node is included in report/output (0=no, 1=yes).
+     *  @see Legacy: Node[j].rptFlag */
+    std::vector<char>       rpt_flag;
 
     // -----------------------------------------------------------------------
     // Cumulative statistics
@@ -434,6 +513,7 @@ struct NodeData {
         outfall_type.assign(un, OutfallType::FREE);
         outfall_param.assign(un, 0.0);
         outfall_has_flap_gate.assign(un, false);
+        outfall_route_to.assign(un, -1);
 
         storage_curve.assign(un, -1);
         storage_curve_name.resize(un);
@@ -462,6 +542,14 @@ struct NodeData {
         volume.assign(un, 0.0);
         lat_flow.assign(un, 0.0);
         user_lat_flow.assign(un, 0.0);
+        runoff_inflow.assign(un, 0.0);
+        gw_inflow.assign(un, 0.0);
+        ext_inflow.assign(un, 0.0);
+        dwf_inflow.assign(un, 0.0);
+        rdii_inflow.assign(un, 0.0);
+        iface_inflow.assign(un, 0.0);
+        qual_mass_in.clear();
+        qual_vol_in.assign(un, 0.0);
         inflow.assign(un, 0.0);
         outflow.assign(un, 0.0);
         overflow.assign(un, 0.0);
@@ -473,6 +561,8 @@ struct NodeData {
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
         old_lat_flow.assign(un, 0.0);
+
+        rpt_flag.assign(un, 0);
 
         stat_vol_flooded.assign(un, 0.0);
         stat_time_flooded.assign(un, 0.0);
@@ -508,6 +598,116 @@ struct NodeData {
     }
 
     /**
+     * @brief Resize per-node quality arrays after pollutant count is known.
+     */
+    void resize_quality(int n_pollutants) {
+        conc_n_pollutants = n_pollutants;
+        if (n_pollutants > 0) {
+            auto total = static_cast<std::size_t>(count()) *
+                         static_cast<std::size_t>(n_pollutants);
+            conc.assign(total, 0.0);
+            conc_old.assign(total, 0.0);
+            hrt.assign(static_cast<std::size_t>(count()), 0.0);
+            user_conc_mass_flux.assign(total, 0.0);
+            qual_mass_in.assign(total, 0.0);
+        }
+    }
+
+    /**
+     * @brief Release excess vector capacity accumulated during parsing.
+     * @details Called once after final sizing is complete. Each vector's
+     *          capacity is reduced to match its size, freeing memory that
+     *          was over-allocated by geometric growth during incremental
+     *          parsing.
+     */
+    void shrink_to_fit() {
+        type.shrink_to_fit();
+        invert_elev.shrink_to_fit();
+        full_depth.shrink_to_fit();
+        init_depth.shrink_to_fit();
+        sur_depth.shrink_to_fit();
+        ponded_area.shrink_to_fit();
+
+        outfall_type.shrink_to_fit();
+        outfall_param.shrink_to_fit();
+        outfall_has_flap_gate.shrink_to_fit();
+        outfall_route_to.shrink_to_fit();
+
+        storage_curve.shrink_to_fit();
+        storage_curve_name.shrink_to_fit();
+        storage_a.shrink_to_fit();
+        storage_b.shrink_to_fit();
+        storage_c.shrink_to_fit();
+        storage_seep_rate.shrink_to_fit();
+        storage_evap_frac.shrink_to_fit();
+        storage_evap_loss.shrink_to_fit();
+        storage_exfil_loss.shrink_to_fit();
+        exfil_suction.shrink_to_fit();
+        exfil_ksat.shrink_to_fit();
+        exfil_imd.shrink_to_fit();
+
+        divider_type.shrink_to_fit();
+        divider_cutoff.shrink_to_fit();
+        divider_cd.shrink_to_fit();
+        divider_max_depth.shrink_to_fit();
+        divider_curve.shrink_to_fit();
+        divider_link.shrink_to_fit();
+        divider_link_name.shrink_to_fit();
+        divider_curve_name.shrink_to_fit();
+
+        depth.shrink_to_fit();
+        head.shrink_to_fit();
+        volume.shrink_to_fit();
+        lat_flow.shrink_to_fit();
+        user_lat_flow.shrink_to_fit();
+        runoff_inflow.shrink_to_fit();
+        gw_inflow.shrink_to_fit();
+        ext_inflow.shrink_to_fit();
+        dwf_inflow.shrink_to_fit();
+        rdii_inflow.shrink_to_fit();
+        iface_inflow.shrink_to_fit();
+        qual_mass_in.shrink_to_fit();
+        qual_vol_in.shrink_to_fit();
+        conc.shrink_to_fit();
+        conc_old.shrink_to_fit();
+        user_conc_mass_flux.shrink_to_fit();
+        inflow.shrink_to_fit();
+        outflow.shrink_to_fit();
+        overflow.shrink_to_fit();
+        losses.shrink_to_fit();
+        crown_elev.shrink_to_fit();
+        degree.shrink_to_fit();
+        old_net_inflow.shrink_to_fit();
+        full_volume.shrink_to_fit();
+        old_depth.shrink_to_fit();
+        old_volume.shrink_to_fit();
+        old_lat_flow.shrink_to_fit();
+
+        rpt_flag.shrink_to_fit();
+
+        stat_vol_flooded.shrink_to_fit();
+        stat_time_flooded.shrink_to_fit();
+        stat_max_depth.shrink_to_fit();
+        stat_max_overflow.shrink_to_fit();
+        stat_max_overflow_date.shrink_to_fit();
+        stat_sum_depth.shrink_to_fit();
+        stat_max_depth_date.shrink_to_fit();
+        stat_max_rpt_depth.shrink_to_fit();
+        stat_max_inflow_date.shrink_to_fit();
+        stat_time_surcharged.shrink_to_fit();
+        stat_max_surcharge_height.shrink_to_fit();
+        stat_max_lat_inflow.shrink_to_fit();
+        stat_max_total_inflow.shrink_to_fit();
+        stat_lat_inflow_vol.shrink_to_fit();
+        stat_total_inflow_vol.shrink_to_fit();
+        stat_total_outflow_vol.shrink_to_fit();
+        stat_outfall_avg_flow.shrink_to_fit();
+        stat_outfall_max_flow.shrink_to_fit();
+        stat_outfall_periods.shrink_to_fit();
+        stat_total_load.shrink_to_fit();
+    }
+
+    /**
      * @brief Snapshot current state into old-step arrays before solving.
      */
     void save_state() noexcept {
@@ -518,6 +718,7 @@ struct NodeData {
         for (std::size_t i = 0; i < inflow.size(); ++i) {
             old_net_inflow[i] = inflow[i] - outflow[i];
         }
+        conc_old = conc;
     }
 
     /** @brief Reset state variables, applying init_depth from input.
@@ -545,7 +746,26 @@ struct NodeData {
         std::fill(losses.begin(),   losses.end(),   0.0);
         std::fill(old_net_inflow.begin(), old_net_inflow.end(), 0.0);
         std::fill(old_lat_flow.begin(), old_lat_flow.end(), 0.0);
+        clearInflowSources();
+        std::fill(conc.begin(), conc.end(), 0.0);
+        std::fill(conc_old.begin(), conc_old.end(), 0.0);
         (void)n;
+    }
+
+    /**
+     * @brief Zero all decomposed inflow source arrays.
+     * @details Called at the start of each routing step before processes
+     *          write to their respective source arrays.
+     */
+    void clearInflowSources() noexcept {
+        std::fill(runoff_inflow.begin(), runoff_inflow.end(), 0.0);
+        std::fill(gw_inflow.begin(),     gw_inflow.end(),     0.0);
+        std::fill(ext_inflow.begin(),    ext_inflow.end(),    0.0);
+        std::fill(dwf_inflow.begin(),    dwf_inflow.end(),    0.0);
+        std::fill(rdii_inflow.begin(),   rdii_inflow.end(),   0.0);
+        std::fill(iface_inflow.begin(),  iface_inflow.end(),  0.0);
+        std::fill(qual_mass_in.begin(),  qual_mass_in.end(),  0.0);
+        std::fill(qual_vol_in.begin(),   qual_vol_in.end(),   0.0);
     }
 };
 

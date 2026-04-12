@@ -219,6 +219,69 @@ struct SubcatchData {
     std::vector<double> old_gw_flow;
 
     // -----------------------------------------------------------------------
+    // Runon coupling — subcatch-to-subcatch routing
+    // -----------------------------------------------------------------------
+
+    /** @brief Runoff inflow from upstream subcatchments (project flow units).
+     *  @details Assembled by assembleRunon(); zero if no upstream subcatch. */
+    std::vector<double> runon_inflow;
+
+    /** @brief Previous-step runon inflow (for interpolation). */
+    std::vector<double> old_runon_inflow;
+
+    // -----------------------------------------------------------------------
+    // Groundwater surface water head coupling
+    // -----------------------------------------------------------------------
+
+    /** @brief Surface water head at GW receiving node (project length units).
+     *  @details Assembled from nodes.depth + nodes.invert_elev - aquifer bottom. */
+    std::vector<double> gw_sw_head;
+
+    /** @brief Available node flow for GW negative flow limit (cfs/ft2). */
+    std::vector<double> gw_node_avail_flow;
+
+    // -----------------------------------------------------------------------
+    // Quality washoff output
+    // -----------------------------------------------------------------------
+
+    /** @brief Washoff mass rate per (subcatch, pollutant) (mass/sec).
+     *  @details Flat 2D: [subcatch * n_pollutants + pollutant]. */
+    std::vector<double> washoff_load;
+
+    // -----------------------------------------------------------------------
+    // Per-subcatch quality state — flat 2D: [subcatch * n_pollutants + pollutant]
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Current quality concentration in subcatchment runoff.
+     * @details Size = n_subcatches * n_pollutants.
+     * @see Legacy: Subcatch[i].newQual[]
+     */
+    std::vector<double> conc;
+
+    /** @brief Previous-step quality in subcatchment runoff. */
+    std::vector<double> conc_old;
+
+    /** @brief Ponded surface water quality mass per (subcatch, pollutant).
+     *  @details Persists between wet/dry events. Updated each timestep as:
+     *           wPonded = pondedQual + rain_deposition + runon_load
+     *           cPonded = wPonded / V_inflow
+     *           pondedQual_new = cPonded * ponded_depth * non_lid_area
+     *  @see Legacy: Subcatch[i].pondedQual[] */
+    std::vector<double> ponded_qual;
+
+    /** @brief Number of pollutants in the quality arrays. */
+    int                 conc_n_pollutants = 0;
+
+    // -----------------------------------------------------------------------
+    // Report flag — per-object output filter
+    // -----------------------------------------------------------------------
+
+    /** @brief Whether this subcatchment is included in report/output (0=no, 1=yes).
+     *  @see Legacy: Subcatch[j].rptFlag */
+    std::vector<char>       rpt_flag;
+
+    // -----------------------------------------------------------------------
     // Cumulative statistics
     // -----------------------------------------------------------------------
 
@@ -370,6 +433,12 @@ struct SubcatchData {
         gw_flow.assign(un, 0.0);
         old_runoff.assign(un, 0.0);
         old_gw_flow.assign(un, 0.0);
+        runon_inflow.assign(un, 0.0);
+        old_runon_inflow.assign(un, 0.0);
+        gw_sw_head.assign(un, 0.0);
+        gw_node_avail_flow.assign(un, 0.0);
+
+        rpt_flag.assign(un, 0);
 
         stat_precip_vol.assign(un, 0.0);
         stat_evap_vol.assign(un, 0.0);
@@ -392,8 +461,104 @@ struct SubcatchData {
         snowpack.assign(un, -1);
     }
 
+    /**
+     * @brief Resize per-subcatch quality arrays after pollutant count is known.
+     */
+    void resize_quality(int n_pollutants) {
+        conc_n_pollutants = n_pollutants;
+        if (n_pollutants > 0) {
+            auto total = static_cast<std::size_t>(count()) *
+                         static_cast<std::size_t>(n_pollutants);
+            conc.assign(total, 0.0);
+            conc_old.assign(total, 0.0);
+            ponded_qual.assign(total, 0.0);
+            washoff_load.assign(total, 0.0);
+        }
+    }
+
+    void resize_washoff_load(int n_pollutants) {
+        if (n_pollutants > 0) {
+            washoff_load.assign(
+                static_cast<std::size_t>(count()) *
+                static_cast<std::size_t>(n_pollutants), 0.0);
+        }
+    }
+
+    /**
+     * @brief Release excess vector capacity accumulated during parsing.
+     */
+    void shrink_to_fit() {
+        outlet_node.shrink_to_fit();
+        outlet_subcatch.shrink_to_fit();
+        outlet_name.shrink_to_fit();
+        gage.shrink_to_fit();
+        area.shrink_to_fit();
+        width.shrink_to_fit();
+        slope.shrink_to_fit();
+        curb_length.shrink_to_fit();
+        frac_imperv.shrink_to_fit();
+        frac_imperv_no_store.shrink_to_fit();
+        n_imperv.shrink_to_fit();
+        n_perv.shrink_to_fit();
+        ds_imperv.shrink_to_fit();
+        ds_perv.shrink_to_fit();
+        subarea_routing.shrink_to_fit();
+        pct_routed.shrink_to_fit();
+
+        infil_model.shrink_to_fit();
+        infil_p1.shrink_to_fit();
+        infil_p2.shrink_to_fit();
+        infil_p3.shrink_to_fit();
+        infil_p4.shrink_to_fit();
+        infil_p5.shrink_to_fit();
+
+        runoff.shrink_to_fit();
+        rainfall.shrink_to_fit();
+        evap_loss.shrink_to_fit();
+        infil_loss.shrink_to_fit();
+        ponded_depth.shrink_to_fit();
+        gw_flow.shrink_to_fit();
+        old_runoff.shrink_to_fit();
+        old_gw_flow.shrink_to_fit();
+        runon_inflow.shrink_to_fit();
+        old_runon_inflow.shrink_to_fit();
+        gw_sw_head.shrink_to_fit();
+        gw_node_avail_flow.shrink_to_fit();
+
+        rpt_flag.shrink_to_fit();
+
+        stat_precip_vol.shrink_to_fit();
+        stat_evap_vol.shrink_to_fit();
+        stat_infil_vol.shrink_to_fit();
+        stat_imperv_vol.shrink_to_fit();
+        stat_perv_vol.shrink_to_fit();
+        stat_runoff_vol.shrink_to_fit();
+        stat_max_runoff.shrink_to_fit();
+
+        gw_aquifer.shrink_to_fit();
+        gw_node.shrink_to_fit();
+        gw_surf_elev.shrink_to_fit();
+        gw_a1.shrink_to_fit();
+        gw_b1.shrink_to_fit();
+        gw_a2.shrink_to_fit();
+        gw_b2.shrink_to_fit();
+        gw_a3.shrink_to_fit();
+        gw_tw.shrink_to_fit();
+        gw_hstar.shrink_to_fit();
+        snowpack.shrink_to_fit();
+
+        conc.shrink_to_fit();
+        conc_old.shrink_to_fit();
+        ponded_qual.shrink_to_fit();
+        washoff_load.shrink_to_fit();
+        total_load.shrink_to_fit();
+        coverage.shrink_to_fit();
+    }
+
     void save_state() noexcept {
         old_runoff = runoff;
+        old_runon_inflow = runon_inflow;
+        conc_old = conc;
     }
 
     void reset_state() noexcept {
@@ -404,6 +569,13 @@ struct SubcatchData {
         std::fill(ponded_depth.begin(), ponded_depth.end(), 0.0);
         std::fill(old_runoff.begin(),   old_runoff.end(),   0.0);
         std::fill(old_gw_flow.begin(),  old_gw_flow.end(),  0.0);
+        std::fill(runon_inflow.begin(), runon_inflow.end(), 0.0);
+        std::fill(old_runon_inflow.begin(), old_runon_inflow.end(), 0.0);
+        std::fill(gw_sw_head.begin(),   gw_sw_head.end(),   0.0);
+        std::fill(gw_node_avail_flow.begin(), gw_node_avail_flow.end(), 0.0);
+        std::fill(washoff_load.begin(), washoff_load.end(), 0.0);
+        std::fill(conc.begin(), conc.end(), 0.0);
+        std::fill(conc_old.begin(), conc_old.end(), 0.0);
     }
 };
 

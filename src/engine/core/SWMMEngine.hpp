@@ -43,6 +43,7 @@
 #include "../hydrology/Runoff.hpp"
 #include "../hydrology/Gage.hpp"
 #include "../hydrology/Climate.hpp"
+#include "../hydrology/ClimateFile.hpp"
 #include "../hydrology/Snow.hpp"
 #include "../hydrology/Groundwater.hpp"
 #include "../hydrology/LID.hpp"
@@ -225,6 +226,7 @@ private:
     Router                       router_;       ///< Hydraulic routing (owns XSectGroups)
     runoff::RunoffSolver         runoff_;       ///< Subcatchment runoff (batch nonlinear reservoir)
     climate::ClimateState        climate_;      ///< Daily climate state (broadcast to subcatchments)
+    climate::ClimateFileReader   climate_file_; ///< Climate file reader (temp/evap/wind from file)
     snow::SnowSolver             snow_;         ///< Snowmelt (batch over subcatch×subareas)
     groundwater::GWSolver        groundwater_;  ///< Groundwater (batch ODE per subcatchment)
     lid::LIDSolver               lid_;          ///< LID (batch by type group)
@@ -237,11 +239,15 @@ private:
     exfil::ExfilSolver           exfil_;        ///< Storage node exfiltration
     inlet::InletSolver           inlet_;        ///< Street inlet capture
     std::vector<int>             culvert_links_;///< Pre-built culvert link indices (avoid per-timestep alloc)
-    std::vector<double>          gw_sw_head_;   ///< Reusable groundwater surface-water head buffer
     std::vector<double>          gw_frac_perv_; ///< Per-subcatch pervious fraction for GW evap
     std::vector<double>          gw_perv_evap_; ///< Per-subcatch pervious evap rate (ft/sec)
     hydstruct::StructureSolver  hydstruct_;    ///< Pumps, orifices, weirs, outlets
     iface::InterfaceManager      iface_;        ///< Routing interface file I/O
+
+    // Event and steady-state tracking
+    int next_event_ = 0;                        ///< Index of next event in ctx_.events
+    bool isBetweenEvents(double current_date) const; ///< Check if between routing events
+    bool isInSteadyState(int action_count) const;    ///< Check if system is in steady state
     std::vector<gage::GageState> gage_states_;  ///< Per-gage state (SoA)
 
 #ifdef OPENSWMM_HAS_2D
@@ -259,6 +265,65 @@ private:
 
     EngineCallbacks callbacks_;   ///< Registered callback bundle
     int save_results_ = 0;        ///< Whether to save binary results
+
+    // -----------------------------------------------------------------------
+    // Report averaging accumulator (legacy RptFlags.averages)
+    // -----------------------------------------------------------------------
+    // When rpt_averages is true, node and link results are accumulated over
+    // each routing step and averaged at report boundaries.  Subcatchment
+    // results are always point-in-time (matching legacy).
+    struct AvgAccumulator {
+        // Node accumulators (6 variables per node)
+        std::vector<double> node_depth;
+        std::vector<double> node_head;
+        std::vector<double> node_volume;
+        std::vector<double> node_lat_inflow;
+        std::vector<double> node_total_inflow;
+        std::vector<double> node_overflow;
+
+        // Link accumulators (5 variables per link)
+        std::vector<double> link_flow;
+        std::vector<double> link_depth;
+        std::vector<double> link_velocity;
+        std::vector<double> link_volume;
+        std::vector<double> link_capacity;
+
+        int n_steps = 0;  ///< Number of routing steps accumulated
+
+        void resize(int n_nodes, int n_links) {
+            auto un = static_cast<std::size_t>(n_nodes);
+            auto ul = static_cast<std::size_t>(n_links);
+            node_depth.assign(un, 0.0);
+            node_head.assign(un, 0.0);
+            node_volume.assign(un, 0.0);
+            node_lat_inflow.assign(un, 0.0);
+            node_total_inflow.assign(un, 0.0);
+            node_overflow.assign(un, 0.0);
+            link_flow.assign(ul, 0.0);
+            link_depth.assign(ul, 0.0);
+            link_velocity.assign(ul, 0.0);
+            link_volume.assign(ul, 0.0);
+            link_capacity.assign(ul, 0.0);
+            n_steps = 0;
+        }
+
+        void reset() {
+            std::fill(node_depth.begin(), node_depth.end(), 0.0);
+            std::fill(node_head.begin(), node_head.end(), 0.0);
+            std::fill(node_volume.begin(), node_volume.end(), 0.0);
+            std::fill(node_lat_inflow.begin(), node_lat_inflow.end(), 0.0);
+            std::fill(node_total_inflow.begin(), node_total_inflow.end(), 0.0);
+            std::fill(node_overflow.begin(), node_overflow.end(), 0.0);
+            std::fill(link_flow.begin(), link_flow.end(), 0.0);
+            std::fill(link_depth.begin(), link_depth.end(), 0.0);
+            std::fill(link_velocity.begin(), link_velocity.end(), 0.0);
+            std::fill(link_volume.begin(), link_volume.end(), 0.0);
+            std::fill(link_capacity.begin(), link_capacity.end(), 0.0);
+            n_steps = 0;
+        }
+    };
+
+    AvgAccumulator avg_;  ///< Averaging accumulator (only used when rpt_averages == true)
 
     // -----------------------------------------------------------------------
     // Initialization sub-functions (called by init_modules)
@@ -281,6 +346,9 @@ private:
 
     /** @brief Initialize mass balance: record initial storage volumes. */
     void initMassBalance() noexcept;
+
+    /** @brief Reset per-step mass balance accumulators (matching legacy massbal_initTimeStepTotals). */
+    void resetStepMassBalance() noexcept;
 
     // -----------------------------------------------------------------------
     // Step sub-functions (called by step)
@@ -343,6 +411,15 @@ private:
      *
      * @param dt_routing  Routing timestep (seconds).
      */
+    /** @brief Assemble subcatch-to-subcatch runon into subcatches.runon_inflow[]. */
+    void assembleRunon() noexcept;
+
+    /** @brief Pre-compute GW surface water head and available node flow from routing state. */
+    void assembleGWCoupling(double dt_runoff) noexcept;
+
+    /** @brief Assemble all decomposed inflow sources into nodes.lat_flow and compute step mass balance. */
+    void assembleLateralInflows() noexcept;
+
     void stepRouting(double dt_routing) noexcept;
 
     /**
@@ -373,6 +450,20 @@ private:
      * @brief Post a snapshot to the IO thread if output is due.
      */
     void postOutputSnapshot(double dt_step) noexcept;
+
+    /**
+     * @brief Accumulate current node/link results into the averaging accumulators.
+     * @details Called every routing step when rpt_averages is true.
+     */
+    void accumulateAvgResults() noexcept;
+
+    /**
+     * @brief Apply time-averaged node/link values to a snapshot.
+     * @details Divides accumulated sums by n_steps and writes into snap.
+     *          Non-conduit capacity (pump/regulator) uses the last value, not averaged.
+     * @param snap  The snapshot to fill with averaged values.
+     */
+    void applyAvgResults(SimulationSnapshot& snap) noexcept;
 
     // -----------------------------------------------------------------------
     // General helpers

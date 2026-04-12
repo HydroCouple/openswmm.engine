@@ -194,6 +194,9 @@ public:
 
     std::vector<Rule>& rules() { return rules_; }
 
+    /// Number of actions taken in the last evaluate() call.
+    int lastActionCount() const { return last_action_count_; }
+
     // ========================================================================
     // SoA batch evaluation index (AD-14)
     // ========================================================================
@@ -242,6 +245,7 @@ public:
                             double current_time, double half_step);
 
 private:
+    int last_action_count_ = 0;     ///< Actions taken in last evaluate() call
     std::vector<Rule>        rules_;
     std::vector<PIDState>    pid_states_;
     std::vector<NamedVariable> named_vars_;

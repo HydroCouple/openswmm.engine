@@ -15,6 +15,7 @@
 #include "Divider.hpp"
 #include "Node.hpp"
 #include "Link.hpp"
+#include "TopoSort.hpp"
 #include "../core/SimulationContext.hpp"
 
 #include <cmath>
@@ -175,9 +176,16 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 
     // Init solvers
     switch (model_) {
-        case RouteModel::KINWAVE:
+        case RouteModel::KINWAVE: {
             kw_solver_.init(n_links, groups_);
+            // Build topological link order for upstream → downstream processing
+            std::vector<int> sorted;
+            toposort::sortLinks(ctx.links.node1.data(),
+                                ctx.links.node2.data(),
+                                n_links, n_nodes, sorted);
+            kw_solver_.setLinkOrder(sorted);
             break;
+        }
         case RouteModel::DYNWAVE:
             dw_solver_.init(n_nodes, n_links, groups_, ctx);
             dw_solver_.head_tol = ctx.options.head_tol;

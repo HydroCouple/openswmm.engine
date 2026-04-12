@@ -193,6 +193,12 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
             ctx.nodes.outfall_has_flap_gate[idx] =
                 Tokenizer::parse_boolean(tok[4]);
         }
+
+        // Route-to subcatchment (optional last field)
+        if (tok.size() > 5 && !tok[5].empty() && tok[5] != "*") {
+            int sc = ctx.subcatch_names.find(tok[5]);
+            ctx.nodes.outfall_route_to[idx] = sc;  // may be -1 if not yet parsed
+        }
     }
 }
 

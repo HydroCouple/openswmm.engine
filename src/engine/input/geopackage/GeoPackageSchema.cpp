@@ -243,6 +243,71 @@ CREATE TABLE IF NOT EXISTS patterns (
     factor          REAL NOT NULL
 );
 
+-- Evaporation settings
+CREATE TABLE IF NOT EXISTS evaporation (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    evap_type       TEXT NOT NULL,
+    evap_values     TEXT,
+    ts_name         TEXT,
+    pan_coeff       TEXT,
+    recovery_pat    TEXT,
+    dry_only        INTEGER DEFAULT 0,
+    UNIQUE(simulation_id)
+);
+
+-- Temperature and climate settings
+CREATE TABLE IF NOT EXISTS climate_settings (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    temp_source     TEXT NOT NULL DEFAULT 'NONE',
+    temp_ts_name    TEXT,
+    temp_file       TEXT,
+    temp_file_start REAL,
+    wind_type       TEXT NOT NULL DEFAULT 'MONTHLY',
+    wind_speed      TEXT,
+    snow_divt       REAL DEFAULT 34.0,
+    snow_ati_wt     REAL DEFAULT 0.5,
+    snow_nrg_ratio  REAL DEFAULT 0.6,
+    snow_lat        REAL DEFAULT 0.0,
+    snow_min_melt   REAL DEFAULT 0.0,
+    snow_max_melt   REAL DEFAULT 0.0,
+    adc_imperv      TEXT,
+    adc_perv        TEXT,
+    UNIQUE(simulation_id)
+);
+
+-- Snowpack definitions (one row per snowpack-surface combination)
+CREATE TABLE IF NOT EXISTS snowpacks (
+    fid              INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id    TEXT NOT NULL,
+    snowpack_id      TEXT NOT NULL,
+    surface_type     TEXT NOT NULL,
+    p1 REAL, p2 REAL, p3 REAL, p4 REAL,
+    p5 REAL, p6 REAL, p7 REAL,
+    removal_subcatch TEXT,
+    UNIQUE(simulation_id, snowpack_id, surface_type)
+);
+
+-- Monthly climate adjustments
+CREATE TABLE IF NOT EXISTS adjustments (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    adjust_type     TEXT NOT NULL,
+    adj_values      TEXT NOT NULL,
+    UNIQUE(simulation_id, adjust_type)
+);
+
+-- Subcatchment pattern adjustments
+CREATE TABLE IF NOT EXISTS subcatch_adjustments (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    subcatch_id     TEXT NOT NULL,
+    adjust_type     TEXT NOT NULL,
+    pattern_id      TEXT NOT NULL,
+    UNIQUE(simulation_id, subcatch_id, adjust_type)
+);
+
 -- Pollutants
 CREATE TABLE IF NOT EXISTS pollutants (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -257,6 +322,71 @@ CREATE TABLE IF NOT EXISTS pollutants (
     co_pollutant    TEXT,
     co_fraction     REAL,
     UNIQUE(simulation_id, pollutant_id)
+);
+
+-- LID control definitions (one row per lid-layer combination)
+CREATE TABLE IF NOT EXISTS lid_controls (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    lid_id          TEXT NOT NULL,
+    layer_type      TEXT NOT NULL,
+    p1 REAL, p2 REAL, p3 REAL, p4 REAL,
+    p5 REAL, p6 REAL, p7 REAL,
+    UNIQUE(simulation_id, lid_id, layer_type)
+);
+
+-- LID usage assignments (one row per subcatchment-LID pair)
+CREATE TABLE IF NOT EXISTS lid_usage (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    subcatch_id     TEXT NOT NULL,
+    lid_id          TEXT NOT NULL,
+    number          INTEGER,
+    area            REAL,
+    width           REAL,
+    init_sat        REAL,
+    from_imperv     REAL,
+    to_perv         INTEGER DEFAULT 0,
+    rpt_file        TEXT,
+    drain_to        TEXT,
+    from_perv       REAL DEFAULT 0.0,
+    UNIQUE(simulation_id, subcatch_id, lid_id)
+);
+
+-- RDII assignments (one row per node-UH pair)
+CREATE TABLE IF NOT EXISTS rdii_assignments (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    node_name       TEXT NOT NULL,
+    uh_name         TEXT NOT NULL,
+    sewer_area      REAL NOT NULL,
+    UNIQUE(simulation_id, node_name, uh_name)
+);
+
+-- Unit hydrograph definitions (gage lines + parameter lines)
+CREATE TABLE IF NOT EXISTS unit_hydrographs (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    uh_name         TEXT NOT NULL,
+    gage_name       TEXT,
+    month           TEXT,
+    response        TEXT,
+    r               REAL,
+    t               REAL,
+    k               REAL,
+    dmax            REAL DEFAULT 0,
+    drecov          REAL DEFAULT 0,
+    dinit           REAL DEFAULT 0
+);
+
+-- Treatment expressions (one row per node-pollutant pair)
+CREATE TABLE IF NOT EXISTS treatment (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    node_id         TEXT NOT NULL,
+    pollutant_id    TEXT NOT NULL,
+    expression      TEXT NOT NULL,
+    UNIQUE(simulation_id, node_id, pollutant_id)
 );
 
 -- Transects

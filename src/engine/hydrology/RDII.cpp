@@ -397,10 +397,7 @@ void RDIISolver::applyRdiiInflows(SimulationContext& ctx) const {
     for (int i = 0; i < static_cast<int>(node_rdii_flow_.size()); ++i) {
         double q = node_rdii_flow_[static_cast<size_t>(i)];
         if (q == 0.0) continue;
-        ctx.nodes.lat_flow[static_cast<size_t>(i)] += q;
-        if (q > 0.0) {
-            ctx.mass_balance.step_rdii_inflow += q;
-        }
+        ctx.nodes.rdii_inflow[static_cast<size_t>(i)] += q;
     }
 }
 

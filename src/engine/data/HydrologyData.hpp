@@ -121,6 +121,11 @@ struct LidControlStore {
 
     /** @brief DRAINMAT layer params (up to 3 values). */
     std::vector<std::array<double, 3>> drainmat;
+
+    /** @brief REMOVALS: per-LID pollutant removal fractions.
+     *  removals[lid_index] = vector of {pollutant_index, fraction} pairs.
+     */
+    std::vector<std::vector<std::pair<int, double>>> removals;
 };
 
 // ============================================================================

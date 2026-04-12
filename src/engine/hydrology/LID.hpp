@@ -70,6 +70,12 @@ struct LIDGroupSoA {
 
     std::vector<int> subcatch_idx;     ///< Which subcatchment this unit belongs to
     std::vector<double> area;          ///< Unit area (ft2)
+    std::vector<double> from_imperv;   ///< Fraction of impervious runoff treated (0-1)
+    std::vector<double> from_perv;     ///< Fraction of pervious runoff treated (0-1)
+    std::vector<int>    to_perv;       ///< Route surface outflow to pervious area (1=yes)
+    std::vector<int>    drain_node;    ///< Resolved drain-to node index (-1=none)
+    std::vector<int>    drain_subcatch;///< Resolved drain-to subcatch index (-1=none)
+    std::vector<double> inflow;        ///< Per-unit inflow rate (ft/sec) — set before execute()
 
     // Surface layer
     std::vector<double> surf_store;    ///< Surface storage depth (ft)
@@ -83,16 +89,23 @@ struct LIDGroupSoA {
     std::vector<double> soil_wp;       ///< Soil wilting point
     std::vector<double> soil_ksat;     ///< Soil saturated K (ft/sec)
     std::vector<double> soil_kslope;   ///< Conductivity slope
+    std::vector<double> soil_suction;  ///< Suction head for Green-Ampt (ft)
 
     // Storage layer
     std::vector<double> stor_thick;    ///< Storage thickness (ft)
     std::vector<double> stor_void;     ///< Storage void fraction
     std::vector<double> stor_ksat;     ///< Storage exfiltration K (ft/sec)
+    std::vector<double> stor_clog;     ///< Storage clogging factor (ft)
+    std::vector<int>    stor_covered;  ///< 1 if rain barrel is covered (blocks rainfall)
 
     // Drain
     std::vector<double> drain_coeff;   ///< Drain coefficient
     std::vector<double> drain_expon;   ///< Drain exponent
     std::vector<double> drain_offset;  ///< Drain offset depth (ft)
+    std::vector<double> drain_delay;   ///< Drain delay time (sec, rain barrel)
+    std::vector<double> drain_hopen;   ///< Head to open drain valve (ft)
+    std::vector<double> drain_hclose;  ///< Head to close drain valve (ft)
+    std::vector<int>    drain_open;    ///< Current drain valve state (1=open, 0=closed)
 
     // Pavement layer (PERM_PAVEMENT)
     std::vector<double> pave_thick;        ///< Pavement thickness (ft)
@@ -100,6 +113,9 @@ struct LIDGroupSoA {
     std::vector<double> pave_imperv_frac;  ///< Impervious fraction of pavement
     std::vector<double> pave_ksat;         ///< Pavement saturated K (ft/sec)
     std::vector<double> pave_clog_factor;  ///< Pavement clog factor (ft of treated volume)
+    std::vector<double> pave_regen_days;   ///< Pavement regeneration interval (days)
+    std::vector<double> pave_regen_deg;    ///< Pavement regeneration degree (0-1)
+    std::vector<double> next_regen_day;    ///< Next day for pavement regeneration (Julian)
 
     // Drainage mat layer (GREEN_ROOF)
     std::vector<double> drainmat_thick;    ///< Drainage mat thickness (ft)
@@ -109,7 +125,9 @@ struct LIDGroupSoA {
     // Surface geometry (for Manning's outflow)
     std::vector<double> surf_void_frac;    ///< Surface void fraction (default 1.0)
     std::vector<double> surf_alpha;        ///< Surface Manning alpha = sqrt(slope)/n
+    std::vector<double> surf_side_slope;   ///< Swale side slope (run/rise)
     std::vector<double> full_width;        ///< Full width for Manning's flow (ft)
+    std::vector<double> dry_time;          ///< Seconds since last rainfall
 
     // State variables (updated each step)
     std::vector<double> surf_depth;    ///< Current surface ponded depth
@@ -122,6 +140,16 @@ struct LIDGroupSoA {
     std::vector<double> drain_flow;
     std::vector<double> evap_loss;
     std::vector<double> infil_loss;
+
+    // Pollutant drain removal fractions: drain_rmvl[unit * n_pollutants + pollutant]
+    std::vector<double> drain_rmvl;  ///< Removal fraction per unit per pollutant
+    int n_pollutants = 0;            ///< Number of pollutants (for indexing drain_rmvl)
+
+    // Previous flux rates (for Modified Puls time weighting)
+    std::vector<double> f_old_surf;   ///< Previous surface flux rate
+    std::vector<double> f_old_soil;   ///< Previous soil flux rate
+    std::vector<double> f_old_stor;   ///< Previous storage flux rate
+    std::vector<double> f_old_pave;   ///< Previous pavement flux rate
 
     // Water balance tracking (cumulative per unit)
     std::vector<double> wb_inflow;     ///< Total inflow volume (ft)
@@ -144,6 +172,11 @@ class LIDSolver {
 public:
     void init(SimulationContext& ctx);
 
+    /// Access a type group (for testing or external queries).
+    LIDGroupSoA& group(int type_index) { return groups_[static_cast<size_t>(type_index)]; }
+    const LIDGroupSoA& group(int type_index) const { return groups_[static_cast<size_t>(type_index)]; }
+    int numGroups() const { return static_cast<int>(groups_.size()); }
+
     /**
      * @brief Compute LID performance for all units (batch by type).
      *
@@ -161,9 +194,6 @@ public:
     void execute(SimulationContext& ctx, double dt,
                  double rainfall, double evap_rate);
 
-private:
-    std::vector<LIDGroupSoA> groups_;
-
     /// Batch bio-cell flux rates — VECTORISABLE
     static void batchBioCellFlux(LIDGroupSoA& g, double rainfall,
                                   double evap_rate, double dt);
@@ -176,19 +206,24 @@ private:
                                 double evap_rate, double dt);
 
     /// Batch green roof flux rates — VECTORISABLE
-    /// Like biocell but drainage mat replaces storage exfiltration
     static void batchGreenRoofFlux(LIDGroupSoA& g, double rainfall,
                                     double evap_rate, double dt);
 
     /// Batch permeable pavement flux rates — VECTORISABLE
-    /// Surface → pavement → (optional soil) → storage → drain
     static void batchPavementFlux(LIDGroupSoA& g, double rainfall,
                                    double evap_rate, double dt);
 
     /// Batch roof disconnection flux rates — VECTORISABLE
-    /// Simple rainfall → surface ponding → overflow/drain split
     static void batchRoofDisconFlux(LIDGroupSoA& g, double rainfall,
                                      double evap_rate, double dt);
+
+    /// Batch Modified Puls solver for swale (omega=0.5, iterative).
+    /// Computes flux rates and iterates until convergence.
+    static void batchSwaleModPuls(LIDGroupSoA& g, double rainfall,
+                                   double evap_rate, double dt);
+
+private:
+    std::vector<LIDGroupSoA> groups_;
 };
 
 } // namespace lid

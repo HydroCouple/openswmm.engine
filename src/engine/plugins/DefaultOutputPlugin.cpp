@@ -89,8 +89,9 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     // rainfall, snow_depth, evap, infil, runoff, gw_flow, gw_elev, soil_moist
     // + pollutant washoff
     // -----------------------------------------------------------------------
-    for (int j = 0; j < n_subcatch_; ++j) {
+    for (int j = 0; j < snapshot.subcatch_count; ++j) {
         auto uj = static_cast<std::size_t>(j);
+        if (uj < subcatch_rpt_flag_.size() && !subcatch_rpt_flag_[uj]) continue;
         // [0] SUBCATCH_RAINFALL — internal ft/sec → display
         writeReal4(static_cast<float>(
             (uj < snapshot.subcatch.rainfall.size()
@@ -135,8 +136,9 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     // Node results (matching legacy node_getResults field order)
     // depth, head, volume, lateral_inflow, total_inflow, overflow + pollutants
     // -----------------------------------------------------------------------
-    for (int j = 0; j < n_nodes_; ++j) {
+    for (int j = 0; j < snapshot.node_count; ++j) {
         auto uj = static_cast<std::size_t>(j);
+        if (uj < node_rpt_flag_.size() && !node_rpt_flag_[uj]) continue;
         // [0] NODE_DEPTH — internal ft → display length
         double depth_display = (uj < snapshot.nodes.depth.size()
             ? snapshot.nodes.depth[uj] : 0.0) * ucf_length_;
@@ -174,8 +176,9 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     // flow, depth, velocity, volume, capacity + pollutants
     // Direction already applied in snapshot builder.
     // -----------------------------------------------------------------------
-    for (int j = 0; j < n_links_; ++j) {
+    for (int j = 0; j < snapshot.link_count; ++j) {
         auto uj = static_cast<std::size_t>(j);
+        if (uj < link_rpt_flag_.size() && !link_rpt_flag_[uj]) continue;
         // [0] LINK_FLOW — internal cfs → display flow (direction pre-applied)
         writeReal4(static_cast<float>(
             (uj < snapshot.links.flow.size()
@@ -276,9 +279,18 @@ int DefaultOutputPlugin::finalize(const SimulationContext& /*ctx*/) {
 // ============================================================================
 
 void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
-    n_subcatch_ = ctx.n_subcatches();
-    n_nodes_ = ctx.n_nodes();
-    n_links_ = ctx.n_links();
+    // Cache per-object report flags
+    subcatch_rpt_flag_ = ctx.subcatches.rpt_flag;
+    node_rpt_flag_     = ctx.nodes.rpt_flag;
+    link_rpt_flag_     = ctx.links.rpt_flag;
+
+    // Count only objects with rpt_flag set (matches legacy output.c:169-171)
+    n_subcatch_ = 0;
+    for (const auto& f : subcatch_rpt_flag_) if (f) ++n_subcatch_;
+    n_nodes_ = 0;
+    for (const auto& f : node_rpt_flag_) if (f) ++n_nodes_;
+    n_links_ = 0;
+    for (const auto& f : link_rpt_flag_) if (f) ++n_links_;
     n_polluts_ = ctx.n_pollutants();
 
     n_subcatch_vars_ = 8 + n_polluts_;  // rainfall..soilmoist + pollutants
@@ -294,14 +306,17 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     writeInt4(n_links_);
     writeInt4(n_polluts_);
 
-    // ID names: subcatch, node, link, pollutant
+    // ID names: subcatch, node, link, pollutant (only flagged objects)
     id_start_pos_ = std::ftell(out_file_);
-    for (int j = 0; j < n_subcatch_; ++j)
-        writeID(ctx.subcatch_names.name_of(j).c_str());
-    for (int j = 0; j < n_nodes_; ++j)
-        writeID(ctx.node_names.name_of(j).c_str());
-    for (int j = 0; j < n_links_; ++j)
-        writeID(ctx.link_names.name_of(j).c_str());
+    for (int j = 0; j < ctx.n_subcatches(); ++j)
+        if (subcatch_rpt_flag_[static_cast<std::size_t>(j)])
+            writeID(ctx.subcatch_names.name_of(j).c_str());
+    for (int j = 0; j < ctx.n_nodes(); ++j)
+        if (node_rpt_flag_[static_cast<std::size_t>(j)])
+            writeID(ctx.node_names.name_of(j).c_str());
+    for (int j = 0; j < ctx.n_links(); ++j)
+        if (link_rpt_flag_[static_cast<std::size_t>(j)])
+            writeID(ctx.link_names.name_of(j).c_str());
     for (int p = 0; p < n_polluts_; ++p)
         writeID(ctx.pollutant_names.name_of(p).c_str());
 
@@ -316,7 +331,8 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     // Subcatchment input: area (converting to display units)
     writeInt4(1);
     writeInt4(1);  // INPUT_AREA code
-    for (int j = 0; j < n_subcatch_; ++j) {
+    for (int j = 0; j < ctx.n_subcatches(); ++j) {
+        if (!subcatch_rpt_flag_[static_cast<std::size_t>(j)]) continue;
         writeReal4(static_cast<float>(
             ctx.subcatches.area[static_cast<std::size_t>(j)] * ucf_landarea_));
     }
@@ -324,7 +340,8 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     // Node input: type, invert, max depth
     writeInt4(3);
     writeInt4(0); writeInt4(2); writeInt4(4);
-    for (int j = 0; j < n_nodes_; ++j) {
+    for (int j = 0; j < ctx.n_nodes(); ++j) {
+        if (!node_rpt_flag_[static_cast<std::size_t>(j)]) continue;
         auto uj = static_cast<std::size_t>(j);
         writeInt4(static_cast<int>(ctx.nodes.type[uj]));
         writeReal4(static_cast<float>(ctx.nodes.invert_elev[uj] * ucf_length_));
@@ -335,7 +352,8 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     // Special handling for pumps and outlets (matching legacy)
     writeInt4(5);
     writeInt4(0); writeInt4(6); writeInt4(7); writeInt4(4); writeInt4(8);
-    for (int j = 0; j < n_links_; ++j) {
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        if (!link_rpt_flag_[static_cast<std::size_t>(j)]) continue;
         auto uj = static_cast<std::size_t>(j);
         auto lt = ctx.links.type[uj];
         writeInt4(static_cast<int>(lt));

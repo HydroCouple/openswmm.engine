@@ -27,10 +27,11 @@ struct SimulationOptions;
 // ============================================================================
 
 enum class InfilModel : int {
-    HORTON      = 0,
-    MOD_HORTON  = 1,   ///< Modified Horton: linear decay fp = f0 - kd * Fe
-    GREEN_AMPT  = 2,
-    CURVE_NUM   = 3
+    HORTON         = 0,
+    MOD_HORTON     = 1,   ///< Modified Horton: linear decay fp = f0 - kd * Fe
+    GREEN_AMPT     = 2,
+    MOD_GREEN_AMPT = 3,   ///< Modified Green-Ampt: does not reset F between events
+    CURVE_NUM      = 4
 };
 
 // ============================================================================
@@ -123,7 +124,8 @@ double modHorton_getInfil(HortonState& state, double precip, double depth, doubl
  * @param dt      Timestep (seconds).
  * @returns Infiltration rate (ft/sec).
  */
-double grnampt_getInfil(GreenAmptState& state, double precip, double depth, double dt);
+double grnampt_getInfil(GreenAmptState& state, double precip, double depth, double dt,
+                        InfilModel model_type = InfilModel::GREEN_AMPT);
 
 /**
  * @brief Compute SCS Curve Number infiltration rate.

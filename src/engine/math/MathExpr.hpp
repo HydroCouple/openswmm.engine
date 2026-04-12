@@ -91,6 +91,32 @@ struct Expression {
 int parse(const std::string& expr_str, Expression& result);
 
 // ============================================================================
+// Variable binding (Tier 1 optimization)
+// ============================================================================
+
+/**
+ * @brief Bind variable names in a compiled expression to integer indices.
+ *
+ * @details Resolves each VARIABLE token's var_name to a var_idx using the
+ *          provided name→index table. After binding, evaluate_fast() can
+ *          look up variables by index instead of by string comparison.
+ *
+ * @param expr       Expression to bind (modified in place).
+ * @param name_table Array of variable names, indexed 0..n_vars-1.
+ * @param n_vars     Number of entries in name_table.
+ * @returns Number of variables successfully bound.
+ */
+int bind_variables(Expression& expr,
+                   const char* const* name_table, int n_vars);
+
+/**
+ * @brief Compute the maximum stack depth needed to evaluate an expression.
+ * @param expr  Compiled expression.
+ * @returns Max stack depth (0 if expression is empty).
+ */
+int compute_max_stack_depth(const Expression& expr);
+
+// ============================================================================
 // Evaluator
 // ============================================================================
 
@@ -113,6 +139,19 @@ double evaluate(const Expression& expr,
  * @returns Expression result.
  */
 double evaluate(const Expression& expr, const double* vars, int n_vars);
+
+/**
+ * @brief Fast evaluate using pre-bound variable indices and stack-free evaluation.
+ *
+ * @details Uses a fixed-size stack array on the C stack (no heap allocation)
+ *          and reads variables via vars[tok.var_idx] (no string comparison).
+ *          Variables must be pre-bound via bind_variables().
+ *
+ * @param expr  Compiled expression with bound variable indices.
+ * @param vars  Variable values array. vars[tok.var_idx] is read for each variable.
+ * @returns Expression result, or 0.0 if expression is invalid.
+ */
+double evaluate_fast(const Expression& expr, const double* vars) noexcept;
 
 } // namespace mathexpr
 } // namespace openswmm

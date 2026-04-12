@@ -259,6 +259,23 @@ SWMM_ENGINE_API int swmm_node_get_inflow(SWMM_Engine engine, int idx, double* in
 SWMM_ENGINE_API int swmm_node_set_lateral_inflow(SWMM_Engine engine, int idx, double flow);
 
 /**
+ * @brief Set a persistent quality mass flux at a node (mass/sec).
+ *
+ * @details The mass flux is applied additively at each routing step,
+ *          converting to a concentration delta: C += (mass_rate * dt) / volume.
+ *          The value persists until the user explicitly changes it (analogous
+ *          to swmm_node_set_lateral_inflow for flow). Set to 0.0 to stop.
+ *
+ * @param engine        Engine handle (RUNNING state).
+ * @param node_idx      Zero-based node index.
+ * @param pollutant_idx Zero-based pollutant index.
+ * @param mass_rate     Mass flux in mass/sec (project mass units).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_node_set_quality_mass_flux(SWMM_Engine engine, int node_idx,
+                                                     int pollutant_idx, double mass_rate);
+
+/**
  * @brief Set a fixed head boundary condition at a node.
  *
  * @details Useful for outfall nodes or real-time coupled boundary conditions.

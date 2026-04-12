@@ -344,8 +344,8 @@ void handle_loadings(SimulationContext& ctx, const std::vector<std::string>& lin
         if (p_idx < 0) continue;
 
         const auto flat = static_cast<std::size_t>(sub_idx * n_pollutants + p_idx);
-        if (flat < ctx.pollutants.subcatch_conc.size()) {
-            ctx.pollutants.subcatch_conc[flat] = to_double(tok[2]);
+        if (flat < ctx.subcatches.conc.size()) {
+            ctx.subcatches.conc[flat] = to_double(tok[2]);
         }
     }
 }

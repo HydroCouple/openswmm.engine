@@ -9,6 +9,7 @@
  */
 
 #include "Snow.hpp"
+#include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
@@ -33,6 +34,9 @@ void SnowSoA::resize(int n) {
     dhmax.assign(total, 0.0);
     fwfrac.assign(total, 0.1);
     fArea.assign(total, 0.0);
+    si.assign(total, 0.0);
+    sba.assign(total, 0.0);
+    sbws.assign(total, 0.0);
     snn.assign(un, 0.0);
     weplow.assign(un, 0.0);
     sfrac.assign(static_cast<std::size_t>(n * 5), 0.0);
@@ -41,6 +45,24 @@ void SnowSoA::resize(int n) {
 
 void SnowSolver::init(int n_subcatch) {
     soa_.resize(n_subcatch);
+}
+
+// ============================================================================
+// Areal depletion curve interpolation (matching legacy getArealSnowCover)
+// ============================================================================
+
+/// Interpolate areal snow coverage from a 10-point ADC curve.
+/// @param adc    10-point curve (index 0-9 maps to AWESI 0.0-0.9+)
+/// @param awesi  Snow water equivalent relative to depth at 100% cover
+/// @return       Areal snow coverage fraction (0 to 1)
+static double getArealSnowCover(const double* adc, double awesi) {
+    if (awesi >= 0.9999) return 1.0;
+    if (awesi <= 0.0)    return 0.0;
+    double x = awesi * 10.0;
+    int k = static_cast<int>(x);
+    if (k >= 9) return adc[9];
+    double frac = x - static_cast<double>(k);
+    return adc[k] + frac * (adc[k + 1] - adc[k]);
 }
 
 // ============================================================================
@@ -134,12 +156,17 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
 
     // 2. Cold content generation during sub-freezing periods
     //    (matching legacy: cc += rnm * dhm * (ati - Ta) * dt * asc)
-    //    asc = areal snow coverage fraction (simplified to 1.0 for now — see #15)
     for (int i = 0; i < total; ++i) {
         auto ui = static_cast<std::size_t>(i);
         if (soa_.wsnow[ui] <= 0.0) continue;
         if (temp < soa_.tbase[ui]) {
-            double asc = 1.0;  // TODO: areal depletion (#15) would reduce this
+            // Areal snow coverage from ADC curve
+            int subarea = i % N_SUBAREAS;
+            const double* adc = (subarea == SNOW_PERV)
+                                ? soa_.adc_perv : soa_.adc_imperv;
+            double si_val = soa_.si[ui];
+            double awesi = (si_val > 0.0) ? soa_.wsnow[ui] / si_val : 1.0;
+            double asc = getArealSnowCover(adc, awesi);
             double cc_incr = soa_.rnm * soa_.dhm[ui] *
                              (soa_.ati[ui] - temp) * dt * asc;
             soa_.coldc[ui] += std::max(0.0, cc_incr);
@@ -161,6 +188,19 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
         // Degree-day melt
         batchDegreeDayMelt(soa_.dhm.data(), soa_.tbase.data(), temp,
                            soa_.imelt.data(), total);
+    }
+
+    // 3b. Scale melt by areal snow coverage (matching legacy meltSnowpack)
+    for (int i = 0; i < total; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (soa_.wsnow[ui] <= 0.0 || soa_.imelt[ui] <= 0.0) continue;
+        int subarea = i % N_SUBAREAS;
+        const double* adc = (subarea == SNOW_PERV)
+                            ? soa_.adc_perv : soa_.adc_imperv;
+        double si_val = soa_.si[ui];
+        double awesi = (si_val > 0.0) ? soa_.wsnow[ui] / si_val : 1.0;
+        double asc = getArealSnowCover(adc, awesi);
+        soa_.imelt[ui] *= asc;
     }
 
     // 4. Apply cold content — melt only occurs after cold content is satisfied
@@ -228,6 +268,7 @@ void SnowSolver::setMeltCoeffs(int day_of_year) {
     // +1.0 at summer solstice (Jun 21, day ~172).
     // season = sin(2*pi*(day - 81)/365)  where day 81 ~ Mar 22 = equinox
     double season = std::sin(2.0 * 3.14159265358979 * (day_of_year - 81.0) / 365.0);
+    soa_.season = season;  // Store for reporting (matching legacy Snow.season)
 
     int total = soa_.n_subcatch * N_SUBAREAS;
     for (int i = 0; i < total; ++i) {
@@ -244,7 +285,7 @@ void SnowSolver::setMeltCoeffs(int day_of_year) {
 // (matching legacy snow.c snow_plowSnow)
 // ============================================================================
 
-void SnowSolver::plowSnow(SimulationContext& /*ctx*/, double dt, double snowfall) {
+void SnowSolver::plowSnow(SimulationContext& ctx, double dt, double snowfall) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
 
@@ -271,7 +312,12 @@ void SnowSolver::plowSnow(SimulationContext& /*ctx*/, double dt, double snowfall
         double sfracTotal = 0.0;
 
         // Plow out of system (sfrac[0])
-        // Note: mass removed tracked externally via mass balance
+        // Accumulate removed volume: depth (ft) * plowable area fraction * subcatch area (ft2)
+        if (soa_.sfrac[sf + 0] > 0.0) {
+            double area_ft2 = ctx.subcatches.area[uj] * 43560.0; // acres → ft2
+            soa_.removed += soa_.sfrac[sf + 0] * exc *
+                            soa_.fArea[plow_idx] * area_ft2;
+        }
         sfracTotal += soa_.sfrac[sf + 0];
 
         // Plow onto non-plowable impervious area (sfrac[1])

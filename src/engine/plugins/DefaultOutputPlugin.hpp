@@ -28,6 +28,7 @@
 #include <string>
 #include <atomic>
 #include <cstdio>
+#include <vector>
 
 namespace openswmm {
 
@@ -98,6 +99,11 @@ private:
     double ucf_volume_    = 1.0;
     double ucf_flow_      = 1.0;
     int    unit_system_   = 0;     // 0=US, 1=SI
+
+    // Per-object report flags, captured during prepare() from SimulationContext
+    std::vector<char> subcatch_rpt_flag_;
+    std::vector<char> node_rpt_flag_;
+    std::vector<char> link_rpt_flag_;
 
     static constexpr int MAGIC_NUMBER = 516114522;
     static constexpr int VERSION      = 52001;     // SWMM 5.2.001

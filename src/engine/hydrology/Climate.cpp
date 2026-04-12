@@ -19,6 +19,35 @@ namespace climate {
 
 using constants::PI;
 
+// ============================================================================
+// MovingAvg7 — 7-day circular buffer (matching legacy TMovAve)
+// ============================================================================
+
+void MovingAvg7::push(double t_avg, double t_range) {
+    ta[front] = t_avg;
+    tr[front] = t_range;
+    front = (front + 1) % 7;
+    if (count < 7) ++count;
+}
+
+double MovingAvg7::avg_temp() const {
+    if (count == 0) return 0.0;
+    double sum = 0.0;
+    for (int i = 0; i < count; ++i) sum += ta[i];
+    return sum / count;
+}
+
+double MovingAvg7::avg_range() const {
+    if (count == 0) return 0.0;
+    double sum = 0.0;
+    for (int i = 0; i < count; ++i) sum += tr[i];
+    return sum / count;
+}
+
+// ============================================================================
+// Hargreaves ET
+// ============================================================================
+
 double hargreaves(double latitude, int day_of_year, double t_avg, double t_range) {
     double a = 2.0 * PI / 365.0;
 
@@ -58,6 +87,11 @@ double hargreaves(double latitude, int day_of_year, double t_avg, double t_range
 }
 
 void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
+    // NOTE: Temperature source (timeseries/file) sets state.temperature
+    // before this function is called. The monthly adjustment is applied
+    // here and reflected in evap/gamma/ea calculations below.
+    // When no source is active, temperature keeps its previous value.
+
     switch (state.evap_method) {
         case EvapMethod::CONSTANT:
             // evap_rate already set
@@ -69,8 +103,12 @@ void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
             break;
 
         case EvapMethod::TEMPERATURE: {
+            // Push today's values into 7-day moving average
+            state.temp_ma.push(state.temperature, state.temp_range);
+            // Use smoothed values for Hargreaves (matching legacy Tma)
             double e_mm = hargreaves(state.latitude, day_of_year,
-                                     state.temperature, state.temp_range);
+                                     state.temp_ma.avg_temp(),
+                                     state.temp_ma.avg_range());
             // mm/day → ft/sec using SI EVAPRATE factor
             state.evap_rate = e_mm / ucf::Ucf[ucf::EVAPRATE][1];
             break;
@@ -88,6 +126,10 @@ void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
     // Saturation vapor pressure (for snowmelt rain-on-snow)
     double ta = state.temperature;
     state.ea = 8.1175e6 * std::exp(-7701.544 / (ta + 405.0265));
+
+    // Psychrometric constant (matching legacy climate.c)
+    // gamma = (cp * P) / (epsilon * lambda) simplified for standard pressure
+    state.gamma = (0.000359 * 1.0) / (0.27 + 0.000459 * ta);
 }
 
 // ============================================================================

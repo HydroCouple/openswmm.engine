@@ -53,6 +53,9 @@ void GWSoA::resize(int n) {
     upper_evap.assign(un, 0.0);
     lower_evap.assign(un, 0.0);
     deep_loss.assign(un, 0.0);
+
+    lateral_expr.resize(un);
+    deep_expr.resize(un);
 }
 
 void GWSolver::init(int n_subcatch) {
@@ -76,15 +79,21 @@ struct GWContext {
     double max_evap;       // max evaporation rate (ft/sec)
     double sw_head;        // surface water head (ft above aquifer bottom)
     double dt;             // time step (sec)
+    double area;           // subcatchment area (project units, for 'A' variable)
     // Unit conversion factors
     double ucf_length;     // UCF(LENGTH) — 1.0 for US
     double ucf_gwflow;     // UCF(GWFLOW) — 43560.0 for US (cfs/acre → ft/sec)
+    double ucf_rainfall;   // UCF(RAINFALL) — 43200.0 for US (in/hr → ft/sec)
+    double ucf_landarea;   // UCF(LANDAREA) — 2.2956e-5 for US (ac → ft²)
     // Flow limits (set before ODE integration)
     double max_upper_perc;
     double max_gw_flow_pos;
     double max_gw_flow_neg;
     // Output fluxes (set by getFluxes, read after integration)
     double upper_evap, lower_evap, upper_perc, deep_loss, gw_flow;
+    // Custom flow expressions (nullptr if not set)
+    const mathexpr::Expression* lateral_expr = nullptr;
+    const mathexpr::Expression* deep_expr    = nullptr;
 };
 
 // ---------------------------------------------------------------------------
@@ -125,8 +134,26 @@ static void getFluxes(GWContext& c, double theta, double lower_depth) {
     c.upper_perc = std::min(c.upper_perc, c.max_upper_perc);
 
     // --- Deep percolation (matching legacy getFluxes) ---
-    c.deep_loss = (c.total_depth > 0.0)
-        ? c.lower_loss_coeff * lower_depth / c.total_depth : 0.0;
+    // Custom [GWF] DEEP expression replaces the standard formula if present.
+    if (c.deep_expr && c.deep_expr->valid) {
+        // Build variable array in GW_VAR_NAMES order for evaluate_fast
+        double vars[GWV_MAX];
+        vars[GWV_HGW]   = lower_depth * c.ucf_length;
+        vars[GWV_HSW]   = c.sw_head * c.ucf_length;
+        vars[GWV_HCB]   = c.h_star * c.ucf_length;
+        vars[GWV_HGS]   = c.total_depth * c.ucf_length;
+        vars[GWV_KS]    = c.k_sat * c.ucf_rainfall;
+        vars[GWV_K]     = c.upper_perc > 0.0 ? c.upper_perc * c.ucf_rainfall : 0.0;
+        vars[GWV_THETA] = theta;
+        vars[GWV_PHI]   = c.porosity;
+        vars[GWV_FI]    = c.infil * c.ucf_rainfall;
+        vars[GWV_FU]    = c.upper_perc * c.ucf_rainfall;
+        vars[GWV_A]     = c.area * c.ucf_landarea;
+        c.deep_loss = mathexpr::evaluate_fast(*c.deep_expr, vars) / c.ucf_rainfall;
+    } else {
+        c.deep_loss = (c.total_depth > 0.0)
+            ? c.lower_loss_coeff * lower_depth / c.total_depth : 0.0;
+    }
     c.deep_loss = std::min(c.deep_loss, lower_depth / c.dt);
 
     // --- Lateral GW flow (matching legacy getGWFlow) ---
@@ -156,6 +183,22 @@ static void getFluxes(GWContext& c, double theta, double lower_depth) {
         double t3 = c.a3 * lower_depth * c.sw_head * ucf_len * ucf_len;
         c.gw_flow = (t1 - t2 + t3) / c.ucf_gwflow;
         if (c.gw_flow < 0.0 && c.a3 != 0.0) c.gw_flow = 0.0;
+    }
+    // Custom [GWF] LATERAL expression adds to the standard formula if present.
+    if (c.lateral_expr && c.lateral_expr->valid) {
+        double vars[GWV_MAX];
+        vars[GWV_HGW]   = lower_depth * c.ucf_length;
+        vars[GWV_HSW]   = c.sw_head * c.ucf_length;
+        vars[GWV_HCB]   = c.h_star * c.ucf_length;
+        vars[GWV_HGS]   = c.total_depth * c.ucf_length;
+        vars[GWV_KS]    = c.k_sat * c.ucf_rainfall;
+        vars[GWV_K]     = c.upper_perc > 0.0 ? c.upper_perc * c.ucf_rainfall : 0.0;
+        vars[GWV_THETA] = theta;
+        vars[GWV_PHI]   = c.porosity;
+        vars[GWV_FI]    = c.infil * c.ucf_rainfall;
+        vars[GWV_FU]    = c.upper_perc * c.ucf_rainfall;
+        vars[GWV_A]     = c.area * c.ucf_landarea;
+        c.gw_flow += mathexpr::evaluate_fast(*c.lateral_expr, vars) / c.ucf_gwflow;
     }
     // Apply flow limits
     if (c.gw_flow >= 0.0)
@@ -239,9 +282,15 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         c.avail_evap       = std::max(c.max_evap - perv_evap_rate[i], 0.0);
         c.sw_head          = sw_head[i];
         c.dt               = dt;
+        c.area             = ctx.subcatches.area[ui];
         int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
         c.ucf_length       = ucf::Ucf[ucf::LENGTH][unit_sys];
         c.ucf_gwflow       = ucf::Ucf[ucf::GWFLOW][unit_sys];
+        c.ucf_rainfall     = ucf::Ucf[ucf::RAINFALL][unit_sys];
+        c.ucf_landarea     = ucf::Ucf[ucf::LANDAREA][unit_sys];
+        // Custom expressions (nullptr if not set for this subcatch)
+        c.lateral_expr = soa_.lateral_expr[ui].valid ? &soa_.lateral_expr[ui] : nullptr;
+        c.deep_expr    = soa_.deep_expr[ui].valid    ? &soa_.deep_expr[ui]    : nullptr;
 
         // --- Set flow limits (matching legacy gwater_getGroundwater) ---
         double theta_0 = soa_.theta[ui];

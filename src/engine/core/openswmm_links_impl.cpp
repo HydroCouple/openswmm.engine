@@ -392,7 +392,7 @@ SWMM_ENGINE_API int swmm_link_get_quality(SWMM_Engine engine, int link_idx,
     CHECK_INDEX(link_idx >= 0 && link_idx < ctx.n_links());
     int np = ctx.n_pollutants();
     CHECK_INDEX(pollutant_idx >= 0 && pollutant_idx < np);
-    if (conc) *conc = ctx.pollutants.link_conc[
+    if (conc) *conc = ctx.links.conc[
         static_cast<std::size_t>(link_idx) * static_cast<std::size_t>(np) +
         static_cast<std::size_t>(pollutant_idx)];
     return SWMM_OK;
@@ -439,7 +439,7 @@ SWMM_ENGINE_API int swmm_link_get_quality_bulk(SWMM_Engine engine, int pollutant
     CHECK_INDEX(pollutant_idx >= 0 && pollutant_idx < np);
     const int n = std::min(count, ctx.n_links());
     for (int i = 0; i < n; ++i) {
-        buf[i] = ctx.pollutants.link_conc[
+        buf[i] = ctx.links.conc[
             static_cast<std::size_t>(i) * static_cast<std::size_t>(np) +
             static_cast<std::size_t>(pollutant_idx)];
     }

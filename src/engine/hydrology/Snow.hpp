@@ -66,6 +66,15 @@ struct SnowSoA {
     // Per subcatchment × 3 subareas: area fractions
     std::vector<double> fArea;    ///< Fraction of total area for each subarea
 
+    // Per subcatchment × 3 subareas: areal depletion state
+    std::vector<double> si;       ///< Snow depth for 100% cover (ft)
+    std::vector<double> sba;      ///< Snow coverage area at start of new-snow ADC
+    std::vector<double> sbws;     ///< Snow water equiv at end of new-snow ADC
+
+    // Global ADC curves (shared by all subcatchments, 10 points each)
+    double adc_imperv[10] = {1,1,1,1,1,1,1,1,1,1};
+    double adc_perv[10]   = {1,1,1,1,1,1,1,1,1,1};
+
     // Per subcatchment: area fractions
     std::vector<double> snn;      ///< Plowable fraction of impervious area
 
@@ -77,8 +86,10 @@ struct SnowSoA {
     std::vector<int>    to_subcatch; ///< Target subcatchment for plowed snow
 
     // Global parameters
-    double tipm = 0.5;            ///< ATI weighting factor
-    double rnm  = 0.6;            ///< Negative melt ratio
+    double tipm    = 0.5;         ///< ATI weighting factor
+    double rnm     = 0.6;         ///< Negative melt ratio
+    double season  = 0.0;         ///< Current snowmelt season factor (-1 to +1)
+    double removed = 0.0;         ///< Cumulative snow plowed out of system (ft3)
 
     void resize(int n);
 };

@@ -45,6 +45,26 @@ enum class EvapMethod : int {
 };
 
 // ============================================================================
+// 7-day temperature moving average (for Hargreaves ET)
+// ============================================================================
+
+struct MovingAvg7 {
+    double ta[7]  = {};   ///< Daily average temps (deg F)
+    double tr[7]  = {};   ///< Daily temp ranges (deg F)
+    int    front  = 0;    ///< Circular buffer write index
+    int    count  = 0;    ///< Number of values stored (max 7)
+
+    /// Push a new day's values into the buffer.
+    void push(double t_avg, double t_range);
+
+    /// Current moving average of temperature.
+    double avg_temp() const;
+
+    /// Current moving average of temperature range.
+    double avg_range() const;
+};
+
+// ============================================================================
 // Daily climate state (scalar — broadcast to all subcatchments)
 // ============================================================================
 
@@ -77,9 +97,17 @@ struct ClimateState {
     // @see Legacy: InfilFactor (set from hydcon adjustment pattern)
     double infil_factor = 1.0;
 
+    // 7-day moving average for Hargreaves ET (matching legacy TMovAve Tma)
+    MovingAvg7 temp_ma;
+
     // Recovery factor for infiltration models
     // @see Legacy: Evap.recoveryFactor (set from recovery adjustment pattern)
     double recovery_factor = 1.0;
+
+    // Resolved timeseries/pattern indices (set at init, -1 = none)
+    int temp_ts_index     = -1;   ///< Temperature timeseries table index
+    int evap_ts_index     = -1;   ///< Evaporation timeseries table index
+    int recovery_pat_index = -1;  ///< Recovery pattern index in ctx.patterns
 };
 
 // ============================================================================

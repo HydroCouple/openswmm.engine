@@ -250,5 +250,114 @@ double evaluate(const Expression& expr, const double* vars, int n_vars) {
     });
 }
 
+// ============================================================================
+// Variable binding
+// ============================================================================
+
+int bind_variables(Expression& expr,
+                   const char* const* name_table, int n_vars) {
+    int bound = 0;
+    for (auto& tok : expr.postfix) {
+        if (tok.type != TokenType::VARIABLE) continue;
+        tok.var_idx = -1;
+        // Case-insensitive match against name table
+        for (int v = 0; v < n_vars; ++v) {
+            const char* tbl = name_table[v];
+            const std::string& tn = tok.var_name;
+            bool match = true;
+            std::size_t k = 0;
+            for (; k < tn.size() && tbl[k]; ++k) {
+                if (std::toupper(static_cast<unsigned char>(tn[k])) !=
+                    std::toupper(static_cast<unsigned char>(tbl[k]))) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match && k == tn.size() && tbl[k] == '\0') {
+                tok.var_idx = v;
+                ++bound;
+                break;
+            }
+        }
+    }
+    return bound;
+}
+
+int compute_max_stack_depth(const Expression& expr) {
+    int depth = 0, max_depth = 0;
+    for (const auto& tok : expr.postfix) {
+        switch (tok.type) {
+            case TokenType::NUMBER:
+            case TokenType::VARIABLE:
+                ++depth; break;
+            case TokenType::NEG:
+                break; // pop 1 push 1 = net 0
+            case TokenType::ADD: case TokenType::SUB:
+            case TokenType::MUL: case TokenType::DIV:
+            case TokenType::POW:
+            case TokenType::FUNC_MIN: case TokenType::FUNC_MAX:
+                --depth; break; // pop 2 push 1 = net -1
+            default:
+                break; // unary functions: pop 1 push 1 = net 0
+        }
+        if (depth > max_depth) max_depth = depth;
+    }
+    return max_depth;
+}
+
+// ============================================================================
+// Fast evaluator (Tier 1: fixed stack, indexed variables, no heap)
+// ============================================================================
+
+double evaluate_fast(const Expression& expr, const double* vars) noexcept {
+    if (!expr.valid || expr.postfix.empty()) return 0.0;
+
+    constexpr int MAX_STACK = 32;
+    double stk[MAX_STACK];
+    int sp = 0; // stack pointer (points to next free slot)
+
+    for (const auto& tok : expr.postfix) {
+        switch (tok.type) {
+            case TokenType::NUMBER:
+                stk[sp++] = tok.value; break;
+            case TokenType::VARIABLE:
+                stk[sp++] = (tok.var_idx >= 0) ? vars[tok.var_idx] : 0.0; break;
+            case TokenType::NEG:
+                stk[sp-1] = -stk[sp-1]; break;
+            case TokenType::ADD: { double b=stk[--sp]; stk[sp-1]+=b; break; }
+            case TokenType::SUB: { double b=stk[--sp]; stk[sp-1]-=b; break; }
+            case TokenType::MUL: { double b=stk[--sp]; stk[sp-1]*=b; break; }
+            case TokenType::DIV: {
+                double b=stk[--sp];
+                stk[sp-1] = (b!=0.0) ? stk[sp-1]/b : 0.0; break;
+            }
+            case TokenType::POW: {
+                double b=stk[--sp];
+                stk[sp-1] = std::pow(stk[sp-1], b); break;
+            }
+            case TokenType::FUNC_ABS:  stk[sp-1] = std::fabs(stk[sp-1]); break;
+            case TokenType::FUNC_SQRT:
+                stk[sp-1] = (stk[sp-1]>=0.0) ? std::sqrt(stk[sp-1]) : 0.0; break;
+            case TokenType::FUNC_EXP:  stk[sp-1] = std::exp(stk[sp-1]); break;
+            case TokenType::FUNC_LOG:
+                stk[sp-1] = (stk[sp-1]>0.0) ? std::log(stk[sp-1]) : 0.0; break;
+            case TokenType::FUNC_SIN:  stk[sp-1] = std::sin(stk[sp-1]); break;
+            case TokenType::FUNC_COS:  stk[sp-1] = std::cos(stk[sp-1]); break;
+            case TokenType::FUNC_TAN:  stk[sp-1] = std::tan(stk[sp-1]); break;
+            case TokenType::FUNC_ASIN: stk[sp-1] = std::asin(stk[sp-1]); break;
+            case TokenType::FUNC_ACOS: stk[sp-1] = std::acos(stk[sp-1]); break;
+            case TokenType::FUNC_ATAN: stk[sp-1] = std::atan(stk[sp-1]); break;
+            case TokenType::FUNC_SGN:
+                stk[sp-1] = (stk[sp-1]>0.0) ? 1.0 : ((stk[sp-1]<0.0) ? -1.0 : 0.0); break;
+            case TokenType::FUNC_STEP:
+                stk[sp-1] = (stk[sp-1]>=0.0) ? 1.0 : 0.0; break;
+            case TokenType::FUNC_MIN: { double b=stk[--sp]; stk[sp-1]=std::min(stk[sp-1],b); break; }
+            case TokenType::FUNC_MAX: { double b=stk[--sp]; stk[sp-1]=std::max(stk[sp-1],b); break; }
+            default: break;
+        }
+    }
+    return (sp > 0) ? stk[0] : 0.0;
+}
+
 } // namespace mathexpr
 } // namespace openswmm

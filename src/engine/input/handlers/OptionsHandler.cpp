@@ -288,8 +288,18 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
 
         } else if (key == "SURCHARGE_METHOD") {
             const std::string sv = norm(val);
-            if      (sv == "EXTRAN") opt.surcharge_method = 0;
-            else if (sv == "SLOT")   opt.surcharge_method = 1;
+            if      (sv == "EXTRAN")       opt.surcharge_method = 0;
+            else if (sv == "SLOT")         opt.surcharge_method = 1;
+            else if (sv == "DYNAMIC_SLOT") opt.surcharge_method = 2;
+
+        } else if (key == "DPS_CELERITY") {
+            opt.dps_target_celerity = to_double(val);
+
+        } else if (key == "DPS_ALPHA") {
+            opt.dps_alpha = to_double(val);
+
+        } else if (key == "DPS_DECAY_TIME") {
+            opt.dps_decay_time = to_double(val);
 
         } else if (key == "NODE_CONTINUITY") {
             const std::string nc = norm(val);
@@ -314,8 +324,10 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "LENGTHENING_STEP") {
             openswmm::from_chars_double(val.data(), val.data() + val.size(), opt.lengthening_step);
 
-        } else if (key == "SKIP_STEADY_STATE" ||
-                   key == "COMPATIBILITY") {
+        } else if (key == "SKIP_STEADY_STATE") {
+            opt.skip_steady_state = Tokenizer::parse_boolean(val);
+
+        } else if (key == "COMPATIBILITY") {
             // no-op; recognized but unused in new engine
 
         // -----------------------------------------------------------------

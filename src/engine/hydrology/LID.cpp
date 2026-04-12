@@ -17,8 +17,46 @@
 namespace openswmm {
 namespace lid {
 
-// static constexpr double STOPTOL = 0.00328;  // 1 mm in ft — integration tolerance
 // static constexpr double MINFLOW = 2.3e-8;   // 0.001 in/hr in ft/sec
+
+// ============================================================================
+// Shared helpers for drain rate and storage exfiltration
+// ============================================================================
+
+/// Compute drain outflow rate with hysteresis (matching legacy getStorageDrainRate).
+/// Updates drain_open state for next timestep.
+static double getDrainRate(double head, double coeff, double expon,
+                           double offset, double hOpen, double hClose,
+                           int& drain_open_state) {
+    double h = head - offset;
+    if (h <= 0.0) { drain_open_state = 0; return 0.0; }
+
+    // Hysteresis: drain opens when head >= hOpen, closes when head < hClose
+    if (hOpen > 0.0 || hClose > 0.0) {
+        if (drain_open_state) {
+            if (h < hClose) { drain_open_state = 0; return 0.0; }
+        } else {
+            if (h < hOpen) return 0.0;
+            drain_open_state = 1;
+        }
+    }
+
+    if (coeff <= 0.0) return 0.0;
+    return coeff * std::pow(h, expon);
+}
+
+/// Compute storage exfiltration rate with clogging reduction.
+static double getStorageExfil(double kSat, double clogFactor,
+                               double cumInflow) {
+    if (kSat <= 0.0) return 0.0;
+    double rate = kSat;
+    if (clogFactor > 0.0 && cumInflow > 0.0) {
+        double reduction = cumInflow / clogFactor;
+        reduction = std::min(reduction, 1.0);
+        rate *= (1.0 - reduction);
+    }
+    return rate;
+}
 
 void LIDGroupSoA::resize(int n) {
     count = n;
@@ -26,6 +64,12 @@ void LIDGroupSoA::resize(int n) {
 
     subcatch_idx.assign(un, -1);
     area.assign(un, 0.0);
+    from_imperv.assign(un, 0.0);
+    from_perv.assign(un, 0.0);
+    to_perv.assign(un, 0);
+    drain_node.assign(un, -1);
+    drain_subcatch.assign(un, -1);
+    inflow.assign(un, 0.0);
 
     surf_store.assign(un, 0.0);
     surf_rough.assign(un, 0.01);
@@ -37,20 +81,30 @@ void LIDGroupSoA::resize(int n) {
     soil_wp.assign(un, 0.1);
     soil_ksat.assign(un, 0.0);
     soil_kslope.assign(un, 0.0);
+    soil_suction.assign(un, 0.0);
 
     stor_thick.assign(un, 0.0);
     stor_void.assign(un, 0.5);
     stor_ksat.assign(un, 0.0);
+    stor_clog.assign(un, 0.0);
+    stor_covered.assign(un, 0);
 
     drain_coeff.assign(un, 0.0);
     drain_expon.assign(un, 0.5);
     drain_offset.assign(un, 0.0);
+    drain_delay.assign(un, 0.0);
+    drain_hopen.assign(un, 0.0);
+    drain_hclose.assign(un, 0.0);
+    drain_open.assign(un, 1);
 
     pave_thick.assign(un, 0.0);
     pave_void.assign(un, 0.15);
     pave_imperv_frac.assign(un, 0.0);
     pave_ksat.assign(un, 0.0);
     pave_clog_factor.assign(un, 0.0);
+    pave_regen_days.assign(un, 0.0);
+    pave_regen_deg.assign(un, 0.0);
+    next_regen_day.assign(un, 0.0);
 
     drainmat_thick.assign(un, 0.0);
     drainmat_void.assign(un, 0.5);
@@ -58,12 +112,22 @@ void LIDGroupSoA::resize(int n) {
 
     surf_void_frac.assign(un, 1.0);
     surf_alpha.assign(un, 0.0);
+    surf_side_slope.assign(un, 0.0);
     full_width.assign(un, 0.0);
+    dry_time.assign(un, 0.0);
 
     surf_depth.assign(un, 0.0);
     soil_moist.assign(un, 0.2);
     stor_depth.assign(un, 0.0);
     pave_depth.assign(un, 0.0);
+
+    // drain_rmvl sized separately in model builder (needs n_pollutants)
+    drain_rmvl.clear();
+
+    f_old_surf.assign(un, 0.0);
+    f_old_soil.assign(un, 0.0);
+    f_old_stor.assign(un, 0.0);
+    f_old_pave.assign(un, 0.0);
 
     surface_runoff.assign(un, 0.0);
     drain_flow.assign(un, 0.0);
@@ -80,9 +144,20 @@ void LIDGroupSoA::resize(int n) {
     vol_treated.assign(un, 0.0);
 }
 
+/// Map type code string to LIDType enum index (0-7).
+static int typeCodeToIndex(const std::string& code) {
+    if (code == "BC") return 0;
+    if (code == "RG") return 1;
+    if (code == "GR") return 2;
+    if (code == "IT") return 3;
+    if (code == "PP") return 4;
+    if (code == "RB") return 5;
+    if (code == "VS") return 6;
+    if (code == "RD") return 7;
+    return -1;
+}
+
 void LIDSolver::init(SimulationContext& ctx) {
-    // Create one LIDGroupSoA for each of the 8 LID types.
-    // After init, groups with count == 0 are skipped during execute().
     static constexpr int N_LID_TYPES = 8;
     groups_.resize(N_LID_TYPES);
 
@@ -96,17 +171,142 @@ void LIDSolver::init(SimulationContext& ctx) {
     groups_[6].type = LIDType::VEG_SWALE;
     groups_[7].type = LIDType::ROOF_DISCON;
 
-    // All groups start with count == 0 (empty).
-    // The parser / model builder is responsible for adding LID units
-    // to the appropriate group via resize() and populating parameters.
-    // Here we ensure group arrays are consistently sized at zero.
-    for (auto& g : groups_) {
-        if (g.count == 0) {
-            g.resize(0);
+    // If no LID usage data, leave all groups empty
+    int n_usage = ctx.lid_usage.count();
+    if (n_usage == 0) {
+        for (auto& g : groups_) g.resize(0);
+        return;
+    }
+
+    // 1. Count units per type from usage entries
+    std::array<int, 8> type_counts = {};
+    for (int j = 0; j < n_usage; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        int li = ctx.lid_usage.lid_index[uj];
+        if (li < 0 || li >= ctx.lid_controls.count()) continue;
+        int ti = typeCodeToIndex(ctx.lid_controls.lid_type[static_cast<std::size_t>(li)]);
+        if (ti < 0 || ti >= N_LID_TYPES) continue;
+        type_counts[static_cast<size_t>(ti)]++;
+    }
+
+    // 2. Resize groups
+    for (int t = 0; t < N_LID_TYPES; ++t)
+        groups_[static_cast<size_t>(t)].resize(type_counts[static_cast<size_t>(t)]);
+
+    // 3. Populate per-unit parameters from LidControlStore + LidUsageStore
+    std::array<int, 8> type_cursor = {};  // next free slot in each group
+    for (int j = 0; j < n_usage; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        int li = ctx.lid_usage.lid_index[uj];
+        if (li < 0 || li >= ctx.lid_controls.count()) continue;
+        auto uli = static_cast<std::size_t>(li);
+        int ti = typeCodeToIndex(ctx.lid_controls.lid_type[uli]);
+        if (ti < 0 || ti >= N_LID_TYPES) continue;
+
+        auto& g = groups_[static_cast<size_t>(ti)];
+        int slot = type_cursor[static_cast<size_t>(ti)]++;
+        auto us = static_cast<std::size_t>(slot);
+
+        // Usage-level fields
+        g.subcatch_idx[us] = ctx.lid_usage.subcatch_index[uj];
+        g.area[us]         = ctx.lid_usage.area[uj];
+        g.full_width[us]   = ctx.lid_usage.width[uj];
+        g.from_imperv[us]  = ctx.lid_usage.from_imperv[uj] / 100.0;  // % → fraction
+        g.from_perv[us]    = (uj < ctx.lid_usage.from_perv.size())
+                             ? ctx.lid_usage.from_perv[uj] / 100.0 : 0.0;
+        g.to_perv[us]      = ctx.lid_usage.to_perv[uj];
+
+        // Resolve drain-to target
+        if (uj < ctx.lid_usage.drain_to.size() && !ctx.lid_usage.drain_to[uj].empty()) {
+            const auto& dt_name = ctx.lid_usage.drain_to[uj];
+            int ni = ctx.node_names.find(dt_name);
+            if (ni >= 0) {
+                g.drain_node[us] = ni;
+            } else {
+                int si = ctx.subcatch_names.find(dt_name);
+                if (si >= 0) g.drain_subcatch[us] = si;
+            }
+        }
+
+        // SURFACE layer: [0]=StorHt, [1]=VegVolFrac, [2]=Roughness, [3]=SurfSlope, [4]=SideSlope
+        if (uli < ctx.lid_controls.surface.size()) {
+            const auto& p = ctx.lid_controls.surface[uli];
+            g.surf_store[us]      = p[0];
+            g.surf_void_frac[us]  = (p[1] > 0.0) ? (1.0 - p[1]) : 1.0;
+            g.surf_rough[us]      = (p[2] > 0.0) ? p[2] : 0.01;
+            g.surf_slope[us]      = (p[3] > 0.0) ? p[3] : 0.01;
+            g.surf_side_slope[us] = p[4];  // swale side slope (run/rise)
+            g.surf_alpha[us] = 1.49 * std::sqrt(g.surf_slope[us]) / g.surf_rough[us];
+        }
+
+        // SOIL layer: [0]=Thick, [1]=Poros, [2]=FC, [3]=WP, [4]=Ksat, [5]=Kslope, [6]=Suction
+        if (uli < ctx.lid_controls.soil.size()) {
+            const auto& p = ctx.lid_controls.soil[uli];
+            g.soil_thick[us]    = p[0];
+            g.soil_poros[us]    = p[1];
+            g.soil_fc[us]       = p[2];
+            g.soil_wp[us]       = p[3];
+            g.soil_ksat[us]     = p[4];
+            g.soil_kslope[us]   = p[5];
+            g.soil_suction[us]  = p[6];
+        }
+
+        // STORAGE layer: [0]=Thick, [1]=VoidRatio, [2]=Ksat, [3]=ClogFactor
+        if (uli < ctx.lid_controls.storage.size()) {
+            const auto& p = ctx.lid_controls.storage[uli];
+            g.stor_thick[us] = p[0];
+            g.stor_void[us]  = p[1];
+            g.stor_ksat[us]  = p[2];
+            g.stor_clog[us]  = p[3];
+        }
+
+        // DRAIN layer: [0]=Coeff, [1]=Expon, [2]=Offset, [3]=Delay, [4]=hOpen, [5]=hClose
+        if (uli < ctx.lid_controls.drain.size()) {
+            const auto& p = ctx.lid_controls.drain[uli];
+            g.drain_coeff[us]  = p[0];
+            g.drain_expon[us]  = p[1];
+            g.drain_offset[us] = p[2];
+            g.drain_delay[us]  = p[3];
+            g.drain_hopen[us]  = p[4];
+            g.drain_hclose[us] = p[5];
+        }
+
+        // PAVEMENT layer: [0]=Thick, [1]=VoidRatio, [2]=FracImperv, [3]=Ksat, [4]=ClogFactor, [5]=RegenDays
+        if (uli < ctx.lid_controls.pavement.size()) {
+            const auto& p = ctx.lid_controls.pavement[uli];
+            g.pave_thick[us]       = p[0];
+            g.pave_void[us]        = p[1];
+            g.pave_imperv_frac[us] = p[2];
+            g.pave_ksat[us]        = p[3];
+            g.pave_clog_factor[us] = p[4];
+            if (p[5] > 0.0) {
+                g.pave_regen_days[us] = p[5];
+                g.pave_regen_deg[us]  = (uli < ctx.lid_controls.pavement.size() && p[5] > 0.0)
+                                        ? 0.0 : 0.0;  // degree parsed separately if available
+                g.next_regen_day[us]  = p[5];  // first regen after p[5] days
+            }
+        }
+
+        // DRAINMAT layer: [0]=Thick, [1]=VoidRatio, [2]=Roughness
+        if (uli < ctx.lid_controls.drainmat.size()) {
+            const auto& p = ctx.lid_controls.drainmat[uli];
+            g.drainmat_thick[us] = p[0];
+            g.drainmat_void[us]  = p[1];
+            g.drainmat_rough[us] = p[2];
+        }
+
+        // Initial saturation
+        double initSat = ctx.lid_usage.init_sat[uj];
+        if (g.soil_thick[us] > 0.0) {
+            g.soil_moist[us] = g.soil_wp[us]
+                             + initSat * (g.soil_poros[us] - g.soil_wp[us]);
+        }
+        if (g.stor_thick[us] > 0.0) {
+            g.stor_depth[us] = initSat * g.stor_thick[us];
         }
     }
 
-    // Initialize water balance initial volumes for any pre-populated groups
+    // 4. Initialize water balance initial volumes
     for (auto& g : groups_) {
         for (int i = 0; i < g.count; ++i) {
             auto ui = static_cast<std::size_t>(i);
@@ -120,7 +320,41 @@ void LIDSolver::init(SimulationContext& ctx) {
         }
     }
 
-    (void)ctx; // subcatchment data available via ctx.subcatches if needed
+    // 5. Populate drain pollutant removal fractions
+    int np = ctx.n_pollutants();
+    if (np > 0) {
+        // Second pass: map units to their LID control index for removals
+        std::array<int, 8> cursor2 = {};
+        for (int j = 0; j < n_usage; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            int li = ctx.lid_usage.lid_index[uj];
+            if (li < 0 || li >= ctx.lid_controls.count()) continue;
+            auto uli = static_cast<std::size_t>(li);
+            int ti = typeCodeToIndex(ctx.lid_controls.lid_type[uli]);
+            if (ti < 0 || ti >= N_LID_TYPES) continue;
+
+            auto& g = groups_[static_cast<size_t>(ti)];
+            int slot = cursor2[static_cast<size_t>(ti)]++;
+
+            // Ensure drain_rmvl is sized
+            if (g.n_pollutants != np) {
+                g.n_pollutants = np;
+                g.drain_rmvl.assign(
+                    static_cast<size_t>(g.count * np), 0.0);
+            }
+
+            // Copy removal fractions from LidControlStore
+            if (uli < ctx.lid_controls.removals.size()) {
+                for (const auto& pr : ctx.lid_controls.removals[uli]) {
+                    int pi = pr.first;
+                    double frac = pr.second;
+                    if (pi >= 0 && pi < np) {
+                        g.drain_rmvl[static_cast<size_t>(slot * np + pi)] = frac;
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -132,8 +366,8 @@ void LIDSolver::batchBioCellFlux(LIDGroupSoA& g, double rainfall,
     for (int i = 0; i < g.count; ++i) {
         auto ui = static_cast<std::size_t>(i);
 
-        // Surface inflow
-        double inflow = rainfall;
+        // Surface inflow: per-unit inflow if set, otherwise rainfall
+        double inflow = (g.inflow[ui] > 0.0) ? g.inflow[ui] : rainfall;
 
         // Surface evaporation (limited by ponded depth)
         double surf_evap = std::min(evap_rate, g.surf_depth[ui] / dt);
@@ -152,15 +386,15 @@ void LIDSolver::batchBioCellFlux(LIDGroupSoA& g, double rainfall,
             ? g.soil_ksat[ui] * std::exp(g.soil_kslope[ui] * (theta - g.soil_fc[ui]))
             : 0.0;
 
-        // Storage → native exfiltration
-        double exfil = g.stor_ksat[ui];
+        // Storage → native exfiltration (with clogging reduction)
+        double exfil = getStorageExfil(g.stor_ksat[ui], g.stor_clog[ui],
+                                        g.wb_inflow[ui]);
 
-        // Storage → drain
-        double drain = 0.0;
-        double head = g.stor_depth[ui] - g.drain_offset[ui];
-        if (head > 0.0 && g.drain_coeff[ui] > 0.0) {
-            drain = g.drain_coeff[ui] * std::pow(head, g.drain_expon[ui]);
-        }
+        // Storage → drain (with hysteresis)
+        double drain = getDrainRate(g.stor_depth[ui], g.drain_coeff[ui],
+                                     g.drain_expon[ui], g.drain_offset[ui],
+                                     g.drain_hopen[ui], g.drain_hclose[ui],
+                                     g.drain_open[ui]);
 
         // Surface overflow
         double overflow = 0.0;
@@ -218,8 +452,18 @@ void LIDSolver::batchBarrelFlux(LIDGroupSoA& g, double rainfall, double dt) {
     for (int i = 0; i < g.count; ++i) {
         auto ui = static_cast<std::size_t>(i);
 
+        // Covered barrel blocks direct rainfall (legacy: storage.covered)
+        double unit_inflow = (g.inflow[ui] > 0.0) ? g.inflow[ui] : rainfall;
+        if (g.stor_covered[ui]) unit_inflow = 0.0;
+
+        // Track dry time for drain delay
+        if (unit_inflow > 0.0)
+            g.dry_time[ui] = 0.0;
+        else
+            g.dry_time[ui] += dt;
+
         // Inflow fills storage
-        double new_depth = g.stor_depth[ui] + rainfall * dt;
+        double new_depth = g.stor_depth[ui] + unit_inflow * dt;
 
         // Overflow
         double overflow = 0.0;
@@ -228,11 +472,13 @@ void LIDSolver::batchBarrelFlux(LIDGroupSoA& g, double rainfall, double dt) {
             new_depth = g.stor_thick[ui];
         }
 
-        // Drain (above offset)
+        // Drain — with delay and hysteresis
         double drain = 0.0;
-        double head = new_depth - g.drain_offset[ui];
-        if (head > 0.0 && g.drain_coeff[ui] > 0.0) {
-            drain = g.drain_coeff[ui] * std::pow(head, g.drain_expon[ui]);
+        bool delay_ok = (g.drain_delay[ui] <= 0.0 || g.dry_time[ui] >= g.drain_delay[ui]);
+        if (delay_ok) {
+            drain = getDrainRate(new_depth, g.drain_coeff[ui], g.drain_expon[ui],
+                                 g.drain_offset[ui], g.drain_hopen[ui],
+                                 g.drain_hclose[ui], g.drain_open[ui]);
             drain = std::min(drain, new_depth / dt);
             new_depth -= drain * dt;
         }
@@ -244,13 +490,13 @@ void LIDSolver::batchBarrelFlux(LIDGroupSoA& g, double rainfall, double dt) {
         g.infil_loss[ui] = 0.0;
 
         // Water balance tracking
-        g.wb_inflow[ui]     += rainfall * dt;
+        g.wb_inflow[ui]     += unit_inflow * dt;
         g.wb_evap[ui]       += 0.0;
         g.wb_infil[ui]      += 0.0;
         g.wb_surf_flow[ui]  += overflow * dt;
         g.wb_drain_flow[ui] += drain * dt;
         g.wb_final_vol[ui]   = g.stor_depth[ui];
-        g.vol_treated[ui]   += rainfall * dt;
+        g.vol_treated[ui]   += unit_inflow * dt;
     }
 }
 
@@ -263,7 +509,7 @@ void LIDSolver::batchSwaleFlux(LIDGroupSoA& g, double rainfall,
     for (int i = 0; i < g.count; ++i) {
         auto ui = static_cast<std::size_t>(i);
 
-        double inflow = rainfall;
+        double inflow = (g.inflow[ui] > 0.0) ? g.inflow[ui] : rainfall;
         double surf_evap = std::min(evap_rate, g.surf_depth[ui] / dt);
 
         // Soil infiltration
@@ -295,6 +541,98 @@ void LIDSolver::batchSwaleFlux(LIDGroupSoA& g, double rainfall,
         g.wb_surf_flow[ui]  += runoff * dt;
         g.wb_drain_flow[ui] += 0.0;
         g.wb_final_vol[ui]   = g.surf_depth[ui] * g.surf_void_frac[ui];
+        g.vol_treated[ui]   += inflow * dt;
+    }
+}
+
+// ============================================================================
+// Batch swale with Modified Puls (omega=0.5, iterative)
+// ============================================================================
+// Legacy reference: modpuls_solve() in lidproc.c with VEG_SWALE omega=0.5.
+// The swale Manning's equation is nonlinear — iteration is needed for
+// the trapezoid-rule time weighting to converge.
+
+static constexpr double STOPTOL = 0.00328;  // 1 mm in ft
+static constexpr int    MAX_ITERATIONS = 20;
+
+void LIDSolver::batchSwaleModPuls(LIDGroupSoA& g, double rainfall,
+                                   double evap_rate, double dt) {
+    constexpr double omega = 0.5;
+
+    for (int i = 0; i < g.count; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+
+        double inflow = (g.inflow[ui] > 0.0) ? g.inflow[ui] : rainfall;
+
+        // Save initial state
+        double x_old = g.surf_depth[ui];
+        double x_prev = x_old;
+        double f_old = g.f_old_surf[ui];  // flux rate from previous timestep
+
+        // Iterate Modified Puls
+        double x = x_old;
+        double f_new = 0.0;
+        for (int iter = 0; iter < MAX_ITERATIONS; ++iter) {
+            // Compute flux rates at current state
+            double surf_evap = std::min(evap_rate, std::max(x, 0.0) / dt);
+            double soil_infil = g.soil_ksat[ui];
+            soil_infil = std::min(soil_infil, std::max(x, 0.0) / dt + inflow - surf_evap);
+            soil_infil = std::max(soil_infil, 0.0);
+
+            double excess = x - g.surf_store[ui];
+            double runoff = 0.0;
+            if (excess > 0.0 && g.surf_rough[ui] > 0.0) {
+                runoff = std::pow(excess, 5.0 / 3.0) * std::sqrt(g.surf_slope[ui])
+                         / g.surf_rough[ui];
+            }
+
+            // Net flux = dx/dt
+            f_new = inflow - surf_evap - soil_infil - runoff;
+
+            // Modified Puls update: x = x_old + (omega*f_old + (1-omega)*f_new) * dt
+            x = x_old + (omega * f_old + (1.0 - omega) * f_new) * dt;
+            x = std::max(x, 0.0);
+
+            // Check convergence
+            if (std::abs(x - x_prev) <= STOPTOL) break;
+            x_prev = x;
+        }
+
+        // Save new flux rate for next timestep
+        g.f_old_surf[ui] = f_new;
+        g.surf_depth[ui] = x;
+
+        // Compute final outputs at converged state for reporting
+        double surf_evap = std::min(evap_rate, std::max(x, 0.0) / dt);
+        double soil_infil = g.soil_ksat[ui];
+        soil_infil = std::min(soil_infil, std::max(x, 0.0) / dt + inflow - surf_evap);
+        soil_infil = std::max(soil_infil, 0.0);
+        double excess = x - g.surf_store[ui];
+        double runoff = 0.0;
+        if (excess > 0.0 && g.surf_rough[ui] > 0.0) {
+            runoff = std::pow(excess, 5.0 / 3.0) * std::sqrt(g.surf_slope[ui])
+                     / g.surf_rough[ui];
+        }
+
+        g.surface_runoff[ui] = runoff;
+        g.drain_flow[ui] = 0.0;
+        g.evap_loss[ui] = surf_evap * dt;
+        g.infil_loss[ui] = soil_infil * dt;
+
+        // Water balance: use actual state change to back-compute fluxes
+        // delta_vol = (x - x_old) * void_frac
+        // inflow*dt = evap*dt + infil*dt + runoff*dt + delta_vol
+        // => runoff*dt = inflow*dt - evap*dt - infil*dt - delta_vol
+        double delta_vol = (x - x_old) * g.surf_void_frac[ui];
+        double wb_runoff = inflow * dt - surf_evap * dt - soil_infil * dt - delta_vol;
+        wb_runoff = std::max(wb_runoff, 0.0);
+
+        g.wb_inflow[ui]     += inflow * dt;
+        g.wb_evap[ui]       += surf_evap * dt;
+        g.wb_infil[ui]      += soil_infil * dt;
+        g.wb_surf_flow[ui]  += wb_runoff;
+        g.wb_drain_flow[ui] += 0.0;
+        g.wb_final_vol[ui]   = x * g.surf_void_frac[ui];
         g.vol_treated[ui]   += inflow * dt;
     }
 }
@@ -332,7 +670,7 @@ void LIDSolver::batchGreenRoofFlux(LIDGroupSoA& g, double rainfall,
         double storageVolume = storageDepth * storageVoidFrac;
 
         // --- inflow ---
-        double surfaceInflow = rainfall;
+        double surfaceInflow = (g.inflow[ui] > 0.0) ? g.inflow[ui] : rainfall;
 
         // --- surface infiltration (Green-Ampt style) ---
         double surfaceInfil;
@@ -511,7 +849,7 @@ void LIDSolver::batchPavementFlux(LIDGroupSoA& g, double rainfall,
         double storageVolume = storageDepth * storageVoidFrac;
 
         // --- inflow ---
-        double surfaceInflow = rainfall;
+        double surfaceInflow = (g.inflow[ui] > 0.0) ? g.inflow[ui] : rainfall;
 
         // --- evaporation cascade (legacy getEvapRates with pervFrac) ---
         double availEvap = evap_rate;
@@ -546,6 +884,17 @@ void LIDSolver::batchPavementFlux(LIDGroupSoA& g, double rainfall,
             storageEvap = 0.0;
         }
 
+        // --- pavement regeneration (reduce clogging at intervals) ---
+        if (g.pave_regen_days[ui] > 0.0 && g.next_regen_day[ui] > 0.0) {
+            // Decrement regen counter by dt (in days)
+            g.next_regen_day[ui] -= dt / 86400.0;
+            if (g.next_regen_day[ui] <= 0.0) {
+                // Regenerate: reduce vol_treated by (1 - regen_degree)
+                g.vol_treated[ui] *= (1.0 - g.pave_regen_deg[ui]);
+                g.next_regen_day[ui] = g.pave_regen_days[ui];
+            }
+        }
+
         // --- pavement permeability (exponential clog model) ---
         double permReduction = 0.0;
         double clogFactor = g.pave_clog_factor[ui];
@@ -578,17 +927,15 @@ void LIDSolver::batchPavementFlux(LIDGroupSoA& g, double rainfall,
             soilPerc = pavePerc;
         }
 
-        // --- storage exfiltration ---
-        double storageExfil = g.stor_ksat[ui];
+        // --- storage exfiltration (with clogging) ---
+        double storageExfil = getStorageExfil(g.stor_ksat[ui], g.stor_clog[ui],
+                                               g.wb_inflow[ui]);
 
-        // --- underdrain flow ---
-        double storageDrain = 0.0;
-        if (g.drain_coeff[ui] > 0.0) {
-            double head = storageDepth - g.drain_offset[ui];
-            if (head > 0.0) {
-                storageDrain = g.drain_coeff[ui] * std::pow(head, g.drain_expon[ui]);
-            }
-        }
+        // --- underdrain flow (with hysteresis) ---
+        double storageDrain = getDrainRate(storageDepth, g.drain_coeff[ui],
+                                            g.drain_expon[ui], g.drain_offset[ui],
+                                            g.drain_hopen[ui], g.drain_hclose[ui],
+                                            g.drain_open[ui]);
 
         // --- adjacency saturation checks (from legacy pavementFluxRates) ---
 
@@ -770,7 +1117,7 @@ void LIDSolver::batchRoofDisconFlux(LIDGroupSoA& g, double rainfall,
         double surfaceDepth = g.surf_depth[ui];
 
         // --- inflow ---
-        double surfaceInflow = rainfall;
+        double surfaceInflow = (g.inflow[ui] > 0.0) ? g.inflow[ui] : rainfall;
 
         // --- evaporation (surface only, pervFrac = 1.0) ---
         double surfaceEvap = std::min(evap_rate, surfaceDepth / dt);
@@ -849,7 +1196,7 @@ void LIDSolver::execute(SimulationContext& /*ctx*/, double dt,
                 break;
 
             case LIDType::VEG_SWALE:
-                batchSwaleFlux(g, rainfall, evap_rate, dt);
+                batchSwaleModPuls(g, rainfall, evap_rate, dt);
                 break;
 
             case LIDType::GREEN_ROOF:

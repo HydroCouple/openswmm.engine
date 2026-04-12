@@ -428,6 +428,31 @@ struct LinkData {
     std::vector<double>     old_volume;
 
     // -----------------------------------------------------------------------
+    // Per-link quality state — flat 2D: [link * n_pollutants + pollutant]
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Current quality concentration in each link.
+     * @details Size = n_links * n_pollutants.
+     * @see Legacy: Link[i].newQual[]
+     */
+    std::vector<double>     conc;
+
+    /** @brief Previous-step quality in each link. */
+    std::vector<double>     conc_old;
+
+    /** @brief Number of pollutants in the quality arrays. */
+    int                     conc_n_pollutants = 0;
+
+    // -----------------------------------------------------------------------
+    // Report flag — per-object output filter
+    // -----------------------------------------------------------------------
+
+    /** @brief Whether this link is included in report/output (0=no, 1=yes).
+     *  @see Legacy: Link[j].rptFlag */
+    std::vector<char>       rpt_flag;
+
+    // -----------------------------------------------------------------------
     // Cumulative statistics
     // -----------------------------------------------------------------------
 
@@ -500,6 +525,22 @@ struct LinkData {
      */
     std::vector<double>     stat_total_load;
     int                     stat_n_pollutants = 0;
+
+    // -----------------------------------------------------------------------
+    // Pump utilization statistics (valid when type[i] == PUMP)
+    // -----------------------------------------------------------------------
+
+    /** @brief Number of pump on→off + off→on transitions per pump. */
+    std::vector<int>        stat_pump_cycles;
+
+    /** @brief Time pump was running (seconds). */
+    std::vector<double>     stat_pump_on_time;
+
+    /** @brief Total volume pumped (ft³). */
+    std::vector<double>     stat_pump_volume;
+
+    /** @brief Previous pump state for cycle detection (true = on). */
+    std::vector<bool>       stat_pump_was_on;
 
     // -----------------------------------------------------------------------
     // Capacity management
@@ -578,6 +619,8 @@ struct LinkData {
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
 
+        rpt_flag.assign(un, 0);
+
         stat_vol_flow.assign(un, 0.0);
         stat_max_flow.assign(un, 0.0);
         stat_max_veloc.assign(un, 0.0);
@@ -591,6 +634,10 @@ struct LinkData {
         stat_time_full_dnstream.assign(un, 0.0);
         stat_time_full_both.assign(un, 0.0);
         stat_time_capacity_limited.assign(un, 0.0);
+        stat_pump_cycles.assign(un, 0);
+        stat_pump_on_time.assign(un, 0.0);
+        stat_pump_volume.assign(un, 0.0);
+        stat_pump_was_on.assign(un, false);
         normal_flow_limited.assign(un, false);
     }
 
@@ -606,10 +653,121 @@ struct LinkData {
         }
     }
 
+    /**
+     * @brief Resize per-link quality arrays after pollutant count is known.
+     */
+    void resize_quality(int n_pollutants) {
+        conc_n_pollutants = n_pollutants;
+        if (n_pollutants > 0) {
+            auto total = static_cast<std::size_t>(count()) *
+                         static_cast<std::size_t>(n_pollutants);
+            conc.assign(total, 0.0);
+            conc_old.assign(total, 0.0);
+        }
+    }
+
+    /**
+     * @brief Release excess vector capacity accumulated during parsing.
+     */
+    void shrink_to_fit() {
+        type.shrink_to_fit();
+        node1.shrink_to_fit();
+        node2.shrink_to_fit();
+        offset1.shrink_to_fit();
+        offset2.shrink_to_fit();
+        q0.shrink_to_fit();
+        q_limit.shrink_to_fit();
+
+        xsect_shape.shrink_to_fit();
+        xsect_y_full.shrink_to_fit();
+        xsect_a_full.shrink_to_fit();
+        xsect_w_max.shrink_to_fit();
+        xsect_curve.shrink_to_fit();
+        roughness.shrink_to_fit();
+        length.shrink_to_fit();
+        slope.shrink_to_fit();
+        mod_length.shrink_to_fit();
+        barrels.shrink_to_fit();
+        beta.shrink_to_fit();
+        rough_factor.shrink_to_fit();
+        q_full.shrink_to_fit();
+        xsect_r_full.shrink_to_fit();
+        xsect_s_full.shrink_to_fit();
+        xsect_s_max.shrink_to_fit();
+        q_max.shrink_to_fit();
+        xsect_y_bot.shrink_to_fit();
+        xsect_a_bot.shrink_to_fit();
+        xsect_s_bot.shrink_to_fit();
+        xsect_r_bot.shrink_to_fit();
+        xsect_yw_max.shrink_to_fit();
+        xsect_batch_shape.shrink_to_fit();
+        setting.shrink_to_fit();
+        target_setting.shrink_to_fit();
+        direction.shrink_to_fit();
+
+        loss_inlet.shrink_to_fit();
+        loss_outlet.shrink_to_fit();
+        loss_avg.shrink_to_fit();
+        has_flap_gate.shrink_to_fit();
+        seep_rate.shrink_to_fit();
+        evap_loss_rate.shrink_to_fit();
+        seep_loss_rate.shrink_to_fit();
+        culvert_code.shrink_to_fit();
+        inlet_control.shrink_to_fit();
+        dqdh.shrink_to_fit();
+        normal_flow_limited.shrink_to_fit();
+
+        pump_curve.shrink_to_fit();
+        pump_init_state.shrink_to_fit();
+        pump_startup.shrink_to_fit();
+        pump_shutoff.shrink_to_fit();
+        pump_curve_name.shrink_to_fit();
+
+        crest_height.shrink_to_fit();
+        cd.shrink_to_fit();
+        param1.shrink_to_fit();
+        param2.shrink_to_fit();
+        orate.shrink_to_fit();
+
+        flow.shrink_to_fit();
+        depth.shrink_to_fit();
+        volume.shrink_to_fit();
+        froude.shrink_to_fit();
+        flow_class.shrink_to_fit();
+        is_closed.shrink_to_fit();
+        old_flow.shrink_to_fit();
+        old_depth.shrink_to_fit();
+        old_volume.shrink_to_fit();
+        conc.shrink_to_fit();
+        conc_old.shrink_to_fit();
+
+        rpt_flag.shrink_to_fit();
+
+        stat_vol_flow.shrink_to_fit();
+        stat_max_flow.shrink_to_fit();
+        stat_max_veloc.shrink_to_fit();
+        stat_max_filling.shrink_to_fit();
+        stat_time_surcharged.shrink_to_fit();
+        stat_flow_class.shrink_to_fit();
+        stat_norm_ltd.shrink_to_fit();
+        stat_inlet_ctrl.shrink_to_fit();
+        stat_max_flow_date.shrink_to_fit();
+        stat_time_full_upstream.shrink_to_fit();
+        stat_time_full_dnstream.shrink_to_fit();
+        stat_time_full_both.shrink_to_fit();
+        stat_time_capacity_limited.shrink_to_fit();
+        stat_pump_cycles.shrink_to_fit();
+        stat_pump_on_time.shrink_to_fit();
+        stat_pump_volume.shrink_to_fit();
+        stat_pump_was_on.shrink_to_fit();
+        stat_total_load.shrink_to_fit();
+    }
+
     void save_state() noexcept {
         old_flow  = flow;
         old_depth = depth;
         old_volume = volume;
+        conc_old = conc;
     }
 
     void reset_state() noexcept {
@@ -621,6 +779,8 @@ struct LinkData {
         std::fill(old_flow.begin(),  old_flow.end(),  0.0);
         std::fill(old_depth.begin(), old_depth.end(), 0.0);
         std::fill(old_volume.begin(), old_volume.end(), 0.0);
+        std::fill(conc.begin(), conc.end(), 0.0);
+        std::fill(conc_old.begin(), conc_old.end(), 0.0);
     }
 };
 

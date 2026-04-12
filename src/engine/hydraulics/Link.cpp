@@ -128,6 +128,20 @@ double getCapacity(const XSectParams& xs, double depth) {
 }
 
 // ============================================================================
+// Per-element: getHydPower
+// ============================================================================
+
+double getHydPower(double flow, double head_upstream, double head_downstream) {
+    // P = gamma * Q * hL
+    // gamma = specific weight of water = 62.4 lb/ft³
+    // Q = flow (ft³/s), hL = head loss (ft)
+    // Result in ft·lb/s (divide by 550 for horsepower)
+    constexpr double GAMMA = 62.4;  // lb/ft³
+    double hL = head_upstream - head_downstream;
+    return GAMMA * std::fabs(flow) * std::fabs(hL);
+}
+
+// ============================================================================
 // Per-element: buildXSectParams
 // ============================================================================
 

@@ -1,5 +1,9 @@
 # OpenSWMM Engine
 
+<p align="center">
+  <img src="docs/images/hydrocouple_logo.png" alt="OpenSWMM MCP" width="120">
+</p>
+
 **Open Storm Water Management Model — Next-Generation Computational Engine**
 
 [![Unit Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml)

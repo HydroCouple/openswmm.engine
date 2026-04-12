@@ -192,9 +192,7 @@ void area_trapezoidal(
     int count
 ) {
     // area = (y_bot + s_bot * depth) * depth
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC ivdep
-#endif
+    OPENSWMM_IVDEP
     for (int k = 0; k < count; ++k) {
         double d = depth[k];
         area[k] = (y_bot[k] + s_bot[k] * d) * d;
@@ -208,9 +206,7 @@ void area_triangular(
     int count
 ) {
     // area = s_bot * depth^2
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC ivdep
-#endif
+    OPENSWMM_IVDEP
     for (int k = 0; k < count; ++k) {
         double d = depth[k];
         area[k] = s_bot[k] * d * d;
@@ -225,9 +221,7 @@ void area_parabolic(
 ) {
     // area = (4/3) * r_bot * depth^(3/2) — auto-vectorizable with ivdep
     constexpr double four_thirds = 4.0 / 3.0;
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC ivdep
-#endif
+    OPENSWMM_IVDEP
     for (int k = 0; k < count; ++k) {
         double d = depth[k];
         area[k] = four_thirds * r_bot[k] * d * std::sqrt(d);
@@ -363,9 +357,7 @@ void hydrad_trapezoidal(
     int count
 ) {
     // R = A / P = (y_bot + s_bot*d)*d / (y_bot + d*r_bot)
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC ivdep
-#endif
+    OPENSWMM_IVDEP
     for (int k = 0; k < count; ++k) {
         double d = depth[k];
         if (d <= 0.0) { hydrad[k] = 0.0; continue; }
@@ -383,9 +375,7 @@ void hydrad_triangular(
     int count
 ) {
     // R = (s_bot*y) / (2*r_bot)
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC ivdep
-#endif
+    OPENSWMM_IVDEP
     for (int k = 0; k < count; ++k) {
         hydrad[k] = (s_bot[k] * depth[k]) / (2.0 * r_bot[k]);
     }
@@ -398,9 +388,7 @@ void hydrad_rect(
     int count
 ) {
     // R = (w*d) / (w + 2*d)
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC ivdep
-#endif
+    OPENSWMM_IVDEP
     for (int k = 0; k < count; ++k) {
         double d = depth[k];
         double w = w_max[k];
@@ -473,9 +461,7 @@ void width_trapezoidal(
     int count
 ) {
     // W = y_bot + 2*s_bot*depth
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC ivdep
-#endif
+    OPENSWMM_IVDEP
     for (int k = 0; k < count; ++k) {
         width[k] = y_bot[k] + 2.0 * s_bot[k] * depth[k];
     }
@@ -488,9 +474,7 @@ void width_triangular(
     int count
 ) {
     // W = 2*s_bot*depth
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC ivdep
-#endif
+    OPENSWMM_IVDEP
     for (int k = 0; k < count; ++k) {
         width[k] = 2.0 * s_bot[k] * depth[k];
     }

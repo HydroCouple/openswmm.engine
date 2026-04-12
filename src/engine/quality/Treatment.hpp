@@ -66,13 +66,15 @@ enum class TokenType : int {
 };
 
 enum class TreatVar : int {
-    C   = 0,   ///< Current concentration
-    R   = 1,   ///< Removal fraction target
-    DT  = 2,   ///< Timestep (sec)
-    HRT = 3,   ///< Hydraulic residence time (hours, per legacy convention)
-    Q   = 4,   ///< Flow rate
-    V   = 5,   ///< Volume
-    D   = 6    ///< Depth
+    C        = 0,   ///< Current concentration (this pollutant)
+    R        = 1,   ///< Removal fraction (this pollutant, unused in expressions)
+    DT       = 2,   ///< Timestep (sec)
+    HRT      = 3,   ///< Hydraulic residence time (hours, per legacy convention)
+    Q        = 4,   ///< Flow rate
+    V        = 5,   ///< Volume
+    D        = 6,   ///< Depth
+    C_POLLUT = 7,   ///< Concentration of another pollutant (uses pollut_ref)
+    R_POLLUT = 8    ///< Removal fraction of another pollutant (uses pollut_ref, co-treatment)
 };
 
 // ============================================================================
@@ -83,6 +85,7 @@ struct Token {
     TokenType type = TokenType::NUMBER;
     double    value = 0.0;        ///< For NUMBER tokens
     TreatVar  var = TreatVar::C;  ///< For VARIABLE tokens
+    int       pollut_ref = -1;    ///< Pollutant index for C_POLLUT/R_POLLUT
 };
 
 // ============================================================================
@@ -119,6 +122,17 @@ struct TreatExpr {
 int parse(const std::string& expr_str, TreatExpr& result);
 
 /**
+ * @brief Parse with pollutant name resolution for co-treatment.
+ *
+ * @param expr_str     Full expression string.
+ * @param result       [out] Parsed expression.
+ * @param pollut_names Pollutant name → index resolver. Returns -1 if not found.
+ * @returns 0 on success, -1 on parse error.
+ */
+int parse(const std::string& expr_str, TreatExpr& result,
+          int (*pollut_lookup)(const std::string& name));
+
+/**
  * @brief Evaluate a treatment expression with given variable values.
  *
  * @param expr   Parsed expression.
@@ -132,6 +146,25 @@ int parse(const std::string& expr_str, TreatExpr& result);
  */
 double evaluate(const TreatExpr& expr, double c, double dt,
                 double hrt, double q, double v, double d);
+
+/**
+ * @brief Evaluate with co-treatment support (R_pollutant references).
+ *
+ * @param expr       Parsed expression.
+ * @param c          Concentration for this pollutant.
+ * @param dt         Timestep (sec).
+ * @param hrt        HRT (hours).
+ * @param q          Flow rate.
+ * @param v          Volume.
+ * @param d          Depth.
+ * @param cin        Inflow concentrations for all pollutants.
+ * @param removal    Removal fractions for all pollutants (-1=not computed).
+ * @param n_pollut   Number of pollutants.
+ * @returns Computed value.
+ */
+double evaluate(const TreatExpr& expr, double c, double dt,
+                double hrt, double q, double v, double d,
+                const double* cin, const double* removal, int n_pollut);
 
 /**
  * @brief Apply treatment at a node for one pollutant.

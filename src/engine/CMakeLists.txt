@@ -135,15 +135,24 @@ elseif(APPLE)
 endif()
 
 # ---- SIMD compiler flags ----
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        # Enable AVX2 for SIMD acceleration (x86_64)
-        target_compile_options(openswmm_engine PRIVATE -mavx2 -mfma)
-    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-        # ARM NEON is always available on arm64 — no special flag needed
+option(OPENSWMM_FORCE_SCALAR "Disable SIMD intrinsics; use scalar fallback only" OFF)
+
+if(OPENSWMM_FORCE_SCALAR)
+    target_compile_definitions(openswmm_engine PRIVATE OPENSWMM_SIMD_SCALAR=1)
+    message(STATUS "OpenSWMM Engine: SIMD disabled — using scalar fallback")
+else()
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+            # Enable AVX2 + FMA for SIMD acceleration (x86_64)
+            target_compile_options(openswmm_engine PRIVATE -mavx2 -mfma)
+        endif()
+        # ARM64: NEON always available, no flag needed
+    elseif(MSVC)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|x86")
+            target_compile_options(openswmm_engine PRIVATE /arch:AVX2)
+        endif()
+        # MSVC ARM64: NEON always available, no flag needed
     endif()
-elseif(MSVC)
-    target_compile_options(openswmm_engine PRIVATE /arch:AVX2)
 endif()
 
 # ---- Export macros ----
@@ -239,7 +248,11 @@ if(MSVC AND OPENSWMM_BUILD_UNIT_TESTS)
         target_compile_definitions(openswmm_engine_internal PRIVATE SWMM_USE_OPENMP)
     endif()
 
-    target_compile_options(openswmm_engine_internal PRIVATE /arch:AVX2)
+    if(OPENSWMM_FORCE_SCALAR)
+        target_compile_definitions(openswmm_engine_internal PRIVATE OPENSWMM_SIMD_SCALAR=1)
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|x86")
+        target_compile_options(openswmm_engine_internal PRIVATE /arch:AVX2)
+    endif()
 
     message(STATUS "OpenSWMM Engine: internal STATIC library enabled for MSVC unit tests")
 endif()

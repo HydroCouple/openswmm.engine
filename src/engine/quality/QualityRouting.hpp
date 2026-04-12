@@ -68,15 +68,21 @@ public:
 private:
     int n_pollutants_ = 0;
 
-    // Per-node quality working arrays: [node * n_pollutants + pollutant]
-    std::vector<double> node_mass_in_;   ///< Accumulated mass inflow per pollutant
-    std::vector<double> node_vol_in_;    ///< Accumulated volume inflow
+    // Quality mass inflow arrays are stored on NodeData (nodes.qual_mass_in[],
+    // nodes.qual_vol_in[]) so that external quality sources (user forcing, DWF
+    // quality, etc.) can contribute at the same assembly point.
+
+    /// Add RDII pollutant loads to node quality inflows.
+    void addRdiiLoads(SimulationContext& ctx, double dt);
 
     /// Batch accumulate link mass flows to downstream nodes.
     void accumulateLinkLoads(SimulationContext& ctx, double dt);
 
     /// Batch complete mixing at all nodes.
     void mixAtNodes(SimulationContext& ctx, double dt);
+
+    /// Apply treatment expressions at nodes with treatment defined.
+    void applyTreatment(SimulationContext& ctx, double dt);
 
     /// Batch first-order decay.
     void applyDecay(SimulationContext& ctx, double dt);

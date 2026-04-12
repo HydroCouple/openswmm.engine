@@ -305,7 +305,7 @@ void InterfaceManager::readInflows(SimulationContext& ctx, double current_time) 
         if (node < 0 || node >= ctx.n_nodes()) continue;
 
         double flow = getFlow(i, iface_frac_);
-        ctx.nodes.lat_flow[static_cast<std::size_t>(node)] += flow;
+        ctx.nodes.iface_inflow[static_cast<std::size_t>(node)] += flow;
 
         // Add interpolated quality values
         int n_polluts = ctx.n_pollutants();
@@ -354,8 +354,8 @@ void InterfaceManager::writeOutfallResults(const SimulationContext& ctx,
         int np = ctx.n_pollutants();
         for (int p = 0; p < np; ++p) {
             auto qi = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
-            double conc = (qi < ctx.pollutants.node_conc.size())
-                          ? ctx.pollutants.node_conc[qi] : 0.0;
+            double conc = (qi < ctx.nodes.conc.size())
+                          ? ctx.nodes.conc[qi] : 0.0;
             std::fprintf(outfile_, " %-10f", conc);
         }
     }

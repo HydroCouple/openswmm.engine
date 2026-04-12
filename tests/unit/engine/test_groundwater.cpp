@@ -69,6 +69,8 @@ TEST(GWSoA, ResizeSetsDefaults) {
 class GWSolverTest : public ::testing::Test {
 protected:
     GWSolver solver;
+    std::vector<double> frac_perv = std::vector<double>(3, 1.0);
+    std::vector<double> perv_evap_rate = std::vector<double>(3, 0.0);
 
     void SetUp() override {
         solver.init(3);
@@ -111,7 +113,8 @@ TEST_F(GWSolverTest, PercAboveFieldCapacityIsPositive) {
     std::vector<double> theta0(soa.theta.begin(), soa.theta.end());
 
     solver.execute(gw_dummy_ctx, 3600.0, 0.0,
-                   infil_rate.data(), sw_head.data());
+                   infil_rate.data(), sw_head.data(),
+                   frac_perv.data(), perv_evap_rate.data());
 
     // theta should decrease (water percolated down)
     for (int i = 0; i < 3; ++i) {
@@ -134,7 +137,8 @@ TEST_F(GWSolverTest, NoPecBelowFieldCapacity) {
     double theta_before = soa.theta[0];
 
     solver.execute(gw_dummy_ctx, 60.0, 0.0,
-                   infil_rate.data(), sw_head.data());
+                   infil_rate.data(), sw_head.data(),
+                   frac_perv.data(), perv_evap_rate.data());
 
     // theta shouldn't increase without infiltration
     EXPECT_LE(soa.theta[0], theta_before + 1e-10);
@@ -150,7 +154,8 @@ TEST_F(GWSolverTest, InfiltrationIncreasesTheta) {
     std::vector<double> sw_head(3, 0.0);
 
     solver.execute(gw_dummy_ctx, 3600.0, 0.0,
-                   infil_rate.data(), sw_head.data());
+                   infil_rate.data(), sw_head.data(),
+                   frac_perv.data(), perv_evap_rate.data());
 
     // theta should increase with infiltration
     for (int i = 0; i < 3; ++i) {
@@ -171,7 +176,8 @@ TEST_F(GWSolverTest, GWFlowPositiveAboveThreshold) {
     std::vector<double> sw_head(3, 0.0);
 
     solver.execute(gw_dummy_ctx, 3600.0, 0.0,
-                   infil_rate.data(), sw_head.data());
+                   infil_rate.data(), sw_head.data(),
+                   frac_perv.data(), perv_evap_rate.data());
 
     for (int i = 0; i < 3; ++i) {
         EXPECT_GT(soa.gw_flow[i], 0.0)
@@ -189,7 +195,8 @@ TEST_F(GWSolverTest, GWFlowZeroBelowThreshold) {
     std::vector<double> sw_head(3, 0.0);
 
     solver.execute(gw_dummy_ctx, 3600.0, 0.0,
-                   infil_rate.data(), sw_head.data());
+                   infil_rate.data(), sw_head.data(),
+                   frac_perv.data(), perv_evap_rate.data());
 
     for (int i = 0; i < 3; ++i) {
         EXPECT_DOUBLE_EQ(soa.gw_flow[i], 0.0)
@@ -212,7 +219,8 @@ TEST_F(GWSolverTest, GWFlowLinearWithUnitExponent) {
     std::vector<double> sw_head(3, 0.0);
 
     solver.execute(gw_dummy_ctx, 0.001, 0.0,
-                   infil_rate.data(), sw_head.data());
+                   infil_rate.data(), sw_head.data(),
+                   frac_perv.data(), perv_evap_rate.data());
 
     // After RKF45 integration the water table moves, so gw_flow reflects
     // the end-state flux.  Just verify flow is positive (H started > H*).
@@ -236,7 +244,8 @@ TEST_F(GWSolverTest, DeepPercolationProportionalToDepth) {
     std::vector<double> sw_head(3, 0.0);
 
     solver.execute(gw_dummy_ctx, 0.001, 0.0,
-                   infil_rate.data(), sw_head.data());
+                   infil_rate.data(), sw_head.data(),
+                   frac_perv.data(), perv_evap_rate.data());
 
     EXPECT_NEAR(soa.deep_loss[0], 0.001 * 5.0 / 10.0, 1e-8);
 }
@@ -249,13 +258,16 @@ TEST_F(GWSolverTest, UpperEvapWhenAboveWiltPoint) {
     auto& soa = solver.state();
     soa.theta[0] = 0.25;  // above wilt_point=0.1
     soa.upper_evap_frac[0] = 0.5;
+    // Reduce GW flow to prevent theta from draining below wilt point
+    soa.a1[0] = 0.0;
 
     std::vector<double> infil_rate(3, 0.0);
     std::vector<double> sw_head(3, 0.0);
     double max_evap = 1e-5;
 
-    solver.execute(gw_dummy_ctx, 3600.0, max_evap,
-                   infil_rate.data(), sw_head.data());
+    solver.execute(gw_dummy_ctx, 60.0, max_evap,
+                   infil_rate.data(), sw_head.data(),
+                   frac_perv.data(), perv_evap_rate.data());
 
     EXPECT_GT(soa.upper_evap[0], 0.0);
     EXPECT_LE(soa.upper_evap[0], max_evap);
@@ -270,7 +282,8 @@ TEST_F(GWSolverTest, NoUpperEvapBelowWiltPoint) {
     std::vector<double> sw_head(3, 0.0);
 
     solver.execute(gw_dummy_ctx, 3600.0, 1e-5,
-                   infil_rate.data(), sw_head.data());
+                   infil_rate.data(), sw_head.data(),
+                   frac_perv.data(), perv_evap_rate.data());
 
     EXPECT_DOUBLE_EQ(soa.upper_evap[0], 0.0);
 }
@@ -289,7 +302,8 @@ TEST_F(GWSolverTest, ThetaClampedToPorosityRange) {
 
     // Long timestep to push bounds
     solver.execute(gw_dummy_ctx, 100000.0, 0.0,
-                   infil_rate.data(), sw_head.data());
+                   infil_rate.data(), sw_head.data(),
+                   frac_perv.data(), perv_evap_rate.data());
 
     for (int i = 0; i < 3; ++i) {
         EXPECT_GE(soa.theta[i], soa.wilt_point[i]);
@@ -310,7 +324,8 @@ TEST_F(GWSolverTest, LowerDepthClampedNonNegative) {
     std::vector<double> sw_head(3, 0.0);
 
     solver.execute(gw_dummy_ctx, 100000.0, 0.0,
-                   infil_rate.data(), sw_head.data());
+                   infil_rate.data(), sw_head.data(),
+                   frac_perv.data(), perv_evap_rate.data());
 
     for (int i = 0; i < 3; ++i) {
         EXPECT_GE(soa.lower_depth[i], 0.0);

@@ -144,7 +144,9 @@ void resolve_cross_references(SimulationContext& ctx) {
     // Allocate quality matrices now that all counts are final
     if (n_polluts > 0) {
         ctx.pollutants.resize_pollutants(n_polluts);
-        ctx.pollutants.resize_quality(n_nodes, n_links, n_subcatch);
+        ctx.nodes.resize_quality(n_polluts);
+        ctx.links.resize_quality(n_polluts);
+        ctx.subcatches.resize_quality(n_polluts);
         ctx.nodes.resize_loads(n_polluts);
         ctx.links.resize_loads(n_polluts);
     }
@@ -1028,6 +1030,58 @@ void resolve_cross_references(SimulationContext& ctx) {
             }
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Report flag propagation (matches legacy project_validate project.c:260-266)
+    // -------------------------------------------------------------------------
+    // Propagate rpt_subcatchments / rpt_nodes / rpt_links from SimulationOptions
+    // to per-object rpt_flag vectors.  ALL → every object; SOME → named objects;
+    // NONE → no objects.
+    {
+        auto& opts = ctx.options;
+
+        // Subcatchments
+        if (opts.rpt_subcatchments == 1) { // ALL
+            std::fill(ctx.subcatches.rpt_flag.begin(),
+                      ctx.subcatches.rpt_flag.end(), 1);
+        } else if (opts.rpt_subcatchments == 2) { // SOME
+            for (const auto& name : opts.rpt_subcatch_names) {
+                int idx = ctx.subcatch_names.find(name);
+                if (idx >= 0)
+                    ctx.subcatches.rpt_flag[static_cast<std::size_t>(idx)] = 1;
+            }
+        }
+        // NONE (0): leave all zeros
+
+        // Nodes
+        if (opts.rpt_nodes == 1) { // ALL
+            std::fill(ctx.nodes.rpt_flag.begin(),
+                      ctx.nodes.rpt_flag.end(), 1);
+        } else if (opts.rpt_nodes == 2) { // SOME
+            for (const auto& name : opts.rpt_node_names) {
+                int idx = ctx.node_names.find(name);
+                if (idx >= 0)
+                    ctx.nodes.rpt_flag[static_cast<std::size_t>(idx)] = 1;
+            }
+        }
+
+        // Links
+        if (opts.rpt_links == 1) { // ALL
+            std::fill(ctx.links.rpt_flag.begin(),
+                      ctx.links.rpt_flag.end(), 1);
+        } else if (opts.rpt_links == 2) { // SOME
+            for (const auto& name : opts.rpt_link_names) {
+                int idx = ctx.link_names.find(name);
+                if (idx >= 0)
+                    ctx.links.rpt_flag[static_cast<std::size_t>(idx)] = 1;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Release excess vector capacity accumulated during parsing
+    // -------------------------------------------------------------------------
+    ctx.shrink_all_to_fit();
 }
 
 } /* namespace openswmm::input */

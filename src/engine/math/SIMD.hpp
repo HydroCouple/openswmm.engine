@@ -42,6 +42,20 @@
 #  endif
 #endif
 
+// ============================================================================
+// Cross-compiler vectorisation hint
+// ============================================================================
+
+#ifndef OPENSWMM_IVDEP
+#  if defined(_MSC_VER)
+#    define OPENSWMM_IVDEP __pragma(loop(ivdep))
+#  elif defined(__GNUC__) || defined(__clang__)
+#    define OPENSWMM_IVDEP _Pragma("GCC ivdep")
+#  else
+#    define OPENSWMM_IVDEP
+#  endif
+#endif
+
 #include <cstddef>
 #include <cmath>
 #include <algorithm>
@@ -51,18 +65,40 @@
 // Platform detection
 // ============================================================================
 
-#if defined(__AVX2__)
-#  include <immintrin.h>
-#  define OPENSWMM_SIMD_AVX2  1
-#  define OPENSWMM_SIMD_WIDTH 4   ///< Doubles per AVX2 register
-#elif defined(__ARM_NEON) || defined(__aarch64__)
-#  include <arm_neon.h>
-#  define OPENSWMM_SIMD_NEON  1
-#  define OPENSWMM_SIMD_WIDTH 2   ///< Doubles per NEON register
+#if !defined(OPENSWMM_SIMD_SCALAR)
+#  if defined(__AVX2__)
+#    include <immintrin.h>
+#    define OPENSWMM_SIMD_AVX2  1
+#    define OPENSWMM_SIMD_WIDTH 4   ///< Doubles per AVX2 register
+#  elif defined(__ARM_NEON) || defined(__aarch64__)
+#    include <arm_neon.h>
+#    define OPENSWMM_SIMD_NEON  1
+#    define OPENSWMM_SIMD_WIDTH 2   ///< Doubles per NEON register
+#  else
+#    define OPENSWMM_SIMD_SCALAR 1
+#    define OPENSWMM_SIMD_WIDTH 1   ///< Scalar fallback
+#  endif
 #else
-#  define OPENSWMM_SIMD_SCALAR 1
-#  define OPENSWMM_SIMD_WIDTH 1   ///< Scalar fallback
+#  if !defined(OPENSWMM_SIMD_WIDTH)
+#    define OPENSWMM_SIMD_WIDTH 1
+#  endif
 #endif
+
+// Exactly one SIMD backend must be active
+static_assert(
+    (0
+#if defined(OPENSWMM_SIMD_AVX2)
+     + 1
+#endif
+#if defined(OPENSWMM_SIMD_NEON)
+     + 1
+#endif
+#if defined(OPENSWMM_SIMD_SCALAR)
+     + 1
+#endif
+    ) == 1,
+    "Exactly one SIMD backend must be active (AVX2, NEON, or SCALAR)"
+);
 
 namespace openswmm::simd {
 
@@ -164,6 +200,17 @@ inline double min(const double* a, std::size_t n) noexcept {
         result = _mm_cvtsd_f64(m1);
     }
     for (std::size_t i = nv * 4; i < n; ++i) result = std::min(result, a[i]);
+#elif defined(OPENSWMM_SIMD_NEON)
+    const std::size_t nv = n / 2;
+    if (nv > 0) {
+        float64x2_t vmin = vld1q_f64(a);
+        for (std::size_t i = 1; i < nv; ++i) {
+            vmin = vminq_f64(vmin, vld1q_f64(a + i * 2));
+        }
+        // Horizontal reduction: min of 2 lanes
+        result = std::min(vgetq_lane_f64(vmin, 0), vgetq_lane_f64(vmin, 1));
+    }
+    for (std::size_t i = nv * 2; i < n; ++i) result = std::min(result, a[i]);
 #else
     for (std::size_t i = 1; i < n; ++i) result = std::min(result, a[i]);
 #endif
@@ -176,7 +223,34 @@ inline double min(const double* a, std::size_t n) noexcept {
 inline double max(const double* a, std::size_t n) noexcept {
     assert(n >= 1);
     double result = a[0];
+#if defined(OPENSWMM_SIMD_AVX2)
+    const std::size_t nv = n / 4;
+    if (nv > 0) {
+        __m256d vmax = _mm256_loadu_pd(a);
+        for (std::size_t i = 1; i < nv; ++i) {
+            vmax = _mm256_max_pd(vmax, _mm256_loadu_pd(a + i * 4));
+        }
+        // Horizontal reduction
+        __m128d hi  = _mm256_extractf128_pd(vmax, 1);
+        __m128d lo  = _mm256_castpd256_pd128(vmax);
+        __m128d m2  = _mm_max_pd(lo, hi);
+        __m128d m1  = _mm_max_pd(m2, _mm_shuffle_pd(m2, m2, 1));
+        result = _mm_cvtsd_f64(m1);
+    }
+    for (std::size_t i = nv * 4; i < n; ++i) result = std::max(result, a[i]);
+#elif defined(OPENSWMM_SIMD_NEON)
+    const std::size_t nv = n / 2;
+    if (nv > 0) {
+        float64x2_t vmax = vld1q_f64(a);
+        for (std::size_t i = 1; i < nv; ++i) {
+            vmax = vmaxq_f64(vmax, vld1q_f64(a + i * 2));
+        }
+        result = std::max(vgetq_lane_f64(vmax, 0), vgetq_lane_f64(vmax, 1));
+    }
+    for (std::size_t i = nv * 2; i < n; ++i) result = std::max(result, a[i]);
+#else
     for (std::size_t i = 1; i < n; ++i) result = std::max(result, a[i]);
+#endif
     return result;
 }
 
@@ -199,6 +273,18 @@ inline void clamp(double* a, double lo, double hi, std::size_t n) noexcept {
         _mm256_storeu_pd(a + i * 4, v);
     }
     for (std::size_t i = nv * 4; i < n; ++i) {
+        a[i] = std::max(lo, std::min(hi, a[i]));
+    }
+#elif defined(OPENSWMM_SIMD_NEON)
+    float64x2_t vlo = vdupq_n_f64(lo);
+    float64x2_t vhi = vdupq_n_f64(hi);
+    const std::size_t nv = n / 2;
+    for (std::size_t i = 0; i < nv; ++i) {
+        float64x2_t v = vld1q_f64(a + i * 2);
+        v = vmaxq_f64(vlo, vminq_f64(vhi, v));
+        vst1q_f64(a + i * 2, v);
+    }
+    for (std::size_t i = nv * 2; i < n; ++i) {
         a[i] = std::max(lo, std::min(hi, a[i]));
     }
 #else
@@ -242,6 +328,19 @@ inline double dot(
         result = _mm_cvtsd_f64(s1);
     }
     for (std::size_t i = nv * 4; i < n; ++i) result += a[i] * b[i];
+#elif defined(OPENSWMM_SIMD_NEON)
+    const std::size_t nv = n / 2;
+    if (nv > 0) {
+        float64x2_t vsum = vdupq_n_f64(0.0);
+        for (std::size_t i = 0; i < nv; ++i) {
+            float64x2_t va = vld1q_f64(a + i * 2);
+            float64x2_t vb = vld1q_f64(b + i * 2);
+            vsum = vfmaq_f64(vsum, va, vb);   // FMA: vsum += va * vb
+        }
+        // Horizontal sum: add both lanes
+        result = vgetq_lane_f64(vsum, 0) + vgetq_lane_f64(vsum, 1);
+    }
+    for (std::size_t i = nv * 2; i < n; ++i) result += a[i] * b[i];
 #else
     for (std::size_t i = 0; i < n; ++i) result += a[i] * b[i];
 #endif
@@ -265,9 +364,7 @@ inline void sqrt_array(
     double*       OPENSWMM_RESTRICT dst,
     std::size_t                n
 ) noexcept {
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC ivdep
-#endif
+    OPENSWMM_IVDEP
     for (std::size_t i = 0; i < n; ++i) dst[i] = std::sqrt(a[i]);
 }
 
@@ -279,9 +376,7 @@ inline void fabs_array(
     double*       OPENSWMM_RESTRICT dst,
     std::size_t                n
 ) noexcept {
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC ivdep
-#endif
+    OPENSWMM_IVDEP
     for (std::size_t i = 0; i < n; ++i) dst[i] = std::fabs(a[i]);
 }
 
@@ -295,9 +390,7 @@ inline void fma_array(
     double*       OPENSWMM_RESTRICT dst,
     std::size_t                n
 ) noexcept {
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC ivdep
-#endif
+    OPENSWMM_IVDEP
     for (std::size_t i = 0; i < n; ++i) dst[i] = a[i] * b[i] + c[i];
 }
 

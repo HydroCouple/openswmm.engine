@@ -117,6 +117,12 @@ public:
 
     std::vector<UnitHydParams> uh_params;
 
+    /// Compute rain processing interval for a UH (minimum limb duration, capped by wet_step).
+    static int getRainInterval(const UnitHydParams& uh, double wet_step);
+
+    /// Compute max past periods for a UH response given a rain interval.
+    static int getMaxPeriods(const UnitHydParams& uh, int response, int rainInterval);
+
 private:
     RDIIGroupSoA groups_;
     std::unordered_map<std::string, int> uh_name_to_idx_;
@@ -124,12 +130,6 @@ private:
 
     /// Compute UH ordinate at time t for response k, month m.
     double uhOrdinate(const UnitHydParams& uh, int month, int response, double t) const;
-
-    /// Compute rain processing interval for a UH (minimum limb duration, capped by wet_step).
-    static int getRainInterval(const UnitHydParams& uh, double wet_step);
-
-    /// Compute max past periods for a UH response given a rain interval.
-    static int getMaxPeriods(const UnitHydParams& uh, int response, int rainInterval);
 };
 
 } // namespace rdii

@@ -58,7 +58,13 @@ constexpr double EPSIL = 0.001;   ///< Newton convergence tolerance
 class KWSolver {
 public:
     /// Initialise for n conduit-type links. Call once after model is built.
+    /// Builds topological link order for upstream → downstream processing.
     void init(int n_conduits, const XSectGroups& groups);
+
+    /// Set topological link order (must be called after init, before first execute).
+    void setLinkOrder(const std::vector<int>& sorted_links) {
+        sorted_links_ = sorted_links;
+    }
 
     /**
      * @brief Route all conduits for one KW timestep.
@@ -75,6 +81,15 @@ public:
      */
     int execute(SimulationContext& ctx, double dt);
 
+    /// Topological link order (upstream → downstream)
+    std::vector<int> sorted_links_;
+
+    /// Per-conduit Newton solve. Returns iteration count.
+    int solveConduit(int idx, const XSectParams& xs,
+                     double q_full, double a_full, double s_full,
+                     double beta, double length, double dt,
+                     double loss_rate);
+
 private:
     int n_conduits_ = 0;
 
@@ -90,12 +105,6 @@ private:
     std::vector<double> q_out_;     ///< Computed outflow (cfs)
     std::vector<double> a_out_;     ///< Outlet area from Newton solve (ft2)
     std::vector<double> sf_in_;     ///< Section factor at inlet
-
-    /// Per-conduit Newton solve. Returns iteration count.
-    int solveConduit(int idx, const XSectParams& xs,
-                     double q_full, double a_full, double s_full,
-                     double beta, double length, double dt,
-                     double loss_rate);
 };
 
 } // namespace kinwave

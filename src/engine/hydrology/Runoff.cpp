@@ -199,8 +199,14 @@ void RunoffSolver::init(SimulationContext& ctx) {
                     ctx.subcatches.infil_p3[ui], ctx.subcatches.infil_p4[ui],
                     ctx.subcatches.infil_p5[ui], ctx.options);
                 break;
-            case 2: case 3:
+            case 2:
                 infil_model_ = InfilModel::GREEN_AMPT;
+                infil::grnampt_init(grnampt_states_[ui],
+                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
+                    ctx.subcatches.infil_p3[ui], ctx.options);
+                break;
+            case 3:
+                infil_model_ = InfilModel::MOD_GREEN_AMPT;
                 infil::grnampt_init(grnampt_states_[ui],
                     ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
                     ctx.subcatches.infil_p3[ui], ctx.options);
@@ -219,7 +225,7 @@ void RunoffSolver::init(SimulationContext& ctx) {
 // ============================================================================
 
 void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_in,
-                           double infil_factor, double recovery_factor) {
+                           double infil_factor, double recovery_factor, int month) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
 
@@ -297,6 +303,19 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 //   → horton_getInfil(state, tStep, precip + runon, depth)
                 // subarea->inflow here is the runon from other subareas (0 for OUTLET routing).
                 double runon = runon_in;  // runon from inter-subarea routing
+                // Per-subcatchment INFIL pattern override
+                // (matching legacy infil_setInfilFactor per subcatchment)
+                double local_infil = infil_factor;
+                if (month >= 0 && ui < ctx.subcatch_infil_pattern.size()) {
+                    int pi = ctx.subcatch_infil_pattern[ui];
+                    if (pi >= 0 && static_cast<std::size_t>(pi) < ctx.patterns.factors.size()) {
+                        const auto& facs = ctx.patterns.factors[static_cast<std::size_t>(pi)];
+                        auto umon = static_cast<std::size_t>(month);
+                        if (umon < facs.size())
+                            local_infil = facs[umon];
+                    }
+                }
+
                 // Apply monthly infiltration and recovery factors
                 // (matching legacy infil.c: InfilFactor scales f0/fmin/Ks,
                 //  Evap.recoveryFactor scales regen/kr)
@@ -305,8 +324,8 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                     case InfilModel::MOD_HORTON: {
                         auto& hs = horton_states_[ui];
                         double save_f0 = hs.f0, save_fmin = hs.fmin, save_regen = hs.regen;
-                        hs.f0   *= infil_factor;
-                        hs.fmin *= infil_factor;
+                        hs.f0   *= local_infil;
+                        hs.fmin *= local_infil;
                         hs.regen *= recovery_factor;
                         infil = (infil_model_ == InfilModel::HORTON)
                             ? infil::horton_getInfil(hs, precip + runon, depth, dt)
@@ -314,15 +333,17 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                         hs.f0 = save_f0; hs.fmin = save_fmin; hs.regen = save_regen;
                         break;
                     }
-                    case InfilModel::GREEN_AMPT: {
+                    case InfilModel::GREEN_AMPT:
+                    case InfilModel::MOD_GREEN_AMPT: {
                         auto& gs = grnampt_states_[ui];
                         double save_Ks = gs.Ks;
-                        gs.Ks *= infil_factor;
+                        gs.Ks *= local_infil;
                         // Recovery factor applied to Lu-based recovery rate
                         // (legacy infil.c line 708: kr = lu/90000 * recoveryFactor)
                         double save_Lu = gs.Lu;
                         gs.Lu *= recovery_factor;
-                        infil = infil::grnampt_getInfil(gs, precip + runon, depth, dt);
+                        infil = infil::grnampt_getInfil(gs, precip + runon, depth, dt,
+                                                         infil_model_);
                         gs.Ks = save_Ks; gs.Lu = save_Lu;
                         break;
                     }
@@ -456,10 +477,9 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         ctx.subcatches.stat_imperv_vol[ui] += (runoff0 * area_i0 + runoff1 * area_i1) * dt;
         ctx.subcatches.stat_perv_vol[ui]   += runoff_p * area_pv * dt;
 
-        // Route runoff to outlet node
-        int out_node = ctx.subcatches.outlet_node[ui];
-        if (out_node >= 0 && out_node < ctx.n_nodes())
-            ctx.nodes.lat_flow[static_cast<std::size_t>(out_node)] += newRunoff;
+        // Runoff is stored in subcatches.runoff[i]; routing picks it up via
+        // interpolateRunoffToNodes() → nodes.runoff_inflow[] → assembleLateralInflows().
+        (void)0;
     }
 }
 

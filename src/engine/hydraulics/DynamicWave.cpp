@@ -68,7 +68,8 @@ using constants::FUDGE;
 // ============================================================================
 
 double DWSolver::getCrownCutoff() const {
-    if (surcharge_method == SurchargeMethod::SLOT)
+    if (surcharge_method == SurchargeMethod::SLOT ||
+        surcharge_method == SurchargeMethod::DYNAMIC_SLOT)
         return SLOT_CROWN_CUTOFF;
     return EXTRAN_CROWN_CUTOFF;
 }
@@ -138,6 +139,179 @@ double DWSolver::getSlotArea(double y, double y_full, double a_full,
 double DWSolver::getSlotHydRad(double y, double y_full, double r_full) const {
     if (y >= y_full) return r_full;
     return r_full;  // caller should use batch hrad for y < y_full
+}
+
+// ============================================================================
+// Dynamic Preissmann Slot (DPS) — geometry override
+// Sharior et al. (2023) Eqs. 14, 15, 19
+// ============================================================================
+
+void DWSolver::applyDPSGeometry(SimulationContext& ctx) {
+    auto& links = ctx.links;
+    double g = GRAVITY;
+    double c2 = dps_config_.c_pT_sq;
+
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        int j = conduit_idx_[static_cast<std::size_t>(ci)];
+        auto uj = static_cast<std::size_t>(j);
+        auto& dps = dps_state_[static_cast<std::size_t>(ci)];
+
+        if (is_open_[uj]) continue;
+
+        double yf = links.xsect_y_full[uj];
+        double af = links.xsect_a_full[uj];
+        double rf = links.xsect_r_full[uj];
+        double yMid = depth_mid_[uj];
+
+        if (yMid > yf && af > 0.0) {
+            // Eq. 14: Delta_As from volume excess above full conduit + prior slot
+            // In the link-node solver, area_mid approximates the element cross-section.
+            // Delta_As = (A_computed - A_full) - As^n  (area excess beyond full + prior slot)
+            double deltaAs = (area_mid_[uj] - af) - dps.As;
+
+            // Eq. 19: Delta_hs = c_pT^2 * Delta_As / (g * A_C * P^2)
+            double P2 = dps.P * dps.P;
+            double deltaHs = (P2 > 0.0) ? (c2 * deltaAs) / (g * af * P2) : 0.0;
+
+            dps.As += deltaAs;
+            dps.hs += deltaHs;
+
+            // Hysteresis: if hs <= 0 but As > 0, treat as full-but-unpressurized
+            // (prevents rapid oscillation in and out of surcharge)
+            if (dps.hs < 0.0 && dps.As > 0.0) {
+                dps.hs = 0.0;
+            }
+
+            // If fully depressurized (As <= 0), reset slot state
+            if (dps.As <= 0.0) {
+                dps.As = 0.0;
+                dps.hs = 0.0;
+            }
+
+            // Override areas with effective A = A_C + As (total including slot)
+            double A_total = af + std::max(dps.As, 0.0);
+            area_mid_[uj] = A_total;
+            area1_[uj] = (depth1_[uj] > yf) ? A_total : area1_[uj];
+            area2_[uj] = (depth2_[uj] > yf) ? A_total : area2_[uj];
+
+            // Effective slot width for surface area continuity (Eq. 20, diagnostic)
+            if (dps.hs > 0.0 && std::abs(deltaHs) > 1e-30) {
+                width_mid_[uj] = std::abs(deltaAs / deltaHs);
+            } else if (dps.hs > 0.0 && dps.As > 0.0) {
+                // Fallback: width from total slot area / total surcharge head
+                width_mid_[uj] = dps.As / dps.hs;
+            }
+
+            // Friction excludes slot: hydraulic radius stays at full
+            hrad_mid_[uj] = rf;
+        } else if (!dps.surcharged && dps.As <= 0.0) {
+            // Not surcharged and no residual slot area — no override needed
+        }
+    }
+}
+
+// ============================================================================
+// DPS post-Picard state update — P decay, surcharge tracking
+// Sharior et al. (2023) Eqs. 22, 23
+// ============================================================================
+
+void DWSolver::updateDPSState(SimulationContext& ctx, double dt) {
+    auto& links = ctx.links;
+    sim_time_ += dt;
+
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        int j = conduit_idx_[static_cast<std::size_t>(ci)];
+        auto uj = static_cast<std::size_t>(j);
+        auto& dps = dps_state_[static_cast<std::size_t>(ci)];
+
+        if (is_open_[uj]) continue;
+
+        double yf = links.xsect_y_full[uj];
+        bool was_surcharged = dps.surcharged;
+        bool now_surcharged = (depth_mid_[uj] > yf && dps.As > 0.0);
+
+        // Track surcharge onset time
+        if (now_surcharged && !was_surcharged) {
+            dps.t_s = sim_time_;
+        }
+
+        // Eq. 22: P_hat(t - t_s) = (P_hat_0 - 1) * exp(-10*(t - t_s)/r) + 1
+        if (now_surcharged) {
+            double dt_surcharge = sim_time_ - dps.t_s;
+            dps.P_hat = (dps.P_hat_0 - 1.0)
+                       * std::exp(-10.0 * dt_surcharge / dps_config_.r) + 1.0;
+        } else {
+            // Reset to initial P for unpressurized conduits (Eq. 23)
+            dps.P_hat = dps.P_hat_0;
+            dps.As = 0.0;
+            dps.hs = 0.0;
+        }
+
+        dps.surcharged = now_surcharged;
+    }
+
+    // Spatial smoothing of P across node boundaries
+    spatialSmoothP(ctx);
+}
+
+// ============================================================================
+// DPS spatial smoothing — element → face → element interpolation
+// Adapted from Sharior et al. (2023) for link-node topology
+// ============================================================================
+
+void DWSolver::spatialSmoothP(const SimulationContext& ctx) {
+    auto& links = ctx.links;
+
+    // Step 1: Accumulate P_hat at nodes from connecting conduits
+    auto un = static_cast<std::size_t>(n_nodes_);
+    thread_local std::vector<double> node_P_sum;
+    thread_local std::vector<int>    node_P_count;
+    node_P_sum.assign(un, 0.0);
+    node_P_count.assign(un, 0);
+
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        int j = conduit_idx_[static_cast<std::size_t>(ci)];
+        auto uj = static_cast<std::size_t>(j);
+        auto& dps = dps_state_[static_cast<std::size_t>(ci)];
+
+        if (is_open_[uj]) continue;
+
+        int n1 = links.node1[uj];
+        int n2 = links.node2[uj];
+        if (n1 >= 0 && n1 < n_nodes_) {
+            node_P_sum[static_cast<std::size_t>(n1)] += dps.P_hat;
+            node_P_count[static_cast<std::size_t>(n1)]++;
+        }
+        if (n2 >= 0 && n2 < n_nodes_) {
+            node_P_sum[static_cast<std::size_t>(n2)] += dps.P_hat;
+            node_P_count[static_cast<std::size_t>(n2)]++;
+        }
+    }
+
+    // Step 2: Compute smoothed P for each conduit from face averages
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        int j = conduit_idx_[static_cast<std::size_t>(ci)];
+        auto uj = static_cast<std::size_t>(j);
+        auto& dps = dps_state_[static_cast<std::size_t>(ci)];
+
+        if (is_open_[uj]) continue;
+
+        int n1 = links.node1[uj];
+        int n2 = links.node2[uj];
+
+        double P_face1 = dps.P_hat;
+        double P_face2 = dps.P_hat;
+        if (n1 >= 0 && n1 < n_nodes_ && node_P_count[static_cast<std::size_t>(n1)] > 0)
+            P_face1 = node_P_sum[static_cast<std::size_t>(n1)]
+                     / node_P_count[static_cast<std::size_t>(n1)];
+        if (n2 >= 0 && n2 < n_nodes_ && node_P_count[static_cast<std::size_t>(n2)] > 0)
+            P_face2 = node_P_sum[static_cast<std::size_t>(n2)]
+                     / node_P_count[static_cast<std::size_t>(n2)];
+
+        // Linear smoothing: average of upstream and downstream face values
+        dps.P = 0.5 * (P_face1 + P_face2);
+        dps.P = std::max(dps.P, 1.0);  // P >= 1 always
+    }
 }
 
 // ============================================================================
@@ -230,6 +404,48 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     aa_y_prev_.resize(un, 0.0);
     aa_g_prev_.resize(un, 0.0);
     aa_r_prev_.resize(un, 0.0);
+
+    // Dynamic Preissmann Slot (DPS) initialization
+    if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
+        // Convert c_pT from m/s to ft/s (internal units)
+        dps_config_.c_pT   = ctx.options.dps_target_celerity * 3.28084;
+        dps_config_.alpha   = std::max(ctx.options.dps_alpha, 2.0);
+        dps_config_.r       = std::max(ctx.options.dps_decay_time, 0.001);
+        dps_config_.c_pT_sq = dps_config_.c_pT * dps_config_.c_pT;
+
+        dps_state_.resize(static_cast<std::size_t>(n_conduits_));
+        sim_time_ = 0.0;
+
+        for (int ci = 0; ci < n_conduits_; ++ci) {
+            int j = conduit_idx_[static_cast<std::size_t>(ci)];
+            auto uj = static_cast<std::size_t>(j);
+            auto& dps = dps_state_[static_cast<std::size_t>(ci)];
+
+            // Skip open shapes — no slot needed
+            if (is_open_[uj]) {
+                dps.P_hat_0 = 1.0;
+                dps.P = dps.P_hat = 1.0;
+                continue;
+            }
+
+            // Compute gravity-wave celerity at full depth:
+            // c_g = sqrt(g * hydraulic_depth) where hydraulic_depth = A_full / T_w
+            double af = links.xsect_a_full[uj];
+            double tw = links.xsect_w_max[uj];
+            double l_D = (tw > 0.0) ? af / tw : 0.0;
+            double c_g = (l_D > 0.0) ? std::sqrt(GRAVITY * l_D) : 1.0;
+
+            // Initial Preissmann Number: P_hat_0 = c_pT / (alpha * c_g) (Eq. 23)
+            dps.P_hat_0 = dps_config_.c_pT / (dps_config_.alpha * c_g);
+            dps.P_hat_0 = std::max(dps.P_hat_0, 1.0);
+
+            dps.P = dps.P_hat = dps.P_hat_0;
+            dps.As = 0.0;
+            dps.hs = 0.0;
+            dps.surcharged = false;
+            dps.t_s = 0.0;
+        }
+    }
 }
 
 // ============================================================================
@@ -308,6 +524,11 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
             // skipped in the next iteration (matching legacy findBypassedLinks)
             findBypassedLinks(ctx);
         }
+    }
+
+    // Post-Picard: update DPS temporal state (P decay, surcharge tracking)
+    if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
+        updateDPSState(ctx, dt);
     }
 
     return steps;
@@ -673,32 +894,38 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     // patched inline in STEP C. No redundant batch recomputation needed.
 
     // ---- STEP E: Preissmann slot overrides (conduits only) ----
-    for (int ci = 0; ci < n_conduits_; ++ci) {
-        int j = conduit_idx_[static_cast<std::size_t>(ci)];
-        auto uj = static_cast<std::size_t>(j);
+    if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
+        // Dynamic Preissmann Slot: area-based transient storage (Sharior et al. 2023)
+        applyDPSGeometry(ctx);
+    } else {
+        // Static slot (Sjoberg formula) or EXTRAN (no slot)
+        for (int ci = 0; ci < n_conduits_; ++ci) {
+            int j = conduit_idx_[static_cast<std::size_t>(ci)];
+            auto uj = static_cast<std::size_t>(j);
 
-        double yf = links.xsect_y_full[uj];
-        double af = links.xsect_a_full[uj];
-        double rf = links.xsect_r_full[uj];
-        double wm = links.xsect_w_max[uj];
-        XsectShape shape = links.xsect_shape[uj];
+            double yf = links.xsect_y_full[uj];
+            double af = links.xsect_a_full[uj];
+            double rf = links.xsect_r_full[uj];
+            double wm = links.xsect_w_max[uj];
+            XsectShape shape = links.xsect_shape[uj];
 
-        if (depth1_[uj] > yf) {
-            double wSlot = getSlotWidth(depth1_[uj], yf, wm, shape);
-            if (wSlot > 0.0) area1_[uj] = af + (depth1_[uj] - yf) * wSlot;
-        }
-        if (depth2_[uj] > yf) {
-            double wSlot = getSlotWidth(depth2_[uj], yf, wm, shape);
-            if (wSlot > 0.0) area2_[uj] = af + (depth2_[uj] - yf) * wSlot;
-        }
-        double yMid = depth_mid_[uj];
-        if (yMid > yf) {
-            double wSlot = getSlotWidth(yMid, yf, wm, shape);
-            if (wSlot > 0.0) {
-                area_mid_[uj] = af + (yMid - yf) * wSlot;
-                width_mid_[uj] = wSlot;
+            if (depth1_[uj] > yf) {
+                double wSlot = getSlotWidth(depth1_[uj], yf, wm, shape);
+                if (wSlot > 0.0) area1_[uj] = af + (depth1_[uj] - yf) * wSlot;
             }
-            hrad_mid_[uj] = rf;
+            if (depth2_[uj] > yf) {
+                double wSlot = getSlotWidth(depth2_[uj], yf, wm, shape);
+                if (wSlot > 0.0) area2_[uj] = af + (depth2_[uj] - yf) * wSlot;
+            }
+            double yMid = depth_mid_[uj];
+            if (yMid > yf) {
+                double wSlot = getSlotWidth(yMid, yf, wm, shape);
+                if (wSlot > 0.0) {
+                    area_mid_[uj] = af + (yMid - yf) * wSlot;
+                    width_mid_[uj] = wSlot;
+                }
+                hrad_mid_[uj] = rf;
+            }
         }
     }
 
@@ -1494,7 +1721,7 @@ double DWSolver::getRoutingStep(const SimulationContext& ctx,
     // Link-based CFL (matching legacy getLinkStep with CourantFactor per-link)
     for (int j = 0; j < n_links_; ++j) {
         double t = getLinkStep(ctx, j);
-        if (t <= 0.0) continue;
+        if (t <= 0.0 || t > 1.0e9) continue;
         // Apply Courant factor per-link (matching legacy dynwave.c line 856)
         t *= courant_factor;
         dt_min = std::min(dt_min, t);

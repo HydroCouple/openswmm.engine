@@ -568,7 +568,7 @@ discussed in later chapters.
 | **Process** | **Variable** | **Description** | **Initial Value** |
 |-------------|--------------|-----------------|-------------------|
 | **Runoff** | *d* | Depth of runoff on a subcatchment surface | 0 |
-| **Infiltration*** | *t*<sub>*p*</sub> | Equivalent time on the Horton curve | 0 |
+| **Infiltration** | *t*<sub>*p*</sub> | Equivalent time on the Horton curve | 0 |
 | | *F*<sub>*e*</sub> | Cumulative excess infiltration volume | 0 |
 | | *F*<sub>*u*</sub> | Upper zone moisture content | 0 |
 | | *T* | Time until the next rainfall event | 0 |

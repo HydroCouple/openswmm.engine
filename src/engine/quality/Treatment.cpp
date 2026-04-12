@@ -89,7 +89,9 @@ static const std::unordered_map<std::string, TreatVar> var_map = {
 
 /// Tokenize an expression string into a flat token list (infix order).
 /// Variables and functions are recognized by name lookup.
-static std::vector<Token> tokenize(const std::string& s) {
+/// If pollut_lookup is non-null, R_xxx and C_xxx are resolved to pollutant refs.
+static std::vector<Token> tokenize(const std::string& s,
+                                    int (*pollut_lookup)(const std::string&) = nullptr) {
     std::vector<Token> tokens;
     size_t i = 0;
     while (i < s.size()) {
@@ -146,10 +148,22 @@ static std::vector<Token> tokenize(const std::string& s) {
                 t.type = TokenType::VARIABLE;
                 t.var  = vit->second;
                 tokens.push_back(t);
+            } else if (pollut_lookup && upper.size() > 2 && upper[1] == '_') {
+                // Co-treatment: R_pollutant or C_pollutant reference
+                char prefix = upper[0];
+                std::string pollut_name = word.substr(2);
+                int pi = pollut_lookup(pollut_name);
+                if (pi >= 0) {
+                    Token t;
+                    t.type = TokenType::VARIABLE;
+                    t.var = (prefix == 'R') ? TreatVar::R_POLLUT : TreatVar::C_POLLUT;
+                    t.pollut_ref = pi;
+                    tokens.push_back(t);
+                } else {
+                    return {};  // unknown pollutant name
+                }
             } else {
-                // Unknown identifier — treat as parse error downstream
-                // but for resilience, push as variable C with value 0
-                return {};  // signal error with empty token list
+                return {};  // unknown identifier
             }
             continue;
         }
@@ -324,13 +338,15 @@ double evaluate(const TreatExpr& expr, double c, double dt,
 
             case TokenType::VARIABLE:
                 switch (tok.var) {
-                    case TreatVar::C:   stk.push(c);   break;
-                    case TreatVar::R:   stk.push(0.0); break;
-                    case TreatVar::DT:  stk.push(dt);  break;
-                    case TreatVar::HRT: stk.push(hrt); break;
-                    case TreatVar::Q:   stk.push(q);   break;
-                    case TreatVar::V:   stk.push(v);   break;
-                    case TreatVar::D:   stk.push(d);   break;
+                    case TreatVar::C:        stk.push(c);   break;
+                    case TreatVar::R:        stk.push(0.0); break;
+                    case TreatVar::DT:       stk.push(dt);  break;
+                    case TreatVar::HRT:      stk.push(hrt); break;
+                    case TreatVar::Q:        stk.push(q);   break;
+                    case TreatVar::V:        stk.push(v);   break;
+                    case TreatVar::D:        stk.push(d);   break;
+                    case TreatVar::C_POLLUT: stk.push(0.0); break;
+                    case TreatVar::R_POLLUT: stk.push(0.0); break;
                 }
                 break;
 
@@ -443,6 +459,136 @@ double applyTreatment(const TreatExpr& expr, double c_in, double dt,
         result = std::min(c_in, result);
         return result;
     }
+}
+
+// ============================================================================
+// Extended parse with pollutant name resolution (co-treatment)
+// ============================================================================
+
+int parse(const std::string& expr_str, TreatExpr& result,
+          int (*pollut_lookup)(const std::string& name)) {
+    result.tokens.clear();
+    result.pollutant_idx = -1;
+    result.is_removal = false;
+
+    if (expr_str.empty()) return -1;
+
+    // Determine treatment type from first non-space character
+    size_t eq = expr_str.find('=');
+    if (eq == std::string::npos || eq == 0) return -1;
+
+    char lhs = static_cast<char>(std::toupper(static_cast<unsigned char>(expr_str[0])));
+    if (lhs == 'R') result.is_removal = true;
+    else if (lhs == 'C') result.is_removal = false;
+    else return -1;
+
+    std::string rhs = expr_str.substr(eq + 1);
+
+    // Tokenize with pollutant lookup
+    auto tokens = tokenize(rhs, pollut_lookup);
+    if (tokens.empty() && !rhs.empty()) return -1;
+
+    // Convert infix to postfix via shunting-yard
+    if (shuntingYard(tokens, result.tokens) != 0) return -1;
+
+    return 0;
+}
+
+// ============================================================================
+// Extended evaluate with co-treatment support
+// ============================================================================
+
+double evaluate(const TreatExpr& expr, double c, double dt,
+                double hrt, double q, double v, double d,
+                const double* cin, const double* removal, int n_pollut) {
+    std::stack<double> stk;
+
+    for (const auto& tok : expr.tokens) {
+        switch (tok.type) {
+            case TokenType::NUMBER:
+                stk.push(tok.value);
+                break;
+
+            case TokenType::VARIABLE:
+                switch (tok.var) {
+                    case TreatVar::C:     stk.push(c);   break;
+                    case TreatVar::R:     stk.push(0.0); break;
+                    case TreatVar::DT:    stk.push(dt);  break;
+                    case TreatVar::HRT:   stk.push(hrt); break;
+                    case TreatVar::Q:     stk.push(q);   break;
+                    case TreatVar::V:     stk.push(v);   break;
+                    case TreatVar::D:     stk.push(d);   break;
+                    case TreatVar::C_POLLUT:
+                        // Concentration of another pollutant (from inflow)
+                        if (cin && tok.pollut_ref >= 0 && tok.pollut_ref < n_pollut)
+                            stk.push(cin[tok.pollut_ref]);
+                        else
+                            stk.push(0.0);
+                        break;
+                    case TreatVar::R_POLLUT:
+                        // Removal of another pollutant (co-treatment)
+                        if (removal && tok.pollut_ref >= 0 && tok.pollut_ref < n_pollut)
+                            stk.push(std::max(0.0, removal[tok.pollut_ref]));
+                        else
+                            stk.push(0.0);
+                        break;
+                }
+                break;
+
+            case TokenType::NEG: {
+                if (stk.empty()) return 0.0;
+                double a = stk.top(); stk.pop();
+                stk.push(-a);
+                break;
+            }
+
+            case TokenType::ADD: case TokenType::SUB:
+            case TokenType::MUL: case TokenType::DIV:
+            case TokenType::POW: {
+                if (stk.size() < 2) return 0.0;
+                double b = stk.top(); stk.pop();
+                double a = stk.top(); stk.pop();
+                switch (tok.type) {
+                    case TokenType::ADD: stk.push(a + b); break;
+                    case TokenType::SUB: stk.push(a - b); break;
+                    case TokenType::MUL: stk.push(a * b); break;
+                    case TokenType::DIV: stk.push(b != 0.0 ? a / b : 0.0); break;
+                    case TokenType::POW: stk.push(std::pow(a, b)); break;
+                    default: break;
+                }
+                break;
+            }
+
+            case TokenType::FUNC_EXP: case TokenType::FUNC_LOG:
+            case TokenType::FUNC_SQRT: case TokenType::FUNC_ABS:
+            case TokenType::FUNC_SGN: case TokenType::FUNC_STEP: {
+                if (stk.empty()) return 0.0;
+                double a = stk.top(); stk.pop();
+                switch (tok.type) {
+                    case TokenType::FUNC_EXP:  stk.push(std::exp(a)); break;
+                    case TokenType::FUNC_LOG:  stk.push(a > 0 ? std::log(a) : 0.0); break;
+                    case TokenType::FUNC_SQRT: stk.push(a >= 0 ? std::sqrt(a) : 0.0); break;
+                    case TokenType::FUNC_ABS:  stk.push(std::abs(a)); break;
+                    case TokenType::FUNC_SGN:  stk.push(a > 0 ? 1.0 : (a < 0 ? -1.0 : 0.0)); break;
+                    case TokenType::FUNC_STEP: stk.push(a > 0 ? 1.0 : 0.0); break;
+                    default: break;
+                }
+                break;
+            }
+
+            case TokenType::FUNC_MIN: case TokenType::FUNC_MAX: {
+                if (stk.size() < 2) return 0.0;
+                double b = stk.top(); stk.pop();
+                double a = stk.top(); stk.pop();
+                stk.push(tok.type == TokenType::FUNC_MIN ? std::min(a, b) : std::max(a, b));
+                break;
+            }
+
+            default: break;
+        }
+    }
+
+    return stk.empty() ? 0.0 : stk.top();
 }
 
 } // namespace treatment

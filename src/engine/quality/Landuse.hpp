@@ -135,6 +135,25 @@ public:
                         const double* runoff, const double* area,
                         int n_subcatch);
 
+    /**
+     * @brief Apply co-pollutant washoff fractions.
+     *
+     * @details After primary washoff is computed, for each pollutant p with
+     *          a co-pollutant k: washoff[p] += co_frac[p] * washoff[k].
+     *          Matches legacy landuse_getCoPollutLoad().
+     *
+     * @param sq           Surface quality SoA (washoff_conc modified in-place).
+     * @param runoff       Runoff rate per subcatchment (for mass rate conversion).
+     * @param area         Subcatchment area.
+     * @param co_pollut    Co-pollutant index per pollutant (-1 = none).
+     * @param co_frac      Co-pollutant fraction per pollutant.
+     * @param n_subcatch   Number of subcatchments.
+     */
+    void applyCoPollutant(SurfaceQualitySoA& sq,
+                          const double* runoff, const double* area,
+                          const int* co_pollut, const double* co_frac,
+                          int n_subcatch);
+
     /// Per (landuse × pollutant) parameters. Index: [lu * n_pollutants + p]
     std::vector<BuildupParams> buildup_params;
     std::vector<WashoffParams> washoff_params;

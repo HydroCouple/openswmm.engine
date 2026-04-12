@@ -221,7 +221,7 @@ SWMM_ENGINE_API int swmm_node_set_quality(SWMM_Engine engine, int node_idx, int 
     CHECK_INDEX(node_idx >= 0 && node_idx < ctx.n_nodes());
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
     const auto np = static_cast<std::size_t>(ctx.n_pollutants());
-    ctx.pollutants.node_conc[static_cast<std::size_t>(node_idx) * np + static_cast<std::size_t>(pollut_idx)] = conc;
+    ctx.nodes.conc[static_cast<std::size_t>(node_idx) * np + static_cast<std::size_t>(pollut_idx)] = conc;
     return SWMM_OK;
 }
 
@@ -231,7 +231,7 @@ SWMM_ENGINE_API int swmm_link_set_quality(SWMM_Engine engine, int link_idx, int 
     CHECK_INDEX(link_idx >= 0 && link_idx < ctx.n_links());
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
     const auto np = static_cast<std::size_t>(ctx.n_pollutants());
-    ctx.pollutants.link_conc[static_cast<std::size_t>(link_idx) * np + static_cast<std::size_t>(pollut_idx)] = conc;
+    ctx.links.conc[static_cast<std::size_t>(link_idx) * np + static_cast<std::size_t>(pollut_idx)] = conc;
     return SWMM_OK;
 }
 

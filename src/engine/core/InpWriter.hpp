@@ -28,10 +28,12 @@ namespace inp_writer {
  * @brief Write the full model to a SWMM .inp file.
  *
  * @details Sections written (in order):
- *   [TITLE], [OPTIONS], [RAINGAGES], [SUBCATCHMENTS], [SUBAREAS],
+ *   [TITLE], [OPTIONS],
+ *   [EVAPORATION], [TEMPERATURE], [SNOWPACKS], [ADJUSTMENTS],
+ *   [RAINGAGES], [SUBCATCHMENTS], [SUBAREAS],
  *   [INFILTRATION], [JUNCTIONS], [OUTFALLS], [STORAGE], [DIVIDERS],
  *   [CONDUITS], [PUMPS], [ORIFICES], [WEIRS], [OUTLETS],
- *   [XSECTIONS], [TRANSECTS], [LOSSES], [CONTROLS],
+ *   [XSECTIONS], [TRANSECTS], [LOSSES], [CONTROLS], [REPORT],
  *   [INFLOWS], [DWF], [RDII],
  *   [POLLUTANTS], [LANDUSES], [BUILDUP], [WASHOFF], [TREATMENT],
  *   [TIMESERIES], [CURVES], [PATTERNS],

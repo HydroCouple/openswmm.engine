@@ -169,6 +169,11 @@ void handle_evaporation(SimulationContext& ctx, const std::vector<std::string>& 
         }
         else if (key == "FILE") {
             ctx.options.evap_type = 4;
+            // Parse optional pan coefficients: FILE pc1 pc2 ... pc12
+            if (tok.size() >= 13) {
+                for (int i = 0; i < 12; ++i)
+                    ctx.options.pan_coeff[i] = to_double(tok[static_cast<std::size_t>(1 + i)]);
+            }
         }
         else if (key == "RECOVERY" && tok.size() >= 2) {
             ctx.options.evap_recovery_pat = tok[1];
@@ -417,9 +422,22 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
             for (std::size_t i = 0; i < 3 && (i + 2) < tok.size(); ++i)
                 ctx.lid_controls.drainmat[idx][i] = to_double(tok[2 + i]);
         }
+        else if (layer == "REMOVALS") {
+            // Format: LID_ID REMOVALS  PollutName1  %Removal1  PollutName2  %Removal2 ...
+            auto uidx = static_cast<std::size_t>(idx);
+            if (ctx.lid_controls.removals.size() <= uidx)
+                ctx.lid_controls.removals.resize(uidx + 1);
+            for (std::size_t i = 2; i + 1 < tok.size(); i += 2) {
+                int pi = ctx.pollutant_names.find(tok[i]);
+                if (pi >= 0) {
+                    double frac = to_double(tok[i + 1]) / 100.0;
+                    frac = std::max(0.0, std::min(1.0, frac));
+                    ctx.lid_controls.removals[uidx].push_back({pi, frac});
+                }
+            }
+        }
         else {
             // Unknown layer or it's actually the type code with params
-            // (e.g., "LID1 BC" when BC is the type)
             ctx.lid_controls.lid_type[idx] = layer;
         }
     }

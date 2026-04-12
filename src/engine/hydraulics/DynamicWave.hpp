@@ -59,6 +59,30 @@ using constants::FUDGE;
 using constants::MIN_SURFAREA;
 
 // ============================================================================
+// Dynamic Preissmann Slot (DPS) configuration and per-link state
+// Sharior, Hodges & Vasconcelos (2023), J. Hydraul. Eng. 149(11)
+// ============================================================================
+
+/// DPS configuration parameters (derived from SimulationOptions at init).
+struct DPSConfig {
+    double c_pT   = 25.0;    ///< Target pressure celerity (ft/s, internal units)
+    double alpha   = 3.0;    ///< Surcharge shock parameter (>= 2)
+    double r       = 0.5;    ///< Decay time scale for P → 1 (seconds)
+    double c_pT_sq = 625.0;  ///< c_pT^2 (pre-computed)
+};
+
+/// Per-conduit DPS state (persistent across timesteps).
+struct DPSLinkState {
+    double As       = 0.0;    ///< Accumulated slot area (ft²)
+    double hs       = 0.0;    ///< Current surcharge head (ft)
+    double P        = 1.0;    ///< Current Preissmann Number (smoothed)
+    double P_hat    = 1.0;    ///< Provisional Preissmann Number (before smoothing)
+    double P_hat_0  = 1.0;    ///< Initial P for unpressurized conduit
+    double t_s      = 0.0;    ///< Time when element last became surcharged (sec)
+    bool   surcharged = false; ///< Currently surcharged flag
+};
+
+// ============================================================================
 // Per-node extended state for DW iterations
 // ============================================================================
 
@@ -264,6 +288,20 @@ private:
     double getSlotArea(double y, double y_full, double a_full, double slot_width) const;
     double getSlotHydRad(double y, double y_full, double r_full) const;
     double getCrownCutoff() const;
+
+    // Dynamic Preissmann Slot (DPS) state and methods
+    DPSConfig dps_config_;
+    std::vector<DPSLinkState> dps_state_;  ///< Per-conduit DPS state [n_conduits_]
+    double sim_time_ = 0.0;               ///< Accumulated simulation time (seconds)
+
+    /// Apply DPS geometry overrides for surcharged conduits (replaces static slot in STEP E).
+    void applyDPSGeometry(SimulationContext& ctx);
+
+    /// Update DPS temporal state after Picard convergence (P decay, t_s tracking).
+    void updateDPSState(SimulationContext& ctx, double dt);
+
+    /// Spatial smoothing of Preissmann Number across node boundaries.
+    void spatialSmoothP(const SimulationContext& ctx);
 };
 
 } // namespace dynwave

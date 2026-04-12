@@ -35,12 +35,35 @@
 #endif
 
 #include <vector>
+#include "../math/MathExpr.hpp"
 
 namespace openswmm {
 
 struct SimulationContext;
 
 namespace groundwater {
+
+/// GW expression variable indices (matching legacy GWvariables enum).
+enum GWVar : int {
+    GWV_HGW   = 0,  ///< Water table height
+    GWV_HSW   = 1,  ///< Surface water head
+    GWV_HCB   = 2,  ///< Channel bottom height (h_star)
+    GWV_HGS   = 3,  ///< Ground surface height (total_depth)
+    GWV_KS    = 4,  ///< Saturated conductivity
+    GWV_K     = 5,  ///< Unsaturated conductivity
+    GWV_THETA = 6,  ///< Upper zone moisture content
+    GWV_PHI   = 7,  ///< Porosity
+    GWV_FI    = 8,  ///< Surface infiltration rate
+    GWV_FU    = 9,  ///< Upper zone percolation rate
+    GWV_A     = 10, ///< Subcatchment area
+    GWV_MAX   = 11
+};
+
+/// Variable name table for bind_variables().
+static const char* GW_VAR_NAMES[] = {
+    "HGW", "HSW", "HCB", "HGS", "KS", "K",
+    "THETA", "PHI", "FI", "FU", "A"
+};
 
 // ============================================================================
 // Per-subcatchment GW state (SoA for vectorization)
@@ -80,6 +103,12 @@ struct GWSoA {
     std::vector<double> upper_evap;   ///< Upper zone evap (ft3/sec)
     std::vector<double> lower_evap;   ///< Lower zone evap (ft3/sec)
     std::vector<double> deep_loss;    ///< Deep percolation (ft3/sec)
+
+    // Custom flow expressions (from [GWF] section)
+    /// Per-subcatch compiled lateral flow expression (added to standard formula).
+    std::vector<mathexpr::Expression> lateral_expr;
+    /// Per-subcatch compiled deep percolation expression (replaces standard formula).
+    std::vector<mathexpr::Expression> deep_expr;
 
     void resize(int n);
 };
