@@ -14,6 +14,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
 #include "../hydraulics/xsect_tables.hpp"
+#include "../hydraulics/XSectBatch.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -582,17 +583,50 @@ void resolve_cross_references(SimulationContext& ctx) {
             ctx.links.xsect_s_bot[uj] = ctx.links.xsect_r_bot[uj];
             break;
 
-        case XsectShape::FILLED_CIRCULAR:
-            // Full values for unfilled pipe first
+        case XsectShape::FILLED_CIRCULAR: {
+            // Filled depth stored in w_max during parsing (Geom2 = tok[3])
+            double y_bot_fill = ctx.links.xsect_w_max[uj];
+            if (y_bot_fill >= y_full) {
+                // Invalid: fill depth must be less than diameter
+                y_bot_fill = 0.0;
+            }
+
+            // Step 1: Full values for the ENTIRE unfilled circular pipe
+            w_max  = y_full;
             a_full = PI / 4.0 * y_full * y_full;
             r_full = 0.25 * y_full;
-            // yBot, aBot, etc. should be set from parsing
-            // Adjust full values (simplified — full implementation needs
-            // circ_getAofY for filled bottom area)
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
+
+            // Step 2: Compute filled bottom section properties
+            // circ_getAofY: area at depth y_bot in the unfilled circle
+            double y_bot_norm = (y_full > 0.0) ? y_bot_fill / y_full : 0.0;
+            double a_bot = a_full * xsect::lookup(y_bot_norm,
+                                           xsect_tables::A_Circ, xsect_tables::N_A_Circ);
+            // Width at fill interface
+            double s_bot_width = w_max * xsect::lookup(y_bot_norm,
+                                                xsect_tables::W_Circ, xsect_tables::N_W_Circ);
+            // Wetted perimeter of filled bottom = area / (rFull * R_Circ_lookup)
+            double r_circ_norm = xsect::lookup(y_bot_norm,
+                                        xsect_tables::R_Circ, xsect_tables::N_R_Circ);
+            double r_bot_wp = (r_full > 0.0 && r_circ_norm > 0.0)
+                            ? a_bot / (r_full * r_circ_norm) : 0.0;
+
+            // Step 3: Adjust full values for available flow space
+            // (matching legacy xsect.c lines 290-296)
+            a_full -= a_bot;
+            r_full = (PI * w_max - r_bot_wp + s_bot_width > 0.0)
+                   ? a_full / (PI * w_max - r_bot_wp + s_bot_width) : 0.0;
+            s_full = a_full * std::pow(r_full, 2.0 / 3.0);
             s_max  = 1.08 * s_full;
+            y_full -= y_bot_fill;
             yw_max = 0.5 * y_full;
+
+            // Store filled bottom properties
+            ctx.links.xsect_y_bot[uj] = y_bot_fill;
+            ctx.links.xsect_a_bot[uj] = a_bot;
+            ctx.links.xsect_s_bot[uj] = s_bot_width;
+            ctx.links.xsect_r_bot[uj] = r_bot_wp;
             break;
+        }
 
         case XsectShape::EGGSHAPED:
             a_full = 0.5105 * y_full * y_full;

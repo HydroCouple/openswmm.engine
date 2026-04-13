@@ -119,6 +119,11 @@ public:
      */
     void computeAllFlows(SimulationContext& ctx, double dt);
 
+    /// @brief Evaluate pump startup/shutoff depth hysteresis.
+    ///        Must be called ONCE per timestep BEFORE the DW iteration loop,
+    ///        matching legacy link_setTargetSetting() timing.
+    void updatePumpTargetSettings(SimulationContext& ctx);
+
     /// @brief Get pre-built list of all non-conduit link indices.
     const std::vector<int>& nonConduitIndices() const noexcept { return nc_indices_; }
 

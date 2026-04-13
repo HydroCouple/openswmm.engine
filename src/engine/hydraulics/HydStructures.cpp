@@ -130,6 +130,36 @@ void StructureSolver::init(SimulationContext& ctx) {
 }
 
 // ============================================================================
+// Pump startup/shutoff depth hysteresis — called ONCE per timestep
+// (matches legacy link_setTargetSetting timing in routing.c line 231)
+// ============================================================================
+
+void StructureSolver::updatePumpTargetSettings(SimulationContext& ctx) {
+    auto& links = ctx.links;
+    auto& nodes = ctx.nodes;
+
+    for (int k = 0; k < pumps_.count; ++k) {
+        auto uk = static_cast<size_t>(k);
+        int j = pumps_.link_idx[uk];
+        auto uj = static_cast<size_t>(j);
+
+        int n1 = links.node1[uj];
+        if (n1 < 0) continue;
+        auto un1 = static_cast<size_t>(n1);
+
+        // Use depth from START of timestep (matching legacy Node[n1].newDepth)
+        double depth = nodes.depth[un1];
+
+        double y_off = pumps_.y_off[uk];
+        double y_on  = pumps_.y_on[uk];
+        if (y_off > 0.0 && links.setting[uj] > 0.0 && depth < y_off)
+            links.target_setting[uj] = 0.0;  // Turn off when depth drops below shutoff
+        if (y_on > 0.0 && links.setting[uj] == 0.0 && depth > y_on)
+            links.target_setting[uj] = 1.0;  // Turn on when depth exceeds startup
+    }
+}
+
+// ============================================================================
 // Batch pump flow
 // ============================================================================
 
@@ -156,19 +186,10 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
         double head = (nodes.depth[un2] + nodes.invert_elev[un2])
                     - (nodes.depth[un1] + nodes.invert_elev[un1]);
 
-        // Pump on/off hysteresis (matching legacy link.c lines 619-624)
-        // Sets target_setting based on upstream depth vs startup/shutoff thresholds.
-        // Control rules may also set target_setting (higher priority handled by
-        // controls_.evaluate() in SWMMEngine which runs BEFORE this).
-        double y_off = pumps_.y_off[uk];
-        double y_on  = pumps_.y_on[uk];
-        if (y_off > 0.0 && links.setting[uj] > 0.0 && depth < y_off)
-            links.target_setting[uj] = 0.0;  // Turn off when depth drops below shutoff
-        if (y_on > 0.0 && links.setting[uj] == 0.0 && depth > y_on)
-            links.target_setting[uj] = 1.0;  // Turn on when depth exceeds startup
-
         // Apply target_setting immediately (matching legacy pump_getInflow line 1570:
         // "Link[j].setting = Link[j].targetSetting")
+        // NOTE: pump startup/shutoff hysteresis is evaluated ONCE per timestep
+        // in updatePumpTargetSettings(), NOT here inside the DW iteration loop.
         links.setting[uj] = links.target_setting[uj];
 
         // If pump is off, no flow

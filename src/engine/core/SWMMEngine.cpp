@@ -1174,8 +1174,12 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     // Legacy: massbal_updateRoutingTotals(routingStep/2) at start of routing
     // (mass balance accumulators updated with half the step's contribution)
 
-    // B1. Evaluate control rules (P8-G18: orifice gradual open/close)
-    //     Pump on/off hysteresis applied via target_setting
+    // B1a. Evaluate pump startup/shutoff depth hysteresis ONCE per timestep
+    //      (matching legacy routing.c: link_setTargetSetting runs BEFORE controls_evaluate)
+    hydstruct_.updatePumpTargetSettings(ctx_);
+
+    // B1b. Evaluate control rules (P8-G18: orifice gradual open/close)
+    //      Control rules can override pump target_setting set above.
     controls_.evaluate(ctx_, ctx_.current_time, dt_routing);
     // Apply setting transitions: move setting toward target_setting
     for (int j = 0; j < ctx_.n_links(); ++j) {
