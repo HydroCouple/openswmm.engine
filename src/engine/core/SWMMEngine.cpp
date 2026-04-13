@@ -172,14 +172,16 @@ int SWMMEngine::initialize() noexcept {
         auto ui = static_cast<std::size_t>(i);
         double d = ctx_.nodes.init_depth[ui];
         if (d > 0.0) {
-            double vol = node::getVolume(ctx_.nodes, i, d, &ctx_.tables);
+            double vol = node::getVolume(ctx_.nodes, i, d, &ctx_.tables,
+                ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)));
             ctx_.nodes.volume[ui] = vol;
             ctx_.nodes.old_volume[ui] = vol;
         }
         // Compute full volume for surcharge detection
         double fd = ctx_.nodes.full_depth[ui];
         if (fd > 0.0) {
-            ctx_.nodes.full_volume[ui] = node::getVolume(ctx_.nodes, i, fd, &ctx_.tables);
+            ctx_.nodes.full_volume[ui] = node::getVolume(ctx_.nodes, i, fd, &ctx_.tables,
+                ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)));
         }
     }
 
@@ -1189,13 +1191,19 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         if (target != current) {
             // Gradual transition (P8-G18): use orifice open/close rate
             // Legacy: link_setSetting() applies orate for time-based ramp
-            double rate = ctx_.links.orate[uj];
-            if (rate > 0.0 && dt_routing > 0.0) {
-                double delta = rate * dt_routing;
-                if (target > current) {
-                    ctx_.links.setting[uj] = std::min(current + delta, target);
+            // orate is stored in hours (from inp file); convert to seconds
+            // Legacy: Orifice[k].orate = x[4] * 3600 (hours → seconds)
+            // Legacy: step = tstep / Orifice[k].orate (fraction of full opening per step)
+            double orate_sec = ctx_.links.orate[uj] * 3600.0;
+            if (orate_sec > 0.0 && dt_routing > 0.0) {
+                double step = dt_routing / orate_sec;
+                double delta_val = std::fabs(target - current);
+                if (step + 0.001 >= delta_val) {
+                    ctx_.links.setting[uj] = target;
+                } else if (target > current) {
+                    ctx_.links.setting[uj] = current + step;
                 } else {
-                    ctx_.links.setting[uj] = std::max(current - delta, target);
+                    ctx_.links.setting[uj] = current - step;
                 }
             } else {
                 // Instantaneous transition (rate == 0 or non-orifice links)
@@ -1307,8 +1315,8 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
             }
 
             // Scatter dqdh to nodes (matching legacy updateNodeFlows lines 566-575)
-            dw.nodeState(n1).sumdqdh += dqdh;
-            dw.nodeState(n2).sumdqdh += dqdh;
+            dw.nodeSumDqdh(n1) += dqdh;
+            dw.nodeSumDqdh(n2) += dqdh;
 
             // Non-conduit surface area (matching legacy findNonConduitSurfArea)
             // Orifices: surfArea = equivalent_length * width_at_depth / 2
@@ -2939,7 +2947,8 @@ void SWMMEngine::initGeometry() noexcept {
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         ctx_.nodes.full_volume[uj] =
-            node::getVolume(ctx_.nodes, j, ctx_.nodes.full_depth[uj], &ctx_.tables);
+            node::getVolume(ctx_.nodes, j, ctx_.nodes.full_depth[uj], &ctx_.tables,
+                ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)));
     }
 }
 

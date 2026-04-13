@@ -11,6 +11,7 @@
 
 #include "Node.hpp"
 
+#include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -22,7 +23,7 @@ namespace node {
 // ============================================================================
 
 double getVolume(const NodeData& nodes, int idx, double depth,
-                 TableData* tables) {
+                 TableData* tables, int unit_sys) {
     if (depth <= 0.0) return 0.0;
     auto ui = static_cast<std::size_t>(idx);
 
@@ -36,7 +37,10 @@ double getVolume(const NodeData& nodes, int idx, double depth,
             // (matching legacy table_getStorageVolume in table.c)
             auto ci = static_cast<std::size_t>(nodes.storage_curve[ui]);
             if (tables && ci < tables->tables.size()) {
-                return table_getStorageVolume(tables->tables[ci], depth);
+                double ucf_len  = ucf::Ucf[ucf::LENGTH][unit_sys];
+                double ucf_vol  = ucf::Ucf[ucf::VOLUME][unit_sys];
+                double vol_disp = table_getStorageVolume(tables->tables[ci], depth * ucf_len);
+                return vol_disp / ucf_vol;
             }
             return 0.0;
         }
@@ -117,15 +121,17 @@ double getDepth(const NodeData& nodes, int idx, double volume,
 // ============================================================================
 
 double getSurfArea(const NodeData& nodes, int idx, double depth,
-                   TableData* tables) {
+                   TableData* tables, int unit_sys) {
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
         if (nodes.storage_curve[ui] >= 0) {
             auto ci = static_cast<std::size_t>(nodes.storage_curve[ui]);
             if (tables && ci < tables->tables.size()) {
-                double area = table_lookup_cursor(tables->tables[ci], depth);
-                return std::max(area, constants::MIN_SURFAREA);
+                double ucf_len  = ucf::Ucf[ucf::LENGTH][unit_sys];
+                double ucf_area = ucf_len * ucf_len;
+                double area = table_lookup_cursor(tables->tables[ci], depth * ucf_len);
+                return std::max(area / ucf_area, constants::MIN_SURFAREA);
             }
             return constants::MIN_SURFAREA;
         }

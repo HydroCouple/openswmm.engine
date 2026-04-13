@@ -6,7 +6,7 @@
  * @details Tests:
  *   - DWSolver Preissmann slot geometry (width, area, hyd radius)
  *   - DWSolver constants match legacy values
- *   - DWNodeState initialization
+ *   - DWNodeArrays initialization
  *   - Surcharge method selection
  *   - XSectGroups-based batch geometry for routing
  *   - Force main friction (Hazen-Williams, Darcy-Weisbach)
@@ -72,17 +72,18 @@ TEST(DWConstants, SlotWidthFactor) {
 }
 
 // ============================================================================
-// DWNodeState initialization
+// DWNodeArrays initialization
 // ============================================================================
 
-TEST(DWNodeState, DefaultValues) {
-    DWNodeState ns;
-    EXPECT_DOUBLE_EQ(ns.new_surf_area, 0.0);
-    EXPECT_DOUBLE_EQ(ns.old_surf_area, 0.0);
-    EXPECT_DOUBLE_EQ(ns.sumdqdh, 0.0);
-    EXPECT_DOUBLE_EQ(ns.dYdT, 0.0);
-    EXPECT_FALSE(ns.converged);
-    EXPECT_FALSE(ns.is_surcharged);
+TEST(DWNodeArrays, DefaultValues) {
+    DWNodeArrays na;
+    na.resize(1);
+    EXPECT_DOUBLE_EQ(na.new_surf_area[0], 0.0);
+    EXPECT_DOUBLE_EQ(na.old_surf_area[0], 0.0);
+    EXPECT_DOUBLE_EQ(na.sumdqdh[0], 0.0);
+    EXPECT_DOUBLE_EQ(na.dYdT[0], 0.0);
+    EXPECT_EQ(na.converged[0], 0);
+    EXPECT_EQ(na.is_surcharged[0], 0);
 }
 
 // ============================================================================
@@ -526,12 +527,13 @@ TEST(DPS, ConfigDefaults) {
 }
 
 TEST(DPS, LinkStateDefaults) {
-    DPSLinkState st;
-    EXPECT_NEAR(st.As, 0.0, 1e-15);
-    EXPECT_NEAR(st.hs, 0.0, 1e-15);
-    EXPECT_NEAR(st.P, 1.0, 1e-15);
-    EXPECT_NEAR(st.P_hat, 1.0, 1e-15);
-    EXPECT_FALSE(st.surcharged);
+    DPSLinkArrays da;
+    da.resize(1);
+    EXPECT_NEAR(da.As[0], 0.0, 1e-15);
+    EXPECT_NEAR(da.hs[0], 0.0, 1e-15);
+    EXPECT_NEAR(da.P[0], 1.0, 1e-15);
+    EXPECT_NEAR(da.P_hat[0], 1.0, 1e-15);
+    EXPECT_EQ(da.surcharged[0], 0);
 }
 
 TEST(DPS, PreissmannNumberDecay) {
@@ -850,28 +852,30 @@ TEST(DPS, HsAccumulation) {
 
 TEST(DPS, DepressurizationHysteresis) {
     // When hs <= 0 but As > 0, clamp hs to 0
-    DPSLinkState dps;
-    dps.As = 0.01;
-    dps.hs = -0.001;  // negative from depressurization
+    DPSLinkArrays dps;
+    dps.resize(1);
+    dps.As[0] = 0.01;
+    dps.hs[0] = -0.001;  // negative from depressurization
 
-    if (dps.hs < 0.0 && dps.As > 0.0) {
-        dps.hs = 0.0;
+    if (dps.hs[0] < 0.0 && dps.As[0] > 0.0) {
+        dps.hs[0] = 0.0;
     }
-    EXPECT_NEAR(dps.hs, 0.0, 1e-15);
-    EXPECT_GT(dps.As, 0.0);  // As still positive — residual conserved
+    EXPECT_NEAR(dps.hs[0], 0.0, 1e-15);
+    EXPECT_GT(dps.As[0], 0.0);  // As still positive — residual conserved
 }
 
 TEST(DPS, FullDepressurizationResets) {
-    DPSLinkState dps;
-    dps.As = -0.001;  // fully depressurized
-    dps.hs = 0.0;
+    DPSLinkArrays dps;
+    dps.resize(1);
+    dps.As[0] = -0.001;  // fully depressurized
+    dps.hs[0] = 0.0;
 
-    if (dps.As <= 0.0) {
-        dps.As = 0.0;
-        dps.hs = 0.0;
+    if (dps.As[0] <= 0.0) {
+        dps.As[0] = 0.0;
+        dps.hs[0] = 0.0;
     }
-    EXPECT_NEAR(dps.As, 0.0, 1e-15);
-    EXPECT_NEAR(dps.hs, 0.0, 1e-15);
+    EXPECT_NEAR(dps.As[0], 0.0, 1e-15);
+    EXPECT_NEAR(dps.hs[0], 0.0, 1e-15);
 }
 
 TEST(DPS, PreissmannNumberClampedAboveOne) {

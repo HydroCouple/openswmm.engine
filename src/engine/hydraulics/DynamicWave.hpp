@@ -71,28 +71,50 @@ struct DPSConfig {
     double c_pT_sq = 625.0;  ///< c_pT^2 (pre-computed)
 };
 
-/// Per-conduit DPS state (persistent across timesteps).
-struct DPSLinkState {
-    double As       = 0.0;    ///< Accumulated slot area (ft²)
-    double hs       = 0.0;    ///< Current surcharge head (ft)
-    double P        = 1.0;    ///< Current Preissmann Number (smoothed)
-    double P_hat    = 1.0;    ///< Provisional Preissmann Number (before smoothing)
-    double P_hat_0  = 1.0;    ///< Initial P for unpressurized conduit
-    double t_s      = 0.0;    ///< Time when element last became surcharged (sec)
-    bool   surcharged = false; ///< Currently surcharged flag
+/// Per-conduit DPS state — Structure of Arrays (persistent across timesteps).
+/// Each vector is indexed by conduit index [0..n_conduits_).
+struct DPSLinkArrays {
+    std::vector<double>  As;          ///< Accumulated slot area (ft²)
+    std::vector<double>  hs;          ///< Current surcharge head (ft)
+    std::vector<double>  P;           ///< Current Preissmann Number (smoothed)
+    std::vector<double>  P_hat;       ///< Provisional Preissmann Number (before smoothing)
+    std::vector<double>  P_hat_0;     ///< Initial P for unpressurized conduit
+    std::vector<double>  t_s;         ///< Time when element last became surcharged (sec)
+    std::vector<uint8_t> surcharged;  ///< Currently surcharged flag
+
+    void resize(std::size_t n) {
+        As.assign(n, 0.0);
+        hs.assign(n, 0.0);
+        P.assign(n, 1.0);
+        P_hat.assign(n, 1.0);
+        P_hat_0.assign(n, 1.0);
+        t_s.assign(n, 0.0);
+        surcharged.assign(n, 0);
+    }
 };
 
 // ============================================================================
 // Per-node extended state for DW iterations
 // ============================================================================
 
-struct DWNodeState {
-    double new_surf_area = 0.0;
-    double old_surf_area = 0.0;   ///< Surface area from last non-surcharged state
-    double sumdqdh       = 0.0;
-    double dYdT          = 0.0;
-    bool   converged     = false;
-    bool   is_surcharged = false;  ///< TRUE when node depth > crown elevation
+/// Per-node extended state for DW iterations — Structure of Arrays.
+/// Each vector is indexed by node index [0..n_nodes_).
+struct DWNodeArrays {
+    std::vector<double>  new_surf_area;
+    std::vector<double>  old_surf_area;   ///< Surface area from last non-surcharged state
+    std::vector<double>  sumdqdh;
+    std::vector<double>  dYdT;
+    std::vector<uint8_t> converged;
+    std::vector<uint8_t> is_surcharged;   ///< TRUE when node depth > crown elevation
+
+    void resize(std::size_t n) {
+        new_surf_area.assign(n, 0.0);
+        old_surf_area.assign(n, 0.0);
+        sumdqdh.assign(n, 0.0);
+        dYdT.assign(n, 0.0);
+        converged.assign(n, 0);
+        is_surcharged.assign(n, 0);
+    }
 };
 
 // ============================================================================
@@ -209,8 +231,8 @@ private:
     // Variable timestep state (matching legacy VariableStep in dynwave.c)
     mutable double variable_step_ = 0.0;
 
-    // Per-node working state
-    std::vector<DWNodeState> xnode_;
+    // Per-node working state (SoA)
+    DWNodeArrays xnode_;
 
     // Per-link pre-computed geometry (batch-filled by XSectGroups each iteration)
     std::vector<double> area1_;      ///< Area at upstream depth
@@ -233,7 +255,8 @@ private:
     std::vector<double> area_old_;
 
     // Per-link bypass flag (true when both end nodes converged; skip momentum solve)
-    std::vector<bool> bypassed_;
+    // uint8_t instead of bool: avoids std::vector<bool> bit-packing overhead
+    std::vector<uint8_t> bypassed_;
 
     // Per-link surface area contributions to upstream/downstream nodes
     // (matching legacy Link[].surfArea1/surfArea2 from dwflow.c findSurfArea)
@@ -298,7 +321,7 @@ private:
 
     // Dynamic Preissmann Slot (DPS) state and methods
     DPSConfig dps_config_;
-    std::vector<DPSLinkState> dps_state_;  ///< Per-conduit DPS state [n_conduits_]
+    DPSLinkArrays dps_;  ///< Per-conduit DPS state (SoA) [n_conduits_]
     double sim_time_ = 0.0;               ///< Accumulated simulation time (seconds)
 
     /// Apply DPS geometry overrides for surcharged conduits (replaces static slot in STEP E).

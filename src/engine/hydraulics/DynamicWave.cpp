@@ -42,6 +42,7 @@
 #include "Culvert.hpp"
 #include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
 #include "../math/SIMD.hpp"
 
 #include <cmath>
@@ -154,7 +155,7 @@ void DWSolver::applyDPSGeometry(SimulationContext& ctx) {
     for (int ci = 0; ci < n_conduits_; ++ci) {
         int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
-        auto& dps = dps_state_[static_cast<std::size_t>(ci)];
+        auto uci = static_cast<std::size_t>(ci);
 
         if (is_open_[uj]) continue;
 
@@ -165,46 +166,42 @@ void DWSolver::applyDPSGeometry(SimulationContext& ctx) {
 
         if (yMid > yf && af > 0.0) {
             // Eq. 14: Delta_As from volume excess above full conduit + prior slot
-            // In the link-node solver, area_mid approximates the element cross-section.
-            // Delta_As = (A_computed - A_full) - As^n  (area excess beyond full + prior slot)
-            double deltaAs = (area_mid_[uj] - af) - dps.As;
+            double deltaAs = (area_mid_[uj] - af) - dps_.As[uci];
 
             // Eq. 19: Delta_hs = c_pT^2 * Delta_As / (g * A_C * P^2)
-            double P2 = dps.P * dps.P;
+            double P2 = dps_.P[uci] * dps_.P[uci];
             double deltaHs = (P2 > 0.0) ? (c2 * deltaAs) / (g * af * P2) : 0.0;
 
-            dps.As += deltaAs;
-            dps.hs += deltaHs;
+            dps_.As[uci] += deltaAs;
+            dps_.hs[uci] += deltaHs;
 
             // Hysteresis: if hs <= 0 but As > 0, treat as full-but-unpressurized
-            // (prevents rapid oscillation in and out of surcharge)
-            if (dps.hs < 0.0 && dps.As > 0.0) {
-                dps.hs = 0.0;
+            if (dps_.hs[uci] < 0.0 && dps_.As[uci] > 0.0) {
+                dps_.hs[uci] = 0.0;
             }
 
             // If fully depressurized (As <= 0), reset slot state
-            if (dps.As <= 0.0) {
-                dps.As = 0.0;
-                dps.hs = 0.0;
+            if (dps_.As[uci] <= 0.0) {
+                dps_.As[uci] = 0.0;
+                dps_.hs[uci] = 0.0;
             }
 
             // Override areas with effective A = A_C + As (total including slot)
-            double A_total = af + std::max(dps.As, 0.0);
+            double A_total = af + std::max(dps_.As[uci], 0.0);
             area_mid_[uj] = A_total;
             area1_[uj] = (depth1_[uj] > yf) ? A_total : area1_[uj];
             area2_[uj] = (depth2_[uj] > yf) ? A_total : area2_[uj];
 
             // Effective slot width for surface area continuity (Eq. 20, diagnostic)
-            if (dps.hs > 0.0 && std::abs(deltaHs) > 1e-30) {
+            if (dps_.hs[uci] > 0.0 && std::abs(deltaHs) > 1e-30) {
                 width_mid_[uj] = std::abs(deltaAs / deltaHs);
-            } else if (dps.hs > 0.0 && dps.As > 0.0) {
-                // Fallback: width from total slot area / total surcharge head
-                width_mid_[uj] = dps.As / dps.hs;
+            } else if (dps_.hs[uci] > 0.0 && dps_.As[uci] > 0.0) {
+                width_mid_[uj] = dps_.As[uci] / dps_.hs[uci];
             }
 
             // Friction excludes slot: hydraulic radius stays at full
             hrad_mid_[uj] = rf;
-        } else if (!dps.surcharged && dps.As <= 0.0) {
+        } else if (!dps_.surcharged[uci] && dps_.As[uci] <= 0.0) {
             // Not surcharged and no residual slot area — no override needed
         }
     }
@@ -222,32 +219,32 @@ void DWSolver::updateDPSState(SimulationContext& ctx, double dt) {
     for (int ci = 0; ci < n_conduits_; ++ci) {
         int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
-        auto& dps = dps_state_[static_cast<std::size_t>(ci)];
+        auto uci = static_cast<std::size_t>(ci);
 
         if (is_open_[uj]) continue;
 
         double yf = links.xsect_y_full[uj];
-        bool was_surcharged = dps.surcharged;
-        bool now_surcharged = (depth_mid_[uj] > yf && dps.As > 0.0);
+        bool was_surcharged = dps_.surcharged[uci] != 0;
+        bool now_surcharged = (depth_mid_[uj] > yf && dps_.As[uci] > 0.0);
 
         // Track surcharge onset time
         if (now_surcharged && !was_surcharged) {
-            dps.t_s = sim_time_;
+            dps_.t_s[uci] = sim_time_;
         }
 
         // Eq. 22: P_hat(t - t_s) = (P_hat_0 - 1) * exp(-10*(t - t_s)/r) + 1
         if (now_surcharged) {
-            double dt_surcharge = sim_time_ - dps.t_s;
-            dps.P_hat = (dps.P_hat_0 - 1.0)
-                       * std::exp(-10.0 * dt_surcharge / dps_config_.r) + 1.0;
+            double dt_surcharge = sim_time_ - dps_.t_s[uci];
+            dps_.P_hat[uci] = (dps_.P_hat_0[uci] - 1.0)
+                             * std::exp(-10.0 * dt_surcharge / dps_config_.r) + 1.0;
         } else {
             // Reset to initial P for unpressurized conduits (Eq. 23)
-            dps.P_hat = dps.P_hat_0;
-            dps.As = 0.0;
-            dps.hs = 0.0;
+            dps_.P_hat[uci] = dps_.P_hat_0[uci];
+            dps_.As[uci] = 0.0;
+            dps_.hs[uci] = 0.0;
         }
 
-        dps.surcharged = now_surcharged;
+        dps_.surcharged[uci] = now_surcharged ? 1 : 0;
     }
 
     // Spatial smoothing of P across node boundaries
@@ -272,18 +269,18 @@ void DWSolver::spatialSmoothP(const SimulationContext& ctx) {
     for (int ci = 0; ci < n_conduits_; ++ci) {
         int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
-        auto& dps = dps_state_[static_cast<std::size_t>(ci)];
+        auto uci = static_cast<std::size_t>(ci);
 
         if (is_open_[uj]) continue;
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
         if (n1 >= 0 && n1 < n_nodes_) {
-            node_P_sum[static_cast<std::size_t>(n1)] += dps.P_hat;
+            node_P_sum[static_cast<std::size_t>(n1)] += dps_.P_hat[uci];
             node_P_count[static_cast<std::size_t>(n1)]++;
         }
         if (n2 >= 0 && n2 < n_nodes_) {
-            node_P_sum[static_cast<std::size_t>(n2)] += dps.P_hat;
+            node_P_sum[static_cast<std::size_t>(n2)] += dps_.P_hat[uci];
             node_P_count[static_cast<std::size_t>(n2)]++;
         }
     }
@@ -292,15 +289,15 @@ void DWSolver::spatialSmoothP(const SimulationContext& ctx) {
     for (int ci = 0; ci < n_conduits_; ++ci) {
         int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
-        auto& dps = dps_state_[static_cast<std::size_t>(ci)];
+        auto uci = static_cast<std::size_t>(ci);
 
         if (is_open_[uj]) continue;
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
 
-        double P_face1 = dps.P_hat;
-        double P_face2 = dps.P_hat;
+        double P_face1 = dps_.P_hat[uci];
+        double P_face2 = dps_.P_hat[uci];
         if (n1 >= 0 && n1 < n_nodes_ && node_P_count[static_cast<std::size_t>(n1)] > 0)
             P_face1 = node_P_sum[static_cast<std::size_t>(n1)]
                      / node_P_count[static_cast<std::size_t>(n1)];
@@ -309,8 +306,8 @@ void DWSolver::spatialSmoothP(const SimulationContext& ctx) {
                      / node_P_count[static_cast<std::size_t>(n2)];
 
         // Linear smoothing: average of upstream and downstream face values
-        dps.P = 0.5 * (P_face1 + P_face2);
-        dps.P = std::max(dps.P, 1.0);  // P >= 1 always
+        dps_.P[uci] = 0.5 * (P_face1 + P_face2);
+        dps_.P[uci] = std::max(dps_.P[uci], 1.0);  // P >= 1 always
     }
 }
 
@@ -327,7 +324,7 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     auto un = static_cast<std::size_t>(n_nodes);
     auto ul = static_cast<std::size_t>(n_links);
 
-    xnode_.resize(un);
+    xnode_.resize(un);  // SoA: allocates all per-node arrays
 
     area1_.resize(ul, 0.0);
     area2_.resize(ul, 0.0);
@@ -344,7 +341,7 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     dqdh_.resize(ul, 0.0);
     new_flow_.resize(ul, 0.0);
     area_old_.resize(ul, 0.0);
-    bypassed_.resize(ul, false);
+    bypassed_.assign(ul, 0);
     surf_area1_.resize(ul, 0.0);
     surf_area2_.resize(ul, 0.0);
     hrad1_.resize(ul, 0.0);
@@ -414,18 +411,18 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
         dps_config_.r       = std::max(ctx.options.dps_decay_time, 0.001);
         dps_config_.c_pT_sq = dps_config_.c_pT * dps_config_.c_pT;
 
-        dps_state_.resize(static_cast<std::size_t>(n_conduits_));
+        dps_.resize(static_cast<std::size_t>(n_conduits_));
         sim_time_ = 0.0;
 
         for (int ci = 0; ci < n_conduits_; ++ci) {
             int j = conduit_idx_[static_cast<std::size_t>(ci)];
             auto uj = static_cast<std::size_t>(j);
-            auto& dps = dps_state_[static_cast<std::size_t>(ci)];
+            auto uci = static_cast<std::size_t>(ci);
 
             // Skip open shapes — no slot needed
             if (is_open_[uj]) {
-                dps.P_hat_0 = 1.0;
-                dps.P = dps.P_hat = 1.0;
+                dps_.P_hat_0[uci] = 1.0;
+                dps_.P[uci] = dps_.P_hat[uci] = 1.0;
                 continue;
             }
 
@@ -437,14 +434,14 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
             double c_g = (l_D > 0.0) ? std::sqrt(GRAVITY * l_D) : 1.0;
 
             // Initial Preissmann Number: P_hat_0 = c_pT / (alpha * c_g) (Eq. 23)
-            dps.P_hat_0 = dps_config_.c_pT / (dps_config_.alpha * c_g);
-            dps.P_hat_0 = std::max(dps.P_hat_0, 1.0);
+            dps_.P_hat_0[uci] = dps_config_.c_pT / (dps_config_.alpha * c_g);
+            dps_.P_hat_0[uci] = std::max(dps_.P_hat_0[uci], 1.0);
 
-            dps.P = dps.P_hat = dps.P_hat_0;
-            dps.As = 0.0;
-            dps.hs = 0.0;
-            dps.surcharged = false;
-            dps.t_s = 0.0;
+            dps_.P[uci] = dps_.P_hat[uci] = dps_.P_hat_0[uci];
+            dps_.As[uci] = 0.0;
+            dps_.hs[uci] = 0.0;
+            dps_.surcharged[uci] = 0;
+            dps_.t_s[uci] = 0.0;
         }
     }
 }
@@ -487,7 +484,7 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
 
     // Clear bypass flags at the start of each timestep
     // (matching legacy initRoutingStep: Link[i].bypassed = FALSE)
-    std::fill(bypassed_.begin(), bypassed_.end(), false);
+    std::fill(bypassed_.begin(), bypassed_.end(), uint8_t{0});
 
     while (steps < max_trials) {
         initNodeStates(ctx);
@@ -536,7 +533,7 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
     if (!converged) {
         for (int i = 0; i < n_nodes_; ++i) {
             auto ui = static_cast<std::size_t>(i);
-            if (!xnode_[ui].converged)
+            if (!xnode_.converged[ui])
                 ++ctx.nodes.stat_non_converged_count[ui];
         }
     }
@@ -557,11 +554,12 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
     auto& nodes = ctx.nodes;
     for (int i = 0; i < n_nodes_; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        xnode_[ui].converged = false;
-        xnode_[ui].sumdqdh = 0.0;
+        xnode_.converged[ui] = 0;
+        xnode_.sumdqdh[ui] = 0.0;
 
         // Surface area at current depth
-        xnode_[ui].new_surf_area = node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables);
+        xnode_.new_surf_area[ui] = node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables,
+            ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)));
 
         // Reset node flows (matching legacy initNodeStates)
         nodes.inflow[ui] = 0.0;
@@ -588,7 +586,7 @@ void DWSolver::findBypassedLinks(const SimulationContext& ctx) {
         auto uj = static_cast<std::size_t>(j);
         auto un1 = static_cast<std::size_t>(links.node1[uj]);
         auto un2 = static_cast<std::size_t>(links.node2[uj]);
-        bypassed_[uj] = xnode_[un1].converged && xnode_[un2].converged;
+        bypassed_[uj] = (xnode_.converged[un1] && xnode_.converged[un2]) ? 1 : 0;
     }
 }
 
@@ -1407,8 +1405,8 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
         }
 
         // Accumulate dQ/dH for node depth solver
-        xnode_[un1].sumdqdh += dqdh_[uj];
-        xnode_[un2].sumdqdh += dqdh_[uj];
+        xnode_.sumdqdh[un1] += dqdh_[uj];
+        xnode_.sumdqdh[un2] += dqdh_[uj];
 
         // Zero conduit half-areas at STORAGE nodes only when the storage curve
         // already provides a meaningful footprint. If the curve value is at or
@@ -1445,8 +1443,8 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
         // (matching legacy dynwave.c updateNodeFlows: surfArea * barrels)
         int barrels = std::max(links.barrels[uj], 1);
         double b = static_cast<double>(barrels);
-        xnode_[un1].new_surf_area += sa1 * b;
-        xnode_[un2].new_surf_area += sa2 * b;
+        xnode_.new_surf_area[un1] += sa1 * b;
+        xnode_.new_surf_area[un2] += sa2 * b;
     }
 }
 
@@ -1528,7 +1526,7 @@ bool DWSolver::updateNodeDepths(SimulationContext& ctx, double dt, int step) {
 
         // Skip outfalls (fixed boundary)
         if (nodes.type[ui] == NodeType::OUTFALL) {
-            xnode_[ui].converged = true;
+            xnode_.converged[ui] = 1;
             continue;
         }
 
@@ -1571,11 +1569,7 @@ bool DWSolver::updateNodeDepths(SimulationContext& ctx, double dt, int step) {
         }
 
         // Convergence check
-        if (std::fabs(nodes.depth[ui] - y_last) > head_tol) {
-            xnode_[ui].converged = false;
-        } else {
-            xnode_[ui].converged = true;
-        }
+        xnode_.converged[ui] = (std::fabs(nodes.depth[ui] - y_last) <= head_tol) ? 1 : 0;
     }
 
     // Sequential convergence check (matching legacy: separate pass after parallel region)
@@ -1583,7 +1577,7 @@ bool DWSolver::updateNodeDepths(SimulationContext& ctx, double dt, int step) {
     for (int i = 0; i < n_nodes_; ++i) {
         auto ui = static_cast<std::size_t>(i);
         if (nodes.type[ui] == NodeType::OUTFALL) continue;
-        if (!xnode_[ui].converged) n_unconverged++;
+        if (!xnode_.converged[ui]) n_unconverged++;
     }
 
     return (n_unconverged == 0);
@@ -1608,7 +1602,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     bool is_ponded = (can_pond && y_last > full_depth);
 
     nodes.overflow[ui] = 0.0;
-    double surf_area = xnode_[ui].new_surf_area;
+    double surf_area = xnode_.new_surf_area[ui];
     surf_area = std::max(surf_area, constants::MIN_SURFAREA);
 
     // --- Net flow volume change (trapezoidal averaging with previous step) ---
@@ -1632,7 +1626,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
             is_surcharged = (yCrown > 0.0 && y_last > yCrown);
         }
     }
-    xnode_[ui].is_surcharged = is_surcharged;
+    xnode_.is_surcharged[ui] = is_surcharged ? 1 : 0;
 
     double y_new;
 
@@ -1667,7 +1661,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         // over, producing a smooth transition without a branch.
         // =================================================================
 
-        double denom = surf_area - 0.5 * dt * xnode_[ui].sumdqdh;
+        double denom = surf_area - 0.5 * dt * xnode_.sumdqdh[ui];
         denom = std::max(denom, constants::MIN_SURFAREA);
 
         double dy = dV / denom;
@@ -1675,7 +1669,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
 
         // Save non-ponded surface area (used by flooding logic and CFL)
         if (!is_ponded) {
-            xnode_[ui].old_surf_area = surf_area;
+            xnode_.old_surf_area[ui] = surf_area;
         }
 
         // Apply under-relaxation to new depth estimate
@@ -1696,14 +1690,14 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         // --- Non-surcharged path: depth change based on surface area ---
         // Also used if storage node is surcharged but has no connecting links
         if (!is_surcharged ||
-            (nodes.type[ui] == NodeType::STORAGE && xnode_[ui].sumdqdh == 0.0)) {
+            (nodes.type[ui] == NodeType::STORAGE && xnode_.sumdqdh[ui] == 0.0)) {
 
             double dy = dV / surf_area;
             y_new = y_old + dy;
 
             // Save non-ponded surface area for use in surcharge algorithm
             if (!is_ponded) {
-                xnode_[ui].old_surf_area = surf_area;
+                xnode_.old_surf_area[ui] = surf_area;
             }
 
             // Apply under-relaxation to new depth estimate
@@ -1724,11 +1718,11 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
 
             // Allow surface area from last non-surcharged condition to influence
             // dqdh if depth is close to crown depth (smooth transition)
-            double denom = xnode_[ui].sumdqdh;
+            double denom = xnode_.sumdqdh[ui];
             if (y_last < 1.25 * yCrown && yCrown > 0.0) {
                 double f = (y_last - yCrown) / yCrown;
-                denom += (xnode_[ui].old_surf_area / dt -
-                          xnode_[ui].sumdqdh) * std::exp(-15.0 * f);
+                denom += (xnode_.old_surf_area[ui] / dt -
+                          xnode_.sumdqdh[ui]) * std::exp(-15.0 * f);
             }
 
             // Compute new estimate of node depth
@@ -1771,12 +1765,13 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         }
         if (nodes.overflow[ui] < FUDGE) nodes.overflow[ui] = 0.0;
     } else {
-        nodes.volume[ui] = node::getVolume(nodes, node_idx, y_new, &ctx.tables);
+        nodes.volume[ui] = node::getVolume(nodes, node_idx, y_new, &ctx.tables,
+            ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)));
     }
 
     // --- Compute change in depth w.r.t. time (for CFL) ---
     if (dt > 0.0) {
-        xnode_[ui].dYdT = std::fabs(y_new - y_old) / dt;
+        xnode_.dYdT[ui] = std::fabs(y_new - y_old) / dt;
     }
 
     // --- Save new depth ---
@@ -1829,7 +1824,7 @@ double DWSolver::getRoutingStep(SimulationContext& ctx,
         double max_depth = yCrown * 0.25;
         if (max_depth < FUDGE) continue;
 
-        double dYdT = xnode_[ui].dYdT;
+        double dYdT = xnode_.dYdT[ui];
         if (dYdT < FUDGE) continue;
 
         double t = max_depth / dYdT;

@@ -325,8 +325,8 @@ struct LinkData {
     std::vector<double>     loss_outlet;
     /** @brief Average loss coefficient. @see Legacy: Link[j].cLossAvg */
     std::vector<double>     loss_avg;
-    /** @brief Flap gate on this conduit. @see Legacy: Link[j].hasFlapGate */
-    std::vector<bool>       has_flap_gate;
+    /** @brief Flap gate on this conduit (uint8_t: 0=no, 1=yes). @see Legacy: Link[j].hasFlapGate */
+    std::vector<uint8_t>    has_flap_gate;
     /** @brief User-specified seepage rate (project units). @see Legacy: Link[j].seepRate */
     std::vector<double>     seep_rate;
 
@@ -342,15 +342,15 @@ struct LinkData {
      */
     std::vector<int>        culvert_code;
 
-    /// True if normal flow limitation was applied this step.
+    /// True if normal flow limitation was applied this step (uint8_t: 0=no, 1=yes).
     /// @see Legacy: Link[j].normalFlow
-    std::vector<bool>       normal_flow_limited;
+    std::vector<uint8_t>    normal_flow_limited;
 
     /**
-     * @brief True if inlet control governs for this culvert link.
+     * @brief True if inlet control governs for this culvert link (uint8_t: 0=no, 1=yes).
      * @see Legacy: Link[j].inletControl
      */
-    std::vector<bool>       inlet_control;
+    std::vector<uint8_t>    inlet_control;
 
     /**
      * @brief Derivative dQ/dH for inlet-controlled culvert flow.
@@ -412,8 +412,8 @@ struct LinkData {
     /** @brief Current flow class (DRY, SUBCRITICAL, etc.). */
     std::vector<FlowClass>  flow_class;
 
-    /** @brief True if the link is closed by a control rule. */
-    std::vector<bool>       is_closed;
+    /** @brief True if the link is closed by a control rule (uint8_t: 0=no, 1=yes). */
+    std::vector<uint8_t>    is_closed;
 
     // -----------------------------------------------------------------------
     // Previous-step state
@@ -615,12 +615,12 @@ struct LinkData {
         loss_inlet.assign(un, 0.0);
         loss_outlet.assign(un, 0.0);
         loss_avg.assign(un, 0.0);
-        has_flap_gate.assign(un, false);
+        has_flap_gate.assign(un, 0);
         seep_rate.assign(un, 0.0);
         evap_loss_rate.assign(un, 0.0);
         seep_loss_rate.assign(un, 0.0);
         culvert_code.assign(un, 0);
-        inlet_control.assign(un, false);
+        inlet_control.assign(un, 0);
         dqdh.assign(un, 0.0);
 
         pump_curve.assign(un, -1);
@@ -640,7 +640,7 @@ struct LinkData {
         volume.assign(un, 0.0);
         froude.assign(un, 0.0);
         flow_class.assign(un, FlowClass::DRY);
-        is_closed.assign(un, false);
+        is_closed.assign(un, 0);
         old_flow.assign(un, 0.0);
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
@@ -667,7 +667,7 @@ struct LinkData {
         stat_flow_turns.assign(un, 0L);
         stat_flow_turn_sign.assign(un, 0);
         stat_time_courant_critical.assign(un, 0.0);
-        normal_flow_limited.assign(un, false);
+        normal_flow_limited.assign(un, 0);
     }
 
     /**
@@ -691,16 +691,16 @@ struct LinkData {
         g(xsect_yw_max, 0.0); g(xsect_batch_shape, 0);
         g(setting, 1.0); g(target_setting, 1.0); g(direction, 1);
         g(loss_inlet, 0.0); g(loss_outlet, 0.0); g(loss_avg, 0.0);
-        g(has_flap_gate, false); g(seep_rate, 0.0);
+        g(has_flap_gate, uint8_t{0}); g(seep_rate, 0.0);
         g(evap_loss_rate, 0.0); g(seep_loss_rate, 0.0);
-        g(culvert_code, 0); g(normal_flow_limited, false);
-        g(inlet_control, false); g(dqdh, 0.0);
+        g(culvert_code, 0); g(normal_flow_limited, uint8_t{0});
+        g(inlet_control, uint8_t{0}); g(dqdh, 0.0);
         g(pump_curve, -1); g(pump_init_state, false);
         g(pump_startup, 0.0); g(pump_shutoff, 0.0);
         pump_curve_name.resize(un);
         g(crest_height, 0.0); g(cd, 0.0); g(param2, 0.0); g(orate, 0.0);
         g(flow, 0.0); g(depth, 0.0); g(volume, 0.0);
-        g(froude, 0.0); g(flow_class, FlowClass::DRY); g(is_closed, false);
+        g(froude, 0.0); g(flow_class, FlowClass::DRY); g(is_closed, uint8_t{0});
         g(old_flow, 0.0); g(old_depth, 0.0); g(old_volume, 0.0);
         g(rpt_flag, static_cast<char>(0));
         g(stat_vol_flow, 0.0); g(stat_max_flow, 0.0);

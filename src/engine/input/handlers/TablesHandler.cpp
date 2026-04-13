@@ -164,6 +164,7 @@ static const std::unordered_map<std::string, TableType> CURVE_TYPE_MAP = {
     {"PUMP2",     TableType::CURVE_PUMP2},
     {"PUMP3",     TableType::CURVE_PUMP3},
     {"PUMP4",     TableType::CURVE_PUMP4},
+    {"PUMP5",     TableType::CURVE_PUMP5},
 };
 
 void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines) {

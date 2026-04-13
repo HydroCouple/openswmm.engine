@@ -61,7 +61,8 @@ enum class TableType : int {
     CURVE_PUMP1   = 7,  ///< Pump curve type 1 (ON/OFF depth)
     CURVE_PUMP2   = 8,  ///< Pump curve type 2 (head vs flow)
     CURVE_PUMP3   = 9,  ///< Pump curve type 3 (volume vs time)
-    CURVE_PUMP4   = 10  ///< Pump curve type 4 (depth vs speed)
+    CURVE_PUMP4   = 10, ///< Pump curve type 4 (depth vs speed)
+    CURVE_PUMP5   = 11  ///< Pump curve type 5 (head vs flow, variable speed)
 };
 
 // ============================================================================

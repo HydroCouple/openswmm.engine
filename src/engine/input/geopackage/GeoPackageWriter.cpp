@@ -10,6 +10,7 @@
 #include "GpkgGeometry.hpp"
 
 #include "core/SimulationContext.hpp"
+#include "core/UnitConversion.hpp"
 #include "data/NodeData.hpp"
 #include "data/LinkData.hpp"
 #include "data/SubcatchData.hpp"
@@ -312,6 +313,8 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
 
 static void write_links(sqlite3* db, const SimulationContext& ctx,
                         const std::string& sim_id, int srs_id) {
+    int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys]; // ft → display (1.0 US, 0.3048 SI)
     auto stmt = prepare(db,
         "INSERT INTO links (simulation_id, link_id, link_type, geom, "
         "from_node, to_node, offset1, offset2, "
@@ -398,8 +401,8 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
             if (!pcname.empty()) bind_text(stmt.get(), 26, pcname);
             else bind_null(stmt.get(), 26);
             bind_double(stmt.get(), 27, safe_get(ctx.links.pump_init_state, (size_t)i, false) ? 1.0 : 0.0);
-            bind_double(stmt.get(), 28, safe_dbl(ctx.links.pump_startup, i));
-            bind_double(stmt.get(), 29, safe_dbl(ctx.links.pump_shutoff, i));
+            bind_double(stmt.get(), 28, safe_dbl(ctx.links.pump_startup, i) * ucf_len);
+            bind_double(stmt.get(), 29, safe_dbl(ctx.links.pump_shutoff, i) * ucf_len);
         } else {
             bind_null(stmt.get(), 26);
             bind_null(stmt.get(), 27);

@@ -42,7 +42,7 @@ namespace node {
  * @returns Volume (ft3).
  */
 double getVolume(const NodeData& nodes, int idx, double depth,
-                 TableData* tables = nullptr);
+                 TableData* tables = nullptr, int unit_sys = 0);
 
 /**
  * @brief Compute surface area at a given depth for a single node.
@@ -56,7 +56,7 @@ double getVolume(const NodeData& nodes, int idx, double depth,
  * @returns Surface area (ft2).
  */
 double getSurfArea(const NodeData& nodes, int idx, double depth,
-                   TableData* tables = nullptr);
+                   TableData* tables = nullptr, int unit_sys = 0);
 
 /**
  * @brief Get the ponded area (for overflow above rim).

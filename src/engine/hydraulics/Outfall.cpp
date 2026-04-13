@@ -11,6 +11,7 @@
 #include "Outfall.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
+#include "../core/UnitConversion.hpp"
 #include "XSectBatch.hpp"
 #include "Link.hpp"
 
@@ -84,6 +85,8 @@ static double getYnorm(const XSectParams& xs, double beta, double q_max,
 
 void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
     auto& nodes = ctx.nodes;
+    int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
 
     // Legacy: iterates over LINKS and calls link_setOutfallDepth(j) for each.
     // Each link finds if either end is an outfall and computes yNorm + yCrit.
@@ -136,7 +139,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 break;
 
             case OutfallType::FIXED: {
-                double stage = nodes.outfall_param[uj];
+                double stage = nodes.outfall_param[uj] / ucf_len;
                 // Legacy: let yCrit = MIN(yCrit, yNorm)
                 yCrit = std::min(yCrit, yNorm);
                 // If critical depth elev < stage, use stage
@@ -158,7 +161,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                     int h_tmp, m_tmp, s_tmp;
                     datetime::decodeTime(current_time, h_tmp, m_tmp, s_tmp);
                     double hour = static_cast<double>(h_tmp) + m_tmp / 60.0 + s_tmp / 3600.0;
-                    stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(curve_idx)], hour);
+                    stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(curve_idx)], hour) / ucf_len;
                 }
                 yCrit = std::min(yCrit, yNorm);
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
@@ -174,7 +177,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 int ts_idx = static_cast<int>(nodes.outfall_param[uj]);
                 double stage = nodes.invert_elev[uj];
                 if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
-                    stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(ts_idx)], current_time);
+                    stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(ts_idx)], current_time) / ucf_len;
                 }
                 yCrit = std::min(yCrit, yNorm);
                 if (yCrit + z + nodes.invert_elev[uj] < stage)

@@ -62,10 +62,10 @@ void StructureSolver::init(SimulationContext& ctx) {
                 int ci = ctx.links.pump_curve[uj];
                 if (ci >= 0 && ci < static_cast<int>(ctx.tables.tables.size())) {
                     int tt = static_cast<int>(ctx.tables.tables[static_cast<size_t>(ci)].type);
-                    // TableType CURVE_PUMP1=7, PUMP2=8, PUMP3=9, PUMP4=10
-                    // Map to curve_type 1..4 (matching legacy PumpCurve enum)
-                    if (tt >= 7 && tt <= 10)
-                        pumps_.curve_type[uk] = tt - 6; // 7→1, 8→2, 9→3, 10→4
+                    // TableType CURVE_PUMP1=7, PUMP2=8, PUMP3=9, PUMP4=10, PUMP5=11
+                    // Map to curve_type 1..5 (matching legacy PumpCurve enum)
+                    if (tt >= 7 && tt <= 11)
+                        pumps_.curve_type[uk] = tt - 6; // 7→1, 8→2, 9→3, 10→4, 11→5
                     else
                         pumps_.curve_type[uk] = 6; // Ideal pump if no curve
                 }
@@ -170,6 +170,9 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
     // Flow unit conversion: pump curves store flow in display units
     int fu = static_cast<int>(ctx.options.flow_units);
     double ucf_flow = ucf::Qcf[fu]; // display → CFS
+    int unit_sys  = ucf::getUnitSystem(fu);
+    double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys]; // internal ft → display
+    double ucf_vol = ucf::Ucf[ucf::VOLUME][unit_sys]; // internal ft³ → display
 
     for (int k = 0; k < pumps_.count; ++k) {
         auto uk = static_cast<size_t>(k);
@@ -206,13 +209,13 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
         switch (ct) {
             case 1: // Volume-based: Q = f(volume)
                 if (ci >= 0 && uci < ctx.tables.tables.size()) {
-                    double vol = nodes.volume[un1];
+                    double vol = nodes.volume[un1] * ucf_vol;
                     q = table_lookup_cursor(ctx.tables.tables[uci], vol);
                 }
                 break;
             case 2: // Depth-based: Q = f(depth)
                 if (ci >= 0 && uci < ctx.tables.tables.size()) {
-                    q = table_lookup_cursor(ctx.tables.tables[uci], depth);
+                    q = table_lookup_cursor(ctx.tables.tables[uci], depth * ucf_len);
                 }
                 break;
             case 3: // Head-based with speed
@@ -220,13 +223,13 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
                 double s = links.setting[uj];
                 double h = (s > 0.0) ? std::max(head / (s * s), 0.0) : 0.0;
                 if (ci >= 0 && uci < ctx.tables.tables.size()) {
-                    q = table_lookup_cursor(ctx.tables.tables[uci], h) * s;
+                    q = table_lookup_cursor(ctx.tables.tables[uci], h * ucf_len) * s;
                 }
                 break;
             }
             case 4: // Depth-based: Q = f(depth)
                 if (ci >= 0 && uci < ctx.tables.tables.size()) {
-                    q = table_lookup_cursor(ctx.tables.tables[uci], depth);
+                    q = table_lookup_cursor(ctx.tables.tables[uci], depth * ucf_len);
                 }
                 break;
             case 6: // Ideal pump
@@ -585,6 +588,11 @@ void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
+    int fu = static_cast<int>(ctx.options.flow_units);
+    int unit_sys  = ucf::getUnitSystem(fu);
+    double ucf_len  = ucf::Ucf[ucf::LENGTH][unit_sys];
+    double ucf_flow = ucf::Qcf[fu];
+
     for (int k = 0; k < outlets_.count; ++k) {
         auto uk = static_cast<size_t>(k);
         int j = outlets_.link_idx[uk];
@@ -606,7 +614,8 @@ void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
         if (outlets_.curve_idx[uk] >= 0) {
             auto uci = static_cast<size_t>(outlets_.curve_idx[uk]);
             if (uci < ctx.tables.tables.size()) {
-                q = table_lookup_cursor(ctx.tables.tables[uci], head);
+                q = table_lookup_cursor(ctx.tables.tables[uci], head * ucf_len);
+                q /= ucf_flow;
             } else {
                 q = 0.0;
             }

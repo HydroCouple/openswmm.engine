@@ -13,6 +13,7 @@
 #include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
+#include "../core/UnitConversion.hpp"
 #include "../hydraulics/xsect_tables.hpp"
 #include "../hydraulics/XSectBatch.hpp"
 #include <algorithm>
@@ -297,6 +298,20 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (ctx.links.pump_curve[uj] >= 0) continue; // already resolved
         if (ctx.links.pump_curve_name[uj].empty()) continue;
         ctx.links.pump_curve[uj] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
+    }
+
+    // Convert pump startup/shutoff depths from display units → internal (ft)
+    {
+        int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+        double ucf_len = ucf::Ucf[ucf::LENGTH][us];
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] != LinkType::PUMP) continue;
+            if (ctx.links.pump_startup[uj] > 0.0)
+                ctx.links.pump_startup[uj] /= ucf_len;
+            if (ctx.links.pump_shutoff[uj] > 0.0)
+                ctx.links.pump_shutoff[uj] /= ucf_len;
+        }
     }
 
     // -------------------------------------------------------------------------

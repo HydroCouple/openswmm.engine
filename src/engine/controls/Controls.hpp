@@ -285,7 +285,8 @@ private:
     bool compareValues(double lhs, CompareOp op, double rhs) const;
     bool compareTimes(double lhs, CompareOp op, double rhs, double half_step) const;
 
-    double computePIDSetting(PIDState& pid, double control_value, double dt);
+    double computePIDSetting(PIDState& pid, double control_value,
+                             double current_setting, bool is_pump, double dt);
 
     void updateActionValue(Action& a, SimulationContext& ctx,
                            double current_time, double dt);

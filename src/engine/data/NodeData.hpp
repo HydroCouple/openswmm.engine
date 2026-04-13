@@ -140,8 +140,8 @@ struct NodeData {
      */
     std::vector<double>     outfall_param;
 
-    /** @brief True if the outfall has a gated flap. */
-    std::vector<bool>       outfall_has_flap_gate;
+    /** @brief True if the outfall has a gated flap (uint8_t: 0=no, 1=yes). */
+    std::vector<uint8_t>    outfall_has_flap_gate;
 
     /** @brief Subcatchment index to route outfall discharge to (-1 = none).
      *  @see Legacy: Outfall[j].routeTo */
@@ -530,7 +530,7 @@ struct NodeData {
 
         outfall_type.assign(un, OutfallType::FREE);
         outfall_param.assign(un, 0.0);
-        outfall_has_flap_gate.assign(un, false);
+        outfall_has_flap_gate.assign(un, 0);
         outfall_route_to.assign(un, -1);
 
         storage_curve.assign(un, -1);
@@ -620,7 +620,7 @@ struct NodeData {
         g(invert_elev, 0.0); g(full_depth, 0.0); g(init_depth, 0.0);
         g(sur_depth, 0.0); g(ponded_area, 0.0);
         g(outfall_type, OutfallType::FREE); g(outfall_param, 0.0);
-        g(outfall_has_flap_gate, false); g(outfall_route_to, -1);
+        g(outfall_has_flap_gate, uint8_t{0}); g(outfall_route_to, -1);
         g(storage_curve, -1); storage_curve_name.resize(un);
         g(storage_a, 0.0); g(storage_b, 0.0); g(storage_c, 0.0);
         g(storage_seep_rate, 0.0); g(storage_evap_frac, 0.0);

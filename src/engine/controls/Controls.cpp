@@ -11,6 +11,7 @@
 #include "Controls.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
+#include "../core/UnitConversion.hpp"
 #include "../hydraulics/XSectBatch.hpp"
 #include "../hydraulics/Link.hpp"
 #include "../data/TableData.hpp"
@@ -304,7 +305,11 @@ void ControlEngine::updateActionValue(Action& a, SimulationContext& ctx,
             for (auto& pid : pid_states_) {
                 if (pid.action_idx >= 0) {
                     pid.setpoint = set_point_;
-                    a.value = computePIDSetting(pid, control_value_, dt);
+                    double cur_setting = (a.link_idx >= 0 && a.link_idx < ctx.n_links())
+                        ? ctx.links.target_setting[static_cast<size_t>(a.link_idx)] : 0.0;
+                    bool is_pump = (a.link_idx >= 0 && a.link_idx < ctx.n_links())
+                        ? (ctx.links.type[static_cast<size_t>(a.link_idx)] == LinkType::PUMP) : false;
+                    a.value = computePIDSetting(pid, control_value_, cur_setting, is_pump, dt);
                     break;
                 }
             }
@@ -389,33 +394,44 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
                                         double current_time, int param) const {
     auto ui = static_cast<size_t>(idx);
 
+    // Unit conversion factors — rule thresholds are in display/project units,
+    // so internal values must be converted to display units for comparison.
+    // (matching legacy controls.c getVariableValue lines 1878-1936)
+    int fu = static_cast<int>(ctx.options.flow_units);
+    int us = ucf::getUnitSystem(fu);
+    // UCF converts internal → display: display = internal * UCF
+    // (matching legacy controls.c: Node[i].newDepth * UCF(LENGTH), etc.)
+    double ucf_len  = ucf::Ucf[3][us];  // LENGTH
+    double ucf_flow = ucf::Qcf[fu];     // FLOW: internal*UCF → display
+    double ucf_vol  = ucf::Ucf[5][us];  // VOLUME
+
     switch (var) {
         case ConditionVar::NODE_DEPTH:
-            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.depth[ui] : MISSING;
+            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.depth[ui] * ucf_len : MISSING;
         case ConditionVar::NODE_MAXDEPTH:
-            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.full_depth[ui] : MISSING;
+            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.full_depth[ui] * ucf_len : MISSING;
         case ConditionVar::NODE_HEAD:
-            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.head[ui] : MISSING;
+            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.head[ui] * ucf_len : MISSING;
         case ConditionVar::NODE_VOLUME:
-            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.volume[ui] : MISSING;
+            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.volume[ui] * ucf_vol : MISSING;
         case ConditionVar::NODE_INFLOW:
-            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.lat_flow[ui] : MISSING;
+            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.lat_flow[ui] * ucf_flow : MISSING;
 
         case ConditionVar::LINK_FLOW:
             return (idx >= 0 && idx < ctx.n_links())
-                ? ctx.links.flow[ui] * static_cast<double>(ctx.links.direction[ui]) : MISSING;
+                ? ctx.links.flow[ui] * static_cast<double>(ctx.links.direction[ui]) * ucf_flow : MISSING;
         case ConditionVar::LINK_DEPTH:
-            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.depth[ui] : MISSING;
+            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.depth[ui] * ucf_len : MISSING;
         case ConditionVar::LINK_SETTING:
             return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.setting[ui] : MISSING;
         case ConditionVar::LINK_STATUS:
             return (idx >= 0 && idx < ctx.n_links()) ? (ctx.links.is_closed[ui] ? 0.0 : 1.0) : MISSING;
         case ConditionVar::LINK_FULLFLOW:
-            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.q_full[ui] : MISSING;
+            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.q_full[ui] * ucf_flow : MISSING;
         case ConditionVar::LINK_FULLDEPTH:
-            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.xsect_y_full[ui] : MISSING;
+            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.xsect_y_full[ui] * ucf_len : MISSING;
         case ConditionVar::LINK_LENGTH:
-            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.length[ui] : MISSING;
+            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.length[ui] * ucf_len : MISSING;
         case ConditionVar::LINK_SLOPE:
             return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.slope[ui] : MISSING;
         case ConditionVar::LINK_VELOCITY:
@@ -428,7 +444,7 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
                 xs.a_full = ctx.links.xsect_a_full[ui];
                 xs.w_max = ctx.links.xsect_w_max[ui];
                 return link::getVelocity(xs, ctx.links.flow[ui], ctx.links.depth[ui],
-                                          ctx.links.barrels[ui]);
+                                          ctx.links.barrels[ui]) * ucf_len;
             }
         case ConditionVar::LINK_TIMEOPEN:
             // Returns MISSING if link is closed (setting <= 0).
@@ -481,17 +497,49 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
 // PID controller
 // ============================================================================
 
-double ControlEngine::computePIDSetting(PIDState& pid, double control_value, double dt) {
-    if (dt <= 0.0) return 0.0;
-    double e0 = (pid.setpoint > 0.0) ? (pid.setpoint - control_value) / pid.setpoint : 0.0;
+double ControlEngine::computePIDSetting(PIDState& pid, double control_value,
+                                         double current_setting, bool is_pump, double dt) {
+    if (dt <= 0.0) return current_setting;
+
+    // Convert dt from seconds to minutes (matching legacy: dt *= 1440 from days)
     double dt_min = dt / 60.0;
-    double p_term = e0 - pid.e1;
-    double i_term = (pid.ki > 0.0) ? e0 * dt_min / pid.ki : 0.0;
-    double d_term = (dt_min > 0.0) ? pid.kd * (e0 - 2.0 * pid.e1 + pid.e2) / dt_min : 0.0;
-    double update = pid.kp * (p_term + i_term + d_term);
+    constexpr double TINY = 1.0e-6;
+    constexpr double tolerance = 0.0001;
+
+    // Relative error (matching legacy controls.c lines 1668-1677)
+    double e0 = pid.setpoint - control_value;
+    if (std::fabs(e0) > TINY) {
+        if (pid.setpoint != 0.0)
+            e0 = e0 / pid.setpoint;
+        else
+            e0 = e0 / control_value;
+    }
+
+    // Anti-windup: reset previous errors if controller gets stuck
+    // (matching legacy controls.c lines 1679-1683)
+    if (std::fabs(e0 - pid.e1) < tolerance) {
+        pid.e2 = 0.0;
+        pid.e1 = 0.0;
+    }
+
+    // Recursive PID (matching legacy controls.c lines 1685-1695)
+    double p = e0 - pid.e1;
+    double i = (pid.ki != 0.0) ? e0 * dt_min / pid.ki : 0.0;
+    double d = (dt_min > 0.0) ? pid.kd * (e0 - 2.0 * pid.e1 + pid.e2) / dt_min : 0.0;
+    double update = pid.kp * (p + i + d);
+    if (std::fabs(update) < tolerance) update = 0.0;
+
+    double setting = current_setting + update;
+
+    // Update previous errors
     pid.e2 = pid.e1;
     pid.e1 = e0;
-    return update;
+
+    // Clamp to feasible range (matching legacy controls.c lines 1703-1706)
+    if (setting < 0.0) setting = 0.0;
+    if (!is_pump && setting > 1.0) setting = 1.0;
+
+    return setting;
 }
 
 // ============================================================================

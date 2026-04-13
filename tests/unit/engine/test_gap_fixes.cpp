@@ -12,6 +12,7 @@
 #include <vector>
 #include <algorithm>
 #include <string>
+#include <filesystem>
 
 #include "quality/Landuse.hpp"
 #include "core/SimulationContext.hpp"
@@ -730,7 +731,8 @@ TEST(PondedQuality, ClampedAtZero) {
 using namespace openswmm::runoff_iface;
 
 TEST(RunoffInterface, WriteAndReadHeader) {
-    const char* path = "/tmp/test_runoff_iface.bin";
+    std::string path_str = (std::filesystem::temp_directory_path() / "test_runoff_iface.bin").string();
+    const char* path = path_str.c_str();
 
     // Write
     {
@@ -754,7 +756,8 @@ TEST(RunoffInterface, WriteAndReadHeader) {
 }
 
 TEST(RunoffInterface, IncompatibleHeaderFails) {
-    const char* path = "/tmp/test_runoff_iface2.bin";
+    std::string path_str = (std::filesystem::temp_directory_path() / "test_runoff_iface2.bin").string();
+    const char* path = path_str.c_str();
 
     // Write with n_subcatch=3, n_pollut=2
     {
@@ -774,7 +777,8 @@ TEST(RunoffInterface, IncompatibleHeaderFails) {
 }
 
 TEST(RunoffInterface, WriteReadRoundTrip) {
-    const char* path = "/tmp/test_runoff_iface3.bin";
+    std::string path_str = (std::filesystem::temp_directory_path() / "test_runoff_iface3.bin").string();
+    const char* path = path_str.c_str();
 
     SimulationContext ctx;
     ctx.subcatch_names.add("SC1");
@@ -823,7 +827,8 @@ TEST(RunoffInterface, WriteReadRoundTrip) {
 }
 
 TEST(RunoffInterface, EOFReturnsFalse) {
-    const char* path = "/tmp/test_runoff_iface4.bin";
+    std::string path_str = (std::filesystem::temp_directory_path() / "test_runoff_iface4.bin").string();
+    const char* path = path_str.c_str();
 
     SimulationContext ctx;
     ctx.subcatch_names.add("SC1");

@@ -27,6 +27,7 @@
 #include "SimulationContext.hpp"
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 namespace openswmm {
 namespace inp_writer {
@@ -34,6 +35,20 @@ namespace inp_writer {
 static void sec(FILE* f, const char* name) {
     std::fprintf(f, "\n[%s]\n", name);
 }
+
+static const std::unordered_map<int, const char*> CURVE_TYPE_LABEL = {
+    {static_cast<int>(TableType::CURVE_STORAGE),   "STORAGE"},
+    {static_cast<int>(TableType::CURVE_DIVERSION),  "DIVERSION"},
+    {static_cast<int>(TableType::CURVE_RATING),     "RATING"},
+    {static_cast<int>(TableType::CURVE_SHAPE),      "SHAPE"},
+    {static_cast<int>(TableType::CURVE_CONTROL),    "CONTROL"},
+    {static_cast<int>(TableType::CURVE_TIDAL),      "TIDAL"},
+    {static_cast<int>(TableType::CURVE_PUMP1),      "PUMP1"},
+    {static_cast<int>(TableType::CURVE_PUMP2),      "PUMP2"},
+    {static_cast<int>(TableType::CURVE_PUMP3),      "PUMP3"},
+    {static_cast<int>(TableType::CURVE_PUMP4),      "PUMP4"},
+    {static_cast<int>(TableType::CURVE_PUMP5),      "PUMP5"},
+};
 
 static const char* nN(const SimulationContext& c, int i) {
     return (i>=0 && i<c.n_nodes()) ? c.node_names.name_of(i).c_str() : "*";
@@ -779,7 +794,9 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     if(has){sec(f,"CURVES");std::fprintf(f,";;%-16s %-12s %-12s %-12s\n","Name","Type","X-Value","Y-Value");
     for(int t=0;t<static_cast<int>(ctx.tables.tables.size());++t){const auto&tb=ctx.tables.tables[static_cast<size_t>(t)];
     if(tb.type==TableType::TIMESERIES)continue;
-    for(size_t k=0;k<tb.x.size();++k)std::fprintf(f,"%-16s %-12s %12.6f %12.6f\n",tN(ctx,t),"STORAGE",tb.x[k],tb.y[k]);
+    auto lbl_it=CURVE_TYPE_LABEL.find(static_cast<int>(tb.type));
+    const char* lbl=lbl_it!=CURVE_TYPE_LABEL.end()?lbl_it->second:"STORAGE";
+    for(size_t k=0;k<tb.x.size();++k)std::fprintf(f,"%-16s %-12s %12.6f %12.6f\n",tN(ctx,t),lbl,tb.x[k],tb.y[k]);
     }}}
 
     // [COORDINATES]
