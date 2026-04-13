@@ -76,19 +76,19 @@ public:
 
     /// Open file and detect format. Returns false on error.
     /// @param path           File path.
-    /// @param start_julian   Start date (Julian) — skip data before this date.
+    /// @param start_oa_date   Start date (OADate) — skip data before this date.
     /// @param unit_system    0 = US, 1 = SI.
-    bool open(const std::string& path, double start_julian, int unit_system);
+    bool open(const std::string& path, double start_oa_date, int unit_system);
 
     /// Close file and release resources.
     void close();
 
-    /// Get the daily climate record for a Julian date.
+    /// Get the daily climate record for a OADate (days since 12/30/1899).
     /// Automatically buffers the month if needed.
-    /// @param julian_date  Julian date (e.g. from DateTime).
+    /// @param oa_date  OADate (days since 12/30/1899) (e.g. from DateTime).
     /// @param[out] rec     Output record.
     /// @returns true if data was found, false if date is out of range.
-    bool getRecord(double julian_date, DailyClimateRecord& rec);
+    bool getRecord(double oa_date, DailyClimateRecord& rec);
 
     /// Detected file format.
     ClimateFileFormat format() const { return format_; }
@@ -136,7 +136,7 @@ private:
     void parseDLY0204Line(const char* line);
 
     // Helpers
-    static void julianToYMD(double julian, int& y, int& m, int& d);
+    static void oaDateToYMD(double oa_date, int& y, int& m, int& d);
     double convertTemp(double raw) const;
     double convertEvap(double raw) const;
     double convertWind(double raw, int wind_type) const;

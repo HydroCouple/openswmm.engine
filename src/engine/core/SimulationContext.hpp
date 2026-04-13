@@ -189,7 +189,7 @@ struct SimulationContext {
     double current_time = 0.0;
 
     /**
-     * @brief Absolute current date/time (decimal days, Julian date).
+     * @brief Absolute current date/time (decimal days, OADate (days since 12/30/1899)).
      *
      * @details = options.start_date + current_time
      *
@@ -662,6 +662,24 @@ struct SimulationContext {
     // Routing time-step statistics
     // =========================================================================
 
+    /// Top-N element statistic entry (matching legacy TMaxStats).
+    struct MaxStats {
+        int    obj_type = -1;  ///< 0 = NODE, 1 = LINK
+        int    index    = -1;  ///< element index (-1 = unused slot)
+        double value    = 0.0; ///< statistic value (percentage or index)
+    };
+
+    static constexpr int MAX_STATS = 5;
+
+    /// Top-5 CFL time-step critical elements.
+    MaxStats max_courant_crit[MAX_STATS] = {};
+    /// Top-5 links with highest flow instability index.
+    MaxStats max_flow_turns[MAX_STATS] = {};
+    /// Top-5 nodes with highest non-convergence frequency.
+    MaxStats max_non_converged[MAX_STATS] = {};
+    /// Top-5 nodes with highest continuity errors.
+    MaxStats max_mass_bal_errs[MAX_STATS] = {};
+
     struct RoutingStepStats {
         double min_step  = 1.0e30; ///< Minimum routing time step used (sec)
         double max_step  = 0.0;    ///< Maximum routing time step used (sec)
@@ -754,6 +772,61 @@ struct SimulationContext {
     // =========================================================================
     // Context-level operations
     // =========================================================================
+
+    /**
+     * @brief Insertion sort into a descending-by-absolute-value top-N array.
+     * @details Matches legacy stats_updateMaxStats() in stats.c.
+     */
+    static void updateMaxStats(MaxStats arr[], int obj_type, int idx, double value) {
+        MaxStats candidate;
+        candidate.obj_type = obj_type;
+        candidate.index    = idx;
+        candidate.value    = value;
+        for (int k = 0; k < MAX_STATS; ++k) {
+            if (std::fabs(candidate.value) > std::fabs(arr[k].value)) {
+                MaxStats tmp = arr[k];
+                arr[k] = candidate;
+                candidate = tmp;
+            }
+        }
+    }
+
+    /**
+     * @brief Compute top-5 arrays for CFL-critical, flow turns, and non-convergence.
+     * @details Called once at end of simulation before reporting (matching legacy
+     *          stats_findMaxStats in stats.c).
+     */
+    void finalize_max_stats() {
+        long step_count = routing_stats.n_steps;
+        if (step_count <= 0) return;
+        double inv_steps = 1.0 / static_cast<double>(step_count);
+
+        // CFL-critical elements: percentage of steps each element was critical
+        for (int j = 0; j < n_nodes(); ++j) {
+            double x = nodes.stat_time_courant_critical[static_cast<std::size_t>(j)] * inv_steps;
+            updateMaxStats(max_courant_crit, 0, j, 100.0 * x);
+        }
+        for (int j = 0; j < n_links(); ++j) {
+            double x = links.stat_time_courant_critical[static_cast<std::size_t>(j)] * inv_steps;
+            updateMaxStats(max_courant_crit, 1, j, 100.0 * x);
+        }
+
+        // Flow instability index (matching legacy normalization)
+        long rpt_steps = routing_stats.n_steps;
+        if (rpt_steps > 2) {
+            double z = 100.0 / (2.0 / 3.0 * static_cast<double>(rpt_steps - 2));
+            for (int j = 0; j < n_links(); ++j) {
+                double x = static_cast<double>(links.stat_flow_turns[static_cast<std::size_t>(j)]) * z;
+                updateMaxStats(max_flow_turns, 1, j, x);
+            }
+        }
+
+        // Non-convergence: fraction of total steps each node failed to converge
+        for (int j = 0; j < n_nodes(); ++j) {
+            double x = static_cast<double>(nodes.stat_non_converged_count[static_cast<std::size_t>(j)]) * inv_steps;
+            updateMaxStats(max_non_converged, 0, j, x);
+        }
+    }
 
     /**
      * @brief Fully reset the context to a CREATED state.

@@ -308,15 +308,21 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
 
     // ID names: subcatch, node, link, pollutant (only flagged objects)
     id_start_pos_ = std::ftell(out_file_);
-    for (int j = 0; j < ctx.n_subcatches(); ++j)
-        if (subcatch_rpt_flag_[static_cast<std::size_t>(j)])
+    for (int j = 0; j < ctx.n_subcatches(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (uj < subcatch_rpt_flag_.size() && subcatch_rpt_flag_[uj])
             writeID(ctx.subcatch_names.name_of(j).c_str());
-    for (int j = 0; j < ctx.n_nodes(); ++j)
-        if (node_rpt_flag_[static_cast<std::size_t>(j)])
+    }
+    for (int j = 0; j < ctx.n_nodes(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (uj < node_rpt_flag_.size() && node_rpt_flag_[uj])
             writeID(ctx.node_names.name_of(j).c_str());
-    for (int j = 0; j < ctx.n_links(); ++j)
-        if (link_rpt_flag_[static_cast<std::size_t>(j)])
+    }
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (uj < link_rpt_flag_.size() && link_rpt_flag_[uj])
             writeID(ctx.link_names.name_of(j).c_str());
+    }
     for (int p = 0; p < n_polluts_; ++p)
         writeID(ctx.pollutant_names.name_of(p).c_str());
 
@@ -332,17 +338,18 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     writeInt4(1);
     writeInt4(1);  // INPUT_AREA code
     for (int j = 0; j < ctx.n_subcatches(); ++j) {
-        if (!subcatch_rpt_flag_[static_cast<std::size_t>(j)]) continue;
+        auto uj = static_cast<std::size_t>(j);
+        if (uj >= subcatch_rpt_flag_.size() || !subcatch_rpt_flag_[uj]) continue;
         writeReal4(static_cast<float>(
-            ctx.subcatches.area[static_cast<std::size_t>(j)] * ucf_landarea_));
+            ctx.subcatches.area[uj] * ucf_landarea_));
     }
 
     // Node input: type, invert, max depth
     writeInt4(3);
     writeInt4(0); writeInt4(2); writeInt4(4);
     for (int j = 0; j < ctx.n_nodes(); ++j) {
-        if (!node_rpt_flag_[static_cast<std::size_t>(j)]) continue;
         auto uj = static_cast<std::size_t>(j);
+        if (uj >= node_rpt_flag_.size() || !node_rpt_flag_[uj]) continue;
         writeInt4(static_cast<int>(ctx.nodes.type[uj]));
         writeReal4(static_cast<float>(ctx.nodes.invert_elev[uj] * ucf_length_));
         writeReal4(static_cast<float>(ctx.nodes.full_depth[uj] * ucf_length_));
@@ -353,8 +360,8 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     writeInt4(5);
     writeInt4(0); writeInt4(6); writeInt4(7); writeInt4(4); writeInt4(8);
     for (int j = 0; j < ctx.n_links(); ++j) {
-        if (!link_rpt_flag_[static_cast<std::size_t>(j)]) continue;
         auto uj = static_cast<std::size_t>(j);
+        if (uj >= link_rpt_flag_.size() || !link_rpt_flag_[uj]) continue;
         auto lt = ctx.links.type[uj];
         writeInt4(static_cast<int>(lt));
 

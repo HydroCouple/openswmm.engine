@@ -720,6 +720,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     double f = (span > 0.0) ? (routing_time - old_runoff_time_) / span : 1.0;
     f = std::max(0.0, std::min(1.0, f));
 
+    // Zero decomposed node inflow arrays before accumulating from subcatchments.
+    // Multiple subcatchments may drain to the same node, so we must use += below,
+    // which requires a fresh zero each routing step (matching legacy initSystemInflows).
+    std::fill(ctx_.nodes.runoff_inflow.begin(), ctx_.nodes.runoff_inflow.end(), 0.0);
+    std::fill(ctx_.nodes.gw_inflow.begin(),     ctx_.nodes.gw_inflow.end(),     0.0);
+
     for (int i = 0; i < ctx_.n_subcatches(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         if (ctx_.subcatches.area[ui] <= 0.0) continue;
@@ -761,7 +767,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
  * @details Selects wet_step or dry_step based on current conditions, then
  *          shortens to align with next rain gage boundary.
  *
- * @param abs_time     Current absolute Julian date.
+ * @param abs_time     Current absolute OADate (days since 12/30/1899).
  * @param is_raining   True if any gage has rainfall > 0.
  * @param has_runoff   True if any subcatchment produces runoff > 0.
  * @param has_snow     True if any subcatchment has snow depth > 0.
@@ -1535,6 +1541,16 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             }
         }
 
+        // Flow turn tracking (matching legacy stats_updateLinkStats flow turn logic)
+        {
+            double dq = ctx_.links.flow[uj] - ctx_.links.old_flow[uj];
+            int old_sign = ctx_.links.stat_flow_turn_sign[uj];
+            int new_sign = (dq > 0.0) ? 1 : ((dq < 0.0) ? -1 : 0);
+            ctx_.links.stat_flow_turn_sign[uj] = new_sign;
+            if (std::fabs(dq) > 0.001 && old_sign * new_sign < 0)
+                ++ctx_.links.stat_flow_turns[uj];
+        }
+
         // Link pollutant loads: load += |flow| * conc * dt
         if (np > 0 && q > 0.0) {
             auto base = uj * static_cast<std::size_t>(np);
@@ -2093,6 +2109,10 @@ int SWMMEngine::end() noexcept {
 
     // Build routing time step histogram for report
     ctx_.routing_stats.build_histogram();
+
+    // Finalize per-element max stats for report (top-5 CFL-critical, flow turns,
+    // non-convergence — matching legacy stats_findMaxStats)
+    ctx_.finalize_max_stats();
 
 #ifdef OPENSWMM_HAS_2D
     // Finalize 2D surface routing module (release CVODE resources)

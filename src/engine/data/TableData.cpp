@@ -73,7 +73,7 @@ std::vector<std::string> split_csv_line(const char* line) {
 /**
  * @brief Parse a datetime from a single string token.
  *        Handles: "YYYY-MM-DD HH:MM:SS", "MM/DD/YYYY HH:MM", date-only, etc.
- * @returns Julian date as double, or -1.0 on failure.
+ * @returns OADate (days since 12/30/1899) as double, or -1.0 on failure.
  */
 double parse_csv_datetime(const std::string& tok) {
     int month = 0, day = 0, year = 0;

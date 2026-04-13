@@ -20,7 +20,7 @@
  *  MIN_SLOPE            → (stored in ext_options — not used by new solver yet)
  *  ALLOW_PONDING        → options.allow_ponding
  *  SKIP_STEADY_STATE    → (ignored)
- *  START_DATE           → options.start_date (Julian date)
+ *  START_DATE           → options.start_date (OADate (days since 12/30/1899))
  *  START_TIME           → combined with START_DATE
  *  END_DATE             → options.end_date
  *  END_TIME             → combined with END_DATE

@@ -21,6 +21,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <algorithm>
 
 namespace openswmm {
 
@@ -462,6 +463,42 @@ struct SubcatchData {
     }
 
     /**
+     * @brief Grow all arrays to hold at least `n` subcatchments, preserving existing data.
+     */
+    void grow_to(int n) {
+        if (n <= count()) return;
+        const auto un = static_cast<std::size_t>(n);
+        auto g = [&](auto& vec, auto def) { vec.resize(un, def); };
+        g(outlet_node, -1); g(outlet_subcatch, -1);
+        outlet_name.resize(un); g(gage, -1);
+        g(area, 0.0); g(width, 0.0); g(slope, 0.0); g(curb_length, 0.0);
+        g(frac_imperv, 0.0); g(frac_imperv_no_store, 0.0);
+        g(n_imperv, 0.013); g(n_perv, 0.1);
+        g(ds_imperv, 0.0); g(ds_perv, 0.0);
+        g(subarea_routing, 0); g(pct_routed, 0.0);
+        g(infil_model, 0);
+        g(infil_p1, 0.0); g(infil_p2, 0.0); g(infil_p3, 0.0);
+        g(infil_p4, 0.0); g(infil_p5, 0.0);
+        g(runoff, 0.0); g(rainfall, 0.0);
+        g(evap_loss, 0.0); g(infil_loss, 0.0);
+        g(ponded_depth, 0.0); g(gw_flow, 0.0);
+        g(old_runoff, 0.0); g(old_gw_flow, 0.0);
+        g(runon_inflow, 0.0); g(old_runon_inflow, 0.0);
+        g(gw_sw_head, 0.0); g(gw_node_avail_flow, 0.0);
+        g(rpt_flag, static_cast<char>(0));
+        g(stat_precip_vol, 0.0); g(stat_evap_vol, 0.0);
+        g(stat_infil_vol, 0.0); g(stat_imperv_vol, 0.0);
+        g(stat_perv_vol, 0.0); g(stat_runoff_vol, 0.0);
+        g(stat_max_runoff, 0.0);
+        g(gw_aquifer, -1); g(gw_node, -1); g(gw_surf_elev, 0.0);
+        g(gw_a1, 0.0); g(gw_b1, 0.0); g(gw_a2, 0.0); g(gw_b2, 0.0);
+        g(gw_a3, 0.0); g(gw_tw, 0.0); g(gw_hstar, 0.0);
+        g(snowpack, -1);
+        // Note: conc, conc_old, ponded_qual, washoff_load handled by resize_quality()
+        // Note: coverage, total_load handled separately
+    }
+
+    /**
      * @brief Resize per-subcatch quality arrays after pollutant count is known.
      */
     void resize_quality(int n_pollutants) {
@@ -556,9 +593,9 @@ struct SubcatchData {
     }
 
     void save_state() noexcept {
-        old_runoff = runoff;
-        old_runon_inflow = runon_inflow;
-        conc_old = conc;
+        std::copy(runoff.begin(),        runoff.end(),        old_runoff.begin());
+        std::copy(runon_inflow.begin(),  runon_inflow.end(),  old_runon_inflow.begin());
+        std::copy(conc.begin(),          conc.end(),          conc_old.begin());
     }
 
     void reset_state() noexcept {

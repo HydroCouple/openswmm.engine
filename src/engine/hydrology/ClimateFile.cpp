@@ -35,7 +35,7 @@ void ClimateFileReader::close() {
     has_saved_line_ = false;
 }
 
-bool ClimateFileReader::open(const std::string& path, double /*start_julian*/,
+bool ClimateFileReader::open(const std::string& path, double /*start_oa_date*/,
                               int unit_system) {
     close();
     unit_system_ = unit_system;
@@ -151,11 +151,11 @@ bool ClimateFileReader::isGhcndFormat(const char* line) {
 }
 
 // ============================================================================
-// Julian date conversion
+// OADate (days since 12/30/1899) conversion
 // ============================================================================
 
-void ClimateFileReader::julianToYMD(double julian, int& y, int& m, int& d) {
-    datetime::decodeDate(julian, y, m, d);
+void ClimateFileReader::oaDateToYMD(double oa_date, int& y, int& m, int& d) {
+    datetime::decodeDate(oa_date, y, m, d);
 }
 
 // ============================================================================
@@ -454,9 +454,9 @@ void ClimateFileReader::parseDLY0204Line(const char* line) {
 // Public lookup
 // ============================================================================
 
-bool ClimateFileReader::getRecord(double julian_date, DailyClimateRecord& rec) {
+bool ClimateFileReader::getRecord(double oa_date, DailyClimateRecord& rec) {
     int y, m, d;
-    julianToYMD(julian_date, y, m, d);
+    oaDateToYMD(oa_date, y, m, d);
 
     // Buffer the month if needed
     if (y != buf_year_ || m != buf_month_) {

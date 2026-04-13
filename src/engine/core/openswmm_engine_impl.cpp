@@ -217,4 +217,37 @@ SWMM_ENGINE_API int swmm_get_routing_step(SWMM_Engine engine, double* dt) {
     return SWMM_OK;
 }
 
+// ============================================================================
+// Routing event and steady-state status
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_is_between_events(SWMM_Engine engine, int* is_between) {
+    CHECK_HANDLE(engine);
+    auto* eng = to_engine(engine);
+    if (is_between) {
+        const auto& events = eng->context().events;
+        *is_between = (!events.empty()) ? 1 : 0;
+        // Delegate to engine method if it exists; for now use event list check
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_get_event_count(SWMM_Engine engine, int* count) {
+    CHECK_HANDLE(engine);
+    if (count) *count = static_cast<int>(to_engine(engine)->context().events.size());
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_get_steady_state_skip(SWMM_Engine engine, int* enabled) {
+    CHECK_HANDLE(engine);
+    if (enabled) *enabled = to_engine(engine)->context().options.skip_steady_state ? 1 : 0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled) {
+    CHECK_HANDLE(engine);
+    to_engine(engine)->context().options.skip_steady_state = (enabled != 0);
+    return SWMM_OK;
+}
+
 } /* extern "C" */

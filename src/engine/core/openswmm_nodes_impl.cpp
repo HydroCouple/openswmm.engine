@@ -12,6 +12,7 @@
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_nodes.h"
+#include "../hydraulics/Node.hpp"
 
 extern "C" {
 
@@ -611,6 +612,39 @@ SWMM_ENGINE_API int swmm_node_get_stat_time_flooded(SWMM_Engine engine, int idx,
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     if (val) *val = ctx.nodes.stat_time_flooded[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Outfall route-to
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_node_set_outfall_route_to(SWMM_Engine engine, int idx, int subcatch_idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    ctx.nodes.outfall_route_to[static_cast<std::size_t>(idx)] = subcatch_idx;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_outfall_route_to(SWMM_Engine engine, int idx, int* subcatch_idx) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (subcatch_idx) *subcatch_idx = ctx.nodes.outfall_route_to[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Depth from volume
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_node_get_depth_from_volume(SWMM_Engine engine, int idx,
+                                                      double volume, double* depth) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (depth) *depth = openswmm::node::getDepth(ctx.nodes, idx, volume, &ctx.tables);
     return SWMM_OK;
 }
 

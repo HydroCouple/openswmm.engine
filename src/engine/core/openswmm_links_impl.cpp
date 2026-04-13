@@ -702,4 +702,50 @@ SWMM_ENGINE_API int swmm_link_get_stat_surcharge_time(SWMM_Engine engine, int id
     return SWMM_OK;
 }
 
+// ============================================================================
+// Pump utilization statistics
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_link_get_stat_pump_cycles(SWMM_Engine engine, int idx, int* cycles) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    if (cycles) *cycles = ctx.links.stat_pump_cycles[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_stat_pump_on_time(SWMM_Engine engine, int idx, double* seconds) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    if (seconds) *seconds = ctx.links.stat_pump_on_time[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_stat_pump_volume(SWMM_Engine engine, int idx, double* volume) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    if (volume) *volume = ctx.links.stat_pump_volume[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Hydraulic power
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_link_get_hyd_power(SWMM_Engine engine, int idx, double* power) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    auto ui = static_cast<std::size_t>(idx);
+    int n1 = ctx.links.node1[ui];
+    int n2 = ctx.links.node2[ui];
+    double h1 = (n1 >= 0) ? ctx.nodes.head[static_cast<std::size_t>(n1)] : 0.0;
+    double h2 = (n2 >= 0) ? ctx.nodes.head[static_cast<std::size_t>(n2)] : 0.0;
+    constexpr double GAMMA = 62.4;
+    if (power) *power = GAMMA * std::fabs(ctx.links.flow[ui]) * std::fabs(h1 - h2);
+    return SWMM_OK;
+}
+
 } /* extern "C" */

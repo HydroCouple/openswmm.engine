@@ -337,15 +337,16 @@ TEST(DailyClimate, GammaIncreasesWithTemp) {
 #include "hydrology/ClimateFile.hpp"
 #include <fstream>
 #include <cstdio>
+#include <filesystem>
 
 // Helper: write a temporary file and return path
 static std::string writeTempFile(const std::string& content) {
-    char path[] = "/tmp/swmm_climate_test_XXXXXX";
-    int fd = mkstemp(path);
-    if (fd < 0) return "";
-    FILE* f = fdopen(fd, "w");
-    std::fputs(content.c_str(), f);
-    std::fclose(f);
+    auto tmp = std::filesystem::temp_directory_path() / "swmm_climate_test_XXXXXX";
+    std::string path = tmp.string();
+    std::ofstream ofs(path);
+    if (!ofs) return "";
+    ofs << content;
+    ofs.close();
     return path;
 }
 

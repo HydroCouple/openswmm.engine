@@ -42,6 +42,12 @@ cdef extern from "openswmm_engine.h":
     cdef int swmm_get_current_time(SWMM_Engine e, double* current)
     cdef int swmm_get_routing_step(SWMM_Engine e, double* dt)
 
+    # --- Routing events / steady-state ---
+    cdef int swmm_is_between_events(SWMM_Engine e, int* is_between)
+    cdef int swmm_get_event_count(SWMM_Engine e, int* count)
+    cdef int swmm_get_steady_state_skip(SWMM_Engine e, int* enabled)
+    cdef int swmm_set_steady_state_skip(SWMM_Engine e, int enabled)
+
     # --- Callbacks ---
     cdef int swmm_set_progress_callback(SWMM_Engine e, SWMM_ProgressCallback cb, void* ud)
     cdef int swmm_set_warning_callback(SWMM_Engine e, SWMM_WarningCallback cb, void* ud)
@@ -133,6 +139,11 @@ cdef extern from "openswmm_nodes.h":
     cdef int swmm_node_set_depths_bulk(SWMM_Engine e, const double* buf, int count)
     cdef int swmm_node_set_lat_inflows_bulk(SWMM_Engine e, const double* buf, int count)
     cdef int swmm_node_get_quality_bulk(SWMM_Engine e, int pollutant_idx, double* buf, int count)
+    # Outfall route-to
+    cdef int swmm_node_set_outfall_route_to(SWMM_Engine e, int idx, int subcatch_idx)
+    cdef int swmm_node_get_outfall_route_to(SWMM_Engine e, int idx, int* subcatch_idx)
+    # Depth from volume
+    cdef int swmm_node_get_depth_from_volume(SWMM_Engine e, int idx, double volume, double* depth)
 
 cdef extern from "openswmm_links.h":
     # Identity
@@ -210,6 +221,12 @@ cdef extern from "openswmm_links.h":
     cdef int swmm_link_get_stat_max_filling(SWMM_Engine e, int idx, double* val)
     cdef int swmm_link_get_stat_vol_flow(SWMM_Engine e, int idx, double* val)
     cdef int swmm_link_get_stat_surcharge_time(SWMM_Engine e, int idx, double* val)
+    # Pump statistics
+    cdef int swmm_link_get_stat_pump_cycles(SWMM_Engine e, int idx, int* cycles)
+    cdef int swmm_link_get_stat_pump_on_time(SWMM_Engine e, int idx, double* seconds)
+    cdef int swmm_link_get_stat_pump_volume(SWMM_Engine e, int idx, double* volume)
+    # Hydraulic power
+    cdef int swmm_link_get_hyd_power(SWMM_Engine e, int idx, double* power)
     # Bulk access
     cdef int swmm_link_get_flows_bulk(SWMM_Engine e, double* buf, int count)
     cdef int swmm_link_get_depths_bulk(SWMM_Engine e, double* buf, int count)
@@ -285,6 +302,9 @@ cdef extern from "openswmm_subcatchments.h":
     # Bulk access
     cdef int swmm_subcatch_get_runoff_bulk(SWMM_Engine e, double* buf, int count)
     cdef int swmm_subcatch_get_quality_bulk(SWMM_Engine e, int pollutant_idx, double* buf, int count)
+    # Ponded quality
+    cdef int swmm_subcatch_get_ponded_quality(SWMM_Engine e, int subcatch_idx, int pollutant_idx, double* mass)
+    cdef int swmm_subcatch_set_ponded_quality(SWMM_Engine e, int subcatch_idx, int pollutant_idx, double mass)
 
 cdef extern from "openswmm_gages.h":
     # Identity
@@ -314,6 +334,15 @@ cdef extern from "openswmm_massbalance.h":
     cdef int swmm_get_quality_continuity_error(SWMM_Engine e, int pollutant_idx, double* error)
     cdef int swmm_get_runoff_total(SWMM_Engine e, int component, double* volume)
     cdef int swmm_get_routing_total(SWMM_Engine e, int component, double* volume)
+    # Routing diagnostics
+    cdef int swmm_get_routing_stats(SWMM_Engine e, double* avg_step, double* min_step,
+                                    double* max_step, int* n_steps,
+                                    double* pct_non_converged, double* avg_iterations,
+                                    double* max_courant)
+    cdef int swmm_get_max_courant(SWMM_Engine e, double* max_courant)
+    # Quality losses
+    cdef int swmm_get_quality_seep_loss(SWMM_Engine e, int pollutant_idx, double* mass)
+    cdef int swmm_get_quality_evap_loss(SWMM_Engine e, int pollutant_idx, double* mass)
 
 cdef extern from "openswmm_hotstart.h":
     cdef int swmm_hotstart_save(SWMM_Engine e, const char* path)

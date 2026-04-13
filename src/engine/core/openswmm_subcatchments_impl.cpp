@@ -531,4 +531,36 @@ SWMM_ENGINE_API int swmm_subcatch_get_quality_bulk(SWMM_Engine engine, int pollu
     return SWMM_OK;
 }
 
+// ============================================================================
+// Ponded quality
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_subcatch_get_ponded_quality(SWMM_Engine engine,
+    int subcatch_idx, int pollutant_idx, double* mass) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(subcatch_idx >= 0 && subcatch_idx < ctx.n_subcatches());
+    int np = ctx.subcatches.conc_n_pollutants;
+    CHECK_INDEX(pollutant_idx >= 0 && pollutant_idx < np);
+    auto idx = static_cast<std::size_t>(subcatch_idx) * static_cast<std::size_t>(np) +
+               static_cast<std::size_t>(pollutant_idx);
+    if (mass) *mass = (idx < ctx.subcatches.ponded_qual.size())
+                    ? ctx.subcatches.ponded_qual[idx] : 0.0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_set_ponded_quality(SWMM_Engine engine,
+    int subcatch_idx, int pollutant_idx, double mass) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(subcatch_idx >= 0 && subcatch_idx < ctx.n_subcatches());
+    int np = ctx.subcatches.conc_n_pollutants;
+    CHECK_INDEX(pollutant_idx >= 0 && pollutant_idx < np);
+    auto idx = static_cast<std::size_t>(subcatch_idx) * static_cast<std::size_t>(np) +
+               static_cast<std::size_t>(pollutant_idx);
+    if (idx < ctx.subcatches.ponded_qual.size())
+        ctx.subcatches.ponded_qual[idx] = mass;
+    return SWMM_OK;
+}
+
 } /* extern "C" */

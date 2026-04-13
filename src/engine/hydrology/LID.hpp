@@ -115,7 +115,7 @@ struct LIDGroupSoA {
     std::vector<double> pave_clog_factor;  ///< Pavement clog factor (ft of treated volume)
     std::vector<double> pave_regen_days;   ///< Pavement regeneration interval (days)
     std::vector<double> pave_regen_deg;    ///< Pavement regeneration degree (0-1)
-    std::vector<double> next_regen_day;    ///< Next day for pavement regeneration (Julian)
+    std::vector<double> next_regen_day;    ///< Next day for pavement regeneration (OADate)
 
     // Drainage mat layer (GREEN_ROOF)
     std::vector<double> drainmat_thick;    ///< Drainage mat thickness (ft)

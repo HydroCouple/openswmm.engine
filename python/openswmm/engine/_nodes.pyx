@@ -778,3 +778,48 @@ class Nodes:
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         _check(swmm_node_get_quality_bulk(h, pollutant_idx, &buf[0], n))
         return buf
+
+    # ------------------------------------------------------------------
+    # Outfall route-to
+    # ------------------------------------------------------------------
+
+    def set_outfall_route_to(self, idx, int subcatch_idx):
+        """Set the subcatchment to route outfall discharge to.
+
+        :param idx: Node index (int) or node ID (str).
+        :param subcatch_idx: Subcatchment index (-1 = no routing).
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_node_set_outfall_route_to(h, i, subcatch_idx))
+
+    def get_outfall_route_to(self, idx) -> int:
+        """Get the subcatchment index outfall discharge is routed to.
+
+        :param idx: Node index (int) or node ID (str).
+        :returns: Subcatchment index (-1 = no routing).
+        :rtype: int
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int v = -1
+        _check(swmm_node_get_outfall_route_to(h, i, &v))
+        return v
+
+    # ------------------------------------------------------------------
+    # Depth from volume (inverse)
+    # ------------------------------------------------------------------
+
+    def get_depth_from_volume(self, idx, double volume) -> float:
+        """Compute depth from volume (inverse of volume-depth relationship).
+
+        :param idx: Node index (int) or node ID (str).
+        :param volume: Volume (project volume units).
+        :returns: Depth (project length units).
+        :rtype: float
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double v = 0.0
+        _check(swmm_node_get_depth_from_volume(h, i, volume, &v))
+        return v

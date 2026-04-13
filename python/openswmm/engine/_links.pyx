@@ -804,3 +804,66 @@ class Links:
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         _check(swmm_link_get_quality_bulk(h, pollutant_idx, &buf[0], n))
         return buf
+
+    # ------------------------------------------------------------------
+    # Pump utilization statistics
+    # ------------------------------------------------------------------
+
+    def get_stat_pump_cycles(self, idx) -> int:
+        """Return pump on/off cycle count.
+
+        :param idx: Link index (int) or link ID (str).
+        :returns: Number of pump on→off and off→on transitions.
+        :rtype: int
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int v = 0
+        _check(swmm_link_get_stat_pump_cycles(h, i, &v))
+        return v
+
+    def get_stat_pump_on_time(self, idx) -> float:
+        """Return total pump on-time (seconds).
+
+        :param idx: Link index (int) or link ID (str).
+        :returns: Total time pump was running (seconds).
+        :rtype: float
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double v = 0.0
+        _check(swmm_link_get_stat_pump_on_time(h, i, &v))
+        return v
+
+    def get_stat_pump_volume(self, idx) -> float:
+        """Return total volume pumped (ft3).
+
+        :param idx: Link index (int) or link ID (str).
+        :returns: Total volume pumped (project volume units).
+        :rtype: float
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double v = 0.0
+        _check(swmm_link_get_stat_pump_volume(h, i, &v))
+        return v
+
+    # ------------------------------------------------------------------
+    # Hydraulic power
+    # ------------------------------------------------------------------
+
+    def get_hyd_power(self, idx) -> float:
+        """Return hydraulic power dissipated in a link (ft-lb/s).
+
+        P = gamma * |Q| * |hL| where gamma = specific weight of water.
+        Divide by 550 to convert to horsepower.
+
+        :param idx: Link index (int) or link ID (str).
+        :returns: Hydraulic power (ft-lb/s).
+        :rtype: float
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double v = 0.0
+        _check(swmm_link_get_hyd_power(h, i, &v))
+        return v

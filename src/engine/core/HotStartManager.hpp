@@ -14,8 +14,8 @@
  *          16      4      Version: uint32_t = 1
  *          20      8      Timestamp (Unix seconds): int64_t
  *          28      8      Simulation time at save (decimal days): double
- *          36      8      Start date (Julian date): double
- *          44      8      End date (Julian date): double
+ *          36      8      Start date (OADate (days since 12/30/1899)): double
+ *          44      8      End date (OADate (days since 12/30/1899)): double
  *          52      4      CRS string length (bytes including NUL): uint32_t
  *          56      n      CRS string (null-terminated)
  *          56+n    4      Node count: uint32_t
@@ -93,8 +93,8 @@ struct HotStartHeader {
     uint32_t version    = 1;
     int64_t  timestamp  = 0;    ///< Unix epoch seconds at save time
     double   sim_time   = 0.0;  ///< Simulation elapsed time (decimal days)
-    double   start_date = 0.0;  ///< options.start_date (Julian date)
-    double   end_date   = 0.0;  ///< options.end_date (Julian date)
+    double   start_date = 0.0;  ///< options.start_date (OADate (days since 12/30/1899))
+    double   end_date   = 0.0;  ///< options.end_date (OADate (days since 12/30/1899))
     std::string crs;            ///< CRS string (may be empty)
 };
 

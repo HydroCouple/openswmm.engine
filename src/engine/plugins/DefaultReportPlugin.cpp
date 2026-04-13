@@ -78,7 +78,7 @@ static void secsToHMS(int secs, char* buf, int buflen) {
     std::snprintf(buf, buflen, "%02d:%02d:%02d", h, m, s);
 }
 
-/// Format a Julian date as "days hr:min" relative to a start date.
+/// Format a OADate (days since 12/30/1899) as "days hr:min" relative to a start date.
 static void elapsedToStr(double date, double start_date, char* buf, int buflen) {
     if (date <= 0.0 || start_date <= 0.0) { std::snprintf(buf, buflen, ""); return; }
     double elapsed = date - start_date;
@@ -782,8 +782,20 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "***************************");
     WRITE(f, "Time-Step Critical Elements");
     WRITE(f, "***************************");
-    // TODO: Track per-link CFL critical count during simulation
-    WRITE(f, "  None");
+    {
+        int k = 0;
+        for (int i = 0; i < SimulationContext::MAX_STATS; ++i) {
+            const auto& ms = ctx.max_courant_crit[i];
+            if (ms.index < 0) continue;
+            ++k;
+            if (ms.obj_type == 0)
+                std::fprintf(f, "\n  Node %s", ctx.node_names.name_of(ms.index).c_str());
+            else
+                std::fprintf(f, "\n  Link %s", ctx.link_names.name_of(ms.index).c_str());
+            std::fprintf(f, " (%.2f%%)", ms.value);
+        }
+        if (k == 0) std::fprintf(f, "\n  None");
+    }
 
     WRITE(f, "");
     WRITE(f, "");
@@ -794,8 +806,18 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "********************************");
     WRITE(f, "Highest Flow Instability Indexes");
     WRITE(f, "********************************");
-    // TODO: Track flow direction changes (turns) per link during simulation
-    WRITE(f, "All links are stable.");
+    {
+        if (ctx.max_flow_turns[0].index < 0 || ctx.max_flow_turns[0].value <= 0.0) {
+            std::fprintf(f, "\n  All links are stable.");
+        } else {
+            for (int i = 0; i < SimulationContext::MAX_STATS; ++i) {
+                const auto& ms = ctx.max_flow_turns[i];
+                if (ms.index < 0) continue;
+                std::fprintf(f, "\n  Link %s (%.0f)",
+                             ctx.link_names.name_of(ms.index).c_str(), ms.value);
+            }
+        }
+    }
 
     WRITE(f, "");
     WRITE(f, "");
@@ -808,12 +830,18 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "*********************************");
     {
         const auto& rs = ctx.routing_stats;
-        if (rs.n_non_converged == 0) {
+        if (rs.n_non_converged == 0 ||
+            ctx.max_non_converged[0].index < 0 ||
+            ctx.max_non_converged[0].value < 0.00005) {
             WRITE(f, "Convergence obtained at all time steps.");
         } else {
-            // TODO: Track per-node non-convergence count to show top 5
-            std::fprintf(f, "\n  %.2f%% of steps did not converge.",
-                         rs.pct_non_converged());
+            for (int i = 0; i < SimulationContext::MAX_STATS; ++i) {
+                const auto& ms = ctx.max_non_converged[i];
+                if (ms.index < 0 || ms.value <= 0.0) continue;
+                std::fprintf(f, "\n  Node %s (%.2f%%)",
+                             ctx.node_names.name_of(ms.index).c_str(),
+                             100.0 * ms.value);
+            }
         }
     }
 
@@ -904,7 +932,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double runoff_in = (area_ft2 > 0.0) ?
                 ctx.subcatches.stat_runoff_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
             double runoff_vol = ctx.subcatches.stat_runoff_vol[uj] * Vcf;
-            double peak = ctx.subcatches.stat_max_runoff[uj];
+            double peak = ctx.subcatches.stat_max_runoff[uj] * Qcf;
             double r = ctx.subcatches.stat_precip_vol[uj];
             double coeff = (r > 0.0) ? ctx.subcatches.stat_runoff_vol[uj] / r : 0.0;
 
@@ -1493,16 +1521,22 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n  ---------------------------------------------------------------------------------------------------------",
                 FlowUnitWords[fu], FlowUnitWords[fu], FlowUnitWords[fu], "10^6 gal");
 
+            double totalSeconds = (ctx.options.end_date - ctx.options.start_date) * 86400.0;
+
             for (int j = 0; j < ctx.n_links(); ++j) {
                 auto uj = static_cast<std::size_t>(j);
                 if (ctx.links.type[uj] != LinkType::PUMP) continue;
 
                 double max_flow = ctx.links.stat_max_flow[uj] * Qcf;
                 double vol = ctx.links.stat_vol_flow[uj] * Vcf;
-                // Pump stats not fully tracked yet
+                double on_time = ctx.links.stat_pump_on_time[uj];
+                double pctUtilized = (totalSeconds > 0.0) ? on_time / totalSeconds * 100.0 : 0.0;
+                int    startUps   = ctx.links.stat_pump_cycles[uj];
+                double avgFlow    = (on_time > 0.0) ? (ctx.links.stat_pump_volume[uj] / on_time) * Qcf : 0.0;
+
                 std::fprintf(f, "\n  %-20s %8.2f  %10d %9.2f %9.2f %9.2f %9.3f %9.2f",
                     ctx.link_names.name_of(j).c_str(),
-                    0.0, 0, 0.0, 0.0, max_flow, vol, 0.0);
+                    pctUtilized, startUps, 0.0, avgFlow, max_flow, vol, 0.0);
                 std::fprintf(f, " %6.1f %6.1f", 0.0, 0.0);
             }
             WRITE(f, "");

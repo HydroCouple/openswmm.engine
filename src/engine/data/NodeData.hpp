@@ -28,6 +28,7 @@
 #include <vector>
 #include <cstdint>
 #include <string>
+#include <algorithm>
 
 namespace openswmm {
 
@@ -414,14 +415,14 @@ struct NodeData {
      */
     std::vector<double>     stat_max_overflow;
 
-    /** @brief Date/time when maximum overflow occurred (Julian date). */
+    /** @brief Date/time when maximum overflow occurred (OADate (days since 12/30/1899)). */
     std::vector<double>     stat_max_overflow_date;
 
     /// Cumulative depth for computing average (project length units × seconds).
     /// @see Legacy: NodeStats[i].avgDepth
     std::vector<double>     stat_sum_depth;
 
-    /// Date/time when maximum depth occurred (Julian date).
+    /// Date/time when maximum depth occurred (OADate (days since 12/30/1899)).
     /// @see Legacy: NodeStats[i].maxDepthDate
     std::vector<double>     stat_max_depth_date;
 
@@ -429,7 +430,7 @@ struct NodeData {
     /// @see Legacy: NodeStats[i].maxRptDepth
     std::vector<double>     stat_max_rpt_depth;
 
-    /// Date/time when maximum total inflow occurred (Julian date).
+    /// Date/time when maximum total inflow occurred (OADate (days since 12/30/1899)).
     /// @see Legacy: NodeStats[i].maxInflowDate
     std::vector<double>     stat_max_inflow_date;
 
@@ -477,6 +478,23 @@ struct NodeData {
      * @see Legacy: OutfallStats[k].totalPeriods
      */
     std::vector<long>       stat_outfall_periods;
+
+    /**
+     * @brief Count of non-converging steps per node.
+     * @details Incremented when a routing step fails to converge and the node
+     *          itself did not converge (matching legacy NodeStats[i].nonConvergedCount).
+     * @see Legacy: stats_updateConvergenceStats()
+     */
+    std::vector<int>        stat_non_converged_count;
+
+    /**
+     * @brief CFL time-step critical count per node.
+     * @details Incremented when the node's depth-change rate produces the
+     *          smallest CFL-limited timestep (matching legacy
+     *          NodeStats[i].timeCourantCritical).
+     * @see Legacy: stats_updateCriticalTimeCount()
+     */
+    std::vector<double>     stat_time_courant_critical;
 
     /**
      * @brief Cumulative pollutant loads at each node.
@@ -583,6 +601,58 @@ struct NodeData {
         stat_outfall_avg_flow.assign(un, 0.0);
         stat_outfall_max_flow.assign(un, 0.0);
         stat_outfall_periods.assign(un, 0);
+        stat_non_converged_count.assign(un, 0);
+        stat_time_courant_critical.assign(un, 0.0);
+    }
+
+    /**
+     * @brief Grow all arrays to hold at least `n` nodes, preserving existing data.
+     *
+     * @details Called by ensure_node_capacity() during incremental INP parsing.
+     *          Uses vector::resize() (not assign) so existing elements are preserved.
+     *          New elements get the same defaults as resize().
+     */
+    void grow_to(int n) {
+        if (n <= count()) return;
+        const auto un = static_cast<std::size_t>(n);
+        auto g = [&](auto& vec, auto def) { vec.resize(un, def); };
+        g(type, NodeType::JUNCTION);
+        g(invert_elev, 0.0); g(full_depth, 0.0); g(init_depth, 0.0);
+        g(sur_depth, 0.0); g(ponded_area, 0.0);
+        g(outfall_type, OutfallType::FREE); g(outfall_param, 0.0);
+        g(outfall_has_flap_gate, false); g(outfall_route_to, -1);
+        g(storage_curve, -1); storage_curve_name.resize(un);
+        g(storage_a, 0.0); g(storage_b, 0.0); g(storage_c, 0.0);
+        g(storage_seep_rate, 0.0); g(storage_evap_frac, 0.0);
+        g(storage_evap_loss, 0.0); g(storage_exfil_loss, 0.0);
+        g(exfil_suction, 0.0); g(exfil_ksat, 0.0); g(exfil_imd, 0.0);
+        g(divider_type, DividerType::CUTOFF); g(divider_cutoff, 0.0);
+        g(divider_cd, 0.0); g(divider_max_depth, 0.0);
+        g(divider_curve, -1); g(divider_link, -1);
+        divider_link_name.resize(un); divider_curve_name.resize(un);
+        g(depth, 0.0); g(head, 0.0); g(volume, 0.0);
+        g(lat_flow, 0.0); g(user_lat_flow, 0.0);
+        g(runoff_inflow, 0.0); g(gw_inflow, 0.0); g(ext_inflow, 0.0);
+        g(dwf_inflow, 0.0); g(rdii_inflow, 0.0); g(iface_inflow, 0.0);
+        qual_vol_in.resize(un, 0.0);
+        g(inflow, 0.0); g(outflow, 0.0); g(overflow, 0.0);
+        g(losses, 0.0); g(crown_elev, 0.0); g(degree, 0);
+        g(old_net_inflow, 0.0); g(full_volume, 0.0);
+        g(old_depth, 0.0); g(old_volume, 0.0); g(old_lat_flow, 0.0);
+        g(rpt_flag, static_cast<char>(0));
+        g(stat_vol_flooded, 0.0); g(stat_time_flooded, 0.0);
+        g(stat_max_depth, 0.0); g(stat_max_overflow, 0.0);
+        g(stat_max_overflow_date, 0.0); g(stat_sum_depth, 0.0);
+        g(stat_max_depth_date, 0.0); g(stat_max_rpt_depth, 0.0);
+        g(stat_max_inflow_date, 0.0); g(stat_time_surcharged, 0.0);
+        g(stat_max_surcharge_height, 0.0);
+        g(stat_max_lat_inflow, 0.0); g(stat_max_total_inflow, 0.0);
+        g(stat_lat_inflow_vol, 0.0); g(stat_total_inflow_vol, 0.0);
+        g(stat_total_outflow_vol, 0.0);
+        g(stat_outfall_avg_flow, 0.0); g(stat_outfall_max_flow, 0.0);
+        g(stat_outfall_periods, 0L);
+        g(stat_non_converged_count, 0); g(stat_time_courant_critical, 0.0);
+        // Note: qual_mass_in, conc, conc_old, hrt handled by resize_quality()
     }
 
     /**
@@ -711,14 +781,14 @@ struct NodeData {
      * @brief Snapshot current state into old-step arrays before solving.
      */
     void save_state() noexcept {
-        old_depth    = depth;
-        old_volume   = volume;
-        old_lat_flow = lat_flow;
+        std::copy(depth.begin(),    depth.end(),    old_depth.begin());
+        std::copy(volume.begin(),   volume.end(),   old_volume.begin());
+        std::copy(lat_flow.begin(), lat_flow.end(), old_lat_flow.begin());
         // Save net inflow for trapezoidal averaging in next step
         for (std::size_t i = 0; i < inflow.size(); ++i) {
             old_net_inflow[i] = inflow[i] - outflow[i];
         }
-        conc_old = conc;
+        std::copy(conc.begin(), conc.end(), conc_old.begin());
     }
 
     /** @brief Reset state variables, applying init_depth from input.
@@ -753,13 +823,16 @@ struct NodeData {
     }
 
     /**
-     * @brief Zero all decomposed inflow source arrays.
+     * @brief Zero routing-phase inflow source arrays.
      * @details Called at the start of each routing step before processes
      *          write to their respective source arrays.
+     *
+     *          NOTE: runoff_inflow and gw_inflow are zeroed in stepRunoff()
+     *          Phase 2 before subcatchment accumulation (matching legacy
+     *          initSystemInflows which zeros newLatFlow each routing step).
      */
     void clearInflowSources() noexcept {
-        std::fill(runoff_inflow.begin(), runoff_inflow.end(), 0.0);
-        std::fill(gw_inflow.begin(),     gw_inflow.end(),     0.0);
+        // runoff_inflow and gw_inflow: zeroed in stepRunoff() Phase 2
         std::fill(ext_inflow.begin(),    ext_inflow.end(),    0.0);
         std::fill(dwf_inflow.begin(),    dwf_inflow.end(),    0.0);
         std::fill(rdii_inflow.begin(),   rdii_inflow.end(),   0.0);

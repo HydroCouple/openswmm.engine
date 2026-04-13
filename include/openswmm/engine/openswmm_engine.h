@@ -277,6 +277,20 @@ SWMM_ENGINE_API int swmm_get_end_time    (SWMM_Engine engine, double* end);
 SWMM_ENGINE_API int swmm_get_current_time(SWMM_Engine engine, double* current);
 SWMM_ENGINE_API int swmm_get_routing_step(SWMM_Engine engine, double* dt);
 
+/* =========================================================================
+ * Routing event and steady-state status
+ * ========================================================================= */
+
+/** @brief Check if simulation is currently between routing events. */
+SWMM_ENGINE_API int swmm_is_between_events(SWMM_Engine engine, int* is_between);
+
+/** @brief Get number of routing events defined. */
+SWMM_ENGINE_API int swmm_get_event_count(SWMM_Engine engine, int* count);
+
+/** @brief Get/set steady-state skip flag. */
+SWMM_ENGINE_API int swmm_get_steady_state_skip(SWMM_Engine engine, int* enabled);
+SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

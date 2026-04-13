@@ -92,95 +92,26 @@ static XsectShape parse_xsect_shape(const std::string& s) {
 // ============================================================================
 
 static void ensure_node_capacity(SimulationContext& ctx, int idx) {
-    size_t n = static_cast<size_t>(idx + 1);
-    auto grow = [n](auto& vec) { if (vec.size() < n) vec.resize(n); };
-    grow(ctx.nodes.type);
-    grow(ctx.nodes.invert_elev);
-    grow(ctx.nodes.full_depth);
-    grow(ctx.nodes.init_depth);
-    grow(ctx.nodes.sur_depth);
-    grow(ctx.nodes.ponded_area);
-    grow(ctx.nodes.outfall_type);
-    grow(ctx.nodes.outfall_param);
-    grow(ctx.nodes.outfall_has_flap_gate);
-    grow(ctx.nodes.storage_curve);
-    grow(ctx.nodes.storage_curve_name);
-    grow(ctx.nodes.storage_a);
-    grow(ctx.nodes.storage_b);
-    grow(ctx.nodes.storage_c);
-    grow(ctx.nodes.divider_type);
-    grow(ctx.nodes.divider_cutoff);
-    grow(ctx.nodes.divider_curve);
-    grow(ctx.nodes.divider_curve_name);
-    grow(ctx.spatial.node_x);
-    grow(ctx.spatial.node_y);
+    ctx.nodes.grow_to(idx + 1);
+    auto n = static_cast<size_t>(idx + 1);
+    if (ctx.spatial.node_x.size() < n) ctx.spatial.node_x.resize(n, 0.0);
+    if (ctx.spatial.node_y.size() < n) ctx.spatial.node_y.resize(n, 0.0);
 }
 
 static void ensure_link_capacity(SimulationContext& ctx, int idx) {
-    size_t n = static_cast<size_t>(idx + 1);
-    auto grow = [n](auto& vec) { if (vec.size() < n) vec.resize(n); };
-    grow(ctx.links.type);
-    grow(ctx.links.node1);
-    grow(ctx.links.node2);
-    grow(ctx.links.offset1);
-    grow(ctx.links.offset2);
-    grow(ctx.links.q0);
-    grow(ctx.links.q_limit);
-    grow(ctx.links.xsect_shape);
-    grow(ctx.links.xsect_y_full);
-    grow(ctx.links.xsect_a_full);
-    grow(ctx.links.xsect_w_max);
-    grow(ctx.links.xsect_curve);
-    grow(ctx.links.roughness);
-    grow(ctx.links.length);
-    grow(ctx.links.barrels);
-    grow(ctx.links.culvert_code);
-    grow(ctx.links.loss_inlet);
-    grow(ctx.links.loss_outlet);
-    grow(ctx.links.loss_avg);
-    grow(ctx.links.has_flap_gate);
-    grow(ctx.links.seep_rate);
-    grow(ctx.links.pump_curve);
-    grow(ctx.links.pump_curve_name);
-    grow(ctx.links.pump_init_state);
-    grow(ctx.links.pump_startup);
-    grow(ctx.links.pump_shutoff);
-    grow(ctx.links.crest_height);
-    grow(ctx.links.cd);
-    grow(ctx.links.xsect_y_bot);
-    grow(ctx.spatial.link_vertices_x);
-    grow(ctx.spatial.link_vertices_y);
-    grow(ctx.spatial.link_x);
-    grow(ctx.spatial.link_y);
+    ctx.links.grow_to(idx + 1);
+    auto n = static_cast<size_t>(idx + 1);
+    if (ctx.spatial.link_vertices_x.size() < n) ctx.spatial.link_vertices_x.resize(n);
+    if (ctx.spatial.link_vertices_y.size() < n) ctx.spatial.link_vertices_y.resize(n);
+    if (ctx.spatial.link_x.size() < n) ctx.spatial.link_x.resize(n, 0.0);
+    if (ctx.spatial.link_y.size() < n) ctx.spatial.link_y.resize(n, 0.0);
 }
 
 static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
-    size_t n = static_cast<size_t>(idx + 1);
-    auto grow = [n](auto& vec) { if (vec.size() < n) vec.resize(n); };
-    grow(ctx.subcatches.outlet_node);
-    grow(ctx.subcatches.outlet_subcatch);
-    grow(ctx.subcatches.outlet_name);
-    grow(ctx.subcatches.gage);
-    grow(ctx.subcatches.area);
-    grow(ctx.subcatches.width);
-    grow(ctx.subcatches.slope);
-    grow(ctx.subcatches.curb_length);
-    grow(ctx.subcatches.frac_imperv);
-    grow(ctx.subcatches.n_imperv);
-    grow(ctx.subcatches.n_perv);
-    grow(ctx.subcatches.ds_imperv);
-    grow(ctx.subcatches.ds_perv);
-    grow(ctx.subcatches.frac_imperv_no_store);
-    grow(ctx.subcatches.subarea_routing);
-    grow(ctx.subcatches.pct_routed);
-    grow(ctx.subcatches.infil_model);
-    grow(ctx.subcatches.infil_p1);
-    grow(ctx.subcatches.infil_p2);
-    grow(ctx.subcatches.infil_p3);
-    grow(ctx.subcatches.infil_p4);
-    grow(ctx.subcatches.infil_p5);
-    grow(ctx.spatial.subcatch_polygon_x);
-    grow(ctx.spatial.subcatch_polygon_y);
+    ctx.subcatches.grow_to(idx + 1);
+    auto n = static_cast<size_t>(idx + 1);
+    if (ctx.spatial.subcatch_polygon_x.size() < n) ctx.spatial.subcatch_polygon_x.resize(n);
+    if (ctx.spatial.subcatch_polygon_y.size() < n) ctx.spatial.subcatch_polygon_y.resize(n);
 }
 
 // ============================================================================

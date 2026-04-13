@@ -124,11 +124,11 @@ struct SimulationOptions {
     // Time control
     // -----------------------------------------------------------------------
 
-    /** @brief Simulation start date/time (decimal days, Julian date).
+    /** @brief Simulation start date/time (decimal days, OADate (days since 12/30/1899)).
      *  @details Legacy default: Jan 1, 2004 = datetime_encodeDate(2004,1,1). */
-    double start_date = 2453006.0;  // Jan 1, 2004 Julian date (legacy default)
+    double start_date = 2453006.0;  // Jan 1, 2004 OADate (days since 12/30/1899) (legacy default)
 
-    /** @brief Simulation end date/time (decimal days, Julian date). */
+    /** @brief Simulation end date/time (decimal days, OADate (days since 12/30/1899)). */
     double end_date = 0.0;
 
     /** @brief Report start date/time. */
@@ -399,7 +399,7 @@ struct SimulationOptions {
     /** @brief File path for temperature data. */
     std::string temp_file;
 
-    /** @brief Temperature file start date (Julian). */
+    /** @brief Temperature file start date (OADate). */
     double temp_file_start = 0.0;
 
     /** @brief Wind speed type: 0=MONTHLY, 1=FILE. */

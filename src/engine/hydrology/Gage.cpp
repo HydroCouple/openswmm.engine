@@ -85,7 +85,7 @@ double getPastRain(const GageState& state, int hours) {
 }
 
 void updateAllGages(SimulationContext& ctx, double current_time) {
-    // current_time is absolute Julian date in fractional days
+    // current_time is absolute OADate (days since 12/30/1899) in fractional days
     for (int j = 0; j < ctx.n_gages(); ++j) {
         auto uj = static_cast<std::size_t>(j);
 

@@ -372,7 +372,7 @@ private:
      * @details Selects wet_step or dry_step based on current conditions, then
      *          shortens to align with next rain gage boundary.
      *
-     * @param abs_time     Current absolute Julian date.
+     * @param abs_time     Current absolute OADate (days since 12/30/1899).
      * @param is_raining   True if any gage has rainfall > 0.
      * @param has_runoff   True if any subcatchment produces runoff > 0.
      * @param has_snow     True if any subcatchment has snow depth > 0.

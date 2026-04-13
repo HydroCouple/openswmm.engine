@@ -47,77 +47,7 @@ namespace openswmm::input {
 
 // Ensure NodeData arrays are large enough for index `idx`
 static void ensure_node_capacity(SimulationContext& ctx, int idx) {
-    const auto n = static_cast<std::size_t>(idx + 1);
-    auto grow = [&](auto& vec, auto def) {
-        if (vec.size() < n) vec.resize(n, def);
-    };
-    using NT  = NodeType;
-    using OT  = OutfallType;
-    grow(ctx.nodes.type,               NT::JUNCTION);
-    grow(ctx.nodes.invert_elev,        0.0);
-    grow(ctx.nodes.full_depth,         0.0);
-    grow(ctx.nodes.init_depth,         0.0);
-    grow(ctx.nodes.sur_depth,          0.0);
-    grow(ctx.nodes.ponded_area,        0.0);
-    grow(ctx.nodes.outfall_type,       OT::FREE);
-    grow(ctx.nodes.outfall_param,      0.0);
-    grow(ctx.nodes.outfall_has_flap_gate, false);
-    grow(ctx.nodes.storage_curve,      -1);
-    if (ctx.nodes.storage_curve_name.size() < n) ctx.nodes.storage_curve_name.resize(n);
-    grow(ctx.nodes.storage_a,          0.0);
-    grow(ctx.nodes.storage_b,          0.0);
-    grow(ctx.nodes.storage_c,          0.0);
-    grow(ctx.nodes.storage_seep_rate,  0.0);
-    grow(ctx.nodes.storage_evap_frac,  0.0);
-    grow(ctx.nodes.storage_evap_loss,  0.0);
-    grow(ctx.nodes.storage_exfil_loss, 0.0);
-    grow(ctx.nodes.exfil_suction,      0.0);
-    grow(ctx.nodes.exfil_ksat,         0.0);
-    grow(ctx.nodes.exfil_imd,          0.0);
-
-    // Divider-specific
-    grow(ctx.nodes.divider_type,       DividerType::CUTOFF);
-    grow(ctx.nodes.divider_cutoff,     0.0);
-    grow(ctx.nodes.divider_cd,         0.0);
-    grow(ctx.nodes.divider_max_depth,  0.0);
-    grow(ctx.nodes.divider_curve,      -1);
-    grow(ctx.nodes.divider_link,       -1);
-    if (ctx.nodes.divider_link_name.size() < n) ctx.nodes.divider_link_name.resize(n);
-    if (ctx.nodes.divider_curve_name.size() < n) ctx.nodes.divider_curve_name.resize(n);
-    grow(ctx.nodes.depth,              0.0);
-    grow(ctx.nodes.head,               0.0);
-    grow(ctx.nodes.volume,             0.0);
-    grow(ctx.nodes.lat_flow,           0.0);
-    grow(ctx.nodes.inflow,             0.0);
-    grow(ctx.nodes.outflow,            0.0);
-    grow(ctx.nodes.overflow,           0.0);
-    grow(ctx.nodes.losses,             0.0);
-    grow(ctx.nodes.crown_elev,         0.0);
-    grow(ctx.nodes.degree,             0);
-    grow(ctx.nodes.old_net_inflow,     0.0);
-    grow(ctx.nodes.full_volume,        0.0);
-    grow(ctx.nodes.old_depth,          0.0);
-    grow(ctx.nodes.old_volume,         0.0);
-    grow(ctx.nodes.old_lat_flow,       0.0);
-    grow(ctx.nodes.stat_vol_flooded,   0.0);
-    grow(ctx.nodes.stat_time_flooded,  0.0);
-    grow(ctx.nodes.stat_max_depth,     0.0);
-    grow(ctx.nodes.stat_max_overflow,  0.0);
-    grow(ctx.nodes.stat_max_overflow_date, 0.0);
-    grow(ctx.nodes.stat_sum_depth,        0.0);
-    grow(ctx.nodes.stat_max_depth_date,   0.0);
-    grow(ctx.nodes.stat_max_rpt_depth,    0.0);
-    grow(ctx.nodes.stat_max_inflow_date,  0.0);
-    grow(ctx.nodes.stat_time_surcharged,  0.0);
-    grow(ctx.nodes.stat_max_surcharge_height, 0.0);
-    grow(ctx.nodes.stat_max_lat_inflow,   0.0);
-    grow(ctx.nodes.stat_max_total_inflow, 0.0);
-    grow(ctx.nodes.stat_lat_inflow_vol,   0.0);
-    grow(ctx.nodes.stat_total_inflow_vol, 0.0);
-    grow(ctx.nodes.stat_total_outflow_vol, 0.0);
-    grow(ctx.nodes.stat_outfall_avg_flow, 0.0);
-    grow(ctx.nodes.stat_outfall_max_flow, 0.0);
-    grow(ctx.nodes.stat_outfall_periods,  0L);
+    ctx.nodes.grow_to(idx + 1);
 }
 
 // Ensure spatial arrays are large enough

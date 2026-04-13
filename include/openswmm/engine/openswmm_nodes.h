@@ -662,6 +662,24 @@ SWMM_ENGINE_API int swmm_node_set_lat_inflows_bulk(SWMM_Engine engine, const dou
 SWMM_ENGINE_API int swmm_node_get_quality_bulk(SWMM_Engine engine, int pollutant_idx,
                                                     double* buf, int count);
 
+/* =========================================================================
+ * Outfall-to-subcatchment routing
+ * ========================================================================= */
+
+/** @brief Set outfall route-to subcatchment index (-1 = none). */
+SWMM_ENGINE_API int swmm_node_set_outfall_route_to(SWMM_Engine engine, int idx, int subcatch_idx);
+
+/** @brief Get outfall route-to subcatchment index (-1 = none). */
+SWMM_ENGINE_API int swmm_node_get_outfall_route_to(SWMM_Engine engine, int idx, int* subcatch_idx);
+
+/* =========================================================================
+ * Depth from volume (inverse of getVolume)
+ * ========================================================================= */
+
+/** @brief Compute depth from volume for a node (inverse of volume-depth curve). */
+SWMM_ENGINE_API int swmm_node_get_depth_from_volume(SWMM_Engine engine, int idx,
+                                                      double volume, double* depth);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

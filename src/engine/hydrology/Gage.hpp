@@ -123,7 +123,7 @@ void updateAllGages(SimulationContext& ctx, double current_time);
  *
  * @param ctx          Simulation context.
  * @param gage_idx     Gage index.
- * @param report_date  Absolute Julian date to query.
+ * @param report_date  Absolute OADate (days since 12/30/1899) to query.
  * @returns Rainfall rate in user units (in/hr or mm/hr).
  */
 double getReportRainfall(const SimulationContext& ctx, int gage_idx,

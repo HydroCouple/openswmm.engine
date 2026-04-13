@@ -13,6 +13,7 @@
 #include "TimestepController.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
+#include <cmath>
 
 #include <algorithm>
 #include <cmath>
@@ -46,8 +47,10 @@ double TimestepController::compute_next(
 
     // Step 2: Adjust so total duration is not exceeded
     //         (matching legacy: routingStep = (RoutingDuration - NewRoutingTime) / 1000)
-    const double sim_remaining =
-        (opt.end_date - ctx.current_date) * SEC_PER_DAY;
+    //         Use millisecond-based arithmetic to match legacy exactly.
+    const double total_sec = std::floor(
+        (opt.end_date - opt.start_date) * SEC_PER_DAY + 0.5);
+    const double sim_remaining = total_sec - ctx.current_time;
     if (sim_remaining > 0.0 && dt > sim_remaining) {
         dt = std::max(sim_remaining, 0.001);  // legacy floor: 1 msec
     }
@@ -59,9 +62,9 @@ double TimestepController::compute_next(
     }
 
     // Step 4: Align to output boundary if it falls within this step.
-    //         Legacy does NOT do this — it overshoots and saves at the
-    //         overshot time. We align when possible (remaining >= min_step)
-    //         to avoid interpolation; otherwise let the step overshoot.
+    //         Shortens the step to land exactly on the report time, avoiding
+    //         interpolation of output values. Only applied when the remaining
+    //         time to the next output is at least min_step (prevents tiny steps).
     if (ctx.dt_output_remaining > 0.0 &&
         ctx.dt_output_remaining >= min_step &&
         ctx.dt_output_remaining < dt) {
@@ -119,7 +122,17 @@ bool TimestepController::output_due(const SimulationContext& ctx) noexcept {
 // ============================================================================
 
 bool TimestepController::simulation_complete(const SimulationContext& ctx) noexcept {
-    return ctx.current_date >= ctx.options.end_date - OUTPUT_EPSILON / SEC_PER_DAY;
+    // Match legacy swmm5.c: TotalDuration = floor((EndDate-StartDate)*SECperDAY
+    //                                       + (EndTime-StartTime)*SECperDAY) * 1000
+    // then: NewRoutingTime >= RoutingDuration (in milliseconds).
+    //
+    // Use floor() to get an exact integer second count, then compare in
+    // milliseconds to avoid floating-point drift in OADate arithmetic.
+    double total_sec = std::floor(
+        (ctx.options.end_date - ctx.options.start_date) * SEC_PER_DAY + 0.5);
+    double current_msec = ctx.current_time * 1000.0;
+    double total_msec   = total_sec * 1000.0;
+    return current_msec >= total_msec;
 }
 
 } /* namespace openswmm::hydraulics */

@@ -526,6 +526,17 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         }
     }
 
+    // Post-Picard: update per-node non-convergence counts (matching legacy
+    // updateConvergenceStats: increment count for each unconverged node when
+    // the overall step did not converge).
+    if (!converged) {
+        for (int i = 0; i < n_nodes_; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (!xnode_[ui].converged)
+                ++ctx.nodes.stat_non_converged_count[ui];
+        }
+    }
+
     // Post-Picard: update DPS temporal state (P decay, surcharge tracking)
     if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
         updateDPSState(ctx, dt);
@@ -1705,8 +1716,8 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
 // getRoutingStep -- CFL-based adaptive timestep
 // ============================================================================
 
-double DWSolver::getRoutingStep(const SimulationContext& ctx,
-                                 double fixed_step, double courant_factor) const {
+double DWSolver::getRoutingStep(SimulationContext& ctx,
+                                 double fixed_step, double courant_factor) {
     if (courant_factor <= 0.0) return fixed_step;
 
     // On first call (no flows yet), use minimum step (matching legacy line 201-204:
@@ -1717,6 +1728,8 @@ double DWSolver::getRoutingStep(const SimulationContext& ctx,
     }
 
     double dt_min = fixed_step;
+    int min_link = -1;   // index of CFL-critical link
+    int min_node = -1;   // index of CFL-critical node
 
     // Link-based CFL (matching legacy getLinkStep with CourantFactor per-link)
     for (int j = 0; j < n_links_; ++j) {
@@ -1724,7 +1737,11 @@ double DWSolver::getRoutingStep(const SimulationContext& ctx,
         if (t <= 0.0 || t > 1.0e9) continue;
         // Apply Courant factor per-link (matching legacy dynwave.c line 856)
         t *= courant_factor;
-        dt_min = std::min(dt_min, t);
+        if (t < dt_min) {
+            dt_min = t;
+            min_link = j;
+            min_node = -1;
+        }
     }
 
     // Node-based CFL (matching legacy getNodeStep)
@@ -1744,7 +1761,18 @@ double DWSolver::getRoutingStep(const SimulationContext& ctx,
         if (dYdT < FUDGE) continue;
 
         double t = max_depth / dYdT;
-        if (t > 0.0 && t < dt_min) dt_min = t;
+        if (t > 0.0 && t < dt_min) {
+            dt_min = t;
+            min_node = i;
+            min_link = -1;
+        }
+    }
+
+    // Update CFL-critical element counters (matching legacy stats_updateCriticalTimeCount)
+    if (min_node >= 0) {
+        ctx.nodes.stat_time_courant_critical[static_cast<std::size_t>(min_node)] += 1.0;
+    } else if (min_link >= 0) {
+        ctx.links.stat_time_courant_critical[static_cast<std::size_t>(min_link)] += 1.0;
     }
 
     // Apply user's minimum step (from MINIMUM_STEP option, typically 0.5 sec)

@@ -713,6 +713,26 @@ SWMM_ENGINE_API int swmm_link_set_flows_bulk(SWMM_Engine engine, const double* b
 SWMM_ENGINE_API int swmm_link_get_quality_bulk(SWMM_Engine engine, int pollutant_idx,
                                                  double* buf, int count);
 
+/* =========================================================================
+ * Pump utilization statistics
+ * ========================================================================= */
+
+/** @brief Get pump on/off cycle count. */
+SWMM_ENGINE_API int swmm_link_get_stat_pump_cycles(SWMM_Engine engine, int idx, int* cycles);
+
+/** @brief Get pump total on-time (seconds). */
+SWMM_ENGINE_API int swmm_link_get_stat_pump_on_time(SWMM_Engine engine, int idx, double* seconds);
+
+/** @brief Get pump total volume pumped (ft3). */
+SWMM_ENGINE_API int swmm_link_get_stat_pump_volume(SWMM_Engine engine, int idx, double* volume);
+
+/* =========================================================================
+ * Hydraulic power
+ * ========================================================================= */
+
+/** @brief Get hydraulic power dissipated in a link (ft-lb/s). P = gamma * |Q| * |hL|. */
+SWMM_ENGINE_API int swmm_link_get_hyd_power(SWMM_Engine engine, int idx, double* power);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

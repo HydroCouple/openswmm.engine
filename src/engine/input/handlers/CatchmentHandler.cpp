@@ -44,58 +44,7 @@
 namespace openswmm::input {
 
 static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
-    const auto n = static_cast<std::size_t>(idx + 1);
-    auto grow = [&](auto& vec, auto def) {
-        if (vec.size() < n) vec.resize(n, def);
-    };
-    grow(ctx.subcatches.outlet_node,          -1);
-    grow(ctx.subcatches.outlet_subcatch,      -1);
-    grow(ctx.subcatches.outlet_name,          std::string{});
-    grow(ctx.subcatches.gage,                 -1);
-    grow(ctx.subcatches.area,                 0.0);
-    grow(ctx.subcatches.width,                0.0);
-    grow(ctx.subcatches.slope,                0.0);
-    grow(ctx.subcatches.curb_length,          0.0);
-    grow(ctx.subcatches.frac_imperv,          0.0);
-    grow(ctx.subcatches.frac_imperv_no_store, 0.0);
-    grow(ctx.subcatches.n_imperv,             0.013);
-    grow(ctx.subcatches.n_perv,               0.1);
-    grow(ctx.subcatches.ds_imperv,            0.0);
-    grow(ctx.subcatches.ds_perv,              0.0);
-    grow(ctx.subcatches.subarea_routing,       0);    // 0 = TO_OUTLET
-    grow(ctx.subcatches.pct_routed,            0.0);
-    grow(ctx.subcatches.infil_model,           0);
-    grow(ctx.subcatches.infil_p1,              0.0);
-    grow(ctx.subcatches.infil_p2,              0.0);
-    grow(ctx.subcatches.infil_p3,              0.0);
-    grow(ctx.subcatches.infil_p4,              0.0);
-    grow(ctx.subcatches.infil_p5,              0.0);
-    grow(ctx.subcatches.runoff,               0.0);
-    grow(ctx.subcatches.rainfall,             0.0);
-    grow(ctx.subcatches.evap_loss,            0.0);
-    grow(ctx.subcatches.infil_loss,           0.0);
-    grow(ctx.subcatches.ponded_depth,         0.0);
-    grow(ctx.subcatches.gw_flow,             0.0);
-    grow(ctx.subcatches.old_runoff,           0.0);
-    grow(ctx.subcatches.old_gw_flow,          0.0);
-    grow(ctx.subcatches.snowpack,             -1);
-    grow(ctx.subcatches.gw_aquifer,           -1);
-    grow(ctx.subcatches.gw_node,             -1);
-    grow(ctx.subcatches.gw_surf_elev,         0.0);
-    grow(ctx.subcatches.gw_a1,                0.0);
-    grow(ctx.subcatches.gw_b1,                0.0);
-    grow(ctx.subcatches.gw_a2,                0.0);
-    grow(ctx.subcatches.gw_b2,                0.0);
-    grow(ctx.subcatches.gw_a3,                0.0);
-    grow(ctx.subcatches.gw_tw,                0.0);
-    grow(ctx.subcatches.gw_hstar,             0.0);
-    grow(ctx.subcatches.stat_precip_vol,      0.0);
-    grow(ctx.subcatches.stat_evap_vol,        0.0);
-    grow(ctx.subcatches.stat_infil_vol,       0.0);
-    grow(ctx.subcatches.stat_imperv_vol,      0.0);
-    grow(ctx.subcatches.stat_perv_vol,        0.0);
-    grow(ctx.subcatches.stat_runoff_vol,      0.0);
-    grow(ctx.subcatches.stat_max_runoff,      0.0);
+    ctx.subcatches.grow_to(idx + 1);
 }
 
 static void ensure_gage_capacity(SimulationContext& ctx, int idx) {

@@ -27,6 +27,7 @@
 #include <vector>
 #include <cstdint>
 #include <string>
+#include <algorithm>
 
 namespace openswmm {
 
@@ -497,7 +498,7 @@ struct LinkData {
     std::vector<long> stat_norm_ltd;      ///< Count of steps with normal flow limiting
     std::vector<long> stat_inlet_ctrl;    ///< Count of steps with inlet control
 
-    /// Date/time when maximum flow occurred (Julian date).
+    /// Date/time when maximum flow occurred (OADate (days since 12/30/1899)).
     /// @see Legacy: LinkStats[i].maxFlowDate
     std::vector<double>     stat_max_flow_date;
 
@@ -541,6 +542,31 @@ struct LinkData {
 
     /** @brief Previous pump state for cycle detection (true = on). */
     std::vector<bool>       stat_pump_was_on;
+
+    /**
+     * @brief Count of flow direction reversals per link.
+     * @details Incremented when the sign of (newFlow - oldFlow) reverses and
+     *          the magnitude exceeds 0.001 (matching legacy
+     *          LinkStats[i].flowTurns).
+     * @see Legacy: stats_updateLinkStats()
+     */
+    std::vector<long>       stat_flow_turns;
+
+    /**
+     * @brief Sign of previous flow change for flow-turn detection.
+     * @details +1 or -1 indicating the sign of (newFlow - oldFlow) at the
+     *          previous routing step (matching legacy LinkStats[i].flowTurnSign).
+     * @see Legacy: stats_updateLinkStats()
+     */
+    std::vector<int>        stat_flow_turn_sign;
+
+    /**
+     * @brief CFL time-step critical count per link.
+     * @details Incremented when the link's CFL condition produces the smallest
+     *          adaptive timestep (matching legacy LinkStats[i].timeCourantCritical).
+     * @see Legacy: stats_updateCriticalTimeCount()
+     */
+    std::vector<double>     stat_time_courant_critical;
 
     // -----------------------------------------------------------------------
     // Capacity management
@@ -638,7 +664,59 @@ struct LinkData {
         stat_pump_on_time.assign(un, 0.0);
         stat_pump_volume.assign(un, 0.0);
         stat_pump_was_on.assign(un, false);
+        stat_flow_turns.assign(un, 0L);
+        stat_flow_turn_sign.assign(un, 0);
+        stat_time_courant_critical.assign(un, 0.0);
         normal_flow_limited.assign(un, false);
+    }
+
+    /**
+     * @brief Grow all arrays to hold at least `n` links, preserving existing data.
+     */
+    void grow_to(int n) {
+        if (n <= count()) return;
+        const auto un = static_cast<std::size_t>(n);
+        auto g = [&](auto& vec, auto def) { vec.resize(un, def); };
+        g(type, LinkType::CONDUIT); g(node1, -1); g(node2, -1);
+        g(offset1, 0.0); g(offset2, 0.0); g(q0, 0.0); g(q_limit, 0.0);
+        g(xsect_shape, XsectShape::CIRCULAR);
+        g(xsect_y_full, 0.0); g(xsect_a_full, 0.0); g(xsect_w_max, 0.0);
+        g(xsect_curve, -1); g(roughness, 0.013); g(param1, 0.0);
+        g(length, 0.0); g(mod_length, 0.0); g(slope, 0.0);
+        g(barrels, 1); g(beta, 0.0); g(rough_factor, 0.0);
+        g(q_full, 0.0); g(q_max, 0.0);
+        g(xsect_r_full, 0.0); g(xsect_s_full, 0.0); g(xsect_s_max, 0.0);
+        g(xsect_y_bot, 0.0); g(xsect_a_bot, 0.0);
+        g(xsect_s_bot, 0.0); g(xsect_r_bot, 0.0);
+        g(xsect_yw_max, 0.0); g(xsect_batch_shape, 0);
+        g(setting, 1.0); g(target_setting, 1.0); g(direction, 1);
+        g(loss_inlet, 0.0); g(loss_outlet, 0.0); g(loss_avg, 0.0);
+        g(has_flap_gate, false); g(seep_rate, 0.0);
+        g(evap_loss_rate, 0.0); g(seep_loss_rate, 0.0);
+        g(culvert_code, 0); g(normal_flow_limited, false);
+        g(inlet_control, false); g(dqdh, 0.0);
+        g(pump_curve, -1); g(pump_init_state, false);
+        g(pump_startup, 0.0); g(pump_shutoff, 0.0);
+        pump_curve_name.resize(un);
+        g(crest_height, 0.0); g(cd, 0.0); g(param2, 0.0); g(orate, 0.0);
+        g(flow, 0.0); g(depth, 0.0); g(volume, 0.0);
+        g(froude, 0.0); g(flow_class, FlowClass::DRY); g(is_closed, false);
+        g(old_flow, 0.0); g(old_depth, 0.0); g(old_volume, 0.0);
+        g(rpt_flag, static_cast<char>(0));
+        g(stat_vol_flow, 0.0); g(stat_max_flow, 0.0);
+        g(stat_max_veloc, 0.0); g(stat_max_filling, 0.0);
+        g(stat_time_surcharged, 0.0); g(stat_max_flow_date, 0.0);
+        g(stat_time_full_upstream, 0.0); g(stat_time_full_dnstream, 0.0);
+        g(stat_time_full_both, 0.0); g(stat_time_capacity_limited, 0.0);
+        g(stat_pump_cycles, 0); g(stat_pump_on_time, 0.0);
+        g(stat_pump_volume, 0.0); g(stat_pump_was_on, false);
+        g(stat_flow_turns, 0L); g(stat_flow_turn_sign, 0);
+        g(stat_time_courant_critical, 0.0);
+        g(stat_norm_ltd, 0L); g(stat_inlet_ctrl, 0L);
+        // stat_flow_class is flat 2D [n * N_FLOW_CLASSES]
+        stat_flow_class.resize(un * N_FLOW_CLASSES, 0L);
+        // Note: conc, conc_old handled by resize_quality()
+        // Note: stat_total_load handled by resize_loads()
     }
 
     /**
@@ -764,10 +842,10 @@ struct LinkData {
     }
 
     void save_state() noexcept {
-        old_flow  = flow;
-        old_depth = depth;
-        old_volume = volume;
-        conc_old = conc;
+        std::copy(flow.begin(),   flow.end(),   old_flow.begin());
+        std::copy(depth.begin(),  depth.end(),  old_depth.begin());
+        std::copy(volume.begin(), volume.end(), old_volume.begin());
+        std::copy(conc.begin(),   conc.end(),   conc_old.begin());
     }
 
     void reset_state() noexcept {

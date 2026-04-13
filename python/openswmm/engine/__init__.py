@@ -160,6 +160,13 @@ from ._output_reader import OutputReader
 from ._spatial import Spatial
 from ._forcing import Forcing
 
+# GeoPackage (optional — requires OPENSWMM_WITH_GEOPACKAGE build)
+try:
+    from ._geopackage import GeoPackage
+    HAS_GEOPACKAGE = True
+except ImportError:
+    HAS_GEOPACKAGE = False
+
 # Enums (pure Python, always available)
 from ._enums import (
     ErrorCode, EngineState, NodeType, LinkType,
@@ -177,7 +184,7 @@ __all__ = [
     "Nodes", "Links", "Subcatchments", "Gages", "MassBalance",
     "Pollutants", "Tables", "Inflows", "Controls",
     "Infrastructure", "Quality", "Statistics", "OutputReader",
-    "Spatial", "Forcing",
+    "Spatial", "Forcing", "HAS_GEOPACKAGE",
     # Enums
     "ErrorCode", "EngineState", "NodeType", "LinkType",
     "XSectShape", "FlowUnits", "RouteModel",

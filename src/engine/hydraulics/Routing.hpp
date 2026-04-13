@@ -83,8 +83,8 @@ public:
      * @param courant      Courant factor target (0 = use fixed).
      * @returns Adaptive timestep (seconds).
      */
-    double getAdaptiveStep(const SimulationContext& ctx,
-                           double fixed_step, double courant) const;
+    double getAdaptiveStep(SimulationContext& ctx,
+                           double fixed_step, double courant);
 
     /// Access the shape-grouped xsect manager.
     const XSectGroups& xsectGroups() const { return groups_; }

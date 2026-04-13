@@ -2,14 +2,23 @@
  * @file DateTime.hpp
  * @brief DateTime utility functions — numerically identical to legacy datetime.c.
  *
- * @details Replicates the exact date/time encoding, decoding, and arithmetic
- *          from the legacy SWMM datetime.c. Uses the same DateDelta epoch
- *          (days from 01/01/0000 to 12/31/1899), the same integer H:M:S
- *          decomposition, and the same rounding behavior.
+ * @details Uses the OLE Automation Date (OADate) / Delphi TDateTime convention:
+ *          a double where the integer part is the number of days since
+ *          December 30, 1899 and the fractional part represents time-of-day.
+ *
+ *          DateDelta = 693594 days from 01/01/0000 to 12/31/1899 converts
+ *          between the proleptic Gregorian calendar and the OADate epoch.
+ *
+ *          Replicates the exact date/time encoding, decoding, and arithmetic
+ *          from the legacy SWMM datetime.c including the same integer H:M:S
+ *          decomposition and the same rounding behavior.
  *
  *          This ensures that operations like datetime_addSeconds() produce
  *          bit-identical results to the legacy engine, which is critical for
  *          deterministic rain gage interval boundary alignment.
+ *
+ * @note    This is NOT an astronomical Julian Date. SWMM uses the OADate
+ *          convention throughout (matching Delphi's TDateTime type).
  *
  * @see Legacy reference: src/legacy/engine/datetime.c
  * @ingroup engine_core

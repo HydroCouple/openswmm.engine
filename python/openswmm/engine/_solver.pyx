@@ -272,6 +272,45 @@ cdef class Solver:
         _check(swmm_get_crs(self._handle, buf, 256))
         return buf.decode('utf-8')
 
+    # --- Routing events / steady-state ---
+
+    def is_between_events(self) -> bool:
+        """Check if simulation is currently between routing events.
+
+        :returns: True if between events (routing skipped), False otherwise.
+        :rtype: bool
+        """
+        cdef int v = 0
+        _check(swmm_is_between_events(self._handle, &v))
+        return v != 0
+
+    def get_event_count(self) -> int:
+        """Get number of routing events defined in [EVENTS] section.
+
+        :returns: Event count.
+        :rtype: int
+        """
+        cdef int v = 0
+        _check(swmm_get_event_count(self._handle, &v))
+        return v
+
+    def get_steady_state_skip(self) -> bool:
+        """Check if steady-state routing skip is enabled.
+
+        :returns: True if SKIP_STEADY_STATE is enabled.
+        :rtype: bool
+        """
+        cdef int v = 0
+        _check(swmm_get_steady_state_skip(self._handle, &v))
+        return v != 0
+
+    def set_steady_state_skip(self, bint enabled):
+        """Enable or disable steady-state routing skip.
+
+        :param enabled: True to enable, False to disable.
+        """
+        _check(swmm_set_steady_state_skip(self._handle, 1 if enabled else 0))
+
     # --- Context manager ---
 
     def __enter__(self):

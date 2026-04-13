@@ -168,9 +168,11 @@ public:
 
     /**
      * @brief Compute CFL-based variable timestep.
+     * @details Also updates per-node/link CFL-critical counters (matching
+     *          legacy stats_updateCriticalTimeCount).
      */
-    double getRoutingStep(const SimulationContext& ctx,
-                          double fixed_step, double courant_factor) const;
+    double getRoutingStep(SimulationContext& ctx,
+                          double fixed_step, double courant_factor);
 
     double head_tol   = DEFAULT_HEAD_TOL;
     int    max_trials = DEFAULT_MAX_TRIALS;

@@ -195,7 +195,7 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Timeseries without explicit dates have x-values starting near 0 (fractional
     // days from midnight). These are relative to the simulation start date.
-    // Offset them by start_date so absolute Julian lookups work.
+    // Offset them by start_date so absolute OADate lookups work.
     for (std::size_t t = 0; t < ctx.tables.tables.size(); ++t) {
         auto& tbl = ctx.tables.tables[t];
         if (tbl.type != TableType::TIMESERIES) continue;

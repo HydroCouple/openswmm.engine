@@ -677,3 +677,35 @@ class Subcatchments:
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         _check(swmm_subcatch_get_quality_bulk(h, pollutant_idx, &buf[0], n))
         return buf
+
+    # ------------------------------------------------------------------
+    # Ponded quality
+    # ------------------------------------------------------------------
+
+    def get_ponded_quality(self, idx, int pollutant_idx) -> float:
+        """Return ponded quality mass for a subcatchment-pollutant pair.
+
+        Ponded quality persists between wet/dry events and represents
+        pollutant mass in standing water on the subcatchment surface.
+
+        :param idx: Subcatchment index (int) or ID (str).
+        :param pollutant_idx: Pollutant index.
+        :returns: Ponded quality mass (project mass units).
+        :rtype: float
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_ponded_quality(h, i, pollutant_idx, &v))
+        return v
+
+    def set_ponded_quality(self, idx, int pollutant_idx, double mass):
+        """Set ponded quality mass for a subcatchment-pollutant pair.
+
+        :param idx: Subcatchment index (int) or ID (str).
+        :param pollutant_idx: Pollutant index.
+        :param mass: Ponded quality mass (project mass units).
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_subcatch_set_ponded_quality(h, i, pollutant_idx, mass))

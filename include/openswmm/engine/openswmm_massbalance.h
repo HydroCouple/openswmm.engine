@@ -84,6 +84,29 @@ SWMM_ENGINE_API int swmm_get_runoff_total (SWMM_Engine engine, int component, do
  */
 SWMM_ENGINE_API int swmm_get_routing_total(SWMM_Engine engine, int component, double* volume);
 
+/* =========================================================================
+ * Routing diagnostics (combined stats in one call)
+ * ========================================================================= */
+
+/** @brief Get combined routing statistics in a single call. */
+SWMM_ENGINE_API int swmm_get_routing_stats(SWMM_Engine engine,
+    double* avg_step, double* min_step, double* max_step,
+    int* n_steps, double* pct_non_converged,
+    double* avg_iterations, double* max_courant);
+
+/** @brief Get maximum Courant number observed during simulation. */
+SWMM_ENGINE_API int swmm_get_max_courant(SWMM_Engine engine, double* max_courant);
+
+/* =========================================================================
+ * Quality mass losses (per-pollutant)
+ * ========================================================================= */
+
+/** @brief Get quality mass lost to seepage (per pollutant). */
+SWMM_ENGINE_API int swmm_get_quality_seep_loss(SWMM_Engine engine, int pollutant_idx, double* mass);
+
+/** @brief Get quality mass lost to evaporation (per pollutant). */
+SWMM_ENGINE_API int swmm_get_quality_evap_loss(SWMM_Engine engine, int pollutant_idx, double* mass);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

@@ -209,7 +209,7 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
                 }
                 break;
             case 6: // Ideal pump
-                q = nodes.inflow[un1];
+                q = nodes.inflow[un1] + nodes.overflow[un1];
                 break;
         }
 

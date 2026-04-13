@@ -329,7 +329,7 @@ void InterfaceManager::writeOutfallResults(const SimulationContext& ctx,
                                             double current_time) {
     if (!outfile_) return;
 
-    // Decode current_time (Julian decimal days) into yr/mon/day/hr/min/sec
+    // Decode current_time (OADate decimal days) into yr/mon/day/hr/min/sec
     // using DateTime.hpp — matching legacy datetime_decodeDate/Time
     int yr, mon, day, hr, mn, sec;
     datetime::decodeDate(current_time, yr, mon, day);

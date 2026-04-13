@@ -321,8 +321,8 @@ int Router::step(SimulationContext& ctx, double dt,
 // getAdaptiveStep
 // ============================================================================
 
-double Router::getAdaptiveStep(const SimulationContext& ctx,
-                                double fixed_step, double courant) const {
+double Router::getAdaptiveStep(SimulationContext& ctx,
+                                double fixed_step, double courant) {
     if (model_ == RouteModel::DYNWAVE) {
         return dw_solver_.getRoutingStep(ctx, fixed_step, courant);
     }

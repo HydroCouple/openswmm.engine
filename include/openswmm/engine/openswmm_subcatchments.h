@@ -512,6 +512,18 @@ SWMM_ENGINE_API int swmm_subcatch_get_runoff_bulk(SWMM_Engine engine, double* bu
 SWMM_ENGINE_API int swmm_subcatch_get_quality_bulk(SWMM_Engine engine, int pollutant_idx,
                                                     double* buf, int count);
 
+/* =========================================================================
+ * Ponded quality (mass in standing water between events)
+ * ========================================================================= */
+
+/** @brief Get ponded quality mass for a subcatchment-pollutant pair. */
+SWMM_ENGINE_API int swmm_subcatch_get_ponded_quality(SWMM_Engine engine,
+    int subcatch_idx, int pollutant_idx, double* mass);
+
+/** @brief Set ponded quality mass for a subcatchment-pollutant pair. */
+SWMM_ENGINE_API int swmm_subcatch_set_ponded_quality(SWMM_Engine engine,
+    int subcatch_idx, int pollutant_idx, double mass);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

@@ -64,18 +64,26 @@ int main(int argc, char* argv[]) {
     const char* out_file = (argc > 3) ? argv[3] : "";
 
     std::printf("\n... OpenSWMM Engine 6.0.0-alpha.1\n");
+    std::printf("... Input: %s\n", inp_file);
+    std::printf("... Report: %s\n", rpt_file);
+    std::printf("... Output: %s\n", out_file);
+    std::fflush(stdout);
 
     std::time_t start = std::time(nullptr);
 
     // ---- Create engine ----
+    std::printf("... Creating engine...\n"); std::fflush(stdout);
     SWMM_Engine engine = swmm_engine_create();
     if (!engine) {
         std::printf("Error: failed to create engine instance.\n");
         return 1;
     }
+    std::printf("... Engine created.\n"); std::fflush(stdout);
 
     // ---- Open input file ----
+    std::printf("... Opening input file...\n"); std::fflush(stdout);
     int err = swmm_engine_open(engine, inp_file, rpt_file, out_file, nullptr);
+    std::printf("... open() returned %d\n", err); std::fflush(stdout);
     if (err != SWMM_OK) {
         std::printf("Error opening input file: %s\n", swmm_get_last_error_msg(engine));
         swmm_engine_destroy(engine);
@@ -83,7 +91,9 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Initialize ----
+    std::printf("... Initializing...\n"); std::fflush(stdout);
     err = swmm_engine_initialize(engine);
+    std::printf("... initialize() returned %d\n", err); std::fflush(stdout);
     if (err != SWMM_OK) {
         std::printf("Error initializing: %s\n", swmm_get_last_error_msg(engine));
         swmm_engine_close(engine);
@@ -92,8 +102,11 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Start simulation ----
+    std::printf("... Starting simulation...\n"); std::fflush(stdout);
     int save = (out_file[0] != '\0') ? 1 : 0;
+    std::printf("... save=%d\n", save); std::fflush(stdout);
     err = swmm_engine_start(engine, save);
+    std::printf("... start() returned %d\n", err); std::fflush(stdout);
     if (err != SWMM_OK) {
         std::printf("Error starting simulation: %s\n", swmm_get_last_error_msg(engine));
         swmm_engine_close(engine);
@@ -104,13 +117,20 @@ int main(int argc, char* argv[]) {
     // ---- Step loop ----
     double elapsed = 0.0;
     long step_count = 0;
+    std::printf("... Starting step loop (state after start: err=%d)\n", err);
+    std::fflush(stdout);
     while (true) {
         err = swmm_engine_step(engine, &elapsed);
         if (err != SWMM_OK) {
-            std::printf("\nError at step %ld: %s\n", step_count, swmm_get_last_error_msg(engine));
+            std::printf("\nError at step %ld (err=%d): %s\n", step_count, err,
+                        swmm_get_last_error_msg(engine));
             break;
         }
-        if (elapsed <= 0.0) break;  // simulation complete
+        if (elapsed <= 0.0) {
+            std::printf("... step() returned elapsed=%.6f at step %ld — simulation complete\n",
+                        elapsed, step_count);
+            break;
+        }
 
         step_count++;
         if (step_count % 1000 == 0) {

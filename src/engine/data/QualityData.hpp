@@ -64,7 +64,8 @@ struct BuildupData {
 
     void resize(int nlu, int npoll) {
         n_landuses = nlu; n_pollutants = npoll;
-        auto total = static_cast<std::size_t>(nlu * npoll);
+        auto total = static_cast<std::size_t>(nlu) *
+                     static_cast<std::size_t>(npoll);
         func_type.assign(total, 0);
         coeff1.assign(total, 0.0);
         coeff2.assign(total, 0.0);
@@ -98,7 +99,8 @@ struct WashoffData {
 
     void resize(int nlu, int npoll) {
         n_landuses = nlu; n_pollutants = npoll;
-        auto total = static_cast<std::size_t>(nlu * npoll);
+        auto total = static_cast<std::size_t>(nlu) *
+                     static_cast<std::size_t>(npoll);
         func_type.assign(total, 0);
         coeff.assign(total, 0.0);
         expon.assign(total, 0.0);
