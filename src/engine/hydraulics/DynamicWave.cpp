@@ -1469,7 +1469,12 @@ bool DWSolver::updateNodeDepths(SimulationContext& ctx, double dt, int step) {
         // --- Anderson acceleration (depth-2 mixing) ---
         // On step 0: just record state for next iteration.
         // On step 1+: use previous iterate to compute optimal blend.
-        if (use_anderson && step >= 1) {
+        // Skip AA for surcharged nodes under EXTRAN: the discontinuous
+        // dQ/dH formulation is not a smooth fixed-point map, so AA mixing
+        // can push depth below the crown floor that setNodeDepth enforces.
+        const bool skip_aa = (surcharge_method == SurchargeMethod::EXTRAN &&
+                              xnode_[ui].is_surcharged);
+        if (use_anderson && step >= 1 && !skip_aa) {
             double r_k = g_k - y_last;                     // residual at current iterate
             double r_km1 = aa_r_prev_[ui];                 // residual from previous iterate
             double dr = r_k - r_km1;
