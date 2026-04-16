@@ -10,6 +10,13 @@
  * @license  MIT License
  */
 
+// CMake defines openswmm_engine_EXPORTS automatically when building the DLL,
+// but IntelliSense doesn't see that, so it resolves SWMM_ENGINE_API to
+// __declspec(dllimport) and flags every function definition as an error.
+#if defined(__INTELLISENSE__) && !defined(openswmm_engine_EXPORTS)
+#  define openswmm_engine_EXPORTS
+#endif
+
 #include "openswmm_api_common.hpp"
 
 extern "C" {
@@ -247,6 +254,61 @@ SWMM_ENGINE_API int swmm_get_steady_state_skip(SWMM_Engine engine, int* enabled)
 SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled) {
     CHECK_HANDLE(engine);
     to_engine(engine)->context().options.skip_steady_state = (enabled != 0);
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Operator snapshot
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_set_operator_snapshot_callback(
+    SWMM_Engine engine,
+    SWMM_OperatorSnapshotCallback callback,
+    void* user_data)
+{
+    CHECK_HANDLE(engine);
+    to_engine(engine)->operatorSnapshot().setCallback(callback, user_data);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_get_operator_snapshot(
+    SWMM_Engine engine,
+    const SWMM_OperatorSnapshot** out_snap)
+{
+    CHECK_HANDLE(engine);
+    if (!out_snap) return SWMM_ERR_BADPARAM;
+    auto& state = to_engine(engine)->operatorSnapshot();
+    state.enablePoll();
+    if (!state.hasBeenPopulated()) {
+        *out_snap = nullptr;
+    } else {
+        *out_snap = &state.snapshot();
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_enable_iteration_history(
+    SWMM_Engine engine,
+    int max_iters)
+{
+    CHECK_HANDLE(engine);
+    auto* eng = to_engine(engine);
+    int n_nodes = static_cast<int>(eng->context().nodes.count());
+    eng->operatorSnapshot().enableIterHistory(max_iters, n_nodes);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_get_iteration_residual(
+    SWMM_Engine engine,
+    int iter,
+    double* residuals,
+    int n_nodes)
+{
+    CHECK_HANDLE(engine);
+    if (!residuals || n_nodes <= 0) return SWMM_ERR_BADPARAM;
+    auto& state = to_engine(engine)->operatorSnapshot();
+    if (!state.getResidual(iter, residuals, n_nodes))
+        return SWMM_ERR_BADINDEX;
     return SWMM_OK;
 }
 
