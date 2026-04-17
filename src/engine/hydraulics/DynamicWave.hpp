@@ -33,6 +33,7 @@
 #include "../core/SimulationOptions.hpp"
 #include "../data/NodeData.hpp"
 #include "../data/LinkData.hpp"
+#include "../../../include/openswmm/engine/openswmm_operator_snapshot.h"
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -40,6 +41,7 @@
 namespace openswmm {
 
 struct SimulationContext;
+class OperatorSnapshotState;
 
 namespace dynwave {
 
@@ -176,10 +178,32 @@ public:
 
     double head_tol   = DEFAULT_HEAD_TOL;
     int    max_trials = DEFAULT_MAX_TRIALS;
+    double min_surf_area = MIN_SURFAREA;
     double omega      = OMEGA;
     SurchargeMethod surcharge_method = SurchargeMethod::EXTRAN;
     NodeContinuity  node_continuity  = NodeContinuity::EXPLICIT;
     bool   anderson_accel = false;       ///< Enable Anderson acceleration
+
+    /**
+     * @brief Populate an operator snapshot from current solver state.
+     *
+     * @details Fills all fields of the snapshot struct with pointers into
+     *          the solver's own buffers (zero-copy where possible).  For
+     *          fields stored in AoS (xnode_, dps_state_) or std::vector<bool>
+     *          (bypassed_), caller-provided staging buffers are filled and
+     *          pointed to.
+     *
+     * @param ctx            Simulation context (for node/link topology and state).
+     * @param dt             Current routing timestep (seconds).
+     * @param iters          Number of Picard iterations used.
+     * @param did_converge   True if Picard loop converged this substep.
+     * @param snap           [out] Snapshot structure to populate.
+     * @param staging        [in]  OperatorSnapshotState providing staging buffers.
+     */
+    void populateSnapshot(const SimulationContext& ctx, double dt,
+                          int iters, bool did_converge,
+                          SWMM_OperatorSnapshot& snap,
+                          OperatorSnapshotState& staging) const;
 
 private:
     int n_nodes_ = 0;
@@ -283,6 +307,16 @@ private:
 public:
     /// Access per-node working state (for non-conduit surfarea/dqdh scatter).
     DWNodeState& nodeState(int idx) { return xnode_[static_cast<std::size_t>(idx)]; }
+
+    /// Number of conduit links (subset of n_links).
+    int numConduits() const noexcept { return n_conduits_; }
+
+    /// Set non-owning pointer to snapshot state for iteration history recording.
+    void setSnapshotState(OperatorSnapshotState* s) noexcept { snap_state_ = s; }
+
+    /// True if the last execute() call's Picard loop converged.
+    bool lastConverged() const noexcept { return last_converged_; }
+
 private:
 
     // Preissmann slot helpers (matching legacy dwflow.c)
@@ -304,6 +338,11 @@ private:
 
     /// Spatial smoothing of Preissmann Number across node boundaries.
     void spatialSmoothP(const SimulationContext& ctx);
+
+    // Iteration history
+    OperatorSnapshotState* snap_state_ = nullptr;      ///< Non-owning; set by SWMMEngine
+    std::vector<double> depth_residual_;                ///< [n_nodes_] for recording per-iter residuals
+    bool last_converged_ = false;                       ///< Result of last execute() Picard loop
 };
 
 } // namespace dynwave

@@ -125,20 +125,22 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
             auto ci = static_cast<std::size_t>(nodes.storage_curve[ui]);
             if (tables && ci < tables->tables.size()) {
                 double area = table_lookup_cursor(tables->tables[ci], depth);
-                return std::max(area, constants::MIN_SURFAREA);
+                return area;
             }
-            return constants::MIN_SURFAREA;
+            return 0.0;
         }
         // Functional: area = a0 + a1 * d^a2
         double a0 = nodes.storage_c[ui];
         double a1 = nodes.storage_a[ui];
         double a2 = nodes.storage_b[ui];
         double area = a0 + a1 * std::pow(depth, a2);
-        return std::max(area, constants::MIN_SURFAREA);
+        return area;
     }
 
-    // Non-storage nodes: constant minimum surface area
-    return constants::MIN_SURFAREA;
+    // Non-storage nodes have no intrinsic surface area.
+    // Dynamic-wave routing applies the configured MIN_SURFAREA floor
+    // after conduit half-areas have been accumulated at each node.
+    return 0.0;
 }
 
 // ============================================================================

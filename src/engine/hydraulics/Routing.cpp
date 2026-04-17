@@ -11,6 +11,7 @@
 
 #include "Routing.hpp"
 #include "../core/Constants.hpp"
+#include "../core/UnitConversion.hpp"
 #include "Outfall.hpp"
 #include "Divider.hpp"
 #include "Node.hpp"
@@ -188,7 +189,15 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
         }
         case RouteModel::DYNWAVE:
             dw_solver_.init(n_nodes, n_links, groups_, ctx);
-            dw_solver_.head_tol = ctx.options.head_tol;
+            {
+                double ucf_len = ucf::UCF(ucf::LENGTH, ctx.options);
+                dw_solver_.head_tol = (ctx.options.head_tol > 0.0)
+                    ? ctx.options.head_tol / ucf_len
+                    : constants::DEFAULT_HEAD_TOL;
+                dw_solver_.min_surf_area = (ctx.options.min_surf_area > 0.0)
+                    ? ctx.options.min_surf_area / (ucf_len * ucf_len)
+                    : constants::MIN_SURFAREA;
+            }
             dw_solver_.max_trials = ctx.options.max_trials;
             dw_solver_.surcharge_method =
                 static_cast<dynwave::SurchargeMethod>(ctx.options.surcharge_method);

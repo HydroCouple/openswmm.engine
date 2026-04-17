@@ -42,6 +42,7 @@
 #include "Culvert.hpp"
 #include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/OperatorSnapshotState.hpp"
 #include "../math/SIMD.hpp"
 
 #include <cmath>
@@ -405,6 +406,9 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     aa_g_prev_.resize(un, 0.0);
     aa_r_prev_.resize(un, 0.0);
 
+    // Iteration history residual buffer (used when snap_state_->hasIterHistory())
+    depth_residual_.resize(un, 0.0);
+
     // Dynamic Preissmann Slot (DPS) initialization
     if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
         // Convert c_pT from m/s to ft/s (internal units)
@@ -488,6 +492,10 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
     // (matching legacy initRoutingStep: Link[i].bypassed = FALSE)
     std::fill(bypassed_.begin(), bypassed_.end(), false);
 
+    // Reset iteration history counter for this substep
+    if (snap_state_ && snap_state_->hasIterHistory())
+        snap_state_->resetIterCount();
+
     while (steps < max_trials) {
         initNodeStates(ctx);
 
@@ -514,8 +522,26 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         }
 
         // Step 5: update node depths, check convergence
+        // Save current depths for iteration history residual recording
+        const bool record_hist = snap_state_ && snap_state_->hasIterHistory();
+        if (record_hist) {
+            for (int i = 0; i < n_nodes_; ++i)
+                depth_residual_[static_cast<std::size_t>(i)] =
+                    ctx.nodes.depth[static_cast<std::size_t>(i)];
+        }
+
         converged = updateNodeDepths(ctx, dt, steps);
         steps++;
+
+        // Record per-node depth residuals for this iteration
+        if (record_hist) {
+            for (int i = 0; i < n_nodes_; ++i) {
+                auto ui = static_cast<std::size_t>(i);
+                depth_residual_[ui] = std::fabs(
+                    ctx.nodes.depth[ui] - depth_residual_[ui]);
+            }
+            snap_state_->recordResidual(steps - 1, depth_residual_.data());
+        }
 
         if (steps > 1) {
             if (converged) break;
@@ -542,6 +568,7 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         updateDPSState(ctx, dt);
     }
 
+    last_converged_ = converged;
     return steps;
 }
 
@@ -1542,7 +1569,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
 
     nodes.overflow[ui] = 0.0;
     double surf_area = xnode_[ui].new_surf_area;
-    surf_area = std::max(surf_area, constants::MIN_SURFAREA);
+    surf_area = std::max(surf_area, min_surf_area);
 
     // --- Net flow volume change (trapezoidal averaging with previous step) ---
     double dQ = nodes.inflow[ui] - nodes.outflow[ui];
@@ -1601,7 +1628,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         // =================================================================
 
         double denom = surf_area - 0.5 * dt * xnode_[ui].sumdqdh;
-        denom = std::max(denom, constants::MIN_SURFAREA);
+        denom = std::max(denom, min_surf_area);
 
         double dy = dV / denom;
         y_new = y_old + dy;
@@ -1820,6 +1847,118 @@ double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
 
     t *= fr / (1.0 + fr);  // Froude-based CFL factor
     return t;              // CourantFactor applied per-link in getRoutingStep
+}
+
+// ============================================================================
+// populateSnapshot  (operator snapshot layer)
+// ============================================================================
+
+void DWSolver::populateSnapshot(const SimulationContext& ctx, double dt,
+                                int iters, bool did_converge,
+                                SWMM_OperatorSnapshot& snap,
+                                OperatorSnapshotState& staging) const {
+    // --- Dimensions ---
+    snap.n_nodes    = n_nodes_;
+    snap.n_links    = n_links_;
+    snap.n_conduits = n_conduits_;
+
+    // --- Directed topology (zero-copy where possible) ---
+    snap.node1     = ctx.links.node1.data();
+    snap.node2     = ctx.links.node2.data();
+    // link_type is int8_t enum, scatter to int staging buffer
+    {
+        auto* lt_buf = staging.linkTypeBuf();
+        for (int j = 0; j < n_links_; ++j)
+            lt_buf[j] = static_cast<int>(ctx.links.type[static_cast<std::size_t>(j)]);
+        snap.link_type = lt_buf;
+    }
+
+    // --- Per-link state (zero-copy from solver buffers) ---
+    snap.link_flow     = ctx.links.flow.data();
+    snap.dqdh          = dqdh_.data();
+    snap.link_velocity = velocity_.data();
+    snap.link_froude   = froude_.data();
+    snap.link_area_mid = area_mid_.data();
+
+    // --- Per-link scatter: flow_class (enum → int8_t), bypassed (bool → uint8_t) ---
+    {
+        auto* fc_buf = staging.flowClassBuf();
+        for (int j = 0; j < n_links_; ++j)
+            fc_buf[j] = static_cast<int8_t>(ctx.links.flow_class[static_cast<std::size_t>(j)]);
+        snap.flow_class = fc_buf;
+    }
+    {
+        auto* bp_buf = staging.bypassedBuf();
+        for (int j = 0; j < n_links_; ++j)
+            bp_buf[j] = bypassed_[static_cast<std::size_t>(j)] ? uint8_t(1) : uint8_t(0);
+        snap.bypassed = bp_buf;
+    }
+
+    // --- Per-node state (zero-copy from ctx) ---
+    snap.node_head   = ctx.nodes.head.data();
+    snap.node_depth  = ctx.nodes.depth.data();
+    snap.node_volume = ctx.nodes.volume.data();
+
+    // --- Per-node AoS → flat scatter: sumdqdh, converged, surcharged ---
+    {
+        auto* sd_buf = staging.sumdqdhBuf();
+        auto* cv_buf = staging.nodeConvergedBuf();
+        auto* sr_buf = staging.nodeSurchargedBuf();
+        for (int i = 0; i < n_nodes_; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            sd_buf[i] = xnode_[ui].sumdqdh;
+            cv_buf[i] = xnode_[ui].converged ? uint8_t(1) : uint8_t(0);
+            sr_buf[i] = xnode_[ui].is_surcharged ? uint8_t(1) : uint8_t(0);
+        }
+        snap.sumdqdh        = sd_buf;
+        snap.node_converged = cv_buf;
+        snap.node_surcharged = sr_buf;
+    }
+
+    // --- Picard telemetry ---
+    snap.iterations = iters;
+    snap.converged  = did_converge ? 1 : 0;
+    snap.routing_dt = dt;
+    snap.sim_time   = ctx.current_time;
+
+    // --- Timestep telemetry ---
+    snap.adaptive_dt         = variable_step_;
+    snap.cfl_critical_link   = -1;  // updated by getRoutingStep; not tracked here
+
+    // --- Anderson acceleration (optional) ---
+    if (anderson_accel && !aa_y_prev_.empty()) {
+        snap.aa_y_prev = aa_y_prev_.data();
+        snap.aa_g_prev = aa_g_prev_.data();
+        snap.aa_r_prev = aa_r_prev_.data();
+    } else {
+        snap.aa_y_prev = nullptr;
+        snap.aa_g_prev = nullptr;
+        snap.aa_r_prev = nullptr;
+    }
+
+    // --- Dynamic Preissmann Slot (optional) ---
+    if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT && !dps_state_.empty()) {
+        auto* sa_buf = staging.dpsSlotAreaBuf();
+        auto* sh_buf = staging.dpsSurchargeHeadBuf();
+        auto* pn_buf = staging.dpsPreissmannNumBuf();
+        for (int c = 0; c < n_conduits_; ++c) {
+            auto uc = static_cast<std::size_t>(c);
+            sa_buf[c] = dps_state_[uc].As;
+            sh_buf[c] = dps_state_[uc].hs;
+            pn_buf[c] = dps_state_[uc].P;
+        }
+        snap.dps_slot_area      = sa_buf;
+        snap.dps_surcharge_head = sh_buf;
+        snap.dps_preissmann_num = pn_buf;
+    } else {
+        snap.dps_slot_area      = nullptr;
+        snap.dps_surcharge_head = nullptr;
+        snap.dps_preissmann_num = nullptr;
+    }
+
+    // --- Unit metadata ---
+    snap.flow_units       = static_cast<int>(ctx.options.flow_units);
+    snap.surcharge_method = static_cast<int>(surcharge_method);
 }
 
 } // namespace dynwave

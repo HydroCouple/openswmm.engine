@@ -38,13 +38,10 @@ static inline int omp_get_max_threads() { return 1; }
 static inline void omp_set_num_threads(int) {}
 #endif
 
-// Error codes (matches openswmm_engine.h SWMM_ErrorCode)
-static constexpr int SWMM_OK                 = 0;
-static constexpr int SWMM_ERR_MEMORY         = 1;
-static constexpr int SWMM_ERR_FILE_NOT_FOUND = 2;
-static constexpr int SWMM_ERR_WRONG_STATE    = 3;
-static constexpr int SWMM_ERR_PARSE          = 4;
-static constexpr int SWMM_ERR_PLUGIN         = 10;
+// Error-code aliases — the canonical definitions live in openswmm_engine.h
+// (pulled in via OperatorSnapshotState.hpp → openswmm_operator_snapshot.h).
+// Only aliases for names that differ from the enum are needed here.
+static constexpr int SWMM_ERR_WRONG_STATE = SWMM_ERR_LIFECYCLE;
 
 namespace openswmm {
 
@@ -1329,6 +1326,20 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     int iters = router_.step(ctx_, dt_routing, climate_.evap_rate, non_conduit_fn);
     ctx_.routing_stats.update_iterations(iters, iters < ctx_.options.max_trials);
 
+    // --- Operator snapshot: populate and fire callback (zero-cost when disabled) ---
+    if (ctx_.options.routing_model == RoutingModel::DYNWAVE &&
+        (op_snap_.hasCallback() || op_snap_.pollEnabled())) {
+        bool did_converge = router_.dwSolver().lastConverged();
+        router_.dwSolver().populateSnapshot(ctx_, dt_routing, iters,
+                                            did_converge,
+                                            op_snap_.snapshot(), op_snap_);
+        op_snap_.markPopulated();
+        if (op_snap_.hasCallback()) {
+            op_snap_.callback()(static_cast<SWMM_Engine>(this),
+                                &op_snap_.snapshot(), op_snap_.userData());
+        }
+    }
+
 #ifdef OPENSWMM_HAS_2D
     // B3+. Post-routing: compute 2D↔1D coupling exchange, update rainfall,
     //      advance CVODE solver, transfer outfall discharges to 2D cells.
@@ -2169,6 +2180,9 @@ int SWMMEngine::close() noexcept {
     // Unload all dynamically loaded plugin libraries
     plugins_.unload_all();
 
+    // Reset transient operator snapshot state so reopen starts clean
+    op_snap_.resetTransientState();
+
     ctx_.state = EngineState::CLOSED;
     return SWMM_OK;
 }
@@ -2397,6 +2411,15 @@ void SWMMEngine::initHydraulics() noexcept {
     if (ctx_.options.routing_model == RoutingModel::KINWAVE) rm = RouteModel::KINWAVE;
     else if (ctx_.options.routing_model == RoutingModel::STEADY) rm = RouteModel::STEADY;
     router_.init(ctx_, rm);
+
+    // Pre-allocate operator snapshot staging buffers (DW only)
+    if (rm == RouteModel::DYNWAVE) {
+        op_snap_.resizeStaging(ctx_.n_nodes(), ctx_.n_links(),
+                               router_.dwSolver().numConduits());
+
+        // Wire snapshot state into DW solver for iteration history recording
+        router_.dwSolver().setSnapshotState(&op_snap_);
+    }
 
 #ifdef OPENSWMM_HAS_2D
     // 1a. Initialize optional 2D surface routing module.

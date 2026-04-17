@@ -318,6 +318,7 @@ SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled);
 #include "openswmm_quality.h"
 #include "openswmm_statistics.h"
 #include "openswmm_forcing.h"
+#include "openswmm_operator_snapshot.h"
 
 #ifdef OPENSWMM_HAS_2D
 #include "openswmm_2d.h"

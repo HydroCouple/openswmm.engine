@@ -1,0 +1,35 @@
+[TITLE]
+Minimal one-conduit DW model for node continuity regression test.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+ROUTING_STEP         0:00:01
+VARIABLE_STEP        0
+MIN_SURFAREA         0
+START_DATE           01/01/2000
+START_TIME           00:00:00
+END_DATE             01/01/2000
+END_TIME             00:01:00
+
+[JUNCTIONS]
+;;Name  Elev    MaxDepth  InitDepth  SurDepth  Aponded
+J1      100     20        0          0         0
+
+[OUTFALLS]
+;;Name  Elev    Type
+O1      99.9    FREE
+
+[CONDUITS]
+;;Name  Node1  Node2  Length  Roughness  InOffset  OutOffset
+C1      J1     O1     100     0.013      0         0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR  3.0    0      0      0      1
+
+[REPORT]
+INPUT     NO
+CONTROLS  NO

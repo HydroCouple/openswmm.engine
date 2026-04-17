@@ -103,6 +103,8 @@ add_gtest_unit(test_engine_gap_fixes       test_gap_fixes.cpp)
 add_gtest_unit(test_engine_report_section  test_report_section.cpp)
 add_gtest_unit(test_engine_dps              test_dynamic_preissmann_slot.cpp)
 add_gtest_unit(test_engine_site_drainage    test_site_drainage_model.cpp)
+add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
+add_gtest_unit(test_operator_snapshot       test_operator_snapshot.cpp)
 
 # 2D surface routing tests — geometry, gradients, flux, parsing
 # These tests exercise the non-CVODE portions of the 2D module and
