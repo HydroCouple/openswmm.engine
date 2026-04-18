@@ -1121,3 +1121,110 @@ TEST(HydPower, ConvertToHorsepower) {
     EXPECT_GT(hp, 0.0);
     EXPECT_NEAR(hp, 3120.0 / 550.0, 0.01);
 }
+
+// ===========================================================================
+// Issue 2 — Storage-node conduit half-area guard
+//
+// The fix in DynamicWave::updateNodeFlows and SWMMEngine non-conduit callback
+// zeroes conduit/orifice half-areas at a STORAGE node only when the storage
+// curve provides area > MIN_SURFAREA. When the curve is degenerate (area ==
+// MIN_SURFAREA, i.e. FUNCTIONAL 0 0 0), the pipe half-areas are kept so the
+// Picard denominator stays bounded.
+//
+// These tests verify the precondition the guard relies on: getSurfArea must
+// return > MIN_SURFAREA for a real curve and exactly MIN_SURFAREA for a
+// degenerate one.
+// ===========================================================================
+
+TEST(StorageHalfAreaGuard, RealCurveProvidesArea) {
+    // FUNCTIONAL 1000 0 0 → A(d) = 1000 for all d
+    // getSurfArea should return 1000 > MIN_SURFAREA → guard zeros pipe halves
+    NodeData nodes;
+    nodes.resize(1);
+    nodes.type[0] = NodeType::STORAGE;
+    nodes.full_depth[0] = 10.0;
+    nodes.storage_curve[0] = -1;  // functional
+    nodes.storage_a[0] = 1000.0;
+    nodes.storage_b[0] = 0.0;
+    nodes.storage_c[0] = 0.0;
+
+    double sa = node::getSurfArea(nodes, 0, 5.0);
+    EXPECT_GT(sa, constants::MIN_SURFAREA)
+        << "Real storage curve should exceed MIN_SURFAREA";
+    EXPECT_NEAR(sa, 1000.0, 0.01);
+}
+
+TEST(StorageHalfAreaGuard, DegenerateCurveFloors) {
+    // FUNCTIONAL 0 0 0 → A(d) = 0 for all d → clamped to MIN_SURFAREA
+    // getSurfArea should return exactly MIN_SURFAREA → guard keeps pipe halves
+    NodeData nodes;
+    nodes.resize(1);
+    nodes.type[0] = NodeType::STORAGE;
+    nodes.full_depth[0] = 10.0;
+    nodes.storage_curve[0] = -1;  // functional
+    nodes.storage_a[0] = 0.0;
+    nodes.storage_b[0] = 0.0;
+    nodes.storage_c[0] = 0.0;
+
+    double sa = node::getSurfArea(nodes, 0, 5.0);
+    EXPECT_NEAR(sa, constants::MIN_SURFAREA, 1e-10)
+        << "Degenerate storage curve should return exactly MIN_SURFAREA";
+}
+
+TEST(StorageHalfAreaGuard, SmallCurveBelowThreshold) {
+    // FUNCTIONAL 0 0.01 0 → A(d) = 0.01 for all d → clamped to MIN_SURFAREA
+    // Guard should keep pipe halves for this near-zero curve
+    NodeData nodes;
+    nodes.resize(1);
+    nodes.type[0] = NodeType::STORAGE;
+    nodes.full_depth[0] = 10.0;
+    nodes.storage_curve[0] = -1;
+    nodes.storage_a[0] = 0.01;
+    nodes.storage_b[0] = 0.0;
+    nodes.storage_c[0] = 0.0;
+
+    double sa = node::getSurfArea(nodes, 0, 5.0);
+    EXPECT_NEAR(sa, constants::MIN_SURFAREA, 1e-10)
+        << "Tiny curve (0.01 ft²) should clamp to MIN_SURFAREA";
+}
+
+TEST(StorageHalfAreaGuard, CurveJustAboveThreshold) {
+    // FUNCTIONAL 13 0 0 → A(d) = 13 > MIN_SURFAREA (12.566)
+    // Guard should zero pipe halves
+    NodeData nodes;
+    nodes.resize(1);
+    nodes.type[0] = NodeType::STORAGE;
+    nodes.full_depth[0] = 10.0;
+    nodes.storage_curve[0] = -1;
+    nodes.storage_a[0] = 13.0;
+    nodes.storage_b[0] = 0.0;
+    nodes.storage_c[0] = 0.0;
+
+    double sa = node::getSurfArea(nodes, 0, 5.0);
+    EXPECT_GT(sa, constants::MIN_SURFAREA)
+        << "Curve area 13 ft² should exceed MIN_SURFAREA (12.566 ft²)";
+    EXPECT_NEAR(sa, 13.0, 0.01);
+}
+
+TEST(StorageHalfAreaGuard, DepthDependentCrosses) {
+    // FUNCTIONAL 0 100 1 → A(d) = 100*d
+    // At d=0.1: A = 10 < MIN_SURFAREA → pipe halves kept
+    // At d=5.0: A = 500 > MIN_SURFAREA → pipe halves zeroed
+    NodeData nodes;
+    nodes.resize(1);
+    nodes.type[0] = NodeType::STORAGE;
+    nodes.full_depth[0] = 20.0;
+    nodes.storage_curve[0] = -1;
+    nodes.storage_a[0] = 100.0;
+    nodes.storage_b[0] = 1.0;
+    nodes.storage_c[0] = 0.0;
+
+    double sa_low = node::getSurfArea(nodes, 0, 0.1);
+    EXPECT_NEAR(sa_low, constants::MIN_SURFAREA, 1e-10)
+        << "At shallow depth (A=10), should clamp to MIN_SURFAREA";
+
+    double sa_high = node::getSurfArea(nodes, 0, 5.0);
+    EXPECT_GT(sa_high, constants::MIN_SURFAREA);
+    EXPECT_NEAR(sa_high, 500.0, 0.01)
+        << "At depth 5 (A=500), should return curve value";
+}

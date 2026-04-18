@@ -1406,12 +1406,20 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
         xnode_[un1].sumdqdh += dqdh_[uj];
         xnode_[un2].sumdqdh += dqdh_[uj];
 
-        // Zero surface area for STORAGE nodes (matching legacy dynwave.c lines 507-510)
-        // Storage nodes get their surface area from the storage curve, not from links.
+        // Zero conduit half-areas at STORAGE nodes only when the storage curve
+        // already provides a meaningful footprint. If the curve value is at or
+        // below MIN_SURFAREA (degenerate / synthetic storage), keep the legacy
+        // pipe-half contribution so the Picard denominator stays bounded.
         double sa1 = surf_area1_[uj];
         double sa2 = surf_area2_[uj];
-        if (nodes.type[un1] == NodeType::STORAGE) sa1 = 0.0;
-        if (nodes.type[un2] == NodeType::STORAGE) sa2 = 0.0;
+        if (nodes.type[un1] == NodeType::STORAGE) {
+            double As1 = node::getSurfArea(nodes, n1, nodes.depth[un1], &ctx.tables);
+            if (As1 > constants::MIN_SURFAREA) sa1 = 0.0;
+        }
+        if (nodes.type[un2] == NodeType::STORAGE) {
+            double As2 = node::getSurfArea(nodes, n2, nodes.depth[un2], &ctx.tables);
+            if (As2 > constants::MIN_SURFAREA) sa2 = 0.0;
+        }
 
         // Add conduit evap/seepage loss to node outflows (matching legacy lines 542-558)
         if (links.type[uj] == LinkType::CONDUIT) {
