@@ -255,6 +255,7 @@ private:
     std::vector<double> aa_y_prev_;     ///< Node depths at iteration k-1
     std::vector<double> aa_g_prev_;     ///< G(y_{k-1}) — computed depths at k-1
     std::vector<double> aa_r_prev_;     ///< Residual r_{k-1} = G(y_{k-1}) - y_{k-1}
+    std::vector<uint8_t> aa_skip_;      ///< Per-node flag: skip AA this iteration
 
     // Per-conduit momentum category (rebuilt each Picard iteration)
     std::vector<MomentumCategory> category_;
@@ -276,6 +277,7 @@ private:
                          std::size_t uj, double& q, double qLast,
                          double barrels_d, bool isFull);
     void updateNodeFlows(SimulationContext& ctx, bool conduits_only = false);
+    void computeAASkipFlags(const SimulationContext& ctx);
     bool updateNodeDepths(SimulationContext& ctx, double dt, int step);
     void setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int step);
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;
@@ -283,6 +285,9 @@ private:
 public:
     /// Access per-node working state (for non-conduit surfarea/dqdh scatter).
     DWNodeState& nodeState(int idx) { return xnode_[static_cast<std::size_t>(idx)]; }
+
+    /// Access per-node AA skip flags (read-only, for testing/diagnostics).
+    const std::vector<uint8_t>& aaSkipFlags() const { return aa_skip_; }
 private:
 
     // Preissmann slot helpers (matching legacy dwflow.c)
