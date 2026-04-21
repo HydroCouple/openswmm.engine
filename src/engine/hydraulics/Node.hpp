@@ -47,8 +47,10 @@ double getVolume(const NodeData& nodes, int idx, double depth,
 /**
  * @brief Compute surface area at a given depth for a single node.
  *
- * @details For JUNCTION: returns MIN_SURFAREA (small constant).
- *          For STORAGE: uses functional or tabulated relationship.
+ * @details For JUNCTION / OUTFALL / DIVIDER: returns 0.0.
+ *          For STORAGE: returns the physical functional or tabulated area.
+ *          Dynamic-wave routing applies the configured MIN_SURFAREA floor
+ *          after link surface-area contributions are accumulated.
  *
  * @param nodes  SoA node data.
  * @param idx    Node index.
