@@ -19,6 +19,10 @@ cmake_minimum_required(VERSION 3.21)
 
 find_package(GTest CONFIG REQUIRED)
 
+option(OPENSWMM_WITH_INTEGRATION_TESTS
+    "Build integration-style tests under tests/unit/engine"
+    OFF)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -102,9 +106,13 @@ add_gtest_unit(test_engine_rdii             test_rdii.cpp)
 add_gtest_unit(test_engine_gap_fixes       test_gap_fixes.cpp)
 add_gtest_unit(test_engine_report_section  test_report_section.cpp)
 add_gtest_unit(test_engine_dps              test_dynamic_preissmann_slot.cpp)
-add_gtest_unit(test_engine_site_drainage    test_site_drainage_model.cpp)
 add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
 add_gtest_unit(test_operator_snapshot       test_operator_snapshot.cpp)
+
+if(OPENSWMM_WITH_INTEGRATION_TESTS)
+    add_gtest_unit(test_engine_site_drainage test_site_drainage_model.cpp)
+    set_tests_properties(test_engine_site_drainage PROPERTIES LABELS "integration")
+endif()
 
 # 2D surface routing tests — geometry, gradients, flux, parsing
 # These tests exercise the non-CVODE portions of the 2D module and
