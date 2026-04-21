@@ -405,6 +405,7 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     aa_y_prev_.resize(un, 0.0);
     aa_g_prev_.resize(un, 0.0);
     aa_r_prev_.resize(un, 0.0);
+    aa_skip_.resize(un, 0);
 
     // Iteration history residual buffer (used when snap_state_->hasIterHistory())
     depth_residual_.resize(un, 0.0);
@@ -530,6 +531,10 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
                     ctx.nodes.depth[static_cast<std::size_t>(i)];
         }
 
+        // Step 5: flag nodes where AA must be skipped (non-smooth operator)
+        computeAASkipFlags(ctx);
+
+        // Step 6: update node depths, check convergence
         converged = updateNodeDepths(ctx, dt, steps);
         steps++;
 
@@ -1433,12 +1438,20 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
         xnode_[un1].sumdqdh += dqdh_[uj];
         xnode_[un2].sumdqdh += dqdh_[uj];
 
-        // Zero surface area for STORAGE nodes (matching legacy dynwave.c lines 507-510)
-        // Storage nodes get their surface area from the storage curve, not from links.
+        // Zero conduit half-areas at STORAGE nodes only when the storage curve
+        // already provides a meaningful footprint. If the curve value is at or
+        // below MIN_SURFAREA (degenerate / synthetic storage), keep the legacy
+        // pipe-half contribution so the Picard denominator stays bounded.
         double sa1 = surf_area1_[uj];
         double sa2 = surf_area2_[uj];
-        if (nodes.type[un1] == NodeType::STORAGE) sa1 = 0.0;
-        if (nodes.type[un2] == NodeType::STORAGE) sa2 = 0.0;
+        if (nodes.type[un1] == NodeType::STORAGE) {
+            double As1 = node::getSurfArea(nodes, n1, nodes.depth[un1], &ctx.tables);
+            if (As1 > constants::MIN_SURFAREA) sa1 = 0.0;
+        }
+        if (nodes.type[un2] == NodeType::STORAGE) {
+            double As2 = node::getSurfArea(nodes, n2, nodes.depth[un2], &ctx.tables);
+            if (As2 > constants::MIN_SURFAREA) sa2 = 0.0;
+        }
 
         // Add conduit evap/seepage loss to node outflows (matching legacy lines 542-558)
         if (links.type[uj] == LinkType::CONDUIT) {
@@ -1462,6 +1475,64 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
         double b = static_cast<double>(barrels);
         xnode_[un1].new_surf_area += sa1 * b;
         xnode_[un2].new_surf_area += sa2 * b;
+    }
+}
+
+// ============================================================================
+// computeAASkipFlags -- identify nodes where Anderson acceleration is invalid
+// ============================================================================
+//
+// AA assumes the fixed-point operator G is the same at iterations k-1 and k.
+// Three surcharge formulations violate this:
+//   EXTRAN:       discontinuous dQ/dH at crown → skip surcharged nodes
+//   DYNAMIC_SLOT: per-iterate geometry rewrite  → skip nodes with active DPS
+//   SLOT:         C⁰ kink near y/yFull ≈ 0.985 → skip nodes near cutoff
+//
+// Flags are scatter-computed: walk conduits once, set skip on end-nodes.
+
+void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
+    if (!anderson_accel) return;
+
+    const auto& links = ctx.links;
+    std::fill(aa_skip_.begin(), aa_skip_.end(), uint8_t(0));
+
+    // EXTRAN: skip AA for surcharged nodes (per-node check, no conduit walk)
+    if (surcharge_method == SurchargeMethod::EXTRAN) {
+        for (int i = 0; i < n_nodes_; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (xnode_[ui].is_surcharged)
+                aa_skip_[ui] = 1;
+        }
+    }
+
+    // DYNAMIC_SLOT: skip AA for nodes incident to a conduit with active slot area
+    if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
+        for (int ci = 0; ci < n_conduits_; ++ci) {
+            auto uci = static_cast<std::size_t>(ci);
+            if (dps_state_[uci].As > 0.0) {
+                int j = conduit_idx_[uci];
+                auto uj = static_cast<std::size_t>(j);
+                aa_skip_[static_cast<std::size_t>(links.node1[uj])] = 1;
+                aa_skip_[static_cast<std::size_t>(links.node2[uj])] = 1;
+            }
+        }
+    }
+
+    // SLOT: skip AA for nodes incident to a conduit near the slot cutoff
+    if (surcharge_method == SurchargeMethod::SLOT) {
+        for (int ci = 0; ci < n_conduits_; ++ci) {
+            auto uci = static_cast<std::size_t>(ci);
+            int j = conduit_idx_[uci];
+            auto uj = static_cast<std::size_t>(j);
+            if (is_open_[uj]) continue;  // open shapes have no slot
+            double yf = links.xsect_y_full[uj];
+            if (yf <= 0.0) continue;
+            double ratio = depth_mid_[uj] / yf;
+            if (ratio >= 0.98 && ratio <= 1.02) {
+                aa_skip_[static_cast<std::size_t>(links.node1[uj])] = 1;
+                aa_skip_[static_cast<std::size_t>(links.node2[uj])] = 1;
+            }
+        }
     }
 }
 
@@ -1496,12 +1567,9 @@ bool DWSolver::updateNodeDepths(SimulationContext& ctx, double dt, int step) {
         // --- Anderson acceleration (depth-2 mixing) ---
         // On step 0: just record state for next iteration.
         // On step 1+: use previous iterate to compute optimal blend.
-        // Skip AA for surcharged nodes under EXTRAN: the discontinuous
-        // dQ/dH formulation is not a smooth fixed-point map, so AA mixing
-        // can push depth below the crown floor that setNodeDepth enforces.
-        const bool skip_aa = (surcharge_method == SurchargeMethod::EXTRAN &&
-                              xnode_[ui].is_surcharged);
-        if (use_anderson && step >= 1 && !skip_aa) {
+        // Skip AA when the fixed-point operator G is non-smooth at this node
+        // (EXTRAN surcharge, DPS active, or SLOT near kink).
+        if (use_anderson && step >= 1 && !aa_skip_[ui]) {
             double r_k = g_k - y_last;                     // residual at current iterate
             double r_km1 = aa_r_prev_[ui];                 // residual from previous iterate
             double dr = r_k - r_km1;

@@ -1317,8 +1317,14 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                 sa = links.xsect_a_full[uj] * links.setting[uj];
             }
             double sa1 = sa / 2.0, sa2 = sa / 2.0;
-            if (ctx.nodes.type[un1] == NodeType::STORAGE) sa1 = 0.0;
-            if (ctx.nodes.type[un2] == NodeType::STORAGE) sa2 = 0.0;
+            if (ctx.nodes.type[un1] == NodeType::STORAGE) {
+                double As1 = node::getSurfArea(ctx.nodes, n1, ctx.nodes.depth[un1], &ctx.tables);
+                if (As1 > constants::MIN_SURFAREA) sa1 = 0.0;
+            }
+            if (ctx.nodes.type[un2] == NodeType::STORAGE) {
+                double As2 = node::getSurfArea(ctx.nodes, n2, ctx.nodes.depth[un2], &ctx.tables);
+                if (As2 > constants::MIN_SURFAREA) sa2 = 0.0;
+            }
             dw.nodeState(n1).new_surf_area += sa1;
             dw.nodeState(n2).new_surf_area += sa2;
         }
