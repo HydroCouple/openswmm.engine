@@ -67,6 +67,23 @@ class EngineError(Exception):
         super().__init__(self.message)
 
 
+# --- C trampolines for step callbacks ---
+
+cdef void _step_begin_trampoline(SWMM_Engine engine, double sim_time,
+                                  double dt, void* user_data) noexcept with gil:
+    (<object>user_data)(sim_time, dt)
+
+
+cdef void _step_end_trampoline(SWMM_Engine engine, double sim_time,
+                                double dt, void* user_data) noexcept with gil:
+    (<object>user_data)(sim_time, dt)
+
+
+cdef void _progress_trampoline(void* engine, double elapsed_frac,
+                               double sim_time, void* user_data) noexcept with gil:
+    (<object>user_data)(elapsed_frac)
+
+
 cdef class Solver:
     """SWMM engine lifecycle manager.
 
@@ -89,6 +106,8 @@ cdef class Solver:
         self._out = out
         self._elapsed = 0.0
         self._handle = NULL
+        self._step_begin_cb = None
+        self._step_end_cb = None
 
     def create(self):
         """Create the engine instance.
@@ -99,11 +118,13 @@ cdef class Solver:
         if self._handle == NULL:
             raise MemoryError("Failed to create engine")
 
-    def open(self):
+    def open(self, str plugin_lib=None):
         """Open and parse the input file; load plugins.
 
         Transitions the engine to ``OPENED`` state.
 
+        :param plugin_lib: Optional path to a plugin shared library.
+        :type plugin_lib: str or None
         :raises EngineError: If the input file cannot be parsed.
         """
         if self._handle == NULL:
@@ -111,7 +132,12 @@ cdef class Solver:
         cdef bytes b_inp = self._inp.encode('utf-8')
         cdef bytes b_rpt = self._rpt.encode('utf-8')
         cdef bytes b_out = self._out.encode('utf-8')
-        _check(swmm_engine_open(self._handle, b_inp, b_rpt, b_out))
+        cdef bytes b_plugin
+        cdef const char* c_plugin = NULL
+        if plugin_lib is not None:
+            b_plugin = plugin_lib.encode('utf-8')
+            c_plugin = b_plugin
+        _check(swmm_engine_open(self._handle, b_inp, b_rpt, b_out, c_plugin))
 
     def initialize(self):
         """Initialize the simulation (allocate arrays, set initial conditions).
@@ -139,6 +165,20 @@ cdef class Solver:
         _check(swmm_engine_step(self._handle, &elapsed))
         self._elapsed = elapsed
         return elapsed > 0.0
+
+    def stride(self, int n_steps) -> float:
+        """Advance the simulation by *n_steps* timesteps in one call.
+
+        :param n_steps: Number of timesteps to advance.
+        :type n_steps: int
+        :returns: Elapsed simulation time in decimal days after the last step,
+                  or 0.0 when the simulation is complete.
+        :rtype: float
+        """
+        cdef double elapsed = 0.0
+        _check(swmm_engine_stride(self._handle, n_steps, &elapsed))
+        self._elapsed = elapsed
+        return elapsed
 
     def end(self):
         """End the simulation; join IO thread; finalize plugins."""
@@ -311,6 +351,48 @@ cdef class Solver:
         """
         _check(swmm_set_steady_state_skip(self._handle, 1 if enabled else 0))
 
+    # --- Step callbacks ---
+
+    def set_step_begin_callback(self, callback):
+        """Register a callback invoked at the start of each timestep.
+
+        The callable receives ``(sim_time: float, dt: float)`` and is
+        called before physics are computed — the right place to inject
+        forcings or modify boundary conditions.
+
+        Pass ``None`` to unregister.
+
+        :param callback: A Python callable or ``None``.
+        """
+        if callback is None:
+            self._step_begin_cb = None
+            _check(swmm_set_step_begin_callback(self._handle, NULL, NULL))
+        else:
+            self._step_begin_cb = callback
+            _check(swmm_set_step_begin_callback(
+                self._handle, _step_begin_trampoline,
+                <void*>self._step_begin_cb))
+
+    def set_step_end_callback(self, callback):
+        """Register a callback invoked at the end of each timestep.
+
+        The callable receives ``(sim_time: float, dt: float)`` and is
+        called after physics — the right place to read results for
+        real-time monitoring or control.
+
+        Pass ``None`` to unregister.
+
+        :param callback: A Python callable or ``None``.
+        """
+        if callback is None:
+            self._step_end_cb = None
+            _check(swmm_set_step_end_callback(self._handle, NULL, NULL))
+        else:
+            self._step_end_cb = callback
+            _check(swmm_set_step_end_callback(
+                self._handle, _step_end_trampoline,
+                <void*>self._step_end_cb))
+
     # --- Context manager ---
 
     def __enter__(self):
@@ -331,3 +413,51 @@ cdef class Solver:
             pass
         self.destroy()
         return False
+
+
+# --- Module-level convenience functions ---
+
+def run(str inp, str rpt="", str out="", str plugin_lib=None):
+    """Run a SWMM simulation from start to finish in a single call.
+
+    :param inp: Path to the SWMM input file (``.inp``).
+    :param rpt: Path for the report file (``.rpt``). Empty string to skip.
+    :param out: Path for the binary output file (``.out``). Empty string to skip.
+    :param plugin_lib: Optional path to a plugin shared library.
+    """
+    cdef bytes b_inp = inp.encode('utf-8')
+    cdef bytes b_rpt = rpt.encode('utf-8')
+    cdef bytes b_out = out.encode('utf-8')
+    cdef bytes b_plugin
+    cdef const char* c_plugin = NULL
+    if plugin_lib is not None:
+        b_plugin = plugin_lib.encode('utf-8')
+        c_plugin = b_plugin
+    _check(swmm_engine_run(b_inp, b_rpt, b_out, c_plugin))
+
+
+def run_with_callback(str inp, str rpt="", str out="",
+                      callback=None, str plugin_lib=None):
+    """Run a SWMM simulation with a progress callback.
+
+    :param inp: Path to the SWMM input file (``.inp``).
+    :param rpt: Path for the report file (``.rpt``). Empty string to skip.
+    :param out: Path for the binary output file (``.out``). Empty string to skip.
+    :param callback: A callable receiving ``(progress: float)`` where progress
+                     is a fraction in [0, 1].
+    :param plugin_lib: Optional path to a plugin shared library.
+    """
+    cdef bytes b_inp = inp.encode('utf-8')
+    cdef bytes b_rpt = rpt.encode('utf-8')
+    cdef bytes b_out = out.encode('utf-8')
+    cdef bytes b_plugin
+    cdef const char* c_plugin = NULL
+    if plugin_lib is not None:
+        b_plugin = plugin_lib.encode('utf-8')
+        c_plugin = b_plugin
+    if callback is None:
+        _check(swmm_engine_run(b_inp, b_rpt, b_out, c_plugin))
+    else:
+        _check(swmm_engine_run_with_callback(
+            b_inp, b_rpt, b_out, c_plugin,
+            _progress_trampoline, <void*>callback))

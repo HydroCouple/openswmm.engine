@@ -68,8 +68,12 @@ SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
         return SWMM_ERR_LIFECYCLE;
     }
 
+    // Gap #54: save V2 format including infiltration + GW state
     openswmm::HotStartFile* hs =
-        openswmm::HotStartManager::save(ctx, path);
+        openswmm::HotStartManager::save(ctx,
+                                        &eng->runoff_solver(),
+                                        &eng->gw_solver(),
+                                        path);
 
     if (!hs) return SWMM_ERR_HOTSTART;
 
@@ -111,15 +115,13 @@ SWMM_ENGINE_API int swmm_hotstart_apply(SWMM_Engine engine, SWMM_HotStart hs) {
 
     openswmm::HotStartFile* file = to_hs(hs);
 
-    // Fire missing-object warnings through the engine's warning callback
+    // Gap #54: apply V2 format including infiltration + GW state
     openswmm::HotStartManager::apply(
         *file,
         ctx,
+        &eng->runoff_solver(),
+        &eng->gw_solver(),
         [&eng](const std::string& msg) {
-            // Delegate to SWMMEngine's warning path via cast — we access it
-            // indirectly by calling a private-compatible path: emit directly
-            // through the context's existing error mechanism isn't ideal, so
-            // we expose a small shim. For now, store in hs->warnings only.
             (void)eng;
             (void)msg;
         }

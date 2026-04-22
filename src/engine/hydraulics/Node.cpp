@@ -66,7 +66,7 @@ double getVolume(const NodeData& nodes, int idx, double depth,
 // ============================================================================
 
 double getDepth(const NodeData& nodes, int idx, double volume,
-                TableData* tables) {
+                TableData* tables, int unit_sys) {
     if (volume <= 0.0) return 0.0;
     auto ui = static_cast<std::size_t>(idx);
 
@@ -76,9 +76,17 @@ double getDepth(const NodeData& nodes, int idx, double volume,
         if (fv > 0.0 && volume >= fv) return fd;
 
         if (nodes.storage_curve[ui] >= 0) {
-            // Tabulated: inverse lookup (Newton iteration using volume function)
-            // Simple linear interpolation: d ≈ fd * (V / Vfull)
-            if (fv > 0.0) return fd * (volume / fv);
+            // Tabulated: quadratic solve per interval (Gap #12).
+            // Matches legacy table_getStorageDepth() in table.c.
+            auto ci = static_cast<std::size_t>(nodes.storage_curve[ui]);
+            if (tables && ci < tables->tables.size()) {
+                double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
+                double ucf_vol = ucf::Ucf[ucf::VOLUME][unit_sys];
+                double vol_disp = volume * ucf_vol;       // internal ft³ → display units
+                double d_disp   = table_getStorageDepth(tables->tables[ci], vol_disp);
+                return d_disp / ucf_len;                  // display units → ft
+            }
+            if (fv > 0.0) return fd * (volume / fv);     // fallback if no table
             return 0.0;
         }
 

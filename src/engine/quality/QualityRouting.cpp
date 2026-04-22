@@ -15,6 +15,8 @@
 #include "QualityRouting.hpp"
 #include "Treatment.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
+#include "../hydraulics/Node.hpp"
 #include "../math/SIMD.hpp"
 
 #include <cmath>
@@ -50,7 +52,7 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     mixAtNodes(ctx, dt);
     applyTreatment(ctx, dt);       // Treatment before decay (matching legacy order)
     applyDecay(ctx, dt);
-    updateLinkQuality(ctx);
+    updateLinkQuality(ctx, dt);
 }
 
 // ============================================================================
@@ -89,6 +91,28 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
             if (mass_rate > 0.0 && nd_idx < ctx.nodes.qual_mass_in.size()) {
                 ctx.nodes.qual_mass_in[nd_idx] += mass_rate;
             }
+        }
+    }
+
+    // Gap #26: LID drain quality — add drain loads to destination node inflows.
+    // lid_drain_qual_load[node * np + p] (mass/sec) and lid_drain_qual_vol[node]
+    // (CFS) are set once per runoff step in A6b and persist until overwritten.
+    // Matches legacy lid_addDrainInflow() (node drain) / lid_addDrainRunon()
+    // (subcatch drain routed to that subcatch's outlet node).
+    for (int j = 0; j < ctx.n_nodes(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        double drain_vol_rate = (uj < ctx.nodes.lid_drain_qual_vol.size())
+                                ? ctx.nodes.lid_drain_qual_vol[uj] : 0.0;
+        if (drain_vol_rate <= 0.0) continue;
+
+        ctx.nodes.qual_vol_in[uj] += drain_vol_rate * dt;
+
+        for (int p = 0; p < np; ++p) {
+            auto nd_idx = uj * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+            double load = (nd_idx < ctx.nodes.lid_drain_qual_load.size())
+                          ? ctx.nodes.lid_drain_qual_load[nd_idx] : 0.0;
+            if (load > 0.0 && nd_idx < ctx.nodes.qual_mass_in.size())
+                ctx.nodes.qual_mass_in[nd_idx] += load;
         }
     }
 }
@@ -253,47 +277,111 @@ void QualitySolver::applyDecay(SimulationContext& ctx, double dt) {
         }
     }
 
-    // Decay at links — vectorisable per-pollutant stripe
-    for (int p = 0; p < np; ++p) {
-        double k = poll.k_decay[static_cast<size_t>(p)];
-        if (k == 0.0) continue;
-        double decay_factor = 1.0 - k * dt;
-
-        OPENSWMM_IVDEP
-        for (int j = 0; j < ctx.n_links(); ++j) {
-            auto idx = static_cast<size_t>(j) * static_cast<size_t>(np) + static_cast<size_t>(p);
-            if (idx >= ctx.links.conc.size()) continue;
-            ctx.links.conc[idx] *= decay_factor;
-            if (ctx.links.conc[idx] < 0.0) ctx.links.conc[idx] = 0.0;
-        }
-    }
+    // Link decay is applied within updateLinkQuality() (volume-balance mixing)
+    // so no separate per-link decay pass is needed here.
 }
 
 // ============================================================================
 // Update link quality from upstream node — VECTORISABLE
 // ============================================================================
 
-void QualitySolver::updateLinkQuality(SimulationContext& ctx) {
+void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
     int np = n_pollutants_;
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
+    auto& poll  = ctx.pollutants;
 
-    // Batch over all links — parallelisable (each link reads from upstream node, writes to own slot)
+    const bool is_steady = (ctx.options.routing_model == RoutingModel::STEADY);
+
+    // Batch over all links — parallelisable (each link writes to its own slot)
 #if defined(SWMM_USE_OPENMP)
 #pragma omp parallel for schedule(static)
 #endif
     for (int j = 0; j < ctx.n_links(); ++j) {
         auto uj = static_cast<size_t>(j);
+        double q = std::fabs(links.flow[uj]);
+
         int upstream = (links.flow[uj] >= 0.0) ? links.node1[uj] : links.node2[uj];
         if (upstream < 0 || upstream >= ctx.n_nodes()) continue;
+        auto un = static_cast<size_t>(upstream);
 
-        // Copy upstream node concentration to link — vectorisable inner loop
+        double v_old = links.old_volume[uj];
+        double v_new = links.volume[uj];
+
+        // Matching legacy qualrout.c findLinkQual():
+        //   New concentration = volume-balance complete-mixing with upstream
+        //   inflow, corrected for volume change, plus first-order in-link decay.
+        //
+        //   c_new = (c_old * v_old + c_up * q_in * dt - k * c_old * v_old * dt)
+        //           / max(v_new, ZERO_VOLUME)
+        //
+        // When there is no flow, the link retains its old concentration
+        // (with decay applied below).
+
+        // Evaporation concentration factor (Gap #2 / legacy findLinkQual):
+        //   fEvap = 1 + vEvap / v_old  where vEvap = evapLossRate * nBarrels * dt
+        //   Concentrates pollutants when conduit water evaporates.
+        double fEvap = 1.0;
+        if (v_old > ZERO_VOLUME) {
+            int nb = (uj < links.barrels.size()) ? links.barrels[uj] : 1;
+            double evap_rate = (uj < links.evap_loss_rate.size()) ? links.evap_loss_rate[uj] : 0.0;
+            double v_evap = evap_rate * static_cast<double>(nb) * dt;
+            if (v_evap > 0.0) fEvap = 1.0 + v_evap / v_old;
+        }
+
         for (int p = 0; p < np; ++p) {
             auto li = uj * static_cast<size_t>(np) + static_cast<size_t>(p);
-            auto ni = static_cast<size_t>(upstream) * static_cast<size_t>(np) + static_cast<size_t>(p);
-            if (li < links.conc.size() && ni < nodes.conc.size()) {
-                links.conc[li] = nodes.conc[ni];
+            auto ni = un  * static_cast<size_t>(np) + static_cast<size_t>(p);
+            if (li >= links.conc.size() || ni >= nodes.conc.size()) continue;
+
+            double c_old = links.conc_old[li];
+            double c_up  = nodes.conc[ni];    // upstream node after node mixing
+
+            double k = (static_cast<size_t>(p) < poll.k_decay.size())
+                ? poll.k_decay[static_cast<size_t>(p)] : 0.0;
+
+            double c_new;
+
+            if (is_steady) {
+                // Gap #38: Steady Flow quality routing (legacy findSFLinkQual).
+                // Link conc = upstream node conc, scaled by fEvap then exact
+                // exponential decay over the full routing timestep.
+                // No volume-balance mixing — steady flow has invariant volumes.
+                double c1 = c_up * fEvap;
+                c_new = (k > 0.0) ? c1 * std::exp(-k * dt) : c1;
+            } else if (q <= 0.0) {
+                // No flow: retain old concentration with in-place decay
+                // Apply fEvap first (legacy order: fEvap then decay)
+                c_new = c_old * fEvap * std::max(1.0 - k * dt, 0.0);
+            } else if (v_new <= ZERO_VOLUME) {
+                // Zero-volume link — matching legacy qualrout.c findLinkQual:
+                // when vNew == 0 the link carries upstream mass instantaneously,
+                // so assign upstream node concentration directly.
+                c_new = c_up;
+            } else {
+                // Legacy order (findLinkQual): fEvap → decay → mix with upstream
+                //   c1 = c_old * fEvap
+                //   c2 = c1 * (1 - k*dt)                 [getReactedQual]
+                //   c_new = (c2 * v_old + c_up * q_in * dt) / (v_old + q_in * dt)
+                //
+                // Volume-change correction for DW (matching legacy line ~337):
+                //   qIn += (v2 + vLosses - v1) / tStep
+                double q_in = q;
+                if (v_new > v_old) q_in += (v_new - v_old) / dt;
+                q_in = std::max(q_in, 0.0);
+
+                double c1 = c_old * fEvap;           // evap-concentrated
+                double c2 = c1 * std::max(1.0 - k * dt, 0.0);  // decayed
+                double w_in = c_up * q_in;           // mass inflow rate
+
+                // getMixedQual: (c2 * v_old + w_in * dt) / (v_old + q_in * dt)
+                double denom = v_old + q_in * dt;
+                c_new = (denom > ZERO_VOLUME)
+                    ? (c2 * v_old + w_in * dt) / denom : c_up;
             }
+
+            c_new = std::max(c_new, 0.0);
+            links.conc[li] = c_new;
         }
     }
 }
@@ -316,23 +404,40 @@ void QualitySolver::applyTreatment(SimulationContext& ctx, double dt) {
         if (!treat.has_treatment[uj]) continue;
 
         // 1. Compute inflow concentration: Cin[p] = mass_in[p] / vol_in
-        double qIn = nodes.qual_vol_in[uj];  // total inflow volume this step
+        double vol_in = nodes.qual_vol_in[uj];  // total inflow volume (ft3) this step
+        double q_raw  = (dt > 0.0) ? vol_in / dt : 0.0;  // inflow rate (ft3/s)
         for (int p = 0; p < np; ++p) {
             auto mi = uj * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
             treat.cin[static_cast<std::size_t>(p)] =
-                (qIn > 0.0 && mi < nodes.qual_mass_in.size())
-                ? nodes.qual_mass_in[mi] / qIn : 0.0;
+                (vol_in > 0.0 && mi < nodes.qual_mass_in.size())
+                ? nodes.qual_mass_in[mi] / vol_in : 0.0;
         }
 
-        // 2. Get node state for process variables
+        // 2. Get node state for process variables — apply UCF conversions (Gap #16)
+        // Matching legacy treatmnt.c getVariableValue():
+        //   pvFLOW  = Q * UCF(FLOW)   — inflow in user display units
+        //   pvDEPTH = y * UCF(LENGTH) — avg depth in user display units
+        //   pvAREA  = (a1+a2)/2 * UCF(LENGTH)^2 — avg surface area in user display units
+        int unit_sys = static_cast<int>(ctx.options.flow_units);
+        double ucf_flow   = ucf::UCF(ucf::FLOW,   ctx.options);
+        double ucf_length = ucf::UCF(ucf::LENGTH,  ctx.options);
+
         double hrt_hours = nodes.hrt[uj] / 3600.0;
-        double q = nodes.lat_flow[uj];                // current inflow
-        double v = nodes.volume[uj];                   // current volume
-        double d = (nodes.depth[uj] + nodes.old_depth[uj]) / 2.0;  // avg depth
+        double q = q_raw * ucf_flow;                        // flow in user units
+        double v = nodes.volume[uj];                         // volume (ft3)
+        double d_ft = (nodes.depth[uj] + nodes.old_depth[uj]) * 0.5;
+        double d  = d_ft * ucf_length;                      // depth in user units
+
+        // AREA: average surface area at old and new depth (Gap #16)
+        double a1 = node::getSurfArea(nodes, j, nodes.old_depth[uj], &ctx.tables,
+                                      ucf::getUnitSystem(unit_sys));
+        double a2 = node::getSurfArea(nodes, j, nodes.depth[uj],     &ctx.tables,
+                                      ucf::getUnitSystem(unit_sys));
+        double area = (a1 + a2) * 0.5 * ucf_length * ucf_length;  // user units²
 
         // 3. Update HRT for storage nodes (matching legacy updateHRT)
         if (nodes.type[uj] == NodeType::STORAGE && v > 0.0) {
-            double qdt = std::abs(q) * dt;
+            double qdt = std::abs(q_raw) * dt;
             nodes.hrt[uj] = (nodes.hrt[uj] + dt) * v / (v + qdt);
             hrt_hours = nodes.hrt[uj] / 3600.0;
         }
@@ -373,8 +478,6 @@ void QualitySolver::applyTreatment(SimulationContext& ctx, double dt) {
             }
 
             // Before evaluation, ensure any R_POLLUT dependencies are resolved
-            // The extended evaluate reads from treat.removal[] directly
-            // For any R_POLLUT(q) where removal[q]==-1, recursively compute it
             for (const auto& tok : expr.tokens) {
                 if (tok.var == treatment::TreatVar::R_POLLUT &&
                     tok.pollut_ref >= 0 && tok.pollut_ref < np) {
@@ -386,7 +489,7 @@ void QualitySolver::applyTreatment(SimulationContext& ctx, double dt) {
 
             double result = treatment::evaluate(
                 expr, c_in, dt, hrt_hours, q, v, d,
-                treat.cin.data(), treat.removal.data(), np);
+                treat.cin.data(), treat.removal.data(), np, area);
             result = std::max(result, 0.0);
 
             if (expr.is_removal) {
@@ -401,7 +504,11 @@ void QualitySolver::applyTreatment(SimulationContext& ctx, double dt) {
         for (int p = 0; p < np; ++p)
             getRemoval(p, getRemoval);
 
-        // 6. Apply removals to nodal concentrations + mass balance
+        // 6. Apply removals to nodal concentrations + mass balance (Gap #17)
+        // Legacy mass loss formula (treatmnt.c lines 262-263):
+        //   massLost = (Cin*q*tStep + oldQual*oldVol - cOut*(q*tStep + oldVol)) / tStep
+        // where q is in ft3/s (internal), oldQual/oldVol are pre-quality-step values.
+        double v_old = nodes.old_volume[uj];
         for (int p = 0; p < np; ++p) {
             double R = treat.removal[static_cast<std::size_t>(p)];
             if (R <= 0.0) continue;
@@ -422,13 +529,21 @@ void QualitySolver::applyTreatment(SimulationContext& ctx, double dt) {
             }
             cOut = std::max(cOut, 0.0);
 
-            // Mass balance: track mass removed by treatment
-            // mass_lost = (c_before - c_after) * volume
-            double mass_removed = (c_node - cOut) * nodes.volume[uj];
-            if (mass_removed > 0.0 &&
+            // Legacy mass loss: accounts for flow-through removal component
+            // massLost = (Cin*q*dt + c_old*v_old - cOut*(q*dt + v_old)) / dt
+            double c_in_p  = treat.cin[static_cast<std::size_t>(p)];
+            double c_old_p = (ci < nodes.conc_old.size()) ? nodes.conc_old[ci] : c_node;
+            double mass_lost = 0.0;
+            if (dt > 0.0) {
+                mass_lost = (c_in_p * q_raw * dt + c_old_p * v_old
+                            - cOut * (q_raw * dt + v_old)) / dt;
+                mass_lost = std::max(0.0, mass_lost);
+            }
+
+            if (mass_lost > 0.0 &&
                 static_cast<std::size_t>(p) < ctx.mass_balance.qual_routing_reacted.size()) {
                 ctx.mass_balance.qual_routing_reacted[static_cast<std::size_t>(p)]
-                    += mass_removed;
+                    += mass_lost;
             }
 
             nodes.conc[ci] = cOut;

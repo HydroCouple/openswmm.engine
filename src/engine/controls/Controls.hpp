@@ -120,6 +120,7 @@ struct Action {
     double     value         = 0.0;      ///< Direct value or computed result
     int        curve_idx     = -1;       ///< Curve index (for CURVE type)
     int        tseries_idx   = -1;       ///< Timeseries index (for TIMESERIES type)
+    int        pid_idx       = -1;       ///< PID state index (for PID type)
 };
 
 // ============================================================================

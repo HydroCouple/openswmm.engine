@@ -58,7 +58,15 @@ enum class TokenType : int {
     FUNC_STEP = 21,
     FUNC_MIN  = 22,
     FUNC_MAX  = 23,
-    COMMA     = 24
+    COMMA     = 24,
+    // Legacy mathexpr.c functions not in original refactor (Gap 49)
+    FUNC_COT   = 25,  ///< cot(x) = 1/tan(x)
+    FUNC_SINH  = 26,  ///< sinh(x)
+    FUNC_COSH  = 27,  ///< cosh(x)
+    FUNC_TANH  = 28,  ///< tanh(x)
+    FUNC_COTH  = 29,  ///< coth(x) = 1/tanh(x)
+    FUNC_LOG10 = 30,  ///< log10(x)
+    FUNC_ACOT  = 31   ///< acot(x) = atan(1/x)
 };
 
 struct Token {

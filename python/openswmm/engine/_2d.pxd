@@ -67,3 +67,13 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_set_rel_tolerance(void* engine, double rtol)
     int swmm_2d_get_abs_tolerance(void* engine, double* atol)
     int swmm_2d_set_abs_tolerance(void* engine, double atol)
+
+    # Boundary edges
+    int swmm_2d_boundary_edge_count(void* engine, int* count)
+    int swmm_2d_get_edge_bc_type(void* engine, int tri_idx, int edge, int* bc_type)
+    int swmm_2d_set_edge_bc_type(void* engine, int tri_idx, int edge, int bc_type)
+    int swmm_2d_get_edge_bc_head(void* engine, int tri_idx, int edge, double* head)
+    int swmm_2d_set_edge_bc_head(void* engine, int tri_idx, int edge, double head)
+    int swmm_2d_get_edge_bc_slope(void* engine, int tri_idx, int edge, double* slope)
+    int swmm_2d_set_edge_bc_slope(void* engine, int tri_idx, int edge, double slope)
+    int swmm_2d_get_edge_bc_cum_flux(void* engine, int tri_idx, int edge, double* cum_flux)

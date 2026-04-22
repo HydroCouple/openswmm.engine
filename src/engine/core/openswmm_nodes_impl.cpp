@@ -14,6 +14,39 @@
 #include "../../../include/openswmm/engine/openswmm_nodes.h"
 #include "../hydraulics/Node.hpp"
 
+namespace {
+
+bool c_to_internal_node_type(int c_type, openswmm::NodeType& out_type) {
+    switch (c_type) {
+        case SWMM_NODE_JUNCTION:
+            out_type = openswmm::NodeType::JUNCTION;
+            return true;
+        case SWMM_NODE_OUTFALL:
+            out_type = openswmm::NodeType::OUTFALL;
+            return true;
+        case SWMM_NODE_STORAGE:
+            out_type = openswmm::NodeType::STORAGE;
+            return true;
+        case SWMM_NODE_DIVIDER:
+            out_type = openswmm::NodeType::DIVIDER;
+            return true;
+        default:
+            return false;
+    }
+}
+
+int internal_to_c_node_type(openswmm::NodeType type) {
+    switch (type) {
+        case openswmm::NodeType::JUNCTION: return SWMM_NODE_JUNCTION;
+        case openswmm::NodeType::OUTFALL:  return SWMM_NODE_OUTFALL;
+        case openswmm::NodeType::DIVIDER:  return SWMM_NODE_DIVIDER;
+        case openswmm::NodeType::STORAGE:  return SWMM_NODE_STORAGE;
+        default:                           return SWMM_NODE_JUNCTION;
+    }
+}
+
+} // namespace
+
 extern "C" {
 
 // ============================================================================
@@ -45,6 +78,10 @@ SWMM_ENGINE_API int swmm_node_add(SWMM_Engine engine, const char* id, int type) 
     CHECK_HANDLE(engine);
     if (!id) return SWMM_ERR_BADPARAM;
 
+    openswmm::NodeType internal_type = openswmm::NodeType::JUNCTION;
+    if (!c_to_internal_node_type(type, internal_type))
+        return SWMM_ERR_BADPARAM;
+
     auto& ctx = to_engine(engine)->context();
     if (ctx.state != openswmm::EngineState::BUILDING)
         return SWMM_ERR_LIFECYCLE;
@@ -61,7 +98,7 @@ SWMM_ENGINE_API int swmm_node_add(SWMM_Engine engine, const char* id, int type) 
     ctx.nodes.resize(n);
 
     // Set type
-    ctx.nodes.type[static_cast<std::size_t>(idx)] = static_cast<openswmm::NodeType>(type);
+    ctx.nodes.type[static_cast<std::size_t>(idx)] = internal_type;
 
     return SWMM_OK;
 }
@@ -123,7 +160,7 @@ SWMM_ENGINE_API int swmm_node_get_type(SWMM_Engine engine, int idx, int* type) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    if (type) *type = static_cast<int>(ctx.nodes.type[static_cast<std::size_t>(idx)]);
+    if (type) *type = internal_to_c_node_type(ctx.nodes.type[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 

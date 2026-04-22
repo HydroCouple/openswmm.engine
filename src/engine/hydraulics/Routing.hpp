@@ -24,6 +24,7 @@
 #include "KinematicWave.hpp"
 #include "DynamicWave.hpp"
 #include "Divider.hpp"
+#include <vector>
 
 namespace openswmm {
 
@@ -89,6 +90,10 @@ public:
     /// Access the shape-grouped xsect manager.
     const XSectGroups& xsectGroups() const { return groups_; }
 
+    /// Gap #44: true if a routing cycle was detected during the last init().
+    /// For KW/STEADY routing only (DW does not toposort).
+    bool hasCycle() const { return cycle_detected_; }
+
     /// Set the DWSolver OpenMP thread count (delegates to DWSolver::setNumThreads).
     void setDWNumThreads(int n) { dw_solver_.setNumThreads(n); }
 
@@ -101,6 +106,8 @@ private:
     kinwave::KWSolver kw_solver_;
     dynwave::DWSolver dw_solver_;
     divider::DividerSoA dividers_;
+    std::vector<int> steady_sorted_links_;  ///< Topological link order for STEADY routing
+    bool cycle_detected_ = false;           ///< Gap #44: set true when toposort detects a loop
 
     /// Save old hydraulic states before routing.
     void saveOldStates(SimulationContext& ctx);
@@ -113,6 +120,10 @@ private:
 
     /// Update final link states (depth, volume) after routing.
     void updateLinkStates(SimulationContext& ctx);
+
+    /// Execute steady-state flow routing (Gap #33).
+    /// Matches legacy flowrout.c::steadyflow_execute() loop.
+    int executeSteadyFlow(SimulationContext& ctx, double dt);
 };
 
 } // namespace openswmm

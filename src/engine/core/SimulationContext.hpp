@@ -656,6 +656,14 @@ struct SimulationContext {
                                routing_final_storage;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
+
+        /// Groundwater continuity error (fraction). Gap #72.
+        double gw_error() const {
+            double total_in  = gw_infil + gw_init_storage;
+            double total_out = gw_upper_evap + gw_lower_evap + gw_lower_perc +
+                               gw_lateral_flow + gw_final_storage;
+            return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
+        }
     } mass_balance;
 
     // =========================================================================
@@ -760,6 +768,22 @@ struct SimulationContext {
     } routing_stats;
 
     // =========================================================================
+    // Control action log — Gap #67
+    // Populated by ControlEngine::applyPendingActions() when rpt_controls is on.
+    // =========================================================================
+
+    /// One entry per control rule action that changed a link setting.
+    struct ControlLogEntry {
+        int         link_idx;    ///< Index of the link whose setting changed
+        std::string rule_name;   ///< Name of the rule that triggered the change
+        double      new_setting; ///< The new target setting value (0-1)
+        double      date;        ///< OADate when the change occurred
+    };
+
+    /// Chronological log of all control actions taken during the simulation.
+    std::vector<ControlLogEntry> control_log;
+
+    // =========================================================================
     // Input file path (for model write / hot start)
     // =========================================================================
 
@@ -837,6 +861,7 @@ struct SimulationContext {
      */
     void reset() {
         state = EngineState::CREATED;
+        control_log.clear();
         current_time = 0.0;
         current_date = 0.0;
         dt_output_remaining = 0.0;

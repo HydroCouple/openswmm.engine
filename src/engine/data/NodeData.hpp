@@ -147,6 +147,18 @@ struct NodeData {
      *  @see Legacy: Outfall[j].routeTo */
     std::vector<int>        outfall_route_to;
 
+    /** @brief Cached index of the conduit connected to this outfall (-1 if none).
+     *
+     *  Populated once at init by outfall::buildOutfallLinkMap so that the
+     *  per-iteration boundary-depth recompute in setAllOutfallDepths can
+     *  skip its O(n_links) inner scan. Only meaningful for OUTFALL nodes.
+     */
+    std::vector<int>        outfall_link_idx;
+
+    /** @brief Conduit offset at the outfall end (ft), matching the link stored
+     *         in outfall_link_idx. Zero for non-outfalls. */
+    std::vector<double>     outfall_link_offset;
+
     // -----------------------------------------------------------------------
     // Storage-specific properties (valid when type[i] == STORAGE)
     // -----------------------------------------------------------------------
@@ -286,6 +298,25 @@ struct NodeData {
 
     /** @brief Accumulated volume inflow rate per node (ft3/sec). */
     std::vector<double>     qual_vol_in;
+
+    /**
+     * @brief LID drain quality mass rate per (node, pollutant) (mass/sec).
+     * @details Set once per runoff step (cleared at runoff step start); read
+     *          each routing step by addWetWeatherLoads() → added to qual_mass_in.
+     *          Flat 2D: [node * n_pollutants + pollutant].
+     *          Covers drain-to-node and drain-to-subcatch (routed to outlet node).
+     *          Matches legacy lid_addDrainInflow() / lid_addDrainRunon() quality.
+     * @see Legacy: lid.c lid_addDrainInflow(), lid_addDrainRunon()
+     */
+    std::vector<double>     lid_drain_qual_load;
+
+    /**
+     * @brief LID drain volume inflow rate per node (ft3/sec).
+     * @details Set once per runoff step; read each routing step by
+     *          addWetWeatherLoads() → added to qual_vol_in (denominator for mixing).
+     * @see Legacy: lid.c lid_addDrainInflow() Node[k].newLatFlow contribution
+     */
+    std::vector<double>     lid_drain_qual_vol;
 
     // -----------------------------------------------------------------------
     // Per-node quality state — flat 2D: [node * n_pollutants + pollutant]
@@ -532,6 +563,8 @@ struct NodeData {
         outfall_param.assign(un, 0.0);
         outfall_has_flap_gate.assign(un, 0);
         outfall_route_to.assign(un, -1);
+        outfall_link_idx.assign(un, -1);
+        outfall_link_offset.assign(un, 0.0);
 
         storage_curve.assign(un, -1);
         storage_curve_name.resize(un);
@@ -568,6 +601,8 @@ struct NodeData {
         iface_inflow.assign(un, 0.0);
         qual_mass_in.clear();
         qual_vol_in.assign(un, 0.0);
+        lid_drain_qual_load.clear();
+        lid_drain_qual_vol.assign(un, 0.0);
         inflow.assign(un, 0.0);
         outflow.assign(un, 0.0);
         overflow.assign(un, 0.0);
@@ -621,6 +656,7 @@ struct NodeData {
         g(sur_depth, 0.0); g(ponded_area, 0.0);
         g(outfall_type, OutfallType::FREE); g(outfall_param, 0.0);
         g(outfall_has_flap_gate, uint8_t{0}); g(outfall_route_to, -1);
+        g(outfall_link_idx, -1); g(outfall_link_offset, 0.0);
         g(storage_curve, -1); storage_curve_name.resize(un);
         g(storage_a, 0.0); g(storage_b, 0.0); g(storage_c, 0.0);
         g(storage_seep_rate, 0.0); g(storage_evap_frac, 0.0);
@@ -635,6 +671,7 @@ struct NodeData {
         g(runoff_inflow, 0.0); g(gw_inflow, 0.0); g(ext_inflow, 0.0);
         g(dwf_inflow, 0.0); g(rdii_inflow, 0.0); g(iface_inflow, 0.0);
         qual_vol_in.resize(un, 0.0);
+        lid_drain_qual_vol.resize(un, 0.0);
         g(inflow, 0.0); g(outflow, 0.0); g(overflow, 0.0);
         g(losses, 0.0); g(crown_elev, 0.0); g(degree, 0);
         g(old_net_inflow, 0.0); g(full_volume, 0.0);
@@ -680,6 +717,7 @@ struct NodeData {
             hrt.assign(static_cast<std::size_t>(count()), 0.0);
             user_conc_mass_flux.assign(total, 0.0);
             qual_mass_in.assign(total, 0.0);
+            lid_drain_qual_load.assign(total, 0.0);
         }
     }
 
@@ -702,6 +740,8 @@ struct NodeData {
         outfall_param.shrink_to_fit();
         outfall_has_flap_gate.shrink_to_fit();
         outfall_route_to.shrink_to_fit();
+        outfall_link_idx.shrink_to_fit();
+        outfall_link_offset.shrink_to_fit();
 
         storage_curve.shrink_to_fit();
         storage_curve_name.shrink_to_fit();

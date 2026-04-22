@@ -127,9 +127,16 @@ void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
     double ta = state.temperature;
     state.ea = 8.1175e6 * std::exp(-7701.544 / (ta + 405.0265));
 
-    // Psychrometric constant (matching legacy climate.c)
-    // gamma = (cp * P) / (epsilon * lambda) simplified for standard pressure
-    state.gamma = (0.000359 * 1.0) / (0.27 + 0.000459 * ta);
+    // Psychrometric constant — matching legacy climate.c:
+    //   z = Temp.elev / 1000 (elevation in thousands of ft)
+    //   pa = 29.9 - 1.02*z + 0.0032*z^2.4  (atmospheric pressure, in-Hg)
+    //   gamma = 0.000359 * pa
+    // If elevation <= 0, default to sea-level pressure of 29.9.
+    {
+        double z = state.elev / 1000.0;
+        double pa = (z <= 0.0) ? 29.9 : (29.9 - 1.02 * z + 0.0032 * std::pow(z, 2.4));
+        state.gamma = 0.000359 * pa;
+    }
 }
 
 // ============================================================================
@@ -143,6 +150,73 @@ void batchDistributeEvap(double evap_rate, const double* ponded_depth,
         double max_evap = ponded_depth[i] * inv_dt;
         evap_out[i] = std::min(evap_rate, max_evap);
     }
+}
+
+// ============================================================================
+// Sub-daily temperature interpolation — Gap #9
+// Matches legacy updateTempTimes() + setTemp() in climate.c
+// ============================================================================
+
+void updateTempTimes(ClimateState& state, int doy) {
+    // Solar declination (radians) — matches legacy climate.c
+    double decl = 0.40928 * std::cos(0.017202 * (172.0 - doy));
+
+    // Hour-angle argument: -tan(decl) * tan(latitude)
+    double lat_rad  = state.latitude * PI / 180.0;
+    double tan_lat  = std::tan(lat_rad);
+    double arg      = -std::tan(decl) * tan_lat;
+
+    double hrsr, hrss;
+    if (arg >= 1.0) {
+        // Polar night — sun never rises; use noon for both
+        hrsr = 12.0;
+        hrss = 12.0;
+    } else if (arg <= -1.0) {
+        // Midnight sun — sun never sets
+        hrsr = 0.0;
+        hrss = 24.0;
+    } else {
+        double hrang = 3.8197 * std::acos(arg);  // half-day length in hours
+        hrsr = 12.0 - hrang + state.dtlong;
+        hrss = 12.0 + hrang + state.dtlong - 3.0; // max temp ~3 h before actual sunset
+    }
+
+    state.hrsr  = hrsr;
+    state.hrss  = hrss;
+    state.hrday = (hrsr + hrss) / 2.0;
+    state.dhrdy = hrsr - hrss;                     // negative (~-9 to -12)
+    state.dydif = 24.0 + hrsr - hrss;              // sunset-to-next-sunrise span
+}
+
+double getSubdailyTemp(const ClimateState& state, double hour) {
+    double tmin  = state.tmin_daily;
+    double tmax  = state.tmax_daily;
+    double tave  = (tmin + tmax) / 2.0;
+    double trng  = (tmax - tmin) / 2.0;
+    // Trng1: overnight range using previous day's max → current min
+    double trng1 = state.prev_tmax - tmin;
+
+    double hrsr  = state.hrsr;
+    double hrss  = state.hrss;
+    double hrday = state.hrday;
+    double dhrdy = state.dhrdy;  // negative
+    double dydif = state.dydif;
+
+    double ta;
+    if (hour < hrsr) {
+        // Zone 1: before sunrise — sinusoidal rise toward tmin
+        double denom = (std::fabs(dydif) > 1e-10) ? dydif : 1.0;
+        ta = tmin + (trng1 / 2.0) * std::sin(PI / denom * (hrsr - hour));
+    } else if (hour <= hrss) {
+        // Zone 2: sunrise to sunset-3 — sinusoid peaking at tmax (at hrss)
+        double denom = (std::fabs(dhrdy) > 1e-10) ? dhrdy : -1.0;
+        ta = tave + trng * std::sin(PI / denom * (hrday - hour));
+    } else {
+        // Zone 3: after sunset-3 — sinusoidal decay from tmax toward next sunrise
+        double denom = (std::fabs(dydif) > 1e-10) ? dydif : 1.0;
+        ta = tmax - trng * std::sin(PI / denom * (hour - hrss));
+    }
+    return ta;
 }
 
 } // namespace climate

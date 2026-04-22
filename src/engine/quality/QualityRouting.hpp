@@ -65,6 +65,11 @@ public:
      */
     void addWetWeatherLoads(SimulationContext& ctx, double dt);
 
+    /// Update link quality using volume-balance mixing with upstream node
+    /// (DW/KW) or upstream node concentration with exponential decay (STEADY).
+    /// Public for testing.
+    void updateLinkQuality(SimulationContext& ctx, double dt);
+
 private:
     int n_pollutants_ = 0;
 
@@ -87,8 +92,6 @@ private:
     /// Batch first-order decay.
     void applyDecay(SimulationContext& ctx, double dt);
 
-    /// Update link quality from upstream node concentration.
-    void updateLinkQuality(SimulationContext& ctx);
 };
 
 } // namespace quality

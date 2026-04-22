@@ -42,7 +42,7 @@ constexpr double SQRT_GRAVITY     = 5.67450438786;  // sqrt(32.2)
 constexpr double INV_SQRT_GRAVITY = 0.17622692584;  // 1.0 / sqrt(32.2)
 
 /// Pi.
-constexpr double PI            = 3.14159265358979;
+constexpr double PI            = 3.141592654;
 
 /// Manning's equation US customary unit factor (1.486).
 /// Q = (PHI/n) * A * R^(2/3) * S^(1/2) where PHI = 1.486 for US, 1.0 for SI.
@@ -86,7 +86,11 @@ constexpr double MIN_DELTA_Z   = 0.001;
 constexpr double XTOL          = 0.001;
 
 /// Small positive number for underflow protection.
-constexpr double TINY          = 1.0e-30;
+constexpr double TINY          = 1.0e-6;
+
+/// @brief Sentinel value for missing or invalid data.
+/// Used in getVariableValue() when a variable is out of range or not applicable.
+static constexpr double MISSING = -1.0e10;
 
 // ============================================================================
 // Dynamic wave solver constants

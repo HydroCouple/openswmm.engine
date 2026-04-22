@@ -155,7 +155,10 @@ class Spatial:
             h, idx, <const double*>x.data, <const double*>y.data, n))
 
     def get_link_vertex_count(self, int idx) -> int:
-        """Return the number of vertices for a link.
+        """Return the number of ordered polyline vertices for a link.
+
+        The returned count includes upstream node coordinate at index 0,
+        interior vertices, and downstream node coordinate at the last index.
 
         :param idx: Link index.
         :returns: Vertex count.
@@ -166,7 +169,9 @@ class Spatial:
         return count
 
     def get_link_vertices(self, int idx) -> tuple:
-        """Return the vertices of a link as NumPy arrays.
+        """Return ordered polyline vertices of a link as NumPy arrays.
+
+        Ordering is: upstream node, interior vertices, downstream node.
 
         :param idx: Link index.
         :returns: Tuple of (x_array, y_array), each with dtype ``float64``.

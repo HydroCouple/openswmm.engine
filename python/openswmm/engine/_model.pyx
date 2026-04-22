@@ -179,6 +179,53 @@ cdef class ModelBuilder:
         cdef bytes b = path.encode('utf-8')
         _check(swmm_model_write(self._handle, b))
 
+    # --- Title management ---
+
+    def get_title_count(self) -> int:
+        """Return the number of title lines in the [TITLE] section.
+
+        :returns: Number of lines.
+        :rtype: int
+        """
+        cdef int count = 0
+        _check(swmm_title_get_count(self._handle, &count))
+        return count
+
+    def get_title_line(self, int index) -> str:
+        """Return a specific title line by zero-based index.
+
+        :param index: Line index.
+        :returns: Title line text.
+        :rtype: str
+        """
+        cdef char buf[1024]
+        _check(swmm_title_get_line(self._handle, index, buf, 1024))
+        return buf.decode('utf-8')
+
+    def add_title_line(self, str line):
+        """Append a new line to the [TITLE] section.
+
+        :param line: Text to append.
+        :type line: str
+        """
+        cdef bytes b = line.encode('utf-8')
+        _check(swmm_title_add_line(self._handle, b))
+
+    def set_title(self, str text):
+        """Replace all title lines with new text.
+
+        Newline characters in *text* are used as line separators.
+
+        :param text: Title text (may contain ``\\n``).
+        :type text: str
+        """
+        cdef bytes b = text.encode('utf-8')
+        _check(swmm_title_set(self._handle, b))
+
+    def clear_title(self):
+        """Remove all lines from the [TITLE] section."""
+        _check(swmm_title_clear(self._handle))
+
     def to_solver(self) -> Solver:
         """Transfer ownership of the engine handle to a :class:`Solver`.
 

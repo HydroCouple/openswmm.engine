@@ -90,10 +90,8 @@ public:
                      double beta, double length, double dt,
                      double loss_rate);
 
-private:
-    int n_conduits_ = 0;
-
     // Per-conduit SoA state (indexed by conduit-link index)
+    // Public so that unit tests can set up / inspect working arrays directly.
     std::vector<double> q1_;    ///< Previous inlet flow (cfs)
     std::vector<double> a1_;    ///< Previous inlet area (ft2)
     std::vector<double> q2_;    ///< Previous outlet flow (cfs)
@@ -105,6 +103,9 @@ private:
     std::vector<double> q_out_;     ///< Computed outflow (cfs)
     std::vector<double> a_out_;     ///< Outlet area from Newton solve (ft2)
     std::vector<double> sf_in_;     ///< Section factor at inlet
+
+private:
+    int n_conduits_ = 0;
 };
 
 } // namespace kinwave

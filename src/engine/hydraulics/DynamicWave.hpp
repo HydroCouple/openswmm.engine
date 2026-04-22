@@ -203,6 +203,10 @@ public:
     NodeContinuity  node_continuity  = NodeContinuity::EXPLICIT;
     bool   anderson_accel = false;       ///< Enable Anderson acceleration
 
+    /// Evaporation rate (ft/s) — set by Router::step() each timestep so that
+    /// solveMomentumBatch can recompute dq6 per Picard iteration (Gap #14).
+    double evap_rate  = 0.0;
+
 private:
     int n_nodes_ = 0;
     int n_links_ = 0;
@@ -222,7 +226,7 @@ private:
     std::vector<double> cached_length_;   ///< max(mod_length, length)
     std::vector<double> inv_length_;      ///< 1.0 / cached_length_
 
-    // Per-timestep constant
+    // Per-timestep constants
     double dt_gravity_ = 0.0;            ///< dt * GRAVITY (set once per timestep)
 
     // Pre-allocated width-capping buffers (avoids thread_local per-call allocation)
@@ -291,11 +295,16 @@ private:
     void computeLinkGeometry(SimulationContext& ctx);
     void solveMomentumBatch(SimulationContext& ctx, double dt, int step);
     void classifyMomentumCategories(SimulationContext& ctx);
-    void processDryLinks(SimulationContext& ctx, double dt);
-    void processManningLinks(SimulationContext& ctx, double dt, int step,
-                             MomentumCategory cat);
-    void processForceMainLinks(SimulationContext& ctx, double dt, int step,
-                               MomentumCategory cat);
+
+    /// Per-element momentum kernels. Called inside the single OpenMP
+    /// parallel-for over all conduits in solveMomentumBatch, matching
+    /// legacy dynwave.c::findLinkFlows (one fork per Picard iteration,
+    /// per-element category dispatch inside).
+    void processDryLink(SimulationContext& ctx, double dt, std::size_t uj);
+    void processManningLink(SimulationContext& ctx, double dt, int step,
+                            std::size_t uj, MomentumCategory cat);
+    void processForceMainLink(SimulationContext& ctx, double dt, int step,
+                              std::size_t uj, MomentumCategory cat);
     void applyFlowLimits(SimulationContext& ctx, double dt, int step,
                          std::size_t uj, double& q, double qLast,
                          double barrels_d, bool isFull);
@@ -306,11 +315,26 @@ private:
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;
 
 public:
+<<<<<<< HEAD
     /// Access per-node working state (for non-conduit surfarea/dqdh scatter).
     DWNodeState& nodeState(int idx) { return xnode_[static_cast<std::size_t>(idx)]; }
 
     /// Access per-node AA skip flags (read-only, for testing/diagnostics).
     const std::vector<uint8_t>& aaSkipFlags() const { return aa_skip_; }
+=======
+    /// Access per-node sumdqdh (for non-conduit dqdh scatter).
+    double& nodeSumDqdh(int idx) { return xnode_.sumdqdh[static_cast<std::size_t>(idx)]; }
+    /// Access per-node new_surf_area (for non-conduit surface area scatter).
+    double& nodeNewSurfArea(int idx) { return xnode_.new_surf_area[static_cast<std::size_t>(idx)]; }
+    /// Raw pointer to the new_surf_area array, used by callers that need
+    /// to index without bounds-checking (e.g. the pump limiter that must
+    /// match legacy Xnode[j].newSurfArea behaviour).
+    const double* nodeNewSurfAreaData() const noexcept { return xnode_.new_surf_area.data(); }
+    /// Mutable variant used by weir flow computation to scatter the
+    /// per-weir surfArea contribution into the node accumulator, matching
+    /// legacy findNonConduitSurfArea.
+    double* nodeNewSurfAreaDataMut() noexcept { return xnode_.new_surf_area.data(); }
+>>>>>>> 1ee5ba8c (Refactoring for computational efficiency)
 private:
 
     // Preissmann slot helpers (matching legacy dwflow.c)

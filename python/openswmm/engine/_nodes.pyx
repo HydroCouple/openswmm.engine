@@ -475,6 +475,17 @@ class Nodes:
         _check(swmm_node_get_quality(h, i, pollutant_idx, &v))
         return v
 
+    def set_quality_mass_flux(self, idx, int pollutant_idx, double mass_rate):
+        """Inject a pollutant mass flux at a node.
+
+        :param idx: Node index (int) or node ID (str).
+        :param pollutant_idx: Pollutant index.
+        :param mass_rate: Mass injection rate (mass/time in model units).
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_node_set_quality_mass_flux(h, i, pollutant_idx, mass_rate))
+
     # ------------------------------------------------------------------
     # Storage node methods
     # ------------------------------------------------------------------

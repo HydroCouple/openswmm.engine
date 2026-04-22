@@ -68,8 +68,10 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.gages.is_raining,    false);
 
     // Past-rain tracking (used by updateAllGages for controls past-rain)
-    grow(ctx.gages.past_rain_accum, 0.0);
-    grow(ctx.gages.past_rain_time,  0.0);
+    grow(ctx.gages.past_rain_accum,   0.0);
+    grow(ctx.gages.past_rain_time,    0.0);
+    grow(ctx.gages.cumul_rain_accum,  0.0);
+    grow(ctx.gages.co_gage_index,     -1);
     // past_rain is a flat 2-D array: [gage * MAXPASTRAIN + hour]
     {
         const auto nr = n * static_cast<std::size_t>(GageData::MAXPASTRAIN);

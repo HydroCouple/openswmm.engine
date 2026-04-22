@@ -488,6 +488,52 @@ TEST_F(GeoPackageTest, VerticesRoundTrip) {
     EXPECT_DOUBLE_EQ(ctx_in.spatial.link_vertices_y[c2][0], 5100.0);
 }
 
+TEST_F(GeoPackageTest, VerticesFollowNodeToNodeOrder) {
+    auto ctx_out = build_test_context();
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+
+    // Store C2 geometry in reverse direction: node2 -> interior -> node1.
+    auto db = open_database(db_path_);
+    auto rev_geom = encode_linestring(
+        std::vector<double>{3000.0, 2500.0, 2000.0},
+        std::vector<double>{5000.0, 5100.0, 5000.0},
+        4326);
+    auto upd = prepare(db.get(),
+        "UPDATE links SET geom = ? WHERE simulation_id = ? AND link_id = ?");
+    bind_blob(upd.get(), 1, rev_geom.data(), static_cast<int>(rev_geom.size()));
+    bind_text(upd.get(), 2, "test_run");
+    bind_text(upd.get(), 3, "C2");
+    ASSERT_EQ(sqlite3_step(upd.get()), SQLITE_DONE);
+
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    int c2 = ctx_in.link_names.find("C2");
+    ASSERT_GE(c2, 0);
+    ASSERT_EQ(ctx_in.spatial.link_vertices_x[c2].size(), 1u);
+    EXPECT_DOUBLE_EQ(ctx_in.spatial.link_vertices_x[c2][0], 2500.0);
+    EXPECT_DOUBLE_EQ(ctx_in.spatial.link_vertices_y[c2][0], 5100.0);
+}
+
+TEST_F(GeoPackageTest, VertexBuffersAreRebuiltOnRead) {
+    auto ctx_out = build_test_context();
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+
+    // C1 has no interior vertices in the stored geometry.
+    SimulationContext ctx_in{};
+    ctx_in.spatial.link_vertices_x.resize(1);
+    ctx_in.spatial.link_vertices_y.resize(1);
+    ctx_in.spatial.link_vertices_x[0] = {123.0, 456.0};
+    ctx_in.spatial.link_vertices_y[0] = {789.0, 987.0};
+
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    int c1 = ctx_in.link_names.find("C1");
+    ASSERT_GE(c1, 0);
+    EXPECT_TRUE(ctx_in.spatial.link_vertices_x[c1].empty());
+    EXPECT_TRUE(ctx_in.spatial.link_vertices_y[c1].empty());
+}
+
 TEST_F(GeoPackageTest, SubcatchmentsRoundTrip) {
     auto ctx_out = build_test_context();
     ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
@@ -534,6 +580,33 @@ TEST_F(GeoPackageTest, PolygonsRoundTrip) {
     ASSERT_GE(ctx_in.spatial.subcatch_polygon_x[s1].size(), 4u);
     EXPECT_DOUBLE_EQ(ctx_in.spatial.subcatch_polygon_x[s1][0], 0.0);
     EXPECT_DOUBLE_EQ(ctx_in.spatial.subcatch_polygon_x[s1][1], 100.0);
+}
+
+TEST_F(GeoPackageTest, PolygonBuffersAreRebuiltOnRead) {
+    auto ctx_out = build_test_context();
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+
+    // Remove S2 geometry from DB so reader should leave an empty polygon,
+    // not stale values from a prior context state.
+    auto db = open_database(db_path_);
+    auto upd = prepare(db.get(),
+        "UPDATE subcatchments SET geom = NULL WHERE simulation_id = ? AND subcatch_id = ?");
+    bind_text(upd.get(), 1, "test_run");
+    bind_text(upd.get(), 2, "S2");
+    ASSERT_EQ(sqlite3_step(upd.get()), SQLITE_DONE);
+
+    SimulationContext ctx_in{};
+    ctx_in.spatial.subcatch_polygon_x.resize(2);
+    ctx_in.spatial.subcatch_polygon_y.resize(2);
+    ctx_in.spatial.subcatch_polygon_x[1] = {9.0, 8.0, 7.0};
+    ctx_in.spatial.subcatch_polygon_y[1] = {6.0, 5.0, 4.0};
+
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    int s2 = ctx_in.subcatch_names.find("S2");
+    ASSERT_GE(s2, 0);
+    EXPECT_TRUE(ctx_in.spatial.subcatch_polygon_x[s2].empty());
+    EXPECT_TRUE(ctx_in.spatial.subcatch_polygon_y[s2].empty());
 }
 
 TEST_F(GeoPackageTest, RainGagesRoundTrip) {

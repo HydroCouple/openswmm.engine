@@ -552,14 +552,35 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
 
 void DWSolver::initNodeStates(SimulationContext& ctx) {
     auto& nodes = ctx.nodes;
+    const int unit_sys = ucf::getUnitSystem(
+        static_cast<int>(ctx.options.flow_units));
+
     for (int i = 0; i < n_nodes_; ++i) {
         auto ui = static_cast<std::size_t>(i);
         xnode_.converged[ui] = 0;
         xnode_.sumdqdh[ui] = 0.0;
 
-        // Surface area at current depth
-        xnode_.new_surf_area[ui] = node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables,
-            ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)));
+        // Match legacy initNodeStates (dynwave.c): Xnode[i].newSurfArea = 0
+        // for ALL nodes, then updateNodeFlows / computeOrificeFlows /
+        // computeWeirFlows accumulate link contributions for JUNCTION /
+        // DIVIDER / OUTFALL ends. STORAGE nodes instead get their surface
+        // area from the storage curve, added here — legacy does this in
+        // setNodeDepth via node_getSurfArea(newDepth), but accumulating
+        // here is equivalent because updateNodeFlows skips scatter when
+        // type == STORAGE.
+        //
+        // Previously this was unconditionally set to node::getSurfArea()
+        // which returned MIN_SURFAREA (50 ft²) for every junction. That
+        // double-counted against the MAX(MinSurfArea) clamp in setNodeDepth
+        // and added ~50 ft² of phantom surface area to every junction
+        // depth update — mis-scaling dy = dV/A and shifting flooding
+        // patterns relative to legacy.
+        if (nodes.type[ui] == NodeType::STORAGE) {
+            xnode_.new_surf_area[ui] = node::getSurfArea(
+                nodes, i, nodes.depth[ui], &ctx.tables, unit_sys);
+        } else {
+            xnode_.new_surf_area[ui] = 0.0;
+        }
 
         // Reset node flows (matching legacy initNodeStates)
         nodes.inflow[ui] = 0.0;
@@ -890,6 +911,12 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     }
 
     // ---- STEP D: Batch compute areas and hyd-rad from (modified) depths ----
+    // Fused from previous 4-pass (computeAreas d1, computeAreas d2,
+    // computeAreaAndHydRad dm, computeHydRad d1) into 3 passes:
+    //   d1 → (a1, hrad1)   via computeAreaAndHydRad (was 2 passes + slot)
+    //   d2 → a2            via computeAreas
+    //   dm → (am, hrad_mid) via computeAreaAndHydRad
+    // Saves one gather of depth1_ plus kernel bookkeeping per Picard iter.
     double* OPENSWMM_RESTRICT p_d1  = depth1_.data();
     double* OPENSWMM_RESTRICT p_d2  = depth2_.data();
     double* OPENSWMM_RESTRICT p_dm  = depth_mid_.data();
@@ -897,16 +924,21 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     double* OPENSWMM_RESTRICT p_a2  = area2_.data();
     double* OPENSWMM_RESTRICT p_am  = area_mid_.data();
     double* OPENSWMM_RESTRICT p_hm  = hrad_mid_.data();
+    double* OPENSWMM_RESTRICT p_h1  = hrad1_.data();
     double* OPENSWMM_RESTRICT p_wm  = width_mid_.data();
+    (void)p_wm;  // width_mid_ already computed in STEP B
 
-    groups_->computeAreas(p_d1, p_a1, n_links_);
+    groups_->computeAreaAndHydRad(p_d1, p_a1, p_h1, n_links_);
     groups_->computeAreas(p_d2, p_a2, n_links_);
-    // Fused area+hydrad for depth_mid (single gather, two kernels, two scatters)
     groups_->computeAreaAndHydRad(p_dm, p_am, p_hm, n_links_);
     // width_mid_ already computed in STEP B; UP/DN_CRITICAL/DRY cases
-    // patched inline in STEP C. No redundant batch recomputation needed.
+    // patched inline in STEP C.
 
     // ---- STEP E: Preissmann slot overrides (conduits only) ----
+    //   Overrides area1/2/mid, width_mid, hrad_mid, hrad1 for surcharged
+    //   conduits (depth > xsect_y_full). Applied AFTER the batch geometry
+    //   kernels above so the slot overwrites whatever the shape kernel
+    //   produced for above-full depth.
     if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
         // Dynamic Preissmann Slot: area-based transient storage (Sharior et al. 2023)
         applyDPSGeometry(ctx);
@@ -925,6 +957,9 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
             if (depth1_[uj] > yf) {
                 double wSlot = getSlotWidth(depth1_[uj], yf, wm, shape);
                 if (wSlot > 0.0) area1_[uj] = af + (depth1_[uj] - yf) * wSlot;
+                // Upstream hyd-rad clamps to r_full once surcharged (legacy behaviour:
+                // slot is narrow so wetted perimeter stays ~constant).
+                hrad1_[uj] = rf;
             }
             if (depth2_[uj] > yf) {
                 double wSlot = getSlotWidth(depth2_[uj], yf, wm, shape);
@@ -940,15 +975,6 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 hrad_mid_[uj] = rf;
             }
         }
-    }
-
-    // ---- STEP F: Upstream hyd-rad and slot override (conduits only) ----
-    groups_->computeHydRad(p_d1, hrad1_.data(), n_links_);
-    for (int ci = 0; ci < n_conduits_; ++ci) {
-        int j = conduit_idx_[static_cast<std::size_t>(ci)];
-        auto uj = static_cast<std::size_t>(j);
-        if (depth1_[uj] > links.xsect_y_full[uj])
-            hrad1_[uj] = links.xsect_r_full[uj];
     }
 }
 
@@ -968,16 +994,47 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
         dqdh_[uj] = 0.0;
     }
 
-    // Classify each conduit into a momentum category
+    // Classify each conduit into a momentum category (serial — writes
+    // into the shared category_[] array).
     classifyMomentumCategories(ctx);
 
-    // Dispatch per-category kernels (each has zero shape/type/state branches)
-    processDryLinks(ctx, dt);
-    processManningLinks(ctx, dt, step, MomentumCategory::MANNING_OPEN);
-    processManningLinks(ctx, dt, step, MomentumCategory::MANNING_CLOSED_FS);
-    processManningLinks(ctx, dt, step, MomentumCategory::MANNING_CLOSED_FULL);
-    processForceMainLinks(ctx, dt, step, MomentumCategory::FORCE_MAIN_HW);
-    processForceMainLinks(ctx, dt, step, MomentumCategory::FORCE_MAIN_DW);
+    // Single parallel-for over all conduits with per-element category
+    // dispatch. Matches legacy dynwave.c::findLinkFlows (one fork per
+    // Picard iteration, per-element dispatch inside the loop body).
+    // Earlier attempts that wrapped six separate per-category loops in
+    // `omp parallel` regions regressed ~20% on Apple Silicon: libomp
+    // fork/sync overhead stacked across the six loops. Collapsing to
+    // one loop body with an inline switch amortises the fork cost
+    // across all conduits.
+#if defined(SWMM_USE_OPENMP)
+    const int nt = (n_conduits_ >= 4 * num_threads_) ? num_threads_ : 1;
+#pragma omp parallel for num_threads(nt) if(nt > 1) schedule(static) \
+    default(none) shared(ctx, links, dt, step)
+#endif
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        int j = conduit_idx_[static_cast<std::size_t>(ci)];
+        auto uj = static_cast<std::size_t>(j);
+
+        if (bypassed_[uj]) continue;
+
+        MomentumCategory cat = category_[uj];
+        switch (cat) {
+            case MomentumCategory::SKIP_DRY:
+                processDryLink(ctx, dt, uj);
+                break;
+            case MomentumCategory::MANNING_OPEN:
+            case MomentumCategory::MANNING_CLOSED_FS:
+            case MomentumCategory::MANNING_CLOSED_FULL:
+                processManningLink(ctx, dt, step, uj, cat);
+                break;
+            case MomentumCategory::FORCE_MAIN_HW:
+            case MomentumCategory::FORCE_MAIN_DW:
+                processForceMainLink(ctx, dt, step, uj, cat);
+                break;
+            default:
+                break;
+        }
+    }
 }
 
 // ============================================================================
@@ -1022,26 +1079,24 @@ void DWSolver::classifyMomentumCategories(SimulationContext& ctx) {
 }
 
 // ============================================================================
-// processDryLinks -- trivial: zero flow, minimal bookkeeping
+// processDryLink -- trivial: zero flow, minimal bookkeeping (per-element)
 // ============================================================================
 
-void DWSolver::processDryLinks(SimulationContext& ctx, double dt) {
+void DWSolver::processDryLink(SimulationContext& ctx, double dt,
+                              std::size_t uj) {
+    (void)dt;  // unused — kept for signature uniformity across kernels
     auto& links = ctx.links;
-    const auto& idx = cat_indices_[static_cast<int>(MomentumCategory::SKIP_DRY)];
     const double dt_g = dt_gravity_;
 
-    for (int j : idx) {
-        auto uj = static_cast<std::size_t>(j);
-        double aMid = area_mid_[uj];
-        double barrels_d = barrels_d_[uj];
-        area_mid_[uj] = 0.5 * (area1_[uj] + area2_[uj]);
-        dqdh_[uj] = dt_g * aMid * inv_length_[uj] * barrels_d;
-        froude_[uj] = 0.0;
-        new_flow_[uj] = 0.0;
-        double yf = links.xsect_y_full[uj];
-        links.depth[uj] = std::min(depth_mid_[uj], yf);
-        links.volume[uj] = area_mid_[uj] * links.length[uj] * barrels_d;
-    }
+    double aMid = area_mid_[uj];
+    double barrels_d = barrels_d_[uj];
+    area_mid_[uj] = 0.5 * (area1_[uj] + area2_[uj]);
+    dqdh_[uj] = dt_g * aMid * inv_length_[uj] * barrels_d;
+    froude_[uj] = 0.0;
+    new_flow_[uj] = 0.0;
+    double yf = links.xsect_y_full[uj];
+    links.depth[uj] = std::min(depth_mid_[uj], yf);
+    links.volume[uj] = area_mid_[uj] * links.length[uj] * barrels_d;
 }
 
 // ============================================================================
@@ -1152,218 +1207,207 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
 }
 
 // ============================================================================
-// processManningLinks -- handles MANNING_OPEN, MANNING_CLOSED_FS,
-//                        and MANNING_CLOSED_FULL categories
+// processManningLink -- per-element kernel for MANNING_OPEN,
+//                       MANNING_CLOSED_FS, and MANNING_CLOSED_FULL
 // ============================================================================
 
-void DWSolver::processManningLinks(SimulationContext& ctx, double dt, int step,
-                                   MomentumCategory cat) {
+void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
+                                  std::size_t uj, MomentumCategory cat) {
     auto& links = ctx.links;
-    const auto& idx = cat_indices_[static_cast<int>(cat)];
-    if (idx.empty()) return;
-
     const int inert_damping = ctx.options.inertial_damping;
     const double dt_g = dt_gravity_;
     const bool is_closed_full = (cat == MomentumCategory::MANNING_CLOSED_FULL);
     const bool is_open_cat    = (cat == MomentumCategory::MANNING_OPEN);
 
-    for (int j : idx) {
-        auto uj = static_cast<std::size_t>(j);
-        double barrels_d = barrels_d_[uj];
-        double length = cached_length_[uj];
-        double inv_len = inv_length_[uj];
-        double aMid = area_mid_[uj];
-        double rMid = hrad_mid_[uj];
-        double qLast = links.flow[uj] / barrels_d;
-        double yf = links.xsect_y_full[uj];
-        bool isFull = (depth1_[uj] >= yf && depth2_[uj] >= yf);
+    double barrels_d = barrels_d_[uj];
+    double length = cached_length_[uj];
+    double inv_len = inv_length_[uj];
+    double aMid = area_mid_[uj];
+    double rMid = hrad_mid_[uj];
+    double qLast = links.flow[uj] / barrels_d;
+    double yf = links.xsect_y_full[uj];
+    bool isFull = (depth1_[uj] >= yf && depth2_[uj] >= yf);
 
-        // Velocity (clamped)
-        double v = qLast / aMid;
-        double absv = std::fabs(v);
-        if (absv > MAX_VELOCITY) {
-            v = (v > 0.0) ? MAX_VELOCITY : -MAX_VELOCITY;
-            absv = MAX_VELOCITY;
-        }
-        velocity_[uj] = v;
-
-        // Froude number — skip entirely for MANNING_CLOSED_FULL (fr=0, sig=0)
-        double fr = 0.0;
-        double sig = 0.0;
-        if (!is_closed_full) {
-            double wMid = width_mid_[uj];
-            if (depth_mid_[uj] > FUDGE && !isFull) {
-                double dh = (wMid > FUDGE) ? aMid / wMid : 0.0;
-                fr = (dh > 0.0) ? absv / (SQRT_GRAVITY * std::sqrt(dh)) : 0.0;
-            }
-
-            // Reclassify SUBCRITICAL → SUPERCRITICAL
-            FlowClass fc = links.flow_class[uj];
-            if (fc == FlowClass::SUBCRITICAL && fr > 1.0)
-                links.flow_class[uj] = FlowClass::SUPERCRITICAL;
-
-            // Branchless sigma
-            sig = std::max(0.0, std::min(1.0, 2.0 * (1.0 - fr)));
-        }
-        froude_[uj] = fr;
-
-        // Head values
-        double h1 = h1_[uj];
-        double h2 = h2_[uj];
-
-        // Upstream weighting (use Froude-based sigma for rho BEFORE override)
-        double r1_val = hrad1_[uj];
-        double rho = 1.0;
-        if (!is_closed_full && !isFull && qLast > 0.0 && h1 >= h2)
-            rho = sig;
-        double aWtd = area1_[uj] + (aMid - area1_[uj]) * rho;
-        double rWtd = r1_val + (rMid - r1_val) * rho;
-        rWtd = std::max(rWtd, FUDGE);
-
-        // Apply InertDamping override AFTER rho computation
-        if (!is_closed_full) {
-            if      (inert_damping == 0) sig = 1.0;  // NO_DAMPING
-            else if (inert_damping == 2) sig = 0.0;  // FULL_DAMPING
-            // MANNING_CLOSED_FS: full damping when surcharged closed conduit
-            if (!is_open_cat && isFull) sig = 0.0;
-        }
-        sigma_[uj] = sig;
-
-        // Manning friction
-        double r43 = fastmath::pow4_3(rWtd);
-        double dq1 = (r43 > FUDGE) ? dt * links.rough_factor[uj] / r43 * absv : 0.0;
-
-        // Head gradient
-        double dq2 = dt_g * aWtd * (h2 - h1) * inv_len;
-
-        // Unsteady + convective acceleration (skip if sig==0)
-        double aOld = std::max(area_old_[uj], FUDGE);
-        double dq3 = 0.0, dq4 = 0.0;
-        if (sig > 0.0) {
-            dq3 = 2.0 * v * (aMid - aOld) * sig;
-            if (length > 0.0)
-                dq4 = dt * v * v * (area2_[uj] - area1_[uj]) * inv_len * sig;
-        }
-
-        // Local losses
-        double dq5 = 0.0;
-        if (has_losses_[uj]) {
-            double absq = std::fabs(qLast);
-            double losses = 0.0;
-            if (area1_[uj] > FUDGE) losses += links.loss_inlet[uj] * (absq / area1_[uj]);
-            if (area2_[uj] > FUDGE) losses += links.loss_outlet[uj] * (absq / area2_[uj]);
-            if (aMid > FUDGE) losses += links.loss_avg[uj] * (absq / aMid);
-            dq5 = losses * 0.5 * inv_len * dt;
-        }
-
-        // Evaporation/seepage
-        double dq6 = 0.0;
-        {
-            double conduit_length = links.length[uj];
-            double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
-            if (loss_rate > 0.0 && conduit_length > 0.0)
-                dq6 = loss_rate * 2.5 * dt * v / conduit_length;
-        }
-
-        // Flow update
-        double qOld = links.old_flow[uj] / barrels_d;
-        double denom = 1.0 + dq1 + dq5;
-        double q = (qOld - dq2 + dq3 + dq4 + dq6) / denom;
-        dqdh_[uj] = (1.0 / denom) * dt_g * aWtd * inv_len * barrels_d;
-
-        // Shared post-processing
-        applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
+    // Velocity (clamped)
+    double v = qLast / aMid;
+    double absv = std::fabs(v);
+    if (absv > MAX_VELOCITY) {
+        v = (v > 0.0) ? MAX_VELOCITY : -MAX_VELOCITY;
+        absv = MAX_VELOCITY;
     }
+    velocity_[uj] = v;
+
+    // Froude number — skip entirely for MANNING_CLOSED_FULL (fr=0, sig=0)
+    double fr = 0.0;
+    double sig = 0.0;
+    if (!is_closed_full) {
+        double wMid = width_mid_[uj];
+        if (depth_mid_[uj] > FUDGE && !isFull) {
+            double dh = (wMid > FUDGE) ? aMid / wMid : 0.0;
+            fr = (dh > 0.0) ? absv / (SQRT_GRAVITY * std::sqrt(dh)) : 0.0;
+        }
+
+        // Reclassify SUBCRITICAL → SUPERCRITICAL
+        FlowClass fc = links.flow_class[uj];
+        if (fc == FlowClass::SUBCRITICAL && fr > 1.0)
+            links.flow_class[uj] = FlowClass::SUPERCRITICAL;
+
+        // Branchless sigma
+        sig = std::max(0.0, std::min(1.0, 2.0 * (1.0 - fr)));
+    }
+    froude_[uj] = fr;
+
+    // Head values
+    double h1 = h1_[uj];
+    double h2 = h2_[uj];
+
+    // Upstream weighting (use Froude-based sigma for rho BEFORE override)
+    double r1_val = hrad1_[uj];
+    double rho = 1.0;
+    if (!is_closed_full && !isFull && qLast > 0.0 && h1 >= h2)
+        rho = sig;
+    double aWtd = area1_[uj] + (aMid - area1_[uj]) * rho;
+    double rWtd = r1_val + (rMid - r1_val) * rho;
+    rWtd = std::max(rWtd, FUDGE);
+
+    // Apply InertDamping override AFTER rho computation
+    if (!is_closed_full) {
+        if      (inert_damping == 0) sig = 1.0;  // NO_DAMPING
+        else if (inert_damping == 2) sig = 0.0;  // FULL_DAMPING
+        // MANNING_CLOSED_FS: full damping when surcharged closed conduit
+        if (!is_open_cat && isFull) sig = 0.0;
+    }
+    sigma_[uj] = sig;
+
+    // Manning friction
+    double r43 = fastmath::pow4_3(rWtd);
+    double dq1 = (r43 > FUDGE) ? dt * links.rough_factor[uj] / r43 * absv : 0.0;
+
+    // Head gradient
+    double dq2 = dt_g * aWtd * (h2 - h1) * inv_len;
+
+    // Unsteady + convective acceleration (skip if sig==0)
+    double aOld = std::max(area_old_[uj], FUDGE);
+    double dq3 = 0.0, dq4 = 0.0;
+    if (sig > 0.0) {
+        dq3 = 2.0 * v * (aMid - aOld) * sig;
+        if (length > 0.0)
+            dq4 = dt * v * v * (area2_[uj] - area1_[uj]) * inv_len * sig;
+    }
+
+    // Local losses
+    double dq5 = 0.0;
+    if (has_losses_[uj]) {
+        double absq = std::fabs(qLast);
+        double losses = 0.0;
+        if (area1_[uj] > FUDGE) losses += links.loss_inlet[uj] * (absq / area1_[uj]);
+        if (area2_[uj] > FUDGE) losses += links.loss_outlet[uj] * (absq / area2_[uj]);
+        if (aMid > FUDGE) losses += links.loss_avg[uj] * (absq / aMid);
+        dq5 = losses * 0.5 * inv_len * dt;
+    }
+
+    // Evaporation/seepage
+    double dq6 = 0.0;
+    {
+        double conduit_length = links.length[uj];
+        double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
+        if (loss_rate > 0.0 && conduit_length > 0.0)
+            dq6 = loss_rate * 2.5 * dt * v / conduit_length;
+    }
+
+    // Flow update
+    double qOld = links.old_flow[uj] / barrels_d;
+    double denom = 1.0 + dq1 + dq5;
+    double q = (qOld - dq2 + dq3 + dq4 + dq6) / denom;
+    dqdh_[uj] = (1.0 / denom) * dt_g * aWtd * inv_len * barrels_d;
+
+    // Shared post-processing
+    applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
 }
 
 // ============================================================================
-// processForceMainLinks -- FORCE_MAIN_HW and FORCE_MAIN_DW categories
+// processForceMainLink -- per-element kernel for FORCE_MAIN_HW/FORCE_MAIN_DW
 // ============================================================================
 
-void DWSolver::processForceMainLinks(SimulationContext& ctx, double dt, int step,
-                                     MomentumCategory cat) {
+void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
+                                    std::size_t uj, MomentumCategory cat) {
     auto& links = ctx.links;
-    const auto& idx = cat_indices_[static_cast<int>(cat)];
-    if (idx.empty()) return;
-
     const double dt_g = dt_gravity_;
     const bool is_dw = (cat == MomentumCategory::FORCE_MAIN_DW);
 
-    for (int j : idx) {
-        auto uj = static_cast<std::size_t>(j);
-        double barrels_d = barrels_d_[uj];
-        double inv_len = inv_length_[uj];
-        double aMid = area_mid_[uj];
-        double rMid = hrad_mid_[uj];
-        double qLast = links.flow[uj] / barrels_d;
+    double barrels_d = barrels_d_[uj];
+    double inv_len = inv_length_[uj];
+    double aMid = area_mid_[uj];
+    double rMid = hrad_mid_[uj];
+    double qLast = links.flow[uj] / barrels_d;
 
-        // Force main is always full (that's the classification condition)
-        bool isFull = true;
+    // Force main is always full (that's the classification condition)
+    bool isFull = true;
 
-        // Velocity (clamped)
-        double v = qLast / aMid;
-        double absv = std::fabs(v);
-        if (absv > MAX_VELOCITY) {
-            v = (v > 0.0) ? MAX_VELOCITY : -MAX_VELOCITY;
-            absv = MAX_VELOCITY;
-        }
-        velocity_[uj] = v;
-
-        // Force main when full: fr=0, sig=0 (no inertial terms)
-        froude_[uj] = 0.0;
-        sigma_[uj] = 0.0;
-
-        // Head values
-        double h1 = h1_[uj];
-        double h2 = h2_[uj];
-
-        // No upstream weighting when full (rho=1)
-        double aWtd = area1_[uj] + (aMid - area1_[uj]);  // = aMid
-        double rWtd = std::max(rMid, FUDGE);
-
-        // Force main friction
-        double fm_coeff = links.roughness[uj];
-        double sf;
-        if (is_dw)
-            sf = forcemain::getFricSlope_DW(v, rMid, fm_coeff);
-        else
-            sf = forcemain::getFricSlope_HW(v, rMid, fm_coeff);
-        double dq1 = (absv > FUDGE) ? dt * GRAVITY * sf / absv : 0.0;
-
-        // Head gradient
-        double dq2 = dt_g * aWtd * (h2 - h1) * inv_len;
-
-        // sig=0: no unsteady/convective terms (dq3=dq4=0)
-
-        // Local losses
-        double dq5 = 0.0;
-        if (has_losses_[uj]) {
-            double absq = std::fabs(qLast);
-            double losses = 0.0;
-            if (area1_[uj] > FUDGE) losses += links.loss_inlet[uj] * (absq / area1_[uj]);
-            if (area2_[uj] > FUDGE) losses += links.loss_outlet[uj] * (absq / area2_[uj]);
-            if (aMid > FUDGE) losses += links.loss_avg[uj] * (absq / aMid);
-            dq5 = losses * 0.5 * inv_len * dt;
-        }
-
-        // Evaporation/seepage
-        double dq6 = 0.0;
-        {
-            double conduit_length = links.length[uj];
-            double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
-            if (loss_rate > 0.0 && conduit_length > 0.0)
-                dq6 = loss_rate * 2.5 * dt * v / conduit_length;
-        }
-
-        // Flow update
-        double qOld = links.old_flow[uj] / barrels_d;
-        double denom = 1.0 + dq1 + dq5;
-        double q = (qOld - dq2 + dq6) / denom;
-        dqdh_[uj] = (1.0 / denom) * dt_g * aWtd * inv_len * barrels_d;
-
-        // Shared post-processing
-        applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
+    // Velocity (clamped)
+    double v = qLast / aMid;
+    double absv = std::fabs(v);
+    if (absv > MAX_VELOCITY) {
+        v = (v > 0.0) ? MAX_VELOCITY : -MAX_VELOCITY;
+        absv = MAX_VELOCITY;
     }
+    velocity_[uj] = v;
+
+    // Force main when full: fr=0, sig=0 (no inertial terms)
+    froude_[uj] = 0.0;
+    sigma_[uj] = 0.0;
+
+    // Head values
+    double h1 = h1_[uj];
+    double h2 = h2_[uj];
+
+    // No upstream weighting when full (rho=1)
+    double aWtd = area1_[uj] + (aMid - area1_[uj]);  // = aMid
+    double rWtd = std::max(rMid, FUDGE);
+    (void)rWtd;  // reserved for future friction variants
+
+    // Force main friction
+    double fm_coeff = links.roughness[uj];
+    double sf;
+    if (is_dw)
+        sf = forcemain::getFricSlope_DW(v, rMid, fm_coeff);
+    else
+        sf = forcemain::getFricSlope_HW(v, rMid, fm_coeff);
+    double dq1 = (absv > FUDGE) ? dt * GRAVITY * sf / absv : 0.0;
+
+    // Head gradient
+    double dq2 = dt_g * aWtd * (h2 - h1) * inv_len;
+
+    // sig=0: no unsteady/convective terms (dq3=dq4=0)
+
+    // Local losses
+    double dq5 = 0.0;
+    if (has_losses_[uj]) {
+        double absq = std::fabs(qLast);
+        double losses = 0.0;
+        if (area1_[uj] > FUDGE) losses += links.loss_inlet[uj] * (absq / area1_[uj]);
+        if (area2_[uj] > FUDGE) losses += links.loss_outlet[uj] * (absq / area2_[uj]);
+        if (aMid > FUDGE) losses += links.loss_avg[uj] * (absq / aMid);
+        dq5 = losses * 0.5 * inv_len * dt;
+    }
+
+    // Evaporation/seepage
+    double dq6 = 0.0;
+    {
+        double conduit_length = links.length[uj];
+        double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
+        if (loss_rate > 0.0 && conduit_length > 0.0)
+            dq6 = loss_rate * 2.5 * dt * v / conduit_length;
+    }
+
+    // Flow update
+    double qOld = links.old_flow[uj] / barrels_d;
+    double denom = 1.0 + dq1 + dq5;
+    double q = (qOld - dq2 + dq6) / denom;
+    dqdh_[uj] = (1.0 / denom) * dt_g * aWtd * inv_len * barrels_d;
+
+    // Shared post-processing
+    applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
 }
 
 // ============================================================================
@@ -1598,7 +1642,12 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     double full_depth = nodes.full_depth[ui];
     double yCrown = nodes.crown_elev[ui] - nodes.invert_elev[ui];
 
-    bool can_pond = (nodes.ponded_area[ui] > 0.0);
+    // Legacy dynwave.c:649: canPond = (AllowPonding && pondedArea > 0).
+    // The global ALLOW_PONDING option must gate ponding; otherwise a node
+    // with a non-zero ponded_area (set out of habit by modellers) will pond
+    // against the user's intent and accumulate water above full_depth that
+    // legacy would have discarded via the "add to losses" branch.
+    bool can_pond = ctx.options.allow_ponding && (nodes.ponded_area[ui] > 0.0);
     bool is_ponded = (can_pond && y_last > full_depth);
 
     nodes.overflow[ui] = 0.0;

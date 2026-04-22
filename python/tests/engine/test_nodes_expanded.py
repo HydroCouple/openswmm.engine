@@ -141,3 +141,19 @@ class TestNodesBulkExpanded:
         n = nodes.count()
         inflows = np.full(n, 0.1, dtype=np.float64)
         nodes.set_lat_inflows_bulk(inflows)
+
+
+# ---------------------------------------------------------------------------
+# Quality mass flux
+# ---------------------------------------------------------------------------
+class TestNodesQualityMassFlux:
+    """Test set_quality_mass_flux method."""
+
+    def test_set_quality_mass_flux(self, stepped_nodes):
+        # Setting mass flux should not raise; pollutant index 0 may or may
+        # not exist depending on the model — we just verify the call works
+        # or raises RuntimeError (not AttributeError).
+        try:
+            stepped_nodes.set_quality_mass_flux(0, 0, 1.0)
+        except RuntimeError:
+            pass  # acceptable if model has no pollutants

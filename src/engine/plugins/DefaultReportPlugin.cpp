@@ -638,6 +638,64 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "");
 
     // =====================================================================
+    // Runoff Quality Continuity — Gap #73, matches legacy writeRunoffQualError()
+    // Internal units: buildup-derived fields are in display mass (lbs for US);
+    //                 volumetric mass fields (wet dep, infil, runoff) are in mg.
+    // =====================================================================
+    if (opt.rpt_continuity && ctx.n_pollutants() > 0) {
+        int np = ctx.n_pollutants();
+        const auto& mb = ctx.mass_balance;
+
+        for (int p = 0; p < np; ++p) {
+            auto up = static_cast<std::size_t>(p);
+            MassUnits mu = (up < ctx.pollutants.units.size()) ?
+                            ctx.pollutants.units[up] : MassUnits::MG_PER_L;
+            const char* mu_str;
+            if (mu == MassUnits::COUNTS_PER_L) {
+                mu_str = "#";
+            } else {
+                mu_str = "lbs";
+            }
+
+            auto getVal = [&](const std::vector<double>& v) -> double {
+                return (up < v.size()) ? v[up] : 0.0;
+            };
+
+            double init_bu  = getVal(mb.qual_init_buildup);
+            double surf_bu  = getVal(mb.qual_surface_buildup);
+            double wet_dep  = getVal(mb.qual_wet_deposition);
+            double sweep    = getVal(mb.qual_sweeping);
+            double bmp      = getVal(mb.qual_bmp_removal);
+            double infil    = getVal(mb.qual_infil_loss);
+            double runoff   = getVal(mb.qual_runoff_load);
+            double final_bu = getVal(mb.qual_final_buildup);
+
+            std::fprintf(f, "\n  **************************%14s",
+                         ctx.pollutant_names.name_of(p).c_str());
+            std::fprintf(f, "\n  Runoff Quality Continuity%15s", mu_str);
+            std::fprintf(f, "\n  **************************    ----------");
+
+            std::fprintf(f, "\n  Initial Buildup ..........%14.3f", init_bu);
+            std::fprintf(f, "\n  Surface Buildup ..........%14.3f", surf_bu);
+            std::fprintf(f, "\n  Wet Deposition ...........%14.3f", wet_dep);
+            std::fprintf(f, "\n  Sweeping Removal .........%14.3f", sweep);
+            std::fprintf(f, "\n  Infiltration Loss ........%14.3f", infil);
+            std::fprintf(f, "\n  BMP Removal ..............%14.3f", bmp);
+            std::fprintf(f, "\n  Surface Runoff ...........%14.3f", runoff);
+            std::fprintf(f, "\n  Remaining Buildup ........%14.3f", final_bu);
+
+            double total_in  = init_bu + surf_bu + wet_dep;
+            double total_out = sweep + bmp + infil + runoff + final_bu;
+            double err_pct = (total_in > 0.0) ?
+                (total_in - total_out) / total_in * 100.0 : 0.0;
+            std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);
+
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+    }
+
+    // =====================================================================
     // Groundwater Continuity — matches legacy report_writeGwaterError()
     // =====================================================================
     if (has_gw && opt.rpt_continuity) {
@@ -727,6 +785,72 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
     WRITE(f, "");
     WRITE(f, "");
+
+    // =====================================================================
+    // Quality Routing Continuity — Gap #71, matches legacy writeQualError()
+    // =====================================================================
+    if (opt.rpt_continuity) {
+        int np = ctx.n_pollutants();
+        const auto& mb = ctx.mass_balance;
+        // Internal mass unit: conc (mg/L or ug/L) × volume (ft³)
+        // Convert to lbs: × (28.317 L/ft³) / (453592 mg/lb) for MG_PER_L
+        //                  × (28.317 L/ft³) / (453592000 ug/lb) for UG_PER_L
+        static constexpr double LT_PER_FT3 = 28.317;
+        for (int p = 0; p < np; ++p) {
+            auto up = static_cast<std::size_t>(p);
+            MassUnits mu = (up < ctx.pollutants.units.size()) ?
+                            ctx.pollutants.units[up] : MassUnits::MG_PER_L;
+            const char* mu_str;
+            double mass_cf;
+            if (mu == MassUnits::COUNTS_PER_L) {
+                mu_str = "#";
+                mass_cf = 1.0;
+            } else if (mu == MassUnits::UG_PER_L) {
+                mu_str = "lbs";
+                mass_cf = LT_PER_FT3 / 453592000.0;
+            } else {
+                mu_str = "lbs";
+                mass_cf = LT_PER_FT3 / 453592.0;
+            }
+
+            std::fprintf(f, "\n  **************************%14s", ctx.pollutant_names.name_of(p).c_str());
+            std::fprintf(f, "\n  Quality Routing Continuity%14s", mu_str);
+            std::fprintf(f, "\n  **************************    ----------");
+
+            auto qrow = [&](const char* label, double raw) {
+                std::fprintf(f, "\n  %s%14.3f", label, raw * mass_cf);
+            };
+
+            double wet     = (up < mb.qual_routing_wet.size())      ? mb.qual_routing_wet[up]      : 0.0;
+            double rdii    = (up < mb.qual_routing_ii_in.size())     ? mb.qual_routing_ii_in[up]    : 0.0;
+            double outflow = (up < mb.qual_routing_outflow.size())   ? mb.qual_routing_outflow[up]  : 0.0;
+            double flood   = (up < mb.qual_routing_flood.size())     ? mb.qual_routing_flood[up]    : 0.0;
+            double seep    = (up < mb.qual_routing_seep.size())      ? mb.qual_routing_seep[up]     : 0.0;
+            double reacted = (up < mb.qual_routing_reacted.size())   ? mb.qual_routing_reacted[up]  : 0.0;
+            double init    = (up < mb.qual_routing_init.size())      ? mb.qual_routing_init[up]     : 0.0;
+            double final_  = (up < mb.qual_routing_final.size())     ? mb.qual_routing_final[up]    : 0.0;
+
+            qrow("Dry Weather Inflow .......", 0.0);
+            qrow("Wet Weather Inflow .......", wet);
+            qrow("Groundwater Inflow .......", 0.0);
+            qrow("RDII Inflow ..............", rdii);
+            qrow("External Inflow ..........", 0.0);
+            qrow("External Outflow .........", outflow);
+            qrow("Flooding Loss ............", flood);
+            qrow("Exfiltration Loss ........", seep);
+            qrow("Mass Reacted .............", reacted);
+            qrow("Initial Stored Mass ......", init);
+            qrow("Final Stored Mass ........", final_);
+
+            double total_in  = wet + rdii + init;
+            double total_out = outflow + flood + reacted + seep + final_;
+            double err_pct = (total_in > 0.0) ? (total_in - total_out) / total_in * 100.0 : 0.0;
+            std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);
+
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+    }
 
     // =====================================================================
     // Highest Continuity Errors — matches legacy report_writeMaxStats()
@@ -897,6 +1021,35 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     } // end rpt_flowstats
 
     // =====================================================================
+    // Control Actions Taken — Gap #67, matches legacy report_writeRuleAction()
+    // Logged by ControlEngine::applyPendingActions() when rpt_controls == true.
+    // =====================================================================
+    if (opt.rpt_controls) {
+        WRITE(f, "**********************");
+        WRITE(f, "Control Actions Taken");
+        WRITE(f, "**********************");
+
+        if (ctx.control_log.empty()) {
+            WRITE(f, "");
+            WRITE(f, "No control actions were taken.");
+        } else {
+            for (const auto& entry : ctx.control_log) {
+                int days, hrs, mins;
+                elapsedToParts(entry.date, ctx.options.start_date, days, hrs, mins);
+                std::fprintf(f,
+                    "\n  Link %s setting changed to %.3f by rule %s at day %d, hr %02d:%02d",
+                    ctx.link_names.name_of(entry.link_idx).c_str(),
+                    entry.new_setting,
+                    entry.rule_name.c_str(),
+                    days, hrs, mins);
+            }
+        }
+
+        WRITE(f, "");
+        WRITE(f, "");
+    }
+
+    // =====================================================================
     // Subcatchment Runoff Summary — matches legacy writeSubcatchRunoff()
     // =====================================================================
     if (ctx.n_subcatches() > 0 && opt.rpt_subcatchments != 0) {
@@ -955,6 +1108,63 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "");
 
     // =====================================================================
+    // Subcatchment Washoff Summary — Gap #64, matches legacy writeSubcatchLoads()
+    // total_load is in mg (washoff_load [mg/s] × dt [s]); convert to lbs: /453592
+    // =====================================================================
+    if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && opt.rpt_subcatchments != 0) {
+        int ns = ctx.n_subcatches();
+        int np = ctx.n_pollutants();
+        static constexpr double MG_TO_LBS = 1.0 / 453592.0;
+
+        WRITE(f, "****************************");
+        WRITE(f, "Subcatchment Washoff Summary");
+        WRITE(f, "****************************");
+        std::fprintf(f, "\n");
+
+        // Separator and header
+        std::fprintf(f, " \n  ----------------------------------");
+        for (int p = 1; p < np; ++p) std::fprintf(f, "--------------");
+        std::fprintf(f, " \n                                ");
+        for (int p = 0; p < np; ++p)
+            std::fprintf(f, "%14s", ctx.pollutant_names.name_of(p).c_str());
+        std::fprintf(f, " \n  Subcatchment                  ");
+        for (int p = 0; p < np; ++p) {
+            auto up = static_cast<std::size_t>(p);
+            MassUnits mu = (up < ctx.pollutants.units.size()) ?
+                            ctx.pollutants.units[up] : MassUnits::MG_PER_L;
+            std::fprintf(f, "%14s", (mu == MassUnits::COUNTS_PER_L) ? "#" : "lbs");
+        }
+        std::fprintf(f, " \n  ----------------------------------");
+        for (int p = 1; p < np; ++p) std::fprintf(f, "--------------");
+
+        std::vector<double> sys_loads(static_cast<std::size_t>(np), 0.0);
+
+        for (int j = 0; j < ns; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            std::fprintf(f, "\n  %-30s", ctx.subcatch_names.name_of(j).c_str());
+            for (int p = 0; p < np; ++p) {
+                auto up = static_cast<std::size_t>(p);
+                auto idx = uj * static_cast<std::size_t>(np) + up;
+                double load_mg = (idx < ctx.subcatches.total_load.size())
+                    ? ctx.subcatches.total_load[idx] : 0.0;
+                double load_lbs = load_mg * MG_TO_LBS;
+                sys_loads[up] += load_lbs;
+                std::fprintf(f, "%14.3f", load_lbs);
+            }
+        }
+
+        // System total row
+        std::fprintf(f, " \n  ----------------------------------");
+        for (int p = 1; p < np; ++p) std::fprintf(f, "--------------");
+        std::fprintf(f, "\n  System                        ");
+        for (int p = 0; p < np; ++p)
+            std::fprintf(f, "%14.3f", sys_loads[static_cast<std::size_t>(p)]);
+
+        WRITE(f, "");
+        WRITE(f, "");
+    }
+
+    // =====================================================================
     // Groundwater Summary — matches legacy writeGroundwater()
     // =====================================================================
     if (has_gw && opt.rpt_subcatchments != 0) {
@@ -974,16 +1184,89 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         for (int j = 0; j < ctx.n_subcatches(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.subcatches.gw_aquifer[uj] < 0) continue;
-            std::fprintf(f, "\n  %-20s", ctx.subcatch_names.name_of(j).c_str());
-            // GW stats not fully tracked yet, write zeros
-            for (int k = 0; k < 9; ++k)
-                std::fprintf(f, " %8.2f", 0.0);
+            double area_ft2  = ctx.subcatches.area[uj] * ucf::ACRES_TO_FT2;
+            double ft_to_in  = 12.0;
+            double infil_in  = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_infil_vol[uj]     / area_ft2 * ft_to_in : 0.0;
+            double evap_in   = (area_ft2 > 0.0) ? (ctx.subcatches.stat_gw_upper_evap_vol[uj] +
+                                                    ctx.subcatches.stat_gw_lower_evap_vol[uj]) / area_ft2 * ft_to_in : 0.0;
+            double seep_in   = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_deep_perc_vol[uj]  / area_ft2 * ft_to_in : 0.0;
+            double lat_in    = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_flow_vol[uj]       / area_ft2 * ft_to_in : 0.0;
+            double max_flow  = ctx.subcatches.stat_gw_max_flow[uj] * ucf::Qcf[fu];
+            long   steps     = ctx.subcatches.stat_gw_steps[uj];
+            double avg_theta = (steps > 0L) ? ctx.subcatches.stat_gw_sum_theta[uj] / static_cast<double>(steps) : 0.0;
+            double avg_depth = (steps > 0L) ? ctx.subcatches.stat_gw_sum_depth[uj] / static_cast<double>(steps) : 0.0;
+            double fin_theta = ctx.subcatches.stat_gw_final_theta[uj];
+            double fin_depth = ctx.subcatches.stat_gw_final_depth[uj];
+            std::fprintf(f, "\n  %-20s %8.2f %8.2f %8.2f %8.2f %8.2f %8.4f %8.2f %8.4f %8.2f",
+                ctx.subcatch_names.name_of(j).c_str(),
+                infil_in, evap_in, seep_in, lat_in, max_flow,
+                avg_theta, avg_depth, fin_theta, fin_depth);
         }
         WRITE(f, "");
     }
 
     WRITE(f, "");
     WRITE(f, "");
+
+    // =====================================================================
+    // LID Performance Summary — Gap #66, matches legacy writeLidPerformance()
+    // wb_* fields are in ft depth; convert to inches (× 12).
+    // Data is copied from LIDGroupSoA to ctx.lid_usage.wb_* in SWMMEngine::report().
+    // =====================================================================
+    if (ctx.lid_usage.count() > 0 && opt.rpt_subcatchments != 0) {
+        int n_usage = ctx.lid_usage.count();
+        bool has_lids = false;
+        for (int j = 0; j < n_usage; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (uj < ctx.lid_usage.wb_inflow.size() &&
+                (ctx.lid_usage.wb_inflow[uj] > 0.0 ||
+                 ctx.lid_usage.wb_drain_flow[uj] > 0.0 ||
+                 ctx.lid_usage.wb_surf_flow[uj] > 0.0)) {
+                has_lids = true; break;
+            }
+        }
+
+        WRITE(f, "********************");
+        WRITE(f, "LID Performance Summary");
+        WRITE(f, "********************");
+        std::fprintf(f, "\n");
+
+        if (!has_lids) {
+            WRITE(f, "");
+            WRITE(f, "No LID performance data.");
+        } else {
+            static constexpr double FT_TO_IN = 12.0;
+            std::fprintf(f,
+"\n  -----------------------------------------------------------------"
+"\n                          Total    Evap   Infil  Surface   Drain"
+"\n                         Inflow    Loss    Loss    Runoff    Flow"
+"\n  Control Group    Subcatch      in      in      in       in      in"
+"\n  -----------------------------------------------------------------");
+
+            for (int j = 0; j < n_usage; ++j) {
+                auto uj = static_cast<std::size_t>(j);
+                int li = ctx.lid_usage.lid_index[uj];
+                int si = ctx.lid_usage.subcatch_index[uj];
+
+                auto safe = [&](const std::vector<double>& v) -> double {
+                    return (uj < v.size()) ? v[uj] * FT_TO_IN : 0.0;
+                };
+
+                std::fprintf(f, "\n  %-16s %-12s",
+                    ctx.lid_names.name_of(li).c_str(),
+                    ctx.subcatch_names.name_of(si).c_str());
+                std::fprintf(f, " %7.2f %7.2f %7.2f %8.2f %7.2f",
+                    safe(ctx.lid_usage.wb_inflow),
+                    safe(ctx.lid_usage.wb_evap),
+                    safe(ctx.lid_usage.wb_infil),
+                    safe(ctx.lid_usage.wb_surf_flow),
+                    safe(ctx.lid_usage.wb_drain_flow));
+            }
+        }
+
+        WRITE(f, "");
+        WRITE(f, "");
+    }
 
     // =====================================================================
     // Node Depth Summary — matches legacy writeNodeDepths()
@@ -1542,6 +1825,120 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             WRITE(f, "");
             WRITE(f, "");
         }
+    }
+
+    // =====================================================================
+    // Street Inlet Flow Summary — Gap #68
+    // Volumes in ft³; convert to 1000 gal: × 7.48052 / 1000
+    // =====================================================================
+    if (ctx.inlet_usages.count() > 0 && opt.rpt_links != 0) {
+        int ni = ctx.inlet_usages.count();
+        // Only write if stats arrays are populated
+        bool has_stats = (static_cast<int>(ctx.inlet_usages.stat_capture_vol.size()) >= ni);
+
+        WRITE(f, "**************************");
+        WRITE(f, "Street Inlet Flow Summary");
+        WRITE(f, "**************************");
+
+        if (!has_stats) {
+            WRITE(f, "");
+            WRITE(f, "No inlet statistics available.");
+        } else {
+            static constexpr double FT3_TO_KGAL = 7.48052 / 1000.0;
+            std::fprintf(f,
+"\n\n  -----------------------------------------------------------------------------------------"
+"\n                                          Peak        Pcnt        Pcnt       Vol.       Vol."
+"\n  Conduit               Inlet           Flow        Captured    Bypassed   Captured   Bypassed"
+"\n                                        %-3s         Percent     Percent    1000 Gal   1000 Gal"
+"\n  -----------------------------------------------------------------------------------------",
+                FlowUnitWords[fu]);
+
+            for (int i = 0; i < ni; ++i) {
+                auto ui = static_cast<std::size_t>(i);
+                int li  = ctx.inlet_usages.link_index[i];
+                int di  = ctx.inlet_usages.design_index[i];
+
+                const char* link_name  = (li >= 0) ? ctx.link_names.name_of(li).c_str() : "?";
+                const char* inlet_name = (di >= 0 && di < ctx.inlets.count())
+                                         ? ctx.inlets.names[di].c_str() : "?";
+
+                double cap_vol  = ctx.inlet_usages.stat_capture_vol[ui];
+                double byp_vol  = ctx.inlet_usages.stat_bypass_vol[ui];
+                double peak     = ctx.inlet_usages.stat_peak_flow[ui] * Qcf;
+                double total    = cap_vol + byp_vol;
+                double cap_pct  = (total > 0.0) ? cap_vol / total * 100.0 : 0.0;
+                double byp_pct  = (total > 0.0) ? byp_vol / total * 100.0 : 0.0;
+                double cap_kgal = cap_vol * FT3_TO_KGAL;
+                double byp_kgal = byp_vol * FT3_TO_KGAL;
+
+                std::fprintf(f, "\n  %-20s  %-14s  %9.3f  %9.2f  %9.2f  %9.3f  %9.3f",
+                    link_name, inlet_name,
+                    peak, cap_pct, byp_pct, cap_kgal, byp_kgal);
+            }
+        }
+        WRITE(f, "");
+        WRITE(f, "");
+    }
+
+    // =====================================================================
+    // Link Pollutant Load Summary — Gap #64, matches legacy writeLinkLoads()
+    // stat_total_load is in ft³ × mg/L; convert to lbs: × 28.317/453592
+    // =====================================================================
+    if (ctx.n_links() > 0 && ctx.n_pollutants() > 0 && opt.rpt_links != 0) {
+        int nl = ctx.n_links();
+        int np = ctx.n_pollutants();
+        // conversion: CFS × mg/L × sec × (28.317 L/ft³) / (453592 mg/lb) = lbs
+        static constexpr double LT_PER_FT3 = 28.317;
+        // Per-pollutant unit and conversion
+        std::vector<double>      mass_cf(static_cast<std::size_t>(np));
+        std::vector<const char*> unit_str(static_cast<std::size_t>(np));
+        for (int p = 0; p < np; ++p) {
+            auto up = static_cast<std::size_t>(p);
+            MassUnits mu = (up < ctx.pollutants.units.size()) ?
+                            ctx.pollutants.units[up] : MassUnits::MG_PER_L;
+            if (mu == MassUnits::COUNTS_PER_L) {
+                unit_str[up] = "#";
+                mass_cf[up]  = 1.0;
+            } else if (mu == MassUnits::UG_PER_L) {
+                unit_str[up] = "lbs";
+                mass_cf[up]  = LT_PER_FT3 / 453592000.0;
+            } else {
+                unit_str[up] = "lbs";
+                mass_cf[up]  = LT_PER_FT3 / 453592.0;
+            }
+        }
+
+        WRITE(f, "***************************");
+        WRITE(f, "Link Pollutant Load Summary");
+        WRITE(f, "***************************");
+        std::fprintf(f, "\n");
+
+        // Separator and header
+        std::fprintf(f, " \n  ----------------------------------");
+        for (int p = 1; p < np; ++p) std::fprintf(f, "--------------");
+        std::fprintf(f, " \n                                ");
+        for (int p = 0; p < np; ++p)
+            std::fprintf(f, "%14s", ctx.pollutant_names.name_of(p).c_str());
+        std::fprintf(f, " \n  Link                          ");
+        for (int p = 0; p < np; ++p)
+            std::fprintf(f, "%14s", unit_str[static_cast<std::size_t>(p)]);
+        std::fprintf(f, " \n  ----------------------------------");
+        for (int p = 1; p < np; ++p) std::fprintf(f, "--------------");
+
+        for (int j = 0; j < nl; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            std::fprintf(f, "\n  %-30s", ctx.link_names.name_of(j).c_str());
+            for (int p = 0; p < np; ++p) {
+                auto up = static_cast<std::size_t>(p);
+                auto idx = uj * static_cast<std::size_t>(np) + up;
+                double raw = (idx < ctx.links.stat_total_load.size())
+                    ? ctx.links.stat_total_load[idx] : 0.0;
+                std::fprintf(f, "%14.3f", raw * mass_cf[up]);
+            }
+        }
+
+        WRITE(f, "");
+        WRITE(f, "");
     }
 }
 

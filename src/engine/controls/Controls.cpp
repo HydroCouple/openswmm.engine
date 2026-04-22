@@ -15,6 +15,7 @@
 #include "../hydraulics/XSectBatch.hpp"
 #include "../hydraulics/Link.hpp"
 #include "../data/TableData.hpp"
+#include "../core/Constants.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -23,9 +24,10 @@
 #include <unordered_map>
 
 namespace openswmm {
+using constants::MISSING;
 namespace controls {
 
-static constexpr double MISSING = -1.0e10;
+
 
 void ControlEngine::init(const std::vector<Rule>& rules) {
     rules_ = rules;
@@ -272,6 +274,18 @@ int ControlEngine::applyPendingActions(SimulationContext& ctx, double current_ti
             // (for TIMEOPEN/TIMECLOSED premise evaluation).
             // Legacy stores this as absolute date (decimal days).
             link_time_last_set_[ul] = ctx.current_date;
+            // Log for the Control Actions report (Gap #67)
+            if (ctx.options.rpt_controls) {
+                int ri = kv.second.rule_idx;
+                std::string rname = (ri >= 0 && ri < static_cast<int>(rules_.size()))
+                    ? rules_[static_cast<std::size_t>(ri)].name : "Rule?";
+                SimulationContext::ControlLogEntry entry;
+                entry.link_idx    = kv.first;
+                entry.rule_name   = std::move(rname);
+                entry.new_setting = kv.second.value;
+                entry.date        = ctx.current_date;
+                ctx.control_log.push_back(std::move(entry));
+            }
             changes++;
         }
     }
@@ -302,16 +316,14 @@ void ControlEngine::updateActionValue(Action& a, SimulationContext& ctx,
             }
             break;
         case ActionType::PID:
-            for (auto& pid : pid_states_) {
-                if (pid.action_idx >= 0) {
-                    pid.setpoint = set_point_;
-                    double cur_setting = (a.link_idx >= 0 && a.link_idx < ctx.n_links())
-                        ? ctx.links.target_setting[static_cast<size_t>(a.link_idx)] : 0.0;
-                    bool is_pump = (a.link_idx >= 0 && a.link_idx < ctx.n_links())
-                        ? (ctx.links.type[static_cast<size_t>(a.link_idx)] == LinkType::PUMP) : false;
-                    a.value = computePIDSetting(pid, control_value_, cur_setting, is_pump, dt);
-                    break;
-                }
+            if (a.pid_idx >= 0 && a.pid_idx < static_cast<int>(pid_states_.size())) {
+                auto& pid = pid_states_[static_cast<size_t>(a.pid_idx)];
+                pid.setpoint = set_point_;
+                double cur_setting = (a.link_idx >= 0 && a.link_idx < ctx.n_links())
+                    ? ctx.links.target_setting[static_cast<size_t>(a.link_idx)] : 0.0;
+                bool is_pump = (a.link_idx >= 0 && a.link_idx < ctx.n_links())
+                    ? (ctx.links.type[static_cast<size_t>(a.link_idx)] == LinkType::PUMP) : false;
+                a.value = computePIDSetting(pid, control_value_, cur_setting, is_pump, dt);
             }
             break;
     }
@@ -425,7 +437,13 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
         case ConditionVar::LINK_SETTING:
             return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.setting[ui] : MISSING;
         case ConditionVar::LINK_STATUS:
-            return (idx >= 0 && idx < ctx.n_links()) ? (ctx.links.is_closed[ui] ? 0.0 : 1.0) : MISSING;
+            // Legacy controls.c:1863-1868: returns Link[j].setting (actual 0..1)
+            // for CONDUIT and PUMP only; MISSING for all other link types.
+            if (idx < 0 || idx >= ctx.n_links()) return MISSING;
+            if (ctx.links.type[ui] != LinkType::CONDUIT &&
+                ctx.links.type[ui] != LinkType::PUMP)
+                return MISSING;
+            return ctx.links.setting[ui];
         case ConditionVar::LINK_FULLFLOW:
             return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.q_full[ui] * ucf_flow : MISSING;
         case ConditionVar::LINK_FULLDEPTH:
@@ -939,7 +957,8 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 pid.kp = kp;
                 pid.ki = ki;
                 pid.kd = kd;
-                pid.action_idx = static_cast<int>(pid_states_.size());
+                action.pid_idx = static_cast<int>(pid_states_.size());
+                pid.action_idx = action.pid_idx;
                 pid_states_.push_back(pid);
                 action.value = 0.0;
             } else {

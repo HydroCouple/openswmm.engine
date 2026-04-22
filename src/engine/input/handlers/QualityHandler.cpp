@@ -235,7 +235,16 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
         ctx.buildup.coeff1[flat] = to_double(tok[3]);
         ctx.buildup.coeff2[flat] = to_double(tok[4]);
 
-        if (tok.size() > 5) ctx.buildup.coeff3[flat] = to_double(tok[5]);
+        if (tok.size() > 5) {
+            // Gap #35: EXT buildup uses a time series name in tok[5], not a number.
+            // Resolve to table index; other types store a numeric exponent.
+            if (ctx.buildup.func_type[flat] == 4) {  // EXTERNAL
+                int ts_idx = ctx.table_names.find(tok[5]);
+                ctx.buildup.coeff3[flat] = static_cast<double>(ts_idx);
+            } else {
+                ctx.buildup.coeff3[flat] = to_double(tok[5]);
+            }
+        }
 
         // Normalizer: AREA=0, CURB=1
         if (tok.size() > 6) {

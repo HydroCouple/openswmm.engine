@@ -312,6 +312,14 @@ struct LinkData {
     /** @brief Pump shutoff depth (ft). */
     std::vector<double>     pump_shutoff;
 
+    /**
+     * @brief Pump curve type: 1=TYPE1..5=TYPE5, 6=Ideal, -1=not a pump.
+     * @details Set by StructureSolver::init(). TYPE4_PUMP is excluded from
+     *          downstream dQ/dH accumulation in the DW solver.
+     * @see Legacy: Pump[k].type, dynwave.c:565-575
+     */
+    std::vector<int>        pump_curve_type;
+
     /** @brief Pump curve name (for deferred resolution). */
     std::vector<std::string> pump_curve_name;
 
@@ -414,6 +422,14 @@ struct LinkData {
 
     /** @brief True if the link is closed by a control rule (uint8_t: 0=no, 1=yes). */
     std::vector<uint8_t>    is_closed;
+
+    /**
+     * @brief End-of-step full-pipe classification: 0=neither, 1=UP_FULL, 2=DN_FULL, 3=ALL_FULL.
+     * @details Set by KW/DW/Steady-flow solvers each routing step.
+     *          Bit 0 = upstream end at or above full depth; bit 1 = downstream end.
+     * @see Legacy: link_getFullState() in src/legacy/engine/link.c
+     */
+    std::vector<int8_t>     full_state;
 
     // -----------------------------------------------------------------------
     // Previous-step state
@@ -627,6 +643,7 @@ struct LinkData {
         pump_init_state.assign(un, false);
         pump_startup.assign(un, 0.0);
         pump_shutoff.assign(un, 0.0);
+        pump_curve_type.assign(un, -1);
         pump_curve_name.resize(un);
 
         crest_height.assign(un, 0.0);
@@ -641,6 +658,7 @@ struct LinkData {
         froude.assign(un, 0.0);
         flow_class.assign(un, FlowClass::DRY);
         is_closed.assign(un, 0);
+        full_state.assign(un, 0);
         old_flow.assign(un, 0.0);
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
@@ -697,10 +715,12 @@ struct LinkData {
         g(inlet_control, uint8_t{0}); g(dqdh, 0.0);
         g(pump_curve, -1); g(pump_init_state, false);
         g(pump_startup, 0.0); g(pump_shutoff, 0.0);
+        g(pump_curve_type, -1);
         pump_curve_name.resize(un);
         g(crest_height, 0.0); g(cd, 0.0); g(param2, 0.0); g(orate, 0.0);
         g(flow, 0.0); g(depth, 0.0); g(volume, 0.0);
         g(froude, 0.0); g(flow_class, FlowClass::DRY); g(is_closed, uint8_t{0});
+        g(full_state, int8_t{0});
         g(old_flow, 0.0); g(old_depth, 0.0); g(old_volume, 0.0);
         g(rpt_flag, static_cast<char>(0));
         g(stat_vol_flow, 0.0); g(stat_max_flow, 0.0);
@@ -799,6 +819,7 @@ struct LinkData {
         pump_init_state.shrink_to_fit();
         pump_startup.shrink_to_fit();
         pump_shutoff.shrink_to_fit();
+        pump_curve_type.shrink_to_fit();
         pump_curve_name.shrink_to_fit();
 
         crest_height.shrink_to_fit();

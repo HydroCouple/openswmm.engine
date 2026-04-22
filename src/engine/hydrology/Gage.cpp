@@ -95,6 +95,15 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
             continue;
         }
 
+        // Gap #53: co-gage sharing — copy rainfall from the primary gage that
+        // shares this gage's timeseries.  Matches legacy gage_setState() coGage path.
+        int co = (uj < ctx.gages.co_gage_index.size())
+                 ? ctx.gages.co_gage_index[uj] : -1;
+        if (co >= 0 && co < j) {
+            ctx.gages.rainfall[uj] = ctx.gages.rainfall[static_cast<std::size_t>(co)];
+            continue;
+        }
+
         // Read gage properties
         int rain_type = ctx.gages.rain_type[uj];
         double interval = ctx.gages.interval_sec[uj]; // seconds
@@ -149,9 +158,20 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
         if (rain_type == 1 && interval > 0.0) {
             // VOLUME: value is depth per interval → convert to in/hr
             raw_value = raw_value / (interval / 3600.0);
+        } else if (rain_type == 2 && interval > 0.0) {
+            // CUMULATIVE (Gap #31): raw_value is cumulative depth; compute delta.
+            // Matches legacy convertRainfall() CUMULATIVE_RAINFALL case:
+            //   if new < accum (counter reset) → treat new value as depth this interval
+            //   else → delta = new - accum (depth this interval)
+            //   always update accumulator with new raw value
+            double prev = ctx.gages.cumul_rain_accum[uj];
+            double depth = (raw_value < prev)
+                ? raw_value              // counter reset — use full value as depth
+                : (raw_value - prev);    // normal incremental delta
+            ctx.gages.cumul_rain_accum[uj] = raw_value;
+            raw_value = depth / (interval / 3600.0);  // depth → in/hr
         }
-        // INTENSITY (type 0): already in/hr — no conversion
-        // CUMULATIVE (type 2): would need state tracking — not yet implemented
+        // INTENSITY (type 0): already in/hr — no conversion needed
 
         // Convert from in/hr to ft/sec for internal use
         // Legacy: rainfall stored as in/hr for reporting, converted to ft/sec for runoff

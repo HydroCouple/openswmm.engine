@@ -397,17 +397,38 @@ inline void fma_array(
 } /* namespace openswmm::simd */
 
 // ============================================================================
-// Fast math: pow(x, 4/3) and pow(x, 2/3) using std::cbrt
+// Fast math: fixed-exponent pow() replacements using std::sqrt / std::cbrt
+//
+// std::pow(x, y) dispatches through exp(y*log(x)) — ~60-80 cycles on ARM.
+// std::sqrt / std::cbrt are ~10-15 cycle intrinsics. For exponents that
+// factor through half- and third-powers these closed forms are dramatically
+// cheaper in the hot loops (Manning friction, weir/orifice equations,
+// submergence corrections).
 // ============================================================================
 
 namespace openswmm::fastmath {
 
-/** @brief pow(x, 4/3) = x * cbrt(x). Much faster than std::pow(x, 4.0/3.0). */
+/** @brief pow(x, 3/2) = x * sqrt(x). Weir TRANSVERSE / TRAPEZOIDAL. */
+inline double pow3_2(double x) noexcept {
+    return x * std::sqrt(x);
+}
+
+/** @brief pow(x, 5/2) = x² * sqrt(x). Weir V-NOTCH. */
+inline double pow5_2(double x) noexcept {
+    return x * x * std::sqrt(x);
+}
+
+/** @brief pow(x, 5/3) = x * cbrt(x²). Weir SIDEFLOW (legacy 1.67 exponent). */
+inline double pow5_3(double x) noexcept {
+    return x * std::cbrt(x * x);
+}
+
+/** @brief pow(x, 4/3) = x * cbrt(x). Manning friction. */
 inline double pow4_3(double x) noexcept {
     return x * std::cbrt(x);
 }
 
-/** @brief pow(x, 2/3) = cbrt(x²). Much faster than std::pow(x, 2.0/3.0). */
+/** @brief pow(x, 2/3) = cbrt(x²). Manning normal-flow. */
 inline double pow2_3(double x) noexcept {
     return std::cbrt(x * x);
 }

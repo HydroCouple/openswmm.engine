@@ -78,9 +78,14 @@ struct RunoffSoA {
     std::vector<double> old_runoff_perv;    ///< Previous PERV runoff (ft/sec)
 
     // Per-subcatchment: computed runoff (output)
-    std::vector<double> runoff;        ///< Total runoff rate (cfs)
-    std::vector<double> evap_loss;     ///< Evaporation loss (ft3)
-    std::vector<double> infil_loss;    ///< Infiltration loss (ft3)
+    std::vector<double> runoff;             ///< Total runoff rate (cfs)
+    std::vector<double> evap_loss;          ///< Evaporation loss (ft3)
+    std::vector<double> infil_loss;         ///< Infiltration loss (ft3)
+
+    // Per-subcatchment: per-subarea runoff CFS from non-LID area (Gap #23)
+    // Used by SWMMEngine to compute LID unit inflow from impervious/pervious fractions.
+    std::vector<double> imperv_runoff_cfs;  ///< Impervious subarea runoff (CFS, non-LID area)
+    std::vector<double> perv_runoff_cfs;    ///< Pervious subarea runoff (CFS, non-LID area)
 
     void resize(int n);
     void computeAlpha();
@@ -103,11 +108,41 @@ public:
 
     const RunoffSoA& soa() const { return soa_; }
 
+    // -----------------------------------------------------------------------
+    // Hot start helpers — Gap #54
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Pack infiltration state for subcatchment @p i into a flat 6-element array.
+     *
+     * Layout (matches legacy infil_getState() encoding):
+     *  - Horton/ModHorton (0,1): [tp, Fe, Fmh, 0, 0, 0]
+     *  - GA/ModGA        (2,3): [IMD, F, Fu, T, sat(0/1), 0]
+     *  - CurveNum        (4):   [S, Se, P, F, f, T]
+     *
+     * @param i        Subcatchment index.
+     * @param model    [out] InfilModel enum value.
+     * @param state    [out] 6-element flat state array.
+     */
+    void infil_get_state(int i, int& model, double state[6]) const noexcept;
+
+    /**
+     * @brief Restore infiltration state for subcatchment @p i from a flat 6-element array.
+     *
+     * Only updates the state fields; does not reinitialise parameters.
+     * Silently ignores out-of-range @p i or mismatched model type.
+     *
+     * @param i        Subcatchment index.
+     * @param model    InfilModel enum value stored in the hot start file.
+     * @param state    6-element flat state array written by infil_get_state().
+     */
+    void infil_set_state(int i, int model, const double state[6]) noexcept;
+
 private:
     RunoffSoA soa_;
 
     // Infiltration state (one per subcatchment)
-    InfilModel infil_model_ = InfilModel::HORTON;
+    std::vector<InfilModel>     infil_models_;   ///< Per-subcatchment model type (BUG FIX: was a single shared field)
     std::vector<HortonState>    horton_states_;
     std::vector<GreenAmptState> grnampt_states_;
     std::vector<CurveNumState>  curvenum_states_;

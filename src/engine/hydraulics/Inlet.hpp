@@ -24,6 +24,7 @@
 namespace openswmm {
 
 struct SimulationContext;
+struct InletUsageStore;
 
 namespace inlet {
 
@@ -80,6 +81,16 @@ struct InletSoA {
     // Working arrays (per-inlet results)
     std::vector<double> flow_capture;   ///< Captured flow rate (cfs)
 
+    // Gap #56: backflow — fraction of capture node overflow that returns to bypass
+    std::vector<double> backflow_ratio; ///< Pre-computed fraction of node overflow → backflow
+    std::vector<double> backflow;       ///< Current backflow rate (cfs), updated each step
+
+    // Gap #68: statistics (accumulated each timestep)
+    std::vector<double> stat_capture_vol;   ///< Total captured volume (ft³)
+    std::vector<double> stat_bypass_vol;    ///< Total bypassed volume (ft³)
+    std::vector<double> stat_backflow_vol;  ///< Total backflow volume (ft³)
+    std::vector<double> stat_peak_flow;     ///< Peak captured flow rate (cfs)
+
     void resize(int n);
 };
 
@@ -94,6 +105,25 @@ public:
      * @param dt   Timestep (seconds).
      */
     void computeAll(SimulationContext& ctx, double dt);
+
+    /**
+     * @brief Adjust quality inflows at bypass and capture nodes for inlet transfers.
+     *
+     * @details Gap #55: called after hydraulic routing + inlet capture, before
+     *          quality routing. For each inlet, transfers pollutant mass based on
+     *          net flow direction (capture → capture node, backflow → bypass node).
+     *          Matches legacy `inlet_adjustQualInflows()`.
+     *
+     * @param ctx  Simulation context.
+     * @param dt   Routing timestep (seconds).
+     */
+    void adjustQualInflows(SimulationContext& ctx, double dt);
+
+    /**
+     * @brief Gap #68: Copy accumulated stats from internal SoA into InletUsageStore.
+     *        Called by SWMMEngine::report() before writing summary reports.
+     */
+    void gatherStats(InletUsageStore& usages) const;
 
 private:
     InletSoA soa_;
@@ -121,6 +151,12 @@ private:
 
     /// Compute on-grade capture for a single inlet (grate, curb, combo, slotted).
     double computeOnGradeCapture(int idx, double flow, double depth) const;
+
+    /// Gap #56: Total unclogged open area of inlet ii (ft²). Returns 0 for CUSTOM type.
+    double getInletArea(int ii) const noexcept;
+
+    /// Gap #56: Pre-compute backflow_ratio[] for all inlets from capture-node topology.
+    void computeBackflowRatios();
 };
 
 } // namespace inlet

@@ -10,6 +10,7 @@
 
 #include "Inlet.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../data/InfraData.hpp"
 #include <cmath>
 #include <algorithm>
 #include <cstring>
@@ -48,6 +49,14 @@ void InletSoA::resize(int n) {
     road_roughness.assign(un, 0.013);
     t_crown.assign(un, 0.0);
     flow_capture.assign(un, 0.0);
+    // Gap #56
+    backflow_ratio.assign(un, 0.0);
+    backflow.assign(un, 0.0);
+    // Gap #68
+    stat_capture_vol.assign(un, 0.0);
+    stat_bypass_vol.assign(un, 0.0);
+    stat_backflow_vol.assign(un, 0.0);
+    stat_peak_flow.assign(un, 0.0);
 }
 
 // ============================================================================
@@ -353,6 +362,9 @@ void InletSolver::init(SimulationContext& ctx) {
             soa_.t_crown[i]           = 100.0;  // effectively unlimited spread
         }
     }
+
+    // Gap #56: pre-compute backflow ratios after all inlets are built
+    computeBackflowRatios();
 }
 
 // ============================================================================
@@ -602,16 +614,22 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
         qCaptured *= nsides;
         soa_.flow_capture[ii] = qCaptured;
 
+        // Gap #68: accumulate capture/bypass stats
+        auto uii = static_cast<std::size_t>(ii);
+        soa_.stat_capture_vol[uii] += qCaptured * dt;
+        soa_.stat_bypass_vol[uii]  += qBypassed * nsides * dt;
+        if (qCaptured > soa_.stat_peak_flow[uii])
+            soa_.stat_peak_flow[uii] = qCaptured;
+
         // Accumulate per bypass node
         if (bypass >= 0 && bypass < nn) {
             inlet_flow_per_node[static_cast<size_t>(bypass)] += qCaptured;
         }
     }
 
-    // Second pass: adjust lateral flows at bypass and capture nodes
+    // Second pass: compute backflow and adjust lateral flows at bypass and capture nodes
     for (int ii = 0; ii < ni; ++ii) {
         double qcap = soa_.flow_capture[ii];
-        if (qcap <= 0.0) continue;
 
         int bypass = soa_.bypass_node[ii];
         int capture_node = soa_.node_idx[ii];
@@ -619,14 +637,206 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
         if (bypass < 0 || bypass >= nn) continue;
         if (capture_node < 0 || capture_node >= nn) continue;
 
-        // Subtract captured flow from bypass node lateral flow
-        nodes.lat_flow[bypass] -= qcap;
+        // Gap #56: backflow = capture node overflow × pre-computed ratio
+        double qbf = nodes.overflow[static_cast<size_t>(capture_node)]
+                     * soa_.backflow_ratio[static_cast<size_t>(ii)];
+        static constexpr double FUDGE = 2.5e-5;
+        if (std::fabs(qbf) < FUDGE) qbf = 0.0;
+        soa_.backflow[static_cast<size_t>(ii)] = qbf;
+
+        // Gap #68: accumulate backflow stats
+        soa_.stat_backflow_vol[static_cast<std::size_t>(ii)] += qbf * dt;
+
+        if (qcap <= 0.0 && qbf <= 0.0) continue;
+
+        // Subtract net captured flow from bypass node lateral flow
+        // Net = capture - backflow (backflow reduces net extraction from bypass)
+        nodes.lat_flow[bypass] -= (qcap - qbf);
 
         // Add captured flow to receiving (capture) node lateral flow
         nodes.lat_flow[capture_node] += qcap;
     }
 
     (void)dt;  // dt available for future on-sag volume limiting
+}
+
+// ============================================================================
+// Gap #56: getInletArea() — unclogged open area of one inlet (ft²)
+// Matches legacy getInletArea().  Returns 0 for CUSTOM type (uses count-based
+// backflow ratio instead).
+// ============================================================================
+
+double InletSolver::getInletArea(int ii) const noexcept {
+    const auto ui = static_cast<size_t>(ii);
+    double cf = soa_.clog_factor[ui];
+    int n     = soa_.num_inlets[ui];
+    auto t    = static_cast<InletType>(soa_.inlet_type[ui]);
+
+    switch (t) {
+        case InletType::GRATE:
+        case InletType::DROP_GRATE:
+            return soa_.grate_length[ui] * soa_.grate_width[ui]
+                   * soa_.opening_ratio[ui] * cf * n;
+
+        case InletType::CURB:
+        case InletType::DROP_CURB:
+            return soa_.curb_height[ui] * soa_.curb_length[ui] * cf * n;
+
+        case InletType::COMBO:
+            return (soa_.grate_length[ui] * soa_.grate_width[ui] * soa_.opening_ratio[ui]
+                    + soa_.curb_height[ui] * soa_.curb_length[ui]) * cf * n;
+
+        case InletType::SLOTTED:
+            return soa_.slotted_length[ui] * soa_.slotted_width[ui] * cf * n;
+
+        case InletType::CUSTOM:
+        default:
+            return 0.0;  // custom: area-based ratio not used
+    }
+}
+
+// ============================================================================
+// Gap #56: computeBackflowRatios() — pre-compute fraction of overflow → backflow
+// Matches legacy getBackflowRatios().
+// ============================================================================
+
+void InletSolver::computeBackflowRatios() {
+    int ni = soa_.count;
+    if (ni == 0) return;
+
+    // Per capture-node accumulators (indexed by capture node idx, but we don't
+    // know max node idx here; use a flat map keyed by capture node)
+    struct NodeInfo {
+        int    n_links       = 0; ///< total inlet links to this node
+        int    n_std_links   = 0; ///< links with standard (area > 0) inlets
+        int    n_custom      = 0; ///< total custom inlets (sum of num_inlets)
+        double total_area    = 0.0;
+    };
+    std::vector<std::pair<int, NodeInfo>> node_map; // sparse: (node_idx, info)
+
+    auto get_node = [&](int node) -> NodeInfo& {
+        for (auto& kv : node_map) {
+            if (kv.first == node) return kv.second;
+        }
+        node_map.push_back({node, NodeInfo{}});
+        return node_map.back().second;
+    };
+
+    // First pass: accumulate totals per capture node
+    for (int ii = 0; ii < ni; ++ii) {
+        int m = soa_.node_idx[static_cast<size_t>(ii)];
+        if (m < 0) continue;
+        auto& info = get_node(m);
+        info.n_links++;
+        double area = getInletArea(ii);
+        if (area > 0.0) {
+            info.n_std_links++;
+            info.total_area += area;
+        } else {
+            info.n_custom += soa_.num_inlets[static_cast<size_t>(ii)];
+        }
+    }
+
+    // Second pass: assign ratios
+    for (int ii = 0; ii < ni; ++ii) {
+        const auto ui = static_cast<size_t>(ii);
+        int m = soa_.node_idx[ui];
+        soa_.backflow_ratio[ui] = 0.0;
+        if (m < 0) continue;
+
+        NodeInfo* info = nullptr;
+        for (auto& kv : node_map) {
+            if (kv.first == m) { info = &kv.second; break; }
+        }
+        if (!info || info->n_links == 0) continue;
+
+        double f = (info->n_links > 0)
+                   ? static_cast<double>(info->n_std_links)
+                     / static_cast<double>(info->n_links)
+                   : 0.0;
+
+        double area = getInletArea(ii);
+        if (area > 0.0 && info->total_area > 0.0) {
+            soa_.backflow_ratio[ui] = area / info->total_area * f;
+        } else if (area == 0.0 && info->n_custom > 0) {
+            soa_.backflow_ratio[ui] = static_cast<double>(soa_.num_inlets[ui])
+                                      / static_cast<double>(info->n_custom)
+                                      * (1.0 - f);
+        }
+    }
+}
+
+// ============================================================================
+// Gap #55: adjustQualInflows() — quality mass transfer at inlet bypass/capture
+// Matches legacy inlet_adjustQualInflows().
+// ============================================================================
+
+void InletSolver::adjustQualInflows(SimulationContext& ctx, double dt) {
+    int ni = soa_.count;
+    if (ni == 0) return;
+
+    int np = ctx.n_pollutants();
+    if (np == 0) return;
+
+    auto& nodes = ctx.nodes;
+    const int nn = ctx.n_nodes();
+
+    for (int ii = 0; ii < ni; ++ii) {
+        const auto ui = static_cast<size_t>(ii);
+        int bypass  = soa_.bypass_node[ui];
+        int capture = soa_.node_idx[ui];
+
+        if (bypass < 0 || bypass >= nn) continue;
+        if (capture < 0 || capture >= nn) continue;
+
+        double qcap = soa_.flow_capture[ui];
+        double qbf  = soa_.backflow[ui];
+        double qNet = qcap - qbf;
+
+        auto ub = static_cast<size_t>(bypass);
+        auto uc = static_cast<size_t>(capture);
+
+        if (qNet > 0.0) {
+            // Net flow: bypass → capture
+            // Add volume and mass to capture node's quality inflow accumulators
+            nodes.qual_vol_in[uc] += qNet * dt;
+            for (int p = 0; p < np; ++p) {
+                auto nd_idx = uc * static_cast<size_t>(np) + static_cast<size_t>(p);
+                auto by_idx = ub * static_cast<size_t>(np) + static_cast<size_t>(p);
+                if (nd_idx < nodes.qual_mass_in.size() && by_idx < nodes.conc_old.size()) {
+                    nodes.qual_mass_in[nd_idx] += qNet * nodes.conc_old[by_idx];
+                }
+            }
+        } else if (qNet < 0.0) {
+            // Net backflow: capture → bypass
+            double qBkf = -qNet;
+            nodes.qual_vol_in[ub] += qBkf * dt;
+            for (int p = 0; p < np; ++p) {
+                auto nd_idx = ub * static_cast<size_t>(np) + static_cast<size_t>(p);
+                auto cp_idx = uc * static_cast<size_t>(np) + static_cast<size_t>(p);
+                if (nd_idx < nodes.qual_mass_in.size() && cp_idx < nodes.conc_old.size()) {
+                    nodes.qual_mass_in[nd_idx] += qBkf * nodes.conc_old[cp_idx];
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Gap #68: gatherStats() — copy per-inlet stats into InletUsageStore
+// ============================================================================
+
+void InletSolver::gatherStats(InletUsageStore& usages) const {
+    int n = std::min(soa_.count, usages.count());
+    if (n <= 0) return;
+    usages.resize_stats(usages.count());
+    for (int i = 0; i < n; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        usages.stat_capture_vol[ui]  = soa_.stat_capture_vol[ui];
+        usages.stat_bypass_vol[ui]   = soa_.stat_bypass_vol[ui];
+        usages.stat_backflow_vol[ui] = soa_.stat_backflow_vol[ui];
+        usages.stat_peak_flow[ui]    = soa_.stat_peak_flow[ui];
+    }
 }
 
 } // namespace inlet

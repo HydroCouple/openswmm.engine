@@ -203,12 +203,13 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
             base *= getPatternFactor(bp, month, day, hour);
         }
 
-        // Timeseries value, looked up via cursor-optimized table lookup.
-        // Legacy: tsv = table_tseriesLookup(&Tseries[k], aDate, FALSE) * sf
+        // Timeseries value: returns 0 past the end of the series, matching
+        // legacy table_tseriesLookup(..., extend=FALSE).  Using the plain
+        // table_lookup_cursor would clamp to the last value indefinitely.
         double ts_val = 0.0;
         int ts = ext_inflows_.ts_idx[ui];
         if (ts >= 0 && ts < static_cast<int>(ctx.tables.count())) {
-            ts_val = table_lookup_cursor(ctx.tables[ts], current_date);
+            ts_val = table_tseries_lookup_cursor(ctx.tables[ts], current_date);
             ts_val *= ext_inflows_.scale_factor[ui];
         }
 

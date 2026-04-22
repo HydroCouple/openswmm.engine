@@ -74,13 +74,14 @@ static const std::unordered_map<std::string, TokenType> func_map = {
 
 // Map of variable names (uppercase) to TreatVar.
 static const std::unordered_map<std::string, TreatVar> var_map = {
-    {"C",   TreatVar::C},
-    {"R",   TreatVar::R},
-    {"DT",  TreatVar::DT},
-    {"HRT", TreatVar::HRT},
-    {"Q",   TreatVar::Q},
-    {"V",   TreatVar::V},
-    {"D",   TreatVar::D},
+    {"C",    TreatVar::C},
+    {"R",    TreatVar::R},
+    {"DT",   TreatVar::DT},
+    {"HRT",  TreatVar::HRT},
+    {"Q",    TreatVar::Q},
+    {"V",    TreatVar::V},
+    {"D",    TreatVar::D},
+    {"AREA", TreatVar::AREA},  // Gap #16: legacy pvAREA
 };
 
 // ============================================================================
@@ -327,7 +328,7 @@ int parse(const std::string& expr_str, TreatExpr& result) {
 // ============================================================================
 
 double evaluate(const TreatExpr& expr, double c, double dt,
-                double hrt, double q, double v, double d) {
+                double hrt, double q, double v, double d, double area) {
     std::stack<double> stk;
 
     for (const auto& tok : expr.tokens) {
@@ -338,15 +339,16 @@ double evaluate(const TreatExpr& expr, double c, double dt,
 
             case TokenType::VARIABLE:
                 switch (tok.var) {
-                    case TreatVar::C:        stk.push(c);   break;
-                    case TreatVar::R:        stk.push(0.0); break;
-                    case TreatVar::DT:       stk.push(dt);  break;
-                    case TreatVar::HRT:      stk.push(hrt); break;
-                    case TreatVar::Q:        stk.push(q);   break;
-                    case TreatVar::V:        stk.push(v);   break;
-                    case TreatVar::D:        stk.push(d);   break;
-                    case TreatVar::C_POLLUT: stk.push(0.0); break;
-                    case TreatVar::R_POLLUT: stk.push(0.0); break;
+                    case TreatVar::C:        stk.push(c);    break;
+                    case TreatVar::R:        stk.push(0.0);  break;
+                    case TreatVar::DT:       stk.push(dt);   break;
+                    case TreatVar::HRT:      stk.push(hrt);  break;
+                    case TreatVar::Q:        stk.push(q);    break;
+                    case TreatVar::V:        stk.push(v);    break;
+                    case TreatVar::D:        stk.push(d);    break;
+                    case TreatVar::AREA:     stk.push(area); break;  // Gap #16
+                    case TreatVar::C_POLLUT: stk.push(0.0);  break;
+                    case TreatVar::R_POLLUT: stk.push(0.0);  break;
                 }
                 break;
 
@@ -441,8 +443,8 @@ double evaluate(const TreatExpr& expr, double c, double dt,
 // ============================================================================
 
 double applyTreatment(const TreatExpr& expr, double c_in, double dt,
-                      double hrt, double q, double v, double d) {
-    double result = evaluate(expr, c_in, dt, hrt, q, v, d);
+                      double hrt, double q, double v, double d, double area) {
+    double result = evaluate(expr, c_in, dt, hrt, q, v, d, area);
 
     // Clamp result to non-negative (legacy: r = MAX(0.0, r))
     result = std::max(0.0, result);
@@ -500,7 +502,8 @@ int parse(const std::string& expr_str, TreatExpr& result,
 
 double evaluate(const TreatExpr& expr, double c, double dt,
                 double hrt, double q, double v, double d,
-                const double* cin, const double* removal, int n_pollut) {
+                const double* cin, const double* removal, int n_pollut,
+                double area) {
     std::stack<double> stk;
 
     for (const auto& tok : expr.tokens) {
@@ -511,22 +514,21 @@ double evaluate(const TreatExpr& expr, double c, double dt,
 
             case TokenType::VARIABLE:
                 switch (tok.var) {
-                    case TreatVar::C:     stk.push(c);   break;
-                    case TreatVar::R:     stk.push(0.0); break;
-                    case TreatVar::DT:    stk.push(dt);  break;
-                    case TreatVar::HRT:   stk.push(hrt); break;
-                    case TreatVar::Q:     stk.push(q);   break;
-                    case TreatVar::V:     stk.push(v);   break;
-                    case TreatVar::D:     stk.push(d);   break;
+                    case TreatVar::C:     stk.push(c);    break;
+                    case TreatVar::R:     stk.push(0.0);  break;
+                    case TreatVar::DT:    stk.push(dt);   break;
+                    case TreatVar::HRT:   stk.push(hrt);  break;
+                    case TreatVar::Q:     stk.push(q);    break;
+                    case TreatVar::V:     stk.push(v);    break;
+                    case TreatVar::D:     stk.push(d);    break;
+                    case TreatVar::AREA:  stk.push(area); break;  // Gap #16
                     case TreatVar::C_POLLUT:
-                        // Concentration of another pollutant (from inflow)
                         if (cin && tok.pollut_ref >= 0 && tok.pollut_ref < n_pollut)
                             stk.push(cin[tok.pollut_ref]);
                         else
                             stk.push(0.0);
                         break;
                     case TreatVar::R_POLLUT:
-                        // Removal of another pollutant (co-treatment)
                         if (removal && tok.pollut_ref >= 0 && tok.pollut_ref < n_pollut)
                             stk.push(std::max(0.0, removal[tok.pollut_ref]));
                         else

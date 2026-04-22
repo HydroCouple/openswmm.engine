@@ -178,9 +178,10 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
                 std::fprintf(f,"WINDSPEED    FILE\n");
             }
 
-            std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.6f %.6f\n",
+            std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.6f %.6f %.4f\n",
                          opts.snow_divt, opts.snow_ati_wt, opts.snow_nrg_ratio,
-                         opts.snow_lat, opts.snow_min_melt, opts.snow_max_melt);
+                         opts.snow_lat, opts.snow_min_melt, opts.snow_max_melt,
+                         opts.snow_elev);
 
             std::fprintf(f,"ADC          IMPERVIOUS");
             for (int i = 0; i < 10; ++i)

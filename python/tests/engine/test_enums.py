@@ -4,7 +4,7 @@ import pytest
 
 from openswmm.engine import (
     ErrorCode, EngineState, NodeType, LinkType,
-    XSectShape, FlowUnits, RouteModel,
+    XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
 )
 
 
@@ -147,6 +147,45 @@ class TestRouteModel:
 
 
 # ---------------------------------------------------------------------------
+# WarnCode
+# ---------------------------------------------------------------------------
+class TestWarnCode:
+    """Verify WarnCode values."""
+
+    def test_known_values(self):
+        expected = {
+            "NONE": 0, "HOTSTART_MISSING": 1, "UNKNOWN_SECTION": 2,
+            "UNKNOWN_OPTION": 3, "DEPRECATED_KW": 4, "PLUGIN_INIT": 5,
+            "NUMERICAL": 6, "STABILITY_LIMIT": 7,
+        }
+        for name, val in expected.items():
+            assert WarnCode[name].value == val
+
+    def test_member_count(self):
+        assert len(WarnCode) == 8
+
+
+# ---------------------------------------------------------------------------
+# ObjectType
+# ---------------------------------------------------------------------------
+class TestObjectType:
+    """Verify ObjectType values."""
+
+    def test_known_values(self):
+        expected = {
+            "GAGE": 0, "SUBCATCH": 1, "NODE": 2, "LINK": 3,
+            "POLLUT": 4, "LANDUSE": 5, "TIMESER": 6, "TABLE": 7,
+            "RDII": 8, "UNITHYD": 9, "SNOWMELT": 10, "SHAPE": 11,
+            "LID": 12,
+        }
+        for name, val in expected.items():
+            assert ObjectType[name].value == val
+
+    def test_member_count(self):
+        assert len(ObjectType) == 13
+
+
+# ---------------------------------------------------------------------------
 # Cross-cutting
 # ---------------------------------------------------------------------------
 class TestEnumsCrossCutting:
@@ -154,7 +193,7 @@ class TestEnumsCrossCutting:
 
     @pytest.mark.parametrize("enum_cls", [
         ErrorCode, EngineState, NodeType, LinkType,
-        XSectShape, FlowUnits, RouteModel,
+        XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
     ])
     def test_all_members_are_int(self, enum_cls):
         for member in enum_cls:
@@ -162,7 +201,7 @@ class TestEnumsCrossCutting:
 
     @pytest.mark.parametrize("enum_cls", [
         ErrorCode, EngineState, NodeType, LinkType,
-        XSectShape, FlowUnits, RouteModel,
+        XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
     ])
     def test_values_are_unique(self, enum_cls):
         vals = [e.value for e in enum_cls]

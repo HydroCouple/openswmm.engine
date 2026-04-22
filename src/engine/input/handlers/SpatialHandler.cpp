@@ -83,6 +83,10 @@ void handle_vertices(SimulationContext& ctx, const std::vector<std::string>& lin
     if (ctx.spatial.link_vertices_x.size() < nl) ctx.spatial.link_vertices_x.resize(nl);
     if (ctx.spatial.link_vertices_y.size() < nl) ctx.spatial.link_vertices_y.resize(nl);
 
+    // Rebuild from section contents to preserve deterministic per-link order.
+    for (auto& xs : ctx.spatial.link_vertices_x) xs.clear();
+    for (auto& ys : ctx.spatial.link_vertices_y) ys.clear();
+
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
         if (tok.size() < 3) continue;
@@ -109,6 +113,10 @@ void handle_polygons(SimulationContext& ctx, const std::vector<std::string>& lin
     const auto ns = static_cast<std::size_t>(ctx.subcatch_names.size());
     if (ctx.spatial.subcatch_polygon_x.size() < ns) ctx.spatial.subcatch_polygon_x.resize(ns);
     if (ctx.spatial.subcatch_polygon_y.size() < ns) ctx.spatial.subcatch_polygon_y.resize(ns);
+
+    // Rebuild from section contents to preserve deterministic per-subcatch order.
+    for (auto& xs : ctx.spatial.subcatch_polygon_x) xs.clear();
+    for (auto& ys : ctx.spatial.subcatch_polygon_y) ys.clear();
 
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);

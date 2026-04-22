@@ -9,7 +9,9 @@
  */
 
 #include "Exfiltration.hpp"
+#include "Node.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -170,7 +172,12 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
                 bank_depth = (depth - soa_.bank_min_depth[uk]) / 2.0;
             }
 
-            double bank_area = soa_.bank_max_area[uk];
+            // Cap bank area at bank_max_area (matching legacy exfil.c line 191:
+            // area = MIN(area, exfil->bankMaxArea))
+            double area = openswmm::node::getSurfArea(ctx.nodes, soa_.node_idx[uk], depth,
+                                            &ctx.tables,
+                                            openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)));
+            double bank_area = std::min(area, soa_.bank_max_area[uk]);
             double bank_rate = infil::grnampt_getInfil(soa_.bank_ga[uk], 0.0, bank_depth, dt);
             total_loss += bank_rate * bank_area;
         }
@@ -179,9 +186,11 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
         double max_loss = nodes.volume[uni] / dt;
         total_loss = std::min(total_loss, max_loss);
 
-        // Apply as node loss (reduce volume)
-        nodes.volume[uni] -= total_loss * dt;
-        nodes.volume[uni] = std::max(nodes.volume[uni], 0.0);
+        // Write pre-computed exfil volume (ft3) for Router::initNodeFlows.
+        // Volume is reduced through the routing continuity equation (nodes.losses)
+        // rather than here, so that evap + exfil are jointly capped to available
+        // storage before advancing the timestep.
+        nodes.storage_exfil_loss[uni] = total_loss * dt;
     }
 }
 

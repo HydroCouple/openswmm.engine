@@ -92,6 +92,20 @@ struct InletUsageStore {
     std::vector<double>      local_depress;  ///< Local gutter depression (ft)
     std::vector<double>      local_width;    ///< Local depression width (ft)
     std::vector<int>         street_index;   ///< Index into StreetStore (-1 if none)
+
+    // Stats (populated by InletSolver::gatherStats() before reporting)
+    std::vector<double> stat_capture_vol;   ///< Total captured volume (ft³)
+    std::vector<double> stat_bypass_vol;    ///< Total bypassed volume (ft³)
+    std::vector<double> stat_backflow_vol;  ///< Total backflow volume (ft³)
+    std::vector<double> stat_peak_flow;     ///< Peak captured flow (cfs)
+
+    void resize_stats(int n) {
+        auto un = static_cast<std::size_t>(n);
+        stat_capture_vol.assign(un, 0.0);
+        stat_bypass_vol.assign(un, 0.0);
+        stat_backflow_vol.assign(un, 0.0);
+        stat_peak_flow.assign(un, 0.0);
+    }
 };
 
 // ============================================================================

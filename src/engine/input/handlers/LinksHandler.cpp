@@ -199,9 +199,32 @@ void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& line
         ctx.links.node1[idx]        = ctx.node_names.find(tok[1]);
         ctx.links.node2[idx]        = ctx.node_names.find(tok[2]);
         if (tok.size() > 3) ctx.links.crest_height[idx] = to_double(tok[3]);
-        // tok[4]: TABULAR/FUNCTIONAL, tok[5]: curve name or C1, tok[6]: C2
-        if (tok.size() > 5) ctx.links.cd[idx]    = to_double(tok[5]);
-        if (tok.size() > 6) ctx.links.param2[idx] = to_double(tok[6]);
+        // tok[4]: type string (TABULAR/HEAD, TABULAR/DEPTH, FUNCTIONAL/HEAD, FUNCTIONAL/DEPTH)
+        // tok[5]: curve name (TABULAR) or C1 coefficient (FUNCTIONAL)
+        // tok[6]: C2 exponent (FUNCTIONAL only)
+        // param1 encodes outlet type: 0=FUNCTIONAL_HEAD, 1=FUNCTIONAL_DEPTH,
+        //                             2=TABULAR_HEAD,     3=TABULAR_DEPTH
+        if (tok.size() > 4) {
+            const auto& type_str = tok[4];
+            bool is_tabular    = (type_str.find("TABULAR")    != std::string::npos);
+            bool is_depth_based = (type_str.find("DEPTH")     != std::string::npos);
+            ctx.links.param1[idx] = is_tabular ? (is_depth_based ? 3.0 : 2.0)
+                                                : (is_depth_based ? 1.0 : 0.0);
+        }
+        int outlet_type = static_cast<int>(ctx.links.param1[idx]);
+        bool is_tabular = (outlet_type >= 2);
+        if (tok.size() > 5) {
+            if (is_tabular) {
+                // Store curve name in pump_curve_name for PostParseResolver
+                auto uidx = static_cast<size_t>(idx);
+                if (uidx < ctx.links.pump_curve_name.size())
+                    ctx.links.pump_curve_name[uidx] = tok[5];
+            } else {
+                ctx.links.cd[idx]    = to_double(tok[5]);
+            }
+        }
+        if (tok.size() > 6 && !is_tabular)
+            ctx.links.param2[idx] = to_double(tok[6]);
     }
 }
 

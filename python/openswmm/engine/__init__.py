@@ -131,7 +131,7 @@ Advanced forcing
 """
 
 # Lifecycle and error
-from ._solver import Solver, EngineError
+from ._solver import Solver, EngineError, run, run_with_callback
 
 # Model building
 from ._model import ModelBuilder
@@ -176,6 +176,7 @@ from ._enums import (
     RunoffTotal, RoutingTotal, LidType, PatternType,
     ForcingMode, ForcingTarget,
     OutSubcatchVar, OutNodeVar, OutLinkVar, OutSystemVar,
+    WarnCode, ObjectType,
 )
 
 __all__ = [
@@ -185,6 +186,8 @@ __all__ = [
     "Pollutants", "Tables", "Inflows", "Controls",
     "Infrastructure", "Quality", "Statistics", "OutputReader",
     "Spatial", "Forcing", "HAS_GEOPACKAGE",
+    # Free functions
+    "run", "run_with_callback",
     # Enums
     "ErrorCode", "EngineState", "NodeType", "LinkType",
     "XSectShape", "FlowUnits", "RouteModel",
@@ -193,4 +196,5 @@ __all__ = [
     "RunoffTotal", "RoutingTotal", "LidType", "PatternType",
     "ForcingMode", "ForcingTarget",
     "OutSubcatchVar", "OutNodeVar", "OutLinkVar", "OutSystemVar",
+    "WarnCode", "ObjectType",
 ]

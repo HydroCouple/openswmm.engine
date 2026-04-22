@@ -71,6 +71,8 @@ void RunoffSoA::resize(int n) {
     runoff.assign(un, 0.0);
     evap_loss.assign(un, 0.0);
     infil_loss.assign(un, 0.0);
+    imperv_runoff_cfs.assign(un, 0.0);
+    perv_runoff_cfs.assign(un, 0.0);
 }
 
 void RunoffSoA::computeAlpha() {
@@ -165,7 +167,11 @@ void RunoffSolver::init(SimulationContext& ctx) {
 
     for (int i = 0; i < n; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        soa_.area[ui]       = ctx.subcatches.area[ui] / ucf_area;
+        // Gap #23: subareas must use non-LID area, matching legacy subcatch_validate()
+        // which sets nonLidArea = area - lidArea before computing alpha and subarea sizes.
+        double full_area_ft2 = ctx.subcatches.area[ui] / ucf_area;
+        double lid_area_ft2  = ctx.subcatches.total_lid_area_ft2[ui]; // already in ft²
+        soa_.area[ui]       = std::max(0.0, full_area_ft2 - lid_area_ft2);
         soa_.width[ui]      = ctx.subcatches.width[ui];
         soa_.slope[ui]      = ctx.subcatches.slope[ui];
         soa_.imperv_pct[ui] = ctx.subcatches.frac_imperv[ui];
@@ -180,39 +186,40 @@ void RunoffSolver::init(SimulationContext& ctx) {
     horton_states_.resize(static_cast<std::size_t>(n));
     grnampt_states_.resize(static_cast<std::size_t>(n));
     curvenum_states_.resize(static_cast<std::size_t>(n));
+    infil_models_.resize(static_cast<std::size_t>(n), InfilModel::HORTON);
 
     for (int i = 0; i < n; ++i) {
         auto ui = static_cast<std::size_t>(i);
         int im = ctx.subcatches.infil_model[ui];
         switch (im) {
             case 0:
-                infil_model_ = InfilModel::HORTON;
+                infil_models_[ui] = InfilModel::HORTON;
                 infil::horton_init(horton_states_[ui],
                     ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
                     ctx.subcatches.infil_p3[ui], ctx.subcatches.infil_p4[ui],
                     ctx.subcatches.infil_p5[ui], ctx.options);
                 break;
             case 1:
-                infil_model_ = InfilModel::MOD_HORTON;
+                infil_models_[ui] = InfilModel::MOD_HORTON;
                 infil::horton_init(horton_states_[ui],
                     ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
                     ctx.subcatches.infil_p3[ui], ctx.subcatches.infil_p4[ui],
                     ctx.subcatches.infil_p5[ui], ctx.options);
                 break;
             case 2:
-                infil_model_ = InfilModel::GREEN_AMPT;
+                infil_models_[ui] = InfilModel::GREEN_AMPT;
                 infil::grnampt_init(grnampt_states_[ui],
                     ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
                     ctx.subcatches.infil_p3[ui], ctx.options);
                 break;
             case 3:
-                infil_model_ = InfilModel::MOD_GREEN_AMPT;
+                infil_models_[ui] = InfilModel::MOD_GREEN_AMPT;
                 infil::grnampt_init(grnampt_states_[ui],
                     ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
                     ctx.subcatches.infil_p3[ui], ctx.options);
                 break;
             case 4:
-                infil_model_ = InfilModel::CURVE_NUM;
+                infil_models_[ui] = InfilModel::CURVE_NUM;
                 infil::curvenum_init(curvenum_states_[ui],
                     ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p4[ui]);
                 break;
@@ -272,6 +279,15 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         double precip  = precip_[ui];     // ft/sec (rainfall + snowmelt)
         double evapRate = evap_rate_[ui]; // ft/sec (global evap rate)
 
+        // Gap #27: subcatchment cascading / runon from upstream subcatchments.
+        // Legacy subcatch_addRunonFlow() distributes upstream runoff (CFS) as
+        // a depth rate (ft/sec) added over the non-LID area of the subcatch.
+        if (total_area > 0.0) {
+            double runon_q = ctx.subcatches.runon_inflow[ui];  // CFS from prev step
+            if (runon_q > 0.0)
+                precip += runon_q / total_area;  // ft/sec over non-LID area
+        }
+
         double alpha_i = soa_.alpha_imperv[ui];
         double alpha_p = soa_.alpha_perv[ui];
 
@@ -319,7 +335,8 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 // Apply monthly infiltration and recovery factors
                 // (matching legacy infil.c: InfilFactor scales f0/fmin/Ks,
                 //  Evap.recoveryFactor scales regen/kr)
-                switch (infil_model_) {
+                const InfilModel im = infil_models_[ui];
+                switch (im) {
                     case InfilModel::HORTON:
                     case InfilModel::MOD_HORTON: {
                         auto& hs = horton_states_[ui];
@@ -327,7 +344,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                         hs.f0   *= local_infil;
                         hs.fmin *= local_infil;
                         hs.regen *= recovery_factor;
-                        infil = (infil_model_ == InfilModel::HORTON)
+                        infil = (im == InfilModel::HORTON)
                             ? infil::horton_getInfil(hs, precip + runon, depth, dt)
                             : infil::modHorton_getInfil(hs, precip + runon, depth, dt);
                         hs.f0 = save_f0; hs.fmin = save_fmin; hs.regen = save_regen;
@@ -336,26 +353,48 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                     case InfilModel::GREEN_AMPT:
                     case InfilModel::MOD_GREEN_AMPT: {
                         auto& gs = grnampt_states_[ui];
-                        double save_Ks = gs.Ks;
-                        gs.Ks *= local_infil;
-                        // Recovery factor applied to Lu-based recovery rate
-                        // (legacy infil.c line 708: kr = lu/90000 * recoveryFactor)
-                        double save_Lu = gs.Lu;
-                        gs.Lu *= recovery_factor;
-                        infil = infil::grnampt_getInfil(gs, precip + runon, depth, dt,
-                                                         infil_model_);
-                        gs.Ks = save_Ks; gs.Lu = save_Lu;
+                        double save_Ks    = gs.Ks;
+                        double save_Lu    = gs.Lu;
+                        double save_Fumax = gs.Fumax;
+                        // Gap #5: Legacy infil_setInfilFactor() applies sqrt(InfilFactor) to Lu:
+                        //   lu = 4 * sqrt(Ks * InfilFactor * ucf_rain) / ucf_depth
+                        //      = original_Lu * sqrt(InfilFactor)
+                        // Gap #5: Fumax = IMDmax * lu * sqrt(InfilFactor) = original_Fumax * InfilFactor
+                        // Gap #6: Recovery factor baked into Lu so that inside grnampt_getInfil():
+                        //   kr = lu/90000 = original_Lu * sqrt(if) * rf / 90000 = legacy kr ✓
+                        //   T  = 5400/lu  = 5400 / (original_Lu * sqrt(if) * rf)  = legacy T ✓
+                        double sqrt_infil = std::sqrt(local_infil);
+                        gs.Ks    = save_Ks * local_infil;
+                        gs.Lu    = save_Lu * sqrt_infil * recovery_factor;
+                        gs.Fumax = save_Fumax * local_infil;
+                        infil = infil::grnampt_getInfil(gs, precip + runon, depth, dt, im);
+                        gs.Ks    = save_Ks;
+                        gs.Lu    = save_Lu;
+                        gs.Fumax = save_Fumax;
                         break;
                     }
                     case InfilModel::CURVE_NUM: {
                         auto& cs = curvenum_states_[ui];
                         double save_regen = cs.regen;
                         cs.regen *= recovery_factor;
-                        infil = infil::curvenum_getInfil(cs, precip + runon, depth, dt);
+                        // Gap #7: CN treats runon as ponded depth, not as a rainfall rate.
+                        // Legacy infil.c lines 318-319: depth += runon * tstep; then pass
+                        // only rainfall (not rainfall+runon) as the rate argument.
+                        double cn_depth = depth + runon * dt;
+                        infil = infil::curvenum_getInfil(cs, precip, cn_depth, dt);
                         cs.regen = save_regen;
                         break;
                     }
                 }
+            }
+
+            // Gap #40: limit pervious infiltration by GW upper zone capacity.
+            // Matching legacy subcatch.c getSubareaInfil():
+            //   infil = MIN(infil, GW->maxInfilVol / tStep)
+            if (isPervious && dt > 0.0) {
+                double max_iv = ctx.subcatches.gw_max_infil_vol[ui];
+                if (max_iv < 1.0e30)
+                    infil = std::min(infil, max_iv / dt);
             }
 
             // Step 3.4: Accumulate inflow and moisture (legacy lines 930-931)
@@ -422,6 +461,17 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         double runon_imperv = 0.0;  // additional inflow to imperv subareas (ft/sec)
         double runon_perv   = 0.0;  // additional inflow to pervious subarea (ft/sec)
 
+        // Gap #23: LID return flow to pervious area (to_perv==1 from previous step).
+        // Matches legacy lid_getFlowToPerv() called in subcatch_getRunon() — one-step lag.
+        {
+            double q_ret = ctx.subcatches.lid_return_to_perv_cfs[ui];
+            if (q_ret > 0.0 && total_area > 0.0 && fp > 0.0) {
+                double perv_area = total_area * fp;
+                runon_perv += q_ret / perv_area;  // ft/sec over pervious area
+            }
+            ctx.subcatches.lid_return_to_perv_cfs[ui] = 0.0;  // consume
+        }
+
         if (route_mode == 2 && fp > 0.0) {
             // IMPERV → PERV: route fraction of imperv runoff to pervious
             double q1 = soa_.old_runoff_imperv0[ui] * f0;  // area-wtd rate
@@ -435,22 +485,44 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             runon_imperv = q * pct / f1;  // distribute over IMPERV1 area fraction
         }
 
+        // Gap #20: When snow is active, use snow-modified net precip per subarea
+        // (imelt + rainfall*(1-asc)) instead of raw rainfall.
+        // precip is captured by reference in processSubarea, so setting it here
+        // controls the inflow for each subarea call.
+        double precip_imperv = precip;
+        double precip_perv   = precip;
+        if (ctx.subcatches.snowpack[ui] >= 0) {
+            double sni = ctx.subcatches.snow_net_imperv[ui];
+            double snp = ctx.subcatches.snow_net_perv[ui];
+            if (sni >= 0.0) precip_imperv = sni;
+            if (snp >= 0.0) precip_perv   = snp;
+        }
+
         // Process all 3 subareas (matching legacy loop: IMPERV0, IMPERV1, PERV)
         // IMPERV0 never receives runon (zero depression storage area)
+        precip = precip_imperv;
         double runoff0  = processSubarea(soa_.depth_imperv0[ui], alpha_i, 0.0,
                                          f0, false, 0.0);
         // IMPERV1 receives runon from pervious when route_mode==TO_IMPERV
         double runoff1  = processSubarea(soa_.depth_imperv1[ui], alpha_i,
                                          soa_.ds_imperv[ui], f1, false, runon_imperv);
         // PERV receives runon from impervious when route_mode==TO_PERV
+        precip = precip_perv;
         double runoff_p = processSubarea(soa_.depth_perv[ui], alpha_p,
                                          soa_.ds_perv[ui], fp, true, runon_perv);
+        precip = precip_[ui];   // restore for subsequent use
 
 
         // Save per-subarea runoff for next step's inter-subarea routing
         soa_.old_runoff_imperv0[ui] = runoff0;
         soa_.old_runoff_imperv1[ui] = runoff1;
         soa_.old_runoff_perv[ui]    = runoff_p;
+
+        // Gap #23: Store per-subarea runoff CFS for LID inflow computation.
+        // Matches legacy qImperv/qPerv used in lid_getRunoff() lid.c line ~1669.
+        soa_.imperv_runoff_cfs[ui] = (runoff0 * total_area * f0)
+                                   + (runoff1 * total_area * f1);
+        soa_.perv_runoff_cfs[ui]   =  runoff_p * total_area * fp;
 
         // ----- Step 4: Compute loss rates and net runoff -----
         // Matches legacy lines 700-709.
@@ -480,6 +552,90 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // Runoff is stored in subcatches.runoff[i]; routing picks it up via
         // interpolateRunoffToNodes() → nodes.runoff_inflow[] → assembleLateralInflows().
         (void)0;
+    }
+}
+
+// ============================================================================
+// Hot start helpers — Gap #54
+// ============================================================================
+
+void RunoffSolver::infil_get_state(int i, int& model, double state[6]) const noexcept {
+    std::fill(state, state + 6, 0.0);
+    if (i < 0 || static_cast<std::size_t>(i) >= infil_models_.size()) {
+        model = 0;
+        return;
+    }
+    const auto ui = static_cast<std::size_t>(i);
+    model = static_cast<int>(infil_models_[ui]);
+
+    switch (infil_models_[ui]) {
+        case InfilModel::HORTON:
+        case InfilModel::MOD_HORTON: {
+            const auto& h = horton_states_[ui];
+            state[0] = h.tp;
+            state[1] = h.Fe;
+            state[2] = h.Fmh;
+            break;
+        }
+        case InfilModel::GREEN_AMPT:
+        case InfilModel::MOD_GREEN_AMPT: {
+            const auto& g = grnampt_states_[ui];
+            state[0] = g.IMD;
+            state[1] = g.F;
+            state[2] = g.Fu;
+            state[3] = g.T;
+            state[4] = g.saturated ? 1.0 : 0.0;
+            break;
+        }
+        case InfilModel::CURVE_NUM: {
+            const auto& c = curvenum_states_[ui];
+            state[0] = c.S;
+            state[1] = c.Se;
+            state[2] = c.P;
+            state[3] = c.F;
+            state[4] = c.f;
+            state[5] = c.T;
+            break;
+        }
+    }
+}
+
+void RunoffSolver::infil_set_state(int i, int model, const double state[6]) noexcept {
+    if (i < 0 || static_cast<std::size_t>(i) >= infil_models_.size()) return;
+    const auto ui = static_cast<std::size_t>(i);
+
+    // Only restore if model matches the initialised type
+    if (model != static_cast<int>(infil_models_[ui])) return;
+
+    switch (infil_models_[ui]) {
+        case InfilModel::HORTON:
+        case InfilModel::MOD_HORTON: {
+            auto& h = horton_states_[ui];
+            h.tp  = state[0];
+            h.Fe  = state[1];
+            h.Fmh = state[2];
+            break;
+        }
+        case InfilModel::GREEN_AMPT:
+        case InfilModel::MOD_GREEN_AMPT: {
+            auto& g = grnampt_states_[ui];
+            g.IMD       = state[0];
+            g.F         = state[1];
+            g.Fu        = state[2];
+            g.T         = state[3];
+            g.saturated = (state[4] != 0.0);
+            break;
+        }
+        case InfilModel::CURVE_NUM: {
+            auto& c = curvenum_states_[ui];
+            c.S  = state[0];
+            c.Se = state[1];
+            c.P  = state[2];
+            c.F  = state[3];
+            c.f  = state[4];
+            c.T  = state[5];
+            break;
+        }
     }
 }
 

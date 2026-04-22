@@ -103,6 +103,10 @@ struct GWSoA {
     std::vector<double> upper_evap;   ///< Upper zone evap (ft3/sec)
     std::vector<double> lower_evap;   ///< Lower zone evap (ft3/sec)
     std::vector<double> deep_loss;    ///< Deep percolation (ft3/sec)
+    /// Gap #40: max infiltration volume upper zone can accept in next step (ft).
+    /// = (total_depth - lower_depth) * (porosity - theta) / frac_perv
+    /// Used by Runoff to cap infiltration rate: max_infil_rate = max_infil_vol / dt.
+    std::vector<double> max_infil_vol;
 
     // Custom flow expressions (from [GWF] section)
     /// Per-subcatch compiled lateral flow expression (added to standard formula).
@@ -143,7 +147,8 @@ public:
                  const double* infil_rate, const double* sw_head,
                  const double* frac_perv, const double* perv_evap_rate);
 
-    GWSoA& state() { return soa_; }
+    GWSoA&       state()       { return soa_; }
+    const GWSoA& state() const { return soa_; }
 
 private:
     GWSoA soa_;

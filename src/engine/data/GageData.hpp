@@ -178,6 +178,23 @@ struct GageData {
     /** @brief Per-gage time (seconds) of last past-rain shift. */
     std::vector<double>         past_rain_time;
 
+    /**
+     * @brief Gap #31: Cumulative rainfall accumulator (project rain units).
+     * @details Tracks the previous raw cumulative value so the delta can be
+     *          computed each timestep.  Initialised to 0.  Matches legacy
+     *          Gage[i].rainAccum.
+     */
+    std::vector<double>         cumul_rain_accum;
+
+    /**
+     * @brief Gap #53: Co-gage index — index of the primary gage sharing the
+     *        same timeseries, or -1 if this gage reads independently.
+     * @details When two gages use the same TIMESERIES source and the same
+     *          ts_index, the later gage copies its rainfall from the earlier
+     *          one (the primary).  Matches legacy Gage[i].coGage.
+     */
+    std::vector<int>            co_gage_index;
+
     // -----------------------------------------------------------------------
     // Capacity management
     // -----------------------------------------------------------------------
@@ -206,6 +223,8 @@ struct GageData {
         past_rain.assign(un * MAXPASTRAIN, 0.0);
         past_rain_accum.assign(un, 0.0);
         past_rain_time.assign(un, 0.0);
+        cumul_rain_accum.assign(un, 0.0);
+        co_gage_index.assign(un, -1);
     }
 
     /**
@@ -231,6 +250,8 @@ struct GageData {
         past_rain.shrink_to_fit();
         past_rain_accum.shrink_to_fit();
         past_rain_time.shrink_to_fit();
+        cumul_rain_accum.shrink_to_fit();
+        co_gage_index.shrink_to_fit();
     }
 
     void reset_state() noexcept {
@@ -241,6 +262,8 @@ struct GageData {
         std::fill(past_rain.begin(),     past_rain.end(),     0.0);
         std::fill(past_rain_accum.begin(), past_rain_accum.end(), 0.0);
         std::fill(past_rain_time.begin(),  past_rain_time.end(),  0.0);
+        std::fill(cumul_rain_accum.begin(), cumul_rain_accum.end(), 0.0);
+        // co_gage_index is static (set at parse time), not reset between runs
     }
 };
 
