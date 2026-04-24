@@ -237,6 +237,21 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_time, double 
         const auto& actions = rule_results_[ur]
             ? rules_[ur].then_actions : rules_[ur].else_actions;
         for (auto a : actions) {
+            // PID / CURVE / TIMESERIES actions read the LAST premise's LHS/RHS
+            // from control_value_ / set_point_. Phase 1's batch path fills
+            // rule_results_ but does NOT set these members — only the scalar
+            // evaluatePremise() path does. Re-evaluate the rule's last premise
+            // here for modulated actions so the PID sees the live control
+            // variable (matching legacy controls.c, where ControlValue/SetPoint
+            // are updated as a side effect of every premise evaluation).
+            if (a.type == ActionType::PID ||
+                a.type == ActionType::CURVE ||
+                a.type == ActionType::TIMESERIES) {
+                if (!rules_[ur].premises.empty()) {
+                    (void)evaluatePremise(ctx, rules_[ur].premises.back(),
+                                          current_time, half_step);
+                }
+            }
             updateActionValue(a, ctx, current_time, dt);
             pending_actions_.push_back({a.link_idx, a.value, rules_[ur].priority, r});
         }

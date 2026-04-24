@@ -1200,7 +1200,6 @@ TEST(HydPower, ConvertToHorsepower) {
     EXPECT_NEAR(hp, 3120.0 / 550.0, 0.01);
 }
 
-<<<<<<< HEAD
 // ===========================================================================
 // Issue 2 — Storage-node conduit half-area guard
 //
@@ -1306,7 +1305,8 @@ TEST(StorageHalfAreaGuard, DepthDependentCrosses) {
     EXPECT_GT(sa_high, constants::MIN_SURFAREA);
     EXPECT_NEAR(sa_high, 500.0, 0.01)
         << "At depth 5 (A=500), should return curve value";
-=======
+}
+
 // ============================================================================
 // Gap #7: Curve Number runon treated as depth (not rainfall rate)
 // ============================================================================
@@ -3454,5 +3454,4 @@ TEST(CyclicTreatment85, LinearDependencyNoCycle) {
         if (color[static_cast<std::size_t>(p)] == 0) dfs(p);
 
     EXPECT_FALSE(cycle) << "Linear p0→p1 DAG should not detect cycle";
->>>>>>> 1ee5ba8c (Refactoring for computational efficiency)
 }

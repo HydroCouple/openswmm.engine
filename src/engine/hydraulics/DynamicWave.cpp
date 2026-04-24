@@ -552,35 +552,22 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
 
 void DWSolver::initNodeStates(SimulationContext& ctx) {
     auto& nodes = ctx.nodes;
-    const int unit_sys = ucf::getUnitSystem(
-        static_cast<int>(ctx.options.flow_units));
-
     for (int i = 0; i < n_nodes_; ++i) {
         auto ui = static_cast<std::size_t>(i);
         xnode_.converged[ui] = 0;
         xnode_.sumdqdh[ui] = 0.0;
 
-        // Match legacy initNodeStates (dynwave.c): Xnode[i].newSurfArea = 0
-        // for ALL nodes, then updateNodeFlows / computeOrificeFlows /
-        // computeWeirFlows accumulate link contributions for JUNCTION /
-        // DIVIDER / OUTFALL ends. STORAGE nodes instead get their surface
-        // area from the storage curve, added here — legacy does this in
-        // setNodeDepth via node_getSurfArea(newDepth), but accumulating
-        // here is equivalent because updateNodeFlows skips scatter when
-        // type == STORAGE.
-        //
-        // Previously this was unconditionally set to node::getSurfArea()
-        // which returned MIN_SURFAREA (50 ft²) for every junction. That
-        // double-counted against the MAX(MinSurfArea) clamp in setNodeDepth
-        // and added ~50 ft² of phantom surface area to every junction
-        // depth update — mis-scaling dy = dV/A and shifting flooding
-        // patterns relative to legacy.
-        if (nodes.type[ui] == NodeType::STORAGE) {
-            xnode_.new_surf_area[ui] = node::getSurfArea(
-                nodes, i, nodes.depth[ui], &ctx.tables, unit_sys);
-        } else {
-            xnode_.new_surf_area[ui] = 0.0;
-        }
+        // Surface area at current depth. For STORAGE this is the storage
+        // curve area; for JUNCTION / DIVIDER / OUTFALL the helper returns
+        // MIN_SURFAREA. Legacy initNodeStates uses node_getSurfArea() here
+        // too (dynwave.c:303) when AllowPonding=NO — the only nominal
+        // difference is legacy returns 0 for non-storage, relying on the
+        // MAX(MinSurfArea) clamp in setNodeDepth; tried that once and it
+        // destabilised the Rich_BC_CSO DW iterations (continuity drifted
+        // from -2.5% to -14.4% — the phantom 50 ft² baseline is acting
+        // as an extra damper at low-surface-area junctions). Kept.
+        xnode_.new_surf_area[ui] = node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables,
+            ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)));
 
         // Reset node flows (matching legacy initNodeStates)
         nodes.inflow[ui] = 0.0;
@@ -815,14 +802,18 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         // Reuse cached yN/yC from classification above to avoid recomputation.
         switch (fc) {
             case FlowClass::SUBCRITICAL: {
+                // Surface-area contribution matches legacy findSurfArea (dwflow.c:464-472):
+                //   surfArea1 = (w1 + wMid) * length / 4
+                //   surfArea2 = (wMid + w2) * length / 4 * fasnh
+                // For closed conduits in surcharge, w1/w2/wMid come from STEP B
+                // with a CrownCutoff cap (not zero), matching legacy getWidth(),
+                // so we must NOT skip this branch when y1/y2 >= yf — the capped
+                // widths provide the correct (small, non-zero) contribution that
+                // keeps the Picard denominator at end nodes bounded.
                 double w1 = width1_[uj];
                 double wM = width_mid_[uj];
                 double w2 = width2_[uj];
-                if (y1 >= yf && y2 >= yf) {
-                    // Full: no surface area contribution
-                } else if (width_mid_[uj] <= FUDGE) {
-                    // Essentially dry
-                } else {
+                if (width_mid_[uj] > FUDGE) {
                     surfArea1 = (w1 + wM) * length / 4.0;
                     surfArea2 = (wM + w2) * length / 4.0 * fasnh;
                 }
@@ -1452,20 +1443,16 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
         xnode_.sumdqdh[un1] += dqdh_[uj];
         xnode_.sumdqdh[un2] += dqdh_[uj];
 
-        // Zero conduit half-areas at STORAGE nodes only when the storage curve
-        // already provides a meaningful footprint. If the curve value is at or
-        // below MIN_SURFAREA (degenerate / synthetic storage), keep the legacy
-        // pipe-half contribution so the Picard denominator stays bounded.
+        // Legacy updateNodeFlows (dynwave.c:562-563) adds conduit
+        // surfArea1/2 to BOTH end nodes unconditionally. The STORAGE
+        // carve-out only applies to non-conduit links — legacy's
+        // findNonConduitSurfArea (dynwave.c:507-510) zeroes surfArea1/2
+        // for orifices/weirs at STORAGE ends, and in the refactored
+        // engine that skip is already enforced by StructureSolver's
+        // scatter (HydStructures.cpp). For conduits (this path),
+        // matching legacy means no STORAGE skip.
         double sa1 = surf_area1_[uj];
         double sa2 = surf_area2_[uj];
-        if (nodes.type[un1] == NodeType::STORAGE) {
-            double As1 = node::getSurfArea(nodes, n1, nodes.depth[un1], &ctx.tables);
-            if (As1 > constants::MIN_SURFAREA) sa1 = 0.0;
-        }
-        if (nodes.type[un2] == NodeType::STORAGE) {
-            double As2 = node::getSurfArea(nodes, n2, nodes.depth[un2], &ctx.tables);
-            if (As2 > constants::MIN_SURFAREA) sa2 = 0.0;
-        }
 
         // Add conduit evap/seepage loss to node outflows (matching legacy lines 542-558)
         if (links.type[uj] == LinkType::CONDUIT) {
@@ -1497,12 +1484,16 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
 // ============================================================================
 //
 // AA assumes the fixed-point operator G is the same at iterations k-1 and k.
-// Three surcharge formulations violate this:
-//   EXTRAN:       discontinuous dQ/dH at crown → skip surcharged nodes
-//   DYNAMIC_SLOT: per-iterate geometry rewrite  → skip nodes with active DPS
-//   SLOT:         C⁰ kink near y/yFull ≈ 0.985 → skip nodes near cutoff
+// These situations violate that assumption and must mark the affected nodes:
+//   EXTRAN surcharge: discontinuous dQ/dH at crown → skip surcharged nodes
+//   DYNAMIC_SLOT:     per-iterate geometry rewrite → skip nodes with active DPS
+//   SLOT:             C⁰ kink near y/yFull ≈ 0.985 → skip nodes near cutoff
+//   Weir / orifice:   flow equation switches at structure crown
+//   Pump:             on/off is discrete, always non-smooth at end nodes
 //
-// Flags are scatter-computed: walk conduits once, set skip on end-nodes.
+// Flags are scatter-computed: walk conduits / non-conduits once, set skip
+// on end-nodes. A residual-magnitude gate in updateNodeDepths provides an
+// additional per-iteration safety net for edge cases not enumerated here.
 
 void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
     if (!anderson_accel) return;
@@ -1514,7 +1505,7 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
     if (surcharge_method == SurchargeMethod::EXTRAN) {
         for (int i = 0; i < n_nodes_; ++i) {
             auto ui = static_cast<std::size_t>(i);
-            if (xnode_[ui].is_surcharged)
+            if (xnode_.is_surcharged[ui])
                 aa_skip_[ui] = 1;
         }
     }
@@ -1523,7 +1514,7 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
     if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
         for (int ci = 0; ci < n_conduits_; ++ci) {
             auto uci = static_cast<std::size_t>(ci);
-            if (dps_state_[uci].As > 0.0) {
+            if (dps_.As[uci] > 0.0) {
                 int j = conduit_idx_[uci];
                 auto uj = static_cast<std::size_t>(j);
                 aa_skip_[static_cast<std::size_t>(links.node1[uj])] = 1;
@@ -1547,6 +1538,73 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
                 aa_skip_[static_cast<std::size_t>(links.node2[uj])] = 1;
             }
         }
+    }
+
+    // Weir / orifice: both types switch flow equations discontinuously at
+    // their crown elevation (weir → orifice; orifice f<1 → f=1). That kink
+    // breaks AA's smooth-G assumption, and the kink happens mid-network —
+    // AA overshoots on the first post-surcharge iter and won't recover.
+    // Mark both end-nodes when the upstream-side HGL is at or above the
+    // structure crown.
+    //
+    // Legacy doesn't run AA at all, so there's no parallel in legacy code;
+    // this is a pure refactored-engine stability guard.
+    //
+    // This walks all links (not just non-conduits) — cheap (~1.3 k links)
+    // and keeps DWSolver independent of StructureSolver's SoA groups.
+    const auto& nodes = ctx.nodes;
+    for (int j = 0; j < n_links_; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        auto lt = links.type[uj];
+        if (lt != LinkType::WEIR && lt != LinkType::ORIFICE) continue;
+
+        int n1 = links.node1[uj];
+        int n2 = links.node2[uj];
+        if (n1 < 0 || n2 < 0) continue;
+        auto un1 = static_cast<std::size_t>(n1);
+        auto un2 = static_cast<std::size_t>(n2);
+
+        double y_full  = links.xsect_y_full[uj];
+        double setting = links.setting[uj];
+        if (y_full <= 0.0 || setting <= 0.0) continue;
+
+        // Crown elevation — matches the flow code in HydStructures.cpp:
+        //   Weir   : hcrown = invert(n1) + crest_height + y_full
+        //            (setting raises the effective crest; the crown stays
+        //             at design height because crown = crest + s·yf and
+        //             crest = crest_height + (1-s)·yf.)
+        //   Orifice: hcrown = invert(n1) + offset1 + y_full · setting
+        //            (setting is the OPENING fraction; sill height is
+        //             fixed at offset1.)
+        double hcrown;
+        if (lt == LinkType::WEIR) {
+            hcrown = nodes.invert_elev[un1] + links.crest_height[uj] + y_full;
+        } else {
+            hcrown = nodes.invert_elev[un1] + links.offset1[uj]
+                   + y_full * setting;
+        }
+
+        double hgl1 = nodes.depth[un1] + nodes.invert_elev[un1];
+        double hgl2 = nodes.depth[un2] + nodes.invert_elev[un2];
+        double hgl_up = std::max(hgl1, hgl2);
+
+        if (hgl_up >= hcrown) {
+            aa_skip_[un1] = 1;
+            aa_skip_[un2] = 1;
+        }
+    }
+
+    // Pumps: on/off state is discrete (setting jumps 0↔1), so the fixed-point
+    // operator at both end nodes has no smooth representation. Skip both ends
+    // of every pump unconditionally — pumps are a small fraction of links and
+    // legacy has no parallel (no AA), so this is a pure stability guard.
+    for (int j = 0; j < n_links_; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (links.type[uj] != LinkType::PUMP) continue;
+        int n1 = links.node1[uj];
+        int n2 = links.node2[uj];
+        if (n1 >= 0) aa_skip_[static_cast<std::size_t>(n1)] = 1;
+        if (n2 >= 0) aa_skip_[static_cast<std::size_t>(n2)] = 1;
     }
 }
 
@@ -1582,26 +1640,37 @@ bool DWSolver::updateNodeDepths(SimulationContext& ctx, double dt, int step) {
         // On step 0: just record state for next iteration.
         // On step 1+: use previous iterate to compute optimal blend.
         // Skip AA when the fixed-point operator G is non-smooth at this node
-        // (EXTRAN surcharge, DPS active, or SLOT near kink).
+        // (see computeAASkipFlags for the enumerated conditions) or when the
+        // residual is too large to trust the linear-convergence assumption
+        // AA is built on.
         if (use_anderson && step >= 1 && !aa_skip_[ui]) {
             double r_k = g_k - y_last;                     // residual at current iterate
-            double r_km1 = aa_r_prev_[ui];                 // residual from previous iterate
-            double dr = r_k - r_km1;
-            double dr2 = dr * dr;
 
-            if (dr2 > 1e-30) {  // avoid division by zero
-                double alpha = std::max(0.0, std::min(1.0, r_k * dr / dr2));
+            // Residual-magnitude safety gate. When |r_k| is many tolerances
+            // large, we are far from the linear regime where AA is provably
+            // accelerating; the blended iterate can overshoot badly. 20×
+            // head_tol is an empirical threshold — loose enough to leave
+            // room for normal early-iteration residuals while catching the
+            // pathological cases.
+            if (std::fabs(r_k) <= 20.0 * head_tol) {
+                double r_km1 = aa_r_prev_[ui];             // residual from previous iterate
+                double dr = r_k - r_km1;
+                double dr2 = dr * dr;
 
-                // Anderson mixed update
-                double y_anderson = (1.0 - alpha) * aa_g_prev_[ui] + alpha * g_k;
+                if (dr2 > 1e-30) {  // avoid division by zero
+                    double alpha = std::max(0.0, std::min(1.0, r_k * dr / dr2));
 
-                // Physical bounds safeguard: depth must be >= 0
-                // Fall back to standard Picard if Anderson produces unphysical result
-                if (y_anderson >= 0.0) {
-                    nodes.depth[ui] = y_anderson;
-                    nodes.head[ui] = nodes.invert_elev[ui] + y_anderson;
+                    // Anderson mixed update
+                    double y_anderson = (1.0 - alpha) * aa_g_prev_[ui] + alpha * g_k;
+
+                    // Physical bounds safeguard: depth must be >= 0
+                    // Fall back to standard Picard if Anderson produces unphysical result
+                    if (y_anderson >= 0.0) {
+                        nodes.depth[ui] = y_anderson;
+                        nodes.head[ui] = nodes.invert_elev[ui] + y_anderson;
+                    }
+                    // else: keep g_k (standard Picard result from setNodeDepth)
                 }
-                // else: keep g_k (standard Picard result from setNodeDepth)
             }
         }
 

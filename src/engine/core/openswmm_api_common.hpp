@@ -38,6 +38,18 @@ static inline openswmm::SWMMEngine* to_engine(SWMM_Engine e) noexcept {
             return SWMM_ERR_LIFECYCLE; \
     } while(0)
 
+/// Model-topology editing (add / remove objects): BUILDING or OPENED.
+/// Explicitly forbids INITIALIZED, STARTED, RUNNING, ENDED — once the
+/// simulation is armed the object-count invariants are baked into
+/// cached solver state that would need a re-init pass to pick up a
+/// new node or link.
+#define CHECK_EDITABLE(ctx) \
+    do { \
+        if ((ctx).state != openswmm::EngineState::BUILDING && \
+            (ctx).state != openswmm::EngineState::OPENED) \
+            return SWMM_ERR_LIFECYCLE; \
+    } while(0)
+
 /// Initial-condition setters: BUILDING, OPENED, or INITIALIZED
 #define CHECK_INITIAL_COND(ctx) \
     do { \

@@ -315,26 +315,17 @@ private:
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;
 
 public:
-<<<<<<< HEAD
-    /// Access per-node working state (for non-conduit surfarea/dqdh scatter).
-    DWNodeState& nodeState(int idx) { return xnode_[static_cast<std::size_t>(idx)]; }
+    /// Direct write access to the per-node is_surcharged flag (for tests/non-conduit scatter).
+    uint8_t& nodeSurchargedFlag(int idx) { return xnode_.is_surcharged[static_cast<std::size_t>(idx)]; }
+
+    /// Mutable pointer to the per-node new_surf_area array (for HydStructures scatter).
+    double* nodeNewSurfAreaDataMut() { return xnode_.new_surf_area.data(); }
+
+    /// Mutable reference to the per-node sumdqdh accumulator at index n.
+    double& nodeSumDqdh(int n) { return xnode_.sumdqdh[static_cast<std::size_t>(n)]; }
 
     /// Access per-node AA skip flags (read-only, for testing/diagnostics).
     const std::vector<uint8_t>& aaSkipFlags() const { return aa_skip_; }
-=======
-    /// Access per-node sumdqdh (for non-conduit dqdh scatter).
-    double& nodeSumDqdh(int idx) { return xnode_.sumdqdh[static_cast<std::size_t>(idx)]; }
-    /// Access per-node new_surf_area (for non-conduit surface area scatter).
-    double& nodeNewSurfArea(int idx) { return xnode_.new_surf_area[static_cast<std::size_t>(idx)]; }
-    /// Raw pointer to the new_surf_area array, used by callers that need
-    /// to index without bounds-checking (e.g. the pump limiter that must
-    /// match legacy Xnode[j].newSurfArea behaviour).
-    const double* nodeNewSurfAreaData() const noexcept { return xnode_.new_surf_area.data(); }
-    /// Mutable variant used by weir flow computation to scatter the
-    /// per-weir surfArea contribution into the node accumulator, matching
-    /// legacy findNonConduitSurfArea.
-    double* nodeNewSurfAreaDataMut() noexcept { return xnode_.new_surf_area.data(); }
->>>>>>> 1ee5ba8c (Refactoring for computational efficiency)
 private:
 
     // Preissmann slot helpers (matching legacy dwflow.c)

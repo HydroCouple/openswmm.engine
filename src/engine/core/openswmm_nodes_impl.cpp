@@ -71,8 +71,12 @@ SWMM_ENGINE_API const char* swmm_node_id(SWMM_Engine engine, int idx) {
 }
 
 // ============================================================================
-// Creation (BUILDING state only)
+// Creation (BUILDING or OPENED — "editable" states)
 // ============================================================================
+// Nodes may be appended in either BUILDING (programmatic construction) or
+// OPENED (interactive editing after the .inp has been parsed). The engine's
+// per-index SoA is pure append-resize plus value assignment; no solver state
+// depends on node count being frozen until swmm_engine_initialize runs.
 
 SWMM_ENGINE_API int swmm_node_add(SWMM_Engine engine, const char* id, int type) {
     CHECK_HANDLE(engine);
@@ -83,8 +87,7 @@ SWMM_ENGINE_API int swmm_node_add(SWMM_Engine engine, const char* id, int type) 
         return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING)
-        return SWMM_ERR_LIFECYCLE;
+    CHECK_EDITABLE(ctx);
 
     // Check for duplicate ID
     if (ctx.node_names.find(id) >= 0)
@@ -100,6 +103,34 @@ SWMM_ENGINE_API int swmm_node_add(SWMM_Engine engine, const char* id, int type) 
     // Set type
     ctx.nodes.type[static_cast<std::size_t>(idx)] = internal_type;
 
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_pop_last(SWMM_Engine engine, const char* id) {
+    CHECK_HANDLE(engine);
+    if (!id) return SWMM_ERR_BADPARAM;
+
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+
+    const int n = ctx.node_names.size();
+    if (n <= 0) return SWMM_ERR_BADINDEX;
+
+    const int tail = n - 1;
+    if (ctx.node_names.name_of(tail) != id)
+        return SWMM_ERR_BADINDEX;
+
+    // Guard against dangling link references. The GUI must cascade-remove
+    // any link whose from/to endpoint is the tail node before popping it.
+    for (int i = 0; i < ctx.n_links(); ++i) {
+        if (ctx.links.node1[static_cast<std::size_t>(i)] == tail ||
+            ctx.links.node2[static_cast<std::size_t>(i)] == tail) {
+            return SWMM_ERR_BADPARAM;
+        }
+    }
+
+    ctx.node_names.pop_back();
+    ctx.nodes.resize(n - 1);
     return SWMM_OK;
 }
 

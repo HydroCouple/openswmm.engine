@@ -1571,12 +1571,10 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         // The DW solver's per-node surface-area buffer is threaded through so
         // (a) the pump limiter can use the actual value (matching legacy
         //     Xnode[j].newSurfArea) instead of the MIN_SURFAREA fallback, and
-        // (b) computeWeirFlows can scatter its per-weir surfArea into the
-        //     same buffer (matching legacy findNonConduitSurfArea) so that
-        //     weir-fed junctions don't get an undersized denominator in
-        //     setNodeDepth. Previously the callback below handled this
-        //     scatter for orifices only and zeroed weirs — a likely source
-        //     of the continuity error at REG_WWF_17_OF3 and similar nodes.
+        // (b) computeOrificeFlows / computeWeirFlows scatter their per-
+        //     structure surfArea into the same buffer (matching legacy
+        //     findNonConduitSurfArea) so weir/orifice-fed junctions don't
+        //     get an undersized denominator in setNodeDepth.
         hydstruct_.computeAllFlows(ctx, dt, dw.nodeNewSurfAreaDataMut());
 
         // Apply under-relaxation and scatter to nodes
@@ -1627,34 +1625,11 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
             dw.nodeSumDqdh(n1) += dqdh;
             if (!is_type4_pump) dw.nodeSumDqdh(n2) += dqdh;
 
-<<<<<<< HEAD
-            // Non-conduit surface area (matching legacy findNonConduitSurfArea)
-            // Orifices: surfArea = equivalent_length * width_at_depth / 2
-            // Weirs/outlets: 0 (SWMM4 compatibility)
-            double sa = 0.0;
-            if (links.type[uj] == LinkType::ORIFICE) {
-                // Legacy: surfArea = xsect_getAofY(xsect, yFull*setting) for BOTTOM
-                //         or width*length for SIDE. Approximate:
-                sa = links.xsect_a_full[uj] * links.setting[uj];
-            }
-            double sa1 = sa / 2.0, sa2 = sa / 2.0;
-            if (ctx.nodes.type[un1] == NodeType::STORAGE) {
-                double As1 = node::getSurfArea(ctx.nodes, n1, ctx.nodes.depth[un1], &ctx.tables);
-                if (As1 > constants::MIN_SURFAREA) sa1 = 0.0;
-            }
-            if (ctx.nodes.type[un2] == NodeType::STORAGE) {
-                double As2 = node::getSurfArea(ctx.nodes, n2, ctx.nodes.depth[un2], &ctx.tables);
-                if (As2 > constants::MIN_SURFAREA) sa2 = 0.0;
-            }
-            dw.nodeState(n1).new_surf_area += sa1;
-            dw.nodeState(n2).new_surf_area += sa2;
-=======
             // Non-conduit surface-area contributions (orifice / weir) are
             // scattered by computeOrificeFlows / computeWeirFlows using
             // dw.nodeNewSurfAreaDataMut() directly — no more approximation
             // here. Outlets contribute zero surface area (legacy SWMM4
             // compatibility), so nothing to do for them.
->>>>>>> 1ee5ba8c (Refactoring for computational efficiency)
         }
     };
     // B3-pre. Exfiltration (storage node Green-Ampt seepage).
@@ -1880,13 +1855,34 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             bool is_on = (ctx_.links.setting[uj] > 0.0 && q > 0.0);
             bool was_on = ctx_.links.stat_pump_was_on[uj];
 
-            if (is_on != was_on) {
+            // Legacy counts start-ups only on OFF→ON transitions (stats.c:682-683);
+            // refactored previously incremented on either direction, giving a 2×
+            // inflation in reported start-up counts.
+            if (is_on && !was_on) {
                 ctx_.links.stat_pump_cycles[uj]++;
+            }
+            if (is_on != was_on) {
                 ctx_.links.stat_pump_was_on[uj] = is_on;
             }
             if (is_on) {
                 ctx_.links.stat_pump_on_time[uj] += dt_routing;
                 ctx_.links.stat_pump_volume[uj] += q * dt_routing;
+
+                // Pump energy (kWh), matching legacy link_getPower:
+                //   power_kW = |dh| * |q| / 8.814 * KWperHP ; energy += power_kW * dt/3600
+                // KWperHP = 0.7457 (conversion factor).
+                const int pn1 = ctx_.links.node1[uj];
+                const int pn2 = ctx_.links.node2[uj];
+                if (pn1 >= 0 && pn2 >= 0) {
+                    const auto un1 = static_cast<std::size_t>(pn1);
+                    const auto un2 = static_cast<std::size_t>(pn2);
+                    const double h1 = ctx_.nodes.invert_elev[un1] + ctx_.nodes.depth[un1];
+                    const double h2 = ctx_.nodes.invert_elev[un2] + ctx_.nodes.depth[un2];
+                    const double dh = std::fabs(h1 - h2);
+                    constexpr double KWperHP = 0.7457;
+                    const double power_kw = dh * q / 8.814 * KWperHP;
+                    ctx_.links.stat_pump_energy[uj] += power_kw * dt_routing / 3600.0;
+                }
             }
         }
 

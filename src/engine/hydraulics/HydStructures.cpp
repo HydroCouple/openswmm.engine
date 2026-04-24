@@ -13,6 +13,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../math/SIMD.hpp"
+#include "Node.hpp"
 #include "XSectBatch.hpp"
 #include <cmath>
 #include <algorithm>
@@ -534,8 +535,10 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
         links.flow[uj] = q * dir;
         links.dqdh[uj] = dqdh;
 
-        // Scatter orifice surface area to end nodes (half each, zero for
-        // STORAGE ends). Matches legacy findNonConduitSurfArea.
+        // Scatter orifice surface area to end nodes (half each). Matches
+        // legacy findNonConduitSurfArea: unconditionally skip STORAGE
+        // ends — the storage curve owns the surface-area computation
+        // there, and MIN_SURFAREA clamps degenerate curves downstream.
         if (node_new_surf_area != nullptr) {
             double sa_half = orifices_.surf_area[uk] * 0.5;
             if (nodes.type[un1] != NodeType::STORAGE)
@@ -723,18 +726,17 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx,
         // fallback from having to re-derive it from finite differences.
         links.dqdh[uj] = (head > FUDGE_W) ? q / (2.0 * head) : 0.0;
 
-        // Scatter weir surface area to the two end nodes (half each,
-        // zero for STORAGE ends). Matches legacy findNonConduitSurfArea:
-        //     Link[i].surfArea1 = Weir[k].surfArea / 2.0
-        //     Link[i].surfArea2 = Link[i].surfArea1
-        // — then updateNodeFlows scatters to un1, un2.
-        if (node_new_surf_area != nullptr) {
-            double sa_half = weirs_.surf_area[uk] * 0.5;
-            if (nodes.type[un1] != NodeType::STORAGE)
-                node_new_surf_area[un1] += sa_half;
-            if (nodes.type[un2] != NodeType::STORAGE)
-                node_new_surf_area[un2] += sa_half;
-        }
+        // Legacy findNonConduitSurfArea (dynwave.c:503-506) explicitly
+        // sets weir surfArea1/surfArea2 = 0 "to maintain SWMM 4 compatibility"
+        // — i.e. weirs contribute NO surface area to their end nodes.
+        // The refactored engine previously scattered `width_at_y*length_eff/2`
+        // here, which added a huge phantom term (e.g. ~2 550 ft² per end for
+        // the Rich_BC_CSO TWIN-WEIR) that biased the Picard denominator at
+        // weir-fed junctions and drove the TWIN66-0 over-surcharge. Leaving
+        // node_new_surf_area untouched restores alignment with legacy.
+        (void)node_new_surf_area;
+        (void)un1;
+        (void)un2;
     }
 }
 

@@ -1816,10 +1816,11 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 double pctUtilized = (totalSeconds > 0.0) ? on_time / totalSeconds * 100.0 : 0.0;
                 int    startUps   = ctx.links.stat_pump_cycles[uj];
                 double avgFlow    = (on_time > 0.0) ? (ctx.links.stat_pump_volume[uj] / on_time) * Qcf : 0.0;
+                double energyKwh  = ctx.links.stat_pump_energy[uj];
 
                 std::fprintf(f, "\n  %-20s %8.2f  %10d %9.2f %9.2f %9.2f %9.3f %9.2f",
                     ctx.link_names.name_of(j).c_str(),
-                    pctUtilized, startUps, 0.0, avgFlow, max_flow, vol, 0.0);
+                    pctUtilized, startUps, 0.0, avgFlow, max_flow, vol, energyKwh);
                 std::fprintf(f, " %6.1f %6.1f", 0.0, 0.0);
             }
             WRITE(f, "");

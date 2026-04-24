@@ -665,7 +665,7 @@ TEST_F(AASkipFlagTest, ExtranSurchargedSkips) {
     ctx.nodes.lat_flow[0] = 100.0;  // strong inflow to maintain surcharge
 
     // Pre-set is_surcharged so first iteration's skip flag is computed
-    solver.nodeState(0).is_surcharged = true;
+    solver.nodeSurchargedFlag(0) = 1;
 
     ctx.nodes.depth[1] = 0.5;  // below crown
     ctx.nodes.old_depth[1] = 0.5;

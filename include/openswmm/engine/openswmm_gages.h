@@ -66,14 +66,15 @@ SWMM_ENGINE_API int swmm_gage_index(SWMM_Engine engine, const char* id);
 SWMM_ENGINE_API const char* swmm_gage_id(SWMM_Engine engine, int idx);
 
 /* =========================================================================
- * Creation (BUILDING state only)
+ * Creation (BUILDING or OPENED — "editable" states)
  * ========================================================================= */
 
 /**
  * @brief Add a new rain gage to the model.
- * @param engine  Engine handle (SWMM_STATE_BUILDING).
+ * @param engine  Engine handle (SWMM_STATE_BUILDING or SWMM_STATE_OPENED).
  * @param id      Unique null-terminated identifier for the new gage.
- * @returns SWMM_OK on success, or an error code.
+ * @returns SWMM_OK on success, SWMM_ERR_LIFECYCLE if not in an editable
+ *          state, or another error code.
  */
 SWMM_ENGINE_API int swmm_gage_add(SWMM_Engine engine, const char* id);
 

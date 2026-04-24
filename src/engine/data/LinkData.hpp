@@ -556,6 +556,13 @@ struct LinkData {
     /** @brief Total volume pumped (ft³). */
     std::vector<double>     stat_pump_volume;
 
+    /**
+     * @brief Total pump energy consumed (kWh).
+     * @see Legacy PumpStats[].energy, computed as link_getPower(j) * dt / 3600
+     *      where link_getPower = |dh| * |q| / 8.814 * KWperHP.
+     */
+    std::vector<double>     stat_pump_energy;
+
     /** @brief Previous pump state for cycle detection (true = on). */
     std::vector<bool>       stat_pump_was_on;
 
@@ -681,6 +688,7 @@ struct LinkData {
         stat_pump_cycles.assign(un, 0);
         stat_pump_on_time.assign(un, 0.0);
         stat_pump_volume.assign(un, 0.0);
+        stat_pump_energy.assign(un, 0.0);
         stat_pump_was_on.assign(un, false);
         stat_flow_turns.assign(un, 0L);
         stat_flow_turn_sign.assign(un, 0);
@@ -729,7 +737,8 @@ struct LinkData {
         g(stat_time_full_upstream, 0.0); g(stat_time_full_dnstream, 0.0);
         g(stat_time_full_both, 0.0); g(stat_time_capacity_limited, 0.0);
         g(stat_pump_cycles, 0); g(stat_pump_on_time, 0.0);
-        g(stat_pump_volume, 0.0); g(stat_pump_was_on, false);
+        g(stat_pump_volume, 0.0); g(stat_pump_energy, 0.0);
+        g(stat_pump_was_on, false);
         g(stat_flow_turns, 0L); g(stat_flow_turn_sign, 0);
         g(stat_time_courant_critical, 0.0);
         g(stat_norm_ltd, 0L); g(stat_inlet_ctrl, 0L);
@@ -858,6 +867,7 @@ struct LinkData {
         stat_pump_cycles.shrink_to_fit();
         stat_pump_on_time.shrink_to_fit();
         stat_pump_volume.shrink_to_fit();
+        stat_pump_energy.shrink_to_fit();
         stat_pump_was_on.shrink_to_fit();
         stat_total_load.shrink_to_fit();
     }

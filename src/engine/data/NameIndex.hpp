@@ -125,6 +125,20 @@ public:
         names_.clear();
     }
 
+    /**
+     * @brief Pop the tail entry — the name added most recently.
+     * @details Used by the C ABI's `*_pop_last` family to undo a just-added
+     *          object without requiring the full renumbering that a
+     *          general-purpose `remove_at(idx)` would need. No-op when
+     *          empty.
+     */
+    void pop_back() noexcept {
+        if (names_.empty()) return;
+        const std::string tail = names_.back();
+        map_.erase(tail);
+        names_.pop_back();
+    }
+
     // -----------------------------------------------------------------------
     // Iteration
     // -----------------------------------------------------------------------

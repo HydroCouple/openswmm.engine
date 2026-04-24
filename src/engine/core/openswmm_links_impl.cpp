@@ -43,7 +43,7 @@ SWMM_ENGINE_API const char* swmm_link_id(SWMM_Engine engine, int idx) {
 }
 
 // ============================================================================
-// Creation (BUILDING state only)
+// Creation (BUILDING or OPENED — "editable" states)
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_link_add(SWMM_Engine engine, const char* id, int type) {
@@ -51,8 +51,7 @@ SWMM_ENGINE_API int swmm_link_add(SWMM_Engine engine, const char* id, int type) 
     if (!id) return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING)
-        return SWMM_ERR_LIFECYCLE;
+    CHECK_EDITABLE(ctx);
 
     if (ctx.link_names.find(id) >= 0)
         return SWMM_ERR_BADPARAM;
@@ -62,6 +61,25 @@ SWMM_ENGINE_API int swmm_link_add(SWMM_Engine engine, const char* id, int type) 
     ctx.links.resize(n);
     ctx.links.type[static_cast<std::size_t>(idx)] = static_cast<openswmm::LinkType>(type);
 
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_pop_last(SWMM_Engine engine, const char* id) {
+    CHECK_HANDLE(engine);
+    if (!id) return SWMM_ERR_BADPARAM;
+
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+
+    const int n = ctx.link_names.size();
+    if (n <= 0) return SWMM_ERR_BADINDEX;
+
+    const int tail = n - 1;
+    if (ctx.link_names.name_of(tail) != id)
+        return SWMM_ERR_BADINDEX;
+
+    ctx.link_names.pop_back();
+    ctx.links.resize(n - 1);
     return SWMM_OK;
 }
 
