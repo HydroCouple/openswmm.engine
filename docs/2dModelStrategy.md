@@ -26,6 +26,7 @@ The 2D model is specified via optional sections in the `.inp` file. All section 
 
 | Section | Purpose |
 |---------|---------|
+| `[2D_MESH_FILE]` | *(optional)* Reference an external file containing 2D mesh and configuration sections |
 | `[2D_OPTIONS]` | Solver options, tolerances, time-stepping parameters |
 | `[2D_VERTICES]` | Mesh vertex coordinates |
 | `[2D_TRIANGLES]` | Triangle connectivity and surface roughness |
@@ -35,7 +36,75 @@ The 2D model is specified via optional sections in the `.inp` file. All section 
 | `[2D_INITIAL_CONDITIONS]` | *(future)* Per-cell initial water depth |
 | `[2D_INFILTRATION]` | *(future)* Per-cell or per-zone infiltration params |
 
-### 1.2 `[2D_OPTIONS]`
+### 1.2 `[2D_MESH_FILE]`
+
+An optional section that redirects the engine to read all 2D mesh and configuration sections from a separate file instead of (or in addition to) the main `.inp`.
+
+```
+[2D_MESH_FILE]
+FILE <path>
+```
+
+| Token | Type | Description |
+|-------|------|-------------|
+| `FILE` | keyword | Case-insensitive keyword |
+| `<path>` | string | Absolute path, or path relative to the directory of the parent `.inp` file |
+
+**Rules:**
+
+- Only one `FILE` line is read; any additional lines in the section are ignored.
+- If `[2D_MESH_FILE]` is absent, mesh sections are read inline from the main `.inp` (existing behaviour, unchanged).
+- The external file may contain any combination of `[2D_OPTIONS]`, `[2D_VERTICES]`, `[2D_TRIANGLES]`, `[2D_VERTEX_NODE_MAP]`, and `[2D_TRIANGLE_NODE_MAP]`.
+- If `[2D_OPTIONS]` appears in both the main `.inp` and the external file, the external file values are applied **after** the main file values (external file wins).
+- The external file is parsed with the same section parser as the main file. `[2D_MESH_FILE]` is **not** registered in the sub-parser — recursive references are not supported.
+- A missing or unreadable external file is a fatal parse error.
+
+**Example — relative path:**
+
+```
+[2D_MESH_FILE]
+FILE meshes/city_basin.2dm
+```
+
+**Example — absolute path:**
+
+```
+[2D_MESH_FILE]
+FILE /data/shared_meshes/city_basin.2dm
+```
+
+**Typical external file layout:**
+
+```
+;; OpenSWMM 2D Mesh File — city_basin.2dm
+
+[2D_OPTIONS]
+MAX_TIMESTEP    10.0
+DRY_DEPTH       0.001
+REPORT_2D       YES
+
+[2D_VERTICES]
+;;  X        Y        Z       TAG
+    0.0      0.0      10.5    V0
+    10.0     0.0      10.3    V1
+    5.0      8.66     10.1    V2
+
+[2D_TRIANGLES]
+;;  V1  V2  V3  Manning_n  TAG
+    0   1   2   0.030      T0
+
+[2D_VERTEX_NODE_MAP]
+;;  VERTEX  NODE  [CD]   [AREA]
+    V0      J1    0.65
+
+[2D_TRIANGLE_NODE_MAP]
+;;  TRIANGLE  NODE  [CD]   [AREA]
+    T0        ST1   0.60
+```
+
+---
+
+### 1.3 `[2D_OPTIONS]`
 
 ```
 ;; Solver and timestepping options for the 2D surface routing module
@@ -54,7 +123,7 @@ COUPLING_INTERVAL         0          ;; 0 = every SWMM routing step (default)
 REPORT_2D                 YES        ;; Write 2D results to output
 ```
 
-### 1.3 `[2D_VERTICES]`
+### 1.4 `[2D_VERTICES]`
 
 Each row defines a mesh vertex. Vertices are indexed in order of appearance (0-based).
 
@@ -69,7 +138,7 @@ Each row defines a mesh vertex. Vertices are indexed in order of appearance (0-b
 - **Z** — Ground surface elevation (project length units)
 - **TAG** — Optional string tag for grouping/reference
 
-### 1.4 `[2D_TRIANGLES]`
+### 1.5 `[2D_TRIANGLES]`
 
 Each row defines a triangle by referencing three vertex indices (0-based) and a Manning's roughness coefficient.
 
@@ -83,7 +152,7 @@ Each row defines a triangle by referencing three vertex indices (0-based) and a 
 - **MANNINGS_N** — Manning's roughness coefficient (s/m^{1/3})
 - **TAG** — Optional string tag
 
-### 1.5 `[2D_VERTEX_NODE_MAP]`
+### 1.6 `[2D_VERTEX_NODE_MAP]`
 
 Maps mesh vertices to SWMM coupling nodes. Flow exchange occurs at these points via an orifice equation.
 
@@ -93,7 +162,7 @@ Maps mesh vertices to SWMM coupling nodes. Flow exchange occurs at these points 
 inlet_region              J2
 ```
 
-### 1.6 `[2D_TRIANGLE_NODE_MAP]`
+### 1.7 `[2D_TRIANGLE_NODE_MAP]`
 
 Maps triangle centroids to SWMM coupling nodes. Flow exchange is distributed over the triangle area.
 

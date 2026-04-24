@@ -25,6 +25,7 @@
 
 #include "../data/MeshData.hpp"
 #include "../data/SolverOptions2D.hpp"
+#include "../../input/SectionRegistry.hpp"
 
 #include <string>
 #include <vector>
@@ -95,10 +96,32 @@ std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens,
  * Call during input reader setup (conditional on OPENSWMM_HAS_2D).
  * The handlers will populate the mesh and options data in SimulationContext.
  *
- * @param mesh    Mesh data to populate.
- * @param options Solver options to populate.
+ * @param mesh     Mesh data to populate.
+ * @param options  Solver options to populate.
+ * @param registry Section registry to register handlers into.
  */
-void register2DSections(MeshData& mesh, SolverOptions2D& options);
+void register2DSections(MeshData& mesh,
+                        SolverOptions2D& options,
+                        input::SectionRegistry& registry);
+
+/**
+ * @brief Load 2D mesh sections from an external file.
+ *
+ * Opens the file referenced by @p mesh_file (resolved relative to
+ * @p inp_base_dir if it is a relative path) and parses any
+ * [2D_OPTIONS], [2D_VERTICES], [2D_TRIANGLES], [2D_VERTEX_NODE_MAP],
+ * and [2D_TRIANGLE_NODE_MAP] sections found in it.
+ *
+ * @param mesh         Mesh data to populate.
+ * @param opts         Solver options to populate.
+ * @param mesh_file    Path from the [2D_MESH_FILE] FILE token.
+ * @param inp_base_dir Directory of the parent .inp file (may be empty).
+ * @returns Empty string on success, or an error description on failure.
+ */
+std::string load2DMeshExternalFile(MeshData& mesh,
+                                   SolverOptions2D& opts,
+                                   const std::string& mesh_file,
+                                   const std::string& inp_base_dir);
 
 } // namespace openswmm::twoD
 

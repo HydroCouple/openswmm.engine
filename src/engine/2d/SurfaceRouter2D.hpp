@@ -121,6 +121,9 @@ public:
     /// Access mesh data (read-only).
     const MeshData& mesh() const noexcept { return mesh_; }
 
+    /// Access mesh data (mutable, for input parsing).
+    MeshData& mesh() noexcept { return mesh_; }
+
     /// Access surface state (read-only).
     const SurfaceStateData& state() const noexcept { return state_; }
 

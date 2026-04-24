@@ -145,13 +145,43 @@ else()
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
             # Enable AVX2 + FMA for SIMD acceleration (x86_64)
             target_compile_options(openswmm_engine PRIVATE -mavx2 -mfma)
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            # ARM64 (Apple Silicon / Graviton / Cortex-A): NEON is always
+            # available, but an explicit CPU target lets the compiler emit
+            # more aggressive auto-vectorised code for the inner hot loops
+            # (XSectBatch, DynamicWave momentum kernels). -mcpu=native when
+            # available, else a safe default baseline.
+            include(CheckCXXCompilerFlag)
+            check_cxx_compiler_flag("-mcpu=native" OPENSWMM_HAVE_MCPU_NATIVE)
+            if(OPENSWMM_HAVE_MCPU_NATIVE)
+                target_compile_options(openswmm_engine PRIVATE -mcpu=native)
+                message(STATUS "OpenSWMM Engine: -mcpu=native enabled for arm64")
+            endif()
         endif()
-        # ARM64: NEON always available, no flag needed
     elseif(MSVC)
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|x86")
             target_compile_options(openswmm_engine PRIVATE /arch:AVX2)
         endif()
         # MSVC ARM64: NEON always available, no flag needed
+    endif()
+endif()
+
+# ---- Link-time optimization (IPO/LTO) ----
+# Enables cross-translation-unit inlining and dead-code elimination. Critical
+# for performance when hot-path functions (fastmath::pow4_3, SIMD helpers,
+# per-conduit dispatch) cross TU boundaries. Guarded by compiler support check
+# to avoid failures on toolchains that lack bitcode linkers.
+if(NOT DEFINED OPENSWMM_ENABLE_LTO)
+    set(OPENSWMM_ENABLE_LTO ON CACHE BOOL "Enable interprocedural / link-time optimization for Release builds")
+endif()
+if(OPENSWMM_ENABLE_LTO AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT OPENSWMM_IPO_SUPPORTED OUTPUT OPENSWMM_IPO_ERROR)
+    if(OPENSWMM_IPO_SUPPORTED)
+        set_property(TARGET openswmm_engine PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        message(STATUS "OpenSWMM Engine: IPO/LTO enabled")
+    else()
+        message(STATUS "OpenSWMM Engine: IPO/LTO not supported by toolchain (${OPENSWMM_IPO_ERROR}); skipping")
     endif()
 endif()
 

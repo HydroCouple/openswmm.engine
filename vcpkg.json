@@ -18,6 +18,9 @@
         },
         {
             "name": "benchmark"
+        },
+        {
+            "name": "sundials"
         }
     ],
     "features": {

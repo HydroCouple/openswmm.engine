@@ -8,9 +8,14 @@
 
 #include "SectionHandlers2D.hpp"
 
+#include "../../input/InputReader.hpp"
+#include "../../input/Tokenizer.hpp"
+#include "../../core/SimulationContext.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <sstream>
 
 namespace openswmm::twoD {
@@ -253,6 +258,134 @@ std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens,
         if (ok) mesh.tri_coupling_area[tidx] = area;
     }
 
+    return {};
+}
+
+
+// ============================================================================
+// Helper: build a section-level lambda that tokenizes each line and calls
+// a line-oriented parser, reporting errors via the SimulationContext.
+// ============================================================================
+
+namespace {
+
+using LineParser = std::function<std::string(const std::vector<std::string>&)>;
+
+input::SectionHandler makeSectionHandler(LineParser line_parser) {
+    return [lp = std::move(line_parser)](
+        openswmm::SimulationContext& ctx,
+        const std::vector<std::string>& lines)
+    {
+        for (const auto& raw : lines) {
+            auto tokens = openswmm::input::Tokenizer::tokenize(raw);
+            if (tokens.empty()) continue;
+            std::string err = lp(tokens);
+            if (!err.empty()) {
+                ctx.error_code    = 1;
+                ctx.error_message = "[2D] " + err + " — line: " + raw;
+                return;
+            }
+        }
+    };
+}
+
+} // anonymous namespace
+
+
+// ============================================================================
+// register2DSections
+// ============================================================================
+
+void register2DSections(MeshData& mesh,
+                        SolverOptions2D& options,
+                        input::SectionRegistry& registry)
+{
+    registry.register_custom("2D_OPTIONS",
+        makeSectionHandler([&options](const std::vector<std::string>& tokens) {
+            return parse2DOptionsLine(tokens, options);
+        }));
+
+    registry.register_custom("2D_VERTICES",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DVertexLine(tokens, mesh);
+        }));
+
+    registry.register_custom("2D_TRIANGLES",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DTriangleLine(tokens, mesh);
+        }));
+
+    registry.register_custom("2D_VERTEX_NODE_MAP",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DVertexNodeMapLine(tokens, mesh);
+        }));
+
+    registry.register_custom("2D_TRIANGLE_NODE_MAP",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DTriangleNodeMapLine(tokens, mesh);
+        }));
+
+    // [2D_MESH_FILE] — capture only the first FILE token; mesh is loaded
+    // after the main .inp is fully parsed (see SWMMEngine::open).
+    registry.register_custom("2D_MESH_FILE",
+        [&options](openswmm::SimulationContext& /*ctx*/,
+                   const std::vector<std::string>& lines)
+        {
+            for (const auto& raw : lines) {
+                auto tokens = openswmm::input::Tokenizer::tokenize(raw);
+                if (tokens.size() >= 2 && iequals(tokens[0], "FILE")) {
+                    options.mesh_file = tokens[1];
+                    return; // only first FILE line
+                }
+            }
+        });
+}
+
+
+// ============================================================================
+// load2DMeshExternalFile
+// ============================================================================
+
+std::string load2DMeshExternalFile(MeshData& mesh,
+                                   SolverOptions2D& opts,
+                                   const std::string& mesh_file,
+                                   const std::string& inp_base_dir)
+{
+    namespace fs = std::filesystem;
+
+    // Resolve path
+    fs::path p(mesh_file);
+    if (p.is_relative() && !inp_base_dir.empty())
+        p = fs::path(inp_base_dir) / p;
+
+    // Build a minimal registry (no 2D_MESH_FILE — prevents recursion)
+    openswmm::input::SectionRegistry mini;
+    mini.register_custom("2D_OPTIONS",
+        makeSectionHandler([&opts](const std::vector<std::string>& tokens) {
+            return parse2DOptionsLine(tokens, opts);
+        }));
+    mini.register_custom("2D_VERTICES",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DVertexLine(tokens, mesh);
+        }));
+    mini.register_custom("2D_TRIANGLES",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DTriangleLine(tokens, mesh);
+        }));
+    mini.register_custom("2D_VERTEX_NODE_MAP",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DVertexNodeMapLine(tokens, mesh);
+        }));
+    mini.register_custom("2D_TRIANGLE_NODE_MAP",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DTriangleNodeMapLine(tokens, mesh);
+        }));
+
+    openswmm::input::InputReader reader(mini);
+    openswmm::SimulationContext  dummy;
+    if (!reader.read(p.string(), dummy)) {
+        return "2D_MESH_FILE: error reading '" + p.string() + "': " + dummy.error_message;
+    }
     return {};
 }
 

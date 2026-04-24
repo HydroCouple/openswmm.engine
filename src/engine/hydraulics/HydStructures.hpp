@@ -72,7 +72,10 @@ struct OrificeGroup {
     std::vector<double> c_orifice;     ///< Cd * sqrt(2g) * Area
     std::vector<double> c_weir;        ///< Cd * L * sqrt(2g) for partial fill
     std::vector<double> h_crit;        ///< Transition depth
-    std::vector<bool>   has_flap;      ///< Flap gate
+    std::vector<uint8_t> has_flap;     ///< Flap gate (uint8_t, not bool: avoids
+                                       ///< vector<bool> bit-packing overhead in
+                                       ///< per-iteration hot loops and enables
+                                       ///< parallel-for writes without atomics).
     /// Most-recently-computed surface area (ft²) for scatter into node
     /// new_surf_area (matches legacy Orifice[k].surfArea).
     std::vector<double> surf_area;
@@ -92,7 +95,7 @@ struct WeirGroup {
     std::vector<double> end_con;       ///< End contraction factor
     std::vector<double> slope;         ///< V-notch slope or trap slope
     std::vector<int>    cd_curve;      ///< Optional Cd(head) curve index
-    std::vector<bool>   has_flap;
+    std::vector<uint8_t> has_flap;     ///< See comment on OrificeGroup::has_flap.
     /// Most-recently-computed surface area (ft²), populated by
     /// computeWeirFlows and scattered to node surface-area accumulators
     /// by the non_conduit_fn callback. Matches legacy Weir[k].surfArea.

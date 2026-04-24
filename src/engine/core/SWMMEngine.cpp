@@ -28,6 +28,11 @@
 #include "../plugins/DefaultOutputPlugin.hpp"
 #include "../plugins/DefaultReportPlugin.hpp"
 
+#ifdef OPENSWMM_HAS_2D
+#include "../2d/input/SectionHandlers2D.hpp"
+#include <filesystem>
+#endif
+
 #include <cstring>
 #include <cstdio>
 #include <functional>
@@ -114,9 +119,39 @@ int SWMMEngine::open(const char* inp_path,
     }
 
     auto* input_plugin = plugins_.input_plugins().front();
+
+#ifdef OPENSWMM_HAS_2D
+    // Register 2D section handlers before reading so the parser can populate
+    // surface_router_ mesh and options directly.
+    if (auto* dip = dynamic_cast<DefaultInputPlugin*>(input_plugin)) {
+        twoD::register2DSections(surface_router_.mesh(),
+                                 surface_router_.options(),
+                                 dip->registry());
+    }
+#endif
+
     if (input_plugin->read(inp_path ? inp_path : "", ctx_) != 0) {
         return ctx_.error_code != 0 ? ctx_.error_code : SWMM_ERR_PARSE;
     }
+
+#ifdef OPENSWMM_HAS_2D
+    // If [2D_MESH_FILE] was present, load the external mesh file now.
+    {
+        const std::string& mf = surface_router_.options().mesh_file;
+        if (!mf.empty()) {
+            std::string base_dir;
+            if (inp_path && inp_path[0] != '\0')
+                base_dir = std::filesystem::path(inp_path).parent_path().string();
+            std::string err = twoD::load2DMeshExternalFile(
+                surface_router_.mesh(), surface_router_.options(), mf, base_dir);
+            if (!err.empty()) {
+                ctx_.error_code    = SWMM_ERR_PARSE;
+                ctx_.error_message = err;
+                return SWMM_ERR_PARSE;
+            }
+        }
+    }
+#endif
 
     // Warn about unknown/skipped sections
     for (const auto& tag : input_plugin->skipped_sections()) {

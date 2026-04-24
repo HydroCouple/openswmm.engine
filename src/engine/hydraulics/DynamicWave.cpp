@@ -394,8 +394,6 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
 
     // Momentum category arrays
     category_.resize(ul, MomentumCategory::SKIP_DRY);
-    for (auto& ci_list : cat_indices_)
-        ci_list.reserve(static_cast<std::size_t>(n_conduits_));
 
     // Anderson acceleration state arrays (allocated regardless; only used when enabled)
     aa_y_prev_.resize(un, 0.0);
@@ -552,6 +550,8 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
 
 void DWSolver::initNodeStates(SimulationContext& ctx) {
     auto& nodes = ctx.nodes;
+    const int unit_sys = ucf::getUnitSystem(
+        static_cast<int>(ctx.options.flow_units));
     for (int i = 0; i < n_nodes_; ++i) {
         auto ui = static_cast<std::size_t>(i);
         xnode_.converged[ui] = 0;
@@ -566,8 +566,8 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
         // destabilised the Rich_BC_CSO DW iterations (continuity drifted
         // from -2.5% to -14.4% — the phantom 50 ft² baseline is acting
         // as an extra damper at low-surface-area junctions). Kept.
-        xnode_.new_surf_area[ui] = node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables,
-            ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)));
+        xnode_.new_surf_area[ui] = node::getSurfArea(nodes, i, nodes.depth[ui],
+            &ctx.tables, unit_sys);
 
         // Reset node flows (matching legacy initNodeStates)
         nodes.inflow[ui] = 0.0;
@@ -635,6 +635,14 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
+#if defined(SWMM_USE_OPENMP)
+    // Threshold for per-conduit loops: only STEP C's heavy body is worth
+    // parallelising. STEP A/B/E are short (<10 ops per conduit) — libomp
+    // fork/sync overhead on Apple Silicon dominates any speedup; a prior
+    // attempt regressed ~15% (444 s → 384 s baseline).
+    const int nt_cg = (n_conduits_ >= 8 * num_threads_) ? num_threads_ : 1;
+#endif
+
     // ---- STEP A: Compute raw depths and heads per conduit link ----
     for (int ci = 0; ci < n_conduits_; ++ci) {
         int j = conduit_idx_[static_cast<std::size_t>(ci)];
@@ -696,7 +704,13 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     // ---- STEP C: Flow classification + surface area (conduits only) ----
     // Matches legacy dwflow.c findSurfArea + getFlowClass.
     // Only links with offsets can trigger non-SUBCRITICAL classification,
-    // so the expensive getYnorm/getYcrit are rarely needed.
+    // so the expensive getYnorm/getYcrit are rarely needed. Per-conduit
+    // writes (surf_area1/2, flow_class, fasnh_, depth_mid_, h1_/h2_,
+    // width_mid_) are single-producer so parallel-safe.
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for num_threads(nt_cg) if(nt_cg > 1) schedule(static) \
+    default(none) shared(ctx, links, nodes)
+#endif
     for (int ci = 0; ci < n_conduits_; ++ci) {
         int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
@@ -706,7 +720,18 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         auto un1 = static_cast<std::size_t>(n1);
         auto un2 = static_cast<std::size_t>(n2);
 
-        double yf   = links.xsect_y_full[uj];
+        // Cache per-conduit invariants once. These fields are hot-looked
+        // references across the classification branches AND the subsequent
+        // surface-area switch; the compiler cannot hoist them because it
+        // cannot prove the SoA arrays don't alias the writes we issue below
+        // (DWSOLVER_DATA_OPTIMIZATION item 3).
+        const double yf      = links.xsect_y_full[uj];
+        const double z1_off  = links.offset1[uj];
+        const double z2_off  = links.offset2[uj];
+        const double beta_j  = links.beta[uj];
+        const double qmax_j  = links.q_max[uj];
+        const double inv1    = nodes.invert_elev[un1];
+        const double inv2    = nodes.invert_elev[un2];
         double y1   = depth1_[uj];
         double y2   = depth2_[uj];
         double h1   = h1_[uj];
@@ -719,45 +744,52 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         double fasnh = 1.0;
 
         // Both ends full → always SUBCRITICAL (skip expensive classification)
-        // Cache yN/yC to avoid recomputation in the surface area switch below
+        // Cache yN/yC to avoid recomputation in the surface area switch below.
+        // Also cache the per-link XSectParams on its first construction so the
+        // UP_CRITICAL / DN_CRITICAL / UP_DRY / DN_DRY switch bodies reuse it
+        // without a second buildXSP gather (item 3 tail).
         double cached_yN = 0.0, cached_yC = 0.0;
-        bool has_cached_ync = false;
+        (void)cached_yN;
+        XSectParams cached_xs;
+        bool xs_built = false;
+        auto xs_ref = [&]() -> XSectParams& {
+            if (!xs_built) { cached_xs = buildXSP(links, uj); xs_built = true; }
+            return cached_xs;
+        };
 
         if (y1 >= yf && y2 >= yf) {
             fc = FlowClass::SUBCRITICAL;
         } else {
             // ---- getFlowClass logic (legacy dwflow.c lines 294-409) ----
-            double z1_off = links.offset1[uj];
-            double z2_off = links.offset2[uj];
-            // Adjust offsets for outfall nodes
+            double z1_off_eff = z1_off;
+            double z2_off_eff = z2_off;
+            // Adjust offsets for outfall nodes (legacy dwflow.c:324-325).
             if (nodes.type[un1] == NodeType::OUTFALL)
-                z1_off = std::max(0.0, z1_off - nodes.depth[un1]);
+                z1_off_eff = std::max(0.0, z1_off_eff - nodes.depth[un1]);
             if (nodes.type[un2] == NodeType::OUTFALL)
-                z2_off = std::max(0.0, z2_off - nodes.depth[un2]);
+                z2_off_eff = std::max(0.0, z2_off_eff - nodes.depth[un2]);
 
-            double qLast = std::fabs(links.flow[uj]);
-            int barrels = std::max(links.barrels[uj], 1);
-            double q = qLast / static_cast<double>(barrels);
+            const double qLast = std::fabs(links.flow[uj]);
+            const int barrels = std::max(links.barrels[uj], 1);
+            const double q = qLast / static_cast<double>(barrels);
 
             if (y1 > FUDGE && y2 > FUDGE) {
                 // Both ends wet
                 if (links.flow[uj] < 0.0) {
                     // Reverse flow: check upstream end
-                    if (z1_off > 0.0) {
-                        XSectParams xs = buildXSP(links, uj);
-                        cached_yN = computeYnorm(xs, links.beta[uj], links.q_max[uj], q);
+                    if (z1_off_eff > 0.0) {
+                        XSectParams& xs = xs_ref();
+                        cached_yN = computeYnorm(xs, beta_j, qmax_j, q);
                         cached_yC = xsect::getYcrit(xs, q);
-                        has_cached_ync = true;
                         double ycMin = std::min(cached_yN, cached_yC);
                         if (y1 < ycMin) fc = FlowClass::UP_CRITICAL;
                     }
                 } else {
                     // Normal flow: check downstream end
-                    if (z2_off > 0.0) {
-                        XSectParams xs = buildXSP(links, uj);
-                        cached_yN = computeYnorm(xs, links.beta[uj], links.q_max[uj], q);
+                    if (z2_off_eff > 0.0) {
+                        XSectParams& xs = xs_ref();
+                        cached_yN = computeYnorm(xs, beta_j, qmax_j, q);
                         cached_yC = xsect::getYcrit(xs, q);
-                        has_cached_ync = true;
                         double ycMin = std::min(cached_yN, cached_yC);
                         double ycMax = std::max(cached_yN, cached_yC);
                         if (y2 < ycMin) {
@@ -773,26 +805,24 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 fc = FlowClass::DRY;
             } else if (y2 > FUDGE) {
                 // Upstream dry, downstream wet
-                double z1_elev = nodes.invert_elev[un1] + links.offset1[uj];
+                const double z1_elev = inv1 + z1_off;
                 if (h2 < z1_elev) {
                     fc = FlowClass::UP_DRY;
-                } else if (z1_off > 0.0) {
-                    XSectParams xs = buildXSP(links, uj);
-                    cached_yN = computeYnorm(xs, links.beta[uj], links.q_max[uj], q);
+                } else if (z1_off_eff > 0.0) {
+                    XSectParams& xs = xs_ref();
+                    cached_yN = computeYnorm(xs, beta_j, qmax_j, q);
                     cached_yC = xsect::getYcrit(xs, q);
-                    has_cached_ync = true;
                     fc = FlowClass::UP_CRITICAL;
                 }
             } else {
                 // Upstream wet, downstream dry
-                double z2_elev = nodes.invert_elev[un2] + links.offset2[uj];
+                const double z2_elev = inv2 + z2_off;
                 if (h1 < z2_elev) {
                     fc = FlowClass::DN_DRY;
-                } else if (z2_off > 0.0) {
-                    XSectParams xs = buildXSP(links, uj);
-                    cached_yN = computeYnorm(xs, links.beta[uj], links.q_max[uj], q);
+                } else if (z2_off_eff > 0.0) {
+                    XSectParams& xs = xs_ref();
+                    cached_yN = computeYnorm(xs, beta_j, qmax_j, q);
                     cached_yC = xsect::getYcrit(xs, q);
-                    has_cached_ync = true;
                     fc = FlowClass::DN_CRITICAL;
                 }
             }
@@ -824,11 +854,11 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 y1 = cached_yC;
                 if (cached_yN < cached_yC) y1 = cached_yN;
                 y1 = std::max(y1, FUDGE);
-                double z1_elev = nodes.invert_elev[un1] + links.offset1[uj];
+                const double z1_elev = inv1 + z1_off;
                 h1 = z1_elev + y1;
                 double yMid = std::max(0.5 * (y1 + y2), FUDGE);
                 double w2 = width2_[uj];
-                XSectParams xs = buildXSP(links, uj);
+                XSectParams& xs = xs_ref();
                 double wM = xsect::getWofY(xs, yMid);
                 surfArea2 = (wM + w2) * length * 0.5;
                 depth1_[uj] = y1;
@@ -842,11 +872,11 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 y2 = cached_yC;
                 if (cached_yN < cached_yC) y2 = cached_yN;
                 y2 = std::max(y2, FUDGE);
-                double z2_elev = nodes.invert_elev[un2] + links.offset2[uj];
+                const double z2_elev = inv2 + z2_off;
                 h2 = z2_elev + y2;
                 double yMid = std::max(0.5 * (y1 + y2), FUDGE);
                 double w1 = width1_[uj];
-                XSectParams xs = buildXSP(links, uj);
+                XSectParams& xs = xs_ref();
                 double wM = xsect::getWofY(xs, yMid);
                 surfArea1 = (w1 + wM) * length * 0.5;
                 depth2_[uj] = y2;
@@ -862,12 +892,12 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 double w2 = width2_[uj];
                 double wM = width_mid_[uj];  // use current width for surface area
                 surfArea2 = (wM + w2) * length / 4.0;
-                if (links.offset1[uj] <= 0.0)
+                if (z1_off <= 0.0)
                     surfArea1 = (w1 + wM) * length / 4.0;
                 depth1_[uj] = FUDGE;
                 depth_mid_[uj] = yMid;
                 // Patch width_mid for modified depth (used by momentum solver)
-                { XSectParams xs = buildXSP(links, uj);
+                { XSectParams& xs = xs_ref();
                   width_mid_[uj] = xsect::getWofY(xs, yMid); }
                 break;
             }
@@ -878,12 +908,12 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 double w2 = width2_[uj];
                 double wM = width_mid_[uj];  // use current width for surface area
                 surfArea1 = (wM + w1) * length / 4.0;
-                if (links.offset2[uj] <= 0.0)
+                if (z2_off <= 0.0)
                     surfArea2 = (w2 + wM) * length / 4.0;
                 depth2_[uj] = FUDGE;
                 depth_mid_[uj] = yMid;
                 // Patch width_mid for modified depth (used by momentum solver)
-                { XSectParams xs = buildXSP(links, uj);
+                { XSectParams& xs = xs_ref();
                   width_mid_[uj] = xsect::getWofY(xs, yMid); }
                 break;
             }
@@ -934,7 +964,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         // Dynamic Preissmann Slot: area-based transient storage (Sharior et al. 2023)
         applyDPSGeometry(ctx);
     } else {
-        // Static slot (Sjoberg formula) or EXTRAN (no slot)
+        // Static slot (Sjoberg formula) or EXTRAN (no slot).
         for (int ci = 0; ci < n_conduits_; ++ci) {
             int j = conduit_idx_[static_cast<std::size_t>(ci)];
             auto uj = static_cast<std::size_t>(j);
@@ -977,7 +1007,7 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
     auto& links = ctx.links;
 
     // Pre-init conduit flows: copy current flow, zero dqdh
-    // (non-conduit flows are handled by the non_conduit_fn callback)
+    // (non-conduit flows are handled by the non_conduit_fn callback).
     for (int ci = 0; ci < n_conduits_; ++ci) {
         int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
@@ -985,8 +1015,7 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
         dqdh_[uj] = 0.0;
     }
 
-    // Classify each conduit into a momentum category (serial — writes
-    // into the shared category_[] array).
+    // Classify each conduit into a momentum category.
     classifyMomentumCategories(ctx);
 
     // Single parallel-for over all conduits with per-element category
@@ -1035,9 +1064,6 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
 void DWSolver::classifyMomentumCategories(SimulationContext& ctx) {
     auto& links = ctx.links;
 
-    for (auto& ci_list : cat_indices_)
-        ci_list.clear();
-
     for (int ci = 0; ci < n_conduits_; ++ci) {
         int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
@@ -1065,7 +1091,6 @@ void DWSolver::classifyMomentumCategories(SimulationContext& ctx) {
             cat = MomentumCategory::MANNING_CLOSED_FS;
         }
         category_[uj] = cat;
-        cat_indices_[static_cast<int>(cat)].push_back(j);
     }
 }
 
@@ -1705,6 +1730,12 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     auto& nodes = ctx.nodes;
     auto ui = static_cast<std::size_t>(node_idx);
 
+    // Cache `nodes.type[ui]` once at function entry (DWSOLVER_DATA_OPTIMIZATION
+    // item 6). The compiler cannot prove no aliasing between nodes.type and the
+    // subsequent writes to nodes.depth/volume/etc., so without this cache every
+    // reference below would reload from memory.
+    const NodeType ntype = nodes.type[ui];
+
     // --- Initialize ---
     double y_old = nodes.old_depth[ui];
     double y_last = nodes.depth[ui];
@@ -1735,7 +1766,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
             is_surcharged = false;
         }
         // Closed storage units that are full are in surcharge
-        else if (nodes.type[ui] == NodeType::STORAGE) {
+        else if (ntype == NodeType::STORAGE) {
             is_surcharged = (nodes.sur_depth[ui] > 0.0 &&
                              y_last > full_depth);
         }
@@ -1808,7 +1839,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         // --- Non-surcharged path: depth change based on surface area ---
         // Also used if storage node is surcharged but has no connecting links
         if (!is_surcharged ||
-            (nodes.type[ui] == NodeType::STORAGE && xnode_.sumdqdh[ui] == 0.0)) {
+            (ntype == NodeType::STORAGE && xnode_.sumdqdh[ui] == 0.0)) {
 
             double dy = dV / surf_area;
             y_new = y_old + dy;

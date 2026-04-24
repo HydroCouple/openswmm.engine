@@ -42,9 +42,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         auto& name = mesh_.vert_coupled_node_name[v];
         if (name.empty()) continue;
 
-        auto it = ctx.node_names.find(name);
-        if (it != ctx.node_names.end()) {
-            mesh_.vert_coupled_node[v] = it->second;
+        int node_idx = ctx.node_names.find(name);
+        if (node_idx >= 0) {
+            mesh_.vert_coupled_node[v] = node_idx;
         } else {
             throw std::runtime_error(
                 "2D vertex " + std::to_string(v)
@@ -56,9 +56,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         auto& name = mesh_.tri_coupled_node_name[t];
         if (name.empty()) continue;
 
-        auto it = ctx.node_names.find(name);
-        if (it != ctx.node_names.end()) {
-            mesh_.tri_coupled_node[t] = it->second;
+        int node_idx = ctx.node_names.find(name);
+        if (node_idx >= 0) {
+            mesh_.tri_coupled_node[t] = node_idx;
         } else {
             throw std::runtime_error(
                 "2D triangle " + std::to_string(t)
@@ -241,11 +241,11 @@ void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
 
     // Convert to m/s
     double rain_m_per_s;
-    if (ctx.options.unit_system == 0) {
-        // US customary: in/hr → m/s
+    if (static_cast<int>(ctx.options.flow_units) < 3) {
+        // US customary (CFS/GPM/MGD): in/hr → m/s
         rain_m_per_s = rain_rate * 0.0254 / 3600.0;
     } else {
-        // SI: mm/hr → m/s
+        // SI (CMS/LPS/MLD): mm/hr → m/s
         rain_m_per_s = rain_rate * 0.001 / 3600.0;
     }
 
