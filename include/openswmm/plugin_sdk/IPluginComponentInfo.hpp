@@ -43,22 +43,109 @@ namespace openswmm {
 class IInputPlugin;
 class IOutputPlugin;
 class IReportPlugin;
+class IStateIOPlugin;
 
 /**
  * @brief Identifies a plugin capability.
  *
  * @details Retained for use in discovery results and filtering.
  *          A single plugin may support multiple types — use the
- *          has_input() / has_output() / has_report() capability
- *          queries on IPluginComponentInfo instead of assuming
- *          a plugin has only one type.
+ *          has_input() / has_output() / has_report() / has_state_io()
+ *          capability queries on IPluginComponentInfo instead of
+ *          assuming a plugin has only one type.
  *
  * @ingroup engine_plugin_sdk
  */
 enum class PluginType {
-    INPUT,   ///< Reads model data into SimulationContext
-    OUTPUT,  ///< Writes time-series results during simulation
-    REPORT   ///< Writes summary statistics post-simulation
+    INPUT,    ///< Reads model data into SimulationContext
+    OUTPUT,   ///< Writes time-series results during simulation
+    REPORT,   ///< Writes summary statistics post-simulation
+    STATE_IO  ///< Reads / writes simulation state (hot-start)
+};
+
+/**
+ * @brief Identifies the I/O direction and category of a file filter entry.
+ *
+ * @details A single plugin may legitimately advertise multiple roles (e.g.,
+ *          GeoPackage handles INPUT_READ, OUTPUT_WRITE, and REPORT_WRITE for
+ *          the same `*.gpkg` extension). The GUI layer uses the role to
+ *          pick which filters to show in each QFileDialog (Open vs. Save,
+ *          model file vs. results file vs. hot-start, etc.).
+ *
+ * @ingroup engine_plugin_sdk
+ */
+enum class PluginRole : int {
+    INPUT_READ,    ///< Plugin reads a model input file (e.g. *.inp).
+    OUTPUT_WRITE,  ///< Plugin writes a time-series results file (e.g. *.out).
+    REPORT_WRITE,  ///< Plugin writes a summary report file (e.g. *.rpt).
+    STATE_READ,    ///< Plugin reads a hot-start / state file.
+    STATE_WRITE    ///< Plugin writes a hot-start / state file.
+};
+
+/**
+ * @brief Convert a PluginRole to a stable, human-readable string.
+ * @param role  Role enum value.
+ * @returns Static null-terminated string (never NULL).
+ * @ingroup engine_plugin_sdk
+ */
+inline const char* plugin_role_to_string(PluginRole role) noexcept {
+    switch (role) {
+        case PluginRole::INPUT_READ:    return "INPUT_READ";
+        case PluginRole::OUTPUT_WRITE:  return "OUTPUT_WRITE";
+        case PluginRole::REPORT_WRITE:  return "REPORT_WRITE";
+        case PluginRole::STATE_READ:    return "STATE_READ";
+        case PluginRole::STATE_WRITE:   return "STATE_WRITE";
+        default:                        return "UNKNOWN";
+    }
+}
+
+/**
+ * @brief A file-format filter advertised by a plugin.
+ *
+ * @details Hosts (Qt GUIs, CLI tools, Python bindings, web frontends) consume
+ *          this struct to build user-visible file pickers without hard-coding
+ *          format lists. The plugin SDK is intentionally framework-free —
+ *          Qt-style filter strings like `"SWMM Input (*.inp);;All Files (*)"`
+ *          are assembled by the host from these entries.
+ *
+ *          Each plugin returns one entry per (role, format) combination.
+ *
+ * @ingroup engine_plugin_sdk
+ */
+struct FileFilter {
+    /**
+     * @brief Human-readable format name shown to the user.
+     *
+     * @details Examples: "SWMM Input File", "SWMM Binary Output",
+     *          "OpenSWMM Hot-Start File". Hosts may translate this string
+     *          (e.g., wrap in tr()).
+     */
+    std::string description;
+
+    /**
+     * @brief Glob patterns that match files in this format.
+     *
+     * @details Examples: {"*.inp"}, {"*.tif", "*.tiff"}. Use lowercase by
+     *          convention; hosts that match case-insensitively need not
+     *          duplicate "*.INP".
+     */
+    std::vector<std::string> patterns;
+
+    /**
+     * @brief I/O role this filter applies to.
+     *
+     * @details A single plugin may emit one filter per direction (e.g.,
+     *          INPUT_READ + OUTPUT_WRITE for the same `*.gpkg`).
+     */
+    PluginRole role = PluginRole::INPUT_READ;
+
+    /**
+     * @brief Optional MIME types for hosts that need them (web, mobile).
+     *
+     * @details Empty for formats with no registered MIME type.
+     *          Examples: {"text/plain"}, {"application/x-swmm-hotstart"}.
+     */
+    std::vector<std::string> mime_types;
 };
 
 /**
@@ -178,6 +265,34 @@ public:
      */
     virtual bool has_report() const noexcept { return false; }
 
+    /**
+     * @brief True if this plugin can create an IStateIOPlugin.
+     * @details The PluginFactory checks this before calling create_state_io_plugin().
+     */
+    virtual bool has_state_io() const noexcept { return false; }
+
+    // -----------------------------------------------------------------------
+    // File-filter advertisement (every plugin)
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief File-format filters this plugin handles.
+     *
+     * @details Every plugin SHOULD override this and return one FileFilter per
+     *          (role, format) pair it supports. The default empty return
+     *          preserves binary compatibility for plugins built against older
+     *          SDK headers, but PluginFactory logs a warning when a plugin
+     *          advertises a capability (e.g., has_input() == true) yet
+     *          returns no filter for the matching role.
+     *
+     *          Hosts (Qt GUIs, CLI, Python bindings) compose user-visible
+     *          file dialogs from the union of filters across all loaded
+     *          plugins, grouped by role.
+     *
+     * @returns Vector of filter entries; empty by default.
+     */
+    virtual std::vector<FileFilter> file_filters() const { return {}; }
+
     // -----------------------------------------------------------------------
     // Registration
     // -----------------------------------------------------------------------
@@ -251,6 +366,17 @@ public:
      * @returns New IReportPlugin instance, or nullptr if not supported.
      */
     virtual IReportPlugin* create_report_plugin() const { return nullptr; }
+
+    /**
+     * @brief Create a new IStateIOPlugin instance.
+     *
+     * @details The PluginFactory calls this when has_state_io() returns true.
+     *          The returned pointer is owned by the caller (PluginFactory).
+     *          The factory will call delete on it during cleanup.
+     *
+     * @returns New IStateIOPlugin instance, or nullptr if not supported.
+     */
+    virtual IStateIOPlugin* create_state_io_plugin() const { return nullptr; }
 };
 
 // ---------------------------------------------------------------------------

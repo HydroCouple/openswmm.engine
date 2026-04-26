@@ -1,0 +1,24 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Platform-specific dependencies
+if(UNIX AND NOT APPLE)
+    find_dependency(Threads)
+endif()
+
+# Include the targets file
+include("${CMAKE_CURRENT_LIST_DIR}/OPENSWMMEngineTargets.cmake")
+
+# Provide portable variables for consumers
+set_and_check(OPENSWMMEngine_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+set_and_check(OPENSWMMEngine_LIB_DIR "@PACKAGE_CMAKE_INSTALL_LIBDIR@")
+
+# Set convenience variables
+set(OPENSWMMEngine_INCLUDE_DIRS "${OPENSWMMEngine_INCLUDE_DIR}")
+set(OPENSWMMEngine_LIBRARY_DIRS "${OPENSWMMEngine_LIB_DIR}")
+set(OPENSWMMEngine_VERSION "@PROJECT_VERSION@")
+
+# Check required components
+check_required_components(OPENSWMMEngine)
+
