@@ -163,6 +163,39 @@
                 "lhs": "${hostSystemName}",
                 "rhs": "Darwin"
             }
+        },
+        {
+            "name": "Windows-tests",
+            "inherits": "Windows-debug",
+            "description": "Windows debug build with unit + regression tests enabled",
+            "binaryDir": "${sourceDir}/build/windows-tests",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_FEATURES": "tests",
+                "OPENSWMM_BUILD_UNIT_TESTS": "ON",
+                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON"
+            }
+        },
+        {
+            "name": "Linux-tests",
+            "inherits": "Linux-debug",
+            "description": "Linux debug build with unit + regression tests enabled",
+            "binaryDir": "${sourceDir}/build/linux-tests",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_FEATURES": "tests",
+                "OPENSWMM_BUILD_UNIT_TESTS": "ON",
+                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON"
+            }
+        },
+        {
+            "name": "Darwin-tests",
+            "inherits": "Darwin-debug",
+            "description": "macOS debug build with unit + regression tests enabled",
+            "binaryDir": "${sourceDir}/build/darwin-tests",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_FEATURES": "tests",
+                "OPENSWMM_BUILD_UNIT_TESTS": "ON",
+                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON"
+            }
         }
     ],
     "buildPresets": [
@@ -211,6 +244,21 @@
             "name": "Darwin-debug",
             "description": "Build all targets for debugging on macOS",
             "configurePreset": "Darwin-debug"
+        },
+        {
+            "name": "Windows-tests",
+            "description": "Build unit and regression tests on Windows",
+            "configurePreset": "Windows-tests"
+        },
+        {
+            "name": "Linux-tests",
+            "description": "Build unit and regression tests on Linux",
+            "configurePreset": "Linux-tests"
+        },
+        {
+            "name": "Darwin-tests",
+            "description": "Build unit and regression tests on macOS",
+            "configurePreset": "Darwin-tests"
         }
     ]
 }
