@@ -7,7 +7,7 @@
 #
 # Target:      openswmm_legacy_engine
 # Output name: openswmm.legacy.engine
-# Aliases:     openswmm::legacy::engine  OpenSWMMCore::Solver  openswmmcore_solver
+# Aliases:     openswmm::legacy::engine
 #
 # IMPORTANT: Do NOT modify any .c or .h file in this directory.
 #            The legacy code must remain byte-for-byte identical to EPA SWMM 5.x
@@ -58,8 +58,6 @@ file(GLOB SWMM_SOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.c *.h)
 add_library(openswmm_legacy_engine SHARED ${SWMM_SOURCES})
 
 # Backwards-compatible aliases
-add_library(openswmmcore_solver          ALIAS openswmm_legacy_engine)
-add_library(OpenSWMMCore::Solver         ALIAS openswmm_legacy_engine)
 add_library(openswmm::legacy::engine     ALIAS openswmm_legacy_engine)
 
 set_target_properties(openswmm_legacy_engine
@@ -79,19 +77,20 @@ elseif(UNIX)
 endif()
 
 # Generate export header
-# NOTE: File name and macro names must match what openswmm_solver.h expects:
-#   #include "openswmmcore_solver_export.h"   → EXPORT_FILE_NAME
-#   EXPORT_OPENSWMMCORE_SOLVER_API            → EXPORT_MACRO_NAME
+# NOTE: Macro name must stay EXPORT_OPENSWMMCORE_SOLVER_API — it is used
+#       directly in the unmodified legacy C source files (swmm5.c, swmm5_stats.c).
+#   #include "openswmm_legacy_solver_export.h"   → EXPORT_FILE_NAME
+#   EXPORT_OPENSWMMCORE_SOLVER_API                → EXPORT_MACRO_NAME (preserved)
 include(GenerateExportHeader)
 generate_export_header(openswmm_legacy_engine
-    BASE_NAME        openswmmcore_solver
+    BASE_NAME        openswmm_legacy_solver
     EXPORT_MACRO_NAME EXPORT_OPENSWMMCORE_SOLVER_API
-    EXPORT_FILE_NAME openswmmcore_solver_export.h
+    EXPORT_FILE_NAME openswmm_legacy_solver_export.h
     STATIC_DEFINE    SHARED_EXPORTS_BUILT_AS_STATIC
 )
 
 # Copy generated export header to the canonical include location
-file(COPY ${CMAKE_CURRENT_BINARY_DIR}/openswmmcore_solver_export.h
+file(COPY ${CMAKE_CURRENT_BINARY_DIR}/openswmm_legacy_solver_export.h
     DESTINATION ${PROJECT_SOURCE_DIR}/include/openswmm/legacy/engine
 )
 
@@ -111,7 +110,7 @@ target_include_directories(openswmm_legacy_engine
 # Link dependencies
 target_link_libraries(openswmm_legacy_engine
     PUBLIC
-        openswmmcore      # INTERFACE library — exposes include/
+        openswmm_common   # INTERFACE library — exposes include/
     PRIVATE
         $<$<NOT:$<BOOL:$<C_COMPILER_ID:MSVC>>>:m>
         OpenMP::OpenMP_C
@@ -140,7 +139,7 @@ install(
 # Install library
 install(
     TARGETS     openswmm_legacy_engine
-    EXPORT      OpenSWMMCoreTargets
+    EXPORT      OpenSWMMEngineTargets
 )
 
 # Copy to build tree for testing

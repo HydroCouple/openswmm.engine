@@ -12,18 +12,36 @@
         {
             "name": "vcpkg-cmake-config",
             "host": true
-        },
-        {
-            "name": "gtest"
-        },
-        {
-            "name": "benchmark"
-        },
-        {
-            "name": "sundials"
         }
     ],
+    "default-features": [
+        "2d"
+    ],
     "features": {
+        "2d": {
+            "description": "2D surface routing module (uses SUNDIALS/CVODE)",
+            "dependencies": [
+                {
+                    "name": "sundials"
+                }
+            ]
+        },
+        "tests": {
+            "description": "Unit and regression test harness (Google Test)",
+            "dependencies": [
+                {
+                    "name": "gtest"
+                }
+            ]
+        },
+        "benchmarks": {
+            "description": "Performance benchmarks (Google Benchmark)",
+            "dependencies": [
+                {
+                    "name": "benchmark"
+                }
+            ]
+        },
         "geopackage": {
             "description": "GeoPackage I/O support (SQLite-based spatial model persistence)",
             "dependencies": [

@@ -206,6 +206,10 @@ public:
     groundwater::GWSolver&       gw_solver()       noexcept { return groundwater_; }
     const groundwater::GWSolver& gw_solver() const noexcept { return groundwater_; }
 
+    /** @brief Access the plugin factory (for C-API dispatch through plugins). */
+    PluginFactory&       plugin_factory()       noexcept { return plugins_; }
+    const PluginFactory& plugin_factory() const noexcept { return plugins_; }
+
     /** @brief Last error code (0 = no error). */
     int last_error() const noexcept { return ctx_.error_code; }
 

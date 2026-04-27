@@ -262,7 +262,16 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt,
                 double s = links.setting[uj];
                 double h = (s > 0.0) ? std::max(head / (s * s), 0.0) : 0.0;
                 if (ci >= 0 && uci < ctx.tables.tables.size()) {
-                    q = table_lookup_cursor(ctx.tables.tables[uci], h * ucf_len) * s;
+                    auto& curve = ctx.tables.tables[uci];
+                    q = table_lookup_cursor(curve, h * ucf_len) * s;
+                    // dQ/dh matching legacy pump.c PUMP3/5 lines 1606-1609:
+                    //   Link[j].dqdh = -table_getSlope(&Curve[m], head)
+                    //                  * UCF(LENGTH) / UCF(FLOW) / s
+                    // sign reversed because flow decreases with increasing head.
+                    if (s > 0.0) {
+                        double slope = table_getSlope(curve, h * ucf_len);
+                        links.dqdh[uj] = -slope * ucf_len / ucf_flow / s;
+                    }
                 }
                 break;
             }

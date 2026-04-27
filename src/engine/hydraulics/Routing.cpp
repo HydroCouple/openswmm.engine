@@ -454,7 +454,15 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
         double seep_loss = 0.0;
 
         if (depth > constants::FUDGE) {
+            // Use RAW user-input length (matching legacy
+            // `link.c::conduit_getLossRate` line 1358:
+            //   length = conduit_getLength(j);
+            // which returns `Conduit[k].length` (raw) for non-IRREGULAR
+            // conduits — NOT `Conduit[k].modLength` (lengthened).
+            // The lengthened length appears only in the momentum equation
+            // (`dwflow.c:133`), not in loss-volume accounting.
             double length = links.length[uj];
+            if (length <= 0.0) length = links.mod_length[uj];
             int batch_shape = links.xsect_batch_shape[uj];
 
             // Evaporation for open conduits only

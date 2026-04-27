@@ -47,6 +47,8 @@
 
 #include <cmath>
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <numeric>
 
 // OpenMP support — graceful degradation when not available
@@ -321,6 +323,16 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     n_links_ = n_links;
     groups_  = &groups;
 
+    // Resolve the effective MIN_SURFAREA floor: user override (from
+    // INP [OPTIONS] MIN_SURFAREA) if > 0, else the compiled default.
+    // Matches legacy dynwave.c:180-181:
+    //   if (MinSurfArea == 0.0) MinSurfArea = DEFAULT_SURFAREA;
+    //   else MinSurfArea /= UCF(LENGTH) * UCF(LENGTH);
+    // Unit conversion is already applied during input parsing.
+    min_surf_area_ = (ctx.options.min_surf_area > 0.0)
+        ? ctx.options.min_surf_area
+        : constants::MIN_SURFAREA;
+
     auto un = static_cast<std::size_t>(n_nodes);
     auto ul = static_cast<std::size_t>(n_links);
 
@@ -395,6 +407,11 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     // Momentum category arrays
     category_.resize(ul, MomentumCategory::SKIP_DRY);
 
+    // Phase A: build conduit-dense hot tile of timestep-invariant data.
+    // Sized n_conduits_ so the inner loops index by ci with sequential
+    // access — better L1 hit rate than sparse links.X[uj] reads.
+    refreshConduitTile(ctx);
+
     // Anderson acceleration state arrays (allocated regardless; only used when enabled)
     aa_y_prev_.resize(un, 0.0);
     aa_g_prev_.resize(un, 0.0);
@@ -441,6 +458,105 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
             dps_.surcharged[uci] = 0;
             dps_.t_s[uci] = 0.0;
         }
+    }
+}
+
+// ============================================================================
+// refreshConduitTile — Phase A: gather timestep-invariant SoA fields into a
+//                       conduit-dense tile for fast inner-loop access.
+//
+// Each ci-indexed read in the Picard hot path now hits a contiguous block
+// of memory holding 8 doubles per cache line. Compared to sparse
+// links.X[conduit_idx_[ci]] / nodes.X[links.node1[uj]] indirection, this
+// removes ~3–4 wasted L1 fills per conduit per Picard iteration.
+//
+// Fields gathered are constants throughout the simulation (network topology,
+// cross-section dimensions, conveyance parameters) so the gather runs ONCE
+// at init, not per timestep or per Picard iter.
+// ============================================================================
+
+void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
+    auto nc = static_cast<std::size_t>(n_conduits_);
+    tile_uj_.resize(nc);
+    tile_n1_.resize(nc);
+    tile_n2_.resize(nc);
+    tile_inv1_elev_.resize(nc);
+    tile_inv2_elev_.resize(nc);
+    tile_z1_off_.resize(nc);
+    tile_z2_off_.resize(nc);
+    tile_y_full_.resize(nc);
+    tile_a_full_.resize(nc);
+    tile_r_full_.resize(nc);
+    tile_w_max_.resize(nc);
+    tile_length_.resize(nc);
+    tile_inv_length_.resize(nc);
+    tile_links_length_.resize(nc);
+    tile_beta_.resize(nc);
+    tile_q_max_.resize(nc);
+    tile_rough_factor_.resize(nc);
+    tile_barrels_d_.resize(nc);
+    tile_is_open_.resize(nc);
+    tile_is_force_main_.resize(nc);
+    tile_is_closed_.resize(nc);
+    tile_has_losses_.resize(nc);
+    tile_xsect_batch_shape_.resize(nc);
+    tile_shape_.resize(nc);
+    tile_has_offset_.resize(nc);
+    tile_culvert_code_.resize(nc);
+    tile_slope_.resize(nc);
+    tile_q_limit_.resize(nc);
+    tile_loss_inlet_.resize(nc);
+    tile_loss_outlet_.resize(nc);
+    tile_has_flap_gate_.resize(nc);
+    tile_direction_.resize(nc);
+    // Reverse map sized n_links_, -1 for non-conduits
+    tile_uj_to_ci_.assign(static_cast<std::size_t>(n_links_), -1);
+
+    const auto& links = ctx.links;
+    const auto& nodes = ctx.nodes;
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        auto uci = static_cast<std::size_t>(ci);
+        int j = conduit_idx_[uci];
+        auto uj = static_cast<std::size_t>(j);
+        int n1 = links.node1[uj];
+        int n2 = links.node2[uj];
+        auto un1 = static_cast<std::size_t>(n1);
+        auto un2 = static_cast<std::size_t>(n2);
+
+        tile_uj_[uci]            = j;
+        tile_n1_[uci]            = n1;
+        tile_n2_[uci]            = n2;
+        tile_inv1_elev_[uci]     = nodes.invert_elev[un1];
+        tile_inv2_elev_[uci]     = nodes.invert_elev[un2];
+        tile_z1_off_[uci]        = links.offset1[uj];
+        tile_z2_off_[uci]        = links.offset2[uj];
+        tile_y_full_[uci]        = links.xsect_y_full[uj];
+        tile_a_full_[uci]        = links.xsect_a_full[uj];
+        tile_r_full_[uci]        = links.xsect_r_full[uj];
+        tile_w_max_[uci]         = links.xsect_w_max[uj];
+        tile_length_[uci]        = cached_length_[uj];
+        tile_inv_length_[uci]    = inv_length_[uj];
+        tile_links_length_[uci]  = links.length[uj];
+        tile_beta_[uci]          = links.beta[uj];
+        tile_q_max_[uci]         = links.q_max[uj];
+        tile_rough_factor_[uci]  = links.rough_factor[uj];
+        tile_barrels_d_[uci]     = barrels_d_[uj];
+        tile_is_open_[uci]       = is_open_[uj];
+        tile_is_force_main_[uci] = is_force_main_[uj];
+        tile_is_closed_[uci]     = links.is_closed[uj] ? 1 : 0;
+        tile_has_losses_[uci]    = has_losses_[uj];
+        tile_xsect_batch_shape_[uci] = links.xsect_batch_shape[uj];
+        tile_shape_[uci]         = links.xsect_shape[uj];
+        tile_has_offset_[uci]    = (links.offset1[uj] > 0.0 ||
+                                    links.offset2[uj] > 0.0) ? 1 : 0;
+        tile_culvert_code_[uci]  = links.culvert_code[uj];
+        tile_slope_[uci]         = links.slope[uj];
+        tile_q_limit_[uci]       = links.q_limit[uj];
+        tile_loss_inlet_[uci]    = links.loss_inlet[uj];
+        tile_loss_outlet_[uci]   = links.loss_outlet[uj];
+        tile_has_flap_gate_[uci] = links.has_flap_gate[uj] ? 1 : 0;
+        tile_direction_[uci]     = static_cast<int8_t>(links.direction[uj]);
+        tile_uj_to_ci_[uj]       = ci;
     }
 }
 
@@ -636,108 +752,112 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     auto& nodes = ctx.nodes;
 
 #if defined(SWMM_USE_OPENMP)
-    // Threshold for per-conduit loops: only STEP C's heavy body is worth
-    // parallelising. STEP A/B/E are short (<10 ops per conduit) — libomp
-    // fork/sync overhead on Apple Silicon dominates any speedup; a prior
-    // attempt regressed ~15% (444 s → 384 s baseline).
     const int nt_cg = (n_conduits_ >= 8 * num_threads_) ? num_threads_ : 1;
 #endif
 
-    // ---- STEP A: Compute raw depths and heads per conduit link ----
+    // ---- STEP A + STEP B prep (fused): depths/heads + width-cap buffers ----
+    // Phase B-1: collapse the previous two per-conduit passes into one. STEP B
+    // prep wrote wcap_d1/d2/dm based on STEP A's freshly written depth1/2/mid
+    // — now we compute and write wcap_d* directly from the depth values that
+    // are still in registers, avoiding a second cache traversal.
+    const bool slot_mode = (surcharge_method == SurchargeMethod::SLOT);
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for num_threads(nt_cg) if(nt_cg > 1) schedule(static) \
+    default(none) shared(ctx, links, nodes, slot_mode)
+#endif
     for (int ci = 0; ci < n_conduits_; ++ci) {
-        int j = conduit_idx_[static_cast<std::size_t>(ci)];
+        auto uci = static_cast<std::size_t>(ci);
+        int j = tile_uj_[uci];
         auto uj = static_cast<std::size_t>(j);
+        auto un1 = static_cast<std::size_t>(tile_n1_[uci]);
+        auto un2 = static_cast<std::size_t>(tile_n2_[uci]);
 
-        int n1 = links.node1[uj];
-        int n2 = links.node2[uj];
-        auto un1 = static_cast<std::size_t>(n1);
-        auto un2 = static_cast<std::size_t>(n2);
-
-        double z1 = nodes.invert_elev[un1] + links.offset1[uj];
-        double z2 = nodes.invert_elev[un2] + links.offset2[uj];
-        double h1 = std::max(nodes.depth[un1] + nodes.invert_elev[un1], z1);
-        double h2 = std::max(nodes.depth[un2] + nodes.invert_elev[un2], z2);
+        const double inv1 = tile_inv1_elev_[uci];
+        const double inv2 = tile_inv2_elev_[uci];
+        const double z1 = inv1 + tile_z1_off_[uci];
+        const double z2 = inv2 + tile_z2_off_[uci];
+        const double h1 = std::max(nodes.depth[un1] + inv1, z1);
+        const double h2 = std::max(nodes.depth[un2] + inv2, z2);
 
         double y1 = std::max(h1 - z1, FUDGE);
         double y2 = std::max(h2 - z2, FUDGE);
 
-        double yf = links.xsect_y_full[uj];
-        if (surcharge_method != SurchargeMethod::SLOT) {
+        const double yf = tile_y_full_[uci];
+        if (!slot_mode) {
             y1 = std::min(y1, yf);
             y2 = std::min(y2, yf);
         }
+        const double yMid = 0.5 * (y1 + y2);
 
         depth1_[uj] = y1;
         depth2_[uj] = y2;
-        depth_mid_[uj] = 0.5 * (y1 + y2);
+        depth_mid_[uj] = yMid;
         h1_[uj] = h1;
         h2_[uj] = h2;
         fasnh_[uj] = 1.0;
+
+        // STEP B prep — fused inline. yCap is the EXTRAN crown cap; SLOT
+        // mode disables it (yCap = ∞). Branchless via select.
+        if (!slot_mode) {
+            const int bs = tile_xsect_batch_shape_[uci];
+            const bool is_open = xsect::isOpen(bs);
+            const double yCap = (!is_open && yf > 0.0) ? EXTRAN_CROWN_CUTOFF * yf : 1e30;
+            wcap_d1_[uj] = std::min(y1,   yCap);
+            wcap_d2_[uj] = std::min(y2,   yCap);
+            wcap_dm_[uj] = std::min(yMid, yCap);
+        }
     }
 
     // ---- STEP B: Batch widths from depths (needed for surface area) ----
-    // For EXTRAN mode, cap depth at CrownCutoff * yFull for width computation
-    // (matching legacy getWidth() which caps at CrownCutoff to avoid near-zero
-    //  widths at crown of closed conduits). Copy capped depths into wcap buffers
-    //  and compute widths from those, leaving original depths untouched.
-    if (surcharge_method != SurchargeMethod::SLOT) {
-        for (int ci = 0; ci < n_conduits_; ++ci) {
-            int j = conduit_idx_[static_cast<std::size_t>(ci)];
-            auto uj = static_cast<std::size_t>(j);
-            double yf = links.xsect_y_full[uj];
-            int bs = links.xsect_batch_shape[uj];
-            bool is_open = xsect::isOpen(bs);
-            double yCap = (!is_open && yf > 0.0) ? EXTRAN_CROWN_CUTOFF * yf : 1e30;
-            wcap_d1_[uj] = std::min(depth1_[uj], yCap);
-            wcap_d2_[uj] = std::min(depth2_[uj], yCap);
-            wcap_dm_[uj] = std::min(depth_mid_[uj], yCap);
-        }
-        groups_->computeWidths(wcap_d1_.data(), width1_.data(), n_links_);
-        groups_->computeWidths(wcap_d2_.data(), width2_.data(), n_links_);
-        groups_->computeWidths(wcap_dm_.data(), width_mid_.data(), n_links_);
+    // For EXTRAN/static-slot, the cap-buffers above feed the width kernel;
+    // for SLOT mode, depths feed it directly (no crown cap).
+    if (!slot_mode) {
+        groups_->computeWidthsTriple(wcap_d1_.data(), wcap_d2_.data(), wcap_dm_.data(),
+                                      width1_.data(), width2_.data(), width_mid_.data(),
+                                      n_links_);
     } else {
-        groups_->computeWidths(depth1_.data(), width1_.data(), n_links_);
-        groups_->computeWidths(depth2_.data(), width2_.data(), n_links_);
-        groups_->computeWidths(depth_mid_.data(), width_mid_.data(), n_links_);
+        groups_->computeWidthsTriple(depth1_.data(), depth2_.data(), depth_mid_.data(),
+                                     width1_.data(), width2_.data(), width_mid_.data(),
+                                     n_links_);
     }
 
     // ---- STEP C: Flow classification + surface area (conduits only) ----
     // Matches legacy dwflow.c findSurfArea + getFlowClass.
     // Only links with offsets can trigger non-SUBCRITICAL classification,
-    // so the expensive getYnorm/getYcrit are rarely needed. Per-conduit
-    // writes (surf_area1/2, flow_class, fasnh_, depth_mid_, h1_/h2_,
-    // width_mid_) are single-producer so parallel-safe.
+    // so the expensive getYnorm/getYcrit Newton solves are rarely needed.
+    // Per-conduit writes (surf_area1/2, flow_class, fasnh_, depth_mid_,
+    // h1_/h2_, width_mid_) are single-producer so parallel-safe.
+    // `schedule(dynamic, 64)` re-tested after the KMP_BLOCKTIME fix and
+    // regressed by ~10 % (145 s vs 133 s) because libomp's per-chunk
+    // atomic-increment overhead exceeds the load-imbalance benefit at
+    // n_conduits ≈ 1 285. Static scheduling stays.
 #if defined(SWMM_USE_OPENMP)
 #pragma omp parallel for num_threads(nt_cg) if(nt_cg > 1) schedule(static) \
     default(none) shared(ctx, links, nodes)
 #endif
     for (int ci = 0; ci < n_conduits_; ++ci) {
-        int j = conduit_idx_[static_cast<std::size_t>(ci)];
+        auto uci = static_cast<std::size_t>(ci);
+        // Phase A: timestep-invariant data is read from the conduit-dense
+        // tile (sequential cache lines). Only nodes.depth, links.flow, and
+        // nodes.type are still read from the sparse SoA — those are the
+        // only quantities that vary across Picard iters in this branch.
+        int j = tile_uj_[uci];
         auto uj = static_cast<std::size_t>(j);
+        auto un1 = static_cast<std::size_t>(tile_n1_[uci]);
+        auto un2 = static_cast<std::size_t>(tile_n2_[uci]);
 
-        int n1 = links.node1[uj];
-        int n2 = links.node2[uj];
-        auto un1 = static_cast<std::size_t>(n1);
-        auto un2 = static_cast<std::size_t>(n2);
-
-        // Cache per-conduit invariants once. These fields are hot-looked
-        // references across the classification branches AND the subsequent
-        // surface-area switch; the compiler cannot hoist them because it
-        // cannot prove the SoA arrays don't alias the writes we issue below
-        // (DWSOLVER_DATA_OPTIMIZATION item 3).
-        const double yf      = links.xsect_y_full[uj];
-        const double z1_off  = links.offset1[uj];
-        const double z2_off  = links.offset2[uj];
-        const double beta_j  = links.beta[uj];
-        const double qmax_j  = links.q_max[uj];
-        const double inv1    = nodes.invert_elev[un1];
-        const double inv2    = nodes.invert_elev[un2];
+        const double yf      = tile_y_full_[uci];
+        const double z1_off  = tile_z1_off_[uci];
+        const double z2_off  = tile_z2_off_[uci];
+        const double beta_j  = tile_beta_[uci];
+        const double qmax_j  = tile_q_max_[uci];
+        const double inv1    = tile_inv1_elev_[uci];
+        const double inv2    = tile_inv2_elev_[uci];
         double y1   = depth1_[uj];
         double y2   = depth2_[uj];
         double h1   = h1_[uj];
         double h2   = h2_[uj];
-        double length = links.mod_length[uj];
-        if (length <= 0.0) length = links.length[uj];
+        double length = tile_length_[uci];
 
         double surfArea1 = 0.0, surfArea2 = 0.0;
         FlowClass fc = FlowClass::SUBCRITICAL;
@@ -757,24 +877,51 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
             return cached_xs;
         };
 
-        if (y1 >= yf && y2 >= yf) {
+        // Phase C: branchless fast path for the trivial cases.
+        // Pre-compute the four mutually exclusive depth states once and
+        // dispatch on them with a single integer code instead of nested
+        // if/else cascades. The compiler can keep these as flags in
+        // registers across the whole STEP C body.
+        const bool both_full = (y1 >= yf) & (y2 >= yf);
+        const bool both_wet  = (y1 >  FUDGE) & (y2 >  FUDGE);
+        const bool both_dry  = (y1 <= FUDGE) & (y2 <= FUDGE);
+        const bool up_dry_only = (y1 <= FUDGE) & (y2 >  FUDGE);
+        // dn_dry_only is the implicit remainder when none of the above match.
+
+        if (both_full) {
             fc = FlowClass::SUBCRITICAL;
+        } else if (both_dry) {
+            fc = FlowClass::DRY;
+        } else if (!tile_has_offset_[uci]) {
+            // Phase C fast-path: no offsets → no Newton solver needed.
+            // The legacy cascade for offset-free conduits collapses to:
+            //   both_wet               → SUBCRITICAL (no critical depth check)
+            //   up_dry_only & h2<z1    → UP_DRY     (z1_off=0 → z1_elev=inv1)
+            //   up_dry_only & h2>=z1   → SUBCRITICAL  (else branch, no Newton)
+            //   dn_dry_only & h1<z2    → DN_DRY     (z2_off=0 → z2_elev=inv2)
+            //   dn_dry_only & h1>=z2   → SUBCRITICAL  (else branch)
+            // Branchless via short-circuit comparisons; default fc is
+            // already SUBCRITICAL.
+            if (up_dry_only) {
+                if (h2 < inv1) fc = FlowClass::UP_DRY;
+            } else if (!both_wet) {           // dn_dry_only
+                if (h1 < inv2) fc = FlowClass::DN_DRY;
+            }
+            // else both_wet → keep fc=SUBCRITICAL
         } else {
-            // ---- getFlowClass logic (legacy dwflow.c lines 294-409) ----
+            // ---- Slow path: at least one end has an offset → may need Newton ----
+            // (legacy dwflow.c getFlowClass lines 294-409)
             double z1_off_eff = z1_off;
             double z2_off_eff = z2_off;
-            // Adjust offsets for outfall nodes (legacy dwflow.c:324-325).
             if (nodes.type[un1] == NodeType::OUTFALL)
                 z1_off_eff = std::max(0.0, z1_off_eff - nodes.depth[un1]);
             if (nodes.type[un2] == NodeType::OUTFALL)
                 z2_off_eff = std::max(0.0, z2_off_eff - nodes.depth[un2]);
 
             const double qLast = std::fabs(links.flow[uj]);
-            const int barrels = std::max(links.barrels[uj], 1);
-            const double q = qLast / static_cast<double>(barrels);
+            const double q = qLast / tile_barrels_d_[uci];
 
-            if (y1 > FUDGE && y2 > FUDGE) {
-                // Both ends wet
+            if (both_wet) {
                 if (links.flow[uj] < 0.0) {
                     // Reverse flow: check upstream end
                     if (z1_off_eff > 0.0) {
@@ -795,16 +942,12 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                         if (y2 < ycMin) {
                             fc = FlowClass::DN_CRITICAL;
                         } else if (y2 < ycMax) {
-                            // Compute fasnh: fraction between normal & critical
                             if (ycMax - ycMin < FUDGE) fasnh = 0.0;
                             else fasnh = (ycMax - y2) / (ycMax - ycMin);
                         }
                     }
                 }
-            } else if (y1 <= FUDGE && y2 <= FUDGE) {
-                fc = FlowClass::DRY;
-            } else if (y2 > FUDGE) {
-                // Upstream dry, downstream wet
+            } else if (up_dry_only) {
                 const double z1_elev = inv1 + z1_off;
                 if (h2 < z1_elev) {
                     fc = FlowClass::UP_DRY;
@@ -814,8 +957,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                     cached_yC = xsect::getYcrit(xs, q);
                     fc = FlowClass::UP_CRITICAL;
                 }
-            } else {
-                // Upstream wet, downstream dry
+            } else {  // dn_dry_only
                 const double z2_elev = inv2 + z2_off;
                 if (h1 < z2_elev) {
                     fc = FlowClass::DN_DRY;
@@ -949,9 +1091,9 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     double* OPENSWMM_RESTRICT p_wm  = width_mid_.data();
     (void)p_wm;  // width_mid_ already computed in STEP B
 
-    groups_->computeAreaAndHydRad(p_d1, p_a1, p_h1, n_links_);
-    groups_->computeAreas(p_d2, p_a2, n_links_);
-    groups_->computeAreaAndHydRad(p_dm, p_am, p_hm, n_links_);
+    groups_->computeAreaHydRadTriple(p_d1, p_d2, p_dm,
+                                     p_a1, p_a2, p_am,
+                                     p_h1, p_hm, n_links_);
     // width_mid_ already computed in STEP B; UP/DN_CRITICAL/DRY cases
     // patched inline in STEP C.
 
@@ -965,15 +1107,22 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         applyDPSGeometry(ctx);
     } else {
         // Static slot (Sjoberg formula) or EXTRAN (no slot).
+        // Per-conduit single-producer writes — safe to parallelise.
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for num_threads(nt_cg) if(nt_cg > 1) schedule(static) \
+    default(none) shared(links)
+#endif
         for (int ci = 0; ci < n_conduits_; ++ci) {
-            int j = conduit_idx_[static_cast<std::size_t>(ci)];
+            auto uci = static_cast<std::size_t>(ci);
+            // Phase A: invariants from conduit-dense tile.
+            int j = tile_uj_[uci];
             auto uj = static_cast<std::size_t>(j);
 
-            double yf = links.xsect_y_full[uj];
-            double af = links.xsect_a_full[uj];
-            double rf = links.xsect_r_full[uj];
-            double wm = links.xsect_w_max[uj];
-            XsectShape shape = links.xsect_shape[uj];
+            double yf = tile_y_full_[uci];
+            double af = tile_a_full_[uci];
+            double rf = tile_r_full_[uci];
+            double wm = tile_w_max_[uci];
+            XsectShape shape = tile_shape_[uci];
 
             if (depth1_[uj] > yf) {
                 double wSlot = getSlotWidth(depth1_[uj], yf, wm, shape);
@@ -1008,9 +1157,10 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
 
     // Pre-init conduit flows: copy current flow, zero dqdh
     // (non-conduit flows are handled by the non_conduit_fn callback).
+    // Phase A: index by ci through the tile to keep the access pattern dense.
     for (int ci = 0; ci < n_conduits_; ++ci) {
-        int j = conduit_idx_[static_cast<std::size_t>(ci)];
-        auto uj = static_cast<std::size_t>(j);
+        auto uci = static_cast<std::size_t>(ci);
+        auto uj = static_cast<std::size_t>(tile_uj_[uci]);
         new_flow_[uj] = links.flow[uj];
         dqdh_[uj] = 0.0;
     }
@@ -1018,14 +1168,7 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
     // Classify each conduit into a momentum category.
     classifyMomentumCategories(ctx);
 
-    // Single parallel-for over all conduits with per-element category
-    // dispatch. Matches legacy dynwave.c::findLinkFlows (one fork per
-    // Picard iteration, per-element dispatch inside the loop body).
-    // Earlier attempts that wrapped six separate per-category loops in
-    // `omp parallel` regions regressed ~20% on Apple Silicon: libomp
-    // fork/sync overhead stacked across the six loops. Collapsing to
-    // one loop body with an inline switch amortises the fork cost
-    // across all conduits.
+    // Single parallel-for over all conduits with per-element category dispatch.
 #if defined(SWMM_USE_OPENMP)
     const int nt = (n_conduits_ >= 4 * num_threads_) ? num_threads_ : 1;
 #pragma omp parallel for num_threads(nt) if(nt > 1) schedule(static) \
@@ -1065,27 +1208,29 @@ void DWSolver::classifyMomentumCategories(SimulationContext& ctx) {
     auto& links = ctx.links;
 
     for (int ci = 0; ci < n_conduits_; ++ci) {
-        int j = conduit_idx_[static_cast<std::size_t>(ci)];
+        auto uci = static_cast<std::size_t>(ci);
+        // Phase A: read invariants from the conduit-dense tile.
+        int j = tile_uj_[uci];
         auto uj = static_cast<std::size_t>(j);
 
         if (bypassed_[uj]) continue;
 
         FlowClass fc = links.flow_class[uj];
         double aMid = area_mid_[uj];
-        double yf = links.xsect_y_full[uj];
+        double yf = tile_y_full_[uci];
         bool isFull = (depth1_[uj] >= yf && depth2_[uj] >= yf);
 
         MomentumCategory cat;
         if (fc == FlowClass::DRY || fc == FlowClass::UP_DRY ||
-            fc == FlowClass::DN_DRY || aMid <= FUDGE || links.is_closed[uj]) {
+            fc == FlowClass::DN_DRY || aMid <= FUDGE || tile_is_closed_[uci]) {
             cat = MomentumCategory::SKIP_DRY;
-        } else if (is_force_main_[uj] && isFull) {
+        } else if (tile_is_force_main_[uci] && isFull) {
             cat = (links.roughness[uj] < 1.0)
                 ? MomentumCategory::FORCE_MAIN_DW
                 : MomentumCategory::FORCE_MAIN_HW;
-        } else if (!is_open_[uj] && isFull) {
+        } else if (!tile_is_open_[uci] && isFull) {
             cat = MomentumCategory::MANNING_CLOSED_FULL;
-        } else if (is_open_[uj]) {
+        } else if (tile_is_open_[uci]) {
             cat = MomentumCategory::MANNING_OPEN;
         } else {
             cat = MomentumCategory::MANNING_CLOSED_FS;
@@ -1104,15 +1249,24 @@ void DWSolver::processDryLink(SimulationContext& ctx, double dt,
     auto& links = ctx.links;
     const double dt_g = dt_gravity_;
 
+    auto uci = static_cast<std::size_t>(tile_uj_to_ci_[uj]);
     double aMid = area_mid_[uj];
-    double barrels_d = barrels_d_[uj];
+    double barrels_d = tile_barrels_d_[uci];
     area_mid_[uj] = 0.5 * (area1_[uj] + area2_[uj]);
-    dqdh_[uj] = dt_g * aMid * inv_length_[uj] * barrels_d;
+    dqdh_[uj] = dt_g * aMid * tile_inv_length_[uci] * barrels_d;
     froude_[uj] = 0.0;
     new_flow_[uj] = 0.0;
-    double yf = links.xsect_y_full[uj];
+    double yf = tile_y_full_[uci];
     links.depth[uj] = std::min(depth_mid_[uj], yf);
-    links.volume[uj] = area_mid_[uj] * links.length[uj] * barrels_d;
+    // Volume uses RAW user-input length to match legacy. Legacy
+    // `dwflow.c:174` computes `Link[j].newVolume = aMid * link_getLength(j)
+    // * barrels`, where `link_getLength` returns `Conduit[k].length` for
+    // non-IRREGULAR conduits (`link.c:1211`). `Conduit[k].length` is set
+    // once at parse-time (`link.c:346`) and never reassigned — it is the
+    // raw input length, NOT the routing-lengthened `Conduit[k].modLength`.
+    // The lengthened length is used only in the momentum equation
+    // (dq2/dq4/dq5/dqdh) per `dwflow.c:133`.
+    links.volume[uj] = area_mid_[uj] * tile_links_length_[uci] * barrels_d;
 }
 
 // ============================================================================
@@ -1126,10 +1280,12 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
     const int normal_flow_ltd = ctx.options.normal_flow_ltd;
-    double yf = links.xsect_y_full[uj];
+    // Phase A extension: read invariants from the conduit-dense tile.
+    auto uci = static_cast<std::size_t>(tile_uj_to_ci_[uj]);
+    double yf = tile_y_full_[uci];
     double h1 = h1_[uj];
-    int n1 = links.node1[uj];
-    int n2 = links.node2[uj];
+    int n1 = tile_n1_[uci];
+    int n2 = tile_n2_[uci];
     auto un1 = static_cast<std::size_t>(n1);
     auto un2 = static_cast<std::size_t>(n2);
 
@@ -1137,11 +1293,11 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     links.inlet_control[uj] = false;
     links.normal_flow_limited[uj] = false;
     if (q > 0.0) {
-        if (links.culvert_code[uj] > 0 && !isFull) {
+        if (tile_culvert_code_[uci] > 0 && !isFull) {
             double dqdh_culv = 0.0;
             double q_inlet = culvert::getInflow(
-                q, h1, yf, links.xsect_a_full[uj],
-                links.slope[uj], links.culvert_code[uj], dqdh_culv);
+                q, h1, yf, tile_a_full_[uci],
+                tile_slope_[uci], tile_culvert_code_[uci], dqdh_culv);
             if (q_inlet < q) {
                 q = q_inlet;
                 links.inlet_control[uj] = true;
@@ -1151,11 +1307,10 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
             int nfl = normal_flow_ltd;
             if (nfl != 3 && depth1_[uj] < yf &&
                 (fc2 == FlowClass::SUBCRITICAL || fc2 == FlowClass::SUPERCRITICAL)) {
-                int n1l = links.node1[uj], n2l = links.node2[uj];
                 bool hasOutfall = false;
-                if (n1l >= 0 && n2l >= 0) {
-                    hasOutfall = (nodes.type[static_cast<std::size_t>(n1l)] == NodeType::OUTFALL ||
-                                  nodes.type[static_cast<std::size_t>(n2l)] == NodeType::OUTFALL);
+                if (n1 >= 0 && n2 >= 0) {
+                    hasOutfall = (nodes.type[un1] == NodeType::OUTFALL ||
+                                  nodes.type[un2] == NodeType::OUTFALL);
                 }
                 bool slope_check = (nfl == 0 || nfl == 2 || hasOutfall) &&
                                    (depth1_[uj] < depth2_[uj]);
@@ -1172,7 +1327,7 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
                 if (slope_check || froude_check) {
                     double r1_for_norm = (hrad1_[uj] > FUDGE) ? hrad1_[uj] : FUDGE;
                     double s1 = area1_[uj] * fastmath::pow2_3(r1_for_norm);
-                    double qNorm = links.beta[uj] * s1;
+                    double qNorm = tile_beta_[uci] * s1;
                     if (qNorm < q) {
                         q = qNorm;
                         links.normal_flow_limited[uj] = true;
@@ -1189,14 +1344,14 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     }
 
     // Flow limit
-    if (links.q_limit[uj] > 0.0) {
-        if (std::fabs(q) > links.q_limit[uj])
-            q = ((q > 0.0) ? 1.0 : -1.0) * links.q_limit[uj];
+    if (tile_q_limit_[uci] > 0.0) {
+        if (std::fabs(q) > tile_q_limit_[uci])
+            q = ((q > 0.0) ? 1.0 : -1.0) * tile_q_limit_[uci];
     }
 
     // Flap gate checks
-    if (links.has_flap_gate[uj]) {
-        if (q * static_cast<double>(links.direction[uj]) < 0.0) q = 0.0;
+    if (tile_has_flap_gate_[uci]) {
+        if (q * static_cast<double>(tile_direction_[uci]) < 0.0) q = 0.0;
     }
     if (q < 0.0 && n2 >= 0 &&
         nodes.type[un2] == NodeType::OUTFALL &&
@@ -1219,7 +1374,11 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     // Update link depth and volume
     links.depth[uj] = std::min(depth_mid_[uj], yf);
     double aMidAvg = (area1_[uj] + area2_[uj]) * 0.5;
-    links.volume[uj] = aMidAvg * links.length[uj] * barrels_d;
+    // Volume uses RAW user-input length (matching legacy `dwflow.c:288`:
+    // `Link[j].newVolume = aMid * link_getLength(j) * barrels`).
+    // `link_getLength` returns the raw `Conduit[k].length`, not the
+    // routing-lengthened `Conduit[k].modLength`. See processDryLink note.
+    links.volume[uj] = aMidAvg * tile_links_length_[uci] * barrels_d;
 }
 
 // ============================================================================
@@ -1235,13 +1394,15 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     const bool is_closed_full = (cat == MomentumCategory::MANNING_CLOSED_FULL);
     const bool is_open_cat    = (cat == MomentumCategory::MANNING_OPEN);
 
-    double barrels_d = barrels_d_[uj];
-    double length = cached_length_[uj];
-    double inv_len = inv_length_[uj];
+    // Phase A extension: read invariants from the conduit-dense tile.
+    auto uci = static_cast<std::size_t>(tile_uj_to_ci_[uj]);
+    double barrels_d = tile_barrels_d_[uci];
+    double length = tile_length_[uci];
+    double inv_len = tile_inv_length_[uci];
     double aMid = area_mid_[uj];
     double rMid = hrad_mid_[uj];
     double qLast = links.flow[uj] / barrels_d;
-    double yf = links.xsect_y_full[uj];
+    double yf = tile_y_full_[uci];
     bool isFull = (depth1_[uj] >= yf && depth2_[uj] >= yf);
 
     // Velocity (clamped)
@@ -1297,7 +1458,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
 
     // Manning friction
     double r43 = fastmath::pow4_3(rWtd);
-    double dq1 = (r43 > FUDGE) ? dt * links.rough_factor[uj] / r43 * absv : 0.0;
+    double dq1 = (r43 > FUDGE) ? dt * tile_rough_factor_[uci] / r43 * absv : 0.0;
 
     // Head gradient
     double dq2 = dt_g * aWtd * (h2 - h1) * inv_len;
@@ -1313,19 +1474,21 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
 
     // Local losses
     double dq5 = 0.0;
-    if (has_losses_[uj]) {
+    if (tile_has_losses_[uci]) {
         double absq = std::fabs(qLast);
         double losses = 0.0;
-        if (area1_[uj] > FUDGE) losses += links.loss_inlet[uj] * (absq / area1_[uj]);
-        if (area2_[uj] > FUDGE) losses += links.loss_outlet[uj] * (absq / area2_[uj]);
+        if (area1_[uj] > FUDGE) losses += tile_loss_inlet_[uci] * (absq / area1_[uj]);
+        if (area2_[uj] > FUDGE) losses += tile_loss_outlet_[uci] * (absq / area2_[uj]);
         if (aMid > FUDGE) losses += links.loss_avg[uj] * (absq / aMid);
         dq5 = losses * 0.5 * inv_len * dt;
     }
 
-    // Evaporation/seepage
+    // Evaporation/seepage. Length divisor uses RAW length (matching legacy
+    // `dwflow.c:233`: `dq6 = ... / link_getLength(j)`, where
+    // `link_getLength` returns `Conduit[k].length` (raw, not modLength).
     double dq6 = 0.0;
     {
-        double conduit_length = links.length[uj];
+        double conduit_length = tile_links_length_[uci];
         double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
         if (loss_rate > 0.0 && conduit_length > 0.0)
             dq6 = loss_rate * 2.5 * dt * v / conduit_length;
@@ -1351,8 +1514,10 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     const double dt_g = dt_gravity_;
     const bool is_dw = (cat == MomentumCategory::FORCE_MAIN_DW);
 
-    double barrels_d = barrels_d_[uj];
-    double inv_len = inv_length_[uj];
+    // Phase A extension: read invariants from the conduit-dense tile.
+    auto uci = static_cast<std::size_t>(tile_uj_to_ci_[uj]);
+    double barrels_d = tile_barrels_d_[uci];
+    double inv_len = tile_inv_length_[uci];
     double aMid = area_mid_[uj];
     double rMid = hrad_mid_[uj];
     double qLast = links.flow[uj] / barrels_d;
@@ -1407,10 +1572,12 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
         dq5 = losses * 0.5 * inv_len * dt;
     }
 
-    // Evaporation/seepage
+    // Evaporation/seepage. Length divisor uses RAW length (matching legacy
+    // `dwflow.c:233`: `dq6 = ... / link_getLength(j)`, where
+    // `link_getLength` returns `Conduit[k].length` (raw, not modLength).
     double dq6 = 0.0;
     {
-        double conduit_length = links.length[uj];
+        double conduit_length = tile_links_length_[uci];
         double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
         if (loss_rate > 0.0 && conduit_length > 0.0)
             dq6 = loss_rate * 2.5 * dt * v / conduit_length;
@@ -1752,7 +1919,11 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
 
     nodes.overflow[ui] = 0.0;
     double surf_area = xnode_.new_surf_area[ui];
-    surf_area = std::max(surf_area, constants::MIN_SURFAREA);
+    // Use the user-configured MIN_SURFAREA (resolved in init()) rather than
+    // the compiled-in constants::MIN_SURFAREA — matches legacy
+    // dynwave.c:658 `surfArea = MAX(surfArea, MinSurfArea)` where
+    // MinSurfArea is the runtime value from the INP [OPTIONS] block.
+    surf_area = std::max(surf_area, min_surf_area_);
 
     // --- Net flow volume change (trapezoidal averaging with previous step) ---
     double dQ = nodes.inflow[ui] - nodes.outflow[ui];
@@ -1811,7 +1982,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         // =================================================================
 
         double denom = surf_area - 0.5 * dt * xnode_.sumdqdh[ui];
-        denom = std::max(denom, constants::MIN_SURFAREA);
+        denom = std::max(denom, min_surf_area_);
 
         double dy = dV / denom;
         y_new = y_old + dy;
@@ -1926,6 +2097,21 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     // --- Save new depth ---
     nodes.depth[ui] = y_new;
     nodes.head[ui] = nodes.invert_elev[ui] + y_new;
+
+    // Optional per-node Picard-iter trace (controlled by OPENSWMM_TRACE_NODE env var).
+    {
+        static const char* trace_name = std::getenv("OPENSWMM_TRACE_NODE");
+        if (trace_name && ctx.node_names.name_of(node_idx) == trace_name) {
+            std::fprintf(stderr,
+                "REFAC %s step=%d t=%.3f y_old=%.6f y_last=%.6f "
+                "surf_area=%.4f sumdqdh=%.6e dQ=%.6e dV=%.6e "
+                "is_surch=%d y_new=%.6f overflow=%.6e volume=%.6e dt=%.4f\n",
+                trace_name, step, ctx.current_time,
+                y_old, y_last, surf_area, xnode_.sumdqdh[ui], dQ, dV,
+                (int)is_surcharged, y_new, nodes.overflow[ui],
+                nodes.volume[ui], dt);
+        }
+    }
 }
 
 // ============================================================================

@@ -10,6 +10,8 @@ env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_EXE: ${{ github.workspace }}/vcpkg/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  # Pull only what the unit-test build needs: default features (2d) + tests.
+  VCPKG_MANIFEST_FEATURES: "tests"
   OMP_NUM_THREADS: 1
 
 jobs:
@@ -93,6 +95,15 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Cache vcpkg downloads (source tarballs)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/downloads
+          key: vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
+            vcpkg-downloads-${{ runner.os }}-
 
       - name: Configure
         run: >

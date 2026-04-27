@@ -61,6 +61,7 @@
 #define OPENSWMM_ENGINE_SIMULATION_CONTEXT_HPP
 
 #include <cmath>
+#include <functional>
 #include "../data/GageData.hpp"
 #include "../data/LinkData.hpp"
 #include "../data/NameIndex.hpp"
@@ -126,6 +127,52 @@ enum class EngineState : int32_t {
     CLOSED       = 7,  ///< Resources released
     ERROR_STATE  = 8,  ///< Fatal error; call swmm_engine_last_error()
     BUILDING     = 9   ///< Programmatic model construction in progress (no .inp)
+};
+
+// ============================================================================
+// StateAccessors
+// ============================================================================
+
+/**
+ * @brief Solver-neutral hooks for reading and writing solver-internal state
+ *        (infiltration, groundwater) at hot-start save/load time.
+ *
+ * @details The state-IO plugin layer intentionally does not depend on
+ *          `runoff::RunoffSolver` or `groundwater::GWSolver` types — those are
+ *          implementation details of the engine. SWMMEngine wires the engine's
+ *          live solvers into these callbacks at open() time so plugins can
+ *          read/write per-subcatchment state through `SimulationContext` alone.
+ *
+ *          Each callback returns `true` if it handled the call, `false` if no
+ *          handler is wired (in which case the caller may choose to fall back
+ *          to default values or skip that part of the snapshot).
+ *
+ * @ingroup engine_core
+ */
+struct StateAccessors {
+    /// Read infiltration model id and the 6-double infiltration state into
+    /// the caller-provided buffers. `out_infil` must point to a 6-element array.
+    std::function<bool(int subcatch_index, int& out_model, double* out_infil)> get_infil_state;
+
+    /// Apply infiltration state to a subcatchment.
+    /// `infil` must point to a 6-element array.
+    std::function<bool(int subcatch_index, int model, const double* infil)> set_infil_state;
+
+    /// Read groundwater zone state (upper-zone moisture and lower-zone depth).
+    std::function<bool(int subcatch_index, double& out_theta, double& out_lower_depth)> get_gw_state;
+
+    /// Apply groundwater zone state to a subcatchment.
+    std::function<bool(int subcatch_index, double theta, double lower_depth)> set_gw_state;
+
+    /// True iff the read-side accessors are wired.
+    bool can_read() const noexcept {
+        return static_cast<bool>(get_infil_state) || static_cast<bool>(get_gw_state);
+    }
+
+    /// True iff the write-side accessors are wired.
+    bool can_write() const noexcept {
+        return static_cast<bool>(set_infil_state) || static_cast<bool>(set_gw_state);
+    }
 };
 
 // ============================================================================
@@ -442,6 +489,16 @@ struct SimulationContext {
      *          New in 6.0.0 — no legacy equivalent.
      */
     std::vector<PluginSpec> plugin_specs;
+
+    /**
+     * @brief Solver-neutral accessors for reading and writing solver-internal
+     *        state at hot-start save/load time.
+     *
+     * @details Wired by SWMMEngine at open() time so state-IO plugins can
+     *          access per-subcatchment infiltration and groundwater state
+     *          without depending on solver types.
+     */
+    StateAccessors state_accessors;
 
     // =========================================================================
     // Error / warning tracking

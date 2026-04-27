@@ -1205,13 +1205,18 @@ TEST(HydPower, ConvertToHorsepower) {
 //
 // The fix in DynamicWave::updateNodeFlows and SWMMEngine non-conduit callback
 // zeroes conduit/orifice half-areas at a STORAGE node only when the storage
-// curve provides area > MIN_SURFAREA. When the curve is degenerate (area ==
-// MIN_SURFAREA, i.e. FUNCTIONAL 0 0 0), the pipe half-areas are kept so the
-// Picard denominator stays bounded.
+// curve provides area > MIN_SURFAREA; otherwise the pipe half-areas are kept
+// so the Picard denominator stays bounded.
 //
-// These tests verify the precondition the guard relies on: getSurfArea must
-// return > MIN_SURFAREA for a real curve and exactly MIN_SURFAREA for a
-// degenerate one.
+// node::getSurfArea returns the RAW storage-curve area — the MIN_SURFAREA
+// floor is applied downstream at consumption sites in DynamicWave (see
+// DynamicWave.cpp `surf_area = std::max(surf_area, min_surf_area_)`).
+// Clamping inside getSurfArea was tried and reverted in commit 5b2be6cf
+// because it over-reported area at degenerate storages and mis-scaled the
+// Picard denominator by ~3× on the Rich_BC_CSO model.
+//
+// These tests verify the raw-return contract the guard relies on, at the
+// curve values that drive each branch of the guard.
 // ===========================================================================
 
 TEST(StorageHalfAreaGuard, RealCurveProvidesArea) {
@@ -1232,9 +1237,9 @@ TEST(StorageHalfAreaGuard, RealCurveProvidesArea) {
     EXPECT_NEAR(sa, 1000.0, 0.01);
 }
 
-TEST(StorageHalfAreaGuard, DegenerateCurveFloors) {
-    // FUNCTIONAL 0 0 0 → A(d) = 0 for all d → clamped to MIN_SURFAREA
-    // getSurfArea should return exactly MIN_SURFAREA → guard keeps pipe halves
+TEST(StorageHalfAreaGuard, DegenerateCurveReturnsRaw) {
+    // FUNCTIONAL 0 0 0 → A(d) = 0 for all d
+    // getSurfArea returns raw 0; downstream MIN_SURFAREA floor keeps pipe halves
     NodeData nodes;
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
@@ -1245,13 +1250,15 @@ TEST(StorageHalfAreaGuard, DegenerateCurveFloors) {
     nodes.storage_c[0] = 0.0;
 
     double sa = node::getSurfArea(nodes, 0, 5.0);
-    EXPECT_NEAR(sa, constants::MIN_SURFAREA, 1e-10)
-        << "Degenerate storage curve should return exactly MIN_SURFAREA";
+    EXPECT_NEAR(sa, 0.0, 1e-10)
+        << "Degenerate storage curve returns raw 0 (no internal MIN_SURFAREA clamp)";
+    EXPECT_LT(sa, constants::MIN_SURFAREA)
+        << "Raw value below MIN_SURFAREA → guard keeps pipe halves";
 }
 
-TEST(StorageHalfAreaGuard, SmallCurveBelowThreshold) {
-    // FUNCTIONAL 0 0.01 0 → A(d) = 0.01 for all d → clamped to MIN_SURFAREA
-    // Guard should keep pipe halves for this near-zero curve
+TEST(StorageHalfAreaGuard, SmallCurveReturnsRaw) {
+    // FUNCTIONAL 0 0.01 0 → A(d) = 0.01 for all d
+    // getSurfArea returns raw 0.01; downstream MIN_SURFAREA floor keeps pipe halves
     NodeData nodes;
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
@@ -1262,8 +1269,10 @@ TEST(StorageHalfAreaGuard, SmallCurveBelowThreshold) {
     nodes.storage_c[0] = 0.0;
 
     double sa = node::getSurfArea(nodes, 0, 5.0);
-    EXPECT_NEAR(sa, constants::MIN_SURFAREA, 1e-10)
-        << "Tiny curve (0.01 ft²) should clamp to MIN_SURFAREA";
+    EXPECT_NEAR(sa, 0.01, 1e-10)
+        << "Tiny curve (0.01 ft²) returns raw value (no internal MIN_SURFAREA clamp)";
+    EXPECT_LT(sa, constants::MIN_SURFAREA)
+        << "Raw value below MIN_SURFAREA → guard keeps pipe halves";
 }
 
 TEST(StorageHalfAreaGuard, CurveJustAboveThreshold) {
@@ -1286,8 +1295,9 @@ TEST(StorageHalfAreaGuard, CurveJustAboveThreshold) {
 
 TEST(StorageHalfAreaGuard, DepthDependentCrosses) {
     // FUNCTIONAL 0 100 1 → A(d) = 100*d
-    // At d=0.1: A = 10 < MIN_SURFAREA → pipe halves kept
-    // At d=5.0: A = 500 > MIN_SURFAREA → pipe halves zeroed
+    // At d=0.1: A = 10 < MIN_SURFAREA → guard keeps pipe halves
+    // At d=5.0: A = 500 > MIN_SURFAREA → guard zeroes pipe halves
+    // getSurfArea returns the raw curve value at both depths.
     NodeData nodes;
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
@@ -1298,13 +1308,16 @@ TEST(StorageHalfAreaGuard, DepthDependentCrosses) {
     nodes.storage_c[0] = 0.0;
 
     double sa_low = node::getSurfArea(nodes, 0, 0.1);
-    EXPECT_NEAR(sa_low, constants::MIN_SURFAREA, 1e-10)
-        << "At shallow depth (A=10), should clamp to MIN_SURFAREA";
+    EXPECT_NEAR(sa_low, 10.0, 1e-10)
+        << "At shallow depth, returns raw curve value (no internal MIN_SURFAREA clamp)";
+    EXPECT_LT(sa_low, constants::MIN_SURFAREA)
+        << "Raw value below MIN_SURFAREA → guard keeps pipe halves";
 
     double sa_high = node::getSurfArea(nodes, 0, 5.0);
-    EXPECT_GT(sa_high, constants::MIN_SURFAREA);
     EXPECT_NEAR(sa_high, 500.0, 0.01)
-        << "At depth 5 (A=500), should return curve value";
+        << "At depth 5, returns raw curve value 500";
+    EXPECT_GT(sa_high, constants::MIN_SURFAREA)
+        << "Raw value above MIN_SURFAREA → guard zeroes pipe halves";
 }
 
 // ============================================================================

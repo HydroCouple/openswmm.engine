@@ -31,11 +31,11 @@ target_include_directories(openswmm_plugin_sdk
 )
 
 # The plugin SDK depends on the common interface for version.h
-target_link_libraries(openswmm_plugin_sdk INTERFACE openswmmcore)
+target_link_libraries(openswmm_plugin_sdk INTERFACE openswmm_common)
 
 install(
     TARGETS openswmm_plugin_sdk
-    EXPORT  OpenSWMMCoreTargets
+    EXPORT  OpenSWMMEngineTargets
 )
 
 install(

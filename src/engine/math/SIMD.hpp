@@ -433,6 +433,80 @@ inline double pow2_3(double x) noexcept {
     return std::cbrt(x * x);
 }
 
+#if defined(OPENSWMM_SIMD_NEON)
+// ============================================================================
+// NEON 2-wide vectorised cube root via Newton-Raphson refinement.
+//
+// Seeding strategy: cast to float32x2, use single-precision cbrt via
+// vrecpe/NR, widen back to float64x2 for three double-precision NR
+// corrections.  Convergence: each NR step cubes the relative error, so
+// after 3 double steps the residual is < 1 ULP for normalised doubles.
+//
+// Used by batch_pow4_3 and batch_pow2_3 to compute Manning exponents on
+// pairs of hydraulic-radius values without calling std::cbrt twice.
+// ============================================================================
+
+/**
+ * @brief Compute cbrt(x) for two doubles packed in a float64x2_t.
+ * @pre  Both lanes must be finite and non-negative.
+ */
+inline float64x2_t vcbrtq_f64(float64x2_t x) noexcept {
+    // --- Step 1: float32 seed ---
+    // Narrow to float32, compute a rough cbrt via bit-manipulation seed
+    // (the classic Kahan integer cbrt trick generalised to float):
+    //   ieee754(float) cbrt seed: reinterpret as int32, scale exponent by 1/3.
+    float32x2_t xf = vcvt_f32_f64(x);                  // narrow to float32
+    int32x2_t   xi = vreinterpret_s32_f32(xf);
+    // Magic constant for float cbrt seed: (1/3) * (2^23) * (2 - 127/3 + bias)
+    // = 0x2A2A2A2B (approx). Gives ~5-bit accurate seed.
+    xi = vadd_s32(vshr_n_s32(vsub_s32(xi, vdup_n_s32(0x3F800000)), 2),
+                  vdup_n_s32(0x3F800000 + (0x3F800000 / 3)));
+    float32x2_t cr = vreinterpret_f32_s32(xi);
+
+    // --- Step 2: two float32 NR steps: cr = cr - (cr - x/cr²) / 3 ---
+    float32x2_t cr2 = vmul_f32(cr, cr);
+    cr = vadd_f32(cr, vmul_f32(vdup_n_f32(0.333333333f),
+                               vsub_f32(vdiv_f32(xf, cr2), cr)));
+    cr2 = vmul_f32(cr, cr);
+    cr = vadd_f32(cr, vmul_f32(vdup_n_f32(0.333333333f),
+                               vsub_f32(vdiv_f32(xf, cr2), cr)));
+
+    // --- Step 3: widen seed to double and run three double-precision NR ---
+    float64x2_t c = vcvt_f64_f32(cr);                  // widen to float64
+
+    // NR: c_next = c - (c³ - x) / (3 c²)
+    //           = (2c³ + x) / (3c²)      [Horner-friendly form]
+    float64x2_t three = vdupq_n_f64(3.0);
+    float64x2_t onethird = vdupq_n_f64(0.333333333333333333);
+    for (int i = 0; i < 3; ++i) {
+        float64x2_t c2 = vmulq_f64(c, c);
+        float64x2_t c3 = vmulq_f64(c2, c);
+        // c = c - (c³ - x) / (3 * c²)
+        c = vsubq_f64(c, vmulq_f64(onethird,
+                                   vdivq_f64(vsubq_f64(c3, x),
+                                             vmulq_f64(three, c2))));
+    }
+    return c;
+}
+
+/**
+ * @brief Compute pow(x, 4/3) = x * cbrt(x) for two doubles.
+ * Replaces two scalar fastmath::pow4_3 calls with one NEON computation.
+ */
+inline float64x2_t batch_pow4_3(float64x2_t x) noexcept {
+    return vmulq_f64(x, vcbrtq_f64(x));
+}
+
+/**
+ * @brief Compute pow(x, 2/3) = cbrt(x²) for two doubles.
+ * Replaces two scalar fastmath::pow2_3 calls with one NEON computation.
+ */
+inline float64x2_t batch_pow2_3(float64x2_t x) noexcept {
+    return vcbrtq_f64(vmulq_f64(x, x));
+}
+
+#endif /* OPENSWMM_SIMD_NEON */
+
 } /* namespace openswmm::fastmath */
 
 #endif /* OPENSWMM_ENGINE_SIMD_HPP */

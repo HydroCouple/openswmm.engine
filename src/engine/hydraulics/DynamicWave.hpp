@@ -226,8 +226,85 @@ private:
     std::vector<double> cached_length_;   ///< max(mod_length, length)
     std::vector<double> inv_length_;      ///< 1.0 / cached_length_
 
+    // ------------------------------------------------------------------------
+    // Phase A — Conduit-dense "hot tile" of timestep-invariant data.
+    //
+    // Sized n_conduits_, accessed by ci (0..n_conduits_-1) for dense linear
+    // memory access pattern. This replaces sparse `links.X[uj]` /
+    // `nodes.X[un]` reads inside the Picard inner loops, where uj/un are
+    // sparse-indexed via conduit_idx_ + links.node1/node2.  Each ci-indexed
+    // read maps to one contiguous cache line that holds 8+ conduits' data,
+    // versus the sparse pattern where each uj read can miss into a new line.
+    //
+    // All fields below are populated once in init() (or refreshConduitTile
+    // when a hot-start changes invariants) and remain constant for the rest
+    // of the simulation.  None of these change per Picard iter, per
+    // timestep, or per outfall update.
+    // ------------------------------------------------------------------------
+    std::vector<int>    tile_uj_;            ///< == conduit_idx_, co-located with rest
+    std::vector<int>    tile_n1_;            ///< links.node1[uj] for ci
+    std::vector<int>    tile_n2_;            ///< links.node2[uj]
+    std::vector<double> tile_inv1_elev_;     ///< nodes.invert_elev[node1]
+    std::vector<double> tile_inv2_elev_;     ///< nodes.invert_elev[node2]
+    std::vector<double> tile_z1_off_;        ///< links.offset1
+    std::vector<double> tile_z2_off_;        ///< links.offset2
+    std::vector<double> tile_y_full_;        ///< links.xsect_y_full
+    std::vector<double> tile_a_full_;        ///< links.xsect_a_full
+    std::vector<double> tile_r_full_;        ///< links.xsect_r_full
+    std::vector<double> tile_w_max_;         ///< links.xsect_w_max
+    std::vector<double> tile_length_;        ///< cached_length_ = max(mod_length, length); used for arithmetic stability
+    std::vector<double> tile_inv_length_;    ///< inv_length_
+    std::vector<double> tile_links_length_;  ///< raw links.length[uj] — used for volume calculations only
+    std::vector<double> tile_beta_;          ///< links.beta
+    std::vector<double> tile_q_max_;         ///< links.q_max
+    std::vector<double> tile_rough_factor_;  ///< links.rough_factor
+    std::vector<double> tile_barrels_d_;     ///< barrels_d_
+    std::vector<uint8_t> tile_is_open_;      ///< is_open_
+    std::vector<uint8_t> tile_is_force_main_;///< is_force_main_
+    std::vector<uint8_t> tile_is_closed_;    ///< links.is_closed
+    std::vector<uint8_t> tile_has_losses_;   ///< has_losses_
+    std::vector<int>     tile_xsect_batch_shape_; ///< links.xsect_batch_shape
+    std::vector<XsectShape> tile_shape_;     ///< links.xsect_shape
+    /// Phase C: pre-flag conduits that can possibly enter the Newton path
+    /// in STEP C. True iff (offset1 > 0 || offset2 > 0). When false the
+    /// flow-classification cascade reduces to two branchless comparisons
+    /// (both_full ? SUBCRITICAL : (both_dry ? DRY : SUBCRITICAL/UP_DRY/DN_DRY)),
+    /// no Newton solver call. Roughly 80–90 % of conduits in typical CSO
+    /// networks have zero offsets and take this fast path.
+    std::vector<uint8_t> tile_has_offset_;   ///< (z1_off > 0 || z2_off > 0)
+    /// Reverse map uj → ci. Sized n_links_, -1 for non-conduits. Lets the
+    /// momentum-kernel functions (processManningLink, processForceMainLink,
+    /// applyFlowLimits) read tile_X[ci] directly without changing their
+    /// uj-based signatures.
+    std::vector<int>     tile_uj_to_ci_;
+    /// Per-conduit timestep-invariants used by processManningLink /
+    /// processForceMainLink / applyFlowLimits (added in Phase A extension).
+    std::vector<int>     tile_culvert_code_;
+    std::vector<double>  tile_slope_;
+    std::vector<double>  tile_q_limit_;
+    std::vector<double>  tile_loss_inlet_;
+    std::vector<double>  tile_loss_outlet_;
+    std::vector<uint8_t> tile_has_flap_gate_;
+    std::vector<int8_t>  tile_direction_;
+
+    /// Populate the tile arrays from links/nodes SoA. Called once after
+    /// conduit_idx_ is built in init(), and exposed publicly for hotstart
+    /// refresh (currently unused but cheap to call again).
+    void refreshConduitTile(const SimulationContext& ctx);
+
     // Per-timestep constants
     double dt_gravity_ = 0.0;            ///< dt * GRAVITY (set once per timestep)
+
+    /// Effective minimum nodal surface area (ft²) used as a floor for the
+    /// dy = dV/surf_area Picard update.  Legacy `MinSurfArea` is the user
+    /// override from the INP `[OPTIONS]` `MIN_SURFAREA` line, falling back
+    /// to `DEFAULT_SURFAREA = 12.566 ft²` (4·π) only when the user did not
+    /// set it.  The new engine had been hard-coding `constants::MIN_SURFAREA`
+    /// regardless — under-counting the floor by up to 4× on models that
+    /// override it (Rich_BC_CSO sets it to 50 ft²), causing aggressive
+    /// dy oscillation and the 99.74 % vs 73.27 % non-convergence gap.
+    /// Set in `init()` from `ctx.options.min_surf_area`.
+    double min_surf_area_ = constants::MIN_SURFAREA;
 
     // Pre-allocated width-capping buffers (avoids thread_local per-call allocation)
     std::vector<double> wcap_d1_, wcap_d2_, wcap_dm_;

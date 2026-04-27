@@ -282,6 +282,23 @@ public:
                               double* hydrad, int n_links) const;
 
     /**
+     * @brief Fused triple: d1→(a1,hrad1), d2→a2, dm→(am,hrad_mid) in one
+     *        pass over shape groups.  Replaces three separate compute calls
+     *        in STEP B / STEP D of computeLinkGeometry.
+     */
+    void computeAreaHydRadTriple(
+        const double* d1, const double* d2, const double* dm,
+        double* a1, double* a2, double* am,
+        double* hrad1, double* hrad_mid, int n_links) const;
+
+    /**
+     * @brief Fused triple: d1→w1, d2→w2, dm→wm in one pass over shape groups.
+     */
+    void computeWidthsTriple(
+        const double* d1, const double* d2, const double* dm,
+        double* w1, double* w2, double* wm, int n_links) const;
+
+    /**
      * @brief Compute section factor for every link (from area, not depth).
      *
      * @param areas   [in]  Global area array.

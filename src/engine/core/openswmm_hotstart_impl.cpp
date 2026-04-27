@@ -26,7 +26,9 @@
 
 #include "SWMMEngine.hpp"
 #include "HotStartManager.hpp"
+#include "../plugins/PluginFactory.hpp"
 #include "../../../include/openswmm/engine/openswmm_hotstart.h"
+#include "../../../include/openswmm/plugin_sdk/IStateIOPlugin.hpp"
 
 #include <cstring>
 
@@ -68,7 +70,20 @@ SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
         return SWMM_ERR_LIFECYCLE;
     }
 
-    // Gap #54: save V2 format including infiltration + GW state
+    // Dispatch through state-IO plugins. The first plugin whose write_state()
+    // succeeds wins; if none is registered (shouldn't happen — SWMMEngine
+    // injects DefaultStateIOPlugin in open()), fall back to HotStartManager
+    // directly so this path remains usable in legacy embeddings.
+    const auto& state_plugins = eng->plugin_factory().state_io_plugins();
+    if (!state_plugins.empty()) {
+        for (auto* sp : state_plugins) {
+            const int rc = sp->write_state(path, ctx);
+            if (rc == 0) return SWMM_OK;
+        }
+        return SWMM_ERR_HOTSTART;
+    }
+
+    // Fallback (no plugin registered): direct HotStartManager call.
     openswmm::HotStartFile* hs =
         openswmm::HotStartManager::save(ctx,
                                         &eng->runoff_solver(),
@@ -76,8 +91,6 @@ SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
                                         path);
 
     if (!hs) return SWMM_ERR_HOTSTART;
-
-    // Immediately close the file handle (caller is not given it)
     delete hs;
     return SWMM_OK;
 }

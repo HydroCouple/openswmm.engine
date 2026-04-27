@@ -1,8 +1,8 @@
-# Description: CMake configuration for openswmmcore python library
-# Created by: Caleb Buahin 
+# Description: CMake configuration for openswmm.engine python library
+# Created by: Caleb Buahin
 # Created on: 2024-11-19
 
-# Add Cython targets for openswmmcore
+# Add Cython targets for openswmm.engine
 add_cython_target(_openswmm _openswmm.pyx CXX PY3)
 
 # Create Python extension modules
@@ -30,7 +30,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_link_options(_openswmm PRIVATE -fno-lto)
 endif()
 
-# Install the openswmmcore module
+# Install the openswmm.engine module
 install(TARGETS _openswmm LIBRARY DESTINATION openswmm)
 
 # Include the current source directory

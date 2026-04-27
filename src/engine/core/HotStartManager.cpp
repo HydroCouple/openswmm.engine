@@ -346,11 +346,14 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const std::string& path) {
     tl_last_io_error.clear();
 
+    // Auto-promote to V2 when ctx exposes solver-internal state via accessors.
+    const bool use_v2 = ctx.state_accessors.can_read();
+
     auto* hs = new HotStartFile();
     hs->path = path;
 
     // Header
-    hs->header.version    = 1;
+    hs->header.version    = use_v2 ? 2u : 1u;
     hs->header.timestamp  = static_cast<int64_t>(std::time(nullptr));
     hs->header.sim_time   = ctx.current_time;
     hs->header.start_date = ctx.options.start_date;
@@ -379,14 +382,26 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->links[ui].volume = ctx.links.volume[ui];
     }
 
-    // Subcatchments
+    // Subcatchments — V2 includes infil + GW state pulled via accessors
     const int n_sub = ctx.n_subcatches();
     hs->subcatches.resize(static_cast<std::size_t>(n_sub));
     for (int i = 0; i < n_sub; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        hs->subcatches[ui].id     = ctx.subcatch_names.name_of(i);
-        hs->subcatches[ui].runoff = ctx.subcatches.runoff[ui];
-        hs->subcatches[ui].gwater = ctx.subcatches.gw_flow[ui];
+        auto& rec = hs->subcatches[ui];
+        rec.id     = ctx.subcatch_names.name_of(i);
+        rec.runoff = ctx.subcatches.runoff[ui];
+        rec.gwater = ctx.subcatches.gw_flow[ui];
+
+        if (use_v2) {
+            if (ctx.state_accessors.get_infil_state) {
+                ctx.state_accessors.get_infil_state(i, rec.infil_model, rec.infil);
+            } else {
+                rec.infil_model = 0;
+            }
+            if (ctx.state_accessors.get_gw_state) {
+                ctx.state_accessors.get_gw_state(i, rec.gw_theta, rec.gw_lower_depth);
+            }
+        }
     }
 
     if (!write_file(*hs, path)) {
@@ -533,7 +548,10 @@ int HotStartManager::apply(HotStartFile& hs,
         ctx.links.volume[i] = rec.volume;
     }
 
-    // Apply subcatchment records
+    // Apply subcatchment records — and any V2 solver-internal state via
+    // ctx.state_accessors when the file is V2 and accessors are wired.
+    const bool apply_v2 = (hs.header.version >= 2u) && ctx.state_accessors.can_write();
+
     for (const auto& rec : hs.subcatches) {
         const int idx = ctx.subcatch_names.find(rec.id);
         if (idx < 0) {
@@ -544,6 +562,15 @@ int HotStartManager::apply(HotStartFile& hs,
         const auto i = static_cast<std::size_t>(idx);
         ctx.subcatches.runoff[i] = rec.runoff;
         ctx.subcatches.gw_flow[i] = rec.gwater;
+
+        if (apply_v2) {
+            if (ctx.state_accessors.set_infil_state && rec.infil_model >= 0) {
+                ctx.state_accessors.set_infil_state(idx, rec.infil_model, rec.infil);
+            }
+            if (ctx.state_accessors.set_gw_state && rec.gw_theta >= 0.0) {
+                ctx.state_accessors.set_gw_state(idx, rec.gw_theta, rec.gw_lower_depth);
+            }
+        }
     }
 
     return missing;

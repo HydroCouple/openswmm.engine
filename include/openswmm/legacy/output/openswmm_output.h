@@ -5,8 +5,8 @@
 * \date Last edited: 2024-10-17
 */
 
-#ifndef OPENSWMMCORE_OUTPUT_H_
-#define OPENSWMMCORE_OUTPUT_H_
+#ifndef OPENSWMM_LEGACY_OUTPUT_H_
+#define OPENSWMM_LEGACY_OUTPUT_H_
 
 /*! 
 * \def MAXFILENAME
@@ -484,4 +484,4 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_checkError(SMO_Handle p_handle_in, char *
 }
 #endif
 
-#endif /* OPENSWMMCORE_OUTPUT_H_ */
+#endif /* OPENSWMM_LEGACY_OUTPUT_H_ */

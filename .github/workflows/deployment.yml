@@ -90,11 +90,26 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
+      - name: Cache vcpkg downloads (source tarballs)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/downloads
+          key: vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
+            vcpkg-downloads-${{ runner.os }}-
+
       - name: Configure (Release)
+        # Release packaging skips the test/benchmark targets so vcpkg pulls only
+        # the runtime deps (default features → sundials for 2D).
         run: >
           cmake
           --preset=${{ matrix.cmake_preset }}
           -B build-${{ matrix.vcpkg_triplet }}
+          -DOPENSWMM_BUILD_TESTS=OFF
+          -DOPENSWMM_BUILD_UNIT_TESTS=OFF
+          -DOPENSWMM_BUILD_REGRESSION_TESTS=OFF
+          -DOPENSWMM_BUILD_BENCHMARKS=OFF
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
       - name: Build and package

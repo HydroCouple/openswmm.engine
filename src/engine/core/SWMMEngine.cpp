@@ -24,6 +24,7 @@
 #include "../hydraulics/TimestepController.hpp"
 #include "../input/PostParseResolver.hpp"
 #include "../plugins/DefaultInputPlugin.hpp"
+#include "../plugins/DefaultStateIOPlugin.hpp"
 #include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
 #include "../plugins/DefaultOutputPlugin.hpp"
 #include "../plugins/DefaultReportPlugin.hpp"
@@ -35,9 +36,11 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include "ErrorCodes.hpp"
 
+// libomp's KMP_BLOCKTIME override — declared here at file scope because
 // OpenMP support — graceful degradation when not available
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
@@ -183,6 +186,62 @@ int SWMMEngine::open(const char* inp_path,
         rp->initialize({}, nullptr);
         rp->validate(ctx_);
         plugins_.add_report_plugin(rp);
+    }
+
+    // Wire solver-neutral state accessors so state-IO plugins can read/write
+    // infiltration and groundwater state through SimulationContext alone.
+    {
+        runoff::RunoffSolver* runoff_ptr = &runoff_;
+        groundwater::GWSolver* gw_ptr    = &groundwater_;
+
+        ctx_.state_accessors.get_infil_state =
+            [runoff_ptr](int i, int& model, double* infil) -> bool {
+                runoff_ptr->infil_get_state(i, model, infil);
+                return true;
+            };
+        ctx_.state_accessors.set_infil_state =
+            [runoff_ptr](int i, int model, const double* infil) -> bool {
+                runoff_ptr->infil_set_state(i, model, infil);
+                return true;
+            };
+        ctx_.state_accessors.get_gw_state =
+            [gw_ptr](int i, double& theta, double& lower_depth) -> bool {
+                const auto& gwa = gw_ptr->state();
+                const auto ui = static_cast<std::size_t>(i);
+                if (ui >= gwa.theta.size()) return false;
+                theta       = gwa.theta[ui];
+                lower_depth = ui < gwa.lower_depth.size() ? gwa.lower_depth[ui] : 0.0;
+                return true;
+            };
+        ctx_.state_accessors.set_gw_state =
+            [gw_ptr](int i, double theta, double lower_depth) -> bool {
+                auto& gwa = gw_ptr->state();
+                const auto ui = static_cast<std::size_t>(i);
+                if (ui >= gwa.theta.size()) return false;
+                gwa.theta[ui] = theta;
+                if (ui < gwa.lower_depth.size()) gwa.lower_depth[ui] = lower_depth;
+                return true;
+            };
+    }
+
+    // Inject the default state-IO plugin if no external one resolved during
+    // [PLUGINS] processing. Coexist-with-fallback: external state plugins
+    // win on read via can_read() in the C-API dispatch; the default handles
+    // legacy formats and any unclaimed paths.
+    {
+        bool has_default_state_io = false;
+        for (auto* sp : plugins_.state_io_plugins()) {
+            if (dynamic_cast<DefaultStateIOPlugin*>(sp)) {
+                has_default_state_io = true;
+                break;
+            }
+        }
+        if (!has_default_state_io) {
+            auto* sp = new DefaultStateIOPlugin();
+            sp->initialize({}, nullptr);
+            sp->validate(ctx_);
+            plugins_.add_state_io_plugin(sp);
+        }
     }
 
     ctx_.state = EngineState::OPENED;
@@ -1643,15 +1702,19 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                 ctx.nodes.outflow[un2] -= q_new;
             }
 
-             // Non-conduit dqdh — orifices compute their own in computeOrificeFlows;
-            // for other types, approximate as Q/(2*head).
+            // Non-conduit dqdh: each per-type compute function (orifice,
+            // weir, outlet, pump3/4/5) sets `links.dqdh[uj]` directly when
+            // it has a usable derivative. PUMP1, PUMP2, PUMP6 (ideal), and
+            // any case where the per-type code doesn't set dqdh leave it at
+            // zero — matching legacy `findNonConduitFlow` (`dynwave.c:423`),
+            // which resets `Link[i].dqdh = 0.0` and only the per-type
+            // `link_getInflow` branches that compute a derivative overwrite
+            // it. Do NOT introduce a `q/(2·dh)` approximation here; legacy
+            // doesn't, and adding non-zero dqdh at wet-well STORAGE nodes
+            // (where multiple PUMP2s discharge) perturbs `sumdqdh` and
+            // changes the surcharge-Newton denom in `setNodeDepth`,
+            // breaking Picard convergence relative to legacy.
             double dqdh = links.dqdh[uj];
-            if (dqdh == 0.0 && std::fabs(q_new) > 0.0001) {
-                double h1_abs = ctx.nodes.depth[un1] + ctx.nodes.invert_elev[un1];
-                double h2_abs = ctx.nodes.depth[un2] + ctx.nodes.invert_elev[un2];
-                double dh = std::fabs(h1_abs - h2_abs);
-                if (dh > 0.001) dqdh = std::fabs(q_new) / (2.0 * dh);
-            }
 
             // Scatter dqdh — legacy dynwave.c lines 565-575:
             // TYPE4_PUMP adds dqdh to node1 (inlet) only; skip node2.
@@ -1973,36 +2036,52 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     ctx_.mass_balance.routing_rdii        += ctx_.mass_balance.step_rdii_inflow * dt_routing;
     ctx_.mass_balance.routing_external    += ctx_.mass_balance.step_ext_inflow * dt_routing;
 
+    // Mass-balance accounting for the per-node system-outflow / flooding
+    // categorisation (matching legacy node_getSystemOutflow + removeOutflows).
+    //
+    // Legacy logic (node.c:414-468):
+    //   OUTFALL                                : outflow = inflow (when outflow==0),
+    //                                            then overflow=0, newVolume=0
+    //   non-DW + degree==0 + non-STORAGE       : outflow = inflow (terminal)
+    //   else (interior, including DW degree==0): outflow = overflow only when
+    //                                            newVolume <= fullVolume,
+    //                                            isFlooded = TRUE
+    //
+    // Critical: under DYNWAVE, degree==0 non-STORAGE nodes are NOT terminal —
+    // they fall into the "interior" branch and only contribute system flow
+    // when overflow is positive AND newVolume <= fullVolume.
+    const bool is_dw = (ctx_.options.routing_model == RoutingModel::DYNWAVE);
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
+        const NodeType nt = ctx_.nodes.type[uj];
 
-        // Flooding (overflow at non-outfall nodes)
-        if (ctx_.nodes.overflow[uj] > 0.0 &&
-            ctx_.nodes.type[uj] != NodeType::OUTFALL) {
-            ctx_.mass_balance.routing_flooding += ctx_.nodes.overflow[uj] * dt_routing;
-            ctx_.mass_balance.step_flooding    += ctx_.nodes.overflow[uj];
-        }
-
-        // Outfall outflow: at outfall nodes, inflow becomes system outflow
-        if (ctx_.nodes.type[uj] == NodeType::OUTFALL) {
+        if (nt == NodeType::OUTFALL) {
+            // Outfall: system outflow = inflow
             double q_outfall = ctx_.nodes.inflow[uj];
             ctx_.mass_balance.routing_outflow += q_outfall * dt_routing;
             ctx_.mass_balance.step_outflow    += q_outfall;
 
             // Gap #28: accumulate outfall discharge as routed volume for next
             // runoff step (matching legacy Outfall[i].vRouted accumulation).
-            // assembleRunon() drains this into runon_inflow[] and resets it.
             int sc = ctx_.nodes.outfall_route_to[uj];
             if (sc >= 0 && sc < ctx_.n_subcatches() && q_outfall > 0.0) {
                 auto usc = static_cast<std::size_t>(sc);
                 ctx_.subcatches.outfall_runon_vol[usc] += q_outfall * dt_routing;
             }
         }
-        // Non-storage terminal nodes (degree == 0) also count as outflow
-        else if (ctx_.nodes.degree[uj] == 0 &&
-                 ctx_.nodes.type[uj] != NodeType::STORAGE) {
+        else if (!is_dw && ctx_.nodes.degree[uj] == 0 && nt != NodeType::STORAGE) {
+            // Non-DW terminal node: counted as system outflow.
             ctx_.mass_balance.routing_outflow += ctx_.nodes.inflow[uj] * dt_routing;
             ctx_.mass_balance.step_outflow    += ctx_.nodes.inflow[uj];
+        }
+        else {
+            // Interior node (also DW terminal nodes): overflow counted as
+            // flooding only if newVolume <= fullVolume (matching legacy).
+            if (ctx_.nodes.overflow[uj] > 0.0 &&
+                ctx_.nodes.volume[uj] <= ctx_.nodes.full_volume[uj]) {
+                ctx_.mass_balance.routing_flooding += ctx_.nodes.overflow[uj] * dt_routing;
+                ctx_.mass_balance.step_flooding    += ctx_.nodes.overflow[uj];
+            }
         }
 
         // Node evaporation and seepage losses

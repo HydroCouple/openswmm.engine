@@ -465,15 +465,17 @@ TEST(NodeHydraulics, JunctionVolumeLinear) {
     EXPECT_NEAR(v, 12.566 * 5.0, 0.1);
 }
 
-TEST(NodeHydraulics, JunctionSurfAreaConstant) {
+TEST(NodeHydraulics, JunctionSurfAreaReturnsZero) {
     NodeData nodes;
     nodes.resize(1);
     nodes.type[0] = NodeType::JUNCTION;
     nodes.full_depth[0] = 10.0;
 
-    // Junction surface area is MIN_SURFAREA (constant)
+    // Non-storage nodes return 0 from getSurfArea — matches legacy
+    // node_getSurfArea. The MIN_SURFAREA floor is applied downstream
+    // at consumption sites in DynamicWave (see commit 5b2be6cf).
     double sa = node::getSurfArea(nodes, 0, 5.0);
-    EXPECT_GT(sa, 0.0);
+    EXPECT_EQ(sa, 0.0);
 }
 
 TEST(NodeHydraulics, StorageFunctionalVolume) {

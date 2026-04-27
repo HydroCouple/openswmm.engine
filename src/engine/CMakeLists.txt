@@ -105,7 +105,7 @@ target_include_directories(openswmm_engine
 # ---- Link against common interface ----
 target_link_libraries(openswmm_engine
     PUBLIC
-        openswmmcore
+        openswmm_common
     PRIVATE
         $<$<NOT:$<BOOL:$<CXX_COMPILER_ID:MSVC>>>:m>
 )
@@ -223,7 +223,7 @@ set_target_properties(openswmm_engine PROPERTIES
 # ---- Install ----
 install(
     TARGETS openswmm_engine
-    EXPORT  OpenSWMMCoreTargets
+    EXPORT  OpenSWMMEngineTargets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -269,7 +269,7 @@ if(MSVC AND OPENSWMM_BUILD_UNIT_TESTS)
     )
 
     target_link_libraries(openswmm_engine_internal
-        PUBLIC  openswmmcore
+        PUBLIC  openswmm_common
         PRIVATE Threads::Threads
     )
 
