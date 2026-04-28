@@ -86,6 +86,35 @@ class Nodes:
         """
         ...
 
+    def add(self, node_id: str, node_type: int) -> int:
+        """Add a node to the model (OPENED-state editing).
+
+        Wraps ``swmm_node_add``. Valid in ``BUILDING`` or ``OPENED`` state.
+
+        Args:
+            node_id: Unique node identifier.
+            node_type: Node type code (see :class:`NodeType`).
+
+        Returns:
+            Error code (0 on success).
+        """
+        ...
+
+    def pop_last(self, node_id: str) -> int:
+        """Remove the most recently added node (undo-of-add).
+
+        Wraps ``swmm_node_pop_last``. Valid in ``BUILDING`` or ``OPENED``
+        state. ``node_id`` must match the current tail; otherwise
+        ``SWMM_ERR_BADINDEX`` is returned.
+
+        Args:
+            node_id: Expected tail node identifier.
+
+        Returns:
+            Error code (0 on success).
+        """
+        ...
+
     def get_depth(self, idx: Union[int, str]) -> float:
         """Return the current water depth at a node.
 

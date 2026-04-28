@@ -96,6 +96,7 @@ cdef extern from "openswmm_nodes.h":
     cdef const char* swmm_node_id(SWMM_Engine e, int idx)
     # Creation
     cdef int swmm_node_add(SWMM_Engine e, const char* id, int type)
+    cdef int swmm_node_pop_last(SWMM_Engine e, const char* id)
     # Geometry setters
     cdef int swmm_node_set_invert_elev(SWMM_Engine e, int idx, double elev)
     cdef int swmm_node_set_max_depth(SWMM_Engine e, int idx, double depth)
@@ -173,6 +174,7 @@ cdef extern from "openswmm_links.h":
     cdef const char* swmm_link_id(SWMM_Engine e, int idx)
     # Creation
     cdef int swmm_link_add(SWMM_Engine e, const char* id, int type)
+    cdef int swmm_link_pop_last(SWMM_Engine e, const char* id)
     # Connectivity
     cdef int swmm_link_set_nodes(SWMM_Engine e, int idx, int from_node, int to_node)
     cdef int swmm_link_get_from_node(SWMM_Engine e, int idx, int* node_idx)

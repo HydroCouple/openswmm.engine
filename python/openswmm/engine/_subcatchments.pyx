@@ -98,6 +98,21 @@ class Subcatchments:
         cdef const char* raw = swmm_subcatch_id(h, idx)
         return raw.decode('utf-8') if raw != NULL else ""
 
+    def add(self, str sc_id) -> int:
+        """Add a subcatchment to the model (OPENED-state editing).
+
+        Wraps ``swmm_subcatch_add``. Valid in ``BUILDING`` or ``OPENED``
+        state. For from-scratch construction without an .inp file, use
+        :class:`ModelBuilder.add_subcatchment`.
+
+        :param sc_id: Unique subcatchment identifier.
+        :returns: Error code (0 on success).
+        :rtype: int
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = sc_id.encode('utf-8')
+        return swmm_subcatch_add(h, b)
+
     # ------------------------------------------------------------------
     # Property setters (BUILDING / OPENED)
     # ------------------------------------------------------------------

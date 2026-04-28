@@ -49,14 +49,17 @@ add_subdirectory(engine)
 # @loader_path / $ORIGIN RPATH entries resolve at runtime.
 # ---------------------------------------------------------------------------
 install(TARGETS openswmm_engine
-    LIBRARY DESTINATION openswmm/engine
-    RUNTIME DESTINATION openswmm/engine   # Windows DLLs
+    LIBRARY DESTINATION openswmm/engine          # .so/.dylib (Unix/macOS)
+    ARCHIVE DESTINATION openswmm/engine          # .lib import library (Windows)
+    RUNTIME DESTINATION openswmm/engine          # .dll (Windows)
 )
 install(TARGETS openswmm_legacy_engine
     LIBRARY DESTINATION openswmm/legacy/engine
+    ARCHIVE DESTINATION openswmm/legacy/engine
     RUNTIME DESTINATION openswmm/legacy/engine
 )
 install(TARGETS openswmm_legacy_output
     LIBRARY DESTINATION openswmm/legacy/output
+    ARCHIVE DESTINATION openswmm/legacy/output
     RUNTIME DESTINATION openswmm/legacy/output
 )

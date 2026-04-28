@@ -68,19 +68,22 @@ target_link_libraries(openswmm_legacy_output
 )
 
 # RPATH settings
+# The output dylib is installed to openswmm/legacy/output/; no external
+# bundled deps needed beyond system libs (libSystem, libc++).
 if(APPLE)
     set(LIB_ROOT "@loader_path")
-else()
+elseif(UNIX)
     set(LIB_ROOT "$ORIGIN")
+else()
+    set(LIB_ROOT "")
 endif()
 
 set_target_properties(openswmm_legacy_output
     PROPERTIES
         MACOSX_RPATH             TRUE
         SKIP_BUILD_RPATH         FALSE
-        BUILD_WITH_INSTALL_RPATH FALSE
-        INSTALL_RPATH            "${LIB_ROOT};${PACKAGE_RPATH};"
-        INSTALL_RPATH_USE_LINK_PATH TRUE
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH            "${LIB_ROOT}"
 )
 
 # Install public headers

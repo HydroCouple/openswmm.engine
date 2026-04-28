@@ -83,20 +83,28 @@ function(add_engine_cython_module name pyx_file)
         )
     endif()
 
-    # RPATH so the extension can find the shared engine library at runtime
+    # RPATH so the extension can find libopenswmm.engine.6.dylib at runtime.
+    # The engine dylib is installed alongside the extension in openswmm/engine/,
+    # so @loader_path / $ORIGIN (same directory as the .so/.pyd) is sufficient.
+    # No additional entries: stale build-tree paths (@loader_path/../../../../..)
+    # and the circular @rpath sentinel are intentionally omitted.
     if(APPLE)
         set_target_properties(${target} PROPERTIES
-            BUILD_RPATH   "@loader_path;@rpath;@loader_path/../../../../.."
-            INSTALL_RPATH "@loader_path;@rpath;@loader_path/../../../../.."
+            BUILD_RPATH   "@loader_path"
+            INSTALL_RPATH "@loader_path"
             BUILD_WITH_INSTALL_RPATH TRUE
         )
     elseif(UNIX)
         set_target_properties(${target} PROPERTIES
-            BUILD_RPATH   "$ORIGIN;$ORIGIN/../../../../.."
-            INSTALL_RPATH "$ORIGIN;$ORIGIN/../../../../.."
+            BUILD_RPATH   "$ORIGIN"
+            INSTALL_RPATH "$ORIGIN"
             BUILD_WITH_INSTALL_RPATH TRUE
         )
     endif()
+    # Windows: no RPATH; the DLL is placed alongside the .pyd by the install()
+    # targets in openswmm/CMakeLists.txt.  delvewheel (run in CI) then bundles
+    # any transitive DLL dependencies and adds the DLL search path via
+    # os.add_dll_directory() in the package __init__.py.
 
     install(TARGETS ${target} LIBRARY DESTINATION openswmm/engine)
 endfunction()

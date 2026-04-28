@@ -41,6 +41,8 @@ class ModelBuilder:
     def add_node(self, node_id: str, node_type: int) -> int:
         """Add a node to the model.
 
+        Valid in ``BUILDING`` or ``OPENED`` state.
+
         Args:
             node_id: Unique node identifier.
             node_type: Node type code (0=JUNCTION, 1=OUTFALL, 2=STORAGE,
@@ -51,13 +53,47 @@ class ModelBuilder:
         """
         ...
 
+    def pop_last_node(self, node_id: str) -> int:
+        """Remove the most recently added node (undo-of-add).
+
+        Valid in ``BUILDING`` or ``OPENED`` state. The ``node_id`` must
+        match the current tail; otherwise ``SWMM_ERR_BADINDEX`` is
+        returned. Returns ``SWMM_ERR_BADPARAM`` if any link still
+        references the tail node — pop those links first via
+        :meth:`pop_last_link`.
+
+        Args:
+            node_id: Expected tail node identifier.
+
+        Returns:
+            Error code (0 on success).
+        """
+        ...
+
     def add_link(self, link_id: str, link_type: int) -> int:
         """Add a link to the model.
+
+        Valid in ``BUILDING`` or ``OPENED`` state.
 
         Args:
             link_id: Unique link identifier.
             link_type: Link type code (0=CONDUIT, 1=PUMP, 2=ORIFICE, 3=WEIR,
                        4=OUTLET). See :class:`~openswmm.engine.LinkType`.
+
+        Returns:
+            Error code (0 on success).
+        """
+        ...
+
+    def pop_last_link(self, link_id: str) -> int:
+        """Remove the most recently added link (undo-of-add).
+
+        Valid in ``BUILDING`` or ``OPENED`` state. The ``link_id`` must
+        match the current tail; otherwise ``SWMM_ERR_BADINDEX`` is
+        returned.
+
+        Args:
+            link_id: Expected tail link identifier.
 
         Returns:
             Error code (0 on success).

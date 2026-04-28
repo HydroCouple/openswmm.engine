@@ -208,13 +208,21 @@ elseif(UNIX)
 endif()
 
 # ---- RPATH ----
+# The engine dylib is installed to openswmm/engine/ in the wheel.
+# External bundled deps (e.g. libomp, placed by delocate/auditwheel) go into
+# openswmm/.dylibs/ — one level above the engine directory.
+# @loader_path/../.dylibs  ==  openswmm/engine/../.dylibs  ==  openswmm/.dylibs/
 if(APPLE)
-    set(LIB_ROOT "@loader_path/../lib;@rpath")
+    set(LIB_ROOT "@loader_path/../.dylibs")
+elseif(UNIX)
+    set(LIB_ROOT "$ORIGIN/../.dylibs")
 else()
-    set(LIB_ROOT "$ORIGIN/../lib;$ORIGIN")
+    # Windows: DLL loading uses PATH / LoadLibraryEx; no RPATH concept.
+    set(LIB_ROOT "")
 endif()
 
 set_target_properties(openswmm_engine PROPERTIES
+    MACOSX_RPATH         TRUE
     INSTALL_RPATH        "${LIB_ROOT}"
     BUILD_RPATH          "${LIB_ROOT}"
     BUILD_WITH_INSTALL_RPATH TRUE

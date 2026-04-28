@@ -32,15 +32,17 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_link_options(_solver PRIVATE -fno-lto)
 endif()
 
+# libopenswmm.legacy.engine.6.dylib is installed alongside this extension
+# in openswmm/legacy/engine/ so @loader_path / $ORIGIN (same directory) is
+# sufficient.  Stale build-tree paths and the circular @rpath are removed.
 if(APPLE)
-    set(INSTALL_LIB_ROOT "@loader_path;@rpath;@loader_path/../../../../..")
-    set(BUILD_LIB_ROOT "@loader_path;@rpath")
+    set(INSTALL_LIB_ROOT "@loader_path")
+    set(BUILD_LIB_ROOT "@loader_path")
 elseif(UNIX)
-    set(INSTALL_LIB_ROOT "$ORIGIN;$ORIGIN/../../../../..")
+    set(INSTALL_LIB_ROOT "$ORIGIN")
     set(BUILD_LIB_ROOT "$ORIGIN")
 endif()
 
-# Set up rpath
 set_target_properties(_solver
     PROPERTIES
         BUILD_RPATH "${BUILD_LIB_ROOT}"

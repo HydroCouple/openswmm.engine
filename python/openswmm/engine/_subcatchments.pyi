@@ -73,6 +73,19 @@ class Subcatchments:
         """
         ...
 
+    def add(self, sc_id: str) -> int:
+        """Add a subcatchment to the model (OPENED-state editing).
+
+        Wraps ``swmm_subcatch_add``. Valid in ``BUILDING`` or ``OPENED`` state.
+
+        Args:
+            sc_id: Unique subcatchment identifier.
+
+        Returns:
+            Error code (0 on success).
+        """
+        ...
+
     def get_runoff(self, idx: Union[int, str]) -> float:
         """Return the current runoff rate from a subcatchment.
 

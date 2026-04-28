@@ -103,6 +103,41 @@ class Nodes:
         cdef const char* raw = swmm_node_id(h, idx)
         return raw.decode('utf-8') if raw != NULL else ""
 
+    def add(self, str node_id, int node_type) -> int:
+        """Add a node to the model (OPENED-state editing).
+
+        Wraps ``swmm_node_add``. Valid in ``BUILDING`` or ``OPENED`` state.
+        Use this on a :class:`Solver` that has been opened for interactive
+        editing of an existing model. For from-scratch construction without
+        an .inp file, use :class:`ModelBuilder.add_node` instead.
+
+        :param node_id: Unique node identifier.
+        :param node_type: Node type code (see :class:`NodeType`).
+        :returns: Error code (0 on success, ``SWMM_ERR_LIFECYCLE`` if the
+                  engine is not in an editable state).
+        :rtype: int
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = node_id.encode('utf-8')
+        return swmm_node_add(h, b, node_type)
+
+    def pop_last(self, str node_id) -> int:
+        """Remove the most recently added node (undo-of-add).
+
+        Wraps ``swmm_node_pop_last``. Valid in ``BUILDING`` or ``OPENED``
+        state. ``node_id`` must match the current tail; otherwise
+        ``SWMM_ERR_BADINDEX`` is returned. Returns ``SWMM_ERR_BADPARAM``
+        if any link still references the tail node — pop those links
+        first via :meth:`Links.pop_last`.
+
+        :param node_id: Expected tail node identifier.
+        :returns: Error code (0 on success).
+        :rtype: int
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = node_id.encode('utf-8')
+        return swmm_node_pop_last(h, b)
+
     def get_depth(self, idx) -> float:
         """Return the current water depth at a node.
 

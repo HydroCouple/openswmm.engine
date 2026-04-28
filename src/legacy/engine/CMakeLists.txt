@@ -117,16 +117,23 @@ target_link_libraries(openswmm_legacy_engine
 )
 
 # RPATH settings
+# The legacy engine dylib is installed to openswmm/legacy/engine/ in the wheel.
+# External bundled deps (libomp, placed by delocate/auditwheel) go into
+# openswmm/.dylibs/ — two levels above:
+# @loader_path/../../.dylibs  ==  openswmm/legacy/engine/../../.dylibs  ==  openswmm/.dylibs/
 if(APPLE)
-    set(LIB_ROOT "@loader_path/../lib;@rpath")
+    set(LIB_ROOT "@loader_path/../../.dylibs")
+elseif(UNIX)
+    set(LIB_ROOT "$ORIGIN/../../.dylibs")
 else()
-    set(LIB_ROOT "$ORIGIN/../lib;$ORIGIN")
+    set(LIB_ROOT "")
 endif()
 
 set_target_properties(openswmm_legacy_engine
     PROPERTIES
-        INSTALL_RPATH          "${LIB_ROOT}"
-        BUILD_RPATH            "${LIB_ROOT}"
+        MACOSX_RPATH             TRUE
+        INSTALL_RPATH            "${LIB_ROOT}"
+        BUILD_RPATH              "${LIB_ROOT}"
         BUILD_WITH_INSTALL_RPATH TRUE
 )
 

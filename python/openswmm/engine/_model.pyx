@@ -57,6 +57,8 @@ cdef class ModelBuilder:
     def add_node(self, str node_id, int node_type) -> int:
         """Add a node to the model.
 
+        Valid in ``BUILDING`` or ``OPENED`` state.
+
         :param node_id: Unique node identifier.
         :type node_id: str
         :param node_type: Node type code (0=JUNCTION, 1=OUTFALL, 2=STORAGE, 3=DIVIDER).
@@ -67,8 +69,27 @@ cdef class ModelBuilder:
         cdef bytes b = node_id.encode('utf-8')
         return swmm_node_add(self._handle, b, node_type)
 
+    def pop_last_node(self, str node_id) -> int:
+        """Remove the most recently added node (undo-of-add).
+
+        Valid in ``BUILDING`` or ``OPENED`` state. ``node_id`` must
+        match the current tail; otherwise ``SWMM_ERR_BADINDEX`` is
+        returned. Returns ``SWMM_ERR_BADPARAM`` if any link still
+        references the tail node — pop those links first via
+        :meth:`pop_last_link`.
+
+        :param node_id: Expected tail node identifier.
+        :type node_id: str
+        :returns: Error code (0 on success).
+        :rtype: int
+        """
+        cdef bytes b = node_id.encode('utf-8')
+        return swmm_node_pop_last(self._handle, b)
+
     def add_link(self, str link_id, int link_type) -> int:
         """Add a link to the model.
+
+        Valid in ``BUILDING`` or ``OPENED`` state.
 
         :param link_id: Unique link identifier.
         :type link_id: str
@@ -79,6 +100,21 @@ cdef class ModelBuilder:
         """
         cdef bytes b = link_id.encode('utf-8')
         return swmm_link_add(self._handle, b, link_type)
+
+    def pop_last_link(self, str link_id) -> int:
+        """Remove the most recently added link (undo-of-add).
+
+        Valid in ``BUILDING`` or ``OPENED`` state. ``link_id`` must
+        match the current tail; otherwise ``SWMM_ERR_BADINDEX`` is
+        returned.
+
+        :param link_id: Expected tail link identifier.
+        :type link_id: str
+        :returns: Error code (0 on success).
+        :rtype: int
+        """
+        cdef bytes b = link_id.encode('utf-8')
+        return swmm_link_pop_last(self._handle, b)
 
     def add_subcatchment(self, str sc_id) -> int:
         """Add a subcatchment to the model.
