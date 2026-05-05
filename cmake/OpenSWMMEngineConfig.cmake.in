@@ -8,7 +8,7 @@ include(CMakeFindDependencyMacro)
 find_dependency(Threads)
 
 # Include the targets file
-include("${CMAKE_CURRENT_LIST_DIR}/OPENSWMMEngineTargets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/OpenSWMMEngineTargets.cmake")
 
 # Provide portable variables for consumers.
 # On Windows a shared-library build produces both an import library (.lib →

@@ -133,6 +133,35 @@ jobs:
             build-${{ matrix.vcpkg_triplet }}/*.tar.gz
             build-${{ matrix.vcpkg_triplet }}/*.zip
 
+      # ── Release build for Python wheel consumption ────────────────────────
+      # vcpkg packages are already in the binary cache from the Debug build
+      # above, so this configure is fast (no SUNDIALS recompilation).
+      - name: Configure (Release, for Python wheel)
+        run: >
+          cmake
+          --preset=${{ matrix.cmake_preset }}
+          -B build-${{ matrix.vcpkg_triplet }}-release
+          -DOPENSWMM_BUILD_TESTS=OFF
+          -DOPENSWMM_BUILD_UNIT_TESTS=OFF
+          -DOPENSWMM_BUILD_REGRESSION_TESTS=OFF
+          -DOPENSWMM_BUILD_BENCHMARKS=OFF
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
+
+      - name: Build (Release, for Python wheel)
+        run: cmake --build build-${{ matrix.vcpkg_triplet }}-release --config Release
+
+      - name: Install (Release, for Python wheel)
+        run: >
+          cmake --install build-${{ matrix.vcpkg_triplet }}-release
+          --config Release
+          --prefix "${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}"
+
+      - name: Upload engine install artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: engine-install-${{ matrix.vcpkg_triplet }}
+          path: engine-install-${{ matrix.vcpkg_triplet }}/
+
   # ──────────────────────────────────────────────────────────────────────
   #  Python bindings — build, test, and wheel packaging
   # ──────────────────────────────────────────────────────────────────────
@@ -229,6 +258,16 @@ jobs:
       - name: Clean stale scikit-build cache
         run: python -c "import shutil; shutil.rmtree('python/_skbuild', ignore_errors=True)"
 
+      # Download the pre-built Release engine produced by the engine job.
+      # The Python cmake uses find_package(OpenSWMMEngine) against this prefix
+      # instead of rebuilding the engine from source, cutting the Python job
+      # from ~20 min to ~5 min.
+      - name: Download pre-built engine install
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-install-${{ matrix.vcpkg_triplet }}
+          path: engine-install
+
       # Pre-install vcpkg packages before pip so that SUNDIALS (and other
       # native deps) are already in $VCPKG_ROOT/installed/ when cmake configure
       # runs inside pip's build-isolation environment.  Running vcpkg install
@@ -243,6 +282,7 @@ jobs:
           "${{ env.VCPKG_ROOT }}/vcpkg" install
           --triplet "${{ matrix.vcpkg_triplet }}"
           --x-manifest-root "${{ github.workspace }}"
+          --x-install-root "${{ env.VCPKG_ROOT }}/installed"
 
       - name: Pre-install vcpkg packages (Windows)
         if: runner.os == 'Windows'
@@ -252,20 +292,22 @@ jobs:
           & "${{ env.VCPKG_ROOT }}\vcpkg.exe" install
           --triplet "${{ matrix.vcpkg_triplet }}"
           --x-manifest-root "${{ github.workspace }}"
+          --x-install-root "${{ env.VCPKG_ROOT }}/installed"
 
-      # VCPKG_MANIFEST_DIR tells the vcpkg toolchain where vcpkg.json lives.
-      # Without it, the python/ sub-directory cmake has no manifest and vcpkg
-      # skips package installation entirely.
-      # VCPKG_DEFAULT_TRIPLET ensures the toolchain uses the same triplet that
-      # was pre-installed above, even if cmake 4.x auto-detection differs.
+      # OPENSWMM_ENGINE_INSTALL_PREFIX points cmake at the pre-built engine
+      # artifact so python/CMakeLists.txt uses find_package instead of
+      # add_subdirectory.  VCPKG_DEFAULT_TRIPLET ensures vcpkg (still needed
+      # so delocate/delvewheel can find SUNDIALS dylibs) uses the correct
+      # triplet.  VCPKG_MANIFEST_DIR is intentionally omitted: without it,
+      # vcpkg runs in classic mode — no package installation, just sets
+      # CMAKE_PREFIX_PATH so the linker and bundling tools find SUNDIALS.
       - name: Build and install (Windows)
         if: runner.os == 'Windows'
         working-directory: python
         env:
           CMAKE_GENERATOR: "Visual Studio 17 2022"
-          VCPKG_MANIFEST_DIR: ${{ github.workspace }}
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-          OPENSWMM_CMAKE_ARGS: "-DVCPKG_INSTALLED_DIR=${{ env.VCPKG_ROOT }}/installed"
+          OPENSWMM_CMAKE_ARGS: "-DOPENSWMM_ENGINE_INSTALL_PREFIX=${{ github.workspace }}/engine-install"
         run: python -m pip install .
 
       - name: Build and install (Unix)
@@ -273,9 +315,8 @@ jobs:
         working-directory: python
         env:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-          VCPKG_MANIFEST_DIR: ${{ github.workspace }}
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-          OPENSWMM_CMAKE_ARGS: "-DVCPKG_INSTALLED_DIR=${{ env.VCPKG_ROOT }}/installed"
+          OPENSWMM_CMAKE_ARGS: "-DOPENSWMM_ENGINE_INSTALL_PREFIX=${{ github.workspace }}/engine-install"
         run: python -m pip install .
 
       # Run tests from the workspace root so python/ is NOT on sys.path,
@@ -300,9 +341,8 @@ jobs:
         working-directory: python
         env:
           CMAKE_GENERATOR: "Visual Studio 17 2022"
-          VCPKG_MANIFEST_DIR: ${{ github.workspace }}
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-          OPENSWMM_CMAKE_ARGS: "-DVCPKG_INSTALLED_DIR=${{ env.VCPKG_ROOT }}/installed"
+          OPENSWMM_CMAKE_ARGS: "-DOPENSWMM_ENGINE_INSTALL_PREFIX=${{ github.workspace }}/engine-install"
         run: python -m build --wheel --no-isolation
 
       - name: Build wheel (Unix)
@@ -310,9 +350,8 @@ jobs:
         working-directory: python
         env:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-          VCPKG_MANIFEST_DIR: ${{ github.workspace }}
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-          OPENSWMM_CMAKE_ARGS: "-DVCPKG_INSTALLED_DIR=${{ env.VCPKG_ROOT }}/installed"
+          OPENSWMM_CMAKE_ARGS: "-DOPENSWMM_ENGINE_INSTALL_PREFIX=${{ github.workspace }}/engine-install"
         run: python -m build --wheel --no-isolation
 
       # delvewheel bundles the engine DLL into the Windows wheel and injects
