@@ -262,6 +262,14 @@ cdef class ModelBuilder:
         """Remove all lines from the [TITLE] section."""
         _check(swmm_title_clear(self._handle))
 
+    @property
+    def handle(self) -> int:
+        """Raw engine handle as an integer (for use by :class:`ModelEditor`).
+
+        :rtype: int
+        """
+        return <size_t>self._handle
+
     def to_solver(self) -> Solver:
         """Transfer ownership of the engine handle to a :class:`Solver`.
 

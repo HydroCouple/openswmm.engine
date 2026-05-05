@@ -31,6 +31,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.cpp
     data/*.cpp
+    edit/*.cpp
     input/*.cpp
     hydrology/*.cpp
     hydraulics/*.cpp
@@ -46,6 +47,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.hpp
     data/*.hpp
+    edit/*.hpp
     input/*.hpp
     hydrology/*.hpp
     hydraulics/*.hpp

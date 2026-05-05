@@ -300,6 +300,15 @@ struct SimulationOptions {
     bool ignore_quality = false;
 
     // -----------------------------------------------------------------------
+    /**
+     * @brief Control rule evaluation interval (seconds).
+     *
+     * @details Parsed from RULE_STEP in [OPTIONS].  0.0 means evaluate control
+     *          rules every routing step (legacy default behaviour).
+     * @see Legacy: globals.h RuleStep
+     */
+    double rule_step = 0.0;
+
     // Threading
     // -----------------------------------------------------------------------
 

@@ -139,6 +139,23 @@ public:
         names_.pop_back();
     }
 
+    /**
+     * @brief Remove the entry at `idx` and rebuild the name→index map.
+     *
+     * @details All entries at indices > idx are shifted down by one.
+     *          The map is rebuilt from scratch — O(n) — which is acceptable
+     *          since this is only called in BUILDING or OPENED state.
+     *          No-op if idx is out of range.
+     */
+    void remove_at(int idx) noexcept {
+        if (idx < 0 || idx >= static_cast<int>(names_.size())) return;
+        names_.erase(names_.begin() + idx);
+        map_.clear();
+        map_.reserve(names_.size());
+        for (int i = 0; i < static_cast<int>(names_.size()); ++i)
+            map_[names_[i]] = i;
+    }
+
     // -----------------------------------------------------------------------
     // Iteration
     // -----------------------------------------------------------------------

@@ -462,6 +462,17 @@ struct LinkData {
     int                     conc_n_pollutants = 0;
 
     // -----------------------------------------------------------------------
+    // Per-object INP comment
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Object comment from the INP file (';'-prefixed lines immediately
+     *        above this link's data row), joined by literal "\\n".
+     *        Empty string means no comment.
+     */
+    std::vector<std::string> comments;
+
+    // -----------------------------------------------------------------------
     // Report flag — per-object output filter
     // -----------------------------------------------------------------------
 
@@ -670,6 +681,8 @@ struct LinkData {
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
 
+        comments.assign(un, std::string{});
+
         rpt_flag.assign(un, 0);
 
         stat_vol_flow.assign(un, 0.0);
@@ -730,6 +743,8 @@ struct LinkData {
         g(froude, 0.0); g(flow_class, FlowClass::DRY); g(is_closed, uint8_t{0});
         g(full_state, int8_t{0});
         g(old_flow, 0.0); g(old_depth, 0.0); g(old_volume, 0.0);
+        comments.resize(un, std::string{});
+
         g(rpt_flag, static_cast<char>(0));
         g(stat_vol_flow, 0.0); g(stat_max_flow, 0.0);
         g(stat_max_veloc, 0.0); g(stat_max_filling, 0.0);
@@ -746,6 +761,80 @@ struct LinkData {
         stat_flow_class.resize(un * N_FLOW_CLASSES, 0L);
         // Note: conc, conc_old handled by resize_quality()
         // Note: stat_total_load handled by resize_loads()
+    }
+
+    /**
+     * @brief Erase the link at index `idx` from every parallel array.
+     *
+     * @details Removes the element at `idx` from every SoA vector. Flat-2D
+     *          arrays (stat_flow_class, conc, conc_old, stat_total_load) have
+     *          their full stride for `idx` removed. Spatial arrays are erased
+     *          separately by ObjectDeleter.
+     */
+    void erase_at(int idx) {
+        const auto ui = static_cast<std::size_t>(idx);
+        auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
+
+        e(type); e(node1); e(node2); e(offset1); e(offset2); e(q0); e(q_limit);
+
+        e(xsect_shape); e(xsect_y_full); e(xsect_a_full); e(xsect_w_max); e(xsect_curve);
+        e(roughness); e(length); e(slope); e(mod_length); e(barrels);
+        e(beta); e(rough_factor); e(q_full);
+        e(xsect_r_full); e(xsect_s_full); e(xsect_s_max); e(q_max);
+        e(xsect_y_bot); e(xsect_a_bot); e(xsect_s_bot); e(xsect_r_bot); e(xsect_yw_max);
+        e(xsect_batch_shape); e(setting); e(target_setting); e(direction);
+
+        e(pump_curve); e(pump_init_state); e(pump_startup); e(pump_shutoff);
+        e(pump_curve_type); e(pump_curve_name);
+
+        e(loss_inlet); e(loss_outlet); e(loss_avg); e(has_flap_gate); e(seep_rate);
+        e(evap_loss_rate); e(seep_loss_rate); e(culvert_code);
+        e(normal_flow_limited); e(inlet_control); e(dqdh);
+
+        e(crest_height); e(cd); e(param1); e(param2); e(orate);
+
+        e(flow); e(depth); e(volume); e(froude); e(flow_class); e(is_closed); e(full_state);
+        e(old_flow); e(old_depth); e(old_volume);
+        e(comments); e(rpt_flag);
+
+        e(stat_vol_flow); e(stat_max_flow); e(stat_max_veloc); e(stat_max_filling);
+        e(stat_time_surcharged); e(stat_norm_ltd); e(stat_inlet_ctrl);
+        e(stat_max_flow_date); e(stat_time_full_upstream); e(stat_time_full_dnstream);
+        e(stat_time_full_both); e(stat_time_capacity_limited);
+        e(stat_pump_cycles); e(stat_pump_on_time); e(stat_pump_volume); e(stat_pump_energy);
+        e(stat_pump_was_on); e(stat_flow_turns); e(stat_flow_turn_sign);
+        e(stat_time_courant_critical);
+
+        // Flat 2D: stat_flow_class [link * N_FLOW_CLASSES + class]
+        {
+            const auto base = ui * static_cast<std::size_t>(N_FLOW_CLASSES);
+            const auto end  = base + static_cast<std::size_t>(N_FLOW_CLASSES);
+            if (end <= stat_flow_class.size())
+                stat_flow_class.erase(stat_flow_class.begin() + static_cast<std::ptrdiff_t>(base),
+                                      stat_flow_class.begin() + static_cast<std::ptrdiff_t>(end));
+        }
+
+        // Flat 2D quality arrays: [link * np + p]
+        if (conc_n_pollutants > 0) {
+            const auto np = static_cast<std::size_t>(conc_n_pollutants);
+            const auto base = ui * np;
+            auto erase2d = [&](auto& v) {
+                if (base + np <= v.size())
+                    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
+                            v.begin() + static_cast<std::ptrdiff_t>(base + np));
+            };
+            erase2d(conc); erase2d(conc_old);
+        }
+
+        // Flat 2D stat load: [link * np + p]
+        if (stat_n_pollutants > 0) {
+            const auto np = static_cast<std::size_t>(stat_n_pollutants);
+            const auto base = ui * np;
+            if (base + np <= stat_total_load.size())
+                stat_total_load.erase(
+                    stat_total_load.begin() + static_cast<std::ptrdiff_t>(base),
+                    stat_total_load.begin() + static_cast<std::ptrdiff_t>(base + np));
+        }
     }
 
     /**
@@ -848,6 +937,8 @@ struct LinkData {
         old_volume.shrink_to_fit();
         conc.shrink_to_fit();
         conc_old.shrink_to_fit();
+
+        comments.shrink_to_fit();
 
         rpt_flag.shrink_to_fit();
 

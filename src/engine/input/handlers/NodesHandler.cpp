@@ -34,6 +34,7 @@
 #include "NodesHandler.hpp"
 
 #include "../Tokenizer.hpp"
+#include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/NodeData.hpp"
 
@@ -62,8 +63,8 @@ static void ensure_spatial_capacity(SimulationContext& ctx, int n_nodes) {
 // ============================================================================
 
 void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 2) continue;
 
         const std::string& name = tok[0];
@@ -80,6 +81,8 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
         if (tok.size() > 3) ctx.nodes.init_depth[idx]  = to_double(tok[3]);     // InitDepth
         if (tok.size() > 4) ctx.nodes.sur_depth[idx]   = to_double(tok[4]);     // SurDepth
         if (tok.size() > 5) ctx.nodes.ponded_area[idx] = to_double(tok[5]);     // Aponded
+        if (!pl.comment.empty())
+            ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -88,8 +91,8 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
 // ============================================================================
 
 void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -129,6 +132,8 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
             int sc = ctx.subcatch_names.find(tok[5]);
             ctx.nodes.outfall_route_to[idx] = sc;  // may be -1 if not yet parsed
         }
+        if (!pl.comment.empty())
+            ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -137,8 +142,8 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
 // ============================================================================
 
 void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 4) continue;
 
         const std::string& name = tok[0];
@@ -187,6 +192,8 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
         else if (dtype == "WEIR") md_offset = 7;
         if (static_cast<int>(tok.size()) > md_offset)
             ctx.nodes.full_depth[ui] = to_double(tok[md_offset]);
+        if (!pl.comment.empty())
+            ctx.nodes.comments[ui] = pl.comment;
     }
 }
 
@@ -195,8 +202,8 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
 // ============================================================================
 
 void handle_storage(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 4) continue;
 
         const std::string& name = tok[0];
@@ -210,7 +217,11 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
         ctx.nodes.full_depth[idx]  = to_double(tok[2]);  // MaxDepth
         ctx.nodes.init_depth[idx]  = to_double(tok[3]);  // InitDepth
 
-        if (tok.size() < 5) continue;
+        if (tok.size() < 5) {
+            if (!pl.comment.empty())
+                ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
+            continue;
+        }
         const std::string shape = Tokenizer::to_upper(tok[4]);
 
         if (shape == "TABULAR") {
@@ -233,6 +244,8 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
             ctx.nodes.storage_evap_frac[idx] = to_double(tok[param_offset + 1]);
         if (static_cast<int>(tok.size()) > param_offset + 2)
             ctx.nodes.storage_seep_rate[idx] = to_double(tok[param_offset + 2]);
+        if (!pl.comment.empty())
+            ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 

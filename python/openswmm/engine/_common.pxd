@@ -607,6 +607,65 @@ cdef extern from "openswmm_output.h":
     cdef int swmm_output_get_error_code(SWMM_Output handle)
 
 
+cdef extern from "openswmm_edit.h":
+
+    # Reference type enum
+    cdef enum SWMM_RefType:
+        SWMM_REF_NODE        = 0
+        SWMM_REF_LINK        = 1
+        SWMM_REF_SUBCATCH    = 2
+        SWMM_REF_GAGE        = 3
+        SWMM_REF_TABLE       = 4
+        SWMM_REF_TRANSECT    = 5
+        SWMM_REF_INLET_USAGE = 6
+
+    # Impact entry
+    cdef struct SWMM_ImpactEntry:
+        int         obj_type
+        int         obj_idx
+        const char* field
+        int         cascaded
+
+    # Impact report (heap-allocated entries)
+    cdef struct SWMM_ImpactReport:
+        SWMM_ImpactEntry* entries
+        int               n_entries
+
+    # Conversion result (heap-allocated string arrays)
+    cdef struct SWMM_ConversionResult:
+        int          new_type
+        const char** cleared_fields
+        int          n_cleared
+        const char** warnings
+        int          n_warnings
+
+    # Memory release
+    cdef void swmm_impact_report_free(SWMM_ImpactReport* report)
+    cdef void swmm_conversion_result_free(SWMM_ConversionResult* result)
+
+    # Non-destructive impact analysis
+    cdef int swmm_node_analyze_impact    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_link_analyze_impact    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_subcatch_analyze_impact(SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_gage_analyze_impact    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_table_analyze_impact   (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_transect_analyze_impact(SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+
+    # Deletion (cascade + renumber)
+    cdef int swmm_node_delete    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_link_delete    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_subcatch_delete(SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_gage_delete    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_table_delete   (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_transect_delete(SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+
+    # In-place type conversion
+    cdef int swmm_node_convert(SWMM_Engine e, int idx, int new_type,
+                                SWMM_ConversionResult* out)
+    cdef int swmm_link_convert(SWMM_Engine e, int idx, int new_type,
+                                SWMM_ConversionResult* out)
+
+
 cdef extern from "openswmm_forcing.h":
     # Node forcing
     cdef int swmm_forcing_node_lat_inflow(SWMM_Engine e, int idx, double value, int mode, int persist)

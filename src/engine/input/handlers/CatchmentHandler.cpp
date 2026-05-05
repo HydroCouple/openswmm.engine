@@ -32,6 +32,7 @@
 #include "CatchmentHandler.hpp"
 
 #include "../Tokenizer.hpp"
+#include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/SubcatchData.hpp"
 #include "../../data/GageData.hpp"
@@ -72,6 +73,7 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.gages.past_rain_time,    0.0);
     grow(ctx.gages.cumul_rain_accum,  0.0);
     grow(ctx.gages.co_gage_index,     -1);
+    if (ctx.gages.comments.size() < n) ctx.gages.comments.resize(n, std::string{});
     // past_rain is a flat 2-D array: [gage * MAXPASTRAIN + hour]
     {
         const auto nr = n * static_cast<std::size_t>(GageData::MAXPASTRAIN);
@@ -85,8 +87,8 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
 // ============================================================================
 
 void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 7) continue;
         // Name  Gage  Outlet  Area  %Imperv  Width  %Slope  [CurbLen]
 
@@ -118,6 +120,8 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
         // Optional CurbLen (column 7)
         if (tok.size() > 7)
             ctx.subcatches.curb_length[idx] = to_double(tok[7]);
+        if (!pl.comment.empty())
+            ctx.subcatches.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -192,8 +196,8 @@ void handle_infiltration(SimulationContext& ctx, const std::vector<std::string>&
 // ============================================================================
 
 void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 5) continue;
         // Name  Format  Interval  SCF  Source  [SourceName]
 
@@ -246,6 +250,8 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
             }
             (void)colon; // suppress warning
         }
+        if (!pl.comment.empty())
+            ctx.gages.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 

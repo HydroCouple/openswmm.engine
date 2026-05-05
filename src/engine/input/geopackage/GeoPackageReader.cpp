@@ -204,6 +204,11 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
             }
         }
         else if (key == "CRS") ctx.spatial.crs = val;
+        else if (key == "MAP_UNITS") ctx.spatial.map_units = val;
+        else if (key == "MAP_X1") ctx.spatial.map_x1 = std::stod(val);
+        else if (key == "MAP_Y1") ctx.spatial.map_y1 = std::stod(val);
+        else if (key == "MAP_X2") ctx.spatial.map_x2 = std::stod(val);
+        else if (key == "MAP_Y2") ctx.spatial.map_y2 = std::stod(val);
     }
 }
 

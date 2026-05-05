@@ -112,6 +112,7 @@ endfunction()
 # ---- extensions ----
 add_engine_cython_module(_solver         _solver.pyx)
 add_engine_cython_module(_model          _model.pyx)
+add_engine_cython_module(_edit           _edit.pyx)
 add_engine_cython_module(_nodes          _nodes.pyx)
 add_engine_cython_module(_links          _links.pyx)
 add_engine_cython_module(_subcatchments  _subcatchments.pyx)

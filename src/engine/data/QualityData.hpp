@@ -33,17 +33,26 @@ struct LanduseData {
     std::vector<double> sweep_removal;   ///< Max removal fraction (0-100)
     std::vector<double> last_swept;      ///< Days since last swept
 
+    /**
+     * @brief Object comment from the INP file (';'-prefixed lines immediately
+     *        above this landuse's data row), joined by literal "\\n".
+     *        Empty string means no comment.
+     */
+    std::vector<std::string> comments;
+
     void resize(int n) {
         auto un = static_cast<std::size_t>(n);
         sweep_interval.assign(un, 0.0);
         sweep_removal.assign(un, 0.0);
         last_swept.assign(un, 0.0);
+        comments.assign(un, std::string{});
     }
 
     void shrink_to_fit() {
         sweep_interval.shrink_to_fit();
         sweep_removal.shrink_to_fit();
         last_swept.shrink_to_fit();
+        comments.shrink_to_fit();
     }
 };
 

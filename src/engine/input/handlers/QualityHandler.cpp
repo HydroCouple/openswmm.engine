@@ -57,6 +57,7 @@
 #include "QualityHandler.hpp"
 
 #include "../Tokenizer.hpp"
+#include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/PollutantData.hpp"
 #include "../../data/QualityData.hpp"
@@ -73,9 +74,11 @@ namespace openswmm::input {
 // ============================================================================
 
 void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    const auto parsed = parse_section(lines);
+
     // First pass: register all pollutant names so co-pollutant lookup works
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parsed) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 2) continue;
 
         const std::string& name = tok[0];
@@ -88,9 +91,9 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
     const int n = ctx.pollutant_names.size();
     ctx.pollutants.resize_pollutants(n);
 
-    // Second pass: populate pollutant properties
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    // Second pass: populate pollutant properties and comments
+    for (const auto& pl : parsed) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 2) continue;
         // Name  Units  Crain  Cgw  Crdii  Kdecay  SnowOnly  CoPollut  CoFrac  Cdwf  Cinit
 
@@ -133,6 +136,9 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
 
         // Cinit
         if (tok.size() > 10) ctx.pollutants.init_conc[idx]  = to_double(tok[10]);
+
+        if (!pl.comment.empty())
+            ctx.pollutants.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -141,8 +147,8 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
 // ============================================================================
 
 void handle_landuses(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.empty()) continue;
         // Name  [SweepInterval]  [SweepRemoval]  [SweepDays0]
 
@@ -156,11 +162,14 @@ void handle_landuses(SimulationContext& ctx, const std::vector<std::string>& lin
             ctx.landuses.sweep_interval.resize(n, 0.0);
             ctx.landuses.sweep_removal.resize(n, 0.0);
             ctx.landuses.last_swept.resize(n, 0.0);
+            ctx.landuses.comments.resize(n, std::string{});
         }
 
         if (tok.size() > 1) ctx.landuses.sweep_interval[idx] = to_double(tok[1]);
         if (tok.size() > 2) ctx.landuses.sweep_removal[idx]  = to_double(tok[2]);
         if (tok.size() > 3) ctx.landuses.last_swept[idx]     = to_double(tok[3]);
+        if (!pl.comment.empty())
+            ctx.landuses.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 

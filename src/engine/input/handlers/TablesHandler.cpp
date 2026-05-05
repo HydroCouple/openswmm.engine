@@ -37,6 +37,7 @@
 #include "TablesHandler.hpp"
 
 #include "../Tokenizer.hpp"
+#include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../core/DateTime.hpp"
 #include "../../data/TableData.hpp"
@@ -63,12 +64,13 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
     double      last_date = 0.0;
     int         current_idx = -1;
 
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.empty()) continue;
 
         // First column: name (non-empty) or continuation (empty — same name)
         const std::string& maybe_name = tok[0];
+        bool is_new_table = false;
         if (!maybe_name.empty()) {
             current_name = maybe_name;
             // Ensure table exists
@@ -76,8 +78,12 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
             if (current_idx < 0) {
                 current_idx = ctx.table_names.add(current_name);
                 ctx.tables.add(current_name, TableType::TIMESERIES);
+                is_new_table = true;
             }
         }
+        // Attach comment to the table on its first (name-introducing) row
+        if (is_new_table && !pl.comment.empty() && current_idx >= 0)
+            ctx.tables[current_idx].comment = pl.comment;
 
         if (current_idx < 0 || current_name.empty()) continue;
         Table& tbl = ctx.tables[current_idx];
@@ -172,11 +178,12 @@ void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines
     int          current_idx = -1;
     TableType    current_type = TableType::CURVE_RATING;
 
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.empty()) continue;
 
         const std::string& maybe_name = tok[0];
+        bool is_new_table = false;
         if (!maybe_name.empty()) {
             current_name = maybe_name;
             current_idx = ctx.table_names.find(current_name);
@@ -190,11 +197,14 @@ void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines
                     }
                 }
                 ctx.tables.add(current_name, current_type);
+                is_new_table = true;
             }
         }
 
         if (current_idx < 0) continue;
         Table& tbl = ctx.tables[current_idx];
+        if (is_new_table && !pl.comment.empty())
+            tbl.comment = pl.comment;
 
         // Data columns: potentially tok[1]/tok[2] (if type present) or tok[1]/tok[2]
         // After the type token, remaining tokens are x-y pairs

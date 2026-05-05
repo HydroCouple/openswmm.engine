@@ -411,6 +411,21 @@ struct NodeData {
     std::vector<double>     old_lat_flow;
 
     // -----------------------------------------------------------------------
+    // Per-object INP comment
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Object comment from the INP file (lines with a single ';' prefix
+     *        immediately above this object's data row).
+     *
+     * @details Multiple comment lines are joined by the literal two-character
+     *          token "\\n" (backslash + n).  Empty string means no comment.
+     *          Written back to INP by InpWriter as one ';'-prefixed row per
+     *          part.  Also stored verbatim in the GeoPackage 'comment' column.
+     */
+    std::vector<std::string> comments;
+
+    // -----------------------------------------------------------------------
     // Report flag — per-object output filter
     // -----------------------------------------------------------------------
 
@@ -615,6 +630,8 @@ struct NodeData {
         old_volume.assign(un, 0.0);
         old_lat_flow.assign(un, 0.0);
 
+        comments.assign(un, std::string{});
+
         rpt_flag.assign(un, 0);
 
         stat_vol_flooded.assign(un, 0.0);
@@ -676,6 +693,8 @@ struct NodeData {
         g(losses, 0.0); g(crown_elev, 0.0); g(degree, 0);
         g(old_net_inflow, 0.0); g(full_volume, 0.0);
         g(old_depth, 0.0); g(old_volume, 0.0); g(old_lat_flow, 0.0);
+        comments.resize(un, std::string{});
+
         g(rpt_flag, static_cast<char>(0));
         g(stat_vol_flooded, 0.0); g(stat_time_flooded, 0.0);
         g(stat_max_depth, 0.0); g(stat_max_overflow, 0.0);
@@ -690,6 +709,75 @@ struct NodeData {
         g(stat_outfall_periods, 0L);
         g(stat_non_converged_count, 0); g(stat_time_courant_critical, 0.0);
         // Note: qual_mass_in, conc, conc_old, hrt handled by resize_quality()
+    }
+
+    /**
+     * @brief Erase the node at index `idx` from every parallel array.
+     *
+     * @details Removes the element at `idx` from every SoA vector. For flat-2D
+     *          quality arrays indexed as [node * n_pollutants + p], the full
+     *          stride for `idx` is removed. Spatial arrays are NOT touched here;
+     *          ObjectDeleter erases spatial data separately after calling this.
+     *          Only call in BUILDING or OPENED state.
+     */
+    void erase_at(int idx) {
+        const auto ui = static_cast<std::size_t>(idx);
+        auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
+
+        e(type); e(invert_elev); e(full_depth); e(init_depth); e(sur_depth); e(ponded_area);
+
+        e(outfall_type); e(outfall_param); e(outfall_has_flap_gate);
+        e(outfall_route_to); e(outfall_link_idx); e(outfall_link_offset);
+
+        e(storage_curve); e(storage_curve_name);
+        e(storage_a); e(storage_b); e(storage_c);
+        e(storage_seep_rate); e(storage_evap_frac); e(storage_evap_loss); e(storage_exfil_loss);
+        e(exfil_suction); e(exfil_ksat); e(exfil_imd);
+
+        e(divider_type); e(divider_cutoff); e(divider_cd); e(divider_max_depth);
+        e(divider_curve); e(divider_link); e(divider_link_name); e(divider_curve_name);
+
+        e(depth); e(head); e(volume);
+        e(lat_flow); e(user_lat_flow);
+        e(runoff_inflow); e(gw_inflow); e(ext_inflow); e(dwf_inflow);
+        e(rdii_inflow); e(iface_inflow);
+        e(qual_vol_in); e(lid_drain_qual_vol);
+        e(inflow); e(outflow); e(overflow); e(losses);
+        e(crown_elev); e(degree); e(old_net_inflow); e(full_volume);
+        e(old_depth); e(old_volume); e(old_lat_flow);
+        e(comments); e(rpt_flag);
+
+        e(stat_vol_flooded); e(stat_time_flooded); e(stat_max_depth); e(stat_max_overflow);
+        e(stat_max_overflow_date); e(stat_sum_depth); e(stat_max_depth_date);
+        e(stat_max_rpt_depth); e(stat_max_inflow_date); e(stat_time_surcharged);
+        e(stat_max_surcharge_height); e(stat_outfall_avg_flow); e(stat_max_lat_inflow);
+        e(stat_max_total_inflow); e(stat_lat_inflow_vol); e(stat_total_inflow_vol);
+        e(stat_total_outflow_vol); e(stat_outfall_max_flow); e(stat_outfall_periods);
+        e(stat_non_converged_count); e(stat_time_courant_critical);
+
+        // Flat 2D quality arrays: [node * np + p] → erase the stride for idx
+        if (conc_n_pollutants > 0) {
+            const auto np = static_cast<std::size_t>(conc_n_pollutants);
+            const auto base = ui * np;
+            auto erase2d = [&](auto& v) {
+                if (base + np <= v.size())
+                    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
+                            v.begin() + static_cast<std::ptrdiff_t>(base + np));
+            };
+            erase2d(conc); erase2d(conc_old);
+            erase2d(qual_mass_in); erase2d(lid_drain_qual_load); erase2d(user_conc_mass_flux);
+            if (ui < hrt.size()) hrt.erase(hrt.begin() + static_cast<std::ptrdiff_t>(idx));
+        }
+
+        // Flat 2D stat load: [node * np + p]
+        if (stat_n_pollutants > 0) {
+            const auto np = static_cast<std::size_t>(stat_n_pollutants);
+            const auto base = ui * np;
+            if (base + np <= stat_total_load.size())
+                stat_total_load.erase(
+                    stat_total_load.begin() + static_cast<std::ptrdiff_t>(base),
+                    stat_total_load.begin() + static_cast<std::ptrdiff_t>(base + np));
+        }
     }
 
     /**
@@ -792,6 +880,8 @@ struct NodeData {
         old_depth.shrink_to_fit();
         old_volume.shrink_to_fit();
         old_lat_flow.shrink_to_fit();
+
+        comments.shrink_to_fit();
 
         rpt_flag.shrink_to_fit();
 

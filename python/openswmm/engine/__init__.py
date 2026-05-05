@@ -136,6 +136,9 @@ from ._solver import Solver, EngineError, run, run_with_callback
 # Model building
 from ._model import ModelBuilder
 
+# Model editing (deletion + type conversion)
+from ._edit import ModelEditor, ImpactEntry, ConversionResult
+
 # Domain access classes
 from ._nodes import Nodes
 from ._links import Links
@@ -181,7 +184,8 @@ from ._enums import (
 
 __all__ = [
     # Classes
-    "Solver", "ModelBuilder", "HotStart", "EngineError",
+    "Solver", "ModelBuilder", "ModelEditor", "HotStart", "EngineError",
+    "ImpactEntry", "ConversionResult",
     "Nodes", "Links", "Subcatchments", "Gages", "MassBalance",
     "Pollutants", "Tables", "Inflows", "Controls",
     "Infrastructure", "Quality", "Statistics", "OutputReader",

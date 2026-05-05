@@ -112,6 +112,7 @@ typedef enum SWMM_ErrorCode {
     SWMM_ERR_HOTSTART    = 12,
     SWMM_ERR_CRS         = 13,
     SWMM_ERR_NUMERICAL   = 14,
+    SWMM_ERR_DEPENDENCY  = 15,  /**< Object has dependents that would be affected by deletion. */
     SWMM_ERR_INTERNAL    = 99
 } SWMM_ErrorCode;
 
@@ -333,6 +334,7 @@ SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled);
 #include "openswmm_quality.h"
 #include "openswmm_statistics.h"
 #include "openswmm_forcing.h"
+#include "openswmm_edit.h"
 
 #ifdef OPENSWMM_HAS_2D
 #include "openswmm_2d.h"

@@ -223,6 +223,14 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
 
     if (!ctx.spatial.crs.empty())
         insert("CRS", ctx.spatial.crs);
+    if (!ctx.spatial.map_units.empty())
+        insert("MAP_UNITS", ctx.spatial.map_units);
+    if (ctx.spatial.map_x2 != 0.0 || ctx.spatial.map_y2 != 0.0) {
+        insert("MAP_X1", std::to_string(ctx.spatial.map_x1));
+        insert("MAP_Y1", std::to_string(ctx.spatial.map_y1));
+        insert("MAP_X2", std::to_string(ctx.spatial.map_x2));
+        insert("MAP_Y2", std::to_string(ctx.spatial.map_y2));
+    }
 }
 
 static void write_nodes(sqlite3* db, const SimulationContext& ctx,
@@ -265,7 +273,7 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
         if (ntype == NodeType::OUTFALL) {
             bind_text(stmt.get(), 10, outfall_type_str(safe_get(ctx.nodes.outfall_type, (size_t)i, OutfallType::FREE)));
             bind_double(stmt.get(), 11, safe_dbl(ctx.nodes.outfall_param, i));
-            bind_int(stmt.get(), 12, safe_get(ctx.nodes.outfall_has_flap_gate, (size_t)i, false) ? 1 : 0);
+            bind_int(stmt.get(), 12, safe_get(ctx.nodes.outfall_has_flap_gate, (size_t)i, uint8_t{0}) ? 1 : 0);
         } else {
             bind_null(stmt.get(), 10);
             bind_null(stmt.get(), 11);
@@ -390,7 +398,7 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 19, safe_dbl(ctx.links.loss_inlet, i));
         bind_double(stmt.get(), 20, safe_dbl(ctx.links.loss_outlet, i));
         bind_double(stmt.get(), 21, safe_dbl(ctx.links.loss_avg, i));
-        bind_int(stmt.get(), 22, safe_get(ctx.links.has_flap_gate, (size_t)i, false) ? 1 : 0);
+        bind_int(stmt.get(), 22, safe_get(ctx.links.has_flap_gate, (size_t)i, uint8_t{0}) ? 1 : 0);
         bind_double(stmt.get(), 23, safe_dbl(ctx.links.seep_rate, i));
         bind_double(stmt.get(), 24, safe_dbl(ctx.links.q0, i));
         bind_double(stmt.get(), 25, safe_dbl(ctx.links.q_limit, i));

@@ -11,41 +11,12 @@
  */
 
 #include "openswmm_api_common.hpp"
+#include "TypeHelpers.hpp"
 #include "../../../include/openswmm/engine/openswmm_nodes.h"
 #include "../hydraulics/Node.hpp"
 
-namespace {
-
-bool c_to_internal_node_type(int c_type, openswmm::NodeType& out_type) {
-    switch (c_type) {
-        case SWMM_NODE_JUNCTION:
-            out_type = openswmm::NodeType::JUNCTION;
-            return true;
-        case SWMM_NODE_OUTFALL:
-            out_type = openswmm::NodeType::OUTFALL;
-            return true;
-        case SWMM_NODE_STORAGE:
-            out_type = openswmm::NodeType::STORAGE;
-            return true;
-        case SWMM_NODE_DIVIDER:
-            out_type = openswmm::NodeType::DIVIDER;
-            return true;
-        default:
-            return false;
-    }
-}
-
-int internal_to_c_node_type(openswmm::NodeType type) {
-    switch (type) {
-        case openswmm::NodeType::JUNCTION: return SWMM_NODE_JUNCTION;
-        case openswmm::NodeType::OUTFALL:  return SWMM_NODE_OUTFALL;
-        case openswmm::NodeType::DIVIDER:  return SWMM_NODE_DIVIDER;
-        case openswmm::NodeType::STORAGE:  return SWMM_NODE_STORAGE;
-        default:                           return SWMM_NODE_JUNCTION;
-    }
-}
-
-} // namespace
+using openswmm::c_to_internal_node_type;
+using openswmm::internal_to_c_node_type;
 
 extern "C" {
 

@@ -25,6 +25,7 @@
 #include "LinksHandler.hpp"
 
 #include "../Tokenizer.hpp"
+#include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/LinkData.hpp"
 #include "../../data/InfraData.hpp"
@@ -46,8 +47,8 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
 // ============================================================================
 
 void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 7) continue;  // Name Node1 Node2 Length Roughness In Out required
 
         const std::string& name = tok[0];
@@ -67,6 +68,8 @@ void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lin
         ctx.links.offset2[idx]   = to_double(tok[6]);
         if (tok.size() > 7) ctx.links.q0[idx]      = to_double(tok[7]);
         if (tok.size() > 8) ctx.links.q_limit[idx] = to_double(tok[8]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -75,8 +78,8 @@ void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lin
 // ============================================================================
 
 void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -106,6 +109,8 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
             ctx.links.pump_startup[idx] = to_double(tok[5]);
         if (tok.size() > 6)
             ctx.links.pump_shutoff[idx] = to_double(tok[6]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -114,8 +119,8 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
 // ============================================================================
 
 void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -140,6 +145,8 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
         if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::to_upper(tok[6]) == "YES";
         // tok[7]: open/close time (seconds)
         if (tok.size() > 7) ctx.links.orate[idx]         = to_double(tok[7]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -148,8 +155,8 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
 // ============================================================================
 
 void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -177,6 +184,8 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
         if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::to_upper(tok[6]) == "YES";
         // tok[7]: end contractions
         if (tok.size() > 7) ctx.links.param2[idx]       = to_double(tok[7]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -185,8 +194,8 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
 // ============================================================================
 
 void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -225,6 +234,8 @@ void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& line
         }
         if (tok.size() > 6 && !is_tabular)
             ctx.links.param2[idx] = to_double(tok[6]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 

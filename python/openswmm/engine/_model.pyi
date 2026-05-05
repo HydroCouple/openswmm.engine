@@ -218,6 +218,11 @@ class ModelBuilder:
         """
         ...
 
+    @property
+    def handle(self) -> int:
+        """Raw engine handle as an integer (for use by :class:`ModelEditor`)."""
+        ...
+
     def to_solver(self) -> Solver:
         """Transfer ownership of the engine handle to a :class:`Solver`.
 
