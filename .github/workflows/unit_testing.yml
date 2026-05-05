@@ -249,7 +249,7 @@ jobs:
         env:
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
         run: >
-          "${{ env.VCPKG_ROOT }}\vcpkg.exe" install
+          & "${{ env.VCPKG_ROOT }}\vcpkg.exe" install
           --triplet "${{ matrix.vcpkg_triplet }}"
           --x-manifest-root "${{ github.workspace }}"
 
@@ -265,6 +265,7 @@ jobs:
           CMAKE_GENERATOR: "Visual Studio 17 2022"
           VCPKG_MANIFEST_DIR: ${{ github.workspace }}
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+          OPENSWMM_CMAKE_ARGS: "-DVCPKG_INSTALLED_DIR=${{ env.VCPKG_ROOT }}/installed"
         run: python -m pip install .
 
       - name: Build and install (Unix)
@@ -274,6 +275,7 @@ jobs:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
           VCPKG_MANIFEST_DIR: ${{ github.workspace }}
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+          OPENSWMM_CMAKE_ARGS: "-DVCPKG_INSTALLED_DIR=${{ env.VCPKG_ROOT }}/installed"
         run: python -m pip install .
 
       # Run tests from the workspace root so python/ is NOT on sys.path,
@@ -300,6 +302,7 @@ jobs:
           CMAKE_GENERATOR: "Visual Studio 17 2022"
           VCPKG_MANIFEST_DIR: ${{ github.workspace }}
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+          OPENSWMM_CMAKE_ARGS: "-DVCPKG_INSTALLED_DIR=${{ env.VCPKG_ROOT }}/installed"
         run: python -m build --wheel --no-isolation
 
       - name: Build wheel (Unix)
@@ -309,6 +312,7 @@ jobs:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
           VCPKG_MANIFEST_DIR: ${{ github.workspace }}
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+          OPENSWMM_CMAKE_ARGS: "-DVCPKG_INSTALLED_DIR=${{ env.VCPKG_ROOT }}/installed"
         run: python -m build --wheel --no-isolation
 
       # delvewheel bundles the engine DLL into the Windows wheel and injects
