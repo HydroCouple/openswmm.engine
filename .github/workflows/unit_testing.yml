@@ -229,15 +229,42 @@ jobs:
       - name: Clean stale scikit-build cache
         run: python -c "import shutil; shutil.rmtree('python/_skbuild', ignore_errors=True)"
 
+      # Pre-install vcpkg packages before pip so that SUNDIALS (and other
+      # native deps) are already in $VCPKG_ROOT/installed/ when cmake configure
+      # runs inside pip's build-isolation environment.  Running vcpkg install
+      # directly here avoids the CMAKE_OSX_DEPLOYMENT_TARGET=<sdk-version>
+      # flag that scikit-build injects, which would otherwise produce a
+      # different vcpkg ABI hash than the engine job and cause a cache miss.
+      - name: Pre-install vcpkg packages (Unix)
+        if: runner.os != 'Windows'
+        env:
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+        run: >
+          "${{ env.VCPKG_ROOT }}/vcpkg" install
+          --triplet "${{ matrix.vcpkg_triplet }}"
+          --x-manifest-root "${{ github.workspace }}"
+
+      - name: Pre-install vcpkg packages (Windows)
+        if: runner.os == 'Windows'
+        env:
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+        run: >
+          "${{ env.VCPKG_ROOT }}\vcpkg.exe" install
+          --triplet "${{ matrix.vcpkg_triplet }}"
+          --x-manifest-root "${{ github.workspace }}"
+
       # VCPKG_MANIFEST_DIR tells the vcpkg toolchain where vcpkg.json lives.
       # Without it, the python/ sub-directory cmake has no manifest and vcpkg
       # skips package installation entirely.
+      # VCPKG_DEFAULT_TRIPLET ensures the toolchain uses the same triplet that
+      # was pre-installed above, even if cmake 4.x auto-detection differs.
       - name: Build and install (Windows)
         if: runner.os == 'Windows'
         working-directory: python
         env:
           CMAKE_GENERATOR: "Visual Studio 17 2022"
           VCPKG_MANIFEST_DIR: ${{ github.workspace }}
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
         run: python -m pip install .
 
       - name: Build and install (Unix)
@@ -246,6 +273,7 @@ jobs:
         env:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
           VCPKG_MANIFEST_DIR: ${{ github.workspace }}
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
         run: python -m pip install .
 
       # Run tests from the workspace root so python/ is NOT on sys.path,
@@ -271,6 +299,7 @@ jobs:
         env:
           CMAKE_GENERATOR: "Visual Studio 17 2022"
           VCPKG_MANIFEST_DIR: ${{ github.workspace }}
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
         run: python -m build --wheel --no-isolation
 
       - name: Build wheel (Unix)
@@ -279,6 +308,7 @@ jobs:
         env:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
           VCPKG_MANIFEST_DIR: ${{ github.workspace }}
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
         run: python -m build --wheel --no-isolation
 
       # delvewheel bundles the engine DLL into the Windows wheel and injects
