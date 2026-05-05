@@ -17,7 +17,9 @@ include("${CMAKE_CURRENT_LIST_DIR}/OpenSWMMEngineTargets.cmake")
 # link-time consumers use OPENSWMMEngine_LIB_DIR.
 set_and_check(OPENSWMMEngine_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
 set_and_check(OPENSWMMEngine_LIB_DIR     "@PACKAGE_CMAKE_INSTALL_LIBDIR@")
-set_and_check(OPENSWMMEngine_BIN_DIR     "@PACKAGE_CMAKE_INSTALL_BINDIR@")
+# BIN_DIR is optional: not created when only libraries are installed (e.g.
+# Python wheel builds that don't include the openswmm CLI executable).
+set(OPENSWMMEngine_BIN_DIR "@PACKAGE_CMAKE_INSTALL_BINDIR@")
 
 # Set convenience variables
 set(OPENSWMMEngine_INCLUDE_DIRS "${OPENSWMMEngine_INCLUDE_DIR}")

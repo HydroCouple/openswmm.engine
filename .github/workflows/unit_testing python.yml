@@ -1,0 +1,257 @@
+name: Unit Testing Python
+
+on:
+  push:
+    branches: [master, main, develop]
+  pull_request:
+    branches: [master, main, develop]
+
+env:
+  VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+  VCPKG_EXE: ${{ github.workspace }}/vcpkg/vcpkg
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  # Pull only what the unit-test build needs: default features (2d) + tests.
+  VCPKG_MANIFEST_FEATURES: "tests"
+  OMP_NUM_THREADS: 1
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────
+  #  Python bindings — build, test, and wheel packaging
+  # ──────────────────────────────────────────────────────────────────────
+  python:
+    name: "Python (${{ matrix.alias }})"
+    permissions:
+      contents: read
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            alias: Linux-x64
+            shell_ext: .sh
+            vcpkg_triplet: x64-linux
+            cmake_osx_arch: ""
+
+          - os: macos-latest
+            alias: macOS-arm64
+            shell_ext: .sh
+            vcpkg_triplet: arm64-osx
+            cmake_osx_arch: arm64
+
+          - os: macos-15-intel
+            alias: macOS-x64
+            shell_ext: .sh
+            vcpkg_triplet: x64-osx
+            cmake_osx_arch: x86_64
+
+          - os: windows-latest
+            alias: Windows-x64
+            shell_ext: .bat
+            vcpkg_triplet: x64-windows
+            cmake_osx_arch: ""
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # vcpkg is required by python/CMakePresets.json (toolchainFile = $env{VCPKG_ROOT}/...).
+      # Each runner is a fresh machine so we must check it out and bootstrap it here.
+      - name: Checkout vcpkg
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: 2025.02.14
+          path: vcpkg
+
+      - name: Install OpenMP and Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp ninja
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          .\bootstrap-vcpkg${{ matrix.shell_ext }}
+          .\vcpkg.exe integrate install
+
+      - name: Bootstrap vcpkg (Unix)
+        if: runner.os != 'Windows'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          ./bootstrap-vcpkg${{ matrix.shell_ext }}
+          chmod +x vcpkg
+
+      # Export the GHA cache tokens so vcpkg can restore binary packages built
+      # by the engine job (avoids re-compiling SUNDIALS, etc.).
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v8
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python requirements
+        working-directory: python
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Clean stale scikit-build cache
+        run: python -c "import shutil; shutil.rmtree('python/_skbuild', ignore_errors=True)"
+
+      # Download the pre-built Release engine produced by the engine job.
+      # The Python cmake uses find_package(OpenSWMMEngine) against this prefix
+      # instead of rebuilding the engine from source, cutting the Python job
+      # from ~20 min to ~5 min.
+      - name: Download pre-built engine install
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-install-${{ matrix.vcpkg_triplet }}
+          path: engine-install
+
+      # Pre-install vcpkg packages before pip so that SUNDIALS (and other
+      # native deps) are already in $VCPKG_ROOT/installed/ when cmake configure
+      # runs inside pip's build-isolation environment.  Running vcpkg install
+      # directly here avoids the CMAKE_OSX_DEPLOYMENT_TARGET=<sdk-version>
+      # flag that scikit-build injects, which would otherwise produce a
+      # different vcpkg ABI hash than the engine job and cause a cache miss.
+      # Pre-install only the native dependencies (SUNDIALS, etc.) so that
+      # delocate/auditwheel/delvewheel can find them at bundle time.  We do
+      # NOT pass --x-manifest-root here: the engine was pre-built and its
+      # cmake config is consumed via find_package, so vcpkg must NOT install
+      # manifest packages (which would conflict with the pre-built install
+      # tree).  The triplet flag alone is enough for vcpkg to set up
+      # CMAKE_PREFIX_PATH for the bundling tools.
+      - name: Pre-install vcpkg packages (Unix)
+        if: runner.os != 'Windows'
+        env:
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+        run: >
+          "${{ env.VCPKG_ROOT }}/vcpkg" install
+          --triplet "${{ matrix.vcpkg_triplet }}"
+          --x-install-root "${{ env.VCPKG_ROOT }}/installed"
+
+      - name: Pre-install vcpkg packages (Windows)
+        if: runner.os == 'Windows'
+        env:
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+        run: >
+          "${{ env.VCPKG_ROOT }}\vcpkg.exe" install
+          --triplet "${{ matrix.vcpkg_triplet }}"
+          --x-install-root "${{ env.VCPKG_ROOT }}/installed"
+
+      # OPENSWMM_ENGINE_INSTALL_PREFIX points cmake at the pre-built engine
+      # artifact so python/CMakeLists.txt uses find_package instead of
+      # add_subdirectory.  VCPKG_DEFAULT_TRIPLET ensures vcpkg (still needed
+      # so delocate/delvewheel can find SUNDIALS dylibs) uses the correct
+      # triplet.  VCPKG_MANIFEST_DIR is intentionally omitted: without it,
+      # vcpkg runs in classic mode — no package installation, just sets
+      # CMAKE_PREFIX_PATH so the linker and bundling tools find SUNDIALS.
+      - name: Build and install (Windows)
+        if: runner.os == 'Windows'
+        working-directory: python
+        env:
+          CMAKE_GENERATOR: "Visual Studio 17 2022"
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+          OPENSWMM_CMAKE_ARGS: "-DOPENSWMM_ENGINE_INSTALL_PREFIX=${{ github.workspace }}/engine-install"
+        run: python -m pip install .
+
+      - name: Build and install (Unix)
+        if: runner.os != 'Windows'
+        working-directory: python
+        env:
+          CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+          OPENSWMM_CMAKE_ARGS: "-DOPENSWMM_ENGINE_INSTALL_PREFIX=${{ github.workspace }}/engine-install"
+        run: python -m pip install .
+
+      # Run tests from the workspace root so python/ is NOT on sys.path,
+      # preventing the source tree from shadowing the installed wheel.
+      # --import-mode=importlib avoids pytest's default rootdir prepend.
+      - name: Run Python tests
+        run: >
+          python -m pytest
+          python/tests/engine python/tests/legacy
+          -v --import-mode=importlib
+          --ignore=python/tests/engine/test_integration.py
+
+      # Smoke test: validates the installed wheel covers all public APIs
+      # including the new OPENED-state editing surface.
+      - name: Run smoke test
+        run: python python/smoke_test.py
+
+      # Build a distributable wheel. python -m build is PEP 517-compliant
+      # and supersedes the deprecated `setup.py bdist_wheel`.
+      - name: Build wheel (Windows)
+        if: runner.os == 'Windows'
+        working-directory: python
+        env:
+          CMAKE_GENERATOR: "Visual Studio 17 2022"
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+          OPENSWMM_CMAKE_ARGS: "-DOPENSWMM_ENGINE_INSTALL_PREFIX=${{ github.workspace }}/engine-install"
+        run: python -m build --wheel --no-isolation
+
+      - name: Build wheel (Unix)
+        if: runner.os != 'Windows'
+        working-directory: python
+        env:
+          CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+          OPENSWMM_CMAKE_ARGS: "-DOPENSWMM_ENGINE_INSTALL_PREFIX=${{ github.workspace }}/engine-install"
+        run: python -m build --wheel --no-isolation
+
+      # delvewheel bundles the engine DLL into the Windows wheel and injects
+      # an os.add_dll_directory() call into __init__.py so the DLL is found
+      # when Python loads the .pyd extension.  Without this the import fails
+      # unless the DLL directory is already on the system PATH.
+      - name: Repair wheel (Windows)
+        if: runner.os == 'Windows'
+        working-directory: python
+        run: >
+          python -c "
+          import glob, subprocess, sys;
+          wheels = glob.glob('dist/*.whl');
+          [subprocess.check_call(['delvewheel', 'repair', '-w', 'dist', w])
+           for w in wheels] if wheels
+          else (print('No wheel in dist/', file=sys.stderr), sys.exit(1))
+          "
+
+      # delocate bundles the engine dylib into the macOS wheel so it is
+      # self-contained (no external libopenswmm.engine.6.dylib dependency).
+      # The wheel path is resolved via Python to avoid shell glob differences
+      # between bash and PowerShell (even though this step only runs on macOS).
+      - name: Delocate wheel (macOS)
+        if: runner.os == 'macOS'
+        working-directory: python
+        run: |
+          pip install delocate
+          python -c "
+          import glob, subprocess, sys
+          wheels = glob.glob('dist/*.whl')
+          if not wheels:
+              print('No wheel found in dist/', file=sys.stderr); sys.exit(1)
+          for w in wheels:
+              subprocess.check_call([
+                  'delocate-wheel',
+                  '--require-archs', '${{ matrix.cmake_osx_arch }}',
+                  '-w', 'dist', '-v', w,
+              ])
+          "
+
+      - name: Upload Python wheel
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: python-wheel-${{ matrix.vcpkg_triplet }}
+          path: python/dist/*.whl
