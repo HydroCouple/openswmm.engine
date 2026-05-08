@@ -1,0 +1,4 @@
+# Build artifacts
+*.o
+*.mod
+generate_sir_reference
