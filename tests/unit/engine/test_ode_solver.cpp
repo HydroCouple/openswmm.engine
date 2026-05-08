@@ -316,7 +316,9 @@ TEST(OdeSolver, SIREpidemicInvariantsAndDynamics) {
     double prev_I = y[1];
     bool   peak_seen = false;
 
-    for (int step = 0; step < 60; ++step) {
+    // Run to t=120: with R0=3, γ=0.1 the epidemic peaks near t=30 and I drops
+    // below 1% only after t≈80 (recovery period 1/γ=10 units).
+    for (int step = 0; step < 120; ++step) {
         const double t = static_cast<double>(step);
         int rc = openswmm::ode::integrate(y, 3, t, t + 1.0, 1e-6, 0.1, sir_rhs);
         ASSERT_EQ(rc, 0) << "ODE integrator failed at t=" << t;
@@ -343,16 +345,16 @@ TEST(OdeSolver, SIREpidemicInvariantsAndDynamics) {
         << "SIR phase-plane S=S0*exp(-R0*R) max error = " << max_phase_err;
 
     // 3b. Epidemic peak occurred (I went up then came down)
-    EXPECT_TRUE(peak_seen) << "Epidemic peak (dI/dt=0) not observed over [0,60]";
+    EXPECT_TRUE(peak_seen) << "Epidemic peak (dI/dt=0) not observed over [0,120]";
 
     // 3c. Herd immunity overshoot: final S below gamma/beta threshold
     EXPECT_LT(y[0], gamma_rate / beta)
-        << "S(60) = " << y[0] << " should be below herd-immunity threshold "
+        << "S(120) = " << y[0] << " should be below herd-immunity threshold "
         << gamma_rate / beta;
 
-    // 3d. Epidemic resolved: I small at t=60
+    // 3d. Epidemic resolved: I small at t=120
     EXPECT_LT(y[1], 1e-2)
-        << "I(60) = " << y[1] << " should be near zero at end of epidemic";
+        << "I(120) = " << y[1] << " should be near zero at end of epidemic";
 }
 
 // SIR epidemic trajectory comparison against Flash-X-generated reference.
