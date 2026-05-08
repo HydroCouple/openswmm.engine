@@ -33,7 +33,6 @@ if(OpenMP_FOUND OR OpenMP_C_FOUND)
 else()
     message(WARNING "OpenMP not found - building legacy engine without parallel support")
     add_compile_definitions(NO_OPENMP)
-    set(OPENSWMM_LEGACY_NO_OPENMP TRUE)
 endif()
 
 # Legacy SWMM version (independent of the OpenSWMM Engine version)
@@ -57,14 +56,6 @@ set(SWMM_PUBLIC_HEADERS
 file(GLOB SWMM_SOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.c *.h)
 
 add_library(openswmm_legacy_engine SHARED ${SWMM_SOURCES})
-
-if(OPENSWMM_LEGACY_NO_OPENMP)
-    # project.c and swmm5.c both provide a fallback omp_get_max_threads().
-    # Rename one translation unit's local fallback to keep the legacy sources untouched.
-    set_source_files_properties(project.c PROPERTIES
-        COMPILE_DEFINITIONS "omp_get_max_threads=project_omp_get_max_threads"
-    )
-endif()
 
 # Backwards-compatible aliases
 add_library(openswmm::legacy::engine     ALIAS openswmm_legacy_engine)
@@ -103,15 +94,6 @@ file(COPY ${CMAKE_CURRENT_BINARY_DIR}/openswmm_legacy_solver_export.h
     DESTINATION ${PROJECT_SOURCE_DIR}/include/openswmm/legacy/engine
 )
 
-# Build the private include list incrementally so OpenMP remains optional.
-set(OPENSWMM_LEGACY_ENGINE_PRIVATE_INCLUDE_DIRS
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
-if(OpenMP_FOUND OR TARGET OpenMP::OpenMP_C)
-    list(APPEND OPENSWMM_LEGACY_ENGINE_PRIVATE_INCLUDE_DIRS ${OpenMP_C_INCLUDE_DIRS})
-endif()
-
 # Include directories
 #   PUBLIC:  consumers find openswmm_solver.h via include/openswmm/legacy/engine/
 #            and the source files themselves (internal headers) via CMAKE_CURRENT_SOURCE_DIR
@@ -121,7 +103,8 @@ target_include_directories(openswmm_legacy_engine
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
         $<INSTALL_INTERFACE:include/openswmm/legacy/engine>
     PRIVATE
-        ${OPENSWMM_LEGACY_ENGINE_PRIVATE_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${OpenMP_C_INCLUDE_DIRS}
 )
 
 # Link dependencies
@@ -130,11 +113,8 @@ target_link_libraries(openswmm_legacy_engine
         openswmm_common   # INTERFACE library — exposes include/
     PRIVATE
         $<$<NOT:$<BOOL:$<C_COMPILER_ID:MSVC>>>:m>
+        OpenMP::OpenMP_C
 )
-
-if(TARGET OpenMP::OpenMP_C)
-    target_link_libraries(openswmm_legacy_engine PRIVATE OpenMP::OpenMP_C)
-endif()
 
 # RPATH settings
 if(APPLE)

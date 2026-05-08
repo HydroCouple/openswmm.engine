@@ -48,19 +48,13 @@ set_target_properties(test_engine_regression PROPERTIES
 )
 
 # Each reference model becomes a parameterized test case
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data")
-    add_test(
-        NAME    regression_example1
-        COMMAND $<TARGET_FILE:test_engine_regression>
-                --gtest_filter="RegressionTest/RegressionTest*"
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
-    )
-    set_tests_properties(regression_example1 PROPERTIES LABELS "regression")
-else()
-    message(WARNING
-        "Skipping regression CTest registration because ${CMAKE_CURRENT_SOURCE_DIR}/data is missing"
-    )
-endif()
+add_test(
+    NAME    regression_example1
+    COMMAND $<TARGET_FILE:test_engine_regression>
+            --gtest_filter="RegressionTest/RegressionTest*"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(regression_example1 PROPERTIES LABELS "regression")
 
 add_custom_command(TARGET test_engine_regression POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
