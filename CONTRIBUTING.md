@@ -9,7 +9,7 @@ Thank you for your interest in contributing to **openswmm.engine**! This documen
 1. [Community Governance](#1-community-governance)
 2. [Repository & Technical Management](#2-repository--technical-management)
 3. [Succession & Delegation](#3-succession--delegation)
-4. [Licensing & Intellectual Property](#4-licensing--intellectual-property)
+4. [Licensing, Intellectual Property & CLA](#4-licensing-intellectual-property--cla)
 5. [Author Acknowledgment](#5-author-acknowledgment)
 6. [How to Cite openswmm.engine](#6-how-to-cite-openswmm.engine)
 7. [Versioning Strategy](#7-versioning-strategy)
@@ -39,7 +39,7 @@ openswmm.engine is a community-driven open source project. All contributors are 
 
 ## 2. Repository & Technical Management
 
-**Repository and technical management is the responsibility of the Technical Manager, [Caleb Buahin](https://github.com/cbuahin).**
+**Repository and technical management is the responsibility of the Technical Manager (currently [@cbuahin](https://github.com/cbuahin)).**
 
 The Technical Manager is responsible for:
 
@@ -63,11 +63,25 @@ The Technical Manager role is a single point of authority, which must be protect
 
 ---
 
-## 4. Licensing & Intellectual Property
+## 4. Licensing, Intellectual Property & CLA
 
 openswmm.engine is released under the **MIT License**.
 
-By submitting a contribution (code, documentation, tests, data, or any other material), **you agree that your contribution will be made available under the MIT License** and that you have the right to grant this license. This agreement is implicit upon the submission of any pull request or patch to this repository.
+All contributors must sign the project **Contributor License Agreement (CLA)** before their pull request can be merged. The CLA is detailed in [CLA.md](./CLA.md). Key points:
+
+- **You retain your copyright.** The CLA grants a license; it does not transfer ownership.
+- **Broad license grant.** You grant the Technical Manager a perpetual, irrevocable license to use, distribute, and **relicense** your contribution (e.g., for future dual open-source/commercial licensing).
+- **Patent grant.** You grant a royalty-free patent license covering patents necessarily infringed by your contribution.
+- **Representation of authority.** You confirm you have the right to submit the contribution and that it contains no unlicensed third-party material.
+- **Corporate contributors** must additionally submit a Corporate CLA (CCLA) — see [CLA.md §6](./CLA.md#6-corporate-contributors).
+
+### Signing the CLA
+
+The project uses [CLA Assistant](https://cla-assistant.io). When you open your first pull request, a bot will post a comment with a signing link. You may also sign manually by posting the following comment on your PR:
+
+> I have read the CLA Document and I hereby sign the CLA.
+
+Once signed, the CLA covers all future contributions. You do not need to sign again.
 
 If your contribution includes third-party code or data, you are responsible for ensuring that the third-party license is compatible with MIT and that proper attribution is included in your submission.
 
@@ -198,7 +212,7 @@ Every PR requires **all three** of the following approvals:
 
 | Reviewer               | Role                                                                                 |
 |------------------------|--------------------------------------------------------------------------------------|
-| **Technical Manager**  | Caleb Buahin — final authority on code quality, architecture, and correctness       |
+| **Technical Manager**  | [@cbuahin](https://github.com/cbuahin) (current Technical Manager) — final authority on code quality, architecture, and correctness       |
 | **AI Copilot Review**  | Automated AI-assisted review for style, logic, and common error patterns             |
 | **Community Reviewer** | At least one community contributor **other than the PR author** must approve         |
 
@@ -209,6 +223,7 @@ Self-approvals are not permitted. The PR author may not count toward the communi
 Before requesting review, confirm that your PR:
 
 - [ ] Targets the correct branch (`dev` for bug fixes and features; see Section 15 for experimental work)
+- [ ] CLA signed — first-time contributors must sign the [CLA](./CLA.md) before the PR can be merged
 - [ ] Includes a clear description of what was changed and why
 - [ ] References any related issues (e.g., `Closes #42`)
 - [ ] Includes new or updated unit tests covering the change
@@ -336,7 +351,7 @@ Before a major formulation change can be merged into `dev`, the following docume
 
 ---
 
-## 16. Conflict of Interest in Reviews
+## 16. Conflict of Interest in Reviewscon
 
 Scientific software reviews can intersect with contributors' professional interests. To protect the integrity of the review process:
 
@@ -418,8 +433,7 @@ Proposals to add a new dependency should be raised in a GitHub Discussion or iss
 
 If you discover a potential security vulnerability in openswmm.engine, please report it privately so that a fix can be prepared before the issue is publicly disclosed:
 
-- **Email:** [calebgh@gmail.com](mailto:calebgh@gmail.com) with the subject line `[openswmm.engine] Security Vulnerability Report`
-- **GitHub Private Advisory:** Use the [Security Advisories](../../security/advisories) tab to submit a draft advisory directly on GitHub.
+- **GitHub Private Advisory:** Use the [Security Advisories](../../security/advisories) tab to submit a draft advisory directly on GitHub. Tag [@cbuahin](https://github.com/cbuahin) (current Technical Manager) in the advisory.
 
 Please include in your report:
 
@@ -458,8 +472,8 @@ openswmm.engine is committed to providing a welcoming, respectful, and inclusive
 - Accept constructive criticism of their contributions in good faith.
 - Prioritize the long-term health of the project over individual preferences.
 
-Harassment, personal attacks, or exclusionary behavior of any kind will not be tolerated. Violations may be reported to the Technical Manager at [calebgh@gmail.com](mailto:calebgh@gmail.com). Reported incidents will be reviewed and addressed promptly and confidentially.
+Harassment, personal attacks, or exclusionary behavior of any kind will not be tolerated. Violations may be reported to the Technical Manager at @cbuahin. Reported incidents will be reviewed and addressed promptly and confidentially.
 
 ---
 
-*This document is maintained by [Caleb Buahin](https://github.com/cbuahin), Technical Manager of openswmm.engine. Last updated: April 2026.*
+*This document is maintained by the Technical Manager of openswmm.engine (currently [@cbuahin](https://github.com/cbuahin)). Last updated: May 2026.*

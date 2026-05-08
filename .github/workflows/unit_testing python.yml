@@ -10,132 +10,17 @@ env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_EXE: ${{ github.workspace }}/vcpkg/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_MANIFEST_FEATURES: "tests"
   OMP_NUM_THREADS: 1
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────
-  #  C++ Engine — Release build only (no unit tests).
-  #  Produces an install tree consumed by the python job below.
-  # ──────────────────────────────────────────────────────────────────────
-  engine:
-    name: "Engine Release (${{ matrix.alias }})"
-    permissions:
-      contents: read
-      actions: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            alias: Linux-x64
-            cmake_preset: Linux
-            shell_ext: .sh
-            vcpkg_triplet: x64-linux
-            cmake_osx_arch: ""
-
-          - os: macos-latest
-            alias: macOS-arm64
-            cmake_preset: Darwin
-            shell_ext: .sh
-            vcpkg_triplet: arm64-osx
-            cmake_osx_arch: arm64
-
-          - os: macos-15-intel
-            alias: macOS-x64
-            cmake_preset: Darwin
-            shell_ext: .sh
-            vcpkg_triplet: x64-osx
-            cmake_osx_arch: x86_64
-
-          - os: windows-latest
-            alias: Windows-x64
-            cmake_preset: Windows
-            shell_ext: .bat
-            vcpkg_triplet: x64-windows
-            cmake_osx_arch: ""
-
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Checkout vcpkg
-        uses: actions/checkout@v5
-        with:
-          repository: microsoft/vcpkg
-          ref: 2025.02.14
-          path: vcpkg
-
-      - name: Install OpenMP (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libomp
-
-      - name: Install Ninja (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
-
-      - name: Bootstrap vcpkg (Windows)
-        if: runner.os == 'Windows'
-        working-directory: ${{ env.VCPKG_ROOT }}
-        run: |
-          .\bootstrap-vcpkg${{ matrix.shell_ext }}
-          .\vcpkg.exe integrate install
-
-      - name: Bootstrap vcpkg (Unix)
-        if: runner.os != 'Windows'
-        working-directory: ${{ env.VCPKG_ROOT }}
-        run: |
-          ./bootstrap-vcpkg${{ matrix.shell_ext }}
-          chmod +x vcpkg
-
-      - name: Export GitHub Actions cache variables
-        uses: actions/github-script@v8
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Cache vcpkg downloads (source tarballs)
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.VCPKG_ROOT }}/downloads
-          key: vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: |
-            vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
-            vcpkg-downloads-${{ runner.os }}-
-
-      - name: Configure (Release)
-        run: >
-          cmake
-          --preset=${{ matrix.cmake_preset }}
-          -B build-${{ matrix.vcpkg_triplet }}-release
-          -DOPENSWMM_BUILD_TESTS=OFF
-          -DOPENSWMM_BUILD_UNIT_TESTS=OFF
-          -DOPENSWMM_BUILD_REGRESSION_TESTS=OFF
-          -DOPENSWMM_BUILD_BENCHMARKS=OFF
-          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
-
-      - name: Build (Release)
-        run: cmake --build build-${{ matrix.vcpkg_triplet }}-release --config Release
-
-      - name: Install (Release)
-        run: >
-          cmake --install build-${{ matrix.vcpkg_triplet }}-release
-          --config Release
-          --prefix "${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}"
-
-      - name: Upload engine install artifact
-        uses: actions/upload-artifact@v5
-        with:
-          name: engine-install-${{ matrix.vcpkg_triplet }}
-          path: engine-install-${{ matrix.vcpkg_triplet }}/
-
-  # ──────────────────────────────────────────────────────────────────────
-  #  Python bindings — build, test, and wheel packaging
+  #  Python bindings — build engine + Cython, test, and package wheel.
+  #  The engine is built from source via add_subdirectory inside the
+  #  cmake configure (no pre-built artifact needed).
   # ──────────────────────────────────────────────────────────────────────
   python:
     name: "Python (${{ matrix.alias }})"
-    needs: engine
     permissions:
       contents: read
       actions: write
@@ -208,6 +93,15 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
+      - name: Cache vcpkg downloads (source tarballs)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/downloads
+          key: vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
+            vcpkg-downloads-${{ runner.os }}-
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -222,15 +116,8 @@ jobs:
       - name: Clean stale scikit-build cache
         run: python -c "import shutil; shutil.rmtree('python/_skbuild', ignore_errors=True)"
 
-      - name: Download pre-built engine install
-        uses: actions/download-artifact@v4
-        with:
-          name: engine-install-${{ matrix.vcpkg_triplet }}
-          path: engine-install
-
-      # Pre-install vcpkg packages so delocate/auditwheel/delvewheel can
-      # find SUNDIALS and other native dylibs at wheel-bundling time.
-      # The vcpkg binary cache from the engine job makes this fast (~30 s).
+      # Pre-install vcpkg packages so cmake configure finds SUNDIALS and
+      # other deps quickly via the GHA binary cache rather than rebuilding.
       - name: Pre-install vcpkg packages (Unix)
         if: runner.os != 'Windows'
         env:
@@ -251,13 +138,15 @@ jobs:
           --x-manifest-root "${{ github.workspace }}"
           --x-install-root "${{ env.VCPKG_ROOT }}/installed"
 
+      # No OPENSWMM_ENGINE_INSTALL_PREFIX → python/CMakeLists.txt uses
+      # add_subdirectory(..) to build the engine inline.
       - name: Build and install (Windows)
         if: runner.os == 'Windows'
         working-directory: python
         env:
           CMAKE_GENERATOR: "Visual Studio 17 2022"
+          VCPKG_MANIFEST_DIR: ${{ github.workspace }}
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-          OPENSWMM_CMAKE_ARGS: "-DOPENSWMM_ENGINE_INSTALL_PREFIX=${{ github.workspace }}/engine-install"
         run: python -m pip install .
 
       - name: Build and install (Unix)
@@ -265,8 +154,8 @@ jobs:
         working-directory: python
         env:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
+          VCPKG_MANIFEST_DIR: ${{ github.workspace }}
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-          OPENSWMM_CMAKE_ARGS: "-DOPENSWMM_ENGINE_INSTALL_PREFIX=${{ github.workspace }}/engine-install"
         run: python -m pip install .
 
       - name: Run Python tests
@@ -284,8 +173,8 @@ jobs:
         working-directory: python
         env:
           CMAKE_GENERATOR: "Visual Studio 17 2022"
+          VCPKG_MANIFEST_DIR: ${{ github.workspace }}
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-          OPENSWMM_CMAKE_ARGS: "-DOPENSWMM_ENGINE_INSTALL_PREFIX=${{ github.workspace }}/engine-install"
         run: python -m build --wheel --no-isolation
 
       - name: Build wheel (Unix)
@@ -293,8 +182,8 @@ jobs:
         working-directory: python
         env:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
+          VCPKG_MANIFEST_DIR: ${{ github.workspace }}
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-          OPENSWMM_CMAKE_ARGS: "-DOPENSWMM_ENGINE_INSTALL_PREFIX=${{ github.workspace }}/engine-install"
         run: python -m build --wheel --no-isolation
 
       - name: Repair wheel (Windows)

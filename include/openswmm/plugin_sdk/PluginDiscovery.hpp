@@ -55,6 +55,46 @@ struct DiscoveredFilter {
  */
 std::vector<DiscoveredFilter> discover_all_filters();
 
+/**
+ * @brief A plugin grouped by id with all the roles and filters it advertises.
+ *
+ * @details Companion view to `DiscoveredFilter` for hosts that need to
+ *          reason about plugin capabilities at the *plugin* level rather
+ *          than per-filter.  The driving use case is detecting tri-role
+ *          plugins (e.g., the GeoPackage trio sharing a single
+ *          `plugin_id`) so a GUI can offer a "single container" toggle
+ *          when one plugin handles INPUT_READ + REPORT_WRITE +
+ *          OUTPUT_WRITE for the same extension.
+ *
+ *          A plugin appears once per `plugin_id`, with `roles` and
+ *          `filters` accumulated across every IPluginComponentInfo
+ *          registered under that id.
+ *
+ * @ingroup engine_plugin_sdk
+ */
+struct DiscoveredPlugin {
+    std::string                plugin_id;       ///< IPluginComponentInfo::id()
+    std::string                plugin_version;  ///< IPluginComponentInfo::version()
+    std::string                plugin_caption;  ///< IPluginComponentInfo::caption()
+    std::vector<PluginRole>    roles;           ///< Distinct roles advertised across all filters
+    std::vector<FileFilter>    filters;         ///< Every filter the plugin advertises
+};
+
+/**
+ * @brief Enumerate every discovered plugin, grouped by `plugin_id`.
+ *
+ * @details Walks `discover_all_filters()` and folds entries that share
+ *          a `plugin_id` into a single `DiscoveredPlugin`.  `roles` is
+ *          de-duplicated.  Order of plugins follows the order in which
+ *          their first filter is encountered (stable across calls).
+ *
+ *          Use this when you need "what does plugin X support overall"
+ *          rather than "give me every (plugin, filter) pair".
+ *
+ * @returns Flat snapshot of plugins, one entry per `plugin_id`.
+ */
+std::vector<DiscoveredPlugin> discover_plugins_by_id();
+
 } /* namespace openswmm */
 
 #endif /* OPENSWMM_PLUGIN_DISCOVERY_HPP */

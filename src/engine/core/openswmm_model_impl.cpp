@@ -13,6 +13,44 @@
 #include "openswmm_api_common.hpp"
 #include "InpWriter.hpp"
 #include "../../../include/openswmm/engine/openswmm_model.h"
+#include "../../../include/openswmm/plugin_sdk/IInputPlugin.hpp"
+#include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
+
+#include <sstream>
+
+namespace {
+
+// Split a space-separated args string into a vector<string>, dropping
+// empty tokens.  Mirrors the [PLUGINS]-line tokenizer for the common
+// (no-quoting) case the GUI's free-form args field produces.
+std::vector<std::string> split_args(const char* s) {
+    std::vector<std::string> out;
+    if (!s || s[0] == '\0') return out;
+    std::istringstream is(s);
+    std::string tok;
+    while (is >> tok) out.push_back(std::move(tok));
+    return out;
+}
+
+// Inverse: join init_args with single spaces.
+std::string join_args(const std::vector<std::string>& args) {
+    std::string out;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (i) out += ' ';
+        out += args[i];
+    }
+    return out;
+}
+
+// Common buffer-fill helper: NUL-terminated, truncated at sz - 1.
+void fill_buf(char* buf, int sz, const std::string& s) {
+    if (!buf || sz <= 0) return;
+    std::size_t n = std::min(static_cast<std::size_t>(sz - 1), s.size());
+    std::memcpy(buf, s.data(), n);
+    buf[n] = '\0';
+}
+
+} // anonymous
 
 extern "C" {
 
@@ -109,6 +147,107 @@ SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_pat
     CHECK_HANDLE(engine);
     if (!new_inp_path) return SWMM_ERR_BADPARAM;
     return openswmm::inp_writer::writeInpFile(to_engine(engine)->context(), new_inp_path);
+}
+
+SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine,
+                                                  const char* new_path,
+                                                  const char* output_plugin_id) {
+    CHECK_HANDLE(engine);
+    if (!new_path) return SWMM_ERR_BADPARAM;
+
+    // Empty / NULL plugin id → built-in .inp writer.
+    if (!output_plugin_id || output_plugin_id[0] == '\0') {
+        return openswmm::inp_writer::writeInpFile(
+            to_engine(engine)->context(), new_path);
+    }
+
+    auto* eng = to_engine(engine);
+
+    // Resolve the writer plugin via the same id/path logic used by
+    // swmm_engine_open's input_plugin_lib argument.  No load warnings
+    // emitted to the engine's warn channel here — the GUI surfaces
+    // resolution failures via the SWMM_ERR_BADPARAM return code.
+    openswmm::IPluginComponentInfo* info =
+        eng->plugin_factory().find_component(output_plugin_id);
+    if (!info) return SWMM_ERR_BADPARAM;
+    if (!info->has_input()) return SWMM_ERR_PLUGIN;
+
+    // Always create a transient writer instance so the engine's primary
+    // input plugin (which may be in any state) is left undisturbed.
+    openswmm::IInputPlugin* writer = info->create_input_plugin();
+    if (!writer) return SWMM_ERR_PLUGIN;
+
+    int rc = writer->initialize({}, info);
+    if (rc == 0)
+        rc = writer->write(new_path, eng->context());
+    // Best-effort finalize; ignore its return so we surface the write rc.
+    (void)writer->finalize(eng->context());
+    delete writer;
+
+    return rc == 0 ? SWMM_OK : SWMM_ERR_PLUGIN;
+}
+
+// ============================================================================
+// [PLUGINS] section accessors (Slice AA-3.1 Phase B)
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_plugins_count(SWMM_Engine engine, int* count) {
+    CHECK_HANDLE(engine);
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = static_cast<int>(to_engine(engine)->context().plugin_specs.size());
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_plugin_get(SWMM_Engine engine,
+                                     int          idx,
+                                     char*        path_buf,
+                                     int          path_buf_sz,
+                                     char*        args_buf,
+                                     int          args_buf_sz) {
+    CHECK_HANDLE(engine);
+    const auto& specs = to_engine(engine)->context().plugin_specs;
+    if (idx < 0 || idx >= static_cast<int>(specs.size())) return SWMM_ERR_BADINDEX;
+
+    const auto& spec = specs[static_cast<std::size_t>(idx)];
+    fill_buf(path_buf, path_buf_sz, spec.path);
+    fill_buf(args_buf, args_buf_sz, join_args(spec.init_args));
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_plugin_set(SWMM_Engine engine,
+                                     const char* path_or_id,
+                                     const char* args) {
+    CHECK_HANDLE(engine);
+    if (!path_or_id || path_or_id[0] == '\0') return SWMM_ERR_BADPARAM;
+
+    auto& specs = to_engine(engine)->context().plugin_specs;
+    const std::string key(path_or_id);
+    auto tokens = split_args(args);
+
+    for (auto& spec : specs) {
+        if (spec.path == key) {
+            spec.init_args = std::move(tokens);
+            return SWMM_OK;
+        }
+    }
+
+    openswmm::PluginSpec spec;
+    spec.path = key;
+    spec.init_args = std::move(tokens);
+    specs.push_back(std::move(spec));
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_plugin_remove(SWMM_Engine engine, const char* path_or_id) {
+    CHECK_HANDLE(engine);
+    if (!path_or_id) return SWMM_ERR_BADPARAM;
+
+    auto& specs = to_engine(engine)->context().plugin_specs;
+    const std::string key(path_or_id);
+    for (auto it = specs.begin(); it != specs.end(); ++it) {
+        if (it->path == key) { specs.erase(it); break; }
+    }
+    return SWMM_OK;  // idempotent
 }
 
 // ============================================================================

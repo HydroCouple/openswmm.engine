@@ -59,7 +59,7 @@ int  main(int argc, char *argv[])
         if (strcmp(arg1, "--help") == 0 || strcmp(arg1, "-h") == 0)
         {
             // Help
-            printf("\n\nSTORMWATER MANAGEMENT MODEL (SWMM) HELP\n\n");
+            printf("\n\nOPEN-SOURCE STORMWATER MANAGEMENT MODEL (SWMM) HELP\n\n");
             printf("COMMANDS:\n");
             printf("\t--help (-h)       SWMM Help\n");
             printf("\t--version (-v)    Build Version\n");
@@ -91,7 +91,7 @@ int  main(int argc, char *argv[])
 
         // Display closing status on console
         runTime = difftime(time(0), start);
-        printf("\n\n... EPA SWMM completed in %.2f seconds.", runTime);
+        printf("\n\n... OPEN-SOURCE SWMM completed in %.2f seconds.", runTime);
         if      ( swmm_getError(errMsg, msgLen) > 0 ) printf(" There are errors.\n");
         else if ( swmm_getWarnings() > 0 ) printf(" There are warnings.\n");
         else printf("\n");
