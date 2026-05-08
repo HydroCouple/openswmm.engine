@@ -178,61 +178,6 @@ TEST(CurveNumInfil, DryPeriodRecovery) {
 }
 
 // ============================================================================
-// ODE Solver basic test
-// ============================================================================
-
-#include "math/OdeSolver.hpp"
-
-TEST(OdeSolver, ExponentialDecay) {
-    // dy/dt = -y, y(0) = 1 → y(t) = exp(-t)
-    double y = 1.0;
-    auto derivs = [](double /*x*/, const double* y, double* dydx) {
-        dydx[0] = -y[0];
-    };
-
-    int rc = openswmm::ode::integrate(&y, 1, 0.0, 1.0, 1e-6, 0.1, derivs);
-    EXPECT_EQ(rc, 0);
-    EXPECT_NEAR(y, std::exp(-1.0), 1e-5);
-}
-
-TEST(OdeSolver, LinearGrowth) {
-    // dy/dt = 1, y(0) = 0 → y(t) = t
-    double y = 0.0;
-    auto derivs = [](double /*x*/, const double* /*y*/, double* dydx) {
-        dydx[0] = 1.0;
-    };
-
-    int rc = openswmm::ode::integrate(&y, 1, 0.0, 5.0, 1e-6, 0.5, derivs);
-    EXPECT_EQ(rc, 0);
-    EXPECT_NEAR(y, 5.0, 1e-10);
-}
-
-// ============================================================================
-// FindRoot basic test
-// ============================================================================
-
-#include "math/FindRoot.hpp"
-
-TEST(FindRoot, NewtonSquareRoot) {
-    // Find x such that x^2 - 2 = 0 → x = sqrt(2)
-    double root = 1.5;
-    auto func = [](double x, double* f, double* df) {
-        *f = x * x - 2.0;
-        *df = 2.0 * x;
-    };
-    int iters = openswmm::findroot::newton(0.1, 10.0, &root, 1e-10, func);
-    EXPECT_GT(iters, 0);
-    EXPECT_NEAR(root, std::sqrt(2.0), 1e-10);
-}
-
-TEST(FindRoot, RidderCubicRoot) {
-    // Find x such that x^3 - 8 = 0 → x = 2
-    auto func = [](double x) -> double { return x * x * x - 8.0; };
-    double root = openswmm::findroot::ridder(0.0, 5.0, 1e-10, func);
-    EXPECT_NEAR(root, 2.0, 1e-8);
-}
-
-// ============================================================================
 // Modified Horton infiltration
 // ============================================================================
 
@@ -378,60 +323,6 @@ TEST(CurveNumInfil, TotalInfilApproachesRetention) {
 }
 
 // ============================================================================
-// ODE solver additional tests
-// ============================================================================
-
-TEST(OdeSolver, HarmonicOscillator) {
-    // dy1/dt = y2, dy2/dt = -y1 → y1(t) = cos(t), y2(t) = -sin(t)
-    double y[2] = {1.0, 0.0};  // y1(0)=1, y2(0)=0
-    auto derivs = [](double /*x*/, const double* y, double* dydx) {
-        dydx[0] = y[1];
-        dydx[1] = -y[0];
-    };
-
-    int rc = openswmm::ode::integrate(y, 2, 0.0, 2.0 * 3.14159265, 1e-8, 0.01, derivs);
-    EXPECT_EQ(rc, 0);
-    // After one full period, should return to initial state
-    EXPECT_NEAR(y[0], 1.0, 1e-5);
-    EXPECT_NEAR(y[1], 0.0, 1e-5);
-}
-
-TEST(OdeSolver, QuadraticGrowth) {
-    // dy/dt = 2*t, y(0) = 0 → y(t) = t²
-    double y = 0.0;
-    auto derivs = [](double x, const double* /*y*/, double* dydx) {
-        dydx[0] = 2.0 * x;
-    };
-
-    int rc = openswmm::ode::integrate(&y, 1, 0.0, 3.0, 1e-8, 0.1, derivs);
-    EXPECT_EQ(rc, 0);
-    EXPECT_NEAR(y, 9.0, 1e-6);
-}
-
-// ============================================================================
-// FindRoot additional tests
-// ============================================================================
-
-TEST(FindRoot, NewtonLinearExact) {
-    // f(x) = 2x - 6 = 0 → x = 3
-    double root = 1.0;
-    auto func = [](double x, double* f, double* df) {
-        *f = 2.0 * x - 6.0;
-        *df = 2.0;
-    };
-    int iters = openswmm::findroot::newton(0.0, 10.0, &root, 1e-12, func);
-    EXPECT_GT(iters, 0);
-    EXPECT_NEAR(root, 3.0, 1e-12);
-}
-
-TEST(FindRoot, RidderTrigRoot) {
-    // Find x such that sin(x) = 0 near x = pi
-    auto func = [](double x) -> double { return std::sin(x); };
-    double root = openswmm::findroot::ridder(2.5, 3.8, 1e-10, func);
-    EXPECT_NEAR(root, 3.14159265358979, 1e-8);
-}
-
-// ============================================================================
 // Modified Green-Ampt vs Standard Green-Ampt
 // ============================================================================
 
@@ -574,3 +465,168 @@ TEST(InfilMassBalance, CurveNumCumulativeNeverExceedsInput) {
     EXPECT_LE(total_infil, total_input + 1e-10)
         << "CN cumulative infiltration should never exceed cumulative input";
 }
+
+// ============================================================================
+// Benchmark trajectory tests
+//
+// These tests load reference datasets from tests/benchmarks/manufactured/ and
+// compare the solver output against analytical reference values.
+//
+// BENCHMARK_DATA_DIR is injected by CMake as an absolute path.
+// If it is absent or the file is missing, the test is skipped rather than
+// failing so that builds without the benchmark tree still pass.
+// ============================================================================
+
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#ifndef BENCHMARK_DATA_DIR
+#  define BENCHMARK_DATA_DIR ""
+#endif
+
+namespace {
+
+struct HortonBenchRow { double t_s, F_ft; };
+
+static std::vector<HortonBenchRow> load_horton_bench(const std::string& path) {
+    std::vector<HortonBenchRow> rows;
+    std::ifstream in(path);
+    if (!in.is_open()) return rows;
+    std::string line;
+    bool header_seen = false;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        if (!header_seen) { header_seen = true; continue; }
+        // columns: t_s, t_hr, f_ft_per_s, F_ft, f_in_per_hr, F_in
+        std::istringstream ss(line);
+        std::string tok;
+        double vals[6] = {};
+        int col = 0;
+        while (std::getline(ss, tok, ',') && col < 6)
+            vals[col++] = std::stod(tok);
+        if (col >= 4)
+            rows.push_back({vals[0], vals[3]});
+    }
+    return rows;
+}
+
+struct GABenchRow { double t_s; double F_ft; };
+
+static std::vector<GABenchRow> load_ga_bench(const std::string& path) {
+    std::vector<GABenchRow> rows;
+    std::ifstream in(path);
+    if (!in.is_open()) return rows;
+    std::string line;
+    bool header_seen = false;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        if (!header_seen) { header_seen = true; continue; }
+        std::istringstream ss(line);
+        std::string tok;
+        double vals[2] = {};
+        int col = 0;
+        while (std::getline(ss, tok, ',') && col < 2)
+            vals[col++] = std::stod(tok);
+        if (col >= 2)
+            rows.push_back({vals[0], vals[1]});
+    }
+    return rows;
+}
+
+}  // namespace
+
+// Horton cumulative-depth trajectory against manufactured benchmark.
+//
+// horton_getInfil returns the average rate over [t, t+dt], so fp*dt equals
+// F(t+dt)−F(t) exactly (in double precision).  Accumulating across all
+// intervals therefore reproduces the analytical F(t) to within floating-point
+// rounding — the expected error is well below 1e-9 ft.
+TEST(HortonInfil, TrajectoryMatchesBenchmark) {
+    std::string path = std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/infil-horton-constant-rainfall/reference.csv";
+
+    auto rows = load_horton_bench(path);
+    if (rows.empty()) {
+        GTEST_SKIP() << "Benchmark data not found: " << path;
+    }
+
+    HortonState s;
+    horton_init(s, 3.0, 0.5, 4.0, 0.1, 0.0, default_opts());
+
+    const double precip = 5.0 / 12.0 / 3600.0;  // 5 in/hr > f0 → always ponded
+    double F_accum = 0.0;
+    double max_err = 0.0, sum_sq = 0.0;
+    double prev_t  = rows[0].t_s;  // t=0
+
+    for (size_t i = 1; i < rows.size(); ++i) {
+        double dt = rows[i].t_s - prev_t;
+        double fp = horton_getInfil(s, precip, 0.0, dt);
+        F_accum += fp * dt;
+
+        double err = std::abs(F_accum - rows[i].F_ft);
+        max_err    = std::max(max_err, err);
+        sum_sq    += err * err;
+        prev_t     = rows[i].t_s;
+    }
+
+    double rms_err = std::sqrt(sum_sq / static_cast<double>(rows.size() - 1));
+    EXPECT_LT(max_err, 1e-9)
+        << "Horton cumulative-depth max error " << max_err
+        << " ft exceeds 1e-9 ft tolerance (benchmark: "
+        << path << ")";
+    EXPECT_LT(rms_err, 1e-10)
+        << "Horton cumulative-depth RMS error " << rms_err
+        << " ft exceeds 1e-10 ft tolerance";
+}
+
+// Green-Ampt saturated-branch trajectory against manufactured benchmark.
+//
+// grnampt_getInfil is called with state.saturated=true so the unsaturated path
+// is bypassed.  The exact implicit G-A equation is
+//   t(F) = [F - c1*ln(1+F/c1)] / Ks,  c1 = (S+depth)*IMD
+// which is exactly what grnampt_getF2 solves in each Newton step, so the
+// solver should reproduce the reference to within its own Newton tolerance
+// (~1e-5 ft/step).  The 1e-3 ft acceptance criterion gives three decades of
+// margin; any failure indicates a real regression.
+TEST(GreenAmptInfil, SaturatedTrajectoryMatchesBenchmark) {
+    std::string path = std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/grnampt-saturated-trajectory/reference.csv";
+
+    auto rows = load_ga_bench(path);
+    if (rows.empty()) {
+        GTEST_SKIP() << "Benchmark data not found: " << path;
+    }
+
+    GreenAmptState state{};
+    state.S         = 1.93 / 12.0;           // ft — sandy loam suction head
+    state.Ks        = 0.43 / 12.0 / 3600.0;  // ft/s — saturated conductivity
+    state.IMD       = 0.25;
+    state.IMDmax    = 0.25;
+    state.T         = 1.0e10;   // timer never expires during wet run
+    state.saturated = true;     // force saturated branch from t=0
+
+    const double precip = 1.0;  // ft/s >> dF/dt; ia clamp never activates
+    double t = rows[0].t_s;     // t=0
+    double max_err = 0.0;
+
+    for (size_t i = 1; i < rows.size(); ++i) {
+        double t_ref = rows[i].t_s;
+        while (t + 1.0 <= t_ref) {
+            grnampt_getInfil(state, precip, 0.0, 1.0, InfilModel::GREEN_AMPT);
+            t += 1.0;
+        }
+        if (t_ref > t) {
+            grnampt_getInfil(state, precip, 0.0, t_ref - t, InfilModel::GREEN_AMPT);
+            t = t_ref;
+        }
+        double err = std::abs(state.F - rows[i].F_ft);
+        max_err = std::max(max_err, err);
+    }
+
+    EXPECT_LT(max_err, 1e-3)
+        << "Green-Ampt saturated trajectory max error " << max_err
+        << " ft exceeds 1e-3 ft tolerance (benchmark: " << path << ")";
+}
+

@@ -1,0 +1,60 @@
+benchmark: odesolve-exponential-decay
+type: manufactured
+description: >
+  Scalar ODE y' = -lambda*y with exact solution y(t) = exp(-lambda*t).
+  Exercises the adaptive RK45 integrator in OdeSolver.cpp over a 10-second
+  window with lambda = 0.5 s^-1.
+swmm_target: src/engine/math/OdeSolver.cpp
+
+problem:
+  name: exponential-decay
+  equation: "dy/dt = -lambda * y"
+  initial_condition: "y(0) = 1.0"
+  parameters:
+    lambda_per_s: 0.5
+    y0: 1.0
+    t_start_s: 0.0
+    t_end_s: 10.0
+
+exact_solution:
+  formula: "y(t) = exp(-0.5 * t)"
+  derivation: standard linear ODE, integrating factor exp(lambda*t)
+  references:
+    integrator: >
+      Cash, J.R. and Karp, A.H. (1990). A variable order Runge-Kutta method
+      for initial value problems with rapidly varying right-hand sides.
+      ACM Transactions on Mathematical Software, 16(3), 201-222.
+      https://doi.org/10.1145/79505.79507
+    test_equation: >
+      Hairer, E., Norsett, S.P. and Wanner, G. (1993). Solving Ordinary
+      Differential Equations I: Nonstiff Problems (2nd ed.). Springer-Verlag,
+      Berlin. Section I.2 (Dahlquist test equation y' = lambda*y).
+
+dataset:
+  file: reference.csv
+  columns:
+    t_s: time in seconds
+    y_exact: dimensionless exact solution value
+  n_points: 6
+  t_start_s: 0.0
+  t_end_s: 10.0
+  dt_s: 2.0
+  sampling: uniform
+
+tolerances:
+  max_absolute_error: 1.0e-5
+  rms_error: 1.0e-6
+  basis: >
+    RK45 with eps=1e-6 and h1=0.1 s is expected to track an analytic
+    trajectory of this smoothness to well within these bounds.
+
+provenance:
+  generated_by: analytic formula evaluated in double-precision arithmetic
+  tool: none (closed-form)
+  date: "2026-05-03"
+  author: openswmm.engine development team
+  computation: "y[i] = std::exp(-0.5 * t[i]) for t in {0, 2, 4, 6, 8, 10}"
+  reproducible: true
+  notes: >
+    Values are exact up to double-precision rounding (ULP error < 1).
+    No external tool or Flash-X generation was used.
