@@ -144,18 +144,19 @@ cdef list _impact_report_to_list(SWMM_ImpactReport* report):
     return result
 
 
-cdef ConversionResult _conversion_result_to_py(SWMM_ConversionResult* res):
+cdef object _conversion_result_to_py(SWMM_ConversionResult* res):
     """Convert a SWMM_ConversionResult to a Python object and free C memory."""
     cdef list cleared = []
     cdef list warnings = []
     cdef int i
+    cdef int new_type
     for i in range(res.n_cleared):
         if res.cleared_fields[i] != NULL:
             cleared.append(res.cleared_fields[i].decode('utf-8'))
     for i in range(res.n_warnings):
         if res.warnings[i] != NULL:
             warnings.append(res.warnings[i].decode('utf-8'))
-    cdef int new_type = res.new_type
+    new_type = res.new_type
     swmm_conversion_result_free(res)
     return ConversionResult(new_type, cleared, warnings)
 
@@ -188,45 +189,55 @@ cdef class ModelEditor:
     # -----------------------------------------------------------------------
 
     cdef int _node_idx(self, object id_or_idx) except -1:
+        cdef bytes nb
+        cdef int ni
         if isinstance(id_or_idx, str):
-            cdef bytes nb = id_or_idx.encode('utf-8')
-            cdef int ni = swmm_node_index(self._handle, nb)
+            nb = id_or_idx.encode('utf-8')
+            ni = swmm_node_index(self._handle, nb)
             if ni < 0:
                 raise KeyError(f"Node '{id_or_idx}' not found")
             return ni
         return int(id_or_idx)
 
     cdef int _link_idx(self, object id_or_idx) except -1:
+        cdef bytes lb
+        cdef int li
         if isinstance(id_or_idx, str):
-            cdef bytes lb = id_or_idx.encode('utf-8')
-            cdef int li = swmm_link_index(self._handle, lb)
+            lb = id_or_idx.encode('utf-8')
+            li = swmm_link_index(self._handle, lb)
             if li < 0:
                 raise KeyError(f"Link '{id_or_idx}' not found")
             return li
         return int(id_or_idx)
 
     cdef int _subcatch_idx(self, object id_or_idx) except -1:
+        cdef bytes sb
+        cdef int si
         if isinstance(id_or_idx, str):
-            cdef bytes sb = id_or_idx.encode('utf-8')
-            cdef int si = swmm_subcatch_index(self._handle, sb)
+            sb = id_or_idx.encode('utf-8')
+            si = swmm_subcatch_index(self._handle, sb)
             if si < 0:
                 raise KeyError(f"Subcatchment '{id_or_idx}' not found")
             return si
         return int(id_or_idx)
 
     cdef int _gage_idx(self, object id_or_idx) except -1:
+        cdef bytes gb
+        cdef int gi
         if isinstance(id_or_idx, str):
-            cdef bytes gb = id_or_idx.encode('utf-8')
-            cdef int gi = swmm_gage_index(self._handle, gb)
+            gb = id_or_idx.encode('utf-8')
+            gi = swmm_gage_index(self._handle, gb)
             if gi < 0:
                 raise KeyError(f"Gage '{id_or_idx}' not found")
             return gi
         return int(id_or_idx)
 
     cdef int _table_idx(self, object id_or_idx) except -1:
+        cdef bytes tb
+        cdef int ti
         if isinstance(id_or_idx, str):
-            cdef bytes tb = id_or_idx.encode('utf-8')
-            cdef int ti = swmm_table_index(self._handle, tb)
+            tb = id_or_idx.encode('utf-8')
+            ti = swmm_table_index(self._handle, tb)
             if ti < 0:
                 raise KeyError(f"Table '{id_or_idx}' not found")
             return ti
