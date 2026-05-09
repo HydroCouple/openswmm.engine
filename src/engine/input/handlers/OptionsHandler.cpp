@@ -224,6 +224,13 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.ignore_groundwater = Tokenizer::parse_boolean(val);
         } else if (key == "IGNORE_RDII") {
             opt.ignore_rdii = Tokenizer::parse_boolean(val);
+        } else if (key == "RDII_METHOD") {
+            std::string uval = val;
+            std::transform(uval.begin(), uval.end(), uval.begin(), ::toupper);
+            if (uval == "AMM")
+                opt.rdii_method = RdiiMethod::AMM;
+            else
+                opt.rdii_method = RdiiMethod::RTK;
         } else if (key == "IGNORE_ROUTING") {
             opt.ignore_routing = Tokenizer::parse_boolean(val);
         } else if (key == "IGNORE_QUALITY") {
