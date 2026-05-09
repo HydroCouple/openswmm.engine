@@ -11,6 +11,10 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "hydrology/Infiltration.hpp"
 #include "core/SimulationOptions.hpp"
@@ -476,11 +480,6 @@ TEST(InfilMassBalance, CurveNumCumulativeNeverExceedsInput) {
 // If it is absent or the file is missing, the test is skipped rather than
 // failing so that builds without the benchmark tree still pass.
 // ============================================================================
-
-#include <fstream>
-#include <sstream>
-#include <string>
-#include <vector>
 
 #ifndef BENCHMARK_DATA_DIR
 #  define BENCHMARK_DATA_DIR ""

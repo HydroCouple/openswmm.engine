@@ -20,7 +20,11 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <fstream>
 #include <numeric>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "hydrology/LID.hpp"
 #include "core/SimulationContext.hpp"
@@ -1243,11 +1247,6 @@ TEST(LIDPollutantRemoval, RemovalsStoreParsedCorrectly) {
 // exactly.  Depth and cumulative exfiltration are compared against the
 // closed-form linear solution to machine-precision tolerance.
 // ============================================================================
-
-#include <fstream>
-#include <sstream>
-#include <string>
-#include <vector>
 
 #ifndef BENCHMARK_DATA_DIR
 #  define BENCHMARK_DATA_DIR ""

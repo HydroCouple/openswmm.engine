@@ -503,11 +503,15 @@ void LIDSolver::batchBarrelFlux(LIDGroupSoA& g, double rainfall, double dt) {
 
         // Exfiltration through storage floor (Euler is exact for constant-rate ODE)
         double exfil = 0.0;
-        if (g.stor_ksat[ui] > 0.0 && g.stor_void[ui] > 0.0 && new_depth > 0.0) {
-            double exfil_depth = (g.stor_ksat[ui] / g.stor_void[ui]) * dt;
-            exfil_depth = std::min(exfil_depth, new_depth);
-            new_depth -= exfil_depth;
-            exfil = exfil_depth * g.stor_void[ui];
+        if (g.stor_void[ui] > 0.0 && new_depth > 0.0) {
+            double ksat_eff = getStorageExfil(g.stor_ksat[ui], g.stor_clog[ui],
+                                              g.wb_inflow[ui]);
+            if (ksat_eff > 0.0) {
+                double exfil_depth = (ksat_eff / g.stor_void[ui]) * dt;
+                exfil_depth = std::min(exfil_depth, new_depth);
+                new_depth -= exfil_depth;
+                exfil = exfil_depth * g.stor_void[ui];
+            }
         }
 
         g.stor_depth[ui] = std::max(new_depth, 0.0);

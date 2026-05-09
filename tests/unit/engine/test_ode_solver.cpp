@@ -358,10 +358,9 @@ TEST(OdeSolver, SIREpidemicInvariantsAndDynamics) {
 }
 
 // SIR epidemic trajectory comparison against Flash-X-generated reference.
-//
-// Skipped when reference.csv contains only the placeholder t=0 row.
-// To activate, populate reference.csv by running
-// tools/generate_sir_reference.py or the Flash-X CashKarp45 driver.
+// Skipped when reference.csv has fewer than 2 rows (populated through t=120).
+// See tests/benchmarks/manufactured/odesolve-sir-epidemic/provenance.yaml
+// for the generation methodology (Flash-X CashKarp45, eFrac=1e-12).
 TEST(OdeSolver, SIRTrajectoryMatchesBenchmark) {
     std::string path = std::string(BENCHMARK_DATA_DIR)
         + "/manufactured/odesolve-sir-epidemic/reference.csv";
