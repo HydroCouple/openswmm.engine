@@ -103,6 +103,7 @@ add_gtest_unit(test_engine_treatment        test_treatment.cpp)
 add_gtest_unit(test_engine_rdii             test_rdii.cpp)
 add_gtest_unit(test_engine_gap_fixes       test_gap_fixes.cpp)
 add_gtest_unit(test_engine_report_section  test_report_section.cpp)
+add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
 add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
 add_gtest_unit(test_engine_type_conversion test_type_conversion.cpp)
 
