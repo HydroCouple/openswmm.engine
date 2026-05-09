@@ -53,6 +53,7 @@ void GWSoA::resize(int n) {
     upper_evap.assign(un, 0.0);
     lower_evap.assign(un, 0.0);
     deep_loss.assign(un, 0.0);
+    max_infil_vol.assign(un, 0.0);
 
     lateral_expr.resize(un);
     deep_expr.resize(un);
@@ -341,6 +342,18 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         // --- Save updated state ---
         soa_.theta[ui]       = x[0];
         soa_.lower_depth[ui] = x[1];
+
+        // Gap #40: compute max infiltration volume the upper zone can accept
+        // in the next timestep (matching legacy gwater.c line ~597).
+        // = (total_depth - new_lower_depth) * (porosity - new_theta) / frac_perv
+        double fp_gw = frac_perv[i];
+        if (fp_gw > 0.0 && c.total_depth > 0.0) {
+            soa_.max_infil_vol[ui] =
+                (c.total_depth - x[1]) * (c.porosity - x[0]) / fp_gw;
+            soa_.max_infil_vol[ui] = std::max(soa_.max_infil_vol[ui], 0.0);
+        } else {
+            soa_.max_infil_vol[ui] = 0.0;
+        }
 
         // --- Compute final fluxes at new state ---
         getFluxes(c, x[0], x[1]);

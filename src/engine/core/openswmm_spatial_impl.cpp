@@ -125,7 +125,14 @@ SWMM_ENGINE_API int swmm_spatial_get_link_vertex_count(SWMM_Engine engine, int i
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (count) *count = static_cast<int>(ctx.spatial.link_vertices_x[static_cast<std::size_t>(idx)].size());
+    const auto ui = static_cast<std::size_t>(idx);
+    const int interior_count = static_cast<int>(ctx.spatial.link_vertices_x[ui].size());
+    const int from_node = ctx.links.node1[ui];
+    const int to_node = ctx.links.node2[ui];
+    const int endpoint_count =
+        ((from_node >= 0 && from_node < ctx.n_nodes()) ? 1 : 0) +
+        ((to_node >= 0 && to_node < ctx.n_nodes()) ? 1 : 0);
+    if (count) *count = interior_count + endpoint_count;
     return SWMM_OK;
 }
 
@@ -137,9 +144,30 @@ SWMM_ENGINE_API int swmm_spatial_get_link_vertices(SWMM_Engine engine, int idx, 
     const auto ui = static_cast<std::size_t>(idx);
     const auto& vx = ctx.spatial.link_vertices_x[ui];
     const auto& vy = ctx.spatial.link_vertices_y[ui];
-    const int n = std::min(max_count, static_cast<int>(vx.size()));
-    std::copy(vx.begin(), vx.begin() + n, x);
-    std::copy(vy.begin(), vy.begin() + n, y);
+    const int from_node = ctx.links.node1[ui];
+    const int to_node = ctx.links.node2[ui];
+
+    int out_count = 0;
+    if (from_node >= 0 && from_node < ctx.n_nodes() && out_count < max_count) {
+        const auto uf = static_cast<std::size_t>(from_node);
+        x[out_count] = ctx.spatial.node_x[uf];
+        y[out_count] = ctx.spatial.node_y[uf];
+        ++out_count;
+    }
+
+    const int interior_count = static_cast<int>(vx.size());
+    const int interior_copy = std::min(max_count - out_count, interior_count);
+    if (interior_copy > 0) {
+        std::copy(vx.begin(), vx.begin() + interior_copy, x + out_count);
+        std::copy(vy.begin(), vy.begin() + interior_copy, y + out_count);
+        out_count += interior_copy;
+    }
+
+    if (to_node >= 0 && to_node < ctx.n_nodes() && out_count < max_count) {
+        const auto ut = static_cast<std::size_t>(to_node);
+        x[out_count] = ctx.spatial.node_x[ut];
+        y[out_count] = ctx.spatial.node_y[ut];
+    }
     return SWMM_OK;
 }
 

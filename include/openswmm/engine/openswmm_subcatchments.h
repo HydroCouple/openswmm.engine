@@ -50,18 +50,21 @@ SWMM_ENGINE_API int swmm_subcatch_index(SWMM_Engine engine, const char* id);
 SWMM_ENGINE_API const char* swmm_subcatch_id(SWMM_Engine engine, int idx);
 
 /* =========================================================================
- * Creation (BUILDING state only)
+ * Creation (BUILDING or OPENED — "editable" states)
  * ========================================================================= */
 
 /**
  * @brief Add a new subcatchment to the model.
  *
- * @details The engine must be in SWMM_STATE_BUILDING. After creation, use
- *          the property setters to configure area, slope, imperviousness, etc.
+ * @details The engine must be in SWMM_STATE_BUILDING or SWMM_STATE_OPENED.
+ *          Returns SWMM_ERR_LIFECYCLE for any other state. After creation,
+ *          use the property setters to configure area, slope, imperviousness,
+ *          etc.
  *
  * @param engine  Engine handle.
  * @param id      Unique null-terminated identifier for the new subcatchment.
- * @returns SWMM_OK on success, or an error code.
+ * @returns SWMM_OK on success, SWMM_ERR_LIFECYCLE if not in an editable
+ *          state, or another error code.
  */
 SWMM_ENGINE_API int swmm_subcatch_add(SWMM_Engine engine, const char* id);
 

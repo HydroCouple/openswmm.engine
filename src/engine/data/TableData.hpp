@@ -39,6 +39,7 @@
 #include <cstdint>
 #include <cassert>
 #include <algorithm>
+#include <cmath>
 
 namespace openswmm {
 
@@ -61,7 +62,8 @@ enum class TableType : int {
     CURVE_PUMP1   = 7,  ///< Pump curve type 1 (ON/OFF depth)
     CURVE_PUMP2   = 8,  ///< Pump curve type 2 (head vs flow)
     CURVE_PUMP3   = 9,  ///< Pump curve type 3 (volume vs time)
-    CURVE_PUMP4   = 10  ///< Pump curve type 4 (depth vs speed)
+    CURVE_PUMP4   = 10, ///< Pump curve type 4 (depth vs speed)
+    CURVE_PUMP5   = 11  ///< Pump curve type 5 (head vs flow, variable speed)
 };
 
 // ============================================================================
@@ -117,6 +119,13 @@ struct TableBlock {
 struct Table {
     std::string         id;      ///< Table identifier (from input file)
     TableType           type;    ///< Table type (TIMESERIES, CURVE_*, etc.)
+
+    /**
+     * @brief Object comment from the INP file (';'-prefixed lines immediately
+     *        above the first row of this table), joined by literal "\\n".
+     *        Empty string means no comment.
+     */
+    std::string         comment;
     std::vector<double> x;       ///< Independent variable (time, depth, etc.)
     std::vector<double> y;       ///< Dependent variable (flow, volume, etc.)
     TableCursor         cursor;  ///< Bidirectional lookup cursor
@@ -214,6 +223,43 @@ inline double table_lookup_cursor(Table& tbl, double x_query) noexcept {
     if (dx <= 0.0) return tbl.y[idx];  // guard against duplicate x values
     const double t = (x_query - tbl.x[idx]) / dx;
     return tbl.y[idx] + t * (tbl.y[idx + 1] - tbl.y[idx]);
+}
+
+/**
+ * @brief Time-series linear interpolation with out-of-range → 0 behaviour.
+ *
+ * @details Matches legacy `table_tseriesLookup(..., extend=FALSE)`:
+ *   - x_query < first x  → return 0  (not yet started)
+ *   - x_query > last  x  → return 0  (series ended, do NOT hold last value)
+ *   - otherwise          → linear interpolation with cursor
+ *
+ * Use this for external-inflow, evaporation, and similar time series where
+ * the inflow should drop to zero once the series is exhausted.
+ *
+ * @param tbl      Table to look up (cursor is modified in-place).
+ * @param x_query  The independent variable value (e.g. simulation date).
+ * @returns        Interpolated y value, or 0 outside the series range.
+ *
+ * @see Legacy: table.c::table_tseriesLookup(tbl, x, extend=FALSE)
+ */
+inline double table_tseries_lookup_cursor(Table& tbl, double x_query) noexcept {
+    const int n = static_cast<int>(tbl.x.size());
+    if (n == 0) return 0.0;
+
+    // Before first entry or after last entry → 0 (series not active)
+    if (x_query <= tbl.x[0]) {
+        tbl.cursor.index     = 0;
+        tbl.cursor.direction = +1;
+        return (x_query < tbl.x[0]) ? 0.0 : tbl.y[0];
+    }
+    if (x_query >= tbl.x[n - 1]) {
+        tbl.cursor.index     = n - 1;
+        tbl.cursor.direction = -1;
+        return (x_query > tbl.x[n - 1]) ? 0.0 : tbl.y[n - 1];
+    }
+
+    // Delegate to cursor-based linear interpolation for the in-range case
+    return table_lookup_cursor(tbl, x_query);
 }
 
 /**
@@ -323,6 +369,257 @@ inline double table_getStorageVolume(Table& tbl, double depth) noexcept {
         }
     }
     return v;
+}
+
+// ============================================================================
+// Inverse volume-to-depth for storage curves
+// ============================================================================
+
+/**
+ * @brief Invert a storage area-vs-depth curve to find depth from volume.
+ *
+ * @details Matches legacy table_getStorageDepth() in table.c.
+ *          Uses the trapezoidal volume formula to bracket the target volume,
+ *          then applies a quadratic formula to solve for depth within that
+ *          interval.
+ *
+ * @param tbl     Table with x = depth, y = surface area.
+ * @param volume  Target volume.
+ * @returns       Depth corresponding to the given volume.
+ */
+inline double table_getStorageDepth(Table& tbl, double volume) noexcept {
+    const int n = static_cast<int>(tbl.x.size());
+    if (n == 0 || volume <= 0.0) return 0.0;
+
+    double x1 = tbl.x[0];
+    double a1 = tbl.y[0];
+    double v_accum = 0.0;
+
+    for (int i = 1; i < n; ++i) {
+        double x2 = tbl.x[i];
+        double a2 = tbl.y[i];
+        double dv = (a1 + a2) / 2.0 * (x2 - x1);
+
+        if (v_accum + dv >= volume) {
+            // Solve the quadratic: target volume falls in this interval.
+            // Area varies linearly: a(d) = a1 + s*(d - x1), s = (a2-a1)/(x2-x1)
+            // Volume:  dv = a1*(d-x1) + s*(d-x1)^2/2
+            // Rearrange to standard form and apply quadratic formula.
+            double dx = x2 - x1;
+            double dv_need = volume - v_accum;
+            if (dx < 1.0e-10) return x1;
+
+            double s = (a2 - a1) / dx;
+            double depth;
+            if (std::fabs(s) < 1.0e-10) {
+                // Rectangular slice: dv = a1 * dd
+                depth = (a1 > 0.0) ? x1 + dv_need / a1 : x1;
+            } else {
+                // Quadratic: s/2 * dd^2 + a1 * dd - dv_need = 0
+                double disc = a1 * a1 + 2.0 * s * dv_need;
+                if (disc < 0.0) disc = 0.0;
+                depth = x1 + (-a1 + std::sqrt(disc)) / s;
+            }
+            return std::min(depth, x2);
+        }
+
+        v_accum += dv;
+        x1 = x2;
+        a1 = a2;
+    }
+
+    // Volume exceeds curve range — extrapolate linearly using last slope
+    if (tbl.x.size() >= 2) {
+        int last = n - 1;
+        double dx = tbl.x[last] - tbl.x[last - 1];
+        double da = tbl.y[last] - tbl.y[last - 1];
+        double s  = (dx > 1.0e-10) ? da / dx : 0.0;
+        double dv_need = volume - v_accum;
+        double a1_ext = tbl.y[last];
+        double depth;
+        if (std::fabs(s) < 1.0e-10) {
+            depth = (a1_ext > 0.0) ? tbl.x[last] + dv_need / a1_ext : tbl.x[last];
+        } else {
+            double disc = a1_ext * a1_ext + 2.0 * s * dv_need;
+            if (disc < 0.0) disc = 0.0;
+            depth = tbl.x[last] + (-a1_ext + std::sqrt(disc)) / s;
+        }
+        return depth;
+    }
+    return tbl.x[n - 1];
+}
+
+// ============================================================================
+// Generic inverse lookup (y → x)
+// ============================================================================
+
+/**
+ * @brief Inverse lookup: given y, find corresponding x by linear interpolation.
+ *
+ * @details Matches legacy table_inverseLookup() in table.c.
+ *          Assumes y is monotonically increasing. Clamped at boundaries.
+ *
+ * @param tbl      Table to search (y must be monotone-increasing).
+ * @param y_query  The dependent variable value to invert.
+ * @returns        Interpolated x value.
+ */
+inline double table_inverseLookup(const Table& tbl, double y_query) noexcept {
+    const int n = static_cast<int>(tbl.x.size());
+    if (n == 0) return 0.0;
+    if (n == 1) return tbl.x[0];
+
+    if (y_query <= tbl.y[0])         return tbl.x[0];
+    if (y_query >= tbl.y[n - 1])     return tbl.x[n - 1];
+
+    for (int i = 1; i < n; ++i) {
+        if (tbl.y[i] >= y_query) {
+            double dy = tbl.y[i] - tbl.y[i - 1];
+            if (dy <= 0.0) return tbl.x[i - 1];
+            double t = (y_query - tbl.y[i - 1]) / dy;
+            return tbl.x[i - 1] + t * (tbl.x[i] - tbl.x[i - 1]);
+        }
+    }
+    return tbl.x[n - 1];
+}
+
+// ============================================================================
+// Extrapolating lookup (extends beyond table bounds)
+// ============================================================================
+
+/**
+ * @brief Linear-interpolating lookup with linear extrapolation outside bounds.
+ *
+ * @details Matches legacy table_lookupEx() in table.c.
+ *          Unlike table_lookup_cursor(), this extends the table using the
+ *          slope of the first (below) or last (above) interval rather than
+ *          clamping.  Used for storage exfiltration bottom-area extrapolation.
+ *
+ * @param tbl      Table to look up (const — no cursor update).
+ * @param x_query  The independent variable value.
+ * @returns        Interpolated or extrapolated y value.
+ */
+inline double table_lookupEx(const Table& tbl, double x_query) noexcept {
+    const int n = static_cast<int>(tbl.x.size());
+    if (n == 0) return 0.0;
+    if (n == 1) return tbl.y[0];
+
+    // Below first entry: extrapolate using first interval slope
+    if (x_query <= tbl.x[0]) {
+        double dx = tbl.x[1] - tbl.x[0];
+        if (dx <= 0.0) return tbl.y[0];
+        double s = (tbl.y[1] - tbl.y[0]) / dx;
+        return tbl.y[0] + s * (x_query - tbl.x[0]);
+    }
+
+    // Above last entry: extrapolate using last interval slope
+    if (x_query >= tbl.x[n - 1]) {
+        double dx = tbl.x[n - 1] - tbl.x[n - 2];
+        if (dx <= 0.0) return tbl.y[n - 1];
+        double s = (tbl.y[n - 1] - tbl.y[n - 2]) / dx;
+        return tbl.y[n - 1] + s * (x_query - tbl.x[n - 1]);
+    }
+
+    // In-range: linear interpolation
+    for (int i = 1; i < n; ++i) {
+        if (tbl.x[i] >= x_query) {
+            double dx = tbl.x[i] - tbl.x[i - 1];
+            if (dx <= 0.0) return tbl.y[i - 1];
+            double t = (x_query - tbl.x[i - 1]) / dx;
+            return tbl.y[i - 1] + t * (tbl.y[i] - tbl.y[i - 1]);
+        }
+    }
+    return tbl.y[n - 1];
+}
+
+// ============================================================================
+// Step-function interval lookup (first entry > x)
+// ============================================================================
+
+/**
+ * @brief Step-function lookup: return y for the first x entry > x_query.
+ *
+ * @details Matches legacy table_intervalLookup() in table.c.
+ *          Used for pattern time series where the value applies until the
+ *          next time point. Returns y[0] if x_query < x[0], y[last] if
+ *          x_query >= x[last].
+ *
+ * @param tbl      Table to look up (const — no cursor update).
+ * @param x_query  The independent variable value.
+ * @returns        y value of the first entry whose x is strictly greater
+ *                 than x_query (step function).
+ */
+inline double table_intervalLookup(const Table& tbl, double x_query) noexcept {
+    const int n = static_cast<int>(tbl.x.size());
+    if (n == 0) return 0.0;
+
+    for (int i = 0; i < n; ++i) {
+        if (tbl.x[i] > x_query) return tbl.y[i];
+    }
+    return tbl.y[n - 1];
+}
+
+// ============================================================================
+// Slope at a point
+// ============================================================================
+
+/**
+ * @brief Compute the slope (dy/dx) at a given x value.
+ *
+ * @details Matches legacy table_getSlope() in table.c.
+ *          Returns the slope of the interval containing x_query.
+ *          Clamped to the nearest interval at boundaries.
+ *
+ * @param tbl      Table to query (const — no cursor update).
+ * @param x_query  The independent variable value.
+ * @returns        dy/dx at x_query.
+ */
+inline double table_getSlope(const Table& tbl, double x_query) noexcept {
+    const int n = static_cast<int>(tbl.x.size());
+    if (n < 2) return 0.0;
+
+    // Use first interval for x below range
+    if (x_query <= tbl.x[0]) {
+        double dx = tbl.x[1] - tbl.x[0];
+        return (dx > 0.0) ? (tbl.y[1] - tbl.y[0]) / dx : 0.0;
+    }
+
+    // Use last interval for x above range
+    if (x_query >= tbl.x[n - 1]) {
+        double dx = tbl.x[n - 1] - tbl.x[n - 2];
+        return (dx > 0.0) ? (tbl.y[n - 1] - tbl.y[n - 2]) / dx : 0.0;
+    }
+
+    for (int i = 1; i < n; ++i) {
+        if (tbl.x[i] >= x_query) {
+            double dx = tbl.x[i] - tbl.x[i - 1];
+            return (dx > 0.0) ? (tbl.y[i] - tbl.y[i - 1]) / dx : 0.0;
+        }
+    }
+    return 0.0;
+}
+
+// ============================================================================
+// Maximum y in non-decreasing portion
+// ============================================================================
+
+/**
+ * @brief Return the maximum y value in the non-decreasing leading portion.
+ *
+ * @details Matches legacy table_getMaxY() in table.c.
+ *          Scans until y starts decreasing and returns the peak.
+ *
+ * @param tbl  Table to query (const).
+ * @returns    Maximum y before the first decreasing step.
+ */
+inline double table_getMaxY(const Table& tbl) noexcept {
+    const int n = static_cast<int>(tbl.x.size());
+    if (n == 0) return 0.0;
+    double ymax = tbl.y[0];
+    for (int i = 1; i < n; ++i) {
+        if (tbl.y[i] < ymax) break;
+        ymax = tbl.y[i];
+    }
+    return ymax;
 }
 
 // ============================================================================

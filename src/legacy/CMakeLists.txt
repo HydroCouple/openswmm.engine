@@ -7,3 +7,4 @@
 add_subdirectory(engine)   # → openswmm_legacy_engine (openswmm.legacy.engine)
 add_subdirectory(output)   # → openswmm_legacy_output (openswmm.legacy.output)
 add_subdirectory(cli)      # → openswmm_legacy (openswmm-legacy executable)
+add_subdirectory(worker)   # → openswmm_legacy_worker (openswmm-legacy-worker executable)

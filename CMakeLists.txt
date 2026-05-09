@@ -42,11 +42,8 @@ else()
     set(OPENSWMM_FULL_VERSION "${PROJECT_VERSION}")
 endif()
 
-# Backwards compatibility aliases for downstream consumers
-set(OPENSWMMCORE_PRERELEASE    "${OPENSWMM_PRERELEASE}")
-set(OPENSWMMCORE_FULL_VERSION  "${OPENSWMM_FULL_VERSION}")
-
 message(STATUS "OpenSWMM Engine version: ${OPENSWMM_FULL_VERSION}")
+
 
 # Modern build type handling
 get_property(isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
@@ -73,7 +70,7 @@ option(OPENSWMM_BUILD_BENCHMARKS  "Build Google Benchmark performance tests" OFF
 option(OPENSWMM_INSTALL           "Install openswmm libraries" ON)
 option(OPENSWMM_BUILD_PYTHON      "Build Python bindings" OFF)
 option(OPENSWMM_WITH_GEOPACKAGE   "Build GeoPackage I/O library (requires sqlite3)" OFF)
-option(OPENSWMM_BUILD_2D          "Build optional 2D surface routing module (requires SUNDIALS)" OFF)
+option(OPENSWMM_BUILD_2D          "Build optional 2D surface routing module (requires SUNDIALS)" ON)
 
 # OPENSWMM_BUILD_TESTS is a convenience flag that enables both unit and regression
 if(OPENSWMM_BUILD_TESTS)
@@ -92,22 +89,21 @@ if(Git_FOUND)
     execute_process(
         COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        OUTPUT_VARIABLE OPENSWMMCORE_GIT_HASH
+        OUTPUT_VARIABLE OPENSWMM_GIT_HASH
         OUTPUT_STRIP_TRAILING_WHITESPACE
         ERROR_QUIET
         RESULT_VARIABLE GIT_RESULT
     )
     if(NOT GIT_RESULT EQUAL 0)
-        set(OPENSWMMCORE_GIT_HASH "unknown")
+        set(OPENSWMM_GIT_HASH "unknown")
     endif()
 else()
-    set(OPENSWMMCORE_GIT_HASH "unknown")
+    set(OPENSWMM_GIT_HASH "unknown")
 endif()
 
-# Create interface library for global headers (backwards compatible alias kept)
-add_library(openswmmcore INTERFACE)
-add_library(OpenSWMMCore::openswmmcore ALIAS openswmmcore)
-add_library(openswmm::common ALIAS openswmmcore)
+# Create interface library for global headers
+add_library(openswmm_common INTERFACE)
+add_library(openswmm::common ALIAS openswmm_common)
 
 # Configure global version header
 configure_file(
@@ -116,7 +112,7 @@ configure_file(
 )
 
 # Set include directories for the common interface
-target_include_directories(openswmmcore
+target_include_directories(openswmm_common
     INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
@@ -154,36 +150,36 @@ endif()
 # Modern package configuration
 if(OPENSWMM_INSTALL OR OPENSWMMCORE_INSTALL)
     configure_package_config_file(
-        cmake/OpenSWMMCoreConfig.cmake.in
-        ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMCoreConfig.cmake
-        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenSWMMCore
+        cmake/OpenSWMMEngineConfig.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMEngineConfig.cmake
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenSWMMEngine
         PATH_VARS CMAKE_INSTALL_INCLUDEDIR CMAKE_INSTALL_LIBDIR
     )
 
     write_basic_package_version_file(
-        ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMCoreConfigVersion.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMEngineConfigVersion.cmake
         VERSION ${PROJECT_VERSION}
         COMPATIBILITY SameMinorVersion  # ✅ More appropriate than AnyNewerVersion
     )
 
     install(
         FILES
-            ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMCoreConfig.cmake
-            ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMCoreConfigVersion.cmake
+            ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMEngineConfig.cmake
+            ${CMAKE_CURRENT_BINARY_DIR}/OpenSWMMEngineConfigVersion.cmake
         DESTINATION
-            ${CMAKE_INSTALL_LIBDIR}/cmake/OpenSWMMCore
+            ${CMAKE_INSTALL_LIBDIR}/cmake/OpenSWMMEngine
     )
 
     install(
-        EXPORT OpenSWMMCoreTargets
-        FILE OpenSWMMCoreTargets.cmake
-        NAMESPACE OpenSWMMCore::
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenSWMMCore
+        EXPORT OpenSWMMEngineTargets
+        FILE OpenSWMMEngineTargets.cmake
+        NAMESPACE OpenSWMMEngine::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenSWMMEngine
     )
 
     install(
-        TARGETS openswmmcore
-        EXPORT OpenSWMMCoreTargets
+        TARGETS openswmm_common
+        EXPORT OpenSWMMEngineTargets
     )
 endif()
 

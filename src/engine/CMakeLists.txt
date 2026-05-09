@@ -31,6 +31,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.cpp
     data/*.cpp
+    edit/*.cpp
     input/*.cpp
     hydrology/*.cpp
     hydraulics/*.cpp
@@ -46,6 +47,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.hpp
     data/*.hpp
+    edit/*.hpp
     input/*.hpp
     hydrology/*.hpp
     hydraulics/*.hpp
@@ -105,7 +107,7 @@ target_include_directories(openswmm_engine
 # ---- Link against common interface ----
 target_link_libraries(openswmm_engine
     PUBLIC
-        openswmmcore
+        openswmm_common
     PRIVATE
         $<$<NOT:$<BOOL:$<CXX_COMPILER_ID:MSVC>>>:m>
 )
@@ -145,13 +147,43 @@ else()
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
             # Enable AVX2 + FMA for SIMD acceleration (x86_64)
             target_compile_options(openswmm_engine PRIVATE -mavx2 -mfma)
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            # ARM64 (Apple Silicon / Graviton / Cortex-A): NEON is always
+            # available, but an explicit CPU target lets the compiler emit
+            # more aggressive auto-vectorised code for the inner hot loops
+            # (XSectBatch, DynamicWave momentum kernels). -mcpu=native when
+            # available, else a safe default baseline.
+            include(CheckCXXCompilerFlag)
+            check_cxx_compiler_flag("-mcpu=native" OPENSWMM_HAVE_MCPU_NATIVE)
+            if(OPENSWMM_HAVE_MCPU_NATIVE)
+                target_compile_options(openswmm_engine PRIVATE -mcpu=native)
+                message(STATUS "OpenSWMM Engine: -mcpu=native enabled for arm64")
+            endif()
         endif()
-        # ARM64: NEON always available, no flag needed
     elseif(MSVC)
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|x86")
             target_compile_options(openswmm_engine PRIVATE /arch:AVX2)
         endif()
         # MSVC ARM64: NEON always available, no flag needed
+    endif()
+endif()
+
+# ---- Link-time optimization (IPO/LTO) ----
+# Enables cross-translation-unit inlining and dead-code elimination. Critical
+# for performance when hot-path functions (fastmath::pow4_3, SIMD helpers,
+# per-conduit dispatch) cross TU boundaries. Guarded by compiler support check
+# to avoid failures on toolchains that lack bitcode linkers.
+if(NOT DEFINED OPENSWMM_ENABLE_LTO)
+    set(OPENSWMM_ENABLE_LTO ON CACHE BOOL "Enable interprocedural / link-time optimization for Release builds")
+endif()
+if(OPENSWMM_ENABLE_LTO AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT OPENSWMM_IPO_SUPPORTED OUTPUT OPENSWMM_IPO_ERROR)
+    if(OPENSWMM_IPO_SUPPORTED)
+        set_property(TARGET openswmm_engine PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        message(STATUS "OpenSWMM Engine: IPO/LTO enabled")
+    else()
+        message(STATUS "OpenSWMM Engine: IPO/LTO not supported by toolchain (${OPENSWMM_IPO_ERROR}); skipping")
     endif()
 endif()
 
@@ -178,13 +210,21 @@ elseif(UNIX)
 endif()
 
 # ---- RPATH ----
+# The engine dylib is installed to openswmm/engine/ in the wheel.
+# External bundled deps (e.g. libomp, placed by delocate/auditwheel) go into
+# openswmm/.dylibs/ — one level above the engine directory.
+# @loader_path/../.dylibs  ==  openswmm/engine/../.dylibs  ==  openswmm/.dylibs/
 if(APPLE)
-    set(LIB_ROOT "@loader_path/../lib;@rpath")
+    set(LIB_ROOT "@loader_path/../.dylibs")
+elseif(UNIX)
+    set(LIB_ROOT "$ORIGIN/../.dylibs")
 else()
-    set(LIB_ROOT "$ORIGIN/../lib;$ORIGIN")
+    # Windows: DLL loading uses PATH / LoadLibraryEx; no RPATH concept.
+    set(LIB_ROOT "")
 endif()
 
 set_target_properties(openswmm_engine PROPERTIES
+    MACOSX_RPATH         TRUE
     INSTALL_RPATH        "${LIB_ROOT}"
     BUILD_RPATH          "${LIB_ROOT}"
     BUILD_WITH_INSTALL_RPATH TRUE
@@ -193,7 +233,7 @@ set_target_properties(openswmm_engine PROPERTIES
 # ---- Install ----
 install(
     TARGETS openswmm_engine
-    EXPORT  OpenSWMMCoreTargets
+    EXPORT  OpenSWMMEngineTargets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -239,7 +279,7 @@ if(MSVC AND OPENSWMM_BUILD_UNIT_TESTS)
     )
 
     target_link_libraries(openswmm_engine_internal
-        PUBLIC  openswmmcore
+        PUBLIC  openswmm_common
         PRIVATE Threads::Threads
     )
 

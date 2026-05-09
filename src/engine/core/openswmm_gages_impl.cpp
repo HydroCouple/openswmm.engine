@@ -37,7 +37,7 @@ SWMM_ENGINE_API const char* swmm_gage_id(SWMM_Engine engine, int idx) {
 }
 
 // ============================================================================
-// Creation (BUILDING state only)
+// Creation (BUILDING or OPENED — "editable" states)
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_gage_add(SWMM_Engine engine, const char* id) {
@@ -45,8 +45,7 @@ SWMM_ENGINE_API int swmm_gage_add(SWMM_Engine engine, const char* id) {
     if (!id) return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING)
-        return SWMM_ERR_LIFECYCLE;
+    CHECK_EDITABLE(ctx);
 
     if (ctx.gage_names.find(id) >= 0)
         return SWMM_ERR_BADPARAM;

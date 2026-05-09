@@ -33,7 +33,7 @@
  *  WET_STEP             → options.wet_step
  *  DRY_STEP             → options.dry_step
  *  ROUTING_STEP         → options.routing_step
- *  RULE_STEP            → options.dt_controls_remaining (set to first rule step)
+ *  RULE_STEP            → options.rule_step (seconds; 0 = use routing step)
  *  MAX_TRIALS           → options.max_trials
  *  HEAD_TOLERANCE       → options.head_tol
  *  SYS_FLOW_TOL         → options.sys_flow_tol
@@ -202,6 +202,9 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
 
         } else if (key == "VARIABLE_STEP") {
             openswmm::from_chars_double(val.data(), val.data() + val.size(), opt.variable_step);
+
+        } else if (key == "RULE_STEP") {
+            opt.rule_step = parse_time_seconds(val);
 
         } else if (key == "THREADS") {
             double d = 0.0;

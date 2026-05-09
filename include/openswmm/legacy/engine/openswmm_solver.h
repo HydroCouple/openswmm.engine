@@ -11,10 +11,10 @@
  *      - Added new functions to support saving hotstart files at specific times.
  *      - Expansions to the SWMM API to include attributes of more objects and water quality.
  */
-#ifndef OPENSWMMCORE_SOLVER_H_
-#define OPENSWMMCORE_SOLVER_H_
+#ifndef OPENSWMM_LEGACY_SOLVER_H_
+#define OPENSWMM_LEGACY_SOLVER_H_
 
-#include "openswmmcore_solver_export.h"
+#include "openswmm_legacy_solver_export.h"
 
 // --- use "C" linkage for C++ programs
 #ifdef __cplusplus
@@ -935,4 +935,4 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getSystemRunoffTotals(swmm_RunoffTotals 
 } // matches the linkage specification from above */
 #endif
 
-#endif // OPENSWMMCORE_SOLVER_H_
+#endif // OPENSWMM_LEGACY_SOLVER_H_

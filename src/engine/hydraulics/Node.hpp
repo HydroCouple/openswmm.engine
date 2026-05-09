@@ -42,7 +42,7 @@ namespace node {
  * @returns Volume (ft3).
  */
 double getVolume(const NodeData& nodes, int idx, double depth,
-                 TableData* tables = nullptr);
+                 TableData* tables = nullptr, int unit_sys = 0);
 
 /**
  * @brief Compute surface area at a given depth for a single node.
@@ -56,7 +56,7 @@ double getVolume(const NodeData& nodes, int idx, double depth,
  * @returns Surface area (ft2).
  */
 double getSurfArea(const NodeData& nodes, int idx, double depth,
-                   TableData* tables = nullptr);
+                   TableData* tables = nullptr, int unit_sys = 0);
 
 /**
  * @brief Get the ponded area (for overflow above rim).
@@ -103,11 +103,11 @@ double getOverflow(double new_volume, double full_volume, double dt);
  *
  * @details For JUNCTION: d = V / MIN_SURFAREA.
  *          For STORAGE functional: Newton iteration or direct inversion.
- *          For STORAGE tabular: inverse table lookup.
+ *          For STORAGE tabular: quadratic solve per interval (Gap #12).
  *  @see Legacy: node_getDepth() in node.c
  */
 double getDepth(const NodeData& nodes, int idx, double volume,
-                TableData* tables = nullptr);
+                TableData* tables = nullptr, int unit_sys = 0);
 
 /**
  * @brief Compute head from depth: head = invert + depth.

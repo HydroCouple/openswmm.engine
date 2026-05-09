@@ -72,6 +72,19 @@ class Gages:
         """
         ...
 
+    def add(self, gage_id: str) -> int:
+        """Add a rain gage to the model (OPENED-state editing).
+
+        Wraps ``swmm_gage_add``. Valid in ``BUILDING`` or ``OPENED`` state.
+
+        Args:
+            gage_id: Unique gage identifier.
+
+        Returns:
+            Error code (0 on success).
+        """
+        ...
+
     def get_rainfall(self, idx: Union[int, str]) -> float:
         """Return the current rainfall rate at a gage.
 

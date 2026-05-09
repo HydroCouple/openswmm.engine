@@ -29,7 +29,8 @@
 #ifdef OPENSWMM_HAS_2D
 
 // Forward declarations for SUNDIALS types (avoid pulling in full headers)
-typedef void* SUNContext;
+struct SUNContext_;
+typedef struct SUNContext_* SUNContext;
 typedef struct _generic_N_Vector* N_Vector;
 typedef struct _generic_SUNLinearSolver* SUNLinearSolver;
 

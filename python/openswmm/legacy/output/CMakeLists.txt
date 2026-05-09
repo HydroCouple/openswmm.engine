@@ -31,15 +31,16 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_link_options(_output PRIVATE -fno-lto)
 endif()
 
+# libopenswmm.legacy.output.6.dylib is installed alongside this extension
+# in openswmm/legacy/output/ so @loader_path / $ORIGIN is sufficient.
 if(APPLE)
-    set(INSTALL_LIB_ROOT "@loader_path;@rpath;@loader_path/../../../../..")
-    set(BUILD_LIB_ROOT "@loader_path;@rpath")
+    set(INSTALL_LIB_ROOT "@loader_path")
+    set(BUILD_LIB_ROOT "@loader_path")
 elseif(UNIX)
-    set(INSTALL_LIB_ROOT "$ORIGIN;$ORIGIN/../../../../..")
+    set(INSTALL_LIB_ROOT "$ORIGIN")
     set(BUILD_LIB_ROOT "$ORIGIN")
 endif()
 
-# Set up rpath
 set_target_properties(_output
     PROPERTIES
         BUILD_RPATH "${BUILD_LIB_ROOT}"

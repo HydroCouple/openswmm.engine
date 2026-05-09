@@ -198,6 +198,18 @@ public:
     SimulationContext&       context()       noexcept { return ctx_; }
     const SimulationContext& context() const noexcept { return ctx_; }
 
+    /** @brief Access the runoff solver (for hot start infil state save/restore). */
+    runoff::RunoffSolver&       runoff_solver()       noexcept { return runoff_; }
+    const runoff::RunoffSolver& runoff_solver() const noexcept { return runoff_; }
+
+    /** @brief Access the GW solver (for hot start GW state save/restore). */
+    groundwater::GWSolver&       gw_solver()       noexcept { return groundwater_; }
+    const groundwater::GWSolver& gw_solver() const noexcept { return groundwater_; }
+
+    /** @brief Access the plugin factory (for C-API dispatch through plugins). */
+    PluginFactory&       plugin_factory()       noexcept { return plugins_; }
+    const PluginFactory& plugin_factory() const noexcept { return plugins_; }
+
     /** @brief Last error code (0 = no error). */
     int last_error() const noexcept { return ctx_.error_code; }
 
@@ -411,8 +423,9 @@ private:
      *
      * @param dt_routing  Routing timestep (seconds).
      */
-    /** @brief Assemble subcatch-to-subcatch runon into subcatches.runon_inflow[]. */
-    void assembleRunon() noexcept;
+    /** @brief Assemble subcatch-to-subcatch and outfall runon into subcatches.runon_inflow[].
+     *  @param dt_runoff  Runoff timestep (sec) — used to convert outfall_runon_vol to CFS. */
+    void assembleRunon(double dt_runoff) noexcept;
 
     /** @brief Pre-compute GW surface water head and available node flow from routing state. */
     void assembleGWCoupling(double dt_runoff) noexcept;

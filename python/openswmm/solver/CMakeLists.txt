@@ -1,4 +1,4 @@
-# CMake configuration for openswmmcore library
+# CMake configuration for openswmm.engine python solver library
 #
 # Created by: Caleb Buahin (EPA/ORD/CESER/WID)
 # Created on: 2024-11-19
@@ -13,8 +13,8 @@ add_library(_solver MODULE ${_solver})
 # Link to SWMM and Python libraries
 target_link_libraries(
     _solver
-    OpenSWMMCore::openswmmcore
-    OpenSWMMCore::openswmmcore_solver
+    openswmm::common
+    openswmm::legacy::engine
 )
 
 # Specify that this is a Python extension module

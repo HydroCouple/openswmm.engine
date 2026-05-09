@@ -71,28 +71,50 @@ struct DPSConfig {
     double c_pT_sq = 625.0;  ///< c_pT^2 (pre-computed)
 };
 
-/// Per-conduit DPS state (persistent across timesteps).
-struct DPSLinkState {
-    double As       = 0.0;    ///< Accumulated slot area (ft²)
-    double hs       = 0.0;    ///< Current surcharge head (ft)
-    double P        = 1.0;    ///< Current Preissmann Number (smoothed)
-    double P_hat    = 1.0;    ///< Provisional Preissmann Number (before smoothing)
-    double P_hat_0  = 1.0;    ///< Initial P for unpressurized conduit
-    double t_s      = 0.0;    ///< Time when element last became surcharged (sec)
-    bool   surcharged = false; ///< Currently surcharged flag
+/// Per-conduit DPS state — Structure of Arrays (persistent across timesteps).
+/// Each vector is indexed by conduit index [0..n_conduits_).
+struct DPSLinkArrays {
+    std::vector<double>  As;          ///< Accumulated slot area (ft²)
+    std::vector<double>  hs;          ///< Current surcharge head (ft)
+    std::vector<double>  P;           ///< Current Preissmann Number (smoothed)
+    std::vector<double>  P_hat;       ///< Provisional Preissmann Number (before smoothing)
+    std::vector<double>  P_hat_0;     ///< Initial P for unpressurized conduit
+    std::vector<double>  t_s;         ///< Time when element last became surcharged (sec)
+    std::vector<uint8_t> surcharged;  ///< Currently surcharged flag
+
+    void resize(std::size_t n) {
+        As.assign(n, 0.0);
+        hs.assign(n, 0.0);
+        P.assign(n, 1.0);
+        P_hat.assign(n, 1.0);
+        P_hat_0.assign(n, 1.0);
+        t_s.assign(n, 0.0);
+        surcharged.assign(n, 0);
+    }
 };
 
 // ============================================================================
 // Per-node extended state for DW iterations
 // ============================================================================
 
-struct DWNodeState {
-    double new_surf_area = 0.0;
-    double old_surf_area = 0.0;   ///< Surface area from last non-surcharged state
-    double sumdqdh       = 0.0;
-    double dYdT          = 0.0;
-    bool   converged     = false;
-    bool   is_surcharged = false;  ///< TRUE when node depth > crown elevation
+/// Per-node extended state for DW iterations — Structure of Arrays.
+/// Each vector is indexed by node index [0..n_nodes_).
+struct DWNodeArrays {
+    std::vector<double>  new_surf_area;
+    std::vector<double>  old_surf_area;   ///< Surface area from last non-surcharged state
+    std::vector<double>  sumdqdh;
+    std::vector<double>  dYdT;
+    std::vector<uint8_t> converged;
+    std::vector<uint8_t> is_surcharged;   ///< TRUE when node depth > crown elevation
+
+    void resize(std::size_t n) {
+        new_surf_area.assign(n, 0.0);
+        old_surf_area.assign(n, 0.0);
+        sumdqdh.assign(n, 0.0);
+        dYdT.assign(n, 0.0);
+        converged.assign(n, 0);
+        is_surcharged.assign(n, 0);
+    }
 };
 
 // ============================================================================
@@ -181,6 +203,10 @@ public:
     NodeContinuity  node_continuity  = NodeContinuity::EXPLICIT;
     bool   anderson_accel = false;       ///< Enable Anderson acceleration
 
+    /// Evaporation rate (ft/s) — set by Router::step() each timestep so that
+    /// solveMomentumBatch can recompute dq6 per Picard iteration (Gap #14).
+    double evap_rate  = 0.0;
+
 private:
     int n_nodes_ = 0;
     int n_links_ = 0;
@@ -200,8 +226,85 @@ private:
     std::vector<double> cached_length_;   ///< max(mod_length, length)
     std::vector<double> inv_length_;      ///< 1.0 / cached_length_
 
-    // Per-timestep constant
+    // ------------------------------------------------------------------------
+    // Phase A — Conduit-dense "hot tile" of timestep-invariant data.
+    //
+    // Sized n_conduits_, accessed by ci (0..n_conduits_-1) for dense linear
+    // memory access pattern. This replaces sparse `links.X[uj]` /
+    // `nodes.X[un]` reads inside the Picard inner loops, where uj/un are
+    // sparse-indexed via conduit_idx_ + links.node1/node2.  Each ci-indexed
+    // read maps to one contiguous cache line that holds 8+ conduits' data,
+    // versus the sparse pattern where each uj read can miss into a new line.
+    //
+    // All fields below are populated once in init() (or refreshConduitTile
+    // when a hot-start changes invariants) and remain constant for the rest
+    // of the simulation.  None of these change per Picard iter, per
+    // timestep, or per outfall update.
+    // ------------------------------------------------------------------------
+    std::vector<int>    tile_uj_;            ///< == conduit_idx_, co-located with rest
+    std::vector<int>    tile_n1_;            ///< links.node1[uj] for ci
+    std::vector<int>    tile_n2_;            ///< links.node2[uj]
+    std::vector<double> tile_inv1_elev_;     ///< nodes.invert_elev[node1]
+    std::vector<double> tile_inv2_elev_;     ///< nodes.invert_elev[node2]
+    std::vector<double> tile_z1_off_;        ///< links.offset1
+    std::vector<double> tile_z2_off_;        ///< links.offset2
+    std::vector<double> tile_y_full_;        ///< links.xsect_y_full
+    std::vector<double> tile_a_full_;        ///< links.xsect_a_full
+    std::vector<double> tile_r_full_;        ///< links.xsect_r_full
+    std::vector<double> tile_w_max_;         ///< links.xsect_w_max
+    std::vector<double> tile_length_;        ///< cached_length_ = max(mod_length, length); used for arithmetic stability
+    std::vector<double> tile_inv_length_;    ///< inv_length_
+    std::vector<double> tile_links_length_;  ///< raw links.length[uj] — used for volume calculations only
+    std::vector<double> tile_beta_;          ///< links.beta
+    std::vector<double> tile_q_max_;         ///< links.q_max
+    std::vector<double> tile_rough_factor_;  ///< links.rough_factor
+    std::vector<double> tile_barrels_d_;     ///< barrels_d_
+    std::vector<uint8_t> tile_is_open_;      ///< is_open_
+    std::vector<uint8_t> tile_is_force_main_;///< is_force_main_
+    std::vector<uint8_t> tile_is_closed_;    ///< links.is_closed
+    std::vector<uint8_t> tile_has_losses_;   ///< has_losses_
+    std::vector<int>     tile_xsect_batch_shape_; ///< links.xsect_batch_shape
+    std::vector<XsectShape> tile_shape_;     ///< links.xsect_shape
+    /// Phase C: pre-flag conduits that can possibly enter the Newton path
+    /// in STEP C. True iff (offset1 > 0 || offset2 > 0). When false the
+    /// flow-classification cascade reduces to two branchless comparisons
+    /// (both_full ? SUBCRITICAL : (both_dry ? DRY : SUBCRITICAL/UP_DRY/DN_DRY)),
+    /// no Newton solver call. Roughly 80–90 % of conduits in typical CSO
+    /// networks have zero offsets and take this fast path.
+    std::vector<uint8_t> tile_has_offset_;   ///< (z1_off > 0 || z2_off > 0)
+    /// Reverse map uj → ci. Sized n_links_, -1 for non-conduits. Lets the
+    /// momentum-kernel functions (processManningLink, processForceMainLink,
+    /// applyFlowLimits) read tile_X[ci] directly without changing their
+    /// uj-based signatures.
+    std::vector<int>     tile_uj_to_ci_;
+    /// Per-conduit timestep-invariants used by processManningLink /
+    /// processForceMainLink / applyFlowLimits (added in Phase A extension).
+    std::vector<int>     tile_culvert_code_;
+    std::vector<double>  tile_slope_;
+    std::vector<double>  tile_q_limit_;
+    std::vector<double>  tile_loss_inlet_;
+    std::vector<double>  tile_loss_outlet_;
+    std::vector<uint8_t> tile_has_flap_gate_;
+    std::vector<int8_t>  tile_direction_;
+
+    /// Populate the tile arrays from links/nodes SoA. Called once after
+    /// conduit_idx_ is built in init(), and exposed publicly for hotstart
+    /// refresh (currently unused but cheap to call again).
+    void refreshConduitTile(const SimulationContext& ctx);
+
+    // Per-timestep constants
     double dt_gravity_ = 0.0;            ///< dt * GRAVITY (set once per timestep)
+
+    /// Effective minimum nodal surface area (ft²) used as a floor for the
+    /// dy = dV/surf_area Picard update.  Legacy `MinSurfArea` is the user
+    /// override from the INP `[OPTIONS]` `MIN_SURFAREA` line, falling back
+    /// to `DEFAULT_SURFAREA = 12.566 ft²` (4·π) only when the user did not
+    /// set it.  The new engine had been hard-coding `constants::MIN_SURFAREA`
+    /// regardless — under-counting the floor by up to 4× on models that
+    /// override it (Rich_BC_CSO sets it to 50 ft²), causing aggressive
+    /// dy oscillation and the 99.74 % vs 73.27 % non-convergence gap.
+    /// Set in `init()` from `ctx.options.min_surf_area`.
+    double min_surf_area_ = constants::MIN_SURFAREA;
 
     // Pre-allocated width-capping buffers (avoids thread_local per-call allocation)
     std::vector<double> wcap_d1_, wcap_d2_, wcap_dm_;
@@ -209,8 +312,8 @@ private:
     // Variable timestep state (matching legacy VariableStep in dynwave.c)
     mutable double variable_step_ = 0.0;
 
-    // Per-node working state
-    std::vector<DWNodeState> xnode_;
+    // Per-node working state (SoA)
+    DWNodeArrays xnode_;
 
     // Per-link pre-computed geometry (batch-filled by XSectGroups each iteration)
     std::vector<double> area1_;      ///< Area at upstream depth
@@ -233,7 +336,8 @@ private:
     std::vector<double> area_old_;
 
     // Per-link bypass flag (true when both end nodes converged; skip momentum solve)
-    std::vector<bool> bypassed_;
+    // uint8_t instead of bool: avoids std::vector<bool> bit-packing overhead
+    std::vector<uint8_t> bypassed_;
 
     // Per-link surface area contributions to upstream/downstream nodes
     // (matching legacy Link[].surfArea1/surfArea2 from dwflow.c findSurfArea)
@@ -255,11 +359,12 @@ private:
     std::vector<double> aa_y_prev_;     ///< Node depths at iteration k-1
     std::vector<double> aa_g_prev_;     ///< G(y_{k-1}) — computed depths at k-1
     std::vector<double> aa_r_prev_;     ///< Residual r_{k-1} = G(y_{k-1}) - y_{k-1}
+    std::vector<uint8_t> aa_skip_;      ///< Per-node flag: skip AA this iteration
 
-    // Per-conduit momentum category (rebuilt each Picard iteration)
+    // Per-conduit momentum category (rebuilt each Picard iteration).
+    // solveMomentumBatch dispatches on category_[uj] inline — no auxiliary
+    // per-category index list is needed.
     std::vector<MomentumCategory> category_;
-    // Per-category conduit index lists (rebuilt each iteration)
-    std::vector<int> cat_indices_[static_cast<int>(MomentumCategory::N_CATEGORIES)];
 
     // Internal methods
     void initNodeStates(SimulationContext& ctx);
@@ -267,22 +372,37 @@ private:
     void computeLinkGeometry(SimulationContext& ctx);
     void solveMomentumBatch(SimulationContext& ctx, double dt, int step);
     void classifyMomentumCategories(SimulationContext& ctx);
-    void processDryLinks(SimulationContext& ctx, double dt);
-    void processManningLinks(SimulationContext& ctx, double dt, int step,
-                             MomentumCategory cat);
-    void processForceMainLinks(SimulationContext& ctx, double dt, int step,
-                               MomentumCategory cat);
+
+    /// Per-element momentum kernels. Called inside the single OpenMP
+    /// parallel-for over all conduits in solveMomentumBatch, matching
+    /// legacy dynwave.c::findLinkFlows (one fork per Picard iteration,
+    /// per-element category dispatch inside).
+    void processDryLink(SimulationContext& ctx, double dt, std::size_t uj);
+    void processManningLink(SimulationContext& ctx, double dt, int step,
+                            std::size_t uj, MomentumCategory cat);
+    void processForceMainLink(SimulationContext& ctx, double dt, int step,
+                              std::size_t uj, MomentumCategory cat);
     void applyFlowLimits(SimulationContext& ctx, double dt, int step,
                          std::size_t uj, double& q, double qLast,
                          double barrels_d, bool isFull);
     void updateNodeFlows(SimulationContext& ctx, bool conduits_only = false);
+    void computeAASkipFlags(const SimulationContext& ctx);
     bool updateNodeDepths(SimulationContext& ctx, double dt, int step);
     void setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int step);
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;
 
 public:
-    /// Access per-node working state (for non-conduit surfarea/dqdh scatter).
-    DWNodeState& nodeState(int idx) { return xnode_[static_cast<std::size_t>(idx)]; }
+    /// Direct write access to the per-node is_surcharged flag (for tests/non-conduit scatter).
+    uint8_t& nodeSurchargedFlag(int idx) { return xnode_.is_surcharged[static_cast<std::size_t>(idx)]; }
+
+    /// Mutable pointer to the per-node new_surf_area array (for HydStructures scatter).
+    double* nodeNewSurfAreaDataMut() { return xnode_.new_surf_area.data(); }
+
+    /// Mutable reference to the per-node sumdqdh accumulator at index n.
+    double& nodeSumDqdh(int n) { return xnode_.sumdqdh[static_cast<std::size_t>(n)]; }
+
+    /// Access per-node AA skip flags (read-only, for testing/diagnostics).
+    const std::vector<uint8_t>& aaSkipFlags() const { return aa_skip_; }
 private:
 
     // Preissmann slot helpers (matching legacy dwflow.c)
@@ -293,7 +413,7 @@ private:
 
     // Dynamic Preissmann Slot (DPS) state and methods
     DPSConfig dps_config_;
-    std::vector<DPSLinkState> dps_state_;  ///< Per-conduit DPS state [n_conduits_]
+    DPSLinkArrays dps_;  ///< Per-conduit DPS state (SoA) [n_conduits_]
     double sim_time_ = 0.0;               ///< Accumulated simulation time (seconds)
 
     /// Apply DPS geometry overrides for surcharged conduits (replaces static slot in STEP E).

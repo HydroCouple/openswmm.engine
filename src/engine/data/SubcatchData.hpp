@@ -22,6 +22,7 @@
 #include <string>
 #include <cstdint>
 #include <algorithm>
+#include <limits>
 
 namespace openswmm {
 
@@ -230,6 +231,11 @@ struct SubcatchData {
     /** @brief Previous-step runon inflow (for interpolation). */
     std::vector<double> old_runon_inflow;
 
+    /** @brief Gap #28: accumulated outfall-routed volume (ft³) between runoff steps.
+     *  @details Matches legacy Outfall[i].vRouted. Drained to runon_inflow at
+     *           each assembleRunon() call, then reset to 0. */
+    std::vector<double> outfall_runon_vol;
+
     // -----------------------------------------------------------------------
     // Groundwater surface water head coupling
     // -----------------------------------------------------------------------
@@ -240,6 +246,14 @@ struct SubcatchData {
 
     /** @brief Available node flow for GW negative flow limit (cfs/ft2). */
     std::vector<double> gw_node_avail_flow;
+
+    /**
+     * @brief Gap #40: max infiltration volume (ft) upper GW zone can accept next step.
+     * @details = (total_depth - lower_depth) * (porosity - theta) / frac_perv.
+     *          Updated after each GW step; used by Runoff to cap infil rate (vol/dt).
+     *          DBL_MAX (no constraint) when no GW is active.
+     */
+    std::vector<double> gw_max_infil_vol;
 
     // -----------------------------------------------------------------------
     // Quality washoff output
@@ -275,6 +289,17 @@ struct SubcatchData {
     int                 conc_n_pollutants = 0;
 
     // -----------------------------------------------------------------------
+    // Per-object INP comment
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Object comment from the INP file (';'-prefixed lines immediately
+     *        above this subcatchment's data row), joined by literal "\\n".
+     *        Empty string means no comment.
+     */
+    std::vector<std::string> comments;
+
+    // -----------------------------------------------------------------------
     // Report flag — per-object output filter
     // -----------------------------------------------------------------------
 
@@ -307,6 +332,19 @@ struct SubcatchData {
      * @see Legacy: SubcatchStats[i].maxFlow
      */
     std::vector<double> stat_max_runoff;
+
+    // Gap #63: Per-subcatch groundwater statistics (accumulated each GW step)
+    std::vector<double> stat_gw_infil_vol;      ///< Cumulative infiltration to GW (ft³)
+    std::vector<double> stat_gw_upper_evap_vol; ///< Cumulative upper zone evap (ft³)
+    std::vector<double> stat_gw_lower_evap_vol; ///< Cumulative lower zone evap (ft³)
+    std::vector<double> stat_gw_deep_perc_vol;  ///< Cumulative deep percolation (ft³)
+    std::vector<double> stat_gw_flow_vol;       ///< Cumulative lateral GW outflow (ft³)
+    std::vector<double> stat_gw_max_flow;       ///< Peak lateral GW outflow (CFS)
+    std::vector<double> stat_gw_sum_theta;      ///< Sum of upper-zone theta (for time-avg)
+    std::vector<double> stat_gw_sum_depth;      ///< Sum of water table height (ft, for time-avg)
+    std::vector<double> stat_gw_final_theta;    ///< Upper-zone theta at last GW step
+    std::vector<double> stat_gw_final_depth;    ///< Water table height at last GW step (ft)
+    std::vector<long>   stat_gw_steps;          ///< Step count for GW averages
 
     // -----------------------------------------------------------------------
     // Groundwater parameters (from [GROUNDWATER] section)
@@ -349,6 +387,52 @@ struct SubcatchData {
     /** @brief Snowpack index for this subcatchment (-1 = none). */
     std::vector<int>    snowpack;
 
+    /**
+     * @brief Snow-modified net precipitation for impervious subareas (ft/sec).
+     * @details Set by SWMMEngine after each snow execute step.
+     *          Combines plowable + non-plowable imperv: imelt + rainfall*(1-asc).
+     *          -1.0 means no snowpack active (use raw rainfall instead).
+     * @see Legacy: netPrecip[SNOW_PLOWABLE/SNOW_IMPERV] in snow.c
+     */
+    std::vector<double> snow_net_imperv;
+
+    /**
+     * @brief Snow-modified net precipitation for pervious subarea (ft/sec).
+     * @details Set by SWMMEngine after each snow execute step.
+     *          = imelt_perv + rainfall*(1-asc_perv).
+     *          -1.0 means no snowpack active (use raw rainfall instead).
+     * @see Legacy: netPrecip[SNOW_PERV] in snow.c
+     */
+    std::vector<double> snow_net_perv;
+
+    /**
+     * @brief Total LID area for this subcatchment (ft²).
+     * @details Sum of all LID unit areas (ft²) that belong to this subcatchment.
+     *          Set by LIDSolver::init(). Used by snow plowing and snow cover
+     *          calculations to exclude LID area (matching legacy Build 5.2.0).
+     * @see Legacy: Subcatch[i].lidArea (snow.c Build 5.2.0 note)
+     */
+    std::vector<double> total_lid_area_ft2;
+
+    /**
+     * @brief LID surface return flow to pervious area (CFS).
+     * @details Set by LIDSolver output routing when to_perv==1. Consumed by
+     *          RunoffSolver as additional pervious-subarea inflow next step.
+     *          Matches legacy lid_getFlowToPerv() called in subcatch_getRunon().
+     * @see Legacy: lidUnit->surfaceOutflow (lid.c), lid_getFlowToPerv()
+     */
+    std::vector<double> lid_return_to_perv_cfs;
+
+    /**
+     * @brief LID drain flow routed to a target subcatchment (CFS).
+     * @details Accumulated each runoff step when drain_subcatch >= 0.
+     *          Drained into runon_inflow[] by assembleRunon() (after the clear),
+     *          then reset, so the drain reaches the target as runon next step.
+     *          Matches legacy lid_addDrainRunon() in lid.c.
+     * @see Legacy: lid.c lid_addDrainRunon()
+     */
+    std::vector<double> lid_drain_runon_cfs;
+
     // -----------------------------------------------------------------------
     // Cumulative pollutant washoff loads — flat 2D: [subcatch * n_pollutants + pollutant]
     // -----------------------------------------------------------------------
@@ -378,19 +462,26 @@ struct SubcatchData {
      */
     std::vector<double> coverage;
 
-    /** @brief Number of landuses stored in the coverage matrix. */
+    /** @brief Number of landuses stored in the coverage and sweep matrices. */
     int coverage_n_landuses = 0;
 
+    /** @brief Gap #34: days since last swept per (subcatch x landuse).
+     *  @details Flat 2D: [sc_idx * n_landuses + lu_idx].
+     *           Matches legacy Subcatch[i].landFactor[j].lastSwept.
+     *           Per-(subcatch,landuse) tracking so each subcatchment sweeps
+     *           independently on its own schedule. */
+    std::vector<double> sweep_last_swept;
+
     /**
-     * @brief Resize the coverage matrix.
+     * @brief Resize the coverage and sweep matrices.
      * @param n_sc      Number of subcatchments.
      * @param n_lu      Number of landuses.
      */
     void resize_coverage(int n_sc, int n_lu) {
         coverage_n_landuses = n_lu;
-        coverage.assign(
-            static_cast<std::size_t>(n_sc) * static_cast<std::size_t>(n_lu),
-            0.0);
+        auto sz = static_cast<std::size_t>(n_sc) * static_cast<std::size_t>(n_lu);
+        coverage.assign(sz, 0.0);
+        sweep_last_swept.assign(sz, 0.0);
     }
 
     // -----------------------------------------------------------------------
@@ -436,8 +527,12 @@ struct SubcatchData {
         old_gw_flow.assign(un, 0.0);
         runon_inflow.assign(un, 0.0);
         old_runon_inflow.assign(un, 0.0);
+        outfall_runon_vol.assign(un, 0.0);
         gw_sw_head.assign(un, 0.0);
         gw_node_avail_flow.assign(un, 0.0);
+        gw_max_infil_vol.assign(un, std::numeric_limits<double>::max());
+
+        comments.assign(un, std::string{});
 
         rpt_flag.assign(un, 0);
 
@@ -448,6 +543,17 @@ struct SubcatchData {
         stat_perv_vol.assign(un, 0.0);
         stat_runoff_vol.assign(un, 0.0);
         stat_max_runoff.assign(un, 0.0);
+        stat_gw_infil_vol.assign(un, 0.0);
+        stat_gw_upper_evap_vol.assign(un, 0.0);
+        stat_gw_lower_evap_vol.assign(un, 0.0);
+        stat_gw_deep_perc_vol.assign(un, 0.0);
+        stat_gw_flow_vol.assign(un, 0.0);
+        stat_gw_max_flow.assign(un, 0.0);
+        stat_gw_sum_theta.assign(un, 0.0);
+        stat_gw_sum_depth.assign(un, 0.0);
+        stat_gw_final_theta.assign(un, 0.0);
+        stat_gw_final_depth.assign(un, 0.0);
+        stat_gw_steps.assign(un, 0L);
 
         gw_aquifer.assign(un, -1);
         gw_node.assign(un, -1);
@@ -460,6 +566,11 @@ struct SubcatchData {
         gw_tw.assign(un, 0.0);
         gw_hstar.assign(un, 0.0);
         snowpack.assign(un, -1);
+        snow_net_imperv.assign(un, -1.0);
+        snow_net_perv.assign(un, -1.0);
+        total_lid_area_ft2.assign(un, 0.0);
+        lid_return_to_perv_cfs.assign(un, 0.0);
+        lid_drain_runon_cfs.assign(un, 0.0);
     }
 
     /**
@@ -485,17 +596,104 @@ struct SubcatchData {
         g(old_runoff, 0.0); g(old_gw_flow, 0.0);
         g(runon_inflow, 0.0); g(old_runon_inflow, 0.0);
         g(gw_sw_head, 0.0); g(gw_node_avail_flow, 0.0);
+        g(gw_max_infil_vol, std::numeric_limits<double>::max());
+        g(outfall_runon_vol, 0.0);
+        comments.resize(un, std::string{});
+
         g(rpt_flag, static_cast<char>(0));
         g(stat_precip_vol, 0.0); g(stat_evap_vol, 0.0);
         g(stat_infil_vol, 0.0); g(stat_imperv_vol, 0.0);
         g(stat_perv_vol, 0.0); g(stat_runoff_vol, 0.0);
         g(stat_max_runoff, 0.0);
+        g(stat_gw_infil_vol, 0.0); g(stat_gw_upper_evap_vol, 0.0);
+        g(stat_gw_lower_evap_vol, 0.0); g(stat_gw_deep_perc_vol, 0.0);
+        g(stat_gw_flow_vol, 0.0); g(stat_gw_max_flow, 0.0);
+        g(stat_gw_sum_theta, 0.0); g(stat_gw_sum_depth, 0.0);
+        g(stat_gw_final_theta, 0.0); g(stat_gw_final_depth, 0.0);
+        stat_gw_steps.resize(un, 0L);
         g(gw_aquifer, -1); g(gw_node, -1); g(gw_surf_elev, 0.0);
         g(gw_a1, 0.0); g(gw_b1, 0.0); g(gw_a2, 0.0); g(gw_b2, 0.0);
         g(gw_a3, 0.0); g(gw_tw, 0.0); g(gw_hstar, 0.0);
         g(snowpack, -1);
+        g(snow_net_imperv, -1.0);
+        g(snow_net_perv,   -1.0);
+        g(total_lid_area_ft2, 0.0);
+        g(lid_return_to_perv_cfs, 0.0);
+        g(lid_drain_runon_cfs, 0.0);
         // Note: conc, conc_old, ponded_qual, washoff_load handled by resize_quality()
         // Note: coverage, total_load handled separately
+    }
+
+    /**
+     * @brief Erase the subcatchment at index `idx` from every parallel array.
+     *
+     * @details Removes element `idx` from every SoA vector. Flat-2D arrays
+     *          (conc/ponded_qual/washoff_load, coverage/sweep, total_load) have
+     *          their full stride for `idx` removed. Spatial arrays are erased
+     *          separately by ObjectDeleter.
+     */
+    void erase_at(int idx) {
+        const auto ui = static_cast<std::size_t>(idx);
+        auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
+
+        e(outlet_node); e(outlet_subcatch); e(outlet_name); e(gage);
+        e(area); e(width); e(slope); e(curb_length);
+        e(frac_imperv); e(frac_imperv_no_store); e(n_imperv); e(n_perv);
+        e(ds_imperv); e(ds_perv); e(subarea_routing); e(pct_routed);
+
+        e(infil_model); e(infil_p1); e(infil_p2); e(infil_p3); e(infil_p4); e(infil_p5);
+
+        e(runoff); e(rainfall); e(evap_loss); e(infil_loss); e(ponded_depth);
+        e(gw_flow); e(old_runoff); e(old_gw_flow);
+        e(runon_inflow); e(old_runon_inflow); e(outfall_runon_vol);
+        e(gw_sw_head); e(gw_node_avail_flow); e(gw_max_infil_vol);
+        e(comments); e(rpt_flag);
+
+        e(stat_precip_vol); e(stat_evap_vol); e(stat_infil_vol);
+        e(stat_imperv_vol); e(stat_perv_vol); e(stat_runoff_vol); e(stat_max_runoff);
+        e(stat_gw_infil_vol); e(stat_gw_upper_evap_vol); e(stat_gw_lower_evap_vol);
+        e(stat_gw_deep_perc_vol); e(stat_gw_flow_vol); e(stat_gw_max_flow);
+        e(stat_gw_sum_theta); e(stat_gw_sum_depth); e(stat_gw_final_theta);
+        e(stat_gw_final_depth); e(stat_gw_steps);
+
+        e(gw_aquifer); e(gw_node); e(gw_surf_elev);
+        e(gw_a1); e(gw_b1); e(gw_a2); e(gw_b2); e(gw_a3); e(gw_tw); e(gw_hstar);
+        e(snowpack); e(snow_net_imperv); e(snow_net_perv);
+        e(total_lid_area_ft2); e(lid_return_to_perv_cfs); e(lid_drain_runon_cfs);
+
+        // Flat 2D quality arrays: [sc * np + p]
+        if (conc_n_pollutants > 0) {
+            const auto np = static_cast<std::size_t>(conc_n_pollutants);
+            const auto base = ui * np;
+            auto erase2d = [&](auto& v) {
+                if (base + np <= v.size())
+                    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
+                            v.begin() + static_cast<std::ptrdiff_t>(base + np));
+            };
+            erase2d(conc); erase2d(conc_old); erase2d(ponded_qual); erase2d(washoff_load);
+        }
+
+        // Flat 2D total load: [sc * np + p]
+        if (total_load_n_pollutants > 0) {
+            const auto np = static_cast<std::size_t>(total_load_n_pollutants);
+            const auto base = ui * np;
+            if (base + np <= total_load.size())
+                total_load.erase(
+                    total_load.begin() + static_cast<std::ptrdiff_t>(base),
+                    total_load.begin() + static_cast<std::ptrdiff_t>(base + np));
+        }
+
+        // Flat 2D coverage/sweep matrices: [sc * n_lu + lu]
+        if (coverage_n_landuses > 0) {
+            const auto nlu = static_cast<std::size_t>(coverage_n_landuses);
+            const auto base = ui * nlu;
+            auto erase2d = [&](auto& v) {
+                if (base + nlu <= v.size())
+                    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
+                            v.begin() + static_cast<std::ptrdiff_t>(base + nlu));
+            };
+            erase2d(coverage); erase2d(sweep_last_swept);
+        }
     }
 
     /**
@@ -559,8 +757,12 @@ struct SubcatchData {
         old_gw_flow.shrink_to_fit();
         runon_inflow.shrink_to_fit();
         old_runon_inflow.shrink_to_fit();
+        outfall_runon_vol.shrink_to_fit();
         gw_sw_head.shrink_to_fit();
         gw_node_avail_flow.shrink_to_fit();
+        gw_max_infil_vol.shrink_to_fit();
+
+        comments.shrink_to_fit();
 
         rpt_flag.shrink_to_fit();
 
@@ -583,6 +785,8 @@ struct SubcatchData {
         gw_tw.shrink_to_fit();
         gw_hstar.shrink_to_fit();
         snowpack.shrink_to_fit();
+        snow_net_imperv.shrink_to_fit();
+        snow_net_perv.shrink_to_fit();
 
         conc.shrink_to_fit();
         conc_old.shrink_to_fit();
@@ -590,6 +794,7 @@ struct SubcatchData {
         washoff_load.shrink_to_fit();
         total_load.shrink_to_fit();
         coverage.shrink_to_fit();
+        sweep_last_swept.shrink_to_fit();
     }
 
     void save_state() noexcept {
@@ -601,6 +806,8 @@ struct SubcatchData {
     void reset_state() noexcept {
         std::fill(runoff.begin(),       runoff.end(),       0.0);
         std::fill(rainfall.begin(),     rainfall.end(),     0.0);
+        std::fill(snow_net_imperv.begin(), snow_net_imperv.end(), -1.0);
+        std::fill(snow_net_perv.begin(),   snow_net_perv.end(),   -1.0);
         std::fill(evap_loss.begin(),    evap_loss.end(),    0.0);
         std::fill(infil_loss.begin(),   infil_loss.end(),   0.0);
         std::fill(ponded_depth.begin(), ponded_depth.end(), 0.0);

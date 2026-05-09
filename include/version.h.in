@@ -42,7 +42,7 @@
                                     + OPENSWMM_VERSION_PATCH)
 
 /** @brief Git commit hash of the build (short form). */
-#define OPENSWMM_BUILD_COMMIT        "@OPENSWMMCORE_GIT_HASH@"
+#define OPENSWMM_BUILD_COMMIT        "@OPENSWMM_GIT_HASH@"
 
 /** @brief Build date string (set by CI, may be empty in local builds). */
 #define OPENSWMM_BUILD_DATE          "@BUILD_DATE@"

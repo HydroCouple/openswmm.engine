@@ -11,6 +11,7 @@
 
 #include "Node.hpp"
 
+#include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -22,7 +23,7 @@ namespace node {
 // ============================================================================
 
 double getVolume(const NodeData& nodes, int idx, double depth,
-                 TableData* tables) {
+                 TableData* tables, int unit_sys) {
     if (depth <= 0.0) return 0.0;
     auto ui = static_cast<std::size_t>(idx);
 
@@ -36,7 +37,10 @@ double getVolume(const NodeData& nodes, int idx, double depth,
             // (matching legacy table_getStorageVolume in table.c)
             auto ci = static_cast<std::size_t>(nodes.storage_curve[ui]);
             if (tables && ci < tables->tables.size()) {
-                return table_getStorageVolume(tables->tables[ci], depth);
+                double ucf_len  = ucf::Ucf[ucf::LENGTH][unit_sys];
+                double ucf_vol  = ucf::Ucf[ucf::VOLUME][unit_sys];
+                double vol_disp = table_getStorageVolume(tables->tables[ci], depth * ucf_len);
+                return vol_disp / ucf_vol;
             }
             return 0.0;
         }
@@ -62,7 +66,7 @@ double getVolume(const NodeData& nodes, int idx, double depth,
 // ============================================================================
 
 double getDepth(const NodeData& nodes, int idx, double volume,
-                TableData* tables) {
+                TableData* tables, int unit_sys) {
     if (volume <= 0.0) return 0.0;
     auto ui = static_cast<std::size_t>(idx);
 
@@ -72,9 +76,17 @@ double getDepth(const NodeData& nodes, int idx, double volume,
         if (fv > 0.0 && volume >= fv) return fd;
 
         if (nodes.storage_curve[ui] >= 0) {
-            // Tabulated: inverse lookup (Newton iteration using volume function)
-            // Simple linear interpolation: d ≈ fd * (V / Vfull)
-            if (fv > 0.0) return fd * (volume / fv);
+            // Tabulated: quadratic solve per interval (Gap #12).
+            // Matches legacy table_getStorageDepth() in table.c.
+            auto ci = static_cast<std::size_t>(nodes.storage_curve[ui]);
+            if (tables && ci < tables->tables.size()) {
+                double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
+                double ucf_vol = ucf::Ucf[ucf::VOLUME][unit_sys];
+                double vol_disp = volume * ucf_vol;       // internal ft³ → display units
+                double d_disp   = table_getStorageDepth(tables->tables[ci], vol_disp);
+                return d_disp / ucf_len;                  // display units → ft
+            }
+            if (fv > 0.0) return fd * (volume / fv);     // fallback if no table
             return 0.0;
         }
 
@@ -117,28 +129,42 @@ double getDepth(const NodeData& nodes, int idx, double volume,
 // ============================================================================
 
 double getSurfArea(const NodeData& nodes, int idx, double depth,
-                   TableData* tables) {
+                   TableData* tables, int unit_sys) {
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
+        // Return RAW storage-curve area (no MIN_SURFAREA clamp here).
+        //
+        // Legacy storage_getSurfArea (node.c:944) returns the curve value
+        // directly; the MIN_SURFAREA floor is applied downstream in
+        // setNodeDepth via MAX(surfArea, MinSurfArea). Clamping here
+        // over-reports the effective area at degenerate storages (e.g.
+        // A=0,B=0,C=19.625 → legacy returns 19.625; clamped returns 50),
+        // which then interacts with the STORAGE-end scatter rule to keep
+        // pipe halves the legacy would drop. On the Rich_BC_CSO model
+        // this mis-scaled the Picard denominator by ~3× and shifted
+        // flooding to non-legacy nodes.
         if (nodes.storage_curve[ui] >= 0) {
             auto ci = static_cast<std::size_t>(nodes.storage_curve[ui]);
             if (tables && ci < tables->tables.size()) {
-                double area = table_lookup_cursor(tables->tables[ci], depth);
-                return std::max(area, constants::MIN_SURFAREA);
+                double ucf_len  = ucf::Ucf[ucf::LENGTH][unit_sys];
+                double ucf_area = ucf_len * ucf_len;
+                double area = table_lookup_cursor(tables->tables[ci], depth * ucf_len);
+                return area / ucf_area;
             }
-            return constants::MIN_SURFAREA;
+            return 0.0;
         }
         // Functional: area = a0 + a1 * d^a2
         double a0 = nodes.storage_c[ui];
         double a1 = nodes.storage_a[ui];
         double a2 = nodes.storage_b[ui];
         double area = a0 + a1 * std::pow(depth, a2);
-        return std::max(area, constants::MIN_SURFAREA);
+        return area;
     }
 
-    // Non-storage nodes: constant minimum surface area
-    return constants::MIN_SURFAREA;
+    // Non-storage nodes: legacy node_getSurfArea returns 0 for everything
+    // other than STORAGE. The MinSurfArea floor is applied in setNodeDepth.
+    return 0.0;
 }
 
 // ============================================================================

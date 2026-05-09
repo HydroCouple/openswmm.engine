@@ -492,4 +492,83 @@ TEST(QualityConstantsTest, ZeroDepthIsOneMillimeterInFt) {
     EXPECT_NEAR(openswmm::quality::ZERO_DEPTH, 0.003281, 1e-5);
 }
 
+// ============================================================================
+// Gap #38: Steady Flow quality routing (findSFLinkQual)
+// ============================================================================
+
+// For STEADY routing the link gets upstream node concentration scaled by
+// fEvap and exact exponential decay over dt — no volume-balance mixing.
+
+TEST(SteadyFlowQuality, NoDecayLinkGetsUpstreamConc) {
+    SimulationContext ctx = makeContext(1);
+    ctx.options.routing_model = openswmm::RoutingModel::STEADY;
+    QualitySolver solver;
+    solver.init(ctx.n_nodes(), ctx.n_links(), 1);
+
+    // Upstream node 0 has concentration 10.0 after node mixing
+    ctx.nodes.conc[0] = 10.0;
+
+    // Link 0 (N0→N1): flowing, no decay, no evap
+    ctx.links.flow[0]       = 1.0;
+    ctx.links.volume[0]     = 100.0;
+    ctx.links.old_volume[0] = 100.0;
+    ctx.links.conc_old[0]   = 5.0;   // old link conc shouldn't matter for STEADY
+
+    // k_decay = 0 → no decay
+    ctx.pollutants.k_decay.assign(1, 0.0);
+
+    solver.updateLinkQuality(ctx, 300.0);
+
+    // link[0] conc should equal upstream (node 0) conc = 10.0
+    EXPECT_NEAR(ctx.links.conc[0], 10.0, 1e-10);
+}
+
+TEST(SteadyFlowQuality, WithDecayUsesExponentialNotLinear) {
+    SimulationContext ctx = makeContext(1);
+    ctx.options.routing_model = openswmm::RoutingModel::STEADY;
+    QualitySolver solver;
+    solver.init(ctx.n_nodes(), ctx.n_links(), 1);
+
+    const double dt    = 300.0;   // routing step
+    const double k     = 0.001;   // /sec decay constant
+    const double c_up  = 8.0;     // upstream conc
+
+    ctx.nodes.conc[0]       = c_up;
+    ctx.links.flow[0]       = 1.0;
+    ctx.links.volume[0]     = 100.0;
+    ctx.links.old_volume[0] = 100.0;
+    ctx.links.conc_old[0]   = 999.0;  // irrelevant for STEADY
+    ctx.pollutants.k_decay.assign(1, k);
+
+    solver.updateLinkQuality(ctx, dt);
+
+    double expected = c_up * std::exp(-k * dt);
+    EXPECT_NEAR(ctx.links.conc[0], expected, 1e-9);
+
+    // Verify it differs from the linear approximation (1 - k*dt):
+    double linear_approx = c_up * (1.0 - k * dt);
+    EXPECT_NE(ctx.links.conc[0], linear_approx)
+        << "STEADY should use exp(-k*dt), not linear (1-k*dt)";
+}
+
+TEST(SteadyFlowQuality, OldLinkConcIgnored) {
+    // Regardless of old link concentration, STEADY routing uses upstream node.
+    SimulationContext ctx = makeContext(1);
+    ctx.options.routing_model = openswmm::RoutingModel::STEADY;
+    QualitySolver solver;
+    solver.init(ctx.n_nodes(), ctx.n_links(), 1);
+
+    ctx.nodes.conc[0]       = 5.0;
+    ctx.links.flow[0]       = 2.0;
+    ctx.links.volume[0]     = 50.0;
+    ctx.links.old_volume[0] = 50.0;
+    ctx.links.conc_old[0]   = 100.0;  // very different old conc
+    ctx.pollutants.k_decay.assign(1, 0.0);
+
+    solver.updateLinkQuality(ctx, 60.0);
+
+    // Result must equal upstream conc, NOT some mixture with old conc
+    EXPECT_NEAR(ctx.links.conc[0], 5.0, 1e-10);
+}
+
 } /* anonymous namespace */

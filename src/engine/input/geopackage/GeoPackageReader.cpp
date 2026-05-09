@@ -204,6 +204,11 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
             }
         }
         else if (key == "CRS") ctx.spatial.crs = val;
+        else if (key == "MAP_UNITS") ctx.spatial.map_units = val;
+        else if (key == "MAP_X1") ctx.spatial.map_x1 = std::stod(val);
+        else if (key == "MAP_Y1") ctx.spatial.map_y1 = std::stod(val);
+        else if (key == "MAP_X2") ctx.spatial.map_x2 = std::stod(val);
+        else if (key == "MAP_Y2") ctx.spatial.map_y2 = std::stod(val);
     }
 }
 
@@ -290,17 +295,6 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
         LinkType ltype = parse_link_type(type_str);
         ctx.links.type[idx] = ltype;
 
-        // Geometry: extract vertices from linestring
-        if (!column_is_null(stmt.get(), 2)) {
-            auto blob = column_blob(stmt.get(), 2);
-            auto ls = decode_linestring(blob);
-            // First and last points are node coordinates; interior points are vertices
-            if (ls.xs.size() > 2) {
-                ctx.spatial.link_vertices_x[idx].assign(ls.xs.begin() + 1, ls.xs.end() - 1);
-                ctx.spatial.link_vertices_y[idx].assign(ls.ys.begin() + 1, ls.ys.end() - 1);
-            }
-        }
-
         // Node connectivity
         std::string from_name = column_text(stmt.get(), 3);
         std::string to_name = column_text(stmt.get(), 4);
@@ -308,6 +302,54 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
         int n2 = ctx.node_names.find(to_name);
         ctx.links.node1[idx] = n1;
         ctx.links.node2[idx] = n2;
+
+        // Reset interior vertices for deterministic re-reads.
+        ctx.spatial.link_vertices_x[idx].clear();
+        ctx.spatial.link_vertices_y[idx].clear();
+
+        // Geometry: extract vertices from linestring
+        if (!column_is_null(stmt.get(), 2)) {
+            auto blob = column_blob(stmt.get(), 2);
+            auto ls = decode_linestring(blob);
+            bool reverse_to_match_link = false;
+
+            // Keep interior vertex order consistent with node1 -> node2 direction.
+            if (ls.xs.size() >= 2 &&
+                n1 >= 0 && n1 < ctx.n_nodes() &&
+                n2 >= 0 && n2 < ctx.n_nodes()) {
+                const auto u1 = static_cast<std::size_t>(n1);
+                const auto u2 = static_cast<std::size_t>(n2);
+
+                const double x0 = ls.xs.front();
+                const double y0 = ls.ys.front();
+                const double xN = ls.xs.back();
+                const double yN = ls.ys.back();
+
+                const double n1x = ctx.spatial.node_x[u1];
+                const double n1y = ctx.spatial.node_y[u1];
+                const double n2x = ctx.spatial.node_x[u2];
+                const double n2y = ctx.spatial.node_y[u2];
+
+                const auto sq = [](double a) { return a * a; };
+                const double forward_err =
+                    sq(x0 - n1x) + sq(y0 - n1y) + sq(xN - n2x) + sq(yN - n2y);
+                const double reverse_err =
+                    sq(x0 - n2x) + sq(y0 - n2y) + sq(xN - n1x) + sq(yN - n1y);
+
+                reverse_to_match_link = reverse_err < forward_err;
+            }
+
+            // First/last points are endpoints; copy only interior vertices.
+            if (ls.xs.size() > 2) {
+                if (!reverse_to_match_link) {
+                    ctx.spatial.link_vertices_x[idx].assign(ls.xs.begin() + 1, ls.xs.end() - 1);
+                    ctx.spatial.link_vertices_y[idx].assign(ls.ys.begin() + 1, ls.ys.end() - 1);
+                } else {
+                    ctx.spatial.link_vertices_x[idx].assign(ls.xs.rbegin() + 1, ls.xs.rend() - 1);
+                    ctx.spatial.link_vertices_y[idx].assign(ls.ys.rbegin() + 1, ls.ys.rend() - 1);
+                }
+            }
+        }
 
         ctx.links.offset1[idx] = column_double(stmt.get(), 5);
         ctx.links.offset2[idx] = column_double(stmt.get(), 6);
@@ -369,6 +411,10 @@ static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::s
         int idx = ctx.subcatch_names.find(name);
         if (idx < 0) idx = ctx.subcatch_names.add(name);
         ensure_subcatch_capacity(ctx, idx);
+
+        // Reset polygon vertices for deterministic re-reads.
+        ctx.spatial.subcatch_polygon_x[idx].clear();
+        ctx.spatial.subcatch_polygon_y[idx].clear();
 
         // Geometry
         if (!column_is_null(stmt.get(), 1)) {

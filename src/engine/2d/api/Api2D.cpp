@@ -9,6 +9,7 @@
  * @ingroup engine_2d
  */
 
+#include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
 #include "../../core/SWMMEngine.hpp"
 
@@ -448,7 +449,7 @@ int swmm_2d_get_dry_depth(SWMM_Engine engine, double* dry_depth) {
 
 int swmm_2d_set_dry_depth(SWMM_Engine engine, double dry_depth) {
     GET_ENGINE(engine);
-    if (!router2d.isActive()) return SWMM_ERR_BADPARAM;
+    CHECK_2D_ACTIVE(eng);
 
     const_cast<openswmm::twoD::SolverOptions2D&>(router2d.options()).dry_depth
         = dry_depth;
@@ -466,7 +467,7 @@ int swmm_2d_get_rel_tolerance(SWMM_Engine engine, double* rtol) {
 
 int swmm_2d_set_rel_tolerance(SWMM_Engine engine, double rtol) {
     GET_ENGINE(engine);
-    if (!router2d.isActive()) return SWMM_ERR_BADPARAM;
+    CHECK_2D_ACTIVE(eng);
 
     const_cast<openswmm::twoD::SolverOptions2D&>(router2d.options()).rel_tolerance
         = rtol;
@@ -484,7 +485,7 @@ int swmm_2d_get_abs_tolerance(SWMM_Engine engine, double* atol) {
 
 int swmm_2d_set_abs_tolerance(SWMM_Engine engine, double atol) {
     GET_ENGINE(engine);
-    if (!router2d.isActive()) return SWMM_ERR_BADPARAM;
+    CHECK_2D_ACTIVE(eng);
 
     const_cast<openswmm::twoD::SolverOptions2D&>(router2d.options()).abs_tolerance
         = atol;

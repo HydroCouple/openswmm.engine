@@ -18,29 +18,69 @@ project(
 )
 
 # ============================================================================
-# 1. Build the parent C/C++ project as a subdirectory
+# 1. Engine library: find_package (CI pre-built) OR add_subdirectory (local dev)
 # ============================================================================
-# Using add_subdirectory (instead of a separate configure/build/install +
-# find_package) keeps all ALIAS targets available (openswmm::engine,
-# openswmm::legacy::engine, etc.) and avoids export/install mismatches.
-set(OPENSWMM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(OPENSWMM_BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
-set(OPENSWMM_BUILD_REGRESSION_TESTS OFF CACHE BOOL "" FORCE)
-set(OPENSWMM_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
-set(OPENSWMM_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
+# If OPENSWMM_ENGINE_INSTALL_PREFIX is set (via -D or env var), locate the
+# pre-built engine via find_package and skip the full C++ source build.
+# Otherwise fall back to add_subdirectory so `pip install .` from a fresh
+# clone works unchanged.
 
-# Disable WINDOWS_EXPORT_ALL_SYMBOLS globally.  When ON, CMake adds a
-# pre-link step (cmake -E __create_def) that cannot parse /GL (LTCG)
-# object files, causing "unrecognized file format" errors on Windows CI.
-# Each shared library that needs DLL exports uses explicit
-# __declspec(dllexport) via generate_export_header() instead.
-set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS OFF)
+if(NOT DEFINED OPENSWMM_ENGINE_INSTALL_PREFIX
+        AND DEFINED ENV{OPENSWMM_ENGINE_INSTALL_PREFIX})
+    set(OPENSWMM_ENGINE_INSTALL_PREFIX "$ENV{OPENSWMM_ENGINE_INSTALL_PREFIX}"
+        CACHE PATH "Install prefix of a pre-built OpenSWMM engine")
+endif()
 
-add_subdirectory(
-    "${CMAKE_CURRENT_SOURCE_DIR}/.."
-    "${CMAKE_BINARY_DIR}/parent_build"
-    EXCLUDE_FROM_ALL
-)
+if(OPENSWMM_ENGINE_INSTALL_PREFIX)
+    # ── Pre-built mode (CI) ────────────────────────────────────────────────
+    message(STATUS "openswmm-python: using pre-built engine from ${OPENSWMM_ENGINE_INSTALL_PREFIX}")
+    set(OPENSWMM_USE_PREBUILT_ENGINE TRUE CACHE BOOL "" FORCE)
+
+    find_package(OpenSWMMEngine CONFIG REQUIRED
+        PATHS "${OPENSWMM_ENGINE_INSTALL_PREFIX}"
+        NO_DEFAULT_PATH
+    )
+
+    # Bridge OpenSWMMEngine:: → openswmm:: ALIAS names used by all Cython
+    # cmake files.  ALIAS of an IMPORTED target requires CMake 3.18+;
+    # cmake_minimum_required here is 3.21 so this is safe.
+    add_library(openswmm::engine         ALIAS OpenSWMMEngine::openswmm_engine)
+    add_library(openswmm::legacy::engine ALIAS OpenSWMMEngine::openswmm_legacy_engine)
+    add_library(openswmm::legacy::output ALIAS OpenSWMMEngine::openswmm_legacy_output)
+    add_library(openswmm::common         ALIAS OpenSWMMEngine::openswmm_common)
+    add_library(openswmm::plugin_sdk     ALIAS OpenSWMMEngine::openswmm_plugin_sdk)
+
+    # LIBRARY_VERSION is set by the parent project in source mode; provide a
+    # fallback so python/openswmm/CMakeLists.txt's VERSION property still works.
+    if(NOT DEFINED LIBRARY_VERSION)
+        set(LIBRARY_VERSION   "${PROJECT_VERSION}")
+        set(LIBRARY_SOVERSION "${PROJECT_VERSION_MAJOR}")
+    endif()
+
+else()
+    # ── Source mode (local dev / fresh clone) ─────────────────────────────
+    # Using add_subdirectory keeps all ALIAS targets available and avoids
+    # export/install mismatches.
+    message(STATUS "openswmm-python: building engine from source")
+    set(OPENSWMM_USE_PREBUILT_ENGINE FALSE CACHE BOOL "" FORCE)
+
+    set(OPENSWMM_BUILD_TESTS             OFF CACHE BOOL "" FORCE)
+    set(OPENSWMM_BUILD_UNIT_TESTS        OFF CACHE BOOL "" FORCE)
+    set(OPENSWMM_BUILD_REGRESSION_TESTS  OFF CACHE BOOL "" FORCE)
+    set(OPENSWMM_BUILD_BENCHMARKS        OFF CACHE BOOL "" FORCE)
+    set(OPENSWMM_BUILD_PYTHON            OFF CACHE BOOL "" FORCE)
+
+    # Disable WINDOWS_EXPORT_ALL_SYMBOLS globally.  When ON, CMake adds a
+    # pre-link step (cmake -E __create_def) that cannot parse /GL (LTCG)
+    # object files, causing "unrecognized file format" errors on Windows CI.
+    set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS OFF)
+
+    add_subdirectory(
+        "${CMAKE_CURRENT_SOURCE_DIR}/.."
+        "${CMAKE_BINARY_DIR}/parent_build"
+        EXCLUDE_FROM_ALL
+    )
+endif()
 
 # ============================================================================
 # 2. CMake policies & settings

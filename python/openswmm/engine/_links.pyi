@@ -86,6 +86,35 @@ class Links:
         """
         ...
 
+    def add(self, link_id: str, link_type: int) -> int:
+        """Add a link to the model (OPENED-state editing).
+
+        Wraps ``swmm_link_add``. Valid in ``BUILDING`` or ``OPENED`` state.
+
+        Args:
+            link_id: Unique link identifier.
+            link_type: Link type code (see :class:`LinkType`).
+
+        Returns:
+            Error code (0 on success).
+        """
+        ...
+
+    def pop_last(self, link_id: str) -> int:
+        """Remove the most recently added link (undo-of-add).
+
+        Wraps ``swmm_link_pop_last``. Valid in ``BUILDING`` or ``OPENED``
+        state. ``link_id`` must match the current tail; otherwise
+        ``SWMM_ERR_BADINDEX`` is returned.
+
+        Args:
+            link_id: Expected tail link identifier.
+
+        Returns:
+            Error code (0 on success).
+        """
+        ...
+
     def get_flow(self, idx: Union[int, str]) -> float:
         """Return the current flow rate in a link.
 

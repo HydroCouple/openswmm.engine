@@ -95,6 +95,21 @@ class Gages:
             return ""
         return s.decode('utf-8')
 
+    def add(self, str gage_id) -> int:
+        """Add a rain gage to the model (OPENED-state editing).
+
+        Wraps ``swmm_gage_add``. Valid in ``BUILDING`` or ``OPENED``
+        state. For from-scratch construction without an .inp file, use
+        :class:`ModelBuilder.add_gage`.
+
+        :param gage_id: Unique gage identifier.
+        :returns: Error code (0 on success).
+        :rtype: int
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = gage_id.encode('utf-8')
+        return swmm_gage_add(h, b)
+
     def get_rainfall(self, idx) -> float:
         """Return the current rainfall rate at a gage.
 

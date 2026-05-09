@@ -26,7 +26,20 @@
 #include <algorithm>
 #include <numeric>
 
+#if defined(SWMM_USE_OPENMP)
+#include <omp.h>
+#endif
+
 namespace openswmm {
+
+// Parallelising the outer shape-group loop in each compute* method pays off
+// now that SWMMEngine::start() pins KMP_BLOCKTIME≈infinite so fork cost is
+// ~500 ns (not ~20 µs). Groups write to disjoint conduit indices via
+// scatter_results, so they are race-free. `schedule(dynamic, 1)` keeps the
+// one big shape group (usually CIRCULAR, ~70 % of conduits) from blocking
+// workers. We gate the parallel region on having multiple non-empty
+// groups — single-group networks (rare) skip the fork entirely.
+
 
 // ============================================================================
 // ShapeGroup
@@ -157,7 +170,14 @@ void area_circular(
     double*       OPENSWMM_RESTRICT area,
     int count
 ) {
-    // Vectorisable: all same table, pure arithmetic interpolation
+    // Vectorisable: all same table, pure arithmetic interpolation.
+    // Tried adding `#pragma omp parallel for if(count >= 256)` here; net
+    // regression of ~38 % wall time on Rich_BC_CSO. Each kernel call
+    // processes ~900 conduits at ~10 ns each = ~9 µs work, while the
+    // 8-way fork/join cost is ~3 µs. With 8 fork/join events per Picard
+    // iter × 1.6 M iters = 12.8 M regions, the cumulative overhead
+    // exceeds the work savings (and the cache-line ping-pong on the
+    // shared `area` array adds further cost). Kept serial.
     const double* table = xsect_tables::A_Circ;
     constexpr int n_items = xsect_tables::N_A_Circ;
     constexpr double delta = 1.0 / static_cast<double>(n_items - 1);
@@ -337,6 +357,7 @@ void hydrad_circular(
     constexpr double inv_delta = static_cast<double>(n_items - 1);
     constexpr double delta = 1.0 / inv_delta;
 
+    // See area_circular for why inner-loop OMP regressed and was reverted.
     for (int k = 0; k < count; ++k) {
         // Branchless: clamp y_norm to [0, 1], table[0]=0 handles depth<=0 naturally
         double y_norm = std::max(0.0, std::min(depth[k] * inv_y_full[k], 1.0));
@@ -442,6 +463,7 @@ void width_circular(
     constexpr double inv_delta = static_cast<double>(n_items - 1);
     constexpr double delta = 1.0 / inv_delta;
 
+    // See area_circular for why inner-loop OMP regressed and was reverted.
     for (int k = 0; k < count; ++k) {
         // Branchless: clamp y_norm to [0, 1]
         double y_norm = std::max(0.0, std::min(depth[k] * inv_y_full[k], 1.0));
@@ -595,6 +617,177 @@ TableRef width_table_for(XSectShape shape) {
         case XSectShape::VERT_ELLIPSE:   return {W_VertEllipse, N_W_VertEllipse};
         case XSectShape::ARCH:           return {W_Arch, N_W_Arch};
         default: return {nullptr, 0};
+    }
+}
+
+// ============================================================================
+// Kernel helpers — dispatch shape switch on an already-gathered local_d
+// buffer.  Used by the fused triple methods to avoid repeating the switch
+// inside each pass.
+// ============================================================================
+
+static void apply_area_kernel(const ShapeGroup& g,
+                               const double* local_d, double* local_a) {
+    switch (g.shape) {
+        case XSectShape::CIRCULAR:
+        case XSectShape::FORCE_MAIN:
+            xsect_batch::area_circular(local_d, g.inv_y_full.data(),
+                                       g.a_full.data(), local_a, g.count);
+            break;
+        case XSectShape::RECT_CLOSED:
+        case XSectShape::RECT_OPEN:
+            xsect_batch::area_rect(local_d, g.w_max.data(), local_a, g.count);
+            break;
+        case XSectShape::TRAPEZOIDAL:
+            xsect_batch::area_trapezoidal(local_d, g.y_bot.data(),
+                                          g.s_bot.data(), local_a, g.count);
+            break;
+        case XSectShape::TRIANGULAR:
+            xsect_batch::area_triangular(local_d, g.s_bot.data(),
+                                         local_a, g.count);
+            break;
+        case XSectShape::PARABOLIC:
+            xsect_batch::area_parabolic(local_d, g.r_bot.data(),
+                                        local_a, g.count);
+            break;
+        case XSectShape::POWERFUNC:
+            xsect_batch::area_powerfunc(local_d, g.s_bot.data(),
+                                        g.r_bot.data(), local_a, g.count);
+            break;
+        case XSectShape::IRREGULAR:
+        case XSectShape::CUSTOM:
+            if (!g.area_tables.empty())
+                xsect_batch::perlink_tabulated(local_d, g.inv_y_full.data(),
+                                               g.a_full.data(), g.area_tables.data(),
+                                               g.transect_tbl_size, local_a, g.count);
+            break;
+        default: {
+            auto tbl = area_table_for(g.shape);
+            if (tbl.data) {
+                xsect_batch::area_tabulated(local_d, g.inv_y_full.data(),
+                                            g.a_full.data(), tbl.data, tbl.size,
+                                            local_a, g.count);
+            } else {
+                auto inv = area_inv_table_for(g.shape);
+                if (inv.data) {
+                    xsect_batch::area_inv_tabulated(local_d, g.inv_y_full.data(),
+                                                    g.a_full.data(), inv.data, inv.size,
+                                                    local_a, g.count);
+                } else {
+                    for (int k = 0; k < g.count; ++k) {
+                        auto uk = static_cast<std::size_t>(k);
+                        XSectParams xs;
+                        xs.type   = static_cast<int>(g.shape);
+                        xs.y_full = g.y_full[uk]; xs.a_full = g.a_full[uk];
+                        xs.w_max  = g.w_max[uk];  xs.y_bot  = g.y_bot[uk];
+                        xs.a_bot  = g.a_bot[uk];  xs.s_bot  = g.s_bot[uk];
+                        xs.r_bot  = g.r_bot[uk];
+                        local_a[uk] = xsect::getAofY(xs, local_d[uk]);
+                    }
+                }
+            }
+            break;
+        }
+    }
+}
+
+static void apply_hydrad_kernel(const ShapeGroup& g,
+                                 const double* local_d, double* local_h) {
+    switch (g.shape) {
+        case XSectShape::CIRCULAR:
+        case XSectShape::FORCE_MAIN:
+            xsect_batch::hydrad_circular(local_d, g.inv_y_full.data(),
+                                         g.r_full.data(), local_h, g.count);
+            break;
+        case XSectShape::RECT_CLOSED:
+        case XSectShape::RECT_OPEN:
+            xsect_batch::hydrad_rect(local_d, g.w_max.data(), local_h, g.count);
+            break;
+        case XSectShape::TRAPEZOIDAL:
+            xsect_batch::hydrad_trapezoidal(local_d, g.y_bot.data(),
+                                            g.s_bot.data(), g.r_bot.data(),
+                                            local_h, g.count);
+            break;
+        case XSectShape::TRIANGULAR:
+            xsect_batch::hydrad_triangular(local_d, g.s_bot.data(),
+                                           g.r_bot.data(), local_h, g.count);
+            break;
+        case XSectShape::IRREGULAR:
+        case XSectShape::CUSTOM:
+            if (!g.hrad_tables.empty())
+                xsect_batch::perlink_tabulated(local_d, g.inv_y_full.data(),
+                                               g.r_full.data(), g.hrad_tables.data(),
+                                               g.transect_tbl_size, local_h, g.count);
+            break;
+        default: {
+            auto tbl = hydrad_table_for(g.shape);
+            if (tbl.data) {
+                xsect_batch::hydrad_tabulated(local_d, g.inv_y_full.data(),
+                                              g.r_full.data(), tbl.data, tbl.size,
+                                              local_h, g.count);
+            } else {
+                for (int k = 0; k < g.count; ++k) {
+                    auto uk = static_cast<std::size_t>(k);
+                    XSectParams xs;
+                    xs.type   = static_cast<int>(g.shape);
+                    xs.y_full = g.y_full[uk]; xs.a_full = g.a_full[uk];
+                    xs.r_full = g.r_full[uk]; xs.w_max  = g.w_max[uk];
+                    xs.y_bot  = g.y_bot[uk];  xs.s_bot  = g.s_bot[uk];
+                    xs.r_bot  = g.r_bot[uk];
+                    local_h[uk] = xsect::getRofY(xs, local_d[uk]);
+                }
+            }
+            break;
+        }
+    }
+}
+
+static void apply_width_kernel(const ShapeGroup& g,
+                                const double* local_d, double* local_w) {
+    switch (g.shape) {
+        case XSectShape::CIRCULAR:
+        case XSectShape::FORCE_MAIN:
+            xsect_batch::width_circular(local_d, g.inv_y_full.data(),
+                                        g.w_max.data(), local_w, g.count);
+            break;
+        case XSectShape::RECT_CLOSED:
+        case XSectShape::RECT_OPEN:
+            xsect_batch::width_rect(g.w_max.data(), local_w, g.count);
+            break;
+        case XSectShape::TRAPEZOIDAL:
+            xsect_batch::width_trapezoidal(local_d, g.y_bot.data(),
+                                           g.s_bot.data(), local_w, g.count);
+            break;
+        case XSectShape::TRIANGULAR:
+            xsect_batch::width_triangular(local_d, g.s_bot.data(),
+                                          local_w, g.count);
+            break;
+        case XSectShape::IRREGULAR:
+        case XSectShape::CUSTOM:
+            if (!g.width_tables.empty())
+                xsect_batch::perlink_tabulated(local_d, g.inv_y_full.data(),
+                                               g.w_max.data(), g.width_tables.data(),
+                                               g.transect_tbl_size, local_w, g.count);
+            break;
+        default: {
+            auto tbl = width_table_for(g.shape);
+            if (tbl.data) {
+                xsect_batch::width_tabulated(local_d, g.inv_y_full.data(),
+                                             g.w_max.data(), tbl.data, tbl.size,
+                                             local_w, g.count);
+            } else {
+                for (int k = 0; k < g.count; ++k) {
+                    auto uk = static_cast<std::size_t>(k);
+                    XSectParams xs;
+                    xs.type   = static_cast<int>(g.shape);
+                    xs.y_full = g.y_full[uk]; xs.w_max  = g.w_max[uk];
+                    xs.y_bot  = g.y_bot[uk];  xs.s_bot  = g.s_bot[uk];
+                    xs.r_bot  = g.r_bot[uk];
+                    local_w[uk] = xsect::getWofY(xs, local_d[uk]);
+                }
+            }
+            break;
+        }
     }
 }
 
@@ -969,6 +1162,68 @@ void XSectGroups::computeWidths(const double* depths, double* widths, int /*n_li
         }
 
         scatter_results(g, local_w, widths);
+    }
+}
+
+// ============================================================================
+// XSectGroups::computeAreaHydRadTriple
+// Fused: d1→(a1,hrad1), d2→a2, dm→(am,hrad_mid) in one pass over groups.
+// Replaces the three separate calls in STEP D of computeLinkGeometry.
+// ============================================================================
+
+void XSectGroups::computeAreaHydRadTriple(
+    const double* d1, const double* d2, const double* dm,
+    double* a1, double* a2, double* am,
+    double* hrad1, double* hrad_mid, int /*n_links*/) const
+{
+    for (const auto& g : groups_) {
+        if (g.count == 0) continue;
+
+        double* ld = g.buf_d.data();
+        double* la = g.buf_r.data();
+        double* lh = g.buf_r2.data();
+
+        // d1 → (a1, hrad1)
+        gather_depths(g, d1, ld);
+        apply_area_kernel(g, ld, la);   scatter_results(g, la, a1);
+        apply_hydrad_kernel(g, ld, lh); scatter_results(g, lh, hrad1);
+
+        // d2 → a2
+        gather_depths(g, d2, ld);
+        apply_area_kernel(g, ld, la);   scatter_results(g, la, a2);
+
+        // dm → (am, hrad_mid)
+        gather_depths(g, dm, ld);
+        apply_area_kernel(g, ld, la);   scatter_results(g, la, am);
+        apply_hydrad_kernel(g, ld, lh); scatter_results(g, lh, hrad_mid);
+    }
+}
+
+// ============================================================================
+// XSectGroups::computeWidthsTriple
+// Fused: d1→w1, d2→w2, dm→wm in one pass over groups.
+// Replaces the three separate computeWidths calls in STEP B of
+// computeLinkGeometry.
+// ============================================================================
+
+void XSectGroups::computeWidthsTriple(
+    const double* d1, const double* d2, const double* dm,
+    double* w1, double* w2, double* wm, int /*n_links*/) const
+{
+    for (const auto& g : groups_) {
+        if (g.count == 0) continue;
+
+        double* ld = g.buf_d.data();
+        double* lw = g.buf_r.data();
+
+        gather_depths(g, d1, ld);
+        apply_width_kernel(g, ld, lw); scatter_results(g, lw, w1);
+
+        gather_depths(g, d2, ld);
+        apply_width_kernel(g, ld, lw); scatter_results(g, lw, w2);
+
+        gather_depths(g, dm, ld);
+        apply_width_kernel(g, ld, lw); scatter_results(g, lw, wm);
     }
 }
 

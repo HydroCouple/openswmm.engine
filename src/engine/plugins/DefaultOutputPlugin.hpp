@@ -106,7 +106,7 @@ private:
     std::vector<char> link_rpt_flag_;
 
     static constexpr int MAGIC_NUMBER = 516114522;
-    static constexpr int VERSION      = 52001;     // SWMM 5.2.001
+    static constexpr int VERSION      = 60000;     // SWMM 6.0.000
     static constexpr int MAX_SYS_RESULTS = 15;
 
     void writeHeader(const SimulationContext& ctx);

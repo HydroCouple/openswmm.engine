@@ -11,3 +11,5 @@ cdef class Solver:
     cdef SWMM_Engine _handle
     cdef str _inp, _rpt, _out
     cdef double _elapsed
+    cdef object _step_begin_cb
+    cdef object _step_end_cb

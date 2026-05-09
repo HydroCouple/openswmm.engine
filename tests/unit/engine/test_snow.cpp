@@ -446,7 +446,10 @@ TEST(SnowADC, DefaultCurvesDoNotReduceMelt) {
 }
 
 TEST(SnowADC, ZeroCurveEliminatesMelt) {
-    // ADC = all 0.0 → asc = 0.0 → no melt (snow-free area)
+    // ADC = all 0.0 → asc = 0.0 → no melt when pack is in depletion phase.
+    // In the legacy new-snow ADC scheme (Gap #18), the ADC curve is consulted
+    // only when awesi < awe (pack has melted below its pre-snowfall reference).
+    // Setting awe = 1.0 puts the pack in the "depletion from full coverage" state.
     SnowSolver solver;
     solver.init(1);
     auto& soa = solver.state();
@@ -457,7 +460,9 @@ TEST(SnowADC, ZeroCurveEliminatesMelt) {
         soa.adc_perv[i]   = 0.0;
     }
 
-    for (int k = 0; k < N_SUBAREAS; ++k) {
+    // Only set snow on IMPERV and PERV subareas.
+    // PLOWABLE (k=0) is never subject to areal depletion → asc=1.0 always (legacy rule).
+    for (int k = SNOW_IMPERV; k <= SNOW_PERV; ++k) {
         auto idx = static_cast<std::size_t>(k);
         soa.wsnow[idx]  = 0.5;     // partial snow (awesi = 0.5/1.0 = 0.5)
         soa.fw[idx]     = 0.0;
@@ -468,23 +473,30 @@ TEST(SnowADC, ZeroCurveEliminatesMelt) {
         soa.fwfrac[idx] = 0.0;
         soa.fArea[idx]  = 0.33;
         soa.si[idx]     = 1.0;     // depth at 100% cover
+        // Simulate post-snowfall depletion: pack has melted below its reference.
+        // awe=1.0 means awesi (0.5) < awe (1.0) → legacy uses regular ADC curve.
+        soa.awe[idx]    = 1.0;
     }
 
     double initial_swe = 0.0;
-    for (auto& w : soa.wsnow) initial_swe += w;
+    for (int k = SNOW_IMPERV; k <= SNOW_PERV; ++k)
+        initial_swe += soa.wsnow[static_cast<std::size_t>(k)];
 
     solver.execute(dummy_ctx, 3600.0, 50.0, 0.0, 0.0);
 
     double final_swe = 0.0;
-    for (auto& w : soa.wsnow) final_swe += w;
+    for (int k = SNOW_IMPERV; k <= SNOW_PERV; ++k)
+        final_swe += soa.wsnow[static_cast<std::size_t>(k)];
 
-    // With asc = 0, melt should be zero, SWE unchanged
+    // With ADC = zeros and awesi < awe, asc = 0 → no melt → SWE unchanged
     EXPECT_NEAR(final_swe, initial_swe, 1e-10)
-        << "SWE should not change when ADC is all zero";
+        << "SWE should not change when ADC is all zero and pack is in depletion phase";
 }
 
 TEST(SnowADC, PartialCoverReducesMelt) {
-    // ADC with intermediate values → partial asc → reduced melt
+    // ADC with intermediate values → partial asc → reduced melt vs. full ADC.
+    // The ADC curve applies when awesi < awe (pack melted below reference level).
+    // Setting awe = 1.0 puts both solvers in the "depletion from full coverage" state.
     SnowSolver solver;
     solver.init(1);
     auto& soa = solver.state();
@@ -495,15 +507,15 @@ TEST(SnowADC, PartialCoverReducesMelt) {
         soa.adc_perv[i]   = i * 0.1;
     }
 
-    // Set up two solvers: one with ADC, one with default (all 1.0)
+    // Set up two solvers: one with linear ADC, one with default (all 1.0)
     SnowSolver solver_full;
     solver_full.init(1);
     auto& soa_full = solver_full.state();
 
     for (int k = 0; k < N_SUBAREAS; ++k) {
         auto idx = static_cast<std::size_t>(k);
-        // Partial cover solver
-        soa.wsnow[idx]  = 0.5;     // awesi = 0.5/1.0 = 0.5 → adc index ~5 → asc ~ 0.5
+        // Partial cover solver: awesi=0.5 < awe=1.0 → ADC[5]=0.5 → asc~0.5
+        soa.wsnow[idx]  = 0.5;
         soa.fw[idx]     = 0.0;
         soa.coldc[idx]  = 0.0;
         soa.ati[idx]    = 40.0;
@@ -512,8 +524,9 @@ TEST(SnowADC, PartialCoverReducesMelt) {
         soa.fwfrac[idx] = 0.0;
         soa.fArea[idx]  = 0.33;
         soa.si[idx]     = 1.0;
+        soa.awe[idx]    = 1.0;   // depletion state: ADC curve is consulted
 
-        // Full cover solver (default ADC = all 1.0)
+        // Full cover solver: same state but ADC = all 1.0 (default) → asc=1.0
         soa_full.wsnow[idx]  = 0.5;
         soa_full.fw[idx]     = 0.0;
         soa_full.coldc[idx]  = 0.0;
@@ -523,12 +536,13 @@ TEST(SnowADC, PartialCoverReducesMelt) {
         soa_full.fwfrac[idx] = 0.0;
         soa_full.fArea[idx]  = 0.33;
         soa_full.si[idx]     = 1.0;
+        soa_full.awe[idx]    = 1.0;   // depletion state
     }
 
     solver.execute(dummy_ctx, 3600.0, 50.0, 0.0, 0.0);
     solver_full.execute(dummy_ctx, 3600.0, 50.0, 0.0, 0.0);
 
-    // Partial cover should have less total melt than full cover
+    // Partial ADC (asc~0.5) should produce less melt than full ADC (asc=1.0)
     double total_melt_partial = 0.0, total_melt_full = 0.0;
     for (int k = 0; k < N_SUBAREAS; ++k) {
         auto idx = static_cast<std::size_t>(k);
@@ -537,7 +551,7 @@ TEST(SnowADC, PartialCoverReducesMelt) {
     }
     EXPECT_GT(total_melt_full, 0.0);
     EXPECT_LT(total_melt_partial, total_melt_full)
-        << "Partial ADC should produce less melt than full coverage";
+        << "Partial ADC (linear) should produce less melt than full ADC (all 1.0) in depletion phase";
 }
 
 TEST(SnowADC, FullSnowCoverGivesAscOne) {

@@ -137,6 +137,11 @@ SWMM_ENGINE_API int swmm_spatial_set_link_vertices(SWMM_Engine engine, int idx, 
 
 /**
  * @brief Get the number of polyline vertices for a link.
+ *
+ * @details Count includes the upstream node coordinate at index 0,
+ *          followed by stored interior vertices (if any), and the
+ *          downstream node coordinate as the final index.
+ *
  * @param engine      Engine handle.
  * @param idx         Zero-based link index.
  * @param[out] count  Receives the vertex count.
@@ -146,6 +151,12 @@ SWMM_ENGINE_API int swmm_spatial_get_link_vertex_count(SWMM_Engine engine, int i
 
 /**
  * @brief Get the polyline vertices for a link.
+ *
+ * @details Returned vertices are ordered as:
+ *          1) upstream node coordinate at index 0,
+ *          2) interior vertices in stored order,
+ *          3) downstream node coordinate as the final vertex.
+ *
  * @param engine     Engine handle.
  * @param idx        Zero-based link index.
  * @param[out] x     Caller-allocated buffer for X coordinates.

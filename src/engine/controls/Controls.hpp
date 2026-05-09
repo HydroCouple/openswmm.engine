@@ -120,6 +120,7 @@ struct Action {
     double     value         = 0.0;      ///< Direct value or computed result
     int        curve_idx     = -1;       ///< Curve index (for CURVE type)
     int        tseries_idx   = -1;       ///< Timeseries index (for TIMESERIES type)
+    int        pid_idx       = -1;       ///< PID state index (for PID type)
 };
 
 // ============================================================================
@@ -285,7 +286,8 @@ private:
     bool compareValues(double lhs, CompareOp op, double rhs) const;
     bool compareTimes(double lhs, CompareOp op, double rhs, double half_step) const;
 
-    double computePIDSetting(PIDState& pid, double control_value, double dt);
+    double computePIDSetting(PIDState& pid, double control_value,
+                             double current_setting, bool is_pump, double dt);
 
     void updateActionValue(Action& a, SimulationContext& ctx,
                            double current_time, double dt);

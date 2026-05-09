@@ -70,6 +70,7 @@ struct SnowSoA {
     std::vector<double> si;       ///< Snow depth for 100% cover (ft)
     std::vector<double> sba;      ///< Snow coverage area at start of new-snow ADC
     std::vector<double> sbws;     ///< Snow water equiv at end of new-snow ADC
+    std::vector<double> asc;      ///< Computed areal snow coverage (0–1), per subarea
 
     // Global ADC curves (shared by all subcatchments, 10 points each)
     double adc_imperv[10] = {1,1,1,1,1,1,1,1,1,1};
@@ -124,6 +125,7 @@ public:
      */
     void execute(SimulationContext& ctx, double dt,
                  double temp, double wind, double rainfall,
+                 double snowfall = 0.0,
                  double gamma = 0.0, double ea = 0.0);
 
     /**

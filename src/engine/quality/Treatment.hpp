@@ -70,11 +70,12 @@ enum class TreatVar : int {
     R        = 1,   ///< Removal fraction (this pollutant, unused in expressions)
     DT       = 2,   ///< Timestep (sec)
     HRT      = 3,   ///< Hydraulic residence time (hours, per legacy convention)
-    Q        = 4,   ///< Flow rate
-    V        = 5,   ///< Volume
-    D        = 6,   ///< Depth
+    Q        = 4,   ///< Flow rate in user units (Q*UCF(FLOW), matching legacy pvFLOW)
+    V        = 5,   ///< Volume (ft3 or m3)
+    D        = 6,   ///< Depth in user units (y*UCF(LENGTH), matching legacy pvDEPTH)
     C_POLLUT = 7,   ///< Concentration of another pollutant (uses pollut_ref)
-    R_POLLUT = 8    ///< Removal fraction of another pollutant (uses pollut_ref, co-treatment)
+    R_POLLUT = 8,   ///< Removal fraction of another pollutant (uses pollut_ref, co-treatment)
+    AREA     = 9    ///< Node surface area in user units² ((a1+a2)/2*UCF(LENGTH)², matching legacy pvAREA)
 };
 
 // ============================================================================
@@ -113,7 +114,7 @@ struct TreatExpr {
  *
  *          Supported operators: + - * / ^ (standard precedence)
  *          Supported functions: exp, log, sqrt, min, max, abs, sgn, step
- *          Supported variables: C, R, DT, HRT, Q, V, D
+ *          Supported variables: C, R, DT, HRT, Q, V, D, AREA
  *
  * @param expr_str  Full expression string (e.g., "R = 1.0 - exp(-0.5 * HRT)").
  * @param result    [out] Parsed expression with is_removal set.
@@ -145,7 +146,7 @@ int parse(const std::string& expr_str, TreatExpr& result,
  * @returns Computed value (concentration or removal fraction).
  */
 double evaluate(const TreatExpr& expr, double c, double dt,
-                double hrt, double q, double v, double d);
+                double hrt, double q, double v, double d, double area = 0.0);
 
 /**
  * @brief Evaluate with co-treatment support (R_pollutant references).
@@ -154,17 +155,19 @@ double evaluate(const TreatExpr& expr, double c, double dt,
  * @param c          Concentration for this pollutant.
  * @param dt         Timestep (sec).
  * @param hrt        HRT (hours).
- * @param q          Flow rate.
+ * @param q          Flow rate in user units.
  * @param v          Volume.
- * @param d          Depth.
+ * @param d          Depth in user units.
  * @param cin        Inflow concentrations for all pollutants.
  * @param removal    Removal fractions for all pollutants (-1=not computed).
  * @param n_pollut   Number of pollutants.
+ * @param area       Node surface area in user units² (Gap #16, legacy pvAREA).
  * @returns Computed value.
  */
 double evaluate(const TreatExpr& expr, double c, double dt,
                 double hrt, double q, double v, double d,
-                const double* cin, const double* removal, int n_pollut);
+                const double* cin, const double* removal, int n_pollut,
+                double area = 0.0);
 
 /**
  * @brief Apply treatment at a node for one pollutant.
@@ -185,7 +188,7 @@ double evaluate(const TreatExpr& expr, double c, double dt,
  * @returns Treated concentration.
  */
 double applyTreatment(const TreatExpr& expr, double c_in, double dt,
-                      double hrt, double q, double v, double d);
+                      double hrt, double q, double v, double d, double area = 0.0);
 
 } // namespace treatment
 } // namespace openswmm

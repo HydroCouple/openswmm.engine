@@ -82,6 +82,9 @@ struct ClimateState {
     // Hargreaves parameters
     double latitude     = 0.0;   ///< Latitude (degrees)
 
+    // Site elevation for psychrometric constant (matching legacy Temp.elev)
+    double elev         = 0.0;   ///< Site elevation above sea level (ft)
+
     // Monthly evaporation table (for MONTHLY method)
     double monthly_evap[12] = {};
 
@@ -108,6 +111,21 @@ struct ClimateState {
     int temp_ts_index     = -1;   ///< Temperature timeseries table index
     int evap_ts_index     = -1;   ///< Evaporation timeseries table index
     int recovery_pat_index = -1;  ///< Recovery pattern index in ctx.patterns
+
+    // Sub-daily sinusoidal temperature interpolation (Gap #9)
+    // Valid only when temperature comes from a daily min/max source.
+    // @see Legacy: setTemp() / updateTempTimes() in climate.c
+    double tmin_daily   = 0.0;  ///< Current day's minimum temperature (deg F)
+    double tmax_daily   = 0.0;  ///< Current day's maximum temperature (deg F)
+    double prev_tmax    = 0.0;  ///< Previous day's maximum temperature (deg F)
+    double hrsr         = 6.0;  ///< Sunrise hour (time of min temp), 0-24
+    double hrss         = 15.0; ///< Sunset-3 hour (time of max temp), 0-24
+    double hrday        = 10.5; ///< Mid-hour between hrsr and hrss
+    double dhrdy        = -9.0; ///< hrsr - hrss (negative)
+    double dydif        = 15.0; ///< 24 + hrsr - hrss (hours from max to next min)
+    double dtlong       = 0.0;  ///< Longitude correction (hrs); 0 = solar time
+    bool   has_minmax   = false;///< True when tmin_daily/tmax_daily are valid
+    int    last_temp_doy = -1;  ///< Day-of-year when hrsr/hrss were last computed
 };
 
 // ============================================================================
@@ -133,6 +151,36 @@ double hargreaves(double latitude, int day_of_year, double t_avg, double t_range
  * @param month      Month (0-11).
  */
 void updateDailyClimate(ClimateState& state, int day_of_year, int month);
+
+/**
+ * @brief Update sunrise/sunset parameters for sub-daily temperature interpolation.
+ *
+ * @details Matches legacy updateTempTimes() in climate.c.
+ *          Computes hrsr, hrss, hrday, dhrdy, dydif from latitude and day-of-year.
+ *          Must be called once per day before calling getSubdailyTemp().
+ *
+ * @param state      [in/out] Climate state (uses latitude, dtlong; writes hrsr etc.)
+ * @param doy        Day of year (1-365).
+ */
+void updateTempTimes(ClimateState& state, int doy);
+
+/**
+ * @brief Compute sub-daily temperature using a three-zone sinusoidal model.
+ *
+ * @details Matches legacy setTemp() in climate.c.
+ *          Zones: (1) before sunrise — sinusoid from prev_tmax toward tmin;
+ *                 (2) sunrise to sunset-3 — sinusoid peaking at tmax;
+ *                 (3) after sunset-3 — sinusoid decaying from tmax.
+ *          Requires updateTempTimes() to have been called for the current day.
+ *
+ * @param state      Climate state (uses tmin_daily, tmax_daily, prev_tmax, hrsr,
+ *                   hrss, hrday, dhrdy, dydif).
+ * @param hour       Hour of day (0.0–24.0).
+ * @returns          Air temperature (deg F).
+ *
+ * @see Legacy: setTemp() in climate.c
+ */
+double getSubdailyTemp(const ClimateState& state, double hour);
 
 /**
  * @brief Batch distribute evaporation to all subcatchments.

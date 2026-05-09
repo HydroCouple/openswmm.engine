@@ -100,6 +100,38 @@ class Links:
         cdef const char* raw = swmm_link_id(h, idx)
         return raw.decode('utf-8') if raw != NULL else ""
 
+    def add(self, str link_id, int link_type) -> int:
+        """Add a link to the model (OPENED-state editing).
+
+        Wraps ``swmm_link_add``. Valid in ``BUILDING`` or ``OPENED`` state.
+        Use on a :class:`Solver` that has been opened for interactive
+        editing of an existing model. For from-scratch construction
+        without an .inp file, use :class:`ModelBuilder.add_link`.
+
+        :param link_id: Unique link identifier.
+        :param link_type: Link type code (see :class:`LinkType`).
+        :returns: Error code (0 on success).
+        :rtype: int
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = link_id.encode('utf-8')
+        return swmm_link_add(h, b, link_type)
+
+    def pop_last(self, str link_id) -> int:
+        """Remove the most recently added link (undo-of-add).
+
+        Wraps ``swmm_link_pop_last``. Valid in ``BUILDING`` or ``OPENED``
+        state. ``link_id`` must match the current tail; otherwise
+        ``SWMM_ERR_BADINDEX`` is returned.
+
+        :param link_id: Expected tail link identifier.
+        :returns: Error code (0 on success).
+        :rtype: int
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = link_id.encode('utf-8')
+        return swmm_link_pop_last(h, b)
+
     def get_flow(self, idx) -> float:
         """Return the current flow rate in a link.
 

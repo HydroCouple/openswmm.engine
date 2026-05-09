@@ -97,6 +97,9 @@ public:
      */
     int findUnitHyd(const std::string& name) const;
 
+    /// Read-only access to the UH name → index map (for validation).
+    const std::unordered_map<std::string, int>& uhNameIndex() const { return uh_name_to_idx_; }
+
     /**
      * @brief Compute RDII inflows for all groups (buffered, not added to lat_flow).
      *

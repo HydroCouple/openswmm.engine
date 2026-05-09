@@ -167,6 +167,24 @@ cdef class Surface2D:
         _check(swmm_2d_get_head(self._engine, idx, &val))
         return val
 
+    def get_rainfall(self, int idx) -> float:
+        """Return the current rainfall at a specific triangle."""
+        cdef double val
+        _check(swmm_2d_get_rainfall(self._engine, idx, &val))
+        return val
+
+    def get_net_source(self, int idx) -> float:
+        """Return the net source term at a specific triangle."""
+        cdef double val
+        _check(swmm_2d_get_net_source(self._engine, idx, &val))
+        return val
+
+    def get_coupling_flux(self, int idx) -> float:
+        """Return the coupling flux at a specific triangle."""
+        cdef double val
+        _check(swmm_2d_get_coupling_flux(self._engine, idx, &val))
+        return val
+
     # ------------------------------------------------------------------
     # State — per vertex
     # ------------------------------------------------------------------
@@ -282,3 +300,50 @@ cdef class Surface2D:
     @abs_tolerance.setter
     def abs_tolerance(self, double value):
         _check(swmm_2d_set_abs_tolerance(self._engine, value))
+
+    # ------------------------------------------------------------------
+    # Boundary edges
+    # ------------------------------------------------------------------
+
+    @property
+    def boundary_edge_count(self) -> int:
+        """Number of boundary edges in the 2D mesh."""
+        cdef int count = 0
+        _check(swmm_2d_boundary_edge_count(self._engine, &count))
+        return count
+
+    def get_edge_bc_type(self, int tri_idx, int edge) -> int:
+        """Return the boundary condition type for a triangle edge."""
+        cdef int bc_type = 0
+        _check(swmm_2d_get_edge_bc_type(self._engine, tri_idx, edge, &bc_type))
+        return bc_type
+
+    def set_edge_bc_type(self, int tri_idx, int edge, int bc_type):
+        """Set the boundary condition type for a triangle edge."""
+        _check(swmm_2d_set_edge_bc_type(self._engine, tri_idx, edge, bc_type))
+
+    def get_edge_bc_head(self, int tri_idx, int edge) -> float:
+        """Return the boundary head for a triangle edge."""
+        cdef double head = 0.0
+        _check(swmm_2d_get_edge_bc_head(self._engine, tri_idx, edge, &head))
+        return head
+
+    def set_edge_bc_head(self, int tri_idx, int edge, double head):
+        """Set the boundary head for a triangle edge."""
+        _check(swmm_2d_set_edge_bc_head(self._engine, tri_idx, edge, head))
+
+    def get_edge_bc_slope(self, int tri_idx, int edge) -> float:
+        """Return the boundary slope for a triangle edge."""
+        cdef double slope = 0.0
+        _check(swmm_2d_get_edge_bc_slope(self._engine, tri_idx, edge, &slope))
+        return slope
+
+    def set_edge_bc_slope(self, int tri_idx, int edge, double slope):
+        """Set the boundary slope for a triangle edge."""
+        _check(swmm_2d_set_edge_bc_slope(self._engine, tri_idx, edge, slope))
+
+    def get_edge_bc_cum_flux(self, int tri_idx, int edge) -> float:
+        """Return the cumulative boundary flux for a triangle edge."""
+        cdef double cum_flux = 0.0
+        _check(swmm_2d_get_edge_bc_cum_flux(self._engine, tri_idx, edge, &cum_flux))
+        return cum_flux

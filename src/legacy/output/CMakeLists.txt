@@ -7,7 +7,7 @@
 #
 # Target:      openswmm_legacy_output
 # Output name: openswmm.legacy.output
-# Aliases:     openswmm::legacy::output  OpenSWMMCore::Output  openswmmcore_output
+# Aliases:     openswmm::legacy::output
 #
 # IMPORTANT: Do NOT modify any .c or .h file in this directory.
 #
@@ -25,8 +25,6 @@ add_library(openswmm_legacy_output SHARED
 )
 
 # Backwards-compatible aliases
-add_library(openswmmcore_output         ALIAS openswmm_legacy_output)
-add_library(OpenSWMMCore::Output        ALIAS openswmm_legacy_output)
 add_library(openswmm::legacy::output    ALIAS openswmm_legacy_output)
 
 set_target_properties(openswmm_legacy_output
@@ -37,12 +35,12 @@ set_target_properties(openswmm_legacy_output
 )
 
 # Generate export header
-# NOTE: File name and macro names must match what openswmm_output.h expects:
-#   #include "openswmm_output_export.h"    → EXPORT_FILE_NAME
-#   EXPORT_OPENSWMMCORE_OUTPUT_API         → EXPORT_MACRO_NAME
+# NOTE: Macro name must stay EXPORT_OPENSWMMCORE_OUTPUT_API — it is used
+#       directly in the unmodified legacy C source file (swmm_output.c).
+#   EXPORT_OPENSWMMCORE_OUTPUT_API         → EXPORT_MACRO_NAME (preserved)
 include(GenerateExportHeader)
 generate_export_header(openswmm_legacy_output
-    BASE_NAME        openswmmcore_output
+    BASE_NAME        openswmm_legacy_output
     EXPORT_MACRO_NAME EXPORT_OPENSWMMCORE_OUTPUT_API
     EXPORT_FILE_NAME openswmm_output_export.h
     STATIC_DEFINE    SHARED_EXPORTS_BUILT_AS_STATIC
@@ -66,23 +64,26 @@ target_include_directories(openswmm_legacy_output
 # Link dependencies
 target_link_libraries(openswmm_legacy_output
     PUBLIC
-        openswmmcore      # INTERFACE library — exposes include/
+        openswmm_common   # INTERFACE library — exposes include/
 )
 
 # RPATH settings
+# The output dylib is installed to openswmm/legacy/output/; no external
+# bundled deps needed beyond system libs (libSystem, libc++).
 if(APPLE)
     set(LIB_ROOT "@loader_path")
-else()
+elseif(UNIX)
     set(LIB_ROOT "$ORIGIN")
+else()
+    set(LIB_ROOT "")
 endif()
 
 set_target_properties(openswmm_legacy_output
     PROPERTIES
         MACOSX_RPATH             TRUE
         SKIP_BUILD_RPATH         FALSE
-        BUILD_WITH_INSTALL_RPATH FALSE
-        INSTALL_RPATH            "${LIB_ROOT};${PACKAGE_RPATH};"
-        INSTALL_RPATH_USE_LINK_PATH TRUE
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH            "${LIB_ROOT}"
 )
 
 # Install public headers
@@ -94,7 +95,7 @@ install(
 # Install library
 install(
     TARGETS     openswmm_legacy_output
-    EXPORT      OpenSWMMCoreTargets
+    EXPORT      OpenSWMMEngineTargets
 )
 
 # Copy to build tree for testing

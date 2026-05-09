@@ -11,10 +11,13 @@
 
 #include "PostParseResolver.hpp"
 #include "../core/Constants.hpp"
+#include "../core/ErrorCodes.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
+#include "../core/UnitConversion.hpp"
 #include "../hydraulics/xsect_tables.hpp"
 #include "../hydraulics/XSectBatch.hpp"
+#include "../hydraulics/ForceMain.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -23,6 +26,13 @@
 #include <utility>
 
 namespace openswmm::input {
+
+using openswmm::format_warning;
+using openswmm::WarnCode;
+using openswmm::WARN_NEGATIVE_OFFSET;
+using openswmm::WARN_MIN_ELEV_DROP;
+using openswmm::WARN_REGULATOR_CREST_LOW;
+using openswmm::WARN_MAX_DEPTH_INCREASED;
 
 // -------------------------------------------------------------------------
 // Load external FILE timeseries from disk
@@ -116,20 +126,8 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
 
 void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
-    // Subcatchment → gage linkage
-    // -------------------------------------------------------------------------
-    // Re-resolve any gage references that were -1 during SUBCATCHMENTS parsing
-    // (can happen when RAINGAGES appears after SUBCATCHMENTS in the file).
-    // We stored the gage name in the subcatch section; we need a separate
-    // name lookup. But since we didn't store names, this pass just validates
-    // that all gage indices are valid. The initial resolution handles
-    // forward-references for in-order files (legacy SWMM requires order too).
-
-    // -------------------------------------------------------------------------
     // Final counts → allocate SoA arrays to exact size
     // -------------------------------------------------------------------------
-    // Up to this point the arrays have been grown incrementally with resize().
-    // Trim/verify sizes are consistent.
     const int n_nodes    = ctx.node_names.size();
     const int n_links    = ctx.link_names.size();
     const int n_subcatch = ctx.subcatch_names.size();
@@ -173,6 +171,7 @@ void resolve_cross_references(SimulationContext& ctx) {
     if (ctx.spatial.link_vertices_y.size() < ul) ctx.spatial.link_vertices_y.resize(ul);
     if (ctx.spatial.subcatch_polygon_x.size() < us) ctx.spatial.subcatch_polygon_x.resize(us);
     if (ctx.spatial.subcatch_polygon_y.size() < us) ctx.spatial.subcatch_polygon_y.resize(us);
+
 
     // -------------------------------------------------------------------------
     // Load external FILE-referenced timeseries from disk
@@ -224,6 +223,28 @@ void resolve_cross_references(SimulationContext& ctx) {
             ctx.gages.source[ug] == RainSource::TIMESERIES &&
             !ctx.gages.ts_name[ug].empty()) {
             ctx.gages.ts_index[ug] = ctx.table_names.find(ctx.gages.ts_name[ug]);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Gap #53: Co-gage detection
+    // -------------------------------------------------------------------------
+    // When two or more gages share the same TIMESERIES source and ts_index, the
+    // secondary gages should copy rainfall from the primary (lowest-index gage)
+    // rather than querying the timeseries independently.  Matches legacy coGage.
+    for (int gj = 0; gj < n_gages; ++gj) {
+        auto ugj = static_cast<std::size_t>(gj);
+        ctx.gages.co_gage_index[ugj] = -1;
+        if (ctx.gages.source[ugj] != RainSource::TIMESERIES) continue;
+        int ts_j = ctx.gages.ts_index[ugj];
+        if (ts_j < 0) continue;
+        for (int gi = 0; gi < gj; ++gi) {
+            auto ugi = static_cast<std::size_t>(gi);
+            if (ctx.gages.source[ugi] == RainSource::TIMESERIES &&
+                ctx.gages.ts_index[ugi] == ts_j) {
+                ctx.gages.co_gage_index[ugj] = gi;
+                break;
+            }
         }
     }
 
@@ -297,6 +318,32 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (ctx.links.pump_curve[uj] >= 0) continue; // already resolved
         if (ctx.links.pump_curve_name[uj].empty()) continue;
         ctx.links.pump_curve[uj] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
+    }
+
+    // Outlet (TABULAR) rating curve name resolution — curve name stored in
+    // pump_curve_name; resolved index stored in pump_curve (mutual exclusion).
+    for (int j = 0; j < n_links; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] != LinkType::OUTLET) continue;
+        int outlet_type = static_cast<int>(ctx.links.param1[uj]);
+        if (outlet_type < 2) continue; // FUNCTIONAL — no curve needed
+        if (ctx.links.pump_curve[uj] >= 0) continue; // already resolved
+        if (ctx.links.pump_curve_name[uj].empty()) continue;
+        ctx.links.pump_curve[uj] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
+    }
+
+    // Convert pump startup/shutoff depths from display units → internal (ft)
+    {
+        int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+        double ucf_len = ucf::Ucf[ucf::LENGTH][us];
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] != LinkType::PUMP) continue;
+            if (ctx.links.pump_startup[uj] > 0.0)
+                ctx.links.pump_startup[uj] /= ucf_len;
+            if (ctx.links.pump_shutoff[uj] > 0.0)
+                ctx.links.pump_shutoff[uj] /= ucf_len;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -408,23 +455,44 @@ void resolve_cross_references(SimulationContext& ctx) {
     if (ctx.options.link_offsets == 1) { // ELEV_OFFSET
         for (int j = 0; j < n_links; ++j) {
             auto uj = static_cast<std::size_t>(j);
-            if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+            auto lt = ctx.links.type[uj];
+            if (lt == LinkType::CONDUIT || lt == LinkType::PUMP) continue;
             int n1 = ctx.links.node1[uj];
             int n2 = ctx.links.node2[uj];
-            if (n1 >= 0 && n1 < n_nodes) {
-                ctx.links.offset1[uj] = std::max(0.0,
-                    ctx.links.offset1[uj] - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)]);
-            }
-            if (n2 >= 0 && n2 < n_nodes) {
-                ctx.links.offset2[uj] = std::max(0.0,
-                    ctx.links.offset2[uj] - ctx.nodes.invert_elev[static_cast<std::size_t>(n2)]);
-            }
-            // Also convert crest_height for weirs/orifices
-            if (ctx.links.type[uj] == LinkType::WEIR ||
-                ctx.links.type[uj] == LinkType::ORIFICE) {
+
+            if (lt == LinkType::ORIFICE) {
+                // [ORIFICES] offset1 = absolute invert elevation → convert to depth above n1
                 if (n1 >= 0 && n1 < n_nodes) {
-                    ctx.links.crest_height[uj] = std::max(0.0,
-                        ctx.links.crest_height[uj] - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)]);
+                    double raw1 = ctx.links.offset1[uj] - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
+                    if (raw1 < 0.0)
+                        ctx.warnings.push_back(format_warning(WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
+                    ctx.links.offset1[uj] = std::max(0.0, raw1);
+                }
+                // WARNING 10: if orifice invert (absolute) < downstream node invert
+                if (n1 >= 0 && n1 < n_nodes && n2 >= 0 && n2 < n_nodes) {
+                    double inv1 = ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
+                    double inv2 = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)];
+                    double ori_abs = ctx.links.offset1[uj] + inv1; // after conversion
+                    if (ori_abs < inv2) {
+                        ctx.links.offset1[uj] = std::max(0.0, inv2 - inv1);
+                        ctx.warnings.push_back(format_warning(WARN_REGULATOR_CREST_LOW, ctx.link_names.name_of(j)));
+                    }
+                }
+            } else if (lt == LinkType::WEIR || lt == LinkType::OUTLET) {
+                // [WEIRS]/[OUTLETS]: crest_height = absolute crest elevation → convert to depth above n1
+                // offset1/offset2 are not explicit input fields for weirs/outlets, keep at 0
+                if (n1 >= 0 && n1 < n_nodes) {
+                    double rawCrest = ctx.links.crest_height[uj] - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
+                    ctx.links.crest_height[uj] = std::max(0.0, rawCrest);
+                }
+                // WARNING 10: if crest (absolute) < downstream node invert
+                if (n1 >= 0 && n1 < n_nodes && n2 >= 0 && n2 < n_nodes) {
+                    double crest_abs = ctx.links.crest_height[uj] + ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
+                    double inv2     = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)];
+                    if (crest_abs < inv2) {
+                        ctx.links.crest_height[uj] = std::max(0.0, inv2 - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)]);
+                        ctx.warnings.push_back(format_warning(WARN_REGULATOR_CREST_LOW, ctx.link_names.name_of(j)));
+                    }
                 }
             }
         }
@@ -577,10 +645,12 @@ void resolve_cross_references(SimulationContext& ctx) {
             r_full = 0.25 * y_full;
             s_full = a_full * std::pow(r_full, 0.63);  // H-W exponent
             s_max  = 1.06949 * s_full;
-            w_max  = y_full;
             yw_max = 0.5 * y_full;
-            // Store C-factor or roughness in s_bot
-            ctx.links.xsect_s_bot[uj] = ctx.links.xsect_r_bot[uj];
+            // Geom2 (w_max) holds the HW C-factor or DW roughness height.
+            // Save it to xsect_r_bot (legacy xsect.rBot) before w_max is
+            // overwritten with diameter = pipe width for a full circle.
+            ctx.links.xsect_r_bot[uj] = w_max;
+            w_max  = y_full;
             break;
 
         case XsectShape::FILLED_CIRCULAR: {
@@ -941,19 +1011,24 @@ void resolve_cross_references(SimulationContext& ctx) {
 
         // Convert elevation offsets if ELEV_OFFSET mode
         if (ctx.options.link_offsets == 1) { // ELEV_OFFSET
-            ctx.links.offset1[uj] =
-                std::max(0.0, ctx.links.offset1[uj] - ctx.nodes.invert_elev[n1]);
-            ctx.links.offset2[uj] =
-                std::max(0.0, ctx.links.offset2[uj] - ctx.nodes.invert_elev[n2]);
+            double raw1 = ctx.links.offset1[uj] - ctx.nodes.invert_elev[n1];
+            double raw2 = ctx.links.offset2[uj] - ctx.nodes.invert_elev[n2];
+            if (raw1 < 0.0)
+                ctx.warnings.push_back(format_warning(WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
+            if (raw2 < 0.0)
+                ctx.warnings.push_back(format_warning(WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
+            ctx.links.offset1[uj] = std::max(0.0, raw1);
+            ctx.links.offset2[uj] = std::max(0.0, raw2);
         }
 
         double elev1 = ctx.links.offset1[uj] + ctx.nodes.invert_elev[n1];
         double elev2 = ctx.links.offset2[uj] + ctx.nodes.invert_elev[n2];
         double delta = std::fabs(elev1 - elev2);
 
-        // Enforce minimum elevation change
+        // Enforce minimum elevation change (matches legacy WARNING 04)
         if (delta < MIN_DELTA_Z) {
             delta = MIN_DELTA_Z;
+            ctx.warnings.push_back(format_warning(WARN_MIN_ELEV_DROP, ctx.link_names.name_of(j)));
         }
 
         double slope;
@@ -975,29 +1050,16 @@ void resolve_cross_references(SimulationContext& ctx) {
         ctx.links.slope[uj] = slope;
 
         // Reverse conduit orientation for adverse slopes in DW routing
-        // (matching legacy conduit_reverse in link.c lines 1084-1089, 1160-1193)
-        // NOTE: Reversal must happen after elevation offsets are converted to
-        // depth offsets (link_offsets == ELEV_OFFSET handled above) but before
-        // the conveyance computation below. The slope sign is stored as computed
-        // so that beta = PHI*sqrt(|slope|)/n always uses positive slope.
+        // (matching legacy conduit_reverse in link.c)
         if (ctx.options.routing_model == RoutingModel::DYNWAVE &&
             slope < 0.0 &&
             ctx.links.xsect_shape[uj] != XsectShape::DUMMY) {
 
-            // Swap node1 and node2
             std::swap(ctx.links.node1[uj], ctx.links.node2[uj]);
-
-            // Swap offsets
             std::swap(ctx.links.offset1[uj], ctx.links.offset2[uj]);
-
-            // Swap inlet/outlet loss coefficients
             std::swap(ctx.links.loss_inlet[uj], ctx.links.loss_outlet[uj]);
-
-            // Negate slope and direction
             ctx.links.slope[uj] = -slope;
             ctx.links.direction[uj] *= -1;
-
-            // Negate initial flow
             ctx.links.q0[uj] = -ctx.links.q0[uj];
         }
     }
@@ -1017,6 +1079,20 @@ void resolve_cross_references(SimulationContext& ctx) {
 
         if (n_val <= 0.0 || a_full <= 0.0) continue;
 
+        // For DW force mains, substitute equivalent Manning's n (Gap #22)
+        // Matches legacy conduit_validate in link.c lines 1094-1096:
+        //   if (RouteModel == DW && xsect.type == FORCE_MAIN)
+        //       roughness = forcemain_getEquivN(j, k);
+        bool is_force_main = (ctx.links.xsect_shape[uj] == XsectShape::FORCE_MAIN);
+        bool is_dw = (ctx.options.routing_model == RoutingModel::DYNWAVE);
+        if (is_dw && is_force_main) {
+            auto fm = static_cast<forcemain::FrictionModel>(ctx.options.force_main_eqn);
+            double r_bot  = ctx.links.xsect_r_bot[uj];
+            double y_full = ctx.links.xsect_y_full[uj];
+            n_val = forcemain::getEquivN(fm, r_bot, y_full, slope, n_val);
+            if (n_val <= 0.0) n_val = ctx.links.roughness[uj];
+        }
+
         // Roughness factor for DW friction slope: GRAVITY * (n/PHI)^2
         ctx.links.rough_factor[uj] = GRAVITY * (n_val / PHI) * (n_val / PHI);
 
@@ -1035,12 +1111,25 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (mod_len <= 0.0) mod_len = ctx.links.length[uj];
         ctx.links.mod_length[uj] = mod_len;
         ctx.links.volume[uj] = a_full * mod_len;
+
+        // For DW force mains, store roughness factor in xsect_s_bot (Gap #22)
+        // Matches legacy link.c lines 1127-1130:
+        //   Link[j].xsect.sBot = forcemain_getRoughFactor(j, lengthFactor)
+        // The lengthFactor = mod_length / length (1.0 if not lengthened).
+        if (is_dw && is_force_main) {
+            double length_factor = (ctx.links.length[uj] > 0.0)
+                ? mod_len / ctx.links.length[uj] : 1.0;
+            auto fm = static_cast<forcemain::FrictionModel>(ctx.options.force_main_eqn);
+            ctx.links.xsect_s_bot[uj] =
+                forcemain::getRoughFactor(fm, ctx.links.xsect_r_bot[uj], length_factor);
+        }
     }
 
     // -------------------------------------------------------------------------
     // Node fullDepth adjustment from connected link crowns
     // (matches legacy link_validate → node fullDepth adjustment)
     // -------------------------------------------------------------------------
+    std::vector<bool> warned_depth(static_cast<std::size_t>(n_nodes), false);
     for (int j = 0; j < n_links; ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
@@ -1049,18 +1138,28 @@ void resolve_cross_references(SimulationContext& ctx) {
         int n1 = ctx.links.node1[uj];
         int n2 = ctx.links.node2[uj];
 
-        // Upstream node: crown = offset1 + y_full
-        if (n1 >= 0 && n1 < n_nodes) {
+        // Upstream node: crown = offset1 + y_full (JUNCTION only, matches legacy Warning 02)
+        if (n1 >= 0 && n1 < n_nodes &&
+            ctx.nodes.type[static_cast<std::size_t>(n1)] == NodeType::JUNCTION) {
             double crown = ctx.links.offset1[uj] + y_full;
             if (crown > ctx.nodes.full_depth[n1]) {
                 ctx.nodes.full_depth[n1] = crown;
+                if (!warned_depth[static_cast<std::size_t>(n1)]) {
+                    ctx.warnings.push_back(format_warning(WARN_MAX_DEPTH_INCREASED, ctx.node_names.name_of(n1)));
+                    warned_depth[static_cast<std::size_t>(n1)] = true;
+                }
             }
         }
-        // Downstream node: crown = offset2 + y_full
-        if (n2 >= 0 && n2 < n_nodes) {
+        // Downstream node: crown = offset2 + y_full (JUNCTION only, matches legacy Warning 02)
+        if (n2 >= 0 && n2 < n_nodes &&
+            ctx.nodes.type[static_cast<std::size_t>(n2)] == NodeType::JUNCTION) {
             double crown = ctx.links.offset2[uj] + y_full;
             if (crown > ctx.nodes.full_depth[n2]) {
                 ctx.nodes.full_depth[n2] = crown;
+                if (!warned_depth[static_cast<std::size_t>(n2)]) {
+                    ctx.warnings.push_back(format_warning(WARN_MAX_DEPTH_INCREASED, ctx.node_names.name_of(n2)));
+                    warned_depth[static_cast<std::size_t>(n2)] = true;
+                }
             }
         }
     }

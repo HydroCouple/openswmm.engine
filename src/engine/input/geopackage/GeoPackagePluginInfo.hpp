@@ -106,6 +106,21 @@ public:
     bool has_report() const noexcept override { return true; }
 
     // -----------------------------------------------------------------------
+    // File-filter advertisement (IPluginComponentInfo)
+    // -----------------------------------------------------------------------
+
+    std::vector<FileFilter> file_filters() const override {
+        const std::string desc        = "OGC GeoPackage";
+        const std::vector<std::string> patterns = {"*.gpkg"};
+        const std::vector<std::string> mimes    = {"application/geopackage+sqlite3"};
+        return {
+            FileFilter{ desc, patterns, PluginRole::INPUT_READ,    mimes },
+            FileFilter{ desc, patterns, PluginRole::OUTPUT_WRITE,  mimes },
+            FileFilter{ desc, patterns, PluginRole::REPORT_WRITE,  mimes },
+        };
+    }
+
+    // -----------------------------------------------------------------------
     // Factory methods (IPluginComponentInfo)
     // -----------------------------------------------------------------------
 

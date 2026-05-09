@@ -63,6 +63,7 @@ void LIDGroupSoA::resize(int n) {
     auto un = static_cast<std::size_t>(n);
 
     subcatch_idx.assign(un, -1);
+    control_idx.assign(un, -1);
     area.assign(un, 0.0);
     from_imperv.assign(un, 0.0);
     from_perv.assign(un, 0.0);
@@ -173,6 +174,7 @@ void LIDSolver::init(SimulationContext& ctx) {
 
     // If no LID usage data, leave all groups empty
     int n_usage = ctx.lid_usage.count();
+    ctx.lid_usage.resize_wb(n_usage);
     if (n_usage == 0) {
         for (auto& g : groups_) g.resize(0);
         return;
@@ -209,6 +211,7 @@ void LIDSolver::init(SimulationContext& ctx) {
 
         // Usage-level fields
         g.subcatch_idx[us] = ctx.lid_usage.subcatch_index[uj];
+        g.control_idx[us]  = li;
         g.area[us]         = ctx.lid_usage.area[uj];
         g.full_width[us]   = ctx.lid_usage.width[uj];
         g.from_imperv[us]  = ctx.lid_usage.from_imperv[uj] / 100.0;  // % → fraction
@@ -355,6 +358,21 @@ void LIDSolver::init(SimulationContext& ctx) {
             }
         }
     }
+
+    // Gap #60: accumulate total LID area (ft²) per subcatchment for snow plow exclusion.
+    // Matches legacy Subcatch[i].lidArea used in snow.c Build 5.2.0.
+    int n_sc = ctx.n_subcatches();
+    if (n_sc > 0) {
+        ctx.subcatches.total_lid_area_ft2.assign(static_cast<std::size_t>(n_sc), 0.0);
+        for (auto& grp : groups_) {
+            for (int u = 0; u < grp.count; ++u) {
+                auto uu = static_cast<std::size_t>(u);
+                int sc = grp.subcatch_idx[uu];
+                if (sc >= 0 && sc < n_sc)
+                    ctx.subcatches.total_lid_area_ft2[static_cast<std::size_t>(sc)] += grp.area[uu];
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -497,6 +515,119 @@ void LIDSolver::batchBarrelFlux(LIDGroupSoA& g, double rainfall, double dt) {
         g.wb_drain_flow[ui] += drain * dt;
         g.wb_final_vol[ui]   = g.stor_depth[ui];
         g.vol_treated[ui]   += unit_inflow * dt;
+    }
+}
+
+// ============================================================================
+// Batch infiltration trench — VECTORISABLE
+// Gap #24: surface drains directly to storage (no soil layer).
+// Matches legacy lidproc.c trenchFluxRates().
+// ============================================================================
+
+void LIDSolver::batchInfilTrenchFlux(LIDGroupSoA& g, double rainfall,
+                                      double evap_rate, double dt) {
+    for (int i = 0; i < g.count; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+
+        double surfaceDepth = g.surf_depth[ui];
+        double storageDepth = g.stor_depth[ui];
+        double storThick    = g.stor_thick[ui];
+        double storVoid     = g.stor_void[ui];
+        double surfVoid     = g.surf_void_frac[ui];
+
+        // Per-unit inflow (rainfall on surface + routed runoff)
+        double surfaceInflow = (g.inflow[ui] > 0.0) ? g.inflow[ui] : rainfall;
+
+        // Convert depths to volumes (ft of equivalent water depth)
+        double surfaceVolume = surfaceDepth * surfVoid;
+        double storageVolume = storageDepth * storVoid;
+
+        // --- Evaporation cascade (matching legacy getEvapRates with pervFrac=1) ---
+        // Surface evap first; storage evap only when surface is dry.
+        double surfaceEvap = std::min(evap_rate, surfaceVolume / dt);
+        surfaceEvap = std::max(0.0, surfaceEvap);
+        double storageEvap = 0.0;
+        if (surfaceDepth <= 0.0) {
+            double availEvap = std::max(0.0, evap_rate - surfaceEvap);
+            storageEvap = std::min(availEvap, storageVolume / dt);
+        }
+
+        // --- Storage inflow: all surface volume drains to storage each step ---
+        // Matching legacy: StorageInflow = SurfaceInflow + SurfaceVolume/Tstep
+        double storageInflow = surfaceInflow + surfaceVolume / dt;
+
+        // --- Exfiltration from storage to native soil (with clogging) ---
+        double storageExfil = getStorageExfil(g.stor_ksat[ui], g.stor_clog[ui],
+                                               g.wb_inflow[ui]);
+
+        // --- Underdrain flow ---
+        double storageDrain = 0.0;
+        if (g.drain_coeff[ui] > 0.0)
+            storageDrain = getDrainRate(storageDepth, g.drain_coeff[ui],
+                                        g.drain_expon[ui], g.drain_offset[ui],
+                                        g.drain_hopen[ui], g.drain_hclose[ui],
+                                        g.drain_open[ui]);
+
+        // --- Limit exfiltration (can't exceed available inflow + stored volume) ---
+        double maxRate = storageInflow - storageEvap
+                       + storageDepth * storVoid / dt;
+        storageExfil = std::min(storageExfil, maxRate);
+        storageExfil = std::max(0.0, storageExfil);
+
+        // --- Limit underdrain (matching legacy limit logic) ---
+        if (storageDrain > 0.0) {
+            maxRate = -storageExfil - storageEvap;
+            if (storageDepth >= storThick) maxRate += storageInflow;
+            if (g.drain_offset[ui] <= storageDepth)
+                maxRate += (storageDepth - g.drain_offset[ui]) * storVoid / dt;
+            maxRate = std::max(0.0, maxRate);
+            storageDrain = std::min(storageDrain, maxRate);
+        }
+
+        // --- Limit storage inflow to available capacity ---
+        maxRate = (storThick - storageDepth) * storVoid / dt
+                + storageExfil + storageEvap + storageDrain;
+        storageInflow = std::min(storageInflow, maxRate);
+
+        // Surface infil equals storage inflow (no soil layer)
+        double surfaceInfil = storageInflow;
+
+        // --- Surface outflow (Manning's over depression storage) ---
+        double surfaceOutflow = 0.0;
+        double excess = surfaceDepth - g.surf_store[ui];
+        if (excess > 0.0 && g.surf_alpha[ui] > 0.0
+            && g.full_width[ui] > 0.0 && g.area[ui] > 0.0) {
+            surfaceOutflow = g.surf_alpha[ui] * std::pow(excess, 5.0 / 3.0)
+                           * g.full_width[ui] / g.area[ui];
+            surfaceOutflow = std::min(surfaceOutflow, excess / dt);
+        }
+
+        // --- Euler integration ---
+        double fSurf = (surfaceInflow - surfaceEvap - surfaceInfil - surfaceOutflow)
+                       / surfVoid;
+        double fStor = (storageInflow - storageEvap - storageExfil - storageDrain)
+                       / storVoid;
+
+        double newSurf = std::max(0.0, surfaceDepth + fSurf * dt);
+        double newStor = std::max(0.0, std::min(storThick, storageDepth + fStor * dt));
+
+        g.surf_depth[ui]    = newSurf;
+        g.stor_depth[ui]    = newStor;
+
+        // Outputs
+        g.surface_runoff[ui] = surfaceOutflow;
+        g.drain_flow[ui]     = storageDrain;
+        g.evap_loss[ui]      = surfaceEvap + storageEvap;
+        g.infil_loss[ui]     = storageExfil;
+
+        // Water balance
+        g.wb_inflow[ui]     += surfaceInflow * dt;
+        g.wb_evap[ui]       += (surfaceEvap + storageEvap) * dt;
+        g.wb_infil[ui]      += storageExfil * dt;
+        g.wb_surf_flow[ui]  += surfaceOutflow * dt;
+        g.wb_drain_flow[ui] += storageDrain * dt;
+        g.wb_final_vol[ui]   = newSurf * surfVoid + newStor * storVoid;
+        g.vol_treated[ui]   += surfaceInflow * dt;
     }
 }
 
@@ -1187,8 +1318,13 @@ void LIDSolver::execute(SimulationContext& /*ctx*/, double dt,
         switch (g.type) {
             case LIDType::BIO_CELL:
             case LIDType::RAIN_GARDEN:
-            case LIDType::INFIL_TRENCH:
                 batchBioCellFlux(g, rainfall, evap_rate, dt);
+                break;
+
+            case LIDType::INFIL_TRENCH:
+                // Gap #24: infiltration trench has no soil layer — surface drains
+                // directly to storage. Uses batchInfilTrenchFlux() not batchBioCellFlux().
+                batchInfilTrenchFlux(g, rainfall, evap_rate, dt);
                 break;
 
             case LIDType::RAIN_BARREL:

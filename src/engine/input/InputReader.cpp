@@ -73,24 +73,32 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
             raw_line.pop_back();
         }
 
-        // Strip comment, then trim
-        std::string_view stripped = Tokenizer::strip_comment(raw_line);
-        std::string_view trimmed  = Tokenizer::trim(stripped);
+        // Trim first so we can inspect the leading character without allocating.
+        std::string_view trimmed_raw = Tokenizer::trim(raw_line);
 
-        // Skip blank lines
-        if (trimmed.empty()) continue;
+        // Skip truly empty lines
+        if (trimmed_raw.empty()) continue;
 
         // Detect section header: starts with '['
-        if (trimmed.front() == '[') {
+        if (trimmed_raw.front() == '[') {
             flush_section();
-            current_tag = parse_section_header(trimmed);
+            current_tag = parse_section_header(trimmed_raw);
             continue;
         }
 
-        // Data line inside a section
-        if (!current_tag.empty()) {
-            section_lines.emplace_back(trimmed);
+        // Comment line (starts with ';') — keep verbatim inside a section so
+        // section handlers can associate per-object comments with objects.
+        if (trimmed_raw.front() == ';') {
+            if (!current_tag.empty())
+                section_lines.emplace_back(std::string(trimmed_raw));
+            continue;
         }
+
+        // Data line — strip inline trailing comment, then trim
+        std::string_view stripped = Tokenizer::strip_comment(trimmed_raw);
+        std::string_view trimmed  = Tokenizer::trim(stripped);
+        if (!trimmed.empty() && !current_tag.empty())
+            section_lines.emplace_back(std::string(trimmed));
         // Lines before the first section header are silently ignored
     }
 

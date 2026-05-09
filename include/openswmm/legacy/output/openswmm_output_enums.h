@@ -5,8 +5,8 @@
  *  \date Last edited: 2024-10-17
  */
 
- #ifndef OPENSWMMCORE_OUTPUT_ENUMS_H_
- #define OPENSWMMCORE_OUTPUT_ENUMS_H_
+ #ifndef OPENSWMM_LEGACY_OUTPUT_ENUMS_H_
+ #define OPENSWMM_LEGACY_OUTPUT_ENUMS_H_
 
 /*!
  * \enum SMO_unitSystem
@@ -182,4 +182,4 @@ typedef enum {
 } SMO_systemAttribute;
 
 
-#endif /* OPENSWMMCORE_OUTPUT_ENUMS_H_ */
+#endif /* OPENSWMM_LEGACY_OUTPUT_ENUMS_H_ */

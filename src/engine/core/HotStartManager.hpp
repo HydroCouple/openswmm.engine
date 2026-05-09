@@ -5,18 +5,29 @@
  * @details `HotStartManager` provides the C++ implementation of the hot start
  *          API declared in `include/openswmm/engine/openswmm_hotstart.h`.
  *
- *          ### Binary file format — OPENSWMM_HS_V1
+ *          ### Binary file format
  *
+ *          **V1** (legacy — no infiltration/GW state):
  *          ```
  *          Offset  Size   Field
  *          ------  ----   -----
  *          0       16     Magic "OPENSWMM_HS_V1\0"
  *          16      4      Version: uint32_t = 1
+ *          ...            (nodes, links as before)
+ *                         Per-subcatch: [uint32 name_len, char name[],
+ *                                        double runoff, double gwater]
+ *          EOF-4   4      CRC32: uint32_t
+ *          ```
+ *
+ *          **V2** (Gap #54 — includes infiltration model state and GW zone state):
+ *          ```
+ *          0       16     Magic "OPENSWMM_HS_V1\0"  (same magic, version byte changes)
+ *          16      4      Version: uint32_t = 2
  *          20      8      Timestamp (Unix seconds): int64_t
  *          28      8      Simulation time at save (decimal days): double
- *          36      8      Start date (OADate (days since 12/30/1899)): double
- *          44      8      End date (OADate (days since 12/30/1899)): double
- *          52      4      CRS string length (bytes including NUL): uint32_t
+ *          36      8      Start date (OADate): double
+ *          44      8      End date (OADate): double
+ *          52      4      CRS string length: uint32_t
  *          56      n      CRS string (null-terminated)
  *          56+n    4      Node count: uint32_t
  *          ...     ...    Per-node: [uint32 name_len, char name[], double depth,
@@ -25,8 +36,12 @@
  *                         Per-link: [uint32 name_len, char name[], double flow,
  *                                    double depth, double volume]
  *                         Subcatch count: uint32_t
- *                         Per-subcatch: [uint32 name_len, char name[],
- *                                        double runoff, double gwater]
+ *                         Per-subcatch V2: [uint32 name_len, char name[],
+ *                                           double runoff, double gwater,
+ *                                           uint32_t infil_model,
+ *                                           double infil[6],
+ *                                           double gw_theta,
+ *                                           double gw_lower_depth]
  *          EOF-4   4      CRC32 of all preceding bytes: uint32_t
  *          ```
  *
@@ -56,6 +71,8 @@
 namespace openswmm {
 
 struct SimulationContext;
+namespace runoff     { class RunoffSolver; }
+namespace groundwater { class GWSolver; }
 
 // ============================================================================
 // Per-object state records
@@ -82,6 +99,14 @@ struct HotStartSubcatchRecord {
     std::string id;
     double      runoff = 0.0;
     double      gwater = 0.0;
+
+    // Gap #54: infiltration model state (V2 only; -1 = not present / V1 file)
+    int         infil_model   = -1;
+    double      infil[6]      = {0, 0, 0, 0, 0, 0};  ///< flat 6-elem state (model-dependent)
+
+    // Gap #54: groundwater zone state (V2 only; gw_theta < 0 = not present)
+    double      gw_theta      = -1.0; ///< upper zone moisture content
+    double      gw_lower_depth = 0.0; ///< lower zone depth (ft)
 };
 
 // ============================================================================
@@ -159,7 +184,7 @@ public:
     // -----------------------------------------------------------------------
 
     /**
-     * @brief Capture current engine state and write to a hot start file.
+     * @brief Capture current engine state and write to a hot start file (V1 format).
      *
      * @param ctx   Simulation context (must be RUNNING or ENDED).
      * @param path  Output file path.
@@ -167,6 +192,23 @@ public:
      *          nullptr on I/O error (error description in `last_io_error`).
      */
     static HotStartFile* save(const SimulationContext& ctx,
+                              const std::string& path);
+
+    /**
+     * @brief Capture current engine state including infiltration and GW (V2 format).
+     *
+     * @details Gap #54: extends V1 save with per-subcatchment infiltration model
+     *          state (6-element flat array) and GW zone state (theta, lower_depth).
+     *          Writes version=2 header.
+     *
+     * @param ctx      Simulation context (must be RUNNING or ENDED).
+     * @param runoff   RunoffSolver providing infiltration state (may be nullptr).
+     * @param gw       GWSolver providing GW zone state (may be nullptr).
+     * @param path     Output file path.
+     */
+    static HotStartFile* save(const SimulationContext& ctx,
+                              const runoff::RunoffSolver* runoff,
+                              const groundwater::GWSolver* gw,
                               const std::string& path);
 
     // -----------------------------------------------------------------------
@@ -202,6 +244,25 @@ public:
      */
     static int apply(HotStartFile& hs,
                      SimulationContext& ctx,
+                     std::function<void(const std::string&)> warn_cb = {});
+
+    /**
+     * @brief Apply hot start records including infiltration and GW state.
+     *
+     * @details Gap #54: extended apply that also restores infiltration model
+     *          state and GW zone state when the file is V2 format.
+     *
+     * @param hs       Hot start file (from save() or open()).
+     * @param ctx      Target simulation context (must be INITIALIZED).
+     * @param runoff   RunoffSolver to restore infiltration state into (may be nullptr).
+     * @param gw       GWSolver to restore GW zone state into (may be nullptr).
+     * @param warn_cb  Optional callback for per-missing-object warnings.
+     * @returns Number of missing-object warnings generated.
+     */
+    static int apply(HotStartFile& hs,
+                     SimulationContext& ctx,
+                     runoff::RunoffSolver* runoff,
+                     groundwater::GWSolver* gw,
                      std::function<void(const std::string&)> warn_cb = {});
 
     // -----------------------------------------------------------------------

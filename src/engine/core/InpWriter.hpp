@@ -38,7 +38,7 @@ namespace inp_writer {
  *   [POLLUTANTS], [LANDUSES], [BUILDUP], [WASHOFF], [TREATMENT],
  *   [TIMESERIES], [CURVES], [PATTERNS],
  *   [USER_FLAGS], [PLUGINS],
- *   [COORDINATES], [MAP]
+ *   [MAP], [COORDINATES], [VERTICES], [Polygons], [SYMBOLS]
  *
  * @param ctx   Simulation context with all model data.
  * @param path  Output file path.

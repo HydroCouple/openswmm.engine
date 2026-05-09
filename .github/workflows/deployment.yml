@@ -90,11 +90,26 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
+      - name: Cache vcpkg downloads (source tarballs)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/downloads
+          key: vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
+            vcpkg-downloads-${{ runner.os }}-
+
       - name: Configure (Release)
+        # Release packaging skips the test/benchmark targets so vcpkg pulls only
+        # the runtime deps (default features → sundials for 2D).
         run: >
           cmake
           --preset=${{ matrix.cmake_preset }}
           -B build-${{ matrix.vcpkg_triplet }}
+          -DOPENSWMM_BUILD_TESTS=OFF
+          -DOPENSWMM_BUILD_UNIT_TESTS=OFF
+          -DOPENSWMM_BUILD_REGRESSION_TESTS=OFF
+          -DOPENSWMM_BUILD_BENCHMARKS=OFF
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
       - name: Build and package
@@ -120,6 +135,7 @@ jobs:
         include:
           - os: ubuntu-latest
             alias: Linux-x64
+            shell_ext: .sh
             vcpkg_triplet: x64-linux
             cmake_osx_arch: ""
 
@@ -139,6 +155,8 @@ jobs:
 
           - os: windows-latest
             alias: Windows-x64
+            cmake_preset: Windows
+            shell_ext: .bat
             vcpkg_triplet: x64-windows
             cmake_osx_arch: ""
 
@@ -147,9 +165,62 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      # vcpkg is required by python/CMakePresets.json (toolchainFile = $env{VCPKG_ROOT}/...).
+      # Each runner is a fresh machine so we must check it out and bootstrap it here.
+      - name: Checkout vcpkg
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: 2025.02.14
+          path: vcpkg
+
       - name: Install OpenMP and Ninja (macOS)
         if: runner.os == 'macOS'
         run: brew install libomp ninja
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          .\bootstrap-vcpkg${{ matrix.shell_ext }}
+          .\vcpkg.exe integrate install
+
+      - name: Bootstrap vcpkg (Unix)
+        if: runner.os != 'Windows'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          ./bootstrap-vcpkg${{ matrix.shell_ext }}
+          chmod +x vcpkg
+
+      # Export the GHA cache tokens so vcpkg can restore binary packages built
+      # by the build job (avoids re-compiling SUNDIALS, etc.).
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v8
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      # Run a cmake configure-only pass on Windows to pre-populate the vcpkg
+      # installed directory using the binary cache from the build job.
+      # cibuildwheel's isolated build env sometimes fails to hit the GHA binary
+      # cache, causing vcpkg to try (and fail) to build SUNDIALS from source.
+      # The installed dir is then forwarded to skbuild via OPENSWMM_CMAKE_ARGS.
+      - name: Pre-install vcpkg dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: >
+          cmake
+          --preset=${{ matrix.cmake_preset }}
+          -B build-vcpkg-prefetch
+          -DOPENSWMM_BUILD_TESTS=OFF
+          -DOPENSWMM_BUILD_UNIT_TESTS=OFF
+          -DOPENSWMM_BUILD_REGRESSION_TESTS=OFF
+          -DOPENSWMM_BUILD_BENCHMARKS=OFF
+          --no-warn-unused-cli
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -174,13 +245,34 @@ jobs:
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
           CIBW_BUILD_VERBOSITY: 3
           CIBW_BEFORE_BUILD_LINUX: pip install ninja
-          CIBW_BEFORE_BUILD_MACOS: brew install ninja libomp && pip install delocate
-          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0 CMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
+          CIBW_BEFORE_BUILD_MACOS: pip install delocate
+          CIBW_ENVIRONMENT_MACOS: >-
+            MACOSX_DEPLOYMENT_TARGET=15.0
+            CMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
+            VCPKG_ROOT=${{ env.VCPKG_ROOT }}
+            VCPKG_BINARY_SOURCES="clear;x-gha,readwrite"
+            VCPKG_MANIFEST_DIR=${{ github.workspace }}
+            ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
+            ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
+          CIBW_ENVIRONMENT_LINUX: >-
+            VCPKG_ROOT=${{ env.VCPKG_ROOT }}
+            VCPKG_BINARY_SOURCES="clear;x-gha,readwrite"
+            VCPKG_MANIFEST_DIR=${{ github.workspace }}
+            ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
+            ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
           CIBW_BEFORE_BUILD_WINDOWS: pip install delvewheel
-          CIBW_ENVIRONMENT_WINDOWS: CMAKE_GENERATOR="Visual Studio 17 2022"
+          CIBW_ENVIRONMENT_WINDOWS: >-
+            CMAKE_GENERATOR="Visual Studio 17 2022"
+            VCPKG_ROOT=${{ env.VCPKG_ROOT }}
+            VCPKG_BINARY_SOURCES="clear;x-gha,readwrite"
+            VCPKG_MANIFEST_DIR=${{ github.workspace }}
+            VCPKG_DEFAULT_TRIPLET=x64-windows
+            OPENSWMM_CMAKE_ARGS=-DVCPKG_INSTALLED_DIR=${{ github.workspace }}/build-vcpkg-prefetch/vcpkg_installed
+            ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
+            ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: auditwheel repair -w {dest_dir} {wheel}
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
-          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: "delvewheel repair -w {dest_dir} {wheel}"
           CIBW_TEST_REQUIRES: pytest numpy
           CIBW_TEST_COMMAND: pytest {package}/tests -v --import-mode=importlib
 

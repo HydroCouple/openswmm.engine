@@ -92,6 +92,128 @@ SWMM_ENGINE_API int swmm_finalize_model(SWMM_Engine engine);
  */
 SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_path);
 
+/**
+ * @brief Write the current model state via a named writer plugin.
+ *
+ * @details Routes the in-memory `SimulationContext` through the
+ *          `IInputPlugin::write()` method of the plugin matching
+ *          @p output_plugin_id.  Lets a host (e.g., the GUI's Save As
+ *          dialog) pick a non-`.inp` container — GeoPackage, HDF5,
+ *          GeoJSON, …— at write time without touching the rest of the
+ *          engine API.
+ *
+ *          Pass NULL or an empty string for @p output_plugin_id to use
+ *          the built-in `.inp` writer (equivalent to swmm_model_write).
+ *
+ *          @p output_plugin_id is resolved via the engine's
+ *          PluginFactory::find_component() — accepts a plugin id
+ *          (e.g., "org.hydrocouple.openswmm.geopackage"), an
+ *          `id:version` pair, or a shared-library path.  The resolved
+ *          plugin must advertise input capability
+ *          (`IPluginComponentInfo::has_input()` returns true), since
+ *          model write is delegated through `IInputPlugin::write()`.
+ *
+ *          The chosen plugin is instantiated transiently for the call:
+ *          create → initialize(args=empty) → write → finalize → delete.
+ *          The engine's primary input plugin is not disturbed so the
+ *          model can be re-saved later with a different writer.
+ *
+ * @param engine            Engine handle (SWMM_STATE_OPENED or later).
+ * @param new_path          Path where the new model file should be written.
+ * @param output_plugin_id  Writer plugin id, version pair, or library
+ *                          path; or NULL/empty for default `.inp` writer.
+ * @returns SWMM_OK on success;
+ *          SWMM_ERR_BADPARAM when @p new_path is NULL or the plugin id
+ *          does not resolve;
+ *          SWMM_ERR_PLUGIN when the resolved plugin has no input
+ *          capability or its initialize/write/finalize fails.
+ *
+ * @see swmm_model_write — built-in `.inp` writer (this function with
+ *      NULL plugin id is functionally equivalent).
+ */
+SWMM_ENGINE_API int
+swmm_model_write_with_plugin(SWMM_Engine engine,
+                              const char* new_path,
+                              const char* output_plugin_id);
+
+/* =========================================================================
+ * [PLUGINS] section access (Slice AA-3.1 Phase B)
+ *
+ * The [PLUGINS] section of an .inp file is a list of rows, one per
+ * plugin to load.  Each row is `path arg1 arg2 …` where `path` resolves
+ * via the same logic as the input plugin lib (a library path, an id, or
+ * an `id:version` pair) and the trailing tokens are passed to the
+ * plugin's initialize() method as `init_args`.
+ *
+ * The accessors below let a host (GUI) read, mutate, and remove rows
+ * without re-parsing the .inp file.  Plugins themselves are
+ * (re-)resolved by PluginFactory at swmm_engine_open / swmm_model_write
+ * time — these accessors only mutate the in-memory `plugin_specs` list.
+ * ========================================================================= */
+
+/**
+ * @brief Number of [PLUGINS] entries currently registered on the engine.
+ * @param count [out] Number of entries.  Always set on SWMM_OK return.
+ */
+SWMM_ENGINE_API int swmm_plugins_count(SWMM_Engine engine, int* count);
+
+/**
+ * @brief Read one [PLUGINS] row by index.
+ *
+ * @details Either output buffer may be NULL (caller doesn't want that
+ *          field).  When non-NULL, the buffer is NUL-terminated and
+ *          truncated at @p path_buf_sz - 1 / @p args_buf_sz - 1 if too
+ *          small (no error returned).  The args string is reconstructed
+ *          by joining the row's `init_args` vector with single spaces.
+ *
+ * @param engine        Engine handle.
+ * @param idx           Index in [0, count).
+ * @param path_buf      [out] UTF-8 plugin path / id; may be NULL.
+ * @param path_buf_sz   Size of path_buf in bytes (incl. NUL).
+ * @param args_buf      [out] UTF-8 space-joined args; may be NULL.
+ * @param args_buf_sz   Size of args_buf in bytes (incl. NUL).
+ * @returns SWMM_OK on success; SWMM_ERR_BADINDEX when idx is out of range.
+ */
+SWMM_ENGINE_API int
+swmm_plugin_get(SWMM_Engine engine,
+                int          idx,
+                char*        path_buf,
+                int          path_buf_sz,
+                char*        args_buf,
+                int          args_buf_sz);
+
+/**
+ * @brief Add or replace a [PLUGINS] row keyed by @p path_or_id.
+ *
+ * @details If a row with the same @p path_or_id exists, its args are
+ *          replaced.  Otherwise a new row is appended.  The engine
+ *          re-serialises the [PLUGINS] section on the next
+ *          swmm_model_write* call.
+ *
+ * @param engine        Engine handle.
+ * @param path_or_id    Library path, plugin id, or `id:version` string.
+ * @param args          Space-separated argument tokens; may be NULL or
+ *                      empty for "no arguments".
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM when @p path_or_id is
+ *          NULL or empty.
+ */
+SWMM_ENGINE_API int
+swmm_plugin_set(SWMM_Engine engine,
+                const char*  path_or_id,
+                const char*  args);
+
+/**
+ * @brief Remove the [PLUGINS] row matching @p path_or_id.
+ *
+ * @details Idempotent: returns SWMM_OK even when no row matches.
+ *
+ * @param engine        Engine handle.
+ * @param path_or_id    Library path, plugin id, or `id:version` string.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM when @p path_or_id is NULL.
+ */
+SWMM_ENGINE_API int
+swmm_plugin_remove(SWMM_Engine engine, const char* path_or_id);
+
 /* =========================================================================
  * Title / notes access
  * ========================================================================= */

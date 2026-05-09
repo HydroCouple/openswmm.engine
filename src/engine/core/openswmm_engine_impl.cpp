@@ -48,6 +48,22 @@ SWMM_ENGINE_API int swmm_engine_step(SWMM_Engine engine, double* elapsed_time) {
     return to_engine(engine)->step(elapsed_time);
 }
 
+// Gap #50: swmm_stride equivalent — advance up to n_steps routing steps.
+SWMM_ENGINE_API int swmm_engine_stride(SWMM_Engine engine, int n_steps, double* elapsed_time) {
+    CHECK_HANDLE(engine);
+    if (elapsed_time) *elapsed_time = 0.0;
+    if (n_steps <= 0) return SWMM_OK;
+
+    double t = 0.0;
+    int err = SWMM_OK;
+    for (int s = 0; s < n_steps; ++s) {
+        err = to_engine(engine)->step(&t);
+        if (elapsed_time) *elapsed_time = t;
+        if (err != SWMM_OK || t <= 0.0) break;
+    }
+    return err;
+}
+
 SWMM_ENGINE_API int swmm_engine_end(SWMM_Engine engine) {
     CHECK_HANDLE(engine);
     return to_engine(engine)->end();

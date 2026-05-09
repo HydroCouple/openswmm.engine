@@ -69,6 +69,7 @@ struct LIDGroupSoA {
     int count = 0;
 
     std::vector<int> subcatch_idx;     ///< Which subcatchment this unit belongs to
+    std::vector<int> control_idx;      ///< LID control index (into ctx.lid_controls)
     std::vector<double> area;          ///< Unit area (ft2)
     std::vector<double> from_imperv;   ///< Fraction of impervious runoff treated (0-1)
     std::vector<double> from_perv;     ///< Fraction of pervious runoff treated (0-1)
@@ -208,6 +209,11 @@ public:
     /// Batch green roof flux rates — VECTORISABLE
     static void batchGreenRoofFlux(LIDGroupSoA& g, double rainfall,
                                     double evap_rate, double dt);
+
+    /// Batch infiltration trench flux rates — VECTORISABLE
+    /// Surface drains directly to storage (no soil layer), matching legacy trenchFluxRates().
+    static void batchInfilTrenchFlux(LIDGroupSoA& g, double rainfall,
+                                      double evap_rate, double dt);
 
     /// Batch permeable pavement flux rates — VECTORISABLE
     static void batchPavementFlux(LIDGroupSoA& g, double rainfall,

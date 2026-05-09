@@ -14,6 +14,7 @@
 #define OPENSWMM_ENGINE_2D_SOLVER_OPTIONS_HPP
 
 #include <cstdint>
+#include <string>
 
 namespace openswmm::twoD {
 
@@ -50,6 +51,9 @@ struct SolverOptions2D {
 
     LinearSolverType   linear_solver   = LinearSolverType::GMRES;
     PreconditionerType preconditioner  = PreconditionerType::NONE;
+
+    /// Path from [2D_MESH_FILE] FILE token. Empty = mesh is inline in main .inp.
+    std::string mesh_file;
 };
 
 } // namespace openswmm::twoD

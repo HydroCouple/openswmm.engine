@@ -10,6 +10,7 @@
 
 #include "Divider.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -29,6 +30,8 @@ void DividerSoA::resize(int n) {
 }
 
 void computeDividerFlows(SimulationContext& ctx, const DividerSoA& soa) {
+    double ucf_flow = ucf::Qcf[static_cast<int>(ctx.options.flow_units)];
+
     for (int k = 0; k < soa.count; ++k) {
         auto uk = static_cast<size_t>(k);
         int ni = soa.node_idx[uk];
@@ -62,7 +65,7 @@ void computeDividerFlows(SimulationContext& ctx, const DividerSoA& soa) {
                 // Lookup diversion fraction from curve
                 int ti = soa.table_idx[uk];
                 if (ti >= 0 && ti < static_cast<int>(ctx.tables.tables.size())) {
-                    double frac = table_lookup_cursor(ctx.tables.tables[static_cast<size_t>(ti)], q_total);
+                    double frac = table_lookup_cursor(ctx.tables.tables[static_cast<size_t>(ti)], q_total * ucf_flow);
                     q_divert = q_total * std::max(0.0, std::min(1.0, frac));
                 }
                 break;

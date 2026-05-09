@@ -290,3 +290,57 @@ class OutSystemVar(IntEnum):
     STORAGE = 11
     EVAP_TOTAL = 12
     PET = 13
+
+
+class WarnCode(IntEnum):
+    """Engine warning codes emitted via the warning callback.
+
+    :cvar NONE: No warning.
+    :cvar HOTSTART_MISSING: Object missing during hot start application.
+    :cvar UNKNOWN_SECTION: Unrecognised input section encountered.
+    :cvar UNKNOWN_OPTION: Unrecognised option keyword.
+    :cvar DEPRECATED_KW: Deprecated keyword used.
+    :cvar PLUGIN_INIT: Plugin initialisation issue.
+    :cvar NUMERICAL: Numerical instability handled gracefully.
+    :cvar STABILITY_LIMIT: Timestep limited by stability criterion.
+    """
+    NONE = 0
+    HOTSTART_MISSING = 1
+    UNKNOWN_SECTION = 2
+    UNKNOWN_OPTION = 3
+    DEPRECATED_KW = 4
+    PLUGIN_INIT = 5
+    NUMERICAL = 6
+    STABILITY_LIMIT = 7
+
+
+class ObjectType(IntEnum):
+    """SWMM object type codes.
+
+    :cvar GAGE: Rain gage.
+    :cvar SUBCATCH: Subcatchment.
+    :cvar NODE: Node (junction, outfall, storage, divider).
+    :cvar LINK: Link (conduit, pump, orifice, weir, outlet).
+    :cvar POLLUT: Pollutant.
+    :cvar LANDUSE: Land use category.
+    :cvar TIMESER: Time series.
+    :cvar TABLE: Curve / table.
+    :cvar RDII: RDII unit hydrograph group.
+    :cvar UNITHYD: Unit hydrograph.
+    :cvar SNOWMELT: Snowmelt parameter set.
+    :cvar SHAPE: Custom cross-section shape.
+    :cvar LID: LID control.
+    """
+    GAGE = 0
+    SUBCATCH = 1
+    NODE = 2
+    LINK = 3
+    POLLUT = 4
+    LANDUSE = 5
+    TIMESER = 6
+    TABLE = 7
+    RDII = 8
+    UNITHYD = 9
+    SNOWMELT = 10
+    SHAPE = 11
+    LID = 12

@@ -217,12 +217,30 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
             }
         }
         else if (key == "SNOWMELT" && tok.size() >= 7) {
+            // Legacy [TEMPERATURE] SNOWMELT format (9 tokens):
+            //   SNOWMELT divT ATIwt nrgRatio elev lat dtlong minMelt maxMelt
+            // New engine format (7 tokens):
+            //   SNOWMELT divT ATIwt nrgRatio lat minMelt maxMelt
+            // Disambiguate: if 9+ tokens, treat as legacy (elevation at tok[4])
             ctx.options.snow_divt      = to_double(tok[1]);
             ctx.options.snow_ati_wt    = to_double(tok[2]);
             ctx.options.snow_nrg_ratio = to_double(tok[3]);
-            ctx.options.snow_lat       = to_double(tok[4]);
-            ctx.options.snow_min_melt  = to_double(tok[5]);
-            ctx.options.snow_max_melt  = to_double(tok[6]);
+            if (tok.size() >= 9) {
+                // Legacy: elev at [4], lat at [5], dtlong at [6], min at [7], max at [8]
+                ctx.options.snow_elev      = to_double(tok[4]);
+                ctx.options.snow_lat       = to_double(tok[5]);
+                // tok[6] = longitude offset (not used in refactored engine)
+                ctx.options.snow_min_melt  = to_double(tok[7]);
+                ctx.options.snow_max_melt  = to_double(tok[8]);
+            } else {
+                // New engine: lat at [4], min at [5], max at [6]
+                ctx.options.snow_lat       = to_double(tok[4]);
+                ctx.options.snow_min_melt  = to_double(tok[5]);
+                ctx.options.snow_max_melt  = to_double(tok[6]);
+                // Optional elevation at tok[7] (new extended format)
+                if (tok.size() >= 8)
+                    ctx.options.snow_elev  = to_double(tok[7]);
+            }
         }
         else if (key == "ADC" && tok.size() >= 12) {
             const std::string surface = Tokenizer::to_upper(tok[1]);

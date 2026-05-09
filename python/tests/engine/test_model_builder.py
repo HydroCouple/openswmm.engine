@@ -160,3 +160,31 @@ class TestModelBuilderWrite:
         m.write(out_path)
         assert os.path.exists(out_path)
         assert os.path.getsize(out_path) > 0
+
+
+# ---------------------------------------------------------------------------
+# Title management
+# ---------------------------------------------------------------------------
+class TestModelBuilderTitle:
+    """Title CRUD operations on a model."""
+
+    def test_title_count_initially_zero(self):
+        m = ModelBuilder()
+        assert m.get_title_count() == 0
+
+    def test_add_title_line(self):
+        m = ModelBuilder()
+        m.add_title_line("First line")
+        assert m.get_title_count() == 1
+        assert m.get_title_line(0) == "First line"
+
+    def test_set_title(self):
+        m = ModelBuilder()
+        m.set_title("Line A\nLine B")
+        assert m.get_title_count() == 2
+
+    def test_clear_title(self):
+        m = ModelBuilder()
+        m.add_title_line("Something")
+        m.clear_title()
+        assert m.get_title_count() == 0

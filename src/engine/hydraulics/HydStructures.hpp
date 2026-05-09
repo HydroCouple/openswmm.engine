@@ -72,7 +72,17 @@ struct OrificeGroup {
     std::vector<double> c_orifice;     ///< Cd * sqrt(2g) * Area
     std::vector<double> c_weir;        ///< Cd * L * sqrt(2g) for partial fill
     std::vector<double> h_crit;        ///< Transition depth
-    std::vector<bool>   has_flap;      ///< Flap gate
+    std::vector<uint8_t> has_flap;     ///< Flap gate (uint8_t, not bool: avoids
+                                       ///< vector<bool> bit-packing overhead in
+                                       ///< per-iteration hot loops and enables
+                                       ///< parallel-for writes without atomics).
+    /// Most-recently-computed surface area (ft²) for scatter into node
+    /// new_surf_area (matches legacy Orifice[k].surfArea).
+    std::vector<double> surf_area;
+    /// Equivalent length (ft) used for surface-area computation on SIDE
+    /// orifices. Legacy: max(200, 2·routingStep·sqrt(g·yFull)).
+    /// Pre-computed at init; constant per simulation.
+    std::vector<double> length_eff;
     void resize(int n);
 };
 
@@ -85,7 +95,15 @@ struct WeirGroup {
     std::vector<double> end_con;       ///< End contraction factor
     std::vector<double> slope;         ///< V-notch slope or trap slope
     std::vector<int>    cd_curve;      ///< Optional Cd(head) curve index
-    std::vector<bool>   has_flap;
+    std::vector<uint8_t> has_flap;     ///< See comment on OrificeGroup::has_flap.
+    /// Most-recently-computed surface area (ft²), populated by
+    /// computeWeirFlows and scattered to node surface-area accumulators
+    /// by the non_conduit_fn callback. Matches legacy Weir[k].surfArea.
+    std::vector<double> surf_area;
+    /// Effective length used for surface-area computation
+    /// (legacy Weir[k].length = max(200, 2·routeStep·sqrt(g·yFull))).
+    /// Pre-computed at init; constant per simulation.
+    std::vector<double> length_eff;
     void resize(int n);
 };
 
@@ -116,8 +134,16 @@ public:
      *
      * @param ctx  Simulation context.
      * @param dt   Timestep (seconds).
+     * @param node_new_surf_area
+     *             Per-node surface area from the DW solver's xnode buffer.
+     *             Read by computePumpFlows (pump flow-limiter, matching
+     *             legacy getModPumpFlow) and written by computeWeirFlows
+     *             (weir surface-area scatter, matching legacy
+     *             findNonConduitSurfArea). Pass nullptr to skip both
+     *             (pump falls back to MIN_SURFAREA; weir scatter is skipped).
      */
-    void computeAllFlows(SimulationContext& ctx, double dt);
+    void computeAllFlows(SimulationContext& ctx, double dt,
+                         double* node_new_surf_area = nullptr);
 
     /// @brief Evaluate pump startup/shutoff depth hysteresis.
     ///        Must be called ONCE per timestep BEFORE the DW iteration loop,
@@ -134,14 +160,25 @@ private:
     OutletGroup  outlets_;
     std::vector<int> nc_indices_;   ///< All non-conduit link indices
 
-    /// Batch pump flow — vectorisable curve lookups
-    void computePumpFlows(SimulationContext& ctx, double dt);
+    /// Batch pump flow — vectorisable curve lookups. Reads node_new_surf_area
+    /// for the non-storage pump flow-limiter (legacy getModPumpFlow).
+    void computePumpFlows(SimulationContext& ctx, double dt,
+                          const double* node_new_surf_area);
 
-    /// Batch orifice flow — Q = Cd*A*sqrt(2gH), vectorisable
-    void computeOrificeFlows(SimulationContext& ctx);
+    /// Batch orifice flow — Q = Cd·A·sqrt(2gH), plus per-orifice
+    /// surface-area scatter into `node_new_surf_area` (matching legacy
+    /// findNonConduitSurfArea: BOTTOM orifice uses xsect_getAofY(xsect, y1);
+    /// SIDE orifice uses xsect_getWofY(xsect, newDepth)·length_eff).
+    /// When `node_new_surf_area` is null the scatter is skipped.
+    void computeOrificeFlows(SimulationContext& ctx,
+                             double* node_new_surf_area = nullptr);
 
-    /// Batch weir flow — Q = Cd*L*H^expon, vectorisable
-    void computeWeirFlows(SimulationContext& ctx);
+    /// Batch weir flow — Q = Cd·L·H^expon, plus per-weir surface-area
+    /// scatter into `node_new_surf_area` (matching legacy
+    /// findNonConduitSurfArea). When `node_new_surf_area` is null the
+    /// scatter is skipped; weir flows are still computed.
+    void computeWeirFlows(SimulationContext& ctx,
+                          double* node_new_surf_area = nullptr);
 
     /// Batch outlet flow — Q = coeff*H^expon or curve lookup
     void computeOutletFlows(SimulationContext& ctx);

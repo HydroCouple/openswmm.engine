@@ -112,6 +112,7 @@ typedef enum SWMM_ErrorCode {
     SWMM_ERR_HOTSTART    = 12,
     SWMM_ERR_CRS         = 13,
     SWMM_ERR_NUMERICAL   = 14,
+    SWMM_ERR_DEPENDENCY  = 15,  /**< Object has dependents that would be affected by deletion. */
     SWMM_ERR_INTERNAL    = 99
 } SWMM_ErrorCode;
 
@@ -192,6 +193,21 @@ SWMM_ENGINE_API int swmm_engine_start(SWMM_Engine engine, int save_results);
 
 /** @brief Advance one explicit timestep. elapsed_time==0 when done. */
 SWMM_ENGINE_API int swmm_engine_step(SWMM_Engine engine, double* elapsed_time);
+
+/**
+ * @brief Advance up to n_steps routing steps in one call (Gap #50 — swmm_stride equivalent).
+ *
+ * @details Calls step() n_steps times and stops early on error or when the
+ *          simulation ends (elapsed_time == 0).  elapsed_time receives the
+ *          last non-zero elapsed value, or 0.0 when the simulation has ended.
+ *          Passing n_steps <= 0 is a no-op (returns SWMM_OK).
+ *
+ * @param engine        Engine handle.
+ * @param n_steps       Maximum number of routing steps to advance.
+ * @param elapsed_time  Receives elapsed time (decimal days) after the last step.
+ * @return SWMM_OK on success; first non-OK error code encountered otherwise.
+ */
+SWMM_ENGINE_API int swmm_engine_stride(SWMM_Engine engine, int n_steps, double* elapsed_time);
 
 /** @brief End the simulation → SWMM_STATE_ENDED. */
 SWMM_ENGINE_API int swmm_engine_end(SWMM_Engine engine);
@@ -318,6 +334,7 @@ SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled);
 #include "openswmm_quality.h"
 #include "openswmm_statistics.h"
 #include "openswmm_forcing.h"
+#include "openswmm_edit.h"
 
 #ifdef OPENSWMM_HAS_2D
 #include "openswmm_2d.h"

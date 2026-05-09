@@ -119,6 +119,13 @@ struct PollutantData {
      */
     std::vector<bool>       snow_only;
 
+    /**
+     * @brief Object comment from the INP file (';'-prefixed lines immediately
+     *        above this pollutant's data row), joined by literal "\\n".
+     *        Empty string means no comment.
+     */
+    std::vector<std::string> comments;
+
     // -----------------------------------------------------------------------
     // Capacity management
     // -----------------------------------------------------------------------
@@ -138,6 +145,7 @@ struct PollutantData {
         co_pollut.assign(un, -1);
         co_frac.assign(un, 0.0);
         snow_only.assign(un, false);
+        comments.assign(un, std::string{});
     }
 
     /** @brief Release excess vector capacity. */
@@ -152,6 +160,7 @@ struct PollutantData {
         co_pollut.shrink_to_fit();
         co_frac.shrink_to_fit();
         snow_only.shrink_to_fit();
+        comments.shrink_to_fit();
     }
 };
 

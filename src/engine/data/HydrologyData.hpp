@@ -151,6 +151,26 @@ struct LidUsageStore {
     std::vector<std::string> rpt_file;         ///< Report file name (optional)
     std::vector<std::string> drain_to;         ///< Drain-to subcatchment name (optional)
     std::vector<double>      from_perv;        ///< % of pervious area routed to LID
+
+    // Water balance results (ft depth, filled at end of simulation from LIDGroupSoA)
+    std::vector<double>      wb_inflow;        ///< Total inflow depth (ft)
+    std::vector<double>      wb_evap;          ///< Total evaporation depth (ft)
+    std::vector<double>      wb_infil;         ///< Total exfiltration depth (ft)
+    std::vector<double>      wb_surf_flow;     ///< Total surface outflow depth (ft)
+    std::vector<double>      wb_drain_flow;    ///< Total drain outflow depth (ft)
+    std::vector<double>      wb_init_vol;      ///< Initial stored depth (ft)
+    std::vector<double>      wb_final_vol;     ///< Final stored depth (ft)
+
+    void resize_wb(int n) {
+        auto un = static_cast<std::size_t>(n);
+        wb_inflow.assign(un, 0.0);
+        wb_evap.assign(un, 0.0);
+        wb_infil.assign(un, 0.0);
+        wb_surf_flow.assign(un, 0.0);
+        wb_drain_flow.assign(un, 0.0);
+        wb_init_vol.assign(un, 0.0);
+        wb_final_vol.assign(un, 0.0);
+    }
 };
 
 } // namespace openswmm

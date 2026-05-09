@@ -51,6 +51,7 @@ namespace openswmm {
     class IInputPlugin;
     class IOutputPlugin;
     class IReportPlugin;
+    class IStateIOPlugin;
     struct SimulationContext;
     struct SimulationSnapshot;
     struct PluginSpec;
@@ -142,9 +143,10 @@ public:
     struct ComponentEntry {
         std::string            id;
         std::string            version;
-        bool                   has_input  = false;
-        bool                   has_output = false;
-        bool                   has_report = false;
+        bool                   has_input    = false;
+        bool                   has_output   = false;
+        bool                   has_report   = false;
+        bool                   has_state_io = false;
         IPluginComponentInfo*  info = nullptr;
     };
     std::vector<ComponentEntry> discovered_components() const;
@@ -183,12 +185,16 @@ public:
     // Introspection
     // -----------------------------------------------------------------------
 
-    const std::vector<IInputPlugin*>&  input_plugins()  const noexcept { return input_plugins_; }
-    const std::vector<IOutputPlugin*>& output_plugins() const noexcept { return output_plugins_; }
-    const std::vector<IReportPlugin*>& report_plugins() const noexcept { return report_plugins_; }
+    const std::vector<IInputPlugin*>&    input_plugins()    const noexcept { return input_plugins_; }
+    const std::vector<IOutputPlugin*>&   output_plugins()   const noexcept { return output_plugins_; }
+    const std::vector<IReportPlugin*>&   report_plugins()   const noexcept { return report_plugins_; }
+    const std::vector<IStateIOPlugin*>&  state_io_plugins() const noexcept { return state_io_plugins_; }
 
     int plugin_count() const noexcept {
-        return static_cast<int>(input_plugins_.size() + output_plugins_.size() + report_plugins_.size());
+        return static_cast<int>(input_plugins_.size()
+                              + output_plugins_.size()
+                              + report_plugins_.size()
+                              + state_io_plugins_.size());
     }
 
     bool empty() const noexcept { return plugin_count() == 0; }
@@ -202,6 +208,7 @@ public:
     void add_output_plugin(IOutputPlugin* plugin, std::vector<std::string> args = {});
     void add_report_plugin(IReportPlugin* plugin);
     void add_input_plugin(IInputPlugin* plugin);
+    void add_state_io_plugin(IStateIOPlugin* plugin);
 
 private:
     // -----------------------------------------------------------------------
@@ -225,10 +232,11 @@ private:
     // Plugin storage
     // -----------------------------------------------------------------------
 
-    std::vector<LibEntry>        libs_;
-    std::vector<IInputPlugin*>   input_plugins_;
-    std::vector<IOutputPlugin*>  output_plugins_;
-    std::vector<IReportPlugin*>  report_plugins_;
+    std::vector<LibEntry>         libs_;
+    std::vector<IInputPlugin*>    input_plugins_;
+    std::vector<IOutputPlugin*>   output_plugins_;
+    std::vector<IReportPlugin*>   report_plugins_;
+    std::vector<IStateIOPlugin*>  state_io_plugins_;
     std::vector<std::vector<std::string>> init_args_;
 
     // -----------------------------------------------------------------------
@@ -237,6 +245,29 @@ private:
 
     void scan_directory(const std::string& dir_path,
                         std::function<void(const std::string&)> warn_cb);
+
+    /**
+     * @brief Register synthetic LibEntry's for built-in plugin metadata.
+     *
+     * @details The default Input/Output/Report/State-IO plugin instances are
+     *          injected into PluginFactory via add_*_plugin() rather than
+     *          loaded via dlopen. Their IPluginComponentInfo singletons are
+     *          registered here as synthetic LibEntry's (handle = nullptr) so
+     *          their metadata — especially file_filters() — is visible to
+     *          discovered_components() and to the GUI FileFilterRegistry.
+     */
+    void register_builtin_infos();
+
+    /**
+     * @brief Verify a plugin's file_filters() match its has_* capabilities.
+     *
+     * @details Checked once at load time. A capability without a matching
+     *          filter triggers a warn_cb call (or stderr fallback) so the
+     *          plugin still loads but the GUI can flag missing labels.
+     */
+    void validate_filter_invariant(IPluginComponentInfo* info,
+                                   const std::string& source_path,
+                                   std::function<void(const std::string&)> warn_cb);
 
     static bool is_file_path(const std::string& str);
     static bool is_shared_library(const std::string& filename);

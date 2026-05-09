@@ -1,8 +1,8 @@
-# Description: CMake configuration for openswmmcore python library
-# Created by: Caleb Buahin 
+# Description: CMake configuration for openswmm.engine python library
+# Created by: Caleb Buahin
 # Created on: 2024-11-19
 
-# Add Cython targets for openswmmcore
+# Add Cython targets for openswmm.engine
 add_cython_target(_openswmm _openswmm.pyx CXX PY3)
 
 # Create Python extension modules
@@ -30,7 +30,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_link_options(_openswmm PRIVATE -fno-lto)
 endif()
 
-# Install the openswmmcore module
+# Install the openswmm.engine module
 install(TARGETS _openswmm LIBRARY DESTINATION openswmm)
 
 # Include the current source directory
@@ -47,16 +47,57 @@ add_subdirectory(engine)
 # ---------------------------------------------------------------------------
 # Install shared libraries alongside the Cython extensions so that
 # @loader_path / $ORIGIN RPATH entries resolve at runtime.
+#
+# In pre-built mode the three targets are IMPORTED; cmake forbids
+# install(TARGETS) on imported targets so use install(FILES) instead,
+# resolving the actual path via IMPORTED_LOCATION.
 # ---------------------------------------------------------------------------
-install(TARGETS openswmm_engine
-    LIBRARY DESTINATION openswmm/engine
-    RUNTIME DESTINATION openswmm/engine   # Windows DLLs
-)
-install(TARGETS openswmm_legacy_engine
-    LIBRARY DESTINATION openswmm/legacy/engine
-    RUNTIME DESTINATION openswmm/legacy/engine
-)
-install(TARGETS openswmm_legacy_output
-    LIBRARY DESTINATION openswmm/legacy/output
-    RUNTIME DESTINATION openswmm/legacy/output
-)
+if(NOT OPENSWMM_USE_PREBUILT_ENGINE)
+    install(TARGETS openswmm_engine
+        LIBRARY DESTINATION openswmm/engine          # .so/.dylib (Unix/macOS)
+        ARCHIVE DESTINATION openswmm/engine          # .lib import library (Windows)
+        RUNTIME DESTINATION openswmm/engine          # .dll (Windows)
+    )
+    install(TARGETS openswmm_legacy_engine
+        LIBRARY DESTINATION openswmm/legacy/engine
+        ARCHIVE DESTINATION openswmm/legacy/engine
+        RUNTIME DESTINATION openswmm/legacy/engine
+    )
+    install(TARGETS openswmm_legacy_output
+        LIBRARY DESTINATION openswmm/legacy/output
+        ARCHIVE DESTINATION openswmm/legacy/output
+        RUNTIME DESTINATION openswmm/legacy/output
+    )
+else()
+    foreach(_entry
+        "OpenSWMMEngine::openswmm_engine|openswmm/engine"
+        "OpenSWMMEngine::openswmm_legacy_engine|openswmm/legacy/engine"
+        "OpenSWMMEngine::openswmm_legacy_output|openswmm/legacy/output"
+    )
+        string(REPLACE "|" ";" _pair "${_entry}")
+        list(GET _pair 0 _tgt)
+        list(GET _pair 1 _dest)
+
+        # Ninja/single-config uses IMPORTED_LOCATION; MSVC multi-config uses
+        # IMPORTED_LOCATION_RELEASE.
+        get_target_property(_loc "${_tgt}" IMPORTED_LOCATION)
+        if(NOT _loc)
+            get_target_property(_loc "${_tgt}" IMPORTED_LOCATION_RELEASE)
+        endif()
+        if(_loc)
+            install(FILES "${_loc}" DESTINATION "${_dest}")
+        else()
+            message(WARNING "IMPORTED_LOCATION not found for ${_tgt} — dylib missing from wheel")
+        endif()
+
+        if(WIN32)
+            get_target_property(_imp "${_tgt}" IMPORTED_IMPLIB)
+            if(NOT _imp)
+                get_target_property(_imp "${_tgt}" IMPORTED_IMPLIB_RELEASE)
+            endif()
+            if(_imp)
+                install(FILES "${_imp}" DESTINATION "${_dest}")
+            endif()
+        endif()
+    endforeach()
+endif()

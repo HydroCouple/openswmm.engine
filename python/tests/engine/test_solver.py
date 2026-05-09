@@ -150,6 +150,80 @@ class TestSolverModelWrite:
 
 
 # ---------------------------------------------------------------------------
+# Stride
+# ---------------------------------------------------------------------------
+class TestSolverStride:
+    """Test stride() multi-step advancement."""
+
+    def test_stride_advances(self, running_solver):
+        elapsed = running_solver.stride(5)
+        assert elapsed > 0.0
+
+    def test_stride_single(self, running_solver):
+        elapsed = running_solver.stride(1)
+        assert elapsed > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Open with plugin_lib
+# ---------------------------------------------------------------------------
+class TestSolverOpenPluginLib:
+    """Test open() with optional plugin_lib parameter."""
+
+    def test_open_with_none_plugin(self, solver_files):
+        inp, rpt, out = solver_files
+        s = Solver(inp, rpt, out)
+        s.open(plugin_lib=None)
+        assert s.handle != 0
+        s.close()
+        s.destroy()
+
+
+# ---------------------------------------------------------------------------
+# Step callbacks
+# ---------------------------------------------------------------------------
+class TestSolverStepCallbacks:
+    """Test step begin/end callback registration."""
+
+    def test_set_step_begin_callback(self, running_solver):
+        called = []
+        running_solver.set_step_begin_callback(lambda t, dt: called.append("begin"))
+        running_solver.step()
+        assert len(called) > 0
+
+    def test_set_step_end_callback(self, running_solver):
+        called = []
+        running_solver.set_step_end_callback(lambda t, dt: called.append("end"))
+        running_solver.step()
+        assert len(called) > 0
+
+    def test_callback_none_clears(self, running_solver):
+        running_solver.set_step_begin_callback(lambda t, dt: None)
+        running_solver.set_step_begin_callback(None)
+        running_solver.step()  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# Module-level run functions
+# ---------------------------------------------------------------------------
+class TestModuleLevelRun:
+    """Test the module-level run() and run_with_callback() functions."""
+
+    def test_run(self, solver_files):
+        from openswmm.engine import run
+        inp, rpt, out = solver_files
+        run(inp, rpt, out)
+        assert os.path.exists(rpt)
+
+    def test_run_with_callback(self, solver_files):
+        from openswmm.engine import run_with_callback
+        inp, rpt, out = solver_files
+        progress = []
+        run_with_callback(inp, rpt, out, lambda p: progress.append(p))
+        assert len(progress) > 0
+
+
+# ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------
 class TestSolverErrors:

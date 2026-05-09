@@ -16,8 +16,10 @@ cdef extern from "openswmm_engine.h":
     ctypedef void* SWMM_HotStart
 
     # --- Callback typedefs ---
-    ctypedef void (*SWMM_ProgressCallback)(double progress, void* user_data)
+    ctypedef void (*SWMM_ProgressCallback)(void* engine, double elapsed_frac, double sim_time, void* user_data)
     ctypedef void (*SWMM_WarningCallback)(int code, const char* msg, void* user_data)
+    ctypedef void (*SWMM_StepBeginCallback)(SWMM_Engine engine, double sim_time, double dt, void* user_data)
+    ctypedef void (*SWMM_StepEndCallback)(SWMM_Engine engine, double sim_time, double dt, void* user_data)
 
     # --- Error reporting ---
     cdef int         swmm_get_last_error(SWMM_Engine e)
@@ -26,10 +28,11 @@ cdef extern from "openswmm_engine.h":
 
     # --- Engine lifecycle ---
     cdef SWMM_Engine swmm_engine_create()
-    cdef int  swmm_engine_open(SWMM_Engine e, const char* inp, const char* rpt, const char* out)
+    cdef int  swmm_engine_open(SWMM_Engine e, const char* inp, const char* rpt, const char* out, const char* input_plugin_lib)
     cdef int  swmm_engine_initialize(SWMM_Engine e)
     cdef int  swmm_engine_start(SWMM_Engine e, int save_results)
     cdef int  swmm_engine_step(SWMM_Engine e, double* elapsed_time)
+    cdef int  swmm_engine_stride(SWMM_Engine e, int n_steps, double* elapsed_time)
     cdef int  swmm_engine_end(SWMM_Engine e)
     cdef int  swmm_engine_report(SWMM_Engine e)
     cdef int  swmm_engine_close(SWMM_Engine e)
@@ -48,15 +51,31 @@ cdef extern from "openswmm_engine.h":
     cdef int swmm_get_steady_state_skip(SWMM_Engine e, int* enabled)
     cdef int swmm_set_steady_state_skip(SWMM_Engine e, int enabled)
 
+    # --- Batch run helpers ---
+    cdef int swmm_engine_run(const char* inp, const char* rpt, const char* out,
+                             const char* input_plugin_lib)
+    cdef int swmm_engine_run_with_callback(
+        const char* inp, const char* rpt, const char* out,
+        const char* input_plugin_lib,
+        SWMM_ProgressCallback callback, void* user_data)
+
     # --- Callbacks ---
     cdef int swmm_set_progress_callback(SWMM_Engine e, SWMM_ProgressCallback cb, void* ud)
     cdef int swmm_set_warning_callback(SWMM_Engine e, SWMM_WarningCallback cb, void* ud)
+    cdef int swmm_set_step_begin_callback(SWMM_Engine e, SWMM_StepBeginCallback cb, void* ud)
+    cdef int swmm_set_step_end_callback(SWMM_Engine e, SWMM_StepEndCallback cb, void* ud)
 
 cdef extern from "openswmm_model.h":
     cdef SWMM_Engine swmm_engine_new()
     cdef int swmm_validate_model(SWMM_Engine e)
     cdef int swmm_finalize_model(SWMM_Engine e)
     cdef int swmm_model_write(SWMM_Engine e, const char* path)
+    # Title management
+    cdef int swmm_title_get_count(SWMM_Engine e, int* count)
+    cdef int swmm_title_get_line(SWMM_Engine e, int index, char* buf, int buflen)
+    cdef int swmm_title_add_line(SWMM_Engine e, const char* line)
+    cdef int swmm_title_set(SWMM_Engine e, const char* text)
+    cdef int swmm_title_clear(SWMM_Engine e)
     cdef int swmm_options_get(SWMM_Engine e, const char* key, char* buf, int buflen)
     cdef int swmm_options_set(SWMM_Engine e, const char* key, const char* value)
     cdef int swmm_options_get_ext(SWMM_Engine e, const char* key, char* buf, int buflen)
@@ -77,6 +96,7 @@ cdef extern from "openswmm_nodes.h":
     cdef const char* swmm_node_id(SWMM_Engine e, int idx)
     # Creation
     cdef int swmm_node_add(SWMM_Engine e, const char* id, int type)
+    cdef int swmm_node_pop_last(SWMM_Engine e, const char* id)
     # Geometry setters
     cdef int swmm_node_set_invert_elev(SWMM_Engine e, int idx, double elev)
     cdef int swmm_node_set_max_depth(SWMM_Engine e, int idx, double depth)
@@ -144,6 +164,8 @@ cdef extern from "openswmm_nodes.h":
     cdef int swmm_node_get_outfall_route_to(SWMM_Engine e, int idx, int* subcatch_idx)
     # Depth from volume
     cdef int swmm_node_get_depth_from_volume(SWMM_Engine e, int idx, double volume, double* depth)
+    # Quality mass flux
+    cdef int swmm_node_set_quality_mass_flux(SWMM_Engine e, int node_idx, int pollutant_idx, double mass_rate)
 
 cdef extern from "openswmm_links.h":
     # Identity
@@ -152,6 +174,7 @@ cdef extern from "openswmm_links.h":
     cdef const char* swmm_link_id(SWMM_Engine e, int idx)
     # Creation
     cdef int swmm_link_add(SWMM_Engine e, const char* id, int type)
+    cdef int swmm_link_pop_last(SWMM_Engine e, const char* id)
     # Connectivity
     cdef int swmm_link_set_nodes(SWMM_Engine e, int idx, int from_node, int to_node)
     cdef int swmm_link_get_from_node(SWMM_Engine e, int idx, int* node_idx)
@@ -582,6 +605,65 @@ cdef extern from "openswmm_output.h":
     cdef int swmm_output_get_period_time(SWMM_Output handle, int period, double* time)
     # Error
     cdef int swmm_output_get_error_code(SWMM_Output handle)
+
+
+cdef extern from "openswmm_edit.h":
+
+    # Reference type enum
+    cdef enum SWMM_RefType:
+        SWMM_REF_NODE        = 0
+        SWMM_REF_LINK        = 1
+        SWMM_REF_SUBCATCH    = 2
+        SWMM_REF_GAGE        = 3
+        SWMM_REF_TABLE       = 4
+        SWMM_REF_TRANSECT    = 5
+        SWMM_REF_INLET_USAGE = 6
+
+    # Impact entry
+    cdef struct SWMM_ImpactEntry:
+        int         obj_type
+        int         obj_idx
+        const char* field
+        int         cascaded
+
+    # Impact report (heap-allocated entries)
+    cdef struct SWMM_ImpactReport:
+        SWMM_ImpactEntry* entries
+        int               n_entries
+
+    # Conversion result (heap-allocated string arrays)
+    cdef struct SWMM_ConversionResult:
+        int          new_type
+        const char** cleared_fields
+        int          n_cleared
+        const char** warnings
+        int          n_warnings
+
+    # Memory release
+    cdef void swmm_impact_report_free(SWMM_ImpactReport* report)
+    cdef void swmm_conversion_result_free(SWMM_ConversionResult* result)
+
+    # Non-destructive impact analysis
+    cdef int swmm_node_analyze_impact    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_link_analyze_impact    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_subcatch_analyze_impact(SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_gage_analyze_impact    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_table_analyze_impact   (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_transect_analyze_impact(SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+
+    # Deletion (cascade + renumber)
+    cdef int swmm_node_delete    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_link_delete    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_subcatch_delete(SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_gage_delete    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_table_delete   (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_transect_delete(SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+
+    # In-place type conversion
+    cdef int swmm_node_convert(SWMM_Engine e, int idx, int new_type,
+                                SWMM_ConversionResult* out)
+    cdef int swmm_link_convert(SWMM_Engine e, int idx, int new_type,
+                                SWMM_ConversionResult* out)
 
 
 cdef extern from "openswmm_forcing.h":

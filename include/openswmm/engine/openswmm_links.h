@@ -95,22 +95,45 @@ SWMM_ENGINE_API int swmm_link_index(SWMM_Engine engine, const char* id);
 SWMM_ENGINE_API const char* swmm_link_id(SWMM_Engine engine, int idx);
 
 /* =========================================================================
- * Creation (BUILDING state only)
+ * Creation (BUILDING or OPENED — "editable" states)
  * ========================================================================= */
 
 /**
  * @brief Add a new link to the model.
  *
- * @details The engine must be in SWMM_STATE_BUILDING. After creation, use
- *          swmm_link_set_nodes() to specify connectivity and the appropriate
- *          geometry/cross-section setters.
+ * @details The engine must be in SWMM_STATE_BUILDING (programmatic
+ *          construction) or SWMM_STATE_OPENED (interactive editing after
+ *          the .inp has been parsed). Returns SWMM_ERR_LIFECYCLE for any
+ *          other state. After creation, use swmm_link_set_nodes() to
+ *          specify connectivity and the appropriate geometry /
+ *          cross-section setters.
  *
  * @param engine  Engine handle.
  * @param id      Unique null-terminated identifier for the new link.
  * @param type    Link type (see @ref SWMM_LinkType).
- * @returns SWMM_OK on success, or an error code.
+ * @returns SWMM_OK on success, SWMM_ERR_LIFECYCLE if not in an editable
+ *          state, or another error code.
  */
 SWMM_ENGINE_API int swmm_link_add(SWMM_Engine engine, const char* id, int type);
+
+/**
+ * @brief Remove the most recently added link (undo-of-add).
+ *
+ * @details Pops the tail of the link list. The engine must be in
+ *          SWMM_STATE_BUILDING or SWMM_STATE_OPENED. Returns
+ *          SWMM_ERR_BADINDEX if the tail doesn't match \p id, or
+ *          SWMM_ERR_LIFECYCLE if the state is wrong.
+ *
+ *          As with @ref swmm_node_pop_last, this is the narrow
+ *          "rollback-of-add" surface; a general swmm_link_remove(idx)
+ *          requires renumbering every reference (controls, reports,
+ *          etc.) and is tracked separately.
+ *
+ * @param engine  Engine handle.
+ * @param id      Expected tail identifier (null-terminated).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_link_pop_last(SWMM_Engine engine, const char* id);
 
 /* =========================================================================
  * Connectivity (BUILDING or OPENED)

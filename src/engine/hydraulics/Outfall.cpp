@@ -11,6 +11,7 @@
 #include "Outfall.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
+#include "../core/UnitConversion.hpp"
 #include "XSectBatch.hpp"
 #include "Link.hpp"
 
@@ -82,8 +83,40 @@ static double getYnorm(const XSectParams& xs, double beta, double q_max,
     return y;
 }
 
+void buildOutfallLinkMap(SimulationContext& ctx) {
+    auto& nodes = ctx.nodes;
+    const int n_nodes = ctx.n_nodes();
+    const int n_links = ctx.n_links();
+
+    nodes.outfall_link_idx.assign(static_cast<std::size_t>(n_nodes), -1);
+    nodes.outfall_link_offset.assign(static_cast<std::size_t>(n_nodes), 0.0);
+
+    // Single pass over links; first matching conduit wins (matches the
+    // first-break legacy behaviour of the inner scan).
+    for (int k = 0; k < n_links; ++k) {
+        auto uk = static_cast<std::size_t>(k);
+        if (ctx.links.type[uk] != LinkType::CONDUIT) continue;
+
+        int n1 = ctx.links.node1[uk];
+        int n2 = ctx.links.node2[uk];
+
+        if (n2 >= 0 && nodes.type[static_cast<std::size_t>(n2)] == NodeType::OUTFALL &&
+            nodes.outfall_link_idx[static_cast<std::size_t>(n2)] < 0) {
+            nodes.outfall_link_idx[static_cast<std::size_t>(n2)]    = k;
+            nodes.outfall_link_offset[static_cast<std::size_t>(n2)] = ctx.links.offset2[uk];
+        }
+        if (n1 >= 0 && nodes.type[static_cast<std::size_t>(n1)] == NodeType::OUTFALL &&
+            nodes.outfall_link_idx[static_cast<std::size_t>(n1)] < 0) {
+            nodes.outfall_link_idx[static_cast<std::size_t>(n1)]    = k;
+            nodes.outfall_link_offset[static_cast<std::size_t>(n1)] = ctx.links.offset1[uk];
+        }
+    }
+}
+
 void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
     auto& nodes = ctx.nodes;
+    int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
 
     // Legacy: iterates over LINKS and calls link_setOutfallDepth(j) for each.
     // Each link finds if either end is an outfall and computes yNorm + yCrit.
@@ -96,20 +129,20 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
 
         double depth = 0.0;
 
-        // Find the conduit connecting to this outfall and compute depths
-        int link_idx = -1;
-        double z = 0.0;  // offset height at outfall end
-        for (int k = 0; k < ctx.n_links(); ++k) {
-            auto uk = static_cast<std::size_t>(k);
-            if (ctx.links.type[uk] != LinkType::CONDUIT) continue;
-            if (ctx.links.node2[uk] == j) {
-                link_idx = k;
-                z = ctx.links.offset2[uk];
-                break;
-            } else if (ctx.links.node1[uk] == j) {
-                link_idx = k;
-                z = ctx.links.offset1[uk];
-                break;
+        // Cached outfall → conduit mapping (populated once at init).
+        // Falls back to a scan only if the cache is empty (e.g. in unit
+        // tests that skip Router::init).
+        int link_idx = nodes.outfall_link_idx[uj];
+        double z = nodes.outfall_link_offset[uj];
+        if (link_idx < 0 && !nodes.outfall_link_idx.empty()) {
+            for (int k = 0; k < ctx.n_links(); ++k) {
+                auto uk = static_cast<std::size_t>(k);
+                if (ctx.links.type[uk] != LinkType::CONDUIT) continue;
+                if (ctx.links.node2[uk] == j) {
+                    link_idx = k; z = ctx.links.offset2[uk]; break;
+                } else if (ctx.links.node1[uk] == j) {
+                    link_idx = k; z = ctx.links.offset1[uk]; break;
+                }
             }
         }
 
@@ -136,7 +169,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 break;
 
             case OutfallType::FIXED: {
-                double stage = nodes.outfall_param[uj];
+                double stage = nodes.outfall_param[uj] / ucf_len;
                 // Legacy: let yCrit = MIN(yCrit, yNorm)
                 yCrit = std::min(yCrit, yNorm);
                 // If critical depth elev < stage, use stage
@@ -158,7 +191,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                     int h_tmp, m_tmp, s_tmp;
                     datetime::decodeTime(current_time, h_tmp, m_tmp, s_tmp);
                     double hour = static_cast<double>(h_tmp) + m_tmp / 60.0 + s_tmp / 3600.0;
-                    stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(curve_idx)], hour);
+                    stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(curve_idx)], hour) / ucf_len;
                 }
                 yCrit = std::min(yCrit, yNorm);
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
@@ -174,7 +207,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 int ts_idx = static_cast<int>(nodes.outfall_param[uj]);
                 double stage = nodes.invert_elev[uj];
                 if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
-                    stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(ts_idx)], current_time);
+                    stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(ts_idx)], current_time) / ucf_len;
                 }
                 yCrit = std::min(yCrit, yNorm);
                 if (yCrit + z + nodes.invert_elev[uj] < stage)

@@ -112,8 +112,13 @@ int input_countObjects()
             }
             else
             {
+                // --- unknown section: warn and skip
+                char warnMsg[MAXLINE+1];
+                snprintf(warnMsg, MAXLINE,
+                    "\n  WARNING: Unknown section '%s' at line %ld will be skipped.", tok, lineCount);
+                report_writeLine(warnMsg);
                 sect = -1;
-                errcode = ERR_KEYWORD;
+                continue;
             }
         }
 
@@ -218,10 +223,13 @@ int input_readData()
             }
             else
             {
-                inperr = error_setInpError(ERR_KEYWORD, Tok[0]);
-                report_writeInputErrorMsg(inperr, sect, line, lineCount);
-                errsum++;
-                break;
+                // --- unknown section: warn and skip until next known section
+                char warnMsg[MAXLINE+1];
+                snprintf(warnMsg, MAXLINE,
+                    "\n  WARNING: Unknown section '%s' at line %ld will be skipped.", Tok[0], lineCount);
+                report_writeLine(warnMsg);
+                sect = -1;
+                continue;
             }
         }
 

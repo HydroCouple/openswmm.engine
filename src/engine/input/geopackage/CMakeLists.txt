@@ -51,7 +51,7 @@ target_include_directories(openswmm_geopackage
 
 target_link_libraries(openswmm_geopackage
     PUBLIC
-        openswmmcore
+        openswmm_common
         $<IF:$<TARGET_EXISTS:unofficial::sqlite3::sqlite3>,unofficial::sqlite3::sqlite3,SQLite::SQLite3>
     PRIVATE
         openswmm_engine
@@ -64,7 +64,7 @@ target_compile_definitions(openswmm_geopackage
 # Install
 install(
     TARGETS openswmm_geopackage
-    EXPORT  OpenSWMMCoreTargets
+    EXPORT  OpenSWMMEngineTargets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )

@@ -300,6 +300,15 @@ struct SimulationOptions {
     bool ignore_quality = false;
 
     // -----------------------------------------------------------------------
+    /**
+     * @brief Control rule evaluation interval (seconds).
+     *
+     * @details Parsed from RULE_STEP in [OPTIONS].  0.0 means evaluate control
+     *          rules every routing step (legacy default behaviour).
+     * @see Legacy: globals.h RuleStep
+     */
+    double rule_step = 0.0;
+
     // Threading
     // -----------------------------------------------------------------------
 
@@ -419,6 +428,12 @@ struct SimulationOptions {
 
     /** @brief Snowmelt: latitude (degrees). */
     double snow_lat = 0.0;
+
+    /** @brief Snowmelt: site elevation above sea level (ft, internal units).
+     *  @details Used to compute atmospheric pressure for psychrometric constant.
+     *           Legacy field: Temp.elev (from [TEMPERATURE] SNOWMELT section).
+     *           Default 0.0 = sea level → pa = 29.9 in-Hg → gamma ≈ 0.01073. */
+    double snow_elev = 0.0;
 
     /** @brief Snowmelt: minimum melt coefficient. */
     double snow_min_melt = 0.0;

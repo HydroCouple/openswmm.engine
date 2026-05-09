@@ -57,7 +57,11 @@ static const std::unordered_map<std::string, TokenType> func_map = {
     {"cos", TokenType::FUNC_COS}, {"tan", TokenType::FUNC_TAN},
     {"asin", TokenType::FUNC_ASIN}, {"acos", TokenType::FUNC_ACOS},
     {"atan", TokenType::FUNC_ATAN}, {"step", TokenType::FUNC_STEP},
-    {"min", TokenType::FUNC_MIN}, {"max", TokenType::FUNC_MAX},
+    {"min",   TokenType::FUNC_MIN},  {"max",   TokenType::FUNC_MAX},
+    {"cot",   TokenType::FUNC_COT},  {"sinh",  TokenType::FUNC_SINH},
+    {"cosh",  TokenType::FUNC_COSH}, {"tanh",  TokenType::FUNC_TANH},
+    {"coth",  TokenType::FUNC_COTH}, {"log10", TokenType::FUNC_LOG10},
+    {"acot",  TokenType::FUNC_ACOT},
 };
 
 static std::vector<Token> tokenize(const std::string& s) {
@@ -227,6 +231,29 @@ double evaluate(const Expression& expr,
             case TokenType::FUNC_MAX: {
                 double b=stk.top(); stk.pop(); double a=stk.top(); stk.pop();
                 stk.push(std::max(a,b)); break;
+            }
+            // Legacy mathexpr.c functions (Gap 49)
+            case TokenType::FUNC_COT: {
+                double a=stk.top(); stk.pop();
+                double t=std::tan(a);
+                stk.push(t!=0.0 ? 1.0/t : 0.0); break;
+            }
+            case TokenType::FUNC_SINH:  { double a=stk.top(); stk.pop(); stk.push(std::sinh(a)); break; }
+            case TokenType::FUNC_COSH:  { double a=stk.top(); stk.pop(); stk.push(std::cosh(a)); break; }
+            case TokenType::FUNC_TANH:  { double a=stk.top(); stk.pop(); stk.push(std::tanh(a)); break; }
+            case TokenType::FUNC_COTH: {
+                double a=stk.top(); stk.pop();
+                double t=std::tanh(a);
+                stk.push(t!=0.0 ? 1.0/t : 0.0); break;
+            }
+            case TokenType::FUNC_LOG10: {
+                double a=stk.top(); stk.pop();
+                stk.push(a>0.0 ? std::log10(a) : 0.0); break;
+            }
+            case TokenType::FUNC_ACOT: {
+                constexpr double HALF_PI = 1.5707963267948966;
+                double a=stk.top(); stk.pop();
+                stk.push(a!=0.0 ? std::atan(1.0/a) : (a>=0.0 ? HALF_PI : -HALF_PI)); break;
             }
             default: break;
         }

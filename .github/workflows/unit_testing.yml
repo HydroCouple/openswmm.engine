@@ -10,6 +10,8 @@ env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_EXE: ${{ github.workspace }}/vcpkg/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  # Pull only what the unit-test build needs: default features (2d) + tests.
+  VCPKG_MANIFEST_FEATURES: "tests"
   OMP_NUM_THREADS: 1
 
 jobs:
@@ -94,11 +96,21 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
+      - name: Cache vcpkg downloads (source tarballs)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/downloads
+          key: vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
+            vcpkg-downloads-${{ runner.os }}-
+
       - name: Configure
         run: >
           cmake
           --preset=${{ matrix.cmake_preset }}-debug
           -B build-${{ matrix.vcpkg_triplet }}
+          -DVCPKG_MANIFEST_FEATURES=tests
           -DOPENSWMM_BUILD_TESTS=OFF
           -DOPENSWMM_BUILD_UNIT_TESTS=ON
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
@@ -121,101 +133,31 @@ jobs:
             build-${{ matrix.vcpkg_triplet }}/*.tar.gz
             build-${{ matrix.vcpkg_triplet }}/*.zip
 
-  # ──────────────────────────────────────────────────────────────────────
-  #  Python bindings — build, test, and wheel packaging
-  # ──────────────────────────────────────────────────────────────────────
-  # python:
-  #   name: "Python (${{ matrix.alias }})"
-  #   needs: engine
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       include:
-  #         - os: ubuntu-latest
-  #           alias: Linux-x64
-  #           vcpkg_triplet: x64-linux
-  #           cmake_osx_arch: ""
+      # ── Release build for Python wheel consumption ────────────────────────
+      # vcpkg packages are already in the binary cache from the Debug build
+      # above, so this configure is fast (no SUNDIALS recompilation).
+      - name: Configure (Release, for Python wheel)
+        run: >
+          cmake
+          --preset=${{ matrix.cmake_preset }}
+          -B build-${{ matrix.vcpkg_triplet }}-release
+          -DOPENSWMM_BUILD_TESTS=OFF
+          -DOPENSWMM_BUILD_UNIT_TESTS=OFF
+          -DOPENSWMM_BUILD_REGRESSION_TESTS=OFF
+          -DOPENSWMM_BUILD_BENCHMARKS=OFF
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
-  #         - os: macos-latest
-  #           alias: macOS-arm64
-  #           vcpkg_triplet: arm64-osx
-  #           cmake_osx_arch: arm64
+      - name: Build (Release, for Python wheel)
+        run: cmake --build build-${{ matrix.vcpkg_triplet }}-release --config Release
 
-  #         - os: macos-15-intel
-  #           alias: macOS-x64
-  #           vcpkg_triplet: x64-osx
-  #           cmake_osx_arch: x86_64
+      - name: Install (Release, for Python wheel)
+        run: >
+          cmake --install build-${{ matrix.vcpkg_triplet }}-release
+          --config Release
+          --prefix "${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}"
 
-  #         - os: windows-latest
-  #           alias: Windows-x64
-  #           vcpkg_triplet: x64-windows
-  #           cmake_osx_arch: ""
-
-  #   runs-on: ${{ matrix.os }}
-  #   steps:
-  #     - name: Checkout repository
-  #       uses: actions/checkout@v5
-
-  #     - name: Install OpenMP and Ninja (macOS)
-  #       if: runner.os == 'macOS'
-  #       run: brew install libomp ninja
-
-  #     - name: Install Ninja (Linux)
-  #       if: runner.os == 'Linux'
-  #       run: sudo apt-get update && sudo apt-get install -y ninja-build
-
-  #     - name: Set up Python
-  #       uses: actions/setup-python@v5
-  #       with:
-  #         python-version: "3.13"
-
-  #     - name: Install Python requirements
-  #       working-directory: python
-  #       run: |
-  #         python -m pip install --upgrade pip
-  #         python -m pip install -r requirements.txt
-
-  #     - name: Build and install (Windows)
-  #       if: runner.os == 'Windows'
-  #       working-directory: python
-  #       env:
-  #         CMAKE_GENERATOR: "Visual Studio 17 2022"
-  #       run: python -m pip install .
-
-  #     - name: Build and install (Unix)
-  #       if: runner.os != 'Windows'
-  #       working-directory: python
-  #       env:
-  #         CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-  #       run: python -m pip install .
-
-  #     - name: Run Python tests
-  #       env:
-  #         CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-  #       working-directory: python
-  #       run: |
-  #         # Temporarily hide source tree so installed package is used
-  #         mv openswmm openswmm_src
-  #         python -m pytest -v tests
-  #         mv openswmm_src openswmm
-
-  #     - name: Build wheel (Windows)
-  #       if: runner.os == 'Windows'
-  #       working-directory: python
-  #       env:
-  #         CMAKE_GENERATOR: "Visual Studio 17 2022"
-  #       run: python setup.py bdist_wheel
-
-  #     - name: Build wheel (Unix)
-  #       if: runner.os != 'Windows'
-  #       working-directory: python
-  #       env:
-  #         CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-  #       run: python setup.py bdist_wheel
-
-  #     - name: Upload Python wheel
-  #       if: always()
-  #       uses: actions/upload-artifact@v5
-  #       with:
-  #         name: python-wheel-${{ matrix.vcpkg_triplet }}
-  #         path: python/dist/*.whl
+      - name: Upload engine install artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: engine-install-${{ matrix.vcpkg_triplet }}
+          path: engine-install-${{ matrix.vcpkg_triplet }}/

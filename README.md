@@ -7,6 +7,9 @@
 **Open Storm Water Management Model — Next-Generation Computational Engine**
 
 [![Unit Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml)
+
+[![Unit Testing Python](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing_python.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing_python.yml)
+
 <!-- [![Regression Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/regression_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/regression_testing.yml) -->
 [![Documentation](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml)
 <!-- [![Deployment](https://github.com/HydroCouple/openswmm.engine/actions/workflows/deployment.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/deployment.yml) -->

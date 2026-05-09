@@ -178,6 +178,30 @@ struct GageData {
     /** @brief Per-gage time (seconds) of last past-rain shift. */
     std::vector<double>         past_rain_time;
 
+    /**
+     * @brief Gap #31: Cumulative rainfall accumulator (project rain units).
+     * @details Tracks the previous raw cumulative value so the delta can be
+     *          computed each timestep.  Initialised to 0.  Matches legacy
+     *          Gage[i].rainAccum.
+     */
+    std::vector<double>         cumul_rain_accum;
+
+    /**
+     * @brief Object comment from the INP file (';'-prefixed lines immediately
+     *        above this gage's data row), joined by literal "\\n".
+     *        Empty string means no comment.
+     */
+    std::vector<std::string>    comments;
+
+    /**
+     * @brief Gap #53: Co-gage index — index of the primary gage sharing the
+     *        same timeseries, or -1 if this gage reads independently.
+     * @details When two gages use the same TIMESERIES source and the same
+     *          ts_index, the later gage copies its rainfall from the earlier
+     *          one (the primary).  Matches legacy Gage[i].coGage.
+     */
+    std::vector<int>            co_gage_index;
+
     // -----------------------------------------------------------------------
     // Capacity management
     // -----------------------------------------------------------------------
@@ -206,6 +230,34 @@ struct GageData {
         past_rain.assign(un * MAXPASTRAIN, 0.0);
         past_rain_accum.assign(un, 0.0);
         past_rain_time.assign(un, 0.0);
+        cumul_rain_accum.assign(un, 0.0);
+        co_gage_index.assign(un, -1);
+        comments.assign(un, std::string{});
+    }
+
+    /**
+     * @brief Erase the rain gage at index `idx` from every parallel array.
+     *
+     * @details Removes element `idx` from every SoA vector. The flat-2D
+     *          past_rain array ([gage * MAXPASTRAIN + hour]) has its full
+     *          stride for `idx` removed. Spatial arrays are erased separately.
+     */
+    void erase_at(int idx) {
+        const auto ui = static_cast<std::size_t>(idx);
+        auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
+
+        e(rain_type); e(source); e(ts_index); e(ts_name);
+        e(file_path); e(col_name); e(file_format); e(interval_sec); e(snow_factor);
+        e(rainfall); e(next_rainfall); e(api_rainfall); e(next_rain_date); e(is_raining);
+        e(past_rain_accum); e(past_rain_time); e(cumul_rain_accum); e(co_gage_index);
+        e(comments);
+
+        // Flat 2D past_rain: [gage * MAXPASTRAIN + hour]
+        const auto base = ui * static_cast<std::size_t>(MAXPASTRAIN);
+        const auto end  = base + static_cast<std::size_t>(MAXPASTRAIN);
+        if (end <= past_rain.size())
+            past_rain.erase(past_rain.begin() + static_cast<std::ptrdiff_t>(base),
+                            past_rain.begin() + static_cast<std::ptrdiff_t>(end));
     }
 
     /**
@@ -231,6 +283,9 @@ struct GageData {
         past_rain.shrink_to_fit();
         past_rain_accum.shrink_to_fit();
         past_rain_time.shrink_to_fit();
+        cumul_rain_accum.shrink_to_fit();
+        co_gage_index.shrink_to_fit();
+        comments.shrink_to_fit();
     }
 
     void reset_state() noexcept {
@@ -241,6 +296,8 @@ struct GageData {
         std::fill(past_rain.begin(),     past_rain.end(),     0.0);
         std::fill(past_rain_accum.begin(), past_rain_accum.end(), 0.0);
         std::fill(past_rain_time.begin(),  past_rain_time.end(),  0.0);
+        std::fill(cumul_rain_accum.begin(), cumul_rain_accum.end(), 0.0);
+        // co_gage_index is static (set at parse time), not reset between runs
     }
 };
 
