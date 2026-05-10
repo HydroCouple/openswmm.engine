@@ -133,7 +133,7 @@ jobs:
         env:
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
         run: >
-          "${{ env.VCPKG_ROOT }}\vcpkg.exe" install
+          & "${{ env.VCPKG_ROOT }}\vcpkg.exe" install
           --triplet "${{ matrix.vcpkg_triplet }}"
           --x-manifest-root "${{ github.workspace }}"
           --x-install-root "${{ env.VCPKG_ROOT }}/installed"
@@ -166,7 +166,10 @@ jobs:
           --ignore=python/tests/engine/test_integration.py
 
       - name: Run smoke test
-        run: python python/smoke_test.py
+        # -P prevents Python from prepending python/ (the script's dir) to
+        # sys.path, which otherwise lets the source tree shadow the installed
+        # wheel (the source tree has _solver.pyx, not the compiled .so).
+        run: python -P python/smoke_test.py
 
       - name: Build wheel (Windows)
         if: runner.os == 'Windows'
