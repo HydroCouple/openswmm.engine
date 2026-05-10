@@ -83,9 +83,32 @@ SWMM_ENGINE_API void swmm_engine_destroy(SWMM_Engine engine) {
     delete to_engine(engine);
 }
 
+// Translate the C++ internal openswmm::EngineState (an implementation detail
+// that may carry sub-states like PAUSED/REPORTED/ERROR_STATE) to the public
+// SWMM_EngineState lifecycle exposed across the C ABI.
+static SWMM_EngineState swmm_engine_state_to_public(openswmm::EngineState s) noexcept {
+    using S = openswmm::EngineState;
+    switch (s) {
+        case S::CREATED:     return SWMM_STATE_CREATED;
+        case S::OPENED:      return SWMM_STATE_OPENED;
+        case S::INITIALIZED: return SWMM_STATE_INITIALIZED;
+        case S::RUNNING:     return SWMM_STATE_RUNNING;
+        case S::PAUSED:      return SWMM_STATE_RUNNING;
+        case S::ENDED:       return SWMM_STATE_ENDED;
+        case S::REPORTED:    return SWMM_STATE_ENDED;
+        case S::CLOSED:      return SWMM_STATE_CLOSED;
+        case S::ERROR_STATE: return SWMM_STATE_NONE;
+        case S::BUILDING:    return SWMM_STATE_BUILDING;
+    }
+    return SWMM_STATE_NONE;
+}
+
 SWMM_ENGINE_API int swmm_engine_get_state(SWMM_Engine engine, int* state) {
     CHECK_HANDLE(engine);
-    if (state) *state = static_cast<int>(to_engine(engine)->context().state);
+    if (state) {
+        *state = static_cast<int>(
+            swmm_engine_state_to_public(to_engine(engine)->context().state));
+    }
     return SWMM_OK;
 }
 

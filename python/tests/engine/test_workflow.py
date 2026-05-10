@@ -79,7 +79,9 @@ class TestStrideBasedStepping:
 
         total_elapsed = 0.0
         for _ in range(5):
-            elapsed = s.stride(10)
+            rc = s.stride(10)
+            assert rc == 0
+            elapsed = s.elapsed
             if elapsed <= 0:
                 break
             total_elapsed = elapsed

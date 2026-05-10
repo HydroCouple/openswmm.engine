@@ -71,34 +71,29 @@ class ErrorCode(IntEnum):
 class EngineState(IntEnum):
     """Engine lifecycle states.
 
-    Returned by the C{state} property of L{Solver}. Values match the C++
-    internal C{openswmm::EngineState} enum (which is what
-    C{swmm_engine_get_state} actually returns). The public C header
-    C{SWMM_EngineState} uses different integer values — kept here purely
-    for compatibility with what the C API emits.
+    Returned by the C{state} property of L{Solver}. Values mirror the
+    C{SWMM_EngineState} enum in C{openswmm_engine.h}.
 
+    @cvar NONE: Uninitialised / fatal-error sentinel.
     @cvar CREATED: Context allocated, no input loaded.
     @cvar OPENED: Input file parsed, objects allocated.
     @cvar INITIALIZED: Initial conditions applied.
+    @cvar STARTED: Simulation prepared to step (post-start, pre-first-step).
     @cvar RUNNING: Simulation loop in progress.
-    @cvar PAUSED: Simulation paused (future hot-swap support).
     @cvar ENDED: Simulation loop completed.
-    @cvar REPORTED: Summary report written.
     @cvar CLOSED: Resources released.
-    @cvar ERROR_STATE: Fatal error.
     @cvar BUILDING: Programmatic model construction in progress (no .inp).
     """
 
-    CREATED = 0
-    OPENED = 1
-    INITIALIZED = 2
-    RUNNING = 3
-    PAUSED = 4
-    ENDED = 5
-    REPORTED = 6
+    NONE = 0
+    CREATED = 1
+    OPENED = 2
+    INITIALIZED = 3
+    STARTED = 4
+    RUNNING = 5
+    ENDED = 6
     CLOSED = 7
-    ERROR_STATE = 8
-    BUILDING = 9
+    BUILDING = 8
 
 
 class WarnCode(IntEnum):
