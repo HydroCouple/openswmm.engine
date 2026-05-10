@@ -601,7 +601,7 @@ with Solver("model.inp", "model.rpt", "model.out") as s:
     print(f"Link 0 max flow:  {stats.link_max_flow(0):.3f}")
 ```
 
-For the full API reference, see the [documentation](https://hydrocouple.github.io/openswmm.engine).
+For the full API reference, see the [documentation](https://hydrocouple.org/openswmm.engine).
 
 
 
@@ -618,15 +618,15 @@ For the full API reference, see the [documentation](https://hydrocouple.github.i
 
 ## Documentation
 
-API documentation is auto-generated with Doxygen and deployed to GitHub Pages:
+OpenSWMM ships **two documentation sites**, both auto-deployed to GitHub Pages:
 
-**[OpenSWMM Engine API Documentation](https://hydrocouple.github.io/openswmm.engine)**
+| | Site | What's there |
+|---|---|---|
+| **C / C++ Engine** | [hydrocouple.org/openswmm.engine](https://hydrocouple.org/openswmm.engine) | Full C API reference, technical reference manuals (Hydrology, Hydraulics, Water Quality), user manual, architecture & design notes. |
+| **Python Bindings** | [hydrocouple.org/openswmm.engine/python](https://hydrocouple.org/openswmm.engine/python) | Quickstart, per-domain user guide for the v6 engine (Nodes, Links, Forcing, Controls, …), legacy SWMM 5 compatibility guide, full Cython API reference, SWMM 5 → v6 migration. |
 
-The documentation includes:
-- Full C API reference with parameter descriptions and usage notes
-- Technical reference manuals (Hydrology, Hydraulics, Water Quality)
-- User manual with modeling capabilities and examples
-- Architecture design decisions and implementation plan
+Both sites cross-link to each other from their top navigation bar, so you
+can switch between them without leaving the docs.
 
 ## Contributing
 
@@ -641,7 +641,7 @@ Contributions are welcome. Please:
 
 This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
 
-Copyright 2026 HydroCouple. Original EPA SWMM material is in the public domain under 17 USC § 105.
+Copyright 2026 Caleb Buahin. Original EPA SWMM material is in the public domain under 17 USC § 105.
 
 ## Acknowledgements
 

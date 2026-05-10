@@ -7,7 +7,7 @@ stages so individual test modules don't duplicate boilerplate.
 import os
 import pytest
 
-from openswmm.engine import Solver, Nodes, Links, Subcatchments, Gages, MassBalance
+from openswmm.engine import Solver, Nodes, Links, Subcatchments, Gages, MassBalance, EngineState
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +101,9 @@ def completed_solver(solver_files):
     s.open()
     s.initialize()
     s.start()
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         pass
     s.end()
     yield s

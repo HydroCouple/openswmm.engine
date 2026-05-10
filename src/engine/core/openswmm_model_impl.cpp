@@ -6,7 +6,7 @@
  * @ingroup engine_api
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -48,6 +48,35 @@ void fill_buf(char* buf, int sz, const std::string& s) {
     std::size_t n = std::min(static_cast<std::size_t>(sz - 1), s.size());
     std::memcpy(buf, s.data(), n);
     buf[n] = '\0';
+}
+
+// [FILES] helpers — kept outside extern "C" so std::string return
+// types don't trigger the -Wreturn-type-c-linkage warning.
+const char* file_mode_to_str(openswmm::FileMode m) noexcept {
+    switch (m) {
+        case openswmm::FileMode::SAVE: return "SAVE";
+        case openswmm::FileMode::USE:  return "USE";
+        case openswmm::FileMode::NONE:
+        default:                       return "";
+    }
+}
+
+bool file_mode_from_str(const char* s, openswmm::FileMode& out) {
+    if (!s) return false;
+    std::string up(s);
+    for (auto& c : up) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+    if      (up.empty())     out = openswmm::FileMode::NONE;
+    else if (up == "SAVE")   out = openswmm::FileMode::SAVE;
+    else if (up == "USE")    out = openswmm::FileMode::USE;
+    else if (up == "NONE")   out = openswmm::FileMode::NONE;
+    else                     return false;
+    return true;
+}
+
+std::string upper_key(const char* key) {
+    std::string k(key);
+    for (auto& c : k) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+    return k;
 }
 
 } // anonymous
@@ -251,6 +280,69 @@ SWMM_ENGINE_API int swmm_plugin_remove(SWMM_Engine engine, const char* path_or_i
 }
 
 // ============================================================================
+// [FILES] section accessors (Slice AA-3 follow-up)
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_files_get(SWMM_Engine engine,
+                                    const char* key, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!key || !buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+
+    const auto& f = to_engine(engine)->context().files;
+    const std::string k = upper_key(key);
+    std::string val;
+
+    if      (k == "RAINFALL_PATH")           val = f.rainfall_path;
+    else if (k == "RAINFALL_MODE")           val = file_mode_to_str(f.rainfall_mode);
+    else if (k == "RUNOFF_PATH")             val = f.runoff_path;
+    else if (k == "RUNOFF_MODE")             val = file_mode_to_str(f.runoff_mode);
+    else if (k == "RDII_PATH")               val = f.rdii_path;
+    else if (k == "RDII_MODE")               val = file_mode_to_str(f.rdii_mode);
+    else if (k == "INFLOWS_PATH")            val = f.inflows_path;
+    else if (k == "OUTFLOWS_PATH")           val = f.outflows_path;
+    else if (k == "HOTSTART_USE_PATH")       val = f.hotstart_use_path;
+    else if (k == "HOTSTART_SAVE_PATH")      val = f.hotstart_save_path;
+    else if (k == "HOTSTART_SAVE_DATETIME")  val = std::to_string(f.hotstart_save_datetime);
+    else return SWMM_ERR_BADPARAM;
+
+    fill_buf(buf, buflen, val);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_files_set(SWMM_Engine engine,
+                                    const char* key, const char* value) {
+    CHECK_HANDLE(engine);
+    if (!key || !value) return SWMM_ERR_BADPARAM;
+
+    auto& f = to_engine(engine)->context().files;
+    const std::string k = upper_key(key);
+    const std::string v(value);
+
+    auto set_mode = [&](openswmm::FileMode& slot) -> int {
+        if (!file_mode_from_str(value, slot)) return SWMM_ERR_BADPARAM;
+        return SWMM_OK;
+    };
+
+    if      (k == "RAINFALL_PATH")           f.rainfall_path = v;
+    else if (k == "RAINFALL_MODE")           return set_mode(f.rainfall_mode);
+    else if (k == "RUNOFF_PATH")             f.runoff_path = v;
+    else if (k == "RUNOFF_MODE")             return set_mode(f.runoff_mode);
+    else if (k == "RDII_PATH")               f.rdii_path = v;
+    else if (k == "RDII_MODE")               return set_mode(f.rdii_mode);
+    else if (k == "INFLOWS_PATH")            f.inflows_path = v;
+    else if (k == "OUTFLOWS_PATH")           f.outflows_path = v;
+    else if (k == "HOTSTART_USE_PATH")       f.hotstart_use_path = v;
+    else if (k == "HOTSTART_SAVE_PATH")      f.hotstart_save_path = v;
+    else if (k == "HOTSTART_SAVE_DATETIME") {
+        try { f.hotstart_save_datetime = v.empty() ? 0.0 : std::stod(v); }
+        catch (...) { return SWMM_ERR_BADPARAM; }
+    }
+    else return SWMM_ERR_BADPARAM;
+
+    return SWMM_OK;
+}
+
+// ============================================================================
 // Title / notes access
 // ============================================================================
 
@@ -413,6 +505,49 @@ SWMM_ENGINE_API int swmm_get_crs(SWMM_Engine engine, char* buf, int buflen) {
     if (crs.empty()) return SWMM_ERR_CRS;
     std::strncpy(buf, crs.c_str(), static_cast<std::size_t>(buflen - 1));
     buf[buflen - 1] = '\0';
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Typed time-control accessors (OADate doubles)
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_options_get_start_date(SWMM_Engine engine, double* value) {
+    CHECK_HANDLE(engine);
+    if (!value) return SWMM_ERR_BADPARAM;
+    *value = to_engine(engine)->context().options.start_date;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_options_set_start_date(SWMM_Engine engine, double value) {
+    CHECK_HANDLE(engine);
+    to_engine(engine)->context().options.start_date = value;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_options_get_end_date(SWMM_Engine engine, double* value) {
+    CHECK_HANDLE(engine);
+    if (!value) return SWMM_ERR_BADPARAM;
+    *value = to_engine(engine)->context().options.end_date;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_options_set_end_date(SWMM_Engine engine, double value) {
+    CHECK_HANDLE(engine);
+    to_engine(engine)->context().options.end_date = value;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_options_get_report_start(SWMM_Engine engine, double* value) {
+    CHECK_HANDLE(engine);
+    if (!value) return SWMM_ERR_BADPARAM;
+    *value = to_engine(engine)->context().options.report_start;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_options_set_report_start(SWMM_Engine engine, double value) {
+    CHECK_HANDLE(engine);
+    to_engine(engine)->context().options.report_start = value;
     return SWMM_OK;
 }
 

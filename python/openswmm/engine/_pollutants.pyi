@@ -3,7 +3,7 @@ Pollutant Access
 ================
 
 :author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
+:copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
 Type stubs for :mod:`openswmm.engine._pollutants`.
@@ -22,11 +22,11 @@ class Pollutants:
 
     All per-element methods accept either an integer index or a string
     pollutant ID. When a string is passed it is resolved via
-    :meth:`get_index`.
+    L{get_index}.
 
-    Args:
-        solver: An active :class:`Solver` instance. The solver must remain
-                alive for the lifetime of this object.
+    @ivar _solver: The owning solver instance whose engine handle is used
+        for every C call.
+    @type _solver: L{Solver}
 
     Example::
 
@@ -35,219 +35,289 @@ class Pollutants:
         with Solver("model.inp", "model.rpt", "model.out") as s:
             poll = Pollutants(s)
             print(f"Pollutant count: {poll.count()}")
-            while s.step():
+            while s.state == EngineState.RUNNING:
+                if s.step() != 0:
+                    break
                 conc = poll.get_init_conc("TSS")
                 poll.set_node_quality("J1", 0, 12.5)
+
+    @param solver: An active L{Solver} instance. The solver must remain
+        alive for the lifetime of this object.
+    @type solver: L{Solver}
     """
 
-    def __init__(self, solver: Solver) -> None: ...
+    def __init__(self, solver: Solver) -> None:
+        """Construct a L{Pollutants} accessor bound to C{solver}.
 
-    def _resolve(self, idx: Union[int, str]) -> int:
-        """Resolve *idx* to an integer pollutant index.
-
-        Args:
-            idx: Integer index or string pollutant ID.
-
-        Returns:
-            Integer index.
-
-        Raises:
-            KeyError: If a string ID is not found.
+        @param solver: An active L{Solver} instance whose engine handle
+            will be used for all subsequent pollutant operations.
+        @type solver: L{Solver}
         """
         ...
 
-    # ------------------------------------------------------------------
-    # Identity
-    # ------------------------------------------------------------------
+    def _resolve(self, idx: Union[int, str]) -> int:
+        """Resolve C{idx} to an integer pollutant index.
+
+        @param idx: Integer index or string pollutant ID.
+        @type idx: Union[int, str]
+        @return: Integer pollutant index.
+        @rtype: int
+        @raise KeyError: If a string ID is not found in the model.
+        """
+        ...
+
+    # ====================================================================
+    # Identification & lookup
+    # ====================================================================
 
     def count(self) -> int:
         """Return the number of pollutants in the model.
 
-        Returns:
-            Pollutant count.
+        @return: Pollutant count.
+        @rtype: int
         """
         ...
 
     def get_index(self, pollut_id: str) -> int:
         """Return the integer index of a pollutant by its string ID.
 
-        Args:
-            pollut_id: Pollutant identifier string.
-
-        Returns:
-            Pollutant index, or -1 if not found.
+        @param pollut_id: Pollutant identifier string.
+        @type pollut_id: str
+        @return: Pollutant index, or C{-1} if not found.
+        @rtype: int
         """
         ...
 
     def get_id(self, idx: int) -> str:
         """Return the string ID of a pollutant by index.
 
-        Args:
-            idx: Pollutant index.
-
-        Returns:
-            Pollutant ID string.
+        @param idx: Pollutant index.
+        @type idx: int
+        @return: Pollutant ID string, or empty string if C{idx} is invalid.
+        @rtype: str
         """
         ...
 
-    # ------------------------------------------------------------------
-    # Property getters
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Pollutant properties (getters)
+    # ====================================================================
 
     def get_units(self, idx: Union[int, str]) -> int:
         """Return the concentration units code for a pollutant.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-
-        Returns:
-            Units code (see :class:`~openswmm.engine.ConcentrationUnits`).
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @return: Units code -- see L{ConcentrationUnits}.
+        @rtype: int
+        @raise EngineError: If the underlying C{swmm_pollutant_get_units}
+            call returns a non-zero error code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def get_kdecay(self, idx: Union[int, str]) -> float:
         """Return the first-order decay coefficient.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-
-        Returns:
-            Decay coefficient (1/day).
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @return: Decay coefficient (1/day).
+        @rtype: float
+        @raise EngineError: If the underlying C{swmm_pollutant_get_kdecay}
+            call returns a non-zero error code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def get_rain_conc(self, idx: Union[int, str]) -> float:
         """Return the rain concentration.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-
-        Returns:
-            Rain concentration.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @return: Rain concentration.
+        @rtype: float
+        @raise EngineError: If the underlying
+            C{swmm_pollutant_get_rain_conc} call returns a non-zero error
+            code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def get_gw_conc(self, idx: Union[int, str]) -> float:
         """Return the groundwater concentration.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-
-        Returns:
-            Groundwater concentration.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @return: Groundwater concentration.
+        @rtype: float
+        @raise EngineError: If the underlying C{swmm_pollutant_get_gw_conc}
+            call returns a non-zero error code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def get_init_conc(self, idx: Union[int, str]) -> float:
         """Return the initial concentration.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-
-        Returns:
-            Initial concentration.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @return: Initial concentration.
+        @rtype: float
+        @raise EngineError: If the underlying
+            C{swmm_pollutant_get_init_conc} call returns a non-zero error
+            code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def get_rdii_conc(self, idx: Union[int, str]) -> float:
         """Return the RDII concentration.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-
-        Returns:
-            RDII concentration.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @return: RDII concentration.
+        @rtype: float
+        @raise EngineError: If the underlying
+            C{swmm_pollutant_get_rdii_conc} call returns a non-zero error
+            code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def get_mwt(self, idx: Union[int, str]) -> float:
         """Return the molecular weight.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-
-        Returns:
-            Molecular weight.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @return: Molecular weight.
+        @rtype: float
+        @raise EngineError: If the underlying C{swmm_pollutant_get_mwt}
+            call returns a non-zero error code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def get_co_pollutant(self, idx: Union[int, str]) -> tuple[int, float]:
         """Return the co-pollutant index and fraction.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-
-        Returns:
-            Tuple of (co-pollutant index, fraction).
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @return: Tuple of C{(co_pollutant_index, fraction)}.
+        @rtype: tuple[int, float]
+        @raise EngineError: If the underlying
+            C{swmm_pollutant_get_co_pollutant} call returns a non-zero
+            error code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def get_snow_only(self, idx: Union[int, str]) -> bool:
         """Return whether the pollutant applies only to snow events.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-
-        Returns:
-            ``True`` if snow-only.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @return: C{True} if the pollutant is snow-only.
+        @rtype: bool
+        @raise EngineError: If the underlying
+            C{swmm_pollutant_get_snow_only} call returns a non-zero error
+            code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
-    # ------------------------------------------------------------------
-    # Property setters
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Pollutant properties (setters)
+    # ====================================================================
 
     def set_kdecay(self, idx: Union[int, str], k: float) -> None:
         """Set the first-order decay coefficient.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-            k: Decay coefficient (1/day).
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @param k: Decay coefficient (1/day).
+        @type k: float
+        @return: C{None}.
+        @rtype: None
+        @raise EngineError: If the underlying C{swmm_pollutant_set_kdecay}
+            call returns a non-zero error code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def set_rain_conc(self, idx: Union[int, str], conc: float) -> None:
         """Set the rain concentration.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-            conc: Rain concentration.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @param conc: Rain concentration.
+        @type conc: float
+        @return: C{None}.
+        @rtype: None
+        @raise EngineError: If the underlying
+            C{swmm_pollutant_set_rain_conc} call returns a non-zero error
+            code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def set_gw_conc(self, idx: Union[int, str], conc: float) -> None:
         """Set the groundwater concentration.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-            conc: Groundwater concentration.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @param conc: Groundwater concentration.
+        @type conc: float
+        @return: C{None}.
+        @rtype: None
+        @raise EngineError: If the underlying C{swmm_pollutant_set_gw_conc}
+            call returns a non-zero error code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def set_init_conc(self, idx: Union[int, str], conc: float) -> None:
         """Set the initial concentration.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-            conc: Initial concentration.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @param conc: Initial concentration.
+        @type conc: float
+        @return: C{None}.
+        @rtype: None
+        @raise EngineError: If the underlying
+            C{swmm_pollutant_set_init_conc} call returns a non-zero error
+            code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def set_rdii_conc(self, idx: Union[int, str], conc: float) -> None:
         """Set the RDII concentration.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-            conc: RDII concentration.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @param conc: RDII concentration.
+        @type conc: float
+        @return: C{None}.
+        @rtype: None
+        @raise EngineError: If the underlying
+            C{swmm_pollutant_set_rdii_conc} call returns a non-zero error
+            code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def set_mwt(self, idx: Union[int, str], mwt: float) -> None:
         """Set the molecular weight.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-            mwt: Molecular weight.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @param mwt: Molecular weight.
+        @type mwt: float
+        @return: C{None}.
+        @rtype: None
+        @raise EngineError: If the underlying C{swmm_pollutant_set_mwt}
+            call returns a non-zero error code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
@@ -256,25 +326,40 @@ class Pollutants:
     ) -> None:
         """Set the co-pollutant relationship.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-            co_idx: Co-pollutant index.
-            frac: Fraction of co-pollutant.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @param co_idx: Co-pollutant index.
+        @type co_idx: int
+        @param frac: Fraction of co-pollutant contribution.
+        @type frac: float
+        @return: C{None}.
+        @rtype: None
+        @raise EngineError: If the underlying
+            C{swmm_pollutant_set_co_pollutant} call returns a non-zero
+            error code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
     def set_snow_only(self, idx: Union[int, str], flag: bool) -> None:
         """Set whether the pollutant applies only to snow events.
 
-        Args:
-            idx: Pollutant index (int) or ID (str).
-            flag: ``True`` for snow-only.
+        @param idx: Pollutant index (int) or ID (str).
+        @type idx: Union[int, str]
+        @param flag: C{True} for snow-only.
+        @type flag: bool
+        @return: C{None}.
+        @rtype: None
+        @raise EngineError: If the underlying
+            C{swmm_pollutant_set_snow_only} call returns a non-zero error
+            code.
+        @raise KeyError: If C{idx} is a string not found in the model.
         """
         ...
 
-    # ------------------------------------------------------------------
-    # Runtime quality injection
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Per-element concentrations (runtime injection)
+    # ====================================================================
 
     def set_node_quality(
         self,
@@ -284,10 +369,17 @@ class Pollutants:
     ) -> None:
         """Inject a pollutant concentration at a node.
 
-        Args:
-            node_idx: Node index (int) or node ID (str).
-            pollut_idx: Pollutant index.
-            conc: Concentration to inject.
+        @param node_idx: Node index (int) or node ID (str).
+        @type node_idx: Union[int, str]
+        @param pollut_idx: Pollutant index.
+        @type pollut_idx: int
+        @param conc: Concentration to inject.
+        @type conc: float
+        @return: C{None}.
+        @rtype: None
+        @raise EngineError: If the underlying C{swmm_node_set_quality}
+            call returns a non-zero error code.
+        @raise KeyError: If C{node_idx} is a string not found in the model.
         """
         ...
 
@@ -299,9 +391,16 @@ class Pollutants:
     ) -> None:
         """Inject a pollutant concentration at a link.
 
-        Args:
-            link_idx: Link index (int) or link ID (str).
-            pollut_idx: Pollutant index.
-            conc: Concentration to inject.
+        @param link_idx: Link index (int) or link ID (str).
+        @type link_idx: Union[int, str]
+        @param pollut_idx: Pollutant index.
+        @type pollut_idx: int
+        @param conc: Concentration to inject.
+        @type conc: float
+        @return: C{None}.
+        @rtype: None
+        @raise EngineError: If the underlying C{swmm_link_set_quality}
+            call returns a non-zero error code.
+        @raise KeyError: If C{link_idx} is a string not found in the model.
         """
         ...

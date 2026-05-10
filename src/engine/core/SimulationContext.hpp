@@ -53,7 +53,7 @@
  * @ingroup engine_core
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -102,6 +102,81 @@ namespace openswmm {
 struct PluginSpec {
     std::string              path;       ///< Shared library path
     std::vector<std::string> init_args;  ///< Extra tokens from the [PLUGINS] row
+};
+
+// ============================================================================
+// [FILES] section spec — secondary file references
+// ============================================================================
+
+/**
+ * @brief Mode keyword for one [FILES] row — `SAVE` or `USE`.
+ *
+ * @details `NONE` is the in-memory default for unconfigured slots so the
+ *          writer can skip them.  `SAVE` writes data out at simulation end;
+ *          `USE` reads data in at simulation start.
+ *
+ * @ingroup engine_core
+ */
+enum class FileMode {
+    NONE,
+    SAVE,
+    USE
+};
+
+/**
+ * @brief Configuration parsed from the `[FILES]` section.
+ *
+ * @details Mirrors legacy SWMM5's `Frainfall`, `Frunoff`, `Frdii`,
+ *          `Finflows`, `Foutflows`, `FhotstartInput`, `FhotstartOutputs`
+ *          structs (see `legacy/engine/iface.c`).  Each kind has an
+ *          (`mode`, `path`) pair; modes that the legacy parser doesn't
+ *          accept (e.g. RAINFALL only ever reads `USE`) are still stored
+ *          so a faithful round-trip is possible — validation can flag
+ *          illegal combinations later.
+ *
+ *          Multi-save HOTSTART (legacy supported up to 10 SAVE rows
+ *          with optional datetimes) is **not yet supported**: a single
+ *          `hotstart_save_path` slot holds the most recent SAVE row.
+ *          Follow-up will lift this to a vector if a real workflow
+ *          calls for it.
+ *
+ * @ingroup engine_core
+ */
+struct FilesSpec {
+    FileMode    rainfall_mode = FileMode::NONE;
+    std::string rainfall_path;
+
+    FileMode    runoff_mode   = FileMode::NONE;
+    std::string runoff_path;
+
+    FileMode    rdii_mode     = FileMode::NONE;
+    std::string rdii_path;
+
+    /// Legacy semantics: USE only.
+    std::string inflows_path;
+
+    /// Legacy semantics: SAVE only.
+    std::string outflows_path;
+
+    /// Legacy semantics: USE — single hot-start input file.
+    std::string hotstart_use_path;
+
+    /// Legacy semantics: SAVE — single hot-start output file.  Date is
+    /// optional (`save_datetime == 0.0` ⇒ default to end-of-simulation).
+    std::string hotstart_save_path;
+    double      hotstart_save_datetime = 0.0;
+
+    /// True when at least one slot is set; used by InpWriter to decide
+    /// whether to emit a `[FILES]` section.
+    [[nodiscard]] bool has_any() const noexcept {
+        return rainfall_mode != FileMode::NONE
+            || runoff_mode   != FileMode::NONE
+            || rdii_mode     != FileMode::NONE
+            || !inflows_path.empty()
+            || !outflows_path.empty()
+            || !hotstart_use_path.empty()
+            || !hotstart_save_path.empty();
+    }
 };
 
 // ============================================================================
@@ -489,6 +564,16 @@ struct SimulationContext {
      *          New in 6.0.0 — no legacy equivalent.
      */
     std::vector<PluginSpec> plugin_specs;
+
+    /**
+     * @brief Secondary file references parsed from [FILES].
+     * @details Mirrors legacy SWMM5's TFile struct array — rainfall,
+     *          runoff, RDII, inflows, outflows, hotstart save/use.
+     *          The simulation engine consults specific slots when the
+     *          corresponding feature is requested (e.g. interfacing
+     *          a routing run with a separately-saved runoff file).
+     */
+    FilesSpec files;
 
     /**
      * @brief Solver-neutral accessors for reading and writing solver-internal

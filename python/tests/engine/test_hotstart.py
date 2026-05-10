@@ -3,7 +3,7 @@
 import os
 import pytest
 
-from openswmm.engine import Solver, HotStart
+from openswmm.engine import Solver, HotStart, EngineState
 from tests.engine.conftest import SITE_DRAINAGE_INP
 
 
@@ -28,7 +28,9 @@ class TestHotStartSave:
         s.open()
         s.initialize()
         s.start()
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             pass
         hs_path = str(tmp_path / "completed.hs")
         HotStart.save(s, hs_path)
@@ -105,7 +107,9 @@ class TestHotStartApply:
         s2.start()
         # Should be able to continue stepping after applying hot start
         stepped = False
-        while s2.step():
+        while s2.state == EngineState.RUNNING:
+            if s2.step() != 0:
+                break
             stepped = True
         assert stepped
         s2.end()

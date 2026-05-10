@@ -51,7 +51,7 @@
  * @see Legacy reference: src/solver/hotstart.c — swmm_saveHotstart(), swmm_useHotstart()
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 

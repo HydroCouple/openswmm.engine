@@ -1,5 +1,5 @@
 # :author: Caleb Buahin
-# :copyright: Copyright (c) HydroCouple 2026
+# :copyright: Copyright (c) 2026 Caleb Buahin
 # :license: MIT
 
 # cython: language_level=3

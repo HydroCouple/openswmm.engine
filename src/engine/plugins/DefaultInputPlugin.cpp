@@ -6,7 +6,7 @@
  * @ingroup engine_plugins
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -27,6 +27,7 @@
 #include "../input/handlers/UserFlagsHandler.hpp"
 #include "../input/handlers/UserFlagValuesHandler.hpp"
 #include "../input/handlers/PluginsHandler.hpp"
+#include "../input/handlers/FilesHandler.hpp"
 #include "../input/handlers/InflowsHandler.hpp"
 #include "../input/handlers/QualityHandler.hpp"
 #include "../input/handlers/HydrologyHandler.hpp"
@@ -119,7 +120,7 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("TAGS",          input::handle_tags);
     registry_.register_builtin("PROFILE",       noop);
     registry_.register_builtin("REPORT",        input::handle_report);
-    registry_.register_builtin("FILES",         noop);
+    registry_.register_builtin("FILES",         input::handle_files);
     registry_.register_builtin("ADJUSTMENTS",   input::handle_adjustments);
     registry_.register_builtin("EVENTS",        input::handle_events);
 

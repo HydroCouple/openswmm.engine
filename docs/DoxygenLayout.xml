@@ -11,9 +11,19 @@
       <tab type="user" title="Hydraulics Reference Manual" visible="yes" url="@ref hydraulics_reference_manual"/>
       <tab type="user" title="Quality Reference Manual" visible="yes" url="@ref quality_reference_manual"/>
     </tab>
-    <tab type="usergroup" visible="yes" title="Developer Docs" url="">
-      <tab type="user" title="Python API" visible="yes" url="python"/>
-    </tab>
+    <!--
+      Top-level cross-link to the Python (Sphinx) documentation.
+
+      Deployment layout (see .github/workflows/documentation.yml):
+        /          Doxygen C/C++ engine docs (this site)
+        /python/   Sphinx Python bindings docs
+
+      The relative URL `python/index.html` resolves to the Python docs
+      when both sites are co-deployed under GitHub Pages.  When the
+      Doxygen site is browsed locally without the Python bundle, this
+      link 404s — that's an accepted local-only limitation.
+    -->
+    <tab type="user" title="Python API" visible="yes" url="python/index.html"/>
     <tab type="user" title="Authors" visible="yes" url="@ref authors"/>
     <tab type="pages" visible="yes" title="" intro=""/>
     <tab type="topics" visible="yes" title="" intro=""/>

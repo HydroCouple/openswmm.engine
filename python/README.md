@@ -393,16 +393,82 @@ cmake --build build --target package
 
 ### Python Bindings
 
+The Python bindings use [scikit-build-core](https://scikit-build-core.readthedocs.io) (≥ 0.10) as the build backend, with Cython extensions compiled via CMake.
+
+#### Prerequisites
+
+```bash
+pip install "scikit-build-core>=0.10" "cython>=3.0.12" "numpy>=1.21.0"
+```
+
+#### Install (release)
+
 ```bash
 cd python
+pip install . --no-build-isolation
+```
 
-# Install requirements
-python -m pip install -r requirements.txt
+#### Editable / development install
 
-# Build and install
-python -m pip install .
+```bash
+cd python
+pip install -e . --no-build-isolation
+```
 
-# Run Python tests
+The editable install uses scikit-build-core's `redirect` mode: `.py` sources are served directly from the source tree while compiled `.so`/`.pyd` files are kept in sync via CMake on import.
+
+#### Debug build
+
+```bash
+cd python
+DEBUG=1 pip install -e . --no-build-isolation
+```
+
+#### Build a wheel locally
+
+```bash
+cd python
+python -m build --wheel --no-isolation
+# Wheel appears in dist/
+```
+
+#### Cross-platform wheels (CI)
+
+```bash
+cd python
+cibuildwheel
+# Wheels for all supported platforms land in wheelhouse/
+```
+
+#### Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `VCPKG_ROOT` | Path to a vcpkg checkout. When set, the vcpkg toolchain file is loaded automatically. |
+| `OPENSWMM_ENGINE_INSTALL_PREFIX` | Path to a pre-built OpenSWMM engine install. Skips building the engine from source (used in CI to avoid redundant rebuilds). |
+| `DEBUG` | Set to `1` to switch `CMAKE_BUILD_TYPE` to `Debug`. |
+| `CMAKE_ARGS` | Extra `-DFOO=BAR` flags forwarded to every CMake configure. |
+| `SKBUILD_CMAKE_ARGS` | scikit-build-core's own CMake flag override channel. |
+
+**Example — vcpkg + pre-built engine:**
+
+```bash
+export VCPKG_ROOT=/path/to/vcpkg
+export OPENSWMM_ENGINE_INSTALL_PREFIX=/path/to/engine/install
+pip install . --no-build-isolation
+```
+
+**Example — extra CMake flags:**
+
+```bash
+export CMAKE_ARGS="-DOPENSWMM_BUILD_2D=ON"
+pip install . --no-build-isolation
+```
+
+#### Run Python tests
+
+```bash
+cd python
 python -m pytest -v tests
 ```
 
@@ -598,7 +664,10 @@ with Solver("model.inp", "model.rpt", "model.out") as s:
     print(f"Link 0 max flow:  {stats.link_max_flow(0):.3f}")
 ```
 
-For the full API reference, see the [documentation](https://hydrocouple.github.io/openswmm.engine).
+For the full API reference and per-domain user guide, see the
+[Python documentation](https://hydrocouple.org/openswmm.engine/python).
+For the underlying C/C++ engine, see the
+[engine documentation](https://hydrocouple.org/openswmm.engine).
 
 
 
@@ -615,15 +684,15 @@ For the full API reference, see the [documentation](https://hydrocouple.github.i
 
 ## Documentation
 
-API documentation is auto-generated with Doxygen and deployed to GitHub Pages:
+OpenSWMM ships **two documentation sites**, both auto-deployed to GitHub Pages:
 
-**[OpenSWMM Engine API Documentation](https://hydrocouple.github.io/openswmm.engine)**
+| | Site | What's there |
+|---|---|---|
+| **Python Bindings** | [hydrocouple.org/openswmm.engine/python](https://hydrocouple.org/openswmm.engine/python) | Quickstart, per-domain user guide for the v6 engine (Nodes, Links, Forcing, Controls, …), legacy SWMM 5 compatibility guide, full Cython API reference, SWMM 5 → v6 migration. |
+| **C / C++ Engine** | [hydrocouple.org/openswmm.engine](https://hydrocouple.org/openswmm.engine) | Full C API reference, technical reference manuals (Hydrology, Hydraulics, Water Quality), user manual, architecture & design notes. |
 
-The documentation includes:
-- Full C API reference with parameter descriptions and usage notes
-- Technical reference manuals (Hydrology, Hydraulics, Water Quality)
-- User manual with modeling capabilities and examples
-- Architecture design decisions and implementation plan
+Both sites cross-link to each other from their top navigation bar, so you
+can switch between them without leaving the docs.
 
 ## Contributing
 
@@ -638,7 +707,7 @@ Contributions are welcome. Please:
 
 This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
 
-Copyright 2026 HydroCouple. Original EPA SWMM material is in the public domain under 17 USC § 105.
+Copyright 2026 Caleb Buahin. Original EPA SWMM material is in the public domain under 17 USC § 105.
 
 ## Acknowledgements
 

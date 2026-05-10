@@ -519,7 +519,10 @@ def run_solver(inp_file: str, rpt_file: str = None, out_file: str = None, swmm_p
     :rtype out_file: str
     :param swmm_progress_callback: Progress callback function
     :type swmm_progress_callback: callable
-    :return: Error code (0 if successful)
+    :return: Error code from the underlying SWMM C API (0 on success,
+        non-zero on failure). Callers should check the return value rather
+        than relying on an exception.
+    :rtype: int
     """
     ...
 
@@ -654,9 +657,14 @@ class Solver:
         """
         ...
     
-    def __next__(self): # -> tuple:
+    def __next__(self) -> int:
         """
-        Next method for the solver.
+        Advance one step.
+
+        :return: Error code from :py:meth:`step` (0 on success, non-zero on
+            failure).
+        :rtype: int
+        :raises StopIteration: When the solver has finished.
         """
         ...
     
@@ -922,51 +930,79 @@ class Solver:
         """
         ...
     
-    def open(self) -> Any:
+    def open(self) -> int:
         """
-        Opens the SWMM solver by calling the open method in the SWMM API.
-        """
-        ...
-    
-    def start(self) -> Any:
-        """
-        Starts the SWMM solver.
+        Open the SWMM solver by calling the open method in the SWMM API.
+
+        :return: Error code (0 on success or no-op, non-zero on failure;
+            -1 if called from an invalid solver state).
+        :rtype: int
         """
         ...
-    
-    def initialize(self) -> Any:
+
+    def start(self) -> int:
         """
-        Initializes the solver and starts the simulation. Calls the open and start methods in
-        the SWMM API.
+        Start the SWMM solver.
+
+        :return: Error code (0 on success or no-op, non-zero on failure;
+            -1 if not in OPEN state).
+        :rtype: int
         """
         ...
-    
-    def step(self, steps: int = ...) -> tuple:
+
+    def initialize(self) -> int:
         """
-        Step a SWMM simulation.
-        
-        :param steps: Number of steps to run. Overrides internal stride step if greater than 0.
+        Initialize the solver and start the simulation. Calls the open and
+        start methods in the SWMM API.
+
+        :return: Error code (0 on success, non-zero from the first failing
+            sub-call).
+        :rtype: int
+        """
+        ...
+
+    def step(self, steps: int = ...) -> int:
+        """
+        Step a SWMM simulation forward.
+
+        :param steps: Number of steps to run. Overrides internal stride
+            step if greater than 0.
         :type steps: int
-        :return: elapsed_time, current_date
-        :rtype: Tuple[float, datetime]
+        :return: Error code (0 on success, non-zero on failure). The
+            simulation transitions to the FINISHED state when complete;
+            poll :py:attr:`solver_state` or read :py:attr:`current_datetime`
+            for per-step data.
+        :rtype: int
         """
         ...
-    
-    def end(self) -> Any:
+
+    def end(self) -> int:
         """
-        Ends the SWMM simulation.
-        """
-        ...
-    
-    def report(self) -> Any:
-        """
-        Reports the results of the SWMM simulation.
+        End the SWMM simulation.
+
+        :return: Error code (0 on success or no-op, non-zero on failure;
+            -1 if called from an invalid solver state).
+        :rtype: int
         """
         ...
-    
-    def close(self) -> Any:
+
+    def report(self) -> int:
+        """
+        Report the results of the SWMM simulation.
+
+        :return: Error code (0 on success or no-op, non-zero on failure;
+            -1 if not in ENDED state).
+        :rtype: int
+        """
+        ...
+
+    def close(self) -> int:
         """
         Close the solver.
+
+        :return: Error code (0 on success or no-op, non-zero on failure;
+            -1 if not in REPORTED state).
+        :rtype: int
         """
         ...
     

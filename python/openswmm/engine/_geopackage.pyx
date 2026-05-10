@@ -3,7 +3,7 @@ GeoPackage Access
 =================
 
 :author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
+:copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
 The :class:`GeoPackage` class provides read/write access to SWMM GeoPackage
@@ -86,75 +86,125 @@ cdef extern from "openswmm_geopackage.h":
 cdef class GeoPackage:
     """GeoPackage database access for SWMM models, results, and observed data.
 
-    :param path: Path to the .gpkg file.
-
-    Supports context manager protocol::
+    Wraps the C{swmm_gpkg_*} entry points of the OpenSWMM GeoPackage
+    plugin. Supports the context-manager protocol for automatic resource
+    cleanup::
 
         with GeoPackage("model.gpkg") as gpkg:
             print(gpkg.simulation_count())
+
+    @ivar last_error: The most recent error message reported by the
+        underlying GeoPackage library.
     """
 
     cdef SWMM_Gpkg _handle
 
     def __cinit__(self, str path):
+        """Open a GeoPackage file.
+
+        @param path: Path to the C{.gpkg} file.
+        @type path: str
+        @raise RuntimeError: If the file cannot be opened.
+        """
         cdef bytes b = path.encode('utf-8')
         self._handle = swmm_gpkg_open(b)
         if self._handle is NULL:
             raise RuntimeError(f"Failed to open GeoPackage: {path}")
 
     def __dealloc__(self):
+        """Release the underlying C{SWMM_Gpkg} handle when garbage-collected."""
         if self._handle is not NULL:
             swmm_gpkg_close(self._handle)
             self._handle = NULL
 
+    # ====================================================================
+    # File lifecycle (open/close)
+    # ====================================================================
+
     def close(self):
-        """Close the database connection."""
+        """Close the database connection.
+
+        Calling C{close} more than once is harmless.
+        """
         if self._handle is not NULL:
             swmm_gpkg_close(self._handle)
             self._handle = NULL
 
     def __enter__(self):
+        """Enter the context-manager scope.
+
+        @return: This L{GeoPackage} instance.
+        @rtype: GeoPackage
+        """
         return self
 
     def __exit__(self, *args):
+        """Close the database when leaving the context-manager scope.
+
+        @param args: Standard C{(exc_type, exc_val, exc_tb)} tuple.
+        @return: Always C{False} (do not suppress exceptions).
+        @rtype: bool
+        """
         self.close()
         return False
 
     @property
     def last_error(self) -> str:
-        """Get the last error message."""
+        """The last error message from the GeoPackage library.
+
+        @return: Error message string, or C{""} if no error has been
+            reported.
+        @rtype: str
+        """
         cdef const char* msg = swmm_gpkg_last_error(self._handle)
         return msg.decode('utf-8') if msg else ""
 
-    # ------------------------------------------------------------------
-    # Transactions
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # File lifecycle - transactions
+    # ====================================================================
 
     def begin(self):
-        """Begin a transaction for bulk operations."""
+        """Begin a transaction for bulk operations.
+
+        @raise RuntimeError: If the transaction cannot be started.
+        """
         if swmm_gpkg_begin(self._handle) != 0:
             raise RuntimeError(f"Transaction begin failed: {self.last_error}")
 
     def commit(self):
-        """Commit the current transaction."""
+        """Commit the current transaction.
+
+        @raise RuntimeError: If the commit fails.
+        """
         if swmm_gpkg_commit(self._handle) != 0:
             raise RuntimeError(f"Transaction commit failed: {self.last_error}")
 
     def rollback(self):
-        """Roll back the current transaction."""
+        """Roll back the current transaction.
+
+        @raise RuntimeError: If the rollback fails.
+        """
         if swmm_gpkg_rollback(self._handle) != 0:
             raise RuntimeError(f"Transaction rollback failed: {self.last_error}")
 
-    # ------------------------------------------------------------------
-    # Simulation metadata
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Read operations - simulation metadata
+    # ====================================================================
 
     def simulation_count(self) -> int:
-        """Get the number of simulation runs in the file."""
+        """Return the number of simulation runs in the file.
+
+        @return: Simulation count.
+        @rtype: int
+        """
         return swmm_gpkg_simulation_count(self._handle)
 
     def simulation_ids(self) -> list:
-        """Get all simulation IDs as a list of strings."""
+        """Return all simulation IDs as a list of strings.
+
+        @return: List of simulation identifier strings.
+        @rtype: list
+        """
         cdef int n = swmm_gpkg_simulation_count(self._handle)
         cdef char buf[256]
         result = []
@@ -164,10 +214,13 @@ cdef class GeoPackage:
         return result
 
     def object_counts(self, str sim_id) -> dict:
-        """Get model object counts for a simulation.
+        """Return model object counts for a simulation.
 
-        :param sim_id: Simulation identifier.
-        :returns: dict with keys: nodes, links, subcatchments, gages.
+        @param sim_id: Simulation identifier.
+        @type sim_id: str
+        @return: Dict with keys C{"nodes"}, C{"links"},
+            C{"subcatchments"}, and C{"gages"}.
+        @rtype: dict
         """
         cdef bytes b = sim_id.encode('utf-8')
         return {
@@ -178,32 +231,43 @@ cdef class GeoPackage:
         }
 
     def variable_count(self) -> int:
-        """Get the number of output variables defined."""
+        """Return the number of output variables defined.
+
+        @return: Variable count.
+        @rtype: int
+        """
         return swmm_gpkg_variable_count(self._handle)
 
     def topology_edge_count(self, str sim_id) -> int:
-        """Get the number of topology edges for a simulation.
+        """Return the number of topology edges for a simulation.
 
-        :param sim_id: Simulation identifier.
-        :returns: Topology edge count.
-        :rtype: int
+        @param sim_id: Simulation identifier.
+        @type sim_id: str
+        @return: Topology edge count.
+        @rtype: int
         """
         cdef bytes b = sim_id.encode('utf-8')
         return swmm_gpkg_topology_edge_count(self._handle, b)
 
-    # ------------------------------------------------------------------
-    # Result timeseries (zero-copy numpy)
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Read operations - result timeseries (zero-copy numpy)
+    # ====================================================================
 
     def result_ts_count(self, str sim_id, str obj_type, str obj_id,
                         str variable) -> int:
-        """Get the number of result timeseries records for a query.
+        """Return the number of result timeseries records for a query.
 
-        :param sim_id: Simulation identifier.
-        :param obj_type: "NODE", "LINK", "SUBCATCH", or "SYSTEM".
-        :param obj_id: Object identifier (e.g., "J1").
-        :param variable: Variable name (e.g., "depth", "flow").
-        :returns: Record count.
+        @param sim_id: Simulation identifier.
+        @type sim_id: str
+        @param obj_type: One of C{"NODE"}, C{"LINK"}, C{"SUBCATCH"},
+            or C{"SYSTEM"}.
+        @type obj_type: str
+        @param obj_id: Object identifier (e.g. C{"J1"}).
+        @type obj_id: str
+        @param variable: Variable name (e.g. C{"depth"}, C{"flow"}).
+        @type variable: str
+        @return: Record count.
+        @rtype: int
         """
         return swmm_gpkg_result_ts_count(
             self._handle, sim_id.encode('utf-8'),
@@ -212,13 +276,20 @@ cdef class GeoPackage:
 
     def read_result_ts(self, str sim_id, str obj_type, str obj_id,
                        str variable):
-        """Read a result timeseries as numpy arrays.
+        """Read a result timeseries as NumPy arrays.
 
-        :param sim_id: Simulation identifier.
-        :param obj_type: "NODE", "LINK", "SUBCATCH", or "SYSTEM".
-        :param obj_id: Object identifier.
-        :param variable: Variable name.
-        :returns: Tuple of (times, values) as numpy float64 arrays.
+        @param sim_id: Simulation identifier.
+        @type sim_id: str
+        @param obj_type: One of C{"NODE"}, C{"LINK"}, C{"SUBCATCH"},
+            or C{"SYSTEM"}.
+        @type obj_type: str
+        @param obj_id: Object identifier.
+        @type obj_id: str
+        @param variable: Variable name.
+        @type variable: str
+        @return: Tuple C{(times, values)} as NumPy C{float64} arrays.
+        @rtype: tuple
+        @see: L{result_ts_count}
         """
         cdef int n = swmm_gpkg_result_ts_count(
             self._handle, sim_id.encode('utf-8'),
@@ -236,19 +307,25 @@ cdef class GeoPackage:
             <double*>times.data, <double*>values.data, n)
         return times[:read], values[:read]
 
-    # ------------------------------------------------------------------
-    # Summary statistics
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Read operations - summary statistics
+    # ====================================================================
 
     def read_summary(self, str sim_id, str obj_type, str obj_id,
                      str variable) -> float:
         """Read a single summary statistic value.
 
-        :param sim_id: Simulation identifier.
-        :param obj_type: "NODE", "LINK", or "SUBCATCH".
-        :param obj_id: Object identifier.
-        :param variable: Variable name (e.g., "max_depth").
-        :returns: Statistic value.
+        @param sim_id: Simulation identifier.
+        @type sim_id: str
+        @param obj_type: One of C{"NODE"}, C{"LINK"}, or C{"SUBCATCH"}.
+        @type obj_type: str
+        @param obj_id: Object identifier.
+        @type obj_id: str
+        @param variable: Variable name (e.g. C{"max_depth"}).
+        @type variable: str
+        @return: Statistic value.
+        @rtype: float
+        @raise KeyError: If the summary record is not found.
         """
         cdef double v = 0.0
         cdef int rc = swmm_gpkg_read_summary(
@@ -259,22 +336,31 @@ cdef class GeoPackage:
             raise KeyError(f"Summary not found: {obj_type}/{obj_id}/{variable}")
         return v
 
-    # ------------------------------------------------------------------
-    # Observed data write
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Write operations - observed data
+    # ====================================================================
 
     def create_observed_series(self, str name, str variable,
                                 str obj_type="", str obj_id="",
                                 str source="", str units="") -> int:
-        """Create an observed data series.
+        """Create an observed-data series.
 
-        :param name: Unique series name.
-        :param variable: Variable being measured.
-        :param obj_type: Model object type (for linking), or "".
-        :param obj_id: Model object ID (for linking), or "".
-        :param source: Data source description, or "".
-        :param units: Measurement units, or "".
-        :returns: Series ID (>= 0).
+        @param name: Unique series name.
+        @type name: str
+        @param variable: Variable being measured.
+        @type variable: str
+        @param obj_type: Model object type for linking, or C{""} for
+            none.
+        @type obj_type: str
+        @param obj_id: Model object ID for linking, or C{""} for none.
+        @type obj_id: str
+        @param source: Data source description, or C{""} for none.
+        @type source: str
+        @param units: Measurement units, or C{""} for none.
+        @type units: str
+        @return: Series ID (M{>= 0}).
+        @rtype: int
+        @raise RuntimeError: If the series cannot be created.
         """
         cdef int sid = swmm_gpkg_create_observed_series(
             self._handle,
@@ -291,10 +377,17 @@ cdef class GeoPackage:
                               double value, str flag=""):
         """Write a single observed data point.
 
-        :param series_id: Series ID from create_observed_series().
-        :param timestamp: ISO 8601 timestamp string.
-        :param value: Measured value.
-        :param flag: Quality flag (e.g., "A", "P"), or "".
+        @param series_id: Series ID returned by
+            L{create_observed_series}.
+        @type series_id: int
+        @param timestamp: ISO 8601 timestamp string.
+        @type timestamp: str
+        @param value: Measured value.
+        @type value: float
+        @param flag: Quality flag (e.g. C{"A"}, C{"P"}), or C{""} for
+            none.
+        @type flag: str
+        @raise RuntimeError: If the write fails.
         """
         cdef int rc = swmm_gpkg_write_observed_value(
             self._handle, series_id,
@@ -307,16 +400,24 @@ cdef class GeoPackage:
                                flags=None):
         """Bulk-write observed data points.
 
-        For best performance, wrap in a transaction::
+        For best performance wrap the call in a transaction::
 
             gpkg.begin()
             gpkg.write_observed_values(sid, timestamps, values)
             gpkg.commit()
 
-        :param series_id: Series ID.
-        :param timestamps: List of ISO 8601 timestamp strings.
-        :param values: List or numpy array of values.
-        :param flags: Optional list of quality flag strings.
+        @param series_id: Series ID.
+        @type series_id: int
+        @param timestamps: List of ISO 8601 timestamp strings.
+        @type timestamps: list
+        @param values: List or NumPy array of values.
+        @type values: np.ndarray
+        @param flags: Optional list of quality-flag strings, one per
+            timestamp.
+        @type flags: list
+        @raise RuntimeError: If the bulk write fails.
+        @raise MemoryError: If the C string-pointer arrays cannot be
+            allocated.
         """
         cdef int n = len(timestamps)
         cdef np.ndarray[double, ndim=1] vals = np.asarray(values, dtype=np.float64)
@@ -347,24 +448,37 @@ cdef class GeoPackage:
             free(c_ts)
             free(c_fl)
 
-    # ------------------------------------------------------------------
-    # Observed data read
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Read operations - observed data
+    # ====================================================================
 
     def observed_series_count(self) -> int:
-        """Get the number of observed data series."""
+        """Return the number of observed-data series.
+
+        @return: Observed-series count.
+        @rtype: int
+        """
         return swmm_gpkg_observed_series_count(self._handle)
 
     def observed_value_count(self, int series_id) -> int:
-        """Get the number of values in an observed series."""
+        """Return the number of values in an observed series.
+
+        @param series_id: Series ID.
+        @type series_id: int
+        @return: Value count.
+        @rtype: int
+        """
         return swmm_gpkg_observed_value_count(self._handle, series_id)
 
     def read_observed_values(self, int series_id):
-        """Read observed timeseries values.
+        """Read observed-timeseries values.
 
-        :param series_id: Series ID.
-        :returns: Tuple of (timestamps, values) where timestamps is a list
-                  of strings and values is a numpy float64 array.
+        @param series_id: Series ID.
+        @type series_id: int
+        @return: Tuple C{(timestamps, values)} where C{timestamps} is a
+            list of ISO 8601 strings and C{values} is a NumPy
+            C{float64} array.
+        @rtype: tuple
         """
         cdef int n = swmm_gpkg_observed_value_count(self._handle, series_id)
         if n <= 0:
@@ -387,23 +501,28 @@ cdef class GeoPackage:
 
         return timestamps, values[:read]
 
-    # ------------------------------------------------------------------
-    # Ad-hoc queries
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Layer queries (ad-hoc SQL)
+    # ====================================================================
 
     def query_int(self, str sql) -> int:
         """Execute a read-only SQL query and return the first integer result.
 
-        :param sql: SELECT query string.
-        :returns: Integer result.
+        @param sql: C{SELECT} query string.
+        @type sql: str
+        @return: Integer result of the query.
+        @rtype: int
         """
         return swmm_gpkg_query_int(self._handle, sql.encode('utf-8'))
 
     def query_double(self, str sql) -> float:
         """Execute a read-only SQL query and return the first double result.
 
-        :param sql: SELECT query string.
-        :returns: Double result.
+        @param sql: C{SELECT} query string.
+        @type sql: str
+        @return: Double-precision result of the query.
+        @rtype: float
+        @raise RuntimeError: If the query fails.
         """
         cdef double v = 0.0
         cdef int rc = swmm_gpkg_query_double(self._handle,
@@ -413,12 +532,23 @@ cdef class GeoPackage:
         return v
 
 
-# Module-level registration functions
+# ====================================================================
+# Schema queries - module-level registration
+# ====================================================================
 
 def register(str key="", str org="", str email="", str deploy="") -> bool:
     """Register the GeoPackage plugin.
 
-    :returns: True if registration succeeded.
+    @param key: License key, or C{""} if not required.
+    @type key: str
+    @param org: Organisation name, or C{""}.
+    @type org: str
+    @param email: Contact e-mail, or C{""}.
+    @type email: str
+    @param deploy: Deployment identifier, or C{""}.
+    @type deploy: str
+    @return: C{True} if registration succeeded.
+    @rtype: bool
     """
     return swmm_gpkg_register(
         key.encode('utf-8') if key else NULL,
@@ -427,7 +557,11 @@ def register(str key="", str org="", str email="", str deploy="") -> bool:
         deploy.encode('utf-8') if deploy else NULL) != 0
 
 def is_registered() -> bool:
-    """Check whether the GeoPackage plugin is registered."""
+    """Check whether the GeoPackage plugin is registered.
+
+    @return: C{True} if registered.
+    @rtype: bool
+    """
     return swmm_gpkg_is_registered() != 0
 
 

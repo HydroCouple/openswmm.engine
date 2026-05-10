@@ -3,7 +3,7 @@ Spatial Coordinate Access
 =========================
 
 :author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
+:copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
 Type stubs for :mod:`openswmm.engine._spatial`.
@@ -21,9 +21,10 @@ from ._solver import Solver
 class Spatial:
     """Access geographic coordinates for model elements.
 
-    Args:
-        solver: An active :class:`Solver` instance. The solver must remain
-                alive for the lifetime of this object.
+    Provides scalar and bulk numpy-array accessors for nodes, links
+    (single coordinates and polyline vertices), subcatchments (centroid
+    and polygon outlines), and rain gages, plus a project-wide
+    coordinate reference system.
 
     Example::
 
@@ -34,52 +35,68 @@ class Spatial:
             sp = Spatial(s)
             x, y = sp.get_node_coord(0)
             sp.set_node_coord(0, x + 100.0, y)
+
+    @ivar _solver: The L{Solver} instance whose engine handle is used for
+        every C API call.
     """
 
-    def __init__(self, solver: Solver) -> None: ...
+    def __init__(self, solver: Solver) -> None:
+        """Construct a L{Spatial} accessor bound to a solver.
 
-    # ------------------------------------------------------------------
-    # CRS
-    # ------------------------------------------------------------------
+        @param solver: An active L{Solver} instance. The solver must remain
+            alive for the lifetime of this object.
+        @type solver: Solver
+        """
+        ...
+
+    # ====================================================================
+    # CRS / projection
+    # ====================================================================
 
     def set_crs(self, crs: str) -> None:
-        """Set the coordinate reference system string.
+        """Set the project coordinate reference system.
 
-        Args:
-            crs: CRS identifier (e.g. EPSG code or WKT string).
+        @param crs: CRS identifier (e.g. an EPSG code such as
+            C{"EPSG:4326"} or a WKT string).
+        @type crs: str
+        @raise RuntimeError: If the C API rejects the CRS string.
         """
         ...
 
     def get_crs(self) -> str:
-        """Return the coordinate reference system string.
+        """Return the project coordinate reference system.
 
-        Returns:
-            CRS identifier.
+        @return: CRS identifier string.
+        @rtype: str
+        @raise RuntimeError: If the C API call fails.
         """
         ...
 
-    # ------------------------------------------------------------------
+    # ====================================================================
     # Node coordinates
-    # ------------------------------------------------------------------
+    # ====================================================================
 
     def set_node_coord(self, idx: int, x: float, y: float) -> None:
-        """Set the coordinate of a node.
+        """Set the projected (X, Y) coordinate of a node.
 
-        Args:
-            idx: Node index.
-            x: X coordinate.
-            y: Y coordinate.
+        @param idx: Node index.
+        @type idx: int
+        @param x: X coordinate in the project CRS.
+        @type x: float
+        @param y: Y coordinate in the project CRS.
+        @type y: float
+        @raise RuntimeError: If the C API rejects the assignment.
         """
         ...
 
     def get_node_coord(self, idx: int) -> tuple[float, float]:
-        """Return the coordinate of a node.
+        """Return the projected (X, Y) coordinate of a node.
 
-        Args:
-            idx: Node index.
-
-        Returns:
-            Tuple of (x, y).
+        @param idx: Node index.
+        @type idx: int
+        @return: Tuple C{(x, y)} of node coordinates.
+        @rtype: tuple[float, float]
+        @raise RuntimeError: If the C API call fails.
         """
         ...
 
@@ -88,9 +105,10 @@ class Spatial:
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """Return coordinates for all nodes as NumPy arrays.
 
-        Returns:
-            Tuple of (x_array, y_array), each of shape ``(n_nodes,)``
-            with dtype ``float64``.
+        @return: Tuple C{(x_array, y_array)}, each of shape
+            C{(n_nodes,)} with dtype C{float64}.
+        @rtype: tuple[np.ndarray, np.ndarray]
+        @raise RuntimeError: If the C API call fails.
         """
         ...
 
@@ -101,40 +119,45 @@ class Spatial:
     ) -> None:
         """Set coordinates for all nodes from NumPy arrays.
 
-        Args:
-            x: X coordinates array of shape ``(n_nodes,)``.
-            y: Y coordinates array of shape ``(n_nodes,)``.
+        @param x: X coordinates of shape C{(n_nodes,)}, dtype C{float64}.
+        @type x: np.ndarray
+        @param y: Y coordinates of shape C{(n_nodes,)}, dtype C{float64}.
+        @type y: np.ndarray
+        @raise RuntimeError: If the C API rejects the bulk assignment.
         """
         ...
 
-    # ------------------------------------------------------------------
+    # ====================================================================
     # Link coordinates
-    # ------------------------------------------------------------------
+    # ====================================================================
 
     def set_link_coord(self, idx: int, x: float, y: float) -> None:
-        """Set the coordinate of a link.
+        """Set the representative (X, Y) coordinate of a link.
 
-        Args:
-            idx: Link index.
-            x: X coordinate.
-            y: Y coordinate.
+        @param idx: Link index.
+        @type idx: int
+        @param x: X coordinate in the project CRS.
+        @type x: float
+        @param y: Y coordinate in the project CRS.
+        @type y: float
+        @raise RuntimeError: If the C API rejects the assignment.
         """
         ...
 
     def get_link_coord(self, idx: int) -> tuple[float, float]:
-        """Return the coordinate of a link.
+        """Return the representative (X, Y) coordinate of a link.
 
-        Args:
-            idx: Link index.
-
-        Returns:
-            Tuple of (x, y).
+        @param idx: Link index.
+        @type idx: int
+        @return: Tuple C{(x, y)} of the link's representative coordinate.
+        @rtype: tuple[float, float]
+        @raise RuntimeError: If the C API call fails.
         """
         ...
 
-    # ------------------------------------------------------------------
+    # ====================================================================
     # Link vertices
-    # ------------------------------------------------------------------
+    # ====================================================================
 
     def set_link_vertices(
         self,
@@ -144,25 +167,31 @@ class Spatial:
     ) -> None:
         """Set the polyline vertices of a link.
 
-        Args:
-            idx: Link index.
-            x: X coordinates of vertices.
-            y: Y coordinates of vertices.
+        The C{x} and C{y} arrays must have the same length and define the
+        ordered polyline geometry of the link.
+
+        @param idx: Link index.
+        @type idx: int
+        @param x: X coordinates of vertices, dtype C{float64}.
+        @type x: np.ndarray
+        @param y: Y coordinates of vertices, dtype C{float64}.
+        @type y: np.ndarray
+        @raise RuntimeError: If the C API rejects the geometry.
         """
         ...
 
     def get_link_vertex_count(self, idx: int) -> int:
         """Return the number of ordered polyline vertices for a link.
 
-        The count includes the upstream node coordinate at index 0,
-        interior vertices, and the downstream node coordinate at the last
-        index.
+        The count includes the upstream node coordinate at index C{0},
+        any interior vertices, and the downstream node coordinate at the
+        last index.
 
-        Args:
-            idx: Link index.
-
-        Returns:
-            Vertex count.
+        @param idx: Link index.
+        @type idx: int
+        @return: Vertex count.
+        @rtype: int
+        @raise RuntimeError: If the C API call fails.
         """
         ...
 
@@ -171,44 +200,45 @@ class Spatial:
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """Return ordered polyline vertices of a link as NumPy arrays.
 
-        Ordering is: upstream node, interior vertices, downstream node.
+        Ordering is upstream node, interior vertices, downstream node.
 
-        Args:
-            idx: Link index.
-
-        Returns:
-            Tuple of (x_array, y_array), each with dtype ``float64``.
+        @param idx: Link index.
+        @type idx: int
+        @return: Tuple C{(x_array, y_array)}, each of shape
+            C{(get_link_vertex_count(idx),)} with dtype C{float64}.
+        @rtype: tuple[np.ndarray, np.ndarray]
+        @raise RuntimeError: If the C API call fails.
+        @see: L{get_link_vertex_count}
         """
         ...
 
-    # ------------------------------------------------------------------
-    # Subcatchment coordinates
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Subcatchment polygons
+    # ====================================================================
 
     def set_subcatch_coord(self, idx: int, x: float, y: float) -> None:
         """Set the centroid coordinate of a subcatchment.
 
-        Args:
-            idx: Subcatchment index.
-            x: X coordinate.
-            y: Y coordinate.
+        @param idx: Subcatchment index.
+        @type idx: int
+        @param x: X coordinate in the project CRS.
+        @type x: float
+        @param y: Y coordinate in the project CRS.
+        @type y: float
+        @raise RuntimeError: If the C API rejects the assignment.
         """
         ...
 
     def get_subcatch_coord(self, idx: int) -> tuple[float, float]:
         """Return the centroid coordinate of a subcatchment.
 
-        Args:
-            idx: Subcatchment index.
-
-        Returns:
-            Tuple of (x, y).
+        @param idx: Subcatchment index.
+        @type idx: int
+        @return: Tuple C{(x, y)} centroid coordinate.
+        @rtype: tuple[float, float]
+        @raise RuntimeError: If the C API call fails.
         """
         ...
-
-    # ------------------------------------------------------------------
-    # Subcatchment polygon
-    # ------------------------------------------------------------------
 
     def set_subcatch_polygon(
         self,
@@ -218,21 +248,24 @@ class Spatial:
     ) -> None:
         """Set the polygon vertices of a subcatchment.
 
-        Args:
-            idx: Subcatchment index.
-            x: X coordinates of polygon vertices.
-            y: Y coordinates of polygon vertices.
+        @param idx: Subcatchment index.
+        @type idx: int
+        @param x: X coordinates of polygon vertices, dtype C{float64}.
+        @type x: np.ndarray
+        @param y: Y coordinates of polygon vertices, dtype C{float64}.
+        @type y: np.ndarray
+        @raise RuntimeError: If the C API rejects the polygon.
         """
         ...
 
     def get_subcatch_polygon_count(self, idx: int) -> int:
         """Return the number of polygon vertices for a subcatchment.
 
-        Args:
-            idx: Subcatchment index.
-
-        Returns:
-            Vertex count.
+        @param idx: Subcatchment index.
+        @type idx: int
+        @return: Vertex count.
+        @rtype: int
+        @raise RuntimeError: If the C API call fails.
         """
         ...
 
@@ -241,35 +274,40 @@ class Spatial:
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """Return the polygon vertices of a subcatchment as NumPy arrays.
 
-        Args:
-            idx: Subcatchment index.
-
-        Returns:
-            Tuple of (x_array, y_array), each with dtype ``float64``.
+        @param idx: Subcatchment index.
+        @type idx: int
+        @return: Tuple C{(x_array, y_array)}, each of shape
+            C{(get_subcatch_polygon_count(idx),)} with dtype C{float64}.
+        @rtype: tuple[np.ndarray, np.ndarray]
+        @raise RuntimeError: If the C API call fails.
+        @see: L{get_subcatch_polygon_count}
         """
         ...
 
-    # ------------------------------------------------------------------
-    # Gage coordinates
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Bulk geometry access (rain gages)
+    # ====================================================================
 
     def set_gage_coord(self, idx: int, x: float, y: float) -> None:
         """Set the coordinate of a rain gage.
 
-        Args:
-            idx: Gage index.
-            x: X coordinate.
-            y: Y coordinate.
+        @param idx: Gage index.
+        @type idx: int
+        @param x: X coordinate in the project CRS.
+        @type x: float
+        @param y: Y coordinate in the project CRS.
+        @type y: float
+        @raise RuntimeError: If the C API rejects the assignment.
         """
         ...
 
     def get_gage_coord(self, idx: int) -> tuple[float, float]:
         """Return the coordinate of a rain gage.
 
-        Args:
-            idx: Gage index.
-
-        Returns:
-            Tuple of (x, y).
+        @param idx: Gage index.
+        @type idx: int
+        @return: Tuple C{(x, y)} of the gage's coordinate.
+        @rtype: tuple[float, float]
+        @raise RuntimeError: If the C API call fails.
         """
         ...

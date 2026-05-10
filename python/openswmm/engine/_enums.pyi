@@ -3,39 +3,45 @@ Enumerations
 ============
 
 :author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
+:copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
-Type stubs for :mod:`openswmm.engine._enums`.
+Type stubs for L{openswmm.engine._enums}.
 
 Integer-backed enums mirroring the C API enum definitions in
-``openswmm_engine.h``. All enums inherit from :class:`~enum.IntEnum` and
+``openswmm_engine.h``. All enums inherit from L{enum.IntEnum} and
 can be compared directly with integer return values from C API functions.
 """
 
 from enum import IntEnum
 
 
+# =============================================================================
+# Lifecycle / errors / object types
+# =============================================================================
+
 class ErrorCode(IntEnum):
     """SWMM C API return codes.
 
-    Attributes:
-        OK: Success (0).
-        NOMEM: Out of memory.
-        INPFILE: Cannot open input file.
-        RPTFILE: Cannot open report file.
-        OUTFILE: Cannot open output file.
-        PARSE: Input file parse error.
-        LIFECYCLE: Function called in wrong lifecycle state.
-        BADHANDLE: NULL or invalid engine handle.
-        BADINDEX: Object index out of range.
-        BADPARAM: Invalid parameter value.
-        PLUGIN: Plugin error.
-        IO: I/O error.
-        HOTSTART: Hot start file error.
-        CRS: Coordinate reference system error.
-        NUMERICAL: Numerical error.
-        INTERNAL: Internal error.
+    Mirrors the integer error codes returned by every C API entry point in
+    ``openswmm_engine.h``.
+
+    @cvar OK: Success (0).
+    @cvar NOMEM: Out of memory.
+    @cvar INPFILE: Cannot open input file.
+    @cvar RPTFILE: Cannot open report file.
+    @cvar OUTFILE: Cannot open output file.
+    @cvar PARSE: Input file parse error.
+    @cvar LIFECYCLE: Function called in wrong lifecycle state.
+    @cvar BADHANDLE: NULL or invalid engine handle.
+    @cvar BADINDEX: Object index out of range.
+    @cvar BADPARAM: Invalid parameter value.
+    @cvar PLUGIN: Plugin error.
+    @cvar IO: I/O error.
+    @cvar HOTSTART: Hot start file error.
+    @cvar CRS: Coordinate reference system error.
+    @cvar NUMERICAL: Numerical error.
+    @cvar INTERNAL: Internal error.
     """
 
     OK = 0
@@ -59,37 +65,132 @@ class ErrorCode(IntEnum):
 class EngineState(IntEnum):
     """Engine lifecycle states.
 
-    Attributes:
-        NONE: Not yet created.
-        CREATED: Engine allocated but not opened.
-        OPENED: Input file parsed.
-        INITIALIZED: Arrays allocated, initial conditions set.
-        STARTED: Simulation started.
-        RUNNING: Simulation in progress (after first step).
-        ENDED: Simulation ended.
-        CLOSED: Files closed.
-        BUILDING: Programmatic model construction in progress.
+    Values match the C++ internal C{openswmm::EngineState} enum (which is
+    what C{swmm_engine_get_state} actually returns).
+
+    @cvar CREATED: Context allocated, no input loaded.
+    @cvar OPENED: Input file parsed, objects allocated.
+    @cvar INITIALIZED: Initial conditions applied.
+    @cvar RUNNING: Simulation loop in progress.
+    @cvar PAUSED: Simulation paused (future hot-swap support).
+    @cvar ENDED: Simulation loop completed.
+    @cvar REPORTED: Summary report written.
+    @cvar CLOSED: Resources released.
+    @cvar ERROR_STATE: Fatal error.
+    @cvar BUILDING: Programmatic model construction in progress (no .inp).
+    """
+
+    CREATED = 0
+    OPENED = 1
+    INITIALIZED = 2
+    RUNNING = 3
+    PAUSED = 4
+    ENDED = 5
+    REPORTED = 6
+    CLOSED = 7
+    ERROR_STATE = 8
+    BUILDING = 9
+
+
+class WarnCode(IntEnum):
+    """Engine warning codes emitted via the warning callback.
+
+    @cvar NONE: No warning.
+    @cvar HOTSTART_MISSING: Object missing during hot start application.
+    @cvar UNKNOWN_SECTION: Unrecognised input section encountered.
+    @cvar UNKNOWN_OPTION: Unrecognised option keyword.
+    @cvar DEPRECATED_KW: Deprecated keyword used.
+    @cvar PLUGIN_INIT: Plugin initialisation issue.
+    @cvar NUMERICAL: Numerical instability handled gracefully.
+    @cvar STABILITY_LIMIT: Timestep limited by stability criterion.
     """
 
     NONE = 0
-    CREATED = 1
-    OPENED = 2
-    INITIALIZED = 3
-    STARTED = 4
-    RUNNING = 5
-    ENDED = 6
-    CLOSED = 7
-    BUILDING = 8
+    HOTSTART_MISSING = 1
+    UNKNOWN_SECTION = 2
+    UNKNOWN_OPTION = 3
+    DEPRECATED_KW = 4
+    PLUGIN_INIT = 5
+    NUMERICAL = 6
+    STABILITY_LIMIT = 7
+
+
+class ObjectType(IntEnum):
+    """SWMM object type codes.
+
+    @cvar GAGE: Rain gage.
+    @cvar SUBCATCH: Subcatchment.
+    @cvar NODE: Node (junction, outfall, storage, divider).
+    @cvar LINK: Link (conduit, pump, orifice, weir, outlet).
+    @cvar POLLUT: Pollutant.
+    @cvar LANDUSE: Land use category.
+    @cvar TIMESER: Time series.
+    @cvar TABLE: Curve / table.
+    @cvar RDII: RDII unit hydrograph group.
+    @cvar UNITHYD: Unit hydrograph.
+    @cvar SNOWMELT: Snowmelt parameter set.
+    @cvar SHAPE: Custom cross-section shape.
+    @cvar LID: LID control.
+    """
+
+    GAGE = 0
+    SUBCATCH = 1
+    NODE = 2
+    LINK = 3
+    POLLUT = 4
+    LANDUSE = 5
+    TIMESER = 6
+    TABLE = 7
+    RDII = 8
+    UNITHYD = 9
+    SNOWMELT = 10
+    SHAPE = 11
+    LID = 12
+
+
+# =============================================================================
+# Hydraulics
+# =============================================================================
+
+class FlowUnits(IntEnum):
+    """Flow unit systems.
+
+    @cvar CFS: Cubic feet per second (US customary).
+    @cvar GPM: Gallons per minute (US customary).
+    @cvar MGD: Million gallons per day (US customary).
+    @cvar CMS: Cubic meters per second (SI).
+    @cvar LPS: Liters per second (SI).
+    @cvar MLD: Million liters per day (SI).
+    """
+
+    CFS = 0
+    GPM = 1
+    MGD = 2
+    CMS = 3
+    LPS = 4
+    MLD = 5
+
+
+class RouteModel(IntEnum):
+    """Hydraulic routing models.
+
+    @cvar STEADY: Steady-state routing.
+    @cvar KINWAVE: Kinematic wave routing.
+    @cvar DYNWAVE: Dynamic wave (full Saint-Venant) routing.
+    """
+
+    STEADY = 0
+    KINWAVE = 1
+    DYNWAVE = 2
 
 
 class NodeType(IntEnum):
-    """Node type codes for :meth:`~openswmm.engine.ModelBuilder.add_node`.
+    """Node type codes for L{openswmm.engine.ModelBuilder.add_node}.
 
-    Attributes:
-        JUNCTION: Junction node.
-        OUTFALL: Outfall node.
-        STORAGE: Storage unit.
-        DIVIDER: Flow divider.
+    @cvar JUNCTION: Junction node.
+    @cvar OUTFALL: Outfall node.
+    @cvar STORAGE: Storage unit.
+    @cvar DIVIDER: Flow divider.
     """
 
     JUNCTION = 0
@@ -99,14 +200,13 @@ class NodeType(IntEnum):
 
 
 class LinkType(IntEnum):
-    """Link type codes for :meth:`~openswmm.engine.ModelBuilder.add_link`.
+    """Link type codes for L{openswmm.engine.ModelBuilder.add_link}.
 
-    Attributes:
-        CONDUIT: Conduit (pipe or channel).
-        PUMP: Pump.
-        ORIFICE: Orifice.
-        WEIR: Weir.
-        OUTLET: Outlet.
+    @cvar CONDUIT: Conduit (pipe or channel).
+    @cvar PUMP: Pump.
+    @cvar ORIFICE: Orifice.
+    @cvar WEIR: Weir.
+    @cvar OUTLET: Outlet.
     """
 
     CONDUIT = 0
@@ -116,29 +216,45 @@ class LinkType(IntEnum):
     OUTLET = 4
 
 
+class OutfallType(IntEnum):
+    """Outfall boundary condition type.
+
+    @cvar FREE: Free outfall.
+    @cvar NORMAL: Normal depth outfall.
+    @cvar FIXED: Fixed head outfall.
+    @cvar TIDAL: Tidal stage outfall.
+    @cvar TIMESERIES: Time-series stage outfall.
+    """
+
+    FREE = 0
+    NORMAL = 1
+    FIXED = 2
+    TIDAL = 3
+    TIMESERIES = 4
+
+
 class XSectShape(IntEnum):
     """Cross-section shape codes.
 
-    Attributes:
-        CIRCULAR: Circular pipe.
-        FILLED_CIRCULAR: Filled circular pipe.
-        RECT_CLOSED: Closed rectangular.
-        RECT_OPEN: Open rectangular.
-        TRAPEZOIDAL: Trapezoidal channel.
-        TRIANGULAR: Triangular channel.
-        PARABOLIC: Parabolic channel.
-        POWER: Power-law shaped channel.
-        MODBASKETHANDLE: Modified baskethandle.
-        EGGSHAPED: Egg-shaped pipe.
-        HORSESHOE: Horseshoe-shaped pipe.
-        GOTHIC: Gothic arch pipe.
-        CATENARY: Catenary-shaped pipe.
-        SEMIELLIPTICAL: Semi-elliptical pipe.
-        BASKETHANDLE: Baskethandle-shaped pipe.
-        SEMICIRCULAR: Semi-circular pipe.
-        IRREGULAR: Irregular (from transect data).
-        CUSTOM: Custom shape (from shape curve).
-        FORCE_MAIN: Force main (pressurized).
+    @cvar CIRCULAR: Circular pipe.
+    @cvar FILLED_CIRCULAR: Filled circular pipe.
+    @cvar RECT_CLOSED: Closed rectangular.
+    @cvar RECT_OPEN: Open rectangular.
+    @cvar TRAPEZOIDAL: Trapezoidal channel.
+    @cvar TRIANGULAR: Triangular channel.
+    @cvar PARABOLIC: Parabolic channel.
+    @cvar POWER: Power-law shaped channel.
+    @cvar MODBASKETHANDLE: Modified baskethandle.
+    @cvar EGGSHAPED: Egg-shaped pipe.
+    @cvar HORSESHOE: Horseshoe-shaped pipe.
+    @cvar GOTHIC: Gothic arch pipe.
+    @cvar CATENARY: Catenary-shaped pipe.
+    @cvar SEMIELLIPTICAL: Semi-elliptical pipe.
+    @cvar BASKETHANDLE: Baskethandle-shaped pipe.
+    @cvar SEMICIRCULAR: Semi-circular pipe.
+    @cvar IRREGULAR: Irregular (from transect data).
+    @cvar CUSTOM: Custom shape (from shape curve).
+    @cvar FORCE_MAIN: Force main (pressurized).
     """
 
     CIRCULAR = 0
@@ -162,75 +278,18 @@ class XSectShape(IntEnum):
     FORCE_MAIN = 18
 
 
-class FlowUnits(IntEnum):
-    """Flow unit systems.
-
-    Attributes:
-        CFS: Cubic feet per second (US customary).
-        GPM: Gallons per minute (US customary).
-        MGD: Million gallons per day (US customary).
-        CMS: Cubic meters per second (SI).
-        LPS: Liters per second (SI).
-        MLD: Million liters per day (SI).
-    """
-
-    CFS = 0
-    GPM = 1
-    MGD = 2
-    CMS = 3
-    LPS = 4
-    MLD = 5
-
-
-class RouteModel(IntEnum):
-    """Hydraulic routing models.
-
-    Attributes:
-        STEADY: Steady-state routing.
-        KINWAVE: Kinematic wave routing.
-        DYNWAVE: Dynamic wave (full Saint-Venant) routing.
-    """
-
-    STEADY = 0
-    KINWAVE = 1
-    DYNWAVE = 2
-
-
-class GageDataSource(IntEnum):
-    """Rain gage data source type.
-
-    Attributes:
-        TIMESERIES: Data comes from a time series object.
-        FILE: Data comes from an external rainfall file.
-    """
-
-    TIMESERIES = 0
-    FILE = 1
-
-
-class GageRainType(IntEnum):
-    """Rain gage rainfall data format.
-
-    Attributes:
-        INTENSITY: Rainfall intensity (depth/time).
-        VOLUME: Rainfall volume (depth per interval).
-        CUMULATIVE: Cumulative rainfall depth.
-    """
-
-    INTENSITY = 0
-    VOLUME = 1
-    CUMULATIVE = 2
-
+# =============================================================================
+# Hydrology
+# =============================================================================
 
 class InfilModel(IntEnum):
     """Infiltration model type.
 
-    Attributes:
-        HORTON: Original Horton model.
-        MOD_HORTON: Modified Horton model.
-        GREEN_AMPT: Green-Ampt model.
-        MOD_GREEN_AMPT: Modified Green-Ampt model.
-        CURVE_NUMBER: SCS Curve Number model.
+    @cvar HORTON: Original Horton model.
+    @cvar MOD_HORTON: Modified Horton model.
+    @cvar GREEN_AMPT: Green-Ampt model.
+    @cvar MOD_GREEN_AMPT: Modified Green-Ampt model.
+    @cvar CURVE_NUMBER: SCS Curve Number model.
     """
 
     HORTON = 0
@@ -240,31 +299,40 @@ class InfilModel(IntEnum):
     CURVE_NUMBER = 4
 
 
-class OutfallType(IntEnum):
-    """Outfall boundary condition type.
+class GageDataSource(IntEnum):
+    """Rain gage data source type.
 
-    Attributes:
-        FREE: Free outfall.
-        NORMAL: Normal depth outfall.
-        FIXED: Fixed head outfall.
-        TIDAL: Tidal stage outfall.
-        TIMESERIES: Time-series stage outfall.
+    @cvar TIMESERIES: Data comes from a time series object.
+    @cvar FILE: Data comes from an external rainfall file.
     """
 
-    FREE = 0
-    NORMAL = 1
-    FIXED = 2
-    TIDAL = 3
-    TIMESERIES = 4
+    TIMESERIES = 0
+    FILE = 1
 
+
+class GageRainType(IntEnum):
+    """Rain gage rainfall data format.
+
+    @cvar INTENSITY: Rainfall intensity (depth/time).
+    @cvar VOLUME: Rainfall volume (depth per interval).
+    @cvar CUMULATIVE: Cumulative rainfall depth.
+    """
+
+    INTENSITY = 0
+    VOLUME = 1
+    CUMULATIVE = 2
+
+
+# =============================================================================
+# Water quality and LID
+# =============================================================================
 
 class ConcentrationUnits(IntEnum):
     """Pollutant concentration units.
 
-    Attributes:
-        MG_PER_L: Milligrams per liter.
-        UG_PER_L: Micrograms per liter.
-        COUNT_PER_L: Counts per liter.
+    @cvar MG_PER_L: Milligrams per liter.
+    @cvar UG_PER_L: Micrograms per liter.
+    @cvar COUNT_PER_L: Counts per liter.
     """
 
     MG_PER_L = 0
@@ -275,12 +343,11 @@ class ConcentrationUnits(IntEnum):
 class BuildupFunc(IntEnum):
     """Pollutant buildup function type.
 
-    Attributes:
-        NONE: No buildup.
-        POW: Power function.
-        EXP: Exponential function.
-        SAT: Saturation function.
-        EXT: External time series.
+    @cvar NONE: No buildup.
+    @cvar POW: Power function.
+    @cvar EXP: Exponential function.
+    @cvar SAT: Saturation function.
+    @cvar EXT: External time series.
     """
 
     NONE = 0
@@ -293,11 +360,10 @@ class BuildupFunc(IntEnum):
 class WashoffFunc(IntEnum):
     """Pollutant washoff function type.
 
-    Attributes:
-        NONE: No washoff.
-        EXP: Exponential washoff.
-        RC: Rating curve washoff.
-        EMC: Event mean concentration.
+    @cvar NONE: No washoff.
+    @cvar EXP: Exponential washoff.
+    @cvar RC: Rating curve washoff.
+    @cvar EMC: Event mean concentration.
     """
 
     NONE = 0
@@ -306,70 +372,17 @@ class WashoffFunc(IntEnum):
     EMC = 3
 
 
-class RunoffTotal(IntEnum):
-    """Runoff mass balance component codes.
-
-    Attributes:
-        RAINFALL: Total rainfall.
-        EVAP: Evaporation loss.
-        INFIL: Infiltration loss.
-        RUNOFF: Surface runoff.
-        SNOWREMOV: Snow removal.
-        INITSTORE: Initial surface storage.
-        FINALSTORE: Final surface storage.
-    """
-
-    RAINFALL = 0
-    EVAP = 1
-    INFIL = 2
-    RUNOFF = 3
-    SNOWREMOV = 4
-    INITSTORE = 5
-    FINALSTORE = 6
-
-
-class RoutingTotal(IntEnum):
-    """Routing mass balance component codes.
-
-    Attributes:
-        DRY_WEATHER: Dry-weather inflow.
-        WET_WEATHER: Wet-weather (runoff) inflow.
-        GW_INFLOW: Groundwater inflow.
-        RDII: RDII inflow.
-        EXTERNAL: External inflow.
-        FLOODING: Flooding loss.
-        OUTFLOW: Outfall outflow.
-        EVAP_LOSS: Evaporation loss.
-        SEEP_LOSS: Seepage loss.
-        INIT_STORAGE: Initial network storage.
-        FINAL_STORAGE: Final network storage.
-    """
-
-    DRY_WEATHER = 0
-    WET_WEATHER = 1
-    GW_INFLOW = 2
-    RDII = 3
-    EXTERNAL = 4
-    FLOODING = 5
-    OUTFLOW = 6
-    EVAP_LOSS = 7
-    SEEP_LOSS = 8
-    INIT_STORAGE = 9
-    FINAL_STORAGE = 10
-
-
 class LidType(IntEnum):
     """Low Impact Development (LID) control type.
 
-    Attributes:
-        BIO_CELL: Bioretention cell.
-        RAIN_GARDEN: Rain garden.
-        GREEN_ROOF: Green roof.
-        INFIL_TRENCH: Infiltration trench.
-        PERM_PAVEMENT: Permeable pavement.
-        RAIN_BARREL: Rain barrel.
-        ROOFTOP_DISCONN: Rooftop disconnection.
-        VEGETATIVE_SWALE: Vegetative swale.
+    @cvar BIO_CELL: Bioretention cell.
+    @cvar RAIN_GARDEN: Rain garden.
+    @cvar GREEN_ROOF: Green roof.
+    @cvar INFIL_TRENCH: Infiltration trench.
+    @cvar PERM_PAVEMENT: Permeable pavement.
+    @cvar RAIN_BARREL: Rain barrel.
+    @cvar ROOFTOP_DISCONN: Rooftop disconnection.
+    @cvar VEGETATIVE_SWALE: Vegetative swale.
     """
 
     BIO_CELL = 0
@@ -382,65 +395,22 @@ class LidType(IntEnum):
     VEGETATIVE_SWALE = 7
 
 
-class PatternType(IntEnum):
-    """Time pattern type.
-
-    Attributes:
-        MONTHLY: Monthly variation pattern.
-        DAILY: Daily variation pattern.
-        HOURLY: Hourly variation pattern.
-        WEEKEND: Weekend hourly variation pattern.
-    """
-
-    MONTHLY = 0
-    DAILY = 1
-    HOURLY = 2
-    WEEKEND = 3
-
-
-class ForcingMode(IntEnum):
-    """Forcing application mode.
-
-    Determines how a forced value is combined with the model-computed value.
-
-    Attributes:
-        REPLACE: Replace the computed value entirely.
-        ADD: Add the forced value to the computed value.
-    """
-
-    REPLACE = 0
-    ADD = 1
-
-
-class ForcingTarget(IntEnum):
-    """Object type codes used with :meth:`~openswmm.engine.Forcing.clear`.
-
-    Attributes:
-        NODE: Node forcing target.
-        LINK: Link forcing target.
-        SUBCATCH: Subcatchment forcing target.
-        GAGE: Rain gage forcing target.
-    """
-
-    NODE = 0
-    LINK = 1
-    SUBCATCH = 2
-    GAGE = 3
-
+# =============================================================================
+# Output variables
+# =============================================================================
 
 class OutSubcatchVar(IntEnum):
     """Subcatchment output result variable indices.
 
-    Attributes:
-        RAINFALL: Rainfall rate.
-        SNOW_DEPTH: Snow depth.
-        EVAP: Evaporation rate.
-        INFIL: Infiltration rate.
-        RUNOFF: Runoff rate.
-        GW_FLOW: Groundwater outflow rate.
-        GW_ELEV: Groundwater table elevation.
-        SOIL_MOIST: Soil moisture fraction.
-        POLLUT_BASE: Base index for pollutant concentrations.
+    @cvar RAINFALL: Rainfall rate.
+    @cvar SNOW_DEPTH: Snow depth.
+    @cvar EVAP: Evaporation rate.
+    @cvar INFIL: Infiltration rate.
+    @cvar RUNOFF: Runoff rate.
+    @cvar GW_FLOW: Groundwater outflow rate.
+    @cvar GW_ELEV: Groundwater table elevation.
+    @cvar SOIL_MOIST: Soil moisture fraction.
+    @cvar POLLUT_BASE: Base index for pollutant concentrations.
     """
 
     RAINFALL = 0
@@ -457,14 +427,13 @@ class OutSubcatchVar(IntEnum):
 class OutNodeVar(IntEnum):
     """Node output result variable indices.
 
-    Attributes:
-        DEPTH: Water depth.
-        HEAD: Hydraulic head.
-        VOLUME: Stored volume.
-        LATERAL_INFLOW: Lateral inflow rate.
-        TOTAL_INFLOW: Total inflow rate.
-        OVERFLOW: Overflow / flooding rate.
-        POLLUT_BASE: Base index for pollutant concentrations.
+    @cvar DEPTH: Water depth.
+    @cvar HEAD: Hydraulic head.
+    @cvar VOLUME: Stored volume.
+    @cvar LATERAL_INFLOW: Lateral inflow rate.
+    @cvar TOTAL_INFLOW: Total inflow rate.
+    @cvar OVERFLOW: Overflow / flooding rate.
+    @cvar POLLUT_BASE: Base index for pollutant concentrations.
     """
 
     DEPTH = 0
@@ -479,13 +448,12 @@ class OutNodeVar(IntEnum):
 class OutLinkVar(IntEnum):
     """Link output result variable indices.
 
-    Attributes:
-        FLOW: Flow rate.
-        DEPTH: Water depth.
-        VELOCITY: Flow velocity.
-        VOLUME: Stored volume.
-        CAPACITY: Capacity fraction (flow / full flow).
-        POLLUT_BASE: Base index for pollutant concentrations.
+    @cvar FLOW: Flow rate.
+    @cvar DEPTH: Water depth.
+    @cvar VELOCITY: Flow velocity.
+    @cvar VOLUME: Stored volume.
+    @cvar CAPACITY: Capacity fraction (flow / full flow).
+    @cvar POLLUT_BASE: Base index for pollutant concentrations.
     """
 
     FLOW = 0
@@ -499,21 +467,20 @@ class OutLinkVar(IntEnum):
 class OutSystemVar(IntEnum):
     """System-wide output result variable indices.
 
-    Attributes:
-        TEMPERATURE: Air temperature.
-        RAINFALL: System-wide rainfall rate.
-        SNOW_DEPTH: Average snow depth.
-        EVAP: System-wide evaporation rate.
-        INFIL: System-wide infiltration rate.
-        RUNOFF: System-wide runoff rate.
-        DW_INFLOW: Dry-weather inflow rate.
-        GW_INFLOW: Groundwater inflow rate.
-        LAT_INFLOW: Total lateral inflow rate.
-        FLOODING: Total flooding rate.
-        OUTFLOW: Total outfall outflow rate.
-        STORAGE: Total network storage volume.
-        EVAP_TOTAL: Actual evaporation rate.
-        PET: Potential evapotranspiration rate.
+    @cvar TEMPERATURE: Air temperature.
+    @cvar RAINFALL: System-wide rainfall rate.
+    @cvar SNOW_DEPTH: Average snow depth.
+    @cvar EVAP: System-wide evaporation rate.
+    @cvar INFIL: System-wide infiltration rate.
+    @cvar RUNOFF: System-wide runoff rate.
+    @cvar DW_INFLOW: Dry-weather inflow rate.
+    @cvar GW_INFLOW: Groundwater inflow rate.
+    @cvar LAT_INFLOW: Total lateral inflow rate.
+    @cvar FLOODING: Total flooding rate.
+    @cvar OUTFLOW: Total outfall outflow rate.
+    @cvar STORAGE: Total network storage volume.
+    @cvar EVAP_TOTAL: Actual evaporation rate.
+    @cvar PET: Potential evapotranspiration rate.
     """
 
     TEMPERATURE = 0
@@ -532,59 +499,106 @@ class OutSystemVar(IntEnum):
     PET = 13
 
 
-class WarnCode(IntEnum):
-    """Engine warning codes emitted via the warning callback.
+# =============================================================================
+# Forcing
+# =============================================================================
 
-    Attributes:
-        NONE: No warning.
-        HOTSTART_MISSING: Object missing during hot start application.
-        UNKNOWN_SECTION: Unrecognised input section encountered.
-        UNKNOWN_OPTION: Unrecognised option keyword.
-        DEPRECATED_KW: Deprecated keyword used.
-        PLUGIN_INIT: Plugin initialisation issue.
-        NUMERICAL: Numerical instability handled gracefully.
-        STABILITY_LIMIT: Timestep limited by stability criterion.
+class ForcingMode(IntEnum):
+    """Forcing application mode.
+
+    Determines how a forced value is combined with the model-computed value.
+
+    @cvar REPLACE: Replace the computed value entirely.
+    @cvar ADD: Add the forced value to the computed value.
     """
 
-    NONE = 0
-    HOTSTART_MISSING = 1
-    UNKNOWN_SECTION = 2
-    UNKNOWN_OPTION = 3
-    DEPRECATED_KW = 4
-    PLUGIN_INIT = 5
-    NUMERICAL = 6
-    STABILITY_LIMIT = 7
+    REPLACE = 0
+    ADD = 1
 
 
-class ObjectType(IntEnum):
-    """SWMM object type codes.
+class ForcingTarget(IntEnum):
+    """Object type codes used with L{openswmm.engine.Forcing.clear}.
 
-    Attributes:
-        GAGE: Rain gage.
-        SUBCATCH: Subcatchment.
-        NODE: Node (junction, outfall, storage, divider).
-        LINK: Link (conduit, pump, orifice, weir, outlet).
-        POLLUT: Pollutant.
-        LANDUSE: Land use category.
-        TIMESER: Time series.
-        TABLE: Curve / table.
-        RDII: RDII unit hydrograph group.
-        UNITHYD: Unit hydrograph.
-        SNOWMELT: Snowmelt parameter set.
-        SHAPE: Custom cross-section shape.
-        LID: LID control.
+    @cvar NODE: Node forcing target.
+    @cvar LINK: Link forcing target.
+    @cvar SUBCATCH: Subcatchment forcing target.
+    @cvar GAGE: Rain gage forcing target.
     """
 
-    GAGE = 0
-    SUBCATCH = 1
-    NODE = 2
-    LINK = 3
-    POLLUT = 4
-    LANDUSE = 5
-    TIMESER = 6
-    TABLE = 7
-    RDII = 8
-    UNITHYD = 9
-    SNOWMELT = 10
-    SHAPE = 11
-    LID = 12
+    NODE = 0
+    LINK = 1
+    SUBCATCH = 2
+    GAGE = 3
+
+
+# =============================================================================
+# Patterns
+# =============================================================================
+
+class PatternType(IntEnum):
+    """Time pattern type.
+
+    @cvar MONTHLY: Monthly variation pattern.
+    @cvar DAILY: Daily variation pattern.
+    @cvar HOURLY: Hourly variation pattern.
+    @cvar WEEKEND: Weekend hourly variation pattern.
+    """
+
+    MONTHLY = 0
+    DAILY = 1
+    HOURLY = 2
+    WEEKEND = 3
+
+
+# =============================================================================
+# Mass-balance totals
+# =============================================================================
+
+class RunoffTotal(IntEnum):
+    """Runoff mass balance component codes.
+
+    @cvar RAINFALL: Total rainfall.
+    @cvar EVAP: Evaporation loss.
+    @cvar INFIL: Infiltration loss.
+    @cvar RUNOFF: Surface runoff.
+    @cvar SNOWREMOV: Snow removal.
+    @cvar INITSTORE: Initial surface storage.
+    @cvar FINALSTORE: Final surface storage.
+    """
+
+    RAINFALL = 0
+    EVAP = 1
+    INFIL = 2
+    RUNOFF = 3
+    SNOWREMOV = 4
+    INITSTORE = 5
+    FINALSTORE = 6
+
+
+class RoutingTotal(IntEnum):
+    """Routing mass balance component codes.
+
+    @cvar DRY_WEATHER: Dry-weather inflow.
+    @cvar WET_WEATHER: Wet-weather (runoff) inflow.
+    @cvar GW_INFLOW: Groundwater inflow.
+    @cvar RDII: RDII inflow.
+    @cvar EXTERNAL: External inflow.
+    @cvar FLOODING: Flooding loss.
+    @cvar OUTFLOW: Outfall outflow.
+    @cvar EVAP_LOSS: Evaporation loss.
+    @cvar SEEP_LOSS: Seepage loss.
+    @cvar INIT_STORAGE: Initial network storage.
+    @cvar FINAL_STORAGE: Final network storage.
+    """
+
+    DRY_WEATHER = 0
+    WET_WEATHER = 1
+    GW_INFLOW = 2
+    RDII = 3
+    EXTERNAL = 4
+    FLOODING = 5
+    OUTFLOW = 6
+    EVAP_LOSS = 7
+    SEEP_LOSS = 8
+    INIT_STORAGE = 9
+    FINAL_STORAGE = 10

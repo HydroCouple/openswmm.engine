@@ -4,7 +4,7 @@ import os
 import numpy as np
 import pytest
 
-from openswmm.engine import Solver, OutputReader
+from openswmm.engine import Solver, OutputReader, EngineState
 
 
 @pytest.fixture
@@ -15,7 +15,9 @@ def output_file(solver_files, tmp_path):
     s.open()
     s.initialize()
     s.start(save_results=True)
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         pass
     s.end()
     s.report()

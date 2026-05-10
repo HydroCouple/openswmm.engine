@@ -3,7 +3,7 @@ openswmm.engine
 ===============
 
 :author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
+:copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
 Cython bindings for the OpenSWMM Engine 6.0 C API.
@@ -22,6 +22,9 @@ The package is split by domain to mirror the C header organisation:
    * - :class:`ModelBuilder`
      - ``openswmm_model.h``
      - Programmatic model construction
+   * - :class:`ModelEditor`
+     - ``openswmm_edit.h``
+     - In-place model editing (delete + type conversion)
    * - :class:`Nodes`
      - ``openswmm_nodes.h``
      - Node get/set, lateral inflow, bulk arrays
@@ -40,9 +43,18 @@ The package is split by domain to mirror the C header organisation:
    * - :class:`MassBalance`
      - ``openswmm_massbalance.h``
      - Continuity error queries
+   * - :class:`Statistics`
+     - ``openswmm_statistics.h``
+     - Cumulative simulation statistics
+   * - :class:`OutputReader`
+     - ``openswmm_output.h``
+     - Binary output file reader
    * - :class:`Pollutants`
      - ``openswmm_pollutants.h``
      - Pollutant management and quality injection
+   * - :class:`Quality`
+     - ``openswmm_quality.h``
+     - Landuse, buildup, washoff, treatment
    * - :class:`Tables`
      - ``openswmm_tables.h``
      - Time series, curves, patterns
@@ -52,24 +64,21 @@ The package is split by domain to mirror the C header organisation:
    * - :class:`Controls`
      - ``openswmm_controls.h``
      - Control rules and direct actions
-   * - :class:`Infrastructure`
-     - ``openswmm_infrastructure.h``
-     - Transects, streets, inlets, LIDs
-   * - :class:`Quality`
-     - ``openswmm_quality.h``
-     - Landuse, buildup, washoff, treatment
-   * - :class:`Statistics`
-     - ``openswmm_statistics.h``
-     - Cumulative simulation statistics
-   * - :class:`OutputReader`
-     - ``openswmm_output.h``
-     - Binary output file reader
-   * - :class:`Spatial`
-     - ``openswmm_spatial.h``
-     - Coordinates, CRS, vertices, polygons
    * - :class:`Forcing`
      - ``openswmm_forcing.h``
      - Advanced runtime forcing (mode + persistence)
+   * - :class:`Infrastructure`
+     - ``openswmm_infrastructure.h``
+     - Transects, streets, inlets, LIDs
+   * - :class:`Spatial`
+     - ``openswmm_spatial.h``
+     - Coordinates, CRS, vertices, polygons
+   * - :class:`Surface2D`
+     - ``openswmm_2d.h``
+     - 2D surface mesh / coupled overland flow
+   * - :class:`GeoPackage` (Optional)
+     - ``openswmm_geopackage.h``
+     - GeoPackage import/export (requires ``OPENSWMM_WITH_GEOPACKAGE`` build)
 
 Quick start
 -----------
@@ -81,7 +90,9 @@ Quick start
     with Solver("model.inp", "model.rpt", "model.out") as s:
         nodes = Nodes(s)
         links = Links(s)
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             depths = nodes.get_depths_bulk()  # numpy array
             flows  = links.get_flows_bulk()   # numpy array
 
@@ -105,7 +116,9 @@ Programmatic model building
 
     solver = m.to_solver()
     solver.start()
-    while solver.step():
+    while solver.state == EngineState.RUNNING:
+        if solver.step() != 0:
+            break
         pass
     solver.end()
     solver.destroy()
@@ -124,81 +137,121 @@ Advanced forcing
         j1 = nodes.get_index("J1")
         forcing.node_lat_inflow(j1, 1.5, ForcingMode.REPLACE, persist=True)
 
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             pass
 
         forcing.clear_all()
 """
 
-# Lifecycle and error
+# =============================================================================
+# Engine lifecycle & errors
+# =============================================================================
 from ._solver import Solver, EngineError, run, run_with_callback
 
-# Model building
+# =============================================================================
+# Programmatic model building & editing
+# =============================================================================
 from ._model import ModelBuilder
-
-# Model editing (deletion + type conversion)
 from ._edit import ModelEditor, ImpactEntry, ConversionResult
 
-# Domain access classes
+# =============================================================================
+# Domain object access (hydraulics)
+# =============================================================================
 from ._nodes import Nodes
 from ._links import Links
 from ._subcatchments import Subcatchments
 from ._gages import Gages
 
-# Hot start
+# =============================================================================
+# Simulation state & I/O
+# =============================================================================
 from ._hotstart import HotStart
-
-# Mass balance
 from ._massbalance import MassBalance
+from ._statistics import Statistics
+from ._output_reader import OutputReader
 
-# Domain modules
+# =============================================================================
+# Hydrology, water quality, and time-varying inputs
+# =============================================================================
 from ._pollutants import Pollutants
+from ._quality import Quality
 from ._tables import Tables
 from ._inflows import Inflows
 from ._controls import Controls
-from ._infrastructure import Infrastructure
-from ._quality import Quality
-from ._statistics import Statistics
-from ._output_reader import OutputReader
-from ._spatial import Spatial
 from ._forcing import Forcing
 
-# GeoPackage (optional — requires OPENSWMM_WITH_GEOPACKAGE build)
+# =============================================================================
+# Spatial / infrastructure / 2D
+# =============================================================================
+from ._infrastructure import Infrastructure
+from ._spatial import Spatial
+
+# =============================================================================
+# Optional extensions (require specific build flags)
+# =============================================================================
+try:
+    from ._2d import Surface2D
+    HAS_2D = True
+except ImportError:
+    HAS_2D = False
+
 try:
     from ._geopackage import GeoPackage
     HAS_GEOPACKAGE = True
 except ImportError:
     HAS_GEOPACKAGE = False
 
-# Enums (pure Python, always available)
+# =============================================================================
+# Enumerations
+# =============================================================================
 from ._enums import (
-    ErrorCode, EngineState, NodeType, LinkType,
-    XSectShape, FlowUnits, RouteModel,
-    GageDataSource, GageRainType, InfilModel, OutfallType,
-    ConcentrationUnits, BuildupFunc, WashoffFunc,
-    RunoffTotal, RoutingTotal, LidType, PatternType,
-    ForcingMode, ForcingTarget,
+    # Lifecycle / errors
+    ErrorCode, EngineState, WarnCode, ObjectType,
+    # Hydraulics
+    FlowUnits, RouteModel, NodeType, LinkType, OutfallType, XSectShape,
+    # Hydrology
+    InfilModel, GageDataSource, GageRainType,
+    # Water quality / LID
+    ConcentrationUnits, BuildupFunc, WashoffFunc, LidType,
+    # Output variables
     OutSubcatchVar, OutNodeVar, OutLinkVar, OutSystemVar,
-    WarnCode, ObjectType,
+    # Forcing & patterns
+    ForcingMode, ForcingTarget, PatternType,
+    # Mass-balance totals
+    RunoffTotal, RoutingTotal,
 )
 
 __all__ = [
-    # Classes
-    "Solver", "ModelBuilder", "ModelEditor", "HotStart", "EngineError",
-    "ImpactEntry", "ConversionResult",
-    "Nodes", "Links", "Subcatchments", "Gages", "MassBalance",
-    "Pollutants", "Tables", "Inflows", "Controls",
-    "Infrastructure", "Quality", "Statistics", "OutputReader",
-    "Spatial", "Forcing", "HAS_GEOPACKAGE",
-    # Free functions
-    "run", "run_with_callback",
-    # Enums
-    "ErrorCode", "EngineState", "NodeType", "LinkType",
-    "XSectShape", "FlowUnits", "RouteModel",
-    "GageDataSource", "GageRainType", "InfilModel", "OutfallType",
-    "ConcentrationUnits", "BuildupFunc", "WashoffFunc",
-    "RunoffTotal", "RoutingTotal", "LidType", "PatternType",
-    "ForcingMode", "ForcingTarget",
+    # --- Engine lifecycle & errors ---
+    "Solver", "EngineError", "run", "run_with_callback",
+    # --- Programmatic model building & editing ---
+    "ModelBuilder", "ModelEditor", "ImpactEntry", "ConversionResult",
+    # --- Domain object access (hydraulics) ---
+    "Nodes", "Links", "Subcatchments", "Gages",
+    # --- Simulation state & I/O ---
+    "HotStart", "MassBalance", "Statistics", "OutputReader",
+    # --- Hydrology, water quality, and time-varying inputs ---
+    "Pollutants", "Quality", "Tables", "Inflows", "Controls", "Forcing",
+    # --- Spatial / infrastructure / 2D ---
+    "Infrastructure", "Spatial",
+    "Surface2D", "HAS_2D",
+    # --- Optional extensions ---
+    "HAS_GEOPACKAGE",
+    # --- Enumerations: lifecycle / errors ---
+    "ErrorCode", "EngineState", "WarnCode", "ObjectType",
+    # --- Enumerations: hydraulics ---
+    "FlowUnits", "RouteModel", "NodeType", "LinkType",
+    "OutfallType", "XSectShape",
+    # --- Enumerations: hydrology ---
+    "InfilModel", "GageDataSource", "GageRainType",
+    # --- Enumerations: water quality / LID ---
+    "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType",
+    # --- Enumerations: output variables ---
     "OutSubcatchVar", "OutNodeVar", "OutLinkVar", "OutSystemVar",
-    "WarnCode", "ObjectType",
+    # --- Enumerations: forcing & patterns ---
+    "ForcingMode", "ForcingTarget", "PatternType",
+    # --- Enumerations: mass-balance totals ---
+    "RunoffTotal", "RoutingTotal",
 ]

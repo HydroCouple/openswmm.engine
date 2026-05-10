@@ -20,7 +20,7 @@
  * @ingroup engine_core
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -1116,6 +1116,50 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     else if(std::holds_alternative<std::string>(v)){const auto&s=std::get<std::string>(v);
     if(s.find(' ')!=std::string::npos)std::fprintf(f,"\"%s\"\n",s.c_str());else std::fprintf(f,"%s\n",s.c_str());}
     }}
+
+    // [FILES] — secondary file references (rainfall / runoff / RDII /
+    // inflows / outflows / hot-start save & use).  Mode → keyword
+    // mapping mirrors the legacy parser.
+    if (ctx.files.has_any()) {
+        sec(f, "FILES");
+        std::fprintf(f, ";;%-12s %-10s %s\n", "Mode", "FileType", "Path");
+        auto mode_word = [](FileMode m) {
+            return m == FileMode::SAVE ? "SAVE" :
+                   m == FileMode::USE  ? "USE"  : "";
+        };
+        auto write_pair = [&](FileMode mode, const char* kind,
+                               const std::string& path) {
+            if (mode == FileMode::NONE || path.empty()) return;
+            std::fprintf(f, "%-13s %-10s \"%s\"\n",
+                          mode_word(mode), kind, path.c_str());
+        };
+        write_pair(ctx.files.rainfall_mode, "RAINFALL", ctx.files.rainfall_path);
+        write_pair(ctx.files.runoff_mode,   "RUNOFF",   ctx.files.runoff_path);
+        write_pair(ctx.files.rdii_mode,     "RDII",     ctx.files.rdii_path);
+        if (!ctx.files.inflows_path.empty())
+            std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE",  "INFLOWS",
+                          ctx.files.inflows_path.c_str());
+        if (!ctx.files.outflows_path.empty())
+            std::fprintf(f, "%-13s %-10s \"%s\"\n", "SAVE", "OUTFLOWS",
+                          ctx.files.outflows_path.c_str());
+        if (!ctx.files.hotstart_use_path.empty())
+            std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE",  "HOTSTART",
+                          ctx.files.hotstart_use_path.c_str());
+        if (!ctx.files.hotstart_save_path.empty()) {
+            if (ctx.files.hotstart_save_datetime > 0.0) {
+                char date_buf[16], time_buf[16];
+                fmt_date(date_buf, ctx.files.hotstart_save_datetime);
+                fmt_time(time_buf, ctx.files.hotstart_save_datetime);
+                std::fprintf(f, "%-13s %-10s \"%s\" %s %s\n",
+                              "SAVE", "HOTSTART",
+                              ctx.files.hotstart_save_path.c_str(),
+                              date_buf, time_buf);
+            } else {
+                std::fprintf(f, "%-13s %-10s \"%s\"\n", "SAVE", "HOTSTART",
+                              ctx.files.hotstart_save_path.c_str());
+            }
+        }
+    }
 
     // [PLUGINS]
     if(!ctx.plugin_specs.empty()){sec(f,"PLUGINS");

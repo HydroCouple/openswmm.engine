@@ -1,4 +1,18 @@
 # cython: language_level=3str
+"""
+openswmm.solver._solver
+========================
+
+:author: Caleb Buahin
+:copyright: Copyright (c) 2026 Caleb Buahin
+:license: MIT
+
+Cython module for the legacy SWMM 5.x solver bindings. Provides
+enumerations identifying SWMM objects, an exception class, free helper
+functions for running the solver and encoding/decoding SWMM datetimes,
+and the L{Solver} class implementing the open / start / step / end /
+report / close lifecycle with callback hooks.
+"""
 # Description: Cython module for openswmmcore solver
 # Created by: Caleb Buahin (EPA/ORD/CESER/WID)
 # Created on: 2024-11-19
@@ -73,48 +87,32 @@ from .solver cimport (
     swmm_getSystemRunoffTotals
 )
 
-class SWMMObjects(Enum):
-    """
-    Enumeration of SWMM objects.
+# =============================================================================
+# Object / type enumerations
+# =============================================================================
 
-    :ivar RAIN_GAGE: Raingage object
-    :type RAIN_GAGE: int
-    :ivar SUBCATCHMENT: Subcatchment object
-    :type SUBCATCHMENT: int 
-    :ivar NODE: Node object
-    :type NODE: int
-    :ivar LINK: Link object
-    :type LINK: int
-    :ivar AQUIFER: Aquifer object
-    :type AQUIFER: int
-    :ivar SNOWPACK: Snowpack object
-    :type SNOWPACK: int
-    :ivar UNIT_HYDROGRAPH: Unit hydrograph object
-    :type UNIT_HYDROGRAPH: int
-    :ivar LID: LID object
-    :type LID: int
-    :ivar STREET: Street object
-    :type STREET: int
-    :ivar INLET: Inlet object
-    :type INLET: int
-    :ivar TRANSECT: Transect object
-    :type TRANSECT: int
-    :ivar XSECTION_SHAPE: Cross-section shape object
-    :type XSECTION_SHAPE: int
-    :ivar CONTROL_RULE: Control rule object
-    :type CONTROL_RULE: int
-    :ivar POLLUTANT: Pollutant object
-    :type POLLUTANT: int
-    :ivar LANDUSE: Land use object
-    :type LANDUSE: int
-    :ivar CURVE: Curve object
-    :type CURVE: int
-    :ivar TIMESERIES: Time series object
-    :type TIMESERIES: int
-    :ivar TIME_PATTERN: Time pattern object
-    :type TIME_PATTERN: int
-    :ivar SYSTEM: System object
-    :type SYSTEM: int
+class SWMMObjects(Enum):
+    """Enumeration of SWMM objects.
+
+    @cvar RAIN_GAGE: Raingage object.
+    @cvar SUBCATCHMENT: Subcatchment object.
+    @cvar NODE: Node object.
+    @cvar LINK: Link object.
+    @cvar AQUIFER: Aquifer object.
+    @cvar SNOWPACK: Snowpack object.
+    @cvar UNIT_HYDROGRAPH: Unit hydrograph object.
+    @cvar LID: LID object.
+    @cvar STREET: Street object.
+    @cvar INLET: Inlet object.
+    @cvar TRANSECT: Transect object.
+    @cvar XSECTION_SHAPE: Cross-section shape object.
+    @cvar CONTROL_RULE: Control rule object.
+    @cvar POLLUTANT: Pollutant object.
+    @cvar LANDUSE: Land use object.
+    @cvar CURVE: Curve object.
+    @cvar TIMESERIES: Time series object.
+    @cvar TIME_PATTERN: Time pattern object.
+    @cvar SYSTEM: System object.
     """
     RAIN_GAGE = swmm_Object.swmm_GAGE
     SUBCATCHMENT = swmm_Object.swmm_SUBCATCH 
@@ -137,138 +135,84 @@ class SWMMObjects(Enum):
     SYSTEM = swmm_Object.swmm_SYSTEM
 
 class SWMMNodeTypes(Enum):
-    """
-    Enumeration of SWMM node types.
+    """Enumeration of SWMM node types.
 
-    :ivar JUNCTION: Junction node
-    :type JUNCTION: int
-    :ivar OUTFALL: Outfall node
-    :type OUTFALL: int
-    :ivar STORAGE: Storage node
-    :type STORAGE: int
-    :ivar DIVIDER: Divider node
-    :type DIVIDER: int
+    @cvar JUNCTION: Junction node.
+    @cvar OUTFALL: Outfall node.
+    @cvar STORAGE: Storage node.
+    @cvar DIVIDER: Divider node.
     """
     JUNCTION = swmm_NodeType.swmm_JUNCTION
     OUTFALL = swmm_NodeType.swmm_OUTFALL
     STORAGE = swmm_NodeType.swmm_STORAGE
     DIVIDER = swmm_NodeType.swmm_DIVIDER
 
-class SWMMRainGageProperties(Enum):
-    """
-    Enumeration of SWMM raingage properties.
+# =============================================================================
+# Property enumerations
+# =============================================================================
 
-    :ivar GAGE_TOTAL_PRECIPITATION: Total precipitation
-    :type GAGE_TOTAL_PRECIPITATION: int
-    :ivar GAGE_RAINFALL: Rainfall
-    :type GAGE_RAINFALL: int
-    :ivar GAGE_SNOWFALL: Snowfall
-    :type GAGE_SNOWFALL: int
+class SWMMRainGageProperties(Enum):
+    """Enumeration of SWMM raingage properties.
+
+    @cvar GAGE_TOTAL_PRECIPITATION: Total precipitation.
+    @cvar GAGE_RAINFALL: Rainfall.
+    @cvar GAGE_SNOWFALL: Snowfall.
     """
     GAGE_TOTAL_PRECIPITATION = swmm_GageProperty.swmm_GAGE_TOTAL_PRECIPITATION # Total precipitation
     GAGE_RAINFALL = swmm_GageProperty.swmm_GAGE_RAINFALL # Rainfall
     GAGE_SNOWFALL = swmm_GageProperty.swmm_GAGE_SNOWFALL # Snowfall
     
 class SWMMSubcatchmentProperties(Enum):
-    """
-    Enumeration of SWMM subcatchment properties.
+    """Enumeration of SWMM subcatchment properties.
 
-    :ivar AREA: Area
-    :type AREA: int
-    :ivar RAINGAGE: Raingage
-    :type RAINGAGE: int
-    :ivar RAINFALL: Rainfall
-    :type RAINFALL: int
-    :ivar EVAPORATION: Evaporation
-    :type EVAPORATION: int
-    :ivar INFILTRATION: Infiltration
-    :type INFILTRATION: int
-    :ivar RUNOFF: Runoff
-    :type RUNOFF: int
-    :ivar REPORT_FLAG: Report flag
-    :type REPORT_FLAG: int
-    :ivar WIDTH: Width
-    :type WIDTH: int
-    :ivar SLOPE: Slope
-    :type SLOPE: int
-    :ivar OUTLET_TYPE: Outlet type (node or subcatchment)
-    :type OUTLET_TYPE: int
-    :ivar OUTLET_INDEX: Outlet index
-    :type OUTLET_INDEX: int
-    :ivar INFILTRATION_MODEL: Infiltration model type
-    :type INFILTRATION_MODEL: int
-    :ivar FRACTION_IMPERVIOUS: Fraction of impervious area
-    :type FRACTION_IMPERVIOUS: int
-    :ivar SUB_AREA_ROUTE_TO: Subarea routing destination
-    :type SUB_AREA_ROUTE_TO: int
-    :ivar SUB_AREA_FRACTION_OUTLET: Fraction of subarea routed to outlet
-    :type SUB_AREA_FRACTION_OUTLET: int
-    :ivar SUB_AREA_MANNINGS_N: Subarea Manning's n (sub_index: 0=imperv, 1=perv)
-    :type SUB_AREA_MANNINGS_N: int
-    :ivar SUB_AREA_FRACTION_AREA: Subarea fraction of total area (sub_index: 0=imperv, 1=perv)
-    :type SUB_AREA_FRACTION_AREA: int
-    :ivar SUB_AREA_DEPRESSION_STORAGE: Subarea depression storage (sub_index: 0=imperv, 1=perv)
-    :type SUB_AREA_DEPRESSION_STORAGE: int
-    :ivar SUB_AREA_INFLOW: Subarea inflow (sub_index: 0=imperv, 1=perv)
-    :type SUB_AREA_INFLOW: int
-    :ivar SUB_AREA_RUNOFF: Subarea runoff (sub_index: 0=imperv, 1=perv)
-    :type SUB_AREA_RUNOFF: int
-    :ivar SUB_AREA_DEPTH: Subarea depth (sub_index: 0=imperv, 1=perv)
-    :type SUB_AREA_DEPTH: int
-    :ivar LID_UNITS_COUNT: Number of LID units in subcatchment
-    :type LID_UNITS_COUNT: int
-    :ivar LID_UNITS_PERV_AREA: LID pervious area
-    :type LID_UNITS_PERV_AREA: int
-    :ivar LID_UNITS_FLOW_TO_PERV_AREA: LID flow to pervious area
-    :type LID_UNITS_FLOW_TO_PERV_AREA: int
-    :ivar LID_UNITS_DRAIN_FLOW: LID drain flow
-    :type LID_UNITS_DRAIN_FLOW: int
-    :ivar LID_UNIT_REPLICATES: Number of LID unit replicates (sub_index=LID unit index)
-    :type LID_UNIT_REPLICATES: int
-    :ivar LID_UNIT_AREA: LID unit area (sub_index=LID unit index)
-    :type LID_UNIT_AREA: int
-    :ivar LID_UNIT_FULL_WIDTH: LID unit full top width (sub_index=LID unit index)
-    :type LID_UNIT_FULL_WIDTH: int
-    :ivar LID_UNIT_BOTTOM_WIDTH: LID unit bottom width (sub_index=LID unit index)
-    :type LID_UNIT_BOTTOM_WIDTH: int
-    :ivar LID_UNIT_INIT_SATURATION: LID unit initial saturation (sub_index=LID unit index)
-    :type LID_UNIT_INIT_SATURATION: int
-    :ivar LID_UNIT_FROM_IMPERVIOUS: LID unit fraction from impervious (sub_index=LID unit index)
-    :type LID_UNIT_FROM_IMPERVIOUS: int
-    :ivar LID_UNIT_FROM_PERVIOUS: LID unit fraction from pervious (sub_index=LID unit index)
-    :type LID_UNIT_FROM_PERVIOUS: int
-    :ivar LID_UNIT_TO_PERVIOUS: LID unit flow sent to pervious (sub_index=LID unit index)
-    :type LID_UNIT_TO_PERVIOUS: int
-    :ivar LID_UNIT_RECEIVING_OUTLET_TYPE: LID unit drain outlet object type (sub_index=LID unit index)
-    :type LID_UNIT_RECEIVING_OUTLET_TYPE: int
-    :ivar LID_UNIT_RECEIVING_OUTLET_INDEX: LID unit drain outlet index (sub_index=LID unit index)
-    :type LID_UNIT_RECEIVING_OUTLET_INDEX: int
-    :ivar LID_UNIT_SURFACE_DEPTH: LID unit surface depth (sub_index=LID unit index)
-    :type LID_UNIT_SURFACE_DEPTH: int
-    :ivar LID_UNIT_SOIL_MOISTURE: LID unit soil moisture content (sub_index=LID unit index)
-    :type LID_UNIT_SOIL_MOISTURE: int
-    :ivar LID_UNIT_GREEN_AMPT_CAPILLARY_SUCTION: LID unit Green-Ampt capillary suction (sub_index=LID unit index)
-    :type LID_UNIT_GREEN_AMPT_CAPILLARY_SUCTION: int
-    :ivar LID_UNIT_GREEN_AMPT_SATURATED_CONDUCTIVITY: LID unit Green-Ampt saturated conductivity (sub_index=LID unit index)
-    :type LID_UNIT_GREEN_AMPT_SATURATED_CONDUCTIVITY: int
-    :ivar LID_UNIT_GREEN_AMPT_MAX_SOIL_MOISTURE_DEFICIT: LID unit Green-Ampt max soil moisture deficit (sub_index=LID unit index)
-    :type LID_UNIT_GREEN_AMPT_MAX_SOIL_MOISTURE_DEFICIT: int
-    :ivar CURB_LENGTH: Curb length
-    :type CURB_LENGTH: int
-    :ivar API_RAINFALL: API Rainfall override
-    :type API_RAINFALL: int
-    :ivar API_SNOWFALL: API Snowfall override
-    :type API_SNOWFALL: int
-    :ivar POLLUTANT_BUILDUP: Pollutant buildup
-    :type POLLUTANT_BUILDUP: int
-    :ivar EXTERNAL_POLLUTANT_BUILDUP: External pollutant buildup
-    :type EXTERNAL_POLLUTANT_BUILDUP: int
-    :ivar POLLUTANT_RUNOFF_CONCENTRATION: Pollutant runoff concentration
-    :type POLLUTANT_RUNOFF_CONCENTRATION: int
-    :ivar POLLUTANT_PONDED_CONCENTRATION: Pollutant ponded concentration
-    :type POLLUTANT_PONDED_CONCENTRATION: int
-    :ivar POLLUTANT_TOTAL_LOAD: Pollutant total load
-    :type POLLUTANT_TOTAL_LOAD: int
+    @cvar AREA: Area.
+    @cvar RAINGAGE: Raingage index.
+    @cvar RAINFALL: Rainfall.
+    @cvar EVAPORATION: Evaporation.
+    @cvar INFILTRATION: Infiltration.
+    @cvar RUNOFF: Runoff.
+    @cvar REPORT_FLAG: Report flag.
+    @cvar WIDTH: Width.
+    @cvar SLOPE: Slope.
+    @cvar OUTLET_TYPE: Outlet object type (node or subcatchment).
+    @cvar OUTLET_INDEX: Outlet object index.
+    @cvar INFILTRATION_MODEL: Infiltration model type.
+    @cvar FRACTION_IMPERVIOUS: Fraction of impervious area.
+    @cvar SUB_AREA_ROUTE_TO: Subarea routing destination.
+    @cvar SUB_AREA_FRACTION_OUTLET: Fraction of subarea routed to outlet.
+    @cvar SUB_AREA_MANNINGS_N: Subarea Manning's n (sub_index: 0=imperv, 1=perv).
+    @cvar SUB_AREA_FRACTION_AREA: Subarea fraction of total area (sub_index: 0=imperv, 1=perv).
+    @cvar SUB_AREA_DEPRESSION_STORAGE: Subarea depression storage (sub_index: 0=imperv, 1=perv).
+    @cvar SUB_AREA_INFLOW: Subarea inflow (sub_index: 0=imperv, 1=perv).
+    @cvar SUB_AREA_RUNOFF: Subarea runoff (sub_index: 0=imperv, 1=perv).
+    @cvar SUB_AREA_DEPTH: Subarea depth (sub_index: 0=imperv, 1=perv).
+    @cvar LID_UNITS_COUNT: Number of LID units in subcatchment.
+    @cvar LID_UNITS_PERV_AREA: LID pervious area.
+    @cvar LID_UNITS_FLOW_TO_PERV_AREA: LID flow to pervious area.
+    @cvar LID_UNITS_DRAIN_FLOW: LID drain flow.
+    @cvar LID_UNIT_REPLICATES: Number of LID unit replicates (sub_index=LID unit index).
+    @cvar LID_UNIT_AREA: LID unit area (sub_index=LID unit index).
+    @cvar LID_UNIT_FULL_WIDTH: LID unit full top width (sub_index=LID unit index).
+    @cvar LID_UNIT_BOTTOM_WIDTH: LID unit bottom width (sub_index=LID unit index).
+    @cvar LID_UNIT_INIT_SATURATION: LID unit initial saturation (sub_index=LID unit index).
+    @cvar LID_UNIT_FROM_IMPERVIOUS: LID unit fraction from impervious (sub_index=LID unit index).
+    @cvar LID_UNIT_FROM_PERVIOUS: LID unit fraction from pervious (sub_index=LID unit index).
+    @cvar LID_UNIT_TO_PERVIOUS: LID unit flow sent to pervious (sub_index=LID unit index).
+    @cvar LID_UNIT_RECEIVING_OUTLET_TYPE: LID unit drain outlet object type (sub_index=LID unit index).
+    @cvar LID_UNIT_RECEIVING_OUTLET_INDEX: LID unit drain outlet index (sub_index=LID unit index).
+    @cvar LID_UNIT_SURFACE_DEPTH: LID unit surface depth (sub_index=LID unit index).
+    @cvar LID_UNIT_SOIL_MOISTURE: LID unit soil moisture content (sub_index=LID unit index).
+    @cvar LID_UNIT_GREEN_AMPT_CAPILLARY_SUCTION: LID unit Green-Ampt capillary suction (sub_index=LID unit index).
+    @cvar LID_UNIT_GREEN_AMPT_SATURATED_CONDUCTIVITY: LID unit Green-Ampt saturated conductivity (sub_index=LID unit index).
+    @cvar LID_UNIT_GREEN_AMPT_MAX_SOIL_MOISTURE_DEFICIT: LID unit Green-Ampt max soil moisture deficit (sub_index=LID unit index).
+    @cvar CURB_LENGTH: Curb length.
+    @cvar API_RAINFALL: API rainfall override.
+    @cvar API_SNOWFALL: API snowfall override.
+    @cvar POLLUTANT_BUILDUP: Pollutant buildup.
+    @cvar EXTERNAL_POLLUTANT_BUILDUP: External pollutant buildup.
+    @cvar POLLUTANT_RUNOFF_CONCENTRATION: Pollutant runoff concentration.
+    @cvar POLLUTANT_PONDED_CONCENTRATION: Pollutant ponded concentration.
+    @cvar POLLUTANT_TOTAL_LOAD: Pollutant total load.
     """
     AREA = swmm_SubcatchProperty.swmm_SUBCATCH_AREA
     RAINGAGE = swmm_SubcatchProperty.swmm_SUBCATCH_RAINGAGE
@@ -320,39 +264,23 @@ class SWMMSubcatchmentProperties(Enum):
     POLLUTANT_TOTAL_LOAD = swmm_SubcatchProperty.swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD
     
 class SWMMNodeProperties(Enum):
-    """
-    Enumeration of SWMM node properties.
+    """Enumeration of SWMM node properties.
 
-    :ivar TYPE: Node type
-    :type TYPE: int
-    :ivar INVERT_ELEVATION: Invert elevation
-    :type INVERT_ELEVATION: int
-    :ivar MAX_DEPTH: Maximum depth
-    :type MAX_DEPTH: int
-    :ivar DEPTH: Depth
-    :type DEPTH: int
-    :ivar HYDRAULIC_HEAD: Hydraulic head
-    :type HYDRAULIC_HEAD: int
-    :ivar VOLUME: Volume
-    :type VOLUME: int
-    :ivar LATERAL_INFLOW: Lateral inflow
-    :type LATERAL_INFLOW: int
-    :ivar TOTAL_INFLOW: Total inflow
-    :type TOTAL_INFLOW: int
-    :ivar FLOODING: Flooding
-    :type FLOODING: int
-    :ivar REPORT_FLAG: Report flag
-    :type REPORT_FLAG: int
-    :ivar SURCHARGE_DEPTH: Surcharge depth
-    :type SURCHARGE_DEPTH: int
-    :ivar PONDING_AREA: Ponding area
-    :type PONDING_AREA: int
-    :ivar INITIAL_DEPTH: Initial depth
-    :type INITIAL_DEPTH: int
-    :ivar POLLUTANT_CONCENTRATION: Pollutant concentration
-    :type POLLUTANT_CONCENTRATION: int
-    :ivar POLLUTANT_LATERAL_MASS_FLUX: Pollutant lateral mass flux
-    :type POLLUTANT_LATERAL_MASS_FLUX: int
+    @cvar TYPE: Node type.
+    @cvar INVERT_ELEVATION: Invert elevation.
+    @cvar MAX_DEPTH: Maximum depth.
+    @cvar DEPTH: Depth.
+    @cvar HYDRAULIC_HEAD: Hydraulic head.
+    @cvar VOLUME: Volume.
+    @cvar LATERAL_INFLOW: Lateral inflow.
+    @cvar TOTAL_INFLOW: Total inflow.
+    @cvar FLOODING: Flooding.
+    @cvar REPORT_FLAG: Report flag.
+    @cvar SURCHARGE_DEPTH: Surcharge depth.
+    @cvar PONDING_AREA: Ponding area.
+    @cvar INITIAL_DEPTH: Initial depth.
+    @cvar POLLUTANT_CONCENTRATION: Pollutant concentration.
+    @cvar POLLUTANT_LATERAL_MASS_FLUX: Pollutant lateral mass flux.
     """
     TYPE = swmm_NodeProperty.swmm_NODE_TYPE
     INVERT_ELEVATION = swmm_NodeProperty.swmm_NODE_ELEV
@@ -371,63 +299,37 @@ class SWMMNodeProperties(Enum):
     POLLUTANT_LATERAL_MASS_FLUX = swmm_NodeProperty.swmm_NODE_POLLUTANT_LATMASS_FLUX # Pollutant inflow concentration
 
 class SWMMLinkProperties(Enum):
-    """
-    Enumeration of SWMM link properties.
+    """Enumeration of SWMM link properties.
 
-    :ivar TYPE: Link type
-    :type TYPE: int
-    :ivar START_NODE: Start node
-    :type START_NODE: int
-    :ivar END_NODE: End node
-    :type END_NODE: int
-    :ivar LENGTH: Length
-    :type LENGTH: int
-    :ivar SLOPE: Slope
-    :type SLOPE: int
-    :ivar FULL_DEPTH: Full depth
-    :type FULL_DEPTH: int
-    :ivar FULL_FLOW: Full flow
-    :type FULL_FLOW: int
-    :ivar SETTING: Setting
-    :type SETTING: int
-    :ivar TIME_OPEN: Time open
-    :type TIME_OPEN: int
-    :ivar TIME_CLOSED: Time closed
-    :type TIME_CLOSED: int
-    :ivar FLOW: Flow
-    :type FLOW: int
-    :ivar DEPTH: Depth
-    :type DEPTH: int
-    :ivar VELOCITY: Velocity
-    :type VELOCITY: int
-    :ivar TOP_WIDTH: Top width
-    :type TOP_WIDTH: int
-    :ivar REPORT_FLAG: Report flag
-    :type REPORT_FLAG: int
-    :ivar START_NODE_OFFSET: Start node offset
-    :type START_NODE_OFFSET: int
-    :ivar END_NODE_OFFSET: End node offset
-    :type END_NODE_OFFSET: int
-    :ivar INITIAL_FLOW: Initial flow
-    :type INITIAL_FLOW: int
-    :ivar FLOW_LIMIT: Flow limit
-    :type FLOW_LIMIT: int
-    :ivar INLET_LOSS: Inlet loss
-    :type INLET_LOSS: int
-    :ivar OUTLET_LOSS: Outlet loss
-    :type OUTLET_LOSS: int
-    :ivar AVERAGE_LOSS: Average loss
-    :type AVERAGE_LOSS: int
-    :ivar SEEPAGE_RATE: Seepage rate
-    :type SEEPAGE_RATE: int
-    :ivar HAS_FLAPGATE: Has flapgate
-    :type HAS_FLAPGATE: int
-    :ivar POLLUTANT_CONCENTRATION: Pollutant concentration
-    :type POLLUTANT_CONCENTRATION: int
-    :ivar POLLUTANT_LOAD: Pollutant load
-    :type POLLUTANT_LOAD: int
-    :ivar POLLUTANT_LATERAL_MASS_FLUX: Pollutant lateral mass flux
-    :type POLLUTANT_LATERAL_MASS_FLUX: int
+    @cvar TYPE: Link type.
+    @cvar START_NODE: Start node.
+    @cvar END_NODE: End node.
+    @cvar LENGTH: Length.
+    @cvar SLOPE: Slope.
+    @cvar FULL_DEPTH: Full depth.
+    @cvar FULL_FLOW: Full flow.
+    @cvar SETTING: Setting.
+    @cvar TIME_OPEN: Time open.
+    @cvar TIME_CLOSED: Time closed.
+    @cvar FLOW: Flow.
+    @cvar DEPTH: Depth.
+    @cvar VELOCITY: Velocity.
+    @cvar TOP_WIDTH: Top width.
+    @cvar VOLUME: Volume.
+    @cvar CAPACITY: Capacity.
+    @cvar REPORT_FLAG: Report flag.
+    @cvar START_NODE_OFFSET: Start node offset.
+    @cvar END_NODE_OFFSET: End node offset.
+    @cvar INITIAL_FLOW: Initial flow.
+    @cvar FLOW_LIMIT: Flow limit.
+    @cvar INLET_LOSS: Inlet loss.
+    @cvar OUTLET_LOSS: Outlet loss.
+    @cvar AVERAGE_LOSS: Average loss.
+    @cvar SEEPAGE_RATE: Seepage rate.
+    @cvar HAS_FLAPGATE: Has flapgate.
+    @cvar POLLUTANT_CONCENTRATION: Pollutant concentration.
+    @cvar POLLUTANT_LOAD: Pollutant load.
+    @cvar POLLUTANT_LATERAL_MASS_FLUX: Pollutant lateral mass flux.
     """
     TYPE = swmm_LinkProperty.swmm_LINK_TYPE
     START_NODE = swmm_LinkProperty.swmm_LINK_NODE1
@@ -460,19 +362,13 @@ class SWMMLinkProperties(Enum):
     POLLUTANT_LATERAL_MASS_FLUX = swmm_LinkProperty.swmm_LINK_POLLUTANT_LATMASS_FLUX # Pollutant lateral mass flux
 
 class SWMMLinkTypes(Enum):
-    """
-    Enumeration of SWMM link types.
+    """Enumeration of SWMM link types.
 
-    :ivar CONDUIT: Conduit link
-    :type CONDUIT: int
-    :ivar PUMP: Pump link
-    :type PUMP: int
-    :ivar ORIFICE: Orifice link
-    :type ORIFICE: int
-    :ivar WEIR: Weir link
-    :type WEIR: int
-    :ivar OUTLET: Outlet link
-    :type OUTLET: int
+    @cvar CONDUIT: Conduit link.
+    @cvar PUMP: Pump link.
+    @cvar ORIFICE: Orifice link.
+    @cvar WEIR: Weir link.
+    @cvar OUTLET: Outlet link.
     """
     CONDUIT = swmm_LinkType.swmm_CONDUIT
     PUMP = swmm_LinkType.swmm_PUMP
@@ -481,90 +377,49 @@ class SWMMLinkTypes(Enum):
     OUTLET = swmm_LinkType.swmm_OUTLET
 
 class SWMMSystemProperties(Enum):
-    """
-    Enumeration of SWMM system properties.
+    """Enumeration of SWMM system properties.
 
-    :ivar START_DATE: Start date for the simulation
-    :type START_DATE: int
-    :ivar CURRENT_DATE: Current date for the simulation
-    :type CURRENT_DATE: int
-    :ivar ELAPSED_TIME: Elapsed time for the simulation
-    :type ELAPSED_TIME: int
-    :ivar ROUTING_STEP: Routing time step
-    :type ROUTING_STEP: int
-    :ivar MAX_ROUTING_STEP: Maximum routing time step
-    :type MAX_ROUTING_STEP: int
-    :ivar REPORT_STEP: Report time step
-    :type REPORT_STEP: int
-    :ivar TOTAL_STEPS: Total number of steps
-    :type TOTAL_STEPS: int
-    :ivar NO_REPORT_FLAG: No report flag
-    :type NO_REPORT_FLAG: int
-    :ivar FLOW_UNITS: Flow units
-    :type FLOW_UNITS: int
-    :ivar END_DATE: End date for the simulation
-    :type END_DATE: int
-    :ivar REPORT_START_DATE: Report start date
-    :type REPORT_START_DATE: int
-    :ivar UNIT_SYSTEM: Unit system
-    :type UNIT_SYSTEM: int
-    :ivar SURCHARGE_METHOD: Surcharge method
-    :type SURCHARGE_METHOD: int
-    :ivar ALLOW_PONDING: Allow ponding
-    :type ALLOW_PONDING: int
-    :ivar INTERTIAL_DAMPING: Inertial damping
-    :type INTERTIAL_DAMPING: int
-    :ivar NORMAL_FLOW_LIMITED: Normal flow limited
-    :type NORMAL_FLOW_LIMITED: int
-    :ivar SKIP_STEADY_STATE: Skip steady state
-    :type SKIP_STEADY_STATE: int
-    :ivar IGNORE_RAINFALL: Ignore rainfall
-    :type IGNORE_RAINFALL: int
-    :ivar IGNORE_RDII: Ignore RDII
-    :type IGNORE_RDII: int
-    :ivar IGNORE_SNOWMELT: Ignore snowmelt
-    :type IGNORE_SNOWMELT: int
-    :ivar IGNORE_GROUNDWATER: Ignore groundwater
-    :type IGNORE_GROUNDWATER: int
-    :ivar IGNORE_ROUTING: Ignore routing
-    :type IGNORE_ROUTING: int
-    :ivar IGNORE_QUALITY: Ignore quality
-    :type IGNORE_QUALITY: int
-    :ivar RULE_STEP: Rule step
-    :type RULE_STEP: int
-    :ivar SWEEP_START: Sweep start
-    :type SWEEP_START: int
-    :ivar SWEEP_END: Sweep end
-    :type SWEEP_END: int
-    :ivar MAX_TRIALS: Maximum trials
-    :type MAX_TRIALS: int
-    :ivar NUM_THREADS: Number of threads
-    :type NUM_THREADS: int
-    :ivar MIN_ROUTE_STEP: Minimum routing step
-    :type MIN_ROUTE_STEP: int
-    :ivar LENGTHENING_STEP: Lengthening step
-    :type LENGTHENING_STEP: int
-    :ivar START_DRY_DAYS: Start dry days
-    :type START_DRY_DAYS: int
-    :ivar COURANT_FACTOR: Courant factor
-    :type COURANT_FACTOR: int
-    :ivar MIN_SURF_AREA: Minimum surface area
-    :type MIN_SURF_AREA: int
-    :ivar MIN_SLOPE: Minimum slope
-    :type MIN_SLOPE: int
-    :ivar RUNOFF_ERROR: Runoff error
-    :type RUNOFF_ERROR: int
-    :ivar FLOW_ERROR: Flow error
-    :type FLOW_ERROR: int
-    :ivar QUAL_ERROR: Quality error
-    :type QUAL_ERROR: int
-    :ivar HEAD_TOL: Head tolerance
-    :type HEAD_TOL: int
-    :ivar SYS_FLOW_TOL: System flow tolerance
-    :type SYS_FLOW_TOL: int
-    :ivar LAT_FLOW_TOL: Lateral flow tolerance
-    :type LAT_FLOW_TOL: int
-
+    @cvar START_DATE: Start date for the simulation.
+    @cvar CURRENT_DATE: Current date for the simulation.
+    @cvar ELAPSED_TIME: Elapsed time for the simulation.
+    @cvar ROUTING_STEP: Routing time step.
+    @cvar MAX_ROUTING_STEP: Maximum routing time step.
+    @cvar REPORT_STEP: Report time step.
+    @cvar TOTAL_STEPS: Total number of steps.
+    @cvar NO_REPORT_FLAG: No report flag.
+    @cvar FLOW_UNITS: Flow units.
+    @cvar END_DATE: End date for the simulation.
+    @cvar REPORT_START_DATE: Report start date.
+    @cvar UNIT_SYSTEM: Unit system.
+    @cvar SURCHARGE_METHOD: Surcharge method.
+    @cvar ALLOW_PONDING: Allow ponding.
+    @cvar INTERTIAL_DAMPING: Inertial damping.
+    @cvar NORMAL_FLOW_LIMITED: Normal flow limited.
+    @cvar SKIP_STEADY_STATE: Skip steady state.
+    @cvar IGNORE_RAINFALL: Ignore rainfall.
+    @cvar IGNORE_RDII: Ignore RDII.
+    @cvar IGNORE_SNOWMELT: Ignore snowmelt.
+    @cvar IGNORE_GROUNDWATER: Ignore groundwater.
+    @cvar IGNORE_ROUTING: Ignore routing.
+    @cvar IGNORE_QUALITY: Ignore quality.
+    @cvar ERROR_CODE: Most recent internal error code.
+    @cvar RULE_STEP: Rule step.
+    @cvar SWEEP_START: Sweep start.
+    @cvar SWEEP_END: Sweep end.
+    @cvar MAX_TRIALS: Maximum trials.
+    @cvar NUM_THREADS: Number of threads.
+    @cvar MIN_ROUTE_STEP: Minimum routing step.
+    @cvar LENGTHENING_STEP: Lengthening step.
+    @cvar START_DRY_DAYS: Start dry days.
+    @cvar COURANT_FACTOR: Courant factor.
+    @cvar MIN_SURF_AREA: Minimum surface area.
+    @cvar MIN_SLOPE: Minimum slope.
+    @cvar RUNOFF_ERROR: Runoff error.
+    @cvar FLOW_ERROR: Flow error.
+    @cvar QUAL_ERROR: Quality error.
+    @cvar HEAD_TOL: Head tolerance.
+    @cvar SYS_FLOW_TOL: System flow tolerance.
+    @cvar LAT_FLOW_TOL: Lateral flow tolerance.
     """
     START_DATE = swmm_SystemProperty.swmm_STARTDATE
     CURRENT_DATE = swmm_SystemProperty.swmm_CURRENTDATE
@@ -608,22 +463,19 @@ class SWMMSystemProperties(Enum):
     SYS_FLOW_TOL = swmm_SystemProperty.swmm_SYSFLOWTOL
     LAT_FLOW_TOL = swmm_SystemProperty.swmm_LATFLOWTOL
 
-class SWMMFlowUnits(Enum):
-    """
-    Enumeration of SWMM flow units.
+# =============================================================================
+# Units / errors enumerations
+# =============================================================================
 
-    :ivar CFS: Cubic feet per second
-    :type CFS: int
-    :ivar GPM: Gallons per minute
-    :type GPM: int
-    :ivar MGD: Million gallons per day
-    :type MGD: int
-    :ivar CMS: Cubic meters per second
-    :type CMS: int
-    :ivar LPS: Liters per second
-    :type LPS: int
-    :ivar MLD: Million liters per day
-    :type MLD: int
+class SWMMFlowUnits(Enum):
+    """Enumeration of SWMM flow units.
+
+    @cvar CFS: Cubic feet per second.
+    @cvar GPM: Gallons per minute.
+    @cvar MGD: Million gallons per day.
+    @cvar CMS: Cubic meters per second.
+    @cvar LPS: Liters per second.
+    @cvar MLD: Million liters per day.
     """
     CFS = swmm_FlowUnitsProperty.swmm_CFS
     GPM = swmm_FlowUnitsProperty.swmm_GPM
@@ -633,15 +485,20 @@ class SWMMFlowUnits(Enum):
     MLD = swmm_FlowUnitsProperty.swmm_MLD
 
 class SWMMAPIErrors(Enum):
-    """
-    Enumeration of SWMM API errors.
+    """Enumeration of SWMM API errors.
 
-    :ivar PROJECT_NOT_OPENED: Project not opened
-    :type PROJECT_NOT_OPENED: int
-    :ivar SIMULATION_NOT_STARTED: Simulation not started
-    :type SIMULATION_NOT_STARTED: int
-    :ivar SIMULATION_NOT_ENDED: Simulation not ended
-    :type SIMULATION_NOT_ENDED: int    
+    @cvar PROJECT_NOT_OPENED: Project not opened.
+    @cvar SIMULATION_NOT_STARTED: Simulation not started.
+    @cvar SIMULATION_NOT_ENDED: Simulation not ended.
+    @cvar OBJECT_TYPE: Invalid object type.
+    @cvar OBJECT_INDEX: Invalid object index.
+    @cvar OBJECT_NAME: Invalid object name.
+    @cvar PROPERTY_TYPE: Invalid property type.
+    @cvar PROPERTY_VALUE: Invalid property value.
+    @cvar TIME_PERIOD: Invalid time period.
+    @cvar HOTSTART_FILE_OPEN: Error opening hotstart file.
+    @cvar HOTSTART_FILE_FORMAT: Invalid hotstart file format.
+    @cvar SIMULATION_IS_RUNNING: Simulation is running.
     """
     PROJECT_NOT_OPENED = swmm_API_Errors.ERR_API_NOT_OPEN          # API not open
     SIMULATION_NOT_STARTED = swmm_API_Errors.ERR_API_NOT_STARTED       # API not started
@@ -656,25 +513,27 @@ class SWMMAPIErrors(Enum):
     HOTSTART_FILE_FORMAT = swmm_API_Errors.ERR_API_HOTSTART_FILE_FORMAT # Invalid hotstart file format
     SIMULATION_IS_RUNNING = swmm_API_Errors.ERR_API_IS_RUNNING # Simulation is running
 
-cdef void c_wrapper_function(double x):
-    """
-    Wrapper function to call a Python function.
+# =============================================================================
+# Internal callback wrappers
+# =============================================================================
 
-    :param x: Input value
-    :type x: double
+cdef void c_wrapper_function(double x):
+    """Wrapper function to call a Python function from C.
+
+    @param x: Input value forwarded to the registered Python callback.
+    @type x: float
     """
     global py_progress_callback
     cdef tuple args = (x,)
     PyObject_CallObject(py_progress_callback, args)
 
 cdef progress_callback wrap_python_function_as_callback(object py_func):
-    """
-    Wrap a Python function as a callback.
+    """Wrap a Python function as a SWMM C C{progress_callback}.
 
-    :param py_func: Python function
-    :type py_func: callable
-    :return: Callback function
-    :rtype: progress_callback
+    @param py_func: Python function to invoke for each progress update.
+    @type py_func: callable
+    @return: C-callable progress callback that forwards to C{py_func}.
+    @rtype: progress_callback
     """
     global py_progress_callback
     py_progress_callback = py_func
@@ -683,12 +542,10 @@ cdef progress_callback wrap_python_function_as_callback(object py_func):
 cdef object global_solver = None
 
 cdef void progress_callback_wrapper(double progress):
-    """
-    Wrapper function to call the instance method.
-    
-    :param progress: Progress percentage
-    :type progress: double
+    """Wrapper function dispatching the C progress callback to a solver instance method.
 
+    @param progress: Progress fraction in C{[0.0, 1.0]}.
+    @type progress: float
     """
     global solver_instance
 
@@ -696,23 +553,26 @@ cdef void progress_callback_wrapper(double progress):
         solver_instance.__progress_callback(progress)
 
 def run_solver(
-    inp_file: str, 
-    rpt_file: str = None, 
-    out_file: str = None, 
+    inp_file: str,
+    rpt_file: str = None,
+    out_file: str = None,
     swmm_progress_callback: Callable[[float], None] = None
     ) -> int:
-    """
-    Run a SWMM simulation with a progress callback.
+    """Run a SWMM simulation, optionally with a progress callback.
 
-    :param inp_file: Input file name
-    :rtype inp_file: str
-    :param rpt_file: Report file name
-    :rtype rpt_file: str
-    :param out_file: Output file name
-    :rtype out_file: str
-    :param swmm_progress_callback: Progress callback function
-    :type swmm_progress_callback: callable
-    :return: Error code (0 if successful)
+    @param inp_file: Input file name.
+    @type inp_file: str
+    @param rpt_file: Report file name.
+    @type rpt_file: str
+    @param out_file: Output file name.
+    @type out_file: str
+    @param swmm_progress_callback: Optional progress callback receiving a
+        float between 0.0 and 1.0.
+    @type swmm_progress_callback: callable
+    @return: Error code from the underlying SWMM C API (C{0} on success,
+        non-zero on failure). Callers should check the return value rather
+        than relying on an exception.
+    @rtype: int
     """
     cdef int error_code = 0
     cdef bytes c_inp_file_bytes = inp_file.encode('utf-8')
@@ -737,20 +597,15 @@ def run_solver(
     else:
         error_code = swmm_run(c_inp_file, c_rpt_file, c_out_file)
 
-    if error_code != 0:
-        raise SWMMSolverException(f'Run failed with message: {get_error_message(error_code)}')
-    
     return error_code
 
 cpdef cython_datetime decode_swmm_datetime(double swmm_datetime):
-    """
-    Decode a SWMM datetime into a datetime object.
-    
-    :param swmm_datetime: SWMM datetime float value
-    :type swmm_datetime: float
-    
-    :return: datetime object
-    :rtype: datetime
+    """Decode a SWMM datetime float into a L{datetime} object.
+
+    @param swmm_datetime: SWMM datetime float value.
+    @type swmm_datetime: float
+    @return: Decoded datetime.
+    @rtype: datetime
     """
     cdef int year, month, day, hour, minute, second, day_of_week
     swmm_decodeDate(swmm_datetime, &year, &month, &day, &hour, &minute, &second, &day_of_week)
@@ -758,13 +613,12 @@ cpdef cython_datetime decode_swmm_datetime(double swmm_datetime):
     return datetime(year, month, day, hour, minute, second)
 
 cpdef double encode_swmm_datetime(cython_datetime dt):
-    """
-    Encode a datetime object into a SWMM datetime float value.
+    """Encode a L{datetime} object into a SWMM datetime float value.
 
-    :param dt: datetime object
-    :type dt: datetime
-    :return: SWMM datetime float value
-    :rtype: float
+    @param dt: datetime object.
+    @type dt: datetime
+    @return: SWMM datetime float value.
+    @rtype: float
     """
     cdef int year = dt.year
     cdef int month = dt.month
@@ -776,24 +630,22 @@ cpdef double encode_swmm_datetime(cython_datetime dt):
     return swmm_encodeDate(year, month, day, hour, minute, second)
 
 cpdef int version():
-    """
-    Get the SWMM version.
-    
-    :return: SWMM version
-    :rtype: str
+    """Get the SWMM version.
+
+    @return: SWMM version (encoded as integer).
+    @rtype: int
     """
     cdef int swmm_version = swmm_getVersion()
 
     return swmm_version
 
 cpdef str get_error_message(int error_code):
-    """
-    Get the error message for a SWMM error code.
-    
-    :param error_code: Error code
-    :type error_code: int
-    :return: Error message
-    :rtype: str
+    """Get the error message text for a SWMM error code.
+
+    @param error_code: Error code.
+    @type error_code: int
+    @return: Error message.
+    @rtype: str
     """
     cdef char* c_error_message = <char*>malloc(1024*sizeof(char))
     
@@ -805,11 +657,22 @@ cpdef str get_error_message(int error_code):
 
     return error_message
 
+# =============================================================================
+# Lifecycle / callback enumerations and exceptions
+# =============================================================================
+
 class SolverState(Enum):
+    """Enumeration to represent the state of the solver.
+
+    @cvar CREATED: Solver instance created but not yet opened.
+    @cvar OPEN: Input file opened.
+    @cvar STARTED: Simulation started.
+    @cvar FINISHED: Stepping has completed.
+    @cvar ENDED: Simulation ended.
+    @cvar REPORTED: Results reported.
+    @cvar CLOSED: Solver closed.
     """
-    An enumeration to represent the state of the solver.
-    """
-    CREATED = 0 
+    CREATED = 0
     OPEN = 1
     STARTED = 2
     FINISHED = 3
@@ -818,8 +681,21 @@ class SolverState(Enum):
     CLOSED = 6
 
 class CallbackType(Enum):
-    """
-    An enumeration to represent the type of callback.
+    """Enumeration of callback hook points exposed by L{Solver.add_callback}.
+
+    @cvar BEFORE_INITIALIZE: Fired before C{initialize}.
+    @cvar BEFORE_OPEN: Fired before C{open}.
+    @cvar AFTER_OPEN: Fired after C{open}.
+    @cvar BEFORE_START: Fired before C{start}.
+    @cvar AFTER_START: Fired after C{start}.
+    @cvar BEFORE_STEP: Fired before each C{step}.
+    @cvar AFTER_STEP: Fired after each C{step}.
+    @cvar BEFORE_END: Fired before C{end}.
+    @cvar AFTER_END: Fired after C{end}.
+    @cvar BEFORE_REPORT: Fired before C{report}.
+    @cvar AFTER_REPORT: Fired after C{report}.
+    @cvar BEFORE_CLOSE: Fired before C{close}.
+    @cvar AFTER_CLOSE: Fired after C{close}.
     """
     BEFORE_INITIALIZE = 0
     BEFORE_OPEN = 1
@@ -836,49 +712,60 @@ class CallbackType(Enum):
     AFTER_CLOSE = 12
 
 class SWMMSolverException(Exception):
-    """
-    Exception class for SWMM output file processing errors.
-    """
+    """Exception class for SWMM solver errors."""
     def __init__(self, message: str) -> None:
-        """
-        Constructor to initialize the exception message.
+        """Constructor to initialize the exception message.
 
-        :param message: Error message.
-        :type message: str
+        @param message: Error message.
+        @type message: str
         """
         super().__init__(message)
 
 cdef class Solver:
-    """
-    A class to represent a SWMM solver.
+    """A class to represent a SWMM solver.
+
+    The solver wraps the legacy SWMM 5.x C API lifecycle
+    (open / start / step / end / report / close) and adds Python
+    conveniences such as context-manager support, iterator-style
+    stepping, and callback hooks.
     """
     cdef str _inp_file
     cdef str _rpt_file
     cdef str _out_file
     cdef bint _save_results
     cdef int _stride_step
-    cdef dict _callbacks 
-    cdef int _progress_callbacks_per_second 
-    cdef list _progress_callbacks 
-    cdef clock_t _clock 
+    cdef dict _callbacks
+    cdef int _progress_callbacks_per_second
+    cdef list _progress_callbacks
+    cdef clock_t _clock
     cdef double _total_duration
     cdef object _solver_state
-    cdef object _partial_step_function 
+    cdef object _partial_step_function
+
+    # ====================================================================
+    # Lifecycle
+    # ====================================================================
 
     def __cinit__(
-        self, 
-        str inp_file, 
-        str rpt_file = None, 
-        str out_file = None, 
-        int stride_step = 300, 
+        self,
+        str inp_file,
+        str rpt_file = None,
+        str out_file = None,
+        int stride_step = 300,
         bint save_results=True
     ):
-        """
-        Constructor to create a new SWMM solver.
+        """Constructor to create a new SWMM solver.
 
-        :param inp_file: Input file name
-        :param rpt_file: Report file name
-        :param out_file: Output file name
+        @param inp_file: Input file name.
+        @type inp_file: str
+        @param rpt_file: Report file name. Derived from C{inp_file} when omitted.
+        @type rpt_file: str
+        @param out_file: Output file name. Derived from C{inp_file} when omitted.
+        @type out_file: str
+        @param stride_step: Default stride (in seconds) used by C{step()}.
+        @type stride_step: int
+        @param save_results: Whether to save binary results.
+        @type save_results: bool
         """
         global global_solver
         self._save_results = save_results
@@ -919,47 +806,60 @@ cdef class Solver:
         self._solver_state = SolverState.CREATED
 
     def __enter__(self):
-        """
-        Enter method for context manager.
+        """Enter the runtime context, opening the solver.
+
+        @return: This solver instance.
+        @rtype: L{Solver}
         """
         self.__execute_callbacks(CallbackType.BEFORE_INITIALIZE)
         self.open()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        """
-        Exit method for context manager.
-        """
+        """Exit the runtime context, finalizing the solver."""
         self.finalize()
 
     def __dealloc__(self):
-        """
-        Destructor to free the solver.
-        """
+        """Destructor to free the solver."""
         self.finalize()
 
     def __iter__(self):
-        """
-        Iterator method for the solver.
+        """Return the solver as an iterator that yields step results.
+
+        @return: This solver instance.
+        @rtype: L{Solver}
         """
         return self
-    
-    def __next__(self):
-        """
-        Next method for the solver.
+
+    def __next__(self) -> int:
+        """Advance one step.
+
+        Returns the per-step error code from L{step}. Iterate, checking the
+        return code to detect failure; iteration stops automatically when
+        the solver transitions to C{FINISHED}::
+
+            for rc in solver:
+                if rc != 0:
+                    break
+
+        @return: Error code (C{0} on success, non-zero on failure).
+        @rtype: int
+        @raise StopIteration: When the solver has finished.
         """
         if self._solver_state == SolverState.FINISHED:
             raise StopIteration
-        else:
-            return self.step()
+        return self.step()
+
+    # ====================================================================
+    # Timing properties
+    # ====================================================================
 
     @property
     def start_datetime(self) -> datetime:
-        """
-        Get the start date of the simulation.
-        
-        :return: Start date
-        :rtype: datetime
+        """Get the start date of the simulation.
+
+        @return: Start date.
+        @rtype: datetime
         """
         cdef double start_date = swmm_getValueExpanded(
             objType=SWMMObjects.SYSTEM.value, 
@@ -973,11 +873,10 @@ cdef class Solver:
 
     @start_datetime.setter
     def start_datetime(self, sim_start_datetime: datetime) -> None:
-        """
-        Initialize the solver.
-        
-        :param sim_start_datetime: Start date of the simulation
-        :return: Error code (0 if successful)
+        """Set the start date of the simulation.
+
+        @param sim_start_datetime: Start date of the simulation.
+        @type sim_start_datetime: datetime
         """
         cdef double start_date = encode_swmm_datetime(dt=sim_start_datetime)
         cdef int error_code = swmm_setValueExpanded(
@@ -993,11 +892,10 @@ cdef class Solver:
 
     @property
     def end_datetime(self) -> datetime:
-        """
-        Get the end date of the simulation.
-        
-        :return: End date
-        :rtype: datetime
+        """Get the end date of the simulation.
+
+        @return: End date.
+        @rtype: datetime
         """
         cdef double end_date = swmm_getValueExpanded(
             objType=SWMMObjects.SYSTEM.value,
@@ -1011,11 +909,10 @@ cdef class Solver:
 
     @end_datetime.setter
     def end_datetime(self, sim_end_datetime: datetime) -> None:
-        """
-        Set the end date of the simulation.
-        
-        :param sim_end_datetime: End date of the simulation
-        :return: Error code (0 if successful)
+        """Set the end date of the simulation.
+
+        @param sim_end_datetime: End date of the simulation.
+        @type sim_end_datetime: datetime
         """
         cdef double end_date = encode_swmm_datetime(dt=sim_end_datetime)
         cdef int error_code = swmm_setValueExpanded(
@@ -1031,11 +928,10 @@ cdef class Solver:
     
     @property
     def routing_step(self) -> float:
-        """
-        Get the routing time step of the simulation in seconds.
-        
-        :return: Routing time step
-        :rtype: double
+        """Get the routing time step of the simulation in seconds.
+
+        @return: Routing time step.
+        @rtype: float
         """
         cdef double routing_step = swmm_getValueExpanded(
             objType=SWMMObjects.SYSTEM.value,
@@ -1049,11 +945,10 @@ cdef class Solver:
 
     @routing_step.setter
     def routing_step(self, value: float) -> None:
-        """
-        Set the routing time step of the simulation in seconds.
-        
-        :param value: Routing time step in seconds
-        :type value: float
+        """Set the routing time step of the simulation in seconds.
+
+        @param value: Routing time step in seconds.
+        @type value: float
         """
         cdef int error_code = swmm_setValueExpanded(
             objType=SWMMObjects.SYSTEM.value,
@@ -1068,11 +963,10 @@ cdef class Solver:
 
     @property
     def reporting_step(self) -> float:
-        """
-        Get the reporting time step of the simulation in seconds.
-        
-        :return: Reporting time step
-        :rtype: double
+        """Get the reporting time step of the simulation in seconds.
+
+        @return: Reporting time step.
+        @rtype: float
         """
         cdef double reporting_step = swmm_getValueExpanded(
             objType=SWMMObjects.SYSTEM.value,
@@ -1086,11 +980,10 @@ cdef class Solver:
 
     @reporting_step.setter
     def reporting_step(self, value: float) -> None:
-        """
-        Set the reporting time step of the simulation in seconds.
-        
-        :param value: Reporting time step in seconds
-        :type value: float
+        """Set the reporting time step of the simulation in seconds.
+
+        @param value: Reporting time step in seconds.
+        @type value: float
         """
         cdef int error_code = swmm_setValueExpanded(
             objType=SWMMObjects.SYSTEM.value,
@@ -1105,11 +998,10 @@ cdef class Solver:
    
     @property
     def report_start_datetime(self) -> datetime:
-        """
-        Get the report start date of the simulation.
-        
-        :return: Report start date
-        :rtype: datetime
+        """Get the report start date of the simulation.
+
+        @return: Report start date.
+        @rtype: datetime
         """
         cdef double report_start_date = swmm_getValueExpanded(
             objType=SWMMObjects.SYSTEM.value,
@@ -1123,11 +1015,10 @@ cdef class Solver:
 
     @report_start_datetime.setter
     def report_start_datetime(self, report_start_datetime: datetime) -> None:
-        """
-        Set the report start date of the simulation.
-        
-        :param report_start_datetime: Report start date
-        :type report_start_datetime: datetime
+        """Set the report start date of the simulation.
+
+        @param report_start_datetime: Report start date.
+        @type report_start_datetime: datetime
         """
         cdef double report_start_date = encode_swmm_datetime(report_start_datetime)
         cdef int error_code = swmm_setValueExpanded(
@@ -1143,11 +1034,10 @@ cdef class Solver:
 
     @property
     def current_datetime(self) -> datetime:
-        """
-        Get the current date of the simulation.
-        
-        :return: Current date
-        :rtype: datetime
+        """Get the current date of the simulation.
+
+        @return: Current date.
+        @rtype: datetime
         """
         cdef double current_date = swmm_getValueExpanded(
             objType=SWMMObjects.SYSTEM.value,
@@ -1161,32 +1051,33 @@ cdef class Solver:
     
     @property
     def progress_callbacks_per_second(self) -> int:
-        """
-        Get the number of progress callbacks per second.
-        
-        :return: Progress callbacks per second
-        :rtype: int
+        """Get the maximum number of progress callbacks per second.
+
+        @return: Progress callbacks per second.
+        @rtype: int
         """
         return self._progress_callbacks_per_second
-    
+
     @progress_callbacks_per_second.setter
     def progress_callbacks_per_second(self, value: int) -> None:
-        """
-        Set the number of progress callbacks per second.
-        
-        :param value: Progress callbacks per second
-        :type value: int
+        """Set the maximum number of progress callbacks per second.
+
+        @param value: Progress callbacks per second.
+        @type value: int
         """
         self._progress_callbacks_per_second = max(1, value)
 
+    # ====================================================================
+    # Per-element queries
+    # ====================================================================
+
     def get_object_count(self, object_type: SWMMObjects) -> int:
-        """
-        Get the count of a SWMM object type.
-        
-        :param object_type: SWMM object type
-        :type object_type: SWMMObjects
-        :return: Object count
-        :rtype: int
+        """Get the count of a SWMM object type.
+
+        @param object_type: SWMM object type.
+        @type object_type: L{SWMMObjects}
+        @return: Object count.
+        @rtype: int
         """
         cdef int count = swmm_getCount(objType=object_type.value)
 
@@ -1195,15 +1086,14 @@ cdef class Solver:
         return count
     
     def get_object_name(self, object_type: SWMMObjects, index: int) -> str:
-        """
-        Get the name of a SWMM object.
-        
-        :param object_type: SWMM object type
-        :type object_type: SWMMObjects
-        :param index: Object index
-        :type index: int
-        :return: Object name
-        :rtype: str
+        """Get the name of a SWMM object.
+
+        @param object_type: SWMM object type.
+        @type object_type: L{SWMMObjects}
+        @param index: Object index.
+        @type index: int
+        @return: Object name.
+        @rtype: str
         """
         cdef char* c_object_name = <char*>malloc(1024*sizeof(char))
 
@@ -1223,13 +1113,12 @@ cdef class Solver:
         return object_name
     
     def get_object_names(self, object_type: SWMMObjects) -> List[str]:
-        """
-        Get the names of all SWMM objects of a given type.
-        
-        :param object_type: SWMM object type
-        :type object_type: SWMMObjects
-        :return: Object names
-        :rtype: List[str]
+        """Get the names of all SWMM objects of a given type.
+
+        @param object_type: SWMM object type.
+        @type object_type: L{SWMMObjects}
+        @return: Object names.
+        @rtype: List[str]
         """
         cdef char* c_object_name = <char*>malloc(1024*sizeof(char))
         cdef list object_names = []
@@ -1255,15 +1144,14 @@ cdef class Solver:
         return object_names
     
     def get_object_index(self, object_type: SWMMObjects, object_name: str) -> int:
-        """
-        Get the index of a SWMM object.
-        
-        :param object_type: SWMM object type
-        :type object_type: SWMMObjects
-        :param object_name: Object name
-        :type object_name: str
-        :return: Object index
-        :rtype: int
+        """Get the index of a SWMM object by name.
+
+        @param object_type: SWMM object type.
+        @type object_type: L{SWMMObjects}
+        @param object_name: Object name.
+        @type object_name: str
+        @return: Object index.
+        @rtype: int
         """
         cdef int index = swmm_getIndex(
             objType=object_type.value,
@@ -1287,21 +1175,21 @@ cdef class Solver:
         sub_index: int = -1,
         pollutant_index: int = -1
         ) -> None:
-        """
-        Set a SWMM system property value.
-        
-        :param object_type: SWMM object type (e.g., SWMMObjects.NODE)
-        :type object_type: SWMMObjects 
-        :param property_type: SWMM system property type (e.g., SWMMSystemProperties.START_DATE)
-        :type property_type: Union[SWMMRainGageProperties, SWMMSubcatchmentProperties, SWMMNodeProperties, SWMMLinkProperties, SWMMSystemProperties]
-        :param index: Object index (e.g., 0, 'J1')
-        :type index: int or str
-        :param value: Property value (e.g., 10.0)
-        :type value: double
-        :param sub_index: Sub-index (e.g., 0) for properties with sub-indexes. For example pollutant index for POLLUTANT properties.
-        :type sub_index: int
-        :param pollutant_index: Pollutant index (e.g., 0) for POLLUTANT properties.
-        :type pollutant_index: int
+        """Set a SWMM property value.
+
+        @param object_type: SWMM object type (e.g., C{SWMMObjects.NODE}).
+        @type object_type: L{SWMMObjects}
+        @param property_type: SWMM property type (e.g., C{SWMMSystemProperties.START_DATE}).
+        @type property_type: Union[SWMMRainGageProperties, SWMMSubcatchmentProperties, SWMMNodeProperties, SWMMLinkProperties, SWMMSystemProperties]
+        @param index: Object index or name (e.g., C{0} or C{"J1"}).
+        @type index: int or str
+        @param value: Property value (e.g., C{10.0}).
+        @type value: float
+        @param sub_index: Sub-index (e.g., C{0}) for properties with sub-indexes.
+            For example, the pollutant index for POLLUTANT properties.
+        @type sub_index: int
+        @param pollutant_index: Pollutant index (e.g., C{0}) for POLLUTANT properties.
+        @type pollutant_index: int
         """
         cdef int element_index = -1
 
@@ -1336,21 +1224,21 @@ cdef class Solver:
         sub_index: int = -1,
         pollutant_index: int = -1
         ) -> float:
-        """
-        Get a SWMM system property value.
-        
-        :param object_type: SWMM object type (e.g., SWMMObjects.NODE)
-        :type object_type: SWMMObjects
-        :param property_type: SWMM system property type (e.g., SWMMSystemProperties.START_DATE)
-        :type property_type: Union[SWMMRainGageProperties, SWMMSubcatchmentProperties, SWMMNodeProperties, SWMMLinkProperties, SWMMSystemProperties]
-        :param index: Object index (e.g., 0, 'J1')
-        :type index: int or str
-        :param sub_index: Sub-index (e.g., 0) for properties with sub-indexes. For example pollutant index for POLLUTANT properties.
-        :type sub_index: int
-        :param pollutant_index: Pollutant index (e.g., 0) for POLLUTANT properties.
-        :type pollutant_index: int
-        :return: Property value
-        :rtype: double
+        """Get a SWMM property value.
+
+        @param object_type: SWMM object type (e.g., C{SWMMObjects.NODE}).
+        @type object_type: L{SWMMObjects}
+        @param property_type: SWMM property type (e.g., C{SWMMSystemProperties.START_DATE}).
+        @type property_type: Union[SWMMRainGageProperties, SWMMSubcatchmentProperties, SWMMNodeProperties, SWMMLinkProperties, SWMMSystemProperties]
+        @param index: Object index or name (e.g., C{0} or C{"J1"}).
+        @type index: int or str
+        @param sub_index: Sub-index (e.g., C{0}) for properties with sub-indexes.
+            For example, the pollutant index for POLLUTANT properties.
+        @type sub_index: int
+        @param pollutant_index: Pollutant index (e.g., C{0}) for POLLUTANT properties.
+        @type pollutant_index: int
+        @return: Property value.
+        @rtype: float
         """
 
         cdef int element_index = -1
@@ -1375,57 +1263,65 @@ cdef class Solver:
     
     @property
     def stride_step(self) -> int:
-        """
-        Get the stride step of the simulation.
-        
-        :return: Stride step
-        :rtype: int
+        """Get the stride step of the simulation.
+
+        @return: Stride step in seconds.
+        @rtype: int
         """
         return self._stride_step
 
     @stride_step.setter
     def stride_step(self, value: int):
-        """
-        Set the stride time step of the simulation.
-        
-        :param value: Stride step in seconds
-        :type value: int
+        """Set the stride time step of the simulation.
+
+        @param value: Stride step in seconds.
+        @type value: int
         """
         self._stride_step = value
 
     @property
     def solver_state(self) -> SolverState:
-        """
-        Get the state of the solver.
-        
-        :return: Solver state
-        :rtype: SolverState
+        """Get the state of the solver.
+
+        @return: Solver state.
+        @rtype: L{SolverState}
         """
         return self._solver_state
 
+    # ====================================================================
+    # Callbacks
+    # ====================================================================
+
     def add_callback(self, callback_type: CallbackType, callback: Callable[[Solver], None]) -> None:
-        """
-        Add a callback to the solver.
-        
-        :param callback_type: Type of callback
-        :type callback_type: CallbackType
-        :param callback: Callback function
-        :type callback: callable
+        """Add a callback to the solver.
+
+        @param callback_type: Type of callback.
+        @type callback_type: L{CallbackType}
+        @param callback: Callback function (receives the solver instance).
+        @type callback: callable
         """
         self._callbacks[callback_type].append(callback)
 
     def add_progress_callback(self, callback: Callable[[float], None]) -> None:
-        """
-        Add a progress callback to the solver.
-        
-        :param callback: Progress callback function
-        :type callback: callable
+        """Add a progress callback to the solver.
+
+        @param callback: Progress callback function receiving a float
+            between 0.0 and 1.0.
+        @type callback: callable
         """
         self._progress_callbacks.append(callback)
 
-    cpdef void open(self):
-        """
-        Opens the SWMM solver by calling the open method in the SWMM API.
+    # ====================================================================
+    # Lifecycle methods
+    # ====================================================================
+
+    cpdef int open(self):
+        """Open the SWMM solver by calling the open method in the SWMM API.
+
+        @return: Error code (C{0} on success or no-op, non-zero on failure).
+            Returns C{-1} if the solver is in a state from which C{open} is
+            not valid; lifecycle status is queryable via L{solver_state}.
+        @rtype: int
         """
         cdef int error_code = 0
         cdef bytes c_inp_file_bytes = self._inp_file.encode('utf-8')
@@ -1435,25 +1331,27 @@ cdef class Solver:
         cdef const char* c_inp_file = c_inp_file_bytes
         cdef const char* c_rpt_file = c_rpt_file_bytes
         cdef const char* c_out_file = c_out_file_bytes
-        
+
         if self._solver_state == SolverState.OPEN:
-            pass
-        elif self._solver_state == SolverState.CREATED or self._solver_state == SolverState.CLOSED:
-            self.__execute_callbacks(CallbackType.BEFORE_OPEN)
-            
-            error_code = swmm_open(
-                inp_file=c_inp_file,
-                rpt_file=c_rpt_file,
-                out_file=c_out_file
-            )
-            
-            self.__validate_error(error_code)
-            self._solver_state = SolverState.OPEN
-            self.__execute_callbacks(CallbackType.AFTER_OPEN)
-            self._clock = clock()
-        else:
-            raise SWMMSolverException(f'Open failed: Solver is not in a valid state: {self._solver_state}')
-        
+            return 0
+        if self._solver_state != SolverState.CREATED and \
+           self._solver_state != SolverState.CLOSED:
+            return -1
+
+        self.__execute_callbacks(CallbackType.BEFORE_OPEN)
+
+        error_code = swmm_open(
+            inp_file=c_inp_file,
+            rpt_file=c_rpt_file,
+            out_file=c_out_file
+        )
+        if error_code != 0:
+            return error_code
+
+        self._solver_state = SolverState.OPEN
+        self.__execute_callbacks(CallbackType.AFTER_OPEN)
+        self._clock = clock()
+
         self._total_duration = swmm_getValue(
             property=SWMMSystemProperties.END_DATE.value,
             index=0
@@ -1461,50 +1359,74 @@ cdef class Solver:
             property=SWMMSystemProperties.START_DATE.value,
             index=0
         )
+        return 0
 
-    cpdef void start(self):
-        """
-        Starts the SWMM solver.
+    cpdef int start(self):
+        """Start the SWMM solver.
+
+        @return: Error code (C{0} on success or no-op, non-zero on failure).
+            Returns C{-1} if not in C{OPEN} state.
+        @rtype: int
         """
         cdef int error_code = 0
 
         if self._solver_state == SolverState.STARTED:
-            pass
-        elif self._solver_state == SolverState.OPEN:
-            self.__execute_callbacks(CallbackType.BEFORE_START)
-            error_code = swmm_start(save_flag=self._save_results)
-            self.__validate_error(error_code)
-            self._solver_state = SolverState.STARTED
-            self.__execute_callbacks(CallbackType.AFTER_START)
-        else:
-            raise SWMMSolverException(f'Start failed: Solver is not in a valid state: {self._solver_state}')
+            return 0
+        if self._solver_state != SolverState.OPEN:
+            return -1
 
-    cpdef void initialize(self):
+        self.__execute_callbacks(CallbackType.BEFORE_START)
+        error_code = swmm_start(save_flag=self._save_results)
+        if error_code != 0:
+            return error_code
+        self._solver_state = SolverState.STARTED
+        self.__execute_callbacks(CallbackType.AFTER_START)
+        return 0
+
+    cpdef int initialize(self):
+        """Initialize the solver and start the simulation.
+
+        Calls the open and start methods in the SWMM API in sequence.
+
+        @return: Error code (C{0} on success, non-zero from the first
+            failing sub-call).
+        @rtype: int
         """
-        Initializes the solver and starts the simulation. Calls the open and start methods in
-        the SWMM API.
-        """
+        cdef int rc
         self.__execute_callbacks(CallbackType.BEFORE_INITIALIZE)
-        self.open()
-        self.start()
-    
-    cpdef tuple step(self, int steps = 0):
-        """
-        Step a SWMM simulation.
-        
-        :param steps: Number of steps to run. Overrides internal stride step if greater than 0.
-        :type steps: int 
-        :return: elapsed_time, current_date
-        :rtype: Tuple[float, datetime]
+        rc = self.open()
+        if rc != 0:
+            return rc
+        return self.start()
+
+    cpdef int step(self, int steps = 0):
+        """Step a SWMM simulation forward.
+
+        Caller polls L{solver_state} (transitions to C{FINISHED} when the
+        simulation is complete) and reads L{current_datetime}/L{elapsed} for
+        per-step data::
+
+            from openswmm.legacy.engine import SolverState
+            while solver.solver_state == SolverState.STARTED:
+                rc = solver.step()
+                if rc != 0:
+                    break
+
+        @param steps: Number of seconds to advance. Overrides the internal
+            stride step when greater than 0.
+        @type steps: int
+        @return: Error code from the underlying SWMM C API (C{0} on success,
+            non-zero on failure).
+        @rtype: int
         """
         cdef double elapsed_time = 0.0
         cdef double progress = 0.0
-        
-        error_code = swmm_stride(strideStep=steps if steps > 0 else self._stride_step, elapsedTime=&elapsed_time)
+        cdef int error_code
 
-        if error_code < 0:
-            self.__validate_error(error_code)
-        
+        error_code = swmm_stride(strideStep=steps if steps > 0 else self._stride_step, elapsedTime=&elapsed_time)
+        if error_code != 0:
+            return error_code
+
         progress = (
             swmm_getValue(
                 property=SWMMSystemProperties.CURRENT_DATE.value,
@@ -1514,79 +1436,89 @@ cdef class Solver:
                 index=0
             )
         ) / self._total_duration
-        
+
         self.__execute_progress_callbacks(progress)
 
         if elapsed_time <= 0.0:
             self._solver_state = SolverState.FINISHED
 
-        return elapsed_time, decode_swmm_datetime(
-            swmm_datetime=swmm_getValue(
-                property=SWMMSystemProperties.CURRENT_DATE.value,
-                index=0
-            )
-        )
-        # else:
-            # raise SWMMSolverException(f'Step failed: Solver is not in a valid state: {self._solver_state}')
+        return 0
 
-    cpdef void end(self):
-        """
-        Ends the SWMM simulation.
+    cpdef int end(self):
+        """End the SWMM simulation.
+
+        @return: Error code (C{0} on success or no-op, non-zero on failure).
+            Returns C{-1} if the solver is in a state from which C{end} is
+            not valid.
+        @rtype: int
         """
         cdef int error_code = 0
 
         if self._solver_state == SolverState.ENDED or \
            self._solver_state == SolverState.CREATED:
-            pass
-        elif self._solver_state == SolverState.OPEN or \
-             self._solver_state == SolverState.STARTED or \
-             self._solver_state == SolverState.FINISHED:
-            
-            self.__execute_callbacks(CallbackType.BEFORE_END)
-            error_code = swmm_end()
-            self.__validate_error(error_code)
-            self._solver_state = SolverState.ENDED
-            self.__execute_callbacks(CallbackType.AFTER_END)
-        else:
-            raise SWMMSolverException(f'End failed: Solver is not in a valid state: {self._solver_state}')
-    
-    cpdef void report(self):
-        """
-        Reports the results of the SWMM simulation.
+            return 0
+        if self._solver_state != SolverState.OPEN and \
+           self._solver_state != SolverState.STARTED and \
+           self._solver_state != SolverState.FINISHED:
+            return -1
+
+        self.__execute_callbacks(CallbackType.BEFORE_END)
+        error_code = swmm_end()
+        if error_code != 0:
+            return error_code
+        self._solver_state = SolverState.ENDED
+        self.__execute_callbacks(CallbackType.AFTER_END)
+        return 0
+
+    cpdef int report(self):
+        """Write the SWMM report file.
+
+        @return: Error code (C{0} on success or no-op, non-zero on failure).
+            Returns C{-1} if the solver is not in C{ENDED} state.
+        @rtype: int
         """
         cdef int error_code = 0
 
         if self._solver_state == SolverState.REPORTED or self._solver_state == SolverState.CREATED:
-            pass
-        elif self._solver_state == SolverState.ENDED:
-            self.__execute_callbacks(CallbackType.BEFORE_REPORT)
-            error_code = swmm_report()
-            self.__validate_error(error_code)
-            self._solver_state = SolverState.REPORTED
-            self.__execute_callbacks(CallbackType.AFTER_REPORT)
-        else:
-            raise SWMMSolverException(f'Report failed: Solver is not in a valid state: {self._solver_state}')
-    
-    cpdef void close(self):
-        """
-        Close the solver.
+            return 0
+        if self._solver_state != SolverState.ENDED:
+            return -1
+
+        self.__execute_callbacks(CallbackType.BEFORE_REPORT)
+        error_code = swmm_report()
+        if error_code != 0:
+            return error_code
+        self._solver_state = SolverState.REPORTED
+        self.__execute_callbacks(CallbackType.AFTER_REPORT)
+        return 0
+
+    cpdef int close(self):
+        """Close the solver.
+
+        @return: Error code (C{0} on success or no-op, non-zero on failure).
+            Returns C{-1} if the solver is not in C{REPORTED} state.
+        @rtype: int
         """
         cdef int error_code = 0
 
         if self._solver_state == SolverState.CREATED:
-            pass
-        elif self._solver_state == SolverState.REPORTED:
-            self.__execute_callbacks(CallbackType.BEFORE_CLOSE)
-            error_code = swmm_close()
-            self.__validate_error(error_code)
-            self._solver_state = SolverState.CLOSED
-            self.__execute_callbacks(CallbackType.AFTER_CLOSE)
-        else:
-            raise SWMMSolverException(f'Close failed: Solver is not in a valid state: {self._solver_state}')
+            return 0
+        if self._solver_state != SolverState.REPORTED:
+            return -1
+
+        self.__execute_callbacks(CallbackType.BEFORE_CLOSE)
+        error_code = swmm_close()
+        if error_code != 0:
+            return error_code
+        self._solver_state = SolverState.CLOSED
+        self.__execute_callbacks(CallbackType.AFTER_CLOSE)
+        return 0
 
     cpdef void finalize(self):
-        """
-        Finalize the solver. Ends simulation, reports the results, and dispose objects.
+        """Finalize the solver.
+
+        Ends the simulation, reports results and disposes of objects, calling
+        each lifecycle method only if it has not already been invoked.
         """
         cdef int error_code = 0
 
@@ -1608,10 +1540,9 @@ cdef class Solver:
             raise SWMMSolverException(f'Finalize failed: Solver is not in a valid state: {self._solver_state}')
 
     cpdef void execute(self):
-        """
-        Run the solver to completion.
-        
-        :return: Error code (0 if successful)
+        """Run the solver to completion.
+
+        @raise SWMMSolverException: If the solver is in an invalid state.
         """
         cdef int error_code = 0
         cdef progress_callback swmm_progress_callback = <progress_callback>progress_callback_wrapper
@@ -1640,11 +1571,15 @@ cdef class Solver:
         else:
             raise SWMMSolverException(f'Solver is not in a valid state: {self._solver_state}')
 
+    # ====================================================================
+    # Hot start I/O
+    # ====================================================================
+
     cpdef void use_hotstart(self, str hotstart_file):
-        """
-        Use a hotstart file.
-        
-        :param hotstart_file: Hotstart file name
+        """Use a hotstart file as input.
+
+        @param hotstart_file: Hotstart file name.
+        @type hotstart_file: str
         """
         cdef bytes c_hotstart_file = hotstart_file.encode('utf-8')
         cdef const char* cc_hotstart_file = c_hotstart_file
@@ -1653,10 +1588,10 @@ cdef class Solver:
         self.__validate_error(error_code)
     
     cpdef void save_hotstart(self, str hotstart_file):
-        """
-        Save a hotstart file.
-        
-        :param hotstart_file: Hotstart file name
+        """Save the current state to a hotstart file.
+
+        @param hotstart_file: Hotstart file name.
+        @type hotstart_file: str
         """
         cdef bytes c_hotstart_file = hotstart_file.encode('utf-8')
         cdef const char* cc_hotstart_file = c_hotstart_file
@@ -1664,12 +1599,15 @@ cdef class Solver:
 
         self.__validate_error(error_code)
 
-    def get_mass_balance_error(self) -> Tuple[float, float, float]:
-        """
-        Get the mass balance error percentages after simulation ends.
+    # ====================================================================
+    # Diagnostics
+    # ====================================================================
 
-        :return: Tuple of (runoff_error%, flow_error%, quality_error%)
-        :rtype: Tuple[float, float, float]
+    def get_mass_balance_error(self) -> Tuple[float, float, float]:
+        """Get the mass balance error percentages after simulation ends.
+
+        @return: Tuple of C{(runoff_error%, flow_error%, quality_error%)}.
+        @rtype: Tuple[float, float, float]
         """
         cdef float runoffErr, flowErr, qualErr
 
@@ -1684,20 +1622,18 @@ cdef class Solver:
         return (runoffErr, flowErr, qualErr)
 
     def get_warnings(self) -> int:
-        """
-        Get the number of warnings issued during the simulation.
+        """Get the number of warnings issued during the simulation.
 
-        :return: Number of warning messages
-        :rtype: int
+        @return: Number of warning messages.
+        @rtype: int
         """
         return swmm_getWarnings()
 
     def write_line(self, text: str) -> None:
-        """
-        Write a line of text to the SWMM report file.
+        """Write a line of text to the SWMM report file.
 
-        :param text: Line of text to write
-        :type text: str
+        @param text: Line of text to write.
+        @type text: str
         """
         cdef bytes c_text = text.encode('utf-8')
         cdef const char* c_line = c_text
@@ -1714,20 +1650,19 @@ cdef class Solver:
         index: Union[int, str],
         period: int
     ) -> float:
-        """
-        Get a saved value from the binary output file during simulation.
+        """Get a saved value from the binary output file during simulation.
 
         Reads a previously saved result value from the output file for the
         specified property, object index, and reporting period.
 
-        :param property_type: Property to retrieve
-        :type property_type: Union[SWMMSubcatchmentProperties, SWMMNodeProperties, SWMMLinkProperties, SWMMSystemProperties]
-        :param index: Object index or name
-        :type index: Union[int, str]
-        :param period: Reporting period index (0-based)
-        :type period: int
-        :return: Saved property value
-        :rtype: float
+        @param property_type: Property to retrieve.
+        @type property_type: Union[SWMMSubcatchmentProperties, SWMMNodeProperties, SWMMLinkProperties, SWMMSystemProperties]
+        @param index: Object index or name.
+        @type index: int or str
+        @param period: Reporting period index (0-based).
+        @type period: int
+        @return: Saved property value.
+        @rtype: float
         """
         cdef int element_index = -1
 
@@ -1753,19 +1688,21 @@ cdef class Solver:
 
         return value
 
-    # ------------------------------------------------------------------
-    #  Statistics and mass balance methods (Phase 2)
-    #  Call after end() but before close().
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Statistics and mass balance (Phase 2 -- call after end() / before close())
+    # ====================================================================
 
     def get_subcatchment_statistics(self, index: Union[int, str]) -> dict:
         """Get cumulative subcatchment statistics.
 
-        Must be called after :meth:`end` and before :meth:`close`.
+        Must be called after L{end} and before L{close}.
 
-        :param index: Subcatchment index or name.
-        :return: Dictionary with keys: precip, runon, evap, infil, runoff,
-                 max_flow, imperv_runoff, perv_runoff.
+        @param index: Subcatchment index or name.
+        @type index: int or str
+        @return: Dictionary with keys: C{precip}, C{runon}, C{evap},
+            C{infil}, C{runoff}, C{max_flow}, C{imperv_runoff},
+            C{perv_runoff}.
+        @rtype: dict
         """
         cdef swmm_SubcatchStats stats
         cdef int idx = self.__resolve_index(SWMMObjects.SUBCATCHMENT, index)
@@ -1785,14 +1722,17 @@ cdef class Solver:
     def get_node_statistics(self, index: Union[int, str]) -> dict:
         """Get cumulative node statistics.
 
-        Must be called after :meth:`end` and before :meth:`close`.
+        Must be called after L{end} and before L{close}.
 
-        :param index: Node index or name.
-        :return: Dictionary with keys: avg_depth, max_depth, max_depth_date,
-                 vol_flooded, time_flooded, time_surcharged,
-                 time_courant_critical, tot_lat_flow, max_lat_flow,
-                 max_inflow, max_overflow, max_ponded_vol,
-                 max_inflow_date, max_overflow_date.
+        @param index: Node index or name.
+        @type index: int or str
+        @return: Dictionary with keys: C{avg_depth}, C{max_depth},
+            C{max_depth_date}, C{max_rpt_depth}, C{vol_flooded},
+            C{time_flooded}, C{time_surcharged}, C{time_courant_critical},
+            C{tot_lat_flow}, C{max_lat_flow}, C{max_inflow},
+            C{max_overflow}, C{max_ponded_vol}, C{max_inflow_date},
+            C{max_overflow_date}.
+        @rtype: dict
         """
         cdef swmm_NodeStats stats
         cdef int idx = self.__resolve_index(SWMMObjects.NODE, index)
@@ -1819,9 +1759,11 @@ cdef class Solver:
     def get_storage_statistics(self, index: Union[int, str]) -> dict:
         """Get cumulative storage node statistics.
 
-        :param index: Node index or name (must be a STORAGE node).
-        :return: Dictionary with keys: init_vol, avg_vol, max_vol, max_flow,
-                 evap_losses, exfil_losses, max_vol_date.
+        @param index: Node index or name (must be a STORAGE node).
+        @type index: int or str
+        @return: Dictionary with keys: C{init_vol}, C{avg_vol}, C{max_vol},
+            C{max_flow}, C{evap_losses}, C{exfil_losses}, C{max_vol_date}.
+        @rtype: dict
         """
         cdef swmm_StorageStats stats
         cdef int idx = self.__resolve_index(SWMMObjects.NODE, index)
@@ -1840,9 +1782,11 @@ cdef class Solver:
     def get_outfall_statistics(self, index: Union[int, str]) -> dict:
         """Get cumulative outfall node statistics.
 
-        :param index: Node index or name (must be an OUTFALL node).
-        :return: Dictionary with keys: avg_flow, max_flow, total_periods,
-                 total_load (list of per-pollutant loads).
+        @param index: Node index or name (must be an OUTFALL node).
+        @type index: int or str
+        @return: Dictionary with keys: C{avg_flow}, C{max_flow},
+            C{total_periods}, C{total_load} (list of per-pollutant loads).
+        @rtype: dict
         """
         cdef int p
         cdef int n_polluts = swmm_getCount(objType=SWMMObjects.POLLUTANT.value)
@@ -1876,13 +1820,16 @@ cdef class Solver:
     def get_link_statistics(self, index: Union[int, str]) -> dict:
         """Get cumulative link statistics.
 
-        :param index: Link index or name.
-        :return: Dictionary with keys: max_flow, max_flow_date, max_veloc,
-                 max_depth, time_normal_flow, time_inlet_control,
-                 time_surcharged, time_full_upstream, time_full_dnstream,
-                 time_full_flow, time_capacity_limited,
-                 time_courant_critical, flow_turns, flow_turn_sign,
-                 time_in_flow_class (list of 7 floats).
+        @param index: Link index or name.
+        @type index: int or str
+        @return: Dictionary with keys: C{max_flow}, C{max_flow_date},
+            C{max_veloc}, C{max_depth}, C{time_normal_flow},
+            C{time_inlet_control}, C{time_surcharged}, C{time_full_upstream},
+            C{time_full_dnstream}, C{time_full_flow},
+            C{time_capacity_limited}, C{time_courant_critical},
+            C{flow_turns}, C{flow_turn_sign},
+            C{time_in_flow_class} (list of 7 floats).
+        @rtype: dict
         """
         cdef swmm_LinkStats stats
         cdef int idx = self.__resolve_index(SWMMObjects.LINK, index)
@@ -1909,10 +1856,12 @@ cdef class Solver:
     def get_pump_statistics(self, index: Union[int, str]) -> dict:
         """Get cumulative pump statistics.
 
-        :param index: Link index or name (must be a PUMP link).
-        :return: Dictionary with keys: utilized, min_flow, avg_flow, max_flow,
-                 volume, energy, off_curve_low, off_curve_high, start_ups,
-                 total_periods.
+        @param index: Link index or name (must be a PUMP link).
+        @type index: int or str
+        @return: Dictionary with keys: C{utilized}, C{min_flow}, C{avg_flow},
+            C{max_flow}, C{volume}, C{energy}, C{off_curve_low},
+            C{off_curve_high}, C{start_ups}, C{total_periods}.
+        @rtype: dict
         """
         cdef swmm_PumpStats stats
         cdef int idx = self.__resolve_index(SWMMObjects.LINK, index)
@@ -1935,7 +1884,7 @@ cdef class Solver:
         """Get system-level flow routing mass balance totals.
 
         All volumes are in project units (ft3 for US, m3 for SI).
-        Must be called after :meth:`end` and before :meth:`close`.
+        Must be called after L{end} and before L{close}.
 
         Mass balance equation::
 
@@ -1943,11 +1892,13 @@ cdef class Solver:
             total_outflow = flooding + outflow + evap_loss + seep_loss
             storage_change = final_storage - init_storage
             balance = total_inflow - total_outflow - storage_change
-            # balance / total_inflow ≈ pct_error / 100
+            # balance / total_inflow ~= pct_error / 100
 
-        :return: Dictionary with keys: dw_inflow, ww_inflow, gw_inflow,
-                 ii_inflow, ex_inflow, flooding, outflow, evap_loss,
-                 seep_loss, reacted, init_storage, final_storage, pct_error.
+        @return: Dictionary with keys: C{dw_inflow}, C{ww_inflow},
+            C{gw_inflow}, C{ii_inflow}, C{ex_inflow}, C{flooding},
+            C{outflow}, C{evap_loss}, C{seep_loss}, C{reacted},
+            C{init_storage}, C{final_storage}, C{pct_error}.
+        @rtype: dict
         """
         cdef swmm_RoutingTotals totals
         cdef int err = swmm_getSystemRoutingTotals(&totals)
@@ -1971,16 +1922,18 @@ cdef class Solver:
     def get_runoff_totals(self) -> dict:
         """Get system-level surface runoff mass balance totals.
 
-        Must be called after :meth:`end` and before :meth:`close`.
+        Must be called after L{end} and before L{close}.
 
         Mass balance equation::
 
             rainfall = evap + infil + runoff + storage_change + error
             storage_change = final_storage - init_storage
 
-        :return: Dictionary with keys: rainfall, evap, infil, runoff, drains,
-                 runon, init_storage, final_storage, init_snow_cover,
-                 final_snow_cover, snow_removed, pct_error.
+        @return: Dictionary with keys: C{rainfall}, C{evap}, C{infil},
+            C{runoff}, C{drains}, C{runon}, C{init_storage},
+            C{final_storage}, C{init_snow_cover}, C{final_snow_cover},
+            C{snow_removed}, C{pct_error}.
+        @rtype: dict
         """
         cdef swmm_RunoffTotals totals
         cdef int err = swmm_getSystemRunoffTotals(&totals)
@@ -2000,12 +1953,20 @@ cdef class Solver:
             'pct_error': totals.pctError,
         }
 
-    # ------------------------------------------------------------------
-    #  Private helpers
-    # ------------------------------------------------------------------
+    # ====================================================================
+    # Private helpers
+    # ====================================================================
 
     cdef int __resolve_index(self, object_type, index):
-        """Resolve a name or int index to an integer index."""
+        """Resolve a name or integer index to an integer index.
+
+        @param object_type: Object type used for name -> index lookup.
+        @type object_type: L{SWMMObjects}
+        @param index: Object index (int) or name (str).
+        @type index: int or str
+        @return: Resolved integer index.
+        @rtype: int
+        """
         cdef int element_index
         if isinstance(index, str):
             element_index = self.get_object_index(object_type, index)
@@ -2014,31 +1975,28 @@ cdef class Solver:
         return <int>index
 
     def __execute_callbacks(self, callback_type: CallbackType) -> None:
-        """
-        Execute the callbacks for the given type.
-        
-        :param callback_type: Type of callback
-        :type callback_type: CallbackType
+        """Execute the callbacks registered for the given type.
+
+        @param callback_type: Type of callback.
+        @type callback_type: L{CallbackType}
         """
         for callback in self._callbacks[callback_type]:
             callback(self)
 
     cpdef void __execute_progress_callbacks(self, double percent_complete):
-        """
-        Execute the progress callbacks.
-        
-        :param percent_complete: Percent complete
-        :type percent_complete: float
+        """Execute all registered progress callbacks.
+
+        @param percent_complete: Progress fraction in C{[0.0, 1.0]}.
+        @type percent_complete: float
         """
         for callback in self._progress_callbacks:
             callback(percent_complete)
 
     cdef void __progress_callback(self, double percent_complete):
-        """
-        Progress callback for the solver.
-        
-        :param percent_complete: Percent complete
-        :type percent_complete: float
+        """Internal progress callback rate-limited by C{progress_callbacks_per_second}.
+
+        @param percent_complete: Progress fraction in C{[0.0, 1.0]}.
+        @type percent_complete: float
         """
         cdef clock_t elapsed_time =   clock() - self._clock
 
@@ -2050,11 +2008,11 @@ cdef class Solver:
             self._clock = clock()
 
     cdef void __validate_error(self, error_code: int) :
-        """
-        Validate the error code and raise an exception if it is not 0.
-        
-        :param error_code: Error code to validate
-        :type error_code: int
+        """Validate a C API return code and raise on error.
+
+        @param error_code: Error code to validate.
+        @type error_code: int
+        @raise SWMMSolverException: If C{error_code} is negative.
         """
         cdef int internal_error_code = <int>swmm_getValue(
             property=SWMMObjects.SYSTEM.value,
@@ -2068,11 +2026,10 @@ cdef class Solver:
                 raise SWMMSolverException(f'SWMM failed with message: {error_code}, {get_error_message(error_code)}')
 
     cdef str __get_error(self):
-        """
-        Get the error code from the solver.
-        
-        :return: Error code
-        :rtype: int
+        """Get the most recent solver error message string.
+
+        @return: Error message text.
+        @rtype: str
         """
         cdef char* c_error_message = <char*>malloc(1024*sizeof(char))
         swmm_getError(c_error_message, 1024)

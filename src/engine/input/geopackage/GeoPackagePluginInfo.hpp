@@ -15,7 +15,7 @@
  * @ingroup engine_geopackage
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -93,7 +93,7 @@ public:
     }
 
     std::string license_text() const override {
-        return "Copyright (c) 2026 HydroCouple. All rights reserved.\n"
+        return "Copyright (c) 2026 Caleb Buahin. All rights reserved.\n"
                "MIT License — see LICENSE file for full text.";
     }
 

@@ -17,7 +17,7 @@ class TestSolverVersion(unittest.TestCase):
 
     def test_get_swmm_version(self):
         version = solver.version()
-        self.assertEqual(version, 60000)
+        self.assertEqual(version, 53000)
 
     def test_swmm_encode_date(self):
         dt = datetime(year=2024, month=11, day=16, hour=13, minute=33, second=21)
@@ -67,13 +67,14 @@ class TestSolverExecution(unittest.TestCase):
         self.assertTrue(os.path.exists(self.out))
 
     def test_run_solver_invalid_inp_file(self):
-        with self.assertRaises(Exception) as ctx:
-            solver.run_solver(
-                inp_file=example_solver_data.NON_EXISTENT_INPUT_FILE,
-                rpt_file=example_solver_data.NON_EXISTENT_INPUT_FILE.replace(".inp", ".rpt"),
-                out_file=example_solver_data.NON_EXISTENT_INPUT_FILE.replace(".inp", ".out"),
-            )
-        self.assertIn("ERROR 303: cannot open input file.", str(ctx.exception))
+        # run_solver now returns a non-zero error code rather than raising.
+        error = solver.run_solver(
+            inp_file=example_solver_data.NON_EXISTENT_INPUT_FILE,
+            rpt_file=example_solver_data.NON_EXISTENT_INPUT_FILE.replace(".inp", ".rpt"),
+            out_file=example_solver_data.NON_EXISTENT_INPUT_FILE.replace(".inp", ".out"),
+        )
+        self.assertNotEqual(error, 0)
+        self.assertIn("ERROR 303", solver.get_error_message(error))
 
     def test_run_without_context_manager(self):
         self._clean_outputs()

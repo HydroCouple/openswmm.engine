@@ -105,6 +105,9 @@ extensions = [
     'sphinx.ext.todo',
     'sphinx.ext.mathjax',
     'myst_parser',
+    # sphinx-design: tab-set / grid / grid-item-card directives used in
+    # the User Guide and Migration pages.
+    'sphinx_design',
 ]
 
 # MyST (Markdown) settings
@@ -124,7 +127,7 @@ master_doc = 'index'
 # -- Project information --------------------------------------------------
 
 project = 'OpenSWMM'
-copyright = '2026 HydroCouple'
+copyright = '2026 Caleb Buahin'
 author = 'Caleb Buahin'
 
 # -- Napoleon settings (Google/NumPy docstrings) --------------------------
@@ -181,7 +184,12 @@ language = 'en'
 pygments_style = 'sphinx'
 todo_include_todos = True
 
-exclude_patterns = ['_build']
+exclude_patterns = [
+    '_build',
+    # Internal planning document — kept in-tree for reference but not
+    # surfaced in the published docs.
+    'LEGACY_API_EXPANSION_PLAN.md',
+]
 
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 if not on_rtd:
@@ -195,10 +203,21 @@ html_theme_options = {
         "image_light": "images/hydrocouple_logo.png",
         "image_dark": "images/hydrocouple_logo.png",
     },
+    # Top-nav cross-link back to the Doxygen C/C++ engine docs.
+    # Deployment layout (see .github/workflows/documentation.yml):
+    #     /         Doxygen docs (root)
+    #     /python/  these (Sphinx) docs
+    # ``../index.html`` resolves to the Doxygen root when both sites are
+    # co-deployed under GitHub Pages.  When viewing the Sphinx docs
+    # locally without the Doxygen bundle, this link 404s — that's an
+    # accepted local-only limitation.
+    "external_links": [
+        {"name": "C/C++ Engine Docs", "url": "../index.html"},
+    ],
     "icon_links": [
         {
             "name": "GitHub",
-            "url": "https://github.com/HydroCouple/OpenSWMMCore",
+            "url": "https://github.com/HydroCouple/openswmm.engine",
             "icon": "fa-brands fa-github",
             "type": "fontawesome",
         },
@@ -252,5 +271,177 @@ def skip_member(app, what, name, obj, skip, options):
     return True if name in exclude else skip
 
 
+# ============================================================================
+# epytext → reStructuredText docstring translator
+# ============================================================================
+# The .pyi stub files use epytext-style docstring tags (@param, @type,
+# @return, @rtype, @raise, @ivar, @cvar, C{...}, L{...}, B{...}, I{...}).
+# Sphinx's docutils parser does not understand these — without this
+# translation it emits ~2,870 "Unexpected indentation" / "Block quote ends
+# without a blank line" warnings and renders the markup as raw text.
+#
+# Rather than rewriting every stub, we hook autodoc and translate at
+# documentation-build time.  The translation is mechanical:
+#
+#   @param X: text     →   :param X: text
+#   @type X: text      →   :type X: text
+#   @return: text      →   :returns: text
+#   @rtype: text       →   :rtype: text
+#   @raise X: text     →   :raises X: text
+#   @ivar X: text      →   :ivar X: text
+#   @cvar X: text      →   :cvar X: text
+#   @note: text        →   .. note:: text
+#   C{anything}        →   ``anything``
+#   L{anything}        →   :py:obj:`anything`
+#   B{anything}        →   **anything**
+#   I{anything}        →   *anything*
+#
+# Multi-line @-block continuations (subsequent lines indented relative to
+# the @-line) are preserved.  A blank line separates each @-block from the
+# preceding paragraph so docutils sees a proper field-list, not a block
+# quote continuation.
+import re
+
+_EPY_TAGS = {
+    'param':   ':param',
+    'type':    ':type',
+    'return':  ':returns:',
+    'returns': ':returns:',
+    'rtype':   ':rtype:',
+    'raise':   ':raises',
+    'raises':  ':raises',
+    'except':  ':raises',
+    'ivar':    ':ivar',
+    'cvar':    ':cvar',
+    'var':     ':var',
+}
+
+_EPY_TAG_RE = re.compile(
+    r'^(\s*)@(' + '|'.join(_EPY_TAGS) + r')(?:\s+([^\s:][^:]*?))?\s*:\s*',
+    re.MULTILINE,
+)
+_EPY_NOTE_RE = re.compile(r'^(\s*)@note\s*:\s*', re.MULTILINE)
+# Inline tags can be followed by any character.  RST requires a word
+# boundary (whitespace or punctuation-followed-by-whitespace) after a
+# closing ``...``/`...`/**...**/*...*; if the original text had something
+# like C{0.0}=closed, the naïve replacement ``0.0``=closed is invalid.
+# We use a regex lookahead and emit a backslash-space when the next char
+# is non-whitespace, which RST treats as a zero-width separator.
+_EPY_INLINE_RE = re.compile(r'([CLBI])\{([^}]*)\}(?=(.))')
+
+
+def _inline_replace(m: re.Match) -> str:
+    tag, body, nxt = m.group(1), m.group(2), m.group(3)
+    if tag == 'C':
+        replacement = f'``{body}``'
+    elif tag == 'L':
+        replacement = f':py:obj:`{body}`'
+    elif tag == 'B':
+        replacement = f'**{body}**'
+    else:  # 'I'
+        replacement = f'*{body}*'
+    # Word boundary fix: if the next char is not whitespace and not the
+    # end of the string, insert a backslash-space so RST recognises the
+    # end of the inline-markup span.
+    if nxt and not nxt.isspace():
+        replacement += '\\ '
+    return replacement
+
+
+def _epytext_to_rst(app, what, name, obj, options, lines):
+    """autodoc-process-docstring callback: rewrite epytext to RST in-place."""
+    if not lines:
+        return
+
+    text = '\n'.join(lines)
+
+    # @param X: ...  →  :param X: ...        (with the value-bearing tags)
+    # @return: ...   →  :returns: ...        (no name)
+    def _tag_sub(m):
+        indent, tag, name_part = m.group(1), m.group(2), m.group(3)
+        rst = _EPY_TAGS[tag]
+        if name_part:
+            # tags that take a name: param, type, raise, ivar, cvar, var
+            return f'{indent}{rst} {name_part.strip()}: '
+        # nameless: return, returns, rtype
+        if rst.endswith(':'):
+            return f'{indent}{rst} '
+        return f'{indent}{rst}: '
+
+    text = _EPY_TAG_RE.sub(_tag_sub, text)
+
+    # @note: ... → standalone admonition.  Keep it simple — single line.
+    text = _EPY_NOTE_RE.sub(r'\1.. note:: ', text)
+
+    # Inline X{...} → RST inline markup.
+    text = _EPY_INLINE_RE.sub(_inline_replace, text)
+
+    # Ensure blank lines bracket the field list:
+    #   * BEFORE: a paragraph immediately followed by `:param ...` causes
+    #     the "Block quote ends without a blank line" warning unless we
+    #     drop a blank line in between.
+    #   * AFTER: a `:param ...` / `:returns: ...` / `:rtype: ...` block
+    #     immediately followed by a continuation paragraph causes the
+    #     "Field list ends without a blank line" warning unless we drop
+    #     a blank line in between.
+    field_re = re.compile(
+        r'^\s*:(?:param|type|returns?|rtype|raises?|ivar|cvar|var)\b'
+    )
+
+    raw_lines = text.split('\n')
+    new_lines: list[str] = []
+    prev_is_blank = True
+    prev_was_field_block = False  # last non-blank line was field-list
+
+    def _is_field(line: str) -> bool:
+        return bool(field_re.match(line))
+
+    def _is_indented_continuation(line: str) -> bool:
+        # Continuation of a field's value: indented relative to col 0,
+        # non-empty, not itself a field.
+        stripped = line.lstrip()
+        return (
+            bool(stripped)
+            and line.startswith(' ')
+            and not _is_field(line)
+        )
+
+    for ln in raw_lines:
+        # Insert blank line BEFORE the start of a field block.
+        if (
+            _is_field(ln)
+            and not prev_is_blank
+            and new_lines
+            and not _is_field(new_lines[-1])
+        ):
+            new_lines.append('')
+
+        # Insert blank line AFTER the end of a field block when followed
+        # by a non-field, non-continuation line.
+        if (
+            prev_was_field_block
+            and ln.strip()                       # non-blank
+            and not _is_field(ln)
+            and not _is_indented_continuation(ln)
+        ):
+            new_lines.append('')
+
+        new_lines.append(ln)
+
+        # Track state for the next iteration.
+        if ln.strip() == '':
+            prev_is_blank = True
+            prev_was_field_block = False
+        elif _is_field(ln) or _is_indented_continuation(ln):
+            prev_is_blank = False
+            prev_was_field_block = True
+        else:
+            prev_is_blank = False
+            prev_was_field_block = False
+
+    lines[:] = new_lines
+
+
 def setup(app):
     app.connect('autodoc-skip-member', skip_member)
+    app.connect('autodoc-process-docstring', _epytext_to_rst)

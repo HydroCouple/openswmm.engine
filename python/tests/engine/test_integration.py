@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from openswmm.engine import Solver, Nodes, Links, Subcatchments, Gages, MassBalance
+from openswmm.engine import Solver, Nodes, Links, Subcatchments, Gages, MassBalance, EngineState
 
 
 class TestFullSimulationWithExpandedAPI:
@@ -28,7 +28,11 @@ class TestFullSimulationWithExpandedAPI:
         n_gages = gages.count()
 
         step_count = 0
-        while s.step() and step_count < 20:
+        # Read properties through the FIRST 20 timesteps, then continue
+        # silently to completion so continuity stats are meaningful.
+        while s.state == EngineState.RUNNING and step_count < 20:
+            if s.step() != 0:
+                break
             step_count += 1
 
             # Node properties
@@ -76,6 +80,12 @@ class TestFullSimulationWithExpandedAPI:
             flows = links.get_flows_bulk()
             assert flows.shape == (n_links,)
 
+        # Drive the rest of the simulation to completion so the continuity
+        # checks below have a complete mass balance.
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
+
         s.end()
 
         # Post-simulation statistics
@@ -114,7 +124,9 @@ class TestFullSimulationWithExpandedAPI:
             nodes.set_lateral_inflow(0, 1.0)
             s.step()
 
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             pass
 
         s.end()
@@ -145,7 +157,9 @@ class TestFullSimulationWithExpandedAPI:
             r = sc.get_runoff(0)
             max_runoff = max(max_runoff, r)
 
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             pass
 
         s.end()

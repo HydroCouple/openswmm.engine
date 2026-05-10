@@ -16,7 +16,7 @@
  * @see openswmm_engine.h — lifecycle and error codes
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -215,6 +215,58 @@ SWMM_ENGINE_API int
 swmm_plugin_remove(SWMM_Engine engine, const char* path_or_id);
 
 /* =========================================================================
+ * [FILES] section access (Slice AA-3 follow-up — secondary file refs)
+ *
+ * Read / write the legacy SWMM5 `[FILES]` section: rainfall, runoff,
+ * RDII, inflows, outflows, and hot-start file references.  The
+ * accessors are keyed by an uppercase string so callers don't depend
+ * on the field layout of `FilesSpec`.
+ *
+ * Recognised keys (case-insensitive):
+ *   "RAINFALL_PATH"          / "RAINFALL_MODE"
+ *   "RUNOFF_PATH"            / "RUNOFF_MODE"
+ *   "RDII_PATH"              / "RDII_MODE"
+ *   "INFLOWS_PATH"
+ *   "OUTFLOWS_PATH"
+ *   "HOTSTART_USE_PATH"
+ *   "HOTSTART_SAVE_PATH"     / "HOTSTART_SAVE_DATETIME"
+ *
+ * `*_MODE` keys take "SAVE" / "USE" / "" (empty clears the slot).
+ * `HOTSTART_SAVE_DATETIME` is a SWMM decimal-day floating-point string
+ * (0 == unset, write at end of run).
+ * ========================================================================= */
+
+/**
+ * @brief Read one [FILES] field by key.
+ *
+ * @param engine  Engine handle.
+ * @param key     Field key (see header comment for recognised values).
+ * @param buf     [out] UTF-8 result; NUL-terminated and truncated at
+ *                @p buflen - 1 if too small.
+ * @param buflen  Size of @p buf in bytes (including NUL).
+ * @returns SWMM_OK on success;
+ *          SWMM_ERR_BADPARAM when @p key is NULL, unknown, or buf args
+ *          are invalid.
+ */
+SWMM_ENGINE_API int
+swmm_files_get(SWMM_Engine engine, const char* key, char* buf, int buflen);
+
+/**
+ * @brief Write one [FILES] field by key.
+ *
+ * @details Pass an empty @p value to clear a path slot.  Pass an empty
+ *          @p value to a `*_MODE` key to clear the mode (slot becomes
+ *          inactive).  The engine re-emits `[FILES]` on the next
+ *          `swmm_model_write*` call.
+ *
+ * @returns SWMM_OK on success;
+ *          SWMM_ERR_BADPARAM when @p key is NULL, unknown, or @p value
+ *          is NULL.
+ */
+SWMM_ENGINE_API int
+swmm_files_set(SWMM_Engine engine, const char* key, const char* value);
+
+/* =========================================================================
  * Title / notes access
  * ========================================================================= */
 
@@ -345,6 +397,61 @@ SWMM_ENGINE_API int swmm_options_set_ext(
  * @returns SWMM_OK; SWMM_ERR_CRS if no CRS was specified in [OPTIONS].
  */
 SWMM_ENGINE_API int swmm_get_crs(SWMM_Engine engine, char* buf, int buflen);
+
+/* =========================================================================
+ * Typed time-control accessors
+ *
+ * Date values are SWMM OADate doubles: the integer part is days since
+ * 1899-12-30 and the fractional part is the time-of-day fraction.
+ * ========================================================================= */
+
+/**
+ * @brief Retrieve the simulation start date/time as an OADate.
+ * @param engine  Engine handle.
+ * @param value   [out] OADate (decimal days since 1899-12-30).
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null engine/value.
+ */
+SWMM_ENGINE_API int swmm_options_get_start_date(SWMM_Engine engine, double* value);
+
+/**
+ * @brief Set the simulation start date/time from an OADate.
+ * @param engine  Engine handle.
+ * @param value   OADate (decimal days since 1899-12-30).
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null engine.
+ */
+SWMM_ENGINE_API int swmm_options_set_start_date(SWMM_Engine engine, double value);
+
+/**
+ * @brief Retrieve the simulation end date/time as an OADate.
+ * @param engine  Engine handle.
+ * @param value   [out] OADate (decimal days since 1899-12-30).
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null engine/value.
+ */
+SWMM_ENGINE_API int swmm_options_get_end_date(SWMM_Engine engine, double* value);
+
+/**
+ * @brief Set the simulation end date/time from an OADate.
+ * @param engine  Engine handle.
+ * @param value   OADate (decimal days since 1899-12-30).
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null engine.
+ */
+SWMM_ENGINE_API int swmm_options_set_end_date(SWMM_Engine engine, double value);
+
+/**
+ * @brief Retrieve the report start date/time as an OADate.
+ * @param engine  Engine handle.
+ * @param value   [out] OADate (decimal days since 1899-12-30).
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null engine/value.
+ */
+SWMM_ENGINE_API int swmm_options_get_report_start(SWMM_Engine engine, double* value);
+
+/**
+ * @brief Set the report start date/time from an OADate.
+ * @param engine  Engine handle.
+ * @param value   OADate (decimal days since 1899-12-30).
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null engine.
+ */
+SWMM_ENGINE_API int swmm_options_set_report_start(SWMM_Engine engine, double value);
 
 /* =========================================================================
  * User flags

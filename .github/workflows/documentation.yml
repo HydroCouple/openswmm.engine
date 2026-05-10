@@ -35,19 +35,21 @@ jobs:
           python-version: "3.12"
 
       - name: Install Sphinx and theme dependencies
+        # Install from requirements.txt (single source of truth — keeps
+        # CI in lockstep with the doc-author's local environment, including
+        # sphinx-design for the grid/tab-set directives in the User Guide
+        # and Migration pages).
         run: |
-          pip install \
-            "sphinx>=7.0" \
-            "pydata-sphinx-theme>=0.15.0" \
-            "myst-parser>=3.0" \
-            "sphinx-autodoc-typehints>=2.0" \
-            numpy
+          pip install -r python/docs/requirements.txt
+          pip install numpy
 
       - name: Build Sphinx HTML docs
         # conf.py adds python/ to sys.path and installs the Cython stub-file
         # finder, so no compiled extensions or package installation is needed.
+        # -W promotes warnings to errors so a regression in the docs blocks
+        # the build; --keep-going still surfaces every issue in one pass.
         run: |
-          sphinx-build -b html python/docs python/docs/_build/html
+          sphinx-build -b html -W --keep-going python/docs python/docs/_build/html
 
       - name: Upload Python docs artifact
         uses: actions/upload-artifact@v5

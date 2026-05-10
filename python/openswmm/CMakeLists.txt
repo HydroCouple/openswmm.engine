@@ -1,62 +1,31 @@
-# Description: CMake configuration for openswmm.engine python library
-# Created by: Caleb Buahin
-# Created on: 2024-11-19
+# ============================================================================
+# openswmm package — top-level Cython extension + subpackage delegation
+#
+# Builds the root _openswmm stub (if ever re-added) and delegates to:
+#   engine/    — new 6.x bindings
+#   legacy/    — legacy 5.x solver + output reader
+#
+# Shared libraries installed via CMake are placed next to each extension:
+#   openswmm/engine/libopenswmm.engine.*
+#   openswmm/legacy/engine/libopenswmm.legacy.engine.*
+#   openswmm/legacy/output/libopenswmm.legacy.output.*
+# ============================================================================
 
-# Add Cython targets for openswmm.engine
-add_cython_target(_openswmm _openswmm.pyx CXX PY3)
-
-# Create Python extension modules
-add_library(_openswmm MODULE ${_openswmm})
-
-set_target_properties(_openswmm
-    PROPERTIES
-        VERSION ${LIBRARY_VERSION}
-        SOVERSION ${LIBRARY_SOVERSION}
-)
-
-python_extension_module(_openswmm)
-
-set_target_properties(_openswmm
-    PROPERTIES
-        CXX_VISIBILITY_PRESET default
-        C_VISIBILITY_PRESET default
-        VISIBILITY_INLINES_HIDDEN OFF
-)
-
-# Keep PyInit__openswmm exported with global hidden visibility flags.
-# -fno-lto prevents GCC/Clang LTO from stripping the PyInit symbol.
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(_openswmm PRIVATE -fvisibility=default -fno-lto)
-    target_link_options(_openswmm PRIVATE -fno-lto)
-endif()
-
-# Install the openswmm.engine module
-install(TARGETS _openswmm LIBRARY DESTINATION openswmm)
-
-# Include the current source directory
-target_include_directories(
-    _openswmm
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
-# Add subdirectories
-add_subdirectory(legacy)
 add_subdirectory(engine)
+add_subdirectory(legacy)
 
 # ---------------------------------------------------------------------------
 # Install shared libraries alongside the Cython extensions so that
 # @loader_path / $ORIGIN RPATH entries resolve at runtime.
 #
-# In pre-built mode the three targets are IMPORTED; cmake forbids
-# install(TARGETS) on imported targets so use install(FILES) instead,
-# resolving the actual path via IMPORTED_LOCATION.
+# In pre-built mode the targets are IMPORTED; cmake forbids install(TARGETS)
+# on imported targets, so we resolve the path via IMPORTED_LOCATION instead.
 # ---------------------------------------------------------------------------
 if(NOT OPENSWMM_USE_PREBUILT_ENGINE)
     install(TARGETS openswmm_engine
-        LIBRARY DESTINATION openswmm/engine          # .so/.dylib (Unix/macOS)
-        ARCHIVE DESTINATION openswmm/engine          # .lib import library (Windows)
-        RUNTIME DESTINATION openswmm/engine          # .dll (Windows)
+        LIBRARY DESTINATION openswmm/engine
+        ARCHIVE DESTINATION openswmm/engine
+        RUNTIME DESTINATION openswmm/engine
     )
     install(TARGETS openswmm_legacy_engine
         LIBRARY DESTINATION openswmm/legacy/engine
@@ -78,8 +47,6 @@ else()
         list(GET _pair 0 _tgt)
         list(GET _pair 1 _dest)
 
-        # Ninja/single-config uses IMPORTED_LOCATION; MSVC multi-config uses
-        # IMPORTED_LOCATION_RELEASE.
         get_target_property(_loc "${_tgt}" IMPORTED_LOCATION)
         if(NOT _loc)
             get_target_property(_loc "${_tgt}" IMPORTED_LOCATION_RELEASE)

@@ -1,5 +1,5 @@
 # :author: Caleb Buahin
-# :copyright: Copyright (c) HydroCouple 2026
+# :copyright: Copyright (c) 2026 Caleb Buahin
 # :license: MIT
 #
 # _common.pxd — Shared C declarations for the OpenSWMM Engine C API.
@@ -81,6 +81,13 @@ cdef extern from "openswmm_model.h":
     cdef int swmm_options_get_ext(SWMM_Engine e, const char* key, char* buf, int buflen)
     cdef int swmm_options_set_ext(SWMM_Engine e, const char* key, const char* value)
     cdef int swmm_get_crs(SWMM_Engine e, char* buf, int buflen)
+    # Typed time-control accessors (OADate doubles)
+    cdef int swmm_options_get_start_date(SWMM_Engine e, double* value)
+    cdef int swmm_options_set_start_date(SWMM_Engine e, double value)
+    cdef int swmm_options_get_end_date(SWMM_Engine e, double* value)
+    cdef int swmm_options_set_end_date(SWMM_Engine e, double value)
+    cdef int swmm_options_get_report_start(SWMM_Engine e, double* value)
+    cdef int swmm_options_set_report_start(SWMM_Engine e, double value)
     # User flags
     cdef int swmm_userflag_get_bool(SWMM_Engine e, const char* name, int* value)
     cdef int swmm_userflag_get_int(SWMM_Engine e, const char* name, int* value)
