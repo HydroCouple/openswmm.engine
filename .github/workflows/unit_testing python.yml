@@ -193,13 +193,14 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: python
         run: |
+          python -m pip install delvewheel
           python -c "
           import glob, subprocess, sys
           wheels = glob.glob('dist/*.whl')
           if not wheels:
               print('No wheel found in dist/', file=sys.stderr); sys.exit(1)
           for w in wheels:
-              subprocess.check_call(['delvewheel', 'repair', '-w', 'dist', w])
+              subprocess.check_call([sys.executable, '-m', 'delvewheel', 'repair', '-w', 'dist', w])
           "
 
       - name: Delocate wheel (macOS)
