@@ -192,16 +192,11 @@ jobs:
       - name: Repair wheel (Windows)
         if: runner.os == 'Windows'
         working-directory: python
+        env:
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
         run: |
           python -m pip install delvewheel
-          python -c "
-          import glob, subprocess, sys
-          wheels = glob.glob('dist/*.whl')
-          if not wheels:
-              print('No wheel found in dist/', file=sys.stderr); sys.exit(1)
-          for w in wheels:
-              subprocess.check_call([sys.executable, '-m', 'delvewheel', 'repair', '-w', 'dist', w])
-          "
+          python scripts/repair_wheel_windows.py
 
       - name: Delocate wheel (macOS)
         if: runner.os == 'macOS'
