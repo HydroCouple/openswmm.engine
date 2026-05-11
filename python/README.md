@@ -1,7 +1,7 @@
 # OpenSWMM Engine
 
 <p align="center">
-  <img src="docs/images/hydrocouple_logo.png" alt="OpenSWMM Python Bindings" width="120">
+  <img src="https://raw.githubusercontent.com/HydroCouple/openswmm.engine/master/python/docs/images/hydrocouple_logo.png" alt="OpenSWMM Python Bindings" width="120">
 </p>
 
 **Open Storm Water Management Model — Next-Generation Computational Engine**
