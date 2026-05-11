@@ -174,6 +174,7 @@ TEST_F(FilesApiTest, WriterEmitsConfiguredFilesBlock) {
     std::ifstream f(path);
     std::stringstream ss; ss << f.rdbuf();
     const std::string content = ss.str();
+    f.close();  // Windows: must release the handle before fs::remove.
     EXPECT_NE(content.find("[FILES]"),         std::string::npos);
     EXPECT_NE(content.find("rain.dat"),        std::string::npos);
     EXPECT_NE(content.find("h.hsf"),           std::string::npos);
@@ -187,6 +188,8 @@ TEST_F(FilesApiTest, WriterSkipsBlockWhenSpecIsEmpty) {
 
     std::ifstream f(path);
     std::stringstream ss; ss << f.rdbuf();
-    EXPECT_EQ(ss.str().find("[FILES]"), std::string::npos);
+    const std::string content = ss.str();
+    f.close();  // Windows: must release the handle before fs::remove.
+    EXPECT_EQ(content.find("[FILES]"), std::string::npos);
     fs::remove(path);
 }

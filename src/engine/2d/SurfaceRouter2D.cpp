@@ -69,6 +69,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Initialize surface state
     state_.resize(mesh_.n_triangles(), mesh_.n_vertices());
 
+    // Initialize per-edge boundary condition storage (n_triangles * 3 slots,
+    // all initialized to WALL with zero head/slope/cum_flux).
+    boundary_.resize(mesh_.n_triangles() * 3);
+
     // Set initial heads from ground elevation
     for (int i = 0; i < mesh_.n_triangles(); ++i) {
         state_.head[i] = mesh_.tri_cz[i];

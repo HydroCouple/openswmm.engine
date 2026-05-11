@@ -25,6 +25,7 @@
 #include "data/MeshData.hpp"
 #include "data/SurfaceStateData.hpp"
 #include "data/SolverOptions2D.hpp"
+#include "data/BoundaryData.hpp"
 #include "coupling/NodeCoupling.hpp"
 
 #ifdef OPENSWMM_HAS_2D
@@ -136,6 +137,12 @@ public:
     /// Access solver options (mutable).
     SolverOptions2D& options() noexcept { return options_; }
 
+    /// Access per-edge boundary-condition data (read-only).
+    const BoundaryData& boundary() const noexcept { return boundary_; }
+
+    /// Access per-edge boundary-condition data (mutable, for forcing/parsing).
+    BoundaryData& boundary() noexcept { return boundary_; }
+
     /// Get total 2D surface volume (sum of depth * area).
     double totalVolume() const;
 
@@ -155,6 +162,7 @@ private:
     MeshData         mesh_;
     SurfaceStateData state_;
     SolverOptions2D  options_;
+    BoundaryData     boundary_;
 
     std::vector<CouplingPoint> coupling_points_;
 

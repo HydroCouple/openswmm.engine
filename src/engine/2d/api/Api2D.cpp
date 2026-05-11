@@ -14,6 +14,7 @@
 #include "../../core/SWMMEngine.hpp"
 
 #include <cstring>
+#include <cstdint>
 #include <algorithm>
 
 // Helper macros for common validation patterns
@@ -489,6 +490,127 @@ int swmm_2d_set_abs_tolerance(SWMM_Engine engine, double atol) {
 
     const_cast<openswmm::twoD::SolverOptions2D&>(router2d.options()).abs_tolerance
         = atol;
+    return SWMM_OK;
+}
+
+// ============================================================================
+// 2D Boundary Conditions (per-edge)
+// ============================================================================
+//
+// Edges are addressed as (tri_idx, edge) where edge ∈ {0,1,2} is the local
+// edge opposite vertex `edge`. Boundary edges are those whose neighbour
+// triangle index (mesh.tri_nbr{0,1,2}) is -1; per-edge BC storage is allocated
+// for every edge but only meaningful for boundary edges.
+
+namespace {
+
+inline int tri_nbr(const openswmm::twoD::MeshData& mesh, int t, int e) {
+    switch (e) {
+        case 0:  return mesh.tri_nbr0[t];
+        case 1:  return mesh.tri_nbr1[t];
+        default: return mesh.tri_nbr2[t];
+    }
+}
+
+} // namespace
+
+int swmm_2d_boundary_edge_count(SWMM_Engine engine, int* count) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!count) return SWMM_ERR_BADPARAM;
+
+    const auto& mesh = router2d.mesh();
+    int n = 0;
+    for (int t = 0; t < mesh.n_triangles(); ++t) {
+        if (mesh.tri_nbr0[t] < 0) ++n;
+        if (mesh.tri_nbr1[t] < 0) ++n;
+        if (mesh.tri_nbr2[t] < 0) ++n;
+    }
+    *count = n;
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
+                              int* bc_type) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2 || !bc_type) return SWMM_ERR_BADPARAM;
+
+    *bc_type = router2d.boundary().edge_bc_type[tri_idx * 3 + edge];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
+                              int bc_type) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    if (bc_type != SWMM_2D_BC_WALL &&
+        bc_type != SWMM_2D_BC_NORMAL_FLOW &&
+        bc_type != SWMM_2D_BC_SPECIFIED_STAGE) {
+        return SWMM_ERR_BADPARAM;
+    }
+
+    router2d.boundary().edge_bc_type[tri_idx * 3 + edge] =
+        static_cast<int8_t>(bc_type);
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
+                              double* head) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2 || !head) return SWMM_ERR_BADPARAM;
+
+    *head = router2d.boundary().edge_bc_head[tri_idx * 3 + edge];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
+                              double head) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+
+    router2d.boundary().edge_bc_head[tri_idx * 3 + edge] = head;
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_bc_slope(SWMM_Engine engine, int tri_idx, int edge,
+                               double* slope) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2 || !slope) return SWMM_ERR_BADPARAM;
+
+    *slope = router2d.boundary().edge_bed_slope[tri_idx * 3 + edge];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_edge_bc_slope(SWMM_Engine engine, int tri_idx, int edge,
+                               double slope) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    if (slope < 0.0) return SWMM_ERR_BADPARAM;
+
+    router2d.boundary().edge_bed_slope[tri_idx * 3 + edge] = slope;
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_bc_cum_flux(SWMM_Engine engine, int tri_idx, int edge,
+                                  double* cum_flux) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2 || !cum_flux) return SWMM_ERR_BADPARAM;
+
+    *cum_flux = router2d.boundary().edge_bc_cum_flux[tri_idx * 3 + edge];
     return SWMM_OK;
 }
 
