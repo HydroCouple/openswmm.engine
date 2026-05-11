@@ -74,8 +74,10 @@ void handle_files(SimulationContext& ctx, const std::vector<std::string>& lines)
             files.outflows_path = path;
         } else if (kind_word == "HOTSTART") {
             if (mode == FileMode::SAVE) {
-                files.hotstart_save_path = path;
-                files.hotstart_save_datetime = parse_optional_datetime(tok, 3);
+                HotstartSaveEntry entry;
+                entry.path = path;
+                entry.datetime = parse_optional_datetime(tok, 3);
+                files.hotstart_saves.push_back(std::move(entry));
             } else {  // USE
                 files.hotstart_use_path = path;
             }

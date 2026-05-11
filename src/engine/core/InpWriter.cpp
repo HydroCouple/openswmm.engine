@@ -1145,18 +1145,19 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
         if (!ctx.files.hotstart_use_path.empty())
             std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE",  "HOTSTART",
                           ctx.files.hotstart_use_path.c_str());
-        if (!ctx.files.hotstart_save_path.empty()) {
-            if (ctx.files.hotstart_save_datetime > 0.0) {
+        for (const auto &save : ctx.files.hotstart_saves) {
+            if (save.path.empty()) continue;
+            if (save.datetime > 0.0) {
                 char date_buf[16], time_buf[16];
-                fmt_date(date_buf, ctx.files.hotstart_save_datetime);
-                fmt_time(time_buf, ctx.files.hotstart_save_datetime);
+                fmt_date(date_buf, save.datetime);
+                fmt_time(time_buf, save.datetime);
                 std::fprintf(f, "%-13s %-10s \"%s\" %s %s\n",
                               "SAVE", "HOTSTART",
-                              ctx.files.hotstart_save_path.c_str(),
+                              save.path.c_str(),
                               date_buf, time_buf);
             } else {
                 std::fprintf(f, "%-13s %-10s \"%s\"\n", "SAVE", "HOTSTART",
-                              ctx.files.hotstart_save_path.c_str());
+                              save.path.c_str());
             }
         }
     }

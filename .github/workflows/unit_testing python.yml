@@ -192,13 +192,14 @@ jobs:
       - name: Repair wheel (Windows)
         if: runner.os == 'Windows'
         working-directory: python
-        run: >
+        run: |
           python -c "
-          import glob, subprocess, sys;
-          wheels = glob.glob('dist/*.whl');
-          [subprocess.check_call(['delvewheel', 'repair', '-w', 'dist', w])
-           for w in wheels] if wheels
-          else (print('No wheel in dist/', file=sys.stderr), sys.exit(1))
+          import glob, subprocess, sys
+          wheels = glob.glob('dist/*.whl')
+          if not wheels:
+              print('No wheel found in dist/', file=sys.stderr); sys.exit(1)
+          for w in wheels:
+              subprocess.check_call(['delvewheel', 'repair', '-w', 'dist', w])
           "
 
       - name: Delocate wheel (macOS)

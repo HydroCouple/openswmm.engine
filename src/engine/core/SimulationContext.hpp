@@ -135,13 +135,21 @@ enum class FileMode {
  *          illegal combinations later.
  *
  *          Multi-save HOTSTART (legacy supported up to 10 SAVE rows
- *          with optional datetimes) is **not yet supported**: a single
- *          `hotstart_save_path` slot holds the most recent SAVE row.
- *          Follow-up will lift this to a vector if a real workflow
- *          calls for it.
+ *          with optional datetimes) is now honoured: `hotstart_saves`
+ *          is a vector and the parser appends per row.  The C API's
+ *          singular `HOTSTART_SAVE_PATH` / `_DATETIME` keys operate on
+ *          slot 0 as a back-compat sugar for GUI clients that only
+ *          surface a single hot-start save.
  *
  * @ingroup engine_core
  */
+struct HotstartSaveEntry {
+    std::string path;
+    /// Optional `SAVE HOTSTART` datetime as a SWMM decimal day.
+    /// `0.0` means "no datetime — write at end of run".
+    double      datetime = 0.0;
+};
+
 struct FilesSpec {
     FileMode    rainfall_mode = FileMode::NONE;
     std::string rainfall_path;
@@ -161,10 +169,10 @@ struct FilesSpec {
     /// Legacy semantics: USE — single hot-start input file.
     std::string hotstart_use_path;
 
-    /// Legacy semantics: SAVE — single hot-start output file.  Date is
-    /// optional (`save_datetime == 0.0` ⇒ default to end-of-simulation).
-    std::string hotstart_save_path;
-    double      hotstart_save_datetime = 0.0;
+    /// Legacy semantics: SAVE — one or more hot-start output files,
+    /// each with an optional datetime (SWMM decimal day, 0 = end of
+    /// run).  Legacy supported up to 10; we don't enforce that here.
+    std::vector<HotstartSaveEntry> hotstart_saves;
 
     /// True when at least one slot is set; used by InpWriter to decide
     /// whether to emit a `[FILES]` section.
@@ -175,7 +183,7 @@ struct FilesSpec {
             || !inflows_path.empty()
             || !outflows_path.empty()
             || !hotstart_use_path.empty()
-            || !hotstart_save_path.empty();
+            || !hotstart_saves.empty();
     }
 };
 

@@ -301,8 +301,15 @@ SWMM_ENGINE_API int swmm_files_get(SWMM_Engine engine,
     else if (k == "INFLOWS_PATH")            val = f.inflows_path;
     else if (k == "OUTFLOWS_PATH")           val = f.outflows_path;
     else if (k == "HOTSTART_USE_PATH")       val = f.hotstart_use_path;
-    else if (k == "HOTSTART_SAVE_PATH")      val = f.hotstart_save_path;
-    else if (k == "HOTSTART_SAVE_DATETIME")  val = std::to_string(f.hotstart_save_datetime);
+    // HOTSTART_SAVE_* operate on slot 0 of the vector as back-compat
+    // sugar for clients that only surface a single hot-start save.
+    else if (k == "HOTSTART_SAVE_PATH")
+        val = f.hotstart_saves.empty() ? std::string{} : f.hotstart_saves.front().path;
+    else if (k == "HOTSTART_SAVE_DATETIME")
+        val = std::to_string(f.hotstart_saves.empty()
+                              ? 0.0 : f.hotstart_saves.front().datetime);
+    else if (k == "HOTSTART_SAVE_COUNT")
+        val = std::to_string(static_cast<int>(f.hotstart_saves.size()));
     else return SWMM_ERR_BADPARAM;
 
     fill_buf(buf, buflen, val);
@@ -332,10 +339,23 @@ SWMM_ENGINE_API int swmm_files_set(SWMM_Engine engine,
     else if (k == "INFLOWS_PATH")            f.inflows_path = v;
     else if (k == "OUTFLOWS_PATH")           f.outflows_path = v;
     else if (k == "HOTSTART_USE_PATH")       f.hotstart_use_path = v;
-    else if (k == "HOTSTART_SAVE_PATH")      f.hotstart_save_path = v;
+    // HOTSTART_SAVE_PATH operates on slot 0 of the vector.  Empty
+    // value clears slot 0 (and removes the row if its datetime is
+    // also zero) so existing single-slot client code keeps working.
+    else if (k == "HOTSTART_SAVE_PATH") {
+        if (f.hotstart_saves.empty()) f.hotstart_saves.emplace_back();
+        f.hotstart_saves.front().path = v;
+        if (v.empty() && f.hotstart_saves.front().datetime == 0.0)
+            f.hotstart_saves.erase(f.hotstart_saves.begin());
+    }
     else if (k == "HOTSTART_SAVE_DATETIME") {
-        try { f.hotstart_save_datetime = v.empty() ? 0.0 : std::stod(v); }
+        double dt = 0.0;
+        try { dt = v.empty() ? 0.0 : std::stod(v); }
         catch (...) { return SWMM_ERR_BADPARAM; }
+        if (f.hotstart_saves.empty()) f.hotstart_saves.emplace_back();
+        f.hotstart_saves.front().datetime = dt;
+        if (f.hotstart_saves.front().path.empty() && dt == 0.0)
+            f.hotstart_saves.erase(f.hotstart_saves.begin());
     }
     else return SWMM_ERR_BADPARAM;
 
