@@ -1,0 +1,13 @@
+name: openswmm-docs
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - numpy
+  - pip:
+    - sphinx>=7.0
+    - pydata-sphinx-theme>=0.15.0
+    - myst-parser>=3.0
+    - sphinx-autodoc-typehints>=2.0

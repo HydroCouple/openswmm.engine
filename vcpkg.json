@@ -1,0 +1,65 @@
+{
+    "name": "openswmm-engine",
+    "description": "Open Storm Water Management Model Engine — data-oriented, plugin-extensible, reentrant C++20 engine built on the EPA SWMM 5.x foundation.",
+    "license": "MIT",
+    "homepage": "https://hydrocouple.org/projects/openswmm",
+    "version-semver": "6.0.0-alpha.1",
+    "dependencies": [
+        {
+            "name": "vcpkg-cmake",
+            "host": true
+        },
+        {
+            "name": "vcpkg-cmake-config",
+            "host": true
+        }
+    ],
+    "default-features": [
+        "2d"
+    ],
+    "features": {
+        "2d": {
+            "description": "2D surface routing module (uses SUNDIALS/CVODE)",
+            "dependencies": [
+                {
+                    "name": "sundials"
+                }
+            ]
+        },
+        "tests": {
+            "description": "Unit and regression test harness (Google Test)",
+            "dependencies": [
+                {
+                    "name": "gtest"
+                }
+            ]
+        },
+        "benchmarks": {
+            "description": "Performance benchmarks (Google Benchmark)",
+            "dependencies": [
+                {
+                    "name": "benchmark"
+                }
+            ]
+        },
+        "geopackage": {
+            "description": "GeoPackage I/O support (SQLite-based spatial model persistence)",
+            "dependencies": [
+                {
+                    "name": "sqlite3",
+                    "features": ["rtree"]
+                }
+            ]
+        }
+    },
+    "overrides": [
+        {
+            "name": "gtest",
+            "version": "1.15.2"
+        },
+        {
+            "name": "benchmark",
+            "version": "1.9.1"
+        }
+    ]
+}

@@ -1,0 +1,163 @@
+name: Unit Testing
+
+on:
+  push:
+    branches: [master, main, develop]
+  pull_request:
+    branches: [master, main, develop]
+
+env:
+  VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+  VCPKG_EXE: ${{ github.workspace }}/vcpkg/vcpkg
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  # Pull only what the unit-test build needs: default features (2d) + tests.
+  VCPKG_MANIFEST_FEATURES: "tests"
+  OMP_NUM_THREADS: 1
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────
+  #  C / C++ Engine — build, unit test, and package
+  # ──────────────────────────────────────────────────────────────────────
+  engine:
+    name: "C++ Engine (${{ matrix.alias }})"
+    permissions:
+      contents: read
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            alias: Linux-x64
+            cmake_preset: Linux
+            shell_ext: .sh
+            vcpkg_triplet: x64-linux
+            cmake_osx_arch: ""
+
+          - os: macos-latest
+            alias: macOS-arm64
+            cmake_preset: Darwin
+            shell_ext: .sh
+            vcpkg_triplet: arm64-osx
+            cmake_osx_arch: arm64
+
+          - os: macos-15-intel
+            alias: macOS-x64
+            cmake_preset: Darwin
+            shell_ext: .sh
+            vcpkg_triplet: x64-osx
+            cmake_osx_arch: x86_64
+
+          - os: windows-latest
+            alias: Windows-x64
+            cmake_preset: Windows
+            shell_ext: .bat
+            vcpkg_triplet: x64-windows
+            cmake_osx_arch: ""
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Checkout vcpkg
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: 2025.02.14
+          path: vcpkg
+
+      - name: Install OpenMP (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          .\bootstrap-vcpkg${{ matrix.shell_ext }}
+          .\vcpkg.exe integrate install
+
+      - name: Bootstrap vcpkg (Unix)
+        if: runner.os != 'Windows'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          ./bootstrap-vcpkg${{ matrix.shell_ext }}
+          chmod +x vcpkg
+
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v8
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Cache vcpkg downloads (source tarballs)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/downloads
+          key: vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
+            vcpkg-downloads-${{ runner.os }}-
+
+      - name: Configure
+        run: >
+          cmake
+          --preset=${{ matrix.cmake_preset }}-debug
+          -B build-${{ matrix.vcpkg_triplet }}
+          -DVCPKG_MANIFEST_FEATURES=tests
+          -DOPENSWMM_BUILD_TESTS=OFF
+          -DOPENSWMM_BUILD_UNIT_TESTS=ON
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
+
+      - name: Build
+        run: cmake --build build-${{ matrix.vcpkg_triplet }} --config Debug
+
+      - name: Unit tests
+        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit --output-on-failure
+
+      - name: Package
+        run: cmake --build build-${{ matrix.vcpkg_triplet }} --target package
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: engine-${{ matrix.vcpkg_triplet }}
+          path: |
+            build-${{ matrix.vcpkg_triplet }}/*.tar.gz
+            build-${{ matrix.vcpkg_triplet }}/*.zip
+
+      # ── Release build for Python wheel consumption ────────────────────────
+      # vcpkg packages are already in the binary cache from the Debug build
+      # above, so this configure is fast (no SUNDIALS recompilation).
+      - name: Configure (Release, for Python wheel)
+        run: >
+          cmake
+          --preset=${{ matrix.cmake_preset }}
+          -B build-${{ matrix.vcpkg_triplet }}-release
+          -DOPENSWMM_BUILD_TESTS=OFF
+          -DOPENSWMM_BUILD_UNIT_TESTS=OFF
+          -DOPENSWMM_BUILD_REGRESSION_TESTS=OFF
+          -DOPENSWMM_BUILD_BENCHMARKS=OFF
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
+
+      - name: Build (Release, for Python wheel)
+        run: cmake --build build-${{ matrix.vcpkg_triplet }}-release --config Release
+
+      - name: Install (Release, for Python wheel)
+        run: >
+          cmake --install build-${{ matrix.vcpkg_triplet }}-release
+          --config Release
+          --prefix "${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}"
+
+      - name: Upload engine install artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: engine-install-${{ matrix.vcpkg_triplet }}
+          path: engine-install-${{ matrix.vcpkg_triplet }}/

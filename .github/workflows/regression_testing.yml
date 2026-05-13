@@ -1,0 +1,134 @@
+name: Regression Testing
+
+on:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  # Pull only what the regression-test build needs: default features (2d) + tests.
+  VCPKG_MANIFEST_FEATURES: "tests"
+  OMP_NUM_THREADS: 1
+
+jobs:
+  regression:
+    name: "Regression (${{ matrix.alias }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            alias: Linux-x64
+            cmake_preset: Linux
+            shell_ext: .sh
+            vcpkg_triplet: x64-linux
+            cmake_osx_arch: ""
+
+          - os: windows-latest
+            alias: Windows-x64
+            cmake_preset: Windows
+            shell_ext: .bat
+            vcpkg_triplet: x64-windows
+            cmake_osx_arch: "" 
+          
+          - os: macos-latest
+            alias: macOS-arm64
+            cmake_preset: Darwin
+            shell_ext: .sh
+            vcpkg_triplet: arm64-osx
+            cmake_osx_arch: arm64
+
+          - os: macos-15-intel
+            alias: macOS-x64
+            cmake_preset: Darwin
+            shell_ext: .sh
+            vcpkg_triplet: x64-osx
+            cmake_osx_arch: x86_64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Checkout vcpkg
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: 2025.02.14
+          path: vcpkg
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          .\bootstrap-vcpkg${{ matrix.shell_ext }}
+          .\vcpkg.exe integrate install
+
+      - name: Bootstrap vcpkg (Unix)
+        if: runner.os != 'Windows'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          ./bootstrap-vcpkg${{ matrix.shell_ext }}
+          chmod +x vcpkg
+
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v8
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Cache vcpkg downloads (source tarballs)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/downloads
+          key: vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
+            vcpkg-downloads-${{ runner.os }}-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python test requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest numpy
+
+      - name: Configure
+        run: >
+          cmake
+          --preset=${{ matrix.cmake_preset }}-debug
+          -B build-${{ matrix.vcpkg_triplet }}
+          -DOPENSWMM_BUILD_TESTS=OFF
+          -DOPENSWMM_BUILD_UNIT_TESTS=ON
+          -DOPENSWMM_BUILD_REGRESSION_TESTS=ON
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
+
+      - name: Build
+        run: cmake --build build-${{ matrix.vcpkg_triplet }} --config Debug
+
+      - name: Unit tests (sanity check)
+        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit --output-on-failure
+
+      - name: C++ regression tests
+        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L regression --output-on-failure
+
+      - name: Python regression tests
+        working-directory: tests/regression_testing
+        run: python -m pytest -v --tb=short
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: regression-${{ matrix.vcpkg_triplet }}
+          path: tests/regression_testing/results/

@@ -1,0 +1,6 @@
+# docs requirements
+sphinx>=7.0
+pydata-sphinx-theme>=0.15.0
+myst-parser>=3.0
+sphinx-autodoc-typehints>=2.0
+sphinx-design>=0.6.0

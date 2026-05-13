@@ -1,0 +1,316 @@
+
+  EPA STORM WATER MANAGEMENT MODEL - VERSION 5.3.0 (Build 5.3.0)
+  ------------------------------------------------------------
+
+  A site surface drainage model. 
+  See Site_Drainage_Model.txt for more details. 
+  
+  ****************
+  Analysis Options
+  ****************
+  Flow Units ............... CFS
+  Process Models:
+    Rainfall/Runoff ........ YES
+    RDII ................... NO
+    Snowmelt ............... NO
+    Groundwater ............ NO
+    Flow Routing ........... YES
+    Ponding Allowed ........ NO
+    Water Quality .......... YES
+  Infiltration Method ...... HORTON
+  Flow Routing Method ...... DYNWAVE
+  Surcharge Method ......... EXTRAN
+  Starting Date ............ 01/01/1998 12:00:00
+  Ending Date .............. 01/02/1998 06:00:00
+  Antecedent Dry Days ...... 5.0
+  Report Time Step ......... 00:05:00
+  Wet Time Step ............ 00:01:00
+  Dry Time Step ............ 00:05:00
+  Routing Time Step ........ 5.00 sec
+  Variable Time Step ....... YES
+  Maximum Trials ........... 8
+  Number of Threads ........ 1
+  Head Tolerance ........... 0.005000 ft
+  
+  
+  **************************        Volume         Depth
+  Runoff Quantity Continuity     acre-feet        inches
+  **************************     ---------       -------
+  Total Precipitation ......         6.278         2.605
+  Evaporation Loss .........         0.000         0.000
+  Infiltration Loss ........         1.910         0.792
+  Surface Runoff ...........         4.296         1.783
+  Final Storage ............         0.075         0.031
+  Continuity Error (%) .....        -0.041
+  
+  
+  **************************           TSS
+  Runoff Quality Continuity            lbs
+  **************************    ----------
+  Initial Buildup ..........       914.089
+  Surface Buildup ..........         0.848
+  Wet Deposition ...........         0.000
+  Sweeping Removal .........         0.000
+  Infiltration Loss ........         0.000
+  BMP Removal ..............         0.000
+  Surface Runoff ...........         0.000
+  Remaining Buildup ........       914.937
+  Continuity Error (%) .....         0.000
+  
+  
+  **************************        Volume        Volume
+  Flow Routing Continuity        acre-feet      10^6 gal
+  **************************     ---------     ---------
+  Dry Weather Inflow .......         0.000         0.000
+  Wet Weather Inflow .......         4.295         1.399
+  Groundwater Inflow .......         0.000         0.000
+  RDII Inflow ..............         0.000         0.000
+  External Inflow ..........         0.000         0.000
+  External Outflow .........         4.269         1.391
+  Flooding Loss ............         0.000         0.000
+  Evaporation Loss .........         0.000         0.000
+  Exfiltration Loss ........         0.000         0.000
+  Initial Stored Volume ....         0.000         0.000
+  Final Stored Volume ......         0.026         0.008
+  Continuity Error (%) .....         0.011
+  
+  
+  **************************           TSS
+  Quality Routing Continuity           lbs
+  **************************    ----------
+  Dry Weather Inflow .......         0.000
+  Wet Weather Inflow .......         0.000
+  Groundwater Inflow .......         0.000
+  RDII Inflow ..............         0.000
+  External Inflow ..........         0.000
+  External Outflow .........         0.000
+  Flooding Loss ............         0.000
+  Exfiltration Loss ........         0.000
+  Mass Reacted .............         0.000
+  Initial Stored Mass ......         0.000
+  Final Stored Mass ........         0.000
+  Continuity Error (%) .....         0.000
+  
+  
+  ***************************
+  Time-Step Critical Elements
+  ***************************
+  Link C11 (2.33%)
+  
+  
+  ********************************
+  Highest Flow Instability Indexes
+  ********************************
+  All links are stable.
+  
+  
+  *********************************
+  Most Frequent Nonconverging Nodes
+  *********************************
+  Convergence obtained at all time steps.
+  
+  
+  *************************
+  Routing Time Step Summary
+  *************************
+  Minimum Time Step           :     3.17 sec
+  Average Time Step           :     4.98 sec
+  Maximum Time Step           :     5.00 sec
+  % of Time in Steady State   :     0.00
+  Average Iterations per Step :     2.00
+  % of Steps Not Converging   :     0.00
+  Time Step Frequencies       :
+      5.000 -  3.155 sec      :   100.00 %
+      3.155 -  1.991 sec      :     0.00 %
+      1.991 -  1.256 sec      :     0.00 %
+      1.256 -  0.792 sec      :     0.00 %
+      0.792 -  0.500 sec      :     0.00 %
+  
+  
+  ***************************
+  Subcatchment Runoff Summary
+  ***************************
+  
+  ------------------------------------------------------------------------------------------------------------------------------
+                            Total      Total      Total      Total     Imperv       Perv      Total       Total     Peak  Runoff
+                           Precip      Runon       Evap      Infil     Runoff     Runoff     Runoff      Runoff   Runoff   Coeff
+  Subcatchment                 in         in         in         in         in         in         in    10^6 gal      CFS
+  ------------------------------------------------------------------------------------------------------------------------------
+  S1                         2.61       0.00       0.00       0.80       1.45       0.33       1.78        0.22    13.73   0.682
+  S2                         2.61       0.00       0.00       0.68       1.61       0.28       1.89        0.24    15.23   0.726
+  S3                         2.61       0.00       0.00       1.12       1.01       0.46       1.47        0.15     9.93   0.564
+  S4                         2.61       0.00       0.00       0.92       1.27       0.38       1.66        0.31    19.76   0.636
+  S5                         2.61       0.00       0.00       0.22       2.24       0.10       2.33        0.30    18.26   0.895
+  S6                         2.61       0.00       0.00       0.09       2.42       0.04       2.46        0.13     7.67   0.945
+  S7                         2.61       0.00       0.00       1.87       0.00       0.74       0.74        0.05     4.32   0.284
+  
+  
+  ****************************
+  Subcatchment Washoff Summary
+  ****************************
+  
+  ----------------------------------
+                                 TSS
+  Subcatchment                   lbs
+  ----------------------------------
+  S1                           0.000
+  S2                           0.000
+  S3                           0.000
+  S4                           0.000
+  S5                           0.000
+  S6                           0.000
+  S7                           0.000
+  ----------------------------------
+  System                       0.000
+  
+  
+  ******************
+  Node Depth Summary
+  ******************
+  
+  ---------------------------------------------------------------------------------
+                                 Average  Maximum  Maximum  Time of Max    Reported
+                                   Depth    Depth      HGL   Occurrence   Max Depth
+  Node                 Type         Feet     Feet     Feet  days hr:min        Feet
+  ---------------------------------------------------------------------------------
+  J1                   JUNCTION     0.08     0.68  4973.68     0  12:06        0.66
+  J2                   JUNCTION     0.16     0.66  4969.66     0  12:07        0.64
+  J3                   JUNCTION     0.12     0.85  4973.85     0  12:06        0.82
+  J4                   JUNCTION     0.07     0.67  4971.67     0  12:06        0.64
+  J5                   JUNCTION     0.15     1.21  4971.01     0  12:07        1.20
+  J6                   JUNCTION     0.19     1.29  4970.29     0  12:07        1.27
+  J7                   JUNCTION     0.09     0.81  4972.31     0  12:06        0.78
+  J8                   JUNCTION     0.16     1.28  4967.78     0  12:08        1.27
+  J9                   JUNCTION     0.23     1.67  4966.47     0  12:12        1.65
+  J10                  JUNCTION     0.25     1.74  4965.54     0  12:12        1.71
+  J11                  JUNCTION     0.31     1.99  4964.99     0  12:12        1.96
+  O1                   OUTFALL      0.30     1.99  4963.99     0  12:12        1.96
+  
+  
+  *******************
+  Node Inflow Summary
+  *******************
+  
+  -------------------------------------------------------------------------------------------------
+                                  Maximum  Maximum                  Lateral       Total        Flow
+                                  Lateral    Total  Time of Max      Inflow      Inflow     Balance
+                                   Inflow   Inflow   Occurrence      Volume      Volume       Error
+  Node                 Type           CFS      CFS  days hr:min    10^6 gal    10^6 gal     Percent
+  -------------------------------------------------------------------------------------------------
+  J1                   JUNCTION     13.73    13.73     0  12:06        0.22        0.22      -0.022
+  J2                   JUNCTION     15.23    15.23     0  12:06       0.243       0.243       0.316
+  J3                   JUNCTION      9.93     9.93     0  12:06       0.149       0.149       0.005
+  J4                   JUNCTION      0.00     9.91     0  12:06           0       0.149       0.026
+  J5                   JUNCTION      0.00    23.11     0  12:06           0       0.369       0.411
+  J6                   JUNCTION      0.00    39.16     0  12:06           0       0.672       0.200
+  J7                   JUNCTION     19.76    19.76     0  12:06       0.305       0.305      -0.010
+  J8                   JUNCTION      0.00    38.33     0  12:07           0       0.671      -0.001
+  J9                   JUNCTION      0.00    38.22     0  12:08           0       0.671       0.337
+  J10                  JUNCTION     21.24    54.53     0  12:12        0.35        1.02       0.170
+  J11                  JUNCTION      7.67    71.76     0  12:12       0.132        1.39       0.067
+  O1                   OUTFALL       0.00    71.61     0  12:12           0        1.39       0.000
+  
+  
+  **********************
+  Node Surcharge Summary
+  **********************
+  
+  No nodes were surcharged.
+  
+  
+  *********************
+  Node Flooding Summary
+  *********************
+  
+  No nodes were flooded.
+  
+  
+  ***********************
+  Outfall Loading Summary
+  ***********************
+  
+  -------------------------------------------------------------------------
+                         Flow       Avg       Max       Total         Total
+                         Freq      Flow      Flow      Volume           TSS
+  Outfall Node           Pcnt       CFS       CFS    10^6 gal           lbs
+  -------------------------------------------------------------------------
+  O1                    97.70      3.14     71.61       1.391         0.000
+  -------------------------------------------------------------------------
+  System                97.70      3.14     71.61       1.391         0.000
+  
+  
+  ********************
+  Link Flow Summary
+  ********************
+  
+  -----------------------------------------------------------------------------
+                                 Maximum  Time of Max   Maximum    Max/    Max/
+                                  |Flow|   Occurrence   |Veloc|    Full    Full
+  Link                 Type          CFS  days hr:min    ft/sec    Flow   Depth
+  -----------------------------------------------------------------------------
+  C1                   CONDUIT     13.48     0  12:06      1.58    0.04    0.31
+  C2                   CONDUIT     13.44     0  12:07      2.77    0.31    0.62
+  C3                   CONDUIT      9.91     0  12:06      8.43    0.29    0.34
+  C4                   CONDUIT      9.67     0  12:06      1.08    0.04    0.31
+  C5                   CONDUIT     20.93     0  12:07      1.49    0.13    0.42
+  C6                   CONDUIT     19.49     0  12:06      1.92    0.06    0.35
+  C7                   CONDUIT     38.33     0  12:07     11.99    0.29    0.37
+  C8                   CONDUIT     38.22     0  12:08      2.23    0.15    0.49
+  C9                   CONDUIT     37.20     0  12:12      1.64    0.26    0.57
+  C10                  CONDUIT     53.89     0  12:12      2.02    0.29    0.62
+  C11                  CONDUIT     71.61     0  12:12     10.18    0.37    0.42
+  
+  
+  ***************************
+  Flow Classification Summary
+  ***************************
+  
+  -------------------------------------------------------------------------------------
+                      Adjusted    ---------- Fraction of Time in Flow Class ---------- 
+                       /Actual         Up    Down  Sub   Sup   Up    Down  Norm  Inlet 
+  Conduit               Length    Dry  Dry   Dry   Crit  Crit  Crit  Crit  Ltd   Ctrl  
+  -------------------------------------------------------------------------------------
+  C1                      1.00   0.01  0.00  0.00  0.99  0.00  0.00  0.00  0.96  0.00
+  C2                      1.00   0.01  0.00  0.00  0.00  0.00  0.00  0.99  0.00  0.00
+  C3                      1.00   0.01  0.00  0.00  0.00  0.99  0.00  0.00  0.00  0.00
+  C4                      1.00   0.01  0.00  0.00  0.99  0.00  0.00  0.00  0.96  0.00
+  C5                      1.00   0.01  0.01  0.00  0.98  0.00  0.00  0.00  0.98  0.00
+  C6                      1.00   0.01  0.00  0.00  0.99  0.00  0.00  0.00  0.96  0.00
+  C7                      1.00   0.01  0.00  0.00  0.01  0.98  0.00  0.00  0.03  0.00
+  C8                      1.00   0.02  0.00  0.00  0.98  0.00  0.00  0.00  0.93  0.00
+  C9                      1.00   0.01  0.02  0.00  0.96  0.00  0.00  0.00  0.96  0.00
+  C10                     1.00   0.01  0.00  0.00  0.99  0.00  0.00  0.00  0.98  0.00
+  C11                     1.00   0.01  0.00  0.00  0.02  0.97  0.00  0.00  0.59  0.00
+  
+  
+  *************************
+  Conduit Surcharge Summary
+  *************************
+  
+  No conduits were surcharged.
+  
+  
+  ***************************
+  Link Pollutant Load Summary
+  ***************************
+  
+  ----------------------------------
+                                 TSS
+  Link                           lbs
+  ----------------------------------
+  C1                           0.000
+  C2                           0.000
+  C3                           0.000
+  C4                           0.000
+  C5                           0.000
+  C6                           0.000
+  C7                           0.000
+  C8                           0.000
+  C9                           0.000
+  C10                          0.000
+  C11                          0.000
+  
+
+  Analysis begun on:  Wed May 13 11:23:52 2026
+  Analysis ended on:  Wed May 13 11:23:52 2026
+  Total elapsed time: < 1 sec
