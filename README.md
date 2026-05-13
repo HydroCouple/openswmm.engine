@@ -1,48 +1,65 @@
 # OpenSWMM Engine
 
 <p align="center">
-  <img src="docs/images/hydrocouple_logo.png" alt="OpenSWMM MCP" width="120">
+  <img src="docs/images/hydrocouple_logo.png" alt="OpenSWMM" width="120">
 </p>
 
 **Open Storm Water Management Model — Next-Generation Computational Engine**
 
 [![Unit Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml)
-
 [![Unit Testing Python](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing_python.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing_python.yml)
-
-<!-- [![Regression Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/regression_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/regression_testing.yml) -->
 [![Documentation](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml)
-<!-- [![Deployment](https://github.com/HydroCouple/openswmm.engine/actions/workflows/deployment.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/deployment.yml) -->
 [![Issues](https://img.shields.io/github/issues/HydroCouple/openswmm.engine)](https://github.com/HydroCouple/openswmm.engine/issues)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
 [![PyPI](https://img.shields.io/pypi/v/openswmm.svg)](https://pypi.org/project/openswmm)
 [![Downloads](https://pepy.tech/badge/openswmm)](https://pepy.tech/project/openswmm)
 [![Python](https://img.shields.io/pypi/pyversions/openswmm.svg)](https://pypi.org/project/openswmm)
 [![Wheel](https://img.shields.io/pypi/wheel/openswmm.svg)](https://pypi.org/project/openswmm)
 
+## Documentation
+
+| | Site | Contents |
+|---|---|---|
+| **C / C++ Engine** | **[hydrocouple.org/openswmm.engine](https://hydrocouple.org/openswmm.engine)** | Full C API reference, hydrology / hydraulics / water-quality reference manuals, user manual, architecture notes. |
+| **Python Bindings** | **[hydrocouple.org/openswmm.engine/python](https://hydrocouple.org/openswmm.engine/python)** | Quickstart, per-domain user guide, Cython API reference, SWMM 5 → v6 migration. |
+
+Both sites cross-link from their top navigation.
+
 ---
 
 ## Overview
 
-OpenSWMM Engine is a community-driven, open-source continuation of the EPA Storm Water Management Model (SWMM). SWMM is a dynamic hydrology–hydraulic–water quality simulation model used for single-event or long-term (continuous) simulation of runoff quantity and quality from primarily urban areas.
-
-This project preserves and advances the rich legacy of SWMM by developing high-quality, QA/QC'd code while building an active community for sustainable maintenance and improvement. The community is actively working with organizations including ASCE's Environmental and Water Resources Institute (EWRI) and Water Environment Federation (WEF) to ensure the long-term sustainability of the SWMM codebase.
+OpenSWMM Engine is a community-driven, open-source continuation of the EPA Storm Water Management Model — a dynamic hydrology, hydraulic, and water-quality simulator for urban runoff. The project preserves the SWMM legacy under QA/QC and builds the community needed for long-term maintenance, working with ASCE/EWRI and the Water Environment Federation.
 
 ## What's New in v6.0.0
 
-OpenSWMM Engine v6.0.0 is a major modernization of the SWMM computational engine. Key improvements include:
-
 ### Architecture & Performance
 
-- **Data-Oriented Design** — Core data structures refactored to Structure of Arrays (SoA) layout for cache efficiency and SIMD-friendly computation.
-- **Reentrant Engine** — Global state eliminated; all simulation state encapsulated in an opaque `SWMM_Engine` handle, enabling multiple independent simulations in the same process.
-- **Plugin-Based I/O** — Output and report writing abstracted through a plugin interface. Plugins receive read-only simulation snapshots on a dedicated I/O thread.
-- **C++20 Codebase** — New engine written in modern C++20; legacy EPA SWMM 5.x solver preserved unmodified in `src/legacy/`.
+- **Data-Oriented Design** — Core state refactored to Structure-of-Arrays for cache efficiency and SIMD-friendly batches.
+- **Reentrant Engine** — All simulation state lives behind an opaque `SWMM_Engine` handle; multiple independent simulations can run in the same process.
+- **Plugin-Based I/O** — Output and report writing dispatch through plugin interfaces on a dedicated I/O thread.
+- **C++20 Codebase** — Modern C++20 implementation; the legacy EPA SWMM 5.x solver is preserved unmodified in `src/legacy/`.
+
+### Process Formulation Enhancements
+
+#### Implemented
+
+- **Semi-Implicit Node Continuity** — Single-equation free-surface/surcharge formulation that removes the legacy two-branch discontinuity. Enabled via `NODE_CONTINUITY SEMI_IMPLICIT` (default). [Reference »](https://hydrocouple.org/openswmm.engine)
+- **Anderson Acceleration for Picard Iteration** — Depth-2 mixing of residual history cuts iteration counts 25–50% on stiff surcharge transitions with safe fall-back to standard Picard. Enabled via `ANDERSON_ACCEL YES`.
+- **Spatially Explicit Overland Flow & Groundwater (2D)** — 2D overland-flow grid coupled to the 1D pipe network. Surcharge re-routes over terrain to downstream nodes, lateral groundwater exchanges are tracked explicitly, and green-infrastructure placement is spatially resolved.
+- **Dynamic Preissmann Slot** — Geometry-dependent slot width replaces the fixed-width slot at the free-surface / pressurized transition, improving stability for rapidly filling or draining conduits.
+- **Physics-Based Initial Abstraction Recovery** — RDII initial abstraction now evolves as an exponential depletion/recovery process with additive base + thermal recovery rates and frozen-ground suppression. Seasonal RDII variation emerges from temperature dynamics on a single RTK set per sewershed — no monthly parameter tables required. Configured via the new `[RDII_DECAY]` input section.
+
+  $$IA_{avail}(t+\Delta t) = IA_{max} - \bigl(IA_{max} - IA_{avail}(t)\bigr) \cdot e^{-k_{rec}(T)\,\Delta t}, \quad k_{rec}(T) = k_0 + k_T \cdot e^{\,\theta(T - T_{ref})}$$
+
+#### In Development
+
+- **Spatially Explicit Inlets** — Promotes inlets to mode-switching junction nodes that capture street flow when gutter spread exceeds a threshold and revert to passive junctions otherwise.
+- **LID as Storage Nodes** — Maps LID layers (surface, media, gravel) onto extended storage nodes using a reduced-physics kinematic Richards ODE for two-way hydraulic feedback.
 
 ### New C API
 
-A comprehensive, domain-split C API replaces the monolithic legacy interface:
+A domain-split C API replaces the monolithic legacy interface. Full reference at the [C engine documentation site](https://hydrocouple.org/openswmm.engine).
 
 | Header | Domain |
 |---|---|
@@ -51,598 +68,148 @@ A comprehensive, domain-split C API replaces the monolithic legacy interface:
 | `openswmm_nodes.h` | Junctions, outfalls, storage, dividers |
 | `openswmm_links.h` | Conduits, pumps, orifices, weirs, outlets |
 | `openswmm_subcatchments.h` | Subcatchments, infiltration, coverage |
-| `openswmm_gages.h` | Rain gages (timeseries and file sources) |
+| `openswmm_gages.h` | Rain gages |
 | `openswmm_pollutants.h` | Pollutant definitions and runtime injection |
-| `openswmm_tables.h` | Time series, curves, and patterns |
-| `openswmm_inflows.h` | External inflows, DWF, RDII |
+| `openswmm_tables.h` | Time series, curves, patterns |
+| `openswmm_inflows.h` | External inflows, DWF, RDII (incl. `[RDII_DECAY]`) |
 | `openswmm_controls.h` | Control rules and direct link actions |
 | `openswmm_infrastructure.h` | Transects, streets, inlets, LID controls |
 | `openswmm_spatial.h` | CRS, coordinates, polylines, polygons |
 | `openswmm_quality.h` | Landuse, buildup, washoff, treatment |
 | `openswmm_massbalance.h` | Continuity errors and cumulative flux totals |
 | `openswmm_callbacks.h` | Progress, warning, and step callbacks |
-| `openswmm_hotstart.h` | Hot start file save/load/modify |
+| `openswmm_hotstart.h` | Hot start file save / load / modify |
 | `openswmm_statistics.h` | Node, link, and subcatchment statistics |
-| `openswmm_geopackage.h` | GeoPackage I/O — observed data, result queries (optional) |
+| `openswmm_geopackage.h` | Optional GeoPackage I/O |
 
 ### Additional Features
 
-- **Hot Start API** — Save, load, modify, and query hot start files through a transparent C ABI.
-- **CRS Support** — Coordinate reference system specification via OPTIONS for spatial data.
-- **User Flags** — Custom USER_FLAGS section for user-defined metadata on objects.
-- **GeoPackage I/O** — Optional SQLite-based spatial persistence for model definitions, simulation results, observed data, and network topology (see [GeoPackage](#geopackage-io) below).
-- **Input Plugin Interface** — `IInputPlugin` allows alternative file formats (GeoPackage, HDF5, databases) to replace the `.inp` text format. Plugins implement `read()` and `write()` and are discovered via `IPluginComponentInfo`.
-- **Plugin SDK** — Header-only development kit for building input/output/report plugins. Plugins advertise capabilities via `has_input()`, `has_output()`, `has_report()` booleans and support optional registration.
-- **HEC-22 Inlet Analysis** — Street inlet capture, grate and curb inlets (from SWMM 5.2).
-- **Variable Speed Pumps** — Type5 pump curves with speed scaling.
-- **New Storage Shapes** — Conical and pyramidal shapes with elliptical/rectangular bases.
+- **Hot Start API** — Save, load, modify, and query hot-start files through a stable C ABI.
+- **CRS Support** — Coordinate reference systems specified in `[OPTIONS]`.
+- **User Flags** — Typed `[USER_FLAGS]` / `[USER_FLAG_VALUES]` sections attach custom metadata (boolean, integer, real, string) to nodes, links, subcatchments, or gages.
+- **Extension Options** — Unrecognized `[OPTIONS]` keys are preserved and exposed to plugins at runtime.
+- **Plugin SDK** — Header-only SDK in `include/openswmm/plugin_sdk/` for input, output, and report plugins; the `IPluginComponentInfo` entry point advertises capabilities and supports custom `.inp` section handlers via `SectionRegistry`.
+- **GeoPackage I/O** — Optional SQLite + spatial backing store for inputs, results, observed series, and topology in a single `.gpkg` file (`-DOPENSWMM_WITH_GEOPACKAGE=ON`).
+- **HEC-22 Inlet Analysis** — Street inlet capture with grate and curb inlets (SWMM 5.2).
+- **Variable Speed Pumps** — Type 5 pump curves with speed scaling.
+- **New Storage Shapes** — Conical and pyramidal shapes with elliptical and rectangular bases.
 
-### Process Formulation Enhancements
-
-The following physics-based and numerical improvements are available or being designed for backward-compatible integration. Each addresses a known simplification or performance limitation in the current SWMM formulation.
-
-#### Implemented
-
-- **Semi-Implicit Node Continuity** — The legacy SWMM dynamic wave solver uses a two-branch explicit scheme for node depth updates, switching abruptly between free-surface and surcharged formulations. This can cause oscillations at the surcharge transition boundary. The new `SEMI_IMPLICIT` formulation unifies both regimes into a single equation that implicitly accounts for the pressure-flow coupling via the `sumdqdh` term in the denominator. This eliminates the discontinuous branch and improves convergence stability, particularly for rapidly filling/draining systems. Enabled via `NODE_CONTINUITY  SEMI_IMPLICIT` in the `[OPTIONS]` section (default).
-
-- **Anderson Acceleration for Picard Iteration** — The standard Picard fixed-point iteration used in dynamic wave routing converges slowly for stiff surcharge transitions, often requiring 8-12 iterations. Anderson acceleration (depth-2 mixing) uses the residual history from the previous two iterates to compute an optimal linear combination, typically reducing iteration counts by 25-50%. Each saved iteration avoids the full hot path (geometry, momentum, scatter, node update), so the speedup compounds with other performance optimizations. Physical safeguards ensure non-negative depths; nodes that violate bounds fall back to standard Picard automatically. Enabled via `ANDERSON_ACCEL  YES` in the `[OPTIONS]` section (default: NO).
-
-#### In Development
-
-- **Spatially Explicit Overland Flow & Groundwater** — SWMM currently has one-way feedback between hydrology and hydraulics: flooded nodes pond over a user-specified area and are reintroduced locally. In reality, surcharge flows traverse the terrain and may re-enter the network at a downstream node. The new module couples a 2D overland flow grid with the 1D pipe network, enabling spatially explicit green infrastructure placement, terrain-routed surcharge, and lateral groundwater flow exchanges, etc.
-
-- **Dynamic Preissmann Slot** — Standard SWMM uses a fixed-width slot for pressurized conduit transitions, which can cause numerical instability at the open-channel/pressure interface. A dynamic slot formulation smooths the transition with a geometry-dependent slot width, improving stability for rapidly filling/draining conduits.
-
-- **Spatially Explicit Inlets** — Current inlets are attributes of conduits, limiting bypass routing and preventing backflow or series-inlet configurations. The redesign promotes inlets to mode-switching junction nodes that actively capture street flow when the gutter spread exceeds a threshold and revert to passive junctions otherwise.
-
-- **LID as Storage Nodes** — Current LID units lack hydraulic feedback: no backpressure from the drainage network, no bidirectional flow, and no control-structure integration. The redesign maps LID layers (surface, media, gravel) onto an extended storage node using a reduced-physics kinematic Richards ODE — a simplified 1D formulation that captures gravity-driven percolation and capillary redistribution between discrete layers without the computational cost of a full 3D variably-saturated solver. This provides physically meaningful moisture dynamics while remaining compatible with SWMM's routing timestep, and enables elevation-mapped underdrain links with full network coupling.
-
-- **Physics-Based Initial Abstraction Recovery** — SWMM's seasonal RTK calibration for RDII confounds infrastructure leakage fraction with soil moisture state, requiring 12 monthly parameter sets. The new formulation tracks initial abstraction capacity as an exponential decay/recovery process. During dry periods, available capacity recovers with additive time-based and temperature-dependent rate components:
-
-  $$IA_{avail}(t+\Delta t) = IA_{max} - \bigl(IA_{max} - IA_{avail}(t)\bigr) \cdot e^{-k_{rec}(T)\,\Delta t}, \qquad k_{rec}(T) = k_0 + k_T \cdot e^{\,\theta\,(T - T_{ref})}$$
-
-  The base rate $k_0$ captures gravity drainage and capillary redistribution that occur regardless of temperature, while $k_T \cdot e^{\theta(T-T_{ref})}$ captures thermally-driven evapotranspiration. During storms, capacity is depleted: $IA_{avail}(t+\Delta t) = IA_{avail}(t) \cdot e^{-k_{dep}\,\Delta P}$. Recovery is suppressed when $T < T_{freeze}$, producing emergent seasonal variation (high winter RDII, low summer RDII) from a single RTK set per sewershed — no monthly parameter tables required.
-
-### Input File Extensions
-
-The new engine extends the standard SWMM `.inp` format with several new sections while remaining fully backward-compatible with existing input files. Below is a complete `.inp` snippet demonstrating all new features:
-
-```ini
-;; EXTENSION OPTIONS — new and custom keys in [OPTIONS]
-;; Standard SWMM options work as before.  Any unrecognized key is stored
-;; in an extension map accessible at runtime via the C/Python API.
-
-[OPTIONS]
-FLOW_UNITS           CFS
-INFILTRATION         HORTON
-FLOW_ROUTING         DYNWAVE
-START_DATE           01/01/2024
-START_TIME           00:00:00
-END_DATE             01/02/2024
-END_TIME             00:00:00
-ROUTING_STEP         00:00:30
-REPORT_STEP          00:05:00
-
-;; New built-in options (v6.0.0)
-CRS                  EPSG:4326
-NODE_CONTINUITY      SEMI_IMPLICIT
-ANDERSON_ACCEL       YES
-
-;; Extension options — stored automatically, readable by plugins
-MY_STABILITY_FACTOR  1.05
-PLUGIN_LOG_LEVEL     DEBUG
-
-
-;; USER FLAGS — typed custom metadata on any model object
-;; Define a schema of flag names with type and default value.
-;; Supported types: BOOLEAN, INTEGER, REAL, STRING.
-
-[USER_FLAGS]
-;;Name              Type      Default   Description
-INSPECTED           BOOLEAN   NO        'Has the asset been field-inspected?'
-PRIORITY            INTEGER   0         'Maintenance priority (0=none, 1=low, 5=critical)'
-ROUGHNESS_ADJ       REAL      1.0       'Roughness calibration multiplier'
-ASSET_ID            STRING    ""        'External asset management system ID'
-
-;; Assign flag values to individual objects.
-;; ObjectType can be NODE, LINK, SUBCATCHMENT, or GAGE.
-
-[USER_FLAG_VALUES]
-;;ObjectType   ObjectName   FlagName        Value
-NODE           J1           INSPECTED       YES
-NODE           J1           PRIORITY        3
-NODE           J2           ASSET_ID        "AM-00412"
-LINK           C1           ROUGHNESS_ADJ   1.12
-LINK           C1           INSPECTED       YES
-LINK           C2           PRIORITY        1
-SUBCATCHMENT   S1           INSPECTED       NO
-SUBCATCHMENT   S1           ASSET_ID        "AM-00501"
-
-
-;; PLUGINS — load output/report plugins at runtime
-;; Each line: <shared-library-path>  [arg1  arg2  ...]
-;; The first token is the path to a .so / .dylib / .dll.
-;; Remaining tokens are passed to the plugin's initialize() method.
-
-[PLUGINS]
-;; Write time-series results to HDF5 instead of (or alongside) the .out file
-./plugins/hdf5_output.so      file="results.h5"  compress=9
-
-;; Write a custom CSV summary report after simulation
-./plugins/csv_report.dylib    file="summary.csv"  delimiter=","
-
-;; Multiple plugins can be loaded — they run concurrently on the I/O thread
-./plugins/netcdf_output.so    file="results.nc"   variables="depth,flow"
-```
-
-#### How Each Feature Works
-
-**Extension Options** — Any keyword the parser does not recognize in `[OPTIONS]` is stored in `options.ext_options` and can be read at runtime:
-
-```python
-# Python
-val = solver.get_option("MY_STABILITY_FACTOR")   # "1.05"
-```
-
-```c
-/* C API */
-char buf[256];
-swmm_options_get(engine, "MY_STABILITY_FACTOR", buf, sizeof(buf));
-```
-
-**User Flags** — Flags attach structured metadata to objects for asset management, calibration tracking, or custom workflows. Plugins can read them during `validate()` or `prepare()` from the `SimulationContext`.
-
-**Plugins** — Shared libraries loaded from the `[PLUGINS]` section implement one or both of:
-
-| Interface | Purpose | Thread |
-|---|---|---|
-| `IOutputPlugin` | Write time-series results at each reporting step | I/O thread |
-| `IReportPlugin` | Write summary statistics after simulation ends | Main thread |
-
-Each plugin library exports a single entry point:
-
-```cpp
-extern "C" openswmm::IPluginComponentInfo* openswmm_plugin_info(void);
-```
-
-The engine calls the plugin through a managed lifecycle:
-
-```
-initialize(args) → validate(ctx) → prepare(ctx) → update(snapshot)... → finalize(ctx)
-                                                   └─ write_summary(ctx)  [report plugins]
-```
-
-Output plugins receive a `SimulationSnapshot` — a read-only deep copy of simulation state safe to consume on the I/O thread while the main simulation advances.
-
-**Custom Sections** — Plugins and embedders can also register handlers for entirely new `.inp` sections via the C++ `SectionRegistry` API:
-
-```cpp
-engine.registry().register_custom("MY_CUSTOM_DATA",
-    [](SimulationContext& ctx, const std::vector<std::string>& lines) {
-        for (const auto& line : lines) {
-            // parse and store in ctx or plugin-managed storage
-        }
-    });
-```
-
-This allows the `.inp` to contain:
-
-```ini
-[MY_CUSTOM_DATA]
-;;ID     Param1   Param2
-OBJ_1    42.0     enabled
-OBJ_2    17.5     disabled
-```
-
-The two built-in plugins (`DefaultOutputPlugin` for `.out` and `DefaultReportPlugin` for `.rpt`) are always available and require no `[PLUGINS]` entry. The Plugin SDK headers are in `include/openswmm/plugin_sdk/`.
-
-### GeoPackage I/O
-
-The optional `openswmm_geopackage` library provides OGC GeoPackage (SQLite + spatial extensions) as an alternative to the text `.inp` and binary `.out` formats. A single `.gpkg` file serves as a complete project container:
-
-- **Model input** — Nodes (POINT), links (LINESTRING), subcatchments (MULTIPOLYGON), rain gages, options, curves, timeseries, patterns, pollutants, and transects stored as GeoPackage feature and attribute tables with full CRS support.
-- **Network topology** — Explicit `node_links` and `subcatch_routing` tables enable SQL-based graph traversal (upstream traces, contributing area, connectivity validation) via recursive CTEs.
-- **Multi-run results** — Multiple simulation runs coexist in one file, each keyed by `simulation_id` with engine version recorded. Per-timestep results and summary statistics are stored in a relational timeseries model inspired by the Observations Data Model (ODM).
-- **Observed / sensor data** — Independent measured timeseries for calibration workflows. Series can be linked to model objects for sim-vs-observed comparison and goodness-of-fit queries.
-
-The library is built when `OPENSWMM_WITH_GEOPACKAGE=ON` and requires SQLite3:
+## Quick Start
 
 ```bash
-cmake -B build -DOPENSWMM_WITH_GEOPACKAGE=ON -DOPENSWMM_BUILD_TESTS=ON
-cmake --build build
+# C / C++ engine
+git clone https://github.com/HydroCouple/openswmm.engine.git
+cd openswmm.engine
+git clone https://github.com/microsoft/vcpkg.git && ./vcpkg/bootstrap-vcpkg.sh
+export VCPKG_ROOT=$(pwd)/vcpkg
+
+cmake --preset=<platform> -B build -DOPENSWMM_WITH_GEOPACKAGE=ON
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+
+# Python bindings (PyPI)
+pip install openswmm
 ```
 
-#### Plugin Architecture
+Presets: `Windows`, `Windows-debug`, `Linux`, `Linux-debug`, `Darwin`, `Darwin-debug`. Full build, test, and packaging instructions are in the [C engine docs](https://hydrocouple.org/openswmm.engine).
 
-GeoPackage I/O is implemented as three plugins behind a single `IPluginComponentInfo`:
+```python
+from openswmm.engine import Solver, Nodes, Links
 
-| Plugin | Interface | Role |
-|--------|-----------|------|
-| `GeoPackageInputPlugin` | `IInputPlugin` | Read/write model definitions (`.gpkg` replaces `.inp`) |
-| `GeoPackageOutputPlugin` | `IOutputPlugin` | Write per-timestep results during simulation |
-| `GeoPackageReportPlugin` | `IReportPlugin` | Write summary statistics and continuity errors |
-
-The plugin is discoverable via the standard `openswmm_plugin_info()` C export and advertises all three capabilities (`has_input()`, `has_output()`, `has_report()` all return `true`). Registration is supported via `register_plugin()` / `registered()` on the `IPluginComponentInfo` interface.
-
-#### C API for External Consumers
-
-The `openswmm_geopackage.h` C API provides read access to models, results, and topology, plus read-write access to observed data with bulk vector operations and transaction support:
-
-```c
-#include <openswmm/engine/openswmm_geopackage.h>
-
-SWMM_Gpkg gpkg = swmm_gpkg_open("model.gpkg");
-
-// Read model metadata
-int nodes = swmm_gpkg_node_count(gpkg, "run_1");
-
-// Bulk-read simulation results
-double times[1000], values[1000];
-int n = swmm_gpkg_read_result_ts(gpkg, "run_1", "NODE", "J1",
-                                  "depth", times, values, 1000);
-
-// Read summary statistics
-double max_depth;
-swmm_gpkg_read_summary(gpkg, "run_1", "NODE", "J1", "max_depth", &max_depth);
-
-// Import observed data (bulk write in a transaction for speed)
-swmm_gpkg_begin(gpkg);
-int sid = swmm_gpkg_create_observed_series(gpkg, "USGS_flow",
-             "flow", "LINK", "C1", "USGS NWIS", "CMS");
-const char* ts[] = {"2026-01-15T08:00:00Z", "2026-01-15T09:00:00Z"};
-double vals[] = {1.5, 2.3};
-swmm_gpkg_write_observed_values(gpkg, sid, ts, vals, NULL, 2);
-swmm_gpkg_commit(gpkg);
-
-// Read observed data back
-double read_vals[100];
-int count = swmm_gpkg_read_observed_values(gpkg, sid, NULL, 0,
-                                            read_vals, 100);
-
-swmm_gpkg_close(gpkg);
+with Solver("model.inp", "model.rpt", "model.out") as s:
+    nodes, links = Nodes(s), Links(s)
+    while s.step():
+        depth = nodes.get_depth("J1")
+        flow  = links.get_flow("C1")
 ```
 
+Forcing, model building, hot-start, bulk NumPy access, mass balance, and statistics are covered in the [Python docs](https://hydrocouple.org/openswmm.engine/python).
 
-### Testing & Quality
+## Glossary
 
-- **Google Test** — All unit tests migrated from Boost.Test to Google Test 1.15.2.
-- **Comprehensive Test Suite** — Legacy engine (73+ tests), legacy output (41 tests), and new engine unit tests.
-- **Multi-Platform CI** — GitHub Actions pipelines for Windows, Linux, and macOS (Intel + ARM64).
-- **Doxygen API Docs** — All 19 public C API headers fully documented with Doxygen conventions.
+Brief definitions of the domain terms used throughout this README. Full treatment lives in the [reference manuals](https://hydrocouple.org/openswmm.engine).
 
----
+- **RDII** — Rainfall-Dependent Inflow & Infiltration. Stormwater that enters sanitary or combined sewers through cracks, joints, defective laterals, and roof / foundation drains during and after rainfall.
+- **RTK** — The triplet `(R, T, K)` that parameterises a SWMM synthetic unit hydrograph for RDII: `R` is the long-term fraction of rainfall that becomes RDII, `T` is the time to peak (hours), and `K` is the ratio of base time to peak time.
+- **IA (Initial Abstraction)** — Rainfall depth absorbed by the catchment before any RDII response begins (interception, surface storage, soil wetting). Recovers between events.
+- **DWF** — Dry-Weather Flow. Base sanitary flow plus infiltration unrelated to rainfall, typically specified as an average value with diurnal / day-of-week / monthly patterns.
+- **LID** — Low-Impact Development. Distributed green-infrastructure controls (bio-retention cells, permeable pavement, green roofs, infiltration trenches, rain gardens) that intercept, store, and infiltrate runoff at the source.
+- **CRS** — Coordinate Reference System. The geodetic / projected coordinate frame (e.g. `EPSG:4326`) the model's spatial data is expressed in.
+- **CFS / CMS** — Cubic feet per second / cubic metres per second. The two flow-unit conventions exposed via `FLOW_UNITS`.
+- **Dynamic Wave Routing** — Full Saint-Venant momentum solver for link flow, used for backwater, surcharge, and pressurized conditions.
+- **Preissmann Slot** — A narrow virtual slot added to a closed conduit's cross-section so that pressurized flow can be solved with the same free-surface equations. The dynamic slot adjusts width with geometry to smooth the surface ↔ pressure transition.
+- **Surcharge** — A pipe flowing full and under pressure (HGL above the crown), typically caused by downstream backwater or capacity exceedance.
+- **Picard Iteration** — Fixed-point iteration used inside the dynamic-wave timestep to converge implicit node depths. Anderson Acceleration is a residual-history accelerator on top of Picard.
+- **Hot Start** — A saved end-of-run state (depths, volumes, IA, snow, GW) that initialises a subsequent simulation, letting long runs be split into checkpoints or warm runs into operational forecasts.
+- **HEC-22** — FHWA Hydraulic Engineering Circular No. 22, the design reference whose grate and curb-opening capture equations are used by the inlet-analysis module.
+- **GeoPackage** — OGC standard for a SQLite-based, single-file container holding spatial features and tabular data with full CRS metadata.
+
+## Prerequisites
+
+| Requirement | Version |
+|---|---|
+| CMake | 3.21+ |
+| C compiler | C17 (GCC 10+, Clang 12+, MSVC 19.29+) |
+| C++ compiler | C++20 (GCC 10+, Clang 14+, MSVC 19.29+) |
+| vcpkg | 2025.02.14 |
+| Python | 3.9 – 3.13 (optional) |
+| Ninja | recommended on Linux/macOS |
 
 ## Project Structure
 
 ```
 openswmm.engine/
 ├── include/openswmm/
-│   ├── engine/           # New engine public C API headers (19 headers)
+│   ├── engine/           # New engine public C API headers
 │   └── legacy/           # Legacy SWMM 5.x public headers
 ├── src/
 │   ├── engine/           # New C++20 engine implementation
-│   │   └── input/geopackage/  # Optional GeoPackage I/O library
-│   ├── legacy/engine/    # Original EPA SWMM 5.x solver (preserved unmodified)
-│   ├── legacy/output/    # Original binary output reader
-│   ├── plugin_sdk/       # Header-only plugin development kit
+│   │   ├── input/geopackage/  # Optional GeoPackage I/O
+│   │   └── 2d/                # 2D overland-flow & groundwater coupling
+│   ├── legacy/           # Original EPA SWMM 5.x solver and output reader
+│   ├── plugin_sdk/       # Header-only plugin SDK
 │   └── cli/              # Command-line interface
 ├── tests/
-│   ├── unit/legacy/      # Legacy solver and output tests (Google Test)
+│   ├── unit/legacy/      # Legacy solver & output tests
 │   ├── unit/engine/      # New engine unit tests
-│   ├── regression/       # Regression tests (new vs. legacy)
-│   └── benchmarks/       # Performance benchmarks (Google Benchmark)
-├── python/               # Python bindings (Cython + scikit-build)
+│   ├── regression/       # New-vs-legacy regression tests
+│   └── benchmarks/       # Performance benchmarks
+├── python/               # Cython bindings (scikit-build)
 ├── docs/                 # Doxygen config and technical manuals
-├── cmake/                # CMake helper modules
 └── .github/workflows/    # CI/CD pipelines
 ```
-
-## Prerequisites
-
-| Requirement | Version |
-|---|---|
-| CMake | 3.21 or higher |
-| C compiler | C17 support (GCC 10+, Clang 12+, MSVC 19.29+) |
-| C++ compiler | C++20 support (GCC 10+, Clang 14+, MSVC 19.29+) |
-| vcpkg | 2025.02.14 (for test dependencies) |
-| Python | 3.9–3.13 (optional, for bindings) |
-| Ninja | Recommended for Linux/macOS builds |
-
-## Build Instructions
-
-### C/C++ Engine
-
-```bash
-# Clone the repository
-git clone https://github.com/HydroCouple/openswmm.engine.git
-cd openswmm.engine
-
-# Bootstrap vcpkg (for test dependencies)
-git clone https://github.com/microsoft/vcpkg.git
-./vcpkg/bootstrap-vcpkg.sh   # or bootstrap-vcpkg.bat on Windows
-
-# Configure and build using a platform preset
-# Available presets: Windows, Windows-debug, Linux, Linux-debug, Darwin, Darwin-debug
-export VCPKG_ROOT=$(pwd)/vcpkg
-
-cmake --preset=<platform> -B build
-cmake --build build --config Release
-
-# Build with tests enabled
-cmake --preset=<platform>-debug -B build-debug -DOPENSWMM_BUILD_TESTS=ON
-cmake --build build-debug --config Debug
-
-# Build with optional GeoPackage I/O support
-cmake --preset=<platform> -B build -DOPENSWMM_WITH_GEOPACKAGE=ON
-cmake --build build --config Release
-```
-
-### Running Tests
-
-```bash
-# Run all C++ unit tests
-ctest --test-dir build-debug -C Debug --output-on-failure
-
-# Run with verbose output
-ctest --test-dir build-debug -C Debug --output-on-failure -V
-```
-
-### Packaging
-
-```bash
-# Create distributable archives (ZIP + TGZ)
-cmake --build build --target package
-```
-
-### Python Bindings
-
-```bash
-cd python
-
-# Install requirements
-python -m pip install -r requirements.txt
-
-# Build and install
-python -m pip install .
-
-# Run Python tests
-python -m pytest -v tests
-```
-
-## Python Usage
-
-The `openswmm` package provides Cython bindings for the full C API.
-Domain objects are constructed by passing an active `Solver` instance.
-
-### Running a Simulation
-
-```python
-from openswmm.engine import Solver, Nodes, Links, Subcatchments, Gages
-
-# Context manager handles open/initialize/start and end/report/close/destroy
-with Solver("model.inp", "model.rpt", "model.out") as s:
-    nodes = Nodes(s)
-    links = Links(s)
-    subcatchments = Subcatchments(s)
-    gages = Gages(s)
-
-    while s.step():
-        # Per-element access by name or integer index
-        depth  = nodes.get_depth("J1")
-        flow   = links.get_flow("C1")
-        runoff = subcatchments.get_runoff("S1")
-
-        # NumPy bulk access (single memcpy — fast)
-        all_depths = nodes.get_depths_bulk()       # shape (n_nodes,)
-        all_flows  = links.get_flows_bulk()         # shape (n_links,)
-
-        # Runtime forcing
-        nodes.set_lateral_inflow("J2", 0.5)
-        gages.set_rainfall(0, 25.4)
-```
-
-### Advanced Forcing with Persistence
-
-```python
-from openswmm.engine import Solver, Nodes, Forcing, ForcingMode, ForcingTarget
-
-with Solver("model.inp", "model.rpt", "model.out") as s:
-    nodes   = Nodes(s)
-    forcing = Forcing(s)
-
-    j1 = nodes.get_index("J1")
-
-    # Apply a persistent lateral inflow (held every step until cleared)
-    forcing.node_lat_inflow(j1, 1.5, ForcingMode.REPLACE, persist=True)
-
-    # Additive forcing (added to model-computed value)
-    forcing.gage_rainfall(0, 10.0, ForcingMode.ADD, persist=True)
-
-    while s.step():
-        pass
-
-    # Clear specific object or all forcing
-    forcing.clear(ForcingTarget.NODE, j1)
-    forcing.clear_all()
-```
-
-### Programmatic Model Building (No .inp File)
-
-```python
-from openswmm.engine import (
-    ModelBuilder, Nodes, Links,
-    NodeType, LinkType, XSectShape,
-)
-
-m = ModelBuilder()
-
-# Add objects
-m.add_node("J1", NodeType.JUNCTION)
-m.add_node("J2", NodeType.JUNCTION)
-m.add_node("OUT1", NodeType.OUTFALL)
-m.add_link("C1", LinkType.CONDUIT)
-m.add_link("C2", LinkType.CONDUIT)
-
-# Set geometry
-m.set_node_invert(0, 10.0)
-m.set_node_invert(1, 8.0)
-m.set_node_invert(2, 5.0)
-m.set_link_nodes(0, 0, 1)        # C1: J1 -> J2
-m.set_link_nodes(1, 1, 2)        # C2: J2 -> OUT1
-m.set_link_length(0, 400.0)
-m.set_link_length(1, 400.0)
-m.set_link_roughness(0, 0.013)
-m.set_link_roughness(1, 0.013)
-m.set_link_xsect(0, XSectShape.CIRCULAR, 1.0)
-m.set_link_xsect(1, XSectShape.CIRCULAR, 1.0)
-
-# Set simulation options
-m.set_option("FLOW_UNITS", "CFS")
-m.set_option("ROUTING_MODEL", "DYNWAVE")
-m.set_option("START_DATE", "01/01/2024")
-m.set_option("END_DATE", "01/02/2024")
-
-# Validate, finalize, and simulate
-m.validate()
-m.finalize()
-
-solver = m.to_solver()
-solver.start()
-while solver.step():
-    pass
-solver.end()
-
-# Optionally write to .inp for inspection
-m.write("generated_model.inp")
-
-solver.destroy()
-```
-
-### Reading Binary Output Files
-
-```python
-from openswmm.engine import OutputReader, OutNodeVar, OutLinkVar
-
-with OutputReader("model.out") as out:
-    # Query metadata
-    print(f"Nodes: {out.get_node_count()}")
-    print(f"Links: {out.get_link_count()}")
-    print(f"Periods: {out.get_period_count()}")
-    print(f"Report step: {out.get_report_step()} sec")
-
-    # List object IDs
-    for i in range(out.get_node_count()):
-        print(f"  Node {i}: {out.get_node_id(i)}")
-
-    # Read all node depths at each reporting period
-    for t in range(out.get_period_count()):
-        depths = out.get_node_result(t, OutNodeVar.DEPTH)     # float32 array
-        flows  = out.get_link_result(t, OutLinkVar.FLOW)      # float32 array
-        print(f"  Period {t}: max depth = {depths.max():.3f}")
-
-    # Time series for a single node
-    node_depths = out.get_node_series(
-        node_idx=0,
-        var=OutNodeVar.DEPTH,
-        start_period=0,
-        end_period=out.get_period_count() - 1,
-    )
-```
-
-### Hot Start Save and Restore
-
-```python
-from openswmm.engine import Solver, HotStart
-
-# Run part of a simulation and save state
-with Solver("model.inp", "model.rpt", "model.out") as s:
-    for _ in range(100):
-        if not s.step():
-            break
-    HotStart.save(s, "checkpoint.hsf")
-
-# Later: restore from hot start
-hs = HotStart.open("checkpoint.hsf")
-
-# Optionally modify state before applying
-hs.set_node_depth("J1", 2.5)
-
-with Solver("model.inp", "model.rpt", "model2.out") as s2:
-    hs.apply(s2)
-    while s2.step():
-        pass
-
-hs.close()
-```
-
-### Mass Balance and Statistics
-
-```python
-from openswmm.engine import Solver, MassBalance, Statistics, RunoffTotal
-
-with Solver("model.inp", "model.rpt", "model.out") as s:
-    while s.step():
-        pass
-
-    mb = MassBalance(s)
-    stats = Statistics(s)
-
-    # Continuity errors
-    print(f"Runoff error: {mb.get_runoff_continuity_error():.4f}%")
-    print(f"Routing error: {mb.get_routing_continuity_error():.4f}%")
-
-    # Cumulative totals
-    precip = mb.get_runoff_total(RunoffTotal.RAINFALL)
-    runoff = mb.get_runoff_total(RunoffTotal.RUNOFF)
-    print(f"Total precip: {precip:.2f}, Total runoff: {runoff:.2f}")
-
-    # Per-object statistics
-    print(f"Node 0 max depth: {stats.node_max_depth(0):.3f}")
-    print(f"Link 0 max flow:  {stats.link_max_flow(0):.3f}")
-```
-
-For the full API reference, see the [documentation](https://hydrocouple.org/openswmm.engine).
-
-
 
 ## Libraries Built
 
 | Target | Description |
 |---|---|
-| `openswmm_legacy_engine` | Original EPA SWMM 5.x solver (shared library) |
-| `openswmm_legacy_output` | Original SWMM binary output reader (shared library) |
-| `openswmm_engine` | New refactored C++20 engine (shared library) |
-| `openswmm_geopackage` | GeoPackage I/O (static library, optional — requires SQLite3) |
-| `openswmm_plugin_sdk` | Header-only plugin SDK (INTERFACE library) |
+| `openswmm_legacy_engine` | Original EPA SWMM 5.x solver (shared) |
+| `openswmm_legacy_output` | Original SWMM binary output reader (shared) |
+| `openswmm_engine` | New refactored C++20 engine (shared) |
+| `openswmm_geopackage` | GeoPackage I/O (static, optional — requires SQLite3) |
+| `openswmm_plugin_sdk` | Header-only plugin SDK (INTERFACE) |
 | `openswmm_cli` | Command-line executable |
-
-## Documentation
-
-OpenSWMM ships **two documentation sites**, both auto-deployed to GitHub Pages:
-
-| | Site | What's there |
-|---|---|---|
-| **C / C++ Engine** | [hydrocouple.org/openswmm.engine](https://hydrocouple.org/openswmm.engine) | Full C API reference, technical reference manuals (Hydrology, Hydraulics, Water Quality), user manual, architecture & design notes. |
-| **Python Bindings** | [hydrocouple.org/openswmm.engine/python](https://hydrocouple.org/openswmm.engine/python) | Quickstart, per-domain user guide for the v6 engine (Nodes, Links, Forcing, Controls, …), legacy SWMM 5 compatibility guide, full Cython API reference, SWMM 5 → v6 migration. |
-
-Both sites cross-link to each other from their top navigation bar, so you
-can switch between them without leaving the docs.
 
 ## Contributing
 
-Contributions are welcome. Please:
+Contributions are welcome — bug reports, fixes, new features, docs, tests, and benchmarks.
 
-1. Fork the repository and create a feature branch.
-2. Ensure all tests pass (`ctest` for C++, `pytest` for Python).
-3. Follow existing code style and naming conventions.
-4. Submit a pull request against the `develop` branch.
+1. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and the [Code of Conduct](CODE_OF_CONDUCT.md).
+2. Fork the repo and create a feature branch.
+3. Ensure C++ (`ctest`) and Python (`pytest`) tests pass.
+4. Follow existing style and naming.
+5. Open a PR against `develop`.
+
+### Contributor License Agreement
+
+First-time contributors must sign the project [CLA](CLA.md) before a pull request can be merged. The CLA grants the project a perpetual, royalty-free copyright and patent license to your contributions and preserves the project's ability to relicense in the future; **you retain full copyright ownership** of your work.
+
+Signing is automated through [CLA Assistant](https://cla-assistant.io) — when you open your first PR, a bot comments with a one-click sign-in link. The CLA covers all subsequent contributions, so you only sign once. Corporate contributors should additionally submit a CCLA per [CLA §6](CLA.md#6-corporate-contributors).
 
 ## License
 
-This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
-
-Copyright 2026 Caleb Buahin. Original EPA SWMM material is in the public domain under 17 USC § 105.
+MIT — see [LICENSE](LICENSE). Original EPA SWMM material is in the public domain under 17 USC § 105.
 
 ## Acknowledgements
 
-OpenSWMM builds on the foundational work of the EPA Storm Water Management Model, originally developed by Lewis A. Rossman at the U.S. EPA Office of Research and Development. See [docs/authors.md](docs/authors.md) for the complete list of authors and contributors.
+OpenSWMM builds on the EPA Storm Water Management Model originally developed by Lewis A. Rossman at the U.S. EPA Office of Research and Development. See [docs/authors.md](docs/authors.md) for the full contributor list.
