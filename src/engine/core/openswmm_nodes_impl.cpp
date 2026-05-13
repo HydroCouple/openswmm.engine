@@ -551,6 +551,30 @@ SWMM_ENGINE_API int swmm_node_get_outfall_flap_gate(SWMM_Engine engine, int idx,
 }
 
 // ============================================================================
+// Divider Node API
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_node_set_divider_type(SWMM_Engine engine, int idx, int type) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (type < 0 || type > static_cast<int>(openswmm::DividerType::WEIR))
+        return SWMM_ERR_BADPARAM;
+    ctx.nodes.divider_type[static_cast<std::size_t>(idx)] =
+        static_cast<openswmm::DividerType>(type);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_divider_type(SWMM_Engine engine, int idx, int* type) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (type) *type = static_cast<int>(ctx.nodes.divider_type[static_cast<std::size_t>(idx)]);
+    return SWMM_OK;
+}
+
+// ============================================================================
 // Node Geometry/State Getters
 // ============================================================================
 

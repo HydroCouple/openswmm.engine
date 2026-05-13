@@ -509,6 +509,43 @@ SWMM_ENGINE_API int swmm_node_set_outfall_flap_gate(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_node_get_outfall_flap_gate(SWMM_Engine engine, int idx, int* has_gate);
 
 /* =========================================================================
+ * Divider Node API
+ * ========================================================================= */
+
+/**
+ * @brief Flow divider method.
+ *
+ * @details Selects how a divider node splits inflow between its diversion
+ *          link and its main outflow link. The value is stored in the
+ *          per-node divider_type SoA array and only consulted when
+ *          type[i] == @ref SWMM_NODE_DIVIDER.
+ */
+typedef enum SWMM_DividerType {
+    SWMM_DIVIDER_CUTOFF      = 0, /**< Flow above cutoff is diverted. */
+    SWMM_DIVIDER_OVERFLOW    = 1, /**< Diverted flow = max link capacity exceedance. */
+    SWMM_DIVIDER_TABULAR     = 2, /**< Diverted flow looked up on a curve. */
+    SWMM_DIVIDER_WEIR        = 3  /**< Weir equation governs diversion. */
+} SWMM_DividerType;
+
+/**
+ * @brief Set the divider method for a flow-divider node.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based node index (must be SWMM_NODE_DIVIDER).
+ * @param type    Divider type code (see @ref SWMM_DividerType).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_node_set_divider_type(SWMM_Engine engine, int idx, int type);
+
+/**
+ * @brief Get the divider method for a flow-divider node.
+ * @param engine     Engine handle.
+ * @param idx        Zero-based node index.
+ * @param[out] type  Receives the divider type code.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_node_get_divider_type(SWMM_Engine engine, int idx, int* type);
+
+/* =========================================================================
  * Additional Geometry / State Getters
  * ========================================================================= */
 
