@@ -23,14 +23,22 @@
 #endif
 #include <gtest/gtest.h>
 #include <cmath>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include "hydraulics/DynamicWave.hpp"
+#include "hydraulics/KinematicWave.hpp"
 #include "hydraulics/Routing.hpp"
 #include "hydraulics/XSectBatch.hpp"
 #include "hydraulics/ForceMain.hpp"
 #include "hydraulics/Node.hpp"
 #include "core/SimulationContext.hpp"
+
+#ifndef BENCHMARK_DATA_DIR
+#  define BENCHMARK_DATA_DIR ""
+#endif
 
 using namespace openswmm;
 using namespace openswmm::dynwave;
@@ -921,4 +929,125 @@ TEST(DPS, OptionsDefaultValues) {
     EXPECT_NEAR(opts.dps_target_celerity, 25.0, 1e-10);
     EXPECT_NEAR(opts.dps_alpha, 3.0, 1e-10);
     EXPECT_NEAR(opts.dps_decay_time, 0.5, 1e-10);
+}
+
+// ============================================================================
+// KW steady-state benchmark — normal-depth recovery
+// ============================================================================
+//
+// Benchmark dataset: tests/benchmarks/manufactured/kinwave-normal-depth-rect-open/
+//
+// At steady state (q1=q2=q_in=Q_n, a1=a2=A_n) the KW continuity residual is
+// identically zero: f(A_n) = S_n/s_full - Q_n/q_full = 0 exactly (WT=WX=0.6
+// cancel).  Newton converges in 0 iterations; output error is FP rounding only.
+
+namespace {
+
+struct KWBenchRow {
+    double d_n_ft;
+    double A_n_ft2;
+    double Q_n_cfs;
+};
+
+static std::vector<KWBenchRow> load_kw_bench(const std::string& path) {
+    std::vector<KWBenchRow> rows;
+    std::ifstream f(path);
+    if (!f.is_open()) return rows;
+    std::string line;
+    bool header_seen = false;
+    while (std::getline(f, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        if (!header_seen) { header_seen = true; continue; }  // skip column header
+        std::istringstream ss(line);
+        std::string tok;
+        KWBenchRow row{};
+        // columns: d_n_ft, A_n_ft2, R_n_ft, S_n_ft83, Q_n_cfs
+        if (!std::getline(ss, tok, ',')) continue; row.d_n_ft  = std::stod(tok);
+        if (!std::getline(ss, tok, ',')) continue; row.A_n_ft2 = std::stod(tok);
+        if (!std::getline(ss, tok, ',')) continue; // R_n_ft (unused)
+        if (!std::getline(ss, tok, ',')) continue; // S_n_ft83 (unused)
+        if (!std::getline(ss, tok, ',')) continue; row.Q_n_cfs = std::stod(tok);
+        rows.push_back(row);
+    }
+    return rows;
+}
+
+}  // namespace
+
+TEST(KWSolverSteadyState, NormalDepthRecovered) {
+    const std::string csv_path =
+        std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/kinwave-normal-depth-rect-open/reference.csv";
+
+    auto rows = load_kw_bench(csv_path);
+    if (rows.empty()) {
+        GTEST_SKIP() << "KW benchmark CSV not found: " << csv_path;
+    }
+
+    // Channel parameters
+    const double PHI    = 1.486;
+    const double n_mann = 0.013;
+    const double slope  = 0.001;
+    const double w      = 10.0;
+    const double y_full = 5.0;
+    const double beta   = PHI * std::sqrt(slope) / n_mann;
+
+    // Arbitrary conduit geometry for the time-marching coefficients;
+    // at steady state these cancel and do not affect the zero-residual result.
+    const double length = 500.0;
+    const double dt     = 60.0;
+
+    // Build cross-section — setParams fills a_full, r_full, s_full, s_max
+    XSectParams xs{};
+    const double p[4] = {y_full, w, 0.0, 0.0};
+    xsect::setParams(xs, static_cast<int>(XSectShape::RECT_OPEN), p, 1.0);
+
+    const double q_full = beta * xs.s_full;
+    const double a_full = xs.a_full;
+
+    kinwave::KWSolver solver;
+    solver.init(1, XSectGroups{});
+
+    double max_q_err = 0.0;
+    double max_a_err = 0.0;
+
+    for (const auto& row : rows) {
+        // Compute A_n and Q_n from the same floating-point path the solver uses,
+        // then cross-check against the hand-computed CSV reference (≤ 0.01%).
+        double A_n = xsect::getAofY(xs, row.d_n_ft);
+        double S_n = xsect::getSofA(xs, A_n);
+        double Q_n = beta * S_n;
+
+        EXPECT_NEAR(Q_n, row.Q_n_cfs, 1e-4 * row.Q_n_cfs)
+            << "Manning Q_n mismatch vs CSV at d_n=" << row.d_n_ft << " ft";
+
+        // Pre-load steady-state ICs: inlet and outlet both at normal depth
+        solver.q1_[0]  = Q_n;
+        solver.a1_[0]  = A_n;
+        solver.q2_[0]  = Q_n;
+        solver.a2_[0]  = A_n;
+        solver.q_in_[0] = Q_n;
+
+        solver.solveConduit(0, xs, q_full, a_full, xs.s_full,
+                            beta, length, dt, 0.0);
+
+        max_q_err = std::max(max_q_err, std::fabs(solver.q_out_[0] - Q_n));
+        max_a_err = std::max(max_a_err, std::fabs(solver.a_out_[0] - A_n));
+    }
+
+    // DO NOT loosen these tolerances.
+    //
+    // The continuity residual f(A_n) = S_n/s_full - Q_n/q_full = 0 at steady
+    // state (WT=WX=0.6 cancel exactly in the C1/C2 derivation).  Newton
+    // therefore converges in 0 iterations; the only error is FP rounding
+    // (~1e-15 relative).  The 1e-9 threshold sits a million times above that.
+    //
+    // If either assertion fails it means a real regression in solveConduit —
+    // the Newton solve, the section-factor inversion, or the state
+    // normalisation changed in a physically meaningful way.  Fix the code,
+    // not the tolerance.
+    EXPECT_LT(max_q_err / q_full, 1e-9)
+        << "q_out deviated from normal-depth Q_n (max over all reference rows)";
+    EXPECT_LT(max_a_err / a_full, 1e-9)
+        << "a_out deviated from normal-depth A_n (max over all reference rows)";
 }
