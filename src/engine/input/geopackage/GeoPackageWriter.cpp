@@ -1044,6 +1044,30 @@ static void write_rdii(sqlite3* db, const SimulationContext& ctx,
             sqlite3_step(stmt.get());
         }
     }
+
+    // RDII exponential-decay parameters
+    if (ctx.rdii_decay.count() > 0) {
+        auto stmt = prepare(db,
+            "INSERT INTO rdii_decay (simulation_id, uh_name, response, "
+            "k_dep, k_0, k_T, T_ref, theta_rec, T_freeze) "
+            "VALUES (?,?,?,?,?,?,?,?,?)");
+        static const char* responses[] = {"SHORT","MEDIUM","LONG"};
+        for (const auto& e : ctx.rdii_decay.entries) {
+            if (e.response < 0 || e.response > 2) continue;
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_text(stmt.get(), 2, e.uh_name);
+            bind_text(stmt.get(), 3, responses[e.response]);
+            sqlite3_bind_double(stmt.get(), 4, e.k_dep);
+            sqlite3_bind_double(stmt.get(), 5, e.k_0);
+            sqlite3_bind_double(stmt.get(), 6, e.k_T);
+            sqlite3_bind_double(stmt.get(), 7, e.T_ref);
+            sqlite3_bind_double(stmt.get(), 8, e.theta_rec);
+            sqlite3_bind_double(stmt.get(), 9, e.T_freeze);
+            sqlite3_step(stmt.get());
+        }
+    }
 }
 
 static void write_treatment(sqlite3* db, const SimulationContext& ctx,

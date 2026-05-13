@@ -108,6 +108,26 @@ int RDIISolver::getMaxPeriods(const UnitHydParams& uh, int response,
 }
 
 // ---------------------------------------------------------------------------
+// validateExpDecay — warn if exponential decay is configured but no temperature
+// data source is available; recovery will fall back to T_ref in that case.
+// ---------------------------------------------------------------------------
+void RDIISolver::validateExpDecay(SimulationContext& ctx) const {
+    bool any_active = false;
+    for (const auto& triple : decay_params) {
+        for (const auto& dp : triple) {
+            if (dp.active) { any_active = true; break; }
+        }
+        if (any_active) break;
+    }
+    if (any_active && ctx.options.temp_source == 0) {
+        ctx.warnings.emplace_back(
+            "WARNING: [RDII_DECAY] exponential IA model is active but no "
+            "temperature source is configured. Recovery rate will be evaluated "
+            "at T_ref for every group; no seasonal variation will be produced.");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // init() — populate UH params from parsed data, allocate per-response buffers.
 // ---------------------------------------------------------------------------
 void RDIISolver::init(SimulationContext& ctx) {
@@ -136,6 +156,26 @@ void RDIISolver::init(SimulationContext& ctx) {
             uh.iaInit[m][k]  = entry.dinit;
         }
     }
+
+    // Resize decay_params parallel to uh_params; default-constructed entries
+    // mean `active == false`, i.e. the response uses the linear IA model.
+    decay_params.assign(uh_params.size(), std::array<ExpDecayParams, 3>{});
+
+    // Populate decay_params from parsed [RDII_DECAY] data
+    for (const auto& d : ctx.rdii_decay.entries) {
+        int idx = findUnitHyd(d.uh_name);
+        if (idx < 0) continue;            // unknown UH group — silently skip
+        if (d.response < 0 || d.response > 2) continue;
+        auto& dp = decay_params[static_cast<size_t>(idx)][static_cast<size_t>(d.response)];
+        dp.active    = true;
+        dp.k_dep     = d.k_dep;
+        dp.k_0       = d.k_0;
+        dp.k_T       = d.k_T;
+        dp.T_ref     = d.T_ref;
+        dp.theta_rec = d.theta_rec;
+        dp.T_freeze  = d.T_freeze;
+    }
+    validateExpDecay(ctx);
 
     // Build UH name → gage index mapping from parsed [HYDROGRAPHS] gage lines.
     // Legacy: each UnitHyd[j] has a rainGage field set during parsing.
@@ -207,14 +247,14 @@ void RDIISolver::init(SimulationContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// applyIA — matches legacy applyIA() exactly.
+// updateIA_linear — matches legacy applyIA() exactly.
 //
 // Subtracts initial abstraction from rainfall depth.
 // During dry periods, recovers IA at iaRecov rate.
 // ---------------------------------------------------------------------------
-static double applyIA(const UnitHydParams& uh, UHResponseData& rd,
-                       int month, int response,
-                       double rainDepth, double dt_sec) {
+static double updateIA_linear(const UnitHydParams& uh, UHResponseData& rd,
+                              int month, int response,
+                              double rainDepth, double dt_sec) {
     int m = month % 12;
     int k = response % 3;
     double iaMax = uh.iaMax[m][k];
@@ -237,6 +277,63 @@ static double applyIA(const UnitHydParams& uh, UHResponseData& rd,
         netRainDepth = 0.0;
     }
     return netRainDepth;
+}
+
+// ---------------------------------------------------------------------------
+// Additive recovery rate k_rec(T) = k_0 + k_T * exp(theta_rec * (T - T_ref))
+// with frozen-ground suppression below T_freeze. T is in deg Celsius.
+// @see docs/RDII_ExpDecay_Implementation.md §2.2
+// ---------------------------------------------------------------------------
+static double getRecoveryRate(const ExpDecayParams& dp, double T_celsius) {
+    if (T_celsius <= dp.T_freeze) return 0.0;
+    double k = dp.k_0 + dp.k_T
+               * std::exp(dp.theta_rec * (T_celsius - dp.T_ref));
+    return std::max(0.0, k);
+}
+
+/// Fahrenheit → Celsius. ClimateState.temperature stores degrees F.
+static inline double fToC(double tf) { return (tf - 32.0) * 5.0 / 9.0; }
+
+// ---------------------------------------------------------------------------
+// updateIA_exp — exponential IA depletion during storms, additive temperature-
+// dependent recovery during dry periods. Falls back to T_ref when no
+// temperature source is configured (warned at init time).
+// @see docs/RDII_ExpDecay_Implementation.md §2.1
+// ---------------------------------------------------------------------------
+static double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd,
+                           const ExpDecayParams& dp,
+                           int month, int response,
+                           double rainDepth, double dt_sec,
+                           const SimulationContext& ctx) {
+    int m = month % 12;
+    int k = response % 3;
+    double iaMax = uh.iaMax[m][k];
+
+    double ia_avail = iaMax - rd.ia_used;
+    ia_avail = std::clamp(ia_avail, 0.0, iaMax);
+
+    if (rainDepth > 0.0) {
+        // Exponential depletion — temperature-independent
+        double ia_new = ia_avail * std::exp(-dp.k_dep * rainDepth);
+        ia_new = std::max(0.0, ia_new);
+        double ia_consumed = ia_avail - ia_new;
+        double netRain = std::max(0.0, rainDepth - ia_consumed);
+        rd.ia_used = iaMax - ia_new;
+        return netRain;
+    }
+
+    // Dry — additive recovery
+    double T_c = (ctx.options.temp_source != 0)
+                   ? fToC(ctx.climate_state.temperature)
+                   : dp.T_ref;
+    double kr = getRecoveryRate(dp, T_c);
+    if (kr <= 0.0) return 0.0;  // frozen ground or fully recovered
+
+    double dt_hr = dt_sec / 3600.0;
+    double ia_new = iaMax - (iaMax - ia_avail) * std::exp(-kr * dt_hr);
+    ia_new = std::clamp(ia_new, 0.0, iaMax);
+    rd.ia_used = iaMax - ia_new;
+    return 0.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -326,9 +423,20 @@ void RDIISolver::computeAll(SimulationContext& ctx, int month, double dt) {
                 auto& rd = groups_.uh_data[ug * 3 + static_cast<size_t>(k)];
                 if (rd.max_periods <= 0) continue;
 
-                // Apply initial abstraction (matching legacy applyIA)
-                double excessDepth = applyIA(uh, rd, month, k, rainDepth,
-                                             static_cast<double>(ri));
+                // Apply initial abstraction — exponential model if a
+                // [RDII_DECAY] row is active for this (group, response),
+                // otherwise legacy linear iaRecov.
+                bool exp_on = (uh_i < static_cast<int>(decay_params.size())) &&
+                              decay_params[static_cast<size_t>(uh_i)]
+                                  [static_cast<size_t>(k)].active;
+                double excessDepth = exp_on
+                    ? updateIA_exp(uh, rd,
+                                   decay_params[static_cast<size_t>(uh_i)]
+                                                [static_cast<size_t>(k)],
+                                   month, k, rainDepth,
+                                   static_cast<double>(ri), ctx)
+                    : updateIA_linear(uh, rd, month, k, rainDepth,
+                                      static_cast<double>(ri));
 
                 // Update dry period tracking (matching legacy updateDryPeriod)
                 updateDryPeriod(rd, excessDepth, ri);

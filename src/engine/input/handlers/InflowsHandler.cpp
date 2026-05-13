@@ -1,6 +1,7 @@
 /**
  * @file InflowsHandler.cpp
- * @brief Section handlers for [PATTERNS], [INFLOWS], [DWF], and [RDII].
+ * @brief Section handlers for [PATTERNS], [INFLOWS], [DWF], [RDII],
+ *        [HYDROGRAPHS], and [RDII_DECAY].
  *
  * ### [PATTERNS] format
  * ```
@@ -240,6 +241,53 @@ void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& 
         entry.dinit    = (tok.size() > 8) ? to_double(tok[8]) : 0.0;
 
         ctx.unit_hyds.add(entry);
+    }
+}
+
+// ============================================================================
+// handle_rdii_decay()
+// ============================================================================
+// [RDII_DECAY] section format:
+//   UHGroup  Response  k_dep  k_0  k_T  T_ref  theta_rec  T_freeze
+//
+// Where Response is "SHORT"/"MEDIUM"/"LONG". Coefficients with units:
+//   k_dep     1/mm   — depletion rate (temperature-independent)
+//   k_0       1/hr   — base recovery rate
+//   k_T       1/hr   — thermal recovery rate at T_ref
+//   T_ref     deg C  — reference temperature
+//   theta_rec 1/degC — temperature sensitivity
+//   T_freeze  deg C  — recovery suppressed at or below this temperature
+//
+// One row per (UH group, response). A group with no row uses the legacy
+// linear IA model; a group with one row falls back to linear on the two
+// unspecified responses.
+// @see docs/RDII_ExpDecay_Implementation.md
+// ============================================================================
+
+void handle_rdii_decay(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.size() < 8) continue;
+
+        RDIIDecayEntry e;
+        e.uh_name = tok[0];
+
+        std::string resp_upper = Tokenizer::to_upper(tok[1]);
+        if      (resp_upper == "SHORT")  e.response = 0;
+        else if (resp_upper == "MEDIUM") e.response = 1;
+        else if (resp_upper == "LONG")   e.response = 2;
+        else continue;
+
+        e.k_dep     = to_double(tok[2]);
+        e.k_0       = to_double(tok[3]);
+        e.k_T       = to_double(tok[4]);
+        e.T_ref     = to_double(tok[5]);
+        e.theta_rec = to_double(tok[6]);
+        e.T_freeze  = to_double(tok[7]);
+
+        if (e.k_dep < 0.0 || e.k_0 < 0.0 || e.k_T < 0.0) continue;
+
+        ctx.rdii_decay.add(e);
     }
 }
 

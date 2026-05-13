@@ -528,86 +528,86 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
 
         // A2a. Temperature source (before updateDailyClimate so
         //       Hargreaves/gamma/ea use the current temperature)
-        if (climate_.temp_ts_index >= 0) {
+        if (ctx_.climate_state.temp_ts_index >= 0) {
             // Temperature from timeseries
-            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(climate_.temp_ts_index)];
-            climate_.temperature = table_lookup_cursor(tbl, abs_time);
-            climate_.temperature += climate_.adjust_temp[mon];
+            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ctx_.climate_state.temp_ts_index)];
+            ctx_.climate_state.temperature = table_lookup_cursor(tbl, abs_time);
+            ctx_.climate_state.temperature += ctx_.climate_state.adjust_temp[mon];
         } else if (ctx_.options.temp_source == 2 && climate_file_.isOpen()) {
             // Temperature from climate file (Gap #9: sub-daily sinusoidal interp)
             climate::DailyClimateRecord rec;
             if (climate_file_.getRecord(abs_time, rec)) {
                 if (!std::isnan(rec.tmin) && !std::isnan(rec.tmax)) {
-                    double tmin = rec.tmin + climate_.adjust_temp[mon];
-                    double tmax = rec.tmax + climate_.adjust_temp[mon];
-                    climate_.temp_range = tmax - tmin;
+                    double tmin = rec.tmin + ctx_.climate_state.adjust_temp[mon];
+                    double tmax = rec.tmax + ctx_.climate_state.adjust_temp[mon];
+                    ctx_.climate_state.temp_range = tmax - tmin;
 
-                    if (doy != climate_.last_temp_doy) {
+                    if (doy != ctx_.climate_state.last_temp_doy) {
                         // New day: update sunrise/sunset params and roll over prev max.
-                        climate_.prev_tmax     = climate_.has_minmax
-                                                 ? climate_.tmax_daily : tmax;
-                        climate_.tmin_daily    = tmin;
-                        climate_.tmax_daily    = tmax;
-                        climate_.has_minmax    = true;
-                        climate_.last_temp_doy = doy;
-                        climate::updateTempTimes(climate_, doy);
+                        ctx_.climate_state.prev_tmax     = ctx_.climate_state.has_minmax
+                                                 ? ctx_.climate_state.tmax_daily : tmax;
+                        ctx_.climate_state.tmin_daily    = tmin;
+                        ctx_.climate_state.tmax_daily    = tmax;
+                        ctx_.climate_state.has_minmax    = true;
+                        ctx_.climate_state.last_temp_doy = doy;
+                        climate::updateTempTimes(ctx_.climate_state, doy);
                     } else {
                         // Same day: refresh min/max (unchanged; tmax may update).
-                        climate_.tmin_daily = tmin;
-                        climate_.tmax_daily = tmax;
+                        ctx_.climate_state.tmin_daily = tmin;
+                        ctx_.climate_state.tmax_daily = tmax;
                     }
 
                     // Sub-daily sinusoidal interpolation (Gap #9).
                     // hour = fractional part of OADate × 24.
                     double hour = (abs_time - std::floor(abs_time)) * 24.0;
-                    climate_.temperature = climate::getSubdailyTemp(climate_, hour);
+                    ctx_.climate_state.temperature = climate::getSubdailyTemp(ctx_.climate_state, hour);
                 }
             }
         }
 
-        climate::updateDailyClimate(climate_, doy, mon);
+        climate::updateDailyClimate(ctx_.climate_state, doy, mon);
 
         // A2b. Evaporation from timeseries or climate file
-        if (climate_.evap_method == climate::EvapMethod::TIMESERIES &&
-            climate_.evap_ts_index >= 0) {
-            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(climate_.evap_ts_index)];
+        if (ctx_.climate_state.evap_method == climate::EvapMethod::TIMESERIES &&
+            ctx_.climate_state.evap_ts_index >= 0) {
+            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ctx_.climate_state.evap_ts_index)];
             double evap_user = table_lookup_cursor(tbl, abs_time);
-            climate_.evap_rate = evap_user / ucf::Ucf[ucf::EVAPRATE][unit_sys];
-            climate_.evap_rate *= climate_.adjust_evap[mon];
+            ctx_.climate_state.evap_rate = evap_user / ucf::Ucf[ucf::EVAPRATE][unit_sys];
+            ctx_.climate_state.evap_rate *= ctx_.climate_state.adjust_evap[mon];
         }
-        else if (climate_.evap_method == climate::EvapMethod::PAN &&
+        else if (ctx_.climate_state.evap_method == climate::EvapMethod::PAN &&
                  climate_file_.isOpen()) {
             // Pan evaporation from climate file × monthly pan coefficient
             climate::DailyClimateRecord rec;
             if (climate_file_.getRecord(abs_time, rec) && !std::isnan(rec.evap)) {
                 // rec.evap is in user units (in/day US, mm/day SI)
-                climate_.evap_rate = rec.evap / ucf::Ucf[ucf::EVAPRATE][unit_sys];
-                climate_.evap_rate *= ctx_.options.pan_coeff[mon];
-                climate_.evap_rate *= climate_.adjust_evap[mon];
+                ctx_.climate_state.evap_rate = rec.evap / ucf::Ucf[ucf::EVAPRATE][unit_sys];
+                ctx_.climate_state.evap_rate *= ctx_.options.pan_coeff[mon];
+                ctx_.climate_state.evap_rate *= ctx_.climate_state.adjust_evap[mon];
             }
         }
 
         // A2c. Wind speed lookup
         if (ctx_.options.wind_type == 0) {
-            climate_.wind_speed = ctx_.options.wind_speed[mon];
+            ctx_.climate_state.wind_speed = ctx_.options.wind_speed[mon];
         } else if (ctx_.options.wind_type == 1 && climate_file_.isOpen()) {
             // Wind from climate file
             climate::DailyClimateRecord rec;
             if (climate_file_.getRecord(abs_time, rec) && !std::isnan(rec.wind)) {
-                climate_.wind_speed = rec.wind;
+                ctx_.climate_state.wind_speed = rec.wind;
             }
         }
 
         // A2d. Monthly adjustment factors
-        climate_.infil_factor = ctx_.adjust_hydcon[mon];
+        ctx_.climate_state.infil_factor = ctx_.adjust_hydcon[mon];
 
         // A2e. Recovery pattern lookup (monthly pattern for soil recovery)
-        if (climate_.recovery_pat_index >= 0) {
-            auto ui = static_cast<std::size_t>(climate_.recovery_pat_index);
+        if (ctx_.climate_state.recovery_pat_index >= 0) {
+            auto ui = static_cast<std::size_t>(ctx_.climate_state.recovery_pat_index);
             if (ui < ctx_.patterns.factors.size()) {
                 const auto& facs = ctx_.patterns.factors[ui];
                 auto umon = static_cast<std::size_t>(mon);
-                climate_.recovery_factor = (umon < facs.size()) ? facs[umon] : 1.0;
+                ctx_.climate_state.recovery_factor = (umon < facs.size()) ? facs[umon] : 1.0;
             }
         }
 
@@ -665,12 +665,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
 
             // Split into rainfall vs. snowfall based on air temperature.
             double snow_divt = ctx_.options.snow_divt;   // deg F threshold
-            double rain_bc   = (climate_.temperature > snow_divt) ? avg_precip : 0.0;
-            double snow_bc   = (climate_.temperature <= snow_divt) ? avg_precip : 0.0;
+            double rain_bc   = (ctx_.climate_state.temperature > snow_divt) ? avg_precip : 0.0;
+            double snow_bc   = (ctx_.climate_state.temperature <= snow_divt) ? avg_precip : 0.0;
 
-            snow_.execute(ctx_, dt_runoff, climate_.temperature,
-                          climate_.wind_speed, rain_bc, snow_bc,
-                          climate_.gamma, climate_.ea);
+            snow_.execute(ctx_, dt_runoff, ctx_.climate_state.temperature,
+                          ctx_.climate_state.wind_speed, rain_bc, snow_bc,
+                          ctx_.climate_state.gamma, ctx_.climate_state.ea);
 
             // A3a (Gap #20): Build per-subcatch snow-modified net precip.
             // netPrecip[i] = imelt[i] + rainfall*(1-asc[i])  (matching legacy)
@@ -729,7 +729,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     }
                 }
                 // INFIL pattern: scales infil_factor for this subcatchment
-                // (applied globally via climate_.infil_factor already;
+                // (applied globally via ctx_.climate_state.infil_factor already;
                 //  per-subcatchment INFIL pattern would require per-subcatch
                 //  infil_factor which is a deeper refactor — noted for future)
             }
@@ -738,8 +738,8 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // A4. Runoff (computes subcatches.runoff[i] = newRunoff rate)
         //     Runoff solver is self-contained; output is subcatches.runoff[i].
         //     Routing picks it up via Phase 2 interpolation → nodes.runoff_inflow[].
-        runoff_.execute(ctx_, dt_runoff, climate_.evap_rate,
-                        climate_.infil_factor, climate_.recovery_factor, mon);
+        runoff_.execute(ctx_, dt_runoff, ctx_.climate_state.evap_rate,
+                        ctx_.climate_state.infil_factor, ctx_.climate_state.recovery_factor, mon);
 
         // Update state flags for next timestep selection
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
@@ -792,7 +792,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             }
         }
 
-        lid_.execute(ctx_, dt_runoff, 0.0, climate_.evap_rate);
+        lid_.execute(ctx_, dt_runoff, 0.0, ctx_.climate_state.evap_rate);
 
         // A6b. Route LID outputs back to subcatchment runoff totals
         for (int t = 0; t < lid_.numGroups(); ++t) {
@@ -1482,7 +1482,7 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
 
     // Pass actual infiltration rate to groundwater (upper zone percolation input).
     // sw_head is read from the pre-assembled subcatches.gw_sw_head[].
-    groundwater_.execute(ctx_, dt_runoff, climate_.evap_rate,
+    groundwater_.execute(ctx_, dt_runoff, ctx_.climate_state.evap_rate,
                          ctx_.subcatches.infil_loss.data(),
                          ctx_.subcatches.gw_sw_head.data(),
                          gw_frac_perv_.data(), gw_perv_evap_.data());
@@ -1736,7 +1736,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //         Router::initNodeFlows() for joint evap+exfil capping.
     exfil_.computeAll(ctx_, dt_routing);
 
-    int iters = router_.step(ctx_, dt_routing, climate_.evap_rate, non_conduit_fn);
+    int iters = router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
     ctx_.routing_stats.update_iterations(iters, iters < ctx_.options.max_trials);
 
 #ifdef OPENSWMM_HAS_2D
@@ -2387,7 +2387,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             }
 
             // System-level results
-            snap.sys_temperature = climate_.temperature;
+            snap.sys_temperature = ctx_.climate_state.temperature;
 
             // Area-weighted average rainfall across subcatchments
             // (matching legacy output_saveSubcatchResults accumulation)
@@ -2420,7 +2420,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 }
                 snap.sys_snow_depth = (total_area > 0.0) ? total_snow / total_area : 0.0;
             }
-            snap.sys_pet = climate_.evap_rate;
+            snap.sys_pet = ctx_.climate_state.evap_rate;
 
             // Area-weighted averages of evap and infil; total runoff
             // Legacy adds GW evaporation (gw->evapLoss) to system evap
@@ -3197,42 +3197,42 @@ void SWMMEngine::initHydrology() noexcept {
         int evap_type = ctx_.options.evap_type;
         if (evap_type == 0) {
             // CONSTANT
-            climate_.evap_method = climate::EvapMethod::CONSTANT;
-            climate_.evap_rate = ctx_.options.evap_values[0]
+            ctx_.climate_state.evap_method = climate::EvapMethod::CONSTANT;
+            ctx_.climate_state.evap_rate = ctx_.options.evap_values[0]
                                / ucf::Ucf[ucf::EVAPRATE][0];
         } else if (evap_type == 1) {
             // MONTHLY
-            climate_.evap_method = climate::EvapMethod::MONTHLY;
+            ctx_.climate_state.evap_method = climate::EvapMethod::MONTHLY;
             for (int i = 0; i < 12; ++i)
-                climate_.monthly_evap[i] = ctx_.options.evap_values[i];
+                ctx_.climate_state.monthly_evap[i] = ctx_.options.evap_values[i];
         } else if (evap_type == 2) {
-            climate_.evap_method = climate::EvapMethod::TIMESERIES;
+            ctx_.climate_state.evap_method = climate::EvapMethod::TIMESERIES;
         } else if (evap_type == 3) {
-            climate_.evap_method = climate::EvapMethod::TEMPERATURE;
+            ctx_.climate_state.evap_method = climate::EvapMethod::TEMPERATURE;
         } else if (evap_type == 4) {
-            climate_.evap_method = climate::EvapMethod::PAN;
+            ctx_.climate_state.evap_method = climate::EvapMethod::PAN;
         }
 
         // Transfer latitude for Hargreaves ET calculation
-        climate_.latitude = ctx_.options.snow_lat;
+        ctx_.climate_state.latitude = ctx_.options.snow_lat;
 
         // Transfer site elevation for psychrometric constant (Gap #8)
-        climate_.elev = ctx_.options.snow_elev;
+        ctx_.climate_state.elev = ctx_.options.snow_elev;
 
         // Transfer monthly adjustment arrays
         for (int i = 0; i < 12; ++i) {
-            climate_.adjust_temp[i] = ctx_.adjust_temp[i];
-            climate_.adjust_evap[i] = ctx_.adjust_evap[i];
-            climate_.adjust_rain[i] = ctx_.adjust_rain[i];
-            climate_.adjust_hydcon[i] = ctx_.adjust_hydcon[i];
+            ctx_.climate_state.adjust_temp[i] = ctx_.adjust_temp[i];
+            ctx_.climate_state.adjust_evap[i] = ctx_.adjust_evap[i];
+            ctx_.climate_state.adjust_rain[i] = ctx_.adjust_rain[i];
+            ctx_.climate_state.adjust_hydcon[i] = ctx_.adjust_hydcon[i];
         }
 
         // Resolve timeseries names to table indices
         if (ctx_.options.temp_source == 1 && !ctx_.options.temp_ts_name.empty()) {
-            climate_.temp_ts_index = ctx_.table_names.find(ctx_.options.temp_ts_name);
+            ctx_.climate_state.temp_ts_index = ctx_.table_names.find(ctx_.options.temp_ts_name);
         }
         if (evap_type == 2 && !ctx_.options.evap_ts_name.empty()) {
-            climate_.evap_ts_index = ctx_.table_names.find(ctx_.options.evap_ts_name);
+            ctx_.climate_state.evap_ts_index = ctx_.table_names.find(ctx_.options.evap_ts_name);
         }
 
         // Resolve recovery pattern name to pattern index
@@ -3240,7 +3240,7 @@ void SWMMEngine::initHydrology() noexcept {
             int np = ctx_.patterns.count();
             for (int i = 0; i < np; ++i) {
                 if (ctx_.patterns.names[static_cast<std::size_t>(i)] == ctx_.options.evap_recovery_pat) {
-                    climate_.recovery_pat_index = i;
+                    ctx_.climate_state.recovery_pat_index = i;
                     break;
                 }
             }

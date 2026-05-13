@@ -20,6 +20,7 @@
 #ifndef OPENSWMM_RDII_HPP
 #define OPENSWMM_RDII_HPP
 
+#include <array>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -35,8 +36,24 @@ struct UnitHydParams {
     double tPeak[12][3] = {};  ///< Time to peak (sec) per month × response
     double tBase[12][3] = {};  ///< Base time (sec) per month × response
     double iaMax[12][3] = {};  ///< Initial abstraction max depth
-    double iaRecov[12][3] = {};///< IA recovery rate
+    double iaRecov[12][3] = {};///< IA recovery rate (linear model)
     double iaInit[12][3] = {}; ///< Initial IA used
+};
+
+/// Exponential IA decay parameters for one RDII response (SHORT/MEDIUM/LONG).
+/// When `active` is true, this response uses the temperature-dependent
+/// exponential IA model in place of the legacy linear iaRecov logic.
+/// Coefficients use project depth units for k_dep (consistent with iaMax),
+/// hours for k_0/k_T, and degrees Celsius for temperature thresholds.
+/// @see docs/RDII_ExpDecay_Implementation.md
+struct ExpDecayParams {
+    bool   active    = false;
+    double k_dep     = 0.0;   ///< Depletion rate (1/project-depth) — temperature-independent
+    double k_0       = 0.0;   ///< Base recovery rate (1/hr)
+    double k_T       = 0.0;   ///< Thermal recovery rate at T_ref (1/hr)
+    double T_ref     = 10.0;  ///< Reference temperature (deg C)
+    double theta_rec = 0.0;   ///< Temperature sensitivity (1/deg C)
+    double T_freeze  = 0.0;   ///< Recovery suppressed at or below this temperature (deg C)
 };
 
 /// Per-response (SHORT/MEDIUM/LONG) unit hydrograph data.
@@ -120,6 +137,11 @@ public:
 
     std::vector<UnitHydParams> uh_params;
 
+    /// Exponential decay params per UH group × response.
+    /// Same indexing as uh_params; each entry holds [SHORT, MEDIUM, LONG].
+    /// `active == false` means the response uses the legacy linear IA model.
+    std::vector<std::array<ExpDecayParams, 3>> decay_params;
+
     /// Compute rain processing interval for a UH (minimum limb duration, capped by wet_step).
     static int getRainInterval(const UnitHydParams& uh, double wet_step);
 
@@ -133,6 +155,9 @@ private:
 
     /// Compute UH ordinate at time t for response k, month m.
     double uhOrdinate(const UnitHydParams& uh, int month, int response, double t) const;
+
+    /// Push a warning if any decay row is active but no temperature source is configured.
+    void validateExpDecay(SimulationContext& ctx) const;
 };
 
 } // namespace rdii

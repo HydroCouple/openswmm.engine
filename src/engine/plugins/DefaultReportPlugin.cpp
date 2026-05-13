@@ -487,7 +487,11 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     std::fprintf(f, "\n  Process Models:");
     std::fprintf(f, "\n    Rainfall/Runoff ........ %s",
                  (ctx.n_subcatches() > 0 && ctx.n_gages() > 0) ? "YES" : "NO");
-    std::fprintf(f, "\n    RDII ................... %s", has_rdii ? "YES" : "NO");
+    bool has_exp_decay = (ctx.rdii_decay.count() > 0);
+    std::fprintf(f, "\n    RDII ................... %s",
+                 has_rdii ? (has_exp_decay ? "YES (Exponential IA)"
+                                           : "YES (Linear IA)")
+                          : "NO");
     std::fprintf(f, "\n    Snowmelt ............... %s", has_snow ? "YES" : "NO");
     std::fprintf(f, "\n    Groundwater ............ %s", has_gw ? "YES" : "NO");
     std::fprintf(f, "\n    Flow Routing ........... %s",

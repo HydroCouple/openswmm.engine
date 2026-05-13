@@ -78,6 +78,7 @@
 #include "../hydraulics/Transect.hpp"
 #include "../data/HydrologyData.hpp"
 #include "../data/ForcingData.hpp"
+#include "../hydrology/Climate.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -304,6 +305,19 @@ struct SimulationContext {
      */
     SimulationOptions options;
 
+    /**
+     * @brief Daily climate state — temperature, evaporation, wind, humidity.
+     *
+     * @details Scalar broadcast to all subcatchments; updated at the runoff
+     *          step boundary by SWMMEngine. Lives on the context so that
+     *          downstream solvers (RDII exponential IA, future models)
+     *          can read it through `ctx.climate_state` without reaching
+     *          into the engine.
+     *
+     * @see Legacy: Temp, Evap, Wind, Humidity in globals.h
+     */
+    climate::ClimateState climate_state;
+
     // =========================================================================
     // Simulation clock
     // =========================================================================
@@ -443,6 +457,7 @@ struct SimulationContext {
     DwfData          dwf_inflows;
     RDIIAssignData   rdii_assigns;
     UnitHydData      unit_hyds;      ///< Parsed [HYDROGRAPHS] data
+    RDIIDecayData    rdii_decay;     ///< Parsed [RDII_DECAY] data (exponential IA model)
     PatternData      patterns;
 
     // =========================================================================
@@ -1038,6 +1053,12 @@ struct SimulationContext {
         gage_names.clear();
         pollutant_names.clear();
         table_names.clear();
+
+        // Clear inflow-related stores that aren't reset by their owning solvers
+        rdii_decay = RDIIDecayData{};
+
+        // Clear daily climate state (re-initialized by SWMMEngine on next run)
+        climate_state = climate::ClimateState{};
 
         // Clear spatial, flags, tags, events, and forcing
         spatial    = SpatialFrame{};

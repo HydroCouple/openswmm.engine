@@ -33,6 +33,9 @@ void handle_rdii(SimulationContext& ctx, const std::vector<std::string>& lines);
 /** @brief Parse [HYDROGRAPHS] into UnitHydData. */
 void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& lines);
 
+/** @brief Parse [RDII_DECAY] into RDIIDecayData (exponential IA model). */
+void handle_rdii_decay(SimulationContext& ctx, const std::vector<std::string>& lines);
+
 } /* namespace openswmm::input */
 
 #endif /* OPENSWMM_ENGINE_INFLOWS_HANDLER_HPP */

@@ -237,7 +237,6 @@ private:
     // Computational modules (batch-oriented, SoA)
     Router                       router_;       ///< Hydraulic routing (owns XSectGroups)
     runoff::RunoffSolver         runoff_;       ///< Subcatchment runoff (batch nonlinear reservoir)
-    climate::ClimateState        climate_;      ///< Daily climate state (broadcast to subcatchments)
     climate::ClimateFileReader   climate_file_; ///< Climate file reader (temp/evap/wind from file)
     snow::SnowSolver             snow_;         ///< Snowmelt (batch over subcatch×subareas)
     groundwater::GWSolver        groundwater_;  ///< Groundwater (batch ODE per subcatchment)

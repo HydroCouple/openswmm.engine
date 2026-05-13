@@ -992,6 +992,30 @@ static void read_rdii(sqlite3* db, SimulationContext& ctx,
             ctx.unit_hyds.add(e);
         }
     }
+
+    // RDII exponential-decay parameters (optional — older GeoPackages won't have it)
+    if (table_exists(db, "rdii_decay")) {
+        auto stmt = prepare(db,
+            "SELECT uh_name, response, k_dep, k_0, k_T, T_ref, theta_rec, T_freeze "
+            "FROM rdii_decay WHERE simulation_id = ?");
+        bind_text(stmt.get(), 1, sim_id);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            RDIIDecayEntry e{};
+            e.uh_name = column_text(stmt.get(), 0);
+            std::string resp = column_text(stmt.get(), 1);
+            if      (resp == "SHORT")  e.response = 0;
+            else if (resp == "MEDIUM") e.response = 1;
+            else if (resp == "LONG")   e.response = 2;
+            else continue;
+            e.k_dep     = sqlite3_column_double(stmt.get(), 2);
+            e.k_0       = sqlite3_column_double(stmt.get(), 3);
+            e.k_T       = sqlite3_column_double(stmt.get(), 4);
+            e.T_ref     = sqlite3_column_double(stmt.get(), 5);
+            e.theta_rec = sqlite3_column_double(stmt.get(), 6);
+            e.T_freeze  = sqlite3_column_double(stmt.get(), 7);
+            ctx.rdii_decay.add(e);
+        }
+    }
 }
 
 static void read_treatment(sqlite3* db, SimulationContext& ctx,

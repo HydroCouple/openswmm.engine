@@ -123,6 +123,39 @@ struct UnitHydData {
 };
 
 // ============================================================================
+// RDII exponential-decay parameters (from [RDII_DECAY] section)
+// ============================================================================
+//
+// One row per (UH group, response). Granularity is per-response, NOT per-month
+// — the whole point of the exponential model is that seasonal variation in
+// IA recovery emerges from temperature dynamics, not from a monthly lookup.
+//
+// A UH group with no row here uses the legacy linear IA recovery for every
+// response. A group with one row falls back to linear for the two unspecified
+// responses, so adoption is incremental.
+//
+// @see docs/RDII_ExpDecay_Implementation.md
+
+struct RDIIDecayEntry {
+    std::string uh_name;    ///< Matches UnitHydEntry::name
+    int    response  = -1;  ///< 0=SHORT, 1=MEDIUM, 2=LONG
+    double k_dep     = 0.0; ///< Depletion rate (1/mm) — temperature-independent
+    double k_0       = 0.0; ///< Base recovery rate (1/hr)
+    double k_T       = 0.0; ///< Thermal recovery rate at T_ref (1/hr)
+    double T_ref     = 10.0;///< Reference temperature (deg C)
+    double theta_rec = 0.0; ///< Temperature sensitivity (1/deg C)
+    double T_freeze  = 0.0; ///< Recovery suppressed when T <= T_freeze (deg C)
+};
+
+struct RDIIDecayData {
+    int count() const { return static_cast<int>(entries.size()); }
+
+    std::vector<RDIIDecayEntry> entries;
+
+    void add(const RDIIDecayEntry& e) { entries.push_back(e); }
+};
+
+// ============================================================================
 // Time patterns (from [PATTERNS] section)
 // ============================================================================
 
