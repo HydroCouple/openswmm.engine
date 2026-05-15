@@ -580,6 +580,73 @@ TEST(HortonInfil, TrajectoryMatchesBenchmark) {
         << " ft exceeds 1e-9 ft tolerance";
 }
 
+// Modified Horton wet-dry-wet trajectory with Fmax cap and exponential recovery.
+//
+// Parameters (in project units for horton_init, US customary):
+//   f0=1.728 in/hr, fmin=0.1728 in/hr, decay=6.0/hr, regen≈0.163001 days,
+//   Fmax=0.192 in.
+// Internally: kd=1/600 s⁻¹, kr=1/3600 s⁻¹, Fmax=0.016 ft.
+//
+// The Euler update is computed in exact double precision — no iterative solver.
+// Tolerance is 1e-9 ft for Fe and Fmh at each step.
+TEST(ModHortonInfil, SaturationRecoveryTrajectory) {
+    std::string path = std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/modified-horton-fmax-saturation-recovery/reference.csv";
+
+    struct Row { double t_s, precip_fts, f_fts, Fe_ft, Fmh_ft; };
+    std::vector<Row> rows;
+    {
+        std::ifstream in(path);
+        if (!in.is_open()) {
+            GTEST_SKIP() << "Benchmark data not found: " << path;
+        }
+        std::string line;
+        bool header_seen = false;
+        while (std::getline(in, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            if (!header_seen) { header_seen = true; continue; }
+            std::istringstream ss(line);
+            std::string tok;
+            double v[5] = {};
+            int col = 0;
+            while (std::getline(ss, tok, ',') && col < 5)
+                v[col++] = std::stod(tok);
+            if (col >= 5)
+                rows.push_back({v[0], v[1], v[2], v[3], v[4]});
+        }
+    }
+    if (rows.empty()) {
+        GTEST_SKIP() << "Benchmark CSV is empty: " << path;
+    }
+
+    // horton_init params (US customary: in/hr for rates, days for regen, in for Fmax)
+    // kd = decay/3600 = 6.0/3600 = 1/600 s^-1
+    // state.regen = -log(0.02) / regen_days / 86400 → regen_days = -log(0.02)/24
+    const double regen_days = -std::log(1.0 - 0.98) / 24.0;
+    HortonState s;
+    horton_init(s, 1.728, 0.1728, 6.0, regen_days, 0.192, default_opts());
+
+    const double dt = 60.0;
+    double max_Fe_err = 0.0, max_Fmh_err = 0.0;
+
+    for (size_t i = 1; i < rows.size(); ++i) {
+        double precip = rows[i].precip_fts;
+        modHorton_getInfil(s, precip, 0.0, dt);
+
+        double Fe_err  = std::abs(s.Fe  - rows[i].Fe_ft);
+        double Fmh_err = std::abs(s.Fmh - rows[i].Fmh_ft);
+        max_Fe_err  = std::max(max_Fe_err,  Fe_err);
+        max_Fmh_err = std::max(max_Fmh_err, Fmh_err);
+    }
+
+    EXPECT_LT(max_Fe_err, 1e-9)
+        << "ModHorton Fe max error " << max_Fe_err
+        << " ft exceeds 1e-9 ft tolerance";
+    EXPECT_LT(max_Fmh_err, 1e-9)
+        << "ModHorton Fmh max error " << max_Fmh_err
+        << " ft exceeds 1e-9 ft tolerance";
+}
+
 // Green-Ampt saturated-branch trajectory against manufactured benchmark.
 //
 // grnampt_getInfil is called with state.saturated=true so the unsaturated path

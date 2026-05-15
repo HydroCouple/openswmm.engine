@@ -16,6 +16,9 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <vector>
 #include <algorithm>
 #include <numeric>
@@ -569,6 +572,116 @@ TEST(SteadyFlowQuality, OldLinkConcIgnored) {
 
     // Result must equal upstream conc, NOT some mixture with old conc
     EXPECT_NEAR(ctx.links.conc[0], 5.0, 1e-10);
+}
+
+// ============================================================================
+// CSTR first-order decay trajectory benchmark
+//
+// Benchmark dataset: tests/benchmarks/manufactured/quality-cstr-first-order-decay/
+//
+// No inflow, no outflow, constant volume.  k_decay = 1e-3 /s, dt = 60 s.
+// execute() applies factor = 1 - k*dt = 0.94 per step.  Reference:
+//   C[N] = 100 * 0.94^N   (discrete recurrence — NOT exp(-k*t))
+//
+// After each execute() the test copies conc → conc_old to advance timestep
+// state, matching what the simulation loop does between routing steps.
+// ============================================================================
+
+#ifndef BENCHMARK_DATA_DIR
+#  define BENCHMARK_DATA_DIR ""
+#endif
+
+// First-order decay trajectory: C[N] = C0 * (1-k*dt)^N.
+// Verifies applyDecay applies the linear factor correctly across multiple steps.
+TEST(QualityCSTR, FirstOrderDecayTrajectory) {
+    const std::string path = std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/quality-cstr-first-order-decay/reference.csv";
+
+    // Load reference CSV (t_s, C_mgl)
+    struct DecayRow { double t_s, C_mgl; };
+    std::vector<DecayRow> rows;
+    {
+        std::ifstream in(path);
+        if (!in.is_open()) {
+            GTEST_SKIP() << "Benchmark data not found: " << path;
+        }
+        std::string line;
+        bool header_seen = false;
+        while (std::getline(in, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            if (!header_seen) { header_seen = true; continue; }
+            std::istringstream ss(line);
+            std::string tok;
+            double vals[2] = {};
+            int col = 0;
+            while (std::getline(ss, tok, ',') && col < 2)
+                vals[col++] = std::stod(tok);
+            if (col >= 2)
+                rows.push_back({vals[0], vals[1]});
+        }
+    }
+    if (rows.empty()) {
+        GTEST_SKIP() << "Benchmark data empty: " << path;
+    }
+
+    // 1 pollutant, 3 nodes, 2 links (from makeContext(1))
+    SimulationContext ctx = makeContext(1);
+    QualitySolver solver;
+    solver.init(ctx.n_nodes(), ctx.n_links(), 1);
+
+    const double K_DECAY = 1.0e-3;     // /s — first-order decay rate
+    const double C_0     = rows[0].C_mgl;  // 100.0 mg/L
+    const double V_NODE  = 1000.0;         // constant volume — must be > ZERO_VOLUME
+
+    ctx.pollutants.k_decay.assign(1, K_DECAY);
+
+    // Zero all flows (no mixing, no inflow — pure decay)
+    for (size_t j = 0; j < static_cast<size_t>(ctx.n_links()); ++j) {
+        ctx.links.flow[j] = 0.0;
+    }
+    ctx.subcatches.runoff[0]     = 0.0;
+    ctx.subcatches.old_runoff[0] = 0.0;
+
+    // Initialise node 0 with C_0; other nodes at 0 (not tested)
+    for (size_t i = 0; i < static_cast<size_t>(ctx.n_nodes()); ++i) {
+        ctx.nodes.old_volume[i] = V_NODE;
+        ctx.nodes.volume[i]     = V_NODE;
+        ctx.nodes.conc_old[i]   = (i == 0) ? C_0 : 0.0;
+        ctx.nodes.conc[i]       = (i == 0) ? C_0 : 0.0;
+    }
+    for (size_t j = 0; j < static_cast<size_t>(ctx.n_links()); ++j) {
+        ctx.links.old_volume[j] = V_NODE;
+        ctx.links.volume[j]     = V_NODE;
+        ctx.links.conc_old[j]   = 0.0;
+        ctx.links.conc[j]       = 0.0;
+    }
+
+    double max_err  = 0.0;
+    double sum_sq   = 0.0;
+    double prev_t   = rows[0].t_s;
+
+    for (size_t i = 1; i < rows.size(); ++i) {
+        double dt = rows[i].t_s - prev_t;
+
+        // Advance "old" state before each execute() — mirrors simulation loop
+        ctx.nodes.conc_old[0] = ctx.nodes.conc[0];
+        ctx.links.conc_old[0] = ctx.links.conc[0];
+
+        solver.execute(ctx, dt);
+
+        double err = std::abs(ctx.nodes.conc[0] - rows[i].C_mgl);
+        max_err  = std::max(max_err, err);
+        sum_sq  += err * err;
+        prev_t   = rows[i].t_s;
+    }
+
+    double n = static_cast<double>(rows.size() - 1);
+
+    EXPECT_LT(max_err, 1e-9)
+        << "CSTR decay max error " << max_err
+        << " mg/L exceeds 1e-9 (benchmark: " << path << ")";
+    EXPECT_LT(std::sqrt(sum_sq / n), 1e-10)
+        << "CSTR decay RMS error exceeds 1e-10 mg/L";
 }
 
 } /* anonymous namespace */

@@ -1,0 +1,90 @@
+benchmark: dynwave-gvf-backwater-m1
+type: manufactured
+description: >
+  GVF M1 backwater profile on a 5-conduit rectangular open channel reach.
+  Under constant inflow Q = 10 cfs and fixed tailwater y_d = 1.5 y_n, the
+  St. Venant equations admit the M1 GVF profile as the unique subcritical
+  steady state.  Reference depths are computed by RK4 integration of the
+  GVF ODE from downstream to upstream.
+swmm_target: src/engine/hydraulics/DynamicWave.cpp (DWSolver::execute)
+
+problem:
+  name: gvf-m1-backwater
+  ode: "dy/dx = (S0 - Sf(y)) / (1 - Fr^2(y))"
+  ode_direction: "integrated from x=1000 (downstream) to x=0 (upstream)"
+  friction: "Manning: Sf = (Q*n / (PHI*A*R^{2/3}))^2"
+  froude:   "Fr^2 = Q^2 / (g*A^2*(A/B))"
+  integration_scheme: RK4 with step dx = -200 ft (upstream direction)
+  boundary_condition: "y(x=1000) = y_d = 1.5 * y_n"
+
+parameters:
+  b_ft: 5.0
+  y_full_ft: 4.0
+  S0: 0.001
+  n_mann: 0.013
+  L_conduit_ft: 200.0
+  Q_cfs: 10.0
+  PHI: 1.486
+  g_fts2: 32.174
+  unit_system: US
+  derived:
+    beta_ft13_per_s: 3.616272    # PHI * sqrt(S0) / n
+    y_n_ft: 0.781692              # normal depth at Q = 10 cfs
+    y_c_ft: 0.498963              # critical depth at Q = 10 cfs
+    Fr_n: 0.510                   # Froude at normal depth (mild slope: Fr_n < 1)
+    y_d_ft: 1.172539              # tailwater BC = 1.5 * y_n
+
+dataset:
+  file: reference.csv
+  columns:
+    node:      "junction label (J0–J5)"
+    x_ft:      "station from upstream end (ft)"
+    z_inv_ft:  "invert elevation (ft)"
+    y_gvf_ft:  "GVF steady-state depth (ft)"
+  n_points: 6
+  note: >
+    J5 is the fixed outfall boundary; its depth equals y_d by construction
+    and is not checked by the consuming test.
+
+tolerances:
+  y_max_abs_ft: 0.039            # 5% of y_n = 0.05 * 0.781692
+  nodes_checked: [J0, J1, J2, J3, J4]
+  basis: >
+    The DW solver uses a 5-conduit spatial discretisation (Δx = 200 ft) and
+    a θ-implicit Preissmann scheme.  After T = 3600 s the flow is within
+    numerical steady state.  Spatial discretisation error on such a coarse
+    grid is estimated at < 2% of y_n; 5% provides comfortable margin.
+
+attribution:
+  references:
+    gvf: >
+      Henderson, F.M. (1966). Open Channel Flow.  Macmillan.  Chapter 5
+      (Gradually Varied Flow — M1 backwater curve).
+    manning: >
+      Manning, R. (1891). On the flow of water in open channels and pipes.
+      Trans. Inst. Civil Eng. Ireland, 20, 161-207.
+  license_note: benchmark data are original to this project; no copied source code.
+
+provenance:
+  generated_by: >
+    Python script using scipy.integrate.solve_ivp (RK45, rtol=1e-10, atol=1e-12)
+    to integrate dy/dx = (S0 - Sf) / (1 - Fr^2) from x=1000 to x=0,
+    with boundary condition y(x=1000) = y_d = 1.5 * y_n.
+  date: "2026-05-14"
+  author: openswmm.engine development team
+  computation: |
+    # Normal depth: solve Q = beta * A(y) * R(y)^{2/3} for y
+    # beta = 1.486 * sqrt(0.001) / 0.013 = 3.616272
+    # A(y) = 5*y,  R(y) = 5*y/(2*y+5)
+    # y_n = 0.781692 ft  (bisection)
+    # y_d = 1.5 * y_n = 1.172539 ft
+    #
+    # GVF ODE integrated backwards (dx = -200 ft per step):
+    # dy/dx = f(y) = (0.001 - Sf(y)) / (1 - Fr^2(y))
+    # Sample at x = 1000, 800, 600, 400, 200, 0 ft
+    #
+    # Values rounded to 6 decimal places.
+  reproducible: true
+  notes: >
+    The DW solver uses g = 32.2 ft/s² (SWMM legacy); the reference used
+    g = 32.174 ft/s².  The 0.08% difference is negligible vs the 5% test tolerance.

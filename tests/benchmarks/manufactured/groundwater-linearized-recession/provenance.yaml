@@ -1,0 +1,81 @@
+benchmark: groundwater-linearized-recession
+type: manufactured
+description: >
+  Two-zone groundwater aquifer draining by linear lateral flow with no inputs.
+  Under b1=1 and zero infiltration/evaporation/deep-loss, the lower-zone head
+  decays exponentially.  Reference values are computed from the exact analytic
+  solution H(t) = h_star + (H_0-h_star)*exp(-lambda*t).
+swmm_target: src/engine/hydrology/Groundwater.cpp (GWSolver::execute, getDxDt)
+
+problem:
+  name: linearized-gw-recession
+  ode: "dH/dt = -a1*(H-h_star) / (ucf_gwflow*(phi-theta))"
+  exact_solution: "H(t) = h_star + (H_0-h_star)*exp(-lambda*t)"
+  lambda_formula: "lambda = a1 / (ucf_gwflow*(phi-theta))"
+  integration_scheme: RKF45 (ode::integrate, tolerance GWTOL = 1e-4)
+
+parameters:
+  H_0_ft: 3.0
+  h_star_ft: 0.5
+  a1_cfs_per_acre_per_ft: 10.0
+  b1: 1.0
+  phi: 0.4
+  theta_0: 0.2
+  field_cap: 0.2
+  total_depth_ft: 5.0
+  a2: 0.0
+  a3: 0.0
+  lower_loss_coeff: 0.0
+  lower_evap_depth_ft: 0.0
+  upper_evap_frac: 0.0
+  max_evap: 0.0
+  infil_rate: 0.0
+  sw_head: 0.0
+  unit_system: US
+  derived:
+    ucf_gwflow: 43560.0
+    lambda_per_s: 0.0011478420569    # 10 / (43560 * 0.2)
+    H_0_minus_h_star_ft: 2.5
+
+dataset:
+  file: reference.csv
+  columns:
+    t_s:  time in seconds
+    H_ft: analytical lower-zone head in ft
+  n_points: 7
+  t_values_s: [0, 200, 400, 600, 800, 1000, 1200]
+  dt_s: 200.0
+
+tolerances:
+  H_max_abs_ft: 1.0e-3
+  basis: >
+    GWSolver uses RKF45 with GWTOL=1e-4.  Global error accumulates over
+    multiple steps; 1e-3 ft provides a factor-of-10 margin above the local
+    tolerance and absorbs step-accumulation effects.
+
+attribution:
+  references:
+    gw_recession: >
+      Hantush, M.S. (1956). Analysis of data from pumping tests in leaky
+      aquifers. Trans. Amer. Geophys. Union 37(6): 702-714.
+      (Exponential recession is a classical result of linear aquifer theory.)
+    swmm_gw: >
+      Rossman, L.A. and Huber, W.C. (2016). Storm Water Management Model
+      Reference Manual Volume I — Hydrology. EPA/600/R-15/162A.  Chapter 7.
+  license_note: benchmark data are original to this project; no copied source code.
+
+provenance:
+  generated_by: analytical formula H(t) = 0.5 + 2.5*exp(-t/871.2) evaluated
+                at t = 0, 200, 400, 600, 800, 1000, 1200 s
+  tool: hand computation using exp() series expansion
+  date: "2026-05-13"
+  author: openswmm.engine development team
+  computation: |
+    lambda = 10 / (43560 * 0.2) = 5 / 4356 = 1/871.2 s^{-1}
+    H(t) = 0.5 + 2.5 * exp(-t * lambda)
+    Values accurate to 6 decimal places (well within 1e-3 ft test tolerance).
+  reproducible: true
+  notes: >
+    Reference values are the continuous analytic solution, NOT the RKF45 solution.
+    The RKF45 solver is expected to match within GWTOL (1e-4) per step.
+    Test tolerance of 1e-3 ft absorbs multi-step error accumulation.

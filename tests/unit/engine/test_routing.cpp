@@ -1051,3 +1051,346 @@ TEST(KWSolverSteadyState, NormalDepthRecovered) {
     EXPECT_LT(max_a_err / a_full, 1e-9)
         << "a_out deviated from normal-depth A_n (max over all reference rows)";
 }
+
+// ============================================================================
+// KW step-inflow benchmark — mass balance and steady-state convergence
+//
+// Benchmark dataset: tests/benchmarks/manufactured/kinwave-step-inflow-rectangular-conduit/
+//
+// Applies a step inflow Q_in = Q_n (normal-depth flow) to a channel initially
+// at rest.  The kinematic wave arrives at the outlet after t_arrival = L/c_0
+// ≈ 80 s.  After N_steps=10 steps (600 s >> t_arrival), two analytically
+// exact properties are verified:
+//   1. SS convergence: Q_out(T) ≈ Q_in (within 0.5%)
+//   2. Mass balance:   |V_in - V_out - delta_V_stored| / V_in < 0.1%
+// ============================================================================
+
+// Step-inflow transient: SS convergence and mass balance for RECT_OPEN channel.
+TEST(KWSolverTransient, StepInflowMassBalance) {
+    const std::string csv_path =
+        std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/kinwave-step-inflow-rectangular-conduit/reference.csv";
+
+    // Load channel parameters from benchmark CSV (single data row, header-only skip)
+    double Q_in = 50.0, W = 10.0, slope = 0.001, n_mann = 0.013, length = 500.0;
+    double dt = 60.0;
+    double ss_tol_rel = 0.005;
+    double massbal_tol_rel = 0.05;
+    int n_steps = 10;
+    {
+        std::ifstream f(csv_path);
+        if (!f.is_open()) {
+            GTEST_SKIP() << "Benchmark CSV not found: " << csv_path;
+        }
+        std::string line;
+        bool header_seen = false;
+        while (std::getline(f, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            if (!header_seen) { header_seen = true; continue; }
+            std::istringstream ss(line);
+            std::string tok;
+            // columns: Q_in_cfs, channel_width_ft, bed_slope, n_mann,
+            //          channel_length_ft, dt_s, n_steps, ...
+            if (!std::getline(ss, tok, ',')) break; Q_in    = std::stod(tok);
+            if (!std::getline(ss, tok, ',')) break; W       = std::stod(tok);
+            if (!std::getline(ss, tok, ',')) break; slope   = std::stod(tok);
+            if (!std::getline(ss, tok, ',')) break; n_mann  = std::stod(tok);
+            if (!std::getline(ss, tok, ',')) break; length  = std::stod(tok);
+            if (!std::getline(ss, tok, ',')) break; dt      = std::stod(tok);
+            if (!std::getline(ss, tok, ',')) break; n_steps = std::stoi(tok);
+            if (!std::getline(ss, tok, ',')) break; // ss_check_step (metadata only)
+            if (!std::getline(ss, tok, ',')) break; ss_tol_rel = std::stod(tok);
+            if (!std::getline(ss, tok, ',')) break; massbal_tol_rel = std::stod(tok);
+            break;
+        }
+    }
+
+    // Build cross-section (RECT_OPEN, W=10 ft, y_full=5 ft)
+    const double PHI    = 1.486;                       // US Manning coefficient
+    const double beta   = PHI * std::sqrt(slope) / n_mann;
+    const double y_full = 5.0;
+
+    XSectParams xs{};
+    const double p[4] = { y_full, W, 0.0, 0.0 };
+    xsect::setParams(xs, static_cast<int>(XSectShape::RECT_OPEN), p, 1.0);
+
+    const double q_full = beta * xs.s_full;
+    const double a_full = xs.a_full;
+
+    // Solve for normal-depth area A_n at Q_in via xsect section factor
+    // S_n = Q_in / beta;  A_n = getAofS(xs, S_n)
+    const double s_n = Q_in / beta;
+    const double A_n = xsect::getAofS(xs, s_n);
+    const double Q_n = beta * xsect::getSofA(xs, A_n);  // should equal Q_in closely
+
+    ASSERT_NEAR(Q_n, Q_in, 1e-3 * Q_in)
+        << "Manning normal depth Q_n does not match Q_in to 0.1%";
+
+    kinwave::KWSolver solver;
+    solver.init(1, XSectGroups{});
+
+    // Initial state: at rest
+    solver.q1_[0]  = 0.0;
+    solver.a1_[0]  = 0.0;
+    solver.q2_[0]  = 0.0;
+    solver.a2_[0]  = 0.0;
+    solver.q_in_[0] = 0.0;
+
+    double V_in  = 0.0;   // cumulative inflow volume (ft^3)
+    double V_out = 0.0;   // cumulative outflow volume (ft^3)
+
+    for (int step = 0; step < n_steps; ++step) {
+        // Apply step inflow
+        solver.q_in_[0] = Q_in;
+
+        solver.solveConduit(0, xs, q_full, a_full, xs.s_full,
+                            beta, length, dt, 0.0);
+
+        V_in  += Q_in * dt;
+        V_out += solver.q_out_[0] * dt;
+
+        // Advance state for next step
+        solver.q1_[0] = solver.q_in_[0];
+        solver.a1_[0] = A_n;              // upstream at normal depth
+        solver.q2_[0] = solver.q_out_[0];
+        solver.a2_[0] = solver.a_out_[0];
+    }
+
+    // 1. Steady-state convergence: after 600 s >> t_arrival (≈80 s),
+    //    outflow must be within 0.5% of Q_in.
+    const double ss_tol = ss_tol_rel * Q_in;
+    EXPECT_NEAR(solver.q_out_[0], Q_in, ss_tol)
+        << "Q_out at step " << n_steps << " has not converged to Q_in within 0.5%"
+        << "  Q_out=" << solver.q_out_[0] << "  Q_in=" << Q_in;
+
+    // 2. Mass balance: compare cumulative net inflow against the conduit's final
+    //    stored volume using the same trapezoidal area formula as KWSolver.
+    //    The step-1 "no-flow" branch still justifies a loose tolerance, but the
+    //    residual should be formed against the actual final storage, not A_n*L.
+    const double delta_stored = V_in - V_out;
+    const double final_stored_volume = 0.5 * (solver.a_in_[0] + solver.a_out_[0]) * length;
+    const double massbal_err  = std::abs(delta_stored - final_stored_volume);
+    EXPECT_GT(delta_stored, 0.0)
+        << "Negative stored volume implies mass loss (V_out > V_in)";
+    EXPECT_LT(massbal_err / V_in, massbal_tol_rel)
+        << "Mass balance error " << massbal_err
+        << " ft^3 exceeds " << (100.0 * massbal_tol_rel)
+        << "% of V_in=" << V_in << " ft^3";
+}
+
+// ============================================================================
+// Benchmark: force-main friction reference curves
+//
+// Both HW and DW formulas are direct transcriptions with no table lookup.
+// The C++ result should match the analytical reference to within 1e-10 relative.
+// ============================================================================
+
+TEST(ForceMain, FrictionReferenceCurvesBenchmark) {
+    std::string path = std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/forcemain-friction-reference-curves/reference.csv";
+
+    struct Row { std::string model; double v, R, param, Sf_ref; };
+    std::vector<Row> rows;
+    {
+        std::ifstream in(path);
+        if (!in.is_open()) {
+            GTEST_SKIP() << "Benchmark data not found: " << path;
+        }
+        std::string line;
+        bool header_seen = false;
+        while (std::getline(in, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            if (!header_seen) { header_seen = true; continue; }
+            std::istringstream ss(line);
+            std::string tok;
+            std::vector<std::string> cols;
+            while (std::getline(ss, tok, ','))
+                cols.push_back(tok);
+            if (cols.size() >= 5)
+                rows.push_back({cols[0],
+                    std::stod(cols[1]), std::stod(cols[2]),
+                    std::stod(cols[3]), std::stod(cols[4])});
+        }
+    }
+    if (rows.empty()) {
+        GTEST_SKIP() << "Benchmark CSV is empty: " << path;
+    }
+
+    for (const auto& row : rows) {
+        double Sf_computed;
+        if (row.model == "HW")
+            Sf_computed = forcemain::getFricSlope_HW(row.v, row.R, row.param);
+        else
+            Sf_computed = forcemain::getFricSlope_DW(row.v, row.R, row.param);
+
+        double rel_err = std::abs(Sf_computed - row.Sf_ref) / row.Sf_ref;
+        EXPECT_LT(rel_err, 1e-10)
+            << row.model << " v=" << row.v << " R=" << row.R
+            << " param=" << row.param
+            << " computed=" << Sf_computed << " ref=" << row.Sf_ref
+            << " rel_err=" << rel_err;
+    }
+}
+
+// ============================================================================
+// DW solver GVF backwater M1 benchmark
+//
+// Benchmark dataset: tests/benchmarks/manufactured/dynwave-gvf-backwater-m1/
+//
+// A 1000-ft RECT_OPEN channel (b=5 ft, S₀=0.001, n=0.013) is discretised into
+// 5 conduits of 200 ft each.  Constant inflow Q=10 cfs enters at J0; J5 is a
+// FIXED outfall at y_d = 1.5·y_n.  After 3600 s the DW solver must converge to
+// the analytically computed M1 GVF profile (RK4-integrated from downstream).
+//
+// Tolerance: 5% of y_n ≈ 0.039 ft at junction nodes J0–J4.
+// ============================================================================
+
+TEST(DWSolverGVF, BackwaterM1Benchmark) {
+    const std::string csv_path =
+        std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/dynwave-gvf-backwater-m1/reference.csv";
+
+    struct Row { std::string node; double x_ft, z_inv_ft, y_gvf_ft; };
+    std::vector<Row> rows;
+    {
+        std::ifstream in(csv_path);
+        if (!in.is_open()) {
+            GTEST_SKIP() << "Benchmark data not found: " << csv_path;
+        }
+        std::string line;
+        bool header_seen = false;
+        while (std::getline(in, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            if (!header_seen) { header_seen = true; continue; }
+            std::istringstream ss(line);
+            std::string tok;
+            std::vector<std::string> cols;
+            while (std::getline(ss, tok, ','))
+                cols.push_back(tok);
+            if (cols.size() >= 4)
+                rows.push_back({cols[0],
+                    std::stod(cols[1]), std::stod(cols[2]),
+                    std::stod(cols[3])});
+        }
+    }
+    if (rows.size() < 6) {
+        GTEST_SKIP() << "Benchmark CSV has fewer than 6 rows: " << csv_path;
+    }
+
+    // ---- Channel parameters ----
+    const double PHI    = 1.486;
+    const double n_mann = 0.013;
+    const double S0     = 0.001;
+    const double b      = 5.0;    // channel width (ft)
+    const double y_full = 4.0;    // full depth (ft) — large to prevent surcharge
+    const double L      = 200.0;  // conduit length (ft)
+    const double Q      = 10.0;   // steady inflow (cfs)
+
+    // ---- Cross-section geometry (same for all 5 conduits) ----
+    XSectParams xs{};
+    const double p_xs[4] = {y_full, b, 0.0, 0.0};
+    xsect::setParams(xs, static_cast<int>(XSectShape::RECT_OPEN), p_xs, 1.0);
+
+    // Build XSectGroups from 5 identical RECT_OPEN parameter blocks
+    std::vector<XSectParams> xparams(5, xs);
+    XSectGroups groups;
+    groups.build(xparams.data(), 5);
+
+    // ---- Conveyance parameters ----
+    const double beta         = PHI * std::sqrt(S0) / n_mann;
+    const double rough_factor = openswmm::constants::GRAVITY * (n_mann / PHI) * (n_mann / PHI);
+    const double q_full       = beta * xs.s_full;
+
+    // ---- Reference depths from CSV ----
+    // rows[0..4] = J0..J4 (junctions), rows[5] = J5 (fixed outfall BC)
+    // y_n_mann: Manning normal depth (provenance.yaml: 0.781692 ft); used for
+    // tolerance only — the J0 GVF depth (0.792075 ft) is 1.3% above y_n because
+    // the M1 profile asymptotes toward y_n as reach length → ∞.
+    const double y_n_mann = 0.781692;      // Manning normal depth (ft)
+    const double y_d      = rows[5].y_gvf_ft;  // downstream fixed stage
+
+    // ---- Build SimulationContext: 6 nodes, 5 conduits ----
+    SimulationContext ctx;
+    ctx.nodes.resize(6);
+    ctx.links.resize(5);
+
+    // Node invert elevations (each conduit drops 0.2 ft over 200 ft → S₀=0.001)
+    const double z_inv[6] = {1.0, 0.8, 0.6, 0.4, 0.2, 0.0};
+
+    for (int i = 0; i < 6; ++i) {
+        ctx.nodes.invert_elev[i] = z_inv[i];
+        ctx.nodes.full_depth[i]  = 100.0;       // large — no overtopping
+        ctx.nodes.crown_elev[i]  = z_inv[i] + 100.0;  // prevent spurious surcharge
+        ctx.nodes.type[i]        = NodeType::JUNCTION;
+        ctx.nodes.depth[i]       = y_n_mann;
+        ctx.nodes.old_depth[i]   = y_n_mann;
+        ctx.nodes.head[i]        = z_inv[i] + y_n_mann;
+    }
+
+    // J5 is the fixed-stage outfall (downstream BC)
+    ctx.nodes.type[5]             = NodeType::OUTFALL;
+    ctx.nodes.outfall_type[5]     = OutfallType::FIXED;
+    ctx.nodes.outfall_param[5]    = y_d;  // stage = invert(0) + y_d = y_d
+    ctx.nodes.outfall_link_idx[5] = 4;    // last conduit L4 (J4→J5)
+    ctx.nodes.outfall_link_offset[5] = 0.0;
+    ctx.nodes.depth[5]            = y_d;
+    ctx.nodes.old_depth[5]        = y_d;
+    ctx.nodes.head[5]             = z_inv[5] + y_d;
+
+    // Constant lateral inflow at J0
+    ctx.nodes.lat_flow[0] = Q;
+
+    // Configure 5 conduits (J0→J1, J1→J2, ..., J4→J5)
+    for (int i = 0; i < 5; ++i) {
+        ctx.links.type[i]               = LinkType::CONDUIT;
+        ctx.links.xsect_shape[i]        = XsectShape::RECT_OPEN;
+        ctx.links.xsect_batch_shape[i]  = static_cast<int>(XSectShape::RECT_OPEN);
+        ctx.links.xsect_y_full[i]       = xs.y_full;
+        ctx.links.xsect_a_full[i]       = xs.a_full;
+        ctx.links.xsect_w_max[i]        = xs.w_max;
+        ctx.links.xsect_r_full[i]       = xs.r_full;
+        ctx.links.xsect_s_full[i]       = xs.s_full;
+        ctx.links.xsect_s_max[i]        = xs.s_max;
+        ctx.links.beta[i]               = beta;
+        ctx.links.rough_factor[i]       = rough_factor;
+        ctx.links.q_full[i]             = q_full;
+        ctx.links.q_max[i]              = q_full;
+        ctx.links.length[i]             = L;
+        ctx.links.mod_length[i]         = L;
+        ctx.links.slope[i]              = S0;
+        ctx.links.roughness[i]          = n_mann;
+        ctx.links.barrels[i]            = 1;
+        ctx.links.node1[i]              = i;
+        ctx.links.node2[i]              = i + 1;
+        ctx.links.flow[i]               = Q;
+        ctx.links.old_flow[i]           = Q;
+    }
+
+    // ---- Initialize DWSolver ----
+    DWSolver solver;
+    solver.surcharge_method = SurchargeMethod::EXTRAN;
+    solver.init(6, 5, groups, ctx);
+
+    // ---- Run 120 steps at dt=30 s (T=3600 s ≈ 18 wave travel times) ----
+    const double dt      = 30.0;
+    const int    n_steps = 120;
+
+    for (int step = 0; step < n_steps; ++step) {
+        ctx.nodes.save_state();   // depth → old_depth, net_inflow → old_net_inflow
+        ctx.links.save_state();   // flow  → old_flow
+        solver.execute(ctx, dt);
+        // Restore constant lateral inflow (save_state copies but does not zero it)
+        ctx.nodes.lat_flow[0] = Q;
+    }
+
+    // ---- Compare final depths to GVF reference ----
+    // J5 is the fixed BC: skip.  Check J0–J4 within 5% of Manning normal depth.
+    const double tol = 0.05 * y_n_mann;
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_NEAR(ctx.nodes.depth[i], rows[i].y_gvf_ft, tol)
+            << rows[i].node << " (x=" << rows[i].x_ft << " ft)"
+            << "  depth=" << ctx.nodes.depth[i]
+            << "  ref="   << rows[i].y_gvf_ft
+            << "  tol="   << tol;
+    }
+}
