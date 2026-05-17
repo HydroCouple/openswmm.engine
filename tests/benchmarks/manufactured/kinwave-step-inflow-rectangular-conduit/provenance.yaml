@@ -4,7 +4,7 @@ description: >
   Single rectangular open channel receiving a step inflow equal to the
   Manning normal-depth discharge.  Tests KW solver mass conservation and
   steady-state convergence; no closed-form transient solution is used.
-swmm_target: src/engine/routing/KinematicWave.cpp (KWSolver::solveConduit)
+swmm_target: src/engine/hydraulics/KinematicWave.cpp (KWSolver::solveConduit)
 
 problem:
   name: kw-step-inflow-rectangular
