@@ -1,0 +1,91 @@
+benchmark: kinwave-normal-depth-rect-open
+type: manufactured
+description: >
+  Steady uniform flow in a rectangular open channel.  Manning's equation gives
+  an exact normal depth for each flow; the KW Newton solver must recover it with
+  zero residual because the continuity function is identically zero at the
+  normal-depth operating point.
+swmm_target: src/engine/hydraulics/KinematicWave.cpp (KWSolver::solveConduit)
+
+problem:
+  name: manning-normal-depth-rect-open
+  equation: "Q = beta * A * R^(2/3) = beta * S(A)"
+  exact_solution:
+    A_n: "A_n = w * d_n"
+    R_n: "R_n = w*d_n / (w + 2*d_n)"
+    S_n: "S_n = A_n * R_n^(2/3)"
+    Q_n: "Q_n = beta * S_n"
+  scenario: steady uniform flow, no losses, sub-bank-full depths
+
+parameters:
+  shape: RECT_OPEN
+  w_ft: 10.0
+  y_full_ft: 5.0
+  n_manning: 0.013
+  slope_ft_per_ft: 0.001
+  PHI: 1.486
+  derived:
+    beta_ft13_per_s: 3.614726617700163    # PHI * sqrt(slope) / n
+    a_full_ft2: 50.0                       # w * y_full
+    r_full_ft: 2.5                         # a_full / (2*y_full + w)
+    s_full_ft83: 92.100787                 # a_full * r_full^(2/3)
+    q_full_cfs: 332.919                    # beta * s_full
+
+dataset:
+  file: reference.csv
+  columns:
+    d_n_ft:   normal depth in ft
+    A_n_ft2:  cross-sectional area at normal depth (ft²)
+    R_n_ft:   hydraulic radius at normal depth (ft)
+    S_n_ft83: section factor at normal depth (ft^(8/3))
+    Q_n_cfs:  Manning normal-depth flow (cfs)
+  n_points: 7
+  d_values_ft: [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
+  regime: sub-bank-full (all depths < y_full = 5 ft)
+
+exactness:
+  newton_residual: "f(A_n) = 0 analytically (WT=WX=0.6 cancel in C1, C2)"
+  note: >
+    At steady state the finite-difference continuity equation reduces to
+    f(A_n) = S_n/s_full - Q_n/q_full = 0 exactly, so Newton converges
+    in 0 iterations.  Output error is floating-point rounding only (~1e-15).
+
+tolerances:
+  q_out_rel: 1.0e-9    # relative to q_full
+  a_out_rel: 1.0e-9    # relative to a_full
+  csv_crosscheck_rel: 1.0e-4   # hand-computed reference vs. code-computed
+  basis: >
+    Newton is exact at steady state; only FP rounding (~1e-15) contributes.
+    Tolerance 1e-9 provides a million-fold margin against platform differences.
+
+attribution:
+  references:
+    mannings_equation: >
+      Manning, R. (1891). On the flow of water in open channels and pipes.
+      Transactions of the Institution of Civil Engineers of Ireland, 20, 161-207.
+    kinematic_wave: >
+      Lighthill, M.J. and Whitham, G.B. (1955). On kinematic waves: I. Flood
+      movement in long rivers. Proceedings of the Royal Society of London,
+      Series A, 229(1178), 281-316. https://doi.org/10.1098/rspa.1955.0088
+    open_channel_text: >
+      Chaudhry, M.H. (2008). Open-Channel Hydraulics (2nd ed.). Springer,
+      New York. Chapter 2 (uniform flow and Manning's equation).
+  license_note: benchmark data are original to this project; no copied source code.
+
+provenance:
+  generated_by: analytic formula evaluated in double-precision arithmetic
+  tool: none (closed-form Manning equation)
+  date: "2026-05-03"
+  author: openswmm.engine development team
+  computation: |
+    beta   = 1.486 * sqrt(0.001) / 0.013
+    A_n[i] = 10.0 * d_n[i]
+    R_n[i] = A_n[i] / (10.0 + 2.0 * d_n[i])
+    S_n[i] = A_n[i] * R_n[i]^(2/3)
+    Q_n[i] = beta * S_n[i]
+  reproducible: true
+  notes: >
+    Values are exact rational multiples of the input parameters (w, d_n)
+    composed with the irrational function R^(2/3).  The reference CSV was
+    computed by hand to 15 significant figures; the test cross-checks the
+    code-computed Manning value against the CSV to 0.01% relative tolerance.

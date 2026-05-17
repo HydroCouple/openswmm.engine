@@ -17,11 +17,18 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include "../../src/engine/hydraulics/XSectBatch.hpp"
 
 using namespace openswmm;
+
+#ifndef BENCHMARK_DATA_DIR
+#  define BENCHMARK_DATA_DIR ""
+#endif
 
 static constexpr double PI = 3.14159265358979323846;
 
@@ -639,4 +646,64 @@ TEST(XSectBatchLarge, CircularBatch1000) {
         EXPECT_NEAR(areas_batch[i], areas_elem[i], 1e-10)
             << "Mismatch at link " << i;
     }
+}
+
+// ============================================================================
+// Benchmark: circular area vs analytical ellipse formula
+//
+// A circle is an ellipse with a=b=R.  The SWMM A_Circ table has 51 entries
+// (dy_norm=0.02) with quadratic interpolation.  Reference values were computed
+// from the exact formula A(y)=R²[(y/R-1)√(1-(y/R-1)²)+arcsin(y/R-1)+π/2].
+// Tolerance is 0.5% of A_full, which is the expected table interpolation bound.
+// ============================================================================
+
+TEST(XSectionCircular, AreaMatchesEllipseReferenceBenchmark) {
+    std::string path = std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/xsect-circular-ellipse-reference/reference.csv";
+
+    struct Row { double y_norm, y_ft, A_ref, A_over_full; };
+    std::vector<Row> rows;
+    {
+        std::ifstream in(path);
+        if (!in.is_open()) {
+            GTEST_SKIP() << "Benchmark data not found: " << path;
+        }
+        std::string line;
+        bool header_seen = false;
+        while (std::getline(in, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            if (!header_seen) { header_seen = true; continue; }
+            std::istringstream ss(line);
+            std::string tok;
+            double v[4] = {};
+            int col = 0;
+            while (std::getline(ss, tok, ',') && col < 4)
+                v[col++] = std::stod(tok);
+            if (col >= 4)
+                rows.push_back({v[0], v[1], v[2], v[3]});
+        }
+    }
+    if (rows.empty()) {
+        GTEST_SKIP() << "Benchmark CSV is empty: " << path;
+    }
+
+    const double D = 3.0;
+    XSectParams xs;
+    double p[4] = {D, 0, 0, 0};
+    xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
+
+    const double tol = 0.005 * xs.a_full;  // 0.5% of A_full
+    double max_err = 0.0;
+
+    for (const auto& row : rows) {
+        double A_table = xsect::getAofY(xs, row.y_ft);
+        double err = std::abs(A_table - row.A_ref);
+        max_err = std::max(max_err, err);
+        EXPECT_LT(err, tol)
+            << "At y_norm=" << row.y_norm
+            << " table=" << A_table
+            << " ref=" << row.A_ref
+            << " err=" << err;
+    }
+    (void)max_err;
 }

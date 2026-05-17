@@ -20,7 +20,11 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <fstream>
 #include <numeric>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "hydrology/LID.hpp"
 #include "core/SimulationContext.hpp"
@@ -1233,4 +1237,192 @@ TEST(LIDPollutantRemoval, RemovalsStoreParsedCorrectly) {
     EXPECT_NEAR(store.removals[0][0].second, 0.75, 1e-10);
     EXPECT_EQ(store.removals[0][1].first, 2);
     EXPECT_NEAR(store.removals[0][1].second, 0.50, 1e-10);
+}
+
+// ============================================================================
+// Storage exfiltration trajectory benchmark
+//
+// batchBarrelFlux with no inflow, no drain, no evap, and clogFactor=0 reduces
+// to d(depth)/dt = -kSat/phi — a constant-rate ODE that Euler integrates
+// exactly.  Depth and cumulative exfiltration are compared against the
+// closed-form linear solution to machine-precision tolerance.
+// ============================================================================
+
+#ifndef BENCHMARK_DATA_DIR
+#  define BENCHMARK_DATA_DIR ""
+#endif
+
+namespace {
+
+struct ExfilBenchRow { double t_s, stor_depth_ft, E_cumul_ft; };
+
+static std::vector<ExfilBenchRow> load_exfil_bench(const std::string& path) {
+    std::vector<ExfilBenchRow> rows;
+    std::ifstream in(path);
+    if (!in.is_open()) return rows;
+    std::string line;
+    bool header_seen = false;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        if (!header_seen) { header_seen = true; continue; }
+        // columns: t_s, stor_depth_ft, E_cumul_ft
+        std::istringstream ss(line);
+        std::string tok;
+        double vals[3] = {};
+        int col = 0;
+        while (std::getline(ss, tok, ',') && col < 3)
+            vals[col++] = std::stod(tok);
+        if (col >= 3)
+            rows.push_back({vals[0], vals[1], vals[2]});
+    }
+    return rows;
+}
+
+}  // namespace
+
+// Constant-area storage draining at constant kSat (no clogging, no drain).
+// Exact solution: depth(t) = 2.0 - 2.5e-4*t, E_cumul(t) = 1e-4*t.
+// Euler is exact for this linear ODE, so tolerance is machine-epsilon tight.
+TEST(LIDStorageExfil, TrajectoryMatchesBenchmark) {
+    std::string path = std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/exfil-storage-constant-area/reference.csv";
+
+    auto rows = load_exfil_bench(path);
+    if (rows.empty()) {
+        GTEST_SKIP() << "Benchmark data not found: " << path;
+    }
+
+    LIDGroupSoA g;
+    g.type = LIDType::RAIN_BARREL;
+    g.resize(1);
+    g.stor_thick[0]  = 2.0;
+    g.stor_void[0]   = 0.4;
+    g.stor_ksat[0]   = 1.0e-4;
+    g.stor_clog[0]   = 0.0;
+    g.drain_coeff[0] = 0.0;
+    g.stor_depth[0]  = rows[0].stor_depth_ft;  // 2.0 ft (full)
+    g.surf_depth[0]  = 0.0;
+
+    double max_depth_err = 0.0, max_exfil_err = 0.0;
+    double sum_sq_depth  = 0.0, sum_sq_exfil  = 0.0;
+    double prev_t = rows[0].t_s;
+
+    for (size_t i = 1; i < rows.size(); ++i) {
+        double dt = rows[i].t_s - prev_t;
+        LIDSolver::batchBarrelFlux(g, 0.0, dt);
+
+        double depth_err = std::abs(g.stor_depth[0] - rows[i].stor_depth_ft);
+        double exfil_err = std::abs(g.wb_infil[0]   - rows[i].E_cumul_ft);
+
+        max_depth_err = std::max(max_depth_err, depth_err);
+        max_exfil_err = std::max(max_exfil_err, exfil_err);
+        sum_sq_depth += depth_err * depth_err;
+        sum_sq_exfil += exfil_err * exfil_err;
+        prev_t = rows[i].t_s;
+    }
+
+    ASSERT_GE(rows.size(), 2u) << "benchmark CSV must have at least one data row";
+    double n = static_cast<double>(rows.size() - 1);
+
+    // DO NOT loosen these tolerances.
+    // The ODE is constant-rate; Euler is exact; actual FP error is ~1e-15 ft.
+    // The 1e-9 ft threshold sits a million times above the expected noise floor.
+    // If either assertion fails, investigate the rate, volume-limiter, or Euler
+    // update in batchBarrelFlux — do not widen the tolerance to make it pass.
+    EXPECT_LT(max_depth_err, 1e-9)
+        << "Storage depth max error " << max_depth_err
+        << " ft exceeds 1e-9 ft (benchmark: " << path << ")";
+    EXPECT_LT(max_exfil_err, 1e-9)
+        << "Cumulative exfil max error " << max_exfil_err
+        << " ft exceeds 1e-9 ft";
+    EXPECT_LT(std::sqrt(sum_sq_depth / n), 1e-10)
+        << "Storage depth RMS error exceeds 1e-10 ft";
+    EXPECT_LT(std::sqrt(sum_sq_exfil / n), 1e-10)
+        << "Cumulative exfil RMS error exceeds 1e-10 ft";
+
+    // Mass-balance identity: E_cumul == (depth_0 - depth) * phi
+    double depth_loss  = (rows[0].stor_depth_ft - g.stor_depth[0]) * g.stor_void[0];
+    double exfil_total = g.wb_infil[0];
+    EXPECT_NEAR(depth_loss, exfil_total, 1e-9)
+        << "Mass-balance identity violated: depth_loss=" << depth_loss
+        << " exfil_total=" << exfil_total;
+}
+
+// ============================================================================
+// Storage exfiltration clogging trajectory benchmark
+//
+// batchBarrelFlux with constant rainfall inflow r = kSat causes wb_inflow to
+// grow by r*dt = 6e-3 ft each step, reducing keff linearly via the clogging
+// model: keff[n] = kSat*(1 - n*r*dt/clogFactor).
+//
+// Because keff is recomputed from the deterministic wb_inflow[n] = n*6e-3 at
+// the start of each call, the Euler step is exact.  The closed-form reference:
+//   D[N] = 2.0 - 0.009*N + 0.00015*N*(N-1)
+//   E[N] = 0.006*N - 0.00006*N*(N-1)
+//
+// At N=10, clogging has reduced keff to 80% of kSat, making the trajectory
+// visibly non-linear and distinct from the constant-area benchmark.
+// ============================================================================
+
+// Clogging trajectory: constant rainfall inflow equals kSat, partial clogging.
+// Exact solution: D[N] = 2.0 - 0.009*N + 0.00015*N*(N-1), E[N] = 0.006*N - 0.00006*N*(N-1).
+TEST(LIDStorageExfil, CloggingTrajectoryMatchesBenchmark) {
+    std::string path = std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/exfil-cylindrical-storage-greenampt/reference.csv";
+
+    auto rows = load_exfil_bench(path);
+    if (rows.empty()) {
+        GTEST_SKIP() << "Benchmark data not found: " << path;
+    }
+
+    const double RAINFALL = 1.0e-4;  // ft/s — unit inflow rate (= kSat)
+
+    LIDGroupSoA g;
+    g.type = LIDType::RAIN_BARREL;
+    g.resize(1);
+    g.stor_thick[0]  = 3.0;          // large enough to never overflow
+    g.stor_void[0]   = 0.4;
+    g.stor_ksat[0]   = 1.0e-4;
+    g.stor_clog[0]   = 0.3;          // clogFactor: fully clogs at 0.3 ft inflow
+    g.drain_coeff[0] = 0.0;
+    g.stor_depth[0]  = rows[0].stor_depth_ft;   // 2.0 ft
+    g.surf_depth[0]  = 0.0;
+    // g.inflow[0] stays 0 — unit_inflow comes from rainfall parameter
+    // g.stor_covered[0] stays 0 — rainfall is NOT blocked
+
+    double max_depth_err = 0.0, max_exfil_err = 0.0;
+    double sum_sq_depth  = 0.0, sum_sq_exfil  = 0.0;
+    double prev_t = rows[0].t_s;
+
+    for (size_t i = 1; i < rows.size(); ++i) {
+        double dt = rows[i].t_s - prev_t;
+        LIDSolver::batchBarrelFlux(g, RAINFALL, dt);
+
+        double depth_err = std::abs(g.stor_depth[0] - rows[i].stor_depth_ft);
+        double exfil_err = std::abs(g.wb_infil[0]   - rows[i].E_cumul_ft);
+
+        max_depth_err = std::max(max_depth_err, depth_err);
+        max_exfil_err = std::max(max_exfil_err, exfil_err);
+        sum_sq_depth += depth_err * depth_err;
+        sum_sq_exfil += exfil_err * exfil_err;
+        prev_t = rows[i].t_s;
+    }
+
+    ASSERT_GE(rows.size(), 2u) << "benchmark CSV must have at least one data row";
+    double n = static_cast<double>(rows.size() - 1);
+
+    // DO NOT loosen these tolerances.
+    // keff is recomputed from wb_inflow[n] = n*6e-3 (deterministic integer multiple)
+    // at the start of every call.  Euler is exact for each step.  Actual FP error
+    // is ~1e-15 ft.  If either assertion fails, investigate the clogging formula,
+    // the exfil rate, the volume-limiter, or the Euler update.
+    EXPECT_LT(max_depth_err, 1e-9)
+        << "Storage depth max error " << max_depth_err
+        << " ft exceeds 1e-9 ft (benchmark: " << path << ")";
+    EXPECT_LT(max_exfil_err, 1e-9)
+        << "Cumulative exfil max error " << max_exfil_err << " ft exceeds 1e-9 ft";
+    EXPECT_LT(std::sqrt(sum_sq_depth / n), 1e-10)
+        << "Storage depth RMS error exceeds 1e-10 ft";
+    EXPECT_LT(std::sqrt(sum_sq_exfil / n), 1e-10)
+        << "Cumulative exfil RMS error exceeds 1e-10 ft";
 }

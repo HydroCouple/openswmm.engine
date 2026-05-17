@@ -1,0 +1,77 @@
+benchmark: dw-ritter-drybed-strip
+type: manufactured
+verification_class: analytical
+description: >
+  1D frictionless dry-bed dam break on a horizontal rectangular channel.
+  Ritter (1892) exact solution compared against the OpenSWMM DW solver
+  (DWSolver::execute) at t ∈ {2, 4, 6, 8} s.  US customary units throughout
+  to match the solver's hardcoded GRAVITY = 32.2 ft/s².
+
+swmm_target: src/engine/hydraulics/DynamicWave.cpp (DWSolver::execute)
+
+reference_generator:
+  type: analytical_formula
+  script: tests/benchmarks/manufactured/dw-ritter-drybed-strip/scripts/generate_reference.py
+  language: python3
+  dependencies: []
+  notes: >
+    Pure Python, no external solver.  Implements the three-region Ritter
+    rarefaction solution exactly in closed form.  Reproducible to machine
+    precision on any IEEE-754 compliant platform.
+
+source:
+  - author: Ritter, A.
+    year: 1892
+    title: "Die Fortpflanzung der Wasserwellen"
+    journal: Zeitschrift des Vereines Deutscher Ingenieure
+    volume: 36
+    pages: 947-954
+    notes: >
+      Original derivation of the dry-bed dam-break rarefaction.
+      The formulas used here are reproduced in equation form in
+      Delestre et al. (2013) SWASHES §2.1.1.
+  - author: "Delestre, O. et al."
+    year: 2013
+    title: "SWASHES: a compilation of shallow water analytic solutions for hydraulic and environmental studies"
+    journal: International Journal for Numerical Methods in Fluids
+    volume: 72
+    issue: 3
+    pages: 269-300
+    doi: 10.1002/fld.3741
+    notes: Reference for the sign-correct formulas used in this benchmark.
+
+problem:
+  name: ritter-dry-bed-dam-break
+  governing_equations: 1D Saint-Venant (frictionless, horizontal)
+  analytical_solution: three-region rarefaction fan
+  coordinate: "xi = x_abs - x_d (local, zero at dam)"
+
+parameters:
+  h0_ft: 1.0
+  g_ft_s2: 32.2
+  c0_ft_s: 5.674504392  # sqrt(32.2)
+  L_ft: 250.0
+  x_d_ft: 125.0
+  b_ft: 5.0
+  dx_ft: 5.0
+  dt_s: 0.5
+  comparison_times_s: [2.0, 4.0, 6.0, 8.0]
+  t_max_s: 11.0142  # (L-x_d)/(2*c0); solution valid for t < t_max
+
+metrics:
+  mass_error_pct:
+    description: hard requirement, bookkeeping check
+    threshold: 0.5
+    initial_target: false
+  dam_station_rel_error:
+    description: |h(xi=0,t) - 4h0/9| / h0
+    threshold: 0.10
+    initial_target: true
+  l1_h_ft:
+    description: mean |h_solver - h_ref| over wet nodes (h_ref > 0.01 ft)
+    threshold: 0.05
+    initial_target: true
+  front_position_error_ft:
+    description: |xi_front_solver - 2*c0*t|
+    threshold: 15.0
+    initial_target: true

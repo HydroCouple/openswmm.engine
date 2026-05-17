@@ -1,0 +1,37 @@
+benchmark: modified-horton-fmax-saturation-recovery
+created: 2026-05-14
+method: exact-euler
+generator: python3 (inline script, see definition.md)
+
+parameters:
+  f0_fps: 4.0e-5
+  fmin_fps: 4.0e-6
+  kd_per_s: 1.666666666666667e-3   # 1/600
+  kr_per_s: 2.777777777777778e-4   # 1/3600
+  Fmax_ft: 0.016
+  dt_s: 60.0
+
+schedule:
+  wet_steps: 10   # t=0..600
+  dry_steps: 6    # t=600..960
+  wet_steps_2: 5  # t=960..1260
+
+notable_events:
+  - step: 10 (t=540→600): Fmh cap triggers; f capped to (Fmax-Fmh)/dt
+  - step: 17 (t=960→1020): dry-recovery values used as initial condition
+  - step: 18 (t=1020→1080): Fmh saturates again after partial recovery
+
+precision: double (IEEE 754)
+tolerance_ft: 1.0e-9
+
+attribution:
+  references:
+    horton: >
+      Horton, R.E. (1940). An approach toward a physical interpretation of
+      infiltration-capacity. Soil Science Society of America Proceedings, 5, 399-417.
+      (original Horton infiltration model with exponential decay/recovery).
+    swmm_infil: >
+      Rossman, L.A. and Huber, W.C. (2016). Storm Water Management Model
+      Reference Manual Volume I — Hydrology. EPA/600/R-15/162A. Section 4.3
+      (Modified Horton with Fmax cap and dry-period recovery).
+  license_note: benchmark data are original to this project; no copied source code.
