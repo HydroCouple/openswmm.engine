@@ -436,6 +436,7 @@ TEST(GWLinearizedRecession, ExponentialDecayTrajectory) {
         prev_t   = rows[i].t_s;
     }
 
+    ASSERT_GE(rows.size(), 2u) << "benchmark CSV must have at least one data row";
     double n = static_cast<double>(rows.size() - 1);
 
     // RKF45 with GWTOL=1e-4; tolerance is 1e-3 ft (10× GWTOL, absorbs step accumulation).

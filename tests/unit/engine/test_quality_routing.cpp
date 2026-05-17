@@ -675,6 +675,7 @@ TEST(QualityCSTR, FirstOrderDecayTrajectory) {
         prev_t   = rows[i].t_s;
     }
 
+    ASSERT_GE(rows.size(), 2u) << "benchmark CSV must have at least one data row";
     double n = static_cast<double>(rows.size() - 1);
 
     EXPECT_LT(max_err, 1e-9)
