@@ -1,0 +1,63 @@
+benchmark: odesolve-logistic-growth
+type: manufactured
+description: >
+  Logistic growth ODE solved by the adaptive RK45 integrator against the
+  closed-form solution. Tests nonlinear right-hand side and autonomous
+  behaviour (S-curve from near-zero to near-carrying-capacity).
+swmm_target: src/engine/math/OdeSolver.cpp
+
+problem:
+  name: logistic-growth
+  equation: "dy/dt = r*y*(1 - y/K)"
+  initial_condition: "y(0) = 0.1"
+  parameters:
+    r_per_s: 0.5
+    K: 1.0
+    y0: 0.1
+    t_start_s: 0.0
+    t_end_s: 14.0
+
+exact_solution:
+  formula: "y(t) = K / (1 + (K/y0 - 1)*exp(-r*t)) = 1 / (1 + 9*exp(-0.5*t))"
+  derivation: >
+    Separation of variables on dy/(y*(1-y)) = r dt, then partial fractions.
+  references:
+    logistic_equation: >
+      Verhulst, P.F. (1845). Recherches mathematiques sur la loi d'accroissement
+      de la population. Nouveaux Memoires de l'Academie Royale des Sciences et
+      Belles-Lettres de Bruxelles, 18, 1-42.
+      (Full derivation and naming of the logistic equation; the 1838 note is
+      the first statement but the 1845 paper gives the closed-form solution.)
+    integrator: >
+      Cash, J.R. and Karp, A.H. (1990). A variable order Runge-Kutta method
+      for initial value problems with rapidly varying right-hand sides.
+      ACM Transactions on Mathematical Software, 16(3), 201-222.
+      https://doi.org/10.1145/79505.79507
+
+dataset:
+  file: reference.csv
+  columns:
+    t_s: time in seconds
+    y_exact: dimensionless exact solution value
+  n_points: 8
+  t_start_s: 0.0
+  t_end_s: 14.0
+  dt_s: 2.0
+  sampling: uniform
+
+tolerances:
+  max_absolute_error: 1.0e-4
+  basis: >
+    RK45 with eps=1e-6 and h1=0.1 s tracks smooth nonlinear trajectories to
+    global error well below 1e-4 over this interval.
+
+provenance:
+  generated_by: analytic formula evaluated in double-precision arithmetic
+  tool: none (closed-form)
+  date: "2026-05-05"
+  author: openswmm.engine development team
+  computation: "y[i] = 1.0 / (1.0 + 9.0 * std::exp(-0.5 * t[i])) for t in {0,2,4,6,8,10,12,14}"
+  reproducible: true
+  notes: >
+    Values are exact to double-precision ULP. The S-curve covers y from 0.1
+    to 0.99, exercising the integrator across the full sigmoid range.

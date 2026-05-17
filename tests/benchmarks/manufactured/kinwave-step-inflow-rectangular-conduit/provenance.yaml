@@ -1,0 +1,87 @@
+benchmark: kinwave-step-inflow-rectangular-conduit
+type: manufactured
+description: >
+  Single rectangular open channel receiving a step inflow equal to the
+  Manning normal-depth discharge.  Tests KW solver mass conservation and
+  steady-state convergence; no closed-form transient solution is used.
+swmm_target: src/engine/routing/KinematicWave.cpp (KWSolver::solveConduit)
+
+problem:
+  name: kw-step-inflow-rectangular
+  transient_solution: none (no closed-form analytical transient for KW step input)
+  verified_properties:
+    - steady_state_convergence: |
+        After t >> t_arrival = L/c_0, outflow must converge to inflow
+        Q_out(T) / Q_in ∈ [1 - tol, 1 + tol] with tol = 0.005 (0.5%)
+    - mass_balance: |
+        |V_in - V_out - delta_V_stored| / V_in < 0.05 (5%)
+        V_in = Q_in * N_steps * dt
+        V_out = sum Q_out[i] * dt
+        delta_V_stored = (A_final - A_initial) * L
+
+parameters:
+  Q_in_cfs: 50.0
+  W_ft: 10.0
+  slope: 0.001
+  n_mann: 0.013
+  length_ft: 500.0
+  dt_s: 60.0
+  n_steps: 10
+  unit_system: US   # PHI = 1.486
+  derived:
+    PHI: 1.486
+    beta: 3.6145        # PHI * sqrt(slope) / n_mann
+    d_n_approx_ft: 1.339
+    A_n_approx_ft2: 13.39
+    c_0_approx_fps: 6.23  # (5/3) * Q_in / A_n (kinematic wave celerity)
+    t_arrival_approx_s: 80  # L / c_0
+    t_final_over_t_arrival: 7.5  # 600 / 80 (wave fully resolved)
+
+dataset:
+  file: reference.csv
+  format: >
+    Single-row parameter table.  All analytical targets are derived at runtime
+    by the test using the same xsect functions as the solver.
+  columns:
+    Q_in_cfs: step inflow
+    channel_width_ft: W
+    bed_slope: S
+    n_mann: Manning roughness
+    channel_length_ft: L
+    dt_s: routing timestep
+    n_steps: number of steps
+    ss_check_step: step at which SS is checked
+    ss_tol_rel: relative tolerance for SS check
+    massbal_tol_rel: relative tolerance for mass balance check
+
+tolerances:
+  ss_convergence_rel: 0.005
+  mass_balance_rel: 0.05
+  basis: >
+    KW Preissmann scheme is conservative and SS-convergent.  The 0.5% SS
+    tolerance is loose relative to expected O(dt^2) discretization error.
+    The 5% mass-balance tolerance is intentionally wide: the KW "no-flow"
+    branch on step 1 (wave not yet arrived) sets q_out=0 without satisfying
+    the finite-difference continuity equation, introducing a ~Q*dt systematic
+    offset (~10% of V_in) that persists cumulatively.  Any value below 5%
+    indicates a real regression in volume tracking across timesteps.
+
+attribution:
+  references:
+    kinematic_wave: >
+      Lighthill, M.J. and Whitham, G.B. (1955). On kinematic waves. I. Flood
+      movement in long rivers. Proc. R. Soc. London A 229(1178): 281-316.
+    swmm_kw: >
+      Rossman, L.A. (2015). Storm Water Management Model Reference Manual
+      Volume II — Hydraulics. EPA/600/R-17/111.  Chapter 4.
+  license_note: benchmark data are original to this project; no copied source code.
+
+provenance:
+  generated_by: analytically derived channel parameters; no time-series reference
+  tool: hand calculation from Manning's equation
+  date: "2026-05-13"
+  author: openswmm.engine development team
+  notes: >
+    The test derives Q_n, A_n, and d_n at runtime using xsect::setParams and
+    Manning's equation — the same path the solver uses.  No pre-computed numerical
+    reference is needed for SS and mass-balance checks.

@@ -1,0 +1,16 @@
+# Horton infiltration, capacity-limited, constant rainfall (fully ponded)
+# f0=3.0 in/hr, f_min=0.5 in/hr, k=4.0 hr^-1
+# f(t) = f_min + (f0-f_min)*exp(-k*t)
+# F(t) = f_min*t + (f0-f_min)/k * (1 - exp(-k*t))
+# Internal units: ft/s for rate, ft for depth
+# t_s: time [s], t_hr: time [hr]
+# f_ft_per_s: rate [ft/s], F_ft: cumulative depth [ft]
+# f_in_per_hr: rate [in/hr], F_in: cumulative depth [in]
+t_s,t_hr,f_ft_per_s,F_ft,f_in_per_hr,F_in
+0,0.00000,6.94444444e-05,0.00000000e+00,3.00000000,0.00000000
+900,0.25000,3.28629224e-05,4.33396128e-02,1.41969860,0.52007535
+1800,0.50000,1.94081341e-05,6.58679538e-02,0.83834980,0.79041545
+2700,0.75000,1.44552697e-05,8.07402572e-02,0.62414765,0.96888309
+3600,1.00000,1.26343037e-05,9.27960613e-02,0.54580111,1.11355274
+7200,2.00000,1.15934952e-05,1.35399195e-01,0.50083770,1.62479034
+14400,4.00000,1.15740806e-05,2.18749994e-01,0.50000027,2.62499993
