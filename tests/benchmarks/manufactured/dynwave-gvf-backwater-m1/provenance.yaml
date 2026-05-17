@@ -67,8 +67,8 @@ attribution:
 
 provenance:
   generated_by: >
-    Python script using scipy.integrate.solve_ivp (RK45, rtol=1e-10, atol=1e-12)
-    to integrate dy/dx = (S0 - Sf) / (1 - Fr^2) from x=1000 to x=0,
+    Python script using fixed-step RK4 with dx = -200 ft to integrate
+    dy/dx = (S0 - Sf) / (1 - Fr^2) from x=1000 to x=0,
     with boundary condition y(x=1000) = y_d = 1.5 * y_n.
   date: "2026-05-14"
   author: openswmm.engine development team
