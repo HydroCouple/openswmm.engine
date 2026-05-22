@@ -74,7 +74,7 @@ MCP_DOMAIN_HINTS: dict[str, list[str]] = {
     "quality": ["spatial_quality"],
     "pollutants": ["query", "building"],
     "hotstart": ["hotstart"],
-    "tables": ["building"],
+    "tables": ["tables", "building"],
     "controls": ["forcing"],
     "forcing": ["forcing"],
     "inflows": ["forcing", "building"],
@@ -307,13 +307,24 @@ def match_mcp(cf: CFunc, mcp_by_ns: dict[str, list[McpEntry]]) -> list[McpEntry]
     namespaces = MCP_DOMAIN_HINTS.get(cf.domain, [])
     if not namespaces or not cf.verb_obj:
         return []
+    needles = {n for n in alt_verb_objs(cf.verb_obj, cf.domain) if n}
     found: list[McpEntry] = []
-    needle = cf.verb_obj
-    # exact suffix or substring match within likely namespaces
+    seen: set[tuple[str, str]] = set()
     for ns in namespaces:
         for entry in mcp_by_ns.get(ns, []):
-            if needle in entry.name or entry.name.endswith(needle):
-                found.append(entry)
+            name = entry.name
+            for needle in needles:
+                if (
+                    name == needle
+                    or name.endswith("_" + needle)
+                    or name.startswith(needle + "_")
+                    or name == needle.replace("_", "")
+                ):
+                    key = (entry.namespace, entry.name)
+                    if key not in seen:
+                        seen.add(key)
+                        found.append(entry)
+                    break
     return found
 
 

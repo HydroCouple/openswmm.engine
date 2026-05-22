@@ -48,7 +48,8 @@ lifecycle	close_model	lifecycle	tool	(ctx: Context, session_id: str='default') -
 lifecycle	get_simulation_state	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
 lifecycle	get_simulation_time	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
 lifecycle	list_sessions	lifecycle	tool	(ctx: Context) -> list[dict]
-lifecycle	open_model	lifecycle	tool	(ctx: Context, inp_path: str, session_id: str='default', rpt_path: str | None=None, out_path: str | None=None, engine: str='openswmm') -> ModelSummary
+lifecycle	open_model	lifecycle	tool	(ctx: Context, inp_path: str, session_id: str='default', rpt_path: str | None=None, out_path: str | None=None, engine: str='openswmm') -> ModelSummary# 97 entries (88 tools, 9 resources) across 12 modules
+
 lifecycle	run_simulation	lifecycle	tool	(ctx: Context, session_id: str='default') -> SimulationResult
 lifecycle	step_simulation	lifecycle	tool	(ctx: Context, session_id: str='default', num_steps: int=1) -> StepResult
 query	find_elements	query	tool	(ctx: Context, session_id: str='default', pattern: str | None=None, element_type: str | None=None) -> list[ElementSearchResult]
@@ -82,3 +83,17 @@ spatial_quality	set_crs	spatial_quality	tool	(ctx: Context, session_id: str='def
 spatial_quality	set_polygon	spatial_quality	tool	(ctx: Context, session_id: str='default', subcatch_id: str='', polygon: list[list[float]]=[]) -> dict
 spatial_quality	set_treatment	spatial_quality	tool	(ctx: Context, session_id: str='default', node_id: str='', pollutant: str='', expression: str='') -> dict
 spatial_quality	set_vertices	spatial_quality	tool	(ctx: Context, session_id: str='default', link_id: str='', vertices: list[list[float]]=[]) -> dict
+tables	add_curve	tables	tool	(ctx: Context, session_id: str='default', curve_id: str='', curve_type: str='storage', x_values: list[float] | None=None, y_values: list[float] | None=None) -> dict
+tables	add_point	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', x: float=0.0, y: float=0.0) -> dict
+tables	add_timeseries	tables	tool	(ctx: Context, session_id: str='default', ts_id: str='', times: list[float] | None=None, values: list[float] | None=None) -> dict
+tables	clear_points	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='') -> dict
+tables	count	tables	tool	(ctx: Context, session_id: str='default') -> dict
+tables	get_id	tables	tool	(ctx: Context, session_id: str='default', index: int=0) -> dict
+tables	get_index	tables	tool	(ctx: Context, session_id: str='default', table_id: str='') -> dict
+tables	get_point	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', point_index: int=0) -> dict
+tables	get_point_count	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='') -> dict
+tables	get_points	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='') -> dict
+tables	lookup	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', x: float=0.0) -> dict
+tables	pattern_add	tables	tool	(ctx: Context, session_id: str='default', pattern_id: str='', pattern_type: str='monthly', factors: list[float] | None=None) -> dict
+tables	pattern_count	tables	tool	(ctx: Context, session_id: str='default') -> dict
+tables	pattern_set_factors	tables	tool	(ctx: Context, session_id: str='default', pattern_index: int=0, factors: list[float] | None=None) -> dict
