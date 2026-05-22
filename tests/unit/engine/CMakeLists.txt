@@ -134,13 +134,20 @@ target_link_libraries(test_engine_2d_surface
         openswmm_legacy_engine
 )
 if(OPENSWMM_BUILD_2D)
-    # HDF5 is required by Default2DOutputPlugin. The engine target finds it
-    # at configure time; surface the imported variables to this test target.
-    if(NOT HDF5_FOUND)
-        find_package(HDF5 REQUIRED COMPONENTS C)
+    # HDF5 is required by Default2DOutputPlugin. The engine target resolves it
+    # at configure time — prefer the imported target it set up (visible globally),
+    # falling back to FindHDF5 variables for system installs.
+    if(TARGET hdf5::hdf5-shared)
+        target_link_libraries(test_engine_2d_surface PRIVATE hdf5::hdf5-shared)
+    elseif(TARGET hdf5::hdf5-static)
+        target_link_libraries(test_engine_2d_surface PRIVATE hdf5::hdf5-static)
+    else()
+        if(NOT HDF5_FOUND)
+            find_package(HDF5 REQUIRED COMPONENTS C)
+        endif()
+        target_link_libraries(test_engine_2d_surface PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(test_engine_2d_surface PRIVATE ${HDF5_INCLUDE_DIRS})
     endif()
-    target_link_libraries(test_engine_2d_surface PRIVATE ${HDF5_C_LIBRARIES})
-    target_include_directories(test_engine_2d_surface PRIVATE ${HDF5_INCLUDE_DIRS})
 endif()
 target_include_directories(test_engine_2d_surface
     PRIVATE

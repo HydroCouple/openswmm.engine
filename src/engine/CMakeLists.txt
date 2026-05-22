@@ -327,10 +327,26 @@ if(OPENSWMM_BUILD_2D)
     find_package(SUNDIALS REQUIRED COMPONENTS cvode)
     target_link_libraries(openswmm_engine PRIVATE SUNDIALS::cvode)
 
-    # Default2DOutputPlugin emits CF-1.11/UGRID-1.0 HDF5 — required dep
-    find_package(HDF5 REQUIRED COMPONENTS C)
-    target_link_libraries(openswmm_engine PRIVATE ${HDF5_C_LIBRARIES})
-    target_include_directories(openswmm_engine PRIVATE ${HDF5_INCLUDE_DIRS})
+    # Default2DOutputPlugin emits CF-1.11/UGRID-1.0 HDF5 — required dep.
+    # Prefer vcpkg's hdf5-config.cmake (CONFIG mode) since CMake's bundled
+    # FindHDF5.cmake hunts for h5cc/well-known layouts and misses vcpkg installs.
+    # Fall back to FindHDF5 for system installs (Linux distros, Homebrew) that
+    # don't ship hdf5-config.cmake.
+    find_package(hdf5 CONFIG QUIET)
+    if(hdf5_FOUND)
+        if(TARGET hdf5::hdf5-shared)
+            set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-shared)
+        elseif(TARGET hdf5::hdf5-static)
+            set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-static)
+        else()
+            message(FATAL_ERROR "hdf5 CONFIG package found but neither hdf5::hdf5-shared nor hdf5::hdf5-static is defined")
+        endif()
+        target_link_libraries(openswmm_engine PRIVATE ${_OPENSWMM_HDF5_TARGET})
+    else()
+        find_package(HDF5 REQUIRED COMPONENTS C)
+        target_link_libraries(openswmm_engine PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(openswmm_engine PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
 
     target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAS_2D=1)
 
@@ -338,8 +354,12 @@ if(OPENSWMM_BUILD_2D)
     if(TARGET openswmm_engine_internal)
         target_sources(openswmm_engine_internal PRIVATE ${OPENSWMM_2D_SOURCES})
         target_link_libraries(openswmm_engine_internal PRIVATE SUNDIALS::cvode)
-        target_link_libraries(openswmm_engine_internal PRIVATE ${HDF5_C_LIBRARIES})
-        target_include_directories(openswmm_engine_internal PRIVATE ${HDF5_INCLUDE_DIRS})
+        if(hdf5_FOUND)
+            target_link_libraries(openswmm_engine_internal PRIVATE ${_OPENSWMM_HDF5_TARGET})
+        else()
+            target_link_libraries(openswmm_engine_internal PRIVATE ${HDF5_C_LIBRARIES})
+            target_include_directories(openswmm_engine_internal PRIVATE ${HDF5_INCLUDE_DIRS})
+        endif()
         target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAS_2D=1)
     endif()
 
