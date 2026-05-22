@@ -354,6 +354,125 @@ class Solver:
     """
 
     # =========================================================================
+    # Routing event windows ([EVENTS] section)
+    # =========================================================================
+
+    def get_event_count(self) -> int:
+        """Number of C{[EVENTS]} rows. Synonym of L{events_count}.
+
+        @rtype: int
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def is_between_events(self) -> bool:
+        """Whether the current simulation time is inside a defined event window.
+
+        @return: C{True} if there are no events, or if the current sim time
+            falls within one.
+        @rtype: bool
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def events_count(self) -> int:
+        """Number of C{[EVENTS]} rows.
+
+        @rtype: int
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def events_get(self, idx: int) -> tuple[float, float]:
+        """Get the start/end OADate for the I{idx}-th event window.
+
+        @param idx: Zero-based row index.
+        @return: C{(start, end)} OADate decimal days.
+        @raise EngineError: On bad index.
+        """
+        ...
+
+    def events_set(self, idx: int, start: float, end: float) -> None:
+        """Overwrite the I{idx}-th event window.
+
+        @raise EngineError: On bad index or when C{start >= end}.
+        """
+        ...
+
+    def events_add(self, start: float, end: float) -> int:
+        """Append a new event window. Returns the new row index.
+
+        @raise EngineError: When C{start >= end} or on C API failure.
+        """
+        ...
+
+    def events_remove(self, idx: int) -> None:
+        """Remove the I{idx}-th event. Trailing entries shift down.
+
+        @raise EngineError: On bad index.
+        """
+        ...
+
+    def events_clear(self) -> None:
+        """Remove every event window. Safe on an already-empty list.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    # =========================================================================
+    # Steady-state skip
+    # =========================================================================
+
+    def get_steady_state_skip(self) -> bool:
+        """Whether C{SKIP_STEADY_STATE} routing skip is enabled.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def set_steady_state_skip(self, enabled: bool) -> None:
+        """Enable or disable C{SKIP_STEADY_STATE} routing.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    # =========================================================================
+    # Step callbacks
+    # =========================================================================
+
+    def set_step_begin_callback(
+        self, callback: Optional[Callable[[float, float], None]]
+    ) -> None:
+        """Register a callback invoked at the start of each routing timestep.
+
+        The callable receives C{(sim_time, dt)} and is invoked before physics
+        are computed — the right place to inject forcings or override
+        boundary conditions. Pass C{None} to unregister.
+
+        Lifetime: the callable is stored on the L{Solver} instance for the
+        duration of registration; do not hold a separate strong reference
+        that outlives the solver.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def set_step_end_callback(
+        self, callback: Optional[Callable[[float, float], None]]
+    ) -> None:
+        """Register a callback invoked at the end of each routing timestep.
+
+        The callable receives C{(sim_time, dt)} and runs after physics —
+        the right place to read results for monitoring or control. Pass
+        C{None} to unregister.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    # =========================================================================
     # Model write
     # =========================================================================
 

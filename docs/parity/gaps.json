@@ -1,8 +1,8 @@
 {
   "counts": {
-    "mcp-gap": 423,
+    "mcp-gap": 434,
     "mcp-gap-2d": 45,
-    "py-gap": 34
+    "py-gap": 23
   },
   "gaps": {
     "mcp-gap": [
@@ -35,10 +35,21 @@
       "swmm_engine_run_with_callback",
       "swmm_engine_start",
       "swmm_engine_stride",
+      "swmm_events_add",
+      "swmm_events_clear",
+      "swmm_events_count",
+      "swmm_events_get",
+      "swmm_events_remove",
+      "swmm_events_set",
       "swmm_get_current_time",
       "swmm_get_end_time",
       "swmm_get_routing_step",
       "swmm_get_start_time",
+      "swmm_get_steady_state_skip",
+      "swmm_is_between_events",
+      "swmm_set_steady_state_skip",
+      "swmm_set_step_begin_callback",
+      "swmm_set_step_end_callback",
       "swmm_forcing_clear_all",
       "swmm_forcing_gage_rainfall",
       "swmm_forcing_link_flow",
@@ -478,17 +489,6 @@
       "swmm_2d_vertex_get_heads_bulk"
     ],
     "py-gap": [
-      "swmm_events_add",
-      "swmm_events_clear",
-      "swmm_events_count",
-      "swmm_events_get",
-      "swmm_events_remove",
-      "swmm_events_set",
-      "swmm_get_steady_state_skip",
-      "swmm_is_between_events",
-      "swmm_set_steady_state_skip",
-      "swmm_set_step_begin_callback",
-      "swmm_set_step_end_callback",
       "swmm_set_warning_callback",
       "swmm_link_set_xsect",
       "swmm_options_get",

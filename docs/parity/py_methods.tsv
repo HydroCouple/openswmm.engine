@@ -447,15 +447,27 @@ solver	Solver.create	_solver	method	(self) -> None
 solver	Solver.destroy	_solver	method	(self) -> None
 solver	Solver.elapsed	_solver	property	(self) -> float
 solver	Solver.end	_solver	method	(self) -> int
+solver	Solver.events_add	_solver	method	(self, start: float, end: float) -> int
+solver	Solver.events_clear	_solver	method	(self) -> None
+solver	Solver.events_count	_solver	method	(self) -> int
+solver	Solver.events_get	_solver	method	(self, idx: int) -> tuple[float, float]
+solver	Solver.events_remove	_solver	method	(self, idx: int) -> None
+solver	Solver.events_set	_solver	method	(self, idx: int, start: float, end: float) -> None
 solver	Solver.get_current_time	_solver	method	(self) -> float
 solver	Solver.get_end_time	_solver	method	(self) -> float
+solver	Solver.get_event_count	_solver	method	(self) -> int
 solver	Solver.get_routing_step	_solver	method	(self) -> float
 solver	Solver.get_start_time	_solver	method	(self) -> float
+solver	Solver.get_steady_state_skip	_solver	method	(self) -> bool
 solver	Solver.handle	_solver	property	(self) -> int
 solver	Solver.initialize	_solver	method	(self) -> int
+solver	Solver.is_between_events	_solver	method	(self) -> bool
 solver	Solver.model_write	_solver	method	(self, path: str) -> None
 solver	Solver.open	_solver	method	(self, plugin_lib: Optional[str]=None) -> int
 solver	Solver.report	_solver	method	(self) -> int
+solver	Solver.set_steady_state_skip	_solver	method	(self, enabled: bool) -> None
+solver	Solver.set_step_begin_callback	_solver	method	(self, callback: Optional[Callable[[float, float], None]]) -> None
+solver	Solver.set_step_end_callback	_solver	method	(self, callback: Optional[Callable[[float, float], None]]) -> None
 solver	Solver.start	_solver	method	(self, save_results: bool=True) -> int
 solver	Solver.state	_solver	property	(self) -> int
 solver	Solver.step	_solver	method	(self) -> int
@@ -539,7 +551,8 @@ subcatchments	Subcatchments.set_coverage	_subcatchments	method	(self, idx: Union
 subcatchments	Subcatchments.set_ds_imperv	_subcatchments	method	(self, idx: Union[int, str], ds: float) -> None
 subcatchments	Subcatchments.set_ds_perv	_subcatchments	method	(self, idx: Union[int, str], ds: float) -> None
 subcatchments	Subcatchments.set_gage	_subcatchments	method	(self, idx: Union[int, str], gage_idx: int) -> None
-subcatchments	Subcatchments.set_imperv_pct	_subcatchments	method	(self, idx: Union[int, str], pct: float) -> None
+subcatchments	Subcatchments.set_imperv_pct	_subcatchments	method	(self, idx: Union[int, str], pct: float) -> None# 579 Python methods across 23 stubs
+
 subcatchments	Subcatchments.set_infil_curve_number	_subcatchments	method	(self, idx: Union[int, str], cn: float) -> None
 subcatchments	Subcatchments.set_infil_green_ampt	_subcatchments	method	(self, idx: Union[int, str], suction: float, conductivity: float, initial_deficit: float) -> None
 subcatchments	Subcatchments.set_infil_horton	_subcatchments	method	(self, idx: Union[int, str], f0: float, fmin: float, decay: float, dry_time: float) -> None
