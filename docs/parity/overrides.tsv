@@ -1,0 +1,55 @@
+# Manually-curated parity matrix overrides.
+#
+# Format: c_function<TAB>status<TAB>note
+# Status enum: parity | py-gap | mcp-gap | mcp-gap-2d | intentional | internal
+#
+# Use this file when:
+#   - The auto-matcher missed a real Python equivalent (override to `parity`
+#     with a `via:` note pointing to the actual binding).
+#   - A C function is deliberately not exposed to Python (override to
+#     `intentional` with a one-line reason).
+#   - A C function is a build/dev helper rather than a public API entry point
+#     (override to `internal`).
+#
+# Re-run `python3 docs/parity/tools/build_matrix.py` after edits.
+
+# ----------------------------------------------------------------------------
+# Intentional non-exposures (Python idioms supersede C-level facilities).
+# ----------------------------------------------------------------------------
+swmm_conversion_result_free	intentional	Python uses GC; _edit.ConversionResult is a TypedDict.
+swmm_impact_report_free	intentional	Python uses GC; _edit.ImpactEntry list is GC-managed.
+swmm_get_last_error	intentional	Python raises EngineError instead of polling last-error state.
+swmm_get_last_error_msg	intentional	Python raises EngineError carrying the message.
+swmm_error_message	intentional	Python raises EngineError; error-code -> message is internal.
+swmm_engine_new	intentional	Solver.__init__ handles engine creation transparently.
+swmm_get_event_count	intentional	Alias of swmm_events_count per inline doc; same Phase 1 wrapping.
+
+# ----------------------------------------------------------------------------
+# False negatives (matcher missed a real Python wrapping under a different name).
+# ----------------------------------------------------------------------------
+swmm_2d_triangle_count	parity	via _2d.Surface2D.n_triangles (property).
+swmm_2d_vertex_count	parity	via _2d.Surface2D.n_vertices (property).
+swmm_2d_vertex_get_head	parity	via _2d.Surface2D.get_vertex_heads (bulk-only on Py side, single via index).
+swmm_2d_vertex_get_xyz	parity	via _2d.Surface2D.get_vertex_coords (returns full (x,y,z) tuple).
+swmm_2d_vertex_get_xyz_bulk	parity	via _2d.Surface2D.get_vertex_coords (returns (x,y,z) NumPy arrays).
+swmm_ext_inflow_add	parity	via _inflows.Inflows.add_external.
+swmm_finalize_model	parity	via _model.ModelBuilder.finalize.
+swmm_validate_model	parity	via _model.ModelBuilder.validate.
+swmm_hotstart_warning	parity	via _hotstart.HotStart.get_warning.
+swmm_hydrograph_add_gage	parity	via _inflows.Inflows.add_hydrograph_gage.
+swmm_output_open	parity	via _output_reader.OutputReader.__init__.
+swmm_gpkg_open	parity	via _geopackage.GeoPackage.__init__.
+swmm_set_progress_callback	parity	via _solver.run_with_callback (function-level convenience).
+swmm_get_crs	parity	via _spatial.Spatial.get_crs (Python routes top-level CRS through Spatial).
+swmm_gpkg_node_count	parity	via _geopackage.GeoPackage.object_counts (aggregate dict).
+swmm_gpkg_link_count	parity	via _geopackage.GeoPackage.object_counts (aggregate dict).
+swmm_gpkg_subcatch_count	parity	via _geopackage.GeoPackage.object_counts (aggregate dict).
+swmm_gpkg_gage_count	parity	via _geopackage.GeoPackage.object_counts (aggregate dict).
+swmm_gpkg_simulation_id	parity	via _geopackage.GeoPackage.simulation_ids (plural, returns list).
+
+# ----------------------------------------------------------------------------
+# True py-gaps confirmed (Phase 1 implementation targets).
+# Listed here only when they need a richer note than the default classification.
+# Leaving them out keeps the auto status `py-gap`.
+# ----------------------------------------------------------------------------
+swmm_link_set_xsect	py-gap	Verify: declared in _links.pyi? If yes, change to parity. Phase 1.

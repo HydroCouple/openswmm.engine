@@ -1,0 +1,84 @@
+namespace	name	module	kind	signature
+analysis	compare_scenarios	analysis	tool	(ctx: Context, session_a: str='', session_b: str='', element_type: str='node', variable: str='depth') -> dict
+analysis	export_results	analysis	tool	(ctx: Context, session_id: str='default', output_path: str='', format: str='csv') -> ExportResult
+analysis	get_capacity_summary	analysis	tool	(ctx: Context, session_id: str='default', max_filling_threshold: float=1.0) -> list[CapacitySummaryItem]
+analysis	get_flooding_summary	analysis	tool	(ctx: Context, session_id: str='default', min_flood_volume: float=0.0) -> list[FloodingSummaryItem]
+analysis	get_mass_balance	analysis	tool	(ctx: Context, session_id: str='default') -> MassBalanceResult
+analysis	get_pump_summary	analysis	tool	(ctx: Context, session_id: str='default') -> list[PumpEntryModel]
+analysis	get_report_snapshot	analysis	tool	(ctx: Context, session_id: str='default') -> ReportSnapshotModel
+analysis	get_statistics	analysis	tool	(ctx: Context, session_id: str='default', element_type: str='node', element_id: str='') -> dict
+analysis	get_time_series	analysis	tool	(ctx: Context, session_id: str='default', element_type: str='node', element_id: str='', variable: str='depth', start_period: int=0, end_period: int=-1, downsample: int=1) -> TimeSeries
+building	add_curve	building	tool	(ctx: Context, session_id: str='default', name: str='', curve_type: str='storage', x_values: list[float] | None=None, y_values: list[float] | None=None) -> dict
+building	add_gage	building	tool	(ctx: Context, session_id: str='default', gage_id: str='') -> BuildingResult
+building	add_link	building	tool	(ctx: Context, session_id: str='default', link_id: str='', link_type: str='conduit', from_node: str='', to_node: str='', length: float=100.0, roughness: float=0.013, xsect_shape: str='circular', xsect_geom1: float=1.0, xsect_geom2: float=0.0, xsect_geom3: float=0.0, xsect_geom4: float=0.0) -> BuildingResult
+building	add_node	building	tool	(ctx: Context, session_id: str='default', node_id: str='', node_type: str='junction', invert_elev: float=0.0, max_depth: float=0.0, x: float | None=None, y: float | None=None) -> BuildingResult
+building	add_pollutant	building	tool	(ctx: Context, session_id: str='default', pollutant_id: str='', units: str='mg/l', kdecay: float=0.0, rain_conc: float=0.0, gw_conc: float=0.0, init_conc: float=0.0, snow_only: bool=False) -> BuildingResult
+building	add_subcatchment	building	tool	(ctx: Context, session_id: str='default', subcatch_id: str='', area: float=1.0, imperv_pct: float=50.0, slope: float=0.5, width: float=100.0, outlet_node: str='') -> BuildingResult
+building	add_timeseries	building	tool	(ctx: Context, session_id: str='default', name: str='', times: list[float] | None=None, values: list[float] | None=None) -> dict
+building	create_model	building	tool	(ctx: Context, session_id: str='default') -> dict
+building	pop_last_link	building	tool	(ctx: Context, session_id: str='default', link_id: str='') -> BuildingResult
+building	pop_last_node	building	tool	(ctx: Context, session_id: str='default', node_id: str='') -> BuildingResult
+building	set_option	building	tool	(ctx: Context, session_id: str='default', option: str='', value: str='') -> dict
+building	validate_model	building	tool	(ctx: Context, session_id: str='default') -> dict
+building	write_model	building	tool	(ctx: Context, session_id: str='default', output_path: str='') -> dict
+editing	analyze_impact	editing	tool	(ctx: Context, session_id: str='default', object_type: str='node', object_id: str='') -> ImpactReportModel
+editing	configure_gage	editing	tool	(ctx: Context, session_id: str='default', gage_id: str='', rain_type: str | None=None, rain_interval: float | None=None, data_source: str | None=None, timeseries_id: str | None=None, filename: str | None=None, station_id: str | None=None) -> GageConfigResult
+editing	convert_link	editing	tool	(ctx: Context, session_id: str='default', link_id: str='', new_type: str='conduit') -> ConversionResultModel
+editing	convert_node	editing	tool	(ctx: Context, session_id: str='default', node_id: str='', new_type: str='junction') -> ConversionResultModel
+editing	delete_object	editing	tool	(ctx: Context, session_id: str='default', object_type: str='node', object_id: str='', dry_run: bool=False) -> ImpactReportModel
+editing	set_link_properties	editing	tool	(ctx: Context, session_id: str='default', link_id: str='', length: float | None=None, roughness: float | None=None, offset_up: float | None=None, offset_dn: float | None=None, initial_flow: float | None=None, max_flow: float | None=None, xsect_shape: str | None=None, xsect_geom1: float | None=None, xsect_geom2: float | None=None, xsect_geom3: float | None=None, xsect_geom4: float | None=None) -> PropertyUpdateResult
+editing	set_node_properties	editing	tool	(ctx: Context, session_id: str='default', node_id: str='', invert_elev: float | None=None, max_depth: float | None=None, initial_depth: float | None=None, surcharge_depth: float | None=None, ponded_area: float | None=None) -> PropertyUpdateResult
+editing	set_subcatchment_properties	editing	tool	(ctx: Context, session_id: str='default', subcatch_id: str='', area: float | None=None, width: float | None=None, slope: float | None=None, imperv_pct: float | None=None, n_imperv: float | None=None, n_perv: float | None=None, ds_imperv: float | None=None, ds_perv: float | None=None, outlet_node_id: str | None=None, gage_id: str | None=None) -> PropertyUpdateResult
+forcing	add_control_rule	forcing	tool	(ctx: Context, session_id: str='default', rule_text: str='') -> dict
+forcing	clear_forcing	forcing	tool	(ctx: Context, session_id: str='default', target_type: str | None=None, element_id: str | None=None) -> dict
+forcing	set_forcing	forcing	tool	(ctx: Context, session_id: str='default', target_type: str='', element_id: str='', variable: str='', value: float=0.0, mode: str='replace', persist: bool=False) -> ForcingResult
+forcing	set_link_control	forcing	tool	(ctx: Context, session_id: str='default', link_id: str='', setting: float=0.0) -> dict
+forcing	set_rainfall_override	forcing	tool	(ctx: Context, session_id: str='default', gage_id: str='', rainfall: float=0.0) -> dict
+geopackage	close_geopackage	geopackage	tool	(ctx: Context, session_id: str='gpkg_default') -> dict
+geopackage	compare_sim_vs_observed	geopackage	tool	(ctx: Context, session_id: str='gpkg_default', simulation_id: str='', element_type: str='NODE', element_id: str='', variable: str='depth', observed_series_id: int=0) -> dict
+geopackage	get_result_summary	geopackage	tool	(ctx: Context, session_id: str='gpkg_default', simulation_id: str='', element_type: str='NODE', element_id: str='', variable: str='max_depth') -> dict
+geopackage	get_result_timeseries	geopackage	tool	(ctx: Context, session_id: str='gpkg_default', simulation_id: str='', element_type: str='NODE', element_id: str='', variable: str='depth') -> dict
+geopackage	import_observed_data	geopackage	tool	(ctx: Context, session_id: str='gpkg_default', name: str='', variable: str='flow', element_type: str='', element_id: str='', timestamps: list[str] | None=None, values: list[float] | None=None, source: str='', units: str='') -> dict
+geopackage	list_simulations	geopackage	tool	(ctx: Context, session_id: str='gpkg_default') -> list[dict]
+geopackage	open_geopackage	geopackage	tool	(ctx: Context, path: str, session_id: str='gpkg_default') -> dict
+hotstart	clone_session	hotstart	tool	(ctx: Context, source_id: str='', target_id: str='') -> dict
+hotstart	load_hotstart	hotstart	tool	(ctx: Context, session_id: str='default', path: str='') -> HotStartResult
+hotstart	save_hotstart	hotstart	tool	(ctx: Context, session_id: str='default', path: str='') -> HotStartResult
+lifecycle	close_model	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
+lifecycle	get_simulation_state	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
+lifecycle	get_simulation_time	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
+lifecycle	list_sessions	lifecycle	tool	(ctx: Context) -> list[dict]
+lifecycle	open_model	lifecycle	tool	(ctx: Context, inp_path: str, session_id: str='default', rpt_path: str | None=None, out_path: str | None=None, engine: str='openswmm') -> ModelSummary
+lifecycle	run_simulation	lifecycle	tool	(ctx: Context, session_id: str='default') -> SimulationResult
+lifecycle	step_simulation	lifecycle	tool	(ctx: Context, session_id: str='default', num_steps: int=1) -> StepResult
+query	find_elements	query	tool	(ctx: Context, session_id: str='default', pattern: str | None=None, element_type: str | None=None) -> list[ElementSearchResult]
+query	get_gage_info	query	tool	(ctx: Context, session_id: str='default', gage_id: str | None=None) -> GageInfo | list[GageInfo]
+query	get_link_info	query	tool	(ctx: Context, session_id: str='default', link_id: str | None=None) -> LinkInfo | list[LinkInfo]
+query	get_node_info	query	tool	(ctx: Context, session_id: str='default', node_id: str | None=None, properties: list[str] | None=None) -> NodeInfo | list[NodeInfo]
+query	get_pollutant_info	query	tool	(ctx: Context, session_id: str='default', pollutant_id: str | None=None) -> PollutantInfo | list[PollutantInfo]
+query	get_subcatchment_info	query	tool	(ctx: Context, session_id: str='default', subcatch_id: str | None=None) -> SubcatchmentInfo | list[SubcatchmentInfo]
+query	get_system_summary	query	tool	(ctx: Context, session_id: str='default') -> SystemSummary
+resources	link_detail	model	resource	(session_id: str, link_id: str, ctx: Context) -> str
+resources	list_links	model	resource	(session_id: str, ctx: Context) -> str
+resources	list_nodes	model	resource	(session_id: str, ctx: Context) -> str
+resources	list_sessions	model	resource	(ctx: Context) -> str
+resources	list_subcatchments	model	resource	(session_id: str, ctx: Context) -> str
+resources	mass_balance	model	resource	(session_id: str, ctx: Context) -> str
+resources	node_detail	model	resource	(session_id: str, node_id: str, ctx: Context) -> str
+resources	session_summary	model	resource	(session_id: str, ctx: Context) -> str
+resources	simulation_options	model	resource	(session_id: str, ctx: Context) -> str
+spatial_quality	add_lid	spatial_quality	tool	(ctx: Context, session_id: str='default', subcatch_id: str='', lid_idx: int=0, number: int=1, area: float=0.0, width: float=0.0, init_sat: float=0.0, from_imperv: float=1.0) -> dict
+spatial_quality	get_all_coordinates	spatial_quality	tool	(ctx: Context, session_id: str='default', element_type: str='node') -> dict
+spatial_quality	get_all_polygons	spatial_quality	tool	(ctx: Context, session_id: str='default') -> dict
+spatial_quality	get_all_vertices	spatial_quality	tool	(ctx: Context, session_id: str='default') -> dict
+spatial_quality	get_coordinates	spatial_quality	tool	(ctx: Context, session_id: str='default', element_type: str='node', element_id: str='') -> SpatialResult
+spatial_quality	get_crs	spatial_quality	tool	(ctx: Context, session_id: str='default') -> dict
+spatial_quality	get_model_geometry	spatial_quality	tool	(ctx: Context, session_id: str='default') -> dict
+spatial_quality	get_polygon	spatial_quality	tool	(ctx: Context, session_id: str='default', subcatch_id: str='') -> dict
+spatial_quality	get_quality	spatial_quality	tool	(ctx: Context, session_id: str='default', element_type: str='node', element_id: str='', pollutant: str | None=None) -> dict
+spatial_quality	get_vertices	spatial_quality	tool	(ctx: Context, session_id: str='default', link_id: str='') -> dict
+spatial_quality	set_coordinates	spatial_quality	tool	(ctx: Context, session_id: str='default', element_type: str='node', element_id: str='', x: float=0.0, y: float=0.0) -> dict
+spatial_quality	set_crs	spatial_quality	tool	(ctx: Context, session_id: str='default', crs: str='') -> dict
+spatial_quality	set_polygon	spatial_quality	tool	(ctx: Context, session_id: str='default', subcatch_id: str='', polygon: list[list[float]]=[]) -> dict
+spatial_quality	set_treatment	spatial_quality	tool	(ctx: Context, session_id: str='default', node_id: str='', pollutant: str='', expression: str='') -> dict
+spatial_quality	set_vertices	spatial_quality	tool	(ctx: Context, session_id: str='default', link_id: str='', vertices: list[list[float]]=[]) -> dict
