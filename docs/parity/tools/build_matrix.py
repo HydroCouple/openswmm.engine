@@ -217,9 +217,10 @@ def alt_verb_objs(verb_obj: str, domain: str) -> set[str]:
         _add_token_variants("_".join(parts[1:] + parts[:1]))
         _add_token_variants("_".join(parts[-1:] + parts[:-1]))
 
-    # If verb_obj contains a `get` or `set` token at any position, also try
-    # promoting it to the front: `triangle_get_area` -> `get_triangle_area`.
-    for accessor in ("get", "set"):
+    # If verb_obj contains a `get`/`set`/`add`/`clear` token at any position,
+    # promote it to the front: `triangle_get_area` -> `get_triangle_area`,
+    # `title_add_line` -> `add_title_line`.
+    for accessor in ("get", "set", "add", "clear", "remove"):
         if accessor in parts:
             idx = parts.index(accessor)
             if idx != 0:
@@ -228,6 +229,20 @@ def alt_verb_objs(verb_obj: str, domain: str) -> set[str]:
         # Strip leading get_/set_ for Python-property style (`abs_tolerance`).
         if verb_obj.startswith(accessor + "_"):
             _add_token_variants(verb_obj[len(accessor) + 1:])
+
+    # Try singular/plural variants of the first token (Python uses `option`
+    # singular while C uses `options` plural; same for some other prefixes).
+    if parts:
+        first = parts[0]
+        if first.endswith("s") and len(first) > 1:
+            singular = first.rstrip("s")
+            _add_token_variants("_".join([singular] + parts[1:]))
+            # also with each accessor variant
+            for accessor in ("get", "set", "add"):
+                if accessor in parts[1:]:
+                    idx = parts.index(accessor)
+                    promoted = [accessor, singular] + parts[1:idx] + parts[idx + 1:]
+                    _add_token_variants("_".join(promoted))
 
     obj_prefixes = CROSS_DOMAIN_OBJECT_PREFIXES.get(domain, set())
     if obj_prefixes and parts:

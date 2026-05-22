@@ -265,6 +265,7 @@ links	Links.set_pump_init_state	_links	method	(self, idx: Union[int, str], on: b
 links	Links.set_roughness	_links	method	(self, idx: Union[int, str], n: float) -> None
 links	Links.set_seep_rate	_links	method	(self, idx: Union[int, str], rate: float) -> None
 links	Links.set_target_setting	_links	method	(self, idx: Union[int, str], setting: float) -> None
+links	Links.set_xsect	_links	method	(self, idx: Union[int, str], shape: int, geom1: float, geom2: float=0.0, geom3: float=0.0, geom4: float=0.0) -> None
 massbalance	MassBalance.__init__	_massbalance	method	(self, solver: Solver) -> None
 massbalance	MassBalance.get_max_courant	_massbalance	method	(self) -> float
 massbalance	MassBalance.get_quality_continuity_error	_massbalance	method	(self, pollutant_idx: int) -> float
@@ -281,9 +282,19 @@ model	ModelBuilder.add_link	_model	method	(self, link_id: str, link_type: int) -
 model	ModelBuilder.add_node	_model	method	(self, node_id: str, node_type: int) -> int
 model	ModelBuilder.add_subcatch	_model	method	(self, sc_id: str) -> int
 model	ModelBuilder.add_subcatchment	_model	method	(self, sc_id: str) -> int
+model	ModelBuilder.add_title_line	_model	method	(self, line: str) -> None
+model	ModelBuilder.clear_title	_model	method	(self) -> None
 model	ModelBuilder.files_get	_model	method	(self, key: str) -> str
 model	ModelBuilder.files_set	_model	method	(self, key: str, value: str) -> None
 model	ModelBuilder.finalize	_model	method	(self) -> None
+model	ModelBuilder.get_crs	_model	method	(self) -> str
+model	ModelBuilder.get_option	_model	method	(self, key: str) -> str
+model	ModelBuilder.get_option_ext	_model	method	(self, key: str) -> str
+model	ModelBuilder.get_title_count	_model	method	(self) -> int
+model	ModelBuilder.get_title_line	_model	method	(self, index: int) -> str
+model	ModelBuilder.get_userflag_bool	_model	method	(self, name: str) -> bool
+model	ModelBuilder.get_userflag_int	_model	method	(self, name: str) -> int
+model	ModelBuilder.get_userflag_real	_model	method	(self, name: str) -> float
 model	ModelBuilder.handle	_model	property	(self) -> int
 model	ModelBuilder.plugin_get	_model	method	(self, idx: int) -> tuple[str, str]
 model	ModelBuilder.plugin_remove	_model	method	(self, path_or_id: str) -> None
@@ -297,6 +308,12 @@ model	ModelBuilder.set_link_roughness	_model	method	(self, idx: int, n: float) -
 model	ModelBuilder.set_link_xsect	_model	method	(self, idx: int, shape: int, g1: float, g2: float=0, g3: float=0, g4: float=0) -> None
 model	ModelBuilder.set_node_invert	_model	method	(self, idx: int, elev: float) -> None
 model	ModelBuilder.set_node_max_depth	_model	method	(self, idx: int, depth: float) -> None
+model	ModelBuilder.set_option	_model	method	(self, key: str, value: str) -> None
+model	ModelBuilder.set_option_ext	_model	method	(self, key: str, value: str) -> None
+model	ModelBuilder.set_title	_model	method	(self, text: str) -> None
+model	ModelBuilder.set_userflag_bool	_model	method	(self, name: str, value: bool) -> None
+model	ModelBuilder.set_userflag_int	_model	method	(self, name: str, value: int) -> None
+model	ModelBuilder.set_userflag_real	_model	method	(self, name: str, value: float) -> None
 model	ModelBuilder.to_solver	_model	method	(self) -> Solver
 model	ModelBuilder.validate	_model	method	(self) -> None
 model	ModelBuilder.write	_model	method	(self, path: str) -> None
@@ -453,9 +470,12 @@ solver	Solver.events_count	_solver	method	(self) -> int
 solver	Solver.events_get	_solver	method	(self, idx: int) -> tuple[float, float]
 solver	Solver.events_remove	_solver	method	(self, idx: int) -> None
 solver	Solver.events_set	_solver	method	(self, idx: int, start: float, end: float) -> None
+solver	Solver.get_crs	_solver	method	(self) -> str
 solver	Solver.get_current_time	_solver	method	(self) -> float
 solver	Solver.get_end_time	_solver	method	(self) -> float
 solver	Solver.get_event_count	_solver	method	(self) -> int
+solver	Solver.get_option	_solver	method	(self, key: str) -> str
+solver	Solver.get_option_ext	_solver	method	(self, key: str) -> str
 solver	Solver.get_routing_step	_solver	method	(self) -> float
 solver	Solver.get_start_time	_solver	method	(self) -> float
 solver	Solver.get_steady_state_skip	_solver	method	(self) -> bool
@@ -465,9 +485,12 @@ solver	Solver.is_between_events	_solver	method	(self) -> bool
 solver	Solver.model_write	_solver	method	(self, path: str) -> None
 solver	Solver.open	_solver	method	(self, plugin_lib: Optional[str]=None) -> int
 solver	Solver.report	_solver	method	(self) -> int
+solver	Solver.set_option	_solver	method	(self, key: str, value: str) -> None
+solver	Solver.set_option_ext	_solver	method	(self, key: str, value: str) -> None
 solver	Solver.set_steady_state_skip	_solver	method	(self, enabled: bool) -> None
 solver	Solver.set_step_begin_callback	_solver	method	(self, callback: Optional[Callable[[float, float], None]]) -> None
 solver	Solver.set_step_end_callback	_solver	method	(self, callback: Optional[Callable[[float, float], None]]) -> None
+solver	Solver.set_warning_callback	_solver	method	(self, callback: Optional[Callable[[int, str], None]]) -> None
 solver	Solver.start	_solver	method	(self, save_results: bool=True) -> int
 solver	Solver.state	_solver	property	(self) -> int
 solver	Solver.step	_solver	method	(self) -> int
@@ -535,7 +558,8 @@ subcatchments	Subcatchments.get_outlet	_subcatchments	method	(self, idx: Union[i
 subcatchments	Subcatchments.get_outlet_subcatch	_subcatchments	method	(self, idx: Union[int, str]) -> int
 subcatchments	Subcatchments.get_ponded_quality	_subcatchments	method	(self, idx: Union[int, str], pollutant_idx: int) -> float
 subcatchments	Subcatchments.get_quality	_subcatchments	method	(self, idx: Union[int, str], pollutant_idx: int) -> float
-subcatchments	Subcatchments.get_quality_bulk	_subcatchments	method	(self, pollutant_idx: int) -> npt.NDArray[np.float64]
+subcatchments	Subcatchments.get_quality_bulk	_subcatchments	method	(self, pollutant_idx: int) -> npt.NDArray[np.float64]# 602 Python methods across 23 stubs
+
 subcatchments	Subcatchments.get_rainfall	_subcatchments	method	(self, idx: Union[int, str]) -> float
 subcatchments	Subcatchments.get_runoff	_subcatchments	method	(self, idx: Union[int, str]) -> float
 subcatchments	Subcatchments.get_runoff_bulk	_subcatchments	method	(self) -> npt.NDArray[np.float64]
@@ -551,8 +575,7 @@ subcatchments	Subcatchments.set_coverage	_subcatchments	method	(self, idx: Union
 subcatchments	Subcatchments.set_ds_imperv	_subcatchments	method	(self, idx: Union[int, str], ds: float) -> None
 subcatchments	Subcatchments.set_ds_perv	_subcatchments	method	(self, idx: Union[int, str], ds: float) -> None
 subcatchments	Subcatchments.set_gage	_subcatchments	method	(self, idx: Union[int, str], gage_idx: int) -> None
-subcatchments	Subcatchments.set_imperv_pct	_subcatchments	method	(self, idx: Union[int, str], pct: float) -> None# 579 Python methods across 23 stubs
-
+subcatchments	Subcatchments.set_imperv_pct	_subcatchments	method	(self, idx: Union[int, str], pct: float) -> None
 subcatchments	Subcatchments.set_infil_curve_number	_subcatchments	method	(self, idx: Union[int, str], cn: float) -> None
 subcatchments	Subcatchments.set_infil_green_ampt	_subcatchments	method	(self, idx: Union[int, str], suction: float, conductivity: float, initial_deficit: float) -> None
 subcatchments	Subcatchments.set_infil_horton	_subcatchments	method	(self, idx: Union[int, str], f0: float, fmin: float, decay: float, dry_time: float) -> None

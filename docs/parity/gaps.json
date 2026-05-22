@@ -1,8 +1,7 @@
 {
   "counts": {
-    "mcp-gap": 434,
-    "mcp-gap-2d": 45,
-    "py-gap": 23
+    "mcp-gap": 451,
+    "mcp-gap-2d": 45
   },
   "gaps": {
     "mcp-gap": [
@@ -50,6 +49,7 @@
       "swmm_set_steady_state_skip",
       "swmm_set_step_begin_callback",
       "swmm_set_step_end_callback",
+      "swmm_set_warning_callback",
       "swmm_forcing_clear_all",
       "swmm_forcing_gage_rainfall",
       "swmm_forcing_link_flow",
@@ -209,6 +209,7 @@
       "swmm_link_set_roughness",
       "swmm_link_set_seep_rate",
       "swmm_link_set_target_setting",
+      "swmm_link_set_xsect",
       "swmm_get_max_courant",
       "swmm_get_quality_continuity_error",
       "swmm_get_quality_evap_loss",
@@ -221,10 +222,25 @@
       "swmm_files_get",
       "swmm_files_set",
       "swmm_model_write_with_plugin",
+      "swmm_options_get",
+      "swmm_options_get_ext",
+      "swmm_options_set",
+      "swmm_options_set_ext",
       "swmm_plugin_get",
       "swmm_plugin_remove",
       "swmm_plugin_set",
       "swmm_plugins_count",
+      "swmm_title_add_line",
+      "swmm_title_clear",
+      "swmm_title_get_count",
+      "swmm_title_get_line",
+      "swmm_title_set",
+      "swmm_userflag_get_bool",
+      "swmm_userflag_get_int",
+      "swmm_userflag_get_real",
+      "swmm_userflag_set_bool",
+      "swmm_userflag_set_int",
+      "swmm_userflag_set_real",
       "swmm_node_count",
       "swmm_node_get_crown_elev",
       "swmm_node_get_degree",
@@ -487,31 +503,6 @@
       "swmm_2d_vertex_coupling_count",
       "swmm_2d_vertex_get_coupled_node",
       "swmm_2d_vertex_get_heads_bulk"
-    ],
-    "py-gap": [
-      "swmm_set_warning_callback",
-      "swmm_link_set_xsect",
-      "swmm_options_get",
-      "swmm_options_get_end_date",
-      "swmm_options_get_ext",
-      "swmm_options_get_report_start",
-      "swmm_options_get_start_date",
-      "swmm_options_set",
-      "swmm_options_set_end_date",
-      "swmm_options_set_ext",
-      "swmm_options_set_report_start",
-      "swmm_options_set_start_date",
-      "swmm_title_add_line",
-      "swmm_title_clear",
-      "swmm_title_get_count",
-      "swmm_title_get_line",
-      "swmm_title_set",
-      "swmm_userflag_get_bool",
-      "swmm_userflag_get_int",
-      "swmm_userflag_get_real",
-      "swmm_userflag_set_bool",
-      "swmm_userflag_set_int",
-      "swmm_userflag_set_real"
     ]
   }
 }

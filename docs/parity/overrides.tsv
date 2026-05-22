@@ -47,9 +47,16 @@ swmm_gpkg_subcatch_count	parity	via _geopackage.GeoPackage.object_counts (aggreg
 swmm_gpkg_gage_count	parity	via _geopackage.GeoPackage.object_counts (aggregate dict).
 swmm_gpkg_simulation_id	parity	via _geopackage.GeoPackage.simulation_ids (plural, returns list).
 
+# Date getters/setters wrapped as datetime properties on both classes.
+swmm_options_get_start_date	parity	via _solver.Solver.start_datetime / _model.ModelBuilder.start_datetime properties.
+swmm_options_set_start_date	parity	via _solver.Solver.start_datetime / _model.ModelBuilder.start_datetime setters.
+swmm_options_get_end_date	parity	via _solver.Solver.end_datetime / _model.ModelBuilder.end_datetime properties.
+swmm_options_set_end_date	parity	via _solver.Solver.end_datetime / _model.ModelBuilder.end_datetime setters.
+swmm_options_get_report_start	parity	via _solver.Solver.report_start_datetime / _model.ModelBuilder.report_start_datetime properties.
+swmm_options_set_report_start	parity	via _solver.Solver.report_start_datetime / _model.ModelBuilder.report_start_datetime setters.
+
 # ----------------------------------------------------------------------------
 # True py-gaps confirmed (Phase 1 implementation targets).
 # Listed here only when they need a richer note than the default classification.
 # Leaving them out keeps the auto status `py-gap`.
 # ----------------------------------------------------------------------------
-swmm_link_set_xsect	py-gap	Verify: declared in _links.pyi? If yes, change to parity. Phase 1.
