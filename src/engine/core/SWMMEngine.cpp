@@ -2746,13 +2746,18 @@ void SWMMEngine::applyForcings(double dt) noexcept {
     }
 
     // ---- Node head boundary forcing (outfalls only) ----
-    for (int i = 0; i < ctx_.n_nodes(); ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (f.node_head_boundary_mode[ui] == ForcingMode::NONE) continue;
-        if (ctx_.nodes.type[ui] != NodeType::OUTFALL) continue;
-        ctx_.nodes.outfall_param[ui] = f.node_head_boundary_value[ui];
-        ctx_.nodes.outfall_type[ui]  = OutfallType::FIXED;
-    }
+    //
+    // C6: the prescribed-HGL value stays in forcing.node_head_boundary_value
+    // and is consumed by Outfall::setAllOutfallDepths as an overlay on top of
+    // the legacy outfall logic and the C4 2D-coupling override. Do NOT
+    // mutate outfall_type or outfall_param here — the original outfall_type
+    // must survive a prescribed step so that "unfix" (mode = NONE) returns
+    // the outfall to its original FREE / NORMAL / FIXED / TIDAL / TIMESERIES
+    // behaviour without any state restoration. See
+    // docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C6).
+    //
+    // This block is intentionally a no-op now; staging into the forcing
+    // buffer is handled by swmm_forcing_node_head_boundary() in the API.
 
     // ---- Gage rainfall forcing (before runoff substeps read gages) ----
     for (int g = 0; g < ctx_.n_gages(); ++g) {

@@ -1266,4 +1266,65 @@ TEST_F(RdiiCApiTest, NullHandleReturnsBadHandle) {
     EXPECT_EQ(swmm_hydrograph_count(nullptr), -1);
     EXPECT_EQ(swmm_rdii_decay_count(nullptr), -1);
     EXPECT_EQ(swmm_hydrograph_gage_count(nullptr), -1);
+    EXPECT_EQ(swmm_hydrograph_group_count(nullptr), -1);
+}
+
+// ============================================================================
+// DA-ENG-01 — swmm_hydrograph_group_count / swmm_hydrograph_group_id
+// ============================================================================
+
+TEST_F(RdiiCApiTest, HydrographGroupSingleGroupTwelveMonths) {
+    // One group "SanSewer" with 12 monthly entries should report as a single
+    // group, not 12. Closes the GUI dataObjectCount / dataObjectNameAt
+    // mismatch that left the Object Browser showing mostly blank rows.
+    for (int m = 0; m < 12; ++m) {
+        ASSERT_EQ(swmm_hydrograph_add(engine, "SanSewer", m, 0,
+                                       0.05, 1.0, 2.0, 0, 0, 0), SWMM_OK);
+    }
+    EXPECT_EQ(swmm_hydrograph_count(engine), 12);
+    EXPECT_EQ(swmm_hydrograph_group_count(engine), 1);
+
+    char buf[64] = {};
+    ASSERT_EQ(swmm_hydrograph_group_id(engine, 0, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "SanSewer");
+}
+
+TEST_F(RdiiCApiTest, HydrographGroupMultipleGroupsFirstOccurrenceOrder) {
+    // Interleave entries for three groups; group_id must enumerate in
+    // first-occurrence order regardless of subsequent interleaving.
+    ASSERT_EQ(swmm_hydrograph_add(engine, "Combined",  0, 0, 0.1, 1, 2, 0,0,0), SWMM_OK);
+    ASSERT_EQ(swmm_hydrograph_add(engine, "Sanitary",  0, 0, 0.1, 1, 2, 0,0,0), SWMM_OK);
+    ASSERT_EQ(swmm_hydrograph_add(engine, "Combined",  1, 0, 0.1, 1, 2, 0,0,0), SWMM_OK);
+    ASSERT_EQ(swmm_hydrograph_add(engine, "Storm",     0, 0, 0.1, 1, 2, 0,0,0), SWMM_OK);
+    ASSERT_EQ(swmm_hydrograph_add(engine, "Sanitary",  1, 0, 0.1, 1, 2, 0,0,0), SWMM_OK);
+
+    EXPECT_EQ(swmm_hydrograph_group_count(engine), 3);
+
+    char buf[64] = {};
+    ASSERT_EQ(swmm_hydrograph_group_id(engine, 0, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "Combined");
+    ASSERT_EQ(swmm_hydrograph_group_id(engine, 1, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "Sanitary");
+    ASSERT_EQ(swmm_hydrograph_group_id(engine, 2, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "Storm");
+
+    EXPECT_EQ(swmm_hydrograph_group_id(engine, 3, buf, sizeof(buf)),
+              SWMM_ERR_BADINDEX);
+}
+
+TEST_F(RdiiCApiTest, HydrographGroupCountIncludesGageOnlyGroups) {
+    // A group can be introduced via gage assignment alone (parameter rows
+    // arrive later). It must still surface as a group.
+    ASSERT_EQ(swmm_hydrograph_add_gage(engine, "GageOnly", "G1"), SWMM_OK);
+    ASSERT_EQ(swmm_hydrograph_add(engine, "Params", -1, 0,
+                                   0.1, 1, 2, 0, 0, 0), SWMM_OK);
+
+    EXPECT_EQ(swmm_hydrograph_group_count(engine), 2);
+
+    char buf[64] = {};
+    // Parameter-entry groups come first (entries iterated before gage_assignments).
+    ASSERT_EQ(swmm_hydrograph_group_id(engine, 0, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "Params");
+    ASSERT_EQ(swmm_hydrograph_group_id(engine, 1, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "GageOnly");
 }

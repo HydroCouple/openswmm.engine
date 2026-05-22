@@ -205,6 +205,36 @@ SWMM_ENGINE_API int swmm_hydrograph_get_gage(SWMM_Engine engine, int entry_idx,
  */
 SWMM_ENGINE_API int swmm_hydrograph_gage_count(SWMM_Engine engine);
 
+/**
+ * @brief Count the unique unit-hydrograph group names defined.
+ *
+ * @details A unit-hydrograph "group" is identified by name; the engine stores
+ *          one entry per `(group, month, response)`. This count is the number
+ *          of *distinct* group names across all parameter entries, useful for
+ *          enumerating groups in a UI without manually de-duplicating the
+ *          per-entry list.
+ *
+ * @param engine  Engine handle.
+ * @returns Number of unique groups, or -1 on error.
+ */
+SWMM_ENGINE_API int swmm_hydrograph_group_count(SWMM_Engine engine);
+
+/**
+ * @brief Read back the name of a unit-hydrograph group by its zero-based index.
+ *
+ * @details Groups are enumerated in first-occurrence order across the parameter
+ *          entry list (matches the order in which they appear in the
+ *          `[HYDROGRAPHS]` section of the input file).
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based group index (0..swmm_hydrograph_group_count()-1).
+ * @param buf     [out] Caller-allocated buffer to receive the group name.
+ * @param buflen  Size of @p buf in bytes.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_hydrograph_group_id(SWMM_Engine engine, int idx,
+                                               char* buf, int buflen);
+
 /* =========================================================================
  * Exponential IA decay ([RDII_DECAY] section)
  * =========================================================================

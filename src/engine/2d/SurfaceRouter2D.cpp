@@ -81,13 +81,38 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Build coupling point descriptors
     coupling_points_ = buildCouplingPoints(mesh_, ctx);
 
-    // Suppress ponding for 2D-coupled nodes
+    // Suppress ponding for 2D-coupled nodes. The 2D surface owns the
+    // surface storage, so any legacy ponded_area would double-count.
+    //
+    // C3a: warn (don't fail) when the user-supplied INP marks a coupled
+    // node with sur_depth > 0 or ponded_area > 0. The engine still proceeds
+    // — the surcharge gate in computeCouplingExchange honours sur_depth
+    // (C1+C2), and ponded_area is zeroed below — but the user should know
+    // that membership in [2D_VERTEX_NODE_MAP] / [2D_TRIANGLE_NODE_MAP] is
+    // the unambiguous "uncapped" flag and the other two attributes have
+    // their meaning narrowed to "physical surcharge cap" only.
+    // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C3a).
     for (const auto& cp : coupling_points_) {
-        if (!cp.is_outfall) {
-            auto ni = static_cast<std::size_t>(cp.node_idx);
-            // Set ponded area to zero — 2D surface handles excess
-            ctx.nodes.ponded_area[ni] = 0.0;
+        if (cp.is_outfall) continue;
+        auto ni = static_cast<std::size_t>(cp.node_idx);
+        const auto& nname = ctx.node_names.name_of(cp.node_idx);
+        if (ctx.nodes.sur_depth[ni] > 0.0) {
+            ctx.warnings.push_back(
+                "WARNING: 2D-coupled node '" + nname
+                + "' has sur_depth > 0 — surcharge gate uses invert + "
+                  "full_depth + sur_depth as the spill threshold "
+                  "(z_top). Below z_top the orifice ramp is closed in "
+                  "both directions; above z_top it opens.");
         }
+        if (ctx.nodes.ponded_area[ni] > 0.0) {
+            ctx.warnings.push_back(
+                "WARNING: 2D-coupled node '" + nname
+                + "' has ponded_area > 0 — the 2D mesh owns surface "
+                  "storage for coupled nodes; ponded_area is being "
+                  "zeroed.");
+        }
+        // Set ponded area to zero — 2D surface handles excess
+        ctx.nodes.ponded_area[ni] = 0.0;
     }
 
 #ifdef OPENSWMM_HAS_2D

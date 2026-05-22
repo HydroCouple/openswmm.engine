@@ -57,6 +57,24 @@ SWMM_ENGINE_API int swmm_control_count(SWMM_Engine engine);
 SWMM_ENGINE_API int swmm_control_get_rule(SWMM_Engine engine, int idx, char* buf, int buflen);
 
 /**
+ * @brief Get the canonical name of a control rule by index.
+ *
+ * @details Parses the stored rule text and returns the first whitespace-delimited
+ *          token that follows the `RULE` keyword (case-insensitive match, leading
+ *          whitespace tolerated). On parse failure — when the rule text does not
+ *          begin with a `RULE` keyword token — returns `SWMM_ERR_BADPARAM` so
+ *          callers can surface a sentinel display name for malformed rules.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based rule index.
+ * @param buf     [out] Caller-allocated buffer to receive the rule name.
+ * @param buflen  Size of @p buf in bytes.
+ * @returns SWMM_OK on success, `SWMM_ERR_BADPARAM` if the rule text has no
+ *          parseable RULE token, or another error code.
+ */
+SWMM_ENGINE_API int swmm_control_get_id(SWMM_Engine engine, int idx, char* buf, int buflen);
+
+/**
  * @brief Remove all control rules from the model.
  * @param engine  Engine handle.
  * @returns SWMM_OK on success, or an error code.

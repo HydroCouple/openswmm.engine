@@ -517,6 +517,9 @@ cdef extern from "openswmm_inflows.h":
                                        char* uh_buf, int uh_buflen,
                                        char* gage_buf, int gage_buflen)
     cdef int swmm_hydrograph_gage_count(SWMM_Engine e)
+    cdef int swmm_hydrograph_group_count(SWMM_Engine e)
+    cdef int swmm_hydrograph_group_id(SWMM_Engine e, int idx,
+                                       char* buf, int buflen)
     # Exponential IA decay ([RDII_DECAY])
     cdef int swmm_rdii_decay_add(SWMM_Engine e, const char* uh_name,
                                   int response,
@@ -533,6 +536,7 @@ cdef extern from "openswmm_controls.h":
     cdef int swmm_control_add_rule(SWMM_Engine e, const char* rule_text)
     cdef int swmm_control_count(SWMM_Engine e)
     cdef int swmm_control_get_rule(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_control_get_id(SWMM_Engine e, int idx, char* buf, int buflen)
     cdef int swmm_control_clear_rules(SWMM_Engine e)
     cdef int swmm_control_set_link_setting(SWMM_Engine e, int link_idx, double setting)
     cdef int swmm_control_set_link_status(SWMM_Engine e, int link_idx, int status)

@@ -73,6 +73,31 @@ class Controls:
         _check(swmm_control_get_rule(h, idx, buf, 4096))
         return buf.decode('utf-8')
 
+    def get_id(self, int idx):
+        """Return the canonical name of a control rule by index.
+
+        Parses the stored rule text and returns the first
+        whitespace-delimited token that follows the C{RULE} keyword
+        (case-insensitive, leading whitespace tolerated). Returns C{None}
+        when the rule text has no parseable C{RULE} keyword token, so
+        callers can render a sentinel display name (e.g.
+        S{"}Rule N [unnamed]S{"}) without catching exceptions.
+
+        @param idx: Rule index.
+        @type idx: int
+        @return: The rule name, or C{None} if the rule text is malformed.
+        @rtype: str | None
+        @raise EngineError: If C{idx} is out of range or the engine handle
+            is invalid (parse failures return C{None} instead of raising).
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef char buf[256]
+        cdef int code = swmm_control_get_id(h, idx, buf, 256)
+        if code == 9:  # SWMM_ERR_BADPARAM — malformed rule text
+            return None
+        _check(code)
+        return buf.decode('utf-8')
+
     def add_rule(self, str rule_text):
         """Add a control rule to the model.
 

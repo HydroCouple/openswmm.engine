@@ -272,6 +272,24 @@ class Inflows:
         """
         ...
 
+    def hydrograph_group_count(self) -> int:
+        """Return the number of unique unit-hydrograph group names defined.
+
+        @rtype: int
+        """
+        ...
+
+    def get_hydrograph_group_id(self, idx: int) -> str:
+        """Read back the name of a unit-hydrograph group by index.
+
+        @param idx: Zero-based group index
+            (C{0..hydrograph_group_count()-1}).
+        @type idx: int
+        @return: The group name.
+        @rtype: str
+        """
+        ...
+
     # ====================================================================
     # Exponential IA decay ([RDII_DECAY])
     # ====================================================================

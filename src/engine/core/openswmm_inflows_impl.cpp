@@ -12,9 +12,12 @@
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_inflows.h"
+#include "../data/InflowData.hpp"
 
 #include <algorithm>
 #include <cstring>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -24,6 +27,24 @@ inline void copy_to_buf(const std::string& src, char* buf, int buflen) {
     const int copy_len = std::min(static_cast<int>(src.size()), buflen - 1);
     std::memcpy(buf, src.c_str(), static_cast<std::size_t>(copy_len));
     buf[copy_len] = '\0';
+}
+
+/// Walk parameter entries + gage assignments in first-occurrence order and
+/// emit a de-duplicated list of unit-hydrograph group names. Groups can be
+/// introduced via either list (e.g. a gage-only group has no parameter rows
+/// yet, a parameter-only group exists before its rain gage is attached).
+inline std::vector<std::string> unique_uh_group_names(
+    const openswmm::UnitHydData& uh) {
+    std::vector<std::string> out;
+    out.reserve(uh.entries.size() + uh.gage_assignments.size());
+    auto seen_or_push = [&out](const std::string& name) {
+        if (name.empty()) return;
+        for (const auto& s : out) if (s == name) return;
+        out.push_back(name);
+    };
+    for (const auto& e : uh.entries)          seen_or_push(e.name);
+    for (const auto& g : uh.gage_assignments) seen_or_push(g);
+    return out;
 }
 
 }  // namespace
@@ -200,6 +221,23 @@ SWMM_ENGINE_API int swmm_hydrograph_gage_count(SWMM_Engine engine) {
     if (!engine) return -1;
     return static_cast<int>(
         to_engine(engine)->context().unit_hyds.gage_assignments.size());
+}
+
+SWMM_ENGINE_API int swmm_hydrograph_group_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    const auto& uh = to_engine(engine)->context().unit_hyds;
+    return static_cast<int>(unique_uh_group_names(uh).size());
+}
+
+SWMM_ENGINE_API int swmm_hydrograph_group_id(SWMM_Engine engine, int idx,
+                                               char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& uh = to_engine(engine)->context().unit_hyds;
+    const auto names = unique_uh_group_names(uh);
+    CHECK_INDEX(idx >= 0 && idx < static_cast<int>(names.size()));
+    copy_to_buf(names[static_cast<std::size_t>(idx)], buf, buflen);
+    return SWMM_OK;
 }
 
 // ============================================================================

@@ -44,12 +44,28 @@ geopackage	open_geopackage	geopackage	tool	(ctx: Context, path: str, session_id:
 hotstart	clone_session	hotstart	tool	(ctx: Context, source_id: str='', target_id: str='') -> dict
 hotstart	load_hotstart	hotstart	tool	(ctx: Context, session_id: str='default', path: str='') -> HotStartResult
 hotstart	save_hotstart	hotstart	tool	(ctx: Context, session_id: str='default', path: str='') -> HotStartResult
+inflows	add_dwf	inflows	tool	(ctx: Context, session_id: str='default', node_id: str | int='', constituent: str='FLOW', avg_value: float=0.0, monthly_pattern: str='', daily_pattern: str='', hourly_pattern: str='', weekend_pattern: str='') -> dict
+inflows	add_external	inflows	tool	(ctx: Context, session_id: str='default', node_id: str | int='', constituent: str='FLOW', ts_name: str='', inflow_type: str='FLOW', m_factor: float=1.0, s_factor: float=1.0, baseline: float=0.0, pattern: str='') -> dict# 113 entries (104 tools, 9 resources) across 13 modules
+
+inflows	add_hydrograph	inflows	tool	(ctx: Context, session_id: str='default', uh_name: str='', month: str | int='all', response: str | int='short', r: float=0.0, t: float=0.0, k: float=1.0, dmax: float=0.0, drecov: float=0.0, dinit: float=0.0) -> dict
+inflows	add_hydrograph_gage	inflows	tool	(ctx: Context, session_id: str='default', uh_name: str='', gage_name: str='') -> dict
+inflows	add_rdii	inflows	tool	(ctx: Context, session_id: str='default', node_id: str | int='', uh_name: str='', area: float=0.0) -> dict
+inflows	add_rdii_decay	inflows	tool	(ctx: Context, session_id: str='default', uh_name: str='', response: str | int='short', k_dep: float=0.0, k_0: float=0.0, k_T: float=0.0, T_ref: float=10.0, theta_rec: float=0.0, T_freeze: float=0.0) -> dict
+inflows	dwf_count	inflows	tool	(ctx: Context, session_id: str='default') -> dict
+inflows	ext_inflow_count	inflows	tool	(ctx: Context, session_id: str='default') -> dict
+inflows	get_hydrograph	inflows	tool	(ctx: Context, session_id: str='default', entry_index: int=0) -> dict
+inflows	get_hydrograph_gage	inflows	tool	(ctx: Context, session_id: str='default', entry_index: int=0) -> dict
+inflows	get_rdii	inflows	tool	(ctx: Context, session_id: str='default', entry_index: int=0) -> dict
+inflows	get_rdii_decay	inflows	tool	(ctx: Context, session_id: str='default', entry_index: int=0) -> dict
+inflows	hydrograph_count	inflows	tool	(ctx: Context, session_id: str='default') -> dict
+inflows	hydrograph_gage_count	inflows	tool	(ctx: Context, session_id: str='default') -> dict
+inflows	rdii_count	inflows	tool	(ctx: Context, session_id: str='default') -> dict
+inflows	rdii_decay_count	inflows	tool	(ctx: Context, session_id: str='default') -> dict
 lifecycle	close_model	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
 lifecycle	get_simulation_state	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
 lifecycle	get_simulation_time	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
 lifecycle	list_sessions	lifecycle	tool	(ctx: Context) -> list[dict]
-lifecycle	open_model	lifecycle	tool	(ctx: Context, inp_path: str, session_id: str='default', rpt_path: str | None=None, out_path: str | None=None, engine: str='openswmm') -> ModelSummary# 97 entries (88 tools, 9 resources) across 12 modules
-
+lifecycle	open_model	lifecycle	tool	(ctx: Context, inp_path: str, session_id: str='default', rpt_path: str | None=None, out_path: str | None=None, engine: str='openswmm') -> ModelSummary
 lifecycle	run_simulation	lifecycle	tool	(ctx: Context, session_id: str='default') -> SimulationResult
 lifecycle	step_simulation	lifecycle	tool	(ctx: Context, session_id: str='default', num_steps: int=1) -> StepResult
 query	find_elements	query	tool	(ctx: Context, session_id: str='default', pattern: str | None=None, element_type: str | None=None) -> list[ElementSearchResult]

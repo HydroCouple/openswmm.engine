@@ -1,6 +1,6 @@
 {
   "counts": {
-    "mcp-gap": 422,
+    "mcp-gap": 408,
     "mcp-gap-2d": 45
   },
   "gaps": {
@@ -96,20 +96,6 @@
       "swmm_hotstart_set_node_head",
       "swmm_hotstart_set_subcatch_runoff",
       "swmm_hotstart_warning_count",
-      "swmm_dwf_add",
-      "swmm_dwf_count",
-      "swmm_ext_inflow_count",
-      "swmm_hydrograph_add",
-      "swmm_hydrograph_count",
-      "swmm_hydrograph_gage_count",
-      "swmm_hydrograph_get",
-      "swmm_hydrograph_get_gage",
-      "swmm_rdii_add",
-      "swmm_rdii_count",
-      "swmm_rdii_decay_add",
-      "swmm_rdii_decay_count",
-      "swmm_rdii_decay_get",
-      "swmm_rdii_get",
       "swmm_inlet_add",
       "swmm_inlet_count",
       "swmm_inlet_set_params",

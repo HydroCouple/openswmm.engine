@@ -185,13 +185,22 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
         // Head difference (positive = 2D → 1D)
         double dh = h_2d - h_1d;
 
-        // For uncapped surcharged nodes, use effective area transition
-        double z_ground = nodes.invert_elev[ni] + nodes.full_depth[ni];
+        // C1: surcharge envelope top — coupling activates above this elevation.
+        // For an uncapped node, sur_depth = 0 and z_top reduces to the rim
+        // elevation, preserving the legacy behaviour. For a capped node
+        // (sur_depth > 0), z_top is the elevation at which the physical cap
+        // (manhole bolt, sealed inlet) yields and water reaches the surface.
+        // The effective-area widening from inlet-grate to manhole-opening
+        // is also anchored at z_top so both transitions share one threshold.
+        // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C1, C2).
+        double z_top = nodes.invert_elev[ni] + nodes.full_depth[ni]
+                       + nodes.sur_depth[ni];
         double h_max = std::max(h_1d, h_2d);
-        double A_eff = effectiveArea(h_max, z_ground, nodes.full_depth[ni],
+        double A_eff = effectiveArea(h_max, z_top, nodes.full_depth[ni],
                                       cp.area, cp.area * 2.0);
 
-        // Orifice exchange flow
+        // Orifice exchange flow (full 1D–2D gradient, signed/bidirectional;
+        // see review §3 R1c).
         double Q = orificeFlow(dh, cp.cd, A_eff);
 
         // Smoothly ramp Q to zero as the source side dries up. A hard
@@ -204,6 +213,22 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
             return t * t * (3.0 - 2.0 * t);
         };
         Q *= (Q > 0.0) ? wetRamp(depth_2d_avail) : wetRamp(depth_1d_avail);
+
+        // C2: surcharge gate — exchange may only carry flow when either side
+        // is above z_top. The ramp is direction-symmetric (multiplies Q
+        // regardless of sign) so R1c bidirectionality is preserved: a 2D
+        // cell flooded above a still-pressurised capped pipe drains in
+        // through the same gate that a surcharging pipe spills out through.
+        // The 5 cm transition matches effectiveArea() above so both
+        // discontinuity sources widen together. Reduces to a no-op for
+        // uncapped nodes (sur_depth = 0) the moment water reaches the rim.
+        {
+            double surcharge_excess = h_max - z_top;
+            double t = std::min(1.0, std::max(0.0,
+                                              surcharge_excess / 0.05));
+            double capRamp = t * t * (3.0 - 2.0 * t);
+            Q *= capRamp;
+        }
 
         // Throttle return flow (2D → 1D) if node is at capacity
         if (Q > 0.0) {
@@ -240,34 +265,50 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
                               SimulationContext& ctx) {
     auto& nodes = ctx.nodes;
 
+    // C4 refactor: this routine no longer writes nodes.head/depth directly.
+    // Doing so was a no-op under the DW solver because setAllOutfallDepths
+    // re-runs inside every Picard iteration and would overwrite the value.
+    // Instead, cache h_2d at the coupling cell into nodes.outfall_2d_head[],
+    // and let Outfall::setAllOutfallDepths apply the max(h_standard, h_2d)
+    // override on every iteration. See docs/1D_2D_COUPLING_GATE_REVIEW.md §6.
+    //
+    // The flap-gate decision is also moved into setAllOutfallDepths so it
+    // can see the just-computed h_standard for that iteration. To express
+    // "flap closed" without coupling the modules, we cache the raw h_2d
+    // here; setAllOutfallDepths checks the node's flap-gate flag and the
+    // current h_standard to decide whether to apply the override.
+    //
+    // Dry-mesh guard: when the cell at the coupling point is essentially
+    // dry, leave the sentinel value (-1e30) in place so setAllOutfallDepths
+    // does not fire the override. The naive check `h_2d > z_inv` in
+    // setAllOutfallDepths is true whenever bed_z > z_inv (the common
+    // physical case — outfall pipe enters underground beneath the surface
+    // mesh), because h_2d = bed_z + depth = bed_z on dry cells. Gating on
+    // actual surface depth here keeps the cached value semantically
+    // meaningful: "the 2D water surface elevation at this outfall, if any
+    // water is present, else absent."
+    constexpr double DRY_DEPTH_THRESHOLD = 1.0e-4;  // 0.1 mm
     for (const auto& cp : cps) {
         if (!cp.is_outfall) continue;
 
         auto ni = static_cast<std::size_t>(cp.node_idx);
 
-        // 2D head at the outfall coupling point
-        double h_2d;
+        // 2D head and bed elevation at the outfall coupling point
+        double h_2d, bed_z;
         if (cp.vertex_idx >= 0) {
-            h_2d = state.vert_head[cp.vertex_idx];
+            h_2d  = state.vert_head[cp.vertex_idx];
+            bed_z = mesh.vz[cp.vertex_idx];
         } else {
-            h_2d = state.head[cp.cell_idx];
+            h_2d  = state.head[cp.cell_idx];
+            bed_z = mesh.tri_cz[cp.cell_idx];
         }
 
-        // Current outfall head (set by standard outfall logic)
-        double h_standard = nodes.head[ni];
-        double z_inv = nodes.invert_elev[ni];
-
-        if (cp.has_flap_gate && h_2d > h_standard) {
-            // Flap gate closed: don't let 2D raise the outfall boundary
-            // Outfall remains at standard boundary condition
-            continue;
+        double depth_2d = h_2d - bed_z;
+        if (depth_2d > DRY_DEPTH_THRESHOLD) {
+            nodes.outfall_2d_head[ni] = h_2d;
+        } else {
+            nodes.outfall_2d_head[ni] = -1.0e30;  // dry — no override
         }
-
-        // Effective boundary = max(standard, 2D surface head)
-        // This ensures 2D flooding raises tailwater but doesn't lower it
-        double h_effective = std::max(h_standard, h_2d);
-        nodes.depth[ni] = std::max(h_effective - z_inv, 0.0);
-        nodes.head[ni]  = z_inv + nodes.depth[ni];
     }
 }
 

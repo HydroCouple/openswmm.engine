@@ -77,7 +77,7 @@ MCP_DOMAIN_HINTS: dict[str, list[str]] = {
     "tables": ["tables", "building"],
     "controls": ["forcing"],
     "forcing": ["forcing"],
-    "inflows": ["forcing", "building"],
+    "inflows": ["inflows", "forcing", "building"],
     "infrastructure": ["spatial_quality"],
     "output": ["analysis"],
     "statistics": ["analysis"],

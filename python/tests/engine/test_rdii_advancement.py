@@ -272,3 +272,53 @@ class TestEndToEndRdiiSetup:
         inflows.add_rdii(0, "UH", 100.0)
         assert inflows.hydrograph_count() == 1
         assert inflows.rdii_decay_count() == 0  # exponential model is off
+
+
+# ---------------------------------------------------------------------------
+# [HYDROGRAPHS] — group enumeration (DA-ENG-01)
+# ---------------------------------------------------------------------------
+class TestHydrographGroupEnumeration:
+    """``hydrograph_group_count`` / ``get_hydrograph_group_id``.
+
+    These accessors de-duplicate the per-(group, month, response) entry
+    list so consumers (GUI Object Browser, MCP tools) can enumerate
+    groups without manually scanning the raw entries.
+    """
+
+    def test_empty_model_has_zero_groups(self, inflows):
+        assert inflows.hydrograph_group_count() == 0
+
+    def test_one_group_twelve_months_counts_as_one(self, inflows):
+        for m in range(12):
+            inflows.add_hydrograph("SanSewer", m, 0, 0.05, 1.0, 2.0)
+        assert inflows.hydrograph_count() == 12
+        assert inflows.hydrograph_group_count() == 1
+        assert inflows.get_hydrograph_group_id(0) == "SanSewer"
+
+    def test_multiple_groups_first_occurrence_order(self, inflows):
+        inflows.add_hydrograph("Combined", 0, 0, 0.1, 1.0, 2.0)
+        inflows.add_hydrograph("Sanitary", 0, 0, 0.1, 1.0, 2.0)
+        inflows.add_hydrograph("Combined", 1, 0, 0.1, 1.0, 2.0)
+        inflows.add_hydrograph("Storm",    0, 0, 0.1, 1.0, 2.0)
+        inflows.add_hydrograph("Sanitary", 1, 0, 0.1, 1.0, 2.0)
+
+        assert inflows.hydrograph_group_count() == 3
+        assert inflows.get_hydrograph_group_id(0) == "Combined"
+        assert inflows.get_hydrograph_group_id(1) == "Sanitary"
+        assert inflows.get_hydrograph_group_id(2) == "Storm"
+
+    def test_gage_only_groups_are_counted(self, inflows):
+        # A group introduced via gage assignment alone (no parameter rows
+        # yet) still surfaces in the group enumeration so it shows up in
+        # the GUI browser.
+        inflows.add_hydrograph_gage("GageOnly", "G1")
+        inflows.add_hydrograph("Params", -1, 0, 0.1, 1.0, 2.0)
+        assert inflows.hydrograph_group_count() == 2
+        # Parameter-entry groups come before gage-only groups.
+        assert inflows.get_hydrograph_group_id(0) == "Params"
+        assert inflows.get_hydrograph_group_id(1) == "GageOnly"
+
+    def test_bad_index_raises(self, inflows):
+        inflows.add_hydrograph("UH", -1, 0, 0.1, 1.0, 2.0)
+        with pytest.raises(RuntimeError):
+            inflows.get_hydrograph_group_id(1)

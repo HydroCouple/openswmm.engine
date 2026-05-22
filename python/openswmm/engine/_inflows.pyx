@@ -298,6 +298,40 @@ class Inflows:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_hydrograph_gage_count(h)
 
+    def hydrograph_group_count(self) -> int:
+        """Return the number of unique unit-hydrograph group names defined.
+
+        A unit-hydrograph group is identified by name; the engine stores one
+        entry per (group, month, response). This count is the number of
+        I{distinct} group names across all parameter entries and gage
+        assignments, useful for enumerating groups in a UI without manually
+        de-duplicating the per-entry list.
+
+        @rtype: int
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        return swmm_hydrograph_group_count(h)
+
+    def get_hydrograph_group_id(self, int idx) -> str:
+        """Read back the name of a unit-hydrograph group by index.
+
+        Groups are enumerated in first-occurrence order across the parameter
+        entry list (matches the order in which they appear in the
+        C{[HYDROGRAPHS]} section of the input file).
+
+        @param idx: Zero-based group index
+            (C{0..hydrograph_group_count()-1}).
+        @type idx: int
+        @return: The group name.
+        @rtype: str
+        @raise EngineError: If C{idx} is out of range or the engine handle
+            is invalid.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef char buf[256]
+        _check(swmm_hydrograph_group_id(h, idx, buf, 256))
+        return buf.decode('utf-8')
+
     # ====================================================================
     # Exponential IA decay ([RDII_DECAY])
     # ====================================================================

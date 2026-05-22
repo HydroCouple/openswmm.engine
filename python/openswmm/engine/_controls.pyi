@@ -12,6 +12,8 @@ The :class:`Controls` class provides access to control rules and runtime
 link overrides during a simulation.
 """
 
+from typing import Optional
+
 from ._solver import Solver
 
 
@@ -66,6 +68,25 @@ class Controls:
         @rtype: str
         @raise EngineError: If the underlying C{swmm_control_get_rule} call
             returns a non-zero error code.
+        """
+        ...
+
+    def get_id(self, idx: int) -> Optional[str]:
+        """Return the canonical name of a control rule by index.
+
+        Parses the stored rule text and returns the first
+        whitespace-delimited token following the C{RULE} keyword
+        (case-insensitive, leading whitespace tolerated). Returns C{None}
+        when the rule text has no parseable C{RULE} keyword token, so
+        callers can render a sentinel display name without catching
+        exceptions.
+
+        @param idx: Rule index.
+        @type idx: int
+        @return: The rule name, or C{None} if the rule text is malformed.
+        @rtype: str | None
+        @raise EngineError: If C{idx} is out of range or the engine handle
+            is invalid.
         """
         ...
 

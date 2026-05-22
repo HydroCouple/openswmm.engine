@@ -159,6 +159,25 @@ struct NodeData {
      *         in outfall_link_idx. Zero for non-outfalls. */
     std::vector<double>     outfall_link_offset;
 
+    /**
+     * @brief Cached 2D surface head at the outfall coupling point (project length).
+     *
+     * @details Populated by SurfaceRouter2D::updateOutfallsPreRouting at the
+     *          start of every routing step for 2D-coupled outfalls; left at
+     *          the sentinel value (-1e30) for non-coupled outfalls and for
+     *          non-outfall nodes. Read inside Outfall::setAllOutfallDepths to
+     *          apply the C4 tailwater override (max(h_standard, h_2d) when
+     *          h_2d > invert_elev, gated by the optional flap gate).
+     *
+     *          The sentinel is chosen so that the predicate `h_2d > z_inv`
+     *          is false by construction for every non-coupled outfall, which
+     *          keeps the legacy path bit-for-bit unchanged when no 2D module
+     *          is attached.
+     *
+     * @see docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C4)
+     */
+    std::vector<double>     outfall_2d_head;
+
     // -----------------------------------------------------------------------
     // Storage-specific properties (valid when type[i] == STORAGE)
     // -----------------------------------------------------------------------
@@ -580,6 +599,7 @@ struct NodeData {
         outfall_route_to.assign(un, -1);
         outfall_link_idx.assign(un, -1);
         outfall_link_offset.assign(un, 0.0);
+        outfall_2d_head.assign(un, -1.0e30);
 
         storage_curve.assign(un, -1);
         storage_curve_name.resize(un);
@@ -674,6 +694,7 @@ struct NodeData {
         g(outfall_type, OutfallType::FREE); g(outfall_param, 0.0);
         g(outfall_has_flap_gate, uint8_t{0}); g(outfall_route_to, -1);
         g(outfall_link_idx, -1); g(outfall_link_offset, 0.0);
+        g(outfall_2d_head, -1.0e30);
         g(storage_curve, -1); storage_curve_name.resize(un);
         g(storage_a, 0.0); g(storage_b, 0.0); g(storage_c, 0.0);
         g(storage_seep_rate, 0.0); g(storage_evap_frac, 0.0);
@@ -728,6 +749,7 @@ struct NodeData {
 
         e(outfall_type); e(outfall_param); e(outfall_has_flap_gate);
         e(outfall_route_to); e(outfall_link_idx); e(outfall_link_offset);
+        e(outfall_2d_head);
 
         e(storage_curve); e(storage_curve_name);
         e(storage_a); e(storage_b); e(storage_c);
@@ -830,6 +852,7 @@ struct NodeData {
         outfall_route_to.shrink_to_fit();
         outfall_link_idx.shrink_to_fit();
         outfall_link_offset.shrink_to_fit();
+        outfall_2d_head.shrink_to_fit();
 
         storage_curve.shrink_to_fit();
         storage_curve_name.shrink_to_fit();
