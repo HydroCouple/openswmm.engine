@@ -105,12 +105,45 @@ lifecycle	list_sessions	lifecycle	tool	(ctx: Context) -> list[dict]
 lifecycle	open_model	lifecycle	tool	(ctx: Context, inp_path: str, session_id: str='default', rpt_path: str | None=None, out_path: str | None=None, engine: str='openswmm') -> ModelSummary
 lifecycle	run_simulation	lifecycle	tool	(ctx: Context, session_id: str='default') -> SimulationResult
 lifecycle	step_simulation	lifecycle	tool	(ctx: Context, session_id: str='default', num_steps: int=1) -> StepResult
+nodes	depth_from_volume	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', volume: float=0.0) -> dict
+nodes	get_depths_bulk	nodes	tool	(ctx: Context, session_id: str='default') -> dict
+nodes	get_divider_type	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+nodes	get_exfil_params	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+nodes	get_heads_bulk	nodes	tool	(ctx: Context, session_id: str='default') -> dict
+nodes	get_inflows_bulk	nodes	tool	(ctx: Context, session_id: str='default') -> dict
+nodes	get_outfall_flap_gate	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+nodes	get_outfall_param	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+nodes	get_outfall_route_to	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+nodes	get_outfall_type	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+nodes	get_overflows_bulk	nodes	tool	(ctx: Context, session_id: str='default') -> dict
+nodes	get_quality	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', pollutant_index: int=0) -> dict
+nodes	get_quality_bulk	nodes	tool	(ctx: Context, session_id: str='default', pollutant_index: int=0) -> dict
+nodes	get_storage_curve	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+nodes	get_storage_functional	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+nodes	get_storage_seep_rate	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+nodes	set_depths_bulk	nodes	tool	(ctx: Context, session_id: str='default', depths: list[float] | None=None) -> dict
+nodes	set_divider_type	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', divider_type: str='cutoff') -> dict
+nodes	set_exfil_params	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', suction: float=0.0, ksat: float=0.0, imd: float=0.0) -> dict
+nodes	set_lat_inflows_bulk	nodes	tool	(ctx: Context, session_id: str='default', inflows: list[float] | None=None) -> dict
+nodes	set_outfall_flap_gate	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', has_gate: bool=False) -> dict
+nodes	set_outfall_route_to	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', subcatch_index: int=-1) -> dict
+nodes	set_outfall_stage	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', stage: float=0.0) -> dict
+nodes	set_outfall_tidal	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', curve_index: int=0) -> dict
+nodes	set_outfall_timeseries	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', timeseries_index: int=0) -> dict
+nodes	set_outfall_type	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', outfall_type: str='free') -> dict
+nodes	set_quality_mass_flux	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', pollutant_index: int=0, mass_flux: float=0.0) -> dict
+nodes	set_storage_curve	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', curve_index: int=0) -> dict
+nodes	set_storage_functional	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', a: float=0.0, b: float=0.0, c: float=0.0) -> dict
+nodes	set_storage_seep_rate	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', rate: float=0.0) -> dict
+nodes	stat_max_depth	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+nodes	stat_max_overflow	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+nodes	stat_time_flooded	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+nodes	stat_vol_flooded	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
 query	find_elements	query	tool	(ctx: Context, session_id: str='default', pattern: str | None=None, element_type: str | None=None) -> list[ElementSearchResult]
 query	get_gage_info	query	tool	(ctx: Context, session_id: str='default', gage_id: str | None=None) -> GageInfo | list[GageInfo]
 query	get_link_info	query	tool	(ctx: Context, session_id: str='default', link_id: str | None=None) -> LinkInfo | list[LinkInfo]
 query	get_node_info	query	tool	(ctx: Context, session_id: str='default', node_id: str | None=None, properties: list[str] | None=None) -> NodeInfo | list[NodeInfo]
-query	get_pollutant_info	query	tool	(ctx: Context, session_id: str='default', pollutant_id: str | None=None) -> PollutantInfo | list[PollutantInfo]# 151 entries (142 tools, 9 resources) across 15 modules
-
+query	get_pollutant_info	query	tool	(ctx: Context, session_id: str='default', pollutant_id: str | None=None) -> PollutantInfo | list[PollutantInfo]
 query	get_subcatchment_info	query	tool	(ctx: Context, session_id: str='default', subcatch_id: str | None=None) -> SubcatchmentInfo | list[SubcatchmentInfo]
 query	get_system_summary	query	tool	(ctx: Context, session_id: str='default') -> SystemSummary
 resources	link_detail	model	resource	(session_id: str, link_id: str, ctx: Context) -> str
@@ -147,7 +180,8 @@ tables	get_index	tables	tool	(ctx: Context, session_id: str='default', table_id:
 tables	get_point	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', point_index: int=0) -> dict
 tables	get_point_count	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='') -> dict
 tables	get_points	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='') -> dict
-tables	lookup	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', x: float=0.0) -> dict
+tables	lookup	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', x: float=0.0) -> dict# 185 entries (176 tools, 9 resources) across 16 modules
+
 tables	pattern_add	tables	tool	(ctx: Context, session_id: str='default', pattern_id: str='', pattern_type: str='monthly', factors: list[float] | None=None) -> dict
 tables	pattern_count	tables	tool	(ctx: Context, session_id: str='default') -> dict
 tables	pattern_set_factors	tables	tool	(ctx: Context, session_id: str='default', pattern_index: int=0, factors: list[float] | None=None) -> dict

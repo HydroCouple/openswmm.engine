@@ -85,6 +85,37 @@ swmm_output_get_link_result	parity	via analysis.output_link_results (plural).
 swmm_output_get_subcatch_result	parity	via analysis.output_subcatch_results (plural).
 
 # ----------------------------------------------------------------------------
+# Nodes domain (Phase 2.6): basic property getter/setter pairs are covered
+# in batched form by query.get_node_info (read) and editing.set_node_properties
+# (write). The new nodes_mcp module exposes the SUBTYPE-specific accessors
+# (storage / outfall / divider), bulk arrays, statistics, and quality —
+# but does not duplicate the basic property pairs.
+# ----------------------------------------------------------------------------
+swmm_node_count	parity	via lifecycle.open_model summary + query.find_elements counts.
+swmm_node_id	parity	via query.get_node_info (id lookup by index returned in listings).
+swmm_node_index	parity	via query.find_elements / get_node_info (string id -> index resolved internally).
+swmm_node_get_invert_elev	parity	via query.get_node_info (returns invert_elev field).
+swmm_node_get_max_depth	parity	via query.get_node_info.
+swmm_node_get_initial_depth	parity	via query.get_node_info.
+swmm_node_get_surcharge_depth	parity	via query.get_node_info.
+swmm_node_get_ponded_area	parity	via query.get_node_info.
+swmm_node_get_crown_elev	parity	via query.get_node_info (invert_elev + max_depth).
+swmm_node_get_full_volume	parity	via query.get_node_info.
+swmm_node_get_losses	parity	via query.get_node_info.
+swmm_node_get_degree	parity	via query.get_node_info.
+swmm_node_get_head	parity	via query.get_node_info (read during running/ended).
+swmm_node_get_inflow	parity	via query.get_node_info.
+swmm_node_get_outflow	parity	via query.get_node_info.
+swmm_node_get_lateral_inflow	parity	via query.get_node_info.
+swmm_node_set_invert_elev	parity	via editing.set_node_properties.
+swmm_node_set_initial_depth	parity	via editing.set_node_properties.
+swmm_node_set_surcharge_depth	parity	via editing.set_node_properties.
+swmm_node_set_pond_area	parity	via editing.set_node_properties.
+swmm_node_set_lateral_inflow	parity	via forcing.set_forcing (target_type='node', variable='lateral_inflow').
+swmm_node_set_head_boundary	parity	via forcing.set_forcing (target_type='node', variable='head').
+swmm_node_rename	mcp-gap	Reachable via session.nodes.rename internally but no MCP tool wraps it; Phase 2 wave 2 to add editing.rename_node alongside link/subcatch/gage renames.
+
+# ----------------------------------------------------------------------------
 # True py-gaps confirmed (Phase 1 implementation targets).
 # Listed here only when they need a richer note than the default classification.
 # Leaving them out keeps the auto status `py-gap`.

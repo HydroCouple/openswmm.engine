@@ -66,7 +66,7 @@ DOMAIN_ALIASES: dict[str, str] = {
 MCP_DOMAIN_HINTS: dict[str, list[str]] = {
     "engine": ["lifecycle"],
     "model": ["building", "editing"],
-    "nodes": ["query", "editing", "building"],
+    "nodes": ["nodes", "query", "editing", "building"],
     "links": ["query", "editing", "building"],
     "subcatchments": ["query", "editing", "building"],
     "gages": ["query", "editing", "building"],
