@@ -52,7 +52,10 @@ SWMM_ENGINE_API int swmm_gage_add(SWMM_Engine engine, const char* id) {
 
     ctx.gage_names.add(id);
     int n = ctx.gage_names.size();
-    ctx.gages.resize(n);
+    ctx.gages.grow_to(n);
+    const auto un = static_cast<std::size_t>(n);
+    if (ctx.spatial.gage_x.size() < un) ctx.spatial.gage_x.resize(un, 0.0);
+    if (ctx.spatial.gage_y.size() < un) ctx.spatial.gage_y.resize(un, 0.0);
 
     return SWMM_OK;
 }
@@ -168,6 +171,15 @@ SWMM_ENGINE_API int swmm_gage_get_rainfall_bulk(SWMM_Engine engine, double* buf,
     const int n = std::min(count, ctx.n_gages());
     std::copy(ctx.gages.rainfall.begin(), ctx.gages.rainfall.begin() + n, buf);
     return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_rename(SWMM_Engine engine, int idx, const char* newId) {
+    CHECK_HANDLE(engine);
+    if (!newId || newId[0] == '\0') return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    return ctx.gage_names.rename(idx, newId) ? SWMM_OK : SWMM_ERR_BADPARAM;
 }
 
 } /* extern "C" */

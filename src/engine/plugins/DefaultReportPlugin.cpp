@@ -934,16 +934,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "********************************");
     WRITE(f, "Highest Flow Instability Indexes");
     WRITE(f, "********************************");
-    {
-        if (ctx.max_flow_turns[0].index < 0 || ctx.max_flow_turns[0].value <= 0.0) {
-            std::fprintf(f, "\n  All links are stable.");
-        } else {
-            for (int i = 0; i < SimulationContext::MAX_STATS; ++i) {
-                const auto& ms = ctx.max_flow_turns[i];
-                if (ms.index < 0) continue;
-                std::fprintf(f, "\n  Link %s (%.0f)",
-                             ctx.link_names.name_of(ms.index).c_str(), ms.value);
-            }
+    if (ctx.max_flow_turns[0].index < 0 || ctx.max_flow_turns[0].value <= 0.0) {
+        std::fprintf(f, "\n  All links are stable.");
+    } else {
+        for (int i = 0; i < SimulationContext::MAX_STATS; ++i) {
+            const auto& ms = ctx.max_flow_turns[i];
+            if (ms.index < 0) continue;
+            std::fprintf(f, "\n  Link %s (%.0f)",
+                         ctx.link_names.name_of(ms.index).c_str(), ms.value);
         }
     }
 

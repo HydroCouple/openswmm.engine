@@ -235,6 +235,23 @@ class Surface2D:
         """
         ...
 
+    def get_edge_flux_bulk(self) -> npt.NDArray[np.float64]:
+        """Return normal edge fluxes for all triangle edges.
+
+        Indexed as C{[tri*3 + localEdge]}.
+        @return: Array of shape C{(n_triangles*3,)} with dtype C{float64}.
+        """
+        ...
+
+    def get_edge_geometry_bulk(self) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Return time-invariant edge lengths and outward unit normal components.
+
+        Returns C{(length, nx, ny)}, each indexed as C{[tri*3 + localEdge]}.
+
+        @return: Tuple C{(length, nx, ny)}, each of shape C{(n_triangles*3,)}.
+        """
+        ...
+
     # ====================================================================
     # State (depth/velocity) - per triangle scalar
     # ====================================================================

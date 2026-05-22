@@ -332,10 +332,16 @@ SWMM_ENGINE_API int swmm_title_clear(SWMM_Engine engine);
  * @brief Retrieve a standard OPTIONS value as a string.
  *
  * @param engine  Engine handle.
- * @param key     Option name (e.g., "FLOW_UNITS", "ROUTING_MODEL", "CRS").
+ * @param key     Option name (e.g., "FLOW_UNITS", "ROUTING_MODEL",
+ *                "LINK_OFFSETS", "CRS").
  * @param buf     Caller-allocated buffer for the value string.
  * @param buflen  Size of buf in bytes.
  * @returns SWMM_OK if key found; SWMM_ERR_BADPARAM if not a standard key.
+ *
+ * @details Encoding is symmetric with swmm_options_set: the returned string
+ *          is one that swmm_options_set accepts for the same key. Enum keys
+ *          return their canonical token (e.g. "CMS", "DYNWAVE", "ELEVATION"),
+ *          never the underlying int.
  */
 SWMM_ENGINE_API int swmm_options_get(
     SWMM_Engine engine,

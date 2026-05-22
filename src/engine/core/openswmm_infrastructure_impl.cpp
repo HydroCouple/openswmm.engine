@@ -66,6 +66,22 @@ SWMM_ENGINE_API int swmm_transect_count(SWMM_Engine engine) {
     return to_engine(engine)->context().transects.count();
 }
 
+SWMM_ENGINE_API int swmm_transect_index(SWMM_Engine engine, const char* id) {
+    if (!engine || !id) return -1;
+    const auto& names = to_engine(engine)->context().transects.names;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+SWMM_ENGINE_API const char* swmm_transect_id(SWMM_Engine engine, int idx) {
+    if (!engine) return nullptr;
+    const auto& names = to_engine(engine)->context().transects.names;
+    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    return names[static_cast<std::size_t>(idx)].c_str();
+}
+
 // ============================================================================
 // Streets
 // ============================================================================
@@ -120,6 +136,22 @@ SWMM_ENGINE_API int swmm_street_count(SWMM_Engine engine) {
     return to_engine(engine)->context().streets.count();
 }
 
+SWMM_ENGINE_API int swmm_street_index(SWMM_Engine engine, const char* id) {
+    if (!engine || !id) return -1;
+    const auto& names = to_engine(engine)->context().streets.names;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+SWMM_ENGINE_API const char* swmm_street_id(SWMM_Engine engine, int idx) {
+    if (!engine) return nullptr;
+    const auto& names = to_engine(engine)->context().streets.names;
+    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    return names[static_cast<std::size_t>(idx)].c_str();
+}
+
 // ============================================================================
 // Inlets
 // ============================================================================
@@ -163,15 +195,59 @@ SWMM_ENGINE_API int swmm_inlet_count(SWMM_Engine engine) {
     return to_engine(engine)->context().inlets.count();
 }
 
+SWMM_ENGINE_API int swmm_inlet_index(SWMM_Engine engine, const char* id) {
+    if (!engine || !id) return -1;
+    const auto& names = to_engine(engine)->context().inlets.names;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+SWMM_ENGINE_API const char* swmm_inlet_id(SWMM_Engine engine, int idx) {
+    if (!engine) return nullptr;
+    const auto& names = to_engine(engine)->context().inlets.names;
+    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    return names[static_cast<std::size_t>(idx)].c_str();
+}
+
 // ============================================================================
 // LID controls
 // ============================================================================
 
+namespace {
+// LID type codes match legacy SWMM 5 2-letter codes used by the .inp parser
+// (HydrologyHandler [LID_CONTROLS]). Index = openswmm_infrastructure.h type
+// enum (0 = BIO_CELL, 1 = RAIN_GARDEN, ...).
+inline const char* lid_type_code(int type) {
+    static const char* codes[] = {"BC", "RG", "GR", "IT", "PP", "RB", "RD", "VS"};
+    if (type < 0 || type >= static_cast<int>(sizeof(codes) / sizeof(codes[0])))
+        return "";
+    return codes[type];
+}
+} // namespace
+
 SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type) {
     CHECK_HANDLE(engine);
     if (!id) return SWMM_ERR_BADPARAM;
-    (void)type;  // TODO: store LID type when LID SoA store is expanded
-    // Placeholder — LID control store not yet in InfraData; returns OK
+
+    auto& ctx = to_engine(engine)->context();
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED)
+        return SWMM_ERR_LIFECYCLE;
+
+    auto& lid = ctx.lid_controls;
+    lid.names.push_back(id);
+    lid.lid_type.push_back(lid_type_code(type));
+    lid.surface.push_back({});
+    lid.soil.push_back({});
+    lid.pavement.push_back({});
+    lid.storage.push_back({});
+    lid.drain.push_back({});
+    lid.drainmat.push_back({});
+    lid.removals.push_back({});
+
+    ctx.lid_names.add(id);
     return SWMM_OK;
 }
 
@@ -204,9 +280,24 @@ SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff
 }
 
 SWMM_ENGINE_API int swmm_lid_count(SWMM_Engine engine) {
-    CHECK_HANDLE(engine);
-    // TODO: return actual LID count when LID SoA store is expanded
-    return 0;
+    if (!engine) return -1;
+    return to_engine(engine)->context().lid_controls.count();
+}
+
+SWMM_ENGINE_API int swmm_lid_index(SWMM_Engine engine, const char* id) {
+    if (!engine || !id) return -1;
+    const auto& names = to_engine(engine)->context().lid_controls.names;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+SWMM_ENGINE_API const char* swmm_lid_id(SWMM_Engine engine, int idx) {
+    if (!engine) return nullptr;
+    const auto& names = to_engine(engine)->context().lid_controls.names;
+    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    return names[static_cast<std::size_t>(idx)].c_str();
 }
 
 // ============================================================================

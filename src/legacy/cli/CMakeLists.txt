@@ -20,16 +20,15 @@ target_include_directories(openswmm_legacy
 )
 
 if(APPLE)
-    set(LIB_ROOT "@loader_path;@rpath;@loader_path/../lib;@rpath/../lib")
+    set(LIB_ROOT "@loader_path;@loader_path/../lib")
 elseif(UNIX)
     set(LIB_ROOT "$ORIGIN;$ORIGIN/../lib")
 endif()
 
-set_target_properties(openswmm_legacy
-    PROPERTIES
-        OUTPUT_NAME "openswmm-legacy"
-        INSTALL_RPATH "${LIB_ROOT}"
-)
+set_target_properties(openswmm_legacy PROPERTIES OUTPUT_NAME "openswmm-legacy")
+if(NOT WIN32)
+    set_target_properties(openswmm_legacy PROPERTIES INSTALL_RPATH "${LIB_ROOT}")
+endif()
 
 install(TARGETS openswmm_legacy DESTINATION bin)
 

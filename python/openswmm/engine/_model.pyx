@@ -636,3 +636,118 @@ cdef class ModelBuilder:
         """
         cdef bytes b = name.encode('utf-8')
         _check(swmm_userflag_set_real(self._handle, b, value))
+
+    # =========================================================================
+    # Plugins
+    # =========================================================================
+
+    def plugins_count(self) -> int:
+        """Return the number of [PLUGINS] entries on the engine.
+
+        @return: Plugin count.
+        @rtype: int
+        @raise EngineError: On C API failure.
+        """
+        cdef int count = 0
+        _check(swmm_plugins_count(self._handle, &count))
+        return count
+
+    def plugin_get(self, int idx) -> tuple:
+        """Read one [PLUGINS] row by index.
+
+        @param idx: Index in C{[0, plugins_count())}.
+        @type idx: int
+        @return: Tuple C{(path, args)} where C{args} is a space-joined string.
+        @rtype: tuple
+        @raise EngineError: On C API failure.
+        """
+        cdef char path_buf[4096]
+        cdef char args_buf[4096]
+        _check(swmm_plugin_get(self._handle, idx, path_buf, 4096, args_buf, 4096))
+        return path_buf.decode('utf-8'), args_buf.decode('utf-8')
+
+    def plugin_set(self, str path_or_id, str args=""):
+        """Add or replace a [PLUGINS] row keyed by path/id.
+
+        If a row with the same C{path_or_id} exists its args are replaced;
+        otherwise a new row is appended.
+
+        @param path_or_id: Library path, plugin id, or C{id:version} string.
+        @type path_or_id: str
+        @param args: Space-separated argument tokens; C{""} for no arguments.
+        @type args: str
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b_path = path_or_id.encode('utf-8')
+        cdef bytes b_args = args.encode('utf-8')
+        _check(swmm_plugin_set(self._handle, b_path, b_args))
+
+    def plugin_remove(self, str path_or_id):
+        """Remove the [PLUGINS] row matching C{path_or_id}.
+
+        Idempotent: returns without error when no row matches.
+
+        @param path_or_id: Library path, plugin id, or C{id:version} string.
+        @type path_or_id: str
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b = path_or_id.encode('utf-8')
+        _check(swmm_plugin_remove(self._handle, b))
+
+    # =========================================================================
+    # [FILES] section
+    # =========================================================================
+
+    def files_get(self, str key) -> str:
+        """Read one [FILES] field by key.
+
+        Recognised keys include: C{"RAINFALL_PATH"}, C{"RAINFALL_MODE"},
+        C{"RUNOFF_PATH"}, C{"RUNOFF_MODE"}, C{"RDII_PATH"}, C{"RDII_MODE"},
+        C{"INFLOWS_PATH"}, C{"OUTFLOWS_PATH"}, C{"HOTSTART_USE_PATH"},
+        C{"HOTSTART_SAVE_PATH"}, C{"HOTSTART_SAVE_DATETIME"}.
+
+        @param key: Field key (case-insensitive).
+        @type key: str
+        @return: Field value string.
+        @rtype: str
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b = key.encode('utf-8')
+        cdef char buf[4096]
+        _check(swmm_files_get(self._handle, b, buf, 4096))
+        return buf.decode('utf-8')
+
+    def files_set(self, str key, str value):
+        """Write one [FILES] field by key.
+
+        Pass an empty C{value} to clear a path slot or mode.
+
+        @param key: Field key (see L{files_get} for recognised keys).
+        @type key: str
+        @param value: New field value; C{""} to clear.
+        @type value: str
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b_key = key.encode('utf-8')
+        cdef bytes b_val = value.encode('utf-8')
+        _check(swmm_files_set(self._handle, b_key, b_val))
+
+    # =========================================================================
+    # Write with plugin
+    # =========================================================================
+
+    def write_with_plugin(self, str path, str output_plugin_id=""):
+        """Write the current model to disk using an output plugin.
+
+        Pass an empty string (the default) to use the built-in `.inp` writer.
+
+        @param path: Destination file path.
+        @type path: str
+        @param output_plugin_id: Plugin id or empty string for built-in writer.
+        @type output_plugin_id: str
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b_path = path.encode('utf-8')
+        cdef bytes b_plugin = output_plugin_id.encode('utf-8')
+        _check(swmm_model_write_with_plugin(self._handle, b_path, b_plugin))
+

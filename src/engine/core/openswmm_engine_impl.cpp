@@ -277,6 +277,63 @@ SWMM_ENGINE_API int swmm_get_event_count(SWMM_Engine engine, int* count) {
     return SWMM_OK;
 }
 
+/* -------------------------------------------------------------------------
+ * [EVENTS] section accessors (Slice CW — added 2026-05-21).
+ * Mirrors the read path in handle_events (InfraHandler.cpp).
+ * ------------------------------------------------------------------------- */
+
+SWMM_ENGINE_API int swmm_events_count(SWMM_Engine engine, int* count) {
+    return swmm_get_event_count(engine, count);
+}
+
+SWMM_ENGINE_API int swmm_events_get(SWMM_Engine engine, int idx,
+                                    double* start, double* end) {
+    CHECK_HANDLE(engine);
+    const auto& events = to_engine(engine)->context().events;
+    if (idx < 0 || static_cast<size_t>(idx) >= events.size())
+        return SWMM_ERR_BADINDEX;
+    if (start) *start = events[static_cast<size_t>(idx)].start;
+    if (end)   *end   = events[static_cast<size_t>(idx)].end;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_events_set(SWMM_Engine engine, int idx,
+                                    double start, double end) {
+    CHECK_HANDLE(engine);
+    auto& events = to_engine(engine)->context().events;
+    if (idx < 0 || static_cast<size_t>(idx) >= events.size())
+        return SWMM_ERR_BADINDEX;
+    if (start >= end) return SWMM_ERR_BADPARAM;
+    events[static_cast<size_t>(idx)].start = start;
+    events[static_cast<size_t>(idx)].end   = end;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_events_add(SWMM_Engine engine,
+                                    double start, double end, int* out_idx) {
+    CHECK_HANDLE(engine);
+    if (start >= end) return SWMM_ERR_BADPARAM;
+    auto& events = to_engine(engine)->context().events;
+    events.push_back({start, end});
+    if (out_idx) *out_idx = static_cast<int>(events.size()) - 1;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_events_remove(SWMM_Engine engine, int idx) {
+    CHECK_HANDLE(engine);
+    auto& events = to_engine(engine)->context().events;
+    if (idx < 0 || static_cast<size_t>(idx) >= events.size())
+        return SWMM_ERR_BADINDEX;
+    events.erase(events.begin() + idx);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_events_clear(SWMM_Engine engine) {
+    CHECK_HANDLE(engine);
+    to_engine(engine)->context().events.clear();
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_get_steady_state_skip(SWMM_Engine engine, int* enabled) {
     CHECK_HANDLE(engine);
     if (enabled) *enabled = to_engine(engine)->context().options.skip_steady_state ? 1 : 0;

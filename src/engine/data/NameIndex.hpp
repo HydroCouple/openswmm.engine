@@ -140,6 +140,23 @@ public:
     }
 
     /**
+     * @brief Rename the entry at `idx` to `newName`.
+     *
+     * @param idx     Index of the entry to rename.
+     * @param newName New name (must not already be registered).
+     * @returns       true on success; false if idx is out of range or newName
+     *                is already in use.
+     */
+    bool rename(int idx, const std::string& newName) noexcept {
+        if (idx < 0 || idx >= static_cast<int>(names_.size())) return false;
+        if (map_.count(newName)) return false; // would create a duplicate
+        map_.erase(names_[static_cast<std::size_t>(idx)]);
+        names_[static_cast<std::size_t>(idx)] = newName;
+        map_[newName] = idx;
+        return true;
+    }
+
+    /**
      * @brief Remove the entry at `idx` and rebuild the name→index map.
      *
      * @details All entries at indices > idx are shifted down by one.

@@ -3,7 +3,7 @@
 #
 # Project:     openswmm.engine
 # Description: Open Storm Water Management Model Engine
-# Version:     6.0.0-alpha.1
+# Version:     6.0.0-alpha.1 (refactored engine) / 6.0.0-beta.1 (legacy engine wrapper)
 #
 # This is the root CMake file for the openswmm.engine project which contains:
 #   - openswmm_legacy_engine : Original EPA SWMM 5.x C solver (preserved unmodified)
@@ -33,8 +33,11 @@ project(
     LANGUAGES C CXX
 )
 
-# Pre-release label (e.g. "alpha.1", "beta.1", "rc.1"). Leave empty for a final release.
-set(OPENSWMM_PRERELEASE "alpha.1" CACHE STRING "Pre-release tag (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
+# Pre-release label for the refactored engine (e.g. "alpha.1", "beta.1", "rc.1"). Leave empty for a final release.
+set(OPENSWMM_PRERELEASE "alpha.1" CACHE STRING "Pre-release tag for the refactored engine (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
+
+# Pre-release label for the legacy engine wrapper. Advances to beta ahead of the refactored engine.
+set(OPENSWMM_LEGACY_PRERELEASE "beta.1" CACHE STRING "Pre-release tag for the legacy engine wrapper (e.g. beta.1, rc.1). Empty for a final release.")
 
 if(OPENSWMM_PRERELEASE)
     set(OPENSWMM_FULL_VERSION "${PROJECT_VERSION}-${OPENSWMM_PRERELEASE}")
@@ -42,7 +45,14 @@ else()
     set(OPENSWMM_FULL_VERSION "${PROJECT_VERSION}")
 endif()
 
-message(STATUS "OpenSWMM Engine version: ${OPENSWMM_FULL_VERSION}")
+if(OPENSWMM_LEGACY_PRERELEASE)
+    set(OPENSWMM_LEGACY_FULL_VERSION "${PROJECT_VERSION}-${OPENSWMM_LEGACY_PRERELEASE}")
+else()
+    set(OPENSWMM_LEGACY_FULL_VERSION "${PROJECT_VERSION}")
+endif()
+
+message(STATUS "OpenSWMM Engine version (refactored): ${OPENSWMM_FULL_VERSION}")
+message(STATUS "OpenSWMM Engine version (legacy):     ${OPENSWMM_LEGACY_FULL_VERSION}")
 
 
 # Modern build type handling
@@ -82,6 +92,35 @@ endif()
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 include(GenerateExportHeader)
+
+# ---- RPATH / runtime-library search-path policy -------------------------
+# Separate build-tree and install rpaths so developers can run binaries
+# directly from the build dir without extra environment variables, while
+# installed binaries locate their dylibs via relative paths.
+#
+# CMAKE_INSTALL_RPATH_USE_LINK_PATH appends every linked-library directory
+# that is not an implicit system path to each target's install rpath
+# automatically — this ensures editable Python installs and standalone
+# cmake --install both find the engine dylibs without manual DYLD/LD setup.
+#
+# Per-target INSTALL_RPATH settings (wheel layout etc.) override the global
+# CMAKE_INSTALL_RPATH value but are still AUGMENTED by USE_LINK_PATH.
+#
+# Windows has no rpath; DLL resolution uses PATH / the executable directory.
+if(NOT WIN32)
+    set(CMAKE_SKIP_BUILD_RPATH            FALSE)
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH    FALSE)
+    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+    if(APPLE)
+        set(CMAKE_MACOSX_RPATH ON)
+        # Executables/libs that do NOT set their own INSTALL_RPATH use this.
+        # @loader_path      — same directory as the binary (co-located dylibs)
+        # @loader_path/../lib — standard prefix layout (bin/ → ../lib/)
+        set(CMAKE_INSTALL_RPATH "@loader_path;@loader_path/../lib")
+    else()
+        set(CMAKE_INSTALL_RPATH "$ORIGIN;$ORIGIN/../lib")
+    endif()
+endif()
 
 # Build information (improved)
 find_package(Git QUIET)

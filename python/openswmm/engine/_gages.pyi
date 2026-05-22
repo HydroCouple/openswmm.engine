@@ -97,6 +97,20 @@ class Gages:
         """
         ...
 
+    def delete(self, idx: Union[int, str]) -> list:
+        """Delete a rain gage and cascade-nullify all referencing objects.
+
+        Valid in C{BUILDING} or C{OPENED} state.
+
+        @param idx: Gage index (int) or gage ID (str).
+        @type idx: Union[int, str]
+        @return: List of C{ImpactEntry} describing cascaded changes.
+        @rtype: list
+        @raise KeyError: If C{idx} is a string and the gage is not found.
+        @raise RuntimeError: On engine error.
+        """
+        ...
+
     # ====================================================================
     # Rainfall get/set
     # ====================================================================
@@ -218,3 +232,16 @@ class Gages:
         @raise KeyError: If C{idx} is a string and the gage ID is not found.
         """
         ...
+
+    # ====================================================================
+    # Rename
+    # ====================================================================
+
+    def rename(self, idx: Union[int, str], new_id: str) -> None:
+        """Rename a rain gage.
+
+        @param idx: Gage index (int) or current gage ID (str).
+        @param new_id: New identifier string.
+        """
+        ...
+

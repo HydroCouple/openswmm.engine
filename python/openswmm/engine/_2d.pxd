@@ -22,6 +22,8 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_triangle_get_mannings(void* engine, int idx, double* n)
     int swmm_2d_triangle_get_neighbours(void* engine, int idx,
                                          int* n0, int* n1, int* n2)
+    int swmm_2d_edge_get_geometry_bulk(void* engine,
+                                        double* length, double* nx, double* ny)
 
     # Coupling
     int swmm_2d_vertex_coupling_count(void* engine, int* count)
@@ -38,6 +40,7 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_get_depths_bulk(void* engine, double* depths)
     int swmm_2d_get_heads_bulk(void* engine, double* heads)
     int swmm_2d_get_coupling_fluxes_bulk(void* engine, double* fluxes)
+    int swmm_2d_get_edge_flux_bulk(void* engine, double* flux)
 
     # State — per vertex
     int swmm_2d_vertex_get_head(void* engine, int idx, double* head)

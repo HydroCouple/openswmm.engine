@@ -42,6 +42,17 @@ set(LEGACY_SWMM_VERSION_PATCH 0)
 set(LEGACY_SWMM_VERSION "${LEGACY_SWMM_VERSION_MAJOR}.${LEGACY_SWMM_VERSION_MINOR}.${LEGACY_SWMM_VERSION_PATCH}")
 set(LEGACY_SWMM_VERSION_FULL "${LEGACY_SWMM_VERSION} (Build ${LEGACY_SWMM_VERSION})")
 
+# OpenSWMM wrapper pre-release tag for the legacy engine integration
+# (e.g. "beta.1", "rc.1", or "" for a stable release).
+set(OPENSWMM_LEGACY_PRERELEASE "beta.1" CACHE STRING
+    "Pre-release tag for the legacy SWMM engine wrapper (e.g. beta.1, rc.1). Empty for a stable release.")
+
+if(OPENSWMM_LEGACY_PRERELEASE)
+    set(OPENSWMM_LEGACY_FULL_VERSION "${LEGACY_SWMM_VERSION}-${OPENSWMM_LEGACY_PRERELEASE}")
+else()
+    set(OPENSWMM_LEGACY_FULL_VERSION "${LEGACY_SWMM_VERSION}")
+endif()
+
 configure_file(
     ${PROJECT_SOURCE_DIR}/include/openswmm/legacy/engine/legacy_version.h.in
     ${CMAKE_CURRENT_BINARY_DIR}/legacy_version.h
@@ -65,6 +76,13 @@ set_target_properties(openswmm_legacy_engine
         OUTPUT_NAME "openswmm.legacy.engine"
         VERSION     ${PROJECT_VERSION}
         SOVERSION   ${PROJECT_VERSION_MAJOR}
+        # Tell generate_export_header that symbols default to hidden so it
+        # emits __attribute__((visibility("default"))) on the export macro.
+        # Without this, if -fvisibility=hidden is in CMAKE_C_FLAGS the API
+        # symbols are hidden and the CLI / worker fail to link.
+        C_VISIBILITY_PRESET   hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN TRUE
 )
 
 # Platform definitions (required by legacy SWMM source)
@@ -81,6 +99,18 @@ endif()
 #       directly in the unmodified legacy C source files (swmm5.c, swmm5_stats.c).
 #   #include "openswmm_legacy_solver_export.h"   → EXPORT_FILE_NAME
 #   EXPORT_OPENSWMMCORE_SOLVER_API                → EXPORT_MACRO_NAME (preserved)
+#
+# generate_export_header uses the cached COMPILER_HAS_HIDDEN_VISIBILITY result
+# to decide whether to emit __attribute__((visibility("default"))) on the export
+# macro.  On macOS/ARM the check_compiler_flag test may fail or return empty
+# because unsupported flags like -ffloat-store are present in CMAKE_C_FLAGS and
+# cause a compiler warning that is treated as a test failure.  Force the variable
+# TRUE here so the generated header always includes the visibility attribute on
+# non-Windows platforms where the compiler is known to support it.
+if(NOT WIN32)
+    set(COMPILER_HAS_HIDDEN_VISIBILITY TRUE CACHE BOOL
+        "Compiler supports -fvisibility=hidden (forced for legacy engine)" FORCE)
+endif()
 include(GenerateExportHeader)
 generate_export_header(openswmm_legacy_engine
     BASE_NAME        openswmm_legacy_solver
@@ -116,11 +146,9 @@ target_link_libraries(openswmm_legacy_engine
         OpenMP::OpenMP_C
 )
 
-# RPATH settings
-# The legacy engine dylib is installed to openswmm/legacy/engine/ in the wheel.
-# External bundled deps (libomp, placed by delocate/auditwheel) go into
-# openswmm/.dylibs/ — two levels above:
-# @loader_path/../../.dylibs  ==  openswmm/legacy/engine/../../.dylibs  ==  openswmm/.dylibs/
+# RPATH — wheel layout: bundled deps in openswmm/.dylibs/, two levels above
+# openswmm/legacy/engine/.  Standalone install: system finds libomp via its
+# default search path.  Build-tree rpath is computed automatically by CMake.
 if(APPLE)
     set(LIB_ROOT "@loader_path/../../.dylibs")
 elseif(UNIX)
@@ -129,13 +157,12 @@ else()
     set(LIB_ROOT "")
 endif()
 
-set_target_properties(openswmm_legacy_engine
-    PROPERTIES
-        MACOSX_RPATH             TRUE
-        INSTALL_RPATH            "${LIB_ROOT}"
-        BUILD_RPATH              "${LIB_ROOT}"
-        BUILD_WITH_INSTALL_RPATH TRUE
-)
+if(NOT WIN32)
+    set_target_properties(openswmm_legacy_engine PROPERTIES
+        MACOSX_RPATH  TRUE
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+endif()
 
 # Install public headers
 install(

@@ -212,4 +212,4 @@ MIT — see [LICENSE](LICENSE). Original EPA SWMM material is in the public doma
 
 ## Acknowledgements
 
-OpenSWMM builds on the EPA Storm Water Management Model originally developed by Lewis A. Rossman at the U.S. EPA Office of Research and Development. See [docs/authors.md](docs/authors.md) for the full contributor list.
+OpenSWMM builds on the EPA Storm Water Management Model. See [docs/authors.md](docs/authors.md) for the full contributor list.

@@ -145,14 +145,21 @@ double DWSolver::getSlotHydRad(double y, double y_full, double r_full) const {
 }
 
 // ============================================================================
-// Dynamic Preissmann Slot (DPS) — geometry override
-// Sharior et al. (2023) Eqs. 14, 15, 19
+// Dynamic Preissmann Slot (DPS) — geometry override (head-first formulation)
+// Sharior et al. (2023) Eqs. 14, 15, 19 — applied in link-node form.
+//
+// SWMM's DW solver evolves node depth as the prognostic variable, so the
+// surcharge head `hs = max(depth_mid − y_full, 0)` is read off the node-head
+// solution rather than integrated from area continuity.  The DPS relation is
+// then used in its forward form `dAs = T_s · dhs` where
+// `T_s = T_s_target · P² = (g·A_C/c_pT²)·P²` is the dynamic slot top width.
+// Accumulating `As` from dhs increments — not from `(area_mid − A_C)` —
+// keeps previously stored slot volume invariant under pure P decay, which is
+// the conservation property the original DPS formulation was designed for.
 // ============================================================================
 
 void DWSolver::applyDPSGeometry(SimulationContext& ctx) {
     auto& links = ctx.links;
-    double g = GRAVITY;
-    double c2 = dps_config_.c_pT_sq;
 
     for (int ci = 0; ci < n_conduits_; ++ci) {
         int j = conduit_idx_[static_cast<std::size_t>(ci)];
@@ -161,51 +168,73 @@ void DWSolver::applyDPSGeometry(SimulationContext& ctx) {
 
         if (is_open_[uj]) continue;
 
-        double yf = links.xsect_y_full[uj];
-        double af = links.xsect_a_full[uj];
-        double rf = links.xsect_r_full[uj];
-        double yMid = depth_mid_[uj];
+        const double yf = links.xsect_y_full[uj];
+        const double af = links.xsect_a_full[uj];
+        const double rf = links.xsect_r_full[uj];
+        if (yf <= 0.0 || af <= 0.0) continue;
 
-        if (yMid > yf && af > 0.0) {
-            // Eq. 14: Delta_As from volume excess above full conduit + prior slot
-            double deltaAs = (area_mid_[uj] - af) - dps_.As[uci];
+        const double y1   = depth1_[uj];
+        const double y2   = depth2_[uj];
+        const double yMid = depth_mid_[uj];
 
-            // Eq. 19: Delta_hs = c_pT^2 * Delta_As / (g * A_C * P^2)
-            double P2 = dps_.P[uci] * dps_.P[uci];
-            double deltaHs = (P2 > 0.0) ? (c2 * deltaAs) / (g * af * P2) : 0.0;
+        // hs_iter is purely geometric — it is what the latest node-depth
+        // solution implies for the surcharge head.  Clamped to ≥ 0 so that a
+        // pipe that has dropped back below crown delivers a non-negative hs
+        // for the increment computation; the As decrement comes from a
+        // negative dhs in that case, which the clamp below handles.
+        const double hs_iter = (yMid > yf) ? (yMid - yf) : 0.0;
+        const double hs_prev = dps_.hs_prev_iter[uci];
+        const double dhs = hs_iter - hs_prev;
 
-            dps_.As[uci] += deltaAs;
-            dps_.hs[uci] += deltaHs;
+        // Dynamic slot top width — Eq. 19 inverted: T_s = g·A_C·P²/c_pT².
+        // T_s_target = g·A_C/c_pT² is cached at init so this is a single mul.
+        const double P  = dps_.P[uci];
+        const double Ts = dps_.T_s_target[uci] * P * P;
 
-            // Hysteresis: if hs <= 0 but As > 0, treat as full-but-unpressurized
-            if (dps_.hs[uci] < 0.0 && dps_.As[uci] > 0.0) {
-                dps_.hs[uci] = 0.0;
-            }
+        // Path-dependent accumulation: dAs uses the *current* T_s but past
+        // contributions to As are not rewritten.  Eq. 14 is satisfied
+        // incrementally, not by re-deriving As from current area_mid.
+        double As_new = dps_.As[uci] + Ts * dhs;
+        if (As_new < 0.0) As_new = 0.0;
 
-            // If fully depressurized (As <= 0), reset slot state
-            if (dps_.As[uci] <= 0.0) {
-                dps_.As[uci] = 0.0;
-                dps_.hs[uci] = 0.0;
-            }
+        const bool slot_active = (hs_iter > 0.0) || (As_new > 0.0);
 
-            // Override areas with effective A = A_C + As (total including slot)
-            double A_total = af + std::max(dps_.As[uci], 0.0);
-            area_mid_[uj] = A_total;
-            area1_[uj] = (depth1_[uj] > yf) ? A_total : area1_[uj];
-            area2_[uj] = (depth2_[uj] > yf) ? A_total : area2_[uj];
+        // Update persistent state.  hs is now the geometric surcharge head
+        // (consistent with depth_mid), not a derived diagnostic; hs_prev_iter
+        // tracks within-Picard iterates so dhs reflects each sub-step.
+        dps_.As[uci] = As_new;
+        dps_.hs[uci] = hs_iter;
+        dps_.hs_prev_iter[uci] = hs_iter;
 
-            // Effective slot width for surface area continuity (Eq. 20, diagnostic)
-            if (dps_.hs[uci] > 0.0 && std::abs(deltaHs) > 1e-30) {
-                width_mid_[uj] = std::abs(deltaAs / deltaHs);
-            } else if (dps_.hs[uci] > 0.0 && dps_.As[uci] > 0.0) {
-                width_mid_[uj] = dps_.As[uci] / dps_.hs[uci];
-            }
-
-            // Friction excludes slot: hydraulic radius stays at full
-            hrad_mid_[uj] = rf;
-        } else if (!dps_.surcharged[uci] && dps_.As[uci] <= 0.0) {
-            // Not surcharged and no residual slot area — no override needed
+        if (!slot_active) {
+            // Below-crown — no slot override.  area_mid/width_mid from the
+            // batch XSect call apply unchanged.
+            continue;
         }
+
+        // ---- Effective geometry overrides for surcharged closed conduit ----
+        // Total midpoint area = closed-section + accumulated slot volume per
+        // unit length.  Used by the momentum solve and routing-step CFL.
+        const double A_total = af + As_new;
+        area_mid_[uj] = A_total;
+        if (y1 > yf) area1_[uj] = A_total;
+        if (y2 > yf) area2_[uj] = A_total;
+
+        // Slot width drives node-continuity surface area.  The batch width
+        // kernel clamps depth to y_full and returns ~0 at the crown for
+        // closed shapes, so for surcharged links we must overwrite both
+        // width_mid AND the surf_area1/2 contributions that STEP C computed
+        // from that ~0 width.  Without this the slot is decoupled from node
+        // depth evolution and the reviewer's invariance argument is vacuous.
+        width_mid_[uj] = Ts;
+
+        const double L = cached_length_[uj];
+        const double slot_surf_per_end = 0.25 * Ts * L;  // matches SUBCRITICAL: (w+w)·L/4
+        if (y1 > yf) surf_area1_[uj] = slot_surf_per_end;
+        if (y2 > yf) surf_area2_[uj] = slot_surf_per_end;
+
+        // Friction excludes slot — hydraulic radius stays at full-pipe value.
+        hrad_mid_[uj] = rf;
     }
 }
 
@@ -240,10 +269,14 @@ void DWSolver::updateDPSState(SimulationContext& ctx, double dt) {
             dps_.P_hat[uci] = (dps_.P_hat_0[uci] - 1.0)
                              * std::exp(-10.0 * dt_surcharge / dps_config_.r) + 1.0;
         } else {
-            // Reset to initial P for unpressurized conduits (Eq. 23)
+            // Fully depressurized: reset to initial P (Eq. 23) and clear the
+            // accumulated slot state so the next surcharge episode starts from
+            // a clean baseline.  hs_prev_iter must be cleared too — otherwise
+            // the first iter of the next surcharge would see a phantom dhs.
             dps_.P_hat[uci] = dps_.P_hat_0[uci];
             dps_.As[uci] = 0.0;
             dps_.hs[uci] = 0.0;
+            dps_.hs_prev_iter[uci] = 0.0;
         }
 
         dps_.surcharged[uci] = now_surcharged ? 1 : 0;
@@ -455,6 +488,16 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
             dps_.P[uci] = dps_.P_hat[uci] = dps_.P_hat_0[uci];
             dps_.As[uci] = 0.0;
             dps_.hs[uci] = 0.0;
+            dps_.hs_prev_iter[uci] = 0.0;
+
+            // T_s_target = g · A_C / c_pT².  This is the slot top width at
+            // steady-state (P = 1) and follows directly from inverting Eq. 19
+            // for the increment: dAs/dhs = g · A_C · P² / c_pT².  The per-iter
+            // dynamic width is then T_s = T_s_target · P².
+            dps_.T_s_target[uci] = (dps_config_.c_pT_sq > 0.0)
+                ? (GRAVITY * af) / dps_config_.c_pT_sq
+                : 0.0;
+
             dps_.surcharged[uci] = 0;
             dps_.t_s[uci] = 0.0;
         }
@@ -760,7 +803,13 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     // prep wrote wcap_d1/d2/dm based on STEP A's freshly written depth1/2/mid
     // — now we compute and write wcap_d* directly from the depth values that
     // are still in registers, avoiding a second cache traversal.
-    const bool slot_mode = (surcharge_method == SurchargeMethod::SLOT);
+    // Both SLOT and DYNAMIC_SLOT skip the depth/width crown clamp so the
+    // surcharged depth propagates through to applyDPSGeometry (DPS) or the
+    // Sjoberg slot override (SLOT).  Without this, the midpoint depth clamps
+    // to y_full and the slot machinery sees a non-surcharged state even when
+    // node depth has clearly exceeded the crown.
+    const bool slot_mode = (surcharge_method == SurchargeMethod::SLOT ||
+                            surcharge_method == SurchargeMethod::DYNAMIC_SLOT);
 #if defined(SWMM_USE_OPENMP)
 #pragma omp parallel for num_threads(nt_cg) if(nt_cg > 1) schedule(static) \
     default(none) shared(ctx, links, nodes, slot_mode)
@@ -1456,9 +1505,11 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     }
     sigma_[uj] = sig;
 
-    // Manning friction
+    // Manning friction — rWtd >= FUDGE > 0 from max() above, so r43 > 0 always.
+    // The legacy (dwflow.c:211) applies this unconditionally; the damping from
+    // large dq1 is the correct physical behaviour for nearly-dry conduits.
     double r43 = fastmath::pow4_3(rWtd);
-    double dq1 = (r43 > FUDGE) ? dt * tile_rough_factor_[uci] / r43 * absv : 0.0;
+    double dq1 = dt * tile_rough_factor_[uci] / r43 * absv;
 
     // Head gradient
     double dq2 = dt_g * aWtd * (h2 - h1) * inv_len;
@@ -1929,24 +1980,38 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     double dQ = nodes.inflow[ui] - nodes.outflow[ui];
     double dV = 0.5 * (nodes.old_net_inflow[ui] + dQ) * dt;
 
-    // --- Determine if node is surcharged (EXTRAN method, matching legacy) ---
+    // --- Determine if node is surcharged ---
+    //
+    // The flag is used by AA skip logic, statistics, and (for EXTRAN only)
+    // the explicit continuity branch's dQ/dH path.  EXTRAN and DYNAMIC_SLOT
+    // share the same geometric definition (depth above crown), but only
+    // EXTRAN actually switches to the dQ/dH formulation — DYNAMIC_SLOT
+    // handles the surcharge transition through the slot-augmented surface
+    // area patched by applyDPSGeometry, so it takes the standard
+    // dy = dV / A_surf path with hs implicit in y.
     bool is_surcharged = false;
-    if (surcharge_method == SurchargeMethod::EXTRAN) {
-        // Ponded nodes don't surcharge
+    if (surcharge_method == SurchargeMethod::EXTRAN ||
+        surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
         if (is_ponded) {
             is_surcharged = false;
         }
-        // Closed storage units that are full are in surcharge
         else if (ntype == NodeType::STORAGE) {
             is_surcharged = (nodes.sur_depth[ui] > 0.0 &&
                              y_last > full_depth);
         }
-        // Surcharge occurs when node depth exceeds top of its highest link
         else {
             is_surcharged = (yCrown > 0.0 && y_last > yCrown);
         }
     }
     xnode_.is_surcharged[ui] = is_surcharged ? 1 : 0;
+
+    // Only EXTRAN takes the dQ/dH surcharge branch in the explicit solver.
+    // DYNAMIC_SLOT uses the slot's effective top width T_s (fed into
+    // surf_area1/2 by applyDPSGeometry) so the standard dV/A path produces
+    // physically sensible head evolution with `head = invert + y =
+    // invert + y_full + hs` falling out naturally when y > y_full.
+    const bool use_surcharge_dqdh =
+        is_surcharged && (surcharge_method == SurchargeMethod::EXTRAN);
 
     double y_new;
 
@@ -2008,8 +2073,10 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         // =================================================================
 
         // --- Non-surcharged path: depth change based on surface area ---
-        // Also used if storage node is surcharged but has no connecting links
-        if (!is_surcharged ||
+        // Also used if storage node is surcharged but has no connecting links,
+        // and for DYNAMIC_SLOT in all cases (the slot's contribution to
+        // surf_area handles the surcharge regime smoothly, no dQ/dH branch).
+        if (!use_surcharge_dqdh ||
             (ntype == NodeType::STORAGE && xnode_.sumdqdh[ui] == 0.0)) {
 
             double dy = dV / surf_area;
@@ -2097,21 +2164,6 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     // --- Save new depth ---
     nodes.depth[ui] = y_new;
     nodes.head[ui] = nodes.invert_elev[ui] + y_new;
-
-    // Optional per-node Picard-iter trace (controlled by OPENSWMM_TRACE_NODE env var).
-    {
-        static const char* trace_name = std::getenv("OPENSWMM_TRACE_NODE");
-        if (trace_name && ctx.node_names.name_of(node_idx) == trace_name) {
-            std::fprintf(stderr,
-                "REFAC %s step=%d t=%.3f y_old=%.6f y_last=%.6f "
-                "surf_area=%.4f sumdqdh=%.6e dQ=%.6e dV=%.6e "
-                "is_surch=%d y_new=%.6f overflow=%.6e volume=%.6e dt=%.4f\n",
-                trace_name, step, ctx.current_time,
-                y_old, y_last, surf_area, xnode_.sumdqdh[ui], dQ, dV,
-                (int)is_surcharged, y_new, nodes.overflow[ui],
-                nodes.volume[ui], dt);
-        }
-    }
 }
 
 // ============================================================================
@@ -2200,6 +2252,30 @@ double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
     double a = area_mid_[uj];
     if (a <= FUDGE) return 1.0e10;
 
+    double L = ctx.links.length[uj];
+    double modL = ctx.links.mod_length[uj];
+    const double Lscale = (L > 0.0 && modL > 0.0) ? (modL / L) : 1.0;
+
+    // ---- DPS-surcharged path: CFL against pressure celerity c_p = c_pT / P ----
+    // The Froude-based factor below uses the gravity-wave celerity sqrt(g·D),
+    // which underestimates the dominant signal speed once a pipe pressurizes.
+    // Use c_p directly so the variable timestep tracks the actual pressure-wave
+    // speed.  t = L / (|v| + c_p), then scale by modL/L for short/culvert links.
+    if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT && link_idx >= 0 &&
+        static_cast<std::size_t>(link_idx) < tile_uj_to_ci_.size()) {
+        int ci = tile_uj_to_ci_[uj];
+        if (ci >= 0) {
+            auto uci = static_cast<std::size_t>(ci);
+            if (dps_.surcharged[uci] && L > 0.0) {
+                double v = q / a;                            // per-barrel velocity
+                double P = std::max(dps_.P[uci], 1.0);
+                double c_p = dps_config_.c_pT / P;           // pressure celerity
+                double denom = std::fabs(v) + c_p;
+                if (denom > 0.0) return (L * Lscale) / denom;
+            }
+        }
+    }
+
     double fr = froude_[uj];
     if (fr <= 0.01) return 1.0e10;
 
@@ -2209,11 +2285,7 @@ double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
 
     // Apply modified length factor for short conduits / culverts
     // (matching legacy dynwave.c line 855: t *= modLength / length)
-    double L = ctx.links.length[uj];
-    double modL = ctx.links.mod_length[uj];
-    if (L > 0.0 && modL > 0.0) {
-        t *= modL / L;
-    }
+    t *= Lscale;
 
     t *= fr / (1.0 + fr);  // Froude-based CFL factor
     return t;              // CourantFactor applied per-link in getRoutingStep

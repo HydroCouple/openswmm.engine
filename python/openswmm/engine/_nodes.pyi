@@ -786,3 +786,36 @@ class Nodes:
         @rtype: numpy.typing.NDArray[numpy.float64]
         """
         ...
+
+    # ====================================================================
+    # Divider
+    # ====================================================================
+
+    def set_divider_type(self, idx: Union[int, str], type: int) -> None:
+        """Set the divider type for a divider node.
+
+        @param idx: Node index (int) or node ID (str).
+        @param type: Divider type code.
+        """
+        ...
+
+    def get_divider_type(self, idx: Union[int, str]) -> int:
+        """Return the divider type for a divider node.
+
+        @param idx: Node index (int) or node ID (str).
+        @return: Divider type code.
+        """
+        ...
+
+    # ====================================================================
+    # Rename
+    # ====================================================================
+
+    def rename(self, idx: Union[int, str], new_id: str) -> None:
+        """Rename a node.
+
+        @param idx: Node index (int) or current node ID (str).
+        @param new_id: New identifier string.
+        """
+        ...
+

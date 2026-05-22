@@ -66,6 +66,22 @@ SWMM_ENGINE_API int swmm_transect_add_station(SWMM_Engine engine, int idx, doubl
  */
 SWMM_ENGINE_API int swmm_transect_count(SWMM_Engine engine);
 
+/**
+ * @brief Look up a transect's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated transect identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_transect_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of a transect by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based transect index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_transect_id(SWMM_Engine engine, int idx);
+
 /* =========================================================================
  * Streets
  * ========================================================================= */
@@ -107,6 +123,22 @@ SWMM_ENGINE_API int swmm_street_set_params(SWMM_Engine engine, int idx,
  */
 SWMM_ENGINE_API int swmm_street_count(SWMM_Engine engine);
 
+/**
+ * @brief Look up a street's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated street identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_street_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of a street by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based street index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_street_id(SWMM_Engine engine, int idx);
+
 /* =========================================================================
  * Inlets
  * ========================================================================= */
@@ -140,6 +172,22 @@ SWMM_ENGINE_API int swmm_inlet_set_params(SWMM_Engine engine, int idx, double le
  * @returns Number of inlets, or -1 on error.
  */
 SWMM_ENGINE_API int swmm_inlet_count(SWMM_Engine engine);
+
+/**
+ * @brief Look up an inlet's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated inlet identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_inlet_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of an inlet by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based inlet index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_inlet_id(SWMM_Engine engine, int idx);
 
 /* =========================================================================
  * LID controls
@@ -212,6 +260,22 @@ SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff
  * @returns Number of LID controls, or -1 on error.
  */
 SWMM_ENGINE_API int swmm_lid_count(SWMM_Engine engine);
+
+/**
+ * @brief Look up a LID control's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated LID identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_lid_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of a LID control by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based LID index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_lid_id(SWMM_Engine engine, int idx);
 
 /* =========================================================================
  * LID usage (assign LID to subcatchment)

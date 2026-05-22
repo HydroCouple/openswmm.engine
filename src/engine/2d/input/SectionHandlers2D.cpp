@@ -130,6 +130,10 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.report_2d = false;
         else
             return "Invalid REPORT_2D value (YES/NO)";
+    } else if (iequals(key, "OUTPUT_FILE")) {
+        // Stored as the raw token; resolved against the .inp directory in
+        // SWMMEngine::open when the Default2DOutputPlugin is instantiated.
+        opts.output_file = val;
     } else {
         return "Unknown 2D_OPTIONS parameter: " + key;
     }

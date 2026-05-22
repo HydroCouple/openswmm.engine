@@ -110,6 +110,22 @@ SWMM_ENGINE_API int swmm_2d_triangle_get_mannings(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_2d_triangle_get_neighbours(SWMM_Engine engine, int idx,
                                                       int* n0, int* n1, int* n2);
 
+/** @brief Bulk get edge geometry — time-invariant edge length and outward
+ *         unit normal components, indexed `[tri*3 + localEdge]`.
+ *
+ *  Output arrays must be pre-allocated to `triangle_count * 3` doubles each.
+ *  Local edge `e` is the edge opposite vertex `e` (matching the neighbour
+ *  convention of `swmm_2d_triangle_get_neighbours`). Outward normals point
+ *  away from the triangle interior. Provided so client-side velocity
+ *  reconstruction from `swmm_2d_get_edge_flux_bulk` can run without
+ *  re-deriving geometry from the vertex coordinates.
+ *
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_edge_get_geometry_bulk(SWMM_Engine engine,
+                                                     double* length,
+                                                     double* nx,
+                                                     double* ny);
+
 /* =========================================================================
  * Coupling Map — Query
  * ========================================================================= */
@@ -180,6 +196,20 @@ SWMM_ENGINE_API int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads);
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine,
                                                        double* fluxes);
+
+/** @brief Bulk get normal edge flux at every edge of every triangle.
+ *
+ *  Output array must be pre-allocated to `triangle_count * 3` doubles,
+ *  indexed `[tri*3 + localEdge]`. Sign convention: **positive flux flows
+ *  outward through the edge's outward normal**. Units `m^2 s^-1` (depth-
+ *  integrated normal speed). Combine with `swmm_2d_edge_get_geometry_bulk`
+ *  to reconstruct cell-centred velocity (RT0): for each triangle, solve
+ *  `(NᵀN) v = Nᵀ q` where rows of `N` are the outward unit normals and
+ *  `q[e] = flux[e] / length[e]`.
+ *
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine,
+                                                 double* flux);
 
 /* =========================================================================
  * 2D State — Per-Vertex (reconstructed heads)

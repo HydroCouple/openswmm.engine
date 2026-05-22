@@ -1,5 +1,6 @@
 """Tests for :class:`openswmm.engine.Tables` (time series, curves, patterns)."""
 
+import numpy as np
 import pytest
 
 
@@ -41,3 +42,52 @@ class TestTablesLookup:
             pc = t.get_point_count(0)
             assert isinstance(pc, int)
             assert pc >= 0
+
+
+# ---------------------------------------------------------------------------
+# Creation methods (new additions)
+# ---------------------------------------------------------------------------
+class TestTablesAdd:
+    """timeseries_add, curve_add, pattern_add, pattern_set_factors.
+
+    These creation methods require BUILDING state (ModelBuilder).
+    """
+
+    def test_timeseries_add_returns_index(self):
+        from openswmm.engine import ModelBuilder, Tables
+        m = ModelBuilder()
+        t = Tables(m)
+        before = t.count()
+        idx = t.timeseries_add("TS_TEST_NEW")
+        assert isinstance(idx, int)
+        assert idx >= 0
+        assert t.count() == before + 1
+
+    def test_curve_add_returns_index(self):
+        from openswmm.engine import ModelBuilder, Tables
+        m = ModelBuilder()
+        t = Tables(m)
+        before = t.count()
+        idx = t.curve_add("CURVE_TEST_NEW", 1)
+        assert isinstance(idx, int)
+        assert idx >= 0
+        assert t.count() == before + 1
+
+    def test_pattern_add_returns_index(self):
+        from openswmm.engine import ModelBuilder, Tables
+        m = ModelBuilder()
+        t = Tables(m)
+        before = t.pattern_count()
+        idx = t.pattern_add("PAT_TEST_NEW", 0)
+        assert isinstance(idx, int)
+        assert idx >= 0
+        assert t.pattern_count() == before + 1
+
+    def test_pattern_set_factors(self):
+        from openswmm.engine import ModelBuilder, Tables
+        m = ModelBuilder()
+        t = Tables(m)
+        idx = t.pattern_add("PAT_TEST_FACTORS", 0)
+        factors = np.ones(12, dtype=np.float64) * 1.5
+        t.pattern_set_factors(idx, factors)  # should not raise
+

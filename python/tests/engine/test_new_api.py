@@ -138,6 +138,62 @@ class TestEventStatus:
         assert v >= 0
 
 
+class TestEventsEditor:
+    """C{[EVENTS]} section editor (Slice CW — 2026-05-21).
+
+    OADate values are decimal days since 1899-12-30; arithmetic is
+    calendar-agnostic here so any disjoint pair works.
+    """
+
+    def test_events_count_alias(self, running_solver):
+        # events_count must agree with the legacy get_event_count.
+        assert running_solver.events_count() == running_solver.get_event_count()
+
+    def test_events_add_then_get_round_trips(self, running_solver):
+        before = running_solver.events_count()
+        idx = running_solver.events_add(46036.0, 46036.5)
+        assert idx == before
+        s, e = running_solver.events_get(idx)
+        assert s == 46036.0
+        assert e == 46036.5
+        running_solver.events_remove(idx)
+        assert running_solver.events_count() == before
+
+    def test_events_add_rejects_start_ge_end(self, running_solver):
+        with pytest.raises(RuntimeError):
+            running_solver.events_add(10.0, 10.0)
+        with pytest.raises(RuntimeError):
+            running_solver.events_add(10.0, 9.0)
+
+    def test_events_set_rejects_start_ge_end(self, running_solver):
+        before = running_solver.events_count()
+        idx = running_solver.events_add(20.0, 21.0)
+        try:
+            with pytest.raises(RuntimeError):
+                running_solver.events_set(idx, 21.0, 21.0)
+            # Underlying row unchanged after rejected set.
+            s, e = running_solver.events_get(idx)
+            assert s == 20.0
+            assert e == 21.0
+        finally:
+            running_solver.events_remove(idx)
+            assert running_solver.events_count() == before
+
+    def test_events_clear(self, running_solver):
+        # Stash whatever the .inp had, restore on teardown so we don't
+        # leak edits across tests sharing a running solver.
+        original = [running_solver.events_get(i)
+                    for i in range(running_solver.events_count())]
+        try:
+            running_solver.events_add(30.0, 31.0)
+            running_solver.events_add(32.0, 33.0)
+            running_solver.events_clear()
+            assert running_solver.events_count() == 0
+        finally:
+            for s, e in original:
+                running_solver.events_add(s, e)
+
+
 class TestSteadyStateSkip:
     """Steady-state skip control from Solver binding."""
 

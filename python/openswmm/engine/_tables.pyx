@@ -204,6 +204,38 @@ class Tables:
         return y
 
     # ====================================================================
+    # Creation
+    # ====================================================================
+
+    def timeseries_add(self, str ts_id) -> int:
+        """Add a new time series to the model.
+
+        @param ts_id: Identifier string for the new time series.
+        @type ts_id: str
+        @return: Index of the newly created time series.
+        @rtype: int
+        @raise EngineError: If the C API rejects the operation.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = ts_id.encode('utf-8')
+        return swmm_timeseries_add(h, b)
+
+    def curve_add(self, str curve_id, int curve_type) -> int:
+        """Add a new curve to the model.
+
+        @param curve_id: Identifier string for the new curve.
+        @type curve_id: str
+        @param curve_type: Curve type code.
+        @type curve_type: int
+        @return: Index of the newly created curve.
+        @rtype: int
+        @raise EngineError: If the C API rejects the operation.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = curve_id.encode('utf-8')
+        return swmm_curve_add(h, b, curve_type)
+
+    # ====================================================================
     # Patterns
     # ====================================================================
 
@@ -215,3 +247,35 @@ class Tables:
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_pattern_count(h)
+
+    def pattern_add(self, str pattern_id, int pattern_type) -> int:
+        """Add a new time pattern to the model.
+
+        @param pattern_id: Identifier string for the new pattern.
+        @type pattern_id: str
+        @param pattern_type: Pattern type code (e.g. MONTHLY, DAILY, etc.).
+        @type pattern_type: int
+        @return: Index of the newly created pattern.
+        @rtype: int
+        @raise EngineError: If the C API rejects the operation.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = pattern_id.encode('utf-8')
+        return swmm_pattern_add(h, b, pattern_type)
+
+    def pattern_set_factors(self, int idx,
+                             np.ndarray[double, ndim=1] factors):
+        """Set the multiplier factors for a time pattern.
+
+        @param idx: Pattern index.
+        @type idx: int
+        @param factors: Array of multiplier factors.
+        @type factors: numpy.ndarray
+        @return: C{None}.
+        @rtype: None
+        @raise EngineError: If the C API rejects the assignment.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = len(factors)
+        _check(swmm_pattern_set_factors(h, idx, &factors[0], n))
+

@@ -20,11 +20,42 @@
 #include "data/InflowData.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 #include "data/HydrologyData.hpp"
+#include "core/DateTime.hpp"
 
 namespace openswmm::gpkg {
+
+namespace {
+// OADates for years >= 1910 are > 3650; no relative storm exceeds 10 years.
+static constexpr double kAbsoluteTsThreshold = 3650.0;
+
+// Format a time series x value for storage in the GeoPackage.
+// PostParseResolver adds start_date to relative series; strip it back out
+// using the same detection condition before formatting.
+static std::string format_ts_timestamp(double x, double startDate) {
+    const double xRel = x - startDate;
+    const bool wasRelative = xRel >= 0.0 && xRel < 366.0;
+    const double xv = wasRelative ? xRel : x;
+
+    if (!wasRelative && xv >= kAbsoluteTsThreshold) {
+        // True absolute calendar date entered by user.
+        int y, mo, d, h, mi, s;
+        datetime::decodeDate(xv, y, mo, d);
+        datetime::decodeTime(xv, h, mi, s);
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%02d/%02d/%04d %02d:%02d", mo, d, y, h, mi);
+        return buf;
+    } else {
+        // Relative: fractional days → decimal hours string
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.6f", xv * 24.0);
+        return buf;
+    }
+}
+} // anonymous namespace
 
 // ============================================================================
 // Helper: enum to string conversions
@@ -652,7 +683,7 @@ static void write_timeseries(sqlite3* db, const SimulationContext& ctx,
             sqlite3_clear_bindings(stmt.get());
             bind_text(stmt.get(), 1, sim_id);
             bind_text(stmt.get(), 2, name);
-            bind_text(stmt.get(), 3, std::to_string(tbl.x[j]));
+            bind_text(stmt.get(), 3, format_ts_timestamp(tbl.x[j], ctx.options.start_date));
             bind_double(stmt.get(), 4, tbl.y[j]);
             bind_int(stmt.get(), 5, j);
             sqlite3_step(stmt.get());

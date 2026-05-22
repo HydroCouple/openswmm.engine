@@ -1007,3 +1007,57 @@ class Nodes:
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         _check(swmm_node_get_quality_bulk(h, pollutant_idx, &buf[0], n))
         return buf
+
+    # ====================================================================
+    # Divider
+    # ====================================================================
+
+    def set_divider_type(self, idx, int type):
+        """Set the divider type for a divider node.
+
+        @param idx: Node index (int) or node ID (str).
+        @type idx: Union[int, str]
+        @param type: Divider type code.
+        @type type: int
+        @raise KeyError: If C{idx} is a string and the node ID is not found.
+        @raise EngineError: If the C API rejects the assignment.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_node_set_divider_type(h, i, type))
+
+    def get_divider_type(self, idx) -> int:
+        """Return the divider type for a divider node.
+
+        @param idx: Node index (int) or node ID (str).
+        @type idx: Union[int, str]
+        @return: Divider type code.
+        @rtype: int
+        @raise KeyError: If C{idx} is a string and the node ID is not found.
+        @raise EngineError: If the C API call fails.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int v = 0
+        _check(swmm_node_get_divider_type(h, i, &v))
+        return v
+
+    # ====================================================================
+    # Rename
+    # ====================================================================
+
+    def rename(self, idx, str new_id):
+        """Rename a node.
+
+        @param idx: Node index (int) or current node ID (str).
+        @type idx: Union[int, str]
+        @param new_id: New identifier string.
+        @type new_id: str
+        @raise KeyError: If C{idx} is a string and the node ID is not found.
+        @raise EngineError: If the C API rejects the rename.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_node_rename(h, i, b))
+

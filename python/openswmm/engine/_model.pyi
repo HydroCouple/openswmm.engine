@@ -293,6 +293,131 @@ class ModelBuilder:
         ...
 
     # =========================================================================
+    # [TITLE] section
+    # =========================================================================
+
+    def get_title_count(self) -> int:
+        """Number of lines in the C{[TITLE]} section.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def get_title_line(self, index: int) -> str:
+        """Return a title line by zero-based index.
+
+        @raise EngineError: On bad index.
+        """
+        ...
+
+    def add_title_line(self, line: str) -> None:
+        """Append a new line to the C{[TITLE]} section.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def set_title(self, text: str) -> None:
+        """Replace all title lines with new text. Newlines split lines.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def clear_title(self) -> None:
+        """Remove all lines from the C{[TITLE]} section.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    # =========================================================================
+    # Options ([OPTIONS] section)
+    # =========================================================================
+
+    def get_option(self, key: str) -> str:
+        """Return a SWMM option value as a string.
+
+        @raise EngineError: On unknown key.
+        """
+        ...
+
+    def set_option(self, key: str, value: str) -> None:
+        """Set a SWMM option.
+
+        @raise EngineError: On unknown key or invalid value.
+        """
+        ...
+
+    def get_option_ext(self, key: str) -> str:
+        """Return the value of an extension option (unknown to base SWMM).
+
+        @raise EngineError: On unknown key.
+        """
+        ...
+
+    def set_option_ext(self, key: str, value: str) -> None:
+        """Set the value of an extension option.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def get_crs(self) -> str:
+        """Return the model's coordinate reference system string.
+
+        @return: CRS string (EPSG identifier, PROJ string, or WKT).
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    # =========================================================================
+    # User flags
+    # =========================================================================
+
+    def get_userflag_bool(self, name: str) -> bool:
+        """Return a boolean user flag value.
+
+        @raise EngineError: On unknown flag.
+        """
+        ...
+
+    def get_userflag_int(self, name: str) -> int:
+        """Return an integer user flag value.
+
+        @raise EngineError: On unknown flag.
+        """
+        ...
+
+    def get_userflag_real(self, name: str) -> float:
+        """Return a real-valued user flag.
+
+        @raise EngineError: On unknown flag.
+        """
+        ...
+
+    def set_userflag_bool(self, name: str, value: bool) -> None:
+        """Set a boolean user flag.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def set_userflag_int(self, name: str, value: int) -> None:
+        """Set an integer user flag.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def set_userflag_real(self, name: str, value: float) -> None:
+        """Set a real-valued user flag.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    # =========================================================================
     # Typed time-control properties (datetime)
     # =========================================================================
 
@@ -341,3 +466,70 @@ class ModelBuilder:
         @rtype: L{Solver}
         """
         ...
+
+    # =========================================================================
+    # Plugins
+    # =========================================================================
+
+    def plugins_count(self) -> int:
+        """Return the number of [PLUGINS] entries on the engine.
+
+        @return: Plugin count.
+        """
+        ...
+
+    def plugin_get(self, idx: int) -> tuple[str, str]:
+        """Read one [PLUGINS] row by index.
+
+        @param idx: Plugin index in C{[0, plugins_count())}.
+        @return: Tuple C{(path, args)}.
+        """
+        ...
+
+    def plugin_set(self, path_or_id: str, args: str = "") -> None:
+        """Add or replace a [PLUGINS] row keyed by path/id.
+
+        @param path_or_id: Library path, plugin id, or C{id:version} string.
+        @param args: Space-separated argument tokens.
+        """
+        ...
+
+    def plugin_remove(self, path_or_id: str) -> None:
+        """Remove the [PLUGINS] row matching C{path_or_id}.
+
+        @param path_or_id: Library path, plugin id, or C{id:version} string.
+        """
+        ...
+
+    # =========================================================================
+    # [FILES] section
+    # =========================================================================
+
+    def files_get(self, key: str) -> str:
+        """Read one [FILES] field by key.
+
+        @param key: Field key (e.g. C{"RAINFALL_PATH"}, C{"HOTSTART_USE_PATH"}).
+        @return: Field value string.
+        """
+        ...
+
+    def files_set(self, key: str, value: str) -> None:
+        """Write one [FILES] field by key.
+
+        @param key: Field key.
+        @param value: New value; C{""} to clear.
+        """
+        ...
+
+    # =========================================================================
+    # Write with plugin
+    # =========================================================================
+
+    def write_with_plugin(self, path: str, output_plugin_id: str = "") -> None:
+        """Write the current model to disk using an output plugin.
+
+        @param path: Destination file path.
+        @param output_plugin_id: Plugin id, or C{""} for the built-in writer.
+        """
+        ...
+

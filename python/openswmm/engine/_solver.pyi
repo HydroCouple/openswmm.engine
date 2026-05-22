@@ -332,6 +332,48 @@ class Solver:
         ...
 
     # =========================================================================
+    # Options ([OPTIONS] section, OPENED state and later)
+    # =========================================================================
+
+    def get_option(self, key: str) -> str:
+        """Return a SWMM option value as a string.
+
+        @param key: Option key (e.g. C{"FLOW_UNITS"}, C{"FLOW_ROUTING"}).
+        @return: Option value as a string.
+        @raise EngineError: On unknown key or other C API failure.
+        """
+        ...
+
+    def set_option(self, key: str, value: str) -> None:
+        """Set a SWMM option.
+
+        @raise EngineError: On unknown key or invalid value.
+        """
+        ...
+
+    def get_option_ext(self, key: str) -> str:
+        """Return the value of an extension option (unknown to base SWMM).
+
+        @raise EngineError: On unknown key.
+        """
+        ...
+
+    def set_option_ext(self, key: str, value: str) -> None:
+        """Set the value of an extension option.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def get_crs(self) -> str:
+        """Return the model's coordinate reference system string.
+
+        @return: CRS string (EPSG identifier, PROJ string, or WKT).
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    # =========================================================================
     # Typed time-control properties (datetime)
     # =========================================================================
 
@@ -467,6 +509,21 @@ class Solver:
         The callable receives C{(sim_time, dt)} and runs after physics —
         the right place to read results for monitoring or control. Pass
         C{None} to unregister.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def set_warning_callback(
+        self, callback: Optional[Callable[[int, str], None]]
+    ) -> None:
+        """Register a callback invoked on each non-fatal engine warning.
+
+        The callable receives C{(code, message)}. Pass C{None} to unregister.
+
+        Lifetime: the callable is stored on the L{Solver} instance for the
+        duration of registration; do not hold a separate strong reference
+        that outlives the solver.
 
         @raise EngineError: On C API failure.
         """

@@ -60,6 +60,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/SurfaceRouter2D.hpp"
+namespace openswmm::twoD { class Default2DOutputPlugin; }
 #endif
 
 #include <functional>
@@ -263,6 +264,11 @@ private:
 
 #ifdef OPENSWMM_HAS_2D
     twoD::SurfaceRouter2D        surface_router_; ///< Optional 2D surface routing solver
+    /// Non-owning pointer to the 2D HDF5 output plugin (lifetime owned by
+    /// PluginFactory's output_plugins_). Set in open() when [2D_OPTIONS]
+    /// OUTPUT_FILE is configured; used in start() to call prepareMeshAndDatasets
+    /// once the mesh is built.
+    twoD::Default2DOutputPlugin* surface_output_plugin_ = nullptr;
 #endif
 
     std::string rpt_path_;  ///< Report file path

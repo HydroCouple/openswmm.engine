@@ -18,11 +18,34 @@
 #include "data/InflowData.hpp"
 #include "data/HydrologyData.hpp"
 
+#include "core/DateTime.hpp"
+
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <sstream>
 
 namespace openswmm::gpkg {
+
+namespace {
+// Parse a timestamp string written by GeoPackageWriter back to an OADate.
+// Accepts "MM/DD/YYYY HH:MM" (absolute) or decimal-hours string (relative).
+static double parse_ts_timestamp(const std::string& s) {
+    int mo = 0, d = 0, y = 0, h = 0, mi = 0;
+    if (s.find('/') != std::string::npos) {
+        // Absolute: "MM/DD/YYYY HH:MM"
+        std::sscanf(s.c_str(), "%d/%d/%d %d:%d", &mo, &d, &y, &h, &mi);
+        return datetime::encodeDate(y, mo, d)
+             + datetime::encodeTime(h, mi, 0);
+    }
+    // Relative or legacy raw-OADate float: decimal hours or raw OADate
+    double v = std::stod(s);
+    // If value looks like a raw OADate (>= threshold), return as-is;
+    // otherwise it's decimal hours → convert to fractional days.
+    if (v >= 3650.0) return v;       // legacy raw OADate float
+    return v / 24.0;                 // decimal hours → fractional days
+}
+} // anonymous namespace
 
 // ============================================================================
 // Enum parsing helpers
@@ -557,7 +580,7 @@ static void read_timeseries(sqlite3* db, SimulationContext& ctx, const std::stri
             }
             prev_name = name;
         }
-        double ts = std::stod(column_text(stmt.get(), 1));
+        double ts = parse_ts_timestamp(column_text(stmt.get(), 1));
         double val = column_double(stmt.get(), 2);
         ctx.tables[idx].x.push_back(ts);
         ctx.tables[idx].y.push_back(val);

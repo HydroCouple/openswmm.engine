@@ -14,6 +14,9 @@ pattern objects stored in the model.
 
 from typing import Union
 
+import numpy as np
+import numpy.typing as npt
+
 from ._solver import Solver
 
 
@@ -175,6 +178,27 @@ class Tables:
         ...
 
     # ====================================================================
+    # Creation
+    # ====================================================================
+
+    def timeseries_add(self, ts_id: str) -> int:
+        """Add a new time series to the model.
+
+        @param ts_id: Identifier string for the new time series.
+        @return: Index of the newly created time series.
+        """
+        ...
+
+    def curve_add(self, curve_id: str, curve_type: int) -> int:
+        """Add a new curve to the model.
+
+        @param curve_id: Identifier string for the new curve.
+        @param curve_type: Curve type code.
+        @return: Index of the newly created curve.
+        """
+        ...
+
+    # ====================================================================
     # Patterns
     # ====================================================================
 
@@ -185,3 +209,22 @@ class Tables:
         @rtype: int
         """
         ...
+
+    def pattern_add(self, pattern_id: str, pattern_type: int) -> int:
+        """Add a new time pattern to the model.
+
+        @param pattern_id: Identifier string for the new pattern.
+        @param pattern_type: Pattern type code.
+        @return: Index of the newly created pattern.
+        """
+        ...
+
+    def pattern_set_factors(self, idx: int,
+                             factors: npt.NDArray[np.float64]) -> None:
+        """Set the multiplier factors for a time pattern.
+
+        @param idx: Pattern index.
+        @param factors: Array of multiplier factors.
+        """
+        ...
+

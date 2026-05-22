@@ -58,6 +58,19 @@ class Infrastructure:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_transect_count(h)
 
+    def transect_add(self, str transect_id) -> int:
+        """Add a new transect to the model.
+
+        @param transect_id: Identifier string for the new transect.
+        @type transect_id: str
+        @return: Index of the newly created transect.
+        @rtype: int
+        @raise RuntimeError: If the C API rejects the operation.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = transect_id.encode('utf-8')
+        return swmm_transect_add(h, b)
+
     def transect_set_roughness(self, int idx, double n_left, double n_right,
                                double n_channel):
         """Set Manning's roughness values for a transect.
@@ -101,6 +114,19 @@ class Infrastructure:
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_street_count(h)
+
+    def street_add(self, str street_id) -> int:
+        """Add a new street cross-section to the model.
+
+        @param street_id: Identifier string for the new street.
+        @type street_id: str
+        @return: Index of the newly created street.
+        @rtype: int
+        @raise RuntimeError: If the C API rejects the operation.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = street_id.encode('utf-8')
+        return swmm_street_add(h, b)
 
     def street_set_params(self, int idx, double t_crown, double h_curb,
                           double sx, double n_road, double gutter_depres,
@@ -150,6 +176,22 @@ class Infrastructure:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_inlet_count(h)
 
+    def inlet_add(self, str inlet_id, str inlet_type) -> int:
+        """Add a new inlet to the model.
+
+        @param inlet_id: Identifier string for the new inlet.
+        @type inlet_id: str
+        @param inlet_type: Inlet type string.
+        @type inlet_type: str
+        @return: Index of the newly created inlet.
+        @rtype: int
+        @raise RuntimeError: If the C API rejects the operation.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b_id = inlet_id.encode('utf-8')
+        cdef bytes b_type = inlet_type.encode('utf-8')
+        return swmm_inlet_add(h, b_id, b_type)
+
     def inlet_set_params(self, int idx, double length, double width,
                          str grate_type, double open_area,
                          double splash_veloc):
@@ -186,6 +228,21 @@ class Infrastructure:
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_lid_count(h)
+
+    def lid_add(self, str lid_id, int lid_type) -> int:
+        """Add a new LID control to the model.
+
+        @param lid_id: Identifier string for the new LID control.
+        @type lid_id: str
+        @param lid_type: LID type code.
+        @type lid_type: int
+        @return: Index of the newly created LID control.
+        @rtype: int
+        @raise RuntimeError: If the C API rejects the operation.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = lid_id.encode('utf-8')
+        return swmm_lid_add(h, b, lid_type)
 
     def lid_set_surface(self, int idx, double storage, double roughness,
                         double slope):

@@ -31,9 +31,18 @@
 #include "2d/data/SolverOptions2D.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/mesh/VertexReconstruction.hpp"
-#include "2d/solver/DiffusiveConductance.hpp"
 #include "2d/solver/SurfaceFluxCalculator.hpp"
 #include "2d/input/SectionHandlers2D.hpp"
+
+#ifdef OPENSWMM_HAS_2D
+#include "2d/output/Default2DOutputPlugin.hpp"
+#include "2d/solver/CvodeSurfaceSolver.hpp"
+#include "core/SimulationContext.hpp"
+#include <openswmm/plugin_sdk/SimulationSnapshot.hpp>
+#include <hdf5.h>
+#include <filesystem>
+#include <stdexcept>
+#endif
 
 using namespace openswmm::twoD;
 
@@ -296,56 +305,6 @@ TEST(VertexReconstruction, ReconstructsLinearFieldAccurately) {
 
 
 // ============================================================================
-// DiffusiveConductance Tests
-// ============================================================================
-
-TEST(DiffusiveConductance, ZeroForDryCell) {
-    double K = diffusiveConductance(0.0005, 0.035, 0.01, 0.001);
-    EXPECT_EQ(K, 0.0);
-}
-
-TEST(DiffusiveConductance, PositiveForWetCell) {
-    double K = diffusiveConductance(0.1, 0.035, 0.01, 0.001);
-    EXPECT_GT(K, 0.0);
-}
-
-TEST(DiffusiveConductance, IncreasesWithDepth) {
-    double K1 = diffusiveConductance(0.01, 0.035, 0.01, 0.001);
-    double K2 = diffusiveConductance(0.1,  0.035, 0.01, 0.001);
-    double K3 = diffusiveConductance(1.0,  0.035, 0.01, 0.001);
-    EXPECT_LT(K1, K2);
-    EXPECT_LT(K2, K3);
-}
-
-TEST(DiffusiveConductance, DecreasesWithRoughness) {
-    double K_smooth = diffusiveConductance(0.1, 0.01, 0.01, 0.001);
-    double K_rough  = diffusiveConductance(0.1, 0.1,  0.01, 0.001);
-    EXPECT_GT(K_smooth, K_rough);
-}
-
-TEST(DiffusiveConductance, SmoothTransitionContinuous) {
-    // Test that smooth variant transitions continuously through dry_depth
-    double dry = 0.01;
-    double K_below = diffusiveConductanceSmooth(dry * 0.99, 0.035, 0.01, dry);
-    double K_at    = diffusiveConductanceSmooth(dry,        0.035, 0.01, dry);
-    double K_above = diffusiveConductanceSmooth(dry * 1.01, 0.035, 0.01, dry);
-
-    // Should be monotonically increasing through the transition
-    EXPECT_LE(K_below, K_at);
-    EXPECT_LE(K_at, K_above);
-    // Below dry should be > 0 (smooth, not hard cutoff)
-    EXPECT_GT(K_below, 0.0);
-}
-
-TEST(DiffusiveConductance, SmoothMatchesHardAboveThreshold) {
-    // Well above dry_depth, smooth and hard variants should match
-    double K_hard   = diffusiveConductance(1.0, 0.035, 0.01, 0.001);
-    double K_smooth = diffusiveConductanceSmooth(1.0, 0.035, 0.01, 0.001);
-    EXPECT_NEAR(K_hard, K_smooth, 1e-12);
-}
-
-
-// ============================================================================
 // Gradient Computation Tests
 // ============================================================================
 
@@ -415,6 +374,161 @@ TEST(GradientComputation, LimiterReducesForUniformGradient) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Permutation invariance — canonical Jawahar-Kamath weights must depend on
+// the multiset of neighbour gradients, not on the order in which neighbours
+// happen to be enumerated in mesh.tri_nbr0/1/2. The previous "skip-two"
+// weight formulation paired each weight's numerator with a fixed pair of
+// neighbours and therefore failed this property; the canonical 3-product
+// form satisfies it by construction.
+// ---------------------------------------------------------------------------
+
+// Helper: a central triangle with three distinct interior neighbours.
+// Layout (six vertices, four triangles). T0 is central; T1/T2/T3 each
+// share exactly one edge with T0 and two boundary edges.
+//
+//        v3 (-0.5, sqrt(3)/2)         v4 (1.5, sqrt(3)/2)
+//                 \                     /
+//                  \      v2 (0.5,   /
+//                   \      sqrt(3)/2)
+//                    \     /  \    /
+//                  T1 \   /    \  / T2
+//                      \ / T0   \/
+//                       v0------v1
+//                       (0,0)  (1,0)
+//                        \  T3 /
+//                         \   /
+//                          \ /
+//                          v5 (0.5, -sqrt(3)/2)
+//
+static MeshData makeCentralTriangleMesh() {
+    const double h = std::sqrt(3.0) * 0.5;
+    MeshData mesh;
+    mesh.resize_vertices(6);
+    mesh.vx = { 0.0,  1.0,  0.5, -0.5,  1.5,  0.5};
+    mesh.vy = { 0.0,  0.0,    h,    h,    h,   -h};
+    mesh.vz = { 0.0,  0.0,  0.0,  0.0,  0.0,  0.0};
+
+    mesh.resize_triangles(4);
+    // T0 (central): v0, v1, v2
+    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
+    // T1 (left,  shares edge v0-v2 with T0): v0, v2, v3
+    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 2; mesh.tri_v2[1] = 3;
+    // T2 (right, shares edge v1-v2 with T0): v1, v4, v2
+    mesh.tri_v0[2] = 1; mesh.tri_v1[2] = 4; mesh.tri_v2[2] = 2;
+    // T3 (below, shares edge v0-v1 with T0): v0, v5, v1
+    mesh.tri_v0[3] = 0; mesh.tri_v1[3] = 5; mesh.tri_v2[3] = 1;
+
+    for (int i = 0; i < 4; ++i) mesh.mannings_n[i] = 0.035;
+
+    buildMeshTopology(mesh);
+    return mesh;
+}
+
+TEST(GradientComputation, LimiterIsPermutationInvariant) {
+    auto mesh = makeCentralTriangleMesh();
+
+    // Confirm the central triangle (T0) really has three interior neighbours.
+    ASSERT_GE(mesh.tri_nbr0[0], 0);
+    ASSERT_GE(mesh.tri_nbr1[0], 0);
+    ASSERT_GE(mesh.tri_nbr2[0], 0);
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+
+    // Three distinct neighbour gradients (deliberately differing magnitudes
+    // and directions so the limiter actually has to mix them) and a fixed
+    // self-gradient on the central triangle.
+    struct Grad { double gx, gy; };
+    Grad neighbour_grads[3] = {
+        {1.0, 0.0},
+        {0.0, 3.0},
+        {2.0, 2.0},
+    };
+    Grad self_grad = {0.5, 0.5};
+
+    auto run_with_assignment = [&](int p0, int p1, int p2) {
+        std::fill(state.grad_hx.begin(), state.grad_hx.end(), 0.0);
+        std::fill(state.grad_hy.begin(), state.grad_hy.end(), 0.0);
+        state.grad_hx[0] = self_grad.gx;
+        state.grad_hy[0] = self_grad.gy;
+        int order[3] = {p0, p1, p2};
+        for (int slot = 0; slot < 3; ++slot) {
+            int nbr = (slot == 0) ? mesh.tri_nbr0[0]
+                    : (slot == 1) ? mesh.tri_nbr1[0]
+                    :               mesh.tri_nbr2[0];
+            state.grad_hx[nbr] = neighbour_grads[order[slot]].gx;
+            state.grad_hy[nbr] = neighbour_grads[order[slot]].gy;
+        }
+        computeLimitedGradients(mesh, state, 1e-6);
+        return Grad{state.grad_hx_lim[0], state.grad_hy_lim[0]};
+    };
+
+    // Identity assignment (gradient[k] goes to slot k).
+    Grad ref = run_with_assignment(0, 1, 2);
+
+    // All five non-identity permutations of three elements. Under canonical
+    // JK weights every permutation must yield the same limited gradient on
+    // T0 — the limiter result is a function of the multiset of contributing
+    // gradients, not of slot order.
+    int perms[5][3] = {
+        {0, 2, 1},
+        {1, 0, 2},
+        {1, 2, 0},
+        {2, 0, 1},
+        {2, 1, 0},
+    };
+    for (auto& p : perms) {
+        Grad out = run_with_assignment(p[0], p[1], p[2]);
+        EXPECT_NEAR(out.gx, ref.gx, 1e-12)
+            << "Limited grad_x changes under neighbour permutation ("
+            << p[0] << "," << p[1] << "," << p[2] << ")";
+        EXPECT_NEAR(out.gy, ref.gy, 1e-12)
+            << "Limited grad_y changes under neighbour permutation ("
+            << p[0] << "," << p[1] << "," << p[2] << ")";
+    }
+}
+
+TEST(GradientComputation, LimiterEqualsAverageForUniformMagnitudes) {
+    // When all four contributing gradients have equal squared magnitude,
+    // the canonical JK weights collapse to 1/4 each and the limited
+    // gradient is exactly the arithmetic mean of the four input gradients.
+    // The previous "skip-two" form satisfied this only after the explicit
+    // normalization step that masked the asymmetric denominator; the new
+    // form satisfies it structurally with no normalization fix-up.
+    auto mesh = makeCentralTriangleMesh();
+    ASSERT_GE(mesh.tri_nbr0[0], 0);
+    ASSERT_GE(mesh.tri_nbr1[0], 0);
+    ASSERT_GE(mesh.tri_nbr2[0], 0);
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+
+    // Four gradients, each with squared magnitude = 1, pointing in four
+    // different directions. The arithmetic mean has zero x-component and
+    // a positive y-component because of how the four directions are placed.
+    double gx[4] = { 1.0,  0.0, -1.0,  0.0};
+    double gy[4] = { 0.0,  1.0,  0.0,  1.0};
+
+    state.grad_hx[0] = gx[0]; state.grad_hy[0] = gy[0];
+    int nbrs[3] = {mesh.tri_nbr0[0], mesh.tri_nbr1[0], mesh.tri_nbr2[0]};
+    for (int k = 0; k < 3; ++k) {
+        state.grad_hx[nbrs[k]] = gx[k + 1];
+        state.grad_hy[nbrs[k]] = gy[k + 1];
+    }
+
+    computeLimitedGradients(mesh, state, 1e-6);
+
+    double mean_x = 0.25 * (gx[0] + gx[1] + gx[2] + gx[3]);
+    double mean_y = 0.25 * (gy[0] + gy[1] + gy[2] + gy[3]);
+    // Tolerance accommodates the eps² regularisation inside each q_k —
+    // for unit-magnitude inputs and eps=1e-6 the bias is O(eps²) ≈ 1e-12.
+    EXPECT_NEAR(state.grad_hx_lim[0], mean_x, 1e-9)
+        << "Limited grad_x ≠ mean for equal-magnitude inputs";
+    EXPECT_NEAR(state.grad_hy_lim[0], mean_y, 1e-9)
+        << "Limited grad_y ≠ mean for equal-magnitude inputs";
+}
+
 
 // ============================================================================
 // Edge Flux Tests
@@ -479,6 +593,102 @@ TEST(EdgeFlux, BoundaryEdgesHaveZeroFlux) {
             }
         }
     }
+}
+
+// Mass conservation: for any shared edge, the flux stored from cell i's
+// perspective and from cell j's perspective must be exact negatives. Both
+// perspectives pick the same upstream cell (the one with the higher head),
+// so depth_edge and K are identical; dh_dn = h_i − h_j differs only in
+// sign between the two perspectives, which makes the products exact
+// negatives. Without this property, the discretisation would silently leak
+// or duplicate mass across each interior face.
+TEST(EdgeFlux, SharedEdgeFluxesAreAntisymmetric) {
+    auto mesh = makeUnitSquareMesh();
+    buildVertexStencils(mesh);
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+    SolverOptions2D opts;
+
+    // Non-trivial state: heads differ across the shared edge.
+    state.depth[0] = 0.20; state.head[0] = 0.20;
+    state.depth[1] = 0.05; state.head[1] = 0.05;
+
+    reconstructVertexHeads(mesh, state);
+    computeUnlimitedGradients(mesh, state);
+    computeLimitedGradients(mesh, state, opts.limiter_epsilon);
+    computeEdgeFluxes(mesh, state, opts);
+
+    auto nbr_of = [&](int t, int e) {
+        switch (e) {
+            case 0: return mesh.tri_nbr0[t];
+            case 1: return mesh.tri_nbr1[t];
+            case 2: return mesh.tri_nbr2[t];
+        }
+        return -1;
+    };
+
+    bool tested_at_least_one_pair = false;
+    int nt = mesh.n_triangles();
+    for (int t = 0; t < nt; ++t) {
+        for (int e = 0; e < 3; ++e) {
+            int j = nbr_of(t, e);
+            if (j < 0) continue;  // boundary edge: antisymmetry doesn't apply
+            // Find the edge of triangle j that points back at t.
+            int e_back = -1;
+            for (int ej = 0; ej < 3; ++ej) {
+                if (nbr_of(j, ej) == t) { e_back = ej; break; }
+            }
+            ASSERT_GE(e_back, 0)
+                << "Triangle " << j << " does not list " << t
+                << " as a neighbour";
+
+            double f_tj = state.edge_flux[t * 3 + e];
+            double f_jt = state.edge_flux[j * 3 + e_back];
+            EXPECT_NEAR(f_tj + f_jt, 0.0, 1e-12)
+                << "Shared edge T" << t << "↔T" << j
+                << " fluxes are not antisymmetric: f_tj=" << f_tj
+                << ", f_jt=" << f_jt;
+            tested_at_least_one_pair = true;
+        }
+    }
+    EXPECT_TRUE(tested_at_least_one_pair)
+        << "No interior edges in test mesh — antisymmetry was not exercised";
+}
+
+// Global volume budget: with no sources (rainfall=0, coupling=0) and all
+// boundaries as walls, the net rate of change of total water volume must
+// be zero. Every interior edge's outflow contribution from one cell
+// cancels its inflow contribution to the neighbour, and every boundary
+// edge contributes zero — leaving Σ(ydot[i]·area[i]) = 0.
+TEST(EdgeFlux, ClosedSystemVolumeBudget) {
+    auto mesh = makeUnitSquareMesh();
+    buildVertexStencils(mesh);
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+    SolverOptions2D opts;
+
+    state.depth[0] = 0.20; state.head[0] = 0.20;
+    state.depth[1] = 0.05; state.head[1] = 0.05;
+    std::fill(state.rainfall.begin(),      state.rainfall.end(),      0.0);
+    std::fill(state.coupling_flux.begin(), state.coupling_flux.end(), 0.0);
+
+    reconstructVertexHeads(mesh, state);
+    computeUnlimitedGradients(mesh, state);
+    computeLimitedGradients(mesh, state, opts.limiter_epsilon);
+    computeEdgeFluxes(mesh, state, opts);
+
+    std::vector<double> ydot(mesh.n_triangles());
+    assembleRHS(mesh, state, ydot.data());
+
+    double net_dvol_dt = 0.0;
+    for (int i = 0; i < mesh.n_triangles(); ++i) {
+        net_dvol_dt += ydot[i] * mesh.tri_area[i];
+    }
+    EXPECT_NEAR(net_dvol_dt, 0.0, 1e-12)
+        << "Closed-system volume budget violated: Σ ydot·area = "
+        << net_dvol_dt << " (expected 0 within 1e-12)";
 }
 
 
@@ -889,3 +1099,246 @@ TEST(DiamondMesh, VertexReconstructionConstantExact) {
         EXPECT_NEAR(state.vert_head[v], 3.14, 1e-10);
     }
 }
+
+// ============================================================================
+// Default2DOutputPlugin — CF-1.11 / UGRID-1.0 HDF5 writer (Path B engine fix)
+// ============================================================================
+//
+// Validates that the 2D HDF5 plugin can be exercised in isolation:
+//  1. prepare()                    creates the file with root attrs
+//  2. prepareMeshAndDatasets(mesh) writes static topology + creates datasets
+//  3. update(snap)                 appends one time-step of depth/head/...
+//  4. finalize()                   closes datasets
+//  5. The resulting .h5 opens cleanly and exposes the expected variables.
+//
+// The test bypasses SWMMEngine — Default2DOutputPlugin is exercised against
+// a hand-built MeshData + a hand-built SimulationSnapshot with the new
+// surface_* fields populated.
+
+#ifdef OPENSWMM_HAS_2D
+
+// ============================================================================
+// CvodeSurfaceSolver — Phase 1 (BDF + Newton + GMRES + Jacobi) sanity tests
+// ============================================================================
+//
+// These verify the post-restoration solver configuration: that GMRES + (NONE
+// or JACOBI) initialises cleanly, that the Phase-2-reserved configurations
+// fail loudly rather than silently substituting, and that a simple
+// source-only advance succeeds end-to-end. These are NOT convergence tests at
+// small dry_depth; that's the snoopy_lagoon integration question Phase 1 is
+// set up to measure on the host build.
+
+namespace {
+
+// Helper: build a tiny flat-bed mesh + initial-state trio suitable for solver
+// initialisation. Bed elevations are zero everywhere (vertex z = 0), so head
+// = depth and the C-property degenerates trivially.
+struct SolverFixture {
+    MeshData         mesh;
+    SurfaceStateData state;
+    SolverOptions2D  opts;
+
+    void build() {
+        mesh = makeUnitSquareMesh();
+        // rhs_fn calls reconstructVertexHeads(), which iterates
+        // mesh.vert_stencil_ptr; buildVertexStencils must run before any
+        // advance() is attempted.
+        buildVertexStencils(mesh);
+        state.resize(mesh.n_triangles(), mesh.n_vertices());
+        // H-formulation: y_i = head_i = depth_i + z_i. Flat bed (z=0)
+        // initially dry → head = 0.
+        for (int i = 0; i < mesh.n_triangles(); ++i) {
+            state.head[i]  = mesh.tri_cz[i];
+            state.depth[i] = 0.0;
+        }
+    }
+};
+
+} // anonymous namespace
+
+TEST(CvodeSurfaceSolverPhase1, InitializesWithGmresAndNoPreconditioner) {
+    SolverFixture fx; fx.build();
+    fx.opts.linear_solver  = LinearSolverType::GMRES;
+    fx.opts.preconditioner = PreconditionerType::NONE;
+
+    CvodeSurfaceSolver solver;
+    ASSERT_NO_THROW(solver.initialize(fx.mesh, fx.state, fx.opts));
+    EXPECT_TRUE(solver.is_initialized());
+    solver.finalize();
+    EXPECT_FALSE(solver.is_initialized());
+}
+
+TEST(CvodeSurfaceSolverPhase1, InitializesWithGmresAndJacobi) {
+    SolverFixture fx; fx.build();
+    fx.opts.linear_solver  = LinearSolverType::GMRES;
+    fx.opts.preconditioner = PreconditionerType::JACOBI;
+
+    CvodeSurfaceSolver solver;
+    ASSERT_NO_THROW(solver.initialize(fx.mesh, fx.state, fx.opts));
+    EXPECT_TRUE(solver.is_initialized());
+}
+
+TEST(CvodeSurfaceSolverPhase1, RejectsBicgstabLinearSolver) {
+    SolverFixture fx; fx.build();
+    fx.opts.linear_solver  = LinearSolverType::BICGSTAB;
+    fx.opts.preconditioner = PreconditionerType::JACOBI;
+
+    CvodeSurfaceSolver solver;
+    EXPECT_THROW(solver.initialize(fx.mesh, fx.state, fx.opts),
+                 std::runtime_error);
+}
+
+TEST(CvodeSurfaceSolverPhase1, RejectsTfqmrLinearSolver) {
+    SolverFixture fx; fx.build();
+    fx.opts.linear_solver  = LinearSolverType::TFQMR;
+    fx.opts.preconditioner = PreconditionerType::JACOBI;
+
+    CvodeSurfaceSolver solver;
+    EXPECT_THROW(solver.initialize(fx.mesh, fx.state, fx.opts),
+                 std::runtime_error);
+}
+
+TEST(CvodeSurfaceSolverPhase1, RejectsIluPreconditioner) {
+    SolverFixture fx; fx.build();
+    fx.opts.linear_solver  = LinearSolverType::GMRES;
+    fx.opts.preconditioner = PreconditionerType::ILU;
+
+    CvodeSurfaceSolver solver;
+    EXPECT_THROW(solver.initialize(fx.mesh, fx.state, fx.opts),
+                 std::runtime_error);
+}
+
+TEST(CvodeSurfaceSolverPhase1, AdvancesUnderConstantRainfall) {
+    // Smooth, source-only problem: uniform rainfall on a flat mesh with no
+    // head differences. With Δh ≡ 0 everywhere the edge fluxes vanish and
+    // f(y) = R is a constant scalar; this is the easiest possible
+    // convergence test for BDF + Newton + GMRES + Jacobi and exercises the
+    // full attach chain end-to-end without stressing the wet/dry path.
+    SolverFixture fx; fx.build();
+    fx.opts.linear_solver  = LinearSolverType::GMRES;
+    fx.opts.preconditioner = PreconditionerType::JACOBI;
+
+    const double rainfall_rate = 1.0e-4;   // m/s ≈ 360 mm/hr
+    for (int i = 0; i < fx.mesh.n_triangles(); ++i) {
+        fx.state.rainfall[i] = rainfall_rate;
+    }
+
+    CvodeSurfaceSolver solver;
+    ASSERT_NO_THROW(solver.initialize(fx.mesh, fx.state, fx.opts));
+
+    const double dt = 1.0;
+    double t_reached = solver.advance(0.0, dt);
+    EXPECT_NEAR(t_reached, dt, 1e-9)
+        << "CVODE did not reach t_target — corrector may have stalled";
+
+    // Expected depth after 1 s of constant rainfall at 1e-4 m/s.
+    // Tolerance is loose because the cubic Hermite shutoff at depth <
+    // dry_depth attenuates very early rainfall accumulation, and the
+    // H-formulation's depth-derived value passes through max(y-z, 0).
+    const double expected = rainfall_rate * dt;
+    for (int i = 0; i < fx.mesh.n_triangles(); ++i) {
+        EXPECT_NEAR(fx.state.depth[i], expected, 5.0e-6)
+            << "Triangle " << i << " depth = " << fx.state.depth[i]
+            << " (expected ~" << expected << ")";
+    }
+}
+
+TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
+    namespace fs = std::filesystem;
+
+    // Hand-build a tiny 2-triangle mesh (the unit square)
+    MeshData mesh = makeUnitSquareMesh();
+    const int n_tri  = mesh.n_triangles();
+    const int n_vert = mesh.n_vertices();
+    ASSERT_EQ(n_tri,  2);
+    ASSERT_EQ(n_vert, 4);
+
+    // Build a snapshot carrying one tick's worth of surface state
+    openswmm::SimulationSnapshot snap;
+    snap.sim_time            = 0.0;
+    snap.surface_tri_count   = n_tri;
+    snap.surface_vert_count  = n_vert;
+    snap.surface_depth         = {0.05, 0.10};
+    snap.surface_head          = {0.05, 0.10};
+    snap.surface_grad_hx       = {0.0,  0.0};
+    snap.surface_grad_hy       = {0.0,  0.0};
+    snap.surface_grad_hx_lim   = {0.0,  0.0};
+    snap.surface_grad_hy_lim   = {0.0,  0.0};
+    snap.surface_rainfall      = {0.0,  0.0};
+    snap.surface_coupling_flux = {0.0,  0.0};
+    snap.surface_net_source    = {0.0,  0.0};
+    snap.surface_edge_flux     = {0.0, 0.0, 0.0,  0.0, 0.0, 0.0}; // [tri*3+e]
+    snap.surface_vert_head     = {0.0, 0.0, 0.0,  0.0};
+
+    // Output path in a temp location; remove any stale file first.
+    const fs::path h5_path = fs::temp_directory_path() /
+                              "openswmm_test_2d_output.h5";
+    fs::remove(h5_path);
+
+    // Exercise the plugin lifecycle
+    Default2DOutputPlugin plugin(h5_path.string());
+    ASSERT_EQ(plugin.initialize({}, nullptr), 0);
+
+    // validate() / prepare() use a SimulationContext but only read what's
+    // already set; an empty/default context is enough for the file-creation
+    // path. We instantiate a stack context via the SWMM SDK header.
+    openswmm::SimulationContext ctx{};
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx),  0);
+
+    plugin.prepareMeshAndDatasets(mesh);
+
+    ASSERT_EQ(plugin.update(snap), 0);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    // File should exist on disk
+    ASSERT_TRUE(fs::exists(h5_path))
+        << "Default2DOutputPlugin did not create " << h5_path;
+
+    // Open the file read-only and assert the documented UGRID datasets exist
+    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY,
+                             H5P_DEFAULT);
+    ASSERT_GE(file_id, 0) << "H5Fopen failed on " << h5_path;
+
+    auto exists = [file_id](const char* name) {
+        return H5Lexists(file_id, name, H5P_DEFAULT) > 0;
+    };
+    EXPECT_TRUE(exists("Mesh2"));
+    EXPECT_TRUE(exists("Mesh2_node_x"));
+    EXPECT_TRUE(exists("Mesh2_node_y"));
+    EXPECT_TRUE(exists("Mesh2_node_z"));
+    EXPECT_TRUE(exists("Mesh2_face_nodes"));
+    EXPECT_TRUE(exists("Mesh2_face_depth"));
+    EXPECT_TRUE(exists("Mesh2_face_head"));
+    EXPECT_TRUE(exists("time"));
+
+    // /time should have one entry after our single update()
+    {
+        hid_t ds_time = H5Dopen2(file_id, "time", H5P_DEFAULT);
+        ASSERT_GE(ds_time, 0);
+        hid_t space = H5Dget_space(ds_time);
+        hsize_t dims[1] = {0};
+        H5Sget_simple_extent_dims(space, dims, nullptr);
+        EXPECT_EQ(dims[0], 1u);
+        H5Sclose(space);
+        H5Dclose(ds_time);
+    }
+
+    // /Mesh2_face_depth should be [1, n_tri] after the single update()
+    {
+        hid_t ds = H5Dopen2(file_id, "Mesh2_face_depth", H5P_DEFAULT);
+        ASSERT_GE(ds, 0);
+        hid_t space = H5Dget_space(ds);
+        hsize_t dims[2] = {0, 0};
+        H5Sget_simple_extent_dims(space, dims, nullptr);
+        EXPECT_EQ(dims[0], 1u);
+        EXPECT_EQ(dims[1], static_cast<hsize_t>(n_tri));
+        H5Sclose(space);
+        H5Dclose(ds);
+    }
+
+    H5Fclose(file_id);
+    fs::remove(h5_path);
+}
+
+#endif // OPENSWMM_HAS_2D

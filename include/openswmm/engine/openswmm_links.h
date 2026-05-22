@@ -756,6 +756,11 @@ SWMM_ENGINE_API int swmm_link_get_stat_pump_volume(SWMM_Engine engine, int idx, 
 /** @brief Get hydraulic power dissipated in a link (ft-lb/s). P = gamma * |Q| * |hL|. */
 SWMM_ENGINE_API int swmm_link_get_hyd_power(SWMM_Engine engine, int idx, double* power);
 
+/** @brief Rename the link at `idx` to `newId`.
+ *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
+ *  idx is out of range. */
+SWMM_ENGINE_API int swmm_link_rename(SWMM_Engine engine, int idx, const char* newId);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

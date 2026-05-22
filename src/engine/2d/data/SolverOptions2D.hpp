@@ -18,16 +18,53 @@
 
 namespace openswmm::twoD {
 
+/**
+ * @brief Krylov linear solver selector for the BDF + Newton + Krylov stack.
+ *
+ * Phase 1 wires GMRES only; BICGSTAB and TFQMR are kept as enum values to
+ * preserve the input-file parsing surface and to mark slots reserved for
+ * possible Phase 2 work, but selecting them today triggers a clear
+ * runtime error in CvodeSurfaceSolver::initialize().
+ *
+ * GMRES is the canonical choice for the elliptic-flavoured diffusive-wave
+ * Jacobian and pairs cleanly with multigrid preconditioners (the Phase 2
+ * BoomerAMG path); the other two Krylov methods would only earn their keep
+ * for problem classes we do not currently solve.
+ */
 enum class LinearSolverType : int8_t {
-    GMRES    = 0,
-    BICGSTAB = 1,
-    TFQMR    = 2
+    GMRES    = 0,   ///< Phase 1: WIRED (SUNLinSol_SPGMR).
+    BICGSTAB = 1,   ///< Reserved; rejected at initialize() in Phase 1.
+    TFQMR    = 2    ///< Reserved; rejected at initialize() in Phase 1.
 };
 
+/**
+ * @brief Preconditioner selector for the Krylov inner solver.
+ *
+ * Phase 1 wires NONE (no preconditioning) and JACOBI (per-cell diagonal
+ * approximation rebuilt each Jacobian refresh). ILU and AMG are reserved
+ * for the Phase 2 hypre/BoomerAMG integration; selecting them today
+ * triggers a clear runtime error in CvodeSurfaceSolver::initialize().
+ *
+ * Tier rationale (see also the Phase 1/2 discussion in
+ * docs/2D_KNOWN_STIFFNESS_ISSUE.md):
+ *
+ *   - NONE   : baseline; useful for measuring how much the Jacobi heuristic
+ *              actually buys at a given mesh size.
+ *   - JACOBI : O(n) setup, O(n) apply, embarrassingly parallel. Effective
+ *              while the Newton matrix M = I − γJ is diagonally dominant;
+ *              expected to scale acceptably to ~10k–50k cells.
+ *   - ILU    : O(nnz) setup + apply via KLU. Better convergence per
+ *              Krylov iteration than JACOBI but still asymptotically
+ *              non-scalable on this elliptic operator. *Not implemented*.
+ *   - AMG    : O(n) setup amortised, near-constant Krylov iterations
+ *              regardless of mesh size. The only scalable option past
+ *              ~100k cells. Requires hypre/BoomerAMG. *Not yet wired.*
+ */
 enum class PreconditionerType : int8_t {
-    NONE   = 0,
-    JACOBI = 1,
-    ILU    = 2    // future
+    NONE   = 0,     ///< Phase 1: WIRED (no preconditioning).
+    JACOBI = 1,     ///< Phase 1: WIRED (diagonal heuristic).
+    ILU    = 2      ///< Reserved; rejected at initialize() in Phase 1.
+    // AMG  = 3     ///< Reserved for Phase 2 (hypre BoomerAMG).
 };
 
 /**
@@ -54,6 +91,11 @@ struct SolverOptions2D {
 
     /// Path from [2D_MESH_FILE] FILE token. Empty = mesh is inline in main .inp.
     std::string mesh_file;
+
+    /// HDF5 output file path from [2D_OPTIONS] OUTPUT_FILE token. Empty =
+    /// no 2D output is written. Resolved relative to the parent .inp directory
+    /// by the section handler.
+    std::string output_file;
 };
 
 } // namespace openswmm::twoD

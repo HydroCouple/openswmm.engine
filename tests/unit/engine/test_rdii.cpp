@@ -18,6 +18,11 @@
 #include "core/SimulationContext.hpp"
 #include "input/handlers/InflowsHandler.hpp"
 
+#include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_nodes.h>
+#include <openswmm/engine/openswmm_inflows.h>
+
 using namespace openswmm;
 using namespace openswmm::rdii;
 
@@ -1084,4 +1089,181 @@ TEST(RdiiDecayRoundTrip, ContextResetClearsDecay) {
     EXPECT_EQ(ctx.rdii_decay.count(), 1);
     ctx.reset();
     EXPECT_EQ(ctx.rdii_decay.count(), 0);
+}
+
+// ============================================================================
+// C API — hydrograph, RDII assignment getter, RDII decay
+// ============================================================================
+// Exercises the C-level entry points used by the Python bindings and external
+// consumers. Uses swmm_engine_new() to build an in-memory model.
+
+class RdiiCApiTest : public ::testing::Test {
+protected:
+    SWMM_Engine engine = nullptr;
+    void SetUp() override {
+        engine = swmm_engine_new();
+        ASSERT_NE(engine, nullptr);
+        // Need at least one node so swmm_rdii_add can succeed.
+        ASSERT_EQ(swmm_node_add(engine, "J1", SWMM_NODE_JUNCTION), SWMM_OK);
+    }
+    void TearDown() override { swmm_engine_destroy(engine); }
+};
+
+TEST_F(RdiiCApiTest, HydrographAddCountGet) {
+    EXPECT_EQ(swmm_hydrograph_count(engine), 0);
+
+    ASSERT_EQ(swmm_hydrograph_add(engine, "SanSewer",
+                                   -1 /*ALL*/, 0 /*SHORT*/,
+                                   0.055, 1.0, 2.0,
+                                   8.0, 0.10, 2.0), SWMM_OK);
+    ASSERT_EQ(swmm_hydrograph_add(engine, "SanSewer",
+                                   -1, 1 /*MEDIUM*/,
+                                   0.032, 3.5, 2.0,
+                                   0.0, 0.0, 0.0), SWMM_OK);
+    EXPECT_EQ(swmm_hydrograph_count(engine), 2);
+
+    char buf[64];
+    int  month = -99, response = -99;
+    double r=0, t=0, k=0, dmax=0, drecov=0, dinit=0;
+    ASSERT_EQ(swmm_hydrograph_get(engine, 0, buf, sizeof(buf),
+                                   &month, &response, &r, &t, &k,
+                                   &dmax, &drecov, &dinit), SWMM_OK);
+    EXPECT_STREQ(buf, "SanSewer");
+    EXPECT_EQ(month, -1);
+    EXPECT_EQ(response, 0);
+    EXPECT_NEAR(r, 0.055, 1e-12);
+    EXPECT_NEAR(t,   1.0, 1e-12);
+    EXPECT_NEAR(k,   2.0, 1e-12);
+    EXPECT_NEAR(dmax,   8.0,  1e-12);
+    EXPECT_NEAR(drecov, 0.10, 1e-12);
+    EXPECT_NEAR(dinit,  2.0,  1e-12);
+
+    ASSERT_EQ(swmm_hydrograph_get(engine, 1, buf, sizeof(buf),
+                                   &month, &response, &r, &t, &k,
+                                   &dmax, &drecov, &dinit), SWMM_OK);
+    EXPECT_EQ(response, 1);
+    EXPECT_NEAR(t, 3.5, 1e-12);
+}
+
+TEST_F(RdiiCApiTest, HydrographRejectsBadInputs) {
+    // null name
+    EXPECT_EQ(swmm_hydrograph_add(engine, nullptr, -1, 0,
+                                   0.1, 1.0, 2.0, 0, 0, 0),
+              SWMM_ERR_BADPARAM);
+    // response out of [0,2]
+    EXPECT_EQ(swmm_hydrograph_add(engine, "UH", -1, 3,
+                                   0.1, 1.0, 2.0, 0, 0, 0),
+              SWMM_ERR_BADPARAM);
+    // month out of [-1,11]
+    EXPECT_EQ(swmm_hydrograph_add(engine, "UH", 12, 0,
+                                   0.1, 1.0, 2.0, 0, 0, 0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hydrograph_add(engine, "UH", -2, 0,
+                                   0.1, 1.0, 2.0, 0, 0, 0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hydrograph_count(engine), 0);
+}
+
+TEST_F(RdiiCApiTest, HydrographGageRoundTrip) {
+    EXPECT_EQ(swmm_hydrograph_gage_count(engine), 0);
+
+    ASSERT_EQ(swmm_hydrograph_add_gage(engine, "SanSewer", "G1"), SWMM_OK);
+    ASSERT_EQ(swmm_hydrograph_add_gage(engine, "Combined", "G2"), SWMM_OK);
+    EXPECT_EQ(swmm_hydrograph_gage_count(engine), 2);
+
+    char uh[32], gage[32];
+    ASSERT_EQ(swmm_hydrograph_get_gage(engine, 1, uh, sizeof(uh),
+                                        gage, sizeof(gage)), SWMM_OK);
+    EXPECT_STREQ(uh,   "Combined");
+    EXPECT_STREQ(gage, "G2");
+}
+
+TEST_F(RdiiCApiTest, HydrographGetTruncatesOverlongName) {
+    ASSERT_EQ(swmm_hydrograph_add(engine, "A_Very_Long_Hydrograph_Name_That_Exceeds_The_Buffer",
+                                   -1, 0, 0.1, 1.0, 2.0, 0, 0, 0), SWMM_OK);
+    char buf[8];
+    int month, response;
+    double r, t, k, dmax, drecov, dinit;
+    ASSERT_EQ(swmm_hydrograph_get(engine, 0, buf, sizeof(buf),
+                                   &month, &response, &r, &t, &k,
+                                   &dmax, &drecov, &dinit), SWMM_OK);
+    EXPECT_EQ(std::string(buf), "A_Very_");        // 7 chars + NUL
+    EXPECT_EQ(buf[sizeof(buf) - 1], '\0');
+}
+
+TEST_F(RdiiCApiTest, RdiiAssignmentRoundTrip) {
+    ASSERT_EQ(swmm_rdii_add(engine, 0, "SanSewer", 1000.0), SWMM_OK);
+    EXPECT_EQ(swmm_rdii_count(engine), 1);
+
+    int node_idx = -1;
+    double area = 0.0;
+    char buf[64];
+    ASSERT_EQ(swmm_rdii_get(engine, 0, &node_idx, buf, sizeof(buf), &area),
+              SWMM_OK);
+    EXPECT_EQ(node_idx, 0);
+    EXPECT_STREQ(buf, "SanSewer");
+    EXPECT_NEAR(area, 1000.0, 1e-12);
+}
+
+TEST_F(RdiiCApiTest, RdiiGetRejectsBadIndex) {
+    int node_idx;
+    double area;
+    char buf[32];
+    EXPECT_EQ(swmm_rdii_get(engine, 0, &node_idx, buf, sizeof(buf), &area),
+              SWMM_ERR_BADINDEX);
+}
+
+TEST_F(RdiiCApiTest, RdiiDecayAddCountGet) {
+    EXPECT_EQ(swmm_rdii_decay_count(engine), 0);
+
+    ASSERT_EQ(swmm_rdii_decay_add(engine, "SanSewer", 0 /*SHORT*/,
+                                   0.15, 0.010, 0.070,
+                                   10.0, 0.055, 0.0), SWMM_OK);
+    ASSERT_EQ(swmm_rdii_decay_add(engine, "SanSewer", 1 /*MEDIUM*/,
+                                   0.10, 0.008, 0.037,
+                                   10.0, 0.055, 0.0), SWMM_OK);
+    EXPECT_EQ(swmm_rdii_decay_count(engine), 2);
+
+    char buf[64];
+    int response = -99;
+    double k_dep=0, k_0=0, k_T=0, T_ref=0, theta_rec=0, T_freeze=0;
+    ASSERT_EQ(swmm_rdii_decay_get(engine, 0, buf, sizeof(buf),
+                                   &response, &k_dep, &k_0, &k_T,
+                                   &T_ref, &theta_rec, &T_freeze), SWMM_OK);
+    EXPECT_STREQ(buf, "SanSewer");
+    EXPECT_EQ(response, 0);
+    EXPECT_NEAR(k_dep, 0.15,  1e-12);
+    EXPECT_NEAR(k_0,   0.010, 1e-12);
+    EXPECT_NEAR(k_T,   0.070, 1e-12);
+    EXPECT_NEAR(T_ref, 10.0,  1e-12);
+    EXPECT_NEAR(theta_rec, 0.055, 1e-12);
+    EXPECT_NEAR(T_freeze,  0.0,   1e-12);
+}
+
+TEST_F(RdiiCApiTest, RdiiDecayRejectsBadInputs) {
+    // bad response
+    EXPECT_EQ(swmm_rdii_decay_add(engine, "UH", 3, 0.1, 0.01, 0.01,
+                                   10.0, 0.0, 0.0),
+              SWMM_ERR_BADPARAM);
+    // negative coefficient
+    EXPECT_EQ(swmm_rdii_decay_add(engine, "UH", 0, -0.1, 0.01, 0.01,
+                                   10.0, 0.0, 0.0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_rdii_decay_add(engine, "UH", 0, 0.1, -0.01, 0.01,
+                                   10.0, 0.0, 0.0),
+              SWMM_ERR_BADPARAM);
+    // null name
+    EXPECT_EQ(swmm_rdii_decay_add(engine, nullptr, 0, 0.1, 0.01, 0.01,
+                                   10.0, 0.0, 0.0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_rdii_decay_count(engine), 0);
+}
+
+TEST_F(RdiiCApiTest, NullHandleReturnsBadHandle) {
+    EXPECT_EQ(swmm_hydrograph_add(nullptr, "UH", -1, 0,
+                                   0.1, 1.0, 2.0, 0, 0, 0),
+              SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_hydrograph_count(nullptr), -1);
+    EXPECT_EQ(swmm_rdii_decay_count(nullptr), -1);
+    EXPECT_EQ(swmm_hydrograph_gage_count(nullptr), -1);
 }

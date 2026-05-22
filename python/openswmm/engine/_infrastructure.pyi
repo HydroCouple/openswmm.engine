@@ -57,6 +57,14 @@ class Infrastructure:
         """
         ...
 
+    def transect_add(self, transect_id: str) -> int:
+        """Add a new transect to the model.
+
+        @param transect_id: Identifier string for the new transect.
+        @return: Index of the newly created transect.
+        """
+        ...
+
     def transect_set_roughness(
         self,
         idx: int,
@@ -102,6 +110,14 @@ class Infrastructure:
 
         @return: Street count.
         @rtype: int
+        """
+        ...
+
+    def street_add(self, street_id: str) -> int:
+        """Add a new street cross-section to the model.
+
+        @param street_id: Identifier string for the new street.
+        @return: Index of the newly created street.
         """
         ...
 
@@ -159,6 +175,15 @@ class Infrastructure:
         """
         ...
 
+    def inlet_add(self, inlet_id: str, inlet_type: str) -> int:
+        """Add a new inlet to the model.
+
+        @param inlet_id: Identifier string for the new inlet.
+        @param inlet_type: Inlet type string.
+        @return: Index of the newly created inlet.
+        """
+        ...
+
     def inlet_set_params(
         self,
         idx: int,
@@ -195,6 +220,15 @@ class Infrastructure:
 
         @return: LID control count.
         @rtype: int
+        """
+        ...
+
+    def lid_add(self, lid_id: str, lid_type: int) -> int:
+        """Add a new LID control to the model.
+
+        @param lid_id: Identifier string for the new LID control.
+        @param lid_type: LID type code.
+        @return: Index of the newly created LID control.
         """
         ...
 

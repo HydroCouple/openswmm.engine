@@ -44,7 +44,7 @@ build-backend = "scikit_build_core.build"
 # ============================================================================
 [project]
 name = "openswmm"
-version = "6.0.0.dev0"
+version = "6.0.0.dev1"
 description = "Python bindings for the OpenSWMM stormwater modelling engine."
 requires-python = ">=3.9"
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -64,6 +64,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Operating System :: Microsoft :: Windows",
+    "Operating System :: Unix",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3",

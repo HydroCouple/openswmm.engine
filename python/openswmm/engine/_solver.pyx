@@ -100,6 +100,12 @@ cdef void _progress_trampoline(void* engine, double elapsed_frac,
     (<object>user_data)(elapsed_frac)
 
 
+cdef void _warning_trampoline(SWMM_Engine engine, int code, const char* msg,
+                               void* user_data) noexcept with gil:
+    cdef bytes b = msg if msg is not NULL else b""
+    (<object>user_data)(code, b.decode("utf-8", "replace"))
+
+
 cdef class Solver:
     """SWMM engine lifecycle manager.
 
@@ -134,6 +140,7 @@ cdef class Solver:
         self._handle = NULL
         self._step_begin_cb = None
         self._step_end_cb = None
+        self._warning_cb = None
 
     # =========================================================================
     # Lifecycle
@@ -547,6 +554,76 @@ cdef class Solver:
         _check(swmm_get_event_count(self._handle, &v))
         return v
 
+    # -------------------------------------------------------------------------
+    # [EVENTS] section editor (Slice CW — 2026-05-21)
+    #
+    # Round-trips the C{[EVENTS]} section through the C API.  Each event is a
+    # (start, end) pair of OADate decimal-day doubles (decimal days since
+    # 1899-12-30 00:00; same convention as Excel / OLE Automation).
+    # -------------------------------------------------------------------------
+
+    def events_count(self) -> int:
+        """Number of C{[EVENTS]} rows. Synonym for L{get_event_count}.
+
+        @rtype: int
+        @raise EngineError: On C API failure.
+        """
+        cdef int v = 0
+        _check(swmm_events_count(self._handle, &v))
+        return v
+
+    def events_get(self, int idx) -> tuple:
+        """Get the start/end OADate for the I{idx}-th event.
+
+        @param idx: Zero-based row index.
+        @type idx: int
+        @return: C{(start, end)} as a 2-tuple of OADate floats.
+        @rtype: tuple[float, float]
+        @raise EngineError: On bad index or other C API failure.
+        """
+        cdef double s = 0.0
+        cdef double e = 0.0
+        _check(swmm_events_get(self._handle, idx, &s, &e))
+        return (s, e)
+
+    def events_set(self, int idx, double start, double end) -> None:
+        """Overwrite the I{idx}-th event's window.
+
+        @param idx: Zero-based row index.
+        @param start: New start OADate (decimal day).
+        @param end: New end OADate. Must be strictly greater than C{start}.
+        @raise EngineError: On bad index or when C{start >= end}.
+        """
+        _check(swmm_events_set(self._handle, idx, start, end))
+
+    def events_add(self, double start, double end) -> int:
+        """Append a new event window.
+
+        @param start: Start OADate (decimal day).
+        @param end: End OADate. Must be strictly greater than C{start}.
+        @return: The new event's zero-based row index.
+        @rtype: int
+        @raise EngineError: When C{start >= end} or on other C API failure.
+        """
+        cdef int new_idx = -1
+        _check(swmm_events_add(self._handle, start, end, &new_idx))
+        return new_idx
+
+    def events_remove(self, int idx) -> None:
+        """Remove the I{idx}-th event. Trailing entries shift down by one.
+
+        @param idx: Zero-based row index.
+        @raise EngineError: On bad index.
+        """
+        _check(swmm_events_remove(self._handle, idx))
+
+    def events_clear(self) -> None:
+        """Remove every event window. Safe on an already-empty list.
+
+        @raise EngineError: On C API failure.
+        """
+        _check(swmm_events_clear(self._handle))
+
     def get_steady_state_skip(self) -> bool:
         """Check whether steady-state routing skip is enabled.
 
@@ -618,6 +695,34 @@ cdef class Solver:
             _check(swmm_set_step_end_callback(
                 self._handle, _step_end_trampoline,
                 <void*>self._step_end_cb))
+
+    def set_warning_callback(self, callback):
+        """Register a callback invoked on each non-fatal engine warning.
+
+        The callable receives C{(code: int, message: str)}. The C API may
+        emit warnings during parsing, initialization, hot-start apply, and
+        the simulation loop. Pass C{None} to unregister.
+
+        Lifetime note: the callable is stored on this L{Solver} instance for
+        the duration of registration. Do not let a separate strong reference
+        outlive the solver -- the C side keeps a function pointer plus the
+        Python object as user data.
+
+        @param callback: A Python callable accepting C{(code, message)} or
+            C{None} to unregister.
+        @type callback: callable or None
+        @return: None
+        @rtype: None
+        @raise EngineError: On C API failure.
+        """
+        if callback is None:
+            self._warning_cb = None
+            _check(swmm_set_warning_callback(self._handle, NULL, NULL))
+        else:
+            self._warning_cb = callback
+            _check(swmm_set_warning_callback(
+                self._handle, _warning_trampoline,
+                <void*>self._warning_cb))
 
     # =========================================================================
     # Context manager

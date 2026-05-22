@@ -82,6 +82,8 @@ add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
 add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.cpp)
 add_gtest_unit(test_engine_model_write_with_plugin test_model_write_with_plugin.cpp)
 add_gtest_unit(test_engine_files_section          test_files_section.cpp)
+add_gtest_unit(test_engine_events_section         test_events_section.cpp)
+add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
 add_gtest_unit(test_engine_io_thread         test_io_thread.cpp)
 add_gtest_unit(test_engine_timestep_ctrl     test_timestep_controller.cpp)
@@ -108,9 +110,10 @@ add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
 add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
 add_gtest_unit(test_engine_type_conversion test_type_conversion.cpp)
 
-# 2D surface routing tests — geometry, gradients, flux, parsing
-# These tests exercise the non-CVODE portions of the 2D module and
-# can be built without SUNDIALS by compiling the needed sources directly.
+# 2D surface routing tests — geometry, gradients, flux, parsing.
+# Non-CVODE portions can be built without SUNDIALS by compiling the needed
+# sources directly; the HDF5 output plugin test is gated on OPENSWMM_BUILD_2D
+# because it needs the real Default2DOutputPlugin + libhdf5.
 set(TEST_2D_SOURCES
     test_2d_surface_routing.cpp
     ${PROJECT_SOURCE_DIR}/src/engine/2d/mesh/MeshBuilder.cpp
@@ -118,6 +121,10 @@ set(TEST_2D_SOURCES
     ${PROJECT_SOURCE_DIR}/src/engine/2d/solver/SurfaceFluxCalculator.cpp
     ${PROJECT_SOURCE_DIR}/src/engine/2d/input/SectionHandlers2D.cpp
 )
+if(OPENSWMM_BUILD_2D)
+    list(APPEND TEST_2D_SOURCES
+        ${PROJECT_SOURCE_DIR}/src/engine/2d/output/Default2DOutputPlugin.cpp)
+endif()
 add_executable(test_engine_2d_surface ${TEST_2D_SOURCES})
 target_link_libraries(test_engine_2d_surface
     PRIVATE
@@ -125,6 +132,15 @@ target_link_libraries(test_engine_2d_surface
         $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
         openswmm_legacy_engine
 )
+if(OPENSWMM_BUILD_2D)
+    # HDF5 is required by Default2DOutputPlugin. The engine target finds it
+    # at configure time; surface the imported variables to this test target.
+    if(NOT HDF5_FOUND)
+        find_package(HDF5 REQUIRED COMPONENTS C)
+    endif()
+    target_link_libraries(test_engine_2d_surface PRIVATE ${HDF5_C_LIBRARIES})
+    target_include_directories(test_engine_2d_surface PRIVATE ${HDF5_INCLUDE_DIRS})
+endif()
 target_include_directories(test_engine_2d_surface
     PRIVATE
         ${PROJECT_SOURCE_DIR}/include

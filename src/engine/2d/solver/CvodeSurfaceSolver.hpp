@@ -4,12 +4,17 @@
  *
  * @details Wraps the SUNDIALS CVODE solver for time integration of the
  *          semi-discrete finite volume surface flow equations. Uses BDF
- *          method with iterative linear solver (GMRES/BiCGStab/TFQMR).
+ *          for time discretisation, CVODE's default Newton corrector
+ *          with inexact tolerance, and SPGMR (Krylov GMRES) for the
+ *          inner linear solves. A Jacobi preconditioner is wired by
+ *          default (per-cell diagonal approximation rebuilt each
+ *          Jacobian refresh); see SolverOptions2D for the menu of other
+ *          linear solver / preconditioner tiers reserved for future use.
  *
  *          The ODE system is:
  *            dy/dt = f(t, y)
- *          where y[i] = ψ_o[i] (depth at triangle i) and f computes the
- *          RHS from the finite volume formulation.
+ *          where y[i] = H_i (water-surface elevation at triangle i) and
+ *          f computes the RHS from the finite volume formulation.
  *
  * @see TWO_DIMENSIONAL_SURFACE_ROUTING_IMPLEMENTATION_STRATEGY.md §4.2
  * @ingroup engine_2d
@@ -28,6 +33,8 @@
 
 #ifdef OPENSWMM_HAS_2D
 
+#include <vector>
+
 // Forward declarations for SUNDIALS types (avoid pulling in full headers)
 struct SUNContext_;
 typedef struct SUNContext_* SUNContext;
@@ -36,16 +43,24 @@ typedef struct _generic_SUNLinearSolver* SUNLinearSolver;
 
 namespace openswmm::twoD {
 
+class CvodeSurfaceSolver;
+
 /**
- * @brief Context passed to the CVODE RHS callback function.
+ * @brief Context passed to the CVODE RHS / preconditioner callbacks.
  *
- * Contains all data needed to evaluate f(t, y) — the RHS of the surface
- * routing ODE system. This is passed as user_data to CVodeSetUserData().
+ * Contains all data needed to evaluate f(t, y) and to set up / apply the
+ * Jacobi preconditioner. Passed as user_data to CVodeSetUserData().
+ *
+ * The `solver` back-pointer lets the preconditioner callbacks reach the
+ * owning solver's per-instance scratch storage (e.g. the cached diagonal
+ * used by Jacobi). It is set in CvodeSurfaceSolver::initialize() and
+ * cleared in finalize().
  */
 struct CvodeSolverContext {
-    MeshData*         mesh   = nullptr;
-    SurfaceStateData* state  = nullptr;
-    SolverOptions2D*  opts   = nullptr;
+    MeshData*           mesh   = nullptr;
+    SurfaceStateData*   state  = nullptr;
+    SolverOptions2D*    opts   = nullptr;
+    CvodeSurfaceSolver* solver = nullptr;
 };
 
 /**
@@ -114,15 +129,27 @@ public:
     bool is_initialized() const noexcept { return cvode_mem_ != nullptr; }
 
 private:
-    void* cvode_mem_          = nullptr;  ///< CVODE memory block
-    SUNLinearSolver ls_       = nullptr;  ///< Iterative linear solver
-    N_Vector y_               = nullptr;  ///< State vector (wraps state.depth)
-    SUNContext sun_ctx_        = nullptr;  ///< SUNDIALS context
+    void*           cvode_mem_ = nullptr;  ///< CVODE memory block
+    SUNLinearSolver ls_        = nullptr;  ///< SPGMR Krylov linear solver
+    N_Vector        y_         = nullptr;  ///< State vector (water-surface elevation H)
+    SUNContext      sun_ctx_   = nullptr;  ///< SUNDIALS context
 
     CvodeSolverContext ctx_;               ///< RHS callback context
 
     long   last_nsteps_ = 0;
     double last_h_      = 0.0;
+
+    /// Cached diagonal of the Jacobi preconditioner, sized to n_triangles.
+    /// Populated in psetup_fn from the current edge fluxes; consumed in
+    /// psolve_fn. Phase 1 stores diag(J) as a heuristic per-cell value
+    /// (sum of edge transmissivities, normalised by cell area, negated).
+    std::vector<double> precond_diag_;
+
+    // ------------------------------------------------------------------
+    // SUNDIALS callbacks. All three have C linkage requirements imposed
+    // by SUNDIALS' function-pointer typedefs; we expose them as static
+    // member functions to keep them inside the class scope.
+    // ------------------------------------------------------------------
 
     /**
      * @brief RHS function: f(t, y, ydot).
@@ -131,6 +158,32 @@ private:
      * finite volume RHS from the current state.
      */
     static int rhs_fn(double t, N_Vector y, N_Vector ydot, void* user_data);
+
+    /**
+     * @brief Preconditioner setup: cache diag(J) for Jacobi.
+     *
+     * Registered as CVLsPrecSetupFn. Called by CVODE when the linear
+     * system's Jacobian needs refreshing. Reads the current edge fluxes
+     * (held in state.edge_flux from the most recent rhs_fn call) and
+     * builds a per-cell diagonal approximation:
+     *   D[i] ≈ -(Σ_e |F_e| / max(|Δh_e|, ε)) / A_i
+     * This is the negative sum of edge transmissivities per unit area —
+     * the dominant self-derivative of the diffusive-wave RHS.
+     */
+    static int psetup_fn(double t, N_Vector y, N_Vector fy,
+                          int jok, int* jcurPtr, double gamma,
+                          void* user_data);
+
+    /**
+     * @brief Preconditioner apply: solve (I − γD) z = r element-wise.
+     *
+     * Registered as CVLsPrecSolveFn. Applied by GMRES at each Krylov
+     * iteration. Uses the diagonal cached by psetup_fn.
+     */
+    static int psolve_fn(double t, N_Vector y, N_Vector fy,
+                          N_Vector r, N_Vector z,
+                          double gamma, double delta, int lr,
+                          void* user_data);
 };
 
 } // namespace openswmm::twoD

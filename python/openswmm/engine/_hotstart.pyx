@@ -315,3 +315,138 @@ cdef class HotStart:
         if self._handle != NULL:
             swmm_hotstart_close(self._handle)
             self._handle = NULL
+
+    # ====================================================================
+    # Save-schedule helpers (engine-side [SAVE HOTSTART] registry)
+    # ====================================================================
+
+    @staticmethod
+    def saves_count(Solver solver) -> int:
+        """Return the number of scheduled hotstart saves on an engine.
+
+        Wraps C{swmm_hotstart_saves_count}.
+
+        @param solver: An active L{Solver} instance.
+        @type solver: Solver
+        @return: Number of SAVE HOTSTART entries.
+        @rtype: int
+        @raise EngineError: On C API failure.
+        """
+        cdef int count = 0
+        _check(swmm_hotstart_saves_count(solver._handle, &count))
+        return count
+
+    @staticmethod
+    def saves_get_path(Solver solver, int idx) -> str:
+        """Return the file path for a scheduled hotstart save entry.
+
+        Wraps C{swmm_hotstart_saves_get_path}.
+
+        @param solver: An active L{Solver} instance.
+        @type solver: Solver
+        @param idx: Save entry index in C{[0, saves_count())}.
+        @type idx: int
+        @return: File path string.
+        @rtype: str
+        @raise EngineError: On C API failure.
+        """
+        cdef char buf[1024]
+        _check(swmm_hotstart_saves_get_path(solver._handle, idx, buf, 1024))
+        return buf.decode('utf-8')
+
+    @staticmethod
+    def saves_get_datetime(Solver solver, int idx) -> float:
+        """Return the datetime (decimal day) for a scheduled hotstart save.
+
+        Wraps C{swmm_hotstart_saves_get_datetime}. A value of C{0.0}
+        means "end of run".
+
+        @param solver: An active L{Solver} instance.
+        @type solver: Solver
+        @param idx: Save entry index.
+        @type idx: int
+        @return: OADate decimal-day datetime.
+        @rtype: float
+        @raise EngineError: On C API failure.
+        """
+        cdef double dt = 0.0
+        _check(swmm_hotstart_saves_get_datetime(solver._handle, idx, &dt))
+        return dt
+
+    @staticmethod
+    def saves_set_path(Solver solver, int idx, str path):
+        """Update the file path for an existing scheduled hotstart save.
+
+        Wraps C{swmm_hotstart_saves_set_path}.
+
+        @param solver: An active L{Solver} instance.
+        @type solver: Solver
+        @param idx: Save entry index.
+        @type idx: int
+        @param path: New file path.
+        @type path: str
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b = path.encode('utf-8')
+        _check(swmm_hotstart_saves_set_path(solver._handle, idx, b))
+
+    @staticmethod
+    def saves_set_datetime(Solver solver, int idx, double datetime):
+        """Update the datetime for an existing scheduled hotstart save.
+
+        Wraps C{swmm_hotstart_saves_set_datetime}. Pass C{0.0} to save
+        at end of run.
+
+        @param solver: An active L{Solver} instance.
+        @type solver: Solver
+        @param idx: Save entry index.
+        @type idx: int
+        @param datetime: OADate decimal-day datetime (C{0.0} = end of run).
+        @type datetime: float
+        @raise EngineError: On C API failure.
+        """
+        _check(swmm_hotstart_saves_set_datetime(solver._handle, idx, datetime))
+
+    @staticmethod
+    def saves_add(Solver solver, str path, double datetime=0.0):
+        """Append a new scheduled hotstart save entry.
+
+        Wraps C{swmm_hotstart_saves_add}.
+
+        @param solver: An active L{Solver} instance.
+        @type solver: Solver
+        @param path: Output file path.
+        @type path: str
+        @param datetime: OADate decimal-day datetime (C{0.0} = end of run).
+        @type datetime: float
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b = path.encode('utf-8')
+        _check(swmm_hotstart_saves_add(solver._handle, b, datetime))
+
+    @staticmethod
+    def saves_remove(Solver solver, int idx):
+        """Remove a scheduled hotstart save entry by index.
+
+        Wraps C{swmm_hotstart_saves_remove}. Subsequent entries shift down.
+
+        @param solver: An active L{Solver} instance.
+        @type solver: Solver
+        @param idx: Index of the entry to remove.
+        @type idx: int
+        @raise EngineError: On C API failure.
+        """
+        _check(swmm_hotstart_saves_remove(solver._handle, idx))
+
+    @staticmethod
+    def saves_clear(Solver solver):
+        """Remove all scheduled hotstart save entries.
+
+        Wraps C{swmm_hotstart_saves_clear}.
+
+        @param solver: An active L{Solver} instance.
+        @type solver: Solver
+        @raise EngineError: On C API failure.
+        """
+        _check(swmm_hotstart_saves_clear(solver._handle))
+

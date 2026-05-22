@@ -100,6 +100,7 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
                               const MeshData& mesh,
                               SurfaceStateData& state,
                               SimulationContext& ctx,
+                              const SolverOptions2D& opts,
                               double dt) {
     auto& nodes = ctx.nodes;
     auto& forcing = ctx.forcing;
@@ -107,24 +108,81 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
     // Clear coupling fluxes
     std::fill(state.coupling_flux.begin(), state.coupling_flux.end(), 0.0);
 
+    // Reset the forcing buffer for every 2D-coupled node and re-arm it with
+    // OVERRIDE+PERSIST. This runs at end of step N (after 1D routing) so the
+    // Q we write here is consumed by applyForcings at start of step N+1.
+    // The default ADD+RESET pattern used elsewhere does not work here:
+    // clear_reset_entries() (end of step N) sets mode → NONE for any
+    // RESET-persisted entry, which silently drops the Q before it is read
+    // by step N+1's applyForcings. OVERRIDE+PERSIST keeps mode armed across
+    // the step boundary, and the explicit zero below means multiple
+    // coupling points targeting the same node accumulate cleanly via the
+    // += in the per-cp loop.
+    for (const auto& cp : cps) {
+        if (cp.is_outfall) continue;
+        auto ni = static_cast<std::size_t>(cp.node_idx);
+        forcing.node_lat_inflow_mode[ni]    = ForcingMode::OVERRIDE;
+        forcing.node_lat_inflow_value[ni]   = 0.0;
+        forcing.node_lat_inflow_persist[ni] = ForcingPersist::PERSIST;
+    }
+
     for (const auto& cp : cps) {
         if (cp.is_outfall) continue;  // Outfalls handled separately
 
         int ci = cp.cell_idx;
         auto ni = static_cast<std::size_t>(cp.node_idx);
 
-        // 2D head at the coupling point
-        double h_2d;
+        // 2D head and bed at the coupling point
+        double h_2d, z_2d;
         if (cp.vertex_idx >= 0) {
             h_2d = state.vert_head[cp.vertex_idx];
+            z_2d = mesh.vz[cp.vertex_idx];
         } else {
             h_2d = state.head[ci];
+            z_2d = mesh.tri_cz[ci];
         }
 
         // 1D node head
         double h_1d = nodes.head[ni];
 
-        // Head difference
+        // Available water on each side, used for the source-side wet/dry
+        // ramp below.
+        //
+        // For vertex-coupled points we use the MAXIMUM depth across the
+        // cells in the vertex stencil. Two failure modes to avoid:
+        //   (a) `vert_head - vert_z` is spuriously positive on a fully
+        //       dry mesh whenever the vertex sits at a local low spot —
+        //       the pseudo-Laplacian reconstruction averages neighbour
+        //       cell heads, all of which equal their (higher) centroid z,
+        //       so the reconstructed head exceeds the vertex z by the
+        //       bed-relief amount alone.
+        //   (b) `state.depth[first_tri_containing_v]` is spuriously zero
+        //       on a wet bowl whenever the vertex sits below all of its
+        //       neighbour cells' centroids: the FV grid has no cell at
+        //       the bowl bottom, so each touching cell's depth = max(0,
+        //       head - centroid_z) stays at 0 even when surrounding
+        //       cells hold water. (This is what kills coupling on
+        //       parabolic-bowl-with-central-junction inputs.)
+        //
+        // Max over the vertex stencil resolves both: truly dry → every
+        // stencil cell has depth 0 → ramp 0; any wet stencil cell → the
+        // vertex is at-or-below that cell's bed → ramp 1.
+        double depth_2d_avail;
+        if (cp.vertex_idx >= 0) {
+            int v = cp.vertex_idx;
+            int start = mesh.vert_stencil_ptr[v];
+            int end   = mesh.vert_stencil_ptr[v + 1];
+            depth_2d_avail = 0.0;
+            for (int k = start; k < end; ++k) {
+                depth_2d_avail = std::max(depth_2d_avail,
+                    state.depth[mesh.vert_stencil_idx[k]]);
+            }
+        } else {
+            depth_2d_avail = state.depth[ci];
+        }
+        double depth_1d_avail = nodes.depth[ni];
+
+        // Head difference (positive = 2D → 1D)
         double dh = h_2d - h_1d;
 
         // For uncapped surcharged nodes, use effective area transition
@@ -135,6 +193,17 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
 
         // Orifice exchange flow
         double Q = orificeFlow(dh, cp.cd, A_eff);
+
+        // Smoothly ramp Q to zero as the source side dries up. A hard
+        // cutoff at opts.dry_depth would introduce a step-discontinuity in
+        // ydot that breaks CVODE's BDF corrector. The Hermite ramp matches
+        // the one used by the conductance, so both wet/dry transitions
+        // share the same C¹ shape.
+        auto wetRamp = [&opts](double d) {
+            double t = std::min(1.0, std::max(0.0, d / opts.dry_depth));
+            return t * t * (3.0 - 2.0 * t);
+        };
+        Q *= (Q > 0.0) ? wetRamp(depth_2d_avail) : wetRamp(depth_1d_avail);
 
         // Throttle return flow (2D → 1D) if node is at capacity
         if (Q > 0.0) {
@@ -149,11 +218,12 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
             }
         }
 
-        // Inject as lateral inflow into SWMM node via forcing API
-        // Positive Q = flow from 2D → 1D (positive lateral inflow)
-        forcing.node_lat_inflow_mode[ni]    = ForcingMode::ADD;
-        forcing.node_lat_inflow_value[ni]  += Q;
-        forcing.node_lat_inflow_persist[ni] = ForcingPersist::RESET;
+        // Inject as lateral inflow into SWMM node. Accumulate into the
+        // forcing buffer that was pre-armed above with OVERRIDE+PERSIST so
+        // applyForcings at step N+1 sets user_lat_flow = Σ Q over all
+        // coupling points targeting this node.
+        // Positive Q = flow from 2D → 1D (positive lateral inflow).
+        forcing.node_lat_inflow_value[ni] += Q;
 
         // Record coupling flux back to 2D cell (negative = drainage out of 2D)
         double tri_area = mesh.tri_area[ci];

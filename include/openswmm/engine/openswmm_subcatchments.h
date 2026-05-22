@@ -527,6 +527,93 @@ SWMM_ENGINE_API int swmm_subcatch_get_ponded_quality(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_subcatch_set_ponded_quality(SWMM_Engine engine,
     int subcatch_idx, int pollutant_idx, double mass);
 
+/** @brief Rename the subcatchment at `idx` to `newId`.
+ *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
+ *  idx is out of range. */
+SWMM_ENGINE_API int swmm_subcatch_rename(SWMM_Engine engine, int idx, const char* newId);
+
+/* =========================================================================
+ * Aquifer definitions ([AQUIFERS] section) — Slice BM.0 / BP.6.6.4
+ * ========================================================================= */
+
+/**
+ * @brief Get the total number of aquifer definitions in the model.
+ * @param engine  Engine handle.
+ * @returns Number of aquifer definitions, or -1 on error.
+ */
+SWMM_ENGINE_API int swmm_aquifer_count(SWMM_Engine engine);
+
+/**
+ * @brief Look up an aquifer's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated aquifer identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_aquifer_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of an aquifer definition by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based aquifer index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_aquifer_id(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Add a new aquifer definition with default (zero) parameters.
+ *
+ * @details Parameters default to 0.0 / empty strings — use the property
+ *          setters from Slice BP `AquiferEditor` to configure porosity,
+ *          conductivity, etc. Lifecycle: BUILDING or OPENED.
+ *
+ * @param engine  Engine handle.
+ * @param id      Unique null-terminated identifier.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_aquifer_add(SWMM_Engine engine, const char* id);
+
+/* =========================================================================
+ * Snowpack definitions ([SNOWPACKS] section) — Slice BM.0 / BP.6.6.5
+ * ========================================================================= */
+
+/**
+ * @brief Get the total number of snowpack definitions in the model.
+ * @param engine  Engine handle.
+ * @returns Number of snowpack definitions, or -1 on error.
+ */
+SWMM_ENGINE_API int swmm_snowpack_count(SWMM_Engine engine);
+
+/**
+ * @brief Look up a snowpack's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated snowpack identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_snowpack_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of a snowpack definition by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based snowpack index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_snowpack_id(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Add a new snowpack definition with default (zero) parameters.
+ *
+ * @details All three surface arrays (plowable / impervious / pervious) and
+ *          the removal row are zero-initialised. Use the property setters
+ *          from Slice BP `SnowpackEditor` to configure melt coefficients,
+ *          ATI, negative-melt-ratio, and removal fractions.
+ *          Lifecycle: BUILDING or OPENED.
+ *
+ * @param engine  Engine handle.
+ * @param id      Unique null-terminated identifier.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

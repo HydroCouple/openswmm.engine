@@ -136,7 +136,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
     state_.save_state();
 
     // Compute coupling exchange flows
-    computeCouplingExchange(coupling_points_, mesh_, state_, ctx, dt);
+    computeCouplingExchange(coupling_points_, mesh_, state_, ctx, options_, dt);
 
     // Transfer outfall discharges into 2D cells
     transferOutfallDischarges(coupling_points_, mesh_, state_, ctx, dt);

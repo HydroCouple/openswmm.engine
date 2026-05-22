@@ -149,6 +149,25 @@ class Pollutants:
         cdef const char* raw = swmm_pollutant_id(h, idx)
         return raw.decode('utf-8') if raw != NULL else ""
 
+    def add(self, str pollut_id, int units) -> int:
+        """Add a pollutant to the model (BUILDING / OPENED state).
+
+        Wraps C{swmm_pollutant_add}. Valid in C{BUILDING} or C{OPENED}
+        state.
+
+        @param pollut_id: Unique pollutant identifier.
+        @type pollut_id: str
+        @param units: Concentration units code (0=MG/L, 1=UG/L, 2=#/L).
+        @type units: int
+        @return: Zero-based index of the newly added pollutant.
+        @rtype: int
+        @raise RuntimeError: On engine error.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = pollut_id.encode('utf-8')
+        _check(swmm_pollutant_add(h, b, units))
+        return swmm_pollutant_count(h) - 1
+
     # ====================================================================
     # Pollutant properties (getters)
     # ====================================================================

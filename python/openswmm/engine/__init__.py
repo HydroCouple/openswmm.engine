@@ -155,6 +155,19 @@ from ._solver import Solver, EngineError, run, run_with_callback
 # =============================================================================
 from ._model import ModelBuilder
 from ._edit import ModelEditor, ImpactEntry, ConversionResult
+from ._geometry import CrossSection
+from ._report import (
+    get_report_snapshot,
+    ReportSnapshot,
+    RoutingDiagnostics,
+    RunoffContinuity,
+    RoutingContinuity,
+    QualityContinuity,
+    NodeFloodingEntry,
+    LinkFlowEntry,
+    PumpEntry,
+    SubcatchmentEntry,
+)
 
 # =============================================================================
 # Domain object access (hydraulics)
@@ -228,6 +241,13 @@ __all__ = [
     "Solver", "EngineError", "run", "run_with_callback",
     # --- Programmatic model building & editing ---
     "ModelBuilder", "ModelEditor", "ImpactEntry", "ConversionResult",
+    # --- Geometry helpers ---
+    "CrossSection",
+    # --- Report snapshot ---
+    "get_report_snapshot",
+    "ReportSnapshot", "RoutingDiagnostics",
+    "RunoffContinuity", "RoutingContinuity", "QualityContinuity",
+    "NodeFloodingEntry", "LinkFlowEntry", "PumpEntry", "SubcatchmentEntry",
     # --- Domain object access (hydraulics) ---
     "Nodes", "Links", "Subcatchments", "Gages",
     # --- Simulation state & I/O ---

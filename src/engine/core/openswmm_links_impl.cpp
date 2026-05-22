@@ -58,7 +58,12 @@ SWMM_ENGINE_API int swmm_link_add(SWMM_Engine engine, const char* id, int type) 
 
     int idx = ctx.link_names.add(id);
     int n = ctx.link_names.size();
-    ctx.links.resize(n);
+    ctx.links.grow_to(n);
+    const auto un = static_cast<std::size_t>(n);
+    if (ctx.spatial.link_x.size() < un)            ctx.spatial.link_x.resize(un, 0.0);
+    if (ctx.spatial.link_y.size() < un)            ctx.spatial.link_y.resize(un, 0.0);
+    if (ctx.spatial.link_vertices_x.size() < un)  ctx.spatial.link_vertices_x.resize(un);
+    if (ctx.spatial.link_vertices_y.size() < un)  ctx.spatial.link_vertices_y.resize(un);
     ctx.links.type[static_cast<std::size_t>(idx)] = static_cast<openswmm::LinkType>(type);
 
     return SWMM_OK;
@@ -79,7 +84,12 @@ SWMM_ENGINE_API int swmm_link_pop_last(SWMM_Engine engine, const char* id) {
         return SWMM_ERR_BADINDEX;
 
     ctx.link_names.pop_back();
-    ctx.links.resize(n - 1);
+    ctx.links.erase_at(tail);
+    // Shrink spatial arrays to match reduced link count
+    if (!ctx.spatial.link_x.empty()) ctx.spatial.link_x.pop_back();
+    if (!ctx.spatial.link_y.empty()) ctx.spatial.link_y.pop_back();
+    if (!ctx.spatial.link_vertices_x.empty()) ctx.spatial.link_vertices_x.pop_back();
+    if (!ctx.spatial.link_vertices_y.empty()) ctx.spatial.link_vertices_y.pop_back();
     return SWMM_OK;
 }
 
@@ -764,6 +774,15 @@ SWMM_ENGINE_API int swmm_link_get_hyd_power(SWMM_Engine engine, int idx, double*
     constexpr double GAMMA = 62.4;
     if (power) *power = GAMMA * std::fabs(ctx.links.flow[ui]) * std::fabs(h1 - h2);
     return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_rename(SWMM_Engine engine, int idx, const char* newId) {
+    CHECK_HANDLE(engine);
+    if (!newId || newId[0] == '\0') return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    return ctx.link_names.rename(idx, newId) ? SWMM_OK : SWMM_ERR_BADPARAM;
 }
 
 } /* extern "C" */

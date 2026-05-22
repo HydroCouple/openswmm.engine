@@ -194,6 +194,39 @@ struct SimulationSnapshot {
 
     /** @brief Flow units code (FlowUnits enum value: 0=CFS, 3=CMS, etc.). */
     int flow_units_code = 0;
+
+    // -----------------------------------------------------------------------
+    // 2D surface routing state (optional; populated only when the engine was
+    // built with OPENSWMM_BUILD_2D and the input file contains a 2D mesh)
+    //
+    // Layout: per-triangle vectors are sized `surface_tri_count`; per-vertex
+    // vectors are sized `surface_vert_count`. `surface_edge_flux` is flat
+    // [tri * 3 + edge] of size `surface_tri_count * 3`.
+    //
+    // Fields are deep-copied from `SurfaceRouter2D::state()` on the main
+    // simulation thread; consumers (Default2DOutputPlugin and any third-party
+    // 2D output plugins) read them through the IO-thread snapshot reference
+    // without further synchronization.
+    //
+    // Vectors are empty when 2D is inactive (either OPENSWMM_BUILD_2D=OFF or
+    // the input file contained no [2D_VERTICES] section). Plugins must check
+    // `surface_tri_count == 0` to skip 2D-specific work in that case.
+    // -----------------------------------------------------------------------
+
+    int surface_tri_count  = 0;             ///< Number of triangles (faces)
+    int surface_vert_count = 0;             ///< Number of vertices (nodes)
+
+    std::vector<double> surface_depth;          ///< Overland flow depth ψ_o (m), per face
+    std::vector<double> surface_head;           ///< Total head h_o = z_s + ψ_o (m), per face
+    std::vector<double> surface_grad_hx;        ///< Unlimited head gradient ∂h/∂x, per face
+    std::vector<double> surface_grad_hy;        ///< Unlimited head gradient ∂h/∂y, per face
+    std::vector<double> surface_grad_hx_lim;    ///< Slope-limited head gradient ∂h/∂x, per face
+    std::vector<double> surface_grad_hy_lim;    ///< Slope-limited head gradient ∂h/∂y, per face
+    std::vector<double> surface_rainfall;       ///< Rainfall intensity (m/s), per face
+    std::vector<double> surface_coupling_flux;  ///< Coupling flux to SWMM node (m/s, + = into 2D), per face
+    std::vector<double> surface_net_source;     ///< Net source/sink (m/s), per face
+    std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
+    std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m)
 };
 
 } /* namespace openswmm */

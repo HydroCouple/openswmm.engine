@@ -17,7 +17,7 @@ cdef extern from "openswmm_engine.h":
 
     # --- Callback typedefs ---
     ctypedef void (*SWMM_ProgressCallback)(void* engine, double elapsed_frac, double sim_time, void* user_data)
-    ctypedef void (*SWMM_WarningCallback)(int code, const char* msg, void* user_data)
+    ctypedef void (*SWMM_WarningCallback)(SWMM_Engine engine, int code, const char* msg, void* user_data)
     ctypedef void (*SWMM_StepBeginCallback)(SWMM_Engine engine, double sim_time, double dt, void* user_data)
     ctypedef void (*SWMM_StepEndCallback)(SWMM_Engine engine, double sim_time, double dt, void* user_data)
 
@@ -51,6 +51,14 @@ cdef extern from "openswmm_engine.h":
     cdef int swmm_get_steady_state_skip(SWMM_Engine e, int* enabled)
     cdef int swmm_set_steady_state_skip(SWMM_Engine e, int enabled)
 
+    # --- [EVENTS] section editor (Slice CW, 2026-05-21) ---
+    cdef int swmm_events_count(SWMM_Engine e, int* count)
+    cdef int swmm_events_get(SWMM_Engine e, int idx, double* start, double* end)
+    cdef int swmm_events_set(SWMM_Engine e, int idx, double start, double end)
+    cdef int swmm_events_add(SWMM_Engine e, double start, double end, int* out_idx)
+    cdef int swmm_events_remove(SWMM_Engine e, int idx)
+    cdef int swmm_events_clear(SWMM_Engine e)
+
     # --- Batch run helpers ---
     cdef int swmm_engine_run(const char* inp, const char* rpt, const char* out,
                              const char* input_plugin_lib)
@@ -70,6 +78,18 @@ cdef extern from "openswmm_model.h":
     cdef int swmm_validate_model(SWMM_Engine e)
     cdef int swmm_finalize_model(SWMM_Engine e)
     cdef int swmm_model_write(SWMM_Engine e, const char* path)
+    cdef int swmm_model_write_with_plugin(SWMM_Engine e, const char* new_path,
+                                           const char* output_plugin_id)
+    # Plugins
+    cdef int swmm_plugins_count(SWMM_Engine e, int* count)
+    cdef int swmm_plugin_get(SWMM_Engine e, int idx,
+                              char* path_buf, int path_buf_sz,
+                              char* args_buf, int args_buf_sz)
+    cdef int swmm_plugin_set(SWMM_Engine e, const char* path_or_id, const char* args)
+    cdef int swmm_plugin_remove(SWMM_Engine e, const char* path_or_id)
+    # [FILES] section
+    cdef int swmm_files_get(SWMM_Engine e, const char* key, char* buf, int buflen)
+    cdef int swmm_files_set(SWMM_Engine e, const char* key, const char* value)
     # Title management
     cdef int swmm_title_get_count(SWMM_Engine e, int* count)
     cdef int swmm_title_get_line(SWMM_Engine e, int index, char* buf, int buflen)
@@ -173,6 +193,11 @@ cdef extern from "openswmm_nodes.h":
     cdef int swmm_node_get_depth_from_volume(SWMM_Engine e, int idx, double volume, double* depth)
     # Quality mass flux
     cdef int swmm_node_set_quality_mass_flux(SWMM_Engine e, int node_idx, int pollutant_idx, double mass_rate)
+    # Divider
+    cdef int swmm_node_set_divider_type(SWMM_Engine e, int idx, int type)
+    cdef int swmm_node_get_divider_type(SWMM_Engine e, int idx, int* type)
+    # Rename
+    cdef int swmm_node_rename(SWMM_Engine e, int idx, const char* newId)
 
 cdef extern from "openswmm_links.h":
     # Identity
@@ -262,6 +287,8 @@ cdef extern from "openswmm_links.h":
     cdef int swmm_link_get_depths_bulk(SWMM_Engine e, double* buf, int count)
     cdef int swmm_link_set_flows_bulk(SWMM_Engine e, const double* buf, int count)
     cdef int swmm_link_get_quality_bulk(SWMM_Engine e, int pollutant_idx, double* buf, int count)
+    # Rename
+    cdef int swmm_link_rename(SWMM_Engine e, int idx, const char* newId)
 
 cdef extern from "openswmm_subcatchments.h":
     # Identity
@@ -335,6 +362,8 @@ cdef extern from "openswmm_subcatchments.h":
     # Ponded quality
     cdef int swmm_subcatch_get_ponded_quality(SWMM_Engine e, int subcatch_idx, int pollutant_idx, double* mass)
     cdef int swmm_subcatch_set_ponded_quality(SWMM_Engine e, int subcatch_idx, int pollutant_idx, double mass)
+    # Rename
+    cdef int swmm_subcatch_rename(SWMM_Engine e, int idx, const char* newId)
 
 cdef extern from "openswmm_gages.h":
     # Identity
@@ -357,6 +386,8 @@ cdef extern from "openswmm_gages.h":
     cdef int swmm_gage_set_rainfall(SWMM_Engine e, int idx, double rainfall)
     # Bulk
     cdef int swmm_gage_get_rainfall_bulk(SWMM_Engine e, double* buf, int count)
+    # Rename
+    cdef int swmm_gage_rename(SWMM_Engine e, int idx, const char* newId)
 
 cdef extern from "openswmm_massbalance.h":
     cdef int swmm_get_runoff_continuity_error(SWMM_Engine e, double* error)
@@ -393,6 +424,15 @@ cdef extern from "openswmm_hotstart.h":
     # Warnings
     cdef int swmm_hotstart_warning_count(SWMM_HotStart hs)
     cdef const char* swmm_hotstart_warning(SWMM_HotStart hs, int index)
+    # Save schedule ([SAVE HOTSTART] entries on the engine)
+    cdef int swmm_hotstart_saves_count(SWMM_Engine e, int* count)
+    cdef int swmm_hotstart_saves_get_path(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_hotstart_saves_get_datetime(SWMM_Engine e, int idx, double* datetime)
+    cdef int swmm_hotstart_saves_set_path(SWMM_Engine e, int idx, const char* path)
+    cdef int swmm_hotstart_saves_set_datetime(SWMM_Engine e, int idx, double datetime)
+    cdef int swmm_hotstart_saves_add(SWMM_Engine e, const char* path, double datetime)
+    cdef int swmm_hotstart_saves_remove(SWMM_Engine e, int idx)
+    cdef int swmm_hotstart_saves_clear(SWMM_Engine e)
 
 cdef extern from "openswmm_pollutants.h":
     # Identity
@@ -453,9 +493,41 @@ cdef extern from "openswmm_inflows.h":
                            double avg_value, const char* pat1, const char* pat2,
                            const char* pat3, const char* pat4)
     cdef int swmm_rdii_add(SWMM_Engine e, int node_idx, const char* uh_name, double area)
+    cdef int swmm_rdii_get(SWMM_Engine e, int entry_idx,
+                            int* node_idx, char* uh_buf, int buflen,
+                            double* area)
     cdef int swmm_ext_inflow_count(SWMM_Engine e)
     cdef int swmm_dwf_count(SWMM_Engine e)
     cdef int swmm_rdii_count(SWMM_Engine e)
+    # Unit hydrographs ([HYDROGRAPHS])
+    cdef int swmm_hydrograph_add(SWMM_Engine e, const char* uh_name,
+                                  int month, int response,
+                                  double r, double t, double k,
+                                  double dmax, double drecov, double dinit)
+    cdef int swmm_hydrograph_get(SWMM_Engine e, int entry_idx,
+                                  char* uh_buf, int buflen,
+                                  int* month, int* response,
+                                  double* r, double* t, double* k,
+                                  double* dmax, double* drecov, double* dinit)
+    cdef int swmm_hydrograph_count(SWMM_Engine e)
+    cdef int swmm_hydrograph_add_gage(SWMM_Engine e,
+                                       const char* uh_name,
+                                       const char* gage_name)
+    cdef int swmm_hydrograph_get_gage(SWMM_Engine e, int entry_idx,
+                                       char* uh_buf, int uh_buflen,
+                                       char* gage_buf, int gage_buflen)
+    cdef int swmm_hydrograph_gage_count(SWMM_Engine e)
+    # Exponential IA decay ([RDII_DECAY])
+    cdef int swmm_rdii_decay_add(SWMM_Engine e, const char* uh_name,
+                                  int response,
+                                  double k_dep, double k_0, double k_T,
+                                  double T_ref, double theta_rec, double T_freeze)
+    cdef int swmm_rdii_decay_get(SWMM_Engine e, int entry_idx,
+                                  char* uh_buf, int buflen,
+                                  int* response,
+                                  double* k_dep, double* k_0, double* k_T,
+                                  double* T_ref, double* theta_rec, double* T_freeze)
+    cdef int swmm_rdii_decay_count(SWMM_Engine e)
 
 cdef extern from "openswmm_controls.h":
     cdef int swmm_control_add_rule(SWMM_Engine e, const char* rule_text)

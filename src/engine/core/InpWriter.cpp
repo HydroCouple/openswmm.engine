@@ -9,6 +9,7 @@
  *
  * All standard SWMM sections implemented:
  *   TITLE, OPTIONS, EVAPORATION, TEMPERATURE, SNOWPACKS, ADJUSTMENTS,
+ *   EVENTS,
  *   RAINGAGES, SUBCATCHMENTS, SUBAREAS, INFILTRATION,
  *   JUNCTIONS, OUTFALLS, DIVIDERS, STORAGE, CONDUITS, PUMPS, ORIFICES,
  *   WEIRS, OUTLETS, XSECTIONS, LOSSES, TRANSECTS, STREETS, INLETS,
@@ -152,7 +153,11 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
 
     sec(f,"TITLE");
     std::fprintf(f,";;Project Title/Notes\n");
+    // Skip any re-parsed copies of the section-header comment so repeated
+    // load/save cycles don't accumulate duplicate ";;Project Title/Notes"
+    // lines in the [TITLE] block.
     for (const auto& line : ctx.title_notes) {
+        if (line == ";;Project Title/Notes") continue;
         std::fprintf(f,"%s\n", line.c_str());
     }
 
@@ -438,6 +443,27 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
         }
     }
 
+    // [EVENTS]  — Slice CW (added 2026-05-21)
+    // Format matches legacy SWMM 5.2: 4 whitespace-separated columns
+    //   StartDate StartTime EndDate EndTime   (HH:MM resolution)
+    if (!ctx.events.empty()) {
+        sec(f, "EVENTS");
+        std::fprintf(f, ";;Start Date  Start Time  End Date    End Time\n");
+        std::fprintf(f, ";;----------  ----------  ----------  ----------\n");
+        char sd[16], st[16], ed[16], et[16];
+        for (const auto& ev : ctx.events) {
+            fmt_date(sd, ev.start);
+            fmt_time(st, ev.start);
+            fmt_date(ed, ev.end);
+            fmt_time(et, ev.end);
+            // Drop the :SS tail for legacy SWMM 5.2 parity (HH:MM resolution).
+            // fmt_time emits HH:MM:SS — truncate to HH:MM for the writer.
+            st[5] = '\0';
+            et[5] = '\0';
+            std::fprintf(f, "%-10s  %-10s  %-10s  %-10s\n", sd, st, ed, et);
+        }
+    }
+
     // [RAINGAGES]
     if(ctx.n_gages()>0){sec(f,"RAINGAGES");
     std::fprintf(f,";;%-16s %-12s %-8s %-8s %-16s\n","Name","Format","Intvl","SCF","Source");
@@ -451,19 +477,23 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
 
     // [SUBCATCHMENTS]
     if(ctx.n_subcatches()>0){sec(f,"SUBCATCHMENTS");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s\n","Name","RainGage","Outlet","Area","%%Imperv","Width","%%Slope");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s\n","----------------","----------------","----------------","------------","----------","------------","----------");
+    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s\n","Name","RainGage","Outlet","Area","%%Imperv","Width","%%Slope","CurbLen");
+    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","------------","----------","----------");
     for(int j=0;j<ctx.n_subcatches();++j){auto u=static_cast<size_t>(j);
     write_obj_comment(f, ctx.subcatches.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s %12.4f %10.2f %12.4f %10.4f\n",ctx.subcatch_names.name_of(j).c_str(),gN(ctx,ctx.subcatches.gage[u]),nN(ctx,ctx.subcatches.outlet_node[u]),ctx.subcatches.area[u],ctx.subcatches.frac_imperv[u]*100.0,ctx.subcatches.width[u],ctx.subcatches.slope[u]*100.0);
+    std::fprintf(f,"%-16s %-16s %-16s %12.4f %10.2f %12.4f %10.4f %10.4f\n",ctx.subcatch_names.name_of(j).c_str(),gN(ctx,ctx.subcatches.gage[u]),nN(ctx,ctx.subcatches.outlet_node[u]),ctx.subcatches.area[u],ctx.subcatches.frac_imperv[u]*100.0,ctx.subcatches.width[u],ctx.subcatches.slope[u]*100.0,ctx.subcatches.curb_length[u]);
     }}
 
     // [SUBAREAS]
-    if(ctx.n_subcatches()>0){sec(f,"SUBAREAS");
-    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s\n","Subcatch","N-Imperv","N-Perv","S-Imperv","S-Perv","%%ZeroImp");
-    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s\n","----------------","----------","----------","----------","----------","----------");
+    if(ctx.n_subcatches()>0){
+    static const char* kRouteToNames[]={"OUTLET","IMPERV","PERV"};
+    sec(f,"SUBAREAS");
+    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s %-8s %-10s\n","Subcatch","N-Imperv","N-Perv","S-Imperv","S-Perv","%%ZeroImp","RouteTo","PctRouted");
+    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s %-8s %-10s\n","----------------","----------","----------","----------","----------","----------","--------","----------");
     for(int j=0;j<ctx.n_subcatches();++j){auto u=static_cast<size_t>(j);
-    std::fprintf(f,"%-16s %10.4f %10.4f %10.4f %10.4f %10.2f\n",ctx.subcatch_names.name_of(j).c_str(),ctx.subcatches.n_imperv[u],ctx.subcatches.n_perv[u],ctx.subcatches.ds_imperv[u]*12.0,ctx.subcatches.ds_perv[u]*12.0,ctx.subcatches.frac_imperv_no_store[u]*100.0);
+    int rt=ctx.subcatches.subarea_routing[u];
+    if(rt<0||rt>2)rt=0;
+    std::fprintf(f,"%-16s %10.4f %10.4f %10.4f %10.4f %10.2f %-8s %10.2f\n",ctx.subcatch_names.name_of(j).c_str(),ctx.subcatches.n_imperv[u],ctx.subcatches.n_perv[u],ctx.subcatches.ds_imperv[u]*12.0,ctx.subcatches.ds_perv[u]*12.0,ctx.subcatches.frac_imperv_no_store[u]*100.0,kRouteToNames[rt],ctx.subcatches.pct_routed[u]*100.0);
     }}
 
     // [INFILTRATION]
@@ -996,14 +1026,39 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     for(int t=0;t<static_cast<int>(ctx.tables.tables.size());++t){const auto&tb=ctx.tables.tables[static_cast<size_t>(t)];
     if(tb.type!=TableType::TIMESERIES)continue;
     if(!tb.comment.empty()){
-        // Write comment once before the first row of this table
         const char*sep="\\n";std::size_t s=0;
         while(s<=tb.comment.size()){std::size_t e=tb.comment.find(sep,s);
         if(e==std::string::npos)e=tb.comment.size();
         std::fprintf(f,";%.*s\n",static_cast<int>(e-s),tb.comment.data()+s);
         if(e==tb.comment.size())break;s=e+2;}
     }
-    for(size_t k=0;k<tb.x.size();++k)std::fprintf(f,"%-16s %20.6f %12.6f\n",tN(ctx,t),tb.x[k],tb.y[k]);
+    // PostParseResolver offsets relative time series by start_date so the
+    // engine can do absolute OADate lookups.  Detect this using the same
+    // condition it uses (x[0] - start_date < 366) and strip the offset
+    // before writing so the output matches the original time-only format.
+    const double startDate = ctx.options.start_date;
+    const double x0 = tb.x.empty() ? 0.0 : tb.x.front();
+    const bool wasRelative = (x0 - startDate) >= 0.0 && (x0 - startDate) < 366.0;
+    // A true absolute series (calendar dates entered by the user) has x values
+    // that are large OADates even before any start_date offset would be added
+    // — i.e. x0 is already >> 3650 regardless of start_date.
+    const bool isAbsolute  = !wasRelative && x0 >= 3650.0;
+
+    char dateBuf[16], timeBuf[12];
+    for(size_t k=0;k<tb.x.size();++k){
+        const double xv = wasRelative ? (tb.x[k] - startDate) : tb.x[k];
+        if(isAbsolute){
+            fmt_date(dateBuf, xv);
+            fmt_time(timeBuf, xv);
+            std::fprintf(f,"%-16s %-12s %-8s %12.6f\n",tN(ctx,t),dateBuf,timeBuf,tb.y[k]);
+        } else {
+            // Relative: convert fractional days → HH:MM; allow hours > 23.
+            const double totalHours = xv * 24.0;
+            const int hh = static_cast<int>(totalHours);
+            const int mm = static_cast<int>((totalHours - hh) * 60.0 + 0.5);
+            std::fprintf(f,"%-16s %d:%02d %12.6f\n",tN(ctx,t),hh,mm,tb.y[k]);
+        }
+    }
     }}}
 
     // [CURVES]

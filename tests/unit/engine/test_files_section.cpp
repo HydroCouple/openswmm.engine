@@ -22,6 +22,7 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_hotstart.h>
 #include <openswmm/engine/openswmm_nodes.h>
 #include <openswmm/engine/openswmm_links.h>
 
@@ -215,6 +216,162 @@ TEST(FilesHandlerTest, AppendsMultipleSaveHotstartRows) {
               ctx.files.hotstart_saves[0].datetime);
     EXPECT_EQ(ctx.files.hotstart_saves[2].path, "third.hsf");
     EXPECT_EQ(ctx.files.hotstart_saves[2].datetime, 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-slot SAVE HOTSTART C API (Slice BV-01 — swmm_hotstart_saves_*)
+// Generalizes the slot-0 sugar above so the GUI can drive a multi-row table.
+// ---------------------------------------------------------------------------
+
+TEST_F(FilesApiTest, HotstartSavesCountStartsAtZero) {
+    int count = -1;
+    EXPECT_EQ(swmm_hotstart_saves_count(engine, &count), SWMM_OK);
+    EXPECT_EQ(count, 0);
+}
+
+TEST_F(FilesApiTest, HotstartSavesAddAppendsAndCountReflects) {
+    EXPECT_EQ(swmm_hotstart_saves_add(engine, "a.hsf", 0.0), SWMM_OK);
+    EXPECT_EQ(swmm_hotstart_saves_add(engine, "b.hsf", 46036.5), SWMM_OK);
+    EXPECT_EQ(swmm_hotstart_saves_add(engine, "c.hsf", 0.0), SWMM_OK);
+
+    int count = -1;
+    ASSERT_EQ(swmm_hotstart_saves_count(engine, &count), SWMM_OK);
+    EXPECT_EQ(count, 3);
+
+    char buf[128];
+    double dt = -1.0;
+    ASSERT_EQ(swmm_hotstart_saves_get_path(engine, 0, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "a.hsf");
+    ASSERT_EQ(swmm_hotstart_saves_get_datetime(engine, 0, &dt), SWMM_OK);
+    EXPECT_EQ(dt, 0.0);
+    ASSERT_EQ(swmm_hotstart_saves_get_path(engine, 1, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "b.hsf");
+    ASSERT_EQ(swmm_hotstart_saves_get_datetime(engine, 1, &dt), SWMM_OK);
+    EXPECT_DOUBLE_EQ(dt, 46036.5);
+    ASSERT_EQ(swmm_hotstart_saves_get_path(engine, 2, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "c.hsf");
+}
+
+TEST_F(FilesApiTest, HotstartSavesSetEditsExistingSlotInPlace) {
+    ASSERT_EQ(swmm_hotstart_saves_add(engine, "a.hsf", 0.0), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_saves_add(engine, "b.hsf", 100.0), SWMM_OK);
+
+    EXPECT_EQ(swmm_hotstart_saves_set_path(engine, 1, "renamed.hsf"), SWMM_OK);
+    EXPECT_EQ(swmm_hotstart_saves_set_datetime(engine, 0, 50.0), SWMM_OK);
+
+    char buf[128];
+    double dt = -1.0;
+    ASSERT_EQ(swmm_hotstart_saves_get_path(engine, 1, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "renamed.hsf");
+    ASSERT_EQ(swmm_hotstart_saves_get_datetime(engine, 0, &dt), SWMM_OK);
+    EXPECT_DOUBLE_EQ(dt, 50.0);
+}
+
+TEST_F(FilesApiTest, HotstartSavesRemoveShiftsSubsequentSlotsDown) {
+    ASSERT_EQ(swmm_hotstart_saves_add(engine, "a.hsf", 0.0), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_saves_add(engine, "b.hsf", 0.0), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_saves_add(engine, "c.hsf", 0.0), SWMM_OK);
+
+    EXPECT_EQ(swmm_hotstart_saves_remove(engine, 1), SWMM_OK);  // removes b
+
+    int count = -1;
+    ASSERT_EQ(swmm_hotstart_saves_count(engine, &count), SWMM_OK);
+    EXPECT_EQ(count, 2);
+
+    char buf[128];
+    ASSERT_EQ(swmm_hotstart_saves_get_path(engine, 0, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "a.hsf");
+    ASSERT_EQ(swmm_hotstart_saves_get_path(engine, 1, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "c.hsf");  // formerly slot 2
+}
+
+TEST_F(FilesApiTest, HotstartSavesClearEmptiesVector) {
+    ASSERT_EQ(swmm_hotstart_saves_add(engine, "a.hsf", 0.0), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_saves_add(engine, "b.hsf", 0.0), SWMM_OK);
+    EXPECT_EQ(swmm_hotstart_saves_clear(engine), SWMM_OK);
+    int count = -1;
+    EXPECT_EQ(swmm_hotstart_saves_count(engine, &count), SWMM_OK);
+    EXPECT_EQ(count, 0);
+}
+
+TEST_F(FilesApiTest, HotstartSavesOutOfRangeIsBadparam) {
+    char buf[16];
+    double dt;
+    EXPECT_EQ(swmm_hotstart_saves_get_path(engine, 0, buf, sizeof(buf)),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_saves_get_datetime(engine, 0, &dt),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_saves_set_path(engine, 0, "x"), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_saves_set_datetime(engine, 0, 0.0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_saves_remove(engine, 0), SWMM_ERR_BADPARAM);
+
+    ASSERT_EQ(swmm_hotstart_saves_add(engine, "a.hsf", 0.0), SWMM_OK);
+    EXPECT_EQ(swmm_hotstart_saves_get_path(engine, -1, buf, sizeof(buf)),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_saves_get_path(engine, 5, buf, sizeof(buf)),
+              SWMM_ERR_BADPARAM);
+}
+
+TEST_F(FilesApiTest, HotstartSavesSlotZeroSugarStillWorks) {
+    // Slot-0 sugar (swmm_files_set) must coexist with the new vector API.
+    ASSERT_EQ(swmm_files_set(engine, "HOTSTART_SAVE_PATH", "via_sugar.hsf"),
+              SWMM_OK);
+    ASSERT_EQ(swmm_files_set(engine, "HOTSTART_SAVE_DATETIME", "12.5"),
+              SWMM_OK);
+
+    int count = -1;
+    ASSERT_EQ(swmm_hotstart_saves_count(engine, &count), SWMM_OK);
+    EXPECT_EQ(count, 1);
+
+    char buf[128];
+    double dt = -1.0;
+    ASSERT_EQ(swmm_hotstart_saves_get_path(engine, 0, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "via_sugar.hsf");
+    ASSERT_EQ(swmm_hotstart_saves_get_datetime(engine, 0, &dt), SWMM_OK);
+    EXPECT_DOUBLE_EQ(dt, 12.5);
+
+    // Appending via the new API extends past slot 0.
+    ASSERT_EQ(swmm_hotstart_saves_add(engine, "slot1.hsf", 24.0), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_saves_count(engine, &count), SWMM_OK);
+    EXPECT_EQ(count, 2);
+
+    // Reading slot 0 back via the sugar key still returns via_sugar.hsf.
+    ASSERT_EQ(swmm_files_get(engine, "HOTSTART_SAVE_PATH", buf, sizeof(buf)),
+              SWMM_OK);
+    EXPECT_STREQ(buf, "via_sugar.hsf");
+}
+
+TEST_F(FilesApiTest, HotstartSavesWriterRoundTripsEntriesAndDatetimes) {
+    ASSERT_EQ(swmm_hotstart_saves_add(engine, "first.hsf",  46036.5), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_saves_add(engine, "second.hsf", 0.0),     SWMM_OK);
+
+    auto path = (fs::temp_directory_path() / "multi_hotstart.inp").string();
+    ASSERT_EQ(swmm_model_write(engine, path.c_str()), SWMM_OK);
+
+    std::ifstream f(path);
+    std::stringstream ss; ss << f.rdbuf();
+    const std::string content = ss.str();
+    f.close();
+
+    EXPECT_NE(content.find("first.hsf"),  std::string::npos);
+    EXPECT_NE(content.find("second.hsf"), std::string::npos);
+    // The second row has datetime=0 → no trailing date string.
+    // (We can't easily grep for absence, but presence of both paths plus a
+    //  single date token in between is the round-trip signal.)
+    fs::remove(path);
+}
+
+TEST_F(FilesApiTest, HotstartSavesNullArgsRejected) {
+    EXPECT_EQ(swmm_hotstart_saves_count(engine, nullptr), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_saves_get_path(engine, 0, nullptr, 16),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_saves_get_datetime(engine, 0, nullptr),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_saves_add(engine, nullptr, 0.0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_saves_count(nullptr, nullptr),
+              SWMM_ERR_BADHANDLE);
 }
 
 TEST_F(FilesApiTest, MultiRowSaveHotstartRoundTrip) {

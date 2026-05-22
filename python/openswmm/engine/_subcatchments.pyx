@@ -121,6 +121,22 @@ class Subcatchments:
         cdef bytes b = sc_id.encode('utf-8')
         return swmm_subcatch_add(h, b)
 
+    def delete(self, idx) -> list:
+        """Delete a subcatchment and cascade-nullify all referencing objects.
+
+        Delegates to L{ModelEditor.delete_subcatch}. Valid in C{BUILDING}
+        or C{OPENED} state.
+
+        @param idx: Subcatchment index (int) or subcatchment ID (str).
+        @type idx: Union[int, str]
+        @return: List of L{ImpactEntry} describing cascaded changes.
+        @rtype: list[ImpactEntry]
+        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
+        @raise RuntimeError: On engine error.
+        """
+        from ._edit import ModelEditor
+        return ModelEditor(self._solver).delete_subcatch(idx)
+
     # ====================================================================
     # Property setters (BUILDING / OPENED)
     # ====================================================================
@@ -844,3 +860,23 @@ class Subcatchments:
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         _check(swmm_subcatch_get_quality_bulk(h, pollutant_idx, &buf[0], n))
         return buf
+
+    # ====================================================================
+    # Rename
+    # ====================================================================
+
+    def rename(self, idx, str new_id):
+        """Rename a subcatchment.
+
+        @param idx: Subcatchment index (int) or current subcatchment ID (str).
+        @type idx: Union[int, str]
+        @param new_id: New identifier string.
+        @type new_id: str
+        @raise KeyError: If C{idx} is a string and the subcatchment ID is not found.
+        @raise EngineError: If the C API rejects the rename.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_subcatch_rename(h, i, b))
+

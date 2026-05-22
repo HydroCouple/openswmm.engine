@@ -57,6 +57,19 @@ class Quality:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_landuse_count(h)
 
+    def landuse_add(self, str landuse_id) -> int:
+        """Add a new land use to the model.
+
+        @param landuse_id: Identifier string for the new land use.
+        @type landuse_id: str
+        @return: Index of the newly created land use.
+        @rtype: int
+        @raise EngineError: If the C API rejects the operation.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = landuse_id.encode('utf-8')
+        return swmm_landuse_add(h, b)
+
     def landuse_index(self, str id) -> int:
         """Return the index of a land use by ID.
 

@@ -13,3 +13,4 @@ cdef class Solver:
     cdef double _elapsed
     cdef object _step_begin_cb
     cdef object _step_end_cb
+    cdef object _warning_cb

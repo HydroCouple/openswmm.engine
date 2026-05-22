@@ -748,6 +748,11 @@ SWMM_ENGINE_API int swmm_node_get_outfall_route_to(SWMM_Engine engine, int idx, 
 SWMM_ENGINE_API int swmm_node_get_depth_from_volume(SWMM_Engine engine, int idx,
                                                       double volume, double* depth);
 
+/** @brief Rename the node at `idx` to `newId`.
+ *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
+ *  idx is out of range. */
+SWMM_ENGINE_API int swmm_node_rename(SWMM_Engine engine, int idx, const char* newId);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

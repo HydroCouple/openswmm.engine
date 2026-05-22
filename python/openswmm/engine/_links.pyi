@@ -12,12 +12,17 @@ The :class:`Links` class provides access to link (conduit/pump/orifice/weir/outl
 properties during a simulation.
 """
 
-from typing import Tuple, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
 
 from ._solver import Solver
+
+if TYPE_CHECKING:
+    from ._geometry import CrossSection
 
 
 class Links:
@@ -121,6 +126,15 @@ class Links:
     # Connectivity
     # ====================================================================
 
+    def set_nodes(self, idx: Union[int, str], from_node: int, to_node: int) -> None:
+        """Set the upstream and downstream nodes of a link.
+
+        @param idx: Link index (int) or link ID (str).
+        @param from_node: Upstream node index.
+        @param to_node: Downstream node index.
+        """
+        ...
+
     def get_from_node(self, idx: Union[int, str]) -> int:
         """Return the upstream (from) node index of a link.
 
@@ -146,6 +160,22 @@ class Links:
     # ====================================================================
     # Geometry/cross-section
     # ====================================================================
+
+    def set_length(self, idx: Union[int, str], length: float) -> None:
+        """Set the length of a link.
+
+        @param idx: Link index (int) or link ID (str).
+        @param length: Link length in project units.
+        """
+        ...
+
+    def set_roughness(self, idx: Union[int, str], n: float) -> None:
+        """Set the Manning's roughness of a link.
+
+        @param idx: Link index (int) or link ID (str).
+        @param n: Manning's M{n} roughness coefficient.
+        """
+        ...
 
     def get_type(self, idx: Union[int, str]) -> int:
         """Return the type code of a link.
@@ -221,6 +251,45 @@ class Links:
         @return: Tuple of C{(shape, geom1, geom2, geom3, geom4)}.
         @rtype: Tuple[int, float, float, float, float]
         @raise KeyError: If C{idx} is a string and the link ID is not found.
+        """
+        ...
+
+    def get_xsect_info(self, idx: Union[int, str]) -> "CrossSection":
+        """Return cross-section geometry as a structured L{CrossSection} object.
+
+        Wraps L{get_xsect} and resolves the shape code to a human-readable
+        name.  The L{CrossSection.geom_labels} property maps each geometry
+        parameter to its semantic name for the given shape type.
+
+        @param idx: Link index (int) or link ID (str).
+        @type idx: Union[int, str]
+        @return: Structured cross-section geometry.
+        @rtype: CrossSection
+        @raise KeyError: If C{idx} is a string and the link ID is not found.
+        """
+        ...
+
+    def set_xsect(
+        self,
+        idx: Union[int, str],
+        shape: int,
+        geom1: float,
+        geom2: float = 0.0,
+        geom3: float = 0.0,
+        geom4: float = 0.0,
+    ) -> None:
+        """Set the cross-section geometry of a link.
+
+        Geometry parameter semantics depend on C{shape}; see L{XSectShape}.
+        For circular conduits, C{geom1 = diameter}; for rectangular shapes,
+        C{geom1 = depth, geom2 = width}.
+
+        @param idx: Link index (int) or link ID (str).
+        @param shape: Cross-section shape code (see L{XSectShape} enum).
+        @param geom1: First geometry parameter (units depend on C{shape}).
+        @raise KeyError: If C{idx} is a string and the link ID is not found.
+        @raise EngineError: On invalid shape, negative geometry, or other
+            C API failure.
         """
         ...
 
@@ -807,3 +876,16 @@ class Links:
         @rtype: numpy.typing.NDArray[numpy.float64]
         """
         ...
+
+    # ====================================================================
+    # Rename
+    # ====================================================================
+
+    def rename(self, idx: Union[int, str], new_id: str) -> None:
+        """Rename a link.
+
+        @param idx: Link index (int) or current link ID (str).
+        @param new_id: New identifier string.
+        """
+        ...
+

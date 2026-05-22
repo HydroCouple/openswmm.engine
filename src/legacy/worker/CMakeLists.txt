@@ -27,11 +27,12 @@ set_target_properties(openswmm_legacy_worker
         OUTPUT_NAME "openswmm-legacy-worker"
 )
 
-if(APPLE)
-    set(LIB_ROOT "@loader_path;@rpath;@loader_path/../lib;@rpath/../lib")
-    set_target_properties(openswmm_legacy_worker PROPERTIES INSTALL_RPATH "${LIB_ROOT}")
-elseif(UNIX)
-    set(LIB_ROOT "$ORIGIN;$ORIGIN/../lib")
+if(NOT WIN32)
+    if(APPLE)
+        set(LIB_ROOT "@loader_path;@loader_path/../lib")
+    else()
+        set(LIB_ROOT "$ORIGIN;$ORIGIN/../lib")
+    endif()
     set_target_properties(openswmm_legacy_worker PROPERTIES INSTALL_RPATH "${LIB_ROOT}")
 endif()
 

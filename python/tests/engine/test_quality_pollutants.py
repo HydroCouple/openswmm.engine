@@ -23,3 +23,24 @@ class TestQualityLanduse:
         n = q.landuse_count()
         assert isinstance(n, int)
         assert n >= 0
+
+
+# ---------------------------------------------------------------------------
+# landuse_add (new addition)
+# ---------------------------------------------------------------------------
+class TestQualityLanduseAdd:
+    """landuse_add creates a new land use entry.
+
+    Requires BUILDING state (ModelBuilder).
+    """
+
+    def test_landuse_add_returns_index(self):
+        from openswmm.engine import ModelBuilder, Quality
+        m = ModelBuilder()
+        q = Quality(m)
+        before = q.landuse_count()
+        idx = q.landuse_add("LU_TEST_NEW")
+        assert isinstance(idx, int)
+        assert idx >= 0
+        assert q.landuse_count() == before + 1
+

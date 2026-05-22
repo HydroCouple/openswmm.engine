@@ -98,6 +98,19 @@ class Pollutants:
         """
         ...
 
+    def add(self, pollut_id: str, units: int) -> int:
+        """Add a pollutant to the model (BUILDING / OPENED state).
+
+        @param pollut_id: Unique pollutant identifier.
+        @type pollut_id: str
+        @param units: Concentration units code (0=MG/L, 1=UG/L, 2=#/L).
+        @type units: int
+        @return: Zero-based index of the newly added pollutant.
+        @rtype: int
+        @raise RuntimeError: On engine error.
+        """
+        ...
+
     # ====================================================================
     # Pollutant properties (getters)
     # ====================================================================

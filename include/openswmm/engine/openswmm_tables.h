@@ -49,6 +49,29 @@ SWMM_ENGINE_API int swmm_table_index(SWMM_Engine engine, const char* id);
  */
 SWMM_ENGINE_API const char* swmm_table_id(SWMM_Engine engine, int idx);
 
+/**
+ * @brief Get a table's type code.
+ *
+ * @details Tables are stored in a single unified array; this lets callers
+ *          partition the array into time series vs. each curve type
+ *          (e.g. for the GUI's Data Objects browser). Type values mirror
+ *          ::openswmm::TableType:
+ *            0 = TIMESERIES
+ *            1 = CURVE_STORAGE
+ *            2 = CURVE_DIVERSION
+ *            3 = CURVE_RATING
+ *            4 = CURVE_SHAPE
+ *            5 = CURVE_CONTROL
+ *            6 = CURVE_TIDAL
+ *            7..11 = CURVE_PUMP1..PUMP5
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based table index.
+ * @param[out] type  Receives the type code.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_table_get_type(SWMM_Engine engine, int idx, int* type);
+
 /* =========================================================================
  * Creation (BUILDING state only)
  * ========================================================================= */
@@ -170,6 +193,22 @@ SWMM_ENGINE_API int swmm_pattern_set_factors(SWMM_Engine engine, int idx, const 
  * @returns Number of patterns, or -1 on error.
  */
 SWMM_ENGINE_API int swmm_pattern_count(SWMM_Engine engine);
+
+/**
+ * @brief Look up a pattern's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated pattern identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_pattern_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of a pattern by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based pattern index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_pattern_id(SWMM_Engine engine, int idx);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -236,6 +236,30 @@ struct GageData {
     }
 
     /**
+     * @brief Append one new gage with defaults, preserving existing data.
+     * @details Uses std::vector::resize (extend-only) so existing gages are
+     *          not overwritten. Call instead of resize() when adding a single
+     *          gage interactively.
+     */
+    void grow_to(int n) {
+        if (n <= count()) return;
+        const auto un = static_cast<std::size_t>(n);
+        auto g = [&](auto& v, auto def) { v.resize(un, def); };
+        g(rain_type, 0); g(source, RainSource::TIMESERIES); g(ts_index, -1);
+        ts_name.resize(un, std::string{});
+        file_path.resize(un, std::string{});
+        col_name.resize(un, std::string{});
+        g(file_format, RainFileFormat::UNKNOWN); g(interval_sec, 3600); g(snow_factor, 1.0);
+        g(rainfall, 0.0); g(next_rainfall, 0.0);
+        g(api_rainfall, -1.0); g(next_rain_date, 0.0); g(is_raining, false);
+        // Flat 2D: [gage * MAXPASTRAIN + hour]
+        past_rain.resize(un * static_cast<std::size_t>(MAXPASTRAIN), 0.0);
+        g(past_rain_accum, 0.0); g(past_rain_time, 0.0); g(cumul_rain_accum, 0.0);
+        g(co_gage_index, -1);
+        comments.resize(un, std::string{});
+    }
+
+    /**
      * @brief Erase the rain gage at index `idx` from every parallel array.
      *
      * @details Removes element `idx` from every SoA vector. The flat-2D

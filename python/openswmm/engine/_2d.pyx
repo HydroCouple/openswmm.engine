@@ -277,6 +277,42 @@ cdef class Surface2D:
         _check(swmm_2d_get_coupling_fluxes_bulk(self._engine, &arr[0]))
         return arr
 
+    def get_edge_flux_bulk(self):
+        """Return normal edge fluxes for all triangle edges as a NumPy array.
+
+        The array is indexed as C{[tri*3 + localEdge]} where C{localEdge}
+        is the edge opposite vertex C{localEdge} (0, 1, or 2). Positive
+        flux flows outward through the edge's outward normal.
+
+        @return: Array of shape C{(n_triangles*3,)} with dtype C{float64}.
+        @rtype: np.ndarray
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef int n = self.n_triangles * 3
+        cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
+        _check(swmm_2d_get_edge_flux_bulk(self._engine, &arr[0]))
+        return arr
+
+    def get_edge_geometry_bulk(self):
+        """Return time-invariant edge lengths and outward unit normal components.
+
+        Returns arrays indexed as C{[tri*3 + localEdge]}.  Use together
+        with L{get_edge_flux_bulk} to reconstruct cell-centred velocity via
+        the RT0 scheme.
+
+        @return: Tuple C{(length, nx, ny)}, each of shape
+            C{(n_triangles*3,)} with dtype C{float64}.
+        @rtype: tuple
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef int n = self.n_triangles * 3
+        cdef np.ndarray[double, ndim=1] length = np.empty(n, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] nx = np.empty(n, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] ny = np.empty(n, dtype=np.float64)
+        _check(swmm_2d_edge_get_geometry_bulk(self._engine, &length[0],
+                                               &nx[0], &ny[0]))
+        return length, nx, ny
+
     # ====================================================================
     # State (depth/velocity) - per triangle scalar
     # ====================================================================

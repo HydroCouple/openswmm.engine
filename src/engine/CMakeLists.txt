@@ -100,6 +100,8 @@ target_include_directories(openswmm_engine
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include/openswmm/plugin_sdk>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
         $<INSTALL_INTERFACE:include>
+        $<INSTALL_INTERFACE:include/openswmm/engine>
+        $<INSTALL_INTERFACE:include/openswmm/plugin_sdk>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
@@ -210,25 +212,29 @@ elseif(UNIX)
 endif()
 
 # ---- RPATH ----
-# The engine dylib is installed to openswmm/engine/ in the wheel.
-# External bundled deps (e.g. libomp, placed by delocate/auditwheel) go into
-# openswmm/.dylibs/ — one level above the engine directory.
-# @loader_path/../.dylibs  ==  openswmm/engine/../.dylibs  ==  openswmm/.dylibs/
+# INSTALL_RPATH: wheel layout — external bundled deps (libomp etc.) placed by
+# delocate/auditwheel land in openswmm/.dylibs/, one level above openswmm/engine/.
+# For standalone cmake --install the system finds libomp via its own search path.
+# CMAKE_INSTALL_RPATH_USE_LINK_PATH (set globally) appends the linked-library
+# directory automatically, so consumers can always locate this dylib.
+#
+# BUILD_WITH_INSTALL_RPATH is left FALSE (the global default) so that the
+# build-tree binary uses CMake's automatically-computed build rpath (link dirs)
+# rather than the wheel-layout path that does not exist in the build tree.
 if(APPLE)
     set(LIB_ROOT "@loader_path/../.dylibs")
 elseif(UNIX)
     set(LIB_ROOT "$ORIGIN/../.dylibs")
 else()
-    # Windows: DLL loading uses PATH / LoadLibraryEx; no RPATH concept.
     set(LIB_ROOT "")
 endif()
 
-set_target_properties(openswmm_engine PROPERTIES
-    MACOSX_RPATH         TRUE
-    INSTALL_RPATH        "${LIB_ROOT}"
-    BUILD_RPATH          "${LIB_ROOT}"
-    BUILD_WITH_INSTALL_RPATH TRUE
-)
+if(NOT WIN32)
+    set_target_properties(openswmm_engine PROPERTIES
+        MACOSX_RPATH  TRUE
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+endif()
 
 # ---- Install ----
 install(
@@ -307,6 +313,7 @@ if(OPENSWMM_BUILD_2D)
         2d/solver/SurfaceFluxCalculator.cpp
         2d/coupling/*.cpp
         2d/input/*.cpp
+        2d/output/*.cpp
         2d/SurfaceRouter2D.cpp
         2d/api/*.cpp
     )
@@ -320,16 +327,23 @@ if(OPENSWMM_BUILD_2D)
     find_package(SUNDIALS REQUIRED COMPONENTS cvode)
     target_link_libraries(openswmm_engine PRIVATE SUNDIALS::cvode)
 
+    # Default2DOutputPlugin emits CF-1.11/UGRID-1.0 HDF5 — required dep
+    find_package(HDF5 REQUIRED COMPONENTS C)
+    target_link_libraries(openswmm_engine PRIVATE ${HDF5_C_LIBRARIES})
+    target_include_directories(openswmm_engine PRIVATE ${HDF5_INCLUDE_DIRS})
+
     target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAS_2D=1)
 
     # Also add to the internal static library for MSVC unit tests
     if(TARGET openswmm_engine_internal)
         target_sources(openswmm_engine_internal PRIVATE ${OPENSWMM_2D_SOURCES})
         target_link_libraries(openswmm_engine_internal PRIVATE SUNDIALS::cvode)
+        target_link_libraries(openswmm_engine_internal PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(openswmm_engine_internal PRIVATE ${HDF5_INCLUDE_DIRS})
         target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAS_2D=1)
     endif()
 
-    message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (SUNDIALS/CVODE)")
+    message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (SUNDIALS/CVODE + HDF5)")
 else()
     message(STATUS "OpenSWMM Engine: 2D surface routing disabled (set -DOPENSWMM_BUILD_2D=ON to enable)")
 endif()

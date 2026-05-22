@@ -157,3 +157,57 @@ class TestNodesQualityMassFlux:
             stepped_nodes.set_quality_mass_flux(0, 0, 1.0)
         except RuntimeError:
             pass  # acceptable if model has no pollutants
+
+
+# ---------------------------------------------------------------------------
+# Divider type (new addition)
+# ---------------------------------------------------------------------------
+class TestNodesDividerType:
+    """get_divider_type / set_divider_type for divider nodes."""
+
+    def test_get_divider_type_returns_int(self, opened_solver):
+        """get_divider_type succeeds or raises RuntimeError on non-divider."""
+        from openswmm.engine import Nodes
+        n = Nodes(opened_solver)
+        try:
+            v = n.get_divider_type(0)
+            assert isinstance(v, int)
+        except RuntimeError:
+            pass  # node 0 may not be a divider node
+
+    def test_set_divider_type_accepts_int(self, opened_solver):
+        """set_divider_type succeeds or raises RuntimeError on non-divider."""
+        from openswmm.engine import Nodes
+        n = Nodes(opened_solver)
+        try:
+            n.set_divider_type(0, 0)
+        except RuntimeError:
+            pass  # node 0 may not be a divider node
+
+
+# ---------------------------------------------------------------------------
+# Rename (new addition)
+# ---------------------------------------------------------------------------
+class TestNodesRename:
+    """rename() changes the node's string identifier."""
+
+    def test_rename_changes_id(self, opened_solver):
+        from openswmm.engine import Nodes
+        n = Nodes(opened_solver)
+        original_name = n.get_id(0)
+        new_name = original_name + "_renamed"
+        n.rename(0, new_name)
+        assert n.get_id(0) == new_name
+        # restore
+        n.rename(0, original_name)
+
+    def test_rename_by_string_index(self, opened_solver):
+        from openswmm.engine import Nodes
+        n = Nodes(opened_solver)
+        original_name = n.get_id(0)
+        new_name = original_name + "_v2"
+        n.rename(original_name, new_name)
+        assert n.get_index(new_name) == 0
+        # restore
+        n.rename(new_name, original_name)
+

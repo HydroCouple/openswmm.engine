@@ -288,6 +288,31 @@ int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine, double* fluxes) {
     return SWMM_OK;
 }
 
+int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine, double* flux) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!flux) return SWMM_ERR_BADPARAM;
+
+    auto& s = router2d.state();
+    std::memcpy(flux, s.edge_flux.data(),
+                s.edge_flux.size() * sizeof(double));
+    return SWMM_OK;
+}
+
+int swmm_2d_edge_get_geometry_bulk(SWMM_Engine engine,
+                                     double* length, double* nx, double* ny) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!length || !nx || !ny) return SWMM_ERR_BADPARAM;
+
+    auto& m = router2d.mesh();
+    const size_t n3 = m.edge_length.size();
+    std::memcpy(length, m.edge_length.data(), n3 * sizeof(double));
+    std::memcpy(nx,     m.edge_nx.data(),     n3 * sizeof(double));
+    std::memcpy(ny,     m.edge_ny.data(),     n3 * sizeof(double));
+    return SWMM_OK;
+}
+
 // ============================================================================
 // 2D State — Per-Vertex
 // ============================================================================

@@ -144,3 +144,35 @@ class TestSubcatchmentsStringAccess:
     def test_nonexistent_name_raises(self, subcatchments):
         with pytest.raises(KeyError, match="not found"):
             subcatchments.get_area("NONEXISTENT_SC")
+
+
+# ---------------------------------------------------------------------------
+# Rename (new addition)
+# ---------------------------------------------------------------------------
+class TestSubcatchmentsRename:
+    """rename() changes the subcatchment's string identifier."""
+
+    def test_rename_changes_id(self, opened_solver):
+        from openswmm.engine import Subcatchments
+        sc = Subcatchments(opened_solver)
+        if sc.count() == 0:
+            pytest.skip("no subcatchments in test model")
+        original_name = sc.get_id(0)
+        new_name = original_name + "_renamed"
+        sc.rename(0, new_name)
+        assert sc.get_id(0) == new_name
+        # restore
+        sc.rename(0, original_name)
+
+    def test_rename_by_string_index(self, opened_solver):
+        from openswmm.engine import Subcatchments
+        sc = Subcatchments(opened_solver)
+        if sc.count() == 0:
+            pytest.skip("no subcatchments in test model")
+        original_name = sc.get_id(0)
+        new_name = original_name + "_v2"
+        sc.rename(original_name, new_name)
+        assert sc.get_index(new_name) == 0
+        # restore
+        sc.rename(new_name, original_name)
+

@@ -12,7 +12,36 @@ The :class:`Inflows` class provides methods for adding external inflows,
 dry-weather flows, and RDII to model nodes.
 """
 
+from typing import Tuple, TypedDict
+
 from ._solver import Solver
+
+
+class HydrographEntry(TypedDict):
+    """Parameters of a single C{[HYDROGRAPHS]} parameter row."""
+
+    uh_name:  str
+    month:    int    # -1 = ALL, otherwise 0..11 = JAN..DEC
+    response: int    # 0 = SHORT, 1 = MEDIUM, 2 = LONG
+    r:        float
+    t:        float
+    k:        float
+    dmax:     float
+    drecov:   float
+    dinit:    float
+
+
+class RDIIDecayEntry(TypedDict):
+    """Parameters of a single C{[RDII_DECAY]} row (exponential IA model)."""
+
+    uh_name:   str
+    response:  int    # 0 = SHORT, 1 = MEDIUM, 2 = LONG
+    k_dep:     float
+    k_0:       float
+    k_T:       float
+    T_ref:     float
+    theta_rec: float
+    T_freeze:  float
 
 
 class Inflows:
@@ -158,10 +187,135 @@ class Inflows:
         """
         ...
 
+    def get_rdii(self, entry_idx: int) -> Tuple[int, str, float]:
+        """Read back an RDII assignment by entry index.
+
+        @param entry_idx: Zero-based index.
+        @type entry_idx: int
+        @return: C{(node_idx, uh_name, area)}.
+        @rtype: tuple[int, str, float]
+        """
+        ...
+
     def rdii_count(self) -> int:
         """Return the number of RDII inflows in the model.
 
         @return: RDII inflow count.
+        @rtype: int
+        """
+        ...
+
+    # ====================================================================
+    # Unit hydrographs ([HYDROGRAPHS])
+    # ====================================================================
+
+    def add_hydrograph(
+        self,
+        uh_name: str,
+        month: int,
+        response: int,
+        r: float,
+        t: float,
+        k: float,
+        dmax: float = 0.0,
+        drecov: float = 0.0,
+        dinit: float = 0.0,
+    ) -> None:
+        """Add a unit hydrograph parameter line.
+
+        @param uh_name: Unit hydrograph group name.
+        @type uh_name: str
+        @param month: C{-1} = ALL, or C{0..11} = JAN..DEC.
+        @type month: int
+        @param response: C{0} = SHORT, C{1} = MEDIUM, C{2} = LONG.
+        @type response: int
+        @param r: Fraction of rainfall that becomes RDII.
+        @param t: Time to peak in hours.
+        @param k: Ratio of base time to peak time (>= 1).
+        @param dmax: Maximum initial-abstraction depth.
+        @param drecov: Linear-model IA recovery rate. Ignored when an
+            exponential decay row exists for this C{(uh_name, response)} pair.
+        @param dinit: Initial IA already used.
+        """
+        ...
+
+    def get_hydrograph(self, entry_idx: int) -> HydrographEntry:
+        """Read back a hydrograph parameter entry by index.
+
+        @rtype: L{HydrographEntry}
+        """
+        ...
+
+    def hydrograph_count(self) -> int:
+        """Return the number of hydrograph parameter entries.
+
+        @rtype: int
+        """
+        ...
+
+    def add_hydrograph_gage(self, uh_name: str, gage_name: str) -> None:
+        """Assign a rain gage to a unit hydrograph group."""
+        ...
+
+    def get_hydrograph_gage(self, entry_idx: int) -> Tuple[str, str]:
+        """Read back a UH-to-gage assignment.
+
+        @return: C{(uh_name, gage_name)}.
+        @rtype: tuple[str, str]
+        """
+        ...
+
+    def hydrograph_gage_count(self) -> int:
+        """Return the number of UH-to-gage assignments.
+
+        @rtype: int
+        """
+        ...
+
+    # ====================================================================
+    # Exponential IA decay ([RDII_DECAY])
+    # ====================================================================
+
+    def add_rdii_decay(
+        self,
+        uh_name: str,
+        response: int,
+        k_dep: float,
+        k_0: float,
+        k_T: float,
+        T_ref: float = 10.0,
+        theta_rec: float = 0.0,
+        T_freeze: float = 0.0,
+    ) -> None:
+        """Add an exponential-decay row for a C{(uh_name, response)} pair.
+
+        Physically-based replacement for the legacy linear IA recovery.
+        Depletion during storms follows S{exp}(-C{k_dep} * rainfall);
+        recovery during dry periods uses an additive base+thermal rate
+        C{k_rec(T) = k_0 + k_T * exp(theta_rec * (T - T_ref))} with
+        suppression when C{T <= T_freeze}.
+
+        @param uh_name: UH group name (must match a hydrograph entry).
+        @param response: C{0} = SHORT, C{1} = MEDIUM, C{2} = LONG.
+        @param k_dep: Depletion rate (1/project-depth-unit).
+        @param k_0: Base recovery rate (1/hr).
+        @param k_T: Thermal recovery rate at C{T_ref} (1/hr).
+        @param T_ref: Reference temperature (deg C). Default 10.
+        @param theta_rec: Temperature sensitivity (1/deg C).
+        @param T_freeze: Frozen-ground threshold (deg C). Default 0.
+        """
+        ...
+
+    def get_rdii_decay(self, entry_idx: int) -> RDIIDecayEntry:
+        """Read back an exponential-decay row by index.
+
+        @rtype: L{RDIIDecayEntry}
+        """
+        ...
+
+    def rdii_decay_count(self) -> int:
+        """Return the number of exponential-decay rows.
+
         @rtype: int
         """
         ...

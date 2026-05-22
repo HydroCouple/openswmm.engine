@@ -16,6 +16,7 @@
  * @license  MIT License
  */
 
+#pragma once
 
 #ifdef OPENSWMM_HAS_2D
 

@@ -36,6 +36,15 @@ SWMM_ENGINE_API const char* swmm_table_id(SWMM_Engine engine, int idx) {
     return ctx.table_names.name_of(idx).c_str();
 }
 
+SWMM_ENGINE_API int swmm_table_get_type(SWMM_Engine engine, int idx, int* type) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_tables());
+    if (!type) return SWMM_ERR_BADPARAM;
+    *type = static_cast<int>(ctx.tables[idx].type);
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Creation (BUILDING state only)
 // ============================================================================
@@ -164,6 +173,22 @@ SWMM_ENGINE_API int swmm_pattern_set_factors(SWMM_Engine engine, int idx, const 
 SWMM_ENGINE_API int swmm_pattern_count(SWMM_Engine engine) {
     if (!engine) return -1;
     return to_engine(engine)->context().patterns.count();
+}
+
+SWMM_ENGINE_API int swmm_pattern_index(SWMM_Engine engine, const char* id) {
+    if (!engine || !id) return -1;
+    const auto& names = to_engine(engine)->context().patterns.names;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+SWMM_ENGINE_API const char* swmm_pattern_id(SWMM_Engine engine, int idx) {
+    if (!engine) return nullptr;
+    const auto& names = to_engine(engine)->context().patterns.names;
+    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    return names[static_cast<std::size_t>(idx)].c_str();
 }
 
 } /* extern "C" */

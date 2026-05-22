@@ -115,3 +115,64 @@ class TestHotStartApply:
         s2.end()
         s2.close()
         s2.destroy()
+
+
+# ---------------------------------------------------------------------------
+# Save schedule (new additions)
+# ---------------------------------------------------------------------------
+class TestHotStartSaves:
+    """saves_count / saves_add / saves_get_path / saves_get_datetime /
+    saves_set_path / saves_set_datetime / saves_remove / saves_clear."""
+
+    def test_saves_count_initially_zero(self, opened_solver):
+        count = HotStart.saves_count(opened_solver)
+        assert isinstance(count, int)
+        assert count >= 0
+
+    def test_saves_add_increments_count(self, opened_solver, tmp_path):
+        before = HotStart.saves_count(opened_solver)
+        path = str(tmp_path / "sched.hs")
+        HotStart.saves_add(opened_solver, path)
+        assert HotStart.saves_count(opened_solver) == before + 1
+
+    def test_saves_get_path_roundtrip(self, opened_solver, tmp_path):
+        path = str(tmp_path / "sched_rt.hs")
+        HotStart.saves_add(opened_solver, path)
+        idx = HotStart.saves_count(opened_solver) - 1
+        retrieved = HotStart.saves_get_path(opened_solver, idx)
+        assert retrieved == path
+
+    def test_saves_get_datetime_default_zero(self, opened_solver, tmp_path):
+        path = str(tmp_path / "sched_dt.hs")
+        HotStart.saves_add(opened_solver, path)
+        idx = HotStart.saves_count(opened_solver) - 1
+        dt = HotStart.saves_get_datetime(opened_solver, idx)
+        assert isinstance(dt, float)
+        assert dt == 0.0
+
+    def test_saves_set_path(self, opened_solver, tmp_path):
+        HotStart.saves_add(opened_solver, str(tmp_path / "orig.hs"))
+        idx = HotStart.saves_count(opened_solver) - 1
+        new_path = str(tmp_path / "updated.hs")
+        HotStart.saves_set_path(opened_solver, idx, new_path)
+        assert HotStart.saves_get_path(opened_solver, idx) == new_path
+
+    def test_saves_set_datetime(self, opened_solver, tmp_path):
+        HotStart.saves_add(opened_solver, str(tmp_path / "dt_set.hs"))
+        idx = HotStart.saves_count(opened_solver) - 1
+        HotStart.saves_set_datetime(opened_solver, idx, 1.5)
+        dt = HotStart.saves_get_datetime(opened_solver, idx)
+        assert abs(dt - 1.5) < 1e-9
+
+    def test_saves_remove_decrements_count(self, opened_solver, tmp_path):
+        HotStart.saves_add(opened_solver, str(tmp_path / "rm.hs"))
+        before = HotStart.saves_count(opened_solver)
+        HotStart.saves_remove(opened_solver, before - 1)
+        assert HotStart.saves_count(opened_solver) == before - 1
+
+    def test_saves_clear_empties_schedule(self, opened_solver, tmp_path):
+        HotStart.saves_add(opened_solver, str(tmp_path / "clr1.hs"))
+        HotStart.saves_add(opened_solver, str(tmp_path / "clr2.hs"))
+        HotStart.saves_clear(opened_solver)
+        assert HotStart.saves_count(opened_solver) == 0
+

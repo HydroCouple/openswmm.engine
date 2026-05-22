@@ -154,6 +154,22 @@ class Links:
     # Connectivity
     # ====================================================================
 
+    def set_nodes(self, idx, int from_node, int to_node):
+        """Set the upstream and downstream nodes of a link.
+
+        @param idx: Link index (int) or link ID (str).
+        @type idx: Union[int, str]
+        @param from_node: Upstream node index.
+        @type from_node: int
+        @param to_node: Downstream node index.
+        @type to_node: int
+        @raise KeyError: If C{idx} is a string and the link ID is not found.
+        @raise EngineError: If the C API rejects the assignment.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_link_set_nodes(h, i, from_node, to_node))
+
     def get_from_node(self, idx) -> int:
         """Return the upstream (from) node index of a link.
 
@@ -187,6 +203,34 @@ class Links:
     # ====================================================================
     # Geometry/cross-section
     # ====================================================================
+
+    def set_length(self, idx, double length):
+        """Set the length of a link.
+
+        @param idx: Link index (int) or link ID (str).
+        @type idx: Union[int, str]
+        @param length: Link length in project units.
+        @type length: float
+        @raise KeyError: If C{idx} is a string and the link ID is not found.
+        @raise EngineError: If the C API rejects the assignment.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_link_set_length(h, i, length))
+
+    def set_roughness(self, idx, double n):
+        """Set the Manning's roughness of a link.
+
+        @param idx: Link index (int) or link ID (str).
+        @type idx: Union[int, str]
+        @param n: Manning's M{n} roughness coefficient.
+        @type n: float
+        @raise KeyError: If C{idx} is a string and the link ID is not found.
+        @raise EngineError: If the C API rejects the assignment.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_link_set_roughness(h, i, n))
 
     def get_type(self, idx) -> int:
         """Return the type code of a link.
@@ -293,6 +337,57 @@ class Links:
         cdef double geom1 = 0.0, geom2 = 0.0, geom3 = 0.0, geom4 = 0.0
         _check(swmm_link_get_xsect(h, i, &shape, &geom1, &geom2, &geom3, &geom4))
         return (shape, geom1, geom2, geom3, geom4)
+
+    def set_xsect(self, idx, int shape,
+                  double geom1, double geom2=0.0,
+                  double geom3=0.0, double geom4=0.0):
+        """Set the cross-section geometry of a link.
+
+        Geometry parameter semantics depend on C{shape} (see
+        L{CrossSection.geom_labels}). For example, a circular conduit takes
+        C{geom1 = diameter}; a rectangular shape takes C{geom1 = depth} and
+        C{geom2 = width}.
+
+        @param idx: Link index (int) or link ID (str).
+        @type idx: Union[int, str]
+        @param shape: Cross-section shape code (see L{XSectShape} enum).
+        @type shape: int
+        @param geom1: First geometry parameter (units depend on C{shape}).
+        @param geom2: Second geometry parameter.
+        @param geom3: Third geometry parameter.
+        @param geom4: Fourth geometry parameter.
+        @raise KeyError: If C{idx} is a string and the link ID is not found.
+        @raise EngineError: On invalid shape, negative geometry, or other
+            C API failure.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_link_set_xsect(h, i, shape, geom1, geom2, geom3, geom4))
+
+    def get_xsect_info(self, idx):
+        """Return cross-section geometry as a L{CrossSection} object.
+
+        Wraps L{get_xsect} and resolves the shape code to a human-readable
+        name.  The returned object exposes a C{geom_labels} property that maps
+        each geometry parameter to its semantic name for the given shape
+        (e.g. C{{"diameter": 1.2}} for a circular pipe).
+
+        @param idx: Link index (int) or link ID (str).
+        @type idx: Union[int, str]
+        @return: Structured cross-section geometry.
+        @rtype: CrossSection
+        @raise KeyError: If C{idx} is a string and the link ID is not found.
+        """
+        from ._geometry import CrossSection, _XSECT_SHAPE_NAMES
+        shape, g1, g2, g3, g4 = self.get_xsect(idx)
+        return CrossSection(
+            shape=shape,
+            shape_name=_XSECT_SHAPE_NAMES.get(shape, f"SHAPE_{shape}"),
+            geom1=g1,
+            geom2=g2,
+            geom3=g3,
+            geom4=g4,
+        )
 
     def set_offset_up(self, idx, double offset):
         """Set the upstream invert offset of a link.
@@ -1038,3 +1133,23 @@ class Links:
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         _check(swmm_link_get_quality_bulk(h, pollutant_idx, &buf[0], n))
         return buf
+
+    # ====================================================================
+    # Rename
+    # ====================================================================
+
+    def rename(self, idx, str new_id):
+        """Rename a link.
+
+        @param idx: Link index (int) or current link ID (str).
+        @type idx: Union[int, str]
+        @param new_id: New identifier string.
+        @type new_id: str
+        @raise KeyError: If C{idx} is a string and the link ID is not found.
+        @raise EngineError: If the C API rejects the rename.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_link_rename(h, i, b))
+

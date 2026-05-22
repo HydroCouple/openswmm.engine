@@ -179,6 +179,11 @@ SWMM_ENGINE_API int swmm_gage_set_rainfall(SWMM_Engine engine, int idx, double r
  */
 SWMM_ENGINE_API int swmm_gage_get_rainfall_bulk(SWMM_Engine engine, double* buf, int count);
 
+/** @brief Rename the rain gage at `idx` to `newId`.
+ *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
+ *  idx is out of range. */
+SWMM_ENGINE_API int swmm_gage_rename(SWMM_Engine engine, int idx, const char* newId);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

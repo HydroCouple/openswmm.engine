@@ -162,3 +162,58 @@ class TestLinksFlap:
         n = links.get_barrels(0)
         assert isinstance(n, int)
         assert n >= 1
+
+
+# ---------------------------------------------------------------------------
+# New setters (set_nodes, set_length, set_roughness)
+# ---------------------------------------------------------------------------
+class TestLinksSetters:
+    """set_nodes / set_length / set_roughness (OPENED state)."""
+
+    def test_set_length_roundtrip(self, opened_solver):
+        orig = Links(opened_solver).get_length(0)
+        new_len = orig * 1.1
+        Links(opened_solver).set_length(0, new_len)
+        v = Links(opened_solver).get_length(0)
+        assert abs(v - new_len) < 1e-3
+
+    def test_set_roughness_roundtrip(self, opened_solver):
+        links = Links(opened_solver)
+        links.set_roughness(0, 0.015)
+        v = links.get_roughness(0)
+        assert abs(v - 0.015) < 1e-6
+
+    def test_set_nodes_preserves_connectivity(self, opened_solver):
+        links = Links(opened_solver)
+        orig_from = links.get_from_node(0)
+        orig_to = links.get_to_node(0)
+        # Set to same values — should succeed without error
+        links.set_nodes(0, orig_from, orig_to)
+        assert links.get_from_node(0) == orig_from
+        assert links.get_to_node(0) == orig_to
+
+
+# ---------------------------------------------------------------------------
+# Rename (new addition)
+# ---------------------------------------------------------------------------
+class TestLinksRename:
+    """rename() changes the link's string identifier."""
+
+    def test_rename_changes_id(self, opened_solver):
+        links = Links(opened_solver)
+        original_name = links.get_id(0)
+        new_name = original_name + "_renamed"
+        links.rename(0, new_name)
+        assert links.get_id(0) == new_name
+        # restore
+        links.rename(0, original_name)
+
+    def test_rename_by_string_index(self, opened_solver):
+        links = Links(opened_solver)
+        original_name = links.get_id(0)
+        new_name = original_name + "_v2"
+        links.rename(original_name, new_name)
+        assert links.get_index(new_name) == 0
+        # restore
+        links.rename(new_name, original_name)
+

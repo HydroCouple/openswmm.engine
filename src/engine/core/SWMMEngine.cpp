@@ -31,6 +31,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/input/SectionHandlers2D.hpp"
+#include "../2d/output/Default2DOutputPlugin.hpp"
 #include <filesystem>
 #endif
 
@@ -188,6 +189,27 @@ int SWMMEngine::open(const char* inp_path,
         plugins_.add_report_plugin(rp);
     }
 
+#ifdef OPENSWMM_HAS_2D
+    // Inject built-in 2D HDF5 output plugin when [2D_OPTIONS] OUTPUT_FILE is set.
+    // Mesh prep is deferred to start() because the mesh topology is not built
+    // until SurfaceRouter2D::initialize() runs (called from SWMMEngine::initialize).
+    {
+        const std::string& of = surface_router_.options().output_file;
+        if (!of.empty()) {
+            std::string resolved = of;
+            std::filesystem::path p(of);
+            if (p.is_relative() && inp_path && inp_path[0] != '\0') {
+                resolved = (std::filesystem::path(inp_path).parent_path() / p).string();
+            }
+            auto* op = new twoD::Default2DOutputPlugin(resolved);
+            op->initialize({}, nullptr);
+            op->validate(ctx_);
+            plugins_.add_output_plugin(op);
+            surface_output_plugin_ = op;
+        }
+    }
+#endif
+
     // Wire solver-neutral state accessors so state-IO plugins can read/write
     // infiltration and groundwater state through SimulationContext alone.
     {
@@ -334,6 +356,16 @@ int SWMMEngine::start(int save_results) noexcept {
             return SWMM_ERR_PLUGIN;
         }
     }
+
+#ifdef OPENSWMM_HAS_2D
+    // After plugin->prepare() created the HDF5 file (root attrs only), write
+    // the static mesh topology and create the time-varying datasets. This is
+    // a separate step because the IOutputPlugin contract has no mesh access
+    // through SimulationContext — SurfaceRouter2D owns the mesh privately.
+    if (surface_output_plugin_ && surface_router_.isActive()) {
+        surface_output_plugin_->prepareMeshAndDatasets(surface_router_.mesh());
+    }
+#endif
 
     // Phase 5: start the IO writer thread
     io_thread_.start();
@@ -485,7 +517,15 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     // infil/evap/runoff reflect the interval STARTING at the report
     // boundary. Legacy achieves this accidentally via variable timestep
     // Legacy uses strict < (runoff.c line 164: while(NewRunoffTime < nextRoutingTime))
-    double next_routing_time = routing_time + dt_routing;
+    //
+    // Clamp next_routing_time to the simulation end, matching legacy
+    // swmm5.c::execRouting() line 900-905. Without this clamp, floating-point
+    // drift in `routing_time + dt_routing` can leave next_routing_time slightly
+    // above total_sec while new_runoff_time_ has already been clamped to
+    // total_sec inside this loop body — causing the while-loop to fire
+    // indefinitely with dt_runoff = 0.
+    const double total_sec_clamp = (ctx_.options.end_date - ctx_.options.start_date) * 86400.0;
+    double next_routing_time = std::min(routing_time + dt_routing, total_sec_clamp);
     while (new_runoff_time_ < next_routing_time) {
         // Save old runoff, runon, and GW state for interpolation
         // (matching legacy subcatch_setOldState + gw oldFlow/newFlow)
@@ -2190,21 +2230,11 @@ void SWMMEngine::computeFinalStorage() noexcept {
     ctx_.mass_balance.routing_final_storage = 0.0;
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        double v = ctx_.nodes.volume[uj];
-        if (std::isnan(v)) {
-            std::fprintf(stderr, "[NAN] node %d (%s) volume=nan\n",
-                j, ctx_.node_names.name_of(j).c_str());
-        }
-        ctx_.mass_balance.routing_final_storage += v;
+        ctx_.mass_balance.routing_final_storage += ctx_.nodes.volume[uj];
     }
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        double v = ctx_.links.volume[uj];
-        if (std::isnan(v)) {
-            std::fprintf(stderr, "[NAN] link %d (%s) volume=nan\n",
-                j, ctx_.link_names.name_of(j).c_str());
-        }
-        ctx_.mass_balance.routing_final_storage += v;
+        ctx_.mass_balance.routing_final_storage += ctx_.links.volume[uj];
     }
 }
 
@@ -2464,6 +2494,29 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     tot_store += ctx_.links.volume[static_cast<std::size_t>(j)];
                 snap.sys_storage = tot_store;
             }
+
+#ifdef OPENSWMM_HAS_2D
+            // 2D surface routing state. Deep-copied like the 1D arrays so the
+            // IO thread can read without synchronization. Empty when 2D
+            // inactive; Default2DOutputPlugin::update() short-circuits on
+            // surface_tri_count == 0.
+            if (surface_router_.isActive()) {
+                const auto& st  = surface_router_.state();
+                snap.surface_tri_count    = surface_router_.mesh().n_triangles();
+                snap.surface_vert_count   = surface_router_.mesh().n_vertices();
+                snap.surface_depth         = st.depth;
+                snap.surface_head          = st.head;
+                snap.surface_grad_hx       = st.grad_hx;
+                snap.surface_grad_hy       = st.grad_hy;
+                snap.surface_grad_hx_lim   = st.grad_hx_lim;
+                snap.surface_grad_hy_lim   = st.grad_hy_lim;
+                snap.surface_rainfall      = st.rainfall;
+                snap.surface_coupling_flux = st.coupling_flux;
+                snap.surface_net_source    = st.net_source;
+                snap.surface_edge_flux     = st.edge_flux;
+                snap.surface_vert_head     = st.vert_head;
+            }
+#endif
 
             // Attach name table pointers (valid for lifetime of ctx_)
             snap.node_ids     = &ctx_.node_names.names();

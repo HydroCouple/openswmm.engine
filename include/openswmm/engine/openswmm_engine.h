@@ -300,8 +300,45 @@ SWMM_ENGINE_API int swmm_get_routing_step(SWMM_Engine engine, double* dt);
 /** @brief Check if simulation is currently between routing events. */
 SWMM_ENGINE_API int swmm_is_between_events(SWMM_Engine engine, int* is_between);
 
-/** @brief Get number of routing events defined. */
+/** @brief Get number of routing events defined.
+ *  @note Synonymous with swmm_events_count (Slice CW). */
 SWMM_ENGINE_API int swmm_get_event_count(SWMM_Engine engine, int* count);
+
+/* -------------------------------------------------------------------------
+ * [EVENTS] section accessors (Slice CW — added 2026-05-21).
+ *
+ * Mirrors the per-row reader in `handle_events` (InfraHandler.cpp). All times
+ * are DateTime decimal days (consistent with `swmm_get_start_time` etc.).
+ * `swmm_events_count` is a synonym of the legacy `swmm_get_event_count` and
+ * is provided so the [EVENTS] surface is self-consistent.
+ * ------------------------------------------------------------------------- */
+
+/** @brief Number of [EVENTS] entries. Alias of swmm_get_event_count. */
+SWMM_ENGINE_API int swmm_events_count(SWMM_Engine engine, int* count);
+
+/** @brief Get the start/end DateTime of the idx-th event.
+ *  @returns SWMM_OK on success; SWMM_ERR_BADINDEX if idx is out of range. */
+SWMM_ENGINE_API int swmm_events_get(SWMM_Engine engine, int idx,
+                                    double* start, double* end);
+
+/** @brief Overwrite the idx-th event's window.
+ *  @returns SWMM_OK on success; SWMM_ERR_BADINDEX if idx out of range;
+ *           SWMM_ERR_BADPARAM if start >= end. */
+SWMM_ENGINE_API int swmm_events_set(SWMM_Engine engine, int idx,
+                                    double start, double end);
+
+/** @brief Append a new event window.
+ *  @param out_idx Receives the new event's index (optional, may be NULL).
+ *  @returns SWMM_OK on success; SWMM_ERR_BADPARAM if start >= end. */
+SWMM_ENGINE_API int swmm_events_add(SWMM_Engine engine,
+                                    double start, double end, int* out_idx);
+
+/** @brief Remove the idx-th event. Trailing entries shift down by one.
+ *  @returns SWMM_OK on success; SWMM_ERR_BADINDEX if idx is out of range. */
+SWMM_ENGINE_API int swmm_events_remove(SWMM_Engine engine, int idx);
+
+/** @brief Remove all events. */
+SWMM_ENGINE_API int swmm_events_clear(SWMM_Engine engine);
 
 /** @brief Get/set steady-state skip flag. */
 SWMM_ENGINE_API int swmm_get_steady_state_skip(SWMM_Engine engine, int* enabled);

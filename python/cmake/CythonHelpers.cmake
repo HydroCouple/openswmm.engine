@@ -172,12 +172,18 @@ function(add_cython_extension)
     )
 
     # ── RPATH + symbol export, per platform ───────────────────────────────
+    # INSTALL_RPATH covers three deployment layouts:
+    #   @loader_path / $ORIGIN          — wheel: dylib bundled next to .so
+    #   ../../../lib (3 levels up)      — conda/venv env lib from
+    #                                     site-packages/openswmm/engine/
+    # CMAKE_INSTALL_RPATH_USE_LINK_PATH (set in python/CMakeLists.txt) appends
+    # the engine dylib's install-time directory automatically, covering both
+    # pre-built prefix installs and editable builds.
+    # BUILD_WITH_INSTALL_RPATH is left FALSE; the build-tree rpath is computed
+    # from link directories by CMake automatically.
     if(APPLE)
-        # Bundled dylibs sit next to the .so; @loader_path is enough.
         set_target_properties("${ACE_TARGET}" PROPERTIES
-            BUILD_RPATH              "@loader_path"
-            INSTALL_RPATH            "@loader_path"
-            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "@loader_path;@loader_path/../../../lib"
         )
     elseif(UNIX)
         # Hidden visibility + version script keeps PyInit_<name> exported
@@ -186,9 +192,7 @@ function(add_cython_extension)
         file(WRITE "${_map}" "{ global: PyInit_${ACE_NAME}; local: *; };\n")
         target_link_options("${ACE_TARGET}" PRIVATE "-Wl,--version-script=${_map}")
         set_target_properties("${ACE_TARGET}" PROPERTIES
-            BUILD_RPATH              "$ORIGIN"
-            INSTALL_RPATH            "$ORIGIN"
-            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "$ORIGIN;$ORIGIN/../../../lib"
         )
     elseif(WIN32)
         # MSVC: explicit /EXPORT for the PyInit symbol.  delvewheel (in CI)

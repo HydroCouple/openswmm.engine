@@ -98,6 +98,20 @@ class Subcatchments:
         """
         ...
 
+    def delete(self, idx: Union[int, str]) -> list:
+        """Delete a subcatchment and cascade-nullify all referencing objects.
+
+        Valid in C{BUILDING} or C{OPENED} state.
+
+        @param idx: Subcatchment index (int) or subcatchment ID (str).
+        @type idx: Union[int, str]
+        @return: List of C{ImpactEntry} describing cascaded changes.
+        @rtype: list
+        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
+        @raise RuntimeError: On engine error.
+        """
+        ...
+
     # ====================================================================
     # Property setters (BUILDING / OPENED)
     # ====================================================================
@@ -685,3 +699,16 @@ class Subcatchments:
         @rtype: numpy.typing.NDArray[numpy.float64]
         """
         ...
+
+    # ====================================================================
+    # Rename
+    # ====================================================================
+
+    def rename(self, idx: Union[int, str], new_id: str) -> None:
+        """Rename a subcatchment.
+
+        @param idx: Subcatchment index (int) or current subcatchment ID (str).
+        @param new_id: New identifier string.
+        """
+        ...
+

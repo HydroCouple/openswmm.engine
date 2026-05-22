@@ -122,6 +122,22 @@ class Gages:
         cdef bytes b = gage_id.encode('utf-8')
         return swmm_gage_add(h, b)
 
+    def delete(self, idx) -> list:
+        """Delete a rain gage and cascade-nullify all referencing objects.
+
+        Delegates to L{ModelEditor.delete_gage}. Valid in C{BUILDING}
+        or C{OPENED} state.
+
+        @param idx: Gage index (int) or gage ID (str).
+        @type idx: Union[int, str]
+        @return: List of L{ImpactEntry} describing cascaded changes.
+        @rtype: list[ImpactEntry]
+        @raise KeyError: If C{idx} is a string and the gage is not found.
+        @raise RuntimeError: On engine error.
+        """
+        from ._edit import ModelEditor
+        return ModelEditor(self._solver).delete_gage(idx)
+
     # ====================================================================
     # Rainfall get/set
     # ====================================================================
@@ -274,3 +290,23 @@ class Gages:
         cdef int v = 0
         _check(swmm_gage_get_data_source(h, i, &v))
         return v
+
+    # ====================================================================
+    # Rename
+    # ====================================================================
+
+    def rename(self, idx, str new_id):
+        """Rename a rain gage.
+
+        @param idx: Gage index (int) or current gage ID (str).
+        @type idx: Union[int, str]
+        @param new_id: New identifier string.
+        @type new_id: str
+        @raise KeyError: If C{idx} is a string and the gage ID is not found.
+        @raise EngineError: If the C API rejects the rename.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_gage_rename(h, i, b))
+

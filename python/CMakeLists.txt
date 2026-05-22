@@ -93,6 +93,15 @@ endif()
 # ============================================================================
 set(CMAKE_MACOSX_RPATH          ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# Append the linked engine dylib directory to each extension's install rpath
+# automatically.  For a pre-built engine install (OPENSWMM_ENGINE_INSTALL_PREFIX)
+# this adds prefix/lib; for an editable build it adds the build-tree dir.
+# delocate/auditwheel rewrite all rpaths for wheel distribution anyway.
+if(NOT WIN32)
+    set(CMAKE_SKIP_BUILD_RPATH            FALSE)
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH    FALSE)
+    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+endif()
 set(CMAKE_INSTALL_OPENMP_LIBRARIES  TRUE)
 include(InstallRequiredSystemLibraries)
 

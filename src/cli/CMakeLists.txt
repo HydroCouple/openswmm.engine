@@ -29,17 +29,18 @@ set_target_properties(openswmm
 )
 
 if(APPLE)
-    set(LIB_ROOT "@loader_path;@rpath;@loader_path/../lib;@rpath/../lib")
+    # @loader_path      — co-located (single-dir installs)
+    # @loader_path/../lib — standard prefix layout (bin/ → ../lib/)
+    set(LIB_ROOT "@loader_path;@loader_path/../lib")
 elseif(UNIX)
     set(LIB_ROOT "$ORIGIN;$ORIGIN/../lib")
 endif()
 
-set_target_properties(openswmm
-    PROPERTIES
+if(NOT WIN32)
+    set_target_properties(openswmm PROPERTIES
         INSTALL_RPATH "${LIB_ROOT}"
-        BUILD_RPATH "${LIB_ROOT}"
-        BUILD_WITH_INSTALL_RPATH TRUE
-)
+    )
+endif()
 
 install(TARGETS openswmm DESTINATION bin)
 

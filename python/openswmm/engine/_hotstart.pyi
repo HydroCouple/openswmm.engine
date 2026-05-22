@@ -286,3 +286,84 @@ class HotStart:
         @rtype: bool
         """
         ...
+
+    # ====================================================================
+    # Save-schedule helpers (engine-side [SAVE HOTSTART] registry)
+    # ====================================================================
+
+    @staticmethod
+    def saves_count(solver: Solver) -> int:
+        """Return the number of scheduled hotstart saves on an engine.
+
+        @param solver: An active L{Solver} instance.
+        @return: Number of SAVE HOTSTART entries.
+        """
+        ...
+
+    @staticmethod
+    def saves_get_path(solver: Solver, idx: int) -> str:
+        """Return the file path for a scheduled hotstart save entry.
+
+        @param solver: An active L{Solver} instance.
+        @param idx: Save entry index.
+        @return: File path string.
+        """
+        ...
+
+    @staticmethod
+    def saves_get_datetime(solver: Solver, idx: int) -> float:
+        """Return the datetime (decimal day) for a scheduled hotstart save.
+
+        @param solver: An active L{Solver} instance.
+        @param idx: Save entry index.
+        @return: OADate decimal-day datetime (C{0.0} = end of run).
+        """
+        ...
+
+    @staticmethod
+    def saves_set_path(solver: Solver, idx: int, path: str) -> None:
+        """Update the file path for an existing scheduled hotstart save.
+
+        @param solver: An active L{Solver} instance.
+        @param idx: Save entry index.
+        @param path: New file path.
+        """
+        ...
+
+    @staticmethod
+    def saves_set_datetime(solver: Solver, idx: int, datetime: float) -> None:
+        """Update the datetime for an existing scheduled hotstart save.
+
+        @param solver: An active L{Solver} instance.
+        @param idx: Save entry index.
+        @param datetime: OADate decimal-day (C{0.0} = end of run).
+        """
+        ...
+
+    @staticmethod
+    def saves_add(solver: Solver, path: str, datetime: float = 0.0) -> None:
+        """Append a new scheduled hotstart save entry.
+
+        @param solver: An active L{Solver} instance.
+        @param path: Output file path.
+        @param datetime: OADate decimal-day (C{0.0} = end of run).
+        """
+        ...
+
+    @staticmethod
+    def saves_remove(solver: Solver, idx: int) -> None:
+        """Remove a scheduled hotstart save entry by index.
+
+        @param solver: An active L{Solver} instance.
+        @param idx: Index of the entry to remove.
+        """
+        ...
+
+    @staticmethod
+    def saves_clear(solver: Solver) -> None:
+        """Remove all scheduled hotstart save entries.
+
+        @param solver: An active L{Solver} instance.
+        """
+        ...
+

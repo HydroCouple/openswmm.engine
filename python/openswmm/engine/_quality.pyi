@@ -57,6 +57,14 @@ class Quality:
         """
         ...
 
+    def landuse_add(self, landuse_id: str) -> int:
+        """Add a new land use to the model.
+
+        @param landuse_id: Identifier string for the new land use.
+        @return: Index of the newly created land use.
+        """
+        ...
+
     def landuse_index(self, id: str) -> int:
         """Return the index of a land use by ID.
 
