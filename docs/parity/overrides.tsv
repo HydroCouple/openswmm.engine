@@ -55,6 +55,37 @@ swmm_options_set_end_date	parity	via _solver.Solver.end_datetime / _model.ModelB
 swmm_options_get_report_start	parity	via _solver.Solver.report_start_datetime / _model.ModelBuilder.report_start_datetime properties.
 swmm_options_set_report_start	parity	via _solver.Solver.report_start_datetime / _model.ModelBuilder.report_start_datetime setters.
 
+# Output reader (Phase 2.5): metadata / count getters subsumed by the
+# analysis.output_metadata aggregate tool.
+swmm_output_close	intentional	OutputReader lifecycle managed by SimSession; no standalone close tool.
+swmm_output_get_version	parity	via analysis.output_metadata.
+swmm_output_get_flow_units	parity	via analysis.output_metadata; also surfaced via lifecycle.open_model summary.
+swmm_output_get_node_count	parity	via analysis.output_metadata; also via query.get_node_info / lifecycle summary.
+swmm_output_get_link_count	parity	via analysis.output_metadata.
+swmm_output_get_subcatch_count	parity	via analysis.output_metadata.
+swmm_output_get_pollut_count	parity	via analysis.output_pollutant_count + analysis.output_metadata.
+swmm_output_get_report_step	parity	via analysis.output_metadata.
+swmm_output_get_start_date	parity	via analysis.output_metadata.
+swmm_output_get_error_code	parity	via analysis.output_metadata; engine surfaces failures as EngineError elsewhere.
+swmm_output_get_node_id	parity	via query.get_node_info (string id round-trip) + lifecycle summary listings.
+swmm_output_get_link_id	parity	via query.get_link_info + listings.
+swmm_output_get_subcatch_id	parity	via query.get_subcatchment_info + listings.
+
+# Output reader (Phase 2.5): time-series readers subsumed by
+# analysis.get_time_series (handles node / link / subcatchment / system).
+swmm_output_get_node_series	parity	via analysis.get_time_series with element_type='node'.
+swmm_output_get_link_series	parity	via analysis.get_time_series with element_type='link'.
+swmm_output_get_subcatch_series	parity	via analysis.get_time_series with element_type='subcatchment'.
+swmm_output_get_system_series	parity	via analysis.get_time_series with element_type='system'.
+
+# Output reader: per-period "result" arrays (one variable across all
+# objects at one period). These complement the attribute readers
+# (one object, all variables) but are not yet exposed as standalone
+# MCP tools. Could be added in a Phase 2.5 follow-up.
+swmm_output_get_node_result	mcp-gap	Phase 2.5 follow-up: per-period array of one variable across all nodes.
+swmm_output_get_link_result	mcp-gap	Phase 2.5 follow-up: per-period array of one variable across all links.
+swmm_output_get_subcatch_result	mcp-gap	Phase 2.5 follow-up: per-period array of one variable across all subcatchments.
+
 # ----------------------------------------------------------------------------
 # True py-gaps confirmed (Phase 1 implementation targets).
 # Listed here only when they need a richer note than the default classification.

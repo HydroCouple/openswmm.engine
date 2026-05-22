@@ -8,6 +8,14 @@ analysis	get_pump_summary	analysis	tool	(ctx: Context, session_id: str='default'
 analysis	get_report_snapshot	analysis	tool	(ctx: Context, session_id: str='default') -> ReportSnapshotModel
 analysis	get_statistics	analysis	tool	(ctx: Context, session_id: str='default', element_type: str='node', element_id: str='') -> dict
 analysis	get_time_series	analysis	tool	(ctx: Context, session_id: str='default', element_type: str='node', element_id: str='', variable: str='depth', start_period: int=0, end_period: int=-1, downsample: int=1) -> TimeSeries
+analysis	output_link_attribute	analysis	tool	(ctx: Context, session_id: str='default', link_id: str='', period: int=0) -> dict
+analysis	output_metadata	analysis	tool	(ctx: Context, session_id: str='default') -> dict
+analysis	output_node_attribute	analysis	tool	(ctx: Context, session_id: str='default', node_id: str='', period: int=0) -> dict
+analysis	output_period_count	analysis	tool	(ctx: Context, session_id: str='default') -> dict
+analysis	output_period_time	analysis	tool	(ctx: Context, session_id: str='default', period: int=0) -> dict
+analysis	output_pollutant_count	analysis	tool	(ctx: Context, session_id: str='default') -> dict
+analysis	output_subcatch_attribute	analysis	tool	(ctx: Context, session_id: str='default', subcatch_id: str='', period: int=0) -> dict
+analysis	output_system_result	analysis	tool	(ctx: Context, session_id: str='default', variable: str='rainfall', period: int=0) -> dict
 building	add_curve	building	tool	(ctx: Context, session_id: str='default', name: str='', curve_type: str='storage', x_values: list[float] | None=None, y_values: list[float] | None=None) -> dict
 building	add_gage	building	tool	(ctx: Context, session_id: str='default', gage_id: str='') -> BuildingResult
 building	add_link	building	tool	(ctx: Context, session_id: str='default', link_id: str='', link_type: str='conduit', from_node: str='', to_node: str='', length: float=100.0, roughness: float=0.013, xsect_shape: str='circular', xsect_geom1: float=1.0, xsect_geom2: float=0.0, xsect_geom3: float=0.0, xsect_geom4: float=0.0) -> BuildingResult
@@ -101,7 +109,8 @@ query	get_node_info	query	tool	(ctx: Context, session_id: str='default', node_id
 query	get_pollutant_info	query	tool	(ctx: Context, session_id: str='default', pollutant_id: str | None=None) -> PollutantInfo | list[PollutantInfo]
 query	get_subcatchment_info	query	tool	(ctx: Context, session_id: str='default', subcatch_id: str | None=None) -> SubcatchmentInfo | list[SubcatchmentInfo]
 query	get_system_summary	query	tool	(ctx: Context, session_id: str='default') -> SystemSummary
-resources	link_detail	model	resource	(session_id: str, link_id: str, ctx: Context) -> str
+resources	link_detail	model	resource	(session_id: str, link_id: str, ctx: Context) -> str# 148 entries (139 tools, 9 resources) across 15 modules
+
 resources	list_links	model	resource	(session_id: str, ctx: Context) -> str
 resources	list_nodes	model	resource	(session_id: str, ctx: Context) -> str
 resources	list_sessions	model	resource	(ctx: Context) -> str
@@ -111,8 +120,7 @@ resources	node_detail	model	resource	(session_id: str, node_id: str, ctx: Contex
 resources	session_summary	model	resource	(session_id: str, ctx: Context) -> str
 resources	simulation_options	model	resource	(session_id: str, ctx: Context) -> str
 spatial_quality	add_lid	spatial_quality	tool	(ctx: Context, session_id: str='default', subcatch_id: str='', lid_idx: int=0, number: int=1, area: float=0.0, width: float=0.0, init_sat: float=0.0, from_imperv: float=1.0) -> dict
-spatial_quality	get_all_coordinates	spatial_quality	tool	(ctx: Context, session_id: str='default', element_type: str='node') -> dict# 140 entries (131 tools, 9 resources) across 15 modules
-
+spatial_quality	get_all_coordinates	spatial_quality	tool	(ctx: Context, session_id: str='default', element_type: str='node') -> dict
 spatial_quality	get_all_polygons	spatial_quality	tool	(ctx: Context, session_id: str='default') -> dict
 spatial_quality	get_all_vertices	spatial_quality	tool	(ctx: Context, session_id: str='default') -> dict
 spatial_quality	get_coordinates	spatial_quality	tool	(ctx: Context, session_id: str='default', element_type: str='node', element_id: str='') -> SpatialResult
