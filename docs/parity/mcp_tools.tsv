@@ -9,12 +9,15 @@ analysis	get_report_snapshot	analysis	tool	(ctx: Context, session_id: str='defau
 analysis	get_statistics	analysis	tool	(ctx: Context, session_id: str='default', element_type: str='node', element_id: str='') -> dict
 analysis	get_time_series	analysis	tool	(ctx: Context, session_id: str='default', element_type: str='node', element_id: str='', variable: str='depth', start_period: int=0, end_period: int=-1, downsample: int=1) -> TimeSeries
 analysis	output_link_attribute	analysis	tool	(ctx: Context, session_id: str='default', link_id: str='', period: int=0) -> dict
+analysis	output_link_results	analysis	tool	(ctx: Context, session_id: str='default', variable: str='flow', period: int=0) -> dict
 analysis	output_metadata	analysis	tool	(ctx: Context, session_id: str='default') -> dict
 analysis	output_node_attribute	analysis	tool	(ctx: Context, session_id: str='default', node_id: str='', period: int=0) -> dict
+analysis	output_node_results	analysis	tool	(ctx: Context, session_id: str='default', variable: str='depth', period: int=0) -> dict
 analysis	output_period_count	analysis	tool	(ctx: Context, session_id: str='default') -> dict
 analysis	output_period_time	analysis	tool	(ctx: Context, session_id: str='default', period: int=0) -> dict
 analysis	output_pollutant_count	analysis	tool	(ctx: Context, session_id: str='default') -> dict
 analysis	output_subcatch_attribute	analysis	tool	(ctx: Context, session_id: str='default', subcatch_id: str='', period: int=0) -> dict
+analysis	output_subcatch_results	analysis	tool	(ctx: Context, session_id: str='default', variable: str='runoff', period: int=0) -> dict
 analysis	output_system_result	analysis	tool	(ctx: Context, session_id: str='default', variable: str='rainfall', period: int=0) -> dict
 building	add_curve	building	tool	(ctx: Context, session_id: str='default', name: str='', curve_type: str='storage', x_values: list[float] | None=None, y_values: list[float] | None=None) -> dict
 building	add_gage	building	tool	(ctx: Context, session_id: str='default', gage_id: str='') -> BuildingResult
@@ -106,11 +109,11 @@ query	find_elements	query	tool	(ctx: Context, session_id: str='default', pattern
 query	get_gage_info	query	tool	(ctx: Context, session_id: str='default', gage_id: str | None=None) -> GageInfo | list[GageInfo]
 query	get_link_info	query	tool	(ctx: Context, session_id: str='default', link_id: str | None=None) -> LinkInfo | list[LinkInfo]
 query	get_node_info	query	tool	(ctx: Context, session_id: str='default', node_id: str | None=None, properties: list[str] | None=None) -> NodeInfo | list[NodeInfo]
-query	get_pollutant_info	query	tool	(ctx: Context, session_id: str='default', pollutant_id: str | None=None) -> PollutantInfo | list[PollutantInfo]
+query	get_pollutant_info	query	tool	(ctx: Context, session_id: str='default', pollutant_id: str | None=None) -> PollutantInfo | list[PollutantInfo]# 151 entries (142 tools, 9 resources) across 15 modules
+
 query	get_subcatchment_info	query	tool	(ctx: Context, session_id: str='default', subcatch_id: str | None=None) -> SubcatchmentInfo | list[SubcatchmentInfo]
 query	get_system_summary	query	tool	(ctx: Context, session_id: str='default') -> SystemSummary
-resources	link_detail	model	resource	(session_id: str, link_id: str, ctx: Context) -> str# 148 entries (139 tools, 9 resources) across 15 modules
-
+resources	link_detail	model	resource	(session_id: str, link_id: str, ctx: Context) -> str
 resources	list_links	model	resource	(session_id: str, ctx: Context) -> str
 resources	list_nodes	model	resource	(session_id: str, ctx: Context) -> str
 resources	list_sessions	model	resource	(ctx: Context) -> str

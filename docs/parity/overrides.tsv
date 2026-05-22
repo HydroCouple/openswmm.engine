@@ -79,12 +79,10 @@ swmm_output_get_subcatch_series	parity	via analysis.get_time_series with element
 swmm_output_get_system_series	parity	via analysis.get_time_series with element_type='system'.
 
 # Output reader: per-period "result" arrays (one variable across all
-# objects at one period). These complement the attribute readers
-# (one object, all variables) but are not yet exposed as standalone
-# MCP tools. Could be added in a Phase 2.5 follow-up.
-swmm_output_get_node_result	mcp-gap	Phase 2.5 follow-up: per-period array of one variable across all nodes.
-swmm_output_get_link_result	mcp-gap	Phase 2.5 follow-up: per-period array of one variable across all links.
-swmm_output_get_subcatch_result	mcp-gap	Phase 2.5 follow-up: per-period array of one variable across all subcatchments.
+# objects at one period).
+swmm_output_get_node_result	parity	via analysis.output_node_results (plural; returns {id, index, value} records).
+swmm_output_get_link_result	parity	via analysis.output_link_results (plural).
+swmm_output_get_subcatch_result	parity	via analysis.output_subcatch_results (plural).
 
 # ----------------------------------------------------------------------------
 # True py-gaps confirmed (Phase 1 implementation targets).

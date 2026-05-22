@@ -1,6 +1,6 @@
 {
   "counts": {
-    "mcp-gap": 365,
+    "mcp-gap": 362,
     "mcp-gap-2d": 45
   },
   "gaps": {
@@ -252,9 +252,6 @@
       "swmm_node_set_storage_functional",
       "swmm_node_set_storage_seep_rate",
       "swmm_node_set_surcharge_depth",
-      "swmm_output_get_link_result",
-      "swmm_output_get_node_result",
-      "swmm_output_get_subcatch_result",
       "swmm_link_set_quality",
       "swmm_node_set_quality",
       "swmm_pollutant_count",
