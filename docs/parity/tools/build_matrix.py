@@ -75,7 +75,7 @@ MCP_DOMAIN_HINTS: dict[str, list[str]] = {
     "pollutants": ["query", "building"],
     "hotstart": ["hotstart"],
     "tables": ["tables", "building"],
-    "controls": ["forcing"],
+    "controls": ["controls", "forcing"],
     "forcing": ["forcing"],
     "inflows": ["inflows", "forcing", "building"],
     "infrastructure": ["spatial_quality"],

@@ -21,6 +21,13 @@ building	pop_last_node	building	tool	(ctx: Context, session_id: str='default', n
 building	set_option	building	tool	(ctx: Context, session_id: str='default', option: str='', value: str='') -> dict
 building	validate_model	building	tool	(ctx: Context, session_id: str='default') -> dict
 building	write_model	building	tool	(ctx: Context, session_id: str='default', output_path: str='') -> dict
+controls	add_rule	controls	tool	(ctx: Context, session_id: str='default', rule_text: str='') -> dict
+controls	clear_rules	controls	tool	(ctx: Context, session_id: str='default') -> dict
+controls	count	controls	tool	(ctx: Context, session_id: str='default') -> dict
+controls	get_rule	controls	tool	(ctx: Context, session_id: str='default', rule_index: int=0) -> dict
+controls	list_rules	controls	tool	(ctx: Context, session_id: str='default') -> dict
+controls	set_link_setting	controls	tool	(ctx: Context, session_id: str='default', link_id: str | int='', setting: float=0.0) -> dict
+controls	set_link_status	controls	tool	(ctx: Context, session_id: str='default', link_id: str | int='', open: bool=True) -> dict
 editing	analyze_impact	editing	tool	(ctx: Context, session_id: str='default', object_type: str='node', object_id: str='') -> ImpactReportModel
 editing	configure_gage	editing	tool	(ctx: Context, session_id: str='default', gage_id: str='', rain_type: str | None=None, rain_interval: float | None=None, data_source: str | None=None, timeseries_id: str | None=None, filename: str | None=None, station_id: str | None=None) -> GageConfigResult
 editing	convert_link	editing	tool	(ctx: Context, session_id: str='default', link_id: str='', new_type: str='conduit') -> ConversionResultModel
@@ -45,8 +52,7 @@ hotstart	clone_session	hotstart	tool	(ctx: Context, source_id: str='', target_id
 hotstart	load_hotstart	hotstart	tool	(ctx: Context, session_id: str='default', path: str='') -> HotStartResult
 hotstart	save_hotstart	hotstart	tool	(ctx: Context, session_id: str='default', path: str='') -> HotStartResult
 inflows	add_dwf	inflows	tool	(ctx: Context, session_id: str='default', node_id: str | int='', constituent: str='FLOW', avg_value: float=0.0, monthly_pattern: str='', daily_pattern: str='', hourly_pattern: str='', weekend_pattern: str='') -> dict
-inflows	add_external	inflows	tool	(ctx: Context, session_id: str='default', node_id: str | int='', constituent: str='FLOW', ts_name: str='', inflow_type: str='FLOW', m_factor: float=1.0, s_factor: float=1.0, baseline: float=0.0, pattern: str='') -> dict# 113 entries (104 tools, 9 resources) across 13 modules
-
+inflows	add_external	inflows	tool	(ctx: Context, session_id: str='default', node_id: str | int='', constituent: str='FLOW', ts_name: str='', inflow_type: str='FLOW', m_factor: float=1.0, s_factor: float=1.0, baseline: float=0.0, pattern: str='') -> dict
 inflows	add_hydrograph	inflows	tool	(ctx: Context, session_id: str='default', uh_name: str='', month: str | int='all', response: str | int='short', r: float=0.0, t: float=0.0, k: float=1.0, dmax: float=0.0, drecov: float=0.0, dinit: float=0.0) -> dict
 inflows	add_hydrograph_gage	inflows	tool	(ctx: Context, session_id: str='default', uh_name: str='', gage_name: str='') -> dict
 inflows	add_rdii	inflows	tool	(ctx: Context, session_id: str='default', node_id: str | int='', uh_name: str='', area: float=0.0) -> dict
@@ -109,7 +115,8 @@ tables	get_index	tables	tool	(ctx: Context, session_id: str='default', table_id:
 tables	get_point	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', point_index: int=0) -> dict
 tables	get_point_count	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='') -> dict
 tables	get_points	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='') -> dict
-tables	lookup	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', x: float=0.0) -> dict
+tables	lookup	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', x: float=0.0) -> dict# 120 entries (111 tools, 9 resources) across 14 modules
+
 tables	pattern_add	tables	tool	(ctx: Context, session_id: str='default', pattern_id: str='', pattern_type: str='monthly', factors: list[float] | None=None) -> dict
 tables	pattern_count	tables	tool	(ctx: Context, session_id: str='default') -> dict
 tables	pattern_set_factors	tables	tool	(ctx: Context, session_id: str='default', pattern_index: int=0, factors: list[float] | None=None) -> dict

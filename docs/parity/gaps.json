@@ -1,14 +1,10 @@
 {
   "counts": {
-    "mcp-gap": 408,
+    "mcp-gap": 404,
     "mcp-gap-2d": 45
   },
   "gaps": {
     "mcp-gap": [
-      "swmm_control_clear_rules",
-      "swmm_control_count",
-      "swmm_control_set_link_setting",
-      "swmm_control_set_link_status",
       "swmm_engine_create",
       "swmm_engine_destroy",
       "swmm_engine_end",
