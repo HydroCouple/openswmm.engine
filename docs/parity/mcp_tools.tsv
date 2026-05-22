@@ -24,6 +24,7 @@ building	write_model	building	tool	(ctx: Context, session_id: str='default', out
 controls	add_rule	controls	tool	(ctx: Context, session_id: str='default', rule_text: str='') -> dict
 controls	clear_rules	controls	tool	(ctx: Context, session_id: str='default') -> dict
 controls	count	controls	tool	(ctx: Context, session_id: str='default') -> dict
+controls	get_id	controls	tool	(ctx: Context, session_id: str='default', rule_index: int=0) -> dict
 controls	get_rule	controls	tool	(ctx: Context, session_id: str='default', rule_index: int=0) -> dict
 controls	list_rules	controls	tool	(ctx: Context, session_id: str='default') -> dict
 controls	set_link_setting	controls	tool	(ctx: Context, session_id: str='default', link_id: str | int='', setting: float=0.0) -> dict
@@ -65,8 +66,27 @@ inflows	get_rdii	inflows	tool	(ctx: Context, session_id: str='default', entry_in
 inflows	get_rdii_decay	inflows	tool	(ctx: Context, session_id: str='default', entry_index: int=0) -> dict
 inflows	hydrograph_count	inflows	tool	(ctx: Context, session_id: str='default') -> dict
 inflows	hydrograph_gage_count	inflows	tool	(ctx: Context, session_id: str='default') -> dict
+inflows	hydrograph_group_count	inflows	tool	(ctx: Context, session_id: str='default') -> dict
+inflows	list_hydrograph_groups	inflows	tool	(ctx: Context, session_id: str='default') -> dict
 inflows	rdii_count	inflows	tool	(ctx: Context, session_id: str='default') -> dict
 inflows	rdii_decay_count	inflows	tool	(ctx: Context, session_id: str='default') -> dict
+infrastructure	add_inlet	infrastructure	tool	(ctx: Context, session_id: str='default', inlet_id: str='', inlet_type: str='') -> dict
+infrastructure	add_lid	infrastructure	tool	(ctx: Context, session_id: str='default', lid_id: str='', lid_type: str='bio_cell') -> dict
+infrastructure	add_lid_usage	infrastructure	tool	(ctx: Context, session_id: str='default', subcatch_id: str | int='', lid_index: int=0, number: int=1, area: float=0.0, width: float=0.0, init_sat: float=0.0, from_imperv: float=1.0) -> dict
+infrastructure	add_street	infrastructure	tool	(ctx: Context, session_id: str='default', street_id: str='') -> dict
+infrastructure	add_transect	infrastructure	tool	(ctx: Context, session_id: str='default', transect_id: str='') -> dict
+infrastructure	add_transect_station	infrastructure	tool	(ctx: Context, session_id: str='default', transect_index: int=0, station: float=0.0, elevation: float=0.0) -> dict
+infrastructure	inlet_count	infrastructure	tool	(ctx: Context, session_id: str='default') -> dict
+infrastructure	lid_count	infrastructure	tool	(ctx: Context, session_id: str='default') -> dict
+infrastructure	set_inlet_params	infrastructure	tool	(ctx: Context, session_id: str='default', inlet_index: int=0, length: float=0.0, width: float=0.0, grate_type: str='', open_area: float=0.0, splash_veloc: float=0.0) -> dict
+infrastructure	set_lid_drain	infrastructure	tool	(ctx: Context, session_id: str='default', lid_index: int=0, coeff: float=0.0, expon: float=0.0, offset: float=0.0) -> dict
+infrastructure	set_lid_soil	infrastructure	tool	(ctx: Context, session_id: str='default', lid_index: int=0, thick: float=0.0, porosity: float=0.0, fc: float=0.0, wp: float=0.0, ksat: float=0.0, kslope: float=0.0) -> dict
+infrastructure	set_lid_storage	infrastructure	tool	(ctx: Context, session_id: str='default', lid_index: int=0, thick: float=0.0, void_frac: float=0.0, ksat: float=0.0) -> dict
+infrastructure	set_lid_surface	infrastructure	tool	(ctx: Context, session_id: str='default', lid_index: int=0, storage: float=0.0, roughness: float=0.0, slope: float=0.0) -> dict
+infrastructure	set_street_params	infrastructure	tool	(ctx: Context, session_id: str='default', street_index: int=0, t_crown: float=0.0, h_curb: float=0.0, sx: float=0.0, n_road: float=0.0, gutter_depres: float=0.0, gutter_width: float=0.0, sides: int=1, back_width: float=0.0, back_slope: float=0.0, back_n: float=0.0) -> dict
+infrastructure	set_transect_roughness	infrastructure	tool	(ctx: Context, session_id: str='default', transect_index: int=0, n_left: float=0.0, n_right: float=0.0, n_channel: float=0.0) -> dict
+infrastructure	street_count	infrastructure	tool	(ctx: Context, session_id: str='default') -> dict
+infrastructure	transect_count	infrastructure	tool	(ctx: Context, session_id: str='default') -> dict
 lifecycle	close_model	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
 lifecycle	get_simulation_state	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
 lifecycle	get_simulation_time	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
@@ -91,7 +111,8 @@ resources	node_detail	model	resource	(session_id: str, node_id: str, ctx: Contex
 resources	session_summary	model	resource	(session_id: str, ctx: Context) -> str
 resources	simulation_options	model	resource	(session_id: str, ctx: Context) -> str
 spatial_quality	add_lid	spatial_quality	tool	(ctx: Context, session_id: str='default', subcatch_id: str='', lid_idx: int=0, number: int=1, area: float=0.0, width: float=0.0, init_sat: float=0.0, from_imperv: float=1.0) -> dict
-spatial_quality	get_all_coordinates	spatial_quality	tool	(ctx: Context, session_id: str='default', element_type: str='node') -> dict
+spatial_quality	get_all_coordinates	spatial_quality	tool	(ctx: Context, session_id: str='default', element_type: str='node') -> dict# 140 entries (131 tools, 9 resources) across 15 modules
+
 spatial_quality	get_all_polygons	spatial_quality	tool	(ctx: Context, session_id: str='default') -> dict
 spatial_quality	get_all_vertices	spatial_quality	tool	(ctx: Context, session_id: str='default') -> dict
 spatial_quality	get_coordinates	spatial_quality	tool	(ctx: Context, session_id: str='default', element_type: str='node', element_id: str='') -> SpatialResult
@@ -115,8 +136,7 @@ tables	get_index	tables	tool	(ctx: Context, session_id: str='default', table_id:
 tables	get_point	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', point_index: int=0) -> dict
 tables	get_point_count	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='') -> dict
 tables	get_points	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='') -> dict
-tables	lookup	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', x: float=0.0) -> dict# 120 entries (111 tools, 9 resources) across 14 modules
-
+tables	lookup	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', x: float=0.0) -> dict
 tables	pattern_add	tables	tool	(ctx: Context, session_id: str='default', pattern_id: str='', pattern_type: str='monthly', factors: list[float] | None=None) -> dict
 tables	pattern_count	tables	tool	(ctx: Context, session_id: str='default') -> dict
 tables	pattern_set_factors	tables	tool	(ctx: Context, session_id: str='default', pattern_index: int=0, factors: list[float] | None=None) -> dict

@@ -1,6 +1,6 @@
 {
   "counts": {
-    "mcp-gap": 404,
+    "mcp-gap": 388,
     "mcp-gap-2d": 45
   },
   "gaps": {
@@ -92,22 +92,6 @@
       "swmm_hotstart_set_node_head",
       "swmm_hotstart_set_subcatch_runoff",
       "swmm_hotstart_warning_count",
-      "swmm_inlet_add",
-      "swmm_inlet_count",
-      "swmm_inlet_set_params",
-      "swmm_lid_count",
-      "swmm_lid_set_drain",
-      "swmm_lid_set_soil",
-      "swmm_lid_set_storage",
-      "swmm_lid_set_surface",
-      "swmm_lid_usage_add",
-      "swmm_street_add",
-      "swmm_street_count",
-      "swmm_street_set_params",
-      "swmm_transect_add",
-      "swmm_transect_add_station",
-      "swmm_transect_count",
-      "swmm_transect_set_roughness",
       "swmm_link_count",
       "swmm_link_get_barrels",
       "swmm_link_get_capacity",
