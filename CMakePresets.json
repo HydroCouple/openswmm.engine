@@ -21,7 +21,7 @@
         {
             "name": "Windows",
             "inherits": "default",
-            "description": "Windows build using Visual Studio generator",
+            "description": "Windows Release (VS gen). FP policy: /fp:precise (IEEE-754, no FMA contraction). C extensions /we4013 promote implicit-decl to error.",
             "generator": "Visual Studio 17 2022",
             "toolset": {
                 "value": "v143",
@@ -30,17 +30,17 @@
             "binaryDir": "${sourceDir}/build/windows",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS": "/O2 /GL /fp:precise /W4 /we4013",
-                "CMAKE_CXX_FLAGS": "/O2 /GL /fp:precise /W4",
+                "CMAKE_C_FLAGS": "/fp:precise /W4 /we4013",
+                "CMAKE_CXX_FLAGS": "/fp:precise /W4",
                 "CMAKE_EXE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
                 "CMAKE_SHARED_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
                 "CMAKE_MODULE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
                 "CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS": "OFF",
-                "CMAKE_C_FLAGS_RELEASE": "/O2 /GL /fp:precise /W4",
-                "CMAKE_CXX_FLAGS_RELEASE": "/O2 /GL /fp:precise /W4",
-                "CMAKE_C_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise",
-                "CMAKE_CXX_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise"
+                "CMAKE_C_FLAGS_RELEASE": "/O2 /GL /Gy /Gw",
+                "CMAKE_CXX_FLAGS_RELEASE": "/O2 /GL /Gy /Gw",
+                "CMAKE_C_FLAGS_DEBUG": "/Zi /Od /DDEBUG",
+                "CMAKE_CXX_FLAGS_DEBUG": "/Zi /Od /DDEBUG"
             },
             "condition": {
                 "type": "equals",
@@ -51,7 +51,7 @@
         {
             "name": "Windows-debug",
             "inherits": "default-debug",
-            "description": "Windows build for debugging using Visual Studio generator",
+            "description": "Windows Debug (VS gen). FP policy: /fp:precise (IEEE-754, no FMA contraction). C extensions /we4013 promote implicit-decl to error.",
             "generator": "Visual Studio 17 2022",
             "toolset": {
                 "value": "v143",
@@ -60,12 +60,12 @@
             "binaryDir": "${sourceDir}/build/windows-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_FLAGS": "/Zi /Od /DDEBUG /W4 /we4013 /fp:precise",
-                "CMAKE_CXX_FLAGS": "/Zi /Od /DDEBUG /W4 /fp:precise",
+                "CMAKE_C_FLAGS": "/fp:precise /W4 /we4013",
+                "CMAKE_CXX_FLAGS": "/fp:precise /W4",
                 "CMAKE_EXE_LINKER_FLAGS": "/DEBUG",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-                "CMAKE_C_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise",
-                "CMAKE_CXX_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise"
+                "CMAKE_C_FLAGS_DEBUG": "/Zi /Od /DDEBUG",
+                "CMAKE_CXX_FLAGS_DEBUG": "/Zi /Od /DDEBUG"
             },
             "condition": {
                 "type": "equals",
@@ -76,21 +76,21 @@
         {
             "name": "Linux",
             "inherits": "default",
-            "description": "Linux build using Ninja generator",
+            "description": "Linux Release (Ninja). FP policy: -fno-fast-math -ffp-contract=off -fexcess-precision=standard (no FMA fusion, no excess precision). -fno-math-errno is safe perf (libm builtins, bit-identical math).",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/linux",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra -Werror=implicit-function-declaration -fvisibility=hidden",
-                "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra -fvisibility=hidden",
+                "CMAKE_C_FLAGS": "-Wall -Wextra -Werror=implicit-function-declaration -fno-fast-math -ffp-contract=off -fno-math-errno -fexcess-precision=standard -fvisibility=hidden",
+                "CMAKE_CXX_FLAGS": "-Wall -Wextra -fno-fast-math -ffp-contract=off -fno-math-errno -fexcess-precision=standard -fvisibility=hidden",
                 "CMAKE_EXE_LINKER_FLAGS": "-Wl,--gc-sections -flto",
                 "CMAKE_SHARED_LINKER_FLAGS": "-Wl,--gc-sections -flto",
                 "CMAKE_MODULE_LINKER_FLAGS": "-Wl,--gc-sections -flto",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-                "CMAKE_C_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra",
-                "CMAKE_CXX_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra",
-                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store"
+                "CMAKE_C_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf",
+                "CMAKE_CXX_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf",
+                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG"
             },
             "condition": {
                 "type": "equals",
@@ -101,17 +101,17 @@
         {
             "name": "Linux-debug",
             "inherits": "default-debug",
-            "description": "Linux build for debugging using Ninja generator",
+            "description": "Linux Debug (Ninja). Same FP policy as Linux preset (-fno-fast-math -ffp-contract=off -fexcess-precision=standard).",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/linux-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -Werror=implicit-function-declaration -fno-fast-math -fexcess-precision=standard -ffloat-store -fvisibility=hidden",
-                "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store -fvisibility=hidden",
+                "CMAKE_C_FLAGS": "-Wall -Wextra -Werror=implicit-function-declaration -fno-fast-math -ffp-contract=off -fno-math-errno -fexcess-precision=standard -fvisibility=hidden",
+                "CMAKE_CXX_FLAGS": "-Wall -Wextra -fno-fast-math -ffp-contract=off -fno-math-errno -fexcess-precision=standard -fvisibility=hidden",
                 "CMAKE_EXE_LINKER_FLAGS": "-g",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store"
+                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG"
             },
             "condition": {
                 "type": "equals",
@@ -122,7 +122,7 @@
         {
             "name": "Darwin",
             "inherits": "default",
-            "description": "macOS build using Ninja generator",
+            "description": "macOS Release (Ninja, clang). FP policy: -fno-fast-math -ffp-contract=off (no FMA fusion). -fexcess-precision is omitted: clang ignores it on x86_64/arm64. -fno-math-errno matches Apple clang default.",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/darwin",
             "environment": {
@@ -132,16 +132,16 @@
             },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -Werror=implicit-function-declaration -fvisibility=hidden",
-                "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -fvisibility=hidden",
+                "CMAKE_C_FLAGS": "-Wall -Wextra -Werror=implicit-function-declaration -fno-fast-math -ffp-contract=off -fno-math-errno -fvisibility=hidden",
+                "CMAKE_CXX_FLAGS": "-Wall -Wextra -fno-fast-math -ffp-contract=off -fno-math-errno -fvisibility=hidden",
                 "CMAKE_EXE_LINKER_FLAGS": "-Wl, -flto",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-                "CMAKE_C_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
-                "CMAKE_CXX_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
+                "CMAKE_C_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections",
+                "CMAKE_CXX_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections",
                 "CMAKE_SHARED_LINKER_FLAGS": "-flto -twolevel_namespace",
                 "CMAKE_MODULE_LINKER_FLAGS": "-flto",
-                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
+                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG",
                 "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64"
             },
             "condition": {
@@ -153,18 +153,18 @@
         {
             "name": "Darwin-debug",
             "inherits": "default-debug",
-            "description": "macOS build for debugging using Ninja generator",
+            "description": "macOS Debug (Ninja, clang). Same FP policy as Darwin preset (-fno-fast-math -ffp-contract=off -fno-math-errno).",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/darwin-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -Werror=implicit-function-declaration -fno-fast-math -fvisibility=hidden",
-                "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fvisibility=hidden",
+                "CMAKE_C_FLAGS": "-Wall -Wextra -Werror=implicit-function-declaration -fno-fast-math -ffp-contract=off -fno-math-errno -fvisibility=hidden",
+                "CMAKE_CXX_FLAGS": "-Wall -Wextra -fno-fast-math -ffp-contract=off -fno-math-errno -fvisibility=hidden",
                 "CMAKE_EXE_LINKER_FLAGS": "-g",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
                 "CMAKE_SHARED_LINKER_FLAGS": "-twolevel_namespace",
-                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math"
+                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG"
             },
             "condition": {
                 "type": "equals",
