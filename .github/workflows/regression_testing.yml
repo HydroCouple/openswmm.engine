@@ -3,6 +3,9 @@ name: Regression Testing
 on:
   push:
     branches: [main, develop]
+  pull_request:
+    branches: [master, main, develop]
+
   workflow_dispatch:
 
 env:
