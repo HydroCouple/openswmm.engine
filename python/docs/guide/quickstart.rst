@@ -22,11 +22,12 @@ engine handle, loads the model, and drives the simulation forward in time.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver
+    from openswmm.engine import Solver, EngineState
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
-        while s.step():
-            pass            # advance one routing step
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break       # non-zero return = engine error
 
 The context manager:
 
@@ -48,7 +49,7 @@ duplicate state — every accessor is a thin call into the engine.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Nodes, Links
+    from openswmm.engine import Solver, Nodes, Links, EngineState
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
         nodes = Nodes(s)
@@ -57,7 +58,9 @@ duplicate state — every accessor is a thin call into the engine.
         j1 = nodes.get_index("J1")          # name → integer index
         c1 = links.get_index("C1")
 
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             depth_at_j1 = nodes.get_depth(j1)
             flow_in_c1  = links.get_flow(c1)
             print(f"t={s.elapsed:.4f} d  J1.depth={depth_at_j1:.3f}  C1.flow={flow_in_c1:.3f}")
@@ -78,7 +81,7 @@ return a contiguous :class:`numpy.ndarray` filled in one C call:
 .. code-block:: python
 
     import numpy as np
-    from openswmm.engine import Solver, Nodes, Links
+    from openswmm.engine import Solver, Nodes, Links, EngineState
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
         nodes = Nodes(s)
@@ -87,7 +90,9 @@ return a contiguous :class:`numpy.ndarray` filled in one C call:
         depths_history = []
         flows_history  = []
 
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             depths_history.append(nodes.get_depths_bulk().copy())
             flows_history.append(links.get_flows_bulk().copy())
 
@@ -134,10 +139,17 @@ at the ``.out`` file to query time-series data:
 
     from openswmm.engine import OutputReader, OutNodeVar
 
-    reader = OutputReader("model.out")
-    times = reader.times()                              # list[datetime]
-    depth_series = reader.node_series("J1", OutNodeVar.DEPTH)
-    print(len(times), "steps, depth peak =", max(depth_series))
+    with OutputReader("model.out") as reader:
+        n = reader.get_period_count()
+        # Resolve "J1" to its zero-based index by scanning ids
+        j1 = next(
+            i for i in range(reader.get_node_count())
+            if reader.get_node_id(i) == "J1"
+        )
+        depth_series = reader.get_node_series(
+            j1, OutNodeVar.DEPTH, start=0, end=n - 1,
+        )
+        print(n, "steps, depth peak =", float(depth_series.max()))
 
 The :class:`OutputReader` is independent of any running solver — you
 can use it on a file produced by any past run.
@@ -152,7 +164,9 @@ programmatically:
 
 .. code-block:: python
 
-    from openswmm.engine import ModelBuilder, NodeType, LinkType, XSectShape
+    from openswmm.engine import (
+        ModelBuilder, NodeType, LinkType, XSectShape, EngineState,
+    )
 
     m = ModelBuilder()
     m.add_node("J1", NodeType.JUNCTION)
@@ -167,8 +181,9 @@ programmatically:
 
     solver = m.to_solver()                 # ready to run
     solver.start()
-    while solver.step():
-        pass
+    while solver.state == EngineState.RUNNING:
+        if solver.step() != 0:
+            break
     solver.end()
     solver.destroy()
 

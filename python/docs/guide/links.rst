@@ -83,9 +83,10 @@ Geometry
    * - :meth:`get_xsect`
      - ``(shape, geom1, geom2, geom3, geom4)``.
 
-Each ``get_*`` has a matching ``set_*`` valid in ``OPENED``.  The
-:meth:`set_link_xsect` flavour from :class:`ModelBuilder` is preferred
-when constructing a model from scratch.
+Each ``get_*`` has a matching ``set_*`` valid in ``OPENED``.  Use
+:meth:`set_xsect` to update the cross-section; :meth:`get_xsect_info`
+returns the shape and geometry as a structured object instead of a
+plain tuple.
 
 Hydraulic state
 ---------------
@@ -184,7 +185,7 @@ End-to-end example
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Links, Nodes, LinkType
+    from openswmm.engine import Solver, Links, Nodes, LinkType, EngineState
 
     with Solver("site_drainage.inp", "site_drainage.rpt", "site_drainage.out") as s:
         links = Links(s)
@@ -201,7 +202,9 @@ End-to-end example
         # watch a single conduit
         c1 = links.get_index("C1")
         peak_q = 0.0
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             q = links.get_flow(c1)
             if q > peak_q:
                 peak_q, t_peak = q, s.elapsed
@@ -218,7 +221,9 @@ Open / close a regulator on schedule
 .. code-block:: python
 
     gate = links.get_index("G1")
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         h = s.elapsed * 24.0
         # close the gate during peak rainfall (hour 6-9)
         links.set_target_setting(gate, 0.0 if 6.0 <= h <= 9.0 else 1.0)
@@ -234,7 +239,9 @@ Pump on / off based on upstream depth
     sumi = nodes.get_index("WET_WELL")
     on_threshold, off_threshold = 4.0, 1.5
     pumping = False
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         d = nodes.get_depth(sumi)
         if not pumping and d >= on_threshold:
             pumping = True
@@ -253,7 +260,7 @@ Re-jig a conduit's geometry mid-warm-up
     # Done once after open(), before initialize()
     s.open()
     c1 = links.get_index("C1")
-    links.set_link_xsect(c1, XSectShape.CIRCULAR, 1.5)   # bump from 1.0 to 1.5 m
+    links.set_xsect(c1, XSectShape.CIRCULAR, 1.5)        # bump from 1.0 to 1.5 m
     s.initialize()
     s.start()
     # ... loop ...
@@ -264,7 +271,9 @@ Identify pipes that ran over capacity
 .. code-block:: python
 
     overcap = []
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         for i in range(links.count()):
             if links.get_capacity(i) >= 0.999 and i not in overcap:
                 overcap.append(i)
@@ -304,7 +313,9 @@ Vectorised peak detection across all links:
     import numpy as np
 
     peaks = np.zeros(links.count(), dtype=np.float64)
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         peaks = np.maximum(peaks, np.abs(links.get_flows_bulk()))
 
     for i, q in enumerate(peaks):

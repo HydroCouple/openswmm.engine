@@ -120,7 +120,7 @@ End-to-end example
 .. code-block:: python
 
     from openswmm.engine import (
-        ModelBuilder, NodeType, LinkType, XSectShape,
+        ModelBuilder, NodeType, LinkType, XSectShape, EngineState,
     )
 
     m = ModelBuilder()
@@ -146,8 +146,9 @@ End-to-end example
 
     solver = m.to_solver()
     solver.start()
-    while solver.step():
-        pass
+    while solver.state == EngineState.RUNNING:
+        if solver.step() != 0:
+            break
     solver.end()
     solver.report()
     solver.close()

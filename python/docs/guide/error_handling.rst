@@ -28,7 +28,7 @@ call dispatches, so they don't carry an engine error code.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Nodes, EngineError
+    from openswmm.engine import Solver, Nodes, EngineError, EngineState
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
         nodes = Nodes(s)
@@ -54,23 +54,26 @@ The Solver moves through these states in strict order:
      - Value
      - Meaning
    * - ``CREATED``
-     - 1
+     - 0
      - Engine handle allocated; no input parsed.
    * - ``OPENED``
-     - 2
+     - 1
      - ``.inp`` parsed; objects accessible for inspection / editing.
    * - ``INITIALIZED``
-     - 3
+     - 2
      - Initial conditions applied; arrays allocated.
-   * - ``STARTED``
-     - 4
-     - Routing started; no time has elapsed.
    * - ``RUNNING``
-     - 5
-     - At least one step has been taken.
+     - 3
+     - ``start()`` called; routing loop active, ``step()`` callable.
+   * - ``PAUSED``
+     - 4
+     - Routing temporarily halted (reserved for future hot-swap support).
    * - ``ENDED``
-     - 6
+     - 5
      - ``end()`` called; cumulative results available.
+   * - ``REPORTED``
+     - 6
+     - ``report()`` called; summary written.
    * - ``CLOSED``
      - 7
      - ``close()`` called; ``.rpt`` / ``.out`` flushed.
@@ -179,7 +182,9 @@ Resolve names once, outside the loop
 .. code-block:: python
 
     j1 = nodes.get_index("J1")     # raises KeyError if not in model
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         d = nodes.get_depth(j1)    # no per-step name-lookup overhead
 
 This catches typos at startup rather than after a long run.
@@ -206,8 +211,9 @@ Verify continuity after the run
     from openswmm.engine import MassBalance
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
-        while s.step():
-            pass
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
         mb = MassBalance(s)
         if abs(mb.get_routing_continuity_error()) > 2.0:
             raise RuntimeError(
@@ -294,8 +300,9 @@ Print the report file
 .. code-block:: python
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
-        while s.step():
-            pass
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
     print(open("model.rpt").read())
 
 The ``.rpt`` file contains the engine's own warnings / errors and

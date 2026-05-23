@@ -122,10 +122,12 @@ End-to-end example
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Statistics, Nodes, Links
+    from openswmm.engine import Solver, Statistics, Nodes, Links, EngineState
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             pass                    # run to completion
 
         stats = Statistics(s)

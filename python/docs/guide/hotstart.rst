@@ -102,6 +102,43 @@ Inspection
    * - :meth:`warning_count()` / :meth:`get_warning(idx)`
      - Diagnostic warnings emitted at save / load.
 
+Scheduled saves (``[SAVE HOTSTART]`` registry)
+----------------------------------------------
+
+The engine maintains a list of times at which it should auto-save a
+hot-start file (``[SAVE HOTSTART]`` in the input file).  These
+``@staticmethod`` helpers act on a live :class:`Solver` and let you
+inspect or rewrite that schedule programmatically.  A datetime value
+of ``0.0`` means "at end of run".
+
+.. list-table::
+   :header-rows: 1
+   :widths: 45 55
+
+   * - Method
+     - Action / returns
+   * - :meth:`HotStart.saves_count(solver)`
+     - Number of scheduled-save entries.
+   * - :meth:`HotStart.saves_get_path(solver, idx)` / :meth:`saves_get_datetime(solver, idx)`
+     - Read back a scheduled entry.
+   * - :meth:`HotStart.saves_set_path(solver, idx, path)` / :meth:`saves_set_datetime(solver, idx, datetime)`
+     - Update an existing entry in place.
+   * - :meth:`HotStart.saves_add(solver, path, datetime=0.0)`
+     - Append a new scheduled save.
+   * - :meth:`HotStart.saves_remove(solver, idx)` / :meth:`saves_clear(solver)`
+     - Remove one entry or clear all.
+
+Example: schedule an end-of-day save while editing the model::
+
+    from openswmm.engine import Solver, HotStart
+
+    s = Solver("model.inp", "model.rpt", "model.out")
+    s.create(); s.open()
+    HotStart.saves_clear(s)
+    HotStart.saves_add(s, "eod.hsf", datetime=1.0)   # decimal day 1
+    s.initialize(); s.start()
+    # run …
+
 ----
 
 End-to-end example
@@ -112,12 +149,13 @@ Save state at end of warm-up, restart later
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, HotStart
+    from openswmm.engine import Solver, HotStart, EngineState
 
     # Step 1: warm up and save
     with Solver("model.inp", "warmup.rpt", "warmup.out") as s:
-        while s.elapsed < 0.5:                    # half a day of warm-up
-            s.step()
+        while s.state == EngineState.RUNNING and s.elapsed < 0.5:
+            if s.step() != 0:
+                break
         HotStart.save(s, "warmup.hsf")
         # context manager finishes the run for clean .rpt/.out
 
@@ -125,8 +163,9 @@ Save state at end of warm-up, restart later
     with Solver("model.inp", "main.rpt", "main.out") as s, \
          HotStart.open("warmup.hsf") as hs:
         hs.apply(s)
-        while s.step():
-            pass
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
 
 The hot-start file is portable: same machine or any machine with the
 matching engine version.
@@ -136,13 +175,16 @@ Patch state before applying
 
 .. code-block:: python
 
+    from openswmm.engine import EngineState
+
     with Solver("model.inp", "patched.rpt", "patched.out") as s, \
          HotStart.open("baseline.hsf") as hs:
         # Counterfactual: J1 depth bumped from baseline to test response
         hs.set_node_depth("J1", 4.0)
         hs.apply(s)
-        while s.step():
-            pass
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
 
 ----
 
@@ -166,10 +208,13 @@ End-of-day chain  (Monte Carlo storm sweep)
 
 .. code-block:: python
 
+    from openswmm.engine import EngineState
+
     # Build a baseline hot start once
     with Solver("baseline.inp", "", "") as s:
-        while s.elapsed < 1.0:                     # 1 day baseline
-            s.step()
+        while s.state == EngineState.RUNNING and s.elapsed < 1.0:
+            if s.step() != 0:
+                break
         HotStart.save(s, "baseline.hsf")
 
     # Run 50 storms from the baseline, in parallel
@@ -182,8 +227,9 @@ End-of-day chain  (Monte Carlo storm sweep)
              HotStart.open("baseline.hsf") as hs:
             hs.apply(s)
             inject_random_storm(s, seed=seed)
-            while s.step():
-                pass
+            while s.state == EngineState.RUNNING:
+                if s.step() != 0:
+                    break
         return out
 
     with ProcessPoolExecutor(max_workers=8) as pool:

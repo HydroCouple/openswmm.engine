@@ -95,7 +95,7 @@ End-to-end example
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Gages
+    from openswmm.engine import Solver, Gages, EngineState
 
     with Solver("site_drainage.inp", "site_drainage.rpt", "site_drainage.out") as s:
         gages = Gages(s)
@@ -103,7 +103,9 @@ End-to-end example
 
         rg1 = gages.get_index("RG1")
         peak_r, t_peak = 0.0, 0.0
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             r = gages.get_rainfall(rg1)
             if r > peak_r:
                 peak_r, t_peak = r, s.elapsed
@@ -120,7 +122,9 @@ Inject a custom hyetograph (one-shot per step)
 .. code-block:: python
 
     rg1 = gages.get_index("RG1")
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         h = s.elapsed * 24.0
         if 1.0 <= h < 4.0:
             gages.set_rainfall(rg1, 0.8)        # heavy rain hours 1-4
@@ -136,8 +140,9 @@ Sticky override via Forcing
 
     forcing = Forcing(s)
     forcing.gage_rainfall("RG1", 1.2, ForcingMode.REPLACE, persist=True)
-    while s.step():
-        pass
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
     forcing.clear_all()
 
 Bulk rainfall snapshot for every gage
@@ -148,7 +153,9 @@ Bulk rainfall snapshot for every gage
     import numpy as np
 
     history = []
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         history.append(gages.get_rainfall_bulk().copy())
     R = np.stack(history)        # shape (T, n_gages)
 

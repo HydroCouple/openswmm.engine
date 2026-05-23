@@ -112,7 +112,8 @@ Setters write the parameters appropriate for the active model.
    * - :meth:`get_infil_model`
      - Active :class:`InfilModel`.
    * - :meth:`set_infil_horton(...)` / :meth:`get_infil_horton`
-     - Max + min infiltration rate, decay constant, regen.
+     - Max + min infiltration rate (``f0``, ``fmin``), decay constant
+       (``decay``), drying time (``dry_time``).
    * - :meth:`set_infil_green_ampt(...)` / :meth:`get_infil_green_ampt`
      - Suction head, conductivity, initial deficit.
    * - :meth:`set_infil_curve_number(cn)` / :meth:`get_infil_curve_number`
@@ -197,7 +198,7 @@ End-to-end example
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Subcatchments
+    from openswmm.engine import Solver, Subcatchments, EngineState
 
     with Solver("site_drainage.inp", "site_drainage.rpt", "site_drainage.out") as s:
         sc = Subcatchments(s)
@@ -215,7 +216,9 @@ End-to-end example
         # accumulate runoff per subcatchment
         total = [0.0] * sc.count()
         dt = s.get_routing_step()
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             for i in range(sc.count()):
                 total[i] += sc.get_runoff(i) * dt
         for i, vol in enumerate(total):
@@ -234,7 +237,9 @@ One-shot per step:
 .. code-block:: python
 
     s1 = sc.get_index("S1")
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         sc.set_rainfall(s1, 0.5)        # in/hr or mm/hr per RAINFALL units
 
 Sticky:
@@ -245,8 +250,9 @@ Sticky:
 
     forcing = Forcing(s)
     forcing.subcatch_rainfall("S1", 0.5, ForcingMode.REPLACE, persist=True)
-    while s.step():
-        pass
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
     forcing.clear_all()
 
 Switch infiltration model parameters at runtime
@@ -261,7 +267,7 @@ Switch infiltration model parameters at runtime
         f0=3.0,         # initial rate
         fmin=0.05,      # final rate
         decay=4.0,      # /hr
-        regen=7.0,      # /day
+        dry_time=7.0,   # /day
     )
     s.initialize()
 
@@ -299,7 +305,9 @@ accessors.  Vectorise across the population manually:
     import numpy as np
 
     runoff = np.zeros(sc.count())
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         for i in range(sc.count()):
             runoff[i] += sc.get_runoff(i)
 

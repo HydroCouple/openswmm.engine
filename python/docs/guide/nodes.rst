@@ -195,7 +195,7 @@ End-to-end example
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Nodes, NodeType
+    from openswmm.engine import Solver, Nodes, NodeType, EngineState
 
     with Solver("site_drainage.inp", "site_drainage.rpt", "site_drainage.out") as s:
         nodes = Nodes(s)
@@ -209,7 +209,9 @@ End-to-end example
         # pick one and watch it
         j1 = nodes.get_index("J1")
         peak = 0.0
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             d = nodes.get_depth(j1)
             if d > peak:
                 peak = d
@@ -229,7 +231,9 @@ One-shot per step (overwritten at the start of every step):
 .. code-block:: python
 
     j1 = nodes.get_index("J1")
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         nodes.set_lateral_inflow(j1, 1.5)  # cfs (or m³/s, per FLOW_UNITS)
 
 Sticky (preserved by the engine across steps):
@@ -241,8 +245,9 @@ Sticky (preserved by the engine across steps):
     forcing = Forcing(s)
     j1 = nodes.get_index("J1")
     forcing.node_lat_inflow(j1, 1.5, ForcingMode.REPLACE, persist=True)
-    while s.step():
-        pass
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
     forcing.clear_all()
 
 Pulse: ramp inflow up between hours 1-3
@@ -251,7 +256,9 @@ Pulse: ramp inflow up between hours 1-3
 .. code-block:: python
 
     j1 = nodes.get_index("J1")
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         h = s.elapsed * 24.0
         if 1.0 <= h <= 3.0:
             ramp = 1.0 - abs((h - 2.0) / 1.0)   # triangular peak at t=2 h
@@ -267,7 +274,9 @@ Tide-driven outfall
     out1 = nodes.get_index("OUT1")
     nodes.set_outfall_type(out1, OutfallType.FIXED)
 
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         h = s.elapsed * 24.0
         # 12.42-hour M2 tide, mean stage 0, amplitude 1.5
         stage = 1.5 * math.sin(2 * math.pi * h / 12.42)
@@ -336,7 +345,9 @@ keep the array (e.g. across a step), call ``.copy()``:
     import numpy as np
 
     history = []
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         history.append(nodes.get_depths_bulk().copy())   # detach from scratch
     H = np.stack(history)              # shape (T, n_nodes)
 

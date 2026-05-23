@@ -58,9 +58,11 @@ Coordinates
    * - Method
      - Action / returns
    * - :meth:`get_node_coord(idx)` / :meth:`set_node_coord(idx, x, y)`
-     - Node point coordinates.
-   * - :meth:`get_node_coords_bulk()` / :meth:`set_node_coords_bulk(...)`
-     - Bulk read / write of every node's ``(x, y)``.
+     - Node point coordinates (returns ``(x, y)`` tuple).
+   * - :meth:`get_node_coords_bulk()` / :meth:`set_node_coords_bulk(x, y)`
+     - Bulk read / write of every node's coordinates.  Returns a tuple
+       of two ``ndarray[float64]`` of shape ``(n_nodes,)`` — *not* a 2-D
+       array — so unpack as ``x, y = spatial.get_node_coords_bulk()``.
    * - :meth:`get_link_coord(idx)` / :meth:`set_link_coord(idx, x, y)`
      - Link "centroid" / annotation point.
    * - :meth:`get_subcatch_coord(idx)` / :meth:`set_subcatch_coord(idx, x, y)`
@@ -78,11 +80,15 @@ Link vertices  (polylines)
    * - Method
      - Action / returns
    * - :meth:`get_link_vertex_count(idx)`
-     - Number of intermediate vertices on link ``idx``.
+     - Number of polyline vertices on link ``idx`` (includes upstream
+       + downstream node coordinates as first and last entries).
    * - :meth:`get_link_vertices(idx)`
-     - Return all vertex ``(x, y)`` coordinates.
-   * - :meth:`set_link_vertices(idx, ...)`
-     - Replace the vertex list.
+     - Tuple ``(x, y)`` of two ``ndarray[float64]`` of shape
+       ``(get_link_vertex_count(idx),)``.  Order is upstream node,
+       interior vertices, downstream node.
+   * - :meth:`set_link_vertices(idx, x, y)`
+     - Replace the vertex list; ``x`` and ``y`` are equal-length
+       ``ndarray[float64]``.
 
 Subcatchment polygons
 ---------------------
@@ -96,9 +102,11 @@ Subcatchment polygons
    * - :meth:`get_subcatch_polygon_count(idx)`
      - Number of vertices on the subcatchment polygon.
    * - :meth:`get_subcatch_polygon(idx)`
-     - All polygon ``(x, y)`` coordinates.
-   * - :meth:`set_subcatch_polygon(idx, ...)`
-     - Replace the polygon.
+     - Tuple ``(x, y)`` of two ``ndarray[float64]`` of shape
+       ``(get_subcatch_polygon_count(idx),)``.
+   * - :meth:`set_subcatch_polygon(idx, x, y)`
+     - Replace the polygon; ``x`` and ``y`` are equal-length
+       ``ndarray[float64]``.
 
 ----
 
@@ -139,26 +147,23 @@ Bulk-read every node coordinate into NumPy
 
 .. code-block:: python
 
-    coords = spatial.get_node_coords_bulk()    # ndarray, shape (n_nodes, 2)
-    # → coords[:, 0] = x, coords[:, 1] = y
+    x, y = spatial.get_node_coords_bulk()    # two ndarrays, shape (n_nodes,)
 
 Re-project node coordinates with pyproj
 ---------------------------------------
 
 .. code-block:: python
 
-    import numpy as np
     from pyproj import Transformer
 
     src_crs = spatial.get_crs() or "EPSG:6433"
     dst_crs = "EPSG:4326"
     tx = Transformer.from_crs(src_crs, dst_crs, always_xy=True)
 
-    coords = spatial.get_node_coords_bulk().copy()      # detach from scratch
-    lon, lat = tx.transform(coords[:, 0], coords[:, 1])
-    new = np.column_stack([lon, lat])
+    x, y = spatial.get_node_coords_bulk()      # detach implicitly via assignment
+    lon, lat = tx.transform(x, y)
 
-    spatial.set_node_coords_bulk(new)
+    spatial.set_node_coords_bulk(lon, lat)
     spatial.set_crs(dst_crs)
 
 Walk every link vertex
@@ -168,11 +173,12 @@ Walk every link vertex
 
     for i in range(links.count()):
         n = spatial.get_link_vertex_count(i)
-        if n > 0:
-            verts = spatial.get_link_vertices(i)
-            print(f"{links.get_id(i):<12} has {n} vertices")
-            for x, y in verts:
-                print(f"     ({x:.2f}, {y:.2f})")
+        if n == 0:
+            continue
+        xs, ys = spatial.get_link_vertices(i)
+        print(f"{links.get_id(i):<12} has {n} vertices (incl. endpoints)")
+        for x, y in zip(xs, ys):
+            print(f"     ({x:.2f}, {y:.2f})")
 
 Export every subcatchment polygon to GeoJSON
 --------------------------------------------
@@ -186,8 +192,9 @@ Export every subcatchment polygon to GeoJSON
         n = spatial.get_subcatch_polygon_count(i)
         if n < 3:
             continue
-        ring = spatial.get_subcatch_polygon(i)
-        ring_closed = list(ring) + [ring[0]]
+        xs, ys = spatial.get_subcatch_polygon(i)
+        ring = list(zip(xs.tolist(), ys.tolist()))
+        ring_closed = ring + [ring[0]]
         features.append({
             "type": "Feature",
             "id":   sc.get_id(i),
@@ -209,13 +216,17 @@ Bulk arrays
 
    * - Method
      - Shape
-   * - :meth:`get_node_coords_bulk`
-     - ``np.ndarray[float64]``, shape ``(n_nodes, 2)``.
-   * - :meth:`set_node_coords_bulk(arr)`
-     - Same shape; updates every node coordinate at once.
+   * - :meth:`get_node_coords_bulk()`
+     - Tuple ``(x, y)`` of two ``ndarray[float64]``, each of shape
+       ``(n_nodes,)``.
+   * - :meth:`set_node_coords_bulk(x, y)`
+     - Same shapes; updates every node coordinate at once.
+   * - :meth:`get_link_vertices(idx)` / :meth:`get_subcatch_polygon(idx)`
+     - Tuple ``(x, y)`` of equal-length ``ndarray[float64]``.
 
-For per-link or per-subcatchment polygons there is no bulk surface —
-the vertex counts vary per object, so you must walk them.
+For per-link or per-subcatchment polylines there is no project-wide
+bulk surface — the vertex counts vary per object, so you must walk
+them.
 
 ----
 

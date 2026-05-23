@@ -55,7 +55,10 @@ Lifecycle methods
    * - :meth:`Solver.start`
      - Start routing.  ``save_results=True`` writes ``.out``.
    * - :meth:`Solver.step`
-     - Advance one routing step.  Returns ``False`` at end.
+     - Advance one routing step.  Returns the C error code (``0`` on
+       success).  Poll :attr:`state` for completion.
+   * - :meth:`Solver.stride`
+     - Advance ``n_steps`` steps in one call.  Returns the C error code.
    * - :meth:`Solver.end`
      - Stop routing; finalize cumulative outputs.
    * - :meth:`Solver.report`
@@ -90,6 +93,54 @@ Inspection / time
      - Current simulation time (same epoch).
    * - :meth:`get_routing_step`
      - Current routing time step in seconds.
+   * - :attr:`Solver.start_datetime`
+     - Simulation start as a :class:`datetime.datetime`.
+   * - :attr:`Solver.end_datetime`
+     - Simulation end as a :class:`datetime.datetime`.
+   * - :attr:`Solver.report_start_datetime`
+     - Report start as a :class:`datetime.datetime`.
+   * - :meth:`get_option` / :meth:`set_option`
+     - Read or update ``[OPTIONS]`` entries (e.g. ``FLOW_UNITS``).
+   * - :meth:`get_option_ext` / :meth:`set_option_ext`
+     - Read or update extension options unknown to base SWMM.
+   * - :meth:`get_crs`
+     - Coordinate reference system string (EPSG / PROJ / WKT).
+
+Event windows, steady-state, and callbacks
+------------------------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Method
+     - What it does
+   * - :meth:`Solver.events_count` / :meth:`events_get` / :meth:`events_set`
+     - Inspect or update the event-window list (start/end pairs).
+   * - :meth:`Solver.events_add` / :meth:`events_remove` / :meth:`events_clear`
+     - Programmatically grow or trim the event-window list.
+   * - :meth:`Solver.get_steady_state_skip` / :meth:`set_steady_state_skip`
+     - Enable/disable the steady-state skip optimisation.
+   * - :meth:`Solver.set_step_begin_callback`
+     - Register a callable invoked before each routing step.
+   * - :meth:`Solver.set_step_end_callback`
+     - Register a callable invoked after each routing step.
+   * - :meth:`Solver.set_warning_callback`
+     - Register a callable invoked when the engine raises a warning.
+
+Module-level helpers
+--------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Function
+     - What it does
+   * - :func:`openswmm.engine.run`
+     - One-call helper that opens, runs, reports, and closes a model.
+   * - :func:`openswmm.engine.run_with_callback`
+     - Same as :func:`run` but invokes a progress callback each step.
 
 Save / serialise
 ----------------
@@ -110,14 +161,17 @@ End-to-end example
 
 .. code-block:: python
 
-    from openswmm.engine import Solver
+    from openswmm.engine import Solver, EngineState
 
     with Solver("site_drainage.inp", "site_drainage.rpt", "site_drainage.out") as s:
         print(f"Routing step: {s.get_routing_step():.1f}s")
         print(f"Sim window:   day {s.get_start_time():.4f} → day {s.get_end_time():.4f}")
 
         steps = 0
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            rc = s.step()
+            if rc != 0:
+                break
             steps += 1
             if steps % 240 == 0:                      # every ~hour at 15s step
                 print(f"  t = {s.elapsed*24:5.2f} h")
@@ -132,7 +186,7 @@ before initialisation):
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Nodes
+    from openswmm.engine import Solver, Nodes, EngineState
 
     s = Solver("model.inp", "model.rpt", "model.out")
     s.create()
@@ -144,9 +198,10 @@ before initialisation):
         print(f"  {nodes.get_id(i)} (type={nodes.get_type(i)})")
 
     s.initialize()
-    s.start(save_results=True)
-    while s.step():
-        pass
+    s.start(save_results=True)            # state == RUNNING
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
     s.end()
     s.report()
     s.close()
@@ -163,12 +218,14 @@ Report progress every wall-clock second
 .. code-block:: python
 
     import time
-    from openswmm.engine import Solver
+    from openswmm.engine import Solver, EngineState
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
         last = time.monotonic()
         total = s.get_end_time() - s.get_start_time()
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             now = time.monotonic()
             if now - last >= 1.0:
                 pct = 100.0 * s.elapsed / total
@@ -181,14 +238,15 @@ Run multiple scenarios in parallel
 .. code-block:: python
 
     from concurrent.futures import ProcessPoolExecutor
-    from openswmm.engine import Solver
+    from openswmm.engine import Solver, EngineState
 
     def run_one(inp_path):
         rpt = inp_path.replace(".inp", ".rpt")
         out = inp_path.replace(".inp", ".out")
         with Solver(inp_path, rpt, out) as s:
-            while s.step():
-                pass
+            while s.state == EngineState.RUNNING:
+                if s.step() != 0:
+                    break
         return out
 
     inputs = ["scenario_a.inp", "scenario_b.inp", "scenario_c.inp"]
@@ -204,12 +262,14 @@ Stop simulation early on a custom condition
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Nodes
+    from openswmm.engine import Solver, Nodes, EngineState
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
         nodes = Nodes(s)
         flooded = nodes.get_index("J1")
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             if nodes.get_depth(flooded) > 5.0:
                 print(f"Flood threshold hit at t={s.elapsed:.4f} d")
                 break       # context manager still runs end/report/close
@@ -262,12 +322,14 @@ combine with bulk reads:
 .. code-block:: python
 
     import numpy as np
-    from openswmm.engine import Solver, Nodes
+    from openswmm.engine import Solver, Nodes, EngineState
 
     times, depths = [], []
     with Solver("model.inp", "model.rpt", "") as s:
         nodes = Nodes(s)
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             times.append(s.elapsed)                          # days since start
             depths.append(nodes.get_depths_bulk().copy())    # (n_nodes,)
     times  = np.array(times)              # shape (T,)
@@ -296,10 +358,16 @@ EngineState requirements & exceptions
      - Allocates per-element state arrays.
    * - ``start``
      - ``INITIALIZED``
-     - ``save_results=False`` skips ``.out`` writes.
+     - Transitions to ``RUNNING``.  ``save_results=False`` skips
+       ``.out`` writes.
    * - ``step``
-     - ``STARTED`` or ``RUNNING``
-     - Returns ``False`` when end-time reached.
+     - ``RUNNING``
+     - Returns the C error code (``0`` on success).  Engine transitions
+       to ``ENDED`` when the end-time is reached; poll :attr:`state` to
+       detect completion.
+   * - ``stride``
+     - ``RUNNING``
+     - As ``step``, but advances ``n_steps`` timesteps in one call.
    * - ``end``
      - ``RUNNING`` or ``ENDED``
      - Idempotent; second call is a no-op.

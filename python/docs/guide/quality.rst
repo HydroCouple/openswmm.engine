@@ -65,10 +65,11 @@ Buildup
 
    * - Method
      - Action / returns
-   * - :meth:`buildup_set(lu_idx, p, ...)`
-     - Configure :class:`BuildupFunc` (NONE / POW / EXP / SAT) and its
-       coefficients for landuse ``lu_idx``, pollutant ``p``.
-   * - :meth:`buildup_get(lu_idx, p)`
+   * - :meth:`buildup_set(lu_idx, pollut_idx, func_type, c1, c2, c3, normalizer)`
+     - Configure :class:`BuildupFunc` (NONE / POW / EXP / SAT) with
+       coefficients ``c1``, ``c2``, ``c3`` and the normalizer code
+       (e.g. by area or curb-length).
+   * - :meth:`buildup_get(lu_idx, pollut_idx)`
      - Returns a dict of the active buildup model parameters.
 
 Washoff
@@ -80,10 +81,10 @@ Washoff
 
    * - Method
      - Action / returns
-   * - :meth:`washoff_set(lu_idx, p, ...)`
-     - Configure :class:`WashoffFunc` (EXP / RATING / EMC) and its
-       coefficients.
-   * - :meth:`washoff_get(lu_idx, p)`
+   * - :meth:`washoff_set(lu_idx, pollut_idx, func_type, coeff, expon, sweep_effic, bmp_effic)`
+     - Configure :class:`WashoffFunc` (EXP / RATING / EMC) plus the
+       street-sweeping and BMP removal efficiencies.
+   * - :meth:`washoff_get(lu_idx, pollut_idx)`
      - Returns a dict of the active washoff model parameters.
 
 Treatment
@@ -129,9 +130,10 @@ End-to-end example
         tss = polls.get_index("TSS")
         q.buildup_set(
             lu, tss,
-            func=int(BuildupFunc.SAT),
+            func_type=int(BuildupFunc.SAT),
             c1=80.0,         # max buildup (lb/acre)
             c2=10.0,         # half-saturation time (days)
+            c3=0.0,          # function-specific (e.g. event-mean rain)
             normalizer=0,    # buildup per unit area
         )
         # Add settling-tank treatment at outfall OUT1
@@ -140,10 +142,13 @@ End-to-end example
             tss,
             "R = 0.85 * EXP(-0.05 * HRT)",
         )
+
+        from openswmm.engine import EngineState
         s.initialize()
         s.start()
-        while s.step():
-            pass
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
         s.end()
 
 ----
@@ -174,30 +179,33 @@ Inspect the active buildup parameters
 
     params = q.buildup_get(q.landuse_index("RESIDENTIAL"),
                            polls.get_index("TSS"))
-    print(params)  # → {'func': 'SAT', 'c1': 80.0, 'c2': 10.0, ...}
+    print(params)  # → {'func_type': 2, 'c1': 80.0, 'c2': 10.0, 'c3': 0.0, 'normalizer': 0}
 
 Run a sensitivity sweep on washoff coefficient
 ----------------------------------------------
 
 .. code-block:: python
 
-    for c1 in [0.005, 0.01, 0.02, 0.05]:
+    from openswmm.engine import EngineState
+
+    for coeff in [0.005, 0.01, 0.02, 0.05]:
         # Re-open / re-edit / re-run pattern
-        with Solver("model.inp", f"sweep_{c1}.rpt", f"sweep_{c1}.out") as s:
+        with Solver("model.inp", f"sweep_{coeff}.rpt", f"sweep_{coeff}.out") as s:
             q = Quality(s); polls = Pollutants(s)
             s.open()
             q.washoff_set(
                 q.landuse_index("RESIDENTIAL"),
                 polls.get_index("TSS"),
-                func=int(WashoffFunc.EXP),
-                c1=c1,
-                c2=2.0,
-                cleaning_efficiency=0.0,
-                bmp_efficiency=0.0,
+                func_type=int(WashoffFunc.EXP),
+                coeff=coeff,
+                expon=2.0,
+                sweep_effic=0.0,
+                bmp_effic=0.0,
             )
             s.initialize(); s.start()
-            while s.step():
-                pass
+            while s.state == EngineState.RUNNING:
+                if s.step() != 0:
+                    break
             s.end()
 
 ----

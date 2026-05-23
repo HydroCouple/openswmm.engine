@@ -105,7 +105,7 @@ End-to-end example
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Pollutants, Nodes
+    from openswmm.engine import Solver, Pollutants, Nodes, EngineState
 
     with Solver("water_quality.inp", "wq.rpt", "wq.out") as s:
         polls = Pollutants(s)
@@ -122,7 +122,9 @@ End-to-end example
         tss = polls.get_index("TSS")
         outfall = nodes.get_index("OUT1")
         history = []
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             history.append(nodes.get_quality(outfall, tss))
         print(f"Mean outfall TSS: {sum(history)/len(history):.2f}")
 
@@ -147,7 +149,9 @@ Inject a pollutant at a node mid-run
 .. code-block:: python
 
     j1, tss = nodes.get_index("J1"), polls.get_index("TSS")
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         h = s.elapsed * 24.0
         if 1.0 <= h <= 2.0:
             polls.set_node_quality(j1, tss, 50.0)   # mg/L for one hour
@@ -162,7 +166,7 @@ Set up a co-pollutant relationship
     # Assume TSS is already defined; couple FECAL to TSS
     fecal = polls.get_index("FECAL")
     tss = polls.get_index("TSS")
-    polls.set_co_pollutant(fecal, (tss, 0.05))   # FECAL = 5% of TSS
+    polls.set_co_pollutant(fecal, tss, 0.05)     # FECAL = 5% of TSS
 
 ----
 

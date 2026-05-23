@@ -117,7 +117,7 @@ End-to-end example
 .. code-block:: python
 
     from openswmm.engine import (
-        Solver, Nodes, Forcing, ForcingMode,
+        Solver, Nodes, Forcing, ForcingMode, EngineState,
     )
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
@@ -131,7 +131,9 @@ End-to-end example
 
         # … plus a 2-hour pulse around the storm peak
         applied_pulse = False
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             h = s.elapsed * 24.0
             if 5.5 <= h <= 7.5 and not applied_pulse:
                 forcing.node_lat_inflow(j1, 1.0, ForcingMode.ADD, persist=True)
@@ -182,7 +184,9 @@ Time-varying ML controller driving lateral inflows
 
 .. code-block:: python
 
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         action = my_ml_controller.predict_inflow(observe(s))
         # one-shot per step is fine here — we re-apply each step anyway
         forcing.node_lat_inflow("J1", action, ForcingMode.REPLACE, persist=False)

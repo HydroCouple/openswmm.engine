@@ -60,17 +60,35 @@ during interactive exploration.
 Key methods
 ===========
 
-Counts
-------
+Counts  (read-only properties — no parentheses)
+-----------------------------------------------
 
 .. list-table::
    :header-rows: 1
    :widths: 35 65
 
-   * - Method
+   * - Property
      - Returns
-   * - :meth:`node_count` / :meth:`link_count` / :meth:`subcatch_count` / :meth:`gage_count` / :meth:`table_count`
-     - Number of objects of each kind currently in the model.
+   * - :attr:`node_count` / :attr:`link_count` / :attr:`subcatch_count` / :attr:`gage_count` / :attr:`table_count`
+     - Number of objects of each kind currently in the model.  Access
+       as attributes — e.g. ``editor.node_count``, *not*
+       ``editor.node_count()``.
+
+Time control  (typed datetime properties)
+-----------------------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Property
+     - Value
+   * - :attr:`start_datetime`
+     - Simulation start as :class:`datetime.datetime` (read/write).
+   * - :attr:`end_datetime`
+     - Simulation end as :class:`datetime.datetime` (read/write).
+   * - :attr:`report_start_datetime`
+     - Report start as :class:`datetime.datetime` (read/write).
 
 Impact analysis  (read-only — no mutation)
 ------------------------------------------
@@ -146,7 +164,7 @@ End-to-end example
     s.open()                                  # state == OPENED
 
     editor = ModelEditor(s)
-    print(f"before: {editor.node_count()} nodes, {editor.link_count()} links")
+    print(f"before: {editor.node_count} nodes, {editor.link_count} links")
 
     # Pre-flight: what would happen if we deleted node X?
     impacts = editor.analyze_node_impact("X")
@@ -161,10 +179,13 @@ End-to-end example
     result = editor.convert_node("J5", NodeType.STORAGE)
     print("conversion:", result)
 
+    from openswmm.engine import EngineState
+
     s.initialize()
     s.start()
-    while s.step():
-        pass
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
     s.end()
     s.report()
     s.close()

@@ -60,13 +60,23 @@ A complete sanity check that exercises every Cython extension::
     python -c "
     import openswmm, importlib
     import openswmm.engine as e
+    # Always-present modules
     mods = ['_solver','_model','_edit','_nodes','_links','_subcatchments',
             '_gages','_hotstart','_massbalance','_pollutants','_tables',
             '_inflows','_controls','_infrastructure','_quality','_statistics',
-            '_output_reader','_spatial','_forcing']
+            '_output_reader','_spatial','_forcing','_dates']
     for m in mods:
         importlib.import_module('openswmm.engine.' + m)
-    print(f'openswmm {openswmm.__version__}: all {len(mods)} modules OK')
+    # Optional build flags — import only if the matching CMake flag was on
+    optional = []
+    for m in ['_geopackage', '_2d']:
+        try:
+            importlib.import_module('openswmm.engine.' + m)
+            optional.append(m)
+        except ImportError:
+            pass
+    print(f'openswmm {openswmm.__version__}: '
+          f'{len(mods)} core modules OK; optional: {optional or \"none\"}')
     "
 
 Building from source
