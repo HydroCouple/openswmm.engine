@@ -61,3 +61,18 @@ add_custom_command(TARGET test_engine_regression POST_BUILD
         $<TARGET_FILE:test_engine_regression>
         ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:test_engine_regression>
 )
+
+# Windows: stage every runtime DLL the test depends on (project libs +
+# vcpkg imported targets like SUNDIALS / HDF5 / sqlite3) next to the exe.
+# Without this the loader fails with STATUS_DLL_NOT_FOUND (0xc0000135)
+# at test launch, since the engine DLLs are built in src/engine/$<CONFIG>/
+# and src/legacy/engine/$<CONFIG>/ rather than alongside the exe, and
+# vcpkg's applocal step only stages vcpkg-managed DLLs.
+if(WIN32)
+    add_custom_command(TARGET test_engine_regression POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:test_engine_regression>
+            $<TARGET_FILE_DIR:test_engine_regression>
+        COMMAND_EXPAND_LISTS
+    )
+endif()

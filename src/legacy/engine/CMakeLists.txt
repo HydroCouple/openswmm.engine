@@ -23,13 +23,22 @@ if(APPLE AND NOT OpenMP_FOUND)
     include(${PROJECT_SOURCE_DIR}/cmake/FindOpenMP.cmake)
 endif()
 
-# Configure based on whether OpenMP was found
+# Configure based on whether OpenMP was found.
+#
+# We intentionally do NOT append ${OpenMP_C_FLAGS} / ${OpenMP_CXX_FLAGS} to
+# CMAKE_C_FLAGS / CMAKE_CXX_FLAGS here. On macOS arm64 with Apple Clang, the
+# stock find_package(OpenMP) probes fail and CMake's FindOpenMP caches the
+# *_FLAGS variables as the literal sentinel string "NOTFOUND". The Apple
+# fallback in cmake/FindOpenMP.cmake then sets OpenMP_FOUND=TRUE without
+# overwriting those cached sentinels, so the append would inject the bare word
+# "NOTFOUND" into the compile line and clang would try to open it as a file.
+#
+# Both the stock CMake FindOpenMP and our Apple fallback create the
+# OpenMP::OpenMP_C / OpenMP::OpenMP_CXX imported targets with the correct
+# INTERFACE compile options and link libraries, so the target_link_libraries
+# call below is sufficient — no global flag manipulation needed.
 if(OpenMP_FOUND OR OpenMP_C_FOUND)
     message(STATUS "OpenMP found and will be used for legacy engine")
-    if(APPLE)
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-    endif()
 else()
     message(WARNING "OpenMP not found - building legacy engine without parallel support")
     add_compile_definitions(NO_OPENMP)
@@ -134,7 +143,12 @@ target_include_directories(openswmm_legacy_engine
         $<INSTALL_INTERFACE:include/openswmm/legacy/engine>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${OpenMP_C_INCLUDE_DIRS}
+        # OpenMP include dirs come from the OpenMP::OpenMP_C imported target
+        # via target_link_libraries below — do not interpolate
+        # ${OpenMP_C_INCLUDE_DIRS} here. CMake's stock FindOpenMP can leave
+        # that variable as the literal sentinel "NOTFOUND" on macOS arm64
+        # when its probes fail, which would be added as a literal include
+        # path and break the build (same class of bug as ${OpenMP_C_FLAGS}).
 )
 
 # Link dependencies

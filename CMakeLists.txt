@@ -56,9 +56,15 @@ message(STATUS "OpenSWMM Engine version (legacy):     ${OPENSWMM_LEGACY_FULL_VER
 
 
 # Modern build type handling
+# Only default to Release when no build type was supplied (via preset, -D, or
+# parent project). Using FORCE here unconditionally would clobber an explicit
+# CMAKE_BUILD_TYPE=Debug from a preset and silently mix Debug CMAKE_C_FLAGS
+# with the default Release -O3 -DNDEBUG flag set.
 get_property(isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 if(NOT isMultiConfig)
-    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+    if(NOT CMAKE_BUILD_TYPE)
+        set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+    endif()
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
         "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()

@@ -130,6 +130,8 @@ jobs:
 
       - name: Python regression tests
         working-directory: tests/regression_testing
+        env:
+          OPENSWMM_BUILD_DIR: ${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}
         run: python -m pytest -v --tb=short
 
       - name: Upload artifacts
@@ -138,3 +140,4 @@ jobs:
         with:
           name: regression-${{ matrix.vcpkg_triplet }}
           path: tests/regression_testing/results/
+          if-no-files-found: ignore
