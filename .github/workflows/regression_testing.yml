@@ -8,8 +8,6 @@ on:
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  # Pull only what the regression-test build needs: default features (2d) + tests.
-  VCPKG_MANIFEST_FEATURES: "tests"
   OMP_NUM_THREADS: 1
 
 jobs:
@@ -104,13 +102,14 @@ jobs:
           python -m pip install pytest numpy
 
       - name: Configure
+        # The *-tests preset sets VCPKG_MANIFEST_FEATURES=tests and enables
+        # both OPENSWMM_BUILD_UNIT_TESTS and OPENSWMM_BUILD_REGRESSION_TESTS
+        # as CMake cache vars (env-var-only propagation isn't honored by the
+        # vcpkg toolchain at configure time).
         run: >
           cmake
-          --preset=${{ matrix.cmake_preset }}-debug
+          --preset=${{ matrix.cmake_preset }}-tests
           -B build-${{ matrix.vcpkg_triplet }}
-          -DOPENSWMM_BUILD_TESTS=OFF
-          -DOPENSWMM_BUILD_UNIT_TESTS=ON
-          -DOPENSWMM_BUILD_REGRESSION_TESTS=ON
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
       - name: Build

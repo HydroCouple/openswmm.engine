@@ -10,8 +10,9 @@ env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_EXE: ${{ github.workspace }}/vcpkg/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  # Pull only what the unit-test build needs: default features (2d) + tests.
-  VCPKG_MANIFEST_FEATURES: "tests"
+  # Note: the vcpkg `tests` feature is enabled via -DVCPKG_MANIFEST_FEATURES on
+  # the Configure step below; the env-var form isn't honored by the vcpkg
+  # toolchain at CMake configure time.
   OMP_NUM_THREADS: 1
 
 jobs:

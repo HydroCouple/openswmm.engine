@@ -73,7 +73,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Modern feature options with namespacing
-option(OPENSWMM_BUILD_TESTS       "Build all tests (unit + regression). Convenience flag." ON)
+option(OPENSWMM_BUILD_TESTS       "Build all tests (unit + regression). Convenience flag." OFF)
 option(OPENSWMM_BUILD_UNIT_TESTS  "Build unit tests only" OFF)
 option(OPENSWMM_BUILD_REGRESSION_TESTS "Build regression tests only" OFF)
 option(OPENSWMM_BUILD_BENCHMARKS  "Build Google Benchmark performance tests" OFF)
