@@ -3,10 +3,9 @@ name: Documentation
 on:
   push:
     branches: [main, develop, swmm6_rel]
-    # branches: [main, develop]
     tags: ["v*.*.*"]
   pull_request:
-    branches: [main]
+    branches: [main, develop, swmm6_rel]
   workflow_dispatch:
 
 # Allow only one concurrent deployment.  Do NOT cancel in-progress runs so
@@ -95,7 +94,17 @@ jobs:
 # ─────────────────────────────────────────────────────────────────────────────
   deploy:
     name: Deploy to GitHub Pages
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/swmm6_rel')
+    # Deploys fire on direct pushes to a whitelisted branch and on manual
+    # workflow_dispatch runs targeting one of those same branches. PR events
+    # are intentionally excluded — PR builds verify the docs compile but must
+    # not overwrite the live Pages site. To preview a PR, push the source
+    # branch (swmm6_rel) or dispatch the workflow manually against it from
+    # the Actions tab.
+    if: |
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && (github.ref == 'refs/heads/main'
+          || github.ref == 'refs/heads/develop'
+          || github.ref == 'refs/heads/swmm6_rel')
     needs: [build_python_docs, build_doxygen_docs]
     runs-on: ubuntu-latest
     permissions:

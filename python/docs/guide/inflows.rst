@@ -14,9 +14,12 @@ at configure time:
 
 * **External inflows** — time-series flow with optional scale/baseline.
 * **Dry-Weather Flow (DWF)** — average flow with up to 4 multiplicative
-  patterns (monthly / weekly / daily / hourly).
+  patterns (monthly / daily / hourly / weekend).
 * **Rainfall-Dependent Inflow & Infiltration (RDII)** — driven by a
-  unit hydrograph attached to a sewershed area.
+  unit hydrograph attached to a sewershed area, with optional
+  exponential initial-abstraction decay (``[RDII_DECAY]``).
+* **Unit-hydrograph definitions (``[HYDROGRAPHS]``)** — UH parameter
+  rows, gage bindings, and group metadata.
 
 For overrides applied **during** a running simulation (per-step
 lateral inflows), see :class:`Nodes.set_lateral_inflow` (one-shot)
@@ -44,54 +47,106 @@ External inflows  (time-series)
 
 .. list-table::
    :header-rows: 1
-   :widths: 40 60
+   :widths: 50 50
 
    * - Method
      - Action / returns
-   * - :meth:`add_external(node_idx, ts_idx, type, mfactor, sfactor, baseline, basepat_idx)`
+   * - :meth:`add_external(node_idx, constituent, ts_name="", type="FLOW", m_factor=1.0, s_factor=1.0, baseline=0.0, pattern="")`
      - Attach a time-series-driven inflow to a node.
    * - :meth:`ext_inflow_count()`
      - Number of registered external inflows.
 
-* ``type``      — pollutant index, or ``-1`` for hydraulic flow.
-* ``mfactor``   — units conversion multiplier.
-* ``sfactor``   — scaling factor.
-* ``baseline``  — baseline flow added on top of the time series.
-* ``basepat_idx`` — optional pattern index multiplying the baseline.
+* ``constituent``  — ``"FLOW"`` for hydraulic flow, or a pollutant ID
+  for a water-quality inflow.
+* ``ts_name``      — name of the driving time series (empty string for
+  baseline-only).
+* ``type``         — inflow-type string (default ``"FLOW"``).
+* ``m_factor``     — units-conversion multiplier.
+* ``s_factor``     — scaling factor.
+* ``baseline``     — baseline value added on top of the time series.
+* ``pattern``      — optional pattern name multiplying the baseline.
 
 Dry-Weather Flow
 ----------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 40 60
+   :widths: 50 50
 
    * - Method
      - Action / returns
-   * - :meth:`add_dwf(node_idx, type, base_value, pattern_idxs)`
-     - Attach DWF with up to 4 patterns.
+   * - :meth:`add_dwf(node_idx, constituent, avg_value, pat1="", pat2="", pat3="", pat4="")`
+     - Attach DWF with up to 4 multiplicative patterns.
    * - :meth:`dwf_count()`
      - Number of registered DWF entries.
 
-* ``type``           — pollutant index, or ``-1`` for hydraulic flow.
-* ``base_value``     — average dry-weather flow.
-* ``pattern_idxs``   — list of up to 4 :class:`Pattern` indices
-  (monthly, daily, hourly, weekend-hourly).  Use ``-1`` to skip a slot.
+* ``constituent`` — ``"FLOW"`` or a pollutant ID.
+* ``avg_value``   — average dry-weather flow.
+* ``pat1`` / ``pat2`` / ``pat3`` / ``pat4`` — monthly / daily / hourly
+  / weekend pattern names.  Pass an empty string to skip a slot.
 
 RDII
 ----
 
 .. list-table::
    :header-rows: 1
-   :widths: 40 60
+   :widths: 50 50
 
    * - Method
      - Action / returns
    * - :meth:`add_rdii(node_idx, uh_name, area)`
      - Attach RDII at a node, driven by a named unit hydrograph and
-       a sewershed area.
+       sewershed area.
+   * - :meth:`get_rdii(entry_idx)`
+     - Read back the ``(node_idx, uh_name, area)`` triple for an entry.
    * - :meth:`rdii_count()`
      - Number of registered RDII entries.
+
+Unit hydrographs (``[HYDROGRAPHS]``)
+------------------------------------
+
+The unit-hydrograph parameter table feeds the RDII model.  Each row
+defines the shape parameters (``r``, ``t``, ``k``) and initial-
+abstraction defaults for a ``(uh_name, month, response)`` combination.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - Method
+     - Action / returns
+   * - :meth:`add_hydrograph(uh_name, month, response, r, t, k, dmax=0.0, drecov=0.0, dinit=0.0)`
+     - Add a ``[HYDROGRAPHS]`` parameter row.  ``month`` is ``-1`` for
+       *all months* or ``0..11`` for ``JAN..DEC``; ``response`` is
+       ``0`` SHORT, ``1`` MEDIUM, ``2`` LONG.
+   * - :meth:`get_hydrograph(entry_idx)` / :meth:`hydrograph_count()`
+     - Read back a parameter row / count rows.
+   * - :meth:`add_hydrograph_gage(uh_name, gage_name)` / :meth:`get_hydrograph_gage(idx)`
+     - Bind a rain-gage to a unit-hydrograph group.
+   * - :meth:`hydrograph_gage_count()` / :meth:`hydrograph_group_count()`
+     - Counts for gage bindings and unique UH group names.
+   * - :meth:`get_hydrograph_group_id(idx)`
+     - Return the name of the *idx*-th UH group.
+
+Exponential IA decay (``[RDII_DECAY]``)
+---------------------------------------
+
+The exponential initial-abstraction decay model replaces the legacy
+linear-recovery formulation for storm-by-storm IA bookkeeping.
+Depletion follows ``exp(-k_dep * rainfall)``; recovery during dry
+periods uses ``k_rec(T) = k_0 + k_T * exp(theta_rec * (T - T_ref))``
+with suppression when ``T <= T_freeze``.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - Method
+     - Action / returns
+   * - :meth:`add_rdii_decay(uh_name, response, k_dep, k_0, k_T, T_ref=10.0, theta_rec=0.0, T_freeze=0.0)`
+     - Add an exponential-decay row for a ``(uh_name, response)`` pair.
+   * - :meth:`get_rdii_decay(entry_idx)` / :meth:`rdii_decay_count()`
+     - Read back a decay row / count rows.
 
 ----
 
@@ -100,31 +155,29 @@ End-to-end example
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Inflows, Nodes, Tables
+    from openswmm.engine import Solver, Inflows, Nodes, EngineState
 
     with Solver("site_drainage.inp", "site_drainage.rpt", "site_drainage.out") as s:
         nodes = Nodes(s)
-        tables = Tables(s)
         inflows = Inflows(s)
 
-        ts_idx = tables.get_index("WET_WEATHER_TS")
         node_idx = nodes.get_index("J1")
 
         # Attach a flow time series to J1 (during model edit phase, before initialize)
         s.open()
         inflows.add_external(
             node_idx=node_idx,
-            ts_idx=ts_idx,
-            type=-1,                  # hydraulic flow
-            mfactor=1.0,              # no unit conversion
-            sfactor=1.0,              # no scaling
-            baseline=0.05,            # cfs baseline
-            basepat_idx=-1,           # no pattern on baseline
+            constituent="FLOW",          # hydraulic flow
+            ts_name="WET_WEATHER_TS",    # named time series
+            m_factor=1.0,                # no unit conversion
+            s_factor=1.0,                # no scaling
+            baseline=0.05,               # cfs baseline
         )
         s.initialize()
         s.start()
-        while s.step():
-            pass
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
         s.end()
 
         print(f"External inflows registered: {inflows.ext_inflow_count()}")
@@ -134,20 +187,19 @@ End-to-end example
 Common recipes
 ==============
 
-Add Dry-Weather Flow with monthly + hourly patterns
----------------------------------------------------
+Add Dry-Weather Flow with monthly + daily + hourly patterns
+-----------------------------------------------------------
 
 .. code-block:: python
 
-    monthly_idx = tables.get_index("MONTHLY_PATTERN")
-    daily_idx   = tables.get_index("DAILY_PATTERN")
-    hourly_idx  = tables.get_index("HOURLY_PATTERN")
-
     inflows.add_dwf(
         node_idx=nodes.get_index("J1"),
-        type=-1,
-        base_value=0.5,                    # average DWF
-        pattern_idxs=[monthly_idx, daily_idx, hourly_idx, -1],
+        constituent="FLOW",
+        avg_value=0.5,                     # average DWF
+        pat1="MONTHLY_PATTERN",
+        pat2="DAILY_PATTERN",
+        pat3="HOURLY_PATTERN",
+        # pat4 unset -- no weekend override
     )
 
 Add RDII to a node
@@ -161,6 +213,35 @@ Add RDII to a node
         area=12.5,                         # sewershed area
     )
 
+Define a unit hydrograph and exponential-decay row
+--------------------------------------------------
+
+.. code-block:: python
+
+    # Build a fresh UH group for the medium-response component
+    inflows.add_hydrograph(
+        uh_name="UH1",
+        month=-1,           # all months
+        response=1,         # MEDIUM
+        r=0.05, t=2.0, k=2.0,
+        dmax=0.2, drecov=0.0, dinit=0.0,
+    )
+
+    # Bind the gage that drives this UH group
+    inflows.add_hydrograph_gage("UH1", "RG1")
+
+    # Replace legacy linear IA recovery with the exponential model
+    inflows.add_rdii_decay(
+        uh_name="UH1",
+        response=1,         # MEDIUM
+        k_dep=0.5,          # depletion rate per inch of rain
+        k_0=0.01,           # base recovery (1/hr)
+        k_T=0.005,          # thermal recovery at T_ref (1/hr)
+        T_ref=10.0,         # deg C
+        theta_rec=0.05,
+        T_freeze=0.0,
+    )
+
 Combine baseline + scaling for unit conversion
 ----------------------------------------------
 
@@ -169,12 +250,11 @@ Combine baseline + scaling for unit conversion
     # Time series in m³/s, model in CFS:
     inflows.add_external(
         node_idx=nodes.get_index("J1"),
-        ts_idx=tables.get_index("INFLOW_M3S"),
-        type=-1,
-        mfactor=35.3147,                   # m³/s → cfs
-        sfactor=1.0,
+        constituent="FLOW",
+        ts_name="INFLOW_M3S",
+        m_factor=35.3147,                  # m³/s → cfs
+        s_factor=1.0,
         baseline=0.0,
-        basepat_idx=-1,
     )
 
 ----
@@ -208,8 +288,10 @@ EngineState requirements & exceptions
 
 Common :class:`EngineError` codes:
 
-* ``INVALID_INDEX``  — node, table, or pattern index out of range.
-* ``INVALID_TYPE``   — pollutant index given for a non-quality model.
+* ``INVALID_INDEX``  — node index out of range.
+* ``INVALID_TYPE``   — pollutant constituent given for a non-quality model.
+* ``NOT_FOUND``      — ``ts_name``, ``pattern``, ``uh_name`` or
+  ``gage_name`` does not exist in the model.
 
 ----
 

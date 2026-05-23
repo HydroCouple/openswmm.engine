@@ -99,11 +99,12 @@ End-to-end example
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, MassBalance
+    from openswmm.engine import Solver, MassBalance, EngineState
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
-        while s.step():
-            pass
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
 
         mb = MassBalance(s)
         print(f"  runoff continuity error  = {mb.get_runoff_continuity_error():+.4f}%")

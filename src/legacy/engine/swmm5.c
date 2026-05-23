@@ -2747,6 +2747,8 @@ static void getAbsolutePath(const char *fname, char *absPath, size_t size)
     // --- case of empty file anme
     if (fname == NULL || strlen(fname) == 0)
         return;
+    if (size == 0)
+        return;
 
     // --- if fname has a relative path then retrieve its full path
     if (isRelativePath(fname))
@@ -2758,11 +2760,19 @@ static void getAbsolutePath(const char *fname, char *absPath, size_t size)
             // realpath() can write up to PATH_MAX (4096) bytes, which may
             // exceed the size of absPath.  Passing NULL lets libc allocate
             // a sufficiently large buffer (POSIX.1-2008).
+            //
+            // sstrncpy(dest, src, n) copies up to n source chars and writes
+            // the null terminator at dest[n], so the buffer must be at least
+            // n+1 bytes — pass size-1 to keep the write inside absPath.
             char *resolved = realpath(fname, NULL);
             if (resolved)
             {
-                sstrncpy(absPath, resolved, size);
+                sstrncpy(absPath, resolved, size - 1);
                 free(resolved);
+            }
+            else
+            {
+                absPath[0] = '\0';
             }
         }
 #endif
@@ -2771,7 +2781,9 @@ static void getAbsolutePath(const char *fname, char *absPath, size_t size)
     // --- otherwise copy fname to absPath
     else
     {
-        sstrncpy(absPath, fname, strlen(fname));
+        size_t flen = strlen(fname);
+        if (flen > size - 1) flen = size - 1;
+        sstrncpy(absPath, fname, flen);
     }
 
 // --- trim file name portion of absPath

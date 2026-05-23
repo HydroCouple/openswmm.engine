@@ -61,32 +61,35 @@ state is exposed via :attr:`Solver.state`:
      - Value
      - Meaning
    * - ``CREATED``
-     - 1
+     - 0
      - Engine handle allocated, no input file parsed yet.
    * - ``OPENED``
-     - 2
+     - 1
      - ``.inp`` parsed; objects are accessible for inspection or editing.
    * - ``INITIALIZED``
-     - 3
+     - 2
      - Initial conditions applied; arrays allocated.
-   * - ``STARTED``
-     - 4
-     - Routing started; no time has elapsed yet.
    * - ``RUNNING``
-     - 5
-     - At least one step has been taken.
+     - 3
+     - ``start()`` has been called; the routing loop is active and
+       ``step()`` may be called.
+   * - ``PAUSED``
+     - 4
+     - Routing temporarily halted (reserved for future hot-swap support).
    * - ``ENDED``
-     - 6
+     - 5
      - ``end()`` called; cumulative results are available but no more
        steps can be taken.
+   * - ``REPORTED``
+     - 6
+     - ``report()`` called; summary written to the ``.rpt`` file.
    * - ``CLOSED``
      - 7
      - ``close()`` called; ``.rpt`` / ``.out`` files flushed.
 
 Methods can require the Solver to be in:
 
-* a **specific** state (e.g. ``Solver.step()`` requires ``STARTED`` or
-  ``RUNNING``),
+* a **specific** state (e.g. ``Solver.step()`` requires ``RUNNING``),
 * a **range** (e.g. node setter methods are valid in ``OPENED`` …
   ``RUNNING`` — anywhere except ``CREATED`` / ``CLOSED``), or
 * **any** state (e.g. ``Solver.state`` itself).
@@ -102,10 +105,14 @@ Calling :class:`Solver` as a context manager hides the state machine:
 
 .. code-block:: python
 
+    from openswmm.engine import EngineState
+
     with Solver("model.inp", "model.rpt", "model.out") as s:
-        # state == STARTED on entry
-        while s.step():       # state moves STARTED → RUNNING after first step
-            ...
+        # state == RUNNING on entry
+        while s.state == EngineState.RUNNING:
+            rc = s.step()
+            if rc != 0:
+                break
     # state == CLOSED on exit; engine handle has been freed
 
 The context manager runs::
@@ -123,17 +130,26 @@ For finer control (e.g. inspecting parsed objects between ``open()`` and
 
 .. code-block:: python
 
+    from openswmm.engine import EngineState
+
     s = Solver("model.inp", "model.rpt", "model.out")
     s.create()
     s.open()           # state == OPENED — inspect / edit the model here
     s.initialize()
-    s.start(save_results=True)
-    while s.step():
-        ...
-    s.end()
-    s.report()
-    s.close()
-    s.destroy()        # state == CLOSED, handle freed
+    s.start(save_results=True)   # state == RUNNING
+    while s.state == EngineState.RUNNING:
+        rc = s.step()
+        if rc != 0:
+            break
+    s.end()            # state == ENDED
+    s.report()         # state == REPORTED
+    s.close()          # state == CLOSED, .rpt / .out flushed
+    s.destroy()        # engine handle freed
+
+Each lifecycle call (:meth:`open`, :meth:`initialize`, :meth:`start`,
+:meth:`step`, :meth:`stride`, :meth:`end`, :meth:`report`,
+:meth:`close`) returns the C error code as an ``int`` (``0`` on
+success).  :meth:`create` and :meth:`destroy` return ``None``.
 
 You **must** call :meth:`Solver.destroy` (or use the context manager)
 to release the C engine handle.  Forgetting to do so leaks memory and
@@ -194,8 +210,12 @@ In hot loops, prefer the integer form:
 
 .. code-block:: python
 
+    from openswmm.engine import EngineState
+
     j1 = nodes.get_index("J1")
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         d = nodes.get_depth(j1)   # no name lookup overhead
 
 Indices are stable for the lifetime of the Solver (they correspond to

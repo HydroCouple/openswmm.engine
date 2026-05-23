@@ -97,7 +97,7 @@ End-to-end example
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Tables
+    from openswmm.engine import Solver, Tables, EngineState
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
         tables = Tables(s)
@@ -115,8 +115,9 @@ End-to-end example
 
         s.initialize()
         s.start()
-        while s.step():
-            pass
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
         s.end()
 
 ----

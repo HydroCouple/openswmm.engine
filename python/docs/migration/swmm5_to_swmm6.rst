@@ -60,7 +60,7 @@ Run a model start to finish
 
         .. code-block:: python
 
-            from openswmm.engine import Solver
+            from openswmm.engine import Solver, EngineState
 
             with Solver("model.inp", "model.rpt", "model.out") as s:
                 while s.step():        # returns False at end-of-sim
@@ -82,7 +82,9 @@ Read a node depth at every step
             from openswmm.legacy.engine import Solver, SWMMObjects, SWMMNodeProperties
 
             with Solver("model.inp", "model.rpt", "model.out") as s:
-                while s.step():
+                while s.state == EngineState.RUNNING:
+                    if s.step() != 0:
+                        break
                     d = s.getValue(SWMMObjects.NODE,
                                    s.getObjectIndex(SWMMObjects.NODE, "J1"),
                                    SWMMNodeProperties.DEPTH)
@@ -96,7 +98,9 @@ Read a node depth at every step
             with Solver("model.inp", "model.rpt", "model.out") as s:
                 nodes = Nodes(s)
                 j1 = nodes.get_index("J1")     # resolve once
-                while s.step():
+                while s.state == EngineState.RUNNING:
+                    if s.step() != 0:
+                        break
                     d = nodes.get_depth(j1)
 
 * Domain class :class:`Nodes`, not enum-driven ``getValue``.
@@ -112,7 +116,9 @@ Inject a lateral inflow
         .. code-block:: python
 
             j1 = s.getObjectIndex(SWMMObjects.NODE, "J1")
-            while s.step():
+            while s.state == EngineState.RUNNING:
+                if s.step() != 0:
+                    break
                 s.setValue(SWMMObjects.NODE, j1,
                            SWMMNodeProperties.LATERAL_INFLOW, 1.5)
 
@@ -122,7 +128,9 @@ Inject a lateral inflow
 
             nodes = Nodes(s)
             j1 = nodes.get_index("J1")
-            while s.step():
+            while s.state == EngineState.RUNNING:
+                if s.step() != 0:
+                    break
                 nodes.set_lateral_inflow(j1, 1.5)
 
     .. tab-item:: v6.0 (sticky / forcing)
@@ -134,8 +142,9 @@ Inject a lateral inflow
             forcing = Forcing(s)
             j1 = nodes.get_index("J1")
             forcing.node_lat_inflow(j1, 1.5, ForcingMode.REPLACE, persist=True)
-            while s.step():
-                pass
+            while s.state == EngineState.RUNNING:
+                if s.step() != 0:
+                    break
             forcing.clear_all()
 
 * The SWMM 5 ``setValue`` is **one-shot** (overwritten by the engine
@@ -191,8 +200,9 @@ Run multiple scenarios in parallel
             def run(inp):
                 with Solver(inp, inp.replace(".inp", ".rpt"),
                             inp.replace(".inp", ".out")) as s:
-                    while s.step():
-                        pass
+                    while s.state == EngineState.RUNNING:
+                        if s.step() != 0:
+                            break
 
             inputs = ["a.inp", "b.inp", "c.inp"]
             with ThreadPoolExecutor(max_workers=4) as pool:
@@ -233,8 +243,9 @@ Build a model from scratch
 
             solver = m.to_solver()
             solver.start()
-            while solver.step():
-                pass
+            while solver.state == EngineState.RUNNING:
+                if solver.step() != 0:
+                    break
             solver.end()
             solver.destroy()
 

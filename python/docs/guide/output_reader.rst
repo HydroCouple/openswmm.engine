@@ -81,50 +81,71 @@ Element counts & ids
        :meth:`get_link_id(idx)`
      - String id for an integer index.
 
-Time-series queries  (one element, all times)
----------------------------------------------
+Time-series queries  (one element, slice of times)
+--------------------------------------------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 50 50
+   :widths: 55 45
 
    * - Method
      - Returns
-   * - :meth:`get_subcatch_series(idx, var)`
-     - Time series for one subcatchment variable.
-   * - :meth:`get_node_series(idx, var)`
+   * - :meth:`get_subcatch_series(subcatch_idx, var, start, end)`
+     - Time series of one subcatchment variable over periods
+       ``start..end`` (inclusive); ``ndarray[float32]`` of shape
+       ``(end - start + 1,)``.
+   * - :meth:`get_node_series(node_idx, var, start, end)`
      - Time series for one node variable.
-   * - :meth:`get_link_series(idx, var)`
+   * - :meth:`get_link_series(link_idx, var, start, end)`
      - Time series for one link variable.
-   * - :meth:`get_system_series(var)`
+   * - :meth:`get_system_series(var, start, end)`
      - Time series for a system-level variable.
 
 The variable enums are :class:`OutSubcatchVar`, :class:`OutNodeVar`,
-:class:`OutLinkVar`, :class:`OutSystemVar`.
+:class:`OutLinkVar`, :class:`OutSystemVar`.  All ``*_series`` methods
+require zero-based ``start`` / ``end`` period indices — use
+``0`` and ``out.get_period_count() - 1`` for the full run.
 
-Snapshot queries  (all elements, one time)
-------------------------------------------
+Snapshot queries  (all elements at one time)
+--------------------------------------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 50 50
+   :widths: 55 45
 
    * - Method
      - Returns
-   * - :meth:`get_subcatch_result(period, idx, var)` /
-       :meth:`get_subcatch_attribute(period, var)`
-     - One subcatchment value / all subcatchments at one time.
-   * - :meth:`get_node_result(period, idx, var)` /
-       :meth:`get_node_attribute(period, var)`
-     - One node value / all nodes at one time.
-   * - :meth:`get_link_result(period, idx, var)` /
-       :meth:`get_link_attribute(period, var)`
-     - One link value / all links at one time.
+   * - :meth:`get_subcatch_result(period, var)`
+     - One variable, all subcatchments at ``period``;
+       ``ndarray[float32]`` of shape ``(n_subcatch,)``.
+   * - :meth:`get_node_result(period, var)`
+     - One variable, all nodes at ``period``; shape ``(n_nodes,)``.
+   * - :meth:`get_link_result(period, var)`
+     - One variable, all links at ``period``; shape ``(n_links,)``.
    * - :meth:`get_system_result(period, var)`
-     - One system-level value at one time.
+     - One system-level value at ``period`` (scalar).
 
-The ``*_attribute`` flavours return numpy arrays — use them for
-post-processing every element at once.
+Per-element attribute queries  (one element, all variables)
+-----------------------------------------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 55 45
+
+   * - Method
+     - Returns
+   * - :meth:`get_subcatch_attribute(subcatch_idx, period)`
+     - All output attributes for one subcatchment at ``period``;
+       ``ndarray[float32]``.
+   * - :meth:`get_node_attribute(node_idx, period)`
+     - All output attributes for one node at ``period``.
+   * - :meth:`get_link_attribute(link_idx, period)`
+     - All output attributes for one link at ``period``.
+
+Use ``*_attribute`` when you want every reported variable for a single
+element (e.g. depth + head + lateral inflow + flooding + … at one
+snapshot); use ``*_result`` when you want one variable across every
+element.
 
 ----
 
@@ -139,12 +160,12 @@ End-to-end example
         n = out.get_period_count()
         print(f"{n} reporting periods, step = {out.get_report_step()} s")
 
-        # Time series for one node and one link:
+        # Time series for one node and one link over the full run:
         t  = [out.get_period_time(i) for i in range(n)]
-        d  = out.get_node_series(out.get_node_id(0), OutNodeVar.DEPTH)
-        q  = out.get_link_series(out.get_link_id(0), OutLinkVar.FLOW_RATE)
-        print(f"first node depth: peak = {max(d):.3f}")
-        print(f"first link flow:  peak = {max(q):.3f}")
+        d  = out.get_node_series(0, OutNodeVar.DEPTH,     start=0, end=n - 1)
+        q  = out.get_link_series(0, OutLinkVar.FLOW_RATE, start=0, end=n - 1)
+        print(f"first node depth: peak = {d.max():.3f}")
+        print(f"first link flow:  peak = {q.max():.3f}")
 
 ----
 
@@ -162,9 +183,9 @@ Build a NumPy depth matrix (T × n_nodes)
     with OutputReader("model.out") as out:
         T = out.get_period_count()
         N = out.get_node_count()
-        depths = np.empty((T, N), dtype=np.float64)
+        depths = np.empty((T, N), dtype=np.float32)
         for t in range(T):
-            depths[t] = out.get_node_attribute(t, OutNodeVar.DEPTH)
+            depths[t] = out.get_node_result(t, OutNodeVar.DEPTH)
         # depths.shape == (T, N) ; ready for vectorised analysis
 
 Plot one node's depth with matplotlib
@@ -177,8 +198,11 @@ Plot one node's depth with matplotlib
 
     with OutputReader("model.out") as out:
         n = out.get_period_count()
+        # Resolve "J1" to its zero-based index by scanning ids
+        j1 = next(i for i in range(out.get_node_count())
+                  if out.get_node_id(i) == "J1")
         t = [out.get_period_time(i) for i in range(n)]
-        d = out.get_node_series("J1", OutNodeVar.DEPTH)
+        d = out.get_node_series(j1, OutNodeVar.DEPTH, start=0, end=n - 1)
 
     plt.plot(t, d); plt.title("J1 depth"); plt.xlabel("time (days)")
     plt.ylabel("depth"); plt.show()
@@ -193,7 +217,7 @@ Convert one snapshot to pandas
 
     with OutputReader("model.out") as out:
         last = out.get_period_count() - 1
-        flows = out.get_link_attribute(last, OutLinkVar.FLOW_RATE)
+        flows = out.get_link_result(last, OutLinkVar.FLOW_RATE)
         ids = [out.get_link_id(i) for i in range(out.get_link_count())]
     df = pd.DataFrame({"link": ids, "flow": flows}).set_index("link")
 
@@ -207,9 +231,9 @@ Detect peak flooding across the run
     with OutputReader("model.out") as out:
         T = out.get_period_count()
         N = out.get_node_count()
-        peak = np.zeros(N)
+        peak = np.zeros(N, dtype=np.float32)
         for t in range(T):
-            peak = np.maximum(peak, out.get_node_attribute(t, OutNodeVar.OVERFLOW))
+            peak = np.maximum(peak, out.get_node_result(t, OutNodeVar.OVERFLOW))
 
         flooded = [
             (out.get_node_id(i), peak[i])
@@ -223,15 +247,19 @@ Detect peak flooding across the run
 Bulk arrays
 ===========
 
-The ``*_attribute`` methods are the bulk surface — they return
-``np.ndarray[float64]`` of the appropriate length:
+The ``*_result`` methods are the bulk surface — they return
+``np.ndarray[float32]`` of the appropriate length:
 
-* ``get_subcatch_attribute(period, var)`` → shape ``(n_subcatch,)``
-* ``get_node_attribute(period, var)``     → shape ``(n_nodes,)``
-* ``get_link_attribute(period, var)``     → shape ``(n_links,)``
+* ``get_subcatch_result(period, var)`` → shape ``(n_subcatch,)``
+* ``get_node_result(period, var)``     → shape ``(n_nodes,)``
+* ``get_link_result(period, var)``     → shape ``(n_links,)``
 
-For per-element series (one element, all times), the ``*_series``
-methods return Python lists.  Wrap with ``np.asarray()`` as needed.
+For one-element-many-times queries, the ``*_series`` methods also
+return ``ndarray[float32]`` — shape ``(end - start + 1,)``.
+
+The ``*_attribute`` methods are the orthogonal slice: one element,
+every output variable at the given period.  They are useful when
+hooking a row of values into a tabular post-processor.
 
 ----
 

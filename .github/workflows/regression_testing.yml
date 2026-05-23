@@ -3,13 +3,14 @@ name: Regression Testing
 on:
   push:
     branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
   workflow_dispatch:
 
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  # Pull only what the regression-test build needs: default features (2d) + tests.
-  VCPKG_MANIFEST_FEATURES: "tests"
   OMP_NUM_THREADS: 1
 
 jobs:
@@ -59,6 +60,10 @@ jobs:
           ref: 2025.02.14
           path: vcpkg
 
+      - name: Install OpenMP (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
       - name: Install Ninja (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build
@@ -104,13 +109,14 @@ jobs:
           python -m pip install pytest numpy
 
       - name: Configure
+        # The *-tests preset sets VCPKG_MANIFEST_FEATURES=tests and enables
+        # both OPENSWMM_BUILD_UNIT_TESTS and OPENSWMM_BUILD_REGRESSION_TESTS
+        # as CMake cache vars (env-var-only propagation isn't honored by the
+        # vcpkg toolchain at configure time).
         run: >
           cmake
-          --preset=${{ matrix.cmake_preset }}-debug
+          --preset=${{ matrix.cmake_preset }}-tests
           -B build-${{ matrix.vcpkg_triplet }}
-          -DOPENSWMM_BUILD_TESTS=OFF
-          -DOPENSWMM_BUILD_UNIT_TESTS=ON
-          -DOPENSWMM_BUILD_REGRESSION_TESTS=ON
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
       - name: Build
@@ -119,11 +125,34 @@ jobs:
       - name: Unit tests (sanity check)
         run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit --output-on-failure
 
+      - name: Diagnose Linux unit-test segfaults (gdb)
+        if: failure() && runner.os == 'Linux'
+        working-directory: tests/unit/legacy/engine/data
+        run: |
+          sudo apt-get install -y gdb
+          for t in test_solver_api test_solver_errors test_solver_hotstart test_solver_shapes test_solver_expanded_api; do
+            bin=$(find ${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }} -name "$t" -type f -executable | head -1)
+            if [ -z "$bin" ]; then echo "Binary $t not found"; continue; fi
+            echo "==================================================="
+            echo "==== gdb backtrace: $t"
+            echo "==================================================="
+            gdb -batch \
+              -ex 'set pagination off' \
+              -ex 'set confirm off' \
+              -ex 'handle SIGSEGV stop print nopass' \
+              -ex run \
+              -ex 'thread apply all bt full' \
+              -ex quit \
+              "$bin" 2>&1 | head -400 || true
+          done
+
       - name: C++ regression tests
         run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L regression --output-on-failure
 
       - name: Python regression tests
         working-directory: tests/regression_testing
+        env:
+          OPENSWMM_BUILD_DIR: ${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}
         run: python -m pytest -v --tb=short
 
       - name: Upload artifacts
@@ -132,3 +161,4 @@ jobs:
         with:
           name: regression-${{ matrix.vcpkg_triplet }}
           path: tests/regression_testing/results/
+          if-no-files-found: ignore

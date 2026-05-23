@@ -68,8 +68,9 @@ struct TimeStep {
 class RegressionTest : public ::testing::TestWithParam<RegressionParams> {
 protected:
     void RunLegacy(const std::string& inp) {
-        std::string rpt = "/tmp/regression_legacy.rpt";
-        std::string out = "/tmp/regression_legacy.out";
+        const auto tmp = fs::temp_directory_path();
+        std::string rpt = (tmp / "regression_legacy.rpt").string();
+        std::string out = (tmp / "regression_legacy.out").string();
 
         int err = swmm_run(inp.c_str(), rpt.c_str(), out.c_str());
         ASSERT_EQ(err, 0) << "Legacy engine failed on " << inp;
@@ -105,8 +106,9 @@ protected:
     }
 
     void RunNew(const std::string& inp) {
-        std::string rpt = "/tmp/regression_new.rpt";
-        std::string out = "/tmp/regression_new.out";
+        const auto tmp = fs::temp_directory_path();
+        std::string rpt = (tmp / "regression_new.rpt").string();
+        std::string out = (tmp / "regression_new.out").string();
 
         // Full run first — mirrors how RunLegacy uses swmm_run()
         int err = swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr);

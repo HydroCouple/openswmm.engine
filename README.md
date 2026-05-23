@@ -1,7 +1,7 @@
 # OpenSWMM Engine
 
 <p align="center">
-  <img src="docs/images/hydrocouple_logo.png" alt="OpenSWMM" width="120">
+  <img src="https://raw.githubusercontent.com/HydroCouple/openswmm.engine/develop/docs/images/hydrocouple_logo.png" alt="OpenSWMM" width="120">
 </p>
 
 **Open Storm Water Management Model — Next-Generation Computational Engine**
@@ -9,8 +9,10 @@
 [![Unit Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml)
 [![Unit Testing Python](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing_python.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing_python.yml)
 [![Documentation](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml)
+[![CodeQL](https://github.com/HydroCouple/openswmm.engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HydroCouple/openswmm.engine/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HydroCouple/openswmm.engine)
 [![Issues](https://img.shields.io/github/issues/HydroCouple/openswmm.engine)](https://github.com/HydroCouple/openswmm.engine/issues)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/HydroCouple/openswmm.engine/blob/HEAD/LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/openswmm.svg)](https://pypi.org/project/openswmm)
 [![Downloads](https://pepy.tech/badge/openswmm)](https://pepy.tech/project/openswmm)
 [![Python](https://img.shields.io/pypi/pyversions/openswmm.svg)](https://pypi.org/project/openswmm)

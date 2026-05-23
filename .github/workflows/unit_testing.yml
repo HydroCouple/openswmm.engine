@@ -2,16 +2,17 @@ name: Unit Testing
 
 on:
   push:
-    branches: [master, main, develop]
+    branches: [main, develop]
   pull_request:
-    branches: [master, main, develop]
+    branches: [main, develop]
 
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_EXE: ${{ github.workspace }}/vcpkg/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  # Pull only what the unit-test build needs: default features (2d) + tests.
-  VCPKG_MANIFEST_FEATURES: "tests"
+  # Note: the vcpkg `tests` feature is enabled via -DVCPKG_MANIFEST_FEATURES on
+  # the Configure step below; the env-var form isn't honored by the vcpkg
+  # toolchain at CMake configure time.
   OMP_NUM_THREADS: 1
 
 jobs:
@@ -120,6 +121,27 @@ jobs:
 
       - name: Unit tests
         run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit --output-on-failure
+
+      - name: Diagnose Linux unit-test segfaults (gdb)
+        if: failure() && runner.os == 'Linux'
+        working-directory: tests/unit/legacy/engine/data
+        run: |
+          sudo apt-get install -y gdb
+          for t in test_solver_api test_solver_errors test_solver_hotstart test_solver_shapes test_solver_expanded_api; do
+            bin=$(find ${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }} -name "$t" -type f -executable | head -1)
+            if [ -z "$bin" ]; then echo "Binary $t not found"; continue; fi
+            echo "==================================================="
+            echo "==== gdb backtrace: $t"
+            echo "==================================================="
+            gdb -batch \
+              -ex 'set pagination off' \
+              -ex 'set confirm off' \
+              -ex 'handle SIGSEGV stop print nopass' \
+              -ex run \
+              -ex 'thread apply all bt full' \
+              -ex quit \
+              "$bin" 2>&1 | head -400 || true
+          done
 
       - name: Package
         run: cmake --build build-${{ matrix.vcpkg_triplet }} --target package

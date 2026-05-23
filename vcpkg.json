@@ -4,6 +4,7 @@
     "license": "MIT",
     "homepage": "https://hydrocouple.org/projects/openswmm",
     "version-semver": "6.0.0-alpha.1",
+    "builtin-baseline": "d5ec528843d29e3a52d745a64b469f810b2cedbf",
     "dependencies": [
         {
             "name": "vcpkg-cmake",
@@ -12,6 +13,9 @@
         {
             "name": "vcpkg-cmake-config",
             "host": true
+        },
+        {
+            "name": "gtest"
         }
     ],
     "default-features": [

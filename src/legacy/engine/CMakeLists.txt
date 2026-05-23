@@ -23,13 +23,22 @@ if(APPLE AND NOT OpenMP_FOUND)
     include(${PROJECT_SOURCE_DIR}/cmake/FindOpenMP.cmake)
 endif()
 
-# Configure based on whether OpenMP was found
+# Configure based on whether OpenMP was found.
+#
+# We intentionally do NOT append ${OpenMP_C_FLAGS} / ${OpenMP_CXX_FLAGS} to
+# CMAKE_C_FLAGS / CMAKE_CXX_FLAGS here. On macOS arm64 with Apple Clang, the
+# stock find_package(OpenMP) probes fail and CMake's FindOpenMP caches the
+# *_FLAGS variables as the literal sentinel string "NOTFOUND". The Apple
+# fallback in cmake/FindOpenMP.cmake then sets OpenMP_FOUND=TRUE without
+# overwriting those cached sentinels, so the append would inject the bare word
+# "NOTFOUND" into the compile line and clang would try to open it as a file.
+#
+# Both the stock CMake FindOpenMP and our Apple fallback create the
+# OpenMP::OpenMP_C / OpenMP::OpenMP_CXX imported targets with the correct
+# INTERFACE compile options and link libraries, so the target_link_libraries
+# call below is sufficient — no global flag manipulation needed.
 if(OpenMP_FOUND OR OpenMP_C_FOUND)
     message(STATUS "OpenMP found and will be used for legacy engine")
-    if(APPLE)
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-    endif()
 else()
     message(WARNING "OpenMP not found - building legacy engine without parallel support")
     add_compile_definitions(NO_OPENMP)
@@ -76,6 +85,17 @@ set_target_properties(openswmm_legacy_engine
         OUTPUT_NAME "openswmm.legacy.engine"
         VERSION     ${PROJECT_VERSION}
         SOVERSION   ${PROJECT_VERSION_MAJOR}
+        # The root CMakeLists sets CMAKE_C_EXTENSIONS OFF, which makes CMake
+        # pass -std=c17 (strict ANSI) instead of -std=gnu17. Under strict ANSI
+        # on glibc, <stdlib.h> hides realpath() because it's a POSIX extension,
+        # and swmm5.c's getAbsolutePath() then calls it with no visible
+        # prototype — the implicit-int return type truncates the 64-bit char*
+        # to 32 bits and the caller dereferences a garbage pointer (Linux
+        # x64 Debug segfault). Apple's libc exposes realpath unconditionally
+        # and Windows uses a different branch, which is why this only bites
+        # on Linux. Override per-target so the rest of the project keeps
+        # strict ANSI.
+        C_EXTENSIONS ON
         # Tell generate_export_header that symbols default to hidden so it
         # emits __attribute__((visibility("default"))) on the export macro.
         # Without this, if -fvisibility=hidden is in CMAKE_C_FLAGS the API
@@ -134,16 +154,24 @@ target_include_directories(openswmm_legacy_engine
         $<INSTALL_INTERFACE:include/openswmm/legacy/engine>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${OpenMP_C_INCLUDE_DIRS}
+        # OpenMP include dirs come from the OpenMP::OpenMP_C imported target
+        # via target_link_libraries below — do not interpolate
+        # ${OpenMP_C_INCLUDE_DIRS} here. CMake's stock FindOpenMP can leave
+        # that variable as the literal sentinel "NOTFOUND" on macOS arm64
+        # when its probes fail, which would be added as a literal include
+        # path and break the build (same class of bug as ${OpenMP_C_FLAGS}).
 )
 
 # Link dependencies
+# OpenMP::OpenMP_C is gated on OpenMP_FOUND so the "no OpenMP" fallback
+# (lines 33-36 above, which defines NO_OPENMP) actually produces a buildable
+# target instead of failing on a missing imported target.
 target_link_libraries(openswmm_legacy_engine
     PUBLIC
         openswmm_common   # INTERFACE library — exposes include/
     PRIVATE
         $<$<NOT:$<BOOL:$<C_COMPILER_ID:MSVC>>>:m>
-        OpenMP::OpenMP_C
+        $<$<BOOL:${OpenMP_FOUND}>:OpenMP::OpenMP_C>
 )
 
 # RPATH — wheel layout: bundled deps in openswmm/.dylibs/, two levels above

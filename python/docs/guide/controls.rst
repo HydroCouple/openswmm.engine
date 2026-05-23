@@ -89,7 +89,7 @@ End-to-end example
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Controls, Links
+    from openswmm.engine import Solver, Controls, Links, EngineState
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
         controls = Controls(s)
@@ -109,7 +109,9 @@ End-to-end example
 
         p1 = links.get_index("P1")
         on_steps = 0
-        while s.step():
+        while s.state == EngineState.RUNNING:
+            if s.step() != 0:
+                break
             if links.get_target_setting(p1) > 0.5:
                 on_steps += 1
         print(f"P1 was on for {on_steps} steps "
@@ -125,7 +127,9 @@ Add a rule at runtime  (mid-simulation)
 
 .. code-block:: python
 
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         if some_external_condition():
             controls.add_rule(
                 "RULE EMERGENCY_BYPASS\n"
@@ -162,7 +166,9 @@ Imperative override  (one step)
 
     p1 = links.get_index("P1")
 
-    while s.step():
+    while s.state == EngineState.RUNNING:
+        if s.step() != 0:
+            break
         if external_signal_says_pump_off():
             controls.set_link_setting(p1, 0.0)        # one-shot
 
