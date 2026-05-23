@@ -138,12 +138,15 @@ target_include_directories(openswmm_legacy_engine
 )
 
 # Link dependencies
+# OpenMP::OpenMP_C is gated on OpenMP_FOUND so the "no OpenMP" fallback
+# (lines 33-36 above, which defines NO_OPENMP) actually produces a buildable
+# target instead of failing on a missing imported target.
 target_link_libraries(openswmm_legacy_engine
     PUBLIC
         openswmm_common   # INTERFACE library — exposes include/
     PRIVATE
         $<$<NOT:$<BOOL:$<C_COMPILER_ID:MSVC>>>:m>
-        OpenMP::OpenMP_C
+        $<$<BOOL:${OpenMP_FOUND}>:OpenMP::OpenMP_C>
 )
 
 # RPATH — wheel layout: bundled deps in openswmm/.dylibs/, two levels above

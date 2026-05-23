@@ -60,6 +60,10 @@ jobs:
           ref: 2025.02.14
           path: vcpkg
 
+      - name: Install OpenMP (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
       - name: Install Ninja (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build

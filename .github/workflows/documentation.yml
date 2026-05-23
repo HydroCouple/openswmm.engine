@@ -6,7 +6,7 @@ on:
     # branches: [main, develop]
     tags: ["v*.*.*"]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 # Allow only one concurrent deployment.  Do NOT cancel in-progress runs so
@@ -95,7 +95,7 @@ jobs:
 # ─────────────────────────────────────────────────────────────────────────────
   deploy:
     name: Deploy to GitHub Pages
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/swmm6_rel')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     needs: [build_python_docs, build_doxygen_docs]
     runs-on: ubuntu-latest
     permissions:
