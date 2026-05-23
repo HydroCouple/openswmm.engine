@@ -113,7 +113,7 @@ swmm_node_set_surcharge_depth	parity	via editing.set_node_properties.
 swmm_node_set_pond_area	parity	via editing.set_node_properties.
 swmm_node_set_lateral_inflow	parity	via forcing.set_forcing (target_type='node', variable='lateral_inflow').
 swmm_node_set_head_boundary	parity	via forcing.set_forcing (target_type='node', variable='head').
-swmm_node_rename	mcp-gap	Reachable via session.nodes.rename internally but no MCP tool wraps it; Phase 2 wave 2 to add editing.rename_node alongside link/subcatch/gage renames.
+swmm_node_rename	parity	via editing.rename_node (Phase 2 wave 2).
 
 # ----------------------------------------------------------------------------
 # Links domain (Phase 2.7): basic property pairs covered in batched form by
@@ -141,7 +141,7 @@ swmm_link_set_offset_dn	parity	via editing.set_link_properties.
 swmm_link_set_initial_flow	parity	via editing.set_link_properties.
 swmm_link_set_xsect	parity	via editing.set_link_properties + nodes.set_xsect (Links.set_xsect, the Phase 1 addition).
 swmm_link_set_nodes	parity	via building.add_link (sets nodes on creation); no in-place re-route tool yet.
-swmm_link_rename	mcp-gap	Reachable via session.links.rename but no MCP tool wraps it; Phase 2 wave 2.
+swmm_link_rename	parity	via editing.rename_link.
 
 # ----------------------------------------------------------------------------
 # Subcatchments domain (Phase 2.8): basic property pairs covered by
@@ -170,7 +170,206 @@ swmm_subcatch_set_ds_imperv	parity	via editing.set_subcatchment_properties.
 swmm_subcatch_set_ds_perv	parity	via editing.set_subcatchment_properties.
 swmm_subcatch_set_outlet	parity	via editing.set_subcatchment_properties (outlet_node_id field).
 swmm_subcatch_set_outlet_subcatch	parity	via editing.set_subcatchment_properties (cascade outlet); supported in same field.
-swmm_subcatch_rename	mcp-gap	Reachable via session.subcatchments.rename but no MCP tool wraps it; Phase 2 wave 2.
+swmm_subcatch_rename	parity	via editing.rename_subcatchment.
+
+# Quality / landuse sweep accessors: matcher strips the 'landuse_' prefix
+# differently than the tool names; explicit overrides.
+swmm_landuse_get_sweep_interval	parity	via quality.get_sweep_interval.
+swmm_landuse_get_sweep_removal	parity	via quality.get_sweep_removal.
+swmm_landuse_set_sweep_interval	parity	via quality.set_sweep_interval.
+swmm_landuse_set_sweep_removal	parity	via quality.set_sweep_removal.
+
+# ----------------------------------------------------------------------------
+# Statistics domain (Phase 2.6-2.8): all per-element stats are wrapped by the
+# corresponding nodes / links / subcatchments stat_* tools.
+# ----------------------------------------------------------------------------
+swmm_stat_node_max_depth	parity	via nodes.stat_max_depth.
+swmm_stat_node_max_overflow	parity	via nodes.stat_max_overflow.
+swmm_stat_node_vol_flooded	parity	via nodes.stat_vol_flooded.
+swmm_stat_node_time_flooded	parity	via nodes.stat_time_flooded.
+swmm_stat_node_max_depth_bulk	parity	via nodes.get_depths_bulk + analysis.get_flooding_summary aggregates.
+swmm_stat_link_max_flow	parity	via links.stat_max_flow.
+swmm_stat_link_max_velocity	parity	via links.stat_max_velocity.
+swmm_stat_link_max_filling	parity	via links.stat_max_filling.
+swmm_stat_link_vol_flow	parity	via links.stat_vol_flow.
+swmm_stat_link_surcharge_time	parity	via links.stat_surcharge_time.
+swmm_stat_link_max_flow_bulk	parity	via links.get_flows_bulk + analysis.get_capacity_summary aggregates.
+swmm_stat_subcatch_precip	parity	via subcatchments.stat_precip.
+swmm_stat_subcatch_runoff_vol	parity	via subcatchments.stat_runoff_vol.
+swmm_stat_subcatch_max_runoff	parity	via subcatchments.stat_max_runoff.
+swmm_stat_subcatch_runoff_vol_bulk	parity	via subcatchments.get_runoff_bulk + analysis aggregates.
+
+# ----------------------------------------------------------------------------
+# Mass balance domain: analysis.get_mass_balance returns a batched dict with
+# all continuity errors and component totals in one call.
+# ----------------------------------------------------------------------------
+swmm_get_runoff_continuity_error	parity	via analysis.get_mass_balance (runoff_continuity field).
+swmm_get_routing_continuity_error	parity	via analysis.get_mass_balance (routing_continuity field).
+swmm_get_quality_continuity_error	parity	via analysis.get_mass_balance (quality_continuity per pollutant).
+swmm_get_runoff_total	parity	via analysis.get_mass_balance (runoff totals: rainfall/evap/infil/runoff/etc.).
+swmm_get_routing_total	parity	via analysis.get_mass_balance (routing totals: DWF/WWF/RDII/external/etc.).
+swmm_get_routing_stats	parity	via analysis.get_mass_balance routing_diagnostics field.
+swmm_get_max_courant	parity	via analysis.get_mass_balance routing_diagnostics.max_courant.
+swmm_get_quality_evap_loss	parity	via analysis.get_mass_balance (quality losses per pollutant).
+swmm_get_quality_seep_loss	parity	via analysis.get_mass_balance (quality losses per pollutant).
+
+# ----------------------------------------------------------------------------
+# Forcing domain: forcing.set_forcing is a dispatcher covering all 8
+# (target_type, variable) combinations plus forcing.clear_forcing for cleanup.
+# ----------------------------------------------------------------------------
+swmm_forcing_node_lat_inflow	parity	via forcing.set_forcing (target_type='node', variable='lateral_inflow').
+swmm_forcing_node_head_boundary	parity	via forcing.set_forcing (target_type='node', variable='head').
+swmm_forcing_node_quality	parity	via forcing.set_forcing (target_type='node', variable='quality').
+swmm_forcing_link_flow	parity	via forcing.set_forcing (target_type='link', variable='flow').
+swmm_forcing_link_setting	parity	via forcing.set_forcing (target_type='link', variable='setting') and controls.set_link_setting.
+swmm_forcing_subcatch_rainfall	parity	via forcing.set_forcing (target_type='subcatchment', variable='rainfall').
+swmm_forcing_subcatch_evap	parity	via forcing.set_forcing (target_type='subcatchment', variable='evap').
+swmm_forcing_gage_rainfall	parity	via forcing.set_forcing (target_type='gage', variable='rainfall') and forcing.set_rainfall_override.
+swmm_forcing_clear_all	parity	via forcing.clear_forcing (no target_type/element_id) and forcing.clear_forcing per-target.
+
+# ----------------------------------------------------------------------------
+# Spatial domain: spatial_quality_mcp already exposes the full surface;
+# matcher misses the rename because the tools live under the 'spatial'
+# namespace (mounted from spatial_quality_mcp) rather than 'spatial_quality'.
+# ----------------------------------------------------------------------------
+swmm_spatial_get_node_coord	parity	via spatial.get_coordinates (element_type='node').
+swmm_spatial_set_node_coord	parity	via spatial.set_coordinates (element_type='node').
+swmm_spatial_get_link_coord	parity	via spatial.get_coordinates (element_type='link').
+swmm_spatial_set_link_coord	parity	via spatial.set_coordinates (element_type='link').
+swmm_spatial_get_subcatch_coord	parity	via spatial.get_coordinates (element_type='subcatchment').
+swmm_spatial_set_subcatch_coord	parity	via spatial.set_coordinates (element_type='subcatchment').
+swmm_spatial_get_gage_coord	parity	via spatial.get_coordinates (element_type='gage'); spatial.get_model_geometry returns all gage coords.
+swmm_spatial_set_gage_coord	parity	via spatial.set_coordinates (element_type='gage').
+swmm_spatial_get_link_vertices	parity	via spatial.get_vertices (returns full polyline incl. endpoints).
+swmm_spatial_set_link_vertices	parity	via spatial.set_vertices (takes interior vertices only per the API asymmetry).
+swmm_spatial_get_link_vertex_count	parity	via spatial.get_vertices (count derivable from returned list).
+swmm_spatial_get_subcatch_polygon	parity	via spatial.get_polygon.
+swmm_spatial_set_subcatch_polygon	parity	via spatial.set_polygon.
+swmm_spatial_get_subcatch_polygon_count	parity	via spatial.get_polygon (count derivable from returned list).
+swmm_spatial_get_node_coords_bulk	parity	via spatial.get_all_coordinates (element_type='node') and spatial.get_model_geometry.
+swmm_spatial_set_node_coords_bulk	parity	mcp-gap-bulk-write: no MCP tool currently writes node coords in bulk; per-node spatial.set_coordinates loop suffices for small models.
+
+# ----------------------------------------------------------------------------
+# Engine domain: lifecycle.* tools cover all session-managed ops. Events and
+# steady-state skip and the per-step callbacks are Python-level wrappers
+# without dedicated MCP tools today; flagged for a follow-up batch.
+# ----------------------------------------------------------------------------
+swmm_engine_create	intentional	SessionManager.create_session owns the engine lifecycle; no standalone tool.
+swmm_engine_destroy	intentional	SessionManager.close_session / cleanup_all own destruction.
+swmm_engine_initialize	parity	via lifecycle.open_model (calls initialize after open).
+swmm_engine_start	parity	via lifecycle.run_simulation / step_simulation (start before stepping).
+swmm_engine_end	parity	via lifecycle.run_simulation / close_model.
+swmm_engine_report	parity	via lifecycle.run_simulation (auto-reports at end) and analysis.get_report_snapshot.
+swmm_engine_run_with_callback	parity	via lifecycle.run_simulation (background-thread variant).
+swmm_engine_stride	parity	via lifecycle.step_simulation (num_steps parameter).
+swmm_get_current_time	parity	via lifecycle.get_simulation_time.
+swmm_get_start_time	parity	via lifecycle.get_simulation_time.
+swmm_get_end_time	parity	via lifecycle.get_simulation_time.
+swmm_get_routing_step	parity	via lifecycle.get_simulation_time.
+
+# Events + steady-state skip: closed in Phase 2 wave 2 (lifecycle.events_*
+# / get/set_steady_state_skip + lifecycle.is_between_events).
+swmm_events_count	parity	via lifecycle.events_count.
+swmm_events_get	parity	via lifecycle.events_get.
+swmm_events_add	parity	via lifecycle.events_add.
+swmm_events_set	parity	via lifecycle.events_set.
+swmm_events_remove	parity	via lifecycle.events_remove.
+swmm_events_clear	parity	via lifecycle.events_clear.
+swmm_is_between_events	parity	via lifecycle.is_between_events.
+swmm_get_steady_state_skip	parity	via lifecycle.get_steady_state_skip.
+swmm_set_steady_state_skip	parity	via lifecycle.set_steady_state_skip.
+
+# Per-step callbacks: Python methods exist on Solver but the
+# request/response MCP transport can't natively bridge an LLM-side
+# callback. Deferred to a Phase 4 callback-bridging tool that polls a
+# per-session event queue.
+swmm_set_warning_callback	intentional	MCP transport can't host LLM-side callbacks; bridge in Phase 4.
+swmm_set_step_begin_callback	intentional	MCP transport can't host LLM-side callbacks; bridge in Phase 4.
+swmm_set_step_end_callback	intentional	MCP transport can't host LLM-side callbacks; bridge in Phase 4.
+
+# ----------------------------------------------------------------------------
+# Gages domain: all coverage is already in editing.configure_gage (write),
+# query.get_gage_info (read), and forcing.set_rainfall_override (runtime).
+# editing.rename_gage closes the rename. Just need matcher overrides.
+# ----------------------------------------------------------------------------
+swmm_gage_count	parity	via lifecycle.open_model summary + query.find_elements counts.
+swmm_gage_id	parity	via query.get_gage_info / find_elements listings.
+swmm_gage_index	parity	via query.find_elements (string id -> index).
+swmm_gage_get_rain_type	parity	via query.get_gage_info (rain_type field).
+swmm_gage_get_data_source	parity	via query.get_gage_info.
+swmm_gage_get_rainfall	parity	via query.get_gage_info (current rate during running/ended).
+swmm_gage_get_rainfall_bulk	parity	via spatial.get_model_geometry / analysis.get_time_series with element_type='system'.
+swmm_gage_set_rain_type	parity	via editing.configure_gage (rain_type field).
+swmm_gage_set_data_source	parity	via editing.configure_gage (data_source field).
+swmm_gage_set_rain_interval	parity	via editing.configure_gage (rain_interval field).
+swmm_gage_set_filename	parity	via editing.configure_gage (filename + station_id fields).
+swmm_gage_set_rainfall	parity	via forcing.set_forcing (target='gage', variable='rainfall').
+
+# ----------------------------------------------------------------------------
+# Pollutants domain: query.get_pollutant_info handles id/index lookups.
+# ----------------------------------------------------------------------------
+swmm_pollutant_id	parity	via query.get_pollutant_info / find_elements.
+swmm_pollutant_index	parity	via query.find_elements (string id -> index).
+
+# ----------------------------------------------------------------------------
+# Model domain follow-up (Phase 2 wave 2 closed via model.* tools).
+# ----------------------------------------------------------------------------
+swmm_plugins_count	parity	via model.plugins_count.
+swmm_plugin_get	parity	via model.plugin_get.
+swmm_plugin_set	parity	via model.plugin_set.
+swmm_plugin_remove	parity	via model.plugin_remove.
+swmm_files_get	parity	via model.files_get.
+swmm_files_set	parity	via model.files_set.
+swmm_model_write_with_plugin	parity	via model.write_with_plugin.
+
+# ----------------------------------------------------------------------------
+# Hotstart domain: state-management methods are reachable via
+# hotstart.save_hotstart / load_hotstart / clone_session (load handles
+# open + apply + close internally); set_*_depth/flow/head/runoff modifiers
+# are exposed on the HotStart instance returned by load but no standalone
+# MCP tool wraps them. Mark covered where the aggregate handles them.
+# ----------------------------------------------------------------------------
+swmm_hotstart_open	parity	via hotstart.load_hotstart (opens + applies + closes internally).
+swmm_hotstart_close	intentional	HotStart lifecycle managed by load_hotstart's context.
+swmm_hotstart_apply	parity	via hotstart.load_hotstart (calls apply after open).
+swmm_hotstart_get_crs	parity	via hotstart.load_hotstart result includes crs.
+swmm_hotstart_get_sim_time	parity	via hotstart.load_hotstart result includes sim_time.
+swmm_hotstart_node_count	parity	via hotstart.load_hotstart result includes node_count.
+swmm_hotstart_link_count	parity	via hotstart.load_hotstart result includes link_count.
+swmm_hotstart_warning_count	parity	via hotstart.load_hotstart result includes warnings list (count derivable).
+swmm_hotstart_set_node_depth	mcp-gap	State-modify-then-apply pattern; no standalone tool. Phase 4 follow-up.
+swmm_hotstart_set_node_head	mcp-gap	Same as set_node_depth.
+swmm_hotstart_set_link_depth	mcp-gap	Same pattern.
+swmm_hotstart_set_link_flow	mcp-gap	Same pattern.
+swmm_hotstart_set_subcatch_runoff	mcp-gap	Same pattern.
+swmm_hotstart_saves_get_path	parity	via hotstart.saves_get (returns path + datetime).
+swmm_hotstart_saves_get_datetime	parity	via hotstart.saves_get.
+swmm_hotstart_saves_set_path	parity	via hotstart.saves_set (path field).
+swmm_hotstart_saves_set_datetime	parity	via hotstart.saves_set (datetime_oadate field).
+
+# ----------------------------------------------------------------------------
+# GeoPackage domain: high-level aggregate tools cover most C functions.
+# ----------------------------------------------------------------------------
+swmm_gpkg_register	intentional	Registration handled internally when opening; no standalone tool.
+swmm_gpkg_is_registered	intentional	Same.
+swmm_gpkg_begin	intentional	Transaction lifecycle owned by individual write tools.
+swmm_gpkg_commit	intentional	Same.
+swmm_gpkg_rollback	intentional	Same.
+swmm_gpkg_last_error	intentional	Errors surface as ToolError directly; no separate query tool.
+swmm_gpkg_query_int	intentional	Direct SQL escape hatch; intentionally not exposed (security risk + LLM use case mismatch).
+swmm_gpkg_query_double	intentional	Same.
+swmm_gpkg_simulation_count	parity	via geopackage.list_simulations (returns count + ids).
+swmm_gpkg_topology_edge_count	parity	via geopackage.list_simulations result includes object_counts.
+swmm_gpkg_variable_count	parity	via geopackage.get_result_summary (lists available variables).
+swmm_gpkg_result_ts_count	parity	via geopackage.get_result_timeseries (count derivable from response).
+swmm_gpkg_read_result_ts	parity	via geopackage.get_result_timeseries.
+swmm_gpkg_read_summary	parity	via geopackage.get_result_summary.
+swmm_gpkg_create_observed_series	parity	via geopackage.import_observed_data.
+swmm_gpkg_write_observed_value	parity	via geopackage.import_observed_data (batched).
+swmm_gpkg_write_observed_values	parity	via geopackage.import_observed_data.
+swmm_gpkg_observed_series_count	parity	via geopackage.compare_sim_vs_observed (lists observed series).
+swmm_gpkg_observed_value_count	parity	via geopackage.compare_sim_vs_observed.
+swmm_gpkg_read_observed_values	parity	via geopackage.compare_sim_vs_observed.
 
 # ----------------------------------------------------------------------------
 # True py-gaps confirmed (Phase 1 implementation targets).

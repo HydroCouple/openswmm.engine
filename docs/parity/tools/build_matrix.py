@@ -64,15 +64,15 @@ DOMAIN_ALIASES: dict[str, str] = {
 
 # Mapping from C domain to likely MCP namespace(s) for hinting.
 MCP_DOMAIN_HINTS: dict[str, list[str]] = {
-    "engine": ["lifecycle"],
-    "model": ["building", "editing"],
+    "engine": ["lifecycle", "model"],
+    "model": ["model", "building", "editing"],
     "nodes": ["nodes", "query", "editing", "building"],
     "links": ["links", "query", "editing", "building"],
     "subcatchments": ["subcatchments", "query", "editing", "building"],
     "gages": ["query", "editing", "building"],
     "spatial": ["spatial_quality"],
-    "quality": ["spatial_quality"],
-    "pollutants": ["query", "building"],
+    "quality": ["quality", "spatial_quality"],
+    "pollutants": ["pollutants", "query", "building"],
     "hotstart": ["hotstart"],
     "tables": ["tables", "building"],
     "controls": ["controls", "forcing"],

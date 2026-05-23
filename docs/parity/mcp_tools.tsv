@@ -45,6 +45,10 @@ editing	configure_gage	editing	tool	(ctx: Context, session_id: str='default', ga
 editing	convert_link	editing	tool	(ctx: Context, session_id: str='default', link_id: str='', new_type: str='conduit') -> ConversionResultModel
 editing	convert_node	editing	tool	(ctx: Context, session_id: str='default', node_id: str='', new_type: str='junction') -> ConversionResultModel
 editing	delete_object	editing	tool	(ctx: Context, session_id: str='default', object_type: str='node', object_id: str='', dry_run: bool=False) -> ImpactReportModel
+editing	rename_gage	editing	tool	(ctx: Context, session_id: str='default', gage_id: str='', new_id: str='') -> dict
+editing	rename_link	editing	tool	(ctx: Context, session_id: str='default', link_id: str='', new_id: str='') -> dict
+editing	rename_node	editing	tool	(ctx: Context, session_id: str='default', node_id: str='', new_id: str='') -> dict
+editing	rename_subcatchment	editing	tool	(ctx: Context, session_id: str='default', subcatch_id: str='', new_id: str='') -> dict
 editing	set_link_properties	editing	tool	(ctx: Context, session_id: str='default', link_id: str='', length: float | None=None, roughness: float | None=None, offset_up: float | None=None, offset_dn: float | None=None, initial_flow: float | None=None, max_flow: float | None=None, xsect_shape: str | None=None, xsect_geom1: float | None=None, xsect_geom2: float | None=None, xsect_geom3: float | None=None, xsect_geom4: float | None=None) -> PropertyUpdateResult
 editing	set_node_properties	editing	tool	(ctx: Context, session_id: str='default', node_id: str='', invert_elev: float | None=None, max_depth: float | None=None, initial_depth: float | None=None, surcharge_depth: float | None=None, ponded_area: float | None=None) -> PropertyUpdateResult
 editing	set_subcatchment_properties	editing	tool	(ctx: Context, session_id: str='default', subcatch_id: str='', area: float | None=None, width: float | None=None, slope: float | None=None, imperv_pct: float | None=None, n_imperv: float | None=None, n_perv: float | None=None, ds_imperv: float | None=None, ds_perv: float | None=None, outlet_node_id: str | None=None, gage_id: str | None=None) -> PropertyUpdateResult
@@ -63,6 +67,12 @@ geopackage	open_geopackage	geopackage	tool	(ctx: Context, path: str, session_id:
 hotstart	clone_session	hotstart	tool	(ctx: Context, source_id: str='', target_id: str='') -> dict
 hotstart	load_hotstart	hotstart	tool	(ctx: Context, session_id: str='default', path: str='') -> HotStartResult
 hotstart	save_hotstart	hotstart	tool	(ctx: Context, session_id: str='default', path: str='') -> HotStartResult
+hotstart	saves_add	hotstart	tool	(ctx: Context, session_id: str='default', path: str='', datetime_oadate: float=0.0) -> dict
+hotstart	saves_clear	hotstart	tool	(ctx: Context, session_id: str='default') -> dict
+hotstart	saves_count	hotstart	tool	(ctx: Context, session_id: str='default') -> dict
+hotstart	saves_get	hotstart	tool	(ctx: Context, session_id: str='default', index: int=0) -> dict
+hotstart	saves_remove	hotstart	tool	(ctx: Context, session_id: str='default', index: int=0) -> dict
+hotstart	saves_set	hotstart	tool	(ctx: Context, session_id: str='default', index: int=0, path: str | None=None, datetime_oadate: float | None=None) -> dict
 inflows	add_dwf	inflows	tool	(ctx: Context, session_id: str='default', node_id: str | int='', constituent: str='FLOW', avg_value: float=0.0, monthly_pattern: str='', daily_pattern: str='', hourly_pattern: str='', weekend_pattern: str='') -> dict
 inflows	add_external	inflows	tool	(ctx: Context, session_id: str='default', node_id: str | int='', constituent: str='FLOW', ts_name: str='', inflow_type: str='FLOW', m_factor: float=1.0, s_factor: float=1.0, baseline: float=0.0, pattern: str='') -> dict
 inflows	add_hydrograph	inflows	tool	(ctx: Context, session_id: str='default', uh_name: str='', month: str | int='all', response: str | int='short', r: float=0.0, t: float=0.0, k: float=1.0, dmax: float=0.0, drecov: float=0.0, dinit: float=0.0) -> dict
@@ -99,11 +109,20 @@ infrastructure	set_transect_roughness	infrastructure	tool	(ctx: Context, session
 infrastructure	street_count	infrastructure	tool	(ctx: Context, session_id: str='default') -> dict
 infrastructure	transect_count	infrastructure	tool	(ctx: Context, session_id: str='default') -> dict
 lifecycle	close_model	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
+lifecycle	events_add	lifecycle	tool	(ctx: Context, session_id: str='default', start_oadate: float=0.0, end_oadate: float=0.0) -> dict
+lifecycle	events_clear	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
+lifecycle	events_count	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
+lifecycle	events_get	lifecycle	tool	(ctx: Context, session_id: str='default', index: int=0) -> dict
+lifecycle	events_remove	lifecycle	tool	(ctx: Context, session_id: str='default', index: int=0) -> dict
+lifecycle	events_set	lifecycle	tool	(ctx: Context, session_id: str='default', index: int=0, start_oadate: float=0.0, end_oadate: float=0.0) -> dict
 lifecycle	get_simulation_state	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
 lifecycle	get_simulation_time	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
+lifecycle	get_steady_state_skip	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
+lifecycle	is_between_events	lifecycle	tool	(ctx: Context, session_id: str='default') -> dict
 lifecycle	list_sessions	lifecycle	tool	(ctx: Context) -> list[dict]
 lifecycle	open_model	lifecycle	tool	(ctx: Context, inp_path: str, session_id: str='default', rpt_path: str | None=None, out_path: str | None=None, engine: str='openswmm') -> ModelSummary
 lifecycle	run_simulation	lifecycle	tool	(ctx: Context, session_id: str='default') -> SimulationResult
+lifecycle	set_steady_state_skip	lifecycle	tool	(ctx: Context, session_id: str='default', enabled: bool=False) -> dict
 lifecycle	step_simulation	lifecycle	tool	(ctx: Context, session_id: str='default', num_steps: int=1) -> StepResult
 links	get_barrels	links	tool	(ctx: Context, session_id: str='default', link_id: str | int='') -> dict
 links	get_closed	links	tool	(ctx: Context, session_id: str='default', link_id: str | int='') -> dict
@@ -145,6 +164,30 @@ links	stat_pump_on_time	links	tool	(ctx: Context, session_id: str='default', lin
 links	stat_pump_volume	links	tool	(ctx: Context, session_id: str='default', link_id: str | int='') -> dict
 links	stat_surcharge_time	links	tool	(ctx: Context, session_id: str='default', link_id: str | int='') -> dict
 links	stat_vol_flow	links	tool	(ctx: Context, session_id: str='default', link_id: str | int='') -> dict
+model	add_title_line	model	tool	(ctx: Context, session_id: str='default', text: str='') -> dict
+model	clear_title	model	tool	(ctx: Context, session_id: str='default') -> dict
+model	files_get	model	tool	(ctx: Context, session_id: str='default', key: str='') -> dict
+model	files_set	model	tool	(ctx: Context, session_id: str='default', key: str='', value: str='') -> dict
+model	get_crs	model	tool	(ctx: Context, session_id: str='default') -> dict
+model	get_option	model	tool	(ctx: Context, session_id: str='default', key: str='') -> dict
+model	get_option_ext	model	tool	(ctx: Context, session_id: str='default', key: str='') -> dict
+model	get_title	model	tool	(ctx: Context, session_id: str='default') -> dict
+model	get_title_count	model	tool	(ctx: Context, session_id: str='default') -> dict
+model	get_title_line	model	tool	(ctx: Context, session_id: str='default', line_index: int=0) -> dict
+model	get_userflag_bool	model	tool	(ctx: Context, session_id: str='default', name: str='') -> dict
+model	get_userflag_int	model	tool	(ctx: Context, session_id: str='default', name: str='') -> dict
+model	get_userflag_real	model	tool	(ctx: Context, session_id: str='default', name: str='') -> dict
+model	plugin_get	model	tool	(ctx: Context, session_id: str='default', index: int=0) -> dict
+model	plugin_remove	model	tool	(ctx: Context, session_id: str='default', path_or_id: str='') -> dict
+model	plugin_set	model	tool	(ctx: Context, session_id: str='default', path_or_id: str='', args: str='') -> dict
+model	plugins_count	model	tool	(ctx: Context, session_id: str='default') -> dict
+model	set_option	model	tool	(ctx: Context, session_id: str='default', key: str='', value: str='') -> dict
+model	set_option_ext	model	tool	(ctx: Context, session_id: str='default', key: str='', value: str='') -> dict
+model	set_title	model	tool	(ctx: Context, session_id: str='default', text: str='') -> dict
+model	set_userflag_bool	model	tool	(ctx: Context, session_id: str='default', name: str='', value: bool=False) -> dict
+model	set_userflag_int	model	tool	(ctx: Context, session_id: str='default', name: str='', value: int=0) -> dict
+model	set_userflag_real	model	tool	(ctx: Context, session_id: str='default', name: str='', value: float=0.0) -> dict
+model	write_with_plugin	model	tool	(ctx: Context, session_id: str='default', path: str='', output_plugin_id: str='') -> dict
 nodes	depth_from_volume	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='', volume: float=0.0) -> dict
 nodes	get_depths_bulk	nodes	tool	(ctx: Context, session_id: str='default') -> dict
 nodes	get_divider_type	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
@@ -179,11 +222,45 @@ nodes	stat_max_depth	nodes	tool	(ctx: Context, session_id: str='default', node_i
 nodes	stat_max_overflow	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
 nodes	stat_time_flooded	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
 nodes	stat_vol_flooded	nodes	tool	(ctx: Context, session_id: str='default', node_id: str | int='') -> dict
+pollutants	add	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str='', units: str='mg_per_l') -> dict
+pollutants	count	pollutants	tool	(ctx: Context, session_id: str='default') -> dict
+pollutants	get_co_pollutant	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='') -> dict
+pollutants	get_gw_conc	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='') -> dict
+pollutants	get_init_conc	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='') -> dict
+pollutants	get_kdecay	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='') -> dict
+pollutants	get_mwt	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='') -> dict
+pollutants	get_rain_conc	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='') -> dict
+pollutants	get_rdii_conc	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='') -> dict
+pollutants	get_snow_only	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='') -> dict
+pollutants	get_units	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='') -> dict
+pollutants	set_co_pollutant	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='', co_pollutant_index: int=-1) -> dict
+pollutants	set_gw_conc	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='', gw_conc: float=0.0) -> dict
+pollutants	set_init_conc	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='', init_conc: float=0.0) -> dict
+pollutants	set_kdecay	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='', kdecay: float=0.0) -> dict
+pollutants	set_link_quality	pollutants	tool	(ctx: Context, session_id: str='default', link_id: str='', pollutant_id: str | int='', concentration: float=0.0) -> dict
+pollutants	set_mwt	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='', molecular_weight: float=0.0) -> dict
+pollutants	set_node_quality	pollutants	tool	(ctx: Context, session_id: str='default', node_id: str='', pollutant_id: str | int='', concentration: float=0.0) -> dict
+pollutants	set_rain_conc	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='', rain_conc: float=0.0) -> dict
+pollutants	set_rdii_conc	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='', rdii_conc: float=0.0) -> dict
+pollutants	set_snow_only	pollutants	tool	(ctx: Context, session_id: str='default', pollutant_id: str | int='', snow_only: bool=False) -> dict
+quality	buildup_get	quality	tool	(ctx: Context, session_id: str='default', landuse_id: str | int='', pollutant_id: str | int='') -> dict
+quality	buildup_set	quality	tool	(ctx: Context, session_id: str='default', landuse_id: str | int='', pollutant_id: str | int='', function: str='none', c1: float=0.0, c2: float=0.0, c3: float=0.0, normalizer: str='per_area') -> dict
+quality	get_sweep_interval	quality	tool	(ctx: Context, session_id: str='default', landuse_id: str | int='') -> dict
+quality	get_sweep_removal	quality	tool	(ctx: Context, session_id: str='default', landuse_id: str | int='') -> dict
+quality	landuse_add	quality	tool	(ctx: Context, session_id: str='default', landuse_id: str='') -> dict
+quality	landuse_count	quality	tool	(ctx: Context, session_id: str='default') -> dict
+quality	landuse_id	quality	tool	(ctx: Context, session_id: str='default', index: int=0) -> dict
+quality	landuse_index	quality	tool	(ctx: Context, session_id: str='default', landuse_id: str='') -> dict
+quality	set_sweep_interval	quality	tool	(ctx: Context, session_id: str='default', landuse_id: str | int='', days: float=0.0) -> dict
+quality	set_sweep_removal	quality	tool	(ctx: Context, session_id: str='default', landuse_id: str | int='', fraction: float=0.0) -> dict
+quality	treatment_clear	quality	tool	(ctx: Context, session_id: str='default', node_id: str='', pollutant_id: str | int='') -> dict
+quality	treatment_get	quality	tool	(ctx: Context, session_id: str='default', node_id: str='', pollutant_id: str | int='') -> dict
+quality	washoff_get	quality	tool	(ctx: Context, session_id: str='default', landuse_id: str | int='', pollutant_id: str | int='') -> dict
+quality	washoff_set	quality	tool	(ctx: Context, session_id: str='default', landuse_id: str | int='', pollutant_id: str | int='', function: str='exponential', c1: float=0.0, c2: float=0.0, sweep_efficiency: float=0.0, bmp_efficiency: float=0.0) -> dict
 query	find_elements	query	tool	(ctx: Context, session_id: str='default', pattern: str | None=None, element_type: str | None=None) -> list[ElementSearchResult]
 query	get_gage_info	query	tool	(ctx: Context, session_id: str='default', gage_id: str | None=None) -> GageInfo | list[GageInfo]
 query	get_link_info	query	tool	(ctx: Context, session_id: str='default', link_id: str | None=None) -> LinkInfo | list[LinkInfo]
-query	get_node_info	query	tool	(ctx: Context, session_id: str='default', node_id: str | None=None, properties: list[str] | None=None) -> NodeInfo | list[NodeInfo]# 248 entries (239 tools, 9 resources) across 18 modules
-
+query	get_node_info	query	tool	(ctx: Context, session_id: str='default', node_id: str | None=None, properties: list[str] | None=None) -> NodeInfo | list[NodeInfo]
 query	get_pollutant_info	query	tool	(ctx: Context, session_id: str='default', pollutant_id: str | None=None) -> PollutantInfo | list[PollutantInfo]
 query	get_subcatchment_info	query	tool	(ctx: Context, session_id: str='default', subcatch_id: str | None=None) -> SubcatchmentInfo | list[SubcatchmentInfo]
 query	get_system_summary	query	tool	(ctx: Context, session_id: str='default') -> SystemSummary
@@ -240,7 +317,8 @@ tables	add_timeseries	tables	tool	(ctx: Context, session_id: str='default', ts_i
 tables	clear_points	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='') -> dict
 tables	count	tables	tool	(ctx: Context, session_id: str='default') -> dict
 tables	get_id	tables	tool	(ctx: Context, session_id: str='default', index: int=0) -> dict
-tables	get_index	tables	tool	(ctx: Context, session_id: str='default', table_id: str='') -> dict
+tables	get_index	tables	tool	(ctx: Context, session_id: str='default', table_id: str='') -> dict# 326 entries (317 tools, 9 resources) across 21 modules
+
 tables	get_point	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='', point_index: int=0) -> dict
 tables	get_point_count	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='') -> dict
 tables	get_points	tables	tool	(ctx: Context, session_id: str='default', table_id: str | int='') -> dict
