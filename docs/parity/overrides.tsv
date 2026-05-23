@@ -116,6 +116,63 @@ swmm_node_set_head_boundary	parity	via forcing.set_forcing (target_type='node', 
 swmm_node_rename	mcp-gap	Reachable via session.nodes.rename internally but no MCP tool wraps it; Phase 2 wave 2 to add editing.rename_node alongside link/subcatch/gage renames.
 
 # ----------------------------------------------------------------------------
+# Links domain (Phase 2.7): basic property pairs covered in batched form by
+# query.get_link_info and editing.set_link_properties; rename remains an
+# honest gap pending a Phase 2 wave 2 editing.rename_link tool.
+# ----------------------------------------------------------------------------
+swmm_link_count	parity	via lifecycle.open_model summary + query.find_elements counts.
+swmm_link_id	parity	via query.get_link_info / find_elements listings.
+swmm_link_index	parity	via query.find_elements (string id -> index resolved internally).
+swmm_link_get_type	parity	via query.get_link_info.
+swmm_link_get_length	parity	via query.get_link_info.
+swmm_link_get_roughness	parity	via query.get_link_info.
+swmm_link_get_slope	parity	via query.get_link_info.
+swmm_link_get_offset_up	parity	via query.get_link_info.
+swmm_link_get_offset_dn	parity	via query.get_link_info.
+swmm_link_get_depth	parity	via query.get_link_info (read during running/ended).
+swmm_link_get_capacity	parity	via query.get_link_info.
+swmm_link_get_from_node	parity	via query.get_link_info (returns endpoints).
+swmm_link_get_to_node	parity	via query.get_link_info.
+swmm_link_get_xsect	parity	via query.get_link_info (returns cross-section dict).
+swmm_link_set_length	parity	via editing.set_link_properties.
+swmm_link_set_roughness	parity	via editing.set_link_properties.
+swmm_link_set_offset_up	parity	via editing.set_link_properties.
+swmm_link_set_offset_dn	parity	via editing.set_link_properties.
+swmm_link_set_initial_flow	parity	via editing.set_link_properties.
+swmm_link_set_xsect	parity	via editing.set_link_properties + nodes.set_xsect (Links.set_xsect, the Phase 1 addition).
+swmm_link_set_nodes	parity	via building.add_link (sets nodes on creation); no in-place re-route tool yet.
+swmm_link_rename	mcp-gap	Reachable via session.links.rename but no MCP tool wraps it; Phase 2 wave 2.
+
+# ----------------------------------------------------------------------------
+# Subcatchments domain (Phase 2.8): basic property pairs covered by
+# query.get_subcatchment_info and editing.set_subcatchment_properties.
+# ----------------------------------------------------------------------------
+swmm_subcatch_count	parity	via lifecycle.open_model summary + query.find_elements counts.
+swmm_subcatch_id	parity	via query.get_subcatchment_info / find_elements listings.
+swmm_subcatch_index	parity	via query.find_elements (string id -> index).
+swmm_subcatch_get_area	parity	via query.get_subcatchment_info.
+swmm_subcatch_get_width	parity	via query.get_subcatchment_info.
+swmm_subcatch_get_slope	parity	via query.get_subcatchment_info.
+swmm_subcatch_get_imperv_pct	parity	via query.get_subcatchment_info.
+swmm_subcatch_get_n_imperv	parity	via query.get_subcatchment_info.
+swmm_subcatch_get_n_perv	parity	via query.get_subcatchment_info.
+swmm_subcatch_get_ds_imperv	parity	via query.get_subcatchment_info.
+swmm_subcatch_get_ds_perv	parity	via query.get_subcatchment_info.
+swmm_subcatch_get_outlet	parity	via query.get_subcatchment_info (returns outlet node id).
+swmm_subcatch_get_outlet_subcatch	parity	via query.get_subcatchment_info.
+swmm_subcatch_set_area	parity	via editing.set_subcatchment_properties.
+swmm_subcatch_set_width	parity	via editing.set_subcatchment_properties.
+swmm_subcatch_set_slope	parity	via editing.set_subcatchment_properties.
+swmm_subcatch_set_imperv_pct	parity	via editing.set_subcatchment_properties.
+swmm_subcatch_set_n_imperv	parity	via editing.set_subcatchment_properties.
+swmm_subcatch_set_n_perv	parity	via editing.set_subcatchment_properties.
+swmm_subcatch_set_ds_imperv	parity	via editing.set_subcatchment_properties.
+swmm_subcatch_set_ds_perv	parity	via editing.set_subcatchment_properties.
+swmm_subcatch_set_outlet	parity	via editing.set_subcatchment_properties (outlet_node_id field).
+swmm_subcatch_set_outlet_subcatch	parity	via editing.set_subcatchment_properties (cascade outlet); supported in same field.
+swmm_subcatch_rename	mcp-gap	Reachable via session.subcatchments.rename but no MCP tool wraps it; Phase 2 wave 2.
+
+# ----------------------------------------------------------------------------
 # True py-gaps confirmed (Phase 1 implementation targets).
 # Listed here only when they need a richer note than the default classification.
 # Leaving them out keeps the auto status `py-gap`.
