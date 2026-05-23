@@ -51,7 +51,7 @@ set_target_properties(test_engine_regression PROPERTIES
 add_test(
     NAME    regression_example1
     COMMAND $<TARGET_FILE:test_engine_regression>
-            --gtest_filter="RegressionTest/RegressionTest*"
+            --gtest_filter=RegressionTest/RegressionTest*
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
 )
 set_tests_properties(regression_example1 PROPERTIES LABELS "regression")
@@ -68,10 +68,21 @@ add_custom_command(TARGET test_engine_regression POST_BUILD
 # at test launch, since the engine DLLs are built in src/engine/$<CONFIG>/
 # and src/legacy/engine/$<CONFIG>/ rather than alongside the exe, and
 # vcpkg's applocal step only stages vcpkg-managed DLLs.
+#
+# Why three TARGET_RUNTIME_DLLS lookups: the genex walks PRIVATE deps of the
+# named target itself, but only INTERFACE deps when recursing through deps-of-
+# deps. openswmm_engine links SUNDIALS::cvode and hdf5::hdf5-shared PRIVATELY,
+# so $<TARGET_RUNTIME_DLLS:test_engine_regression> yields the two engine DLLs
+# but NOT sundials_cvode.dll / hdf5.dll. The Windows loader searches the EXE's
+# directory (not the importing DLL's directory) for transitive imports, so we
+# must also ask each shared engine target for its own runtime DLLs and stage
+# them alongside the test exe.
 if(WIN32)
     add_custom_command(TARGET test_engine_regression POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_RUNTIME_DLLS:test_engine_regression>
+            $<TARGET_RUNTIME_DLLS:openswmm_engine>
+            $<TARGET_RUNTIME_DLLS:openswmm_legacy_engine>
             $<TARGET_FILE_DIR:test_engine_regression>
         COMMAND_EXPAND_LISTS
     )
