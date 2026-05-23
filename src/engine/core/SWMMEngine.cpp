@@ -2145,18 +2145,30 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     {
         double runoff_q = 0.0;
         double user_q_total = 0.0;
+        double coupling_out_q = 0.0;   // 1D → 2D, absolute Σ over coupled nodes
         for (int j = 0; j < ctx_.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx_.nodes.runoff_inflow[uj] > 0.0)
                 runoff_q += ctx_.nodes.runoff_inflow[uj];
             if (ctx_.nodes.user_lat_flow[uj] > 0.0)
                 user_q_total += ctx_.nodes.user_lat_flow[uj];
+            if (ctx_.nodes.coupling_inflow[uj] < 0.0)
+                coupling_out_q += -ctx_.nodes.coupling_inflow[uj];
         }
         if (runoff_q > 0.0) {
             ctx_.mass_balance.routing_wet_weather += runoff_q * dt_routing;
         }
         if (user_q_total > 0.0) {
             ctx_.mass_balance.routing_forcing_inflow += user_q_total * dt_routing;
+        }
+        // 1D → 2D coupling spill folds into routing_flooding (and the
+        // per-step accumulator) so it appears under the existing "Flooding
+        // Loss" row in the continuity report. The positive (2D → 1D) side
+        // was already added to step_ext_inflow → routing_external by
+        // assembleLateralInflows. See review §11.
+        if (coupling_out_q > 0.0) {
+            ctx_.mass_balance.routing_flooding += coupling_out_q * dt_routing;
+            ctx_.mass_balance.step_flooding    += coupling_out_q;
         }
     }
 
@@ -3827,12 +3839,20 @@ void SWMMEngine::assembleLateralInflows() noexcept {
                                 + ctx_.nodes.dwf_inflow[uj]
                                 + ctx_.nodes.rdii_inflow[uj]
                                 + ctx_.nodes.iface_inflow[uj]
-                                + ctx_.nodes.user_lat_flow[uj];
+                                + ctx_.nodes.user_lat_flow[uj]
+                                + ctx_.nodes.coupling_inflow[uj];
 
         sum_dw   += ctx_.nodes.dwf_inflow[uj];
         sum_gw   += ctx_.nodes.gw_inflow[uj];
         sum_rdii += ctx_.nodes.rdii_inflow[uj];
         sum_ext  += ctx_.nodes.ext_inflow[uj];
+
+        // 2D → 1D coupling (positive coupling_inflow) folds into the
+        // routing_external category for continuity reporting; the negative
+        // side (1D → 2D spill) is accumulated separately in
+        // updateRoutingMassBalance as routing_flooding. See review §11.
+        if (ctx_.nodes.coupling_inflow[uj] > 0.0)
+            sum_ext += ctx_.nodes.coupling_inflow[uj];
     }
 
     ctx_.mass_balance.step_dw_inflow   = sum_dw;

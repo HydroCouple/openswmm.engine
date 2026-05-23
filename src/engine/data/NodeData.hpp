@@ -306,6 +306,29 @@ struct NodeData {
     /** @brief Interface file (upstream model coupling) inflows (project flow units). */
     std::vector<double>     iface_inflow;
 
+    /**
+     * @brief 2D ↔ 1D coupling exchange flow at the node (project flow units).
+     *
+     * @details Signed: positive = 2D → 1D (surface drainage into the node),
+     *          negative = 1D → 2D (surcharge spill onto the surface).
+     *          Written by SurfaceRouter2D::advancePostRouting at the end of
+     *          step N; read by assembleLateralInflows at the start of step
+     *          N+1 (so the value persists across the step boundary and is
+     *          consumed exactly once by the DW solver).
+     *
+     *          For mass-balance accounting the signed value is split:
+     *          - positive side folds into step_ext_inflow → routing_external
+     *          - negative side folds into routing_flooding (absolute value)
+     *
+     *          This replaces the earlier scheme of routing coupling Q through
+     *          forcing.node_lat_inflow_value, which conflated user forcing
+     *          with 2D coupling and dropped the negative (1D→2D) volume from
+     *          the mass balance entirely.
+     *
+     * @see docs/1D_2D_COUPLING_GATE_REVIEW.md §11
+     */
+    std::vector<double>     coupling_inflow;
+
     // -----------------------------------------------------------------------
     // Quality mass inflow assembly arrays
     // assembleQualityInflows() writes these; mixAtNodes() reads them.
@@ -634,6 +657,7 @@ struct NodeData {
         dwf_inflow.assign(un, 0.0);
         rdii_inflow.assign(un, 0.0);
         iface_inflow.assign(un, 0.0);
+        coupling_inflow.assign(un, 0.0);
         qual_mass_in.clear();
         qual_vol_in.assign(un, 0.0);
         lid_drain_qual_load.clear();
@@ -708,6 +732,7 @@ struct NodeData {
         g(lat_flow, 0.0); g(user_lat_flow, 0.0);
         g(runoff_inflow, 0.0); g(gw_inflow, 0.0); g(ext_inflow, 0.0);
         g(dwf_inflow, 0.0); g(rdii_inflow, 0.0); g(iface_inflow, 0.0);
+        g(coupling_inflow, 0.0);
         qual_vol_in.resize(un, 0.0);
         lid_drain_qual_vol.resize(un, 0.0);
         g(inflow, 0.0); g(outflow, 0.0); g(overflow, 0.0);
@@ -763,6 +788,7 @@ struct NodeData {
         e(lat_flow); e(user_lat_flow);
         e(runoff_inflow); e(gw_inflow); e(ext_inflow); e(dwf_inflow);
         e(rdii_inflow); e(iface_inflow);
+        e(coupling_inflow);
         e(qual_vol_in); e(lid_drain_qual_vol);
         e(inflow); e(outflow); e(overflow); e(losses);
         e(crown_elev); e(degree); e(old_net_inflow); e(full_volume);
@@ -887,6 +913,7 @@ struct NodeData {
         dwf_inflow.shrink_to_fit();
         rdii_inflow.shrink_to_fit();
         iface_inflow.shrink_to_fit();
+        coupling_inflow.shrink_to_fit();
         qual_mass_in.shrink_to_fit();
         qual_vol_in.shrink_to_fit();
         conc.shrink_to_fit();
@@ -969,6 +996,10 @@ struct NodeData {
         std::fill(losses.begin(),   losses.end(),   0.0);
         std::fill(old_net_inflow.begin(), old_net_inflow.end(), 0.0);
         std::fill(old_lat_flow.begin(), old_lat_flow.end(), 0.0);
+        // coupling_inflow is NOT cleared by clearInflowSources (its end-of-
+        // step value must persist into the next step's assembly), so zero it
+        // explicitly on cold start.
+        std::fill(coupling_inflow.begin(), coupling_inflow.end(), 0.0);
         clearInflowSources();
         std::fill(conc.begin(), conc.end(), 0.0);
         std::fill(conc_old.begin(), conc_old.end(), 0.0);

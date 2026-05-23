@@ -103,27 +103,26 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
                               const SolverOptions2D& opts,
                               double dt) {
     auto& nodes = ctx.nodes;
-    auto& forcing = ctx.forcing;
 
-    // Clear coupling fluxes
+    // Clear coupling fluxes on the 2D side
     std::fill(state.coupling_flux.begin(), state.coupling_flux.end(), 0.0);
 
-    // Reset the forcing buffer for every 2D-coupled node and re-arm it with
-    // OVERRIDE+PERSIST. This runs at end of step N (after 1D routing) so the
-    // Q we write here is consumed by applyForcings at start of step N+1.
-    // The default ADD+RESET pattern used elsewhere does not work here:
-    // clear_reset_entries() (end of step N) sets mode → NONE for any
-    // RESET-persisted entry, which silently drops the Q before it is read
-    // by step N+1's applyForcings. OVERRIDE+PERSIST keeps mode armed across
-    // the step boundary, and the explicit zero below means multiple
-    // coupling points targeting the same node accumulate cleanly via the
-    // += in the per-cp loop.
+    // Clear the dedicated 1D-side coupling source array for every coupled
+    // junction. The signed Q accumulated below is consumed by
+    // assembleLateralInflows at the start of step N+1, where it is split
+    // into routing_external (positive part) and routing_flooding (negative
+    // part) for mass-balance accounting. See review §11.
+    //
+    // This replaces the earlier hack of routing coupling Q through
+    // forcing.node_lat_inflow_value with OVERRIDE+PERSIST, which (a)
+    // conflated 2D coupling with user-API forcing and (b) silently dropped
+    // the negative (1D→2D) side from the routing continuity equation
+    // because the mass-balance accumulator at SWMMEngine.cpp:2152 only
+    // sums positive user_lat_flow values.
     for (const auto& cp : cps) {
         if (cp.is_outfall) continue;
         auto ni = static_cast<std::size_t>(cp.node_idx);
-        forcing.node_lat_inflow_mode[ni]    = ForcingMode::OVERRIDE;
-        forcing.node_lat_inflow_value[ni]   = 0.0;
-        forcing.node_lat_inflow_persist[ni] = ForcingPersist::PERSIST;
+        nodes.coupling_inflow[ni] = 0.0;
     }
 
     for (const auto& cp : cps) {
@@ -243,12 +242,15 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
             }
         }
 
-        // Inject as lateral inflow into SWMM node. Accumulate into the
-        // forcing buffer that was pre-armed above with OVERRIDE+PERSIST so
-        // applyForcings at step N+1 sets user_lat_flow = Σ Q over all
-        // coupling points targeting this node.
-        // Positive Q = flow from 2D → 1D (positive lateral inflow).
-        forcing.node_lat_inflow_value[ni] += Q;
+        // Inject as a dedicated 2D-coupling source on the SWMM node.
+        // Multiple coupling points targeting the same node accumulate via
+        // the += below. Positive Q = 2D → 1D (drain into pipe);
+        // negative Q = 1D → 2D (surcharge spill out of pipe). The signed
+        // value is consumed by assembleLateralInflows at the start of the
+        // next routing step, which both feeds lat_flow for the DW solver
+        // and folds the sign-split volumes into routing_external (positive
+        // side) and routing_flooding (negative side, |Q|).
+        nodes.coupling_inflow[ni] += Q;
 
         // Record coupling flux back to 2D cell (negative = drainage out of 2D)
         double tri_area = mesh.tri_area[ci];
