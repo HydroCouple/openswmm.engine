@@ -30,7 +30,7 @@
             "binaryDir": "${sourceDir}/build/windows",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS": "/O2 /GL /fp:precise /W4",
+                "CMAKE_C_FLAGS": "/O2 /GL /fp:precise /W4 /we4013",
                 "CMAKE_CXX_FLAGS": "/O2 /GL /fp:precise /W4",
                 "CMAKE_EXE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
                 "CMAKE_SHARED_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
@@ -60,7 +60,7 @@
             "binaryDir": "${sourceDir}/build/windows-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_FLAGS": "/Zi /Od /DDEBUG /W4 /fp:precise",
+                "CMAKE_C_FLAGS": "/Zi /Od /DDEBUG /W4 /we4013 /fp:precise",
                 "CMAKE_CXX_FLAGS": "/Zi /Od /DDEBUG /W4 /fp:precise",
                 "CMAKE_EXE_LINKER_FLAGS": "/DEBUG",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
@@ -81,7 +81,7 @@
             "binaryDir": "${sourceDir}/build/linux",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra -fvisibility=hidden",
+                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra -Werror=implicit-function-declaration -fvisibility=hidden",
                 "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra -fvisibility=hidden",
                 "CMAKE_EXE_LINKER_FLAGS": "-Wl,--gc-sections -flto",
                 "CMAKE_SHARED_LINKER_FLAGS": "-Wl,--gc-sections -flto",
@@ -106,7 +106,7 @@
             "binaryDir": "${sourceDir}/build/linux-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store -fvisibility=hidden",
+                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -Werror=implicit-function-declaration -fno-fast-math -fexcess-precision=standard -ffloat-store -fvisibility=hidden",
                 "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store -fvisibility=hidden",
                 "CMAKE_EXE_LINKER_FLAGS": "-g",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
@@ -132,7 +132,7 @@
             },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -fvisibility=hidden",
+                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -Werror=implicit-function-declaration -fvisibility=hidden",
                 "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -fvisibility=hidden",
                 "CMAKE_EXE_LINKER_FLAGS": "-Wl, -flto",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
@@ -158,7 +158,7 @@
             "binaryDir": "${sourceDir}/build/darwin-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fvisibility=hidden",
+                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -Werror=implicit-function-declaration -fno-fast-math -fvisibility=hidden",
                 "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fvisibility=hidden",
                 "CMAKE_EXE_LINKER_FLAGS": "-g",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
