@@ -1,0 +1,272 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "default-debug",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/debug",
+            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "default",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "cacheVariables": {
+            }
+        },
+        {
+            "name": "Windows",
+            "inherits": "default",
+            "description": "Windows build using Visual Studio generator",
+            "generator": "Visual Studio 17 2022",
+            "toolset": {
+                "value": "v143",
+                "strategy": "external"
+            },
+            "binaryDir": "${sourceDir}/build/windows",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS": "/O2 /GL /fp:precise /W4",
+                "CMAKE_CXX_FLAGS": "/O2 /GL /fp:precise /W4",
+                "CMAKE_EXE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
+                "CMAKE_SHARED_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
+                "CMAKE_MODULE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+                "CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS": "OFF",
+                "CMAKE_C_FLAGS_RELEASE": "/O2 /GL /fp:precise /W4",
+                "CMAKE_CXX_FLAGS_RELEASE": "/O2 /GL /fp:precise /W4",
+                "CMAKE_C_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise",
+                "CMAKE_CXX_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "Windows-debug",
+            "inherits": "default-debug",
+            "description": "Windows build for debugging using Visual Studio generator",
+            "generator": "Visual Studio 17 2022",
+            "toolset": {
+                "value": "v143",
+                "strategy": "external"
+            },
+            "binaryDir": "${sourceDir}/build/windows-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_FLAGS": "/Zi /Od /DDEBUG /W4 /fp:precise",
+                "CMAKE_CXX_FLAGS": "/Zi /Od /DDEBUG /W4 /fp:precise",
+                "CMAKE_EXE_LINKER_FLAGS": "/DEBUG",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+                "CMAKE_C_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise",
+                "CMAKE_CXX_FLAGS_DEBUG": "/Zi /Od /DDEBUG /W4 /fp:precise"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "Linux",
+            "inherits": "default",
+            "description": "Linux build using Ninja generator",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/linux",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra -fvisibility=hidden",
+                "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra -fvisibility=hidden",
+                "CMAKE_EXE_LINKER_FLAGS": "-Wl,--gc-sections -flto",
+                "CMAKE_SHARED_LINKER_FLAGS": "-Wl,--gc-sections -flto",
+                "CMAKE_MODULE_LINKER_FLAGS": "-Wl,--gc-sections -flto",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+                "CMAKE_C_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra",
+                "CMAKE_CXX_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fipa-icf -fno-fast-math -fexcess-precision=standard -ffloat-store -Wall -Wextra",
+                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "Linux-debug",
+            "inherits": "default-debug",
+            "description": "Linux build for debugging using Ninja generator",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/linux-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store -fvisibility=hidden",
+                "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store -fvisibility=hidden",
+                "CMAKE_EXE_LINKER_FLAGS": "-g",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fexcess-precision=standard -ffloat-store"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "Darwin",
+            "inherits": "default",
+            "description": "macOS build using Ninja generator",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/darwin",
+            "environment": {
+                "VCPKG_OSX_ARCHITECTURES": "arm64;x86_64",
+                "CC": "clang",
+                "CXX": "clang++"
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -fvisibility=hidden",
+                "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra -fvisibility=hidden",
+                "CMAKE_EXE_LINKER_FLAGS": "-Wl, -flto",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+                "CMAKE_C_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
+                "CMAKE_CXX_FLAGS_RELEASE": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -Wall -Wextra",
+                "CMAKE_SHARED_LINKER_FLAGS": "-flto -twolevel_namespace",
+                "CMAKE_MODULE_LINKER_FLAGS": "-flto",
+                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
+                "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "Darwin-debug",
+            "inherits": "default-debug",
+            "description": "macOS build for debugging using Ninja generator",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/darwin-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fvisibility=hidden",
+                "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math -fvisibility=hidden",
+                "CMAKE_EXE_LINKER_FLAGS": "-g",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+                "CMAKE_SHARED_LINKER_FLAGS": "-twolevel_namespace",
+                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG -Wall -Wextra -fno-fast-math"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "Windows-tests",
+            "inherits": "Windows-debug",
+            "description": "Windows debug build with unit + regression tests enabled",
+            "binaryDir": "${sourceDir}/build/windows-tests",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_FEATURES": "tests",
+                "OPENSWMM_BUILD_UNIT_TESTS": "ON",
+                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON"
+            }
+        },
+        {
+            "name": "Linux-tests",
+            "inherits": "Linux-debug",
+            "description": "Linux debug build with unit + regression tests enabled",
+            "binaryDir": "${sourceDir}/build/linux-tests",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_FEATURES": "tests",
+                "OPENSWMM_BUILD_UNIT_TESTS": "ON",
+                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON"
+            }
+        },
+        {
+            "name": "Darwin-tests",
+            "inherits": "Darwin-debug",
+            "description": "macOS debug build with unit + regression tests enabled",
+            "binaryDir": "${sourceDir}/build/darwin-tests",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_FEATURES": "tests",
+                "OPENSWMM_BUILD_UNIT_TESTS": "ON",
+                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "default",
+            "hidden": true,
+            "configurePreset": "default"
+        },
+        {
+            "name": "default-debug",
+            "hidden": true,
+            "configurePreset": "default-debug"
+        },
+        {
+            "name": "Windows",
+            "configurePreset": "Windows",
+            "targets": [
+                "package"
+            ]
+        },
+        {
+            "name": "Windows-debug",
+            "description": "Build all targets for debugging on Windows",
+            "configurePreset": "Windows-debug"
+        },
+        {
+            "name": "Linux",
+            "configurePreset": "Linux",
+            "targets": [
+                "package"
+            ]
+        },
+        {
+            "name": "Linux-debug",
+            "description": "Build all targets for debugging on Linux",
+            "configurePreset": "Linux-debug"
+        },
+        {
+            "name": "Darwin",
+            "configurePreset": "Darwin",
+            "targets": [
+                "package"
+            ]
+        },
+        {
+            "name": "Darwin-debug",
+            "description": "Build all targets for debugging on macOS",
+            "configurePreset": "Darwin-debug"
+        },
+        {
+            "name": "Windows-tests",
+            "description": "Build unit and regression tests on Windows",
+            "configurePreset": "Windows-tests"
+        },
+        {
+            "name": "Linux-tests",
+            "description": "Build unit and regression tests on Linux",
+            "configurePreset": "Linux-tests"
+        },
+        {
+            "name": "Darwin-tests",
+            "description": "Build unit and regression tests on macOS",
+            "configurePreset": "Darwin-tests"
+        }
+    ]
+}

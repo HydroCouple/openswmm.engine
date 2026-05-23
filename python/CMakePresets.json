@@ -1,0 +1,163 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "generator": "Ninja",
+            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES"
+            }
+        },
+        {
+            "name": "base-debug",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "Windows",
+            "inherits": "base",
+            "description": "Windows release build",
+            "generator": "Visual Studio 17 2022",
+            "toolset": {
+                "value": "v143",
+                "strategy": "external"
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS": "/O2 /GL /fp:precise /W4",
+                "CMAKE_CXX_FLAGS": "/O2 /GL /fp:precise /W4",
+                "CMAKE_EXE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
+                "CMAKE_SHARED_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
+                "CMAKE_MODULE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
+                "CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS": "OFF"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "Windows-debug",
+            "inherits": "base-debug",
+            "description": "Windows debug build",
+            "generator": "Visual Studio 17 2022",
+            "toolset": {
+                "value": "v143",
+                "strategy": "external"
+            },
+            "cacheVariables": {
+                "CMAKE_C_FLAGS": "/Zi /Od /DDEBUG /W4 /fp:precise",
+                "CMAKE_CXX_FLAGS": "/Zi /Od /DDEBUG /W4 /fp:precise",
+                "CMAKE_EXE_LINKER_FLAGS": "/DEBUG"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "Linux",
+            "inherits": "base",
+            "description": "Linux release build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS": "-O2 -fdata-sections -ffunction-sections -fno-fast-math -ffp-contract=off -fexcess-precision=standard -ffloat-store -Wall -Wextra",
+                "CMAKE_CXX_FLAGS": "-O2 -fdata-sections -ffunction-sections -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
+                "CMAKE_EXE_LINKER_FLAGS": "-Wl,--gc-sections",
+                "CMAKE_SHARED_LINKER_FLAGS": "-Wl,--gc-sections",
+                "CMAKE_MODULE_LINKER_FLAGS": ""
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "Linux-debug",
+            "inherits": "base-debug",
+            "description": "Linux debug build",
+            "cacheVariables": {
+                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -fno-fast-math -ffp-contract=off -fexcess-precision=standard -ffloat-store -Wall -Wextra",
+                "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
+                "CMAKE_EXE_LINKER_FLAGS": "-g"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "Darwin",
+            "inherits": "base",
+            "description": "macOS release build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
+                "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
+                "CMAKE_EXE_LINKER_FLAGS": "-flto",
+                "CMAKE_SHARED_LINKER_FLAGS": "-flto -twolevel_namespace -undefined dynamic_lookup",
+                "CMAKE_MODULE_LINKER_FLAGS": "-flto -undefined dynamic_lookup"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "Darwin-debug",
+            "inherits": "base-debug",
+            "description": "macOS debug build",
+            "cacheVariables": {
+                "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
+                "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
+                "CMAKE_EXE_LINKER_FLAGS": "-g",
+                "CMAKE_SHARED_LINKER_FLAGS": "-twolevel_namespace -undefined dynamic_lookup",
+                "CMAKE_MODULE_LINKER_FLAGS": "-undefined dynamic_lookup"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "Windows",
+            "configurePreset": "Windows",
+            "targets": ["package"]
+        },
+        {
+            "name": "Windows-debug",
+            "configurePreset": "Windows-debug"
+        },
+        {
+            "name": "Linux",
+            "configurePreset": "Linux",
+            "targets": ["package"]
+        },
+        {
+            "name": "Linux-debug",
+            "configurePreset": "Linux-debug"
+        },
+        {
+            "name": "Darwin",
+            "configurePreset": "Darwin",
+            "targets": ["package"]
+        },
+        {
+            "name": "Darwin-debug",
+            "configurePreset": "Darwin-debug"
+        }
+    ]
+}

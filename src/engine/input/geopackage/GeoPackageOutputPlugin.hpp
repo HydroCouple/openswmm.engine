@@ -1,0 +1,82 @@
+/**
+ * @file GeoPackageOutputPlugin.hpp
+ * @brief IOutputPlugin that writes per-timestep results to a GeoPackage.
+ * @ingroup engine_geopackage
+ *
+ * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license  MIT License
+ */
+
+#ifndef OPENSWMM_GEOPACKAGE_OUTPUT_PLUGIN_HPP
+#define OPENSWMM_GEOPACKAGE_OUTPUT_PLUGIN_HPP
+
+#include "GpkgUtils.hpp"
+#include <openswmm/plugin_sdk/IOutputPlugin.hpp>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace openswmm::gpkg {
+
+class GeoPackageOutputPlugin : public IOutputPlugin {
+public:
+    GeoPackageOutputPlugin() = default;
+
+    PluginState state() const noexcept override { return state_; }
+
+    int initialize(const std::vector<std::string>& init_args,
+                   const IPluginComponentInfo* info) override;
+
+    int validate(const SimulationContext& ctx) override;
+    int prepare(const SimulationContext& ctx) override;
+    int update(const SimulationSnapshot& snapshot) override;
+    int finalize(const SimulationContext& ctx) override;
+
+    const char* last_error_message() const noexcept override {
+        return error_msg_.c_str();
+    }
+
+private:
+    PluginState state_ = PluginState::UNLOADED;
+    std::string error_msg_;
+    std::string db_path_;
+    std::string simulation_id_;
+    DbPtr db_;
+    StmtPtr insert_stmt_;
+
+    // Cached variable IDs
+    std::unordered_map<std::string, int> variable_ids_;
+
+    // Batch buffer
+    struct ResultRow {
+        std::string object_type;
+        std::string object_id;
+        int variable_id;
+        double elapsed_time;
+        double value;
+    };
+    std::vector<ResultRow> buffer_;
+    static constexpr size_t FLUSH_THRESHOLD = 5000;
+
+    void flush_buffer();
+    int lookup_variable(const std::string& name, const std::string& obj_type);
+
+    // Unit conversion factors (internal → display), computed once in prepare()
+    double ucf_rainfall_  = 1.0;
+    double ucf_raindepth_ = 1.0;
+    double ucf_evaprate_  = 1.0;
+    double ucf_length_    = 1.0;
+    double ucf_volume_    = 1.0;
+    double ucf_flow_      = 1.0;
+    int    unit_system_   = 0;     // 0=US, 1=SI
+
+    // Per-object report flags, captured during prepare() from SimulationContext
+    std::vector<char> subcatch_rpt_flag_;
+    std::vector<char> node_rpt_flag_;
+    std::vector<char> link_rpt_flag_;
+};
+
+} // namespace openswmm::gpkg
+
+#endif // OPENSWMM_GEOPACKAGE_OUTPUT_PLUGIN_HPP
