@@ -85,6 +85,17 @@ set_target_properties(openswmm_legacy_engine
         OUTPUT_NAME "openswmm.legacy.engine"
         VERSION     ${PROJECT_VERSION}
         SOVERSION   ${PROJECT_VERSION_MAJOR}
+        # The root CMakeLists sets CMAKE_C_EXTENSIONS OFF, which makes CMake
+        # pass -std=c17 (strict ANSI) instead of -std=gnu17. Under strict ANSI
+        # on glibc, <stdlib.h> hides realpath() because it's a POSIX extension,
+        # and swmm5.c's getAbsolutePath() then calls it with no visible
+        # prototype — the implicit-int return type truncates the 64-bit char*
+        # to 32 bits and the caller dereferences a garbage pointer (Linux
+        # x64 Debug segfault). Apple's libc exposes realpath unconditionally
+        # and Windows uses a different branch, which is why this only bites
+        # on Linux. Override per-target so the rest of the project keeps
+        # strict ANSI.
+        C_EXTENSIONS ON
         # Tell generate_export_header that symbols default to hidden so it
         # emits __attribute__((visibility("default"))) on the export macro.
         # Without this, if -fvisibility=hidden is in CMAKE_C_FLAGS the API
