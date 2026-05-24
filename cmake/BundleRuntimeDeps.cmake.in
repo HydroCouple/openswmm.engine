@@ -1,0 +1,124 @@
+#
+# BundleRuntimeDeps.cmake.in
+#
+# Configured per-target by openswmm_bundle_runtime_deps() at top-level
+# CMakeLists.txt. Runs at install time as part of the per-directory
+# cmake_install.cmake script. Probes the already-installed executable
+# (so RPATH rewrites from install_name_tool are in effect) and copies
+# every shared library it depends on — except OS-provided ones filtered
+# by the PRE/POST_EXCLUDE_REGEXES — next to the exe.
+#
+# @-substituted placeholders: see configure_file() call at the helper.
+#
+
+cmake_policy(PUSH)
+cmake_policy(SET CMP0011 NEW)  # POLICY scope, regular variable scope rules
+# NB: regexes contain '\.' and '\+' which CMake's quoted-string parser would
+#     otherwise flag under CMP0010 (bad variable reference syntax). Using a
+#     template file keeps the literal backslashes out of the install(CODE)
+#     interpolation path.
+
+set(_exe "${CMAKE_INSTALL_PREFIX}/@OPENSWMM_BUNDLE_SUBDIR@/@OPENSWMM_BUNDLE_TARGET_FILE_NAME@")
+if(NOT EXISTS "${_exe}")
+    message(WARNING "openswmm_bundle_runtime_deps: ${_exe} does not exist yet — install ordering bug?")
+    cmake_policy(POP)
+    return()
+endif()
+
+message(STATUS "Bundling runtime deps for @OPENSWMM_BUNDLE_TARGET_NAME@ into @OPENSWMM_BUNDLE_SUBDIR@")
+
+file(GET_RUNTIME_DEPENDENCIES
+    RESOLVED_DEPENDENCIES_VAR   _resolved
+    UNRESOLVED_DEPENDENCIES_VAR _unresolved
+    EXECUTABLES "${_exe}"
+    DIRECTORIES
+        "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@"
+        "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_LIBDIR@"
+    PRE_EXCLUDE_REGEXES  @OPENSWMM_BUNDLE_PRE_EXCLUDES@
+    POST_EXCLUDE_REGEXES @OPENSWMM_BUNDLE_POST_EXCLUDES@
+)
+
+file(REAL_PATH "${CMAKE_INSTALL_PREFIX}" _prefix_real)
+set(_bundled_basename_to_oldpath "")  # map of basename → original absolute path
+foreach(_dep IN LISTS _resolved)
+    file(REAL_PATH "${_dep}" _dep_real)
+    # Skip anything that already lives under the install prefix — those
+    # files are installed by their own install(TARGETS …) rule and copying
+    # again would just duplicate them.
+    string(FIND "${_dep_real}" "${_prefix_real}/" _in_prefix)
+    if(_in_prefix EQUAL 0)
+        continue()
+    endif()
+
+    if(_dep MATCHES "\\.framework/")
+        # Copy the whole .framework directory, not just the inner binary.
+        string(REGEX REPLACE "(.*\\.framework)/.*" "\\1" _fwk "${_dep}")
+        file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/@OPENSWMM_BUNDLE_SUBDIR@"
+            TYPE DIRECTORY FILES "${_fwk}" USE_SOURCE_PERMISSIONS)
+        message(STATUS "  bundled framework: ${_fwk}")
+    else()
+        file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/@OPENSWMM_BUNDLE_SUBDIR@"
+            TYPE SHARED_LIBRARY FILES "${_dep}" FOLLOW_SYMLINK_CHAIN)
+        message(STATUS "  bundled: ${_dep}")
+        get_filename_component(_bn "${_dep}" NAME)
+        list(APPEND _bundled_basename_to_oldpath "${_bn}=${_dep}")
+    endif()
+endforeach()
+
+foreach(_dep IN LISTS _unresolved)
+    message(WARNING "  unresolved runtime dep: ${_dep}")
+endforeach()
+
+# ---- macOS install_name rewrite -----------------------------------------
+# On macOS, bundling a dylib doesn't help if consumers still reference its
+# ORIGINAL absolute path (LC_LOAD_DYLIB). Each bundled lib gets its install
+# name flipped to @rpath/<basename>, and every dylib / executable in the
+# install tree gets its references to the original path rewritten the same
+# way. The dyld loader then resolves @rpath via each binary's LC_RPATH set,
+# which we've configured to include @loader_path / @loader_path/../bin /
+# @loader_path/../lib (see project-wide RPATH config in src/engine).
+if(APPLE)
+    find_program(_install_name_tool install_name_tool REQUIRED)
+
+    # 1. Set each bundled lib's own install_name to @rpath/<basename> so any
+    #    binary that links it after rewriting picks the @rpath entry.
+    foreach(_entry IN LISTS _bundled_basename_to_oldpath)
+        string(REGEX REPLACE "^([^=]+)=.*$" "\\1" _bn "${_entry}")
+        set(_installed "${CMAKE_INSTALL_PREFIX}/@OPENSWMM_BUNDLE_SUBDIR@/${_bn}")
+        if(EXISTS "${_installed}")
+            execute_process(
+                COMMAND "${_install_name_tool}" -id "@rpath/${_bn}" "${_installed}"
+                RESULT_VARIABLE _rc
+            )
+            if(NOT _rc EQUAL 0)
+                message(WARNING "    install_name_tool -id failed on ${_installed}")
+            endif()
+        endif()
+    endforeach()
+
+    # 2. Walk every Mach-O in the install tree and rewrite LC_LOAD_DYLIB
+    #    references that still point at a bundled lib's original abs path.
+    file(GLOB_RECURSE _machos
+        "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@/*"
+        "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_LIBDIR@/*"
+    )
+    foreach(_macho IN LISTS _machos)
+        if(IS_SYMLINK "${_macho}")
+            continue()
+        endif()
+        if(_macho MATCHES "\\.(a|h|hpp|cmake)$")
+            continue()
+        endif()
+        foreach(_entry IN LISTS _bundled_basename_to_oldpath)
+            string(REGEX REPLACE "^([^=]+)=(.*)$" "\\1" _bn "${_entry}")
+            string(REGEX REPLACE "^([^=]+)=(.*)$" "\\2" _oldpath "${_entry}")
+            execute_process(
+                COMMAND "${_install_name_tool}" -change "${_oldpath}" "@rpath/${_bn}" "${_macho}"
+                RESULT_VARIABLE _rc
+                ERROR_QUIET
+            )
+        endforeach()
+    endforeach()
+endif()
+
+cmake_policy(POP)
