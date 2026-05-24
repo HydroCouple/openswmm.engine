@@ -193,6 +193,30 @@ function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
     set(OPENSWMM_BUNDLE_PRE_EXCLUDES     "[==[${OPENSWMM_RUNTIME_DEP_PRE_EXCLUDES}]==]")
     set(OPENSWMM_BUNDLE_POST_EXCLUDES    "[==[${OPENSWMM_RUNTIME_DEP_POST_EXCLUDES}]==]")
 
+    # Extra DIRECTORIES that file(GET_RUNTIME_DEPENDENCIES) should search
+    # when resolving transitive dependencies of the executable. Critically
+    # this is where we point at vcpkg's installed/<triplet>/bin so SUNDIALS,
+    # HDF5, sqlite3, etc. (linked by openswmm_engine) get found and copied
+    # into the package. Without this, those DLLs show up in the bundle's
+    # unresolved-deps warnings on Windows and never get included in the
+    # cpack zip. Linux/macOS usually resolve them via rpath, but the extra
+    # dir is harmless on those platforms.
+    set(OPENSWMM_BUNDLE_EXTRA_DIRS "")
+    if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+        list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS
+            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+    elseif(DEFINED ENV{VCPKG_ROOT})
+        # Fallback: use the env-var-rooted classic-mode layout.
+        set(_triplet "${VCPKG_TARGET_TRIPLET}")
+        if(NOT _triplet AND WIN32)
+            set(_triplet "x64-windows")
+        endif()
+        if(_triplet)
+            list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS
+                "$ENV{VCPKG_ROOT}/installed/${_triplet}/bin")
+        endif()
+    endif()
+
     # Use PROJECT_SOURCE_DIR (not CMAKE_SOURCE_DIR): the engine has its own
     # project() at line 28, so this resolves to the engine root even when the
     # engine is pulled in via add_subdirectory(..) from python/CMakeLists.txt.

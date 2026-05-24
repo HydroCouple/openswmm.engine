@@ -38,6 +38,10 @@ message(STATUS "Bundling runtime deps for @OPENSWMM_BUNDLE_TARGET_NAME@ into @OP
 #   separate arguments. Each regex is then applied individually as intended.
 set(_pre_excludes  @OPENSWMM_BUNDLE_PRE_EXCLUDES@)
 set(_post_excludes @OPENSWMM_BUNDLE_POST_EXCLUDES@)
+# Extra search paths captured at configure time — typically vcpkg's
+# installed/<triplet>/bin where SUNDIALS, HDF5, etc. live. The list is
+# `;`-separated; ${_extra_dirs} dereference splits it into separate args.
+set(_extra_dirs    "@OPENSWMM_BUNDLE_EXTRA_DIRS@")
 
 file(GET_RUNTIME_DEPENDENCIES
     RESOLVED_DEPENDENCIES_VAR   _resolved
@@ -46,6 +50,7 @@ file(GET_RUNTIME_DEPENDENCIES
     DIRECTORIES
         "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@"
         "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_LIBDIR@"
+        ${_extra_dirs}
     PRE_EXCLUDE_REGEXES  ${_pre_excludes}
     POST_EXCLUDE_REGEXES ${_post_excludes}
 )
