@@ -215,14 +215,23 @@ test-command  = "pytest {package}/tests/engine -v --import-mode=importlib --igno
 [tool.cibuildwheel.linux]
 # Bootstrap vcpkg inside the manylinux container. The host's $VCPKG_ROOT is
 # not visible here (this is what broke the previous cibuildwheel attempt).
+#
+# Triplet naming: vcpkg uses x64/arm64, not uname -m's x86_64/aarch64.
+# Mapping is done explicitly to avoid silently picking the wrong triplet
+# if vcpkg ever adds e.g. an x86_64-linux community alias.
 before-all = """
 set -euo pipefail
 (yum install -y curl zip unzip tar git ninja-build libgomp) || \
   (apt-get update && apt-get install -y curl zip unzip tar git ninja-build libgomp1)
+case "$(uname -m)" in
+  x86_64)  VCPKG_TRIPLET=x64-linux ;;
+  aarch64) VCPKG_TRIPLET=arm64-linux ;;
+  *)       echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
+esac
 git clone --depth 1 --branch 2025.02.14 https://github.com/microsoft/vcpkg.git /host/vcpkg
 /host/vcpkg/bootstrap-vcpkg.sh -disableMetrics
 /host/vcpkg/vcpkg install \
-  --triplet "$(uname -m)-linux" \
+  --triplet "$VCPKG_TRIPLET" \
   --x-manifest-root /project \
   --x-install-root /host/vcpkg/installed
 """
@@ -246,11 +255,21 @@ environment-pass = ["ACTIONS_CACHE_URL", "ACTIONS_RUNTIME_TOKEN", "VCPKG_BINARY_
 before-all   = "brew install ninja libomp"
 before-build = "pip install delocate"
 repair-wheel-command = "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}"
-environment  = { VCPKG_ROOT = "$VCPKG_ROOT", MACOSX_DEPLOYMENT_TARGET = "11.0" }
+# Deployment target = 15.0 because Homebrew's libomp bottle on the
+# macos-15 runners is built with min-target 15.0; delocate refuses to
+# bundle a dylib with a higher minimum than the wheel's stated target.
+# Lowering this requires either building libomp from source (slow) or
+# pinning to older runners. macOS 11–14 users build from sdist.
+environment  = { VCPKG_ROOT = "$VCPKG_ROOT", MACOSX_DEPLOYMENT_TARGET = "15.0" }
 
 [tool.cibuildwheel.windows]
 before-build = "pip install delvewheel"
-repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel}"
+# Custom repair: delvewheel's default search (PATH only) misses both
+# openswmm.engine.dll (installed inside the wheel at openswmm/engine/)
+# and the vcpkg-provided runtime DLLs (SUNDIALS, HDF5, …). The helper
+# script extracts the wheel, collects every DLL subdirectory, adds
+# $VCPKG_ROOT/installed/x64-windows/bin, and passes them as --add-path.
+repair-wheel-command = "python {project}/python/scripts/cibw_repair_windows.py {wheel} {dest_dir}"
 environment  = { VCPKG_ROOT = "$VCPKG_ROOT" }
 
 # ============================================================================

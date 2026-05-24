@@ -80,6 +80,10 @@ jobs:
           # Linux uses /host/vcpkg inside the container (see pyproject.toml).
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+          # See deployment.yml for rationale — pyproject.toml's
+          # [tool.cibuildwheel.macos].environment doesn't reach the
+          # x86_64 wheel-tag computation reliably; CIBW_ENVIRONMENT_MACOS does.
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0 VCPKG_ROOT=${{ github.workspace }}/vcpkg
 
       - name: Upload Python wheels
         if: always()

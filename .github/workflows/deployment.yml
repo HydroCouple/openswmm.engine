@@ -193,6 +193,12 @@ jobs:
           # the container by pyproject.toml's before-all hook).
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+          # Force the macOS deployment target via cibuildwheel's env channel.
+          # Setting it ONLY in pyproject.toml [tool.cibuildwheel.macos].environment
+          # was not propagating to the x86_64 build's wheel-tag computation
+          # (wheel ended up tagged macosx_10_9 despite the toml override).
+          # CIBW_ENVIRONMENT_MACOS is read early and applied uniformly.
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0 VCPKG_ROOT=${{ github.workspace }}/vcpkg
 
       - name: Upload Python wheels
         if: always()

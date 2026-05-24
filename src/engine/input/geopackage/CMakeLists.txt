@@ -59,6 +59,15 @@ target_link_libraries(openswmm_geopackage
 
 target_compile_definitions(openswmm_geopackage
     PUBLIC OPENSWMM_HAS_GEOPACKAGE=1
+    # openswmm_geopackage is a STATIC library, but its implementation file
+    # decorates the swmm_gpkg_* function definitions with SWMM_ENGINE_API
+    # (from openswmm_engine.h). On MSVC, CMake only auto-defines
+    # openswmm_engine_EXPORTS for the engine SHARED target, so when this
+    # TU is compiled, SWMM_ENGINE_API expands to __declspec(dllimport) —
+    # and you cannot define a function as dllimport (C2491). Defining
+    # OPENSWMM_ENGINE_STATIC here short-circuits the macro to empty for
+    # this target only, which is correct: geopackage is statically linked.
+    PRIVATE OPENSWMM_ENGINE_STATIC
 )
 
 # Install
