@@ -17,6 +17,7 @@
 #define OPENSWMM_STATISTICS_H
 
 #include "openswmm_engine.h"
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -71,6 +72,16 @@ SWMM_ENGINE_API int swmm_stat_subcatch_runoff_vol(SWMM_Engine engine, int idx, d
 SWMM_ENGINE_API int swmm_stat_subcatch_max_runoff(SWMM_Engine engine, int idx, double* val);
 
 /* =========================================================================
+ * Object Counts
+ * ========================================================================= */
+
+/** @brief Number of nodes in the network (valid after swmm_engine_initialize). */
+SWMM_ENGINE_API int swmm_engine_node_count(SWMM_Engine engine, int* n);
+
+/** @brief Number of links in the network (valid after swmm_engine_initialize). */
+SWMM_ENGINE_API int swmm_engine_link_count(SWMM_Engine engine, int* n);
+
+/* =========================================================================
  * Bulk Statistics
  * ========================================================================= */
 
@@ -82,6 +93,34 @@ SWMM_ENGINE_API int swmm_stat_link_max_flow_bulk(SWMM_Engine engine, double* buf
 
 /** @brief Get total runoff volume for all subcatchments into a caller-supplied buffer. */
 SWMM_ENGINE_API int swmm_stat_subcatch_runoff_vol_bulk(SWMM_Engine engine, double* buf, int count);
+
+/* =========================================================================
+ * Routing Solver Statistics
+ * ========================================================================= */
+
+/**
+ * @brief Get the cumulative number of Picard sweeps executed by the dynamic-wave
+ *        solver across all routing timesteps since the last swmm_engine_start().
+ *
+ * @param engine        Engine handle.
+ * @param[out] sweeps   Receives total Picard sweep count, or 0 if not DYNWAVE.
+ * @return SWMM_OK on success.
+ */
+SWMM_ENGINE_API int swmm_stat_routing_picard_sweeps(SWMM_Engine engine, int64_t* sweeps);
+
+/**
+ * @brief Get spectral coarse-correction counters from the dynamic-wave solver.
+ *
+ * @param engine         Engine handle.
+ * @param[out] attempted Corrections attempted (NULL safe).
+ * @param[out] accepted  Corrections accepted   (NULL safe).
+ * @param[out] rejected  Corrections rejected   (NULL safe).
+ * @return SWMM_OK on success.
+ */
+SWMM_ENGINE_API int swmm_stat_spectral_corrections(SWMM_Engine engine,
+                                                    int* attempted,
+                                                    int* accepted,
+                                                    int* rejected);
 
 #ifdef __cplusplus
 } /* extern "C" */

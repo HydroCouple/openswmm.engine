@@ -127,8 +127,163 @@ target_compile_definitions(test_engine_exfiltration PRIVATE
 )
 add_gtest_unit(test_engine_treatment        test_treatment.cpp)
 add_gtest_unit(test_engine_rdii             test_rdii.cpp)
+add_gtest_unit(test_engine_runoff_ensemble  test_runoff_ensemble.cpp)
 add_gtest_unit(test_engine_gap_fixes       test_gap_fixes.cpp)
 add_gtest_unit(test_engine_report_section  test_report_section.cpp)
+
+# Spectral coarse correction — compiled from source (no engine shared-lib dependency)
+add_executable(test_engine_spectral_correction
+    test_spectral_correction.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/hydraulics/SpectralCoarse.cpp
+)
+target_link_libraries(test_engine_spectral_correction
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+target_include_directories(test_engine_spectral_correction
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/engine
+        ${PROJECT_SOURCE_DIR}/src/engine/hydraulics
+)
+if(MSVC)
+    target_compile_options(test_engine_spectral_correction PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_spectral_correction PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+)
+add_test(
+    NAME    test_engine_spectral_correction
+    COMMAND $<TARGET_FILE:test_engine_spectral_correction>
+)
+set_tests_properties(test_engine_spectral_correction PROPERTIES LABELS "unit")
+
+# 2D spectral preconditioner — eigenbasis correctness and apply() identities.
+# Compiled from source: no SUNDIALS dependency required.
+add_executable(test_engine_2d_spectral_precond
+    test_2d_spectral_precond.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/solver/SpectralPrecond2D.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/mesh/MeshBuilder.cpp
+)
+target_link_libraries(test_engine_2d_spectral_precond
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+target_include_directories(test_engine_2d_spectral_precond
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+if(MSVC)
+    target_compile_options(test_engine_2d_spectral_precond PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_2d_spectral_precond PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+)
+add_test(
+    NAME    test_engine_2d_spectral_precond
+    COMMAND $<TARGET_FILE:test_engine_2d_spectral_precond>
+)
+set_tests_properties(test_engine_2d_spectral_precond PROPERTIES LABELS "unit")
+
+# 2D spectral ROM — ensemble uncertainty propagation.
+# No SUNDIALS dependency: SpectralROM uses the eigenbasis from SpectralPrecond2D
+# but only calls std::exp; all sources compiled directly.
+add_executable(test_engine_2d_spectral_rom
+    test_2d_spectral_rom.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/uncertainty/SpectralROM.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/solver/SpectralPrecond2D.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/mesh/MeshBuilder.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/UncertaintyEnsemble.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/GraphEigenBasis.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/SpectralROM1D.cpp
+)
+target_link_libraries(test_engine_2d_spectral_rom
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+target_include_directories(test_engine_2d_spectral_rom
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+target_compile_definitions(test_engine_2d_spectral_rom PRIVATE OPENSWMM_HAS_2D=1)
+if(MSVC)
+    target_compile_options(test_engine_2d_spectral_rom PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_2d_spectral_rom PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+)
+add_test(
+    NAME    test_engine_2d_spectral_rom
+    COMMAND $<TARGET_FILE:test_engine_2d_spectral_rom>
+)
+set_tests_properties(test_engine_2d_spectral_rom PROPERTIES LABELS "unit")
+
+# 1D spectral ROM — GraphEigenBasis + NetworkLaplacian1D + SpectralROM1D.
+# Compiled from source: no engine shared-lib or SUNDIALS dependency.
+add_executable(test_engine_spectral_rom1d
+    test_spectral_rom1d.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/GraphEigenBasis.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/SpectralROM1D.cpp
+)
+target_link_libraries(test_engine_spectral_rom1d
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+target_include_directories(test_engine_spectral_rom1d
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+if(MSVC)
+    target_compile_options(test_engine_spectral_rom1d PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_spectral_rom1d PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+)
+add_test(
+    NAME    test_engine_spectral_rom1d
+    COMMAND $<TARGET_FILE:test_engine_spectral_rom1d>
+)
+set_tests_properties(test_engine_spectral_rom1d PROPERTIES LABELS "unit")
+
+# 2D spatial uncertainty field + correlated field generator tests.
+add_executable(test_engine_2d_spatial_field
+    test_2d_spatial_field.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/uncertainty/CorrelatedFieldGenerator.cpp
+)
+target_link_libraries(test_engine_2d_spatial_field
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+target_include_directories(test_engine_2d_spatial_field
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+target_compile_definitions(test_engine_2d_spatial_field PRIVATE OPENSWMM_HAS_2D=1)
+if(MSVC)
+    target_compile_options(test_engine_2d_spatial_field PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_2d_spatial_field PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+)
+add_test(
+    NAME    test_engine_2d_spatial_field
+    COMMAND $<TARGET_FILE:test_engine_2d_spatial_field>
+)
+set_tests_properties(test_engine_2d_spatial_field PROPERTIES LABELS "unit")
 
 # 2D surface routing tests — geometry, gradients, flux, parsing
 # These tests exercise the non-CVODE portions of the 2D module and

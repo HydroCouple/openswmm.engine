@@ -37,6 +37,10 @@ struct SimulationContext;
 
 namespace openswmm::twoD {
 
+// Forward declarations so rom() / setROM1D() are usable without full includes.
+struct SpectralROM;
+namespace openswmm::uncertainty { struct SpectralROM1D; }
+
 /**
  * @brief Top-level orchestrator for the 2D surface routing module.
  */
@@ -146,9 +150,36 @@ public:
     /// Access CVODE solver statistics.
     long lastCvodeSteps() const { return cvode_solver_.last_num_steps(); }
     double lastCvodeStepSize() const { return cvode_solver_.last_step_size(); }
+    /// Access the ROM sidecar (null if ROM not active or not yet seeded).
+    const SpectralROM* rom() const noexcept { return cvode_solver_.rom(); }
+
+    /**
+     * @brief Per-coupling-point exchange flux bounds from the last ROM step.
+     *
+     * Valid (is_valid() == true) after the first advancePostRouting() call when
+     * the ROM sidecar is active and there are coupling points.  Returns a
+     * reference to the struct stored inside the ROM; empty when ROM not active.
+     */
+    const CouplingUncertaintyOutput& couplingOutput() const noexcept {
+        static const CouplingUncertaintyOutput empty{};
+        const SpectralROM* r = cvode_solver_.rom();
+        return r ? r->coupling_unc_output : empty;
+    }
+
+    /**
+     * @brief Register a 1D network ROM for per-member coupling head reconstruction.
+     *
+     * Forwarded to CvodeSurfaceSolver::setROM1D().  The caller retains ownership.
+     * Pass nullptr to clear.
+     */
+    void setROM1D(const openswmm::uncertainty::SpectralROM1D* rom1d) noexcept {
+        cvode_solver_.setROM1D(rom1d);
+    }
 #else
     long lastCvodeSteps() const { return 0; }
     double lastCvodeStepSize() const { return 0.0; }
+    const SpectralROM* rom() const noexcept { return nullptr; }
+    void setROM1D(const openswmm::uncertainty::SpectralROM1D*) noexcept {}
 #endif
 
 private:

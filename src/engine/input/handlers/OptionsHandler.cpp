@@ -310,6 +310,15 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             const std::string av = norm(val);
             opt.anderson_accel = (av == "YES" || av == "TRUE" || av == "1");
 
+        } else if (key == "SPECTRAL_ACCEL") {
+            const std::string av = norm(val);
+            opt.spectral_accel = (av == "YES" || av == "TRUE" || av == "1");
+
+        } else if (key == "SPECTRAL_NUM_MODES") {
+            double d = 10.0;
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), d);
+            opt.spectral_num_modes = static_cast<int>(d);
+
         } else if (key == "LINK_OFFSETS") {
             const std::string lv = norm(val);
             if      (lv == "DEPTH")     opt.link_offsets = 0;

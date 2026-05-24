@@ -25,9 +25,10 @@ enum class LinearSolverType : int8_t {
 };
 
 enum class PreconditionerType : int8_t {
-    NONE   = 0,
-    JACOBI = 1,
-    ILU    = 2    // future
+    NONE     = 0,
+    JACOBI   = 1,
+    ILU      = 2,   // future
+    SPECTRAL = 3    // spectral Laplacian (SpectralPrecond2D)
 };
 
 /**
@@ -49,8 +50,31 @@ struct SolverOptions2D {
     int    max_cvode_steps   = 500;     ///< Max CVODE steps per advance
     bool   report_2d         = true;    ///< Write 2D results to output
 
+    int spectral_num_modes = 10;   ///< modes for PreconditionerType::SPECTRAL
+
     LinearSolverType   linear_solver   = LinearSolverType::GMRES;
     PreconditionerType preconditioner  = PreconditionerType::NONE;
+
+    // ---- Spectral ROM uncertainty sidecar ----
+    bool   enable_rom        = false; ///< Run SpectralROM ensemble alongside CVODE.
+    int    rom_members       = 50;    ///< Ensemble size M.
+    int    rom_modes         = 10;    ///< Eigenmodes retained for ROM basis.
+    double rom_mannings_pert = 0.20;  ///< Manning's n half-range: n ∈ [1±p].
+    double rom_rainfall_pert = 0.20;  ///< Rainfall half-range: r ∈ [1±p].
+    double rom_k_eff         = 10.0;  ///< Effective diffusivity estimate (m^{4/3}/s).
+
+    double rom_wet_reseed_fraction     = 0.05;   ///< Reseed ROM basis when wet-cell count changes by > this fraction of n_tri.
+    double rom_wet_reseed_min_interval = 60.0;   ///< Min simulation time (s) between ROM basis reseeds.
+    bool   rom_parametric_tails        = false;  ///< Use log-normal parametric upper tail in computeQuantiles.
+    double rom_mode_drop_threshold     = 1.0e-10; ///< Drop mode j if E_j < threshold AND rainfall forcing < threshold (transient; reactivated by rain).
+
+    // ---- Spatial uncertainty (Phase 2) ----
+    /// Exponential correlation length for spatially-varying Manning's n (m).
+    /// 0 = scalar mode (mannings_mult uniform over all cells, fast path).
+    double rom_mannings_corr_len = 0.0;
+    /// Exponential correlation length for spatially-varying rainfall (m).
+    /// 0 = scalar mode.
+    double rom_rainfall_corr_len = 0.0;
 
     /// Path from [2D_MESH_FILE] FILE token. Empty = mesh is inline in main .inp.
     std::string mesh_file;

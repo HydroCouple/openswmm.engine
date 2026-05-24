@@ -363,6 +363,15 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     writeStringAttr(ds_node_head_, "units", "m");
     writeStringAttr(ds_node_head_, "mesh", "Mesh2");
     writeStringAttr(ds_node_head_, "location", "node");
+
+    // ROM quantile datasets — created unconditionally so the file schema is
+    // consistent even when ROM is disabled.  Empty steps are written as zeros.
+    ds_face_depth_q05_ = createFaceDS("Mesh2_face_depth_q05",
+                                       "5th-percentile ensemble depth", "m");
+    ds_face_depth_q50_ = createFaceDS("Mesh2_face_depth_q50",
+                                       "median ensemble depth", "m");
+    ds_face_depth_q95_ = createFaceDS("Mesh2_face_depth_q95",
+                                       "95th-percentile ensemble depth", "m");
 }
 
 // ============================================================================
@@ -402,6 +411,17 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     // Write per-node fields
     extendAndWrite2D(ds_node_head_, snap.surface_vert_head.data(), n_nodes_);
 
+    // Write ROM quantile fields.  When the ROM is not active the quantile
+    // vectors are empty; fall back to a zero-filled scratch buffer so the
+    // dataset dimensions remain consistent across all time steps.
+    static const std::vector<double> zeros_placeholder(65536, 0.0);
+    auto quantile_ptr = [&](const std::vector<double>& v) -> const double* {
+        return v.empty() ? zeros_placeholder.data() : v.data();
+    };
+    extendAndWrite2D(ds_face_depth_q05_, quantile_ptr(snap.surface_depth_q05), n_faces_);
+    extendAndWrite2D(ds_face_depth_q50_, quantile_ptr(snap.surface_depth_q50), n_faces_);
+    extendAndWrite2D(ds_face_depth_q95_, quantile_ptr(snap.surface_depth_q95), n_faces_);
+
     ++n_steps_;
     return 0;
 }
@@ -427,6 +447,9 @@ int Default2DOutputPlugin::finalize(const SimulationContext& /*ctx*/) {
     closeDS(ds_face_net_source_);
     closeDS(ds_edge_flux_);
     closeDS(ds_node_head_);
+    closeDS(ds_face_depth_q05_);
+    closeDS(ds_face_depth_q50_);
+    closeDS(ds_face_depth_q95_);
 
     if (file_id_ != H5I_INVALID_HID) {
         H5Fclose(file_id_);

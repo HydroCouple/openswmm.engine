@@ -16,6 +16,22 @@
 extern "C" {
 
 // ============================================================================
+// Object Counts
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_engine_node_count(SWMM_Engine engine, int* n) {
+    CHECK_HANDLE(engine);
+    if (n) *n = to_engine(engine)->context().n_nodes();
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_engine_link_count(SWMM_Engine engine, int* n) {
+    CHECK_HANDLE(engine);
+    if (n) *n = to_engine(engine)->context().n_links();
+    return SWMM_OK;
+}
+
+// ============================================================================
 // Node Statistics
 // ============================================================================
 
@@ -154,6 +170,28 @@ SWMM_ENGINE_API int swmm_stat_subcatch_runoff_vol_bulk(SWMM_Engine engine, doubl
     const int n = std::min(count, ctx.n_subcatches());
     std::copy(ctx.subcatches.stat_runoff_vol.begin(),
               ctx.subcatches.stat_runoff_vol.begin() + n, buf);
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Routing Solver Statistics
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_stat_routing_picard_sweeps(SWMM_Engine engine, int64_t* sweeps) {
+    CHECK_HANDLE(engine);
+    if (sweeps) *sweeps = to_engine(engine)->router().dwSolver().totalPicardSweeps();
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_stat_spectral_corrections(SWMM_Engine engine,
+                                                    int* attempted,
+                                                    int* accepted,
+                                                    int* rejected) {
+    CHECK_HANDLE(engine);
+    const auto& sc = to_engine(engine)->router().dwSolver().spectralState();
+    if (attempted) *attempted = sc.corrections_attempted;
+    if (accepted)  *accepted  = sc.corrections_accepted;
+    if (rejected)  *rejected  = sc.corrections_rejected;
     return SWMM_OK;
 }
 

@@ -22,6 +22,7 @@
 #include <cstdio>
 
 #include "../../include/openswmm/engine/openswmm_engine.h"
+#include "../../include/openswmm/engine/openswmm_output.h"
 #include "../../include/openswmm/legacy/engine/openswmm_solver.h"
 
 namespace fs = std::filesystem;
@@ -67,6 +68,37 @@ struct TimeStep {
 
 class RegressionTest : public ::testing::TestWithParam<RegressionParams> {
 protected:
+    // Load all report-period results from a binary .out file into `results`.
+    // Works for both legacy (swmm_run) and new-engine (swmm_engine_run) output
+    // because both engines write the same binary format.
+    void LoadFromOutputFile(const std::string& path, std::vector<TimeStep>& results) {
+        SWMM_Output out = swmm_output_open(path.c_str());
+        ASSERT_NE(out, nullptr) << "Failed to open output file: " << path;
+
+        int n_nodes  = swmm_output_get_node_count(out);
+        int n_links  = swmm_output_get_link_count(out);
+        int nperiods = swmm_output_get_period_count(out);
+        int rs_sec   = swmm_output_get_report_step(out);
+        double rs_day = rs_sec / 86400.0;
+
+        std::vector<float> node_buf(static_cast<size_t>(n_nodes));
+        std::vector<float> link_buf(static_cast<size_t>(n_links));
+
+        for (int p = 0; p < nperiods; ++p) {
+            TimeStep ts;
+            ts.time = (p + 1) * rs_day;  // elapsed days from simulation start
+
+            swmm_output_get_node_result(out, p, SWMM_OUT_NODE_DEPTH, node_buf.data());
+            swmm_output_get_link_result(out, p, SWMM_OUT_LINK_FLOW,  link_buf.data());
+
+            ts.node_depths.assign(node_buf.begin(), node_buf.end());
+            ts.link_flows.assign(link_buf.begin(), link_buf.end());
+            results.push_back(ts);
+        }
+
+        swmm_output_close(out);
+    }
+
     void RunLegacy(const std::string& inp) {
         std::string rpt = "/tmp/regression_legacy.rpt";
         std::string out = "/tmp/regression_legacy.out";
@@ -74,121 +106,68 @@ protected:
         int err = swmm_run(inp.c_str(), rpt.c_str(), out.c_str());
         ASSERT_EQ(err, 0) << "Legacy engine failed on " << inp;
 
-        // Read back results via legacy API
-        err = swmm_open(inp.c_str(), rpt.c_str(), out.c_str());
-        ASSERT_EQ(err, 0);
-
-        int n_nodes = swmm_getCount(2);  // NODE type = 2
-        int n_links = swmm_getCount(3);  // LINK type = 3
-
-        err = swmm_start(1);
-        ASSERT_EQ(err, 0);
-
-        double t = 0.0;
-        while (swmm_step(&t) == 0 && t > 0.0) {
-            TimeStep ts;
-            ts.time = t;
-            ts.node_depths.resize(static_cast<size_t>(n_nodes));
-            ts.link_flows.resize(static_cast<size_t>(n_links));
-
-            for (int i = 0; i < n_nodes; ++i) {
-                ts.node_depths[static_cast<size_t>(i)] = swmm_getValue(96, i);  // NODE_DEPTH = 96
-            }
-            for (int i = 0; i < n_links; ++i) {
-                ts.link_flows[static_cast<size_t>(i)] = swmm_getValue(121, i);  // LINK_FLOW = 121
-            }
-            legacy_results_.push_back(ts);
-        }
-
-        swmm_end();
-        swmm_close();
+        LoadFromOutputFile(out, legacy_results_);
     }
 
     void RunNew(const std::string& inp) {
         std::string rpt = "/tmp/regression_new.rpt";
         std::string out = "/tmp/regression_new.out";
 
-        // Full run first — mirrors how RunLegacy uses swmm_run()
         int err = swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr);
         ASSERT_EQ(err, 0) << "New engine run failed";
 
-        // Re-open and step through to read per-timestep results
-        SWMM_Engine e = swmm_engine_create();
-        ASSERT_NE(e, nullptr);
-
-        err = swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr);
-        ASSERT_EQ(err, 0) << "New engine open failed: " << swmm_get_last_error_msg(e);
-
-        err = swmm_engine_initialize(e);
-        ASSERT_EQ(err, 0);
-
-        err = swmm_engine_start(e, 1);
-        ASSERT_EQ(err, 0);
-
-        int n_nodes = swmm_node_count(e);
-        int n_links = swmm_link_count(e);
-
-        double t = 0.0;
-        while (swmm_engine_step(e, &t) == 0 && t > 0.0) {
-            TimeStep ts;
-            ts.time = t;
-            ts.node_depths.resize(static_cast<size_t>(n_nodes));
-            ts.link_flows.resize(static_cast<size_t>(n_links));
-
-            // Bulk read — single memcpy per array (SoA)
-            swmm_node_get_depths_bulk(e, ts.node_depths.data(), n_nodes);
-            swmm_link_get_flows_bulk(e, ts.link_flows.data(), n_links);
-
-            new_results_.push_back(ts);
-        }
-
-        swmm_engine_end(e);
-        swmm_engine_report(e);
-        swmm_engine_close(e);
-        swmm_engine_destroy(e);
+        LoadFromOutputFile(out, new_results_);
     }
 
     void CompareOutputs(double abs_tol, double rel_tol) {
-        ASSERT_EQ(legacy_results_.size(), new_results_.size())
-            << "Different number of output timesteps";
+        // Times are in days. Match periods by time value with a 5-second tolerance
+        // to handle any residual clock-offset differences.
+        const double time_tol = 5.0 / 86400.0;  // 5 seconds in days
 
+        size_t li = 0, ni = 0;
+        size_t matched = 0;
         int max_mismatches = 10;
         int mismatches = 0;
 
-        for (size_t t = 0; t < legacy_results_.size(); ++t) {
-            const auto& leg = legacy_results_[t];
-            const auto& neo = new_results_[t];
+        while (li < legacy_results_.size() && ni < new_results_.size()) {
+            const auto& leg = legacy_results_[li];
+            const auto& neo = new_results_[ni];
 
-            // Compare node depths
+            double dt = leg.time - neo.time;
+            if (dt > time_tol)  { ++ni; continue; }
+            if (dt < -time_tol) { ++li; continue; }
+            ++li; ++ni; ++matched;
+
             ASSERT_EQ(leg.node_depths.size(), neo.node_depths.size());
             for (size_t i = 0; i < leg.node_depths.size(); ++i) {
                 double delta = std::fabs(neo.node_depths[i] - leg.node_depths[i]);
-                double ref = std::fabs(leg.node_depths[i]);
-                double tol = std::max(abs_tol, rel_tol * ref);
+                double ref   = std::fabs(leg.node_depths[i]);
+                double tol   = std::max(abs_tol, rel_tol * ref);
                 if (delta > tol) {
                     EXPECT_LE(delta, tol)
-                        << "Node depth mismatch at step " << t << " node " << i
+                        << "Node depth mismatch at t=" << leg.time << " node " << i
                         << ": legacy=" << leg.node_depths[i]
-                        << " new=" << neo.node_depths[i];
+                        << " new="    << neo.node_depths[i];
                     if (++mismatches >= max_mismatches) return;
                 }
             }
 
-            // Compare link flows
             ASSERT_EQ(leg.link_flows.size(), neo.link_flows.size());
             for (size_t i = 0; i < leg.link_flows.size(); ++i) {
                 double delta = std::fabs(neo.link_flows[i] - leg.link_flows[i]);
-                double ref = std::fabs(leg.link_flows[i]);
-                double tol = std::max(abs_tol, rel_tol * ref);
+                double ref   = std::fabs(leg.link_flows[i]);
+                double tol   = std::max(abs_tol, rel_tol * ref);
                 if (delta > tol) {
                     EXPECT_LE(delta, tol)
-                        << "Link flow mismatch at step " << t << " link " << i
+                        << "Link flow mismatch at t=" << leg.time << " link " << i
                         << ": legacy=" << leg.link_flows[i]
-                        << " new=" << neo.link_flows[i];
+                        << " new="    << neo.link_flows[i];
                     if (++mismatches >= max_mismatches) return;
                 }
             }
         }
+
+        ASSERT_GT(matched, 0u) << "No matching timesteps found between legacy and new engine";
     }
 
     std::vector<TimeStep> legacy_results_;

@@ -33,9 +33,12 @@
 #include "2d/mesh/VertexReconstruction.hpp"
 #include "2d/solver/DiffusiveConductance.hpp"
 #include "2d/solver/SurfaceFluxCalculator.hpp"
+#include "2d/solver/CvodeSurfaceSolver.hpp"
 #include "2d/input/SectionHandlers2D.hpp"
+#include "uncertainty/UncertaintyConfig.hpp"
 
 using namespace openswmm::twoD;
+using namespace openswmm::uncertainty;
 
 // ============================================================================
 // Helper: Build a simple 2-triangle mesh (a unit square split diagonally)
@@ -888,4 +891,714 @@ TEST(DiamondMesh, VertexReconstructionConstantExact) {
     for (int v = 0; v < mesh.n_vertices(); ++v) {
         EXPECT_NEAR(state.vert_head[v], 3.14, 1e-10);
     }
+}
+
+// ============================================================================
+// DWSolverSpectral — smoke test: ROM sidecar wired into CvodeSurfaceSolver
+// ============================================================================
+
+// Build a 5×5 structured mesh on [0,10]² with mild x-slope.
+static MeshData makeSmallSlopedMesh() {
+    const int N = 5;
+    const double domain = 10.0;
+    const double slope_x = 0.002;
+    MeshData mesh;
+    mesh.resize_vertices((N+1)*(N+1));
+    mesh.resize_triangles(2*N*N);
+    double dx = domain / N;
+    double dy = domain / N;
+    for (int i = 0; i <= N; ++i)
+        for (int j = 0; j <= N; ++j) {
+            int vi = i*(N+1)+j;
+            double x = j*dx;
+            mesh.vx[vi] = x;
+            mesh.vy[vi] = i*dy;
+            mesh.vz[vi] = -slope_x*x;
+        }
+    int t = 0;
+    for (int i = 0; i < N; ++i)
+        for (int j = 0; j < N; ++j) {
+            int v00=i*(N+1)+j, v01=i*(N+1)+j+1;
+            int v10=(i+1)*(N+1)+j, v11=(i+1)*(N+1)+j+1;
+            mesh.tri_v0[t]=v00; mesh.tri_v1[t]=v01; mesh.tri_v2[t]=v11;
+            mesh.mannings_n[t]=0.035; ++t;
+            mesh.tri_v0[t]=v00; mesh.tri_v1[t]=v11; mesh.tri_v2[t]=v10;
+            mesh.mannings_n[t]=0.035; ++t;
+        }
+    buildMeshTopology(mesh);
+    buildVertexStencils(mesh);
+    return mesh;
+}
+
+TEST(DWSolverSpectral, ROMSidecarFiresAndProducesQuantiles) {
+    MeshData mesh = makeSmallSlopedMesh();
+    int n = mesh.n_triangles();
+
+    SurfaceStateData state;
+    state.resize(n, mesh.n_vertices());
+    for (int i = 0; i < n; ++i) {
+        state.depth[i] = 0.10;
+        state.head[i]  = mesh.tri_cz[i] + 0.10;
+    }
+
+    SolverOptions2D opts;
+    opts.rel_tolerance   = 1.0e-3;
+    opts.abs_tolerance   = 1.0e-5;
+    opts.max_timestep    = 5.0;
+    opts.max_cvode_steps = 10000;
+    opts.linear_solver   = LinearSolverType::GMRES;
+    opts.preconditioner  = PreconditionerType::NONE;
+    opts.enable_rom      = true;
+    opts.rom_modes       = 4;
+    opts.rom_members     = 10;
+    opts.rom_k_eff       = 10.0;
+
+    CvodeSurfaceSolver solver;
+    solver.initialize(mesh, state, opts);
+    solver.suppress_warnings();
+
+    // ROM should be initialised but not yet seeded
+    ASSERT_NE(solver.rom(), nullptr) << "ROM sidecar should be non-null after initialize()";
+
+    double t = solver.advance(0.0, 5.0);
+    EXPECT_GE(t, 0.0);
+
+    const SpectralROM* rom = solver.rom();
+    ASSERT_NE(rom, nullptr);
+    EXPECT_EQ(static_cast<int>(rom->q05.size()), n);
+    EXPECT_EQ(static_cast<int>(rom->q50.size()), n);
+    EXPECT_EQ(static_cast<int>(rom->q95.size()), n);
+
+    for (int i = 0; i < n; ++i) {
+        EXPECT_LE(rom->q05[i], rom->q50[i] + 1e-14)
+            << "q05 > q50 at cell " << i;
+        EXPECT_LE(rom->q50[i], rom->q95[i] + 1e-14)
+            << "q50 > q95 at cell " << i;
+        EXPECT_GE(rom->q05[i], 0.0)
+            << "q05 < 0 at cell " << i;
+    }
+}
+
+// ============================================================================
+// [2D_ROM] parser tests (PR 3)
+// ============================================================================
+
+TEST(InputParsing, Parse2DROMEnableYes) {
+    SolverOptions2D opts;
+    EXPECT_FALSE(opts.enable_rom);
+    auto err = parse2DROMLine({"ENABLE", "YES"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_TRUE(opts.enable_rom);
+}
+
+TEST(InputParsing, Parse2DROMEnableNo) {
+    SolverOptions2D opts;
+    opts.enable_rom = true;
+    auto err = parse2DROMLine({"ENABLE", "NO"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_FALSE(opts.enable_rom);
+}
+
+TEST(InputParsing, Parse2DROMMembersAndModes) {
+    SolverOptions2D opts;
+    auto err = parse2DROMLine({"MEMBERS", "30"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_EQ(opts.rom_members, 30);
+
+    err = parse2DROMLine({"MODES", "8"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_EQ(opts.rom_modes, 8);
+}
+
+TEST(InputParsing, Parse2DROMPerturbations) {
+    SolverOptions2D opts;
+    auto err = parse2DROMLine({"MANNINGS_PERT", "0.15"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_DOUBLE_EQ(opts.rom_mannings_pert, 0.15);
+
+    err = parse2DROMLine({"RAINFALL_PERT", "0.25"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_DOUBLE_EQ(opts.rom_rainfall_pert, 0.25);
+}
+
+TEST(InputParsing, Parse2DROMKEffPositiveAndNegative) {
+    SolverOptions2D opts;
+    auto err = parse2DROMLine({"K_EFF", "15.5"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_DOUBLE_EQ(opts.rom_k_eff, 15.5);
+
+    // Negative K_EFF means AUTO mode (PR 4)
+    err = parse2DROMLine({"K_EFF", "-1"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_LT(opts.rom_k_eff, 0.0);
+}
+
+TEST(InputParsing, Parse2DROMUnknownKeyReturnsError) {
+    SolverOptions2D opts;
+    auto err = parse2DROMLine({"BOGUS_KEY", "42"}, opts);
+    EXPECT_FALSE(err.empty()) << "Expected error for unknown key";
+}
+
+TEST(InputParsing, Parse2DROMMembersTooFewReturnsError) {
+    SolverOptions2D opts;
+    auto err = parse2DROMLine({"MEMBERS", "1"}, opts);
+    EXPECT_FALSE(err.empty()) << "MEMBERS=1 should be rejected";
+}
+
+// Spatial correlation length tokens (PR 9).
+TEST(InputParsing, Parse2DROMSpatialCorrelationLengths) {
+    SolverOptions2D opts;
+    auto err = parse2DROMLine({"MANNINGS_CORR_LEN", "25.0"}, opts);
+    EXPECT_TRUE(err.empty()) << "MANNINGS_CORR_LEN parse error: " << err;
+    EXPECT_DOUBLE_EQ(opts.rom_mannings_corr_len, 25.0);
+
+    err = parse2DROMLine({"RAINFALL_CORR_LEN", "50.5"}, opts);
+    EXPECT_TRUE(err.empty()) << "RAINFALL_CORR_LEN parse error: " << err;
+    EXPECT_DOUBLE_EQ(opts.rom_rainfall_corr_len, 50.5);
+
+    // Zero is valid (= scalar mode).
+    err = parse2DROMLine({"MANNINGS_CORR_LEN", "0"}, opts);
+    EXPECT_TRUE(err.empty()) << "MANNINGS_CORR_LEN=0 should be accepted";
+    EXPECT_DOUBLE_EQ(opts.rom_mannings_corr_len, 0.0);
+
+    // Negative values rejected.
+    err = parse2DROMLine({"MANNINGS_CORR_LEN", "-1"}, opts);
+    EXPECT_FALSE(err.empty()) << "Negative MANNINGS_CORR_LEN should be rejected";
+
+    err = parse2DROMLine({"RAINFALL_CORR_LEN", "-0.1"}, opts);
+    EXPECT_FALSE(err.empty()) << "Negative RAINFALL_CORR_LEN should be rejected";
+}
+
+// ============================================================================
+// [UNCERTAINTY] parser tests (PR 3)
+// ============================================================================
+
+TEST(InputParsing, ParseUncertaintyScalarMannings2D) {
+    SolverOptions2D opts;
+    UncertaintyConfig config;
+
+    auto err = parseUncertaintyLine({"2D", "MANNINGS_N", "0.20"}, opts, config);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_TRUE(opts.enable_rom);
+    EXPECT_DOUBLE_EQ(opts.rom_mannings_pert, 0.20);
+    ASSERT_EQ(config.sources.size(), std::size_t{1});
+    EXPECT_EQ(config.sources[0].name, "MANNINGS_N");
+    EXPECT_EQ(config.sources[0].layer, LayerTarget::TWO_D);
+    EXPECT_EQ(config.sources[0].dist,  DistType::UNIFORM);
+    EXPECT_DOUBLE_EQ(config.sources[0].perturbation, 0.20);
+}
+
+TEST(InputParsing, ParseUncertaintyScalarRainfall2D) {
+    SolverOptions2D opts;
+    UncertaintyConfig config;
+
+    auto err = parseUncertaintyLine({"2D", "RAINFALL", "UNIFORM", "0.15"}, opts, config);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_TRUE(opts.enable_rom);
+    EXPECT_DOUBLE_EQ(opts.rom_rainfall_pert, 0.15);
+    ASSERT_EQ(config.sources.size(), std::size_t{1});
+    EXPECT_EQ(config.sources[0].name, "RAINFALL");
+}
+
+TEST(InputParsing, ParseUncertaintyUnsupportedLayerReturnsError) {
+    SolverOptions2D opts;
+    UncertaintyConfig config;
+    auto err = parseUncertaintyLine({"1D", "MANNINGS_N", "0.20"}, opts, config);
+    EXPECT_FALSE(err.empty()) << "Expected error for unsupported layer 1D";
+    EXPECT_TRUE(config.sources.empty());
+}
+
+TEST(InputParsing, ParseUncertaintyUnsupportedParameterReturnsError) {
+    SolverOptions2D opts;
+    UncertaintyConfig config;
+    auto err = parseUncertaintyLine({"2D", "ROUGHNESS", "0.20"}, opts, config);
+    EXPECT_FALSE(err.empty()) << "Expected error for unsupported parameter ROUGHNESS";
+    EXPECT_TRUE(config.sources.empty());
+}
+
+// [UNCERTAINTY] overrides [2D_ROM] legacy fields (precedence test)
+TEST(InputParsing, UncertaintyOverridesROMLegacyPerturbations) {
+    SolverOptions2D opts;
+    opts.rom_mannings_pert = 0.30;  // set via [2D_ROM]
+    opts.rom_rainfall_pert = 0.30;
+
+    UncertaintyConfig config;
+    // [UNCERTAINTY] with smaller perturbation — must win
+    auto err = parseUncertaintyLine({"2D", "MANNINGS_N", "0.10"}, opts, config);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_DOUBLE_EQ(opts.rom_mannings_pert, 0.10)
+        << "[UNCERTAINTY] should override the [2D_ROM] MANNINGS_PERT value";
+
+    err = parseUncertaintyLine({"2D", "RAINFALL", "0.05"}, opts, config);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_DOUBLE_EQ(opts.rom_rainfall_pert, 0.05)
+        << "[UNCERTAINTY] should override the [2D_ROM] RAINFALL_PERT value";
+}
+
+// Multiple [UNCERTAINTY] lines accumulate in config.sources
+TEST(InputParsing, UncertaintyMultipleLinesAccumulate) {
+    SolverOptions2D opts;
+    UncertaintyConfig config;
+
+    parseUncertaintyLine({"2D", "MANNINGS_N", "0.20"}, opts, config);
+    parseUncertaintyLine({"2D", "RAINFALL",   "0.10"}, opts, config);
+
+    EXPECT_EQ(config.sources.size(), std::size_t{2});
+    EXPECT_TRUE(config.has_2d());
+    EXPECT_TRUE(config.mannings_2d().has_value());
+    EXPECT_TRUE(config.rainfall_2d().has_value());
+}
+
+// ============================================================================
+// AUTO K_eff tests (PR 4)
+// ============================================================================
+//
+// Uses makeSmallSlopedMesh() (5×5 grid, 50 triangles, slope_x=0.002) which is
+// large enough for the Lanczos eigensolver and already proven by the ROM smoke
+// test above.
+//
+// Expected K_eff ≈ h_mean^(5/3) / (2 * n_mean * sqrt(S_mean))
+// For h=0.10m, n=0.035, S≈0.002:  K_eff ≈ 14.8 m²/s  (within 50%)
+// ============================================================================
+
+// Flat version of makeSmallSlopedMesh(): same topology, all z = 0.
+static MeshData makeFlatSmallMesh() {
+    const int N = 5;
+    const double domain = 10.0;
+    MeshData mesh;
+    mesh.resize_vertices((N+1)*(N+1));
+    mesh.resize_triangles(2*N*N);
+    double dx = domain / N;
+    double dy = domain / N;
+    for (int i = 0; i <= N; ++i)
+        for (int j = 0; j <= N; ++j) {
+            int vi = i*(N+1)+j;
+            mesh.vx[vi] = j*dx;
+            mesh.vy[vi] = i*dy;
+            mesh.vz[vi] = 0.0;   // flat
+        }
+    int t = 0;
+    for (int i = 0; i < N; ++i)
+        for (int j = 0; j < N; ++j) {
+            int v00=i*(N+1)+j, v01=i*(N+1)+j+1;
+            int v10=(i+1)*(N+1)+j, v11=(i+1)*(N+1)+j+1;
+            mesh.tri_v0[t]=v00; mesh.tri_v1[t]=v01; mesh.tri_v2[t]=v11;
+            mesh.mannings_n[t]=0.035; ++t;
+            mesh.tri_v0[t]=v00; mesh.tri_v1[t]=v11; mesh.tri_v2[t]=v10;
+            mesh.mannings_n[t]=0.035; ++t;
+        }
+    buildMeshTopology(mesh);
+    buildVertexStencils(mesh);
+    return mesh;
+}
+
+// Shared ROM options for AutoKEff tests.
+static SolverOptions2D makeROMOpts(double k_eff_override) {
+    SolverOptions2D opts;
+    opts.rel_tolerance   = 1.0e-3;
+    opts.abs_tolerance   = 1.0e-5;
+    opts.max_timestep    = 5.0;
+    opts.max_cvode_steps = 10000;
+    opts.linear_solver   = LinearSolverType::GMRES;
+    opts.preconditioner  = PreconditionerType::NONE;
+    opts.enable_rom      = true;
+    opts.rom_modes       = 4;
+    opts.rom_members     = 4;
+    opts.rom_k_eff       = k_eff_override;
+    return opts;
+}
+
+TEST(AutoKEff, NominalEstimateInPhysicalRange) {
+    // Sloped domain: slope_x=0.002, h=0.10m, n=0.035
+    // Formula: K_eff = h^(5/3) / (2 * n * sqrt(S)) ≈ 14.8
+    MeshData mesh = makeSmallSlopedMesh();
+    int n = mesh.n_triangles();
+    SurfaceStateData state;
+    state.resize(n, mesh.n_vertices());
+    for (int i = 0; i < n; ++i) {
+        state.depth[i] = 0.10;
+        state.head[i]  = mesh.tri_cz[i] + 0.10;
+    }
+
+    SolverOptions2D opts = makeROMOpts(-1.0);   // AUTO mode
+
+    CvodeSurfaceSolver solver;
+    solver.initialize(mesh, state, opts);
+    solver.suppress_warnings();
+    solver.advance(0.0, 5.0);
+
+    double k = solver.effectiveKEff();
+    // Physical range: K_eff must be positive and less than 200.
+    EXPECT_GT(k, 0.0)   << "AUTO K_eff must be positive";
+    EXPECT_LT(k, 200.0) << "AUTO K_eff too large: " << k;
+
+    // Formula check: within 50% of h^(5/3) / (2*n*sqrt(S)).
+    double k_expected = std::pow(0.10, 5.0/3.0) / (2.0 * 0.035 * std::sqrt(0.002));
+    EXPECT_NEAR(k, k_expected, 0.5 * k_expected)
+        << "AUTO K_eff=" << k << " differs from formula=" << k_expected << " by >50%";
+}
+
+TEST(AutoKEff, FlatDomainFallbackNonZero) {
+    // All z=0 → S_mean=0 → should clamp to S_FLOOR=1e-6, giving K_eff > 0.
+    MeshData mesh = makeFlatSmallMesh();
+    int n = mesh.n_triangles();
+    SurfaceStateData state;
+    state.resize(n, mesh.n_vertices());
+    for (int i = 0; i < n; ++i) {
+        state.depth[i] = 0.10;
+        state.head[i]  = 0.10;
+    }
+
+    SolverOptions2D opts = makeROMOpts(-1.0);   // AUTO mode
+
+    CvodeSurfaceSolver solver;
+    solver.initialize(mesh, state, opts);
+    solver.suppress_warnings();
+    solver.advance(0.0, 5.0);
+
+    EXPECT_GT(solver.effectiveKEff(), 0.0)
+        << "Flat domain should give K_eff > 0 via S_FLOOR fallback";
+}
+
+TEST(AutoKEff, DryDomainReturnsZero) {
+    // All cells dry (h=0) → h_mean=0 → K_eff=0.
+    MeshData mesh = makeSmallSlopedMesh();
+    int n = mesh.n_triangles();
+    SurfaceStateData state;
+    state.resize(n, mesh.n_vertices());
+    // depth stays at 0 (dry).
+
+    SolverOptions2D opts = makeROMOpts(-1.0);   // AUTO mode
+
+    CvodeSurfaceSolver solver;
+    solver.initialize(mesh, state, opts);
+    solver.suppress_warnings();
+    solver.advance(0.0, 5.0);
+
+    EXPECT_DOUBLE_EQ(solver.effectiveKEff(), 0.0)
+        << "Dry domain should give K_eff = 0";
+}
+
+TEST(AutoKEff, PositiveOverrideAlwaysUsed) {
+    // rom_k_eff=42.0 > 0 → effectiveKEff() must equal 42.0 exactly.
+    MeshData mesh = makeSmallSlopedMesh();
+    int n = mesh.n_triangles();
+    SurfaceStateData state;
+    state.resize(n, mesh.n_vertices());
+    for (int i = 0; i < n; ++i) {
+        state.depth[i] = 0.10;
+        state.head[i]  = mesh.tri_cz[i] + 0.10;
+    }
+
+    SolverOptions2D opts = makeROMOpts(42.0);   // explicit override
+
+    CvodeSurfaceSolver solver;
+    solver.initialize(mesh, state, opts);
+    solver.suppress_warnings();
+    solver.advance(0.0, 5.0);
+
+    EXPECT_DOUBLE_EQ(solver.effectiveKEff(), 42.0)
+        << "Positive rom_k_eff override must be used unchanged";
+}
+
+// ============================================================================
+// ROMScalarCase — end-to-end Phase 1 validation tests (PR 6)
+//
+// "Scalar case": uniform ROM parameters built from [2D_ROM] / [UNCERTAINTY]
+// parser output, run through CvodeSurfaceSolver with the ROM sidecar active.
+// ============================================================================
+
+// --- Ensemble spread grows with perturbation size ----------------------------
+//
+// The ROM propagates parameter uncertainty onto the depth field.  With a
+// non-uniform IC (Gaussian bump off-centre), the eigenmodes have non-trivial
+// projections.  After advance, the maximum (q95 - q05) spread across all cells
+// should be strictly positive, and a larger perturbation should produce more
+// spread than a smaller one.
+//
+// Note: a uniform IC projects entirely onto the null Laplacian mode, which is
+// filtered out; the ROM correctly sees zero spatial variation in that case.
+// The test therefore uses a spatially non-uniform depth field.
+
+// Build a Gaussian bump IC off-centre so it projects onto retained eigenmodes.
+static void setGaussianBump(SurfaceStateData& state, const MeshData& mesh,
+                              double h_bg, double amp, double cx, double cy,
+                              double sigma) {
+    int n = mesh.n_triangles();
+    for (int i = 0; i < n; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        double dx = mesh.tri_cx[ui] - cx;
+        double dy = mesh.tri_cy[ui] - cy;
+        double bump = amp * std::exp(-(dx*dx + dy*dy) / (2.0 * sigma * sigma));
+        state.depth[ui] = h_bg + bump;
+        state.head[ui]  = mesh.tri_cz[ui] + state.depth[ui];
+    }
+}
+
+TEST(ROMScalarCase, EnsembleSpreadGrowsWithPerturbation) {
+    MeshData mesh = makeSmallSlopedMesh();
+    int n = mesh.n_triangles();
+
+    // Build base opts via the parser path (end-to-end: [2D_ROM] + [UNCERTAINTY]).
+    auto buildOpts = [](double pert) {
+        SolverOptions2D opts;
+        opts.rel_tolerance   = 1.0e-3;
+        opts.abs_tolerance   = 1.0e-5;
+        opts.max_timestep    = 5.0;
+        opts.max_cvode_steps = 10000;
+        opts.linear_solver   = LinearSolverType::GMRES;
+        opts.preconditioner  = PreconditionerType::NONE;
+        parse2DROMLine({"ENABLE", "YES"}, opts);
+        parse2DROMLine({"MEMBERS", "20"}, opts);
+        parse2DROMLine({"MODES", "4"}, opts);
+        parse2DROMLine({"K_EFF", "10.0"}, opts);
+        UncertaintyConfig cfg;
+        std::string s = std::to_string(pert);
+        parseUncertaintyLine({"2D", "MANNINGS_N", s}, opts, cfg);
+        return opts;
+    };
+
+    auto runAndGetMaxSpread = [&](double pert) -> double {
+        SolverOptions2D opts = buildOpts(pert);
+        MeshData m = makeSmallSlopedMesh();
+
+        SurfaceStateData state;
+        state.resize(n, m.n_vertices());
+        // Gaussian bump at (3m, 4m) off-centre; σ=1.5m on a 10m domain.
+        setGaussianBump(state, m, 0.02, 0.08, 3.0, 4.0, 1.5);
+
+        CvodeSurfaceSolver solver;
+        solver.initialize(m, state, opts);
+        solver.suppress_warnings();
+        solver.advance(0.0, 5.0);
+
+        const SpectralROM* rom = solver.rom();
+        if (!rom || rom->q05.empty()) return -1.0;
+
+        double max_spread = 0.0;
+        for (int i = 0; i < n; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            max_spread = std::max(max_spread, rom->q95[ui] - rom->q05[ui]);
+        }
+        return max_spread;
+    };
+
+    double spread_low  = runAndGetMaxSpread(0.05);
+    double spread_high = runAndGetMaxSpread(0.30);
+
+    EXPECT_GT(spread_low,  0.0) << "ROM ensemble should show nonzero spread";
+    EXPECT_GT(spread_high, 0.0) << "ROM ensemble should show nonzero spread";
+    EXPECT_GT(spread_high, spread_low)
+        << "Larger perturbation (0.30) should yield more spread than smaller (0.05);"
+        << " got spread_low=" << spread_low << " spread_high=" << spread_high;
+}
+
+// --- Quantile monotonicity after [UNCERTAINTY] parsing ----------------------
+//
+// Confirms the full pipeline: [2D_ROM] + [UNCERTAINTY] → parser → opts →
+// CvodeSurfaceSolver → quantile output with q05 ≤ q50 ≤ q95 everywhere.
+
+TEST(ROMScalarCase, QuantileMonotonicityAfterParserInput) {
+    MeshData mesh = makeSmallSlopedMesh();
+    int n = mesh.n_triangles();
+
+    SolverOptions2D opts;
+    opts.rel_tolerance   = 1.0e-3;
+    opts.abs_tolerance   = 1.0e-5;
+    opts.max_timestep    = 5.0;
+    opts.max_cvode_steps = 10000;
+    opts.linear_solver   = LinearSolverType::GMRES;
+    opts.preconditioner  = PreconditionerType::NONE;
+
+    // [2D_ROM] then [UNCERTAINTY] with both Manning and rainfall perturbations
+    ASSERT_TRUE(parse2DROMLine({"ENABLE", "YES"}, opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"MEMBERS", "10"}, opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"MODES", "4"}, opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"K_EFF", "10.0"}, opts).empty());
+
+    UncertaintyConfig config;
+    ASSERT_TRUE(parseUncertaintyLine({"2D", "MANNINGS_N", "0.25"}, opts, config).empty());
+    ASSERT_TRUE(parseUncertaintyLine({"2D", "RAINFALL",   "0.25"}, opts, config).empty());
+    EXPECT_EQ(config.sources.size(), std::size_t{2});
+
+    SurfaceStateData state;
+    state.resize(n, mesh.n_vertices());
+    // Add rainfall forcing to create spread
+    state.rainfall.assign(static_cast<std::size_t>(n), 1.0e-5);
+    for (int i = 0; i < n; ++i) {
+        state.depth[i] = 0.10;
+        state.head[i]  = mesh.tri_cz[i] + 0.10;
+    }
+
+    CvodeSurfaceSolver solver;
+    solver.initialize(mesh, state, opts);
+    solver.suppress_warnings();
+    solver.advance(0.0, 5.0);
+
+    const SpectralROM* rom = solver.rom();
+    ASSERT_NE(rom, nullptr);
+    ASSERT_EQ(static_cast<int>(rom->q05.size()), n);
+    ASSERT_EQ(static_cast<int>(rom->q50.size()), n);
+    ASSERT_EQ(static_cast<int>(rom->q95.size()), n);
+
+    for (int i = 0; i < n; ++i) {
+        EXPECT_LE(rom->q05[static_cast<std::size_t>(i)],
+                  rom->q50[static_cast<std::size_t>(i)] + 1e-12)
+            << "q05 > q50 at cell " << i;
+        EXPECT_LE(rom->q50[static_cast<std::size_t>(i)],
+                  rom->q95[static_cast<std::size_t>(i)] + 1e-12)
+            << "q50 > q95 at cell " << i;
+        EXPECT_GE(rom->q05[static_cast<std::size_t>(i)], 0.0)
+            << "q05 < 0 at cell " << i;
+    }
+}
+
+// ============================================================================
+// ROMSpatialCase — end-to-end spatial 2D uncertainty validation (PR 10)
+// ============================================================================
+
+// When MANNINGS_CORR_LEN > 0 is parsed, seedROM() should generate a spatial
+// Manning field and the ROM quantiles should remain valid (q05 ≤ q50 ≤ q95).
+TEST(ROMSpatialCase, SpatialManningsFieldPopulatedAndQuantilesValid) {
+    MeshData mesh = makeSmallSlopedMesh();
+    int n = mesh.n_triangles();
+
+    SolverOptions2D opts;
+    opts.rel_tolerance   = 1.0e-3;
+    opts.abs_tolerance   = 1.0e-5;
+    opts.max_timestep    = 5.0;
+    opts.max_cvode_steps = 10000;
+    opts.linear_solver   = LinearSolverType::GMRES;
+    opts.preconditioner  = PreconditionerType::NONE;
+
+    ASSERT_TRUE(parse2DROMLine({"ENABLE",          "YES"},  opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"MEMBERS",         "10"},   opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"MODES",           "4"},    opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"K_EFF",           "10.0"}, opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"MANNINGS_PERT",   "0.20"}, opts).empty());
+    // Spatial correlation length = 3 m on a 10m domain.
+    ASSERT_TRUE(parse2DROMLine({"MANNINGS_CORR_LEN", "3.0"}, opts).empty());
+    EXPECT_DOUBLE_EQ(opts.rom_mannings_corr_len, 3.0);
+
+    SurfaceStateData state;
+    state.resize(n, mesh.n_vertices());
+    setGaussianBump(state, mesh, 0.02, 0.08, 3.0, 4.0, 1.5);
+
+    CvodeSurfaceSolver solver;
+    solver.initialize(mesh, state, opts);
+    solver.suppress_warnings();
+    solver.advance(0.0, 5.0);
+
+    const SpectralROM* rom = solver.rom();
+    ASSERT_NE(rom, nullptr);
+    ASSERT_TRUE(rom->is_ready());
+
+    // Spatial Manning field must be populated after seeding.
+    EXPECT_TRUE(rom->spatial_mannings.is_spatial())
+        << "spatial_mannings should be populated when MANNINGS_CORR_LEN > 0";
+    EXPECT_EQ(rom->spatial_mannings.n_members, opts.rom_members);
+    EXPECT_EQ(rom->spatial_mannings.n_cells,   n);
+
+    // All spatial multiplier values must be in a physically reasonable range.
+    for (int i = 0; i < opts.rom_members; ++i)
+        for (int t = 0; t < n; ++t) {
+            double v = rom->spatial_mannings.at(i, t);
+            EXPECT_GT(v, 0.0) << "member " << i << " cell " << t;
+            EXPECT_LT(v, 2.0) << "member " << i << " cell " << t;
+        }
+
+    // Quantile ordering must hold.
+    ASSERT_EQ(static_cast<int>(rom->q05.size()), n);
+    ASSERT_EQ(static_cast<int>(rom->q50.size()), n);
+    ASSERT_EQ(static_cast<int>(rom->q95.size()), n);
+    for (int i = 0; i < n; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        EXPECT_LE(rom->q05[ui], rom->q50[ui] + 1e-12) << "q05 > q50 at cell " << i;
+        EXPECT_LE(rom->q50[ui], rom->q95[ui] + 1e-12) << "q50 > q95 at cell " << i;
+        EXPECT_GE(rom->q05[ui], 0.0)                  << "q05 < 0 at cell " << i;
+    }
+}
+
+// Spatial rainfall field is populated when RAINFALL_CORR_LEN > 0.
+TEST(ROMSpatialCase, SpatialRainfallFieldPopulated) {
+    MeshData mesh = makeSmallSlopedMesh();
+    int n = mesh.n_triangles();
+
+    SolverOptions2D opts;
+    opts.rel_tolerance   = 1.0e-3;
+    opts.abs_tolerance   = 1.0e-5;
+    opts.max_timestep    = 5.0;
+    opts.max_cvode_steps = 10000;
+    opts.linear_solver   = LinearSolverType::GMRES;
+    opts.preconditioner  = PreconditionerType::NONE;
+
+    ASSERT_TRUE(parse2DROMLine({"ENABLE",            "YES"},  opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"MEMBERS",           "8"},    opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"MODES",             "4"},    opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"K_EFF",             "10.0"}, opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"RAINFALL_CORR_LEN", "5.0"},  opts).empty());
+    EXPECT_DOUBLE_EQ(opts.rom_rainfall_corr_len, 5.0);
+
+    SurfaceStateData state;
+    state.resize(n, mesh.n_vertices());
+    setGaussianBump(state, mesh, 0.02, 0.08, 3.0, 4.0, 1.5);
+    state.rainfall.assign(static_cast<std::size_t>(n), 1.0e-5);
+
+    CvodeSurfaceSolver solver;
+    solver.initialize(mesh, state, opts);
+    solver.suppress_warnings();
+    solver.advance(0.0, 5.0);
+
+    const SpectralROM* rom = solver.rom();
+    ASSERT_NE(rom, nullptr);
+
+    // Spatial rainfall field must be populated.
+    EXPECT_TRUE(rom->spatial_rainfall.is_spatial())
+        << "spatial_rainfall should be populated when RAINFALL_CORR_LEN > 0";
+    EXPECT_EQ(rom->spatial_rainfall.n_members, opts.rom_members);
+    EXPECT_EQ(rom->spatial_rainfall.n_cells,   n);
+
+    // Values in range.
+    for (int i = 0; i < opts.rom_members; ++i)
+        for (int t = 0; t < n; ++t) {
+            double v = rom->spatial_rainfall.at(i, t);
+            EXPECT_GT(v, 0.0) << "member " << i << " cell " << t;
+            EXPECT_LT(v, 2.0) << "member " << i << " cell " << t;
+        }
+}
+
+// Scalar mode (corr_len == 0) leaves spatial fields empty.
+TEST(ROMSpatialCase, ScalarModeLeavesSpatialFieldsEmpty) {
+    MeshData mesh = makeSmallSlopedMesh();
+    int n = mesh.n_triangles();
+
+    SolverOptions2D opts;
+    opts.rel_tolerance   = 1.0e-3;
+    opts.abs_tolerance   = 1.0e-5;
+    opts.max_timestep    = 5.0;
+    opts.max_cvode_steps = 10000;
+    opts.linear_solver   = LinearSolverType::GMRES;
+    opts.preconditioner  = PreconditionerType::NONE;
+
+    ASSERT_TRUE(parse2DROMLine({"ENABLE",  "YES"},  opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"MEMBERS", "8"},    opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"MODES",   "4"},    opts).empty());
+    ASSERT_TRUE(parse2DROMLine({"K_EFF",   "10.0"}, opts).empty());
+    // Default corr_len = 0 → scalar mode.
+
+    SurfaceStateData state;
+    state.resize(n, mesh.n_vertices());
+    setGaussianBump(state, mesh, 0.02, 0.08, 3.0, 4.0, 1.5);
+
+    CvodeSurfaceSolver solver;
+    solver.initialize(mesh, state, opts);
+    solver.suppress_warnings();
+    solver.advance(0.0, 5.0);
+
+    const SpectralROM* rom = solver.rom();
+    ASSERT_NE(rom, nullptr);
+    EXPECT_FALSE(rom->spatial_mannings.is_spatial())
+        << "spatial_mannings should be empty in scalar mode";
+    EXPECT_FALSE(rom->spatial_rainfall.is_spatial())
+        << "spatial_rainfall should be empty in scalar mode";
 }

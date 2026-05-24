@@ -157,6 +157,12 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
     }
 
 #ifdef OPENSWMM_HAS_2D
+    // Propagate coupling exchange into the ROM ensemble (per-member orifice physics)
+    // before advancing CVODE so all ensemble members see the same drainage sink.
+    if (!coupling_points_.empty())
+        cvode_solver_.applyCouplingFluxToROM(
+            coupling_points_, ctx.nodes.head.data(), mesh_, dt);
+
     // Advance CVODE by dt
     double t_target = sim_time_ + dt;
     cvode_solver_.advance(sim_time_, t_target);

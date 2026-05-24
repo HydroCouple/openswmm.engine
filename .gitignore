@@ -30,5 +30,37 @@ __pycache__/
 *.egg
 *.egg-info
 *.manifest
-*.spec  
+*.spec
 
+# SWMManywhere download cache (OSM/DEM intermediate files)
+tests/benchmarks/generated/_work/
+
+# clangd compile database symlink (build-dir specific, not portable)
+compile_commands.json
+
+# Generated plot outputs
+tests/benchmarks/*.png
+
+# SWMM temp output file
+swmmJlcZNU
+
+# vcpkg package manager (has its own git repo)
+vcpkg/
+vcpkg_installed/
+
+# Legacy test generated report files
+tests/unit/legacy/engine/data/hotstart/*.rpt
+tests/unit/legacy/engine/data/hotstart/*.hsf
+
+# Fortran tool build artifacts
+tools/**/*.o
+tools/**/*.mod
+tools/**/generate_sir_reference
+
+# Legacy hotstart generated artifacts (re-created by test run)
+tests/unit/legacy/engine/data/hotstart/*.rpt
+tests/unit/legacy/engine/data/hotstart/*.hsf
+
+# SWMManywhere generated network suite
+tests/benchmarks/generated/*.inp
+tests/benchmarks/generated/*.py

@@ -61,6 +61,7 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/SurfaceRouter2D.hpp"
 #endif
+#include "../uncertainty/UncertaintyConfig.hpp"
 
 #include <functional>
 #include <memory>
@@ -224,6 +225,9 @@ public:
     const twoD::SurfaceRouter2D& surfaceRouter2D() const noexcept { return surface_router_; }
 #endif
 
+    /** @brief Access the hydraulic router (for statistics / diagnostics). */
+    Router&       router()       noexcept { return router_; }
+    const Router& router() const noexcept { return router_; }
 
 private:
     // -----------------------------------------------------------------------
@@ -265,6 +269,7 @@ private:
 #ifdef OPENSWMM_HAS_2D
     twoD::SurfaceRouter2D        surface_router_; ///< Optional 2D surface routing solver
 #endif
+    uncertainty::UncertaintyConfig uncertainty_config_; ///< Parsed [UNCERTAINTY] config
 
     std::string rpt_path_;  ///< Report file path
     std::string out_path_;  ///< Binary output file path

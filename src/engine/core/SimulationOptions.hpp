@@ -231,6 +231,19 @@ struct SimulationOptions {
      */
     bool anderson_accel = false;
 
+    /** @brief Enable spectral coarse correction for Picard iteration.
+     *  @details When true, applies a two-level spectral coarse correction after
+     *           each pre-smoothing sweep, removing smooth network-scale errors
+     *           that AA alone cannot efficiently damp.  Non-fatal: auto-disables
+     *           if eigensolver fails or every correction is rejected.
+     *  @code
+     *  SPECTRAL_ACCEL      YES   ;; enable spectral correction
+     *  SPECTRAL_NUM_MODES  10    ;; number of coarse eigenmodes (default 10)
+     *  @endcode
+     */
+    bool spectral_accel     = false;
+    int  spectral_num_modes = 10;
+
     /** @brief Normal flow limitation: 0=SLOPE, 1=FROUDE, 2=BOTH, 3=NEITHER.
      *  @see Legacy: NormalFlowLtd */
     int normal_flow_ltd = 2;  // BOTH (legacy default)

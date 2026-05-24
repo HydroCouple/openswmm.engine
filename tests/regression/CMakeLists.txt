@@ -52,7 +52,7 @@ add_test(
     NAME    regression_example1
     COMMAND $<TARGET_FILE:test_engine_regression>
             --gtest_filter="RegressionTest/RegressionTest*"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 set_tests_properties(regression_example1 PROPERTIES LABELS "regression")
 

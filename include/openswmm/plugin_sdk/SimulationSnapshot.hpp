@@ -194,6 +194,66 @@ struct SimulationSnapshot {
 
     /** @brief Flow units code (FlowUnits enum value: 0=CFS, 3=CMS, etc.). */
     int flow_units_code = 0;
+
+    // -----------------------------------------------------------------------
+    // 2D surface routing state (populated only when OPENSWMM_HAS_2D is active)
+    // -----------------------------------------------------------------------
+
+    /** @brief Number of 2D mesh triangles. Zero when 2D routing is not active. */
+    int surface_tri_count  = 0;
+
+    /** @brief Number of 2D mesh vertices. Zero when 2D routing is not active. */
+    int surface_vert_count = 0;
+
+    /** @brief Overland flow depth per triangle (m). Length: surface_tri_count. */
+    std::vector<double> surface_depth;
+
+    /** @brief Total hydraulic head per triangle (m). Length: surface_tri_count. */
+    std::vector<double> surface_head;
+
+    /** @brief Unlimited head gradient dh/dx per triangle. Length: surface_tri_count. */
+    std::vector<double> surface_grad_hx;
+
+    /** @brief Unlimited head gradient dh/dy per triangle. Length: surface_tri_count. */
+    std::vector<double> surface_grad_hy;
+
+    /** @brief Slope-limited head gradient dh/dx per triangle. Length: surface_tri_count. */
+    std::vector<double> surface_grad_hx_lim;
+
+    /** @brief Slope-limited head gradient dh/dy per triangle. Length: surface_tri_count. */
+    std::vector<double> surface_grad_hy_lim;
+
+    /** @brief Rainfall intensity per triangle (m/s). Length: surface_tri_count. */
+    std::vector<double> surface_rainfall;
+
+    /** @brief Coupling flux with SWMM node per triangle (m/s). Length: surface_tri_count. */
+    std::vector<double> surface_coupling_flux;
+
+    /** @brief Net source/sink per triangle (m/s). Length: surface_tri_count. */
+    std::vector<double> surface_net_source;
+
+    /**
+     * @brief Normal flux through each cell edge (m²/s).
+     * Layout: [triangle_index * 3 + edge_local]. Length: surface_tri_count * 3.
+     */
+    std::vector<double> surface_edge_flux;
+
+    /**
+     * @brief Reconstructed hydraulic head at mesh vertices (m).
+     * Length: surface_vert_count.
+     */
+    std::vector<double> surface_vert_head;
+
+    // ---- ROM quantile fields (empty when ROM is not active) ----------------
+
+    /** @brief 5th-percentile depth per triangle (m). Empty if ROM not active. */
+    std::vector<double> surface_depth_q05;
+
+    /** @brief Median depth per triangle (m). Empty if ROM not active. */
+    std::vector<double> surface_depth_q50;
+
+    /** @brief 95th-percentile depth per triangle (m). Empty if ROM not active. */
+    std::vector<double> surface_depth_q95;
 };
 
 } /* namespace openswmm */

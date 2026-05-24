@@ -129,6 +129,7 @@ int SWMMEngine::open(const char* inp_path,
     if (auto* dip = dynamic_cast<DefaultInputPlugin*>(input_plugin)) {
         twoD::register2DSections(surface_router_.mesh(),
                                  surface_router_.options(),
+                                 uncertainty_config_,
                                  dip->registry());
     }
 #endif
@@ -626,9 +627,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
 
         // Update runoff clock
         new_runoff_time_ = old_runoff_time_ + dt_runoff;
-        // Total simulation duration in seconds
-        double total_sec = (ctx_.options.end_date - ctx_.options.start_date)
-                           * 86400.0;
+        // Total simulation duration in seconds — use floor(+0.5) rounding to
+        // match simulation_complete(); raw OADate subtraction gives ~3599.9999998
+        // for a 1-hour run, causing new_runoff_time_ (=3600) to always exceed it
+        // and loop infinitely at the final step.
+        double total_sec = std::floor(
+            (ctx_.options.end_date - ctx_.options.start_date) * 86400.0 + 0.5);
         if (new_runoff_time_ > total_sec) {
             dt_runoff = total_sec - old_runoff_time_;
             new_runoff_time_ = total_sec;
@@ -2471,6 +2475,34 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             snap.subcatch_ids = &ctx_.subcatch_names.names();
             snap.gage_ids     = &ctx_.gage_names.names();
             snap.pollut_names = &ctx_.pollutant_names.names();
+
+#ifdef OPENSWMM_HAS_2D
+            // Populate 2D surface routing fields when the module is active.
+            if (surface_router_.isActive()) {
+                const auto& s2d   = surface_router_.state();
+                const auto& mesh  = surface_router_.mesh();
+                snap.surface_tri_count  = mesh.n_triangles();
+                snap.surface_vert_count = mesh.n_vertices();
+                snap.surface_depth         = s2d.depth;
+                snap.surface_head          = s2d.head;
+                snap.surface_grad_hx       = s2d.grad_hx;
+                snap.surface_grad_hy       = s2d.grad_hy;
+                snap.surface_grad_hx_lim   = s2d.grad_hx_lim;
+                snap.surface_grad_hy_lim   = s2d.grad_hy_lim;
+                snap.surface_rainfall      = s2d.rainfall;
+                snap.surface_coupling_flux = s2d.coupling_flux;
+                snap.surface_net_source    = s2d.net_source;
+                snap.surface_edge_flux     = s2d.edge_flux;
+                snap.surface_vert_head     = s2d.vert_head;
+
+                const twoD::SpectralROM* rom = surface_router_.rom();
+                if (rom && rom->is_ready()) {
+                    snap.surface_depth_q05 = rom->q05;
+                    snap.surface_depth_q50 = rom->q50;
+                    snap.surface_depth_q95 = rom->q95;
+                }
+            }
+#endif
 
             io_thread_.post(std::move(snap));
         }

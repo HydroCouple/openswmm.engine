@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <sstream>
+#include <stdexcept>
 
 namespace openswmm::twoD {
 
@@ -263,6 +264,159 @@ std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens,
 
 
 // ============================================================================
+// parse2DROMLine
+// ============================================================================
+
+std::string parse2DROMLine(const std::vector<std::string>& tokens,
+                            SolverOptions2D& opts) {
+    if (tokens.size() < 2) return "Expected PARAMETER VALUE";
+
+    const auto& key = tokens[0];
+    const auto& val = tokens[1];
+    bool ok = false;
+
+    if (iequals(key, "ENABLE")) {
+        if (iequals(val, "YES") || val == "1")
+            opts.enable_rom = true;
+        else if (iequals(val, "NO") || val == "0")
+            opts.enable_rom = false;
+        else
+            return "Invalid ENABLE value (YES/NO)";
+    } else if (iequals(key, "MEMBERS")) {
+        int v = tryParseInt(val, ok);
+        if (!ok || v < 2) return "MEMBERS must be integer >= 2";
+        opts.rom_members = v;
+    } else if (iequals(key, "MODES")) {
+        int v = tryParseInt(val, ok);
+        if (!ok || v < 1) return "MODES must be integer >= 1";
+        opts.rom_modes = v;
+    } else if (iequals(key, "MANNINGS_PERT")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "MANNINGS_PERT must be >= 0";
+        opts.rom_mannings_pert = v;
+    } else if (iequals(key, "RAINFALL_PERT")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "RAINFALL_PERT must be >= 0";
+        opts.rom_rainfall_pert = v;
+    } else if (iequals(key, "K_EFF")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok) return "Invalid K_EFF value";
+        opts.rom_k_eff = v;   // <= 0 means AUTO mode (PR 4)
+    } else if (iequals(key, "WET_RESEED_FRACTION")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0 || v > 1.0) return "WET_RESEED_FRACTION must be in [0, 1]";
+        opts.rom_wet_reseed_fraction = v;
+    } else if (iequals(key, "WET_RESEED_MIN_INTERVAL")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "WET_RESEED_MIN_INTERVAL must be >= 0";
+        opts.rom_wet_reseed_min_interval = v;
+    } else if (iequals(key, "PARAMETRIC_TAILS")) {
+        if (iequals(val, "YES") || val == "1")
+            opts.rom_parametric_tails = true;
+        else if (iequals(val, "NO") || val == "0")
+            opts.rom_parametric_tails = false;
+        else
+            return "Invalid PARAMETRIC_TAILS value (YES/NO)";
+    } else if (iequals(key, "MODE_DROP_THRESHOLD")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "MODE_DROP_THRESHOLD must be >= 0";
+        opts.rom_mode_drop_threshold = v;
+    } else if (iequals(key, "MANNINGS_CORR_LEN")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "MANNINGS_CORR_LEN must be >= 0";
+        opts.rom_mannings_corr_len = v;
+    } else if (iequals(key, "RAINFALL_CORR_LEN")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "RAINFALL_CORR_LEN must be >= 0";
+        opts.rom_rainfall_corr_len = v;
+    } else {
+        return "Unknown 2D_ROM parameter: " + key;
+    }
+    return {};
+}
+
+// ============================================================================
+// parseUncertaintyLine
+// ============================================================================
+
+std::string parseUncertaintyLine(
+    const std::vector<std::string>& tokens,
+    SolverOptions2D& opts,
+    openswmm::uncertainty::UncertaintyConfig& config)
+{
+    // Format: LAYER PARAMETER [DISTRIBUTION] PERTURBATION
+    // Minimal: "2D MANNINGS_N 0.20"  (DISTRIBUTION defaults to UNIFORM)
+    //          "2D RAINFALL UNIFORM 0.15"
+    if (tokens.size() < 3)
+        return "Expected LAYER PARAMETER [DISTRIBUTION] PERTURBATION";
+
+    const auto& layer_str = tokens[0];
+    const auto& param_str = tokens[1];
+
+    // Determine whether optional DISTRIBUTION token is present
+    // (3 tokens → no dist; 4+ tokens → dist is tokens[2])
+    std::string dist_str  = "UNIFORM";
+    std::string pert_str;
+    if (tokens.size() >= 4) {
+        dist_str = tokens[2];
+        pert_str = tokens[3];
+    } else {
+        pert_str = tokens[2];
+    }
+
+    // --- Parse LAYER ---
+    openswmm::uncertainty::LayerTarget layer;
+    if (iequals(layer_str, "2D"))
+        layer = openswmm::uncertainty::LayerTarget::TWO_D;
+    else
+        return "Unsupported LAYER '" + layer_str + "' (Phase 0/1 supports only '2D')";
+
+    // --- Parse DISTRIBUTION ---
+    openswmm::uncertainty::DistType dist;
+    if (iequals(dist_str, "UNIFORM"))
+        dist = openswmm::uncertainty::DistType::UNIFORM;
+    else if (iequals(dist_str, "NORMAL"))
+        dist = openswmm::uncertainty::DistType::NORMAL;
+    else if (iequals(dist_str, "LOGNORMAL"))
+        dist = openswmm::uncertainty::DistType::LOGNORMAL;
+    else
+        return "Unknown DISTRIBUTION '" + dist_str + "' (UNIFORM / NORMAL / LOGNORMAL)";
+
+    // --- Parse PERTURBATION ---
+    bool ok = false;
+    double pert = tryParseDouble(pert_str, ok);
+    if (!ok || pert < 0.0)
+        return "PERTURBATION must be a non-negative number";
+
+    // --- Validate PARAMETER for Phase 0/1 scope ---
+    std::string param_upper = param_str;
+    std::transform(param_upper.begin(), param_upper.end(), param_upper.begin(),
+                   [](unsigned char c){ return static_cast<char>(std::toupper(c)); });
+
+    if (param_upper != "MANNINGS_N" && param_upper != "RAINFALL")
+        return "Unsupported PARAMETER '" + param_str
+               + "' (Phase 0/1 supports MANNINGS_N and RAINFALL for LAYER=2D)";
+
+    // --- Build spec and record ---
+    openswmm::uncertainty::UncertaintySourceSpec spec;
+    spec.name        = param_upper;
+    spec.layer       = layer;
+    spec.dist        = dist;
+    spec.perturbation = pert;
+    config.sources.push_back(spec);
+
+    // [UNCERTAINTY] takes precedence: immediately update opts so the ROM
+    // uses these values even if [2D_ROM] also set them.
+    opts.enable_rom = true;
+    if (param_upper == "MANNINGS_N")
+        opts.rom_mannings_pert = pert;
+    else if (param_upper == "RAINFALL")
+        opts.rom_rainfall_pert = pert;
+
+    return {};
+}
+
+// ============================================================================
 // Helper: build a section-level lambda that tokenizes each line and calls
 // a line-oriented parser, reporting errors via the SimulationContext.
 // ============================================================================
@@ -298,6 +452,7 @@ input::SectionHandler makeSectionHandler(LineParser line_parser) {
 
 void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
+                        openswmm::uncertainty::UncertaintyConfig& config,
                         input::SectionRegistry& registry)
 {
     registry.register_custom("2D_OPTIONS",
@@ -339,6 +494,19 @@ void register2DSections(MeshData& mesh,
                 }
             }
         });
+
+    // [2D_ROM] — scalar ROM configuration (enable, size, perturbations, K_eff).
+    registry.register_custom("2D_ROM",
+        makeSectionHandler([&options](const std::vector<std::string>& tokens) {
+            return parse2DROMLine(tokens, options);
+        }));
+
+    // [UNCERTAINTY] — scalar parameter uncertainty for 2D layer (Phase 0/1).
+    // Entries here OVERRIDE the corresponding scalar fields in [2D_ROM].
+    registry.register_custom("UNCERTAINTY",
+        makeSectionHandler([&options, &config](const std::vector<std::string>& tokens) {
+            return parseUncertaintyLine(tokens, options, config);
+        }));
 }
 
 

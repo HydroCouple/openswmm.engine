@@ -39,6 +39,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
     output/*.cpp
     plugins/*.cpp
     math/*.cpp
+    uncertainty/*.cpp
 )
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
 
@@ -54,6 +55,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     output/*.hpp
     plugins/*.hpp
     math/*.hpp
+    uncertainty/*.hpp
 )
 list(FILTER OPENSWMM_ENGINE_HEADERS EXCLUDE REGEX "input/geopackage/.*")
 
@@ -301,8 +303,11 @@ if(OPENSWMM_BUILD_2D)
         2d/api/*.cpp
     )
 
-    # CVODE wrapper requires SUNDIALS
+    # CVODE wrapper and spectral preconditioner require SUNDIALS
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/CvodeSurfaceSolver.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SpectralPrecond2D.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/SpectralROM.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/CorrelatedFieldGenerator.cpp)
 
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
 

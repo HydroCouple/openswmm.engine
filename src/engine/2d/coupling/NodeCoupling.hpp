@@ -33,6 +33,26 @@ struct SimulationContext;
 namespace openswmm::twoD {
 
 /**
+ * @brief Per-coupling-point exchange flux bounds across the ROM ensemble.
+ *
+ * Populated by SpectralROM::applyCouplingFlux() after each coupling step.
+ * q_min[k] / q_max[k] give the minimum and maximum orifice exchange flux (m³/s)
+ * across all M ensemble members at coupling point k.
+ *
+ * Positive flux = drainage from 2D surface into 1D; negative = backflow.
+ * Both q_min and q_max are 0.0 for outfall coupling points (skipped by the ROM).
+ *
+ * Empty (is_valid() == false) when the ROM is not active.
+ */
+struct CouplingUncertaintyOutput {
+    std::vector<double> q_min;  ///< Min exchange flux per coupling point (m³/s).
+    std::vector<double> q_max;  ///< Max exchange flux per coupling point (m³/s).
+
+    /// True when populated (non-empty).
+    bool is_valid() const noexcept { return !q_min.empty(); }
+};
+
+/**
  * @brief Descriptor for a single coupling point between 2D and 1D.
  */
 struct CouplingPoint {

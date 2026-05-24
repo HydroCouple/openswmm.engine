@@ -28,6 +28,7 @@
 #ifndef OPENSWMM_DYNAMIC_WAVE_HPP
 #define OPENSWMM_DYNAMIC_WAVE_HPP
 
+#include "SpectralCoarse.hpp"
 #include "XSectBatch.hpp"
 #include "../core/Constants.hpp"
 #include "../core/SimulationOptions.hpp"
@@ -201,7 +202,9 @@ public:
     double omega      = OMEGA;
     SurchargeMethod surcharge_method = SurchargeMethod::EXTRAN;
     NodeContinuity  node_continuity  = NodeContinuity::EXPLICIT;
-    bool   anderson_accel = false;       ///< Enable Anderson acceleration
+    bool   anderson_accel  = false;  ///< Enable Anderson acceleration
+    bool   spectral_accel  = false;  ///< Enable spectral coarse correction
+    int    spectral_num_modes = 10;  ///< Coarse modes to retain (clamped to usable count)
 
     /// Evaporation rate (ft/s) — set by Router::step() each timestep so that
     /// solveMomentumBatch can recompute dq6 per Picard iteration (Gap #14).
@@ -361,6 +364,19 @@ private:
     std::vector<double> aa_r_prev_;     ///< Residual r_{k-1} = G(y_{k-1}) - y_{k-1}
     std::vector<uint8_t> aa_skip_;      ///< Per-node flag: skip AA this iteration
 
+    // Spectral coarse correction
+    SpectralCoarse spectral_;  ///< Two-level spectral coarse correction state
+
+    // Pre-allocated working arrays for spectral correction (size = n_active)
+    std::vector<double> spectral_adiag_;      ///< Semi-implicit diagonal per active node
+    std::vector<double> spectral_coff_;       ///< Off-diagonal coupling per conduit
+    std::vector<double> spectral_resid_;      ///< Depth residual per active node
+    std::vector<double> spectral_corr_;       ///< Correction output per active node
+    std::vector<double> y_spectral_prev_;     ///< Depths at start of previous sweep
+    std::vector<double> spectral_acc_corr_;   ///< Accumulated corrections this timestep
+
+    int64_t total_picard_sweeps_ = 0;     ///< Cumulative Picard sweeps this instance
+
     // Per-conduit momentum category (rebuilt each Picard iteration).
     // solveMomentumBatch dispatches on category_[uj] inline — no auxiliary
     // per-category index list is needed.
@@ -389,6 +405,8 @@ private:
     void computeAASkipFlags(const SimulationContext& ctx);
     bool updateNodeDepths(SimulationContext& ctx, double dt, int step);
     void setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int step);
+    void initSpectral(const SimulationContext& ctx);
+    void applySpectralCorrection(SimulationContext& ctx, double dt);
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;
 
 public:
@@ -403,6 +421,12 @@ public:
 
     /// Access per-node AA skip flags (read-only, for testing/diagnostics).
     const std::vector<uint8_t>& aaSkipFlags() const { return aa_skip_; }
+
+    /// Read-only access to spectral coarse correction state (for testing/diagnostics).
+    const SpectralCoarse& spectralState() const { return spectral_; }
+
+    /// Cumulative Picard sweeps executed across all routing steps since init().
+    int64_t totalPicardSweeps() const { return total_picard_sweeps_; }
 private:
 
     // Preissmann slot helpers (matching legacy dwflow.c)

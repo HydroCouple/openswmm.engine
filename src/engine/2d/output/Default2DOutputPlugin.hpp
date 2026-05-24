@@ -131,6 +131,11 @@ private:
     hid_t ds_edge_flux_            = H5I_INVALID_HID;
     hid_t ds_node_head_            = H5I_INVALID_HID;
 
+    // ROM quantile datasets (created only when ROM active; H5I_INVALID_HID otherwise)
+    hid_t ds_face_depth_q05_       = H5I_INVALID_HID;
+    hid_t ds_face_depth_q50_       = H5I_INVALID_HID;
+    hid_t ds_face_depth_q95_       = H5I_INVALID_HID;
+
     hsize_t n_faces_  = 0;
     hsize_t n_nodes_  = 0;
     hsize_t n_steps_  = 0;  ///< Current time step count (grows with each update)

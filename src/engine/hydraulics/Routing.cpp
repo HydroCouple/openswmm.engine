@@ -219,13 +219,22 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             break;
         }
         case RouteModel::DYNWAVE:
-            dw_solver_.init(n_nodes, n_links, groups_, ctx);
-            dw_solver_.head_tol = ctx.options.head_tol;
-            dw_solver_.max_trials = ctx.options.max_trials;
+            // Set solver options BEFORE init() — initSpectral() inside init()
+            // reads spectral_accel and spectral_num_modes during construction.
+            // Legacy SWMM5: value of 0 means "use default"
+            dw_solver_.head_tol = (ctx.options.head_tol > 0.0)
+                ? ctx.options.head_tol
+                : constants::DEFAULT_HEAD_TOL;
+            dw_solver_.max_trials = (ctx.options.max_trials > 0)
+                ? ctx.options.max_trials
+                : constants::DEFAULT_MAX_TRIALS;
             dw_solver_.surcharge_method =
                 static_cast<dynwave::SurchargeMethod>(ctx.options.surcharge_method);
             dw_solver_.node_continuity = ctx.options.node_continuity;
-            dw_solver_.anderson_accel = ctx.options.anderson_accel;
+            dw_solver_.anderson_accel  = ctx.options.anderson_accel;
+            dw_solver_.spectral_accel  = ctx.options.spectral_accel;
+            dw_solver_.spectral_num_modes = ctx.options.spectral_num_modes;
+            dw_solver_.init(n_nodes, n_links, groups_, ctx);
             break;
         case RouteModel::STEADY: {
             // Build topological link order (same as KW — upstream → downstream)

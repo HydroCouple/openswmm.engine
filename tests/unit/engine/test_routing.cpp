@@ -1400,6 +1400,309 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
 }
 
 // ============================================================================
+// Spectral coarse correction smoke test
+//
+// Mirrors DWSolverGVF/BackwaterM1Benchmark with spectral_accel = true.
+// Guards three things:
+//   1. Enabled flag set and eigenbasis built successfully
+//   2. At least one correction was accepted over 120 timesteps
+//   3. Final GVF depths still within 5 % of Manning normal depth
+// ============================================================================
+
+TEST(DWSolverSpectral, GVFAccuracyAndCorrectionsFired) {
+    const std::string csv_path =
+        std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/dynwave-gvf-backwater-m1/reference.csv";
+
+    struct Row { std::string node; double x_ft, z_inv_ft, y_gvf_ft; };
+    std::vector<Row> rows;
+    {
+        std::ifstream in(csv_path);
+        if (!in.is_open()) GTEST_SKIP() << "Benchmark data not found: " << csv_path;
+        std::string line;
+        bool header_seen = false;
+        while (std::getline(in, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            if (!header_seen) { header_seen = true; continue; }
+            std::istringstream ss(line);
+            std::string tok;
+            std::vector<std::string> cols;
+            while (std::getline(ss, tok, ',')) cols.push_back(tok);
+            if (cols.size() >= 4)
+                rows.push_back({cols[0], std::stod(cols[1]),
+                                std::stod(cols[2]), std::stod(cols[3])});
+        }
+    }
+    if (rows.size() < 6) GTEST_SKIP() << "Benchmark CSV has fewer than 6 rows";
+
+    // Channel parameters (identical to BackwaterM1Benchmark)
+    const double PHI    = 1.486;
+    const double n_mann = 0.013;
+    const double S0     = 0.001;
+    const double b      = 5.0;
+    const double y_full = 4.0;
+    const double L      = 200.0;
+    const double Q      = 10.0;
+    const double y_n_mann = 0.781692;
+    const double y_d      = rows[5].y_gvf_ft;
+
+    XSectParams xs{};
+    const double p_xs[4] = {y_full, b, 0.0, 0.0};
+    xsect::setParams(xs, static_cast<int>(XSectShape::RECT_OPEN), p_xs, 1.0);
+    std::vector<XSectParams> xparams(5, xs);
+    XSectGroups groups;
+    groups.build(xparams.data(), 5);
+
+    const double beta         = PHI * std::sqrt(S0) / n_mann;
+    const double rough_factor = openswmm::constants::GRAVITY * (n_mann / PHI) * (n_mann / PHI);
+    const double q_full       = beta * xs.s_full;
+    const double z_inv[6]     = {1.0, 0.8, 0.6, 0.4, 0.2, 0.0};
+
+    // Build context (same as baseline test)
+    SimulationContext ctx;
+    ctx.nodes.resize(6);
+    ctx.links.resize(5);
+    for (int i = 0; i < 6; ++i) {
+        ctx.nodes.invert_elev[i]  = z_inv[i];
+        ctx.nodes.full_depth[i]   = 100.0;
+        ctx.nodes.crown_elev[i]   = z_inv[i] + 100.0;
+        ctx.nodes.type[i]         = NodeType::JUNCTION;
+        ctx.nodes.depth[i]        = y_n_mann;
+        ctx.nodes.old_depth[i]    = y_n_mann;
+        ctx.nodes.head[i]         = z_inv[i] + y_n_mann;
+    }
+    ctx.nodes.type[5]              = NodeType::OUTFALL;
+    ctx.nodes.outfall_type[5]      = OutfallType::FIXED;
+    ctx.nodes.outfall_param[5]     = y_d;
+    ctx.nodes.outfall_link_idx[5]  = 4;
+    ctx.nodes.outfall_link_offset[5] = 0.0;
+    ctx.nodes.depth[5]             = y_d;
+    ctx.nodes.old_depth[5]         = y_d;
+    ctx.nodes.head[5]              = z_inv[5] + y_d;
+    ctx.nodes.lat_flow[0]          = Q;
+
+    for (int i = 0; i < 5; ++i) {
+        ctx.links.type[i]              = LinkType::CONDUIT;
+        ctx.links.xsect_shape[i]       = XsectShape::RECT_OPEN;
+        ctx.links.xsect_batch_shape[i] = static_cast<int>(XSectShape::RECT_OPEN);
+        ctx.links.xsect_y_full[i]      = xs.y_full;
+        ctx.links.xsect_a_full[i]      = xs.a_full;
+        ctx.links.xsect_w_max[i]       = xs.w_max;
+        ctx.links.xsect_r_full[i]      = xs.r_full;
+        ctx.links.xsect_s_full[i]      = xs.s_full;
+        ctx.links.xsect_s_max[i]       = xs.s_max;
+        ctx.links.beta[i]              = beta;
+        ctx.links.rough_factor[i]      = rough_factor;
+        ctx.links.q_full[i]            = q_full;
+        ctx.links.q_max[i]             = q_full;
+        ctx.links.length[i]            = L;
+        ctx.links.mod_length[i]        = L;
+        ctx.links.slope[i]             = S0;
+        ctx.links.roughness[i]         = n_mann;
+        ctx.links.barrels[i]           = 1;
+        ctx.links.node1[i]             = i;
+        ctx.links.node2[i]             = i + 1;
+        ctx.links.flow[i]              = Q;
+        ctx.links.old_flow[i]          = Q;
+    }
+
+    DWSolver solver;
+    solver.surcharge_method  = SurchargeMethod::EXTRAN;
+    solver.spectral_accel    = true;
+    solver.spectral_num_modes = 3;  // 5 active nodes → 4 nontrivial modes; keep 3
+    solver.init(6, 5, groups, ctx);
+
+    // Guard: eigenbasis must be built
+    ASSERT_TRUE(solver.spectralState().enabled)
+        << "spectral init failed (last_error=" << solver.spectralState().last_error << ")";
+
+    const double dt      = 30.0;
+    const int    n_steps = 120;
+    for (int step = 0; step < n_steps; ++step) {
+        ctx.nodes.save_state();
+        ctx.links.save_state();
+        solver.execute(ctx, dt);
+        ctx.nodes.lat_flow[0] = Q;
+    }
+
+    // At least one correction must have been accepted
+    EXPECT_GT(solver.spectralState().corrections_accepted, 0)
+        << "spectral correction was never accepted over " << n_steps << " timesteps"
+        << " (attempted=" << solver.spectralState().corrections_attempted
+        << " rejected=" << solver.spectralState().corrections_rejected << ")";
+
+    // GVF accuracy must be preserved
+    const double tol = 0.05 * y_n_mann;
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_NEAR(ctx.nodes.depth[i], rows[i].y_gvf_ft, tol)
+            << rows[i].node << " depth=" << ctx.nodes.depth[i]
+            << " ref=" << rows[i].y_gvf_ft << " tol=" << tol;
+    }
+}
+
+// ============================================================================
+// Spectral correction iteration-count benchmark — 100-node chain
+//
+// 101 nodes (J0 inlet → J100 outfall), 100 conduits of 100 ft each.
+// Starts at Manning steady state for Q₀ = 10 cfs, then jumps to Q₁ = 20 cfs.
+// The step inflow generates a smooth pressure wave that exercises the coarse
+// spectral modes most strongly, giving the correction its best opportunity.
+//
+// Asserts:
+//   1. Spectral init succeeded (enabled flag set, num_modes >= 1)
+//   2. At least one correction was accepted over 60 timesteps
+//   3. Final depths agree with baseline within 2 % of Manning normal depth
+//   4. Total Picard iterations no worse than baseline * 1.3
+//
+// Prints: baseline and spectral iteration counts + ratio to stdout so the
+// actual performance signal is visible when running with --gtest_verbose or
+// when a bound is violated.
+// ============================================================================
+
+TEST(DWSolverSpectral, IterationCountBenchmark100NodeChain) {
+    const int    N  = 101;   // nodes (J0 .. J100)
+    const int    NC = 100;   // conduits
+    const double PHI        = 1.486;
+    const double n_mann     = 0.013;
+    const double S0         = 0.001;
+    const double b          = 5.0;     // channel width (ft)
+    const double y_full     = 3.0;     // large — prevents surcharge
+    const double L          = 100.0;   // per-conduit length (ft)
+    const double Q0         = 10.0;    // initial steady inflow (cfs)
+    const double Q1         = 20.0;    // step inflow (cfs)
+    const double y_n        = 0.782;   // Manning normal depth for Q0 (ft)
+    const double dt         = 30.0;
+    const int    n_steps    = 60;
+
+    XSectParams xs{};
+    const double p_xs[4] = {y_full, b, 0.0, 0.0};
+    xsect::setParams(xs, static_cast<int>(XSectShape::RECT_OPEN), p_xs, 1.0);
+    std::vector<XSectParams> xparams(NC, xs);
+    XSectGroups groups;
+    groups.build(xparams.data(), NC);
+
+    const double beta         = PHI * std::sqrt(S0) / n_mann;
+    const double rough_factor = openswmm::constants::GRAVITY * (n_mann / PHI) * (n_mann / PHI);
+    const double q_full       = beta * xs.s_full;
+
+    // Build a context at Manning steady state with Q0, step inflow set to Q1
+    auto make_ctx = [&]() {
+        SimulationContext ctx;
+        ctx.nodes.resize(N);
+        ctx.links.resize(NC);
+        for (int i = 0; i < N; ++i) {
+            double z = S0 * L * (NC - i);   // invert drops S0*L per reach
+            ctx.nodes.invert_elev[i] = z;
+            ctx.nodes.full_depth[i]  = 100.0;
+            ctx.nodes.crown_elev[i]  = z + 100.0;
+            ctx.nodes.type[i]        = NodeType::JUNCTION;
+            ctx.nodes.depth[i]       = y_n;
+            ctx.nodes.old_depth[i]   = y_n;
+            ctx.nodes.head[i]        = z + y_n;
+        }
+        // J100: fixed outfall at Manning depth for Q0
+        ctx.nodes.type[NC]               = NodeType::OUTFALL;
+        ctx.nodes.outfall_type[NC]       = OutfallType::FIXED;
+        ctx.nodes.outfall_param[NC]      = y_n;
+        ctx.nodes.outfall_link_idx[NC]   = NC - 1;
+        ctx.nodes.outfall_link_offset[NC] = 0.0;
+        ctx.nodes.depth[NC]              = y_n;
+        ctx.nodes.old_depth[NC]          = y_n;
+        ctx.nodes.head[NC]               = S0 * L * 0 + y_n;
+
+        // Step inflow fires immediately at J0
+        ctx.nodes.lat_flow[0] = Q1;
+
+        for (int i = 0; i < NC; ++i) {
+            ctx.links.type[i]              = LinkType::CONDUIT;
+            ctx.links.xsect_shape[i]       = XsectShape::RECT_OPEN;
+            ctx.links.xsect_batch_shape[i] = static_cast<int>(XSectShape::RECT_OPEN);
+            ctx.links.xsect_y_full[i]      = xs.y_full;
+            ctx.links.xsect_a_full[i]      = xs.a_full;
+            ctx.links.xsect_w_max[i]       = xs.w_max;
+            ctx.links.xsect_r_full[i]      = xs.r_full;
+            ctx.links.xsect_s_full[i]      = xs.s_full;
+            ctx.links.xsect_s_max[i]       = xs.s_max;
+            ctx.links.beta[i]              = beta;
+            ctx.links.rough_factor[i]      = rough_factor;
+            ctx.links.q_full[i]            = q_full;
+            ctx.links.q_max[i]             = q_full;
+            ctx.links.length[i]            = L;
+            ctx.links.mod_length[i]        = L;
+            ctx.links.slope[i]             = S0;
+            ctx.links.roughness[i]         = n_mann;
+            ctx.links.barrels[i]           = 1;
+            ctx.links.node1[i]             = i;
+            ctx.links.node2[i]             = i + 1;
+            ctx.links.flow[i]              = Q0;
+            ctx.links.old_flow[i]          = Q0;
+        }
+        return ctx;
+    };
+
+    // ---- Baseline (spectral off) ----
+    auto ctx_base = make_ctx();
+    DWSolver solver_base;
+    solver_base.surcharge_method = SurchargeMethod::EXTRAN;
+    solver_base.init(N, NC, groups, ctx_base);
+
+    int total_base = 0;
+    for (int s = 0; s < n_steps; ++s) {
+        ctx_base.nodes.save_state();
+        ctx_base.links.save_state();
+        total_base += solver_base.execute(ctx_base, dt);
+        ctx_base.nodes.lat_flow[0] = Q1;
+    }
+
+    // ---- Spectral (spectral on, 10 coarse modes) ----
+    auto ctx_sc = make_ctx();
+    DWSolver solver_sc;
+    solver_sc.surcharge_method   = SurchargeMethod::EXTRAN;
+    solver_sc.spectral_accel     = true;
+    solver_sc.spectral_num_modes = 10;
+    solver_sc.init(N, NC, groups, ctx_sc);
+
+    ASSERT_TRUE(solver_sc.spectralState().enabled)
+        << "spectral init failed (n_active=" << solver_sc.spectralState().n_active
+        << " last_error=" << solver_sc.spectralState().last_error << ")";
+
+    int total_sc = 0;
+    for (int s = 0; s < n_steps; ++s) {
+        ctx_sc.nodes.save_state();
+        ctx_sc.links.save_state();
+        total_sc += solver_sc.execute(ctx_sc, dt);
+        ctx_sc.nodes.lat_flow[0] = Q1;
+    }
+
+    double ratio = static_cast<double>(total_sc) / static_cast<double>(total_base);
+
+    // Print performance numbers unconditionally (visible with --gtest_verbose)
+    std::printf("[  PERF    ] baseline=%d iters  spectral=%d iters  ratio=%.3f  "
+                "accepted=%d / attempted=%d\n",
+                total_base, total_sc, ratio,
+                solver_sc.spectralState().corrections_accepted,
+                solver_sc.spectralState().corrections_attempted);
+
+    // At least one correction must have been accepted
+    EXPECT_GT(solver_sc.spectralState().corrections_accepted, 0)
+        << "no corrections accepted over " << n_steps << " timesteps";
+
+    // Final depths must agree with baseline (both should reach the same transient state)
+    const double depth_tol = 0.02 * y_n;
+    for (int i : {0, 25, 50, 75, 99}) {
+        EXPECT_NEAR(ctx_sc.nodes.depth[i], ctx_base.nodes.depth[i], depth_tol)
+            << "depth mismatch at J" << i
+            << "  spectral=" << ctx_sc.nodes.depth[i]
+            << "  baseline=" << ctx_base.nodes.depth[i];
+    }
+
+    // Iteration count: spectral must not be substantially worse than baseline
+    EXPECT_LE(ratio, 1.3)
+        << "spectral used " << total_sc << " iters vs baseline " << total_base
+        << " (ratio=" << ratio << ") — correction is destabilising";
+}
+
+// ============================================================================
 // DW solver Ritter dry-bed dam-break benchmark
 //
 // Benchmark dataset: tests/benchmarks/manufactured/dw-ritter-drybed-strip/
