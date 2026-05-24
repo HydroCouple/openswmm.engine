@@ -175,34 +175,73 @@
         {
             "name": "Windows-tests",
             "inherits": "Windows-debug",
-            "description": "Windows debug build with unit + regression tests enabled",
+            "description": "Windows debug build with unit + regression tests + geopackage",
             "binaryDir": "${sourceDir}/build/windows-tests",
             "cacheVariables": {
-                "VCPKG_MANIFEST_FEATURES": "tests",
+                "VCPKG_MANIFEST_FEATURES": "tests;geopackage",
                 "OPENSWMM_BUILD_UNIT_TESTS": "ON",
-                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON"
+                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON",
+                "OPENSWMM_WITH_GEOPACKAGE": "ON"
             }
         },
         {
             "name": "Linux-tests",
             "inherits": "Linux-debug",
-            "description": "Linux debug build with unit + regression tests enabled",
+            "description": "Linux debug build with unit + regression tests + geopackage",
             "binaryDir": "${sourceDir}/build/linux-tests",
             "cacheVariables": {
-                "VCPKG_MANIFEST_FEATURES": "tests",
+                "VCPKG_MANIFEST_FEATURES": "tests;geopackage",
                 "OPENSWMM_BUILD_UNIT_TESTS": "ON",
-                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON"
+                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON",
+                "OPENSWMM_WITH_GEOPACKAGE": "ON"
             }
         },
         {
             "name": "Darwin-tests",
             "inherits": "Darwin-debug",
-            "description": "macOS debug build with unit + regression tests enabled",
+            "description": "macOS debug build with unit + regression tests + geopackage",
             "binaryDir": "${sourceDir}/build/darwin-tests",
             "cacheVariables": {
-                "VCPKG_MANIFEST_FEATURES": "tests",
+                "VCPKG_MANIFEST_FEATURES": "tests;geopackage",
                 "OPENSWMM_BUILD_UNIT_TESTS": "ON",
-                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON"
+                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON",
+                "OPENSWMM_WITH_GEOPACKAGE": "ON"
+            }
+        },
+        {
+            "name": "Windows-tests-release",
+            "inherits": "Windows",
+            "description": "Windows Release build with unit + regression tests + geopackage",
+            "binaryDir": "${sourceDir}/build/windows-tests-release",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_FEATURES": "tests;geopackage",
+                "OPENSWMM_BUILD_UNIT_TESTS": "ON",
+                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON",
+                "OPENSWMM_WITH_GEOPACKAGE": "ON"
+            }
+        },
+        {
+            "name": "Linux-tests-release",
+            "inherits": "Linux",
+            "description": "Linux Release build with unit + regression tests + geopackage",
+            "binaryDir": "${sourceDir}/build/linux-tests-release",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_FEATURES": "tests;geopackage",
+                "OPENSWMM_BUILD_UNIT_TESTS": "ON",
+                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON",
+                "OPENSWMM_WITH_GEOPACKAGE": "ON"
+            }
+        },
+        {
+            "name": "Darwin-tests-release",
+            "inherits": "Darwin",
+            "description": "macOS Release build with unit + regression tests + geopackage",
+            "binaryDir": "${sourceDir}/build/darwin-tests-release",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_FEATURES": "tests;geopackage",
+                "OPENSWMM_BUILD_UNIT_TESTS": "ON",
+                "OPENSWMM_BUILD_REGRESSION_TESTS": "ON",
+                "OPENSWMM_WITH_GEOPACKAGE": "ON"
             }
         }
     ],
@@ -267,6 +306,21 @@
             "name": "Darwin-tests",
             "description": "Build unit and regression tests on macOS",
             "configurePreset": "Darwin-tests"
+        },
+        {
+            "name": "Windows-tests-release",
+            "description": "Build unit and regression tests in Release on Windows",
+            "configurePreset": "Windows-tests-release"
+        },
+        {
+            "name": "Linux-tests-release",
+            "description": "Build unit and regression tests in Release on Linux",
+            "configurePreset": "Linux-tests-release"
+        },
+        {
+            "name": "Darwin-tests-release",
+            "description": "Build unit and regression tests in Release on macOS",
+            "configurePreset": "Darwin-tests-release"
         }
     ]
 }

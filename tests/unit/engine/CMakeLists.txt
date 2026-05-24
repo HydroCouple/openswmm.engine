@@ -62,6 +62,8 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
         INSTALL_RPATH "${LIB_ROOT}"
     )
 
+    openswmm_stage_test_runtime_deps(${TEST_NAME})
+
     add_test(
         NAME    ${TEST_NAME}
         COMMAND $<TARGET_FILE:${TEST_NAME}>
@@ -163,6 +165,7 @@ set_target_properties(test_engine_2d_surface PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
     INSTALL_RPATH "${LIB_ROOT}"
 )
+openswmm_stage_test_runtime_deps(test_engine_2d_surface)
 add_test(
     NAME    test_engine_2d_surface
     COMMAND $<TARGET_FILE:test_engine_2d_surface>
@@ -191,6 +194,7 @@ if(OPENSWMM_WITH_GEOPACKAGE)
         RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
         INSTALL_RPATH "${LIB_ROOT}"
     )
+    openswmm_stage_test_runtime_deps(test_engine_geopackage)
     add_test(
         NAME    test_engine_geopackage
         COMMAND $<TARGET_FILE:test_engine_geopackage>

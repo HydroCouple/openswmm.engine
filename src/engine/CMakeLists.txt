@@ -222,9 +222,15 @@ endif()
 # build-tree binary uses CMake's automatically-computed build rpath (link dirs)
 # rather than the wheel-layout path that does not exist in the build tree.
 if(APPLE)
-    set(LIB_ROOT "@loader_path/../.dylibs")
+    # @loader_path/../.dylibs : wheel layout (delocate places bundled deps there)
+    # @loader_path             : sibling-co-located deps when consumer puts the
+    #                            engine + its deps in the same dir
+    # @loader_path/../bin      : standalone install (cmake --install) — deps are
+    #                            bundled into bin/, engine .dylib lives in lib/
+    # @loader_path/../lib      : sibling lib dir (engine.dylib's lib/)
+    set(LIB_ROOT "@loader_path/../.dylibs;@loader_path;@loader_path/../bin;@loader_path/../lib")
 elseif(UNIX)
-    set(LIB_ROOT "$ORIGIN/../.dylibs")
+    set(LIB_ROOT "$ORIGIN/../.dylibs;$ORIGIN;$ORIGIN/../bin;$ORIGIN/../lib")
 else()
     set(LIB_ROOT "")
 endif()
@@ -243,6 +249,24 @@ install(
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+# Bundle imported third-party runtime libraries next to the executables that
+# consume openswmm_engine. The CLI install (src/cli/CMakeLists.txt) already
+# captures the full closure via RUNTIME_DEPENDENCIES; this block exists for
+# downstream consumers who install openswmm_engine without an executable
+# (e.g. a Python wheel built standalone outside cibuildwheel, or a sibling
+# C++ project that links the engine). Co-locating in bin/ matches the RPATH
+# already configured on the engine ("@loader_path/../.dylibs" stays for the
+# wheel path; "@loader_path" + "$ORIGIN" cover the standalone-install path).
+openswmm_install_runtime_deps(${CMAKE_INSTALL_BINDIR}
+    SUNDIALS::cvode
+    SUNDIALS::nvecserial
+    SUNDIALS::sunmatrixdense
+    SUNDIALS::sunlinsoldense
+    hdf5::hdf5-shared
+    unofficial::sqlite3::sqlite3
+    SQLite::SQLite3
 )
 
 install(

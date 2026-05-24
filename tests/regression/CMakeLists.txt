@@ -62,28 +62,11 @@ add_custom_command(TARGET test_engine_regression POST_BUILD
         ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:test_engine_regression>
 )
 
-# Windows: stage every runtime DLL the test depends on (project libs +
-# vcpkg imported targets like SUNDIALS / HDF5 / sqlite3) next to the exe.
-# Without this the loader fails with STATUS_DLL_NOT_FOUND (0xc0000135)
-# at test launch, since the engine DLLs are built in src/engine/$<CONFIG>/
-# and src/legacy/engine/$<CONFIG>/ rather than alongside the exe, and
-# vcpkg's applocal step only stages vcpkg-managed DLLs.
-#
-# Why three TARGET_RUNTIME_DLLS lookups: the genex walks PRIVATE deps of the
-# named target itself, but only INTERFACE deps when recursing through deps-of-
-# deps. openswmm_engine links SUNDIALS::cvode and hdf5::hdf5-shared PRIVATELY,
-# so $<TARGET_RUNTIME_DLLS:test_engine_regression> yields the two engine DLLs
-# but NOT sundials_cvode.dll / hdf5.dll. The Windows loader searches the EXE's
-# directory (not the importing DLL's directory) for transitive imports, so we
-# must also ask each shared engine target for its own runtime DLLs and stage
-# them alongside the test exe.
-if(WIN32)
-    add_custom_command(TARGET test_engine_regression POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:test_engine_regression>
-            $<TARGET_RUNTIME_DLLS:openswmm_engine>
-            $<TARGET_RUNTIME_DLLS:openswmm_legacy_engine>
-            $<TARGET_FILE_DIR:test_engine_regression>
-        COMMAND_EXPAND_LISTS
-    )
-endif()
+# Stage every runtime shared library the test depends on (project libs +
+# vcpkg imported targets like SUNDIALS / HDF5 / sqlite3 / libomp) next to
+# the exe. On Windows, the loader fails with STATUS_DLL_NOT_FOUND otherwise.
+# On Unix the rpath finds dylibs in lib/ at install time, but ctest runs
+# from the build tree where the engine dylibs live in a sibling dir; the
+# helper colocates them next to the test exe so $<ORIGIN>/@loader_path
+# resolves them.
+openswmm_stage_test_runtime_deps(test_engine_regression)

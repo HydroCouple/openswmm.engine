@@ -99,6 +99,91 @@ include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 include(GenerateExportHeader)
 
+# ---- Runtime-dependency bundling ----------------------------------------
+# Regexes shared by every install(RUNTIME_DEPENDENCY_SET …) call to keep the
+# OS-provided libraries out of the package (bundling libc / libGL.so.1 /
+# opengl32.dll would break dispatch on the target machine and is forbidden
+# by Apple's bundle rules). Anything NOT matched here — SUNDIALS, HDF5,
+# libomp, sqlite3, and any vcpkg-provided OpenGL-stack wrappers (GLEW,
+# GLFW, ANGLE, glbinding) — will be copied next to the executable.
+set(OPENSWMM_RUNTIME_DEP_PRE_EXCLUDES
+    # Windows OS contract DLLs (MSVC redists not in this list — we bundle them)
+    "api-ms-.*" "ext-ms-.*"
+    # macOS / Linux system search paths
+    "^/usr/lib/.*" "^/lib/.*" "^/lib64/.*"
+    "^/System/Library/.*" "^/usr/lib/system/.*"
+    # Unix system libs by basename
+    "^libc\\..*" "^libm\\..*" "^libdl\\..*"
+    "^libpthread\\..*" "^librt\\..*" "^libutil\\..*"
+    "^libresolv\\..*" "^libnsl\\..*"
+    "^libstdc\\+\\+\\..*" "^libgcc_s\\..*"
+    # OpenGL loader / driver dispatch — must come from the OS, never bundled.
+    # vcpkg's GLEW/GLFW/ANGLE wrappers do NOT match these (different names).
+    # `$` end-anchor is dropped on purpose: CMake's variable-reference parser
+    # (CMP0010) treats stray `$` characters as bad references when these
+    # regex strings get interpolated into install(CODE "...") bodies.
+    "^libGL\\..*" "^libGLX\\..*" "^libEGL\\..*" "^libGLdispatch\\..*"
+    "^opengl32\\.dll" "^glu32\\.dll"
+)
+
+set(OPENSWMM_RUNTIME_DEP_POST_EXCLUDES
+    ".*[/\\\\][Ss]ystem32[/\\\\].*\\.dll"
+    ".*[/\\\\][Ss]ys[Ww][Oo][Ww]64[/\\\\].*\\.dll"
+)
+
+# Install runtime files for a list of imported targets into the given
+# destination. Skips targets that are not defined in the current
+# configuration, which lets callers list optional deps unconditionally.
+function(openswmm_install_runtime_deps DESTINATION)
+    foreach(_target IN LISTS ARGN)
+        if(TARGET ${_target})
+            install(IMPORTED_RUNTIME_ARTIFACTS ${_target}
+                RUNTIME DESTINATION ${DESTINATION}
+                LIBRARY DESTINATION ${DESTINATION}
+            )
+        endif()
+    endforeach()
+endfunction()
+
+# Bundle the full runtime-dependency closure of an installed executable into
+# the given subdir of CMAKE_INSTALL_PREFIX. Runs at install time as an
+# install(SCRIPT …) — configure_file produces a per-target script from
+# cmake/BundleRuntimeDeps.cmake.in. The template approach avoids escape-
+# hell with backslashes in the regex strings inside install(CODE "…").
+#
+# Why a custom script instead of install(TARGETS … RUNTIME_DEPENDENCY_SET …):
+# when openswmm_engine is itself installed by another install(TARGETS …)
+# rule, CMake auto-adds the build-tree engine dylib to the set's
+# POST_EXCLUDE_FILES_STRICT. That strict exclusion prunes the dep walk
+# *through* the engine, so libomp / SUNDIALS / HDF5 — which are deps of
+# the engine, not of the CLI — never appear in the resolved set. Probing
+# the installed exe via the template sidesteps that auto-exclusion entirely.
+function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
+    # Resolve the executable's installed file name at configure time so the
+    # template substitution baked into the script is a plain path, not a
+    # genex (configure_file doesn't evaluate $<…>).
+    get_target_property(_out_name ${TARGET_NAME} OUTPUT_NAME)
+    if(NOT _out_name)
+        set(_out_name "${TARGET_NAME}")
+    endif()
+    if(WIN32)
+        set(_file_name "${_out_name}.exe")
+    else()
+        set(_file_name "${_out_name}")
+    endif()
+
+    set(OPENSWMM_BUNDLE_TARGET_NAME      "${TARGET_NAME}")
+    set(OPENSWMM_BUNDLE_TARGET_FILE_NAME "${_file_name}")
+    set(OPENSWMM_BUNDLE_SUBDIR           "${SUBDIR}")
+    set(OPENSWMM_BUNDLE_PRE_EXCLUDES     "[==[${OPENSWMM_RUNTIME_DEP_PRE_EXCLUDES}]==]")
+    set(OPENSWMM_BUNDLE_POST_EXCLUDES    "[==[${OPENSWMM_RUNTIME_DEP_POST_EXCLUDES}]==]")
+
+    set(_script_in  "${CMAKE_SOURCE_DIR}/cmake/BundleRuntimeDeps.cmake.in")
+    set(_script_out "${CMAKE_CURRENT_BINARY_DIR}/BundleRuntimeDeps-${TARGET_NAME}.cmake")
+    configure_file("${_script_in}" "${_script_out}" @ONLY)
+    install(SCRIPT "${_script_out}")
+endfunction()
+
 # ---- RPATH / runtime-library search-path policy -------------------------
 # Separate build-tree and install rpaths so developers can run binaries
 # directly from the build dir without extra environment variables, while
@@ -179,17 +264,16 @@ install(
     FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
 )
 
-# Add testing subdirectories conditionally
+# Add testing subdirectories conditionally.
+# Note: testing/benchmarks subdirs are added AFTER add_subdirectory(src) below
+# so that imported third-party targets (OpenMP::OpenMP_CXX, SUNDIALS::cvode,
+# hdf5::hdf5-shared, sqlite3) created during the engine configure are visible
+# to the test-tree dependency-staging helper (openswmm_stage_test_runtime_deps).
+# CMake permits forward target references in target_link_libraries, so this
+# reorder is safe.
 if(OPENSWMM_BUILD_UNIT_TESTS OR OPENSWMM_BUILD_REGRESSION_TESTS)
     enable_testing()
     find_package(GTest CONFIG REQUIRED)
-    add_subdirectory(tests)
-endif()
-
-# Add benchmarks subdirectory conditionally
-if(OPENSWMM_BUILD_BENCHMARKS)
-    find_package(benchmark CONFIG REQUIRED)
-    add_subdirectory(tests/benchmarks)
 endif()
 
 # Modern package configuration
@@ -230,6 +314,17 @@ endif()
 
 # Add subdirectories
 add_subdirectory(src)
+
+# Test / benchmark subdirs are added here (after src/) so the staging helper
+# sees the imported runtime targets created during the engine configure.
+if(OPENSWMM_BUILD_UNIT_TESTS OR OPENSWMM_BUILD_REGRESSION_TESTS)
+    add_subdirectory(tests)
+endif()
+
+if(OPENSWMM_BUILD_BENCHMARKS)
+    find_package(benchmark CONFIG REQUIRED)
+    add_subdirectory(tests/benchmarks)
+endif()
 
 # Optional Python bindings (Cython extensions compiled via scikit-build).
 # Typically invoked indirectly by `pip install ./python`, but can also be

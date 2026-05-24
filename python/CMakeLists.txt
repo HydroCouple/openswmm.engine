@@ -12,6 +12,40 @@
 cmake_minimum_required(VERSION 3.24)
 
 # ============================================================================
+# Source-distribution guard: the sdist on PyPI is metadata-only and does NOT
+# carry the OpenSWMM C/C++ engine source tree.  Detect that we have neither a
+# pre-built engine prefix nor the parent project's CMakeLists.txt reachable
+# via add_subdirectory(..) and fail with a clear, actionable error rather
+# than letting vcpkg or the C compiler emit a confusing one.  Without this
+# guard, a stray VCPKG_ROOT in the user's environment causes the auto-load
+# block below to fire and vcpkg then tries to read a vcpkg.json next to the
+# unpacked sdist that does not exist.
+# ============================================================================
+if(NOT DEFINED OPENSWMM_ENGINE_INSTALL_PREFIX
+        AND NOT DEFINED ENV{OPENSWMM_ENGINE_INSTALL_PREFIX}
+        AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../CMakeLists.txt")
+    message(FATAL_ERROR
+        "openswmm cannot be built from this source distribution: the sdist "
+        "does not bundle the OpenSWMM C/C++ engine sources, and no pre-built "
+        "engine was supplied via -DOPENSWMM_ENGINE_INSTALL_PREFIX=<path>.\n"
+        "\n"
+        "Install a pre-built wheel instead:\n"
+        "    python -m pip install openswmm\n"
+        "\n"
+        "Wheels are published for Python 3.9-3.13 on Linux x86_64, macOS "
+        "(arm64 and x86_64), and Windows x64. If pip fell back to this "
+        "sdist, no wheel matched your platform/interpreter -- check the "
+        "available files at https://pypi.org/project/openswmm/#files and, "
+        "if needed, switch to a supported Python version.\n"
+        "\n"
+        "Source builds are supported only from a full git checkout of the "
+        "openswmm.engine repository:\n"
+        "    git clone https://github.com/hydrocouple/openswmm.engine\n"
+        "    cd openswmm.engine/python\n"
+        "    pip install . --no-build-isolation")
+endif()
+
+# ============================================================================
 # vcpkg manifest directory: the vcpkg.json lives one directory above python/.
 # Set VCPKG_MANIFEST_DIR before project() so vcpkg's toolchain file sees it.
 # Users who install without vcpkg (e.g. system-lib builds) can ignore this.
