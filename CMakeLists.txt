@@ -178,7 +178,12 @@ function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
     set(OPENSWMM_BUNDLE_PRE_EXCLUDES     "[==[${OPENSWMM_RUNTIME_DEP_PRE_EXCLUDES}]==]")
     set(OPENSWMM_BUNDLE_POST_EXCLUDES    "[==[${OPENSWMM_RUNTIME_DEP_POST_EXCLUDES}]==]")
 
-    set(_script_in  "${CMAKE_SOURCE_DIR}/cmake/BundleRuntimeDeps.cmake.in")
+    # Use PROJECT_SOURCE_DIR (not CMAKE_SOURCE_DIR): the engine has its own
+    # project() at line 28, so this resolves to the engine root even when the
+    # engine is pulled in via add_subdirectory(..) from python/CMakeLists.txt.
+    # With CMAKE_SOURCE_DIR, the lookup would (incorrectly) start at the
+    # top-level CMakeLists — which under scikit-build-core is python/.
+    set(_script_in  "${PROJECT_SOURCE_DIR}/cmake/BundleRuntimeDeps.cmake.in")
     set(_script_out "${CMAKE_CURRENT_BINARY_DIR}/BundleRuntimeDeps-${TARGET_NAME}.cmake")
     configure_file("${_script_in}" "${_script_out}" @ONLY)
     install(SCRIPT "${_script_out}")
