@@ -27,6 +27,18 @@ endif()
 
 message(STATUS "Bundling runtime deps for @OPENSWMM_BUNDLE_TARGET_NAME@ into @OPENSWMM_BUNDLE_SUBDIR@")
 
+# Why the set + ${...} dance:
+#   The @-substituted value is wrapped as [==[a;b;c]==] (bracket-quoted to
+#   preserve literal backslashes in the regexes through configure_file).
+#   Passing [==[a;b;c]==] DIRECTLY to file(GET_RUNTIME_DEPENDENCIES ...
+#   PRE_EXCLUDE_REGEXES ...) passes it as ONE giant single regex that
+#   matches nothing — verified by direct testing of file(GET_RUNTIME_DEPENDENCIES).
+#   Capturing into a regular CMake variable first, then dereferencing with
+#   ${...}, triggers CMake's list-aware expansion that splits on `;` into
+#   separate arguments. Each regex is then applied individually as intended.
+set(_pre_excludes  @OPENSWMM_BUNDLE_PRE_EXCLUDES@)
+set(_post_excludes @OPENSWMM_BUNDLE_POST_EXCLUDES@)
+
 file(GET_RUNTIME_DEPENDENCIES
     RESOLVED_DEPENDENCIES_VAR   _resolved
     UNRESOLVED_DEPENDENCIES_VAR _unresolved
@@ -34,8 +46,8 @@ file(GET_RUNTIME_DEPENDENCIES
     DIRECTORIES
         "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@"
         "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_LIBDIR@"
-    PRE_EXCLUDE_REGEXES  @OPENSWMM_BUNDLE_PRE_EXCLUDES@
-    POST_EXCLUDE_REGEXES @OPENSWMM_BUNDLE_POST_EXCLUDES@
+    PRE_EXCLUDE_REGEXES  ${_pre_excludes}
+    POST_EXCLUDE_REGEXES ${_post_excludes}
 )
 
 file(REAL_PATH "${CMAKE_INSTALL_PREFIX}" _prefix_real)
