@@ -29,11 +29,15 @@ What it does
 Wired in from ``python/pyproject.toml``:
 
     [tool.cibuildwheel.windows]
-    repair-wheel-command = "python {package}/scripts/cibw_repair_windows.py {wheel} {dest_dir}"
+    repair-wheel-command = "python python/scripts/cibw_repair_windows.py {wheel} {dest_dir}"
 
-Note: cibuildwheel substitutions are ``{package}`` (the --package-dir,
-which is ``./python``), ``{wheel}``, and ``{dest_dir}``. There is NO
-``{project}`` token — using it leaves the literal string in the command.
+Note: cibuildwheel's ``repair-wheel-command`` only substitutes ``{wheel}``
+and ``{dest_dir}`` (plus the default ``{python}``/``{pip}``). It does NOT
+substitute ``{project}`` or ``{package}`` — those would be passed through
+literally and break the command. Verified by reading cibuildwheel's source
+(util.py::prepare_command and windows.py's call site). The script path is
+therefore relative to cibuildwheel's cwd (workspace root, where the
+repository was checked out), not the package dir.
 """
 from __future__ import annotations
 

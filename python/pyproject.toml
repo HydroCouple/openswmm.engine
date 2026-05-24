@@ -44,7 +44,7 @@ build-backend = "scikit_build_core.build"
 # ============================================================================
 [project]
 name = "openswmm"
-version = "6.0.0a1"
+version = "6.0.0.dev2"
 description = "Python bindings for the OpenSWMM stormwater modelling engine."
 requires-python = ">=3.10"
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -281,7 +281,7 @@ before-build = "pip install delvewheel"
 # and the vcpkg-provided runtime DLLs (SUNDIALS, HDF5, …). The helper
 # script extracts the wheel, collects every DLL subdirectory, adds
 # $VCPKG_ROOT/installed/x64-windows/bin, and passes them as --add-path.
-repair-wheel-command = "python {package}/scripts/cibw_repair_windows.py {wheel} {dest_dir}"
+repair-wheel-command = "python python/scripts/cibw_repair_windows.py {wheel} {dest_dir}"
 environment  = { VCPKG_ROOT = "$VCPKG_ROOT" }
 
 # ============================================================================
