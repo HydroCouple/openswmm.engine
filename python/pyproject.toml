@@ -223,6 +223,18 @@ before-all = """
 set -euo pipefail
 (yum install -y curl zip unzip tar git ninja-build libgomp) || \
   (apt-get update && apt-get install -y curl zip unzip tar git ninja-build libgomp1)
+
+# Pin CMake < 4 inside the manylinux container, ahead of the system cmake.
+# Why: manylinux_2_28_aarch64:2025.08.15-1 ships CMake 4.x. vcpkg-tool's
+# bundled cmakerc dep has cmake_minimum_required(VERSION 3.3), which CMake
+# 4.x rejects with "Compatibility with CMake < 3.5 has been removed". On
+# x86_64, bootstrap-vcpkg.sh downloads a pre-built binary and skips this
+# CMake compile entirely — the bug only fires on arm64. We apply the pin
+# unconditionally so the same fix protects any vcpkg port (SUNDIALS, HDF5,
+# ...) that might hit the same compatibility removal on either arch.
+/opt/python/cp312-cp312/bin/pip install --quiet 'cmake<4'
+export PATH="/opt/python/cp312-cp312/bin:$PATH"
+
 case "$(uname -m)" in
   x86_64)  VCPKG_TRIPLET=x64-linux ;;
   aarch64) VCPKG_TRIPLET=arm64-linux ;;
@@ -269,7 +281,7 @@ before-build = "pip install delvewheel"
 # and the vcpkg-provided runtime DLLs (SUNDIALS, HDF5, …). The helper
 # script extracts the wheel, collects every DLL subdirectory, adds
 # $VCPKG_ROOT/installed/x64-windows/bin, and passes them as --add-path.
-repair-wheel-command = "python {project}/python/scripts/cibw_repair_windows.py {wheel} {dest_dir}"
+repair-wheel-command = "python {package}/scripts/cibw_repair_windows.py {wheel} {dest_dir}"
 environment  = { VCPKG_ROOT = "$VCPKG_ROOT" }
 
 # ============================================================================

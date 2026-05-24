@@ -109,6 +109,17 @@ include(GenerateExportHeader)
 set(OPENSWMM_RUNTIME_DEP_PRE_EXCLUDES
     # Windows OS contract DLLs (MSVC redists not in this list — we bundle them)
     "api-ms-.*" "ext-ms-.*"
+    # Windows system DLLs by basename. These get pulled in transitively
+    # by Win32 API surface (shell, ACL UI, networking, theming, etc.) and
+    # must NOT be bundled — Windows always provides them. Critically,
+    # excluding them via POST is too late: one bundle pass copies them
+    # into the staging bin/ dir, the next pass then finds them in TWO
+    # places (system32 + staging/bin) and file(GET_RUNTIME_DEPENDENCIES)
+    # errors with "Multiple conflicting paths" before POST filters run.
+    # Add to this list when a new system DLL surfaces in CI warnings.
+    # NB: must be ONE quoted string — CMake parses each "" as a separate
+    # list element, so splitting across lines breaks the alternation.
+    "^(aclui|advapi32|bcrypt|bcryptprimitives|combase|comctl32|comdlg32|crypt32|cryptbase|cryptsp|dbgcore|dbghelp|dnsapi|dwmapi|dwrite|fwpuclnt|gdi32|gdi32full|imagehlp|imm32|iphlpapi|kernel32|kernelbase|mpr|msasn1|mscoree|msi|msvcp_win|msvcrt|mswsock|netapi32|netutils|normaliz|ntdll|ntmarta|ole32|oleacc|oleaut32|powrprof|profapi|propsys|psapi|rpcrt4|samcli|sechost|secur32|setupapi|sfc|sfc_os|shcore|shell32|shlwapi|srvcli|user32|userenv|usp10|uxtheme|version|wer|win32u|wininet|winmm|winnsi|wintrust|wkscli|wldap32|ws2_32|wsock32|wtsapi32|zlibwapi)\\.dll"
     # macOS / Linux system search paths
     "^/usr/lib/.*" "^/lib/.*" "^/lib64/.*"
     "^/System/Library/.*" "^/usr/lib/system/.*"
