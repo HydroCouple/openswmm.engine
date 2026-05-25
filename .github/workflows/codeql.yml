@@ -2,15 +2,14 @@ name: CodeQL
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]                         # drop develop — covered by PR
+    paths: ['src/**', 'include/**', 'python/**', 'CMakeLists.txt', 'vcpkg.json']
   pull_request:
     branches: [main, develop]
-  schedule:
-    # Weekly scan so newly disclosed CWE queries hit dormant branches too.
-    # Mondays at 06:00 UTC — outside US-business hours but before EU-morning.
-    - cron: "0 6 * * 1"
+    paths: ['src/**', 'include/**', 'python/**', 'CMakeLists.txt', 'vcpkg.json']
+  schedule: [{ cron: "0 6 * * 1" }]
   workflow_dispatch:
-
+    
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
