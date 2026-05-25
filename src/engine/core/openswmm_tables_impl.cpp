@@ -13,6 +13,24 @@
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_tables.h"
 
+namespace {
+
+// Visit every pattern-name reference site with @p fn(std::string& slot).
+// Centralised so remove (clear matching) and rename (rewrite matching)
+// share one walk and stay in sync with the data layout.
+template <class F>
+void for_each_pattern_name_ref(openswmm::SimulationContext& ctx, F&& fn) {
+    for (auto& s : ctx.ext_inflows.pattern_name)  fn(s);
+    for (auto& s : ctx.dwf_inflows.pat1)           fn(s);
+    for (auto& s : ctx.dwf_inflows.pat2)           fn(s);
+    for (auto& s : ctx.dwf_inflows.pat3)           fn(s);
+    for (auto& s : ctx.dwf_inflows.pat4)           fn(s);
+    for (auto& s : ctx.aquifers.upper_evap_pat)    fn(s);
+    fn(ctx.options.evap_recovery_pat);
+}
+
+} // namespace
+
 extern "C" {
 
 // ============================================================================
@@ -219,24 +237,6 @@ SWMM_ENGINE_API int swmm_pattern_get_factor(SWMM_Engine engine, int idx, int i, 
     *v = f[static_cast<std::size_t>(i)];
     return SWMM_OK;
 }
-
-namespace {
-
-// Visit every pattern-name reference site with @p fn(std::string& slot).
-// Centralised so remove (clear matching) and rename (rewrite matching)
-// share one walk and stay in sync with the data layout.
-template <class F>
-void for_each_pattern_name_ref(openswmm::SimulationContext& ctx, F&& fn) {
-    for (auto& s : ctx.ext_inflows.pattern_name)  fn(s);
-    for (auto& s : ctx.dwf_inflows.pat1)           fn(s);
-    for (auto& s : ctx.dwf_inflows.pat2)           fn(s);
-    for (auto& s : ctx.dwf_inflows.pat3)           fn(s);
-    for (auto& s : ctx.dwf_inflows.pat4)           fn(s);
-    for (auto& s : ctx.aquifers.upper_evap_pat)    fn(s);
-    fn(ctx.options.evap_recovery_pat);
-}
-
-} // namespace
 
 SWMM_ENGINE_API int swmm_pattern_remove(SWMM_Engine engine, int idx) {
     CHECK_HANDLE(engine);
