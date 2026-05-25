@@ -243,6 +243,40 @@ SWMM_ENGINE_API int swmm_pattern_get_factor_count(SWMM_Engine engine, int idx, i
  */
 SWMM_ENGINE_API int swmm_pattern_get_factor(SWMM_Engine engine, int idx, int i, double* v);
 
+/**
+ * @brief Remove a time pattern by index, clearing any reference sites.
+ *
+ * @details Walks every place the engine stores a pattern name and clears
+ *          any entry matching the removed pattern: external inflows
+ *          (`ext_inflows.pattern_name`), dry-weather-flow patterns
+ *          (`dwf.pat1..pat4`), aquifer ET patterns
+ *          (`aquifers.upper_evap_pat`), and the evaporation recovery
+ *          option (`options.evap_recovery_pat`). The removal itself
+ *          shifts subsequent pattern indices down by one — callers that
+ *          hold cached pattern indices must re-resolve via
+ *          ::swmm_pattern_index.
+ *
+ * @param engine  Engine handle (SWMM_STATE_BUILDING or SWMM_STATE_OPENED).
+ * @param idx     Zero-based pattern index.
+ * @returns SWMM_OK on success (idempotent: returns SWMM_OK if @p idx is
+ *          out of range, matching the GUI's repeated-click expectations);
+ *          SWMM_ERR_LIFECYCLE if not editable.
+ */
+SWMM_ENGINE_API int swmm_pattern_remove(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Rename a time pattern; updates every stored reference to the
+ *        previous name across inflows, DWF, aquifer ET, and options.
+ *
+ * @param engine  Engine handle (SWMM_STATE_BUILDING or SWMM_STATE_OPENED).
+ * @param idx     Zero-based pattern index.
+ * @param newId   New null-terminated identifier; must not already be in use.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if @p newId is empty or
+ *          collides with an existing pattern; SWMM_ERR_LIFECYCLE if not
+ *          editable; SWMM_ERR_BADINDEX if @p idx is out of range.
+ */
+SWMM_ENGINE_API int swmm_pattern_rename(SWMM_Engine engine, int idx, const char* newId);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

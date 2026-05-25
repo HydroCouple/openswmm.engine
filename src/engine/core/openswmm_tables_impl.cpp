@@ -220,4 +220,68 @@ SWMM_ENGINE_API int swmm_pattern_get_factor(SWMM_Engine engine, int idx, int i, 
     return SWMM_OK;
 }
 
+namespace {
+
+// Visit every pattern-name reference site with @p fn(std::string& slot).
+// Centralised so remove (clear matching) and rename (rewrite matching)
+// share one walk and stay in sync with the data layout.
+template <class F>
+void for_each_pattern_name_ref(openswmm::SimulationContext& ctx, F&& fn) {
+    for (auto& s : ctx.ext_inflows.pattern_name)  fn(s);
+    for (auto& s : ctx.dwf_inflows.pat1)           fn(s);
+    for (auto& s : ctx.dwf_inflows.pat2)           fn(s);
+    for (auto& s : ctx.dwf_inflows.pat3)           fn(s);
+    for (auto& s : ctx.dwf_inflows.pat4)           fn(s);
+    for (auto& s : ctx.aquifers.upper_evap_pat)    fn(s);
+    fn(ctx.options.evap_recovery_pat);
+}
+
+} // namespace
+
+SWMM_ENGINE_API int swmm_pattern_remove(SWMM_Engine engine, int idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    // Idempotent: silently ignore stale indices so the GUI's "delete then
+    // delete again on a re-resolved-too-late button" path is safe.
+    if (idx < 0 || idx >= ctx.patterns.count()) return SWMM_OK;
+
+    const auto u = static_cast<std::size_t>(idx);
+    const std::string removed = ctx.patterns.names[u];
+
+    ctx.patterns.names.erase(ctx.patterns.names.begin() + u);
+    ctx.patterns.types.erase(ctx.patterns.types.begin() + u);
+    ctx.patterns.factors.erase(ctx.patterns.factors.begin() + u);
+
+    for_each_pattern_name_ref(ctx, [&](std::string& slot) {
+        if (slot == removed) slot.clear();
+    });
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_pattern_rename(SWMM_Engine engine, int idx, const char* newId) {
+    CHECK_HANDLE(engine);
+    if (!newId || newId[0] == '\0') return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.patterns.count());
+
+    const std::string next = newId;
+    const auto u = static_cast<std::size_t>(idx);
+    // Renaming to the same name is a no-op (also avoids a false collision).
+    if (ctx.patterns.names[u] == next) return SWMM_OK;
+
+    for (std::size_t j = 0; j < ctx.patterns.names.size(); ++j) {
+        if (j != u && ctx.patterns.names[j] == next) return SWMM_ERR_BADPARAM;
+    }
+
+    const std::string prev = ctx.patterns.names[u];
+    ctx.patterns.names[u] = next;
+
+    for_each_pattern_name_ref(ctx, [&](std::string& slot) {
+        if (slot == prev) slot = next;
+    });
+    return SWMM_OK;
+}
+
 } /* extern "C" */
