@@ -13,6 +13,10 @@
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_subcatchments.h"
 
+#include <algorithm>
+#include <cstring>
+#include <string>
+
 extern "C" {
 
 // ============================================================================
@@ -574,6 +578,32 @@ SWMM_ENGINE_API int swmm_subcatch_rename(SWMM_Engine engine, int idx, const char
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     return ctx.subcatch_names.rename(idx, newId) ? SWMM_OK : SWMM_ERR_BADPARAM;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_tag(SWMM_Engine engine, int idx,
+                                            char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    const auto u = static_cast<std::size_t>(idx);
+    const std::string& s = (u < ctx.subcatches.tags.size()) ? ctx.subcatches.tags[u]
+                                                            : std::string{};
+    const int copy_len = std::min(static_cast<int>(s.size()), buflen - 1);
+    if (copy_len > 0) std::memcpy(buf, s.c_str(), static_cast<std::size_t>(copy_len));
+    buf[copy_len] = '\0';
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_set_tag(SWMM_Engine engine, int idx,
+                                            const char* tag) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    const auto u = static_cast<std::size_t>(idx);
+    if (u >= ctx.subcatches.tags.size()) ctx.subcatches.tags.resize(u + 1);
+    ctx.subcatches.tags[u] = (tag != nullptr) ? std::string(tag) : std::string{};
+    return SWMM_OK;
 }
 
 // ============================================================================

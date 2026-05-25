@@ -106,12 +106,15 @@ add_gtest_unit(test_engine_routing          test_routing.cpp)
 add_gtest_unit(test_engine_quality_routing  test_quality_routing.cpp)
 add_gtest_unit(test_engine_treatment        test_treatment.cpp)
 add_gtest_unit(test_engine_rdii             test_rdii.cpp)
+add_gtest_unit(test_engine_hydrograph_mutation test_hydrograph_mutation_api.cpp)
+add_gtest_unit(test_engine_da4_api          test_da4_engine_api.cpp)
 add_gtest_unit(test_engine_controls         test_controls.cpp)
 add_gtest_unit(test_engine_gap_fixes       test_gap_fixes.cpp)
 add_gtest_unit(test_engine_report_section  test_report_section.cpp)
 add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
 add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
 add_gtest_unit(test_engine_type_conversion test_type_conversion.cpp)
+add_gtest_unit(test_engine_tags           test_tags.cpp)
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # Non-CVODE portions can be built without SUNDIALS by compiling the needed

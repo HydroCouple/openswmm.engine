@@ -553,15 +553,10 @@ struct SimulationContext {
     // Object tags (from [TAGS] section)
     // =========================================================================
 
-    /**
-     * @brief Tags assigned to objects for categorization/filtering.
-     * @details Parsed from the [TAGS] section. Format: ObjectType  Name  Tag
-     *          Used by GUI tools for filtering; preserved through read/write.
-     * @see Legacy: s_TAG section in enums.h (GUI-only in legacy SWMM)
-     */
-    std::unordered_map<std::string, std::string> node_tags;
-    std::unordered_map<std::string, std::string> link_tags;
-    std::unordered_map<std::string, std::string> subcatch_tags;
+    // Tags from the [TAGS] section now live per-index on
+    // NodeData::tags / LinkData::tags / SubcatchData::tags. Storing
+    // them name-keyed here was a latent rename bug — a tagged node
+    // would lose its tag the moment `swmm_node_rename` was called.
 
     // =========================================================================
     // Runtime forcing data
@@ -1060,12 +1055,11 @@ struct SimulationContext {
         // Clear daily climate state (re-initialized by SWMMEngine on next run)
         climate_state = climate::ClimateState{};
 
-        // Clear spatial, flags, tags, events, and forcing
+        // Clear spatial, flags, events, and forcing. Per-object tags
+        // are owned by NodeData/LinkData/SubcatchData and cleared when
+        // those SoAs are resized/cleared by the wider reset path.
         spatial    = SpatialFrame{};
         user_flags.clear();
-        node_tags.clear();
-        link_tags.clear();
-        subcatch_tags.clear();
         events.clear();
         std::fill(std::begin(adjust_temp), std::end(adjust_temp), 0.0);
         std::fill(std::begin(adjust_evap), std::end(adjust_evap), 1.0);

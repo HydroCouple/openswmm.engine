@@ -339,10 +339,10 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
             bind_null(stmt.get(), 19);
         }
 
-        // Tag
-        auto tag_it = ctx.node_tags.find(name);
-        if (tag_it != ctx.node_tags.end())
-            bind_text(stmt.get(), 20, tag_it->second);
+        // Tag — pulled from per-NodeData field (was: ctx.node_tags map).
+        const auto utag = static_cast<std::size_t>(i);
+        if (utag < ctx.nodes.tags.size() && !ctx.nodes.tags[utag].empty())
+            bind_text(stmt.get(), 20, ctx.nodes.tags[utag]);
         else
             bind_null(stmt.get(), 20);
 
@@ -453,10 +453,10 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 30, safe_dbl(ctx.links.crest_height, i));
         bind_double(stmt.get(), 31, safe_dbl(ctx.links.cd, i));
 
-        // Tag
-        auto tag_it = ctx.link_tags.find(name);
-        if (tag_it != ctx.link_tags.end())
-            bind_text(stmt.get(), 32, tag_it->second);
+        // Tag — per-LinkData field.
+        const auto utag = static_cast<std::size_t>(i);
+        if (utag < ctx.links.tags.size() && !ctx.links.tags[utag].empty())
+            bind_text(stmt.get(), 32, ctx.links.tags[utag]);
         else
             bind_null(stmt.get(), 32);
 
@@ -532,9 +532,9 @@ static void write_subcatchments(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 23, safe_dbl(ctx.subcatches.infil_p4, i));
         bind_double(stmt.get(), 24, safe_dbl(ctx.subcatches.infil_p5, i));
 
-        auto tag_it = ctx.subcatch_tags.find(name);
-        if (tag_it != ctx.subcatch_tags.end())
-            bind_text(stmt.get(), 25, tag_it->second);
+        const auto utag = static_cast<std::size_t>(i);
+        if (utag < ctx.subcatches.tags.size() && !ctx.subcatches.tags[utag].empty())
+            bind_text(stmt.get(), 25, ctx.subcatches.tags[utag]);
         else
             bind_null(stmt.get(), 25);
 

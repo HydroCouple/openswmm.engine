@@ -13,7 +13,10 @@
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_links.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <string>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -783,6 +786,32 @@ SWMM_ENGINE_API int swmm_link_rename(SWMM_Engine engine, int idx, const char* ne
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     return ctx.link_names.rename(idx, newId) ? SWMM_OK : SWMM_ERR_BADPARAM;
+}
+
+SWMM_ENGINE_API int swmm_link_get_tag(SWMM_Engine engine, int idx,
+                                       char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto u = static_cast<std::size_t>(idx);
+    const std::string& s = (u < ctx.links.tags.size()) ? ctx.links.tags[u]
+                                                       : std::string{};
+    const int copy_len = std::min(static_cast<int>(s.size()), buflen - 1);
+    if (copy_len > 0) std::memcpy(buf, s.c_str(), static_cast<std::size_t>(copy_len));
+    buf[copy_len] = '\0';
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_set_tag(SWMM_Engine engine, int idx,
+                                       const char* tag) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto u = static_cast<std::size_t>(idx);
+    if (u >= ctx.links.tags.size()) ctx.links.tags.resize(u + 1);
+    ctx.links.tags[u] = (tag != nullptr) ? std::string(tag) : std::string{};
+    return SWMM_OK;
 }
 
 } /* extern "C" */

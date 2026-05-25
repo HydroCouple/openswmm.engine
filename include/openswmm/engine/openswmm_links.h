@@ -761,6 +761,18 @@ SWMM_ENGINE_API int swmm_link_get_hyd_power(SWMM_Engine engine, int idx, double*
  *  idx is out of range. */
 SWMM_ENGINE_API int swmm_link_rename(SWMM_Engine engine, int idx, const char* newId);
 
+/* =========================================================================
+ * Tag — free-form string label from the INP `[TAGS]` section
+ * ========================================================================= */
+
+/** @brief Read the link's tag into `buf` (NUL-terminated, truncated if too small). */
+SWMM_ENGINE_API int swmm_link_get_tag(SWMM_Engine engine, int idx,
+                                       char* buf, int buflen);
+
+/** @brief Set or clear the link's tag. Null/empty clears. Persists across rename. */
+SWMM_ENGINE_API int swmm_link_set_tag(SWMM_Engine engine, int idx,
+                                       const char* tag);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

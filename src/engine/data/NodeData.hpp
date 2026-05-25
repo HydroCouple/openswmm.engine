@@ -467,6 +467,19 @@ struct NodeData {
      */
     std::vector<std::string> comments;
 
+    /**
+     * @brief Per-object tag from the INP `[TAGS]` section.
+     *
+     * @details Free-form string label, used by GUIs for filtering and grouping
+     *          (e.g. catchment-name labels, asset IDs, user-defined groups).
+     *          Empty string means no tag. Written back to INP by InpWriter as
+     *          a `Node <name> <tag>` row in `[TAGS]`. Index-keyed (per-`NodeData`
+     *          field) so `swmm_node_rename` keeps the tag attached — the
+     *          earlier name-keyed `SimulationContext::node_tags` map lost
+     *          tags on rename.
+     */
+    std::vector<std::string> tags;
+
     // -----------------------------------------------------------------------
     // Report flag — per-object output filter
     // -----------------------------------------------------------------------
@@ -675,6 +688,7 @@ struct NodeData {
         old_lat_flow.assign(un, 0.0);
 
         comments.assign(un, std::string{});
+        tags.assign(un, std::string{});
 
         rpt_flag.assign(un, 0);
 
@@ -740,6 +754,7 @@ struct NodeData {
         g(old_net_inflow, 0.0); g(full_volume, 0.0);
         g(old_depth, 0.0); g(old_volume, 0.0); g(old_lat_flow, 0.0);
         comments.resize(un, std::string{});
+        tags.resize(un, std::string{});
 
         g(rpt_flag, static_cast<char>(0));
         g(stat_vol_flooded, 0.0); g(stat_time_flooded, 0.0);
@@ -793,7 +808,7 @@ struct NodeData {
         e(inflow); e(outflow); e(overflow); e(losses);
         e(crown_elev); e(degree); e(old_net_inflow); e(full_volume);
         e(old_depth); e(old_volume); e(old_lat_flow);
-        e(comments); e(rpt_flag);
+        e(comments); e(tags); e(rpt_flag);
 
         e(stat_vol_flooded); e(stat_time_flooded); e(stat_max_depth); e(stat_max_overflow);
         e(stat_max_overflow_date); e(stat_sum_depth); e(stat_max_depth_date);
@@ -932,6 +947,7 @@ struct NodeData {
         old_lat_flow.shrink_to_fit();
 
         comments.shrink_to_fit();
+        tags.shrink_to_fit();
 
         rpt_flag.shrink_to_fit();
 

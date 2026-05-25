@@ -1162,6 +1162,47 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     }}
     }
 
+    // [TAGS] — per-object free-form labels. Tags are stored per-SoA
+    // index (NodeData::tags / LinkData::tags / SubcatchData::tags) so
+    // they survive swmm_*_rename. Only objects with a non-empty tag
+    // are emitted; section is skipped entirely if nothing's tagged.
+    {
+        auto has_any = [](const std::vector<std::string>& v){
+            for (const auto& s : v) if (!s.empty()) return true;
+            return false;
+        };
+        const bool any =
+            has_any(ctx.nodes.tags) ||
+            has_any(ctx.links.tags) ||
+            has_any(ctx.subcatches.tags);
+        if (any) {
+            sec(f,"TAGS");
+            std::fprintf(f,";;%-10s %-16s %s\n","Type","Name","Tag");
+            std::fprintf(f,";;%-10s %-16s %s\n","----------","----------------","---");
+            for (int j = 0; j < ctx.n_nodes(); ++j) {
+                const auto u = static_cast<size_t>(j);
+                if (u < ctx.nodes.tags.size() && !ctx.nodes.tags[u].empty())
+                    std::fprintf(f,"%-10s %-16s %s\n", "Node",
+                        ctx.node_names.name_of(j).c_str(),
+                        ctx.nodes.tags[u].c_str());
+            }
+            for (int j = 0; j < ctx.n_links(); ++j) {
+                const auto u = static_cast<size_t>(j);
+                if (u < ctx.links.tags.size() && !ctx.links.tags[u].empty())
+                    std::fprintf(f,"%-10s %-16s %s\n", "Link",
+                        ctx.link_names.name_of(j).c_str(),
+                        ctx.links.tags[u].c_str());
+            }
+            for (int j = 0; j < ctx.n_subcatches(); ++j) {
+                const auto u = static_cast<size_t>(j);
+                if (u < ctx.subcatches.tags.size() && !ctx.subcatches.tags[u].empty())
+                    std::fprintf(f,"%-10s %-16s %s\n", "Subcatch",
+                        ctx.subcatch_names.name_of(j).c_str(),
+                        ctx.subcatches.tags[u].c_str());
+            }
+        }
+    }
+
     // [USER_FLAGS]
     if(ctx.user_flags.def_count()>0){sec(f,"USER_FLAGS");
     std::fprintf(f,";;%-20s %-10s %s\n","Name","Type","Description");

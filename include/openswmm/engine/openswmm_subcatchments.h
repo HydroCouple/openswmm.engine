@@ -614,6 +614,18 @@ SWMM_ENGINE_API const char* swmm_snowpack_id(SWMM_Engine engine, int idx);
  */
 SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id);
 
+/* =========================================================================
+ * Tag — free-form string label from the INP `[TAGS]` section
+ * ========================================================================= */
+
+/** @brief Read the subcatchment's tag into `buf` (NUL-terminated, truncated if too small). */
+SWMM_ENGINE_API int swmm_subcatch_get_tag(SWMM_Engine engine, int idx,
+                                            char* buf, int buflen);
+
+/** @brief Set or clear the subcatchment's tag. Null/empty clears. Persists across rename. */
+SWMM_ENGINE_API int swmm_subcatch_set_tag(SWMM_Engine engine, int idx,
+                                            const char* tag);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

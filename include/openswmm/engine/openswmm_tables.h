@@ -210,6 +210,39 @@ SWMM_ENGINE_API int swmm_pattern_index(SWMM_Engine engine, const char* id);
  */
 SWMM_ENGINE_API const char* swmm_pattern_id(SWMM_Engine engine, int idx);
 
+/**
+ * @brief Get a pattern's type code.
+ *
+ * @details Pattern types: 0=MONTHLY, 1=DAILY, 2=HOURLY, 3=WEEKEND. Used by
+ *          the GUI to filter pattern pickers by pattern kind (e.g. the
+ *          four DWF picker rows each accept a specific type).
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based pattern index.
+ * @param[out] type  Receives the pattern type code.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_pattern_get_type(SWMM_Engine engine, int idx, int* type);
+
+/**
+ * @brief Get the number of multiplier factors stored for a pattern.
+ * @param engine      Engine handle.
+ * @param idx         Zero-based pattern index.
+ * @param[out] count  Receives the factor count (typically 12, 7, or 24).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_pattern_get_factor_count(SWMM_Engine engine, int idx, int* count);
+
+/**
+ * @brief Get one multiplier factor from a pattern.
+ * @param engine    Engine handle.
+ * @param idx       Zero-based pattern index.
+ * @param i         Zero-based factor index within the pattern.
+ * @param[out] v    Receives the multiplier value.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_pattern_get_factor(SWMM_Engine engine, int idx, int i, double* v);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

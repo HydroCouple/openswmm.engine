@@ -149,14 +149,30 @@ set(OPENSWMM_RUNTIME_DEP_POST_EXCLUDES
 # Install runtime files for a list of imported targets into the given
 # destination. Skips targets that are not defined in the current
 # configuration, which lets callers list optional deps unconditionally.
+#
+# `IMPORTED_RUNTIME_ARTIFACTS` requires SHARED_LIBRARY / MODULE_LIBRARY /
+# EXECUTABLE targets. We allowlist those explicitly and skip everything
+# else — covers STATIC_LIBRARY (vcpkg static triplets), INTERFACE_LIBRARY
+# (header-only deps), OBJECT_LIBRARY, and notably UNKNOWN_LIBRARY (the
+# type reported by `FindSQLite3.cmake` and other classic Find modules
+# that don't classify the artifact). Without this filter, configure
+# aborts with "given target X which is not an executable, library, or
+# module."
 function(openswmm_install_runtime_deps DESTINATION)
     foreach(_target IN LISTS ARGN)
-        if(TARGET ${_target})
-            install(IMPORTED_RUNTIME_ARTIFACTS ${_target}
-                RUNTIME DESTINATION ${DESTINATION}
-                LIBRARY DESTINATION ${DESTINATION}
-            )
+        if(NOT TARGET ${_target})
+            continue()
         endif()
+        get_target_property(_type ${_target} TYPE)
+        if(NOT (_type STREQUAL "SHARED_LIBRARY" OR
+                _type STREQUAL "MODULE_LIBRARY" OR
+                _type STREQUAL "EXECUTABLE"))
+            continue()
+        endif()
+        install(IMPORTED_RUNTIME_ARTIFACTS ${_target}
+            RUNTIME DESTINATION ${DESTINATION}
+            LIBRARY DESTINATION ${DESTINATION}
+        )
     endforeach()
 endfunction()
 

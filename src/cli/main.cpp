@@ -15,10 +15,11 @@
 #include <ctime>
 
 #include "openswmm_engine.h"
+#include "version.h"
 
 static void print_help() {
     std::printf("\n");
-    std::printf("OpenSWMM Engine 6.0 — Storm Water Management Model\n");
+    std::printf("Open Source Storm Water Management Model %s\n", OPENSWMM_VERSION_FULL);
     std::printf("===================================================\n\n");
     std::printf("USAGE:\n");
     std::printf("  openswmm <input.inp> <report.rpt> [output.out]\n\n");
@@ -33,7 +34,7 @@ static void print_help() {
 }
 
 static void print_version() {
-    std::printf("openswmm.engine 6.0.0-alpha.1\n");
+    std::printf("openswmm.engine %s\n", OPENSWMM_VERSION_FULL);
 }
 
 int main(int argc, char* argv[]) {
@@ -63,7 +64,7 @@ int main(int argc, char* argv[]) {
     const char* rpt_file = argv[2];
     const char* out_file = (argc > 3) ? argv[3] : "";
 
-    std::printf("\n... OpenSWMM Engine 6.0.0-alpha.1\n");
+    std::printf("\n... OpenSWMM Engine %s\n", OPENSWMM_VERSION_FULL);
     std::printf("... Input: %s\n", inp_file);
     std::printf("... Report: %s\n", rpt_file);
     std::printf("... Output: %s\n", out_file);

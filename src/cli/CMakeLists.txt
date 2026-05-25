@@ -14,6 +14,7 @@ add_executable(openswmm
 target_link_libraries(openswmm
     PRIVATE
         openswmm_engine
+        openswmm::common
 )
 
 target_include_directories(openswmm

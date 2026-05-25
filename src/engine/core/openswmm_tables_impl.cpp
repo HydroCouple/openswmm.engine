@@ -191,4 +191,33 @@ SWMM_ENGINE_API const char* swmm_pattern_id(SWMM_Engine engine, int idx) {
     return names[static_cast<std::size_t>(idx)].c_str();
 }
 
+SWMM_ENGINE_API int swmm_pattern_get_type(SWMM_Engine engine, int idx, int* type) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.patterns.count());
+    if (!type) return SWMM_ERR_BADPARAM;
+    *type = ctx.patterns.types[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_pattern_get_factor_count(SWMM_Engine engine, int idx, int* count) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.patterns.count());
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = static_cast<int>(ctx.patterns.factors[static_cast<std::size_t>(idx)].size());
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_pattern_get_factor(SWMM_Engine engine, int idx, int i, double* v) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.patterns.count());
+    const auto& f = ctx.patterns.factors[static_cast<std::size_t>(idx)];
+    CHECK_INDEX(i >= 0 && i < static_cast<int>(f.size()));
+    if (!v) return SWMM_ERR_BADPARAM;
+    *v = f[static_cast<std::size_t>(i)];
+    return SWMM_OK;
+}
+
 } /* extern "C" */

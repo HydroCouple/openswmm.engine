@@ -307,10 +307,27 @@ protected:
                                                  0.7, 0.8, 0.9, 1.0, 1.1, 1.2});
         }
 
-        // --- TAGS ---
-        ctx.node_tags["J1"] = "upstream";
-        ctx.link_tags["C1"] = "trunk";
-        ctx.subcatch_tags["S1"] = "residential";
+        // --- TAGS --- (now per-index on the SoA; resolve name → idx)
+        {
+            const int j1 = ctx.node_names.find("J1");
+            if (j1 >= 0) {
+                const auto u = static_cast<std::size_t>(j1);
+                if (u >= ctx.nodes.tags.size()) ctx.nodes.tags.resize(u + 1);
+                ctx.nodes.tags[u] = "upstream";
+            }
+            const int c1 = ctx.link_names.find("C1");
+            if (c1 >= 0) {
+                const auto u = static_cast<std::size_t>(c1);
+                if (u >= ctx.links.tags.size()) ctx.links.tags.resize(u + 1);
+                ctx.links.tags[u] = "trunk";
+            }
+            const int s1 = ctx.subcatch_names.find("S1");
+            if (s1 >= 0) {
+                const auto u = static_cast<std::size_t>(s1);
+                if (u >= ctx.subcatches.tags.size()) ctx.subcatches.tags.resize(u + 1);
+                ctx.subcatches.tags[u] = "residential";
+            }
+        }
 
         return ctx;
     }
@@ -696,9 +713,17 @@ TEST_F(GeoPackageTest, TagsRoundTrip) {
     SimulationContext ctx_in{};
     ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
 
-    EXPECT_EQ(ctx_in.node_tags["J1"], "upstream");
-    EXPECT_EQ(ctx_in.link_tags["C1"], "trunk");
-    EXPECT_EQ(ctx_in.subcatch_tags["S1"], "residential");
+    {
+        const int j1 = ctx_in.node_names.find("J1");
+        ASSERT_GE(j1, 0);
+        EXPECT_EQ(ctx_in.nodes.tags[static_cast<std::size_t>(j1)], "upstream");
+        const int c1 = ctx_in.link_names.find("C1");
+        ASSERT_GE(c1, 0);
+        EXPECT_EQ(ctx_in.links.tags[static_cast<std::size_t>(c1)], "trunk");
+        const int s1 = ctx_in.subcatch_names.find("S1");
+        ASSERT_GE(s1, 0);
+        EXPECT_EQ(ctx_in.subcatches.tags[static_cast<std::size_t>(s1)], "residential");
+    }
 }
 
 // ============================================================================

@@ -488,6 +488,36 @@ SWMM_ENGINE_API int swmm_node_set_outfall_timeseries(SWMM_Engine engine, int idx
 SWMM_ENGINE_API int swmm_node_get_outfall_param(SWMM_Engine engine, int idx, double* param);
 
 /**
+ * @brief Get the tidal curve index assigned to a TIDAL outfall.
+ *
+ * @details The outfall parameter slot is union-typed across stage / tidal-idx /
+ *          ts-idx; this accessor returns the slot interpreted as a curve index
+ *          only when the outfall is currently of TIDAL type. Returns
+ *          @ref SWMM_ERR_BADPARAM if the outfall type is not TIDAL, so the
+ *          caller can distinguish "unassigned" from a genuine index of 0.
+ *
+ * @param engine          Engine handle.
+ * @param idx             Zero-based node index.
+ * @param[out] curve_idx  Receives the zero-based curve index.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if outfall type != TIDAL.
+ */
+SWMM_ENGINE_API int swmm_node_get_outfall_tidal(SWMM_Engine engine, int idx, int* curve_idx);
+
+/**
+ * @brief Get the time-series index assigned to a TIMESERIES outfall.
+ *
+ * @details Symmetric to @ref swmm_node_get_outfall_tidal. Returns
+ *          @ref SWMM_ERR_BADPARAM unless the outfall is currently of
+ *          TIMESERIES type.
+ *
+ * @param engine       Engine handle.
+ * @param idx          Zero-based node index.
+ * @param[out] ts_idx  Receives the zero-based time-series index.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if outfall type != TIMESERIES.
+ */
+SWMM_ENGINE_API int swmm_node_get_outfall_timeseries(SWMM_Engine engine, int idx, int* ts_idx);
+
+/**
  * @brief Set whether a flap gate exists at the outfall.
  *
  * @details A flap gate prevents reverse flow through the outfall.
@@ -752,6 +782,22 @@ SWMM_ENGINE_API int swmm_node_get_depth_from_volume(SWMM_Engine engine, int idx,
  *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
  *  idx is out of range. */
 SWMM_ENGINE_API int swmm_node_rename(SWMM_Engine engine, int idx, const char* newId);
+
+/* =========================================================================
+ * Tag — free-form string label from the INP `[TAGS]` section
+ * ========================================================================= */
+
+/** @brief Read the tag string into `buf` (NUL-terminated, truncated to
+ *  `buflen-1` chars if necessary). Returns empty string when the node has
+ *  no tag. */
+SWMM_ENGINE_API int swmm_node_get_tag(SWMM_Engine engine, int idx,
+                                       char* buf, int buflen);
+
+/** @brief Set or clear the node's tag. Pass null or empty string to clear.
+ *  Tag persists across `swmm_node_rename` (it is keyed by index, not name).
+ *  Writes are honoured in any engine lifecycle state. */
+SWMM_ENGINE_API int swmm_node_set_tag(SWMM_Engine engine, int idx,
+                                       const char* tag);
 
 #ifdef __cplusplus
 } /* extern "C" */

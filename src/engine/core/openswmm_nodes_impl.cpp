@@ -15,6 +15,10 @@
 #include "../../../include/openswmm/engine/openswmm_nodes.h"
 #include "../hydraulics/Node.hpp"
 
+#include <algorithm>
+#include <cstring>
+#include <string>
+
 using openswmm::c_to_internal_node_type;
 using openswmm::internal_to_c_node_type;
 
@@ -539,6 +543,30 @@ SWMM_ENGINE_API int swmm_node_get_outfall_param(SWMM_Engine engine, int idx, dou
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_node_get_outfall_tidal(SWMM_Engine engine, int idx, int* curve_idx) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (!curve_idx) return SWMM_ERR_BADPARAM;
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.nodes.outfall_type[uidx] != openswmm::OutfallType::TIDAL)
+        return SWMM_ERR_BADPARAM;
+    *curve_idx = static_cast<int>(ctx.nodes.outfall_param[uidx]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_outfall_timeseries(SWMM_Engine engine, int idx, int* ts_idx) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (!ts_idx) return SWMM_ERR_BADPARAM;
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.nodes.outfall_type[uidx] != openswmm::OutfallType::TIMESERIES)
+        return SWMM_ERR_BADPARAM;
+    *ts_idx = static_cast<int>(ctx.nodes.outfall_param[uidx]);
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_node_set_outfall_flap_gate(SWMM_Engine engine, int idx, int has_gate) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
@@ -724,6 +752,32 @@ SWMM_ENGINE_API int swmm_node_rename(SWMM_Engine engine, int idx, const char* ne
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     return ctx.node_names.rename(idx, newId) ? SWMM_OK : SWMM_ERR_BADPARAM;
+}
+
+SWMM_ENGINE_API int swmm_node_get_tag(SWMM_Engine engine, int idx,
+                                       char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    const auto u = static_cast<std::size_t>(idx);
+    const std::string& s = (u < ctx.nodes.tags.size()) ? ctx.nodes.tags[u]
+                                                       : std::string{};
+    const int copy_len = std::min(static_cast<int>(s.size()), buflen - 1);
+    if (copy_len > 0) std::memcpy(buf, s.c_str(), static_cast<std::size_t>(copy_len));
+    buf[copy_len] = '\0';
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_set_tag(SWMM_Engine engine, int idx,
+                                       const char* tag) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    const auto u = static_cast<std::size_t>(idx);
+    if (u >= ctx.nodes.tags.size()) ctx.nodes.tags.resize(u + 1);
+    ctx.nodes.tags[u] = (tag != nullptr) ? std::string(tag) : std::string{};
+    return SWMM_OK;
 }
 
 } /* extern "C" */
