@@ -117,10 +117,17 @@ TEST_F(TagsTest, InpWriterEmitsTagsSection) {
     const fs::path tmp = fs::temp_directory_path() / "swmm_tags_roundtrip.inp";
     ASSERT_EQ(swmm_model_write(engine, tmp.string().c_str()), SWMM_OK);
 
-    std::ifstream in(tmp);
-    ASSERT_TRUE(in.good());
-    std::string body((std::istreambuf_iterator<char>(in)),
-                       std::istreambuf_iterator<char>());
+    // Read into a string in an inner scope so the ifstream's handle is
+    // released before fs::remove. Windows refuses to delete a file while
+    // any process holds an open handle to it (POSIX unlink-on-open does
+    // not apply); on Linux/macOS the inner scope is harmless.
+    std::string body;
+    {
+        std::ifstream in(tmp);
+        ASSERT_TRUE(in.good());
+        body.assign((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    }
 
     EXPECT_NE(body.find("[TAGS]"),    std::string::npos);
     EXPECT_NE(body.find("tagN1"),     std::string::npos);
@@ -140,10 +147,15 @@ TEST_F(TagsTest, NoTagsSectionWhenAllEmpty) {
     const fs::path tmp = fs::temp_directory_path() / "swmm_tags_empty.inp";
     ASSERT_EQ(swmm_model_write(engine, tmp.string().c_str()), SWMM_OK);
 
-    std::ifstream in(tmp);
-    ASSERT_TRUE(in.good());
-    std::string body((std::istreambuf_iterator<char>(in)),
-                       std::istreambuf_iterator<char>());
+    // Inner scope: see InpWriterEmitsTagsSection for the rationale —
+    // Windows fs::remove fails if the ifstream still holds the handle.
+    std::string body;
+    {
+        std::ifstream in(tmp);
+        ASSERT_TRUE(in.good());
+        body.assign((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    }
 
     EXPECT_EQ(body.find("[TAGS]"), std::string::npos);
     fs::remove(tmp);
