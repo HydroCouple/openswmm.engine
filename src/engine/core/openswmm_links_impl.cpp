@@ -477,6 +477,118 @@ SWMM_ENGINE_API int swmm_link_get_quality_bulk(SWMM_Engine engine, int pollutant
     return SWMM_OK;
 }
 
+// ----------------------------------------------------------------------------
+// Phase 3 bulk getters — Links.
+//
+// Three of these (volumes, control_settings, target_settings) are simple SoA
+// memcpys. Three (velocities, capacities, hyd_powers) recompute a derived
+// quantity per link — there is no SoA column for them — but bulk-mode still
+// saves the C ABI crossing cost and any Python-level iteration. The
+// arithmetic is taken verbatim from the matching scalar accessors above so
+// the bulk vs scalar parity tests stay bit-equivalent.
+//
+// Stride-packed IDs follow the same format as swmm_node_get_ids_bulk.
+// ----------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_link_get_velocities_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    for (int i = 0; i < n; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        const double q = ctx.links.flow[ui];
+        const double d = ctx.links.depth[ui];
+        const double y_full = ctx.links.xsect_y_full[ui];
+        const double a_full = ctx.links.xsect_a_full[ui];
+        const double area = (y_full > 0.0 && a_full > 0.0 && d > 0.0)
+                            ? a_full * (d / y_full) : 0.0;
+        buf[i] = (area > 1.0e-12) ? q / area : 0.0;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_capacities_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    for (int i = 0; i < n; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        const double q = ctx.links.flow[ui];
+        const double qf = ctx.links.q_full[ui];
+        buf[i] = (qf > 1.0e-12) ? q / qf : 0.0;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_volumes_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    std::copy(ctx.links.volume.begin(), ctx.links.volume.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_control_settings_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    std::copy(ctx.links.setting.begin(), ctx.links.setting.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_target_settings_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    std::copy(ctx.links.target_setting.begin(),
+              ctx.links.target_setting.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_hyd_powers_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    constexpr double GAMMA = 62.4;
+    for (int i = 0; i < n; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        const int n1 = ctx.links.node1[ui];
+        const int n2 = ctx.links.node2[ui];
+        const double h1 = (n1 >= 0)
+            ? ctx.nodes.head[static_cast<std::size_t>(n1)] : 0.0;
+        const double h2 = (n2 >= 0)
+            ? ctx.nodes.head[static_cast<std::size_t>(n2)] : 0.0;
+        buf[i] = GAMMA * std::fabs(ctx.links.flow[ui]) * std::fabs(h1 - h2);
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_ids_bulk(SWMM_Engine engine,
+                                            char* buf,
+                                            int stride,
+                                            int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || stride < 2 || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    const std::size_t s = static_cast<std::size_t>(stride);
+
+    std::fill_n(buf, s * static_cast<std::size_t>(n), '\0');
+    for (int i = 0; i < n; ++i) {
+        const std::string& name = ctx.link_names.name_of(i);
+        const std::size_t copy_n = std::min(name.size(), s - 1);
+        std::memcpy(buf + static_cast<std::size_t>(i) * s,
+                    name.data(), copy_n);
+    }
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Pump Link API
 // ============================================================================
@@ -758,6 +870,52 @@ SWMM_ENGINE_API int swmm_link_get_stat_pump_volume(SWMM_Engine engine, int idx, 
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     if (volume) *volume = ctx.links.stat_pump_volume[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+// ----------------------------------------------------------------------------
+// Bulk pump statistics — single pass over all links.
+//
+// Non-pump links receive sentinel values (cycles = -1, on_time = 0.0,
+// volume = 0.0) so the caller can distinguish them. Any of cycles / on_time
+// / volume may be NULL if the caller does not need that output.
+//
+// Design note: we deliberately do NOT early-exit the iteration when all
+// outputs are NULL — that case is reported as SWMM_ERR_BADPARAM at entry,
+// rather than silently being a no-op (the caller almost certainly made a
+// mistake if they call with all three null).
+// ----------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_link_get_pump_stats_bulk(SWMM_Engine engine,
+                                                   int* cycles,
+                                                   double* on_time,
+                                                   double* volume,
+                                                   int count) {
+    CHECK_HANDLE(engine);
+    if (count <= 0) return SWMM_ERR_BADPARAM;
+    if (!cycles && !on_time && !volume) return SWMM_ERR_BADPARAM;
+
+    const auto& ctx = to_engine(engine)->context();
+    const int n_links = ctx.n_links();
+    const int n = std::min(count, n_links);
+
+    // Defensive: the per-link statistics vectors are sized at engine init.
+    // If for some reason they have not been sized (caller invoked too early),
+    // fall back to sentinel for the entire range rather than dereferencing.
+    const bool stats_sized =
+        static_cast<int>(ctx.links.stat_pump_cycles.size())  >= n_links &&
+        static_cast<int>(ctx.links.stat_pump_on_time.size()) >= n_links &&
+        static_cast<int>(ctx.links.stat_pump_volume.size())  >= n_links;
+
+    for (int i = 0; i < n; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        const bool is_pump =
+            stats_sized && ctx.links.type[ui] == openswmm::LinkType::PUMP;
+
+        if (cycles)  cycles[i]  = is_pump ? ctx.links.stat_pump_cycles[ui]  : -1;
+        if (on_time) on_time[i] = is_pump ? ctx.links.stat_pump_on_time[ui] : 0.0;
+        if (volume)  volume[i]  = is_pump ? ctx.links.stat_pump_volume[ui]  : 0.0;
+    }
     return SWMM_OK;
 }
 

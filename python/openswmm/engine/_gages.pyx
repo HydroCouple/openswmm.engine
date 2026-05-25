@@ -175,7 +175,8 @@ class Gages:
         _check(swmm_gage_set_rainfall(h, i, rainfall))
 
     def get_rainfall_bulk(self) -> np.ndarray:
-        """Return rainfall for all gages as a NumPy array.
+        """Return rainfall for all gages as a NumPy array. The GIL is
+        released during the C call.
 
         @return: 1-D array of rainfall values, one per gage. Shape
             C{(n_gages,)}, dtype C{float64}.
@@ -184,7 +185,11 @@ class Gages:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_gage_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_gage_get_rainfall_bulk(h, <double*>buf.data, n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_gage_get_rainfall_bulk(h, p, n)
+        _check(err)
         return buf
 
     # ====================================================================

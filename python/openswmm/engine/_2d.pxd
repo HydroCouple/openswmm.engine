@@ -13,7 +13,7 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_vertex_get_xyz(void* engine, int idx,
                                 double* x, double* y, double* z)
     int swmm_2d_vertex_get_xyz_bulk(void* engine,
-                                     double* x, double* y, double* z)
+                                     double* x, double* y, double* z) nogil
     int swmm_2d_triangle_get_vertices(void* engine, int idx,
                                        int* v0, int* v1, int* v2)
     int swmm_2d_triangle_get_area(void* engine, int idx, double* area)
@@ -23,7 +23,7 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_triangle_get_neighbours(void* engine, int idx,
                                          int* n0, int* n1, int* n2)
     int swmm_2d_edge_get_geometry_bulk(void* engine,
-                                        double* length, double* nx, double* ny)
+                                        double* length, double* nx, double* ny) nogil
 
     # Coupling
     int swmm_2d_vertex_coupling_count(void* engine, int* count)
@@ -37,14 +37,14 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_get_coupling_flux(void* engine, int idx, double* flux)
     int swmm_2d_get_rainfall(void* engine, int idx, double* rainfall)
     int swmm_2d_get_net_source(void* engine, int idx, double* net_source)
-    int swmm_2d_get_depths_bulk(void* engine, double* depths)
-    int swmm_2d_get_heads_bulk(void* engine, double* heads)
-    int swmm_2d_get_coupling_fluxes_bulk(void* engine, double* fluxes)
-    int swmm_2d_get_edge_flux_bulk(void* engine, double* flux)
+    int swmm_2d_get_depths_bulk(void* engine, double* depths) nogil
+    int swmm_2d_get_heads_bulk(void* engine, double* heads) nogil
+    int swmm_2d_get_coupling_fluxes_bulk(void* engine, double* fluxes) nogil
+    int swmm_2d_get_edge_flux_bulk(void* engine, double* flux) nogil
 
     # State — per vertex
     int swmm_2d_vertex_get_head(void* engine, int idx, double* head)
-    int swmm_2d_vertex_get_heads_bulk(void* engine, double* heads)
+    int swmm_2d_vertex_get_heads_bulk(void* engine, double* heads) nogil
 
     # Statistics
     int swmm_2d_get_max_depth(void* engine, double* max_depth)

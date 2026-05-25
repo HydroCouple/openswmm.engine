@@ -290,3 +290,6 @@ environment  = { VCPKG_ROOT = "$VCPKG_ROOT" }
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts   = "-v --tb=short"
+markers   = [
+    "slow: tests that take more than ~1s of wall time (concurrent-simulation, perf checks). Skip with -m 'not slow'.",
+]

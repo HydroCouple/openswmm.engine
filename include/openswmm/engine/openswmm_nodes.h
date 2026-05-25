@@ -760,6 +760,108 @@ SWMM_ENGINE_API int swmm_node_set_lat_inflows_bulk(SWMM_Engine engine, const dou
 SWMM_ENGINE_API int swmm_node_get_quality_bulk(SWMM_Engine engine, int pollutant_idx,
                                                     double* buf, int count);
 
+/**
+ * @brief Get current stored volumes for all nodes in a single call.
+ *
+ * @details Single-pass bulk variant of @ref swmm_node_get_volume — avoids
+ *          @c N round-trips through the C ABI for whole-network reads.
+ *          Used by the MCP server's per-node info builders and the
+ *          `mass_balance` resource.
+ *
+ * @param engine     Engine handle.
+ * @param[out] buf   Caller-allocated buffer of at least @p count doubles.
+ * @param count      Number of elements. If smaller than @c swmm_node_count()
+ *                   only the first @c min(count, n_nodes) entries are written.
+ * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
+ *          invalid; @c SWMM_ERR_BADPARAM if @p buf is NULL or @p count <= 0.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_node_get_volumes_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get current outflows for all nodes in a single call.
+ *
+ * @details Single-pass bulk variant of @ref swmm_node_get_outflow.
+ *
+ * @param engine     Engine handle.
+ * @param[out] buf   Caller-allocated buffer of at least @p count doubles.
+ * @param count      Number of elements.
+ * @returns @c SWMM_OK on success, or an error code (see @ref swmm_node_get_volumes_bulk).
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_node_get_outflows_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get accumulated node losses (exfil + evap) for all nodes in one call.
+ *
+ * @details Single-pass bulk variant of @ref swmm_node_get_losses.
+ *
+ * @param engine     Engine handle.
+ * @param[out] buf   Caller-allocated buffer of at least @p count doubles.
+ * @param count      Number of elements.
+ * @returns @c SWMM_OK on success, or an error code.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_node_get_losses_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get current lateral inflows for all nodes in a single call.
+ *
+ * @details Single-pass bulk variant of @ref swmm_node_get_lateral_inflow.
+ *          The matching setter is @ref swmm_node_set_lat_inflows_bulk.
+ *
+ * @param engine     Engine handle.
+ * @param[out] buf   Caller-allocated buffer of at least @p count doubles.
+ * @param count      Number of elements.
+ * @returns @c SWMM_OK on success, or an error code.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_node_get_lateral_inflows_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get node IDs for all nodes in a single call (stride-packed UTF-8).
+ *
+ * @details Each ID is written into a fixed-size slot @c buf[i*stride .. i*stride+stride-1].
+ *          The ID is NUL-terminated within its slot; if the ID is longer than
+ *          @c stride-1 bytes it is truncated and still NUL-terminated. The
+ *          caller can recover each ID via @c strlen(buf + i*stride) (or
+ *          equivalent UTF-8-safe slicing).
+ *
+ *          This is the Phase 3 alternative to looping @ref swmm_node_id @c N
+ *          times through the C ABI. A typical stride for SWMM node IDs is
+ *          32–64 bytes (SWMM IDs are limited to MAX_ID_CHARS = 31 in legacy);
+ *          callers should choose a stride that comfortably accommodates the
+ *          longest ID in their model.
+ *
+ * @param engine   Engine handle.
+ * @param[out] buf Caller-allocated buffer of @c stride*count bytes.
+ * @param stride   Per-ID slot size in bytes (must be > 1 to allow at least
+ *                 one character plus the NUL).
+ * @param count    Number of IDs to read.
+ * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
+ *          invalid; @c SWMM_ERR_BADPARAM if @p buf is NULL, @p stride < 2,
+ *          or @p count <= 0.
+ *
+ * @par Example
+ * @code{.c}
+ *   int n = swmm_node_count(eng);
+ *   int stride = 64;
+ *   char* buf = calloc(n, stride);
+ *   swmm_node_get_ids_bulk(eng, buf, stride, n);
+ *   for (int i = 0; i < n; ++i) {
+ *       const char* id = buf + i * stride;
+ *       printf("node %d: %s\n", i, id);
+ *   }
+ * @endcode
+ *
+ * @see swmm_node_id
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_node_get_ids_bulk(SWMM_Engine engine,
+                                            char* buf,
+                                            int stride,
+                                            int count);
+
 /* =========================================================================
  * Outfall-to-subcatchment routing
  * ========================================================================= */

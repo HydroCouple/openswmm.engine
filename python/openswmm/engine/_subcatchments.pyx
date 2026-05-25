@@ -836,7 +836,8 @@ class Subcatchments:
         """Return all subcatchment runoff rates as a NumPy array.
 
         Uses the bulk C API for a single C{memcpy} -- much faster than
-        calling L{get_runoff} in a loop.
+        calling L{get_runoff} in a loop. GIL is released during the C call,
+        so a peer thread can step an independent engine in parallel.
 
         @return: Array of shape C{(n_subcatchments,)} with dtype C{float64}.
         @rtype: numpy.ndarray
@@ -844,11 +845,16 @@ class Subcatchments:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_subcatch_get_runoff_bulk(h, &buf[0], n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_subcatch_get_runoff_bulk(h, p, n)
+        _check(err)
         return buf
 
     def get_quality_bulk(self, int pollutant_idx):
         """Return all subcatchment pollutant concentrations as a NumPy array.
+        GIL is released during the C call.
 
         @param pollutant_idx: Pollutant index.
         @type pollutant_idx: int
@@ -858,8 +864,135 @@ class Subcatchments:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_subcatch_get_quality_bulk(h, pollutant_idx, &buf[0], n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_subcatch_get_quality_bulk(h, pollutant_idx, p, n)
+        _check(err)
         return buf
+
+    # ------------------------------------------------------------------
+    # Phase 3 bulk getters — rainfall / evap / infil / snow_depth / ids.
+    # GIL is released for each C call following the established pattern.
+    # ------------------------------------------------------------------
+
+    def get_rainfall_bulk(self):
+        """Return rainfall rates for all subcatchments as a NumPy array.
+        GIL is released during the C call.
+
+        :returns: Array of shape ``(n_subcatchments,)``, dtype
+                  ``float64``, in project rainfall units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_subcatch_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_subcatch_get_rainfall_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_evap_bulk(self):
+        """Return evaporation losses for all subcatchments as a NumPy
+        array. GIL is released during the C call.
+
+        :returns: Array of shape ``(n_subcatchments,)``, dtype
+                  ``float64``, in project flow/rainfall units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_subcatch_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_subcatch_get_evap_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_infil_bulk(self):
+        """Return infiltration losses for all subcatchments as a NumPy
+        array. GIL is released during the C call.
+
+        :returns: Array of shape ``(n_subcatchments,)``, dtype
+                  ``float64``, in project flow/rainfall units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_subcatch_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_subcatch_get_infil_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_snow_depth_bulk(self):
+        """Return snow depths for all subcatchments as a NumPy array.
+        GIL is released during the C call.
+
+        .. note::
+
+           Mirrors the scalar :py:meth:`get_snow_depth` placeholder:
+           returns zeros for every entry until full snow-state
+           integration with ``SubcatchData`` lands.
+
+        :returns: Array of shape ``(n_subcatchments,)``, dtype
+                  ``float64``.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_subcatch_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_subcatch_get_snow_depth_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_ids_bulk(self, int stride=64):
+        """Return all subcatchment IDs as a Python list of strings in a
+        single C call (stride-packed UTF-8). GIL is released during the
+        C copy; per-slot decoding runs afterwards.
+
+        :param stride: Per-ID slot size in bytes (default 64). IDs
+                       longer than ``stride - 1`` are truncated.
+        :type stride: int
+        :returns: List of ``n_subcatchments`` Python strings.
+        :rtype: list[str]
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_subcatch_count(h)
+        cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
+            n * stride, dtype=np.int8)
+        cdef char* p = <char*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_subcatch_get_ids_bulk(h, p, stride, n)
+        _check(err)
+        raw = bytes(buf)
+        ids = []
+        for i in range(n):
+            slot = raw[i * stride:(i + 1) * stride]
+            nul = slot.find(b"\x00")
+            if nul >= 0:
+                slot = slot[:nul]
+            ids.append(slot.decode("utf-8"))
+        return ids
 
     # ====================================================================
     # Rename

@@ -277,7 +277,8 @@ class OutputReader:
     def get_subcatch_series(
         self, subcatch_idx: int, var: int, start: int, end: int
     ) -> npt.NDArray[np.float32]:
-        """Return a time series of a subcatchment variable.
+        """Return a time series of a subcatchment variable. GIL is
+        released for the duration of the disk read.
 
         Wraps C{swmm_output_get_subcatch_series}.
 
@@ -337,7 +338,8 @@ class OutputReader:
     def get_node_series(
         self, node_idx: int, var: int, start: int, end: int
     ) -> npt.NDArray[np.float32]:
-        """Return a time series of a node variable.
+        """Return a time series of a node variable. GIL is released for
+        the duration of the disk read.
 
         Wraps C{swmm_output_get_node_series}.
 
@@ -397,7 +399,8 @@ class OutputReader:
     def get_link_series(
         self, link_idx: int, var: int, start: int, end: int
     ) -> npt.NDArray[np.float32]:
-        """Return a time series of a link variable.
+        """Return a time series of a link variable. GIL is released for
+        the duration of the disk read.
 
         Wraps C{swmm_output_get_link_series}.
 
@@ -455,7 +458,8 @@ class OutputReader:
     def get_system_series(
         self, var: int, start: int, end: int
     ) -> npt.NDArray[np.float32]:
-        """Return a time series of a system-level variable.
+        """Return a time series of a system-level variable. GIL is
+        released for the duration of the disk read.
 
         Wraps C{swmm_output_get_system_series}.
 

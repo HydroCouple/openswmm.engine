@@ -83,6 +83,42 @@ SWMM_ENGINE_API int swmm_stat_link_max_flow_bulk(SWMM_Engine engine, double* buf
 /** @brief Get total runoff volume for all subcatchments into a caller-supplied buffer. */
 SWMM_ENGINE_API int swmm_stat_subcatch_runoff_vol_bulk(SWMM_Engine engine, double* buf, int count);
 
+/* -------------------------------------------------------------------------
+ * Phase 3 statistics bulk getters — added in OpenSWMM 6.0.0 to power the
+ * MCP server's flooding / capacity summary tools without a per-node
+ * Python loop. Each is a simple SoA memcpy from the corresponding
+ * scalar accessor's column.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @brief Get maximum overflow rate for all nodes into a caller-supplied buffer.
+ * @details Bulk variant of @ref swmm_stat_node_max_overflow. SoA copy of
+ *          @c ctx.nodes.stat_max_overflow.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_stat_node_max_overflow_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get total flooded volume for all nodes into a caller-supplied buffer.
+ * @details Bulk variant of @ref swmm_stat_node_vol_flooded.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_stat_node_vol_flooded_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get cumulative time-flooded for all nodes into a caller-supplied buffer.
+ * @details Bulk variant of @ref swmm_stat_node_time_flooded.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_stat_node_time_flooded_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get peak runoff rate for all subcatchments into a caller-supplied buffer.
+ * @details Bulk variant of @ref swmm_stat_subcatch_max_runoff.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_stat_subcatch_max_runoff_bulk(SWMM_Engine engine, double* buf, int count);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

@@ -193,6 +193,11 @@ class Solver:
                 if rc != 0:
                     break
 
+        The GIL is released for the duration of the C step, so another
+        Python thread can advance an independent L{Solver} in parallel.
+        Registered step-begin / step-end callbacks reacquire the GIL via
+        their Cython trampolines and remain safe.
+
         @return: Error code from the C API (C{0} on success, non-zero on
             failure).
         @rtype: int
@@ -202,7 +207,9 @@ class Solver:
     def stride(self, n_steps: int) -> int:
         """Advance the simulation by C{n_steps} timesteps in one call.
 
-        Updates L{elapsed} as a side effect.
+        Updates L{elapsed} as a side effect. The GIL is released for the
+        duration of the C call — particularly valuable for stride() since
+        it amortises a single GIL release over many C-level steps.
 
         @param n_steps: Number of timesteps to advance.
         @type n_steps: int

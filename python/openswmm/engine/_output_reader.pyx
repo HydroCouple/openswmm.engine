@@ -304,7 +304,8 @@ cdef class OutputReader:
 
     def get_subcatch_series(self, int subcatch_idx, int var,
                             int start, int end) -> np.ndarray:
-        """Return a time series of a subcatchment variable.
+        """Return a time series of a subcatchment variable. GIL is
+        released for the duration of the disk read.
 
         Wraps C{swmm_output_get_subcatch_series}.
 
@@ -322,8 +323,11 @@ cdef class OutputReader:
         """
         cdef int n = end - start + 1
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
-        cdef int rc = swmm_output_get_subcatch_series(
-            self._handle, subcatch_idx, var, start, end, <float*>buf.data)
+        cdef SWMM_Output h = self._handle
+        cdef float* p = <float*>buf.data
+        cdef int rc
+        with nogil:
+            rc = swmm_output_get_subcatch_series(h, subcatch_idx, var, start, end, p)
         if rc != 0:
             raise RuntimeError(f"Output read error {rc}")
         return buf
@@ -377,7 +381,8 @@ cdef class OutputReader:
 
     def get_node_series(self, int node_idx, int var,
                         int start, int end) -> np.ndarray:
-        """Return a time series of a node variable.
+        """Return a time series of a node variable. GIL is released for
+        the duration of the disk read.
 
         Wraps C{swmm_output_get_node_series}.
 
@@ -395,8 +400,11 @@ cdef class OutputReader:
         """
         cdef int n = end - start + 1
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
-        cdef int rc = swmm_output_get_node_series(
-            self._handle, node_idx, var, start, end, <float*>buf.data)
+        cdef SWMM_Output h = self._handle
+        cdef float* p = <float*>buf.data
+        cdef int rc
+        with nogil:
+            rc = swmm_output_get_node_series(h, node_idx, var, start, end, p)
         if rc != 0:
             raise RuntimeError(f"Output read error {rc}")
         return buf
@@ -450,7 +458,8 @@ cdef class OutputReader:
 
     def get_link_series(self, int link_idx, int var,
                         int start, int end) -> np.ndarray:
-        """Return a time series of a link variable.
+        """Return a time series of a link variable. GIL is released for
+        the duration of the disk read.
 
         Wraps C{swmm_output_get_link_series}.
 
@@ -468,8 +477,11 @@ cdef class OutputReader:
         """
         cdef int n = end - start + 1
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
-        cdef int rc = swmm_output_get_link_series(
-            self._handle, link_idx, var, start, end, <float*>buf.data)
+        cdef SWMM_Output h = self._handle
+        cdef float* p = <float*>buf.data
+        cdef int rc
+        with nogil:
+            rc = swmm_output_get_link_series(h, link_idx, var, start, end, p)
         if rc != 0:
             raise RuntimeError(f"Output read error {rc}")
         return buf
@@ -521,7 +533,8 @@ cdef class OutputReader:
         return v
 
     def get_system_series(self, int var, int start, int end) -> np.ndarray:
-        """Return a time series of a system-level variable.
+        """Return a time series of a system-level variable. GIL is
+        released for the duration of the disk read.
 
         Wraps C{swmm_output_get_system_series}.
 
@@ -537,8 +550,11 @@ cdef class OutputReader:
         """
         cdef int n = end - start + 1
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
-        cdef int rc = swmm_output_get_system_series(
-            self._handle, var, start, end, <float*>buf.data)
+        cdef SWMM_Output h = self._handle
+        cdef float* p = <float*>buf.data
+        cdef int rc
+        with nogil:
+            rc = swmm_output_get_system_series(h, var, start, end, p)
         if rc != 0:
             raise RuntimeError(f"Output read error {rc}")
         return buf

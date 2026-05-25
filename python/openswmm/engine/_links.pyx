@@ -1082,12 +1082,75 @@ class Links:
         _check(swmm_link_get_hyd_power(h, i, &v))
         return v
 
+    def get_pump_stats_bulk(self):
+        """Return pump utilization statistics for **all** links in one call.
+
+        This is the bulk equivalent of calling :py:meth:`get_stat_pump_cycles`,
+        :py:meth:`get_stat_pump_on_time`, and :py:meth:`get_stat_pump_volume`
+        for every link. It performs a single C ABI crossing instead of
+        C{3 * n_links}, which makes it the preferred accessor when assembling
+        a network-wide pump summary.
+
+        Non-pump links are tagged with a sentinel: ``cycles[i] == -1`` and
+        ``on_time[i] == volume[i] == 0.0``. Use the cycles sentinel (not the
+        zero values, which are also valid for an inactive pump) to filter:
+
+        .. code-block:: python
+
+            stats = links.get_pump_stats_bulk()
+            mask = stats["cycles"] >= 0          # pumps only
+            pump_indices = np.where(mask)[0]
+            total_volume = stats["volume"][mask].sum()
+
+        The GIL is released for the duration of the C call.
+
+        :returns: A dict with three NumPy arrays of length ``n_links``:
+
+                  * ``cycles`` — ``int32`` array of pump on/off cycle counts;
+                    ``-1`` where the link is not a pump.
+                  * ``on_time`` — ``float64`` array of total pump on-time in
+                    seconds; ``0.0`` for non-pumps.
+                  * ``volume`` — ``float64`` array of total volume pumped in
+                    ft³; ``0.0`` for non-pumps.
+
+        :rtype: dict[str, numpy.ndarray]
+
+        .. versionadded:: 6.0.0
+
+        .. seealso::
+
+           :py:meth:`get_stat_pump_cycles`,
+           :py:meth:`get_stat_pump_on_time`,
+           :py:meth:`get_stat_pump_volume` — equivalent per-link scalar
+           accessors.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_link_count(h)
+        # Allocate NumPy buffers up-front; the C call only sees raw pointers
+        # so the GIL can be safely released during the iteration.
+        cdef np.ndarray[int, ndim=1] cycles = np.empty(n, dtype=np.intc)
+        cdef np.ndarray[double, ndim=1] on_time = np.empty(n, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] volume = np.empty(n, dtype=np.float64)
+        cdef int err
+        cdef int* p_cycles = <int*>cycles.data
+        cdef double* p_on = <double*>on_time.data
+        cdef double* p_vol = <double*>volume.data
+        with nogil:
+            err = swmm_link_get_pump_stats_bulk(h, p_cycles, p_on, p_vol, n)
+        _check(err)
+        return {"cycles": cycles, "on_time": on_time, "volume": volume}
+
     # ====================================================================
     # Bulk array access (numpy)
     # ====================================================================
 
+    # Each bulk accessor below releases the GIL for its single C call —
+    # see the analogous comment block in `_nodes.pyx` for the rationale
+    # and the pre-/post-call pattern.
+
     def get_flows_bulk(self):
-        """Return all link flows as a NumPy array.
+        """Return all link flows as a NumPy array. GIL is released during
+        the C call.
 
         @return: Array of shape C{(n_links,)} with dtype C{float64}.
         @rtype: numpy.ndarray
@@ -1095,21 +1158,31 @@ class Links:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_link_get_flows_bulk(h, &buf[0], n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_link_get_flows_bulk(h, p, n)
+        _check(err)
         return buf
 
     def set_flows_bulk(self, np.ndarray[double, ndim=1] values):
-        """Set all link flows from a NumPy array.
+        """Set all link flows from a NumPy array. GIL is released during
+        the C call.
 
         @param values: Array of shape C{(n_links,)} with dtype C{float64}.
         @type values: numpy.ndarray
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_link_count(h)
-        _check(swmm_link_set_flows_bulk(h, &values[0], n))
+        cdef const double* p = <const double*>values.data
+        cdef int err
+        with nogil:
+            err = swmm_link_set_flows_bulk(h, p, n)
+        _check(err)
 
     def get_depths_bulk(self):
-        """Return all link depths as a NumPy array.
+        """Return all link depths as a NumPy array. GIL is released during
+        the C call.
 
         @return: Array of shape C{(n_links,)} with dtype C{float64}.
         @rtype: numpy.ndarray
@@ -1117,11 +1190,16 @@ class Links:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_link_get_depths_bulk(h, &buf[0], n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_link_get_depths_bulk(h, p, n)
+        _check(err)
         return buf
 
     def get_quality_bulk(self, int pollutant_idx):
-        """Return all link pollutant concentrations as a NumPy array.
+        """Return all link pollutant concentrations as a NumPy array. GIL
+        is released during the C call.
 
         @param pollutant_idx: Pollutant index.
         @type pollutant_idx: int
@@ -1131,8 +1209,180 @@ class Links:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_link_get_quality_bulk(h, pollutant_idx, &buf[0], n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_link_get_quality_bulk(h, pollutant_idx, p, n)
+        _check(err)
         return buf
+
+    # ------------------------------------------------------------------
+    # Phase 3 bulk getters — velocities / capacities / volumes /
+    # control_settings / target_settings / hyd_powers / ids.
+    #
+    # Velocities, capacities, and hydraulic powers are derived quantities
+    # (per-link calculation in C, not a memcpy from a SoA column). The
+    # bulk forms still save the N-call ABI crossing cost. GIL is released
+    # for each C call.
+    # ------------------------------------------------------------------
+
+    def get_velocities_bulk(self):
+        """Return cross-sectional velocities for all links as a NumPy
+        array. Computed per link in C as ``q / area`` (area approximated
+        from ``d / y_full * a_full``). GIL is released during the C call.
+
+        :returns: Array of shape ``(n_links,)``, dtype ``float64``, in
+                  project length/time units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_link_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_link_get_velocities_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_capacities_bulk(self):
+        """Return capacity ratios (``q / q_full``) for all links as a
+        NumPy array. GIL is released during the C call.
+
+        :returns: Array of shape ``(n_links,)``, dtype ``float64``,
+                  dimensionless ratio (>= 1 indicates surcharge).
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_link_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_link_get_capacities_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_volumes_bulk(self):
+        """Return stored volumes for all links as a NumPy array. GIL is
+        released during the C call.
+
+        :returns: Array of shape ``(n_links,)``, dtype ``float64``, in
+                  project volume units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_link_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_link_get_volumes_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_control_settings_bulk(self):
+        """Return active control settings (0..1) for all links as a NumPy
+        array. GIL is released during the C call.
+
+        :returns: Array of shape ``(n_links,)``, dtype ``float64``.
+                  ``0.0`` = closed, ``1.0`` = fully open.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_link_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_link_get_control_settings_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_target_settings_bulk(self):
+        """Return target control settings for all links as a NumPy array.
+        GIL is released during the C call.
+
+        :returns: Array of shape ``(n_links,)``, dtype ``float64``.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_link_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_link_get_target_settings_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_hyd_powers_bulk(self):
+        """Return hydraulic power dissipated in every link as a NumPy
+        array. ``P = gamma * |Q| * |h_up - h_dn|`` (ft-lb/s). GIL is
+        released during the C call.
+
+        :returns: Array of shape ``(n_links,)``, dtype ``float64``,
+                  in ft-lb/s. Divide by 550 for horsepower.
+        :rtype: numpy.ndarray
+
+        .. seealso::
+
+           :py:meth:`get_pump_stats_bulk` — pair this with ``cycles >= 0``
+           to filter to pumps when assembling a pump-energy summary.
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_link_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_link_get_hyd_powers_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_ids_bulk(self, int stride=64):
+        """Return all link IDs as a Python list of strings in a single C
+        call (stride-packed UTF-8). GIL is released during the C copy;
+        per-slot decoding runs afterwards.
+
+        :param stride: Per-ID slot size in bytes (default 64). IDs
+                       longer than ``stride - 1`` are truncated.
+        :type stride: int
+        :returns: List of ``n_links`` Python strings.
+        :rtype: list[str]
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_link_count(h)
+        cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
+            n * stride, dtype=np.int8)
+        cdef char* p = <char*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_link_get_ids_bulk(h, p, stride, n)
+        _check(err)
+        raw = bytes(buf)
+        ids = []
+        for i in range(n):
+            slot = raw[i * stride:(i + 1) * stride]
+            nul = slot.find(b"\x00")
+            if nul >= 0:
+                slot = slot[:nul]
+            ids.append(slot.decode("utf-8"))
+        return ids
 
     # ====================================================================
     # Rename

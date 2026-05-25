@@ -539,6 +539,77 @@ SWMM_ENGINE_API int swmm_subcatch_get_quality_bulk(SWMM_Engine engine, int pollu
     return SWMM_OK;
 }
 
+// ----------------------------------------------------------------------------
+// Phase 3 bulk getters — Subcatchments.
+//
+// rainfall, evap_loss, infil_loss are simple SoA memcpys. snow_depth mirrors
+// the scalar accessor (which currently returns 0.0 since snow state lives in
+// the SnowSolver, not SubcatchData) — when snow integration lands, both the
+// scalar and bulk variants get updated together. IDs follow the stride-packed
+// UTF-8 format established by swmm_node_get_ids_bulk.
+// ----------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_subcatch_get_rainfall_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    std::copy(ctx.subcatches.rainfall.begin(),
+              ctx.subcatches.rainfall.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_evap_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    std::copy(ctx.subcatches.evap_loss.begin(),
+              ctx.subcatches.evap_loss.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_infil_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    std::copy(ctx.subcatches.infil_loss.begin(),
+              ctx.subcatches.infil_loss.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_snow_depth_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    // Mirror the scalar accessor's placeholder behavior: zero-fill until
+    // snow state is integrated with SubcatchData.
+    std::fill_n(buf, n, 0.0);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_ids_bulk(SWMM_Engine engine,
+                                                char* buf,
+                                                int stride,
+                                                int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || stride < 2 || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    const std::size_t s = static_cast<std::size_t>(stride);
+
+    std::fill_n(buf, s * static_cast<std::size_t>(n), '\0');
+    for (int i = 0; i < n; ++i) {
+        const std::string& name = ctx.subcatch_names.name_of(i);
+        const std::size_t copy_n = std::min(name.size(), s - 1);
+        std::memcpy(buf + static_cast<std::size_t>(i) * s,
+                    name.data(), copy_n);
+    }
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Ponded quality
 // ============================================================================

@@ -49,6 +49,70 @@ class TestPumpStatistics:
         assert v >= 0.0
 
 
+class TestPumpStatsBulk:
+    """Bulk pump-stats accessor — single C call returning numpy arrays.
+
+    The contract under test:
+
+      * Returns a dict with keys ``cycles`` (int32), ``on_time`` (float64),
+        and ``volume`` (float64). Each array has length ``n_links``.
+      * For non-pump links, ``cycles[i] == -1`` and ``on_time[i] == 0.0``
+        and ``volume[i] == 0.0`` (the cycles sentinel is the discriminator).
+      * For pump links, the values match the per-link scalar getters
+        exactly (numerical equivalence).
+      * The number of non-sentinel entries equals the number of pump links
+        when discovered independently via ``get_type``.
+    """
+
+    def test_exists(self, stepped_links):
+        assert hasattr(stepped_links, "get_pump_stats_bulk")
+
+    def test_return_shape_and_dtypes(self, stepped_links):
+        n = stepped_links.count
+        result = stepped_links.get_pump_stats_bulk()
+        assert set(result.keys()) == {"cycles", "on_time", "volume"}
+        assert result["cycles"].shape == (n,)
+        assert result["on_time"].shape == (n,)
+        assert result["volume"].shape == (n,)
+        assert result["cycles"].dtype == np.intc
+        assert result["on_time"].dtype == np.float64
+        assert result["volume"].dtype == np.float64
+
+    def test_equivalence_with_scalar_getters(self, stepped_links):
+        """Bulk values must match scalar values for every pump link.
+
+        Non-pump links are skipped because the scalar getters read raw
+        statistics vectors and may return zeros while the bulk getter
+        emits the documented sentinel.
+        """
+        result = stepped_links.get_pump_stats_bulk()
+        n = stepped_links.count
+        # LinkType.PUMP == 1 (see LinkData.hpp); use get_type to discover.
+        for i in range(n):
+            if stepped_links.get_type(i) != 1:  # not a pump
+                assert result["cycles"][i] == -1
+                assert result["on_time"][i] == 0.0
+                assert result["volume"][i] == 0.0
+                continue
+            # Pump link: bulk == scalar exactly.
+            assert result["cycles"][i] == stepped_links.get_stat_pump_cycles(i)
+            assert result["on_time"][i] == stepped_links.get_stat_pump_on_time(i)
+            assert result["volume"][i] == stepped_links.get_stat_pump_volume(i)
+
+    def test_sentinel_count_matches_non_pumps(self, stepped_links):
+        """Count of -1 sentinels should equal the count of non-pump links."""
+        result = stepped_links.get_pump_stats_bulk()
+        n = stepped_links.count
+        n_non_pumps = sum(1 for i in range(n) if stepped_links.get_type(i) != 1)
+        assert int((result["cycles"] == -1).sum()) == n_non_pumps
+
+    def test_returns_contiguous_arrays(self, stepped_links):
+        """C call passes raw pointers; arrays must be C-contiguous."""
+        result = stepped_links.get_pump_stats_bulk()
+        for arr in result.values():
+            assert arr.flags["C_CONTIGUOUS"]
+
+
 # ============================================================================
 # Links: Hydraulic Power
 # ============================================================================
@@ -293,3 +357,368 @@ class TestPondedQuality:
         except Exception:
             # Might fail if no pollutants — that's OK
             pass
+
+
+# ============================================================================
+# Phase 3: Nodes bulk getters (volumes / outflows / losses /
+# lateral_inflows / ids)
+# ============================================================================
+
+class TestNodesPhase3Bulk:
+    """Equivalence and contract tests for the Phase 3 nodes-bulk family.
+
+    The contract under test for each get_*_bulk:
+
+      * Returns a NumPy ``float64`` (or ``list[str]`` for ids) of length
+        ``n_nodes``.
+      * Each entry matches the scalar accessor on the same engine state
+        (numerical equivalence).
+      * The C array is contiguous (the C call writes raw doubles into
+        ``arr.data``).
+    """
+
+    def test_get_volumes_bulk_exists(self, stepped_nodes):
+        assert hasattr(stepped_nodes, "get_volumes_bulk")
+
+    def test_get_volumes_bulk_shape_and_dtype(self, stepped_nodes):
+        n = stepped_nodes.count
+        arr = stepped_nodes.get_volumes_bulk()
+        assert isinstance(arr, np.ndarray)
+        assert arr.shape == (n,)
+        assert arr.dtype == np.float64
+        assert arr.flags["C_CONTIGUOUS"]
+
+    def test_get_volumes_bulk_equivalence(self, stepped_nodes):
+        arr = stepped_nodes.get_volumes_bulk()
+        n = stepped_nodes.count
+        for i in range(n):
+            assert arr[i] == stepped_nodes.get_volume(i), f"node {i}"
+
+    def test_get_outflows_bulk_equivalence(self, stepped_nodes):
+        arr = stepped_nodes.get_outflows_bulk()
+        n = stepped_nodes.count
+        for i in range(n):
+            assert arr[i] == stepped_nodes.get_outflow(i), f"node {i}"
+
+    def test_get_losses_bulk_equivalence(self, stepped_nodes):
+        arr = stepped_nodes.get_losses_bulk()
+        n = stepped_nodes.count
+        for i in range(n):
+            assert arr[i] == stepped_nodes.get_losses(i), f"node {i}"
+
+    def test_get_lateral_inflows_bulk_equivalence(self, stepped_nodes):
+        arr = stepped_nodes.get_lateral_inflows_bulk()
+        n = stepped_nodes.count
+        for i in range(n):
+            assert arr[i] == stepped_nodes.get_lateral_inflow(i), f"node {i}"
+
+    def test_get_lateral_inflows_bulk_matches_inflows_bulk(self, stepped_nodes):
+        """Backward-compat: ``get_lateral_inflows_bulk`` reads the same
+        SoA column as the older ``get_inflows_bulk`` (both expose
+        ``lat_flow``)."""
+        new = stepped_nodes.get_lateral_inflows_bulk()
+        old = stepped_nodes.get_inflows_bulk()
+        np.testing.assert_array_equal(new, old)
+
+    def test_get_ids_bulk_returns_list_of_strings(self, stepped_nodes):
+        ids = stepped_nodes.get_ids_bulk()
+        n = stepped_nodes.count
+        assert isinstance(ids, list)
+        assert len(ids) == n
+        for s in ids:
+            assert isinstance(s, str)
+
+    def test_get_ids_bulk_equivalence_with_scalar(self, stepped_nodes):
+        ids = stepped_nodes.get_ids_bulk()
+        n = stepped_nodes.count
+        for i in range(n):
+            assert ids[i] == stepped_nodes.get_id(i), f"index {i}"
+
+    def test_get_ids_bulk_handles_short_stride_truncation(self, stepped_nodes):
+        """A deliberately small stride should truncate IDs without
+        crashing. Each returned string is at most ``stride - 1`` chars."""
+        stride = 4
+        ids = stepped_nodes.get_ids_bulk(stride=stride)
+        for s in ids:
+            # UTF-8 length (bytes), not codepoints — but SWMM IDs are
+            # ASCII so they coincide. Allow exactly stride-1 bytes max.
+            assert len(s.encode("utf-8")) <= stride - 1
+
+    def test_get_ids_bulk_default_stride_no_truncation(self, stepped_nodes):
+        """At the default stride of 64, the site_drainage fixture's IDs
+        must round-trip without loss."""
+        ids = stepped_nodes.get_ids_bulk()
+        for i, s in enumerate(ids):
+            assert s == stepped_nodes.get_id(i)
+
+
+# ============================================================================
+# Phase 3: Links bulk getters (velocities / capacities / volumes /
+# control_settings / target_settings / hyd_powers / ids)
+# ============================================================================
+
+class TestLinksPhase3Bulk:
+    """Equivalence and contract tests for the Phase 3 links-bulk family.
+
+    Velocities, capacities, and hyd_powers are derived per-link in C; the
+    rest are SoA memcpys. Both flavours must agree bit-for-bit with the
+    matching scalar accessors.
+    """
+
+    def test_velocities_bulk_shape(self, stepped_links):
+        arr = stepped_links.get_velocities_bulk()
+        assert isinstance(arr, np.ndarray)
+        assert arr.shape == (stepped_links.count,)
+        assert arr.dtype == np.float64
+        assert arr.flags["C_CONTIGUOUS"]
+
+    def test_velocities_bulk_equivalence(self, stepped_links):
+        arr = stepped_links.get_velocities_bulk()
+        for i in range(stepped_links.count):
+            assert arr[i] == stepped_links.get_velocity(i), f"link {i}"
+
+    def test_capacities_bulk_equivalence(self, stepped_links):
+        arr = stepped_links.get_capacities_bulk()
+        for i in range(stepped_links.count):
+            assert arr[i] == stepped_links.get_capacity(i), f"link {i}"
+
+    def test_volumes_bulk_equivalence(self, stepped_links):
+        arr = stepped_links.get_volumes_bulk()
+        for i in range(stepped_links.count):
+            assert arr[i] == stepped_links.get_volume(i), f"link {i}"
+
+    def test_control_settings_bulk_equivalence(self, stepped_links):
+        arr = stepped_links.get_control_settings_bulk()
+        for i in range(stepped_links.count):
+            assert arr[i] == stepped_links.get_control_setting(i), f"link {i}"
+
+    def test_target_settings_bulk_equivalence(self, stepped_links):
+        arr = stepped_links.get_target_settings_bulk()
+        for i in range(stepped_links.count):
+            assert arr[i] == stepped_links.get_target_setting(i), f"link {i}"
+
+    def test_hyd_powers_bulk_equivalence(self, stepped_links):
+        arr = stepped_links.get_hyd_powers_bulk()
+        for i in range(stepped_links.count):
+            assert arr[i] == stepped_links.get_hyd_power(i), f"link {i}"
+
+    def test_ids_bulk_returns_list_of_strings(self, stepped_links):
+        ids = stepped_links.get_ids_bulk()
+        assert isinstance(ids, list)
+        assert len(ids) == stepped_links.count
+        for s in ids:
+            assert isinstance(s, str)
+
+    def test_ids_bulk_equivalence_with_scalar(self, stepped_links):
+        ids = stepped_links.get_ids_bulk()
+        for i, s in enumerate(ids):
+            assert s == stepped_links.get_id(i), f"index {i}"
+
+    def test_ids_bulk_handles_short_stride_truncation(self, stepped_links):
+        stride = 4
+        ids = stepped_links.get_ids_bulk(stride=stride)
+        for s in ids:
+            assert len(s.encode("utf-8")) <= stride - 1
+
+    def test_ids_bulk_default_stride_no_truncation(self, stepped_links):
+        ids = stepped_links.get_ids_bulk()
+        for i, s in enumerate(ids):
+            assert s == stepped_links.get_id(i)
+
+    def test_pump_filtered_hyd_power_summary(self, stepped_links):
+        """End-to-end pattern: pair ``get_pump_stats_bulk`` with
+        ``get_hyd_powers_bulk`` to get pump power totals — the canonical
+        idiom for the MCP server's pump-energy summary."""
+        stats = stepped_links.get_pump_stats_bulk()
+        powers = stepped_links.get_hyd_powers_bulk()
+        mask = stats["cycles"] >= 0
+        # Non-pumps still have a defined hyd_power, but the sum below
+        # is restricted to pumps only — this is the documented pattern.
+        pump_power = float(powers[mask].sum())
+        assert pump_power >= 0.0
+
+
+# ============================================================================
+# Phase 3: Subcatchments bulk getters (rainfall / evap / infil /
+# snow_depth / ids)
+# ============================================================================
+
+class TestSubcatchmentsPhase3Bulk:
+    """Equivalence and contract tests for the Phase 3 subcatchments-bulk
+    family.
+
+    Snow depth currently returns zeros from both the scalar and bulk
+    variants (placeholder until snow-state integration); the equivalence
+    test exercises that documented behaviour.
+    """
+
+    def test_rainfall_bulk_shape(self, stepped_subcatchments):
+        arr = stepped_subcatchments.get_rainfall_bulk()
+        assert isinstance(arr, np.ndarray)
+        assert arr.shape == (stepped_subcatchments.count,)
+        assert arr.dtype == np.float64
+        assert arr.flags["C_CONTIGUOUS"]
+
+    def test_rainfall_bulk_equivalence(self, stepped_subcatchments):
+        arr = stepped_subcatchments.get_rainfall_bulk()
+        for i in range(stepped_subcatchments.count):
+            assert arr[i] == stepped_subcatchments.get_rainfall(i), f"subcatch {i}"
+
+    def test_evap_bulk_equivalence(self, stepped_subcatchments):
+        arr = stepped_subcatchments.get_evap_bulk()
+        for i in range(stepped_subcatchments.count):
+            assert arr[i] == stepped_subcatchments.get_evap(i), f"subcatch {i}"
+
+    def test_infil_bulk_equivalence(self, stepped_subcatchments):
+        arr = stepped_subcatchments.get_infil_bulk()
+        for i in range(stepped_subcatchments.count):
+            assert arr[i] == stepped_subcatchments.get_infil(i), f"subcatch {i}"
+
+    def test_snow_depth_bulk_returns_zeros_placeholder(self, stepped_subcatchments):
+        """Mirrors the scalar accessor's placeholder behavior — every
+        entry is 0.0 until snow-state integration lands. When that
+        integration completes, both this test and the scalar test will
+        need a corresponding update."""
+        arr = stepped_subcatchments.get_snow_depth_bulk()
+        for i in range(stepped_subcatchments.count):
+            scalar = stepped_subcatchments.get_snow_depth(i)
+            assert arr[i] == scalar, f"subcatch {i}"
+            assert arr[i] == 0.0, f"subcatch {i}: expected placeholder zero"
+
+    def test_ids_bulk_returns_list_of_strings(self, stepped_subcatchments):
+        ids = stepped_subcatchments.get_ids_bulk()
+        assert isinstance(ids, list)
+        assert len(ids) == stepped_subcatchments.count
+        for s in ids:
+            assert isinstance(s, str)
+
+    def test_ids_bulk_equivalence_with_scalar(self, stepped_subcatchments):
+        ids = stepped_subcatchments.get_ids_bulk()
+        for i, s in enumerate(ids):
+            assert s == stepped_subcatchments.get_id(i), f"index {i}"
+
+    def test_ids_bulk_handles_short_stride_truncation(self, stepped_subcatchments):
+        stride = 4
+        ids = stepped_subcatchments.get_ids_bulk(stride=stride)
+        for s in ids:
+            assert len(s.encode("utf-8")) <= stride - 1
+
+    def test_ids_bulk_default_stride_no_truncation(self, stepped_subcatchments):
+        ids = stepped_subcatchments.get_ids_bulk()
+        for i, s in enumerate(ids):
+            assert s == stepped_subcatchments.get_id(i)
+
+    def test_whole_network_water_balance_pattern(self, stepped_subcatchments):
+        """End-to-end pattern: rainfall - infil - evap - runoff per
+        subcatchment as a quick water-balance check. This is the canonical
+        MCP / GUI idiom; verifies the four hydrology bulk getters return
+        equally-sized arrays in matching subcatch order."""
+        rain = stepped_subcatchments.get_rainfall_bulk()
+        infil = stepped_subcatchments.get_infil_bulk()
+        evap = stepped_subcatchments.get_evap_bulk()
+        runoff = stepped_subcatchments.get_runoff_bulk()
+        n = stepped_subcatchments.count
+        assert rain.shape == (n,)
+        assert infil.shape == (n,)
+        assert evap.shape == (n,)
+        assert runoff.shape == (n,)
+        # Each subcatch has a non-negative residual when storage is steady.
+        # We don't assert sign here (snow / storage make the instantaneous
+        # balance noisy), just that we can compute it without error.
+        residual = rain - infil - evap - runoff
+        assert residual.shape == (n,)
+
+
+# ============================================================================
+# Phase 3: Statistics bulk getters (node max_overflow / vol_flooded /
+# time_flooded; subcatch max_runoff)
+# ============================================================================
+
+class TestStatisticsPhase3Bulk:
+    """Equivalence + non-negativity tests for the Phase 3 statistics-bulk
+    family. These are cumulative quantities populated over the simulation,
+    so each test runs against ``completed_solver`` (a fixture that drives
+    the site_drainage_model through to ENDED) and asserts equivalence with
+    the post-run scalar accessor.
+    """
+
+    def test_node_max_overflow_bulk_shape(self, completed_solver):
+        from openswmm.engine import Nodes, Statistics
+        stats = Statistics(completed_solver)
+        nodes = Nodes(completed_solver)
+        arr = stats.node_max_overflow_bulk()
+        assert isinstance(arr, np.ndarray)
+        assert arr.shape == (nodes.count,)
+        assert arr.dtype == np.float64
+        assert arr.flags["C_CONTIGUOUS"]
+
+    def test_node_max_overflow_bulk_equivalence(self, completed_solver):
+        from openswmm.engine import Nodes, Statistics
+        stats = Statistics(completed_solver)
+        nodes = Nodes(completed_solver)
+        arr = stats.node_max_overflow_bulk()
+        for i in range(nodes.count):
+            assert arr[i] == nodes.get_stat_max_overflow(i), f"node {i}"
+
+    def test_node_vol_flooded_bulk_equivalence(self, completed_solver):
+        from openswmm.engine import Nodes, Statistics
+        stats = Statistics(completed_solver)
+        nodes = Nodes(completed_solver)
+        arr = stats.node_vol_flooded_bulk()
+        for i in range(nodes.count):
+            assert arr[i] == nodes.get_stat_vol_flooded(i), f"node {i}"
+
+    def test_node_time_flooded_bulk_equivalence(self, completed_solver):
+        from openswmm.engine import Nodes, Statistics
+        stats = Statistics(completed_solver)
+        nodes = Nodes(completed_solver)
+        arr = stats.node_time_flooded_bulk()
+        for i in range(nodes.count):
+            assert arr[i] == nodes.get_stat_time_flooded(i), f"node {i}"
+
+    def test_subcatch_max_runoff_bulk_equivalence(self, completed_solver):
+        from openswmm.engine import Subcatchments, Statistics
+        stats = Statistics(completed_solver)
+        subs = Subcatchments(completed_solver)
+        arr = stats.subcatch_max_runoff_bulk()
+        for i in range(subs.count):
+            assert arr[i] == subs.get_stat_max_runoff(i), f"subcatch {i}"
+
+    def test_all_stats_non_negative(self, completed_solver):
+        """Cumulative non-negative quantities — a regression that reads the
+        wrong SoA column would likely produce negatives here."""
+        from openswmm.engine import Statistics
+        stats = Statistics(completed_solver)
+        for arr_name, arr in [
+            ("node_max_overflow_bulk", stats.node_max_overflow_bulk()),
+            ("node_vol_flooded_bulk",  stats.node_vol_flooded_bulk()),
+            ("node_time_flooded_bulk", stats.node_time_flooded_bulk()),
+            ("subcatch_max_runoff_bulk", stats.subcatch_max_runoff_bulk()),
+        ]:
+            assert (arr >= 0).all(), f"{arr_name} has a negative entry"
+
+    def test_flooding_summary_idiom(self, completed_solver):
+        """End-to-end pattern: pair the three flooding bulk getters with
+        ``Nodes.get_ids_bulk()`` to assemble a network-wide flooding
+        summary in 4 C calls instead of 4*N. This is the canonical
+        replacement for the MCP server's ``get_flooding_summary`` Python
+        loop."""
+        from openswmm.engine import Nodes, Statistics
+        stats = Statistics(completed_solver)
+        nodes = Nodes(completed_solver)
+        ids       = nodes.get_ids_bulk()
+        max_over  = stats.node_max_overflow_bulk()
+        vol_flood = stats.node_vol_flooded_bulk()
+        t_flood   = stats.node_time_flooded_bulk()
+        # All four results align on the node index.
+        n = nodes.count
+        assert len(ids) == n
+        assert max_over.shape == (n,)
+        assert vol_flood.shape == (n,)
+        assert t_flood.shape == (n,)
+        # The set of "flooded nodes" is consistent across the three stats:
+        # a node with no flooded time should also have zero flooded volume.
+        for i in range(n):
+            if t_flood[i] == 0.0:
+                assert vol_flood[i] == 0.0, (
+                    f"{ids[i]}: t_flooded==0 but vol_flooded={vol_flood[i]}")

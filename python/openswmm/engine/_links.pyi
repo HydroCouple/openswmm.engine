@@ -839,12 +839,39 @@ class Links:
         """
         ...
 
+    def get_pump_stats_bulk(self) -> dict[str, npt.NDArray]:
+        """Return pump utilization statistics for **all** links in one call.
+
+        This is the bulk equivalent of calling :py:meth:`get_stat_pump_cycles`,
+        :py:meth:`get_stat_pump_on_time`, and :py:meth:`get_stat_pump_volume`
+        for every link, with one C ABI crossing instead of C{3 * n_links}.
+        The GIL is released for the duration of the C call.
+
+        Non-pump links carry a sentinel: C{cycles[i] == -1} and
+        C{on_time[i] == volume[i] == 0.0}. Filter pumps with
+        C{stats["cycles"] >= 0}.
+
+        @return: A dict with three NumPy arrays of length C{n_links}:
+                 ``cycles`` (C{int32}, ``-1`` for non-pumps);
+                 ``on_time`` (C{float64}, seconds);
+                 ``volume`` (C{float64}, ft3).
+        @rtype: dict[str, numpy.ndarray]
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
     # ====================================================================
     # Bulk array access (numpy)
+    #
+    # Every method in this section releases the GIL for the duration of
+    # the underlying C call. See the package-level user guide for the
+    # full threading story.
     # ====================================================================
 
     def get_flows_bulk(self) -> npt.NDArray[np.float64]:
-        """Return all link flows as a NumPy array.
+        """Return all link flows as a NumPy array. GIL is released during
+        the C call.
 
         @return: Array of shape C{(n_links,)} with dtype C{float64}.
         @rtype: numpy.typing.NDArray[numpy.float64]
@@ -852,7 +879,8 @@ class Links:
         ...
 
     def set_flows_bulk(self, values: npt.NDArray[np.float64]) -> None:
-        """Set all link flows from a NumPy array.
+        """Set all link flows from a NumPy array. GIL is released during
+        the C call.
 
         @param values: Array of shape C{(n_links,)} with dtype C{float64}.
         @type values: numpy.typing.NDArray[numpy.float64]
@@ -860,7 +888,8 @@ class Links:
         ...
 
     def get_depths_bulk(self) -> npt.NDArray[np.float64]:
-        """Return all link depths as a NumPy array.
+        """Return all link depths as a NumPy array. GIL is released during
+        the C call.
 
         @return: Array of shape C{(n_links,)} with dtype C{float64}.
         @rtype: numpy.typing.NDArray[numpy.float64]
@@ -868,12 +897,96 @@ class Links:
         ...
 
     def get_quality_bulk(self, pollutant_idx: int) -> npt.NDArray[np.float64]:
-        """Return all link pollutant concentrations as a NumPy array.
+        """Return all link pollutant concentrations as a NumPy array. GIL
+        is released during the C call.
 
         @param pollutant_idx: Pollutant index.
         @type pollutant_idx: int
         @return: Array of shape C{(n_links,)} with dtype C{float64}.
         @rtype: numpy.typing.NDArray[numpy.float64]
+        """
+        ...
+
+    # ====================================================================
+    # Phase 3 bulk getters — velocities / capacities / volumes /
+    # control_settings / target_settings / hyd_powers / ids.
+    # Each releases the GIL during the C call.
+    # ====================================================================
+
+    def get_velocities_bulk(self) -> npt.NDArray[np.float64]:
+        """Return cross-sectional velocities for all links as a NumPy
+        array (per-link ``q / area`` computed in C). GIL is released
+        during the C call.
+
+        @return: Array of shape C{(n_links,)} with dtype C{float64} in
+            project length/time units.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_capacities_bulk(self) -> npt.NDArray[np.float64]:
+        """Return capacity ratios (``q / q_full``) for all links as a
+        NumPy array. GIL is released during the C call.
+
+        @return: Array of shape C{(n_links,)} with dtype C{float64}.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_volumes_bulk(self) -> npt.NDArray[np.float64]:
+        """Return stored volumes for all links as a NumPy array. GIL is
+        released during the C call.
+
+        @return: Array of shape C{(n_links,)} with dtype C{float64} in
+            project volume units.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_control_settings_bulk(self) -> npt.NDArray[np.float64]:
+        """Return active control settings (0..1) for all links as a NumPy
+        array. GIL is released during the C call.
+
+        @return: Array of shape C{(n_links,)} with dtype C{float64}.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_target_settings_bulk(self) -> npt.NDArray[np.float64]:
+        """Return target control settings for all links as a NumPy array.
+        GIL is released during the C call.
+
+        @return: Array of shape C{(n_links,)} with dtype C{float64}.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_hyd_powers_bulk(self) -> npt.NDArray[np.float64]:
+        """Return hydraulic power dissipated in every link
+        (``P = gamma * |Q| * |h_up - h_dn|``, ft-lb/s) as a NumPy array.
+        GIL is released during the C call.
+
+        @return: Array of shape C{(n_links,)} with dtype C{float64} in
+            ft-lb/s. Divide by 550 for horsepower.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_ids_bulk(self, stride: int = 64) -> list[str]:
+        """Return all link IDs in a single C call (stride-packed UTF-8).
+        GIL is released during the C copy.
+
+        @param stride: Per-ID slot size in bytes (default 64). IDs longer
+            than ``stride - 1`` bytes are truncated.
+        @return: List of ``n_links`` Python strings.
+
+        .. versionadded:: 6.0.0
         """
         ...
 

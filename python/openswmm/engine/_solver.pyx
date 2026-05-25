@@ -232,7 +232,15 @@ cdef class Solver:
         @rtype: int
         """
         cdef double elapsed = 0.0
-        cdef int rc = swmm_engine_step(self._handle, &elapsed)
+        cdef SWMM_Engine h = self._handle
+        cdef int rc
+        # Release the GIL for the duration of the C step so that another
+        # Python thread can step an independent engine handle in parallel.
+        # Any registered step_begin/step_end callbacks reacquire the GIL via
+        # `noexcept with gil:` in their trampolines (see _step_begin_trampoline
+        # above), so this is safe even with callbacks active.
+        with nogil:
+            rc = swmm_engine_step(h, &elapsed)
         self._elapsed = elapsed
         return rc
 
@@ -248,7 +256,13 @@ cdef class Solver:
         @rtype: int
         """
         cdef double elapsed = 0.0
-        cdef int rc = swmm_engine_stride(self._handle, n_steps, &elapsed)
+        cdef SWMM_Engine h = self._handle
+        cdef int rc
+        # Same nogil reasoning as `step()` — a stride is conceptually a tight
+        # loop of N steps inside the C engine, so releasing the GIL here is
+        # particularly valuable for parallel simulations.
+        with nogil:
+            rc = swmm_engine_stride(h, n_steps, &elapsed)
         self._elapsed = elapsed
         return rc
 

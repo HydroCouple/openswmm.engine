@@ -256,6 +256,21 @@ Threading & multiprocessing
 * **Multiple threads, one Solver per thread**: supported.  The C
   engine is reentrant; two threads each holding their own Solver do
   not interact.
+
+  As of OpenSWMM 6.0, the following Cython entry points release the
+  GIL while inside the C engine, so two such threads execute their
+  C work truly in parallel rather than serialising on the interpreter:
+
+  * :meth:`Solver.step`, :meth:`Solver.stride`
+  * Every ``*_bulk`` getter / setter on :class:`Nodes`,
+    :class:`Links`, and :class:`Subcatchments`
+    (:meth:`get_depths_bulk`, :meth:`get_flows_bulk`,
+    :meth:`get_quality_bulk`, etc.)
+
+  Registered step-begin / step-end callbacks remain safe: their
+  Cython trampolines reacquire the GIL via ``noexcept with gil:``
+  before invoking the user's Python callable.
+
 * **Multiple threads, one shared Solver**: **not** supported.  The
   Solver and its domain classes assume a single-threaded caller.  If
   you need shared state, drive a single Solver from one thread and

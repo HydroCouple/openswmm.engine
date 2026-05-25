@@ -12,6 +12,7 @@
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_controls.h"
+#include "../controls/Controls.hpp"
 
 #include <cctype>
 #include <cstring>
@@ -105,6 +106,40 @@ SWMM_ENGINE_API int swmm_control_clear_rules(SWMM_Engine engine) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     ctx.control_rules.rule_text.clear();
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_control_validate_rule(SWMM_Engine engine,
+                                                const char* rule_text,
+                                                char* errbuf, int buflen,
+                                                int* line_out) {
+    CHECK_HANDLE(engine);
+    if (!rule_text) return SWMM_ERR_BADPARAM;
+
+    // Throwaway ControlEngine: parseRuleText mutates only its own rules_ /
+    // pid_states_ vectors. Name resolution reads ctx.link_names /
+    // ctx.table_names (find() is non-mutating). The live engine's rule list
+    // and PID state are untouched.
+    auto& ctx = to_engine(engine)->context();
+    openswmm::controls::ControlEngine sandbox;
+    const int rc = sandbox.parseRuleText(std::string(rule_text), ctx);
+
+    if (line_out) *line_out = -1;  // Line-precise reporting not yet plumbed.
+
+    if (rc < 0) {
+        if (errbuf && buflen > 0) {
+            // Generic message — parseRuleText returns -1 without context.
+            // Line-precise + token-specific messages land in a follow-up
+            // when parseRuleText itself grows error-out parameters.
+            static constexpr char kMsg[] = "Control-rule parser rejected the rule text";
+            const int n = std::min(static_cast<int>(sizeof(kMsg) - 1), buflen - 1);
+            std::memcpy(errbuf, kMsg, static_cast<std::size_t>(n));
+            errbuf[n] = '\0';
+        }
+        return SWMM_ERR_BADPARAM;
+    }
+
+    if (errbuf && buflen > 0) errbuf[0] = '\0';
     return SWMM_OK;
 }
 

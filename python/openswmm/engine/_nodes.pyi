@@ -724,13 +724,20 @@ class Nodes:
 
     # ====================================================================
     # Bulk array access (numpy)
+    #
+    # Every method in this section releases the GIL for the duration of
+    # the underlying C call. Concurrent calls from multiple threads on
+    # independent Solver instances therefore execute their C work truly
+    # in parallel. See the package-level "Threading & multiprocessing"
+    # section in the user guide for the full picture.
     # ====================================================================
 
     def get_depths_bulk(self) -> npt.NDArray[np.float64]:
         """Return all node depths as a NumPy array.
 
         Uses the bulk C API for a single C{memcpy} -- much faster than
-        calling L{get_depth} in a loop.
+        calling L{get_depth} in a loop. The GIL is released during the
+        C call.
 
         @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @rtype: numpy.typing.NDArray[numpy.float64]
@@ -738,7 +745,8 @@ class Nodes:
         ...
 
     def get_heads_bulk(self) -> npt.NDArray[np.float64]:
-        """Return all node heads as a NumPy array.
+        """Return all node heads as a NumPy array. GIL is released during
+        the C call.
 
         @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @rtype: numpy.typing.NDArray[numpy.float64]
@@ -746,7 +754,8 @@ class Nodes:
         ...
 
     def set_depths_bulk(self, values: npt.NDArray[np.float64]) -> None:
-        """Set all node depths from a NumPy array.
+        """Set all node depths from a NumPy array. GIL is released during
+        the C call.
 
         @param values: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @type values: numpy.typing.NDArray[numpy.float64]
@@ -754,7 +763,8 @@ class Nodes:
         ...
 
     def get_inflows_bulk(self) -> npt.NDArray[np.float64]:
-        """Return all node total inflows as a NumPy array.
+        """Return all node total inflows as a NumPy array. GIL is released
+        during the C call.
 
         @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @rtype: numpy.typing.NDArray[numpy.float64]
@@ -762,7 +772,8 @@ class Nodes:
         ...
 
     def get_overflows_bulk(self) -> npt.NDArray[np.float64]:
-        """Return all node overflow rates as a NumPy array.
+        """Return all node overflow rates as a NumPy array. GIL is released
+        during the C call.
 
         @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @rtype: numpy.typing.NDArray[numpy.float64]
@@ -770,7 +781,8 @@ class Nodes:
         ...
 
     def set_lat_inflows_bulk(self, values: npt.NDArray[np.float64]) -> None:
-        """Set all node lateral inflows from a NumPy array.
+        """Set all node lateral inflows from a NumPy array. GIL is released
+        during the C call.
 
         @param values: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @type values: numpy.typing.NDArray[numpy.float64]
@@ -779,11 +791,88 @@ class Nodes:
 
     def get_quality_bulk(self, pollutant_idx: int) -> npt.NDArray[np.float64]:
         """Return all node concentrations for a pollutant as a NumPy array.
+        GIL is released during the C call.
 
         @param pollutant_idx: Pollutant index.
         @type pollutant_idx: int
         @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @rtype: numpy.typing.NDArray[numpy.float64]
+        """
+        ...
+
+    # ====================================================================
+    # Phase 3 bulk getters — added in OpenSWMM 6.0.0 to eliminate the
+    # N-round-trip cost of per-node scalar accessors in whole-network
+    # consumers (notably the MCP server's get_node_info(all) path).
+    # Each releases the GIL during the C call.
+    # ====================================================================
+
+    def get_volumes_bulk(self) -> npt.NDArray[np.float64]:
+        """Return all node stored volumes as a NumPy array. GIL is released
+        during the C call.
+
+        @return: Array of shape C{(n_nodes,)} with dtype C{float64} in
+            project volume units.
+        @rtype: numpy.typing.NDArray[numpy.float64]
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_outflows_bulk(self) -> npt.NDArray[np.float64]:
+        """Return current outflows for all nodes as a NumPy array. GIL is
+        released during the C call.
+
+        @return: Array of shape C{(n_nodes,)} with dtype C{float64} in
+            project flow units.
+        @rtype: numpy.typing.NDArray[numpy.float64]
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_losses_bulk(self) -> npt.NDArray[np.float64]:
+        """Return per-node losses (evaporation + seepage) as a NumPy array.
+        GIL is released during the C call.
+
+        @return: Array of shape C{(n_nodes,)} with dtype C{float64} in
+            project flow units.
+        @rtype: numpy.typing.NDArray[numpy.float64]
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_lateral_inflows_bulk(self) -> npt.NDArray[np.float64]:
+        """Return current lateral inflows for all nodes as a NumPy array.
+        GIL is released during the C call.
+
+        Explicitly-named successor to L{get_inflows_bulk}; both methods
+        read the same ``lat_flow`` SoA column. Prefer this name in new
+        code.
+
+        @return: Array of shape C{(n_nodes,)} with dtype C{float64} in
+            project flow units.
+        @rtype: numpy.typing.NDArray[numpy.float64]
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_ids_bulk(self, stride: int = 64) -> list[str]:
+        """Return all node IDs in a single C call (stride-packed UTF-8).
+
+        Replaces a Python-level ``[get_id(i) for i in range(count)]`` loop
+        with one C call. GIL is released during the C copy; UTF-8 decoding
+        happens afterwards with the GIL re-held.
+
+        @param stride: Per-ID slot size in bytes (default 64). IDs longer
+            than C{stride - 1} bytes are truncated.
+        @type stride: int
+        @return: List of ``n_nodes`` Python strings.
+        @rtype: list[str]
+
+        .. versionadded:: 6.0.0
         """
         ...
 

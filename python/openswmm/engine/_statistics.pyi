@@ -220,12 +220,15 @@ class Statistics:
 
     # ====================================================================
     # Cumulative totals (bulk array reads)
+    #
+    # Every bulk getter in this section releases the GIL for the C call.
     # ====================================================================
 
     def node_max_depth_bulk(self) -> npt.NDArray[np.float64]:
         """Return maximum depths for all nodes as a NumPy array.
 
-        Wraps C{swmm_stat_node_max_depth_bulk}.
+        Wraps C{swmm_stat_node_max_depth_bulk}. GIL is released during
+        the C call.
 
         @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @rtype: np.ndarray
@@ -236,7 +239,8 @@ class Statistics:
     def link_max_flow_bulk(self) -> npt.NDArray[np.float64]:
         """Return maximum flows for all links as a NumPy array.
 
-        Wraps C{swmm_stat_link_max_flow_bulk}.
+        Wraps C{swmm_stat_link_max_flow_bulk}. GIL is released during
+        the C call.
 
         @return: Array of shape C{(n_links,)} with dtype C{float64}.
         @rtype: np.ndarray
@@ -247,10 +251,62 @@ class Statistics:
     def subcatch_runoff_vol_bulk(self) -> npt.NDArray[np.float64]:
         """Return total runoff volumes for all subcatchments as a NumPy array.
 
-        Wraps C{swmm_stat_subcatch_runoff_vol_bulk}.
+        Wraps C{swmm_stat_subcatch_runoff_vol_bulk}. GIL is released
+        during the C call.
 
         @return: Array of shape C{(n_subcatchments,)} with dtype C{float64}.
         @rtype: np.ndarray
         @raise EngineError: If the underlying C call fails.
+        """
+        ...
+
+    # ====================================================================
+    # Phase 3 statistics bulk getters — flooding + peak runoff. Each
+    # releases the GIL during the C call.
+    # ====================================================================
+
+    def node_max_overflow_bulk(self) -> npt.NDArray[np.float64]:
+        """Return maximum overflow rates for all nodes as a NumPy array.
+
+        Wraps C{swmm_stat_node_max_overflow_bulk}. GIL is released during
+        the C call.
+
+        @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def node_vol_flooded_bulk(self) -> npt.NDArray[np.float64]:
+        """Return total flooded volume for all nodes as a NumPy array.
+
+        Wraps C{swmm_stat_node_vol_flooded_bulk}. GIL is released during
+        the C call.
+
+        @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def node_time_flooded_bulk(self) -> npt.NDArray[np.float64]:
+        """Return cumulative time-flooded (hours) for all nodes as a NumPy
+        array. Wraps C{swmm_stat_node_time_flooded_bulk}. GIL is released
+        during the C call.
+
+        @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def subcatch_max_runoff_bulk(self) -> npt.NDArray[np.float64]:
+        """Return peak runoff rates for all subcatchments as a NumPy
+        array. Wraps C{swmm_stat_subcatch_max_runoff_bulk}. GIL is
+        released during the C call.
+
+        @return: Array of shape C{(n_subcatchments,)} with dtype C{float64}.
+
+        .. versionadded:: 6.0.0
         """
         ...

@@ -99,6 +99,10 @@ Per-subcatchment
 Bulk variants
 -------------
 
+Each bulk method makes a single C call and returns a contiguous
+``np.ndarray[float64]``. The GIL is released for the duration of the
+C call.
+
 .. list-table::
    :header-rows: 1
    :widths: 50 50
@@ -111,9 +115,38 @@ Bulk variants
      - All-link peak flows.
    * - :meth:`subcatch_runoff_vol_bulk()`
      - All-subcatchment runoff volumes.
+   * - :meth:`node_max_overflow_bulk()`
+     - All-node peak overflow rate *(added 6.0.0)*.
+   * - :meth:`node_vol_flooded_bulk()`
+     - All-node total flooded volume *(added 6.0.0)*.
+   * - :meth:`node_time_flooded_bulk()`
+     - All-node cumulative time-flooded *(added 6.0.0)*.
+   * - :meth:`subcatch_max_runoff_bulk()`
+     - All-subcatchment peak runoff *(added 6.0.0)*.
+
+Whole-network flooding summary in 4 C calls (replaces a ``4 * n_nodes``
+Python loop):
+
+.. code-block:: python
+
+   from openswmm.engine import Nodes, Statistics
+
+   stats   = Statistics(solver)
+   nodes   = Nodes(solver)
+
+   ids        = nodes.get_ids_bulk()
+   max_over   = stats.node_max_overflow_bulk()
+   vol_flood  = stats.node_vol_flooded_bulk()
+   t_flood    = stats.node_time_flooded_bulk()
+
+   # Worst-flooded node by cumulative volume:
+   worst = int(vol_flood.argmax())
+   print(f"{ids[worst]}: vol={vol_flood[worst]:.1f},  "
+         f"peak overflow={max_over[worst]:.3f},  hours={t_flood[worst]:.2f}")
 
 The standard memory-aliasing rule applies — ``.copy()`` if you need
-to keep the array.
+to keep the array (the four pre-6.0 bulk getters share scratch
+buffers; the 6.0 additions return freshly allocated arrays).
 
 ----
 
@@ -214,7 +247,9 @@ Compute surcharge fraction across the network
 Bulk arrays
 ===========
 
-The ``*_bulk`` family is the vectorised path:
+The ``*_bulk`` family is the vectorised path. Each call returns a
+contiguous ``np.ndarray[float64]`` of the indicated shape. GIL is
+released during the underlying C call.
 
 .. list-table::
    :header-rows: 1
@@ -228,10 +263,19 @@ The ``*_bulk`` family is the vectorised path:
      - ``(n_links,)``
    * - :meth:`subcatch_runoff_vol_bulk`
      - ``(n_subcatch,)``
+   * - :meth:`node_max_overflow_bulk`
+     - ``(n_nodes,)`` *(added 6.0.0)*
+   * - :meth:`node_vol_flooded_bulk`
+     - ``(n_nodes,)`` *(added 6.0.0)*
+   * - :meth:`node_time_flooded_bulk`
+     - ``(n_nodes,)`` *(added 6.0.0)*
+   * - :meth:`subcatch_max_runoff_bulk`
+     - ``(n_subcatch,)`` *(added 6.0.0)*
 
-Same memory-aliasing semantics as the bulk methods on :class:`Nodes`
-and :class:`Links` — ``.copy()`` if you keep the array past the next
-call.
+Memory-aliasing rule: the three pre-6.0 bulk methods share scratch
+buffers with engine state — ``.copy()`` if you need to retain them
+past the next call. The 6.0 additions return freshly allocated
+arrays.
 
 ----
 

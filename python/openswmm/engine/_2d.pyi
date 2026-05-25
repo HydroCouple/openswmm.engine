@@ -92,7 +92,8 @@ class Surface2D:
         npt.NDArray[np.float64],
         npt.NDArray[np.float64],
     ]:
-        """Return (x, y, z) NumPy arrays for all vertices.
+        """Return (x, y, z) NumPy arrays for all vertices. GIL is released
+        during the C call.
 
         @return: Tuple C{(x, y, z)}, each of shape C{(n_vertices,)} with
             dtype C{float64}.
@@ -205,10 +206,13 @@ class Surface2D:
 
     # ====================================================================
     # State (depth/velocity) - per triangle bulk arrays
+    #
+    # Every bulk getter in this section releases the GIL for the C call.
     # ====================================================================
 
     def get_depths(self) -> npt.NDArray[np.float64]:
-        """Return depths for all triangles as a NumPy array.
+        """Return depths for all triangles as a NumPy array. GIL is
+        released during the C call.
 
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
         @rtype: np.ndarray
@@ -217,7 +221,8 @@ class Surface2D:
         ...
 
     def get_heads(self) -> npt.NDArray[np.float64]:
-        """Return total heads for all triangles as a NumPy array.
+        """Return total heads for all triangles as a NumPy array. GIL is
+        released during the C call.
 
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
         @rtype: np.ndarray
@@ -226,7 +231,8 @@ class Surface2D:
         ...
 
     def get_coupling_fluxes(self) -> npt.NDArray[np.float64]:
-        """Return coupling fluxes for all triangles as a NumPy array.
+        """Return coupling fluxes for all triangles as a NumPy array. GIL
+        is released during the C call.
 
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
             Positive values denote flux into the 2D surface.
@@ -236,7 +242,8 @@ class Surface2D:
         ...
 
     def get_edge_flux_bulk(self) -> npt.NDArray[np.float64]:
-        """Return normal edge fluxes for all triangle edges.
+        """Return normal edge fluxes for all triangle edges. GIL is
+        released during the C call.
 
         Indexed as C{[tri*3 + localEdge]}.
         @return: Array of shape C{(n_triangles*3,)} with dtype C{float64}.
@@ -245,6 +252,7 @@ class Surface2D:
 
     def get_edge_geometry_bulk(self) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """Return time-invariant edge lengths and outward unit normal components.
+        GIL is released during the C call.
 
         Returns C{(length, nx, ny)}, each indexed as C{[tri*3 + localEdge]}.
 
@@ -317,6 +325,7 @@ class Surface2D:
 
     def get_vertex_heads(self) -> npt.NDArray[np.float64]:
         """Return reconstructed heads at all vertices as a NumPy array.
+        GIL is released during the C call.
 
         @return: Array of shape C{(n_vertices,)} with dtype C{float64}.
         @rtype: np.ndarray

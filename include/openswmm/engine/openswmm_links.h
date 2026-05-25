@@ -737,6 +737,97 @@ SWMM_ENGINE_API int swmm_link_get_quality_bulk(SWMM_Engine engine, int pollutant
                                                  double* buf, int count);
 
 /* =========================================================================
+ * Phase 3 bulk getters — added in OpenSWMM 6.0.0 to eliminate the N
+ * round-trip cost of per-link scalar accessors in whole-network consumers
+ * (notably the MCP server's get_link_info(all) path and post-run reports).
+ *
+ * Note: velocities, capacities, and hydraulic powers are *derived* values
+ * (depth/flow ratios; flow * head loss). Their bulk variants do a per-link
+ * loop in C — there is no SoA column to memcpy from — but they still
+ * eliminate the C ABI crossing overhead and any Python-level looping cost.
+ * ========================================================================= */
+
+/**
+ * @brief Get cross-sectional velocities for all links in a single call.
+ * @details Bulk variant of @ref swmm_link_get_velocity. The C side
+ *          recomputes @c q / area per link (area approximated from
+ *          @c d / y_full * a_full), so this is a per-link loop rather
+ *          than a memcpy — but still O(n_links) and free of per-call ABI
+ *          overhead.
+ * @param engine    Engine handle.
+ * @param[out] buf  Caller-allocated buffer of at least @p count doubles.
+ * @param count     Number of elements (should equal swmm_link_count()).
+ * @returns @c SWMM_OK on success, or an error code.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_velocities_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get capacity ratios (q/q_full) for all links in a single call.
+ * @details Bulk variant of @ref swmm_link_get_capacity. Per-link loop
+ *          (capacity is derived from flow / full-flow).
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_capacities_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get stored volumes for all links in a single call.
+ * @details Bulk variant of @ref swmm_link_get_volume. Simple SoA memcpy.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_volumes_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get active control settings (0..1) for all links in a single call.
+ * @details Bulk variant of @ref swmm_link_get_control_setting.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_control_settings_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get target control settings for all links in a single call.
+ * @details Bulk variant of @ref swmm_link_get_target_setting.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_target_settings_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get hydraulic power dissipated in every link in a single call.
+ * @details Bulk variant of @ref swmm_link_get_hyd_power. Per-link loop:
+ *          @c P = gamma * |Q| * |h_up - h_dn| (ft-lb/s); non-conduit
+ *          links produce the same expression with whatever flow they
+ *          report. Use cycles[i] from @ref swmm_link_get_pump_stats_bulk
+ *          to filter to pumps if needed.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_hyd_powers_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get link IDs for all links in a single call (stride-packed UTF-8).
+ *
+ * @details Stride-packed format matching @ref swmm_node_get_ids_bulk: each
+ *          ID is written into the slot @c buf[i*stride .. i*stride+stride-1]
+ *          and NUL-terminated within its slot (truncated to @c stride-1
+ *          bytes if longer). The function zero-fills the requested region
+ *          on entry so trailing bytes are always NUL.
+ *
+ * @param engine    Engine handle.
+ * @param[out] buf  Caller-allocated buffer of @c stride*count bytes.
+ * @param stride    Per-ID slot size in bytes (must be > 1).
+ * @param count     Number of IDs to read.
+ * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
+ *          invalid; @c SWMM_ERR_BADPARAM if @p buf is NULL,
+ *          @p stride < 2, or @p count <= 0.
+ *
+ * @see swmm_link_id, swmm_node_get_ids_bulk
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_ids_bulk(SWMM_Engine engine,
+                                            char* buf,
+                                            int stride,
+                                            int count);
+
+/* =========================================================================
  * Pump utilization statistics
  * ========================================================================= */
 
@@ -748,6 +839,68 @@ SWMM_ENGINE_API int swmm_link_get_stat_pump_on_time(SWMM_Engine engine, int idx,
 
 /** @brief Get pump total volume pumped (ft3). */
 SWMM_ENGINE_API int swmm_link_get_stat_pump_volume(SWMM_Engine engine, int idx, double* volume);
+
+/**
+ * @brief Get pump utilization statistics for **all** links in a single call.
+ *
+ * @details Single-pass bulk accessor that avoids @c N round-trips through the
+ *          C ABI when caller needs pump stats across the network (e.g. when
+ *          building a network-wide pump summary report). For links whose type
+ *          is not @c LinkType::PUMP, the corresponding @p cycles entry is set
+ *          to @c -1 and the @p on_time / @p volume entries to @c 0.0 — this
+ *          allows the caller to distinguish "non-pump" from "pump with zero
+ *          cycles".
+ *
+ *          Any of @p cycles, @p on_time, @p volume may be @c NULL if the
+ *          caller does not need that output; the function still iterates the
+ *          full link array (the cost is identical) but skips the store.
+ *
+ * @param engine        Engine handle (must be in INITIALIZED state or later
+ *                      so the statistics vectors are sized).
+ * @param[out] cycles   Caller-allocated @c int buffer of at least @p count
+ *                      entries, or @c NULL. Non-pump links get @c -1.
+ * @param[out] on_time  Caller-allocated @c double buffer of at least @p count
+ *                      entries (seconds), or @c NULL.
+ * @param[out] volume   Caller-allocated @c double buffer of at least @p count
+ *                      entries (ft3), or @c NULL.
+ * @param count         Length of the caller-allocated buffers. If smaller
+ *                      than the link count, only the first @c min(count,
+ *                      n_links) entries are written.
+ *
+ * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
+ *          invalid; @c SWMM_ERR_BADPARAM if @p count is non-positive or all
+ *          three output pointers are NULL.
+ *
+ * @par Example
+ * @code{.c}
+ *   int n = swmm_link_count(eng);
+ *   int* cycles = malloc(n * sizeof(int));
+ *   double* on_time = malloc(n * sizeof(double));
+ *   double* volume = malloc(n * sizeof(double));
+ *   swmm_link_get_pump_stats_bulk(eng, cycles, on_time, volume, n);
+ *   for (int i = 0; i < n; ++i) {
+ *       if (cycles[i] < 0) continue;            // not a pump
+ *       printf("link %d: %d cycles, %.1f s, %.2f ft3\n",
+ *              i, cycles[i], on_time[i], volume[i]);
+ *   }
+ * @endcode
+ *
+ * @note Equivalent to calling @ref swmm_link_get_stat_pump_cycles,
+ *       @ref swmm_link_get_stat_pump_on_time, and
+ *       @ref swmm_link_get_stat_pump_volume for every link, but with one C
+ *       ABI crossing instead of @c 3N.
+ *
+ * @see swmm_link_get_stat_pump_cycles
+ * @see swmm_link_get_stat_pump_on_time
+ * @see swmm_link_get_stat_pump_volume
+ *
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_pump_stats_bulk(SWMM_Engine engine,
+                                                   int* cycles,
+                                                   double* on_time,
+                                                   double* volume,
+                                                   int count);
 
 /* =========================================================================
  * Hydraulic power
