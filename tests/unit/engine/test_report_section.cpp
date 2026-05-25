@@ -576,10 +576,16 @@ TEST(ReportPluginDisabledTest, DisabledWritesSummaryOk) {
     ASSERT_EQ(rp.finalize(ctx), 0);
     ASSERT_EQ(rp.write_summary(ctx), 0);
 
-    // Verify the rpt file is minimal (empty or very short — no full summaries)
-    std::ifstream f(rpt_path);
-    std::string content((std::istreambuf_iterator<char>(f)),
+    // Verify the rpt file is minimal (empty or very short — no full summaries).
+    // Inner scope so the ifstream's handle is released before std::remove —
+    // Windows refuses to delete a file while any handle is open
+    // (unlike POSIX, where unlink-on-open succeeds).
+    std::string content;
+    {
+        std::ifstream f(rpt_path);
+        content.assign((std::istreambuf_iterator<char>(f)),
                         std::istreambuf_iterator<char>());
+    }
 
     // With DISABLED=YES, continuity/flow stats/node/link/subcatch summaries skipped.
     // The file should not contain "Node Depth Summary" or similar.
