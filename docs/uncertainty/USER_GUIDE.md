@@ -138,7 +138,7 @@ Controls the ROM solver. All keywords are optional; defaults shown.
 | `MODES` | `10` | ≥ 1 | Laplacian eigenmodes retained for the ROM basis. More modes → finer spatial resolution of spread. Capped at min(MEMBERS, n_tri−1). |
 | `MANNINGS_PERT` | `0.20` | ≥ 0 | Half-range for Manning's n: each member's n ∈ [1−p, 1+p] × n_base. Overridden by `[UNCERTAINTY] 2D MANNINGS_N`. |
 | `RAINFALL_PERT` | `0.20` | ≥ 0 | Half-range for rainfall intensity. Overridden by `[UNCERTAINTY] 2D RAINFALL`. |
-| `K_EFF` | `≤ 0 → AUTO` | any | Effective diffusive conductance (m^(4/3)/s). Values ≤ 0 activate AUTO mode (see §4.3). |
+| `K_EFF` | `≤ 0 → AUTO` | any | Effective diffusive conductance (m^(4/3)/s). Values ≤ 0 activate AUTO mode (see §4.8). |
 | `MANNINGS_CORR_LEN` | `0.0` | ≥ 0 | Spatial correlation length (m) for Manning's n field. 0 = uniform scalar per member (fast). |
 | `RAINFALL_CORR_LEN` | `0.0` | ≥ 0 | Spatial correlation length (m) for rainfall field. 0 = uniform scalar per member. |
 | `WET_RESEED_FRACTION` | `0.05` | [0, 1] | Trigger a ROM reseed when the wet-cell count changes by more than this fraction of n_tri. Prevents stale seeds on rapidly advancing wetting fronts. |
@@ -313,7 +313,85 @@ engineering practice, not just in papers.
 
 *The remaining subsections give the precise mathematical definitions for implementers.*
 
-### 4.5 The ROM ODE (full definition)
+### 4.5 ROM setup and lifecycle
+
+The 2D and 1D ROMs are built and seeded independently at `initialize()`, then advance alongside
+their respective solvers at every routing step.
+
+#### 2D ROM — what runs when
+
+**At `initialize()`** — mesh Laplacian built, eigenbasis computed, ROM allocated:
+
+The 2D mesh Laplacian is assembled from triangle connectivity (shared-face lengths, centroid
+distances, cell areas). The Lanczos+QL eigensolver extracts the k lowest non-trivial eigenvectors
+P[:,0..k−1] and eigenvalues λ₀..λ_{k-1} from this Laplacian. If `SpectralPrecond2D` is also
+active, the ROM reuses its already-computed eigenbasis rather than rerunning the solver. A
+`SpectralROM` struct is allocated with an M×k coefficient matrix (all zeros) and an LHS
+parameter design for M members.
+
+**At the first `CvodeSurfaceSolver::advance()` call** — seeding:
+
+`seedROM()` projects the current CVODE depth array h onto the eigenbasis:
+```
+a[i,j] = P[:,j]ᵀ · h    for all members i = 0..M−1
+```
+Every member starts from the same deterministic IC, so spread = 0 at seed time. The different
+LHS multipliers (`mannings_mult[i]`, `rainfall_mult[i]`) give each member a different decay
+rate and forcing on the very next `advance()` call, so spread grows immediately.
+
+**At each subsequent CVODE step** — advance and quantiles:
+
+1. `applyCouplingFluxToROM()` injects per-member drainage fluxes at coupling points (if any; see §4.11).
+2. `SpectralROM::advance(dt, K_eff, rainfall)` updates all M×k coefficients via the exponential integrator.
+3. `computeQuantiles()` reconstructs per-cell depths for all M members and sorts to get q05/q50/q95.
+
+**Reseeding** — keeping the ROM aligned with a moving wetting front:
+
+If the wet-cell count changes by more than `WET_RESEED_FRACTION × n_tri` since the last seed,
+and at least `WET_RESEED_MIN_INTERVAL` seconds have elapsed, the ROM reseeds from the current
+CVODE depth. Spread briefly collapses to zero and re-grows as members diverge under their
+different multipliers.
+
+#### 1D ROM — what runs when
+
+**At `SWMMEngine::initialize()`** — network Laplacian built, eigenbasis computed, ROM seeded:
+
+`buildROM1D()` collects all conduit node pairs from `ctx_.links`. Outfall nodes are identified
+from `ctx_.nodes.type` and excluded from the active set — they are fixed-head boundaries and
+cannot carry spreading uncertainty. `NetworkLaplacian1D::buildUniform()` assembles the graph
+Laplacian in CSR format over the remaining active nodes. `GraphEigenBasis::build()` runs
+Lanczos+QL to extract k eigenvectors and eigenvalues. The ROM is then seeded immediately from
+the current hydraulic state:
+```
+a[i,j] = P[:,j]ᵀ · h_active    for all members i = 0..M−1
+```
+where `h_active` contains only the heads of active (non-outfall) nodes in the ROM's index
+space. The `full_to_active[]` map (indexed by SWMM node index) records which active ROM index
+corresponds to each node, and returns −1 for outfalls.
+
+**At each `stepRouting()` call** — advance and quantiles:
+
+1. `computeK1d()` estimates mean diffusion-wave diffusivity from current conduit depths, slopes,
+   and roughnesses, then normalises by conduit length² to yield K1d [1/s].
+2. `SpectralROM1D::advance(dt, K1d, nullptr)` updates all M×k coefficients.
+3. `computeQuantiles()` reconstructs per-active-node head quantiles.
+
+The 1D ROM is **not automatically reseeded** during a simulation run. It seeds once at
+`initialize()` from the hydraulic initial condition and evolves through the event from there.
+
+#### How the two ROMs differ in basis construction
+
+| | 2D ROM (`SpectralROM`) | 1D ROM (`SpectralROM1D`) |
+|---|---|---|
+| Laplacian type | Geometric mesh Laplacian (area/distance-weighted) | Graph (topological) Laplacian (connectivity only, uniform weights) |
+| Eigenvalue character | Carries spatial scale implicitly via mesh geometry | Dimensionless — counts graph connectivity, not metres |
+| Diffusivity parameter | K_eff [m^(4/3)/s] — spatial scale baked into mesh Laplacian | K1d = D/L² [1/s] — must normalise by L² to give 1/s |
+| When seeded | Deferred to first CVODE advance (solver warms up first) | Immediately at `initialize()` (from initial steady-state heads) |
+| Automatic reseeding | Yes — triggered by wetting-front advance | No |
+| Basis shared with preconditioner? | Yes, if `SpectralPrecond2D` active | No — always a standalone `GraphEigenBasis` |
+| Output quantiles sized | n_tri (triangles) | n_active_nodes (excluding outfalls) |
+
+### 4.6 The ROM ODE (full definition)
 
 The 2D diffusion-wave equation (linearised about the current deterministic state) is:
 
@@ -350,7 +428,7 @@ conduit length squared `L²` to yield units of 1/s. This normalisation is essent
 Laplacian eigenvalues are dimensionless (they count topological connectivity, not spatial
 scale), so `λ_j × K1d` must have units of 1/s.
 
-### 4.6 Latin-hypercube design
+### 4.7 Latin-hypercube design
 
 `UncertaintyEnsemble` generates four decorrelated LHS columns, each stratifying its parameter
 uniformly across M strata (midpoint rule):
@@ -366,7 +444,7 @@ The reversed-order trick for rainfall gives perfect anti-correlation between Man
 columns within each realisation — members with high Manning's n (slow conveyance) get low
 rainfall multipliers, which is physically conservative and prevents artificial spread inflation.
 
-### 4.7 AUTO K_eff
+### 4.8 AUTO K_eff
 
 At the first CVODE advance (and at each reseed), K_eff is estimated from the current wet state:
 
@@ -388,7 +466,7 @@ K_eff_j = K_eff · Σ_t φ_j[t]² · (h[t]/h̄)^(5/3)
 Modes concentrated in deep cells decay faster. This is enabled automatically when h_cell is
 passed to `advance()` (which `CvodeSurfaceSolver` does by default).
 
-### 4.8 Quantile computation
+### 4.9 Quantile computation
 
 After each `advance()` call, `computeQuantiles()` reconstructs per-cell depths for all M members
 and computes the three percentiles by sorting:
@@ -404,7 +482,7 @@ With `PARAMETRIC_TAILS YES`: for cells where ≥ 4 members are wet, fits a log-n
 wet sub-population and replaces the sort-based q95 with the analytic 95th percentile of that
 fit. This suppresses noise from the top 1–2 samples when M is small (< 30).
 
-### 4.9 Spatial uncertainty fields
+### 4.10 Spatial uncertainty fields
 
 When `MANNINGS_CORR_LEN > 0` or `RAINFALL_CORR_LEN > 0`, each member gets a spatially-varying
 multiplier field generated by `CorrelatedFieldGenerator`:
@@ -421,22 +499,51 @@ When `corr_len = 0`, the spatial generator is bypassed for speed.
 **In `advance()`**: `f_j^i = P[:,j]ᵀ · (rainfall ⊙ W_rain[i])` replaces the scalar
 `r_coarse[j] · rainfall_mult[i]` when spatial rainfall is active.
 
-### 4.10 Coupling uncertainty
+### 4.11 Coupling uncertainty
 
-At each 2D↔1D coupling exchange (`applyCouplingFlux()`), the ROM applies the orifice equation
-independently per member, using each member's reconstructed 2D head and its Manning's multiplier:
+When both a 2D ROM and a 1D ROM are active, the coupling exchange operates on the full
+ensemble rather than on a single deterministic pair of heads. The sequence at each SWMM
+routing step is:
 
-```
-Q_i = (Cd · A · sign(Δh_i) · √(2g|Δh_i|)) / mannings_mult[i]
-```
+**Step 1 — deterministic exchange (shared heads)**
 
-The volume removed from cell `ci` is projected back onto the ROM basis:
+`computeCouplingExchange()` computes a single inflow/outflow at each coupling point using the
+current CVODE surface depth and the DYNWAVE node head. This updates `ctx_.nodes.lat_flow[]`
+and drives the deterministic 1D DYNWAVE solve — exactly as in a run with no ROM.
 
-```
-δa_{i,j} = P[j, ci] · (−Q_i · dt / tri_area)
-```
+**Step 2 — per-member ROM exchange**
 
-The per-coupling-point bounds `[q_min, q_max]` across the ensemble are accumulated in
+`applyCouplingFluxToROM()` re-runs the orifice equation independently for all M ensemble
+members at each non-outfall coupling point:
+
+- **2D head per member**: reconstructed from 2D ROM coefficients:
+  `h_2d[i][ci] = max(0, Σ_j P[ci,j] · a[i,j])`
+- **1D head per member**: if the 1D ROM is registered,
+  `h_1d[i] = rom1d->reconstructHead(i, full_to_active[cp.node_idx])`; for outfall nodes
+  (`full_to_active == −1`) the shared deterministic head is used as a fallback.
+- **Orifice flow per member**:
+  `Q_i = Cd · A · sign(h_2d[i] − h_1d[i]) · √(2g|h_2d[i] − h_1d[i]|)`, capped by
+  available depth in the 2D cell.
+- **2D ROM coefficient update** (for each retained mode j):
+  `a[i,j] += P[j,ci] · (−Q_i · dt / tri_area)`
+
+**Step 3 — independent ROM advances**
+
+After coupling, `SpectralROM::advance()` and `SpectralROM1D::advance()` run independently for
+the remainder of the routing step using their respective K_eff and K1d. The coupling flux
+injected in Step 2 is a one-shot impulse on the 2D ROM coefficients; the 2D ROM then evolves
+freely until the next routing step.
+
+**What the 1D ROM is not updated by:**
+
+The 1D ROM coefficients are not modified by `applyCouplingFluxToROM()`. The 1D ROM sees the
+coupling only indirectly — through the lateral flow term in DYNWAVE, which updates
+`ctx_.nodes.head[]`, which in turn affects K1d and the initial seed state. This is an
+operator-splitting approximation: the 2D ensemble absorbs per-member coupling uncertainty;
+the 1D ensemble evolves under its own Manning uncertainty and contributes per-member 1D heads
+to the coupling exchange in Step 2.
+
+The per-coupling-point bounds `[q_min, q_max]` across all M members are accumulated in
 `CouplingUncertaintyOutput` and available via `SurfaceRouter2D::couplingOutput()`.
 
 ---
@@ -817,7 +924,7 @@ via the C++ API as shown in §2.1.
    the ROM spread will be qualitatively wrong (it cannot capture shock propagation).
 
 3. **Mean K_eff (not per-cell).** The scalar K_eff path uses a single effective conductance
-   for the full domain. Per-mode Rayleigh-quotient K_eff (§4.3 Option A) partially corrects
+   for the full domain. Per-mode Rayleigh-quotient K_eff (§4.8 Option A) partially corrects
    for this, but for highly non-uniform Manning's n distributions the spread may be
    systematically underestimated in rougher zones.
 
