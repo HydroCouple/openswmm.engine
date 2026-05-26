@@ -661,6 +661,116 @@ cdef class Solver:
         _check(swmm_set_steady_state_skip(self._handle, 1 if enabled else 0))
 
     # =========================================================================
+    # Phase 1b: Runoff interface file (legacy "Frunoff")
+    # =========================================================================
+    #
+    # Persist per-subcatchment runoff to a binary file (SAVE mode) so a
+    # downstream routing-only run can replay the runoff phase (USE mode).
+    # SAVE mode is fully auto-integrated — the engine emits one record per
+    # runoff substep from inside ``stepRunoff``. USE-mode auto-skip is a
+    # follow-up; today's USE mode requires the caller to invoke
+    # :py:meth:`read_runoff_step` between ``step`` calls.
+
+    def open_runoff_iface_write(self, str path):
+        """Open the runoff interface file in SAVE mode.
+
+        :param path: Output file path. Existing content is truncated.
+        :type path: str
+
+        :raises EngineError: If the file cannot be opened, or a runoff
+            interface file is already open and must be closed first.
+
+        .. versionadded:: 6.0.0
+        """
+        cdef bytes b = path.encode('utf-8')
+        cdef SWMM_Engine h = self._handle
+        cdef const char* p = b
+        cdef int err
+        with nogil:
+            err = swmm_runoff_iface_open_write(h, p)
+        _check(err)
+
+    def open_runoff_iface_read(self, str path):
+        """Open the runoff interface file in USE mode.
+
+        :param path: Path to an existing runoff interface file.
+        :type path: str
+
+        :raises EngineError: On file-open failure or header mismatch
+            (subcatchment count, pollutant count, or flow units differ
+            from the current model).
+
+        .. note::
+
+           The engine does not yet auto-skip runoff in USE mode. After
+           opening, the caller must invoke :py:meth:`read_runoff_step`
+           between simulation steps; the engine will still run its own
+           runoff computation and overwrite the loaded state if you do
+           not handle that yourself. Full USE-mode auto-skip is tracked
+           as a follow-up to Phase 1b.
+
+        .. versionadded:: 6.0.0
+        """
+        cdef bytes b = path.encode('utf-8')
+        cdef SWMM_Engine h = self._handle
+        cdef const char* p = b
+        cdef int err
+        with nogil:
+            err = swmm_runoff_iface_open_read(h, p)
+        _check(err)
+
+    def save_runoff_step(self, double dt):
+        """Force one runoff substep snapshot to the open SAVE file.
+
+        :param dt: Substep duration in seconds recorded with the snapshot.
+        :type dt: float
+
+        Typically unnecessary — the engine emits records automatically
+        from inside ``stepRunoff``. This method is exposed for plugin
+        authors and tests that want to force a snapshot at a specific
+        time.  No-op when no file is open or the file is in USE mode.
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = self._handle
+        cdef int err
+        with nogil:
+            err = swmm_runoff_iface_save_step(h, dt)
+        _check(err)
+
+    def read_runoff_step(self) -> bool:
+        """Read one runoff substep record from the open USE file into
+        the current subcatchment state.
+
+        :returns: ``True`` when a record was read; ``False`` on EOF.
+        :rtype: bool
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = self._handle
+        cdef int has = 0
+        cdef int err
+        with nogil:
+            err = swmm_runoff_iface_read_step(h, &has)
+        _check(err)
+        return bool(has)
+
+    def close_runoff_iface(self):
+        """Close the runoff interface file (idempotent).
+
+        Also invoked automatically when the solver is closed; calling it
+        explicitly is useful in tests or when reusing the same solver
+        for a second runoff run.
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = self._handle
+        cdef int err
+        with nogil:
+            err = swmm_runoff_iface_close(h)
+        _check(err)
+
+    # =========================================================================
     # Step callbacks
     # =========================================================================
 

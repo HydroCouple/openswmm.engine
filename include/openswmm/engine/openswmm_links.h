@@ -226,6 +226,230 @@ SWMM_ENGINE_API int swmm_link_set_initial_flow(SWMM_Engine engine, int idx, doub
  */
 SWMM_ENGINE_API int swmm_link_set_max_flow(SWMM_Engine engine, int idx, double flow);
 
+/**
+ * @brief Get the initial flow in a link at simulation start.
+ *
+ * @details Symmetric getter for @ref swmm_link_set_initial_flow. Reads the
+ *          same SoA slot the setter writes; safe to call in any
+ *          post-construction engine state.
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based link index.
+ * @param[out] flow  Receives the initial flow in project flow units.
+ * @returns SWMM_OK on success, or an error code.
+ * @since 6.0.0 (engine gap BN-LINK-01a, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_get_initial_flow(SWMM_Engine engine, int idx, double* flow);
+
+/**
+ * @brief Get the maximum allowable flow in a link.
+ *
+ * @details Symmetric getter for @ref swmm_link_set_max_flow. Returns 0.0
+ *          when no limit is configured (mirrors the setter's contract).
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based link index.
+ * @param[out] flow  Receives the maximum flow in project flow units.
+ * @returns SWMM_OK on success, or an error code.
+ * @since 6.0.0 (engine gap BN-LINK-01b, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_get_max_flow(SWMM_Engine engine, int idx, double* flow);
+
+/**
+ * @brief Orifice flow-attack classification.
+ *
+ * @details Used with @ref swmm_link_set_orifice_type and
+ *          @ref swmm_link_get_orifice_type. Order matches the legacy
+ *          SWMM-GUI combo (`SWMM-GUI/Epaswmm5/objprops.txt:862`).
+ * @since 6.0.0 (engine gap BN-LINK-02, added 2026-05-25)
+ */
+typedef enum SWMM_OrificeType {
+    SWMM_ORIFICE_SIDE   = 0, /**< Orifice opens on the side of the upstream node. */
+    SWMM_ORIFICE_BOTTOM = 1, /**< Orifice opens through the bottom of the upstream node. */
+} SWMM_OrificeType;
+
+/**
+ * @brief Set the orifice flow-attack classification (SIDE / BOTTOM).
+ *
+ * @details Only valid on links of type @ref SWMM_LINK_ORIFICE; returns
+ *          @c SWMM_ERR_BADPARAM otherwise.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based link index.
+ * @param type    Orifice type (see @ref SWMM_OrificeType).
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-orifice link or @p type is out of range.
+ * @since 6.0.0 (engine gap BN-LINK-02, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_orifice_type(SWMM_Engine engine, int idx, int type);
+
+/**
+ * @brief Get the orifice flow-attack classification.
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based link index.
+ * @param[out] type  Receives the orifice type (see @ref SWMM_OrificeType).
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-orifice link.
+ * @since 6.0.0 (engine gap BN-LINK-02, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_get_orifice_type(SWMM_Engine engine, int idx, int* type);
+
+/**
+ * @brief Weir-flow classification.
+ *
+ * @details Used with @ref swmm_link_set_weir_type and
+ *          @ref swmm_link_get_weir_type. Numeric order matches the
+ *          legacy WeirType enum in `legacy/engine/enums.h:925` and the
+ *          legacy SWMM-GUI combo (`SWMM-GUI/Epaswmm5/objprops.txt:160`).
+ *
+ *          The companion "Shape" attribute in the legacy GUI is derived
+ *          from the weir type (see `objprops.txt:162` for the mapping)
+ *          and need not be stored separately; clients that want the
+ *          shape should consult @ref swmm_link_get_xsect.
+ *
+ * @since 6.0.0 (engine gap BN-LINK-03, added 2026-05-25)
+ */
+typedef enum SWMM_WeirType {
+    SWMM_WEIR_TRANSVERSE  = 0, /**< Sharp-crested transverse weir.       */
+    SWMM_WEIR_SIDEFLOW    = 1, /**< Side-flow weir (USBR formula).        */
+    SWMM_WEIR_VNOTCH      = 2, /**< Triangular / V-notch weir.            */
+    SWMM_WEIR_TRAPEZOIDAL = 3, /**< Trapezoidal weir.                     */
+    SWMM_WEIR_ROADWAY     = 4, /**< FHWA HDS-5 roadway weir.              */
+} SWMM_WeirType;
+
+/**
+ * @brief Set the weir flow classification.
+ *
+ * @details Only valid on links of type @ref SWMM_LINK_WEIR; returns
+ *          @c SWMM_ERR_BADPARAM otherwise.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based link index.
+ * @param type    Weir type (see @ref SWMM_WeirType).
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-weir link or @p type is out of range.
+ * @since 6.0.0 (engine gap BN-LINK-03, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_weir_type(SWMM_Engine engine, int idx, int type);
+
+/**
+ * @brief Get the weir flow classification.
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based link index.
+ * @param[out] type  Receives the weir type (see @ref SWMM_WeirType).
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-weir link.
+ * @since 6.0.0 (engine gap BN-LINK-03, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_get_weir_type(SWMM_Engine engine, int idx, int* type);
+
+/**
+ * @brief Outlet rating-curve classification.
+ *
+ * @details Used with @ref swmm_link_set_outlet_rating_type and
+ *          @ref swmm_link_get_outlet_rating_type. Numeric encoding
+ *          matches the legacy `LinksHandler::handle_outlets`
+ *          convention (`src/engine/input/handlers/LinksHandler.cpp:214-221`)
+ *          and the legacy SWMM-GUI combo order at
+ *          `SWMM-GUI/Epaswmm5/objprops.txt:913`.
+ *
+ *          FUNCTIONAL types use the @c cd (coefficient) and the
+ *          outlet exponent (see @ref swmm_link_set_outlet_expon)
+ *          to define the rating curve; TABULAR types use the
+ *          curve assigned via @ref swmm_link_set_pump_curve (the
+ *          engine shares the curve-index slot between pumps and
+ *          tabular outlets).
+ *
+ * @since 6.0.0 (engine gap BN-LINK-04, added 2026-05-25)
+ */
+typedef enum SWMM_OutletRatingType {
+    SWMM_OUTLET_FUNCTIONAL_HEAD  = 0, /**< Q = Cd · H^expon (head above invert). */
+    SWMM_OUTLET_FUNCTIONAL_DEPTH = 1, /**< Q = Cd · y^expon (depth at upstream node). */
+    SWMM_OUTLET_TABULAR_HEAD     = 2, /**< Q from rating curve indexed by head. */
+    SWMM_OUTLET_TABULAR_DEPTH    = 3, /**< Q from rating curve indexed by depth. */
+} SWMM_OutletRatingType;
+
+/**
+ * @brief Set the outlet rating-curve classification.
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-outlet link or @p type is out of range.
+ * @since 6.0.0 (engine gap BN-LINK-04, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_outlet_rating_type(SWMM_Engine engine, int idx, int type);
+
+/**
+ * @brief Get the outlet rating-curve classification.
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-outlet link.
+ * @since 6.0.0 (engine gap BN-LINK-04, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_get_outlet_rating_type(SWMM_Engine engine, int idx, int* type);
+
+/**
+ * @brief Set the outlet functional-form exponent.
+ *
+ * @details Only meaningful for FUNCTIONAL_* rating types — the engine
+ *          ignores the stored value when the type is TABULAR_*. The
+ *          coefficient term (Cd) is accessed via
+ *          @ref swmm_link_set_discharge_coeff / @ref swmm_link_get_discharge_coeff.
+ *
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-outlet link.
+ * @since 6.0.0 (engine gap BN-LINK-04, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_outlet_expon(SWMM_Engine engine, int idx, double expon);
+
+/**
+ * @brief Get the outlet functional-form exponent.
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-outlet link.
+ * @since 6.0.0 (engine gap BN-LINK-04, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_get_outlet_expon(SWMM_Engine engine, int idx, double* expon);
+
+/**
+ * @brief Set the pump startup depth (depth at upstream node when the
+ *        pump turns on, project length units).
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-pump link.
+ * @since 6.0.0 (engine gap BN-LINK-05, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_pump_startup_depth(SWMM_Engine engine, int idx, double depth);
+
+/** @brief Get the pump startup depth. @since 6.0.0 (BN-LINK-05) */
+SWMM_ENGINE_API int swmm_link_get_pump_startup_depth(SWMM_Engine engine, int idx, double* depth);
+
+/**
+ * @brief Set the pump shutoff depth (depth at upstream node when the
+ *        pump turns off, project length units).
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-pump link.
+ * @since 6.0.0 (engine gap BN-LINK-05, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_pump_shutoff_depth(SWMM_Engine engine, int idx, double depth);
+
+/** @brief Get the pump shutoff depth. @since 6.0.0 (BN-LINK-05) */
+SWMM_ENGINE_API int swmm_link_get_pump_shutoff_depth(SWMM_Engine engine, int idx, double* depth);
+
+/**
+ * @brief Set the orifice open/close rate (fraction per second).
+ *
+ * @details 0 means instantaneous open/close. The legacy SWMM-GUI surfaces
+ *          this field as "Time to Open/Close" measured in hours; clients
+ *          that want the hours-based UX should compute
+ *          @c rate = 1.0 / (3600 * hours) before calling this setter.
+ *
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-orifice link.
+ * @since 6.0.0 (engine gap BN-LINK-06, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_orifice_open_close_rate(SWMM_Engine engine, int idx, double rate);
+
+/** @brief Get the orifice open/close rate (fraction per second). @since 6.0.0 (BN-LINK-06) */
+SWMM_ENGINE_API int swmm_link_get_orifice_open_close_rate(SWMM_Engine engine, int idx, double* rate);
+
 /* =========================================================================
  * Cross-section (BUILDING or OPENED)
  * ========================================================================= */

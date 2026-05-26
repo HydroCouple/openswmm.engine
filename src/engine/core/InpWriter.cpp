@@ -784,9 +784,17 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     for(int t=0;t<ctx.transects.count();++t){auto ut=static_cast<size_t>(t);
     std::fprintf(f,"NC %10.4f %10.4f %10.4f\n",ctx.transects.n_left[ut],ctx.transects.n_right[ut],ctx.transects.n_channel[ut]);
     int nsta=static_cast<int>(ctx.transects.stations[ut].size());
-    std::fprintf(f,"X1 %-16s %10d %10.4f %10.4f 0 0 0 %10.4f %10.4f\n",
+    // X1 layout per EPA SWMM 5 (transect.c::setParams):
+    //   X1 Name Nsta Xleft Xright 0 0 Lfactor Xfactor Yfactor
+    // i.e. TWO placeholder zeros between Xright and Lfactor (not three).
+    // An extra zero shifts Lfactor/Xfactor/Yfactor by one column, which
+    // every SWMM-5 parser then misreads.
+    std::fprintf(f,"X1 %-16s %10d %10.4f %10.4f 0 0 %10.4f %10.4f %10.4f\n",
         ctx.transects.names[ut].c_str(),nsta,ctx.transects.x_left_bank[ut],
-        ctx.transects.x_right_bank[ut],ctx.transects.x_factor[ut],ctx.transects.y_factor[ut]);
+        ctx.transects.x_right_bank[ut],
+        ctx.transects.length_factor[ut],
+        ctx.transects.x_factor[ut],
+        ctx.transects.y_factor[ut]);
     for(int k=0;k<nsta;++k){auto uk=static_cast<size_t>(k);
     if(k%5==0)std::fprintf(f,"GR");
     std::fprintf(f," %10.4f %10.4f",ctx.transects.elevations[ut][uk],ctx.transects.stations[ut][uk]);

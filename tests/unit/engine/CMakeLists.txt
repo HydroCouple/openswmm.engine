@@ -82,6 +82,10 @@ add_gtest_unit(test_engine_options_parser    test_options_parser.cpp)
 add_gtest_unit(test_engine_csv_timeseries    test_csv_timeseries.cpp)
 add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
 add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.cpp)
+# Slice RC.5 — GeoPackage explicit-builtin registration + is_builtin flag.
+add_gtest_unit(test_engine_pluginfactory_builtins test_pluginfactory_builtins.cpp)
+# Slice QA-01.4 — per-node summary stats read from a SWMM_Output handle.
+add_gtest_unit(test_engine_output_node_stats     test_output_node_stats.cpp)
 add_gtest_unit(test_engine_model_write_with_plugin test_model_write_with_plugin.cpp)
 add_gtest_unit(test_engine_files_section          test_files_section.cpp)
 add_gtest_unit(test_engine_events_section         test_events_section.cpp)
@@ -109,6 +113,7 @@ add_gtest_unit(test_engine_rdii             test_rdii.cpp)
 add_gtest_unit(test_engine_hydrograph_mutation test_hydrograph_mutation_api.cpp)
 add_gtest_unit(test_engine_pattern_mutation  test_pattern_mutation_api.cpp)
 add_gtest_unit(test_engine_transect_mutation test_transect_mutation_api.cpp)
+add_gtest_unit(test_engine_transect_inp_parser test_transect_inp_parser.cpp)
 add_gtest_unit(test_engine_da4_api          test_da4_engine_api.cpp)
 add_gtest_unit(test_engine_controls         test_controls.cpp)
 add_gtest_unit(test_engine_control_rule_validate test_control_rule_validate_api.cpp)
@@ -118,11 +123,15 @@ add_gtest_unit(test_engine_nodes_bulk_phase3 test_nodes_bulk_phase3.cpp)
 add_gtest_unit(test_engine_links_bulk_phase3 test_links_bulk_phase3.cpp)
 add_gtest_unit(test_engine_subcatchments_bulk_phase3 test_subcatchments_bulk_phase3.cpp)
 add_gtest_unit(test_engine_statistics_bulk_phase3 test_statistics_bulk_phase3.cpp)
+add_gtest_unit(test_engine_runoff_interface_capi test_runoff_interface_capi.cpp)
 add_gtest_unit(test_engine_report_section  test_report_section.cpp)
 add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
 add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
 add_gtest_unit(test_engine_type_conversion test_type_conversion.cpp)
 add_gtest_unit(test_engine_tags           test_tags.cpp)
+# Engine gaps BN-LINK-01a / -01b — symmetric getters for initial-flow /
+# max-flow (added 2026-05-25 for Slice SB of the GUI plan).
+add_gtest_unit(test_engine_link_flow_roundtrip test_link_flow_roundtrip.cpp)
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # Non-CVODE portions can be built without SUNDIALS by compiling the needed

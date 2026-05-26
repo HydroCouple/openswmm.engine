@@ -395,7 +395,20 @@ endif()
 # ---- Optional GeoPackage I/O library ----
 if(OPENSWMM_WITH_GEOPACKAGE)
     add_subdirectory(input/geopackage)
-    message(STATUS "OpenSWMM Engine: GeoPackage I/O library enabled")
+    # Slice RC.1 (APPROVED 2026-05-25, see §R.3 of openswmm.gui's
+    # GUI_IMPLEMENTATION_PLAN.md) — link the static GeoPackage lib into
+    # the engine SHARED so its IPluginComponentInfo singleton is
+    # resolvable from PluginFactory::register_builtin_infos AND so the
+    # PUBLIC OPENSWMM_HAS_GEOPACKAGE define propagates to the engine's
+    # own TUs (gating the explicit register_one call).
+    # PRIVATE because the cycle (engine ←→ geopackage PRIVATE both
+    # directions) collapses cleanly when geopackage's STATIC archive is
+    # absorbed into the engine SHARED at link time.
+    target_link_libraries(openswmm_engine PRIVATE openswmm_geopackage)
+    if(TARGET openswmm_engine_internal)
+        target_link_libraries(openswmm_engine_internal PRIVATE openswmm_geopackage)
+    endif()
+    message(STATUS "OpenSWMM Engine: GeoPackage I/O library enabled (built-in plugin)")
 else()
     message(STATUS "OpenSWMM Engine: GeoPackage I/O disabled (set -DOPENSWMM_WITH_GEOPACKAGE=ON to enable)")
 endif()

@@ -310,3 +310,55 @@ class Statistics:
         .. versionadded:: 6.0.0
         """
         ...
+
+    # ====================================================================
+    # Phase 4e link-stat bulks — completes the per-link statistics
+    # surface. Each releases the GIL during the C call.
+    # ====================================================================
+
+    def link_max_velocity_bulk(self) -> npt.NDArray[np.float64]:
+        """Return peak velocities for all links as a NumPy array.
+
+        Wraps C{swmm_stat_link_max_velocity_bulk}. GIL is released
+        during the C call.
+
+        @return: Array of shape C{(n_links,)} with dtype C{float64}.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def link_max_filling_bulk(self) -> npt.NDArray[np.float64]:
+        """Return peak depth-to-full-depth ratios for all links as a
+        NumPy array. Wraps C{swmm_stat_link_max_filling_bulk}. GIL is
+        released during the C call.
+
+        @return: Array of shape C{(n_links,)} with dtype C{float64}
+            (dimensionless ratio).
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def link_vol_flow_bulk(self) -> npt.NDArray[np.float64]:
+        """Return cumulative flow volumes for all links as a NumPy
+        array. Wraps C{swmm_stat_link_vol_flow_bulk}. GIL is released
+        during the C call.
+
+        @return: Array of shape C{(n_links,)} with dtype C{float64}.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def link_surcharge_time_bulk(self) -> npt.NDArray[np.float64]:
+        """Return cumulative surcharge time for all links as a NumPy
+        array. Wraps C{swmm_stat_link_surcharge_time_bulk}. GIL is
+        released during the C call.
+
+        @return: Array of shape C{(n_links,)} with dtype C{float64}
+            (hours).
+
+        .. versionadded:: 6.0.0
+        """
+        ...

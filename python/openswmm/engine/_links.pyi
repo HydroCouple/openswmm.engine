@@ -337,6 +337,108 @@ class Links:
         """
         ...
 
+    def get_initial_flow(self, idx: Union[int, str]) -> float:
+        """Return the initial flow assigned to a link.
+
+        Symmetric reader for L{set_initial_flow} — engine gap BN-LINK-01a.
+        """
+        ...
+
+    def get_max_flow(self, idx: Union[int, str]) -> float:
+        """Return the maximum flow limit assigned to a link (0 = no limit).
+
+        Symmetric reader for L{set_max_flow} — engine gap BN-LINK-01b.
+        """
+        ...
+
+    def get_orifice_type(self, idx: Union[int, str]) -> int:
+        """Return the orifice flow-attack classification (0=SIDE, 1=BOTTOM).
+
+        Engine gap BN-LINK-02. Returns an error for non-orifice links.
+        """
+        ...
+
+    def set_orifice_type(self, idx: Union[int, str], type_: int) -> None:
+        """Set the orifice flow-attack classification (0=SIDE, 1=BOTTOM).
+
+        Engine gap BN-LINK-02. Returns an error for non-orifice links.
+        """
+        ...
+
+    def get_weir_type(self, idx: Union[int, str]) -> int:
+        """Return the weir flow classification (0..4).
+
+        Engine gap BN-LINK-03. 0=TRANSVERSE, 1=SIDEFLOW, 2=VNOTCH,
+        3=TRAPEZOIDAL, 4=ROADWAY. Errors for non-weir links.
+        """
+        ...
+
+    def set_weir_type(self, idx: Union[int, str], type_: int) -> None:
+        """Set the weir flow classification (0..4).
+
+        Engine gap BN-LINK-03. Errors for non-weir links or out-of-range values.
+        """
+        ...
+
+    def get_outlet_rating_type(self, idx: Union[int, str]) -> int:
+        """Return the outlet rating-curve classification (0..3).
+
+        Engine gap BN-LINK-04. 0=FUNCTIONAL_HEAD, 1=FUNCTIONAL_DEPTH,
+        2=TABULAR_HEAD, 3=TABULAR_DEPTH. Errors for non-outlet links.
+        """
+        ...
+
+    def set_outlet_rating_type(self, idx: Union[int, str], type_: int) -> None:
+        """Set the outlet rating-curve classification (0..3).
+
+        Engine gap BN-LINK-04. Errors for non-outlet links or out-of-range values.
+        """
+        ...
+
+    def get_outlet_expon(self, idx: Union[int, str]) -> float:
+        """Return the outlet functional-form exponent.
+
+        Engine gap BN-LINK-04. Errors for non-outlet links.
+        """
+        ...
+
+    def set_outlet_expon(self, idx: Union[int, str], expon: float) -> None:
+        """Set the outlet functional-form exponent.
+
+        Engine gap BN-LINK-04. Errors for non-outlet links.
+        """
+        ...
+
+    def get_pump_startup_depth(self, idx: Union[int, str]) -> float:
+        """Return the pump startup depth (engine gap BN-LINK-05).
+
+        Errors for non-pump links.
+        """
+        ...
+
+    def set_pump_startup_depth(self, idx: Union[int, str], depth: float) -> None:
+        """Set the pump startup depth (engine gap BN-LINK-05)."""
+        ...
+
+    def get_pump_shutoff_depth(self, idx: Union[int, str]) -> float:
+        """Return the pump shutoff depth (engine gap BN-LINK-05)."""
+        ...
+
+    def set_pump_shutoff_depth(self, idx: Union[int, str], depth: float) -> None:
+        """Set the pump shutoff depth (engine gap BN-LINK-05)."""
+        ...
+
+    def get_orifice_open_close_rate(self, idx: Union[int, str]) -> float:
+        """Return the orifice open/close rate (1/s, engine gap BN-LINK-06).
+
+        0 = instantaneous. Errors for non-orifice links.
+        """
+        ...
+
+    def set_orifice_open_close_rate(self, idx: Union[int, str], rate: float) -> None:
+        """Set the orifice open/close rate (engine gap BN-LINK-06)."""
+        ...
+
     # ====================================================================
     # Per-element flow/depth state
     # ====================================================================

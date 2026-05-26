@@ -26,6 +26,7 @@
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_statistics.h>
 #include <openswmm/engine/openswmm_nodes.h>
+#include <openswmm/engine/openswmm_links.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
 
 namespace {
@@ -122,6 +123,92 @@ TEST_F(StatsBulkPhase3Test, SubcatchMaxRunoffBulkMatchesScalar) {
         double scalar = -1.0;
         ASSERT_EQ(swmm_stat_subcatch_max_runoff(engine_, i, &scalar), SWMM_OK);
         EXPECT_EQ(bulk[i], scalar) << "subcatch " << i;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4e link-stat bulks — same equivalence + non-negativity + bad-param
+// shape as the Phase 3 batch.
+// ---------------------------------------------------------------------------
+
+TEST_F(StatsBulkPhase3Test, LinkMaxVelocityBulkMatchesScalar) {
+    const int n_links = swmm_link_count(engine_);
+    ASSERT_GT(n_links, 0);
+    std::vector<double> bulk(n_links, -42.0);
+    ASSERT_EQ(swmm_stat_link_max_velocity_bulk(engine_, bulk.data(), n_links),
+              SWMM_OK);
+    for (int i = 0; i < n_links; ++i) {
+        double scalar = -1.0;
+        ASSERT_EQ(swmm_stat_link_max_velocity(engine_, i, &scalar), SWMM_OK);
+        EXPECT_EQ(bulk[i], scalar) << "link " << i;
+    }
+}
+
+TEST_F(StatsBulkPhase3Test, LinkMaxFillingBulkMatchesScalar) {
+    const int n_links = swmm_link_count(engine_);
+    std::vector<double> bulk(n_links, -42.0);
+    ASSERT_EQ(swmm_stat_link_max_filling_bulk(engine_, bulk.data(), n_links),
+              SWMM_OK);
+    for (int i = 0; i < n_links; ++i) {
+        double scalar = -1.0;
+        ASSERT_EQ(swmm_stat_link_max_filling(engine_, i, &scalar), SWMM_OK);
+        EXPECT_EQ(bulk[i], scalar) << "link " << i;
+    }
+}
+
+TEST_F(StatsBulkPhase3Test, LinkVolFlowBulkMatchesScalar) {
+    const int n_links = swmm_link_count(engine_);
+    std::vector<double> bulk(n_links, -42.0);
+    ASSERT_EQ(swmm_stat_link_vol_flow_bulk(engine_, bulk.data(), n_links),
+              SWMM_OK);
+    for (int i = 0; i < n_links; ++i) {
+        double scalar = -1.0;
+        ASSERT_EQ(swmm_stat_link_vol_flow(engine_, i, &scalar), SWMM_OK);
+        EXPECT_EQ(bulk[i], scalar) << "link " << i;
+    }
+}
+
+TEST_F(StatsBulkPhase3Test, LinkSurchargeTimeBulkMatchesScalar) {
+    const int n_links = swmm_link_count(engine_);
+    std::vector<double> bulk(n_links, -42.0);
+    ASSERT_EQ(swmm_stat_link_surcharge_time_bulk(engine_, bulk.data(), n_links),
+              SWMM_OK);
+    for (int i = 0; i < n_links; ++i) {
+        double scalar = -1.0;
+        ASSERT_EQ(swmm_stat_link_surcharge_time(engine_, i, &scalar), SWMM_OK);
+        EXPECT_EQ(bulk[i], scalar) << "link " << i;
+    }
+}
+
+TEST_F(StatsBulkPhase3Test, LinkStatsBulksRejectBadParams) {
+    const int n_links = swmm_link_count(engine_);
+    std::vector<double> v(n_links, 0.0);
+    EXPECT_EQ(swmm_stat_link_max_velocity_bulk(engine_, nullptr, n_links),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_link_max_filling_bulk(engine_, nullptr, n_links),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_link_vol_flow_bulk(engine_, nullptr, n_links),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_link_surcharge_time_bulk(engine_, nullptr, n_links),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_link_max_velocity_bulk(engine_, v.data(), 0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_link_max_velocity_bulk(nullptr, v.data(), n_links),
+              SWMM_ERR_BADHANDLE);
+}
+
+TEST_F(StatsBulkPhase3Test, LinkStatsAreNonNegative) {
+    const int n_links = swmm_link_count(engine_);
+    std::vector<double> mv(n_links), mf(n_links), vf(n_links), st(n_links);
+    ASSERT_EQ(swmm_stat_link_max_velocity_bulk(engine_, mv.data(), n_links), SWMM_OK);
+    ASSERT_EQ(swmm_stat_link_max_filling_bulk(engine_, mf.data(), n_links), SWMM_OK);
+    ASSERT_EQ(swmm_stat_link_vol_flow_bulk(engine_, vf.data(), n_links), SWMM_OK);
+    ASSERT_EQ(swmm_stat_link_surcharge_time_bulk(engine_, st.data(), n_links), SWMM_OK);
+    for (int i = 0; i < n_links; ++i) {
+        EXPECT_GE(mv[i], 0.0) << "link " << i << " max_velocity";
+        EXPECT_GE(mf[i], 0.0) << "link " << i << " max_filling";
+        EXPECT_GE(vf[i], 0.0) << "link " << i << " vol_flow";
+        EXPECT_GE(st[i], 0.0) << "link " << i << " surcharge_time";
     }
 }
 

@@ -474,3 +474,56 @@ class OutputReader:
         @raise RuntimeError: If the underlying read fails.
         """
         ...
+
+    # ====================================================================
+    # Post-run node statistics aggregated from the .out file.
+    # Each releases the GIL during the C call.
+    # ====================================================================
+
+    def get_node_stat_max_depth(self, node_idx: int) -> float:
+        """Maximum node depth across all reporting periods.
+
+        Wraps C{swmm_output_get_node_stat_max_depth}. GIL is released
+        during the C call.
+
+        @param node_idx: Zero-based node index.
+        @type node_idx: int
+        @return: Peak depth in the model's length units.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_node_stat_max_overflow(self, node_idx: int) -> float:
+        """Maximum node overflow rate across all reporting periods.
+
+        Wraps C{swmm_output_get_node_stat_max_overflow}. GIL is released
+        during the C call.
+
+        @return: Peak overflow rate in the file's flow units.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_node_stat_vol_flooded(self, node_idx: int) -> float:
+        """Total flood volume at the node across the simulation.
+
+        Wraps C{swmm_output_get_node_stat_vol_flooded}. GIL is released
+        during the C call.
+
+        @return: Total flooded volume in ft³ (US) or m³ (SI).
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_node_stat_time_flooded(self, node_idx: int) -> float:
+        """Total flooded time in seconds. Divide by 3600 for hours.
+
+        Wraps C{swmm_output_get_node_stat_time_flooded}. GIL is released
+        during the C call.
+
+        .. versionadded:: 6.0.0
+        """
+        ...

@@ -123,6 +123,14 @@ C call.
      - All-node cumulative time-flooded *(added 6.0.0)*.
    * - :meth:`subcatch_max_runoff_bulk()`
      - All-subcatchment peak runoff *(added 6.0.0)*.
+   * - :meth:`link_max_velocity_bulk()`
+     - All-link peak velocity *(added 6.0.0)*.
+   * - :meth:`link_max_filling_bulk()`
+     - All-link peak depth/full-depth ratio *(added 6.0.0)*.
+   * - :meth:`link_vol_flow_bulk()`
+     - All-link cumulative flow volume *(added 6.0.0)*.
+   * - :meth:`link_surcharge_time_bulk()`
+     - All-link cumulative surcharge time *(added 6.0.0)*.
 
 Whole-network flooding summary in 4 C calls (replaces a ``4 * n_nodes``
 Python loop):
@@ -271,6 +279,14 @@ released during the underlying C call.
      - ``(n_nodes,)`` *(added 6.0.0)*
    * - :meth:`subcatch_max_runoff_bulk`
      - ``(n_subcatch,)`` *(added 6.0.0)*
+   * - :meth:`link_max_velocity_bulk`
+     - ``(n_links,)`` *(added 6.0.0)*
+   * - :meth:`link_max_filling_bulk`
+     - ``(n_links,)`` *(added 6.0.0)*
+   * - :meth:`link_vol_flow_bulk`
+     - ``(n_links,)`` *(added 6.0.0)*
+   * - :meth:`link_surcharge_time_bulk`
+     - ``(n_links,)`` *(added 6.0.0)*
 
 Memory-aliasing rule: the three pre-6.0 bulk methods share scratch
 buffers with engine state — ``.copy()`` if you need to retain them

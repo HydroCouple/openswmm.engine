@@ -185,6 +185,250 @@ SWMM_ENGINE_API int swmm_link_set_max_flow(SWMM_Engine engine, int idx, double f
     return SWMM_OK;
 }
 
+// Engine gap BN-LINK-01a (added 2026-05-25) — symmetric getter for
+// swmm_link_set_initial_flow. Reads the same SoA slot the setter writes.
+// Read-only: usable in any post-construction state (no CHECK_GEOMETRY).
+SWMM_ENGINE_API int swmm_link_get_initial_flow(SWMM_Engine engine, int idx, double* flow) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    if (flow) *flow = ctx.links.flow[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+// Engine gap BN-LINK-01b (added 2026-05-25) — symmetric getter for
+// swmm_link_set_max_flow. Reads the `q_limit` SoA slot. 0.0 means no
+// limit (mirrors the setter's contract documented in openswmm_links.h:223).
+SWMM_ENGINE_API int swmm_link_get_max_flow(SWMM_Engine engine, int idx, double* flow) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    if (flow) *flow = ctx.links.q_limit[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+// Engine gap BN-LINK-02 (added 2026-05-25) — orifice TYPE (SIDE / BOTTOM)
+// accessors. Stored in `links.param1` per the legacy convention documented
+// in LinkData.hpp:379 and LinksHandler.cpp:138 — 0.0 = BOTTOM, 1.0 = SIDE.
+// The integer ABI here uses 0 = SIDE, 1 = BOTTOM to match the legacy
+// SWMM-GUI combo order (SWMM-GUI/Epaswmm5/objprops.txt:862 lists
+// 'SIDE' first, 'BOTTOM' second). The engine-internal float storage
+// stays as-is; the int↔float mapping lives in this accessor pair so
+// callers always see the legacy enum ordering.
+//
+// Returns SWMM_ERR_BADPARAM if the link type isn't ORIFICE; tests pin the
+// contract so callers don't silently mutate a conduit's `param1` slot
+// (which means something else for conduits).
+SWMM_ENGINE_API int swmm_link_set_orifice_type(SWMM_Engine engine, int idx, int type) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::ORIFICE)
+        return SWMM_ERR_BADPARAM;
+    if (type != 0 && type != 1) return SWMM_ERR_BADPARAM;
+    // GUI 0=SIDE → engine 1.0=SIDE ; GUI 1=BOTTOM → engine 0.0=BOTTOM.
+    ctx.links.param1[uidx] = (type == 0) ? 1.0 : 0.0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_orifice_type(SWMM_Engine engine, int idx, int* type) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::ORIFICE)
+        return SWMM_ERR_BADPARAM;
+    if (type) {
+        // Engine 1.0=SIDE → GUI 0=SIDE; Engine 0.0=BOTTOM → GUI 1=BOTTOM.
+        *type = (ctx.links.param1[uidx] >= 0.5) ? 0 : 1;
+    }
+    return SWMM_OK;
+}
+
+// Engine gap BN-LINK-03 (added 2026-05-25) — weir TYPE accessors. Five
+// values matching the legacy WeirType enum order in
+// `legacy/engine/enums.h:925`: TRANSVERSE=0, SIDEFLOW=1, VNOTCH=2,
+// TRAPEZOIDAL=3, ROADWAY=4. Stored in `links.param1` per the legacy
+// convention (LinksHandler.cpp:171-178). ROADWAY is accepted by the
+// accessor even though the .inp parser doesn't yet recognise the
+// "ROADWAY" keyword — the engine simulation code (legacy/engine/link.c)
+// has the case branch, so an interactively-set ROADWAY weir does work.
+// Filing the .inp parser-side ROADWAY tokenisation as a separate gap.
+SWMM_ENGINE_API int swmm_link_set_weir_type(SWMM_Engine engine, int idx, int type) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::WEIR)
+        return SWMM_ERR_BADPARAM;
+    if (type < 0 || type > 4) return SWMM_ERR_BADPARAM;
+    ctx.links.param1[uidx] = static_cast<double>(type);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_weir_type(SWMM_Engine engine, int idx, int* type) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::WEIR)
+        return SWMM_ERR_BADPARAM;
+    if (type) {
+        // Round to nearest int — param1 is a double slot but only
+        // discrete integer-valued weir-type codes are stored.
+        const int raw = static_cast<int>(ctx.links.param1[uidx] + 0.5);
+        *type = (raw < 0 || raw > 4) ? 0 : raw;
+    }
+    return SWMM_OK;
+}
+
+// Engine gap BN-LINK-04 (added 2026-05-25) — outlet RATING CURVE TYPE
+// accessors. Four values: 0=FUNCTIONAL_HEAD, 1=FUNCTIONAL_DEPTH,
+// 2=TABULAR_HEAD, 3=TABULAR_DEPTH. Encoding matches the existing
+// LinksHandler.cpp:214-221 convention; stored in `links.param1` per the
+// established legacy pattern.
+//
+// Functional coefficient (`links.cd`) and tabular curve index
+// (`links.pump_curve`) reuse the existing scalar accessors
+// (`swmm_link_set_discharge_coeff` / `swmm_link_set_pump_curve`); only
+// the type code and the functional exponent (`links.param2`) need
+// new outlet-typed accessor pairs to be unambiguous about which
+// link kind they apply to.
+SWMM_ENGINE_API int swmm_link_set_outlet_rating_type(SWMM_Engine engine, int idx, int type) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::OUTLET)
+        return SWMM_ERR_BADPARAM;
+    if (type < 0 || type > 3) return SWMM_ERR_BADPARAM;
+    ctx.links.param1[uidx] = static_cast<double>(type);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_outlet_rating_type(SWMM_Engine engine, int idx, int* type) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::OUTLET)
+        return SWMM_ERR_BADPARAM;
+    if (type) {
+        const int raw = static_cast<int>(ctx.links.param1[uidx] + 0.5);
+        *type = (raw < 0 || raw > 3) ? 0 : raw;
+    }
+    return SWMM_OK;
+}
+
+// Outlet functional exponent (`links.param2`). Only valid for outlets;
+// for the TABULAR/* rating types the engine ignores the stored value.
+SWMM_ENGINE_API int swmm_link_set_outlet_expon(SWMM_Engine engine, int idx, double expon) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::OUTLET)
+        return SWMM_ERR_BADPARAM;
+    ctx.links.param2[uidx] = expon;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_outlet_expon(SWMM_Engine engine, int idx, double* expon) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::OUTLET)
+        return SWMM_ERR_BADPARAM;
+    if (expon) *expon = ctx.links.param2[uidx];
+    return SWMM_OK;
+}
+
+// Engine gap BN-LINK-05 (added 2026-05-25) — pump startup / shutoff
+// depth accessors. Engine state already exists at LinkData.hpp:310-313
+// (`pump_startup`, `pump_shutoff`); these accessors expose it through
+// the public ABI. Non-pump links rejected.
+SWMM_ENGINE_API int swmm_link_set_pump_startup_depth(SWMM_Engine engine, int idx, double depth) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::PUMP)
+        return SWMM_ERR_BADPARAM;
+    ctx.links.pump_startup[uidx] = depth;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_pump_startup_depth(SWMM_Engine engine, int idx, double* depth) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::PUMP)
+        return SWMM_ERR_BADPARAM;
+    if (depth) *depth = ctx.links.pump_startup[uidx];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_set_pump_shutoff_depth(SWMM_Engine engine, int idx, double depth) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::PUMP)
+        return SWMM_ERR_BADPARAM;
+    ctx.links.pump_shutoff[uidx] = depth;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_pump_shutoff_depth(SWMM_Engine engine, int idx, double* depth) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::PUMP)
+        return SWMM_ERR_BADPARAM;
+    if (depth) *depth = ctx.links.pump_shutoff[uidx];
+    return SWMM_OK;
+}
+
+// Engine gap BN-LINK-06 (added 2026-05-25) — orifice open/close rate
+// accessor pair. Engine state exists at LinkData.hpp:390 (`orate`).
+// Stores fraction per second (0 = instantaneous) per the legacy
+// convention; legacy SWMM-GUI uses the "Time to Open/Close" label in
+// hours, but the engine stores the rate. The GUI's
+// `setOrificeOrateHours` helper converts the legacy hours-based value
+// to the engine's rate-per-second on write.
+SWMM_ENGINE_API int swmm_link_set_orifice_open_close_rate(SWMM_Engine engine, int idx, double rate) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::ORIFICE)
+        return SWMM_ERR_BADPARAM;
+    ctx.links.orate[uidx] = rate;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_orifice_open_close_rate(SWMM_Engine engine, int idx, double* rate) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.links.type[uidx] != openswmm::LinkType::ORIFICE)
+        return SWMM_ERR_BADPARAM;
+    if (rate) *rate = ctx.links.orate[uidx];
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Cross-section
 // ============================================================================

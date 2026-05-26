@@ -54,6 +54,14 @@ cdef extern from "openswmm_engine.h":
     cdef int swmm_get_event_count(SWMM_Engine e, int* count)
     cdef int swmm_get_steady_state_skip(SWMM_Engine e, int* enabled)
     cdef int swmm_set_steady_state_skip(SWMM_Engine e, int enabled)
+    # Phase 1b: runoff interface file (legacy "Frunoff"). I/O-bound,
+    # so each is declared nogil to allow the GIL to be released around
+    # the C call (the wrappers in _solver.pyx wrap them in `with nogil:`).
+    cdef int swmm_runoff_iface_open_write(SWMM_Engine e, const char* path) nogil
+    cdef int swmm_runoff_iface_open_read(SWMM_Engine e, const char* path) nogil
+    cdef int swmm_runoff_iface_save_step(SWMM_Engine e, double dt) nogil
+    cdef int swmm_runoff_iface_read_step(SWMM_Engine e, int* has_data) nogil
+    cdef int swmm_runoff_iface_close(SWMM_Engine e) nogil
 
     # --- [EVENTS] section editor (Slice CW, 2026-05-21) ---
     cdef int swmm_events_count(SWMM_Engine e, int* count)
@@ -229,6 +237,28 @@ cdef extern from "openswmm_links.h":
     cdef int swmm_link_set_offset_dn(SWMM_Engine e, int idx, double offset)
     cdef int swmm_link_set_initial_flow(SWMM_Engine e, int idx, double flow)
     cdef int swmm_link_set_max_flow(SWMM_Engine e, int idx, double flow)
+    # Engine gaps BN-LINK-01a / -01b — symmetric getters added 2026-05-25.
+    cdef int swmm_link_get_initial_flow(SWMM_Engine e, int idx, double* flow)
+    cdef int swmm_link_get_max_flow(SWMM_Engine e, int idx, double* flow)
+    # Engine gap BN-LINK-02 — orifice TYPE (SIDE=0 / BOTTOM=1) — added 2026-05-25.
+    cdef int swmm_link_get_orifice_type(SWMM_Engine e, int idx, int* type_)
+    cdef int swmm_link_set_orifice_type(SWMM_Engine e, int idx, int type_)
+    # Engine gap BN-LINK-03 — weir TYPE (5 values) — added 2026-05-25.
+    cdef int swmm_link_get_weir_type(SWMM_Engine e, int idx, int* type_)
+    cdef int swmm_link_set_weir_type(SWMM_Engine e, int idx, int type_)
+    # Engine gap BN-LINK-04 — outlet rating type (4 values) + exponent — 2026-05-25.
+    cdef int swmm_link_get_outlet_rating_type(SWMM_Engine e, int idx, int* type_)
+    cdef int swmm_link_set_outlet_rating_type(SWMM_Engine e, int idx, int type_)
+    cdef int swmm_link_get_outlet_expon(SWMM_Engine e, int idx, double* expon)
+    cdef int swmm_link_set_outlet_expon(SWMM_Engine e, int idx, double expon)
+    # Engine gap BN-LINK-05 — pump startup / shutoff depth — added 2026-05-25.
+    cdef int swmm_link_get_pump_startup_depth(SWMM_Engine e, int idx, double* depth)
+    cdef int swmm_link_set_pump_startup_depth(SWMM_Engine e, int idx, double depth)
+    cdef int swmm_link_get_pump_shutoff_depth(SWMM_Engine e, int idx, double* depth)
+    cdef int swmm_link_set_pump_shutoff_depth(SWMM_Engine e, int idx, double depth)
+    # Engine gap BN-LINK-06 — orifice open/close rate (1/s) — added 2026-05-25.
+    cdef int swmm_link_get_orifice_open_close_rate(SWMM_Engine e, int idx, double* rate)
+    cdef int swmm_link_set_orifice_open_close_rate(SWMM_Engine e, int idx, double rate)
     # Cross-section
     cdef int swmm_link_set_xsect(SWMM_Engine e, int idx, int shape,
                                   double g1, double g2, double g3, double g4)
@@ -653,6 +683,11 @@ cdef extern from "openswmm_statistics.h":
     cdef int swmm_stat_node_vol_flooded_bulk(SWMM_Engine e, double* buf, int count) nogil
     cdef int swmm_stat_node_time_flooded_bulk(SWMM_Engine e, double* buf, int count) nogil
     cdef int swmm_stat_subcatch_max_runoff_bulk(SWMM_Engine e, double* buf, int count) nogil
+    # Phase 4e link-stat bulks — completes the per-link statistics surface.
+    cdef int swmm_stat_link_max_velocity_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_stat_link_max_filling_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_stat_link_vol_flow_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_stat_link_surcharge_time_bulk(SWMM_Engine e, double* buf, int count) nogil
 
 cdef extern from "openswmm_spatial.h":
     # CRS
@@ -726,6 +761,16 @@ cdef extern from "openswmm_output.h":
     cdef int swmm_output_get_period_time(SWMM_Output handle, int period, double* time)
     # Error
     cdef int swmm_output_get_error_code(SWMM_Output handle)
+    # Post-run node statistics aggregated from the .out file
+    # (added 2026-05 to the engine; bound here in the Phase 5 drift sweep).
+    cdef int swmm_output_get_node_stat_max_depth(SWMM_Output handle,
+                                                  int node_idx, double* value) nogil
+    cdef int swmm_output_get_node_stat_max_overflow(SWMM_Output handle,
+                                                     int node_idx, double* value) nogil
+    cdef int swmm_output_get_node_stat_vol_flooded(SWMM_Output handle,
+                                                    int node_idx, double* value) nogil
+    cdef int swmm_output_get_node_stat_time_flooded(SWMM_Output handle,
+                                                     int node_idx, double* value) nogil
 
 
 cdef extern from "openswmm_edit.h":

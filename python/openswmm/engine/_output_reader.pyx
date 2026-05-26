@@ -558,3 +558,103 @@ cdef class OutputReader:
         if rc != 0:
             raise RuntimeError(f"Output read error {rc}")
         return buf
+
+    # ====================================================================
+    # Post-run node statistics aggregated from the .out file.
+    #
+    # These mirror the live-engine ``Statistics`` accessors
+    # (node_max_depth, node_max_overflow, node_vol_flooded,
+    # node_time_flooded) but read from a closed .out file rather than
+    # the running engine.  Useful in post-processing workflows where the
+    # engine handle has already been destroyed and only the binary
+    # output remains.  Each releases the GIL during the C call — the
+    # aggregation reads many periods sequentially from disk and is
+    # worth parallelising.
+    # ====================================================================
+
+    def get_node_stat_max_depth(self, int node_idx) -> float:
+        """Maximum node depth across all reporting periods.
+
+        Wraps C{swmm_output_get_node_stat_max_depth}. GIL is released
+        during the C call.
+
+        @param node_idx: Zero-based node index (0 .. node_count - 1).
+        @type node_idx: int
+        @return: Peak depth in the model's length units (ft / m).
+        @rtype: float
+        @raise RuntimeError: On I/O failure or out-of-range index.
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Output h = self._handle
+        cdef double v = 0.0
+        cdef int rc
+        with nogil:
+            rc = swmm_output_get_node_stat_max_depth(h, node_idx, &v)
+        if rc != 0:
+            raise RuntimeError(f"Output read error {rc}")
+        return v
+
+    def get_node_stat_max_overflow(self, int node_idx) -> float:
+        """Maximum node overflow rate across all reporting periods.
+
+        Wraps C{swmm_output_get_node_stat_max_overflow}. GIL is released
+        during the C call.
+
+        @return: Peak overflow rate in the file's flow units (see
+            :meth:`get_flow_units`).
+        @rtype: float
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Output h = self._handle
+        cdef double v = 0.0
+        cdef int rc
+        with nogil:
+            rc = swmm_output_get_node_stat_max_overflow(h, node_idx, &v)
+        if rc != 0:
+            raise RuntimeError(f"Output read error {rc}")
+        return v
+
+    def get_node_stat_vol_flooded(self, int node_idx) -> float:
+        """Total flood volume at the node across the simulation.
+
+        Aggregates ``sum(overflow_i * report_step)`` over periods where
+        overflow > 0. Wraps C{swmm_output_get_node_stat_vol_flooded}.
+        GIL is released during the C call.
+
+        @return: Total flooded volume in ft³ (US) or m³ (SI). Matches
+            the units of the live-engine ``stat_vol_flooded``.
+        @rtype: float
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Output h = self._handle
+        cdef double v = 0.0
+        cdef int rc
+        with nogil:
+            rc = swmm_output_get_node_stat_vol_flooded(h, node_idx, &v)
+        if rc != 0:
+            raise RuntimeError(f"Output read error {rc}")
+        return v
+
+    def get_node_stat_time_flooded(self, int node_idx) -> float:
+        """Total time the node was flooded across the simulation
+        (seconds). Divide by 3600 for hours (the statsrpt convention).
+
+        Wraps C{swmm_output_get_node_stat_time_flooded}. GIL is released
+        during the C call.
+
+        @return: Total flooded time in seconds.
+        @rtype: float
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Output h = self._handle
+        cdef double v = 0.0
+        cdef int rc
+        with nogil:
+            rc = swmm_output_get_node_stat_time_flooded(h, node_idx, &v)
+        if rc != 0:
+            raise RuntimeError(f"Output read error {rc}")
+        return v

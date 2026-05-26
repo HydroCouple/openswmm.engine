@@ -441,6 +441,205 @@ class Links:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_link_set_max_flow(h, i, flow))
 
+    def get_initial_flow(self, idx) -> float:
+        """Return the initial flow assigned to a link.
+
+        Symmetric reader for L{set_initial_flow} — engine gap BN-LINK-01a
+        (added 2026-05-25).
+
+        @param idx: Link index (int) or link ID (str).
+        @type idx: Union[int, str]
+        @raise KeyError: If C{idx} is a string and the link ID is not found.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double v = 0.0
+        _check(swmm_link_get_initial_flow(h, i, &v))
+        return v
+
+    def get_max_flow(self, idx) -> float:
+        """Return the maximum flow limit assigned to a link (0 = no limit).
+
+        Symmetric reader for L{set_max_flow} — engine gap BN-LINK-01b
+        (added 2026-05-25).
+
+        @param idx: Link index (int) or link ID (str).
+        @type idx: Union[int, str]
+        @raise KeyError: If C{idx} is a string and the link ID is not found.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double v = 0.0
+        _check(swmm_link_get_max_flow(h, i, &v))
+        return v
+
+    def get_orifice_type(self, idx) -> int:
+        """Return the orifice flow-attack classification (0=SIDE, 1=BOTTOM).
+
+        Engine gap BN-LINK-02 (added 2026-05-25). Returns SWMM_ERR_BADPARAM
+        when C{idx} names a non-orifice link.
+
+        @param idx: Link index (int) or link ID (str).
+        @type idx: Union[int, str]
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int t = 0
+        _check(swmm_link_get_orifice_type(h, i, &t))
+        return t
+
+    def set_orifice_type(self, idx, int type_):
+        """Set the orifice flow-attack classification.
+
+        Engine gap BN-LINK-02 (added 2026-05-25).
+
+        @param idx: Link index (int) or link ID (str).
+        @type idx: Union[int, str]
+        @param type_: 0 for SIDE, 1 for BOTTOM.
+        @type type_: int
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_link_set_orifice_type(h, i, type_))
+
+    def get_weir_type(self, idx) -> int:
+        """Return the weir flow classification.
+
+        Engine gap BN-LINK-03 (added 2026-05-25). Returns one of
+        0=TRANSVERSE, 1=SIDEFLOW, 2=VNOTCH, 3=TRAPEZOIDAL, 4=ROADWAY.
+        Errors if C{idx} names a non-weir link.
+
+        @param idx: Link index (int) or link ID (str).
+        @type idx: Union[int, str]
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int t = 0
+        _check(swmm_link_get_weir_type(h, i, &t))
+        return t
+
+    def set_weir_type(self, idx, int type_):
+        """Set the weir flow classification.
+
+        Engine gap BN-LINK-03 (added 2026-05-25). Accepts 0..4.
+
+        @param idx: Link index (int) or link ID (str).
+        @type idx: Union[int, str]
+        @param type_: 0=TRANSVERSE, 1=SIDEFLOW, 2=VNOTCH, 3=TRAPEZOIDAL, 4=ROADWAY.
+        @type type_: int
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_link_set_weir_type(h, i, type_))
+
+    def get_outlet_rating_type(self, idx) -> int:
+        """Return the outlet rating-curve classification (0..3).
+
+        Engine gap BN-LINK-04 (added 2026-05-25).
+        0=FUNCTIONAL_HEAD, 1=FUNCTIONAL_DEPTH, 2=TABULAR_HEAD, 3=TABULAR_DEPTH.
+        Errors for non-outlet links.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int t = 0
+        _check(swmm_link_get_outlet_rating_type(h, i, &t))
+        return t
+
+    def set_outlet_rating_type(self, idx, int type_):
+        """Set the outlet rating-curve classification (0..3).
+
+        Engine gap BN-LINK-04 (added 2026-05-25). Errors for non-outlet
+        links or out-of-range values.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_link_set_outlet_rating_type(h, i, type_))
+
+    def get_outlet_expon(self, idx) -> float:
+        """Return the outlet functional-form exponent.
+
+        Engine gap BN-LINK-04 (added 2026-05-25). Meaningful only for
+        FUNCTIONAL_* rating types; engine ignores the value when the
+        type is TABULAR_*. Errors for non-outlet links.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double v = 0.0
+        _check(swmm_link_get_outlet_expon(h, i, &v))
+        return v
+
+    def set_outlet_expon(self, idx, double expon):
+        """Set the outlet functional-form exponent.
+
+        Engine gap BN-LINK-04 (added 2026-05-25). Errors for non-outlet
+        links.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_link_set_outlet_expon(h, i, expon))
+
+    def get_pump_startup_depth(self, idx) -> float:
+        """Return the pump startup depth (project length units).
+
+        Engine gap BN-LINK-05 (added 2026-05-25). Errors for non-pump links.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double v = 0.0
+        _check(swmm_link_get_pump_startup_depth(h, i, &v))
+        return v
+
+    def set_pump_startup_depth(self, idx, double depth):
+        """Set the pump startup depth.
+
+        Engine gap BN-LINK-05 (added 2026-05-25). Errors for non-pump links.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_link_set_pump_startup_depth(h, i, depth))
+
+    def get_pump_shutoff_depth(self, idx) -> float:
+        """Return the pump shutoff depth (project length units).
+
+        Engine gap BN-LINK-05 (added 2026-05-25). Errors for non-pump links.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double v = 0.0
+        _check(swmm_link_get_pump_shutoff_depth(h, i, &v))
+        return v
+
+    def set_pump_shutoff_depth(self, idx, double depth):
+        """Set the pump shutoff depth.
+
+        Engine gap BN-LINK-05 (added 2026-05-25). Errors for non-pump links.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_link_set_pump_shutoff_depth(h, i, depth))
+
+    def get_orifice_open_close_rate(self, idx) -> float:
+        """Return the orifice open/close rate (fraction per second).
+
+        Engine gap BN-LINK-06 (added 2026-05-25). 0 = instantaneous.
+        Errors for non-orifice links.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double v = 0.0
+        _check(swmm_link_get_orifice_open_close_rate(h, i, &v))
+        return v
+
+    def set_orifice_open_close_rate(self, idx, double rate):
+        """Set the orifice open/close rate (fraction per second).
+
+        Engine gap BN-LINK-06 (added 2026-05-25). 0 = instantaneous.
+        Errors for non-orifice links.
+        """
+        cdef int i = self._resolve(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_link_set_orifice_open_close_rate(h, i, rate))
+
     # ====================================================================
     # Per-element flow/depth state
     # ====================================================================

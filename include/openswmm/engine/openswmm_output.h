@@ -454,6 +454,78 @@ SWMM_ENGINE_API int swmm_output_get_period_time(SWMM_Output handle,
                                                   double* time);
 
 /* =========================================================================
+ * Per-node summary statistics — Slice QA-01
+ *
+ * The SWMM 5.x binary output format does not include a stats block; these
+ * functions reconstruct the four flooding statistics at read time by
+ * walking the per-period node results stored in the file. The semantics
+ * mirror the engine-side `swmm_node_get_stat_*` accessors (which read
+ * from SimulationContext.nodes.stat_*), except sourced from a SWMM_Output
+ * handle so per-output comparisons work across multiple loaded .out
+ * files. Implementations are O(n_periods) per call.
+ *
+ * Caveat: aggregation runs over REPORT-step samples, not the engine's
+ * internal routing-step samples. For runs where the report step is much
+ * coarser than the routing step (e.g. report every hour vs. route every
+ * 5 s), `time_flooded` and `vol_flooded` will under-count brief
+ * sub-report-step flooding events. The engine-side getters
+ * (`swmm_node_get_stat_*`) retain the legacy routing-step precision —
+ * use those when a fresh in-process run is the source.
+ * ========================================================================= */
+
+/**
+ * @brief Maximum node depth across all reporting periods.
+ *
+ * @details Computes `max(SWMM_OUT_NODE_DEPTH)` over the open file's
+ *          period range. Result is in the model's length units (ft / m).
+ *
+ * @param handle    Output reader handle.
+ * @param node_idx  Zero-based node index (0 .. node_count - 1).
+ * @param value     [out] Maximum depth on success; unchanged on error.
+ * @returns 0 on success, -1 on error (bad handle, index out of range, or
+ *          I/O failure during aggregation).
+ */
+SWMM_ENGINE_API int swmm_output_get_node_stat_max_depth(SWMM_Output handle,
+                                                          int          node_idx,
+                                                          double*      value);
+
+/**
+ * @brief Maximum node overflow rate across all reporting periods.
+ *
+ * @details Computes `max(SWMM_OUT_NODE_OVERFLOW)` over the open file's
+ *          period range. Result is in the file's flow units
+ *          (see swmm_output_get_flow_units).
+ */
+SWMM_ENGINE_API int swmm_output_get_node_stat_max_overflow(SWMM_Output handle,
+                                                             int          node_idx,
+                                                             double*      value);
+
+/**
+ * @brief Total flood volume at the node across the simulation.
+ *
+ * @details Aggregates `sum(overflow_i * report_step)` over the periods
+ *          where overflow > 0. Result is in cubic feet (US) or cubic
+ *          metres (SI) — matching `swmm_node_get_stat_vol_flooded` units.
+ *          Returns 0 when the file has no positive-overflow periods.
+ */
+SWMM_ENGINE_API int swmm_output_get_node_stat_vol_flooded(SWMM_Output handle,
+                                                            int          node_idx,
+                                                            double*      value);
+
+/**
+ * @brief Total time the node was flooded across the simulation.
+ *
+ * @details Counts the report periods where overflow > 0 and multiplies
+ *          by the file's report-step seconds. Result is in seconds —
+ *          matching `swmm_node_get_stat_time_flooded` units. Divide by
+ *          3600 for hours (the convention SWMM's statsrpt uses for
+ *          display).
+ */
+SWMM_ENGINE_API int swmm_output_get_node_stat_time_flooded(SWMM_Output handle,
+                                                             int          node_idx,
+                                                             double*      value);
+
+/* =========================================================================
  * Error reporting
  * ========================================================================= */
 

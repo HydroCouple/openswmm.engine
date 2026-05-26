@@ -346,4 +346,43 @@ SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled) 
     return SWMM_OK;
 }
 
+// ============================================================================
+// Phase 1b: Runoff interface file (legacy "Frunoff")
+// ============================================================================
+//
+// Thin pass-throughs to SWMMEngine's runoff-iface methods.  The non-trivial
+// work (header validation, per-substep auto-save) lives in SWMMEngine.cpp;
+// here we just translate between the public C ABI and the C++ helpers.
+
+SWMM_ENGINE_API int swmm_runoff_iface_open_write(SWMM_Engine engine, const char* path) {
+    CHECK_HANDLE(engine);
+    if (!path || path[0] == '\0') return SWMM_ERR_BADPARAM;
+    return to_engine(engine)->openRunoffIfaceWrite(path);
+}
+
+SWMM_ENGINE_API int swmm_runoff_iface_open_read(SWMM_Engine engine, const char* path) {
+    CHECK_HANDLE(engine);
+    if (!path || path[0] == '\0') return SWMM_ERR_BADPARAM;
+    return to_engine(engine)->openRunoffIfaceRead(path);
+}
+
+SWMM_ENGINE_API int swmm_runoff_iface_save_step(SWMM_Engine engine, double dt) {
+    CHECK_HANDLE(engine);
+    to_engine(engine)->saveRunoffIfaceStep(dt);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_runoff_iface_read_step(SWMM_Engine engine, int* has_data) {
+    CHECK_HANDLE(engine);
+    const bool ok = to_engine(engine)->readRunoffIfaceStep();
+    if (has_data) *has_data = ok ? 1 : 0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_runoff_iface_close(SWMM_Engine engine) {
+    CHECK_HANDLE(engine);
+    to_engine(engine)->closeRunoffIface();
+    return SWMM_OK;
+}
+
 } /* extern "C" */

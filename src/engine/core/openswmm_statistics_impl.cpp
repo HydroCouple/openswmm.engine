@@ -207,4 +207,52 @@ SWMM_ENGINE_API int swmm_stat_subcatch_max_runoff_bulk(SWMM_Engine engine, doubl
     return SWMM_OK;
 }
 
+// ----------------------------------------------------------------------------
+// Phase 4e: link-stat bulks (max_velocity, max_filling, vol_flow,
+// surcharge_time).  All simple SoA memcpys from the corresponding scalar
+// accessor's column.  Added to complete the per-link statistics surface so
+// the MCP server's capacity_summary tool can be collapsed to a single-pass
+// shape.
+// ----------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_stat_link_max_velocity_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    std::copy(ctx.links.stat_max_veloc.begin(),
+              ctx.links.stat_max_veloc.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_stat_link_max_filling_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    std::copy(ctx.links.stat_max_filling.begin(),
+              ctx.links.stat_max_filling.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_stat_link_vol_flow_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    std::copy(ctx.links.stat_vol_flow.begin(),
+              ctx.links.stat_vol_flow.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_stat_link_surcharge_time_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    std::copy(ctx.links.stat_time_surcharged.begin(),
+              ctx.links.stat_time_surcharged.begin() + n, buf);
+    return SWMM_OK;
+}
+
 } /* extern "C" */
