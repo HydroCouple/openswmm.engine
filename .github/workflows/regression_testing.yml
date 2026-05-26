@@ -10,7 +10,7 @@ on:
 
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite" 
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   OMP_NUM_THREADS: 1
 
 jobs:
