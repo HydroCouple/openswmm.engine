@@ -341,10 +341,20 @@ SWMM_ENGINE_API int swmm_2d_set_abs_tolerance(SWMM_Engine engine, double atol);
  * 2D Boundary Conditions
  * ========================================================================= */
 
-/** Boundary condition type constants. */
+/** Boundary condition type constants.
+ *
+ *  WALL / NORMAL_FLOW / SPECIFIED_STAGE were the original three; the
+ *  SPECIFIED_FLOW (3) and RATING_CURVE (4) values were added per GUI plan
+ *  §V V-E4 / V-E5. Storage + this C API only at this revision — the
+ *  FV-SWE flux integration for non-Wall BCs is deferred to a separate
+ *  slice (V-E-FLUX). The solver still treats every boundary edge as
+ *  Wall regardless of type today (see SurfaceFluxCalculator.cpp:131).
+ */
 #define SWMM_2D_BC_WALL            0
 #define SWMM_2D_BC_NORMAL_FLOW     1
 #define SWMM_2D_BC_SPECIFIED_STAGE 2
+#define SWMM_2D_BC_SPECIFIED_FLOW  3   /**< V-E4. */
+#define SWMM_2D_BC_RATING_CURVE    4   /**< V-E5. */
 
 /** @brief Get the number of boundary edges (edges with no neighbour).
  *  @ingroup engine_2d */
@@ -388,6 +398,47 @@ SWMM_ENGINE_API int swmm_2d_get_edge_bc_slope(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_2d_set_edge_bc_slope(SWMM_Engine engine,
                                                 int tri_idx, int edge,
                                                 double slope);
+
+/** @brief Set the timeseries NAME to drive a SPECIFIED_STAGE edge.
+ *
+ *  V-E2. Stores the name verbatim; the engine resolves it into a table
+ *  index from `SimulationContext::tables` on the next forcing-step
+ *  lookup (until then `edge_bc_tseries[idx]` is -2). Empty name clears
+ *  the slot (back to constant `edge_bc_head`).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine,
+                                                       int tri_idx,
+                                                       int edge,
+                                                       const char* name);
+
+/** @brief Get prescribed flow per metre of edge (m³/s/m) for a
+ *         SPECIFIED_FLOW edge. V-E4.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_edge_bc_flow(SWMM_Engine engine,
+                                               int tri_idx, int edge,
+                                               double* flow);
+
+/** @brief Set prescribed flow per metre of edge (m³/s/m). V-E4. */
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_flow(SWMM_Engine engine,
+                                               int tri_idx, int edge,
+                                               double flow);
+
+/** @brief Set the timeseries NAME to drive a SPECIFIED_FLOW edge.
+ *  V-E4 — same resolution contract as `swmm_2d_set_edge_bc_tseries_name`. */
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_flow_tseries_name(SWMM_Engine engine,
+                                                            int tri_idx,
+                                                            int edge,
+                                                            const char* name);
+
+/** @brief Set the curve NAME to drive a RATING_CURVE edge.
+ *
+ *  V-E5. Stage → flow lookup is resolved against the existing
+ *  `swmm_curve_*` registry on the next forcing-step lookup. Empty name
+ *  clears the slot. */
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_rating_curve_name(SWMM_Engine engine,
+                                                            int tri_idx,
+                                                            int edge,
+                                                            const char* name);
 
 /** @brief Get cumulative boundary flux at an edge (m³, + = outflow).
  *  @ingroup engine_2d */

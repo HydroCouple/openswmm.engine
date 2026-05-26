@@ -29,6 +29,7 @@
 #include "2d/data/MeshData.hpp"
 #include "2d/data/SurfaceStateData.hpp"
 #include "2d/data/SolverOptions2D.hpp"
+#include "2d/data/BoundaryData.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/mesh/VertexReconstruction.hpp"
 #include "2d/solver/SurfaceFluxCalculator.hpp"
@@ -199,6 +200,31 @@ TEST(MeshBuilder, RecomputeVertexZDependentsUpdatesIncidentTriangles) {
             EXPECT_NEAR(mesh.edge_mz[t * 3 + e], expected, 1e-12)
                 << "t=" << t << " e=" << e;
         }
+    }
+}
+
+TEST(BoundaryData, ResizeInitialisesAllSlotsIncludingV_E4andV_E5) {
+    // Verifies V-E4 (SPECIFIED_FLOW) + V-E5 (RATING_CURVE) slots resize
+    // correctly alongside the legacy stage/slope slots, and that the
+    // default values are the "unset" / "constant zero" sentinels the
+    // API documents.
+    BoundaryData b;
+    b.resize(12);  // 4 triangles * 3 edges
+    EXPECT_EQ(b.size(), 12);
+    for (int i = 0; i < 12; ++i) {
+        EXPECT_EQ(b.edge_bc_type[i], static_cast<int8_t>(BoundaryType::WALL));
+        EXPECT_DOUBLE_EQ(b.edge_bed_slope[i],  0.0);
+        EXPECT_DOUBLE_EQ(b.edge_bc_head[i],    0.0);
+        EXPECT_EQ(b.edge_bc_tseries[i],         -1);
+        EXPECT_TRUE(b.edge_bc_tseries_name[i].empty());
+        EXPECT_DOUBLE_EQ(b.edge_bc_cum_flux[i], 0.0);
+
+        EXPECT_DOUBLE_EQ(b.edge_bc_flow[i],    0.0);
+        EXPECT_EQ(b.edge_bc_flow_tseries[i],    -1);
+        EXPECT_TRUE(b.edge_bc_flow_tseries_name[i].empty());
+
+        EXPECT_EQ(b.edge_bc_rating_curve[i],   -1);
+        EXPECT_TRUE(b.edge_bc_rating_curve_name[i].empty());
     }
 }
 

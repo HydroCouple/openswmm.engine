@@ -73,15 +73,30 @@ target_link_libraries(openswmm_geopackage
 
 target_compile_definitions(openswmm_geopackage
     PUBLIC OPENSWMM_HAS_GEOPACKAGE=1
-    # openswmm_geopackage is a STATIC library, but its implementation file
-    # decorates the swmm_gpkg_* function definitions with SWMM_ENGINE_API
-    # (from openswmm_engine.h). On MSVC, CMake only auto-defines
-    # openswmm_engine_EXPORTS for the engine SHARED target, so when this
-    # TU is compiled, SWMM_ENGINE_API expands to __declspec(dllimport) —
-    # and you cannot define a function as dllimport (C2491). Defining
-    # OPENSWMM_ENGINE_STATIC here short-circuits the macro to empty for
-    # this target only, which is correct: geopackage is statically linked.
-    PRIVATE OPENSWMM_ENGINE_STATIC
+    # openswmm_geopackage is a STATIC library whose archive is absorbed into
+    # the engine SHARED (engine PRIVATE-links geopackage). Its source files
+    # define the swmm_gpkg_* C API decorated with SWMM_ENGINE_API (from
+    # openswmm_engine.h). On MSVC, CMake auto-defines openswmm_engine_EXPORTS
+    # only for the engine target itself, not for sources in static archives
+    # that get linked into it — so without intervention, SWMM_ENGINE_API
+    # expands to __declspec(dllimport) when these TUs compile, and the
+    # compiler rejects defining a function as dllimport (C2491).
+    #
+    # We mirror the engine's own _EXPORTS flag on this target so that
+    # SWMM_ENGINE_API expands to __declspec(dllexport) here. Result: the
+    # swmm_gpkg_* symbols land in the engine DLL's export table (and thus
+    # openswmm.engine.lib), so the Cython _geopackage extension — and any
+    # other external consumer — can dllimport them at link time.
+    #
+    # The previous workaround (defining OPENSWMM_ENGINE_STATIC instead)
+    # made SWMM_ENGINE_API empty, which silenced the compiler but left the
+    # symbols out of the export table. That caused 27 LNK2019 errors when
+    # building the Windows Python wheel — see Cython _geopackage link step.
+    #
+    # On non-MSVC, openswmm_engine_EXPORTS is harmless: SWMM_ENGINE_API
+    # expands to __attribute__((visibility("default"))) on all platforms
+    # under that branch, matching what the engine's own TUs already get.
+    PRIVATE openswmm_engine_EXPORTS
 )
 
 # Install
