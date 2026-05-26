@@ -457,6 +457,30 @@ conduit length squared `L²` to yield units of 1/s. This normalisation is essent
 Laplacian eigenvalues are dimensionless (they count topological connectivity, not spatial
 scale), so `λ_j × K1d` must have units of 1/s.
 
+**Does this work with SWMM's dynamic wave routing?**
+
+*2D surface domain*: The CVODE solver solves the diffusion-wave equation by design — the ROM's
+basis is derived from the exact same equation, so the Jacobian connection above holds exactly.
+"Dynamic wave" in the 2D context does not apply.
+
+*1D sewer network*: SWMM's `DYNWAVE` solver integrates the full **Saint-Venant equations**
+(continuity + momentum). The 1D ROM propagates uncertainty using a **diffusion-wave
+approximation** — the momentum equation is dropped. This approximation is valid when inertial
+terms are small compared to pressure-gradient and friction forces, which is true for:
+- Subcritical flow in partially-full pipes (Fr ≪ 1)
+- Gradually-varying, pressure-gradient-dominated events
+- Most standard urban drainage design storms
+
+It breaks down — and the ROM spread should be treated as a qualitative indicator only — for:
+- Surcharging or fully-pressurized mains (the momentum balance changes fundamentally)
+- Rapidly rising hydrographs where `∂Q/∂t` is large
+- Tidal or strongly backwater-controlled reaches
+- Pump stations, inline storage, or sluice gates (discontinuous momentum sources)
+
+In these regimes the ROM correctly identifies *which nodes* carry the most Manning's n
+sensitivity (the spread pattern is qualitatively right) but may mis-estimate the band width
+by 30–50%. See also §8, limitation 2.
+
 ### 4.7 Latin-hypercube design
 
 `UncertaintyEnsemble` generates four decorrelated LHS columns, each stratifying its parameter
@@ -948,9 +972,16 @@ via the C++ API as shown in §2.1.
    partially mitigates this but does not fix it for rapidly evolving wetting fronts or
    hydraulic jumps.
 
-2. **No backwater in ROM.** The ROM uses the Laplacian diffusion operator, not the full
-   shallow-water momentum equation. For supercritical flow or hydraulic-jump-dominated reaches
-   the ROM spread will be qualitatively wrong (it cannot capture shock propagation).
+2. **1D ROM is diffusion-wave; DYNWAVE is not.** SWMM's 1D solver integrates the full
+   Saint-Venant equations (continuity + momentum). The 1D ROM propagates uncertainty using a
+   diffusion-wave (Laplacian) approximation, which drops the momentum term. For subcritical,
+   gradually-varying flow in partially-full pipes — the standard urban drainage design case —
+   this is a good approximation. It breaks down for: surcharging or fully-pressurized mains;
+   rapidly rising events where `∂Q/∂t` dominates; tidal or strongly backwater-controlled
+   reaches; pump stations and sluice gates. In those regimes the ROM identifies the right
+   *spatial pattern* of sensitivity but may mis-estimate band width by 30–50%.
+   The 2D CVODE solver uses the diffusion-wave equation by design, so this limitation applies
+   only to the 1D ROM. See §4.6 for the full discussion.
 
 3. **Mean K_eff (not per-cell).** The scalar K_eff path uses a single effective conductance
    for the full domain. Per-mode Rayleigh-quotient K_eff (§4.8 Option A) partially corrects
