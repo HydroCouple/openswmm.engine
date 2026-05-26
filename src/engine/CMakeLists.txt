@@ -411,6 +411,47 @@ if(OPENSWMM_WITH_GEOPACKAGE)
     if(TARGET openswmm_engine_internal)
         target_link_libraries(openswmm_engine_internal PRIVATE openswmm_geopackage)
     endif()
+
+    # Linkers on every platform we target drop .obj/.o files from a static
+    # archive when no source in the consumer references their symbols. The
+    # swmm_gpkg_* C API exists solely for external consumers (Cython
+    # _geopackage, host apps) — nothing inside the engine itself calls it —
+    # so the openswmm_geopackage_impl translation unit is pruned and the
+    # C API never reaches the engine shared library's export table.
+    #
+    # On Windows the failure is loud: 27 LNK2019 errors at the Cython
+    # _geopackage link step (openswmm.engine.lib has no swmm_gpkg_* in it).
+    # On Linux/macOS the failure is silent: the wheel builds fine, but
+    # `from openswmm.engine._geopackage import GeoPackage` raises
+    # ImportError at runtime (undefined symbol), and test_geopackage.py
+    # wraps that import in try/except and skips its tests.
+    #
+    # Force whole-archive linking so every translation unit in the
+    # geopackage static archive is retained in the engine shared library:
+    #   - MSVC:    /WHOLEARCHIVE:<archive-name>
+    #   - Apple:   -Wl,-force_load,<archive-path>
+    #   - GNU ld:  -Wl,--whole-archive <archive-path> -Wl,--no-whole-archive
+    # The visibility attributes on swmm_gpkg_* (SWMM_ENGINE_API → either
+    # __declspec(dllexport) on MSVC or __attribute__((visibility("default")))
+    # elsewhere — see input/geopackage/CMakeLists.txt) then ensure the
+    # retained symbols are also exported.
+    if(MSVC)
+        target_link_options(openswmm_engine PRIVATE
+            "/WHOLEARCHIVE:$<TARGET_FILE_NAME:openswmm_geopackage>"
+        )
+    elseif(APPLE)
+        target_link_options(openswmm_engine PRIVATE
+            "LINKER:-force_load,$<TARGET_FILE:openswmm_geopackage>"
+        )
+    else()
+        # GNU ld / lld accept bracketed --whole-archive; the archive path
+        # must appear between the two flags.
+        target_link_options(openswmm_engine PRIVATE
+            "LINKER:--whole-archive"
+            "$<TARGET_FILE:openswmm_geopackage>"
+            "LINKER:--no-whole-archive"
+        )
+    endif()
     # Re-export OPENSWMM_HAS_GEOPACKAGE on the engine target so consumers
     # (tests, host apps) can compile-time gate on engine capabilities.
     # The PRIVATE link above hides geopackage's own PUBLIC defines from
