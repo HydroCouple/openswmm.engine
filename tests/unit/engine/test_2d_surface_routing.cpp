@@ -203,6 +203,48 @@ TEST(MeshBuilder, RecomputeVertexZDependentsUpdatesIncidentTriangles) {
     }
 }
 
+TEST(V_E3_Parser, ParsesAllSupportedTypes) {
+    // V-E3 — verify the [2D_BOUNDARY_CONDITIONS] line parser maps each
+    // INP token to the right BoundaryType + parameter slot.
+    std::vector<openswmm::twoD::SurfaceRouter2D::PendingBoundaryRow> rows;
+
+    EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
+        {"3", "1", "NORMAL_FLOW", "0.002", "*", "*"}, rows).empty());
+    EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
+        {"4", "0", "SPECIFIED_STAGE", "95.4", "*", "*"}, rows).empty());
+    EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
+        {"5", "2", "TS_STAGE", "DownstreamTS", "*", "Outlet"}, rows).empty());
+    EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
+        {"6", "1", "SPECIFIED_FLOW", "0.5", "*", "*"}, rows).empty());
+    EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
+        {"7", "0", "RATING_CURVE", "WeirRC", "*", "*"}, rows).empty());
+
+    ASSERT_EQ(rows.size(), 5u);
+    EXPECT_EQ(rows[0].bc_type, static_cast<int>(BoundaryType::NORMAL_FLOW));
+    EXPECT_DOUBLE_EQ(rows[0].param1, 0.002);
+    EXPECT_EQ(rows[1].bc_type, static_cast<int>(BoundaryType::SPECIFIED_STAGE));
+    EXPECT_DOUBLE_EQ(rows[1].param1, 95.4);
+    EXPECT_EQ(rows[2].bc_type, static_cast<int>(BoundaryType::SPECIFIED_STAGE));
+    EXPECT_EQ(rows[2].name, "DownstreamTS");
+    EXPECT_EQ(rows[2].group, "Outlet");
+    EXPECT_EQ(rows[3].bc_type, static_cast<int>(BoundaryType::SPECIFIED_FLOW));
+    EXPECT_DOUBLE_EQ(rows[3].param1, 0.5);
+    EXPECT_EQ(rows[4].bc_type, static_cast<int>(BoundaryType::RATING_CURVE));
+    EXPECT_EQ(rows[4].name, "WeirRC");
+}
+
+TEST(V_E3_Parser, RejectsBadType) {
+    std::vector<openswmm::twoD::SurfaceRouter2D::PendingBoundaryRow> rows;
+    EXPECT_FALSE(openswmm::twoD::parse2DBoundaryConditionsLine(
+        {"1", "0", "GIBBERISH", "0", "*", "*"}, rows).empty());
+}
+
+TEST(V_E3_Parser, EmptyLineIsSilentlySkipped) {
+    std::vector<openswmm::twoD::SurfaceRouter2D::PendingBoundaryRow> rows;
+    EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine({}, rows).empty());
+    EXPECT_EQ(rows.size(), 0u);
+}
+
 TEST(BoundaryData, ResizeInitialisesAllSlotsIncludingV_E4andV_E5) {
     // Verifies V-E4 (SPECIFIED_FLOW) + V-E5 (RATING_CURVE) slots resize
     // correctly alongside the legacy stage/slope slots, and that the

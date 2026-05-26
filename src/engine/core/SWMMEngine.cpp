@@ -130,6 +130,7 @@ int SWMMEngine::open(const char* inp_path,
     if (auto* dip = dynamic_cast<DefaultInputPlugin*>(input_plugin)) {
         twoD::register2DSections(surface_router_.mesh(),
                                  surface_router_.options(),
+                                 surface_router_.pendingBCRows(),
                                  dip->registry());
     }
 #endif
@@ -147,7 +148,8 @@ int SWMMEngine::open(const char* inp_path,
             if (inp_path && inp_path[0] != '\0')
                 base_dir = std::filesystem::path(inp_path).parent_path().string();
             std::string err = twoD::load2DMeshExternalFile(
-                surface_router_.mesh(), surface_router_.options(), mf, base_dir);
+                surface_router_.mesh(), surface_router_.options(),
+                surface_router_.pendingBCRows(), mf, base_dir);
             if (!err.empty()) {
                 ctx_.error_code    = SWMM_ERR_PARSE;
                 ctx_.error_message = err;
