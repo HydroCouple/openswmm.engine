@@ -502,16 +502,90 @@ contaminating `links.flow` across timesteps. A read-only ROM sidecar would avoid
 
 Three open questions before this can be implemented:
 
-1. **Re-eigensolving cost**: H changes as pipe depths change. Recomputing k eigenvectors per
-   step (or every N steps) costs O(N·k) extra. Affordable for small networks; potentially
-   significant at 10k+ nodes. Amortised re-solving (e.g., every 10 routing steps) is a
-   practical middle ground.
-2. **Time-varying basis**: when P changes between timesteps, the modal coordinates
-   `a[i,j]` are defined on a new basis. The sidecar must re-project `a_old` onto `P_new`
-   before advancing: `a_new[i,j] = Σ_k (P_new[:,j]ᵀ · P_old[:,k]) · a_old[i,k]`.
-3. **Non-symmetry of H**: H is not symmetric due to the convective term `∂(Q²/A)/∂x`.
-   Standard Lanczos (used for the graph Laplacian) requires symmetric input; a one-sided or
-   generalised eigensolver would be needed.
+**Gap 1 — Re-eigensolving cost per step**
+
+H changes every routing step as pipe depths change (depth changes → `dqdh` changes → H
+changes). Recomputing k=20 eigenvectors of a N=10,000 node network costs approximately:
+```
+O(N · k · iters) ≈ 10,000 × 20 × 60 iterations ≈ 12M flops ≈ 15 ms per solve
+```
+For a 6-hour storm at 30-second routing intervals (720 steps), re-solving every step adds
+roughly 10.8 seconds — a ~36% overhead on a 30-second run, rising to 100%+ on faster models.
+
+The practical fixes, in order of increasing complexity:
+
+- **Amortised re-solving**: re-compute the eigenbasis every K=10 steps. Cost drops to ~1.5 s
+  for the same storm. Appropriate when H evolves slowly (steady or slowly-rising events).
+- **Change-triggered re-solving**: only re-solve when a trigger fires — e.g., when a
+  pipe transitions between free-surface and pressurised (`depth/diameter` crosses 0.9), or
+  when `max|H_new − H_old| / max|H_old| > threshold`. Most routing steps in a typical event
+  trigger nothing; re-solves cluster around peak flow and surcharge onset.
+- **Krylov recycling (warm start)**: pass the previous eigenvectors as starting vectors for
+  the next Lanczos run. When H changes slowly, the new eigenvectors are close to the old ones;
+  Lanczos converges in ~k iterations rather than ~3k. Cost estimate: 20 × 10,000 = 200k flops
+  ≈ 0.25 ms per step — effectively negligible. This is the most promising approach and reuses
+  the existing `GraphEigenBasis` infrastructure.
+
+**Gap 2 — Time-varying basis: re-projecting the ensemble state**
+
+This is the most subtle gap. At step t, each ROM member's head distribution is encoded as:
+```
+h_i(t) ≈ Σ_j P_t[:,j] · a_t[i,j]
+```
+where `P_t` is the eigenbasis computed from `H_t`. At step t+1, H changes and we compute a
+new eigenbasis `P_{t+1}`. The old modal coordinates `a_t[i,j]` are now expressed on the wrong
+basis. Before calling `advance()` with `P_{t+1}`, the ensemble state must be re-projected:
+```
+a_{t+1}[i,j] = Σ_k  (P_{t+1}[:,j]ᵀ · P_t[:,k])  · a_t[i,k]
+             = Σ_k  R[j,k]  · a_t[i,k]
+
+where  R = P_{t+1}ᵀ · P_t  is a k×k "rotation matrix" between the two bases.
+```
+Cost: forming R costs O(N·k²). At N=10,000 and k=20: 10,000 × 400 = 4M flops ≈ 4 ms.
+For 720 steps at every step: ~2.9 s added per simulation run.
+
+Two practical mitigations:
+
+- **Skip when the basis is nearly the same**: check `‖R − I‖_F < tol` (cheap: O(k²)). If
+  the rotation is small, the re-projection error is also small; skip it for that step. In
+  practice, this fires for most steps during steady or slowly-varying flow.
+- **Sign alignment**: Lanczos eigenvectors have arbitrary sign per run; `P_{t+1}[:,j]` may
+  point in the opposite direction from `P_t[:,j]`. Before computing R, align signs via
+  `sign(P_{t+1}[:,j]ᵀ · P_t[:,j])` — otherwise the rotation matrix contains −1 diagonal
+  entries that invert modal coordinates spuriously.
+
+**Gap 3 — Non-symmetry of H**
+
+The Picard Jacobian is `H = surfaceArea/dt − dQ/dh`. In the linearised Saint-Venant equations,
+`dQ/dh` at a conduit endpoint depends on the local velocity and depth:
+```
+dQ_ij/dh_i ≠ dQ_ij/dh_j   (in general, when Q ≠ 0)
+```
+The asymmetry comes from the convective acceleration term `∂(Q²/A)/∂x = (2Q/A)·∂Q/∂x`.
+When flow velocity is significant, the upstream endpoint has higher sensitivity to a head
+perturbation than the downstream endpoint — H is non-symmetric by O(Fr) × magnitude.
+
+Standard Lanczos requires a symmetric matrix to guarantee real eigenvalues and a stable
+tridiagonal recursion. For non-symmetric H, the correct algorithm is Arnoldi iteration
+(ARPACK-style), which produces a Hessenberg matrix rather than tridiagonal — more memory and
+~2× more flops per step, with less favourable numerical stability.
+
+The practical solution for the urban drainage case is to **symmetrize H**:
+```
+H_sym = (H + H^T) / 2
+```
+The antisymmetric part `H_skew = (H − H^T) / 2` is the component that breaks Lanczos. Its
+magnitude scales as O(Fr²) relative to the symmetric part (pressure gradient + friction
+dominate at low Froude numbers). For subcritical urban drainage (Fr < 0.5 in most pipes):
+```
+‖H_skew‖ / ‖H_sym‖ ≈ Fr² < 0.25
+```
+Discarding `H_skew` and running Lanczos on `H_sym` reuses the existing `GraphEigenBasis`
+solver with no algorithmic changes, and gives an eigenbasis that is accurate to O(Fr²) in the
+dynamic wave regime — substantially better than the pure diffusion-wave Laplacian, which is
+only accurate to O(Fr⁰) (it completely drops the inertial terms regardless of Froude number).
+For surcharging pipes (Fr → 0 as pipes fill, since wave speed dominates velocity), `H_sym` is
+effectively the exact Jacobian.
 
 This enhancement would remove limitation 2 from §8 entirely for the 1D domain.
 
