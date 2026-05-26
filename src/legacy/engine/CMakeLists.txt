@@ -58,9 +58,13 @@ file(GLOB SWMM_SOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.c *.h)
 
 add_library(openswmm_legacy_engine SHARED ${SWMM_SOURCES})
 
-if(OPENSWMM_LEGACY_NO_OPENMP)
+if(OPENSWMM_LEGACY_NO_OPENMP AND NOT TARGET OpenMP::OpenMP_C)
     # project.c and swmm5.c both provide a fallback omp_get_max_threads().
-    # Rename one translation unit's local fallback to keep the legacy sources untouched.
+    # Rename one translation unit's local fallback to avoid duplicate symbols.
+    # Only needed when libomp is completely unavailable (no target, no real omp
+    # function provided). When OpenMP::OpenMP_C exists, _OPENMP is defined by
+    # -Xpreprocessor -fopenmp so the fallbacks aren't compiled and libomp
+    # provides the real omp_get_max_threads() — no rename needed.
     set_source_files_properties(project.c PROPERTIES
         COMPILE_DEFINITIONS "omp_get_max_threads=project_omp_get_max_threads"
     )

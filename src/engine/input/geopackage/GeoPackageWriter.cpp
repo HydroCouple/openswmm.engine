@@ -161,7 +161,9 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
     insert("SWEEP_START", std::to_string(opts.sweep_start));
     insert("SWEEP_END", std::to_string(opts.sweep_end));
     insert("NODE_CONTINUITY", std::to_string(static_cast<int>(opts.node_continuity)));
-    insert("ANDERSON_ACCEL", std::to_string(opts.anderson_accel ? 1 : 0));
+    insert("ANDERSON_ACCEL",    std::to_string(opts.anderson_accel    ? 1 : 0));
+    insert("SPECTRAL_ACCEL",    std::to_string(opts.spectral_accel    ? 1 : 0));
+    insert("SPECTRAL_NUM_MODES", std::to_string(opts.spectral_num_modes));
     insert("SURCHARGE_METHOD", std::to_string(opts.surcharge_method));
     if (opts.surcharge_method == 2) {
         insert("DPS_CELERITY", std::to_string(opts.dps_target_celerity));

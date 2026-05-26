@@ -38,6 +38,14 @@ void SpectralROM::setExternalSamples(const std::vector<double>& mann,
 // setEnsembleRainfall / clearEnsembleRainfall
 // ============================================================================
 
+void SpectralROM::setCdSamples(const std::vector<double>& cd) {
+    if (static_cast<int>(cd.size()) != n_ensemble)
+        throw std::invalid_argument(
+            "SpectralROM::setCdSamples: size must equal n_ensemble");
+    external_cd_ = cd;
+    external_cd_set_ = true;
+}
+
 void SpectralROM::setEnsembleRainfall(const std::vector<double>& per_member_rates) {
     if (static_cast<int>(per_member_rates.size()) != n_ensemble)
         throw std::invalid_argument(
@@ -98,6 +106,7 @@ void SpectralROM::initialize() {
 
     mannings_mult.resize(static_cast<std::size_t>(n_ensemble));
     rainfall_mult.resize(static_cast<std::size_t>(n_ensemble));
+    cd_mult.resize(static_cast<std::size_t>(n_ensemble));
 
     if (external_samples_set_) {
         mannings_mult = external_mann_;
@@ -114,6 +123,20 @@ void SpectralROM::initialize() {
             double t_r = (static_cast<double>(n_ensemble - 1 - i) + 0.5)
                        / static_cast<double>(n_ensemble);
             rainfall_mult[static_cast<std::size_t>(i)] = r_lo + t_r * (r_hi - r_lo);
+        }
+    }
+
+    // Cd multiplier: external path (setCdSamples) or internal ascending LHS.
+    // Production path always uses setCdSamples(ens.cdSamples()) for decorrelation.
+    // Default cd_pert=0 → all entries are 1.0 (no Cd uncertainty).
+    if (external_cd_set_) {
+        cd_mult = external_cd_;
+    } else {
+        double c_lo = 1.0 - cd_pert;
+        double c_hi = 1.0 + cd_pert;
+        for (int i = 0; i < n_ensemble; ++i) {
+            double t = (static_cast<double>(i) + 0.5) / static_cast<double>(n_ensemble);
+            cd_mult[static_cast<std::size_t>(i)] = c_lo + t * (c_hi - c_lo);
         }
     }
 
@@ -439,7 +462,8 @@ void SpectralROM::applyCouplingFlux(
             double mm = spatial_mannings.is_spatial()
                 ? spatial_mannings.at(i, static_cast<int>(ci))
                 : mannings_mult[ui];
-            double Q    = sign * cp.cd * cp.area * std::sqrt(G2 * std::abs(dh)) / mm;
+            double cd_i = cd_mult[ui];  // per-member Cd multiplier (1.0 when cd_pert=0)
+            double Q    = sign * cp.cd * cd_i * cp.area * std::sqrt(G2 * std::abs(dh)) / mm;
 
             // Limit drainage by available depth (cannot drain below zero)
             if (Q > 0.0)

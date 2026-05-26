@@ -34,6 +34,7 @@ void UncertaintyEnsemble::generate() {
     mannings_mult_2d.resize(M);
     rainfall_mult_2d.resize(M);
     soil_mult.resize(M);
+    cd_mult.resize(M);
 
     const double m_lo = 1.0 - mannings_pert_2d;
     const double m_hi = 1.0 + mannings_pert_2d;
@@ -41,6 +42,8 @@ void UncertaintyEnsemble::generate() {
     const double r_hi = 1.0 + rainfall_pert_2d;
     const double s_lo = 1.0 - soil_pert;
     const double s_hi = 1.0 + soil_pert;
+    const double c_lo = 1.0 - cd_pert;
+    const double c_hi = 1.0 + cd_pert;
     const double Md   = static_cast<double>(n_members);
 
     for (int i = 0; i < n_members; ++i) {
@@ -67,6 +70,21 @@ void UncertaintyEnsemble::generate() {
     for (int i = 0; i < n_members; ++i) {
         double t_s = (static_cast<double>(perm[static_cast<std::size_t>(i)]) + 0.5) / Md;
         soil_mult[static_cast<std::size_t>(i)] = s_lo + t_s * (s_hi - s_lo);
+    }
+
+    // Cd: independent Fisher-Yates shuffle using seed+3 — decorrelates from
+    // Manning (ascending), rainfall (descending), and soil (seed+2 shuffle).
+    std::iota(perm.begin(), perm.end(), 0);
+    rng = seed + 3;
+    for (int j = n_members - 1; j > 0; --j) {
+        uint64_t r   = splitmix64(rng);
+        int      k   = static_cast<int>(r % static_cast<uint64_t>(j + 1));
+        std::swap(perm[static_cast<std::size_t>(j)],
+                  perm[static_cast<std::size_t>(k)]);
+    }
+    for (int i = 0; i < n_members; ++i) {
+        double t_c = (static_cast<double>(perm[static_cast<std::size_t>(i)]) + 0.5) / Md;
+        cd_mult[static_cast<std::size_t>(i)] = c_lo + t_c * (c_hi - c_lo);
     }
 }
 

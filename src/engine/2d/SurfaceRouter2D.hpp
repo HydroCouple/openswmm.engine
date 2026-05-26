@@ -35,11 +35,15 @@ namespace openswmm {
 struct SimulationContext;
 }
 
+// Forward declaration outside openswmm::twoD so the fully-qualified name
+// resolves to openswmm::uncertainty::SpectralROM1D, not the invalid
+// openswmm::twoD::openswmm::uncertainty::SpectralROM1D.
+namespace openswmm::uncertainty { struct SpectralROM1D; }
+
 namespace openswmm::twoD {
 
-// Forward declarations so rom() / setROM1D() are usable without full includes.
+// Forward declaration so rom() is usable without pulling in SpectralROM.hpp.
 struct SpectralROM;
-namespace openswmm::uncertainty { struct SpectralROM1D; }
 
 /**
  * @brief Top-level orchestrator for the 2D surface routing module.

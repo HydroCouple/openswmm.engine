@@ -323,6 +323,68 @@ add_test(
 )
 set_tests_properties(test_engine_2d_surface PROPERTIES LABELS "unit")
 
+# Phase 8 integration test — full engine lifecycle with 2D ROM.
+# Links against openswmm_engine (needs CVODE + full 2D pipeline).
+add_executable(test_engine_2d_rom_integration
+    test_engine_2d_rom_integration.cpp
+)
+target_link_libraries(test_engine_2d_rom_integration
+    PRIVATE
+        GTest::gtest GTest::gtest_main
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+        openswmm_legacy_engine
+)
+target_include_directories(test_engine_2d_rom_integration
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+target_compile_definitions(test_engine_2d_rom_integration PRIVATE OPENSWMM_HAS_2D=1)
+if(MSVC)
+    target_compile_options(test_engine_2d_rom_integration PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_2d_rom_integration PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+add_test(
+    NAME    test_engine_2d_rom_integration
+    COMMAND $<TARGET_FILE:test_engine_2d_rom_integration>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_2d_rom_integration PROPERTIES LABELS "unit")
+
+add_executable(test_engine_1d_rom_integration
+    test_engine_1d_rom_integration.cpp
+)
+target_link_libraries(test_engine_1d_rom_integration
+    PRIVATE
+        GTest::gtest GTest::gtest_main
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+)
+target_include_directories(test_engine_1d_rom_integration
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+if(MSVC)
+    target_compile_options(test_engine_1d_rom_integration PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_1d_rom_integration PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+add_test(
+    NAME    test_engine_1d_rom_integration
+    COMMAND $<TARGET_FILE:test_engine_1d_rom_integration>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_1d_rom_integration PROPERTIES LABELS "unit")
+
 # GeoPackage tests (only if the library is built)
 if(OPENSWMM_WITH_GEOPACKAGE)
     add_executable(test_engine_geopackage test_geopackage.cpp)

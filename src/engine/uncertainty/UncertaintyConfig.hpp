@@ -61,6 +61,21 @@ struct UncertaintyConfig {
         return false;
     }
 
+    /// First active 1D Manning's-n spec, or nullopt.
+    std::optional<UncertaintySourceSpec> mannings_1d() const noexcept {
+        for (const auto& s : sources)
+            if (s.layer == LayerTarget::ONE_D && s.name == "MANNINGS_N" && s.is_active())
+                return s;
+        return std::nullopt;
+    }
+
+    /// True if any active 1D uncertainty source is configured.
+    bool has_1d() const noexcept {
+        for (const auto& s : sources)
+            if (s.layer == LayerTarget::ONE_D && s.is_active()) return true;
+        return false;
+    }
+
     /// True if any active source is configured.
     bool has_any() const noexcept {
         for (const auto& s : sources)

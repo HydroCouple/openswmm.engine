@@ -71,6 +71,7 @@ struct SpectralROM {
     int    n_ensemble    = 50;    ///< Number of ensemble members M.
     double mannings_pert = 0.20;  ///< Half-range: Manning's n ∈ [1-p, 1+p] × base.
     double rainfall_pert = 0.20;  ///< Half-range: rainfall ∈ [1-p, 1+p] × base.
+    double cd_pert       = 0.00;  ///< Half-range: Cd ∈ [1-p, 1+p] × nominal; 0 = disabled.
 
     double mode_drop_threshold = 1.0e-10; ///< Drop mode j when E_j < threshold AND rain forcing < threshold.
 
@@ -95,6 +96,7 @@ struct SpectralROM {
     /// Parameter design — one entry per member (scalar path).
     std::vector<double> mannings_mult;  ///< Manning's n scale factor per member.
     std::vector<double> rainfall_mult;  ///< Rainfall scale factor per member.
+    std::vector<double> cd_mult;        ///< Discharge coefficient scale factor per member.
 
     // -------------------------------------------------------------------------
     // Spatial fields (Phase 2 — optional; empty = scalar fallback active)
@@ -165,6 +167,19 @@ struct SpectralROM {
      */
     void setExternalSamples(const std::vector<double>& mann,
                             const std::vector<double>& rain);
+
+    /**
+     * @brief Supply externally generated Cd multiplier samples.
+     *
+     * When called before initialize(), initialize() uses these samples for
+     * cd_mult instead of building the internal LHS.  This is the production
+     * path: UncertaintyEnsemble::cdSamples() → setCdSamples() → applyCouplingFlux().
+     *
+     * @param cd  Cd multiplier per member (length n_ensemble), from
+     *            UncertaintyEnsemble::cdSamples().
+     * @throws std::invalid_argument if size != n_ensemble.
+     */
+    void setCdSamples(const std::vector<double>& cd);
 
     /**
      * @brief Allocate buffers and build deterministic Latin-hypercube parameter
@@ -311,6 +326,10 @@ private:
     bool external_samples_set_ = false;
     std::vector<double> external_mann_;
     std::vector<double> external_rain_;
+
+    /// When true, initialize() uses external_cd_ instead of building internal LHS.
+    bool external_cd_set_ = false;
+    std::vector<double> external_cd_;
 };
 
 } // namespace openswmm::twoD

@@ -148,7 +148,9 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
         else if (key == "SWEEP_START") ctx.options.sweep_start = std::stoi(val);
         else if (key == "SWEEP_END") ctx.options.sweep_end = std::stoi(val);
         else if (key == "NODE_CONTINUITY") ctx.options.node_continuity = static_cast<NodeContinuity>(std::stoi(val));
-        else if (key == "ANDERSON_ACCEL") ctx.options.anderson_accel = (std::stoi(val) != 0);
+        else if (key == "ANDERSON_ACCEL")    ctx.options.anderson_accel    = (std::stoi(val) != 0);
+        else if (key == "SPECTRAL_ACCEL")    ctx.options.spectral_accel    = (std::stoi(val) != 0);
+        else if (key == "SPECTRAL_NUM_MODES") ctx.options.spectral_num_modes = std::stoi(val);
         else if (key == "SURCHARGE_METHOD") ctx.options.surcharge_method = std::stoi(val);
         else if (key == "DPS_CELERITY") ctx.options.dps_target_celerity = std::stod(val);
         else if (key == "DPS_ALPHA") ctx.options.dps_alpha = std::stod(val);

@@ -62,6 +62,9 @@
 #include "../2d/SurfaceRouter2D.hpp"
 #endif
 #include "../uncertainty/UncertaintyConfig.hpp"
+#include "../uncertainty/GraphEigenBasis.hpp"
+#include "../uncertainty/NetworkLaplacian1D.hpp"
+#include "../uncertainty/SpectralROM1D.hpp"
 
 #include <functional>
 #include <memory>
@@ -229,6 +232,9 @@ public:
     Router&       router()       noexcept { return router_; }
     const Router& router() const noexcept { return router_; }
 
+    /** @brief 1D spectral ROM quantiles (null if not built or network too small). */
+    const uncertainty::SpectralROM1D* rom1d() const noexcept { return rom1d_.get(); }
+
 private:
     // -----------------------------------------------------------------------
     // Sub-systems
@@ -270,6 +276,10 @@ private:
     twoD::SurfaceRouter2D        surface_router_; ///< Optional 2D surface routing solver
 #endif
     uncertainty::UncertaintyConfig uncertainty_config_; ///< Parsed [UNCERTAINTY] config
+
+    // 1D spectral ROM for uncertainty propagation (owned)
+    std::unique_ptr<uncertainty::GraphEigenBasis> rom1d_basis_;
+    std::unique_ptr<uncertainty::SpectralROM1D>   rom1d_;
 
     std::string rpt_path_;  ///< Report file path
     std::string out_path_;  ///< Binary output file path
@@ -499,6 +509,12 @@ private:
      * @param dt  Routing timestep (seconds) — for mass balance accumulation.
      */
     void applyForcings(double dt) noexcept;
+
+    /** @brief Build + seed the 1D spectral ROM from conduit connectivity and node heads. */
+    void buildROM1D() noexcept;
+
+    /** @brief Compute effective 1D Manning conductance K1d (m^(4/3)/s) from current state. */
+    double computeK1d() noexcept;
 
     /** @brief Set a fatal error on the context and transition to ERROR_STATE. */
     void set_error(int code, const char* message) noexcept;

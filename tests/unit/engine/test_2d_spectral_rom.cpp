@@ -11,6 +11,7 @@
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/solver/SpectralPrecond2D.hpp"
 #include "2d/uncertainty/SpectralROM.hpp"
+#include "2d/uncertainty/FiedlerDiagnostic.hpp"
 #include "2d/coupling/NodeCoupling.hpp"
 #include "uncertainty/UncertaintyEnsemble.hpp"
 #include "uncertainty/GraphEigenBasis.hpp"
@@ -1106,7 +1107,6 @@ TEST(SpectralROMSpatial, ScalarLimitQuantilesSame) {
 TEST(SpectralROMSpatial, CouplingUsesPerCellMannings) {
     Fixture f(/*N=*/5, /*k=*/6, /*M=*/20);
     int n_tri = f.mesh.n_triangles();
-    int n_kept = f.rom.n_kept;
 
     // Seed with any depth (the backflow case doesn't depend on ROM reconstructed depth).
     std::vector<double> h(static_cast<std::size_t>(n_tri), 0.05);
@@ -1547,6 +1547,97 @@ TEST(SpectralROM, CouplingUncOutputPopulatedAfterCouplingFlux) {
     EXPECT_DOUBLE_EQ(f.rom.coupling_unc_output.q_max[1], 0.0);
 }
 
+// ============================================================================
+// Phase 5C — Discharge-coefficient uncertainty
+// ============================================================================
+
+// With Manning and rainfall pert = 0 but cd_pert > 0, each member has a
+// different effective Cd → per-member flux varies → q_max > q_min.
+TEST(SpectralROM, CdPertDrivesFluxSpread) {
+    // Build ROM with zero Manning/rainfall pert so Cd is the only source of spread.
+    MeshData mesh = makeStructuredMesh(5);
+    SpectralPrecond2D basis;
+    ASSERT_TRUE(basis.build(mesh, 6));
+
+    SpectralROM rom;
+    rom.basis         = &basis;
+    rom.n_ensemble    = 20;
+    rom.mannings_pert = 0.0;
+    rom.rainfall_pert = 0.0;
+    rom.cd_pert       = 0.15;  // ±15% Cd variation
+    rom.initialize();
+
+    int nt = rom.n_tri;
+
+    // Seed with first-mode shape so coupling cell has nonzero depth.
+    double sign0 = (basis.P[0] >= 0.0) ? 1.0 : -1.0;
+    std::vector<double> h2d(static_cast<std::size_t>(nt));
+    for (int t = 0; t < nt; ++t)
+        h2d[static_cast<std::size_t>(t)] =
+            sign0 * basis.P[static_cast<std::size_t>(t)] * 0.10;
+    rom.seed(h2d.data());
+
+    // Small coupling area keeps Q_orifice below the h*tri_area/dt drainage cap.
+    CouplingPoint cp;
+    cp.cell_idx = 0; cp.vertex_idx = -1; cp.node_idx = 0;
+    cp.cd = 0.6; cp.area = 1.0e-4; cp.is_outfall = false; cp.has_flap_gate = false;
+
+    std::vector<CouplingPoint> cps = {cp};
+    std::vector<double> node_heads(1, 0.0);
+
+    rom.applyCouplingFlux(cps, node_heads.data(), mesh, 10.0);
+
+    ASSERT_TRUE(rom.coupling_unc_output.is_valid());
+    EXPECT_GT(
+        rom.coupling_unc_output.q_max[0] - rom.coupling_unc_output.q_min[0],
+        1.0e-8)
+        << "15% Cd perturbation should create nonzero flux spread at coupling point";
+}
+
+// With cd_pert = 0 (default) and zero Manning/rainfall pert, all members
+// compute identical flux → q_min == q_max.
+TEST(SpectralROM, CdPertZeroNoSpread) {
+    MeshData mesh = makeStructuredMesh(5);
+    SpectralPrecond2D basis;
+    ASSERT_TRUE(basis.build(mesh, 6));
+
+    SpectralROM rom;
+    rom.basis         = &basis;
+    rom.n_ensemble    = 20;
+    rom.mannings_pert = 0.0;
+    rom.rainfall_pert = 0.0;
+    // cd_pert defaults to 0.0 — no Cd variation
+    rom.initialize();
+
+    int nt = rom.n_tri;
+
+    // Seed with index-based Gaussian so coupling cell has some depth.
+    std::vector<double> h2d(static_cast<std::size_t>(nt), 0.0);
+    double sigma2d = nt / 8.0;
+    for (int t = 0; t < nt; ++t) {
+        double dx = t - nt / 3.0;
+        h2d[static_cast<std::size_t>(t)] =
+            0.10 * std::exp(-0.5 * dx * dx / (sigma2d * sigma2d));
+    }
+    rom.seed(h2d.data());
+
+    CouplingPoint cp;
+    cp.cell_idx = 0; cp.vertex_idx = -1; cp.node_idx = 0;
+    cp.cd = 0.6; cp.area = 0.04; cp.is_outfall = false; cp.has_flap_gate = false;
+
+    std::vector<CouplingPoint> cps = {cp};
+    std::vector<double> node_heads(1, 0.0);
+
+    rom.applyCouplingFlux(cps, node_heads.data(), mesh, 10.0);
+
+    ASSERT_TRUE(rom.coupling_unc_output.is_valid());
+    EXPECT_NEAR(
+        rom.coupling_unc_output.q_min[0],
+        rom.coupling_unc_output.q_max[0],
+        1.0e-14)
+        << "cd_pert=0 with zero Manning/rainfall pert should give q_min == q_max";
+}
+
 // With mannings_pert = 0 and no rom1d, every member computes the same flux,
 // so q_min == q_max at the (non-outfall) coupling point.
 TEST(SpectralROM, CouplingUncOutputNoSpreadWithZeroPert) {
@@ -1577,4 +1668,110 @@ TEST(SpectralROM, CouplingUncOutputNoSpreadWithZeroPert) {
     EXPECT_NEAR(f.rom.coupling_unc_output.q_min[0],
                 f.rom.coupling_unc_output.q_max[0], 1.0e-14)
         << "zero perturbation should give q_min == q_max";
+}
+
+// ============================================================================
+// Phase 6 — FiedlerDiagnostic
+// ============================================================================
+
+// compute() sets is_ready() to true and populates phi2/grad/rank.
+TEST(FiedlerDiagnostic, IsReadyAfterCompute) {
+    Fixture f;  // N=5 → 50 triangles, k=6 modes (num_kept >= 2)
+    FiedlerDiagnostic fd;
+    fd.basis = &f.basis;
+    fd.compute(f.mesh);
+
+    EXPECT_TRUE(fd.is_ready());
+    EXPECT_EQ(static_cast<int>(fd.phi2.size()), f.basis.n_triangles);
+    EXPECT_EQ(static_cast<int>(fd.grad.size()), f.basis.n_triangles);
+    EXPECT_EQ(static_cast<int>(fd.rank.size()), f.basis.n_triangles);
+}
+
+// lambda2 must equal basis.eigenvalues[0].
+// SpectralPrecond2D stores only nontrivial modes, so eigenvalues[0] = λ₂.
+TEST(FiedlerDiagnostic, Lambda2MatchesBasisEigenvalue) {
+    Fixture f;
+    FiedlerDiagnostic fd;
+    fd.basis = &f.basis;
+    fd.compute(f.mesh);
+
+    EXPECT_DOUBLE_EQ(fd.lambda2, f.basis.eigenvalues[0]);
+}
+
+// phi2[t] must equal basis.P[0*n_tri + t] for all t.
+// SpectralPrecond2D filters the null mode before storing P, so j=0 IS the
+// Fiedler vector (the smallest nontrivial eigenvector of the Laplacian).
+TEST(FiedlerDiagnostic, Phi2MatchesBasisColumn0) {
+    Fixture f;
+    FiedlerDiagnostic fd;
+    fd.basis = &f.basis;
+    fd.compute(f.mesh);
+
+    int n = f.basis.n_triangles;
+    for (int t = 0; t < n; ++t) {
+        EXPECT_DOUBLE_EQ(fd.phi2[static_cast<std::size_t>(t)],
+                         f.basis.P[static_cast<std::size_t>(t)])
+            << "phi2 mismatch at t=" << t;
+    }
+}
+
+// Gradient must be non-negative everywhere.
+TEST(FiedlerDiagnostic, GradientNonNegative) {
+    Fixture f;
+    FiedlerDiagnostic fd;
+    fd.basis = &f.basis;
+    fd.compute(f.mesh);
+
+    for (int t = 0; t < f.basis.n_triangles; ++t)
+        EXPECT_GE(fd.grad[static_cast<std::size_t>(t)], 0.0)
+            << "grad < 0 at t=" << t;
+}
+
+// The max gradient must be positive (Fiedler vector is non-constant).
+TEST(FiedlerDiagnostic, MaxGradientPositive) {
+    Fixture f;
+    FiedlerDiagnostic fd;
+    fd.basis = &f.basis;
+    fd.compute(f.mesh);
+
+    double gmax = *std::max_element(fd.grad.begin(), fd.grad.end());
+    EXPECT_GT(gmax, 0.0)
+        << "Fiedler vector is non-constant so max gradient must be positive";
+}
+
+// rank must be sorted in descending gradient order.
+TEST(FiedlerDiagnostic, RankSortedDescending) {
+    Fixture f;
+    FiedlerDiagnostic fd;
+    fd.basis = &f.basis;
+    fd.compute(f.mesh);
+
+    int n = f.basis.n_triangles;
+    for (int i = 0; i + 1 < n; ++i) {
+        EXPECT_GE(fd.grad[static_cast<std::size_t>(fd.rank[static_cast<std::size_t>(i)])],
+                  fd.grad[static_cast<std::size_t>(fd.rank[static_cast<std::size_t>(i + 1)])])
+            << "rank not sorted at i=" << i;
+    }
+}
+
+TEST(FiedlerDiagnostic, CouplingAnnotation2DSide) {
+    // Demonstrate coupling-path annotation for the 2D side:
+    // given a CouplingPoint with cell_idx, look up the Fiedler bottleneck
+    // score directly from fd.grad[cp.cell_idx].
+    Fixture f;
+    FiedlerDiagnostic fd;
+    fd.basis = &f.basis;
+    fd.compute(f.mesh);
+    ASSERT_TRUE(fd.is_ready());
+
+    // Simulate coupling point at the highest-gradient 2D cell (rank[0]).
+    const int cp_cell_idx = fd.rank[0];
+    const double bottleneck_score = fd.grad[static_cast<std::size_t>(cp_cell_idx)];
+
+    // The highest-ranked cell must have a positive gradient (non-constant Fiedler).
+    EXPECT_GT(bottleneck_score, 0.0);
+
+    // A low-gradient cell should have a smaller or equal score.
+    const int low_cell_idx = fd.rank[static_cast<std::size_t>(f.basis.n_triangles - 1)];
+    EXPECT_LE(fd.grad[static_cast<std::size_t>(low_cell_idx)], bottleneck_score);
 }

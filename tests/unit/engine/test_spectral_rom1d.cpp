@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include "uncertainty/GraphEigenBasis.hpp"
+#include "uncertainty/FiedlerDiagnostic1D.hpp"
 #include "uncertainty/NetworkLaplacian1D.hpp"
 #include "uncertainty/SpectralROM1D.hpp"
 
@@ -589,4 +590,247 @@ TEST(SpectralROM1D, InitializeThrowsWithSmallEnsemble) {
     rom.basis      = &basis;
     rom.n_ensemble = 1;
     EXPECT_THROW(rom.initialize(), std::runtime_error);
+}
+
+// ============================================================================
+// FiedlerDiagnostic1D
+// ============================================================================
+
+// 6-node chain, outfalls at ends → 4 active nodes (full 1,2,3,4 → active 0,1,2,3).
+// GraphEigenBasis::build requires n_nodes >= 4; a 5-node chain leaves only 3 active.
+// full_to_active: {-1, 0, 1, 2, 3, -1}
+static GraphEigenBasis make_chain_fiedler_basis(
+        std::vector<int>& an1_out,
+        std::vector<int>& an2_out,
+        std::vector<double>& lens_out,
+        std::vector<int>& full_to_active_out) {
+    // Full graph: 6 nodes, conduits 0-1,...,4-5; outfalls at 0 and 5.
+    int n1f[5] = {0,1,2,3,4};
+    int n2f[5] = {1,2,3,4,5};
+    int is_outfall[6] = {1,0,0,0,0,1};
+    std::vector<int> active_map;
+    CsrGraph L = NetworkLaplacian1D::buildUniform(
+        6, 5, n1f, n2f, is_outfall, active_map, full_to_active_out);
+    // Active nodes: 0→full1, 1→full2, 2→full3, 3→full4.
+    // Active-node conduit connectivity (internal conduits only):
+    //   full 1-2 → active 0-1
+    //   full 2-3 → active 1-2
+    //   full 3-4 → active 2-3
+    an1_out = {0, 1, 2};
+    an2_out = {1, 2, 3};
+    lens_out = {100.0, 100.0, 100.0};
+
+    GraphEigenBasis basis;
+    basis.build(L, 2);
+    return basis;
+}
+
+TEST(FiedlerDiagnostic1D, ThrowsIfBasisNotReady) {
+    FiedlerDiagnostic1D fd;
+    // basis = nullptr
+    EXPECT_THROW(fd.compute({0}, {1}, {}), std::runtime_error);
+}
+
+TEST(FiedlerDiagnostic1D, ThrowsOnLengthsMismatch) {
+    std::vector<int> an1, an2;
+    std::vector<double> lens;
+    std::vector<int> f2a;
+    GraphEigenBasis basis = make_chain_fiedler_basis(an1, an2, lens, f2a);
+    ASSERT_TRUE(basis.is_ready());
+
+    FiedlerDiagnostic1D fd;
+    fd.basis = &basis;
+    // lengths size 1 != n1 size 3 → invalid_argument
+    EXPECT_THROW(fd.compute(an1, an2, {99.0}), std::invalid_argument);
+}
+
+TEST(FiedlerDiagnostic1D, IsReadyAfterCompute) {
+    std::vector<int> an1, an2;
+    std::vector<double> lens;
+    std::vector<int> f2a;
+    GraphEigenBasis basis = make_chain_fiedler_basis(an1, an2, lens, f2a);
+    ASSERT_TRUE(basis.is_ready());
+
+    FiedlerDiagnostic1D fd;
+    fd.basis = &basis;
+    fd.compute(an1, an2, lens);
+    EXPECT_TRUE(fd.is_ready());
+}
+
+TEST(FiedlerDiagnostic1D, Lambda2MatchesBasisEigenvalue) {
+    std::vector<int> an1, an2;
+    std::vector<double> lens;
+    std::vector<int> f2a;
+    GraphEigenBasis basis = make_chain_fiedler_basis(an1, an2, lens, f2a);
+    ASSERT_TRUE(basis.is_ready());
+
+    FiedlerDiagnostic1D fd;
+    fd.basis = &basis;
+    fd.compute(an1, an2, lens);
+    EXPECT_DOUBLE_EQ(fd.lambda2, basis.eigenvalues[0]);
+}
+
+TEST(FiedlerDiagnostic1D, Phi2MatchesBasisColumn0) {
+    std::vector<int> an1, an2;
+    std::vector<double> lens;
+    std::vector<int> f2a;
+    GraphEigenBasis basis = make_chain_fiedler_basis(an1, an2, lens, f2a);
+    ASSERT_TRUE(basis.is_ready());
+
+    FiedlerDiagnostic1D fd;
+    fd.basis = &basis;
+    fd.compute(an1, an2, lens);
+
+    const int n = basis.n_nodes;
+    for (int i = 0; i < n; ++i)
+        EXPECT_DOUBLE_EQ(fd.phi2[static_cast<std::size_t>(i)],
+                         basis.P[static_cast<std::size_t>(i)])
+            << "phi2[" << i << "] != P[0*n+" << i << "]";
+}
+
+TEST(FiedlerDiagnostic1D, GradientNonNegative) {
+    std::vector<int> an1, an2;
+    std::vector<double> lens;
+    std::vector<int> f2a;
+    GraphEigenBasis basis = make_chain_fiedler_basis(an1, an2, lens, f2a);
+    ASSERT_TRUE(basis.is_ready());
+
+    FiedlerDiagnostic1D fd;
+    fd.basis = &basis;
+    fd.compute(an1, an2, lens);
+    for (std::size_t i = 0; i < fd.grad.size(); ++i)
+        EXPECT_GE(fd.grad[i], 0.0);
+}
+
+TEST(FiedlerDiagnostic1D, MaxGradientPositive) {
+    // On a 3-active-node chain the Fiedler vector is non-constant → max grad > 0.
+    std::vector<int> an1, an2;
+    std::vector<double> lens;
+    std::vector<int> f2a;
+    GraphEigenBasis basis = make_chain_fiedler_basis(an1, an2, lens, f2a);
+    ASSERT_TRUE(basis.is_ready());
+
+    FiedlerDiagnostic1D fd;
+    fd.basis = &basis;
+    fd.compute(an1, an2, lens);
+    double max_g = *std::max_element(fd.grad.begin(), fd.grad.end());
+    EXPECT_GT(max_g, 0.0);
+}
+
+TEST(FiedlerDiagnostic1D, RankSortedDescending) {
+    // Use a larger chain for a meaningful gradient distribution.
+    std::vector<int> an1, an2;
+    for (int k = 0; k < 9; ++k) { an1.push_back(k); an2.push_back(k + 1); }
+    CsrGraph L = make_chain_laplacian(10);
+    GraphEigenBasis basis;
+    ASSERT_TRUE(basis.build(L, 4));
+
+    FiedlerDiagnostic1D fd;
+    fd.basis = &basis;
+    fd.compute(an1, an2, {});  // unit lengths
+
+    for (std::size_t k = 1; k < fd.rank.size(); ++k) {
+        EXPECT_GE(fd.grad[static_cast<std::size_t>(fd.rank[k - 1])],
+                  fd.grad[static_cast<std::size_t>(fd.rank[k])])
+            << "rank not descending at position " << k;
+    }
+}
+
+TEST(FiedlerDiagnostic1D, GradAtActiveNodeMatchesGrad) {
+    std::vector<int> an1, an2;
+    std::vector<double> lens;
+    std::vector<int> f2a;
+    GraphEigenBasis basis = make_chain_fiedler_basis(an1, an2, lens, f2a);
+    ASSERT_TRUE(basis.is_ready());
+
+    FiedlerDiagnostic1D fd;
+    fd.basis = &basis;
+    fd.compute(an1, an2, lens);
+
+    for (int ai = 0; ai < basis.n_nodes; ++ai)
+        EXPECT_DOUBLE_EQ(fd.gradAtActiveNode(ai),
+                         fd.grad[static_cast<std::size_t>(ai)]);
+}
+
+TEST(FiedlerDiagnostic1D, GradAtFullNodeMapsCorrectly) {
+    // 5-node chain, outfalls at 0 and 4:
+    //   full_to_active = {-1, 0, 1, 2, -1}
+    // Full node 2 → active node 1 → fd.grad[1]
+    std::vector<int> an1, an2;
+    std::vector<double> lens;
+    std::vector<int> f2a;
+    GraphEigenBasis basis = make_chain_fiedler_basis(an1, an2, lens, f2a);
+    ASSERT_TRUE(basis.is_ready());
+
+    FiedlerDiagnostic1D fd;
+    fd.basis = &basis;
+    fd.compute(an1, an2, lens);
+
+    // Full index 2 maps to active index 1
+    EXPECT_DOUBLE_EQ(fd.gradAtFullNode(2, f2a), fd.grad[1]);
+    // Full index 1 maps to active index 0
+    EXPECT_DOUBLE_EQ(fd.gradAtFullNode(1, f2a), fd.grad[0]);
+}
+
+TEST(FiedlerDiagnostic1D, GradAtFullNodeZeroForOutfall) {
+    std::vector<int> an1, an2;
+    std::vector<double> lens;
+    std::vector<int> f2a;
+    GraphEigenBasis basis = make_chain_fiedler_basis(an1, an2, lens, f2a);
+    ASSERT_TRUE(basis.is_ready());
+
+    FiedlerDiagnostic1D fd;
+    fd.basis = &basis;
+    fd.compute(an1, an2, lens);
+
+    // Outfall nodes (full 0 and 5) have full_to_active = -1 → 0.0
+    EXPECT_DOUBLE_EQ(fd.gradAtFullNode(0, f2a), 0.0);
+    EXPECT_DOUBLE_EQ(fd.gradAtFullNode(5, f2a), 0.0);
+}
+
+TEST(FiedlerDiagnostic1D, GradAtFullNodeZeroForOutOfRange) {
+    std::vector<int> an1, an2;
+    std::vector<double> lens;
+    std::vector<int> f2a;
+    GraphEigenBasis basis = make_chain_fiedler_basis(an1, an2, lens, f2a);
+    ASSERT_TRUE(basis.is_ready());
+
+    FiedlerDiagnostic1D fd;
+    fd.basis = &basis;
+    fd.compute(an1, an2, lens);
+
+    EXPECT_DOUBLE_EQ(fd.gradAtFullNode(-1, f2a), 0.0);
+    EXPECT_DOUBLE_EQ(fd.gradAtFullNode(999, f2a), 0.0);
+}
+
+TEST(FiedlerDiagnostic1D, CouplingAnnotation) {
+    // Demonstrate coupling-path annotation: given a coupling point with
+    // cp.node_idx (full SWMM index), retrieve the Fiedler bottleneck score
+    // from the 1D diagnostic via gradAtFullNode(cp.node_idx, full_to_active).
+    //
+    // Setup: 6-node chain, outfalls at 0 and 5.  Coupling point at full node 2
+    //        (second active node — expected nonzero gradient on the Fiedler vector).
+    std::vector<int> an1, an2;
+    std::vector<double> lens;
+    std::vector<int> f2a;  // full_to_active for use with cp.node_idx
+    GraphEigenBasis basis = make_chain_fiedler_basis(an1, an2, lens, f2a);
+    ASSERT_TRUE(basis.is_ready());
+
+    FiedlerDiagnostic1D fd;
+    fd.basis = &basis;
+    fd.compute(an1, an2, lens);
+    ASSERT_TRUE(fd.is_ready());
+
+    // Simulate coupling point at full node 2 (active index 1):
+    const int cp_node_idx = 2;
+    const double bottleneck_score = fd.gradAtFullNode(cp_node_idx, f2a);
+
+    // Score must be >= 0; on a 4-active-node chain with a non-constant
+    // Fiedler vector, an interior node should have nonzero gradient.
+    EXPECT_GE(bottleneck_score, 0.0);
+    EXPECT_GT(bottleneck_score, 0.0);
+
+    // Outfall coupling points return 0 (no gradient defined for excluded nodes).
+    EXPECT_DOUBLE_EQ(fd.gradAtFullNode(0, f2a), 0.0);
+    EXPECT_DOUBLE_EQ(fd.gradAtFullNode(5, f2a), 0.0);
 }

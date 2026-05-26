@@ -368,8 +368,10 @@ std::string parseUncertaintyLine(
     openswmm::uncertainty::LayerTarget layer;
     if (iequals(layer_str, "2D"))
         layer = openswmm::uncertainty::LayerTarget::TWO_D;
+    else if (iequals(layer_str, "1D"))
+        layer = openswmm::uncertainty::LayerTarget::ONE_D;
     else
-        return "Unsupported LAYER '" + layer_str + "' (Phase 0/1 supports only '2D')";
+        return "Unsupported LAYER '" + layer_str + "' (supported: '2D', '1D')";
 
     // --- Parse DISTRIBUTION ---
     openswmm::uncertainty::DistType dist;
@@ -395,7 +397,7 @@ std::string parseUncertaintyLine(
 
     if (param_upper != "MANNINGS_N" && param_upper != "RAINFALL")
         return "Unsupported PARAMETER '" + param_str
-               + "' (Phase 0/1 supports MANNINGS_N and RAINFALL for LAYER=2D)";
+               + "' (supported: MANNINGS_N, RAINFALL)";
 
     // --- Build spec and record ---
     openswmm::uncertainty::UncertaintySourceSpec spec;
@@ -405,13 +407,15 @@ std::string parseUncertaintyLine(
     spec.perturbation = pert;
     config.sources.push_back(spec);
 
-    // [UNCERTAINTY] takes precedence: immediately update opts so the ROM
-    // uses these values even if [2D_ROM] also set them.
-    opts.enable_rom = true;
-    if (param_upper == "MANNINGS_N")
-        opts.rom_mannings_pert = pert;
-    else if (param_upper == "RAINFALL")
-        opts.rom_rainfall_pert = pert;
+    // For 2D specs, [UNCERTAINTY] takes precedence over [2D_ROM] values.
+    // For 1D specs, only update the uncertainty config (not the 2D solver opts).
+    if (layer == openswmm::uncertainty::LayerTarget::TWO_D) {
+        opts.enable_rom = true;
+        if (param_upper == "MANNINGS_N")
+            opts.rom_mannings_pert = pert;
+        else if (param_upper == "RAINFALL")
+            opts.rom_rainfall_pert = pert;
+    }
 
     return {};
 }

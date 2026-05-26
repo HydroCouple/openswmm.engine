@@ -50,6 +50,7 @@ struct UncertaintyEnsemble {
     double   mannings_pert_2d  = 0.20;  ///< Half-range: n ∈ [1-p, 1+p] × base.
     double   rainfall_pert_2d  = 0.20;  ///< Half-range: r ∈ [1-p, 1+p] × base.
     double   soil_pert         = 0.20;  ///< Half-range: Ks/f0 ∈ [1-p, 1+p] × base (runoff layer).
+    double   cd_pert           = 0.10;  ///< Half-range: Cd ∈ [1-p, 1+p] × nominal (coupling layer).
 
     // ------------------------------------------------------------------
     // State (set by generate())
@@ -62,6 +63,9 @@ struct UncertaintyEnsemble {
     /// Soil hydraulic conductivity multiplier per member — length n_members.
     /// Decorrelated from Manning and rainfall via shuffled LHS strata.
     std::vector<double> soil_mult;
+    /// Discharge coefficient multiplier per member — length n_members.
+    /// Decorrelated from Manning, rainfall, and soil via independently shuffled strata.
+    std::vector<double> cd_mult;
 
     // ------------------------------------------------------------------
     // Methods
@@ -99,6 +103,12 @@ struct UncertaintyEnsemble {
     /// Decorrelated from Manning and rainfall; use for runoff-layer LHS design.
     const std::vector<double>& soilSamples() const noexcept {
         return soil_mult;
+    }
+
+    /// Const view of discharge coefficient multipliers (length n_members).
+    /// Decorrelated from Manning, rainfall, and soil; use for coupling-layer LHS design.
+    const std::vector<double>& cdSamples() const noexcept {
+        return cd_mult;
     }
 };
 

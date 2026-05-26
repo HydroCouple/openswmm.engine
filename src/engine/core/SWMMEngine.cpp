@@ -34,6 +34,10 @@
 #include <filesystem>
 #endif
 
+#include "../uncertainty/GraphEigenBasis.hpp"
+#include "../uncertainty/NetworkLaplacian1D.hpp"
+#include "../uncertainty/SpectralROM1D.hpp"
+
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -1749,6 +1753,13 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     surface_router_.advancePostRouting(ctx_, dt_routing, ctx_.current_time);
 #endif
 
+    // B3++. Advance 1D spectral ROM for uncertainty propagation.
+    if (rom1d_ && rom1d_->is_ready()) {
+        const double K1d = computeK1d();
+        rom1d_->advance(dt_routing, K1d, nullptr);
+        rom1d_->computeQuantiles();
+    }
+
     // B3a. Inlet capture (street inlet HEC-22 calculations)
     inlet_.computeAll(ctx_, dt_routing);
 
@@ -2982,6 +2993,23 @@ void SWMMEngine::initHydraulics() noexcept {
     surface_router_.initialize(ctx_);
 #endif
 
+    // 1b. Build optional 1D spectral ROM when any uncertainty source is configured
+    //     or when the 2D ROM is active (so per-member 1D heads feed the coupling).
+    {
+        bool need_rom1d = uncertainty_config_.has_1d();
+#ifdef OPENSWMM_HAS_2D
+        need_rom1d = need_rom1d ||
+                     (surface_router_.isActive() && surface_router_.options().enable_rom);
+#endif
+        if (need_rom1d) {
+            buildROM1D();
+#ifdef OPENSWMM_HAS_2D
+            if (rom1d_)
+                surface_router_.setROM1D(rom1d_.get());
+#endif
+        }
+    }
+
     // 1b. Configure OpenMP thread count from THREADS option.
     //     0 = use all available; N = use min(N, available).
     //     DWSolver applies its own threshold (< 4*nThreads links → 1 thread).
@@ -3899,6 +3927,115 @@ void SWMMEngine::initMassBalance() noexcept {
             ctx_.mass_balance.gw_init_storage += vol * area;
         }
     }
+}
+
+// ============================================================================
+// buildROM1D() — build + seed the 1D spectral ROM
+// ============================================================================
+
+void SWMMEngine::buildROM1D() noexcept {
+    const int n_full = ctx_.n_nodes();
+    if (n_full < 4) return;
+
+    // Collect conduit node pairs
+    std::vector<int> n1_vec, n2_vec;
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
+        n1_vec.push_back(ctx_.links.node1[uj]);
+        n2_vec.push_back(ctx_.links.node2[uj]);
+    }
+    if (n1_vec.empty()) return;
+
+    // Build outfall flag array
+    std::vector<int> is_outfall(static_cast<std::size_t>(n_full), 0);
+    for (int i = 0; i < n_full; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (ctx_.nodes.type[ui] == NodeType::OUTFALL)
+            is_outfall[ui] = 1;
+    }
+
+    std::vector<int> active_map, full_to_active;
+    uncertainty::CsrGraph g = uncertainty::NetworkLaplacian1D::buildUniform(
+        n_full, static_cast<int>(n1_vec.size()),
+        n1_vec.data(), n2_vec.data(), is_outfall.data(),
+        active_map, full_to_active);
+
+    const int n_active = static_cast<int>(active_map.size());
+    if (n_active < 4) return;  // GraphEigenBasis::build requires >= 4 nodes
+
+    // Determine mode count from 2D ROM options (if active) or a reasonable default
+    int k_modes = std::min(20, n_active - 1);
+#ifdef OPENSWMM_HAS_2D
+    if (surface_router_.isActive())
+        k_modes = std::min(surface_router_.options().rom_modes, n_active - 1);
+#endif
+
+    rom1d_basis_ = std::make_unique<uncertainty::GraphEigenBasis>();
+    if (!rom1d_basis_->build(g, k_modes)) {
+        rom1d_basis_.reset();
+        return;
+    }
+
+    // Configure ROM — start from 2D ROM settings if 2D is active
+    rom1d_ = std::make_unique<uncertainty::SpectralROM1D>();
+    rom1d_->basis          = rom1d_basis_.get();
+    rom1d_->full_to_active = std::move(full_to_active);
+
+#ifdef OPENSWMM_HAS_2D
+    if (surface_router_.isActive()) {
+        const auto& opts     = surface_router_.options();
+        rom1d_->n_ensemble    = opts.rom_members;
+        rom1d_->mannings_pert = opts.rom_mannings_pert;
+        rom1d_->runoff_pert   = opts.rom_rainfall_pert;
+    }
+#endif
+
+    // Override with explicit 1D uncertainty specs from [UNCERTAINTY] section
+    for (const auto& s : uncertainty_config_.sources) {
+        if (s.layer != uncertainty::LayerTarget::ONE_D || !s.is_active()) continue;
+        if (s.name == "MANNINGS_N") rom1d_->mannings_pert = s.perturbation;
+        if (s.name == "RAINFALL")   rom1d_->runoff_pert   = s.perturbation;
+    }
+
+    rom1d_->initialize();
+
+    // Seed from current node heads (all members start identical)
+    std::vector<double> h0(static_cast<std::size_t>(n_active));
+    for (int ai = 0; ai < n_active; ++ai) {
+        auto ui = static_cast<std::size_t>(active_map[static_cast<std::size_t>(ai)]);
+        h0[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
+    }
+    rom1d_->seed(h0.data());
+}
+
+// ============================================================================
+// computeK1d() — effective Manning conductance averaged over active conduits
+// ============================================================================
+
+double SWMMEngine::computeK1d() noexcept {
+    // Diffusion-wave diffusivity D = h^(5/3) / (2n*sqrt(S))  [m²/s].
+    // GraphEigenBasis eigenvalues are dimensionless (topological, not spatial),
+    // so D must be normalised by L² to give K1d in 1/s:
+    //   K1d = D / L² = h^(5/3) / (2n * sqrt(S) * L²)
+    // This ensures lambda_j * K1d has units 1/s in the ROM advance equation.
+    double sum_k = 0.0;
+    int    cnt   = 0;
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
+        const double n_rough = ctx_.links.roughness[uj];
+        const double slope   = std::fabs(ctx_.links.slope[uj]);
+        const double h       = ctx_.nodes.depth[static_cast<std::size_t>(ctx_.links.node1[uj])];
+        const double L       = ctx_.links.mod_length[uj] > 0.0
+                                 ? ctx_.links.mod_length[uj]
+                                 : ctx_.links.length[uj];
+        if (n_rough <= 0.0 || slope <= 0.0 || h < 1e-6 || L <= 0.0) continue;
+        const double D = std::pow(h, 5.0 / 3.0) / (2.0 * n_rough * std::sqrt(slope));
+        sum_k += D / (L * L);
+        ++cnt;
+    }
+    return cnt > 0 ? sum_k / cnt : 1e-4;
 }
 
 } /* namespace openswmm */
