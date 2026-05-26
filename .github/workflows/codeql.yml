@@ -5,7 +5,7 @@ on:
     branches: [main]                         # drop develop — covered by PR
     paths: ['src/**', 'include/**', 'python/**', 'CMakeLists.txt', 'vcpkg.json']
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     paths: ['src/**', 'include/**', 'python/**', 'CMakeLists.txt', 'vcpkg.json']
   schedule: [{ cron: "0 6 * * 1" }]
   workflow_dispatch:

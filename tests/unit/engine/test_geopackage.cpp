@@ -904,6 +904,14 @@ TEST(GeoPackagePluginInfoTest, FactoryCreatesReportPlugin) {
     delete plugin;
 }
 
+// Slice RC.2 hid the `openswmm_plugin_info` C export from the engine SHARED
+// (visibility=hidden + no public header declaration) to plug the dlsym leak
+// that PluginFactory::discover() was inadvertently picking up. The symbol
+// is still emitted into the openswmm_geopackage STATIC archive that this
+// test links, so a local forward declaration is sufficient to call it from
+// the test executable without re-exporting it for third-party consumers.
+extern "C" openswmm::IPluginComponentInfo* openswmm_plugin_info(void);
+
 TEST(GeoPackagePluginInfoTest, CExportFunction) {
     // Verify the C export returns the same singleton
     auto* exported = openswmm_plugin_info();

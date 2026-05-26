@@ -68,7 +68,7 @@ class TestPumpStatsBulk:
         assert hasattr(stepped_links, "get_pump_stats_bulk")
 
     def test_return_shape_and_dtypes(self, stepped_links):
-        n = stepped_links.count
+        n = stepped_links.count()
         result = stepped_links.get_pump_stats_bulk()
         assert set(result.keys()) == {"cycles", "on_time", "volume"}
         assert result["cycles"].shape == (n,)
@@ -86,7 +86,7 @@ class TestPumpStatsBulk:
         emits the documented sentinel.
         """
         result = stepped_links.get_pump_stats_bulk()
-        n = stepped_links.count
+        n = stepped_links.count()
         # LinkType.PUMP == 1 (see LinkData.hpp); use get_type to discover.
         for i in range(n):
             if stepped_links.get_type(i) != 1:  # not a pump
@@ -102,7 +102,7 @@ class TestPumpStatsBulk:
     def test_sentinel_count_matches_non_pumps(self, stepped_links):
         """Count of -1 sentinels should equal the count of non-pump links."""
         result = stepped_links.get_pump_stats_bulk()
-        n = stepped_links.count
+        n = stepped_links.count()
         n_non_pumps = sum(1 for i in range(n) if stepped_links.get_type(i) != 1)
         assert int((result["cycles"] == -1).sum()) == n_non_pumps
 
@@ -381,7 +381,7 @@ class TestNodesPhase3Bulk:
         assert hasattr(stepped_nodes, "get_volumes_bulk")
 
     def test_get_volumes_bulk_shape_and_dtype(self, stepped_nodes):
-        n = stepped_nodes.count
+        n = stepped_nodes.count()
         arr = stepped_nodes.get_volumes_bulk()
         assert isinstance(arr, np.ndarray)
         assert arr.shape == (n,)
@@ -390,25 +390,25 @@ class TestNodesPhase3Bulk:
 
     def test_get_volumes_bulk_equivalence(self, stepped_nodes):
         arr = stepped_nodes.get_volumes_bulk()
-        n = stepped_nodes.count
+        n = stepped_nodes.count()
         for i in range(n):
             assert arr[i] == stepped_nodes.get_volume(i), f"node {i}"
 
     def test_get_outflows_bulk_equivalence(self, stepped_nodes):
         arr = stepped_nodes.get_outflows_bulk()
-        n = stepped_nodes.count
+        n = stepped_nodes.count()
         for i in range(n):
             assert arr[i] == stepped_nodes.get_outflow(i), f"node {i}"
 
     def test_get_losses_bulk_equivalence(self, stepped_nodes):
         arr = stepped_nodes.get_losses_bulk()
-        n = stepped_nodes.count
+        n = stepped_nodes.count()
         for i in range(n):
             assert arr[i] == stepped_nodes.get_losses(i), f"node {i}"
 
     def test_get_lateral_inflows_bulk_equivalence(self, stepped_nodes):
         arr = stepped_nodes.get_lateral_inflows_bulk()
-        n = stepped_nodes.count
+        n = stepped_nodes.count()
         for i in range(n):
             assert arr[i] == stepped_nodes.get_lateral_inflow(i), f"node {i}"
 
@@ -422,7 +422,7 @@ class TestNodesPhase3Bulk:
 
     def test_get_ids_bulk_returns_list_of_strings(self, stepped_nodes):
         ids = stepped_nodes.get_ids_bulk()
-        n = stepped_nodes.count
+        n = stepped_nodes.count()
         assert isinstance(ids, list)
         assert len(ids) == n
         for s in ids:
@@ -430,7 +430,7 @@ class TestNodesPhase3Bulk:
 
     def test_get_ids_bulk_equivalence_with_scalar(self, stepped_nodes):
         ids = stepped_nodes.get_ids_bulk()
-        n = stepped_nodes.count
+        n = stepped_nodes.count()
         for i in range(n):
             assert ids[i] == stepped_nodes.get_id(i), f"index {i}"
 
@@ -468,44 +468,44 @@ class TestLinksPhase3Bulk:
     def test_velocities_bulk_shape(self, stepped_links):
         arr = stepped_links.get_velocities_bulk()
         assert isinstance(arr, np.ndarray)
-        assert arr.shape == (stepped_links.count,)
+        assert arr.shape == (stepped_links.count(),)
         assert arr.dtype == np.float64
         assert arr.flags["C_CONTIGUOUS"]
 
     def test_velocities_bulk_equivalence(self, stepped_links):
         arr = stepped_links.get_velocities_bulk()
-        for i in range(stepped_links.count):
+        for i in range(stepped_links.count()):
             assert arr[i] == stepped_links.get_velocity(i), f"link {i}"
 
     def test_capacities_bulk_equivalence(self, stepped_links):
         arr = stepped_links.get_capacities_bulk()
-        for i in range(stepped_links.count):
+        for i in range(stepped_links.count()):
             assert arr[i] == stepped_links.get_capacity(i), f"link {i}"
 
     def test_volumes_bulk_equivalence(self, stepped_links):
         arr = stepped_links.get_volumes_bulk()
-        for i in range(stepped_links.count):
+        for i in range(stepped_links.count()):
             assert arr[i] == stepped_links.get_volume(i), f"link {i}"
 
     def test_control_settings_bulk_equivalence(self, stepped_links):
         arr = stepped_links.get_control_settings_bulk()
-        for i in range(stepped_links.count):
+        for i in range(stepped_links.count()):
             assert arr[i] == stepped_links.get_control_setting(i), f"link {i}"
 
     def test_target_settings_bulk_equivalence(self, stepped_links):
         arr = stepped_links.get_target_settings_bulk()
-        for i in range(stepped_links.count):
+        for i in range(stepped_links.count()):
             assert arr[i] == stepped_links.get_target_setting(i), f"link {i}"
 
     def test_hyd_powers_bulk_equivalence(self, stepped_links):
         arr = stepped_links.get_hyd_powers_bulk()
-        for i in range(stepped_links.count):
+        for i in range(stepped_links.count()):
             assert arr[i] == stepped_links.get_hyd_power(i), f"link {i}"
 
     def test_ids_bulk_returns_list_of_strings(self, stepped_links):
         ids = stepped_links.get_ids_bulk()
         assert isinstance(ids, list)
-        assert len(ids) == stepped_links.count
+        assert len(ids) == stepped_links.count()
         for s in ids:
             assert isinstance(s, str)
 
@@ -555,23 +555,23 @@ class TestSubcatchmentsPhase3Bulk:
     def test_rainfall_bulk_shape(self, stepped_subcatchments):
         arr = stepped_subcatchments.get_rainfall_bulk()
         assert isinstance(arr, np.ndarray)
-        assert arr.shape == (stepped_subcatchments.count,)
+        assert arr.shape == (stepped_subcatchments.count(),)
         assert arr.dtype == np.float64
         assert arr.flags["C_CONTIGUOUS"]
 
     def test_rainfall_bulk_equivalence(self, stepped_subcatchments):
         arr = stepped_subcatchments.get_rainfall_bulk()
-        for i in range(stepped_subcatchments.count):
+        for i in range(stepped_subcatchments.count()):
             assert arr[i] == stepped_subcatchments.get_rainfall(i), f"subcatch {i}"
 
     def test_evap_bulk_equivalence(self, stepped_subcatchments):
         arr = stepped_subcatchments.get_evap_bulk()
-        for i in range(stepped_subcatchments.count):
+        for i in range(stepped_subcatchments.count()):
             assert arr[i] == stepped_subcatchments.get_evap(i), f"subcatch {i}"
 
     def test_infil_bulk_equivalence(self, stepped_subcatchments):
         arr = stepped_subcatchments.get_infil_bulk()
-        for i in range(stepped_subcatchments.count):
+        for i in range(stepped_subcatchments.count()):
             assert arr[i] == stepped_subcatchments.get_infil(i), f"subcatch {i}"
 
     def test_snow_depth_bulk_returns_zeros_placeholder(self, stepped_subcatchments):
@@ -580,7 +580,7 @@ class TestSubcatchmentsPhase3Bulk:
         integration completes, both this test and the scalar test will
         need a corresponding update."""
         arr = stepped_subcatchments.get_snow_depth_bulk()
-        for i in range(stepped_subcatchments.count):
+        for i in range(stepped_subcatchments.count()):
             scalar = stepped_subcatchments.get_snow_depth(i)
             assert arr[i] == scalar, f"subcatch {i}"
             assert arr[i] == 0.0, f"subcatch {i}: expected placeholder zero"
@@ -588,7 +588,7 @@ class TestSubcatchmentsPhase3Bulk:
     def test_ids_bulk_returns_list_of_strings(self, stepped_subcatchments):
         ids = stepped_subcatchments.get_ids_bulk()
         assert isinstance(ids, list)
-        assert len(ids) == stepped_subcatchments.count
+        assert len(ids) == stepped_subcatchments.count()
         for s in ids:
             assert isinstance(s, str)
 
@@ -617,7 +617,7 @@ class TestSubcatchmentsPhase3Bulk:
         infil = stepped_subcatchments.get_infil_bulk()
         evap = stepped_subcatchments.get_evap_bulk()
         runoff = stepped_subcatchments.get_runoff_bulk()
-        n = stepped_subcatchments.count
+        n = stepped_subcatchments.count()
         assert rain.shape == (n,)
         assert infil.shape == (n,)
         assert evap.shape == (n,)
@@ -648,7 +648,7 @@ class TestStatisticsPhase3Bulk:
         nodes = Nodes(completed_solver)
         arr = stats.node_max_overflow_bulk()
         assert isinstance(arr, np.ndarray)
-        assert arr.shape == (nodes.count,)
+        assert arr.shape == (nodes.count(),)
         assert arr.dtype == np.float64
         assert arr.flags["C_CONTIGUOUS"]
 
@@ -657,7 +657,7 @@ class TestStatisticsPhase3Bulk:
         stats = Statistics(completed_solver)
         nodes = Nodes(completed_solver)
         arr = stats.node_max_overflow_bulk()
-        for i in range(nodes.count):
+        for i in range(nodes.count()):
             assert arr[i] == nodes.get_stat_max_overflow(i), f"node {i}"
 
     def test_node_vol_flooded_bulk_equivalence(self, completed_solver):
@@ -665,7 +665,7 @@ class TestStatisticsPhase3Bulk:
         stats = Statistics(completed_solver)
         nodes = Nodes(completed_solver)
         arr = stats.node_vol_flooded_bulk()
-        for i in range(nodes.count):
+        for i in range(nodes.count()):
             assert arr[i] == nodes.get_stat_vol_flooded(i), f"node {i}"
 
     def test_node_time_flooded_bulk_equivalence(self, completed_solver):
@@ -673,7 +673,7 @@ class TestStatisticsPhase3Bulk:
         stats = Statistics(completed_solver)
         nodes = Nodes(completed_solver)
         arr = stats.node_time_flooded_bulk()
-        for i in range(nodes.count):
+        for i in range(nodes.count()):
             assert arr[i] == nodes.get_stat_time_flooded(i), f"node {i}"
 
     def test_subcatch_max_runoff_bulk_equivalence(self, completed_solver):
@@ -681,7 +681,7 @@ class TestStatisticsPhase3Bulk:
         stats = Statistics(completed_solver)
         subs = Subcatchments(completed_solver)
         arr = stats.subcatch_max_runoff_bulk()
-        for i in range(subs.count):
+        for i in range(subs.count()):
             assert arr[i] == subs.get_stat_max_runoff(i), f"subcatch {i}"
 
     def test_all_stats_non_negative(self, completed_solver):
@@ -711,7 +711,7 @@ class TestStatisticsPhase3Bulk:
         vol_flood = stats.node_vol_flooded_bulk()
         t_flood   = stats.node_time_flooded_bulk()
         # All four results align on the node index.
-        n = nodes.count
+        n = nodes.count()
         assert len(ids) == n
         assert max_over.shape == (n,)
         assert vol_flood.shape == (n,)

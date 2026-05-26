@@ -111,7 +111,10 @@ target_link_libraries(openswmm_engine
     PUBLIC
         openswmm_common
     PRIVATE
-        $<$<NOT:$<BOOL:$<CXX_COMPILER_ID:MSVC>>>:m>
+        # On macOS, libm is part of libSystem and HDF5/SUNDIALS already pull in
+        # -lm transitively — adding it here produces an "ignoring duplicate
+        # libraries: '-lm'" ld warning. Restrict to non-APPLE UNIX.
+        $<$<AND:$<NOT:$<BOOL:$<CXX_COMPILER_ID:MSVC>>>,$<NOT:$<PLATFORM_ID:Darwin>>>:m>
 )
 
 # ---- Threads (for IOThread) ----

@@ -41,40 +41,44 @@ static void sec(FILE* f, const char* name) {
 }
 
 // Format an OADate as MM/DD/YYYY
-static void fmt_date(char* buf, double oadate) {
+template<std::size_t N>
+static void fmt_date(char (&buf)[N], double oadate) {
     int y, m, d;
     datetime::decodeDate(oadate, y, m, d);
-    std::sprintf(buf, "%02d/%02d/%04d", m, d, y);
+    std::snprintf(buf, N, "%02d/%02d/%04d", m, d, y);
 }
 
 // Format the time-of-day part of an OADate as HH:MM:SS
-static void fmt_time(char* buf, double oadate) {
+template<std::size_t N>
+static void fmt_time(char (&buf)[N], double oadate) {
     int h, m, s;
     datetime::decodeTime(oadate, h, m, s);
-    std::sprintf(buf, "%02d:%02d:%02d", h, m, s);
+    std::snprintf(buf, N, "%02d:%02d:%02d", h, m, s);
 }
 
 // Format a timestep (seconds).  Whole-second values use H:MM:SS (matching
 // legacy SWMM GUI GetTimeString); fractional values use %g decimal notation.
-static void fmt_step(char* buf, double secs) {
+template<std::size_t N>
+static void fmt_step(char (&buf)[N], double secs) {
     long r = std::lround(secs);
     if (std::fabs(secs - static_cast<double>(r)) < 0.001) {
         int ss = static_cast<int>(r % 60);
         int mm = static_cast<int>((r / 60) % 60);
         int hh = static_cast<int>(r / 3600);
-        std::sprintf(buf, "%d:%02d:%02d", hh, mm, ss);
+        std::snprintf(buf, N, "%d:%02d:%02d", hh, mm, ss);
     } else {
-        std::sprintf(buf, "%g", secs);
+        std::snprintf(buf, N, "%g", secs);
     }
 }
 
 // Format a day-of-year integer as M/D (no leading zeros, matching legacy GUI)
-static void fmt_sweep(char* buf, int doy) {
+template<std::size_t N>
+static void fmt_sweep(char (&buf)[N], int doy) {
     // Anchor to a non-leap year to get a stable month/day
     double dt = datetime::encodeDate(2001, 1, 1) + static_cast<double>(doy - 1);
     int y, m, d;
     datetime::decodeDate(dt, y, m, d);
-    std::sprintf(buf, "%d/%d", m, d);
+    std::snprintf(buf, N, "%d/%d", m, d);
 }
 
 // Write per-object comment lines. Multi-line comments are stored with literal
