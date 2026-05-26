@@ -481,6 +481,40 @@ In these regimes the ROM correctly identifies *which nodes* carry the most Manni
 sensitivity (the spread pattern is qualitatively right) but may mis-estimate the band width
 by 30–50%. See also §8, limitation 2.
 
+**Roadmap: Jacobian-informed 1D ROM basis**
+
+SWMM's DYNWAVE Picard iteration already assembles a linearized operator H at each Newton
+step. The existing `SpectralCoarse` infrastructure extracts it:
+
+```cpp
+active_diag[ai] = max(surf_area - 0.5*dt*sumdqdh, min_surf_area)
+conduit_off[ci]  = 0.5*dt * dqdh_[tile_uj_[ci]]   // H = surfaceArea/dt − dQ/dh
+```
+
+H includes inertial terms, actual pipe depths, backwater, and surcharge effects through the
+live `dqdh` values — it is the true dynamic-wave Jacobian, not a diffusion-wave approximation.
+Using H's eigenvectors as the ROM basis would make the 1D ROM accurate for the full
+Saint-Venant regime.
+
+`SpectralCoarse` was closed as unsafe because it *wrote corrections back* to the DYNWAVE state,
+contaminating `links.flow` across timesteps. A read-only ROM sidecar would avoid this entirely
+— it reads H's eigenvectors to update its own coefficients and never touches the solver state.
+
+Three open questions before this can be implemented:
+
+1. **Re-eigensolving cost**: H changes as pipe depths change. Recomputing k eigenvectors per
+   step (or every N steps) costs O(N·k) extra. Affordable for small networks; potentially
+   significant at 10k+ nodes. Amortised re-solving (e.g., every 10 routing steps) is a
+   practical middle ground.
+2. **Time-varying basis**: when P changes between timesteps, the modal coordinates
+   `a[i,j]` are defined on a new basis. The sidecar must re-project `a_old` onto `P_new`
+   before advancing: `a_new[i,j] = Σ_k (P_new[:,j]ᵀ · P_old[:,k]) · a_old[i,k]`.
+3. **Non-symmetry of H**: H is not symmetric due to the convective term `∂(Q²/A)/∂x`.
+   Standard Lanczos (used for the graph Laplacian) requires symmetric input; a one-sided or
+   generalised eigensolver would be needed.
+
+This enhancement would remove limitation 2 from §8 entirely for the 1D domain.
+
 ### 4.7 Latin-hypercube design
 
 `UncertaintyEnsemble` generates four decorrelated LHS columns, each stratifying its parameter
