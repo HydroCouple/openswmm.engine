@@ -379,6 +379,25 @@ corresponds to each node, and returns −1 for outfalls.
 The 1D ROM is **not automatically reseeded** during a simulation run. It seeds once at
 `initialize()` from the hydraulic initial condition and evolves through the event from there.
 
+#### How the sidecar attaches — five hook points
+
+The ROM is a **read-only observer** of the deterministic solver. It never writes to CVODE
+state or the DYNWAVE solution; the solver drives, the sidecar observes and reports. But it
+does not attach loosely — it reads from five specific hook points, each of which extracts a
+quantity the deterministic solver computes anyway:
+
+| Hook | What the sidecar reads | How it is used |
+|---|---|---|
+| `initialize()` | Mesh/network topology — triangle connectivity, conduit node pairs, cell areas, conduit lengths | Assembles the Laplacian eigenbasis: the same operator CVODE will invert at every Newton step |
+| First `CvodeSurfaceSolver::advance()` | CVODE depth array `h[]` (current state after solver warmup) | Seeds all M members: `a[i,j] = P[:,j]ᵀ · h` |
+| Each `advance()` | Current wet-cell depths, Manning's n values, bed slopes | Computes K_eff (2D) or K1d (1D) — the same linearisation coefficient the solver uses for its Jacobian |
+| Coupling exchange | Deterministic DYNWAVE node heads from `computeCouplingExchange()` | Per-member orifice equation — M realisations of what the inlet head difference is |
+| Reseed check | CVODE's current wet-cell count | Decides when the seed state has drifted too far from the deterministic solution to trust |
+
+This is the barnacle design: the ROM attaches to the hull at initialization, moves with the
+solver through every timestep, draws parameters from quantities the solver already computes,
+and emits three extra depth fields per cell without altering the solver's own trajectory.
+
 #### How the two ROMs differ in basis construction
 
 | | 2D ROM (`SpectralROM`) | 1D ROM (`SpectralROM1D`) |
@@ -420,6 +439,16 @@ a_j(t+dt) = (a_j(t) − f_j/rate_j) · exp(−rate_j · dt)  +  f_j/rate_j
 
 When `rate_j` is near zero (near-null mode or K_eff ≈ 0), the solver falls back to Euler.
 Reconstructed cell depths are clamped to ≥ 0.
+
+**Connection to the CVODE Jacobian:**  
+For the linearised system `∂h/∂t = K_eff · L · h`, the Jacobian is `J = K_eff · L`. Its
+eigenvalues are exactly `{λ_j · K_eff}` — the same values that appear as the ROM's per-mode
+decay rates. The ROM basis P is not arbitrary: it diagonalises the operator that CVODE's
+Newton–Krylov solver is implicitly inverting at each timestep. The k retained modes are the k
+slowest-decaying directions of the linearised dynamics — the most persistent patterns in the
+solution space and therefore the ones that carry the most uncertainty at the timescales of
+interest. Modes with high `λ_j` decay so fast (sub-second) that they contribute negligible
+uncertainty by the time the CVODE step completes; they are safely discarded.
 
 The same formulation applies to the 1D sewer ROM (`SpectralROM1D`), substituting the network
 graph Laplacian for the 2D mesh Laplacian. The 1D K_eff is computed as the diffusion-wave
