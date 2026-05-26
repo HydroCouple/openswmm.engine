@@ -411,6 +411,15 @@ if(OPENSWMM_WITH_GEOPACKAGE)
     if(TARGET openswmm_engine_internal)
         target_link_libraries(openswmm_engine_internal PRIVATE openswmm_geopackage)
     endif()
+    # Re-export OPENSWMM_HAS_GEOPACKAGE on the engine target so consumers
+    # (tests, host apps) can compile-time gate on engine capabilities.
+    # The PRIVATE link above hides geopackage's own PUBLIC defines from
+    # engine consumers, but the capability is an engine-level fact once
+    # geopackage is absorbed into the engine SHARED.
+    target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAS_GEOPACKAGE=1)
+    if(TARGET openswmm_engine_internal)
+        target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAS_GEOPACKAGE=1)
+    endif()
     message(STATUS "OpenSWMM Engine: GeoPackage I/O library enabled (built-in plugin)")
 else()
     message(STATUS "OpenSWMM Engine: GeoPackage I/O disabled (set -DOPENSWMM_WITH_GEOPACKAGE=ON to enable)")
