@@ -67,7 +67,16 @@ SWMM_ENGINE_API SWMM_Gpkg swmm_gpkg_open(const char* path) {
     if (!path) return nullptr;
     try {
         auto* h = new GpkgHandle();
-        h->db = open_database(path, SQLITE_OPEN_READWRITE);
+        // Default flags are SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE.
+        // Matches the contract used by GeoPackageOutputPlugin / GeoPackageWriter
+        // and the Python binding's "open creates file" semantics
+        // (see python/tests/engine/test_geopackage.py::test_open_creates_file).
+        h->db = open_database(path);
+        // Idempotent: create_schema / populate_default_variables use
+        // CREATE TABLE IF NOT EXISTS and INSERT OR IGNORE, so this is a no-op
+        // on an already-initialised GeoPackage.
+        create_schema(h->db.get());
+        populate_default_variables(h->db.get());
         return h;
     } catch (const std::exception&) {
         return nullptr;
