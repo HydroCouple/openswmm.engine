@@ -269,9 +269,11 @@ class TestTopologyEdgeCount:
     """Test topology_edge_count method."""
 
     def test_topology_edge_count(self, gpkg_with_schema):
-        # The count may be 0 if no topology edges exist, but the call
-        # should succeed and return a non-negative integer.
-        sid = gpkg_with_schema.simulation_ids()[0]
-        count = gpkg_with_schema.topology_edge_count(sid)
+        # A freshly-opened gpkg has no simulations (see
+        # TestSimulationMetadata.test_simulation_ids_empty), so we pass a
+        # synthetic sim_id rather than indexing simulation_ids()[0]. The
+        # contract under test is that the call succeeds and returns a
+        # non-negative integer regardless of whether the sim_id exists.
+        count = gpkg_with_schema.topology_edge_count("none")
         assert isinstance(count, int)
         assert count >= 0
