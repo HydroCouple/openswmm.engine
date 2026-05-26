@@ -138,6 +138,16 @@ public:
     /** @brief Get the simulation time for a given period. */
     bool get_period_time(int period, double* time) const;
 
+    // -- Per-node summary statistics — Slice QA-01 -------------------------
+    //
+    // Computed on-demand from the per-period node results stored in the
+    // file. See openswmm_output.h for unit conventions + the report-step
+    // vs. routing-step precision caveat. Each method is O(n_periods).
+    bool get_node_stat_max_depth(int node_idx, double* value) const;
+    bool get_node_stat_max_overflow(int node_idx, double* value) const;
+    bool get_node_stat_vol_flooded(int node_idx, double* value) const;
+    bool get_node_stat_time_flooded(int node_idx, double* value) const;
+
 private:
     static constexpr int32_t MAGIC_NUMBER = 516114522;
 

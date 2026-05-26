@@ -41,40 +41,44 @@ static void sec(FILE* f, const char* name) {
 }
 
 // Format an OADate as MM/DD/YYYY
-static void fmt_date(char* buf, double oadate) {
+template<std::size_t N>
+static void fmt_date(char (&buf)[N], double oadate) {
     int y, m, d;
     datetime::decodeDate(oadate, y, m, d);
-    std::sprintf(buf, "%02d/%02d/%04d", m, d, y);
+    std::snprintf(buf, N, "%02d/%02d/%04d", m, d, y);
 }
 
 // Format the time-of-day part of an OADate as HH:MM:SS
-static void fmt_time(char* buf, double oadate) {
+template<std::size_t N>
+static void fmt_time(char (&buf)[N], double oadate) {
     int h, m, s;
     datetime::decodeTime(oadate, h, m, s);
-    std::sprintf(buf, "%02d:%02d:%02d", h, m, s);
+    std::snprintf(buf, N, "%02d:%02d:%02d", h, m, s);
 }
 
 // Format a timestep (seconds).  Whole-second values use H:MM:SS (matching
 // legacy SWMM GUI GetTimeString); fractional values use %g decimal notation.
-static void fmt_step(char* buf, double secs) {
+template<std::size_t N>
+static void fmt_step(char (&buf)[N], double secs) {
     long r = std::lround(secs);
     if (std::fabs(secs - static_cast<double>(r)) < 0.001) {
         int ss = static_cast<int>(r % 60);
         int mm = static_cast<int>((r / 60) % 60);
         int hh = static_cast<int>(r / 3600);
-        std::sprintf(buf, "%d:%02d:%02d", hh, mm, ss);
+        std::snprintf(buf, N, "%d:%02d:%02d", hh, mm, ss);
     } else {
-        std::sprintf(buf, "%g", secs);
+        std::snprintf(buf, N, "%g", secs);
     }
 }
 
 // Format a day-of-year integer as M/D (no leading zeros, matching legacy GUI)
-static void fmt_sweep(char* buf, int doy) {
+template<std::size_t N>
+static void fmt_sweep(char (&buf)[N], int doy) {
     // Anchor to a non-leap year to get a stable month/day
     double dt = datetime::encodeDate(2001, 1, 1) + static_cast<double>(doy - 1);
     int y, m, d;
     datetime::decodeDate(dt, y, m, d);
-    std::sprintf(buf, "%d/%d", m, d);
+    std::snprintf(buf, N, "%d/%d", m, d);
 }
 
 // Write per-object comment lines. Multi-line comments are stored with literal
@@ -784,9 +788,17 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     for(int t=0;t<ctx.transects.count();++t){auto ut=static_cast<size_t>(t);
     std::fprintf(f,"NC %10.4f %10.4f %10.4f\n",ctx.transects.n_left[ut],ctx.transects.n_right[ut],ctx.transects.n_channel[ut]);
     int nsta=static_cast<int>(ctx.transects.stations[ut].size());
-    std::fprintf(f,"X1 %-16s %10d %10.4f %10.4f 0 0 0 %10.4f %10.4f\n",
+    // X1 layout per EPA SWMM 5 (transect.c::setParams):
+    //   X1 Name Nsta Xleft Xright 0 0 Lfactor Xfactor Yfactor
+    // i.e. TWO placeholder zeros between Xright and Lfactor (not three).
+    // An extra zero shifts Lfactor/Xfactor/Yfactor by one column, which
+    // every SWMM-5 parser then misreads.
+    std::fprintf(f,"X1 %-16s %10d %10.4f %10.4f 0 0 %10.4f %10.4f %10.4f\n",
         ctx.transects.names[ut].c_str(),nsta,ctx.transects.x_left_bank[ut],
-        ctx.transects.x_right_bank[ut],ctx.transects.x_factor[ut],ctx.transects.y_factor[ut]);
+        ctx.transects.x_right_bank[ut],
+        ctx.transects.length_factor[ut],
+        ctx.transects.x_factor[ut],
+        ctx.transects.y_factor[ut]);
     for(int k=0;k<nsta;++k){auto uk=static_cast<size_t>(k);
     if(k%5==0)std::fprintf(f,"GR");
     std::fprintf(f," %10.4f %10.4f",ctx.transects.elevations[ut][uk],ctx.transects.stations[ut][uk]);
@@ -1160,6 +1172,47 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
             ctx.gage_names.name_of(j).c_str(),
             ctx.spatial.gage_x[u], ctx.spatial.gage_y[u]);
     }}
+    }
+
+    // [TAGS] — per-object free-form labels. Tags are stored per-SoA
+    // index (NodeData::tags / LinkData::tags / SubcatchData::tags) so
+    // they survive swmm_*_rename. Only objects with a non-empty tag
+    // are emitted; section is skipped entirely if nothing's tagged.
+    {
+        auto has_any = [](const std::vector<std::string>& v){
+            for (const auto& s : v) if (!s.empty()) return true;
+            return false;
+        };
+        const bool any =
+            has_any(ctx.nodes.tags) ||
+            has_any(ctx.links.tags) ||
+            has_any(ctx.subcatches.tags);
+        if (any) {
+            sec(f,"TAGS");
+            std::fprintf(f,";;%-10s %-16s %s\n","Type","Name","Tag");
+            std::fprintf(f,";;%-10s %-16s %s\n","----------","----------------","---");
+            for (int j = 0; j < ctx.n_nodes(); ++j) {
+                const auto u = static_cast<size_t>(j);
+                if (u < ctx.nodes.tags.size() && !ctx.nodes.tags[u].empty())
+                    std::fprintf(f,"%-10s %-16s %s\n", "Node",
+                        ctx.node_names.name_of(j).c_str(),
+                        ctx.nodes.tags[u].c_str());
+            }
+            for (int j = 0; j < ctx.n_links(); ++j) {
+                const auto u = static_cast<size_t>(j);
+                if (u < ctx.links.tags.size() && !ctx.links.tags[u].empty())
+                    std::fprintf(f,"%-10s %-16s %s\n", "Link",
+                        ctx.link_names.name_of(j).c_str(),
+                        ctx.links.tags[u].c_str());
+            }
+            for (int j = 0; j < ctx.n_subcatches(); ++j) {
+                const auto u = static_cast<size_t>(j);
+                if (u < ctx.subcatches.tags.size() && !ctx.subcatches.tags[u].empty())
+                    std::fprintf(f,"%-10s %-16s %s\n", "Subcatch",
+                        ctx.subcatch_names.name_of(j).c_str(),
+                        ctx.subcatches.tags[u].c_str());
+            }
+        }
     }
 
     // [USER_FLAGS]

@@ -31,7 +31,9 @@ void handle_polygons(SimulationContext& ctx, const std::vector<std::string>& lin
 /** @brief Parse [SYMBOLS] — fills spatial.gage_x/y. */
 void handle_symbols(SimulationContext& ctx, const std::vector<std::string>& lines);
 
-/** @brief Parse [TAGS] — fills node_tags, link_tags, subcatch_tags. */
+/** @brief Parse [TAGS] — writes per-index tags onto ctx.nodes.tags /
+ *  ctx.links.tags / ctx.subcatches.tags (resolves name → idx via the
+ *  matching NameIndex; unresolved lines are skipped). */
 void handle_tags(SimulationContext& ctx, const std::vector<std::string>& lines);
 
 } /* namespace openswmm::input */

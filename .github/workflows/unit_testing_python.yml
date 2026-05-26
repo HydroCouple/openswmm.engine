@@ -2,9 +2,9 @@ name: Unit Testing Python
 
 on:
   push:
-    branches: [master, main, develop]
+    branches: [main, develop]
   pull_request:
-    branches: [master, main, develop]
+    branches: [main, develop]
 
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
@@ -15,76 +15,37 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────
-  #  Python bindings — build engine + Cython, test, and package wheel.
-  #  The engine is built from source via add_subdirectory inside the
-  #  cmake configure (no pre-built artifact needed).
+  #  Python bindings — cibuildwheel matrix (one runner per OS/arch).
+  #
+  #  cibuildwheel's test-command in pyproject.toml runs pytest inside
+  #  each built wheel, so the previous "Run Python tests" and
+  #  "Run smoke test" steps are no longer needed here.
+  #
+  #  PR runs build only one CPython version (cp312) per OS for speed.
+  #  Pushes to main/develop and manual triggers build the full matrix.
+  #  See docs/CIBUILDWHEEL_REVERT_PLAN.md.
   # ──────────────────────────────────────────────────────────────────────
   python:
-    name: "Python (${{ matrix.alias }})"
+    name: "Python (${{ matrix.os }})"
     permissions:
       contents: read
       actions: write
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            alias: Linux-x64
-            shell_ext: .sh
-            vcpkg_triplet: x64-linux
-            cmake_osx_arch: ""
-
-          - os: macos-latest
-            alias: macOS-arm64
-            shell_ext: .sh
-            vcpkg_triplet: arm64-osx
-            cmake_osx_arch: arm64
-
-          - os: macos-15-intel
-            alias: macOS-x64
-            shell_ext: .sh
-            vcpkg_triplet: x64-osx
-            cmake_osx_arch: x86_64
-
-          - os: windows-latest
-            alias: Windows-x64
-            shell_ext: .bat
-            vcpkg_triplet: x64-windows
-            cmake_osx_arch: ""
-
+        os:
+          - ubuntu-24.04          # Linux x86_64
+          - ubuntu-24.04-arm      # Linux aarch64 (native, no QEMU)
+          - windows-2025          # Windows x86_64
+          - macos-15              # macOS arm64
+          - macos-15-intel        # macOS x86_64
     runs-on: ${{ matrix.os }}
+    env:
+      # Full matrix on push/dispatch; single CPython on PR for fast feedback.
+      CIBW_BUILD: ${{ github.event_name == 'pull_request' && 'cp312-*' || 'cp310-* cp311-* cp312-* cp313-*' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
-      - name: Checkout vcpkg
-        uses: actions/checkout@v5
-        with:
-          repository: microsoft/vcpkg
-          ref: 2025.02.14
-          path: vcpkg
-
-      - name: Install OpenMP and Ninja (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libomp ninja
-
-      - name: Install Ninja (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
-
-      - name: Bootstrap vcpkg (Windows)
-        if: runner.os == 'Windows'
-        working-directory: ${{ env.VCPKG_ROOT }}
-        run: |
-          .\bootstrap-vcpkg${{ matrix.shell_ext }}
-          .\vcpkg.exe integrate install
-
-      - name: Bootstrap vcpkg (Unix)
-        if: runner.os != 'Windows'
-        working-directory: ${{ env.VCPKG_ROOT }}
-        run: |
-          ./bootstrap-vcpkg${{ matrix.shell_ext }}
-          chmod +x vcpkg
 
       - name: Export GitHub Actions cache variables
         uses: actions/github-script@v8
@@ -93,132 +54,72 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-      - name: Cache vcpkg downloads (source tarballs)
-        uses: actions/cache@v4
+      - name: Checkout vcpkg (host-side, macOS/Windows)
+        if: runner.os != 'Linux'
+        uses: actions/checkout@v5
         with:
-          path: ${{ env.VCPKG_ROOT }}/downloads
-          key: vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: |
-            vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
-            vcpkg-downloads-${{ runner.os }}-
+          repository: microsoft/vcpkg
+          ref: 2025.02.14
+          path: vcpkg
+
+      - name: Bootstrap vcpkg (macOS)
+        if: runner.os == 'macOS'
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v3.1.4
+        with:
+          package-dir: ./python
+          output-dir:  ./wheelhouse
+        env:
+          # Host-side VCPKG_ROOT consumed by macOS/Windows builds.
+          # Linux uses /host/vcpkg inside the container (see pyproject.toml).
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+          # See deployment.yml for rationale — pyproject.toml's
+          # [tool.cibuildwheel.macos].environment doesn't reach the
+          # x86_64 wheel-tag computation reliably; CIBW_ENVIRONMENT_MACOS does.
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0 VCPKG_ROOT=${{ github.workspace }}/vcpkg
+
+      - name: Upload Python wheels
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: python-wheels-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+
+  # ──────────────────────────────────────────────────────────────────────
+  #  Python source distribution (sdist) — platform-independent, built once.
+  # ──────────────────────────────────────────────────────────────────────
+  sdist:
+    name: "Python sdist"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Install Python requirements
-        working-directory: python
+      - name: Install build frontend
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install build
 
-      - name: Clean stale scikit-build cache
-        run: python -c "import shutil; shutil.rmtree('python/_skbuild', ignore_errors=True)"
-
-      # Pre-install vcpkg packages so cmake configure finds SUNDIALS and
-      # other deps quickly via the GHA binary cache rather than rebuilding.
-      - name: Pre-install vcpkg packages (Unix)
-        if: runner.os != 'Windows'
-        env:
-          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-        run: >
-          "${{ env.VCPKG_ROOT }}/vcpkg" install
-          --triplet "${{ matrix.vcpkg_triplet }}"
-          --x-manifest-root "${{ github.workspace }}"
-          --x-install-root "${{ env.VCPKG_ROOT }}/installed"
-
-      - name: Pre-install vcpkg packages (Windows)
-        if: runner.os == 'Windows'
-        env:
-          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-        run: >
-          & "${{ env.VCPKG_ROOT }}\vcpkg.exe" install
-          --triplet "${{ matrix.vcpkg_triplet }}"
-          --x-manifest-root "${{ github.workspace }}"
-          --x-install-root "${{ env.VCPKG_ROOT }}/installed"
-
-      # No OPENSWMM_ENGINE_INSTALL_PREFIX → python/CMakeLists.txt uses
-      # add_subdirectory(..) to build the engine inline.
-      - name: Build and install (Windows)
-        if: runner.os == 'Windows'
+      - name: Build sdist
         working-directory: python
-        env:
-          CMAKE_GENERATOR: "Visual Studio 17 2022"
-          VCPKG_MANIFEST_DIR: ${{ github.workspace }}
-          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-        run: python -m pip install .
+        run: python -m build --sdist
 
-      - name: Build and install (Unix)
-        if: runner.os != 'Windows'
-        working-directory: python
-        env:
-          CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-          VCPKG_MANIFEST_DIR: ${{ github.workspace }}
-          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-        run: python -m pip install .
-
-      - name: Run Python tests
-        run: >
-          python -m pytest
-          python/tests/engine python/tests/legacy
-          -v --import-mode=importlib
-          --ignore=python/tests/engine/test_integration.py
-
-      - name: Run smoke test
-        # -P prevents Python from prepending python/ (the script's dir) to
-        # sys.path, which otherwise lets the source tree shadow the installed
-        # wheel (the source tree has _solver.pyx, not the compiled .so).
-        run: python -P python/smoke_test.py
-
-      - name: Build wheel (Windows)
-        if: runner.os == 'Windows'
-        working-directory: python
-        env:
-          CMAKE_GENERATOR: "Visual Studio 17 2022"
-          VCPKG_MANIFEST_DIR: ${{ github.workspace }}
-          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-        run: python -m build --wheel --no-isolation
-
-      - name: Build wheel (Unix)
-        if: runner.os != 'Windows'
-        working-directory: python
-        env:
-          CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-          VCPKG_MANIFEST_DIR: ${{ github.workspace }}
-          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-        run: python -m build --wheel --no-isolation
-
-      - name: Repair wheel (Windows)
-        if: runner.os == 'Windows'
-        working-directory: python
-        env:
-          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-        run: |
-          python -m pip install delvewheel
-          python scripts/repair_wheel_windows.py
-
-      - name: Delocate wheel (macOS)
-        if: runner.os == 'macOS'
-        working-directory: python
-        run: |
-          pip install delocate
-          python -c "
-          import glob, subprocess, sys
-          wheels = glob.glob('dist/*.whl')
-          if not wheels:
-              print('No wheel found in dist/', file=sys.stderr); sys.exit(1)
-          for w in wheels:
-              subprocess.check_call([
-                  'delocate-wheel',
-                  '--require-archs', '${{ matrix.cmake_osx_arch }}',
-                  '-w', 'dist', '-v', w,
-              ])
-          "
-
-      - name: Upload Python wheel
-        if: always()
+      - name: Upload sdist
         uses: actions/upload-artifact@v5
         with:
-          name: python-wheel-${{ matrix.vcpkg_triplet }}
-          path: python/dist/*.whl
+          name: python-sdist
+          path: python/dist/*.tar.gz

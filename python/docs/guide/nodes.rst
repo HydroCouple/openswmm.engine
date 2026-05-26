@@ -316,7 +316,7 @@ want vectorised.  Each returns or accepts a contiguous
 
 .. list-table::
    :header-rows: 1
-   :widths: 35 65
+   :widths: 40 60
 
    * - Method
      - Returns / accepts
@@ -327,13 +327,33 @@ want vectorised.  Each returns or accepts a contiguous
    * - :meth:`set_depths_bulk(arr)`
      - Force depths for every node from ``arr``.
    * - :meth:`get_inflows_bulk`
-     - Total inflow per node.
+     - **Lateral** inflow per node (see naming note below).
    * - :meth:`get_overflows_bulk`
      - Overflow (flooding) per node.
    * - :meth:`set_lat_inflows_bulk(arr)`
      - Lateral inflow per node.
    * - :meth:`get_quality_bulk(p)`
      - Concentration of pollutant ``p`` per node.
+   * - :meth:`get_volumes_bulk`
+     - Stored volume per node *(added 6.0.0)*.
+   * - :meth:`get_outflows_bulk`
+     - Total outflow per node *(added 6.0.0)*.
+   * - :meth:`get_losses_bulk`
+     - Per-node losses (evaporation + seepage) *(added 6.0.0)*.
+   * - :meth:`get_lateral_inflows_bulk`
+     - Lateral inflow per node — explicitly named successor to
+       :meth:`get_inflows_bulk` *(added 6.0.0)*.
+   * - :meth:`get_ids_bulk`
+     - ``list[str]`` of every node's id in one C call
+       *(added 6.0.0; stride-packed UTF-8)*.
+
+.. note::
+
+   Naming caveat: :meth:`get_inflows_bulk` reads the *lateral* inflow
+   column on the C side despite its generic name; it is retained for
+   backward compatibility, but new code should prefer
+   :meth:`get_lateral_inflows_bulk`. Both methods return the same
+   values.
 
 Memory-aliasing rule: the array returned by a ``get_*_bulk`` method
 shares memory with an internal scratch buffer that the engine reuses
@@ -350,6 +370,35 @@ keep the array (e.g. across a step), call ``.copy()``:
             break
         history.append(nodes.get_depths_bulk().copy())   # detach from scratch
     H = np.stack(history)              # shape (T, n_nodes)
+
+Whole-network reporting with the Phase 3 bulk accessors:
+
+.. code-block:: python
+
+   # Single C call per quantity — replaces N round-trips through
+   # the scalar getters. Useful when building post-run summaries,
+   # MCP / GUI dataframes, or input to a downstream tool.
+   ids       = nodes.get_ids_bulk()              # list[str]
+   depths    = nodes.get_depths_bulk()           # np.ndarray[float64]
+   volumes   = nodes.get_volumes_bulk()
+   outflows  = nodes.get_outflows_bulk()
+   losses    = nodes.get_losses_bulk()
+   lat       = nodes.get_lateral_inflows_bulk()
+
+   # Build a single DataFrame-shaped dict in one shot:
+   summary = {
+       "id":               ids,
+       "depth":            depths,
+       "volume":           volumes,
+       "outflow":          outflows,
+       "losses":           losses,
+       "lateral_inflow":   lat,
+   }
+
+   # Find the most-flooded outfall, e.g.:
+   flooded = nodes.get_overflows_bulk()
+   worst   = int(flooded.argmax())
+   print(f"max overflow at {ids[worst]}: {flooded[worst]:.3f}")
 
 ----
 

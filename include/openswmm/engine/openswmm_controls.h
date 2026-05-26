@@ -81,6 +81,45 @@ SWMM_ENGINE_API int swmm_control_get_id(SWMM_Engine engine, int idx, char* buf, 
  */
 SWMM_ENGINE_API int swmm_control_clear_rules(SWMM_Engine engine);
 
+/**
+ * @brief Validate a control-rule text block without storing it.
+ *
+ * @details Runs the engine's control-rule parser against the engine's live
+ *          @ref SimulationContext for name resolution (NODE / LINK / CURVE /
+ *          TIMESERIES references), but **does not** mutate the engine's rule
+ *          list or PID state. Designed for GUI-side live validation where
+ *          the editor needs the production parser's accept/reject verdict
+ *          on each keystroke without side effects.
+ *
+ *          The validation contract matches @ref swmm_control_add_rule
+ *          followed by a simulation-initialisation parse: identical input
+ *          text yields identical accept/reject. Engine state across the
+ *          call is invariant — `swmm_control_count`, `swmm_control_get_rule`,
+ *          and the engine's internal `ControlEngine::rules()` vector are
+ *          unchanged.
+ *
+ *          On reject the function returns @ref SWMM_ERR_BADPARAM and writes
+ *          a short human-readable message to @p errbuf (truncated to fit).
+ *          Line-precise error reporting is not yet wired through the parser;
+ *          @p line_out is set to `-1` on reject. Future work may carry a
+ *          1-based line index through the parser.
+ *
+ * @param engine     Engine handle.
+ * @param rule_text  Null-terminated rule text. Same grammar as the
+ *                   `[CONTROLS]` section.
+ * @param errbuf     [out, optional] Buffer for the rejection message. May
+ *                   be NULL or zero-length to suppress message capture.
+ * @param buflen     Size of @p errbuf in bytes.
+ * @param line_out   [out, optional] 1-based line number of the rejection,
+ *                   or `-1` if not available. May be NULL.
+ * @returns SWMM_OK if the parser accepts the text, SWMM_ERR_BADPARAM if it
+ *          rejects, or another error code on infrastructure failure.
+ */
+SWMM_ENGINE_API int swmm_control_validate_rule(SWMM_Engine engine,
+                                                const char* rule_text,
+                                                char* errbuf, int buflen,
+                                                int* line_out);
+
 /* =========================================================================
  * Direct control actions (without rules)
  * ========================================================================= */

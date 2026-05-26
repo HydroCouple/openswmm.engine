@@ -409,6 +409,69 @@ For the full list see :class:`~openswmm.engine.ErrorCode`.
 
 ----
 
+Runoff interface file (Phase 1b)
+================================
+
+Persists per-subcatchment runoff snapshots to a binary file matching
+the legacy SWMM-5 ``Frunoff`` format.  Useful when a slow-running
+runoff phase needs to be cached and replayed against a downstream
+routing-only run (e.g. design-storm sensitivity analyses).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Method
+     - Description
+   * - :meth:`open_runoff_iface_write(path)`
+     - Open the file in SAVE mode.  The engine then auto-emits one
+       record per runoff substep until :meth:`close_runoff_iface`
+       is called.
+   * - :meth:`open_runoff_iface_read(path)`
+     - Open the file in USE mode.  Currently exposes the file but
+       does **not** yet skip the engine's runoff computation —
+       see the note below.
+   * - :meth:`save_runoff_step(dt)`
+     - Manually force one snapshot.  Normally unnecessary because the
+       engine auto-saves; provided for plugin authors and tests.
+   * - :meth:`read_runoff_step()`
+     - Read one record from the open USE file into the current
+       subcatchment runoff/quality vectors.  Returns ``False`` on EOF.
+   * - :meth:`close_runoff_iface()`
+     - Close the file (idempotent).  Called automatically when the
+       solver is closed.
+
+.. note::
+
+   USE-mode auto-skip — making the engine bypass its own runoff
+   computation when a USE file is open — is a follow-up to Phase 1b.
+   Today's USE mode is an advanced manual feature: callers must invoke
+   :meth:`read_runoff_step` between :meth:`Solver.step` calls *and*
+   understand that the engine will overwrite the loaded state when it
+   runs its own runoff phase.
+
+End-to-end SAVE example:
+
+.. code-block:: python
+
+   from openswmm.engine import EngineState, Solver
+
+   with Solver("design_storm.inp", "design_storm.rpt", "design_storm.out") as s:
+       s.open()
+       s.initialize()
+       s.start()
+       s.open_runoff_iface_write("design_storm.rfi")
+       while s.state == EngineState.RUNNING:
+           if s.step() != 0:
+               break
+       s.end()
+       s.close_runoff_iface()
+       # design_storm.rfi now contains one record per runoff substep and
+       # can be reopened by a downstream routing-only run via
+       # ``s.open_runoff_iface_read(...)``.
+
+----
+
 See also
 ========
 

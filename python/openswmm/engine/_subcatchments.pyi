@@ -677,13 +677,17 @@ class Subcatchments:
 
     # ====================================================================
     # Bulk array access (numpy)
+    #
+    # Every method in this section releases the GIL for the duration of
+    # the underlying C call.
     # ====================================================================
 
     def get_runoff_bulk(self) -> npt.NDArray[np.float64]:
         """Return all subcatchment runoff rates as a NumPy array.
 
         Uses the bulk C API for a single C{memcpy} -- much faster than
-        calling L{get_runoff} in a loop.
+        calling L{get_runoff} in a loop. GIL is released during the C
+        call.
 
         @return: Array of shape C{(n_subcatchments,)} with dtype C{float64}.
         @rtype: numpy.typing.NDArray[numpy.float64]
@@ -692,11 +696,72 @@ class Subcatchments:
 
     def get_quality_bulk(self, pollutant_idx: int) -> npt.NDArray[np.float64]:
         """Return all subcatchment pollutant concentrations as a NumPy array.
+        GIL is released during the C call.
 
         @param pollutant_idx: Pollutant index.
         @type pollutant_idx: int
         @return: Array of shape C{(n_subcatchments,)} with dtype C{float64}.
         @rtype: numpy.typing.NDArray[numpy.float64]
+        """
+        ...
+
+    # ====================================================================
+    # Phase 3 bulk getters — rainfall / evap / infil / snow_depth / ids.
+    # Each releases the GIL during the C call.
+    # ====================================================================
+
+    def get_rainfall_bulk(self) -> npt.NDArray[np.float64]:
+        """Return rainfall rates for all subcatchments as a NumPy array.
+        GIL is released during the C call.
+
+        @return: Array of shape C{(n_subcatchments,)} with dtype C{float64}
+            in project rainfall units.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_evap_bulk(self) -> npt.NDArray[np.float64]:
+        """Return evaporation losses for all subcatchments as a NumPy
+        array. GIL is released during the C call.
+
+        @return: Array of shape C{(n_subcatchments,)} with dtype C{float64}.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_infil_bulk(self) -> npt.NDArray[np.float64]:
+        """Return infiltration losses for all subcatchments as a NumPy
+        array. GIL is released during the C call.
+
+        @return: Array of shape C{(n_subcatchments,)} with dtype C{float64}.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_snow_depth_bulk(self) -> npt.NDArray[np.float64]:
+        """Return snow depths for all subcatchments as a NumPy array.
+        Currently returns zeros for every entry (mirrors the scalar
+        :py:meth:`get_snow_depth` placeholder pending snow-state
+        integration). GIL is released during the C call.
+
+        @return: Array of shape C{(n_subcatchments,)} with dtype C{float64}.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_ids_bulk(self, stride: int = 64) -> list[str]:
+        """Return all subcatchment IDs in a single C call (stride-packed
+        UTF-8). GIL is released during the C copy.
+
+        @param stride: Per-ID slot size in bytes (default 64). IDs longer
+            than ``stride - 1`` bytes are truncated.
+        @return: List of ``n_subcatchments`` Python strings.
+
+        .. versionadded:: 6.0.0
         """
         ...
 

@@ -193,6 +193,11 @@ class Solver:
                 if rc != 0:
                     break
 
+        The GIL is released for the duration of the C step, so another
+        Python thread can advance an independent L{Solver} in parallel.
+        Registered step-begin / step-end callbacks reacquire the GIL via
+        their Cython trampolines and remain safe.
+
         @return: Error code from the C API (C{0} on success, non-zero on
             failure).
         @rtype: int
@@ -202,7 +207,9 @@ class Solver:
     def stride(self, n_steps: int) -> int:
         """Advance the simulation by C{n_steps} timesteps in one call.
 
-        Updates L{elapsed} as a side effect.
+        Updates L{elapsed} as a side effect. The GIL is released for the
+        duration of the C call — particularly valuable for stride() since
+        it amortises a single GIL release over many C-level steps.
 
         @param n_steps: Number of timesteps to advance.
         @type n_steps: int
@@ -477,6 +484,67 @@ class Solver:
         """Enable or disable C{SKIP_STEADY_STATE} routing.
 
         @raise EngineError: On C API failure.
+        """
+        ...
+
+    # =========================================================================
+    # Phase 1b: Runoff interface file (legacy "Frunoff").
+    # Each method releases the GIL during the C call.
+    # =========================================================================
+
+    def open_runoff_iface_write(self, path: str) -> None:
+        """Open the runoff interface file in SAVE mode. The engine auto-emits
+        one record per runoff substep until ``close_runoff_iface`` is called.
+        GIL is released during the C call.
+
+        @raise EngineError: On file-open failure or when a runoff iface
+            file is already open.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def open_runoff_iface_read(self, path: str) -> None:
+        """Open the runoff interface file in USE mode. The engine does NOT
+        yet auto-skip runoff in USE mode — see :py:meth:`read_runoff_step`.
+        GIL is released during the C call.
+
+        @raise EngineError: On file-open failure or header mismatch
+            (subcatchment count, pollutant count, or flow units differ
+            from the current model).
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def save_runoff_step(self, dt: float) -> None:
+        """Manually force one runoff substep snapshot to the open SAVE
+        file (no-op when no file is open or the file is in USE mode).
+        GIL is released during the C call.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def read_runoff_step(self) -> bool:
+        """Read one runoff substep record from the open USE file into
+        the current subcatchment state.
+
+        @return: ``True`` on success, ``False`` on EOF.
+        @rtype: bool
+
+        GIL is released during the C call.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def close_runoff_iface(self) -> None:
+        """Close the runoff interface file (idempotent). GIL is released
+        during the C call. Also invoked automatically when the solver
+        is closed.
+
+        .. versionadded:: 6.0.0
         """
         ...
 

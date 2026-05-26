@@ -522,4 +522,109 @@ bool OutputReader::readReal8(double& value) const {
     return std::fread(&value, sizeof(double), 1, file_) == 1;
 }
 
+// ----------------------------------------------------------------------------
+// Slice QA-01 — per-node summary statistics (computed on-demand)
+// ----------------------------------------------------------------------------
+//
+// All four aggregators walk the node's full period range via
+// get_node_series(). For a typical project (a few thousand periods) the
+// cost is sub-millisecond — well below the human-perceptible threshold
+// for an attribute-panel refresh. The same shape is reused across the
+// four functions because the math collapses to a single fold; pulling
+// it into a helper would obscure the variable selection and unit
+// conventions documented per-function in the header.
+//
+// Var indices (from openswmm_output.h SWMM_OutNodeVar):
+//   SWMM_OUT_NODE_DEPTH    = 0
+//   SWMM_OUT_NODE_OVERFLOW = 5
+//
+// Hard-coded here to keep this TU free of a header coupling — the .out
+// format's variable ordering is part of the binary contract and only
+// changes with a file-format version bump.
+
+namespace {
+constexpr int kNodeVarDepth    = 0;
+constexpr int kNodeVarOverflow = 5;
+} // anonymous
+
+bool OutputReader::get_node_stat_max_depth(int node_idx, double* value) const {
+    if (!value || !is_open()) return false;
+    if (node_idx < 0 || node_idx >= n_nodes_) return false;
+    if (n_periods_ <= 0) { *value = 0.0; return true; }
+
+    std::vector<float> series(static_cast<size_t>(n_periods_));
+    if (!get_node_series(node_idx, kNodeVarDepth, 0, n_periods_ - 1, series.data()))
+        return false;
+
+    double maxV = static_cast<double>(series[0]);
+    for (size_t i = 1; i < series.size(); ++i) {
+        if (series[i] > maxV) maxV = static_cast<double>(series[i]);
+    }
+    *value = maxV;
+    return true;
+}
+
+bool OutputReader::get_node_stat_max_overflow(int node_idx, double* value) const {
+    if (!value || !is_open()) return false;
+    if (node_idx < 0 || node_idx >= n_nodes_) return false;
+    if (n_periods_ <= 0) { *value = 0.0; return true; }
+
+    std::vector<float> series(static_cast<size_t>(n_periods_));
+    if (!get_node_series(node_idx, kNodeVarOverflow, 0, n_periods_ - 1, series.data()))
+        return false;
+
+    double maxV = static_cast<double>(series[0]);
+    for (size_t i = 1; i < series.size(); ++i) {
+        if (series[i] > maxV) maxV = static_cast<double>(series[i]);
+    }
+    *value = maxV;
+    return true;
+}
+
+bool OutputReader::get_node_stat_vol_flooded(int node_idx, double* value) const {
+    if (!value || !is_open()) return false;
+    if (node_idx < 0 || node_idx >= n_nodes_) return false;
+    if (n_periods_ <= 0) { *value = 0.0; return true; }
+
+    std::vector<float> overflow(static_cast<size_t>(n_periods_));
+    if (!get_node_series(node_idx, kNodeVarOverflow, 0, n_periods_ - 1, overflow.data()))
+        return false;
+
+    // Sum overflow * report_step over periods with positive overflow.
+    // The legacy engine accumulates this at routing-step resolution
+    // (`NodeStats[j].volFlooded += Node[j].overflow * tStep` in
+    // stats.c:554); we accumulate at report-step resolution because
+    // that's the only granularity the .out file preserves.
+    const double dt = static_cast<double>(report_step_);
+    double total = 0.0;
+    for (float v : overflow) {
+        if (v > 0.0f) total += static_cast<double>(v) * dt;
+    }
+    *value = total;
+    return true;
+}
+
+bool OutputReader::get_node_stat_time_flooded(int node_idx, double* value) const {
+    if (!value || !is_open()) return false;
+    if (node_idx < 0 || node_idx >= n_nodes_) return false;
+    if (n_periods_ <= 0) { *value = 0.0; return true; }
+
+    std::vector<float> overflow(static_cast<size_t>(n_periods_));
+    if (!get_node_series(node_idx, kNodeVarOverflow, 0, n_periods_ - 1, overflow.data()))
+        return false;
+
+    // Count positive-overflow periods, multiply by report_step (seconds).
+    // Matches `swmm_node_get_stat_time_flooded` units (seconds);
+    // statsrpt.c:468 divides by 3600 for the display-only "hours"
+    // column. Counts a full report step even when overflow happened
+    // only in part of it — same first-order approximation as the
+    // legacy engine when run with a coarse report step.
+    long count = 0;
+    for (float v : overflow) {
+        if (v > 0.0f) ++count;
+    }
+    *value = static_cast<double>(count) * static_cast<double>(report_step_);
+    return true;
+}
+
 } /* namespace openswmm */

@@ -290,8 +290,11 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
             ctx.nodes.storage_c[idx] = column_double(stmt.get(), 17);
         }
 
-        if (!column_is_null(stmt.get(), 18))
-            ctx.node_tags[name] = column_text(stmt.get(), 18);
+        if (!column_is_null(stmt.get(), 18)) {
+            const auto u = static_cast<std::size_t>(idx);
+            if (u >= ctx.nodes.tags.size()) ctx.nodes.tags.resize(u + 1);
+            ctx.nodes.tags[u] = column_text(stmt.get(), 18);
+        }
     }
 }
 
@@ -413,8 +416,11 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
         ctx.links.crest_height[idx] = column_double(stmt.get(), 28);
         ctx.links.cd[idx] = column_double(stmt.get(), 29);
 
-        if (!column_is_null(stmt.get(), 30))
-            ctx.link_tags[name] = column_text(stmt.get(), 30);
+        if (!column_is_null(stmt.get(), 30)) {
+            const auto u = static_cast<std::size_t>(idx);
+            if (u >= ctx.links.tags.size()) ctx.links.tags.resize(u + 1);
+            ctx.links.tags[u] = column_text(stmt.get(), 30);
+        }
     }
 }
 
@@ -488,8 +494,11 @@ static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::s
         ctx.subcatches.infil_p4[idx] = column_double(stmt.get(), 21);
         ctx.subcatches.infil_p5[idx] = column_double(stmt.get(), 22);
 
-        if (!column_is_null(stmt.get(), 23))
-            ctx.subcatch_tags[name] = column_text(stmt.get(), 23);
+        if (!column_is_null(stmt.get(), 23)) {
+            const auto u = static_cast<std::size_t>(idx);
+            if (u >= ctx.subcatches.tags.size()) ctx.subcatches.tags.resize(u + 1);
+            ctx.subcatches.tags[u] = column_text(stmt.get(), 23);
+        }
     }
 }
 

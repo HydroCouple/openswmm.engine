@@ -790,6 +790,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // A4b. Accumulate runoff mass balance totals
         accumulateRunoffMassBalance(dt_runoff);
 
+        // A4b'. Phase 1b auto-save hook — when the runoff interface file
+        // is open in SAVE mode, emit one record per substep. saveResults
+        // is a cheap no-op when the file is not in SAVE mode, so the
+        // unconditional call here costs nothing for ordinary runs.
+        saveRunoffIfaceStep(dt_runoff);
+
         // A4c. Surface quality: buildup + washoff
         stepSurfaceQuality(dt_runoff);
 
@@ -2730,6 +2736,11 @@ int SWMMEngine::close() noexcept {
     // Close routing interface files
     iface_.closeFiles();
 
+    // Phase 1b: close the runoff interface file (no-op if never opened).
+    // Done before plugins_.unload_all so that any plugin holding the
+    // runoff file open via swmm_runoff_iface_* sees a clean shutdown.
+    closeRunoffIface();
+
     // Unload all dynamically loaded plugin libraries
     plugins_.unload_all();
 
@@ -2868,6 +2879,68 @@ void SWMMEngine::applyForcings(double dt) noexcept {
             }
         }
     }
+}
+
+// ============================================================================
+// Phase 1b: runoff interface file management
+// ============================================================================
+//
+// Thin wrappers around runoff_iface::RunoffInterfaceFile. The auto-save
+// hook lives in stepRunoff() right after accumulateRunoffMassBalance —
+// see the call site in this file for the in-loop emit.
+
+int SWMMEngine::openRunoffIfaceWrite(const std::string& path) noexcept {
+    if (runoff_iface_file_ && runoff_iface_file_->isOpen()) {
+        // Refuse to silently leak the previous file — caller must close
+        // explicitly so it's obvious in tests / debug logs.
+        return -10;
+    }
+    runoff_iface_file_ = std::make_unique<runoff_iface::RunoffInterfaceFile>();
+    const int rc = runoff_iface_file_->openForWrite(
+        path,
+        ctx_.n_subcatches(),
+        ctx_.n_pollutants(),
+        static_cast<int>(ctx_.options.flow_units));
+    if (rc != 0) runoff_iface_file_.reset();
+    return rc;
+}
+
+int SWMMEngine::openRunoffIfaceRead(const std::string& path) noexcept {
+    if (runoff_iface_file_ && runoff_iface_file_->isOpen()) return -10;
+    runoff_iface_file_ = std::make_unique<runoff_iface::RunoffInterfaceFile>();
+    const int rc = runoff_iface_file_->openForRead(
+        path,
+        ctx_.n_subcatches(),
+        ctx_.n_pollutants(),
+        static_cast<int>(ctx_.options.flow_units));
+    if (rc != 0) runoff_iface_file_.reset();
+    return rc;
+}
+
+void SWMMEngine::saveRunoffIfaceStep(double dt) noexcept {
+    if (!runoff_iface_file_) return;
+    // saveResults is a no-op if the file is not in SAVE mode.
+    runoff_iface_file_->saveResults(ctx_, dt);
+}
+
+bool SWMMEngine::readRunoffIfaceStep() noexcept {
+    if (!runoff_iface_file_) return false;
+    return runoff_iface_file_->readResults(ctx_);
+}
+
+void SWMMEngine::closeRunoffIface() noexcept {
+    if (!runoff_iface_file_) return;
+    runoff_iface_file_->close();
+    runoff_iface_file_.reset();
+}
+
+FileMode SWMMEngine::runoffIfaceMode() const noexcept {
+    if (!runoff_iface_file_ || !runoff_iface_file_->isOpen())
+        return FileMode::NONE;
+    // RunoffInterfaceFile doesn't expose its mode directly; infer from
+    // the FilesSpec which is set by the C API entry points before
+    // calling open*. Falling back to SAVE keeps the diagnostic non-NONE.
+    return ctx_.files.runoff_mode;
 }
 
 // ============================================================================

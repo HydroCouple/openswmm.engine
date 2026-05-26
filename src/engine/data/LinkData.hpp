@@ -472,6 +472,14 @@ struct LinkData {
      */
     std::vector<std::string> comments;
 
+    /**
+     * @brief Per-object tag from the INP `[TAGS]` section.
+     *
+     * @details Free-form string label. Index-keyed so `swmm_link_rename`
+     *          keeps the tag attached.
+     */
+    std::vector<std::string> tags;
+
     // -----------------------------------------------------------------------
     // Report flag — per-object output filter
     // -----------------------------------------------------------------------
@@ -682,6 +690,7 @@ struct LinkData {
         old_volume.assign(un, 0.0);
 
         comments.assign(un, std::string{});
+        tags.assign(un, std::string{});
 
         rpt_flag.assign(un, 0);
 
@@ -744,6 +753,7 @@ struct LinkData {
         g(full_state, int8_t{0});
         g(old_flow, 0.0); g(old_depth, 0.0); g(old_volume, 0.0);
         comments.resize(un, std::string{});
+        tags.resize(un, std::string{});
 
         g(rpt_flag, static_cast<char>(0));
         g(stat_vol_flow, 0.0); g(stat_max_flow, 0.0);
@@ -795,7 +805,7 @@ struct LinkData {
 
         e(flow); e(depth); e(volume); e(froude); e(flow_class); e(is_closed); e(full_state);
         e(old_flow); e(old_depth); e(old_volume);
-        e(comments); e(rpt_flag);
+        e(comments); e(tags); e(rpt_flag);
 
         e(stat_vol_flow); e(stat_max_flow); e(stat_max_veloc); e(stat_max_filling);
         e(stat_time_surcharged); e(stat_norm_ltd); e(stat_inlet_ctrl);
@@ -939,6 +949,7 @@ struct LinkData {
         conc_old.shrink_to_fit();
 
         comments.shrink_to_fit();
+        tags.shrink_to_fit();
 
         rpt_flag.shrink_to_fit();
 

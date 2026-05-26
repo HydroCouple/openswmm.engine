@@ -28,14 +28,13 @@ static void renumber_refs(std::vector<int>& refs, int deleted_idx) {
 }
 
 // Erase all spatial arrays for a node at idx (if they exist).
+// Tags are erased by NodeData::erase_at via the index-shift path;
+// no name-keyed map cleanup needed.
 static void erase_node_spatial(SimulationContext& ctx, int idx) {
     const auto ui = static_cast<std::size_t>(idx);
     auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
     e(ctx.spatial.node_x);
     e(ctx.spatial.node_y);
-    // Remove tag keyed by the node name (looked up before erase)
-    const std::string& name = ctx.node_names.name_of(idx);
-    ctx.node_tags.erase(name);
 }
 
 static void erase_link_spatial(SimulationContext& ctx, int idx) {
@@ -47,8 +46,6 @@ static void erase_link_spatial(SimulationContext& ctx, int idx) {
         ctx.spatial.link_vertices_x.erase(ctx.spatial.link_vertices_x.begin() + static_cast<std::ptrdiff_t>(idx));
     if (ui < ctx.spatial.link_vertices_y.size())
         ctx.spatial.link_vertices_y.erase(ctx.spatial.link_vertices_y.begin() + static_cast<std::ptrdiff_t>(idx));
-    const std::string& name = ctx.link_names.name_of(idx);
-    ctx.link_tags.erase(name);
 }
 
 static void erase_subcatch_spatial(SimulationContext& ctx, int idx) {
@@ -60,8 +57,6 @@ static void erase_subcatch_spatial(SimulationContext& ctx, int idx) {
         ctx.spatial.subcatch_polygon_x.erase(ctx.spatial.subcatch_polygon_x.begin() + static_cast<std::ptrdiff_t>(idx));
     if (ui < ctx.spatial.subcatch_polygon_y.size())
         ctx.spatial.subcatch_polygon_y.erase(ctx.spatial.subcatch_polygon_y.begin() + static_cast<std::ptrdiff_t>(idx));
-    const std::string& name = ctx.subcatch_names.name_of(idx);
-    ctx.subcatch_tags.erase(name);
 }
 
 static void erase_gage_spatial(SimulationContext& ctx, int idx) {

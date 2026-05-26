@@ -15,6 +15,10 @@
 #include "../../../include/openswmm/engine/openswmm_nodes.h"
 #include "../hydraulics/Node.hpp"
 
+#include <algorithm>
+#include <cstring>
+#include <string>
+
 using openswmm::c_to_internal_node_type;
 using openswmm::internal_to_c_node_type;
 
@@ -377,6 +381,82 @@ SWMM_ENGINE_API int swmm_node_set_lat_inflows_bulk(SWMM_Engine engine, const dou
     return SWMM_OK;
 }
 
+// ----------------------------------------------------------------------------
+// Phase 3 bulk getters — volumes, outflows, losses, lateral_inflows, ids.
+// Each follows the same "memcpy into caller's buffer" pattern as the bulk
+// getters above. Non-pump links / non-existent state is not a concern here
+// because every node maintains all of these fields after initialization.
+//
+// Naming note: `swmm_node_get_lateral_inflows_bulk` reads the same `lat_flow`
+// SoA column as the pre-existing `swmm_node_get_inflows_bulk`; the older
+// name was labelled "total inflows" in error and is retained for backward
+// compatibility. New callers should prefer the explicitly-named variant.
+// See docs/C_API_BINDINGS_MCP_IMPROVEMENT_PLAN.md Appendix A item 3.
+// ----------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_node_get_volumes_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const int n = std::min(count, ctx.n_nodes());
+    std::copy(ctx.nodes.volume.begin(), ctx.nodes.volume.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_outflows_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const int n = std::min(count, ctx.n_nodes());
+    std::copy(ctx.nodes.outflow.begin(), ctx.nodes.outflow.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_losses_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const int n = std::min(count, ctx.n_nodes());
+    std::copy(ctx.nodes.losses.begin(), ctx.nodes.losses.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_lateral_inflows_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const int n = std::min(count, ctx.n_nodes());
+    std::copy(ctx.nodes.lat_flow.begin(), ctx.nodes.lat_flow.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_ids_bulk(SWMM_Engine engine,
+                                            char* buf,
+                                            int stride,
+                                            int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || stride < 2 || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_nodes());
+    const std::size_t s = static_cast<std::size_t>(stride);
+
+    // Zero the requested region up front; that way any IDs shorter than
+    // stride are NUL-terminated without an explicit per-slot write, and a
+    // partial read leaves a clean tail.
+    std::fill_n(buf, s * static_cast<std::size_t>(n), '\0');
+
+    for (int i = 0; i < n; ++i) {
+        const std::string& name = ctx.node_names.name_of(i);
+        // Truncate (never overflow): leave the last byte of each slot as
+        // the NUL terminator.
+        const std::size_t copy_n =
+            std::min(name.size(), s - 1);
+        std::memcpy(buf + static_cast<std::size_t>(i) * s,
+                    name.data(), copy_n);
+    }
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_node_get_quality_bulk(SWMM_Engine engine, int pollutant_idx,
                                                 double* buf, int count) {
     CHECK_HANDLE(engine);
@@ -536,6 +616,30 @@ SWMM_ENGINE_API int swmm_node_get_outfall_param(SWMM_Engine engine, int idx, dou
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     if (param) *param = ctx.nodes.outfall_param[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_outfall_tidal(SWMM_Engine engine, int idx, int* curve_idx) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (!curve_idx) return SWMM_ERR_BADPARAM;
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.nodes.outfall_type[uidx] != openswmm::OutfallType::TIDAL)
+        return SWMM_ERR_BADPARAM;
+    *curve_idx = static_cast<int>(ctx.nodes.outfall_param[uidx]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_outfall_timeseries(SWMM_Engine engine, int idx, int* ts_idx) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (!ts_idx) return SWMM_ERR_BADPARAM;
+    const auto uidx = static_cast<std::size_t>(idx);
+    if (ctx.nodes.outfall_type[uidx] != openswmm::OutfallType::TIMESERIES)
+        return SWMM_ERR_BADPARAM;
+    *ts_idx = static_cast<int>(ctx.nodes.outfall_param[uidx]);
     return SWMM_OK;
 }
 
@@ -724,6 +828,32 @@ SWMM_ENGINE_API int swmm_node_rename(SWMM_Engine engine, int idx, const char* ne
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     return ctx.node_names.rename(idx, newId) ? SWMM_OK : SWMM_ERR_BADPARAM;
+}
+
+SWMM_ENGINE_API int swmm_node_get_tag(SWMM_Engine engine, int idx,
+                                       char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    const auto u = static_cast<std::size_t>(idx);
+    const std::string& s = (u < ctx.nodes.tags.size()) ? ctx.nodes.tags[u]
+                                                       : std::string{};
+    const int copy_len = std::min(static_cast<int>(s.size()), buflen - 1);
+    if (copy_len > 0) std::memcpy(buf, s.c_str(), static_cast<std::size_t>(copy_len));
+    buf[copy_len] = '\0';
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_set_tag(SWMM_Engine engine, int idx,
+                                       const char* tag) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    const auto u = static_cast<std::size_t>(idx);
+    if (u >= ctx.nodes.tags.size()) ctx.nodes.tags.resize(u + 1);
+    ctx.nodes.tags[u] = (tag != nullptr) ? std::string(tag) : std::string{};
+    return SWMM_OK;
 }
 
 } /* extern "C" */

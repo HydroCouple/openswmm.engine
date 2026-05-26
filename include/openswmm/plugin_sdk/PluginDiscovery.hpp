@@ -42,6 +42,13 @@ struct DiscoveredFilter {
     std::string  plugin_version;  ///< IPluginComponentInfo::version() of the source plugin
     std::string  plugin_caption;  ///< IPluginComponentInfo::caption() — human-readable
     FileFilter   filter;          ///< The advertised filter
+
+    /// Slice RC.3 — true when the source plugin is an engine built-in
+    /// (statically linked into the engine, registered via
+    /// PluginFactory::register_builtin_infos). False for plugins
+    /// discovered through the on-disk shared-library scan. Propagated
+    /// up to DiscoveredPlugin's matching field by discover_plugins_by_id.
+    bool         is_builtin = false;
 };
 
 /**
@@ -78,6 +85,21 @@ struct DiscoveredPlugin {
     std::string                plugin_caption;  ///< IPluginComponentInfo::caption()
     std::vector<PluginRole>    roles;           ///< Distinct roles advertised across all filters
     std::vector<FileFilter>    filters;         ///< Every filter the plugin advertises
+
+    /**
+     * @brief True when the plugin was registered as an engine built-in
+     *        (via PluginFactory::register_builtin_infos) rather than
+     *        discovered through the on-disk shared-library scan.
+     *
+     * @details Slice RC.3 (APPROVED 2026-05-25). Hosts use this to gate
+     *          UI affordances that don't make sense for built-ins — e.g.
+     *          the Simulation Options Plugins-tab Remove button cannot
+     *          dlclose a statically-linked plugin, so it's greyed out
+     *          when `is_builtin == true`. The default (`false`) keeps
+     *          older callers' behavior unchanged: any plugin discovered
+     *          via the directory scan is treated as a non-builtin.
+     */
+    bool                       is_builtin = false;
 };
 
 /**

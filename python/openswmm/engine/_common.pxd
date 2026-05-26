@@ -31,8 +31,12 @@ cdef extern from "openswmm_engine.h":
     cdef int  swmm_engine_open(SWMM_Engine e, const char* inp, const char* rpt, const char* out, const char* input_plugin_lib)
     cdef int  swmm_engine_initialize(SWMM_Engine e)
     cdef int  swmm_engine_start(SWMM_Engine e, int save_results)
-    cdef int  swmm_engine_step(SWMM_Engine e, double* elapsed_time)
-    cdef int  swmm_engine_stride(SWMM_Engine e, int n_steps, double* elapsed_time)
+    # NOTE: step/stride may invoke registered step_begin/step_end callbacks.
+    # Those trampolines reacquire the GIL via `noexcept with gil:`, so it is
+    # safe to release the GIL around the C call itself (and necessary, so
+    # that another thread can advance an independent engine concurrently).
+    cdef int  swmm_engine_step(SWMM_Engine e, double* elapsed_time) nogil
+    cdef int  swmm_engine_stride(SWMM_Engine e, int n_steps, double* elapsed_time) nogil
     cdef int  swmm_engine_end(SWMM_Engine e)
     cdef int  swmm_engine_report(SWMM_Engine e)
     cdef int  swmm_engine_close(SWMM_Engine e)
@@ -50,6 +54,14 @@ cdef extern from "openswmm_engine.h":
     cdef int swmm_get_event_count(SWMM_Engine e, int* count)
     cdef int swmm_get_steady_state_skip(SWMM_Engine e, int* enabled)
     cdef int swmm_set_steady_state_skip(SWMM_Engine e, int enabled)
+    # Phase 1b: runoff interface file (legacy "Frunoff"). I/O-bound,
+    # so each is declared nogil to allow the GIL to be released around
+    # the C call (the wrappers in _solver.pyx wrap them in `with nogil:`).
+    cdef int swmm_runoff_iface_open_write(SWMM_Engine e, const char* path) nogil
+    cdef int swmm_runoff_iface_open_read(SWMM_Engine e, const char* path) nogil
+    cdef int swmm_runoff_iface_save_step(SWMM_Engine e, double dt) nogil
+    cdef int swmm_runoff_iface_read_step(SWMM_Engine e, int* has_data) nogil
+    cdef int swmm_runoff_iface_close(SWMM_Engine e) nogil
 
     # --- [EVENTS] section editor (Slice CW, 2026-05-21) ---
     cdef int swmm_events_count(SWMM_Engine e, int* count)
@@ -179,13 +191,20 @@ cdef extern from "openswmm_nodes.h":
     cdef int swmm_node_get_stat_vol_flooded(SWMM_Engine e, int idx, double* val)
     cdef int swmm_node_get_stat_time_flooded(SWMM_Engine e, int idx, double* val)
     # Bulk access
-    cdef int swmm_node_get_depths_bulk(SWMM_Engine e, double* buf, int count)
-    cdef int swmm_node_get_heads_bulk(SWMM_Engine e, double* buf, int count)
-    cdef int swmm_node_get_inflows_bulk(SWMM_Engine e, double* buf, int count)
-    cdef int swmm_node_get_overflows_bulk(SWMM_Engine e, double* buf, int count)
-    cdef int swmm_node_set_depths_bulk(SWMM_Engine e, const double* buf, int count)
-    cdef int swmm_node_set_lat_inflows_bulk(SWMM_Engine e, const double* buf, int count)
-    cdef int swmm_node_get_quality_bulk(SWMM_Engine e, int pollutant_idx, double* buf, int count)
+    # Bulk node accessors — pure C memory ops, safe to call without the GIL.
+    cdef int swmm_node_get_depths_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_node_get_heads_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_node_get_inflows_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_node_get_overflows_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_node_set_depths_bulk(SWMM_Engine e, const double* buf, int count) nogil
+    cdef int swmm_node_set_lat_inflows_bulk(SWMM_Engine e, const double* buf, int count) nogil
+    cdef int swmm_node_get_quality_bulk(SWMM_Engine e, int pollutant_idx, double* buf, int count) nogil
+    # Phase 3 bulk getters (volumes, outflows, losses, lateral_inflows, ids).
+    cdef int swmm_node_get_volumes_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_node_get_outflows_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_node_get_losses_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_node_get_lateral_inflows_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_node_get_ids_bulk(SWMM_Engine e, char* buf, int stride, int count) nogil
     # Outfall route-to
     cdef int swmm_node_set_outfall_route_to(SWMM_Engine e, int idx, int subcatch_idx)
     cdef int swmm_node_get_outfall_route_to(SWMM_Engine e, int idx, int* subcatch_idx)
@@ -218,6 +237,28 @@ cdef extern from "openswmm_links.h":
     cdef int swmm_link_set_offset_dn(SWMM_Engine e, int idx, double offset)
     cdef int swmm_link_set_initial_flow(SWMM_Engine e, int idx, double flow)
     cdef int swmm_link_set_max_flow(SWMM_Engine e, int idx, double flow)
+    # Engine gaps BN-LINK-01a / -01b — symmetric getters added 2026-05-25.
+    cdef int swmm_link_get_initial_flow(SWMM_Engine e, int idx, double* flow)
+    cdef int swmm_link_get_max_flow(SWMM_Engine e, int idx, double* flow)
+    # Engine gap BN-LINK-02 — orifice TYPE (SIDE=0 / BOTTOM=1) — added 2026-05-25.
+    cdef int swmm_link_get_orifice_type(SWMM_Engine e, int idx, int* type_)
+    cdef int swmm_link_set_orifice_type(SWMM_Engine e, int idx, int type_)
+    # Engine gap BN-LINK-03 — weir TYPE (5 values) — added 2026-05-25.
+    cdef int swmm_link_get_weir_type(SWMM_Engine e, int idx, int* type_)
+    cdef int swmm_link_set_weir_type(SWMM_Engine e, int idx, int type_)
+    # Engine gap BN-LINK-04 — outlet rating type (4 values) + exponent — 2026-05-25.
+    cdef int swmm_link_get_outlet_rating_type(SWMM_Engine e, int idx, int* type_)
+    cdef int swmm_link_set_outlet_rating_type(SWMM_Engine e, int idx, int type_)
+    cdef int swmm_link_get_outlet_expon(SWMM_Engine e, int idx, double* expon)
+    cdef int swmm_link_set_outlet_expon(SWMM_Engine e, int idx, double expon)
+    # Engine gap BN-LINK-05 — pump startup / shutoff depth — added 2026-05-25.
+    cdef int swmm_link_get_pump_startup_depth(SWMM_Engine e, int idx, double* depth)
+    cdef int swmm_link_set_pump_startup_depth(SWMM_Engine e, int idx, double depth)
+    cdef int swmm_link_get_pump_shutoff_depth(SWMM_Engine e, int idx, double* depth)
+    cdef int swmm_link_set_pump_shutoff_depth(SWMM_Engine e, int idx, double depth)
+    # Engine gap BN-LINK-06 — orifice open/close rate (1/s) — added 2026-05-25.
+    cdef int swmm_link_get_orifice_open_close_rate(SWMM_Engine e, int idx, double* rate)
+    cdef int swmm_link_set_orifice_open_close_rate(SWMM_Engine e, int idx, double rate)
     # Cross-section
     cdef int swmm_link_set_xsect(SWMM_Engine e, int idx, int shape,
                                   double g1, double g2, double g3, double g4)
@@ -280,13 +321,25 @@ cdef extern from "openswmm_links.h":
     cdef int swmm_link_get_stat_pump_cycles(SWMM_Engine e, int idx, int* cycles)
     cdef int swmm_link_get_stat_pump_on_time(SWMM_Engine e, int idx, double* seconds)
     cdef int swmm_link_get_stat_pump_volume(SWMM_Engine e, int idx, double* volume)
+    cdef int swmm_link_get_pump_stats_bulk(SWMM_Engine e, int* cycles,
+                                            double* on_time, double* volume,
+                                            int count) nogil
     # Hydraulic power
     cdef int swmm_link_get_hyd_power(SWMM_Engine e, int idx, double* power)
     # Bulk access
-    cdef int swmm_link_get_flows_bulk(SWMM_Engine e, double* buf, int count)
-    cdef int swmm_link_get_depths_bulk(SWMM_Engine e, double* buf, int count)
-    cdef int swmm_link_set_flows_bulk(SWMM_Engine e, const double* buf, int count)
-    cdef int swmm_link_get_quality_bulk(SWMM_Engine e, int pollutant_idx, double* buf, int count)
+    # Bulk link accessors — pure C memory ops, safe to call without the GIL.
+    cdef int swmm_link_get_flows_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_link_get_depths_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_link_set_flows_bulk(SWMM_Engine e, const double* buf, int count) nogil
+    cdef int swmm_link_get_quality_bulk(SWMM_Engine e, int pollutant_idx, double* buf, int count) nogil
+    # Phase 3 bulk getters — velocities/capacities/volumes/control/target/power, ids.
+    cdef int swmm_link_get_velocities_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_link_get_capacities_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_link_get_volumes_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_link_get_control_settings_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_link_get_target_settings_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_link_get_hyd_powers_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_link_get_ids_bulk(SWMM_Engine e, char* buf, int stride, int count) nogil
     # Rename
     cdef int swmm_link_rename(SWMM_Engine e, int idx, const char* newId)
 
@@ -357,8 +410,15 @@ cdef extern from "openswmm_subcatchments.h":
     # Quality
     cdef int swmm_subcatch_get_quality(SWMM_Engine e, int subcatch_idx, int pollutant_idx, double* conc)
     # Bulk access
-    cdef int swmm_subcatch_get_runoff_bulk(SWMM_Engine e, double* buf, int count)
-    cdef int swmm_subcatch_get_quality_bulk(SWMM_Engine e, int pollutant_idx, double* buf, int count)
+    # Bulk subcatchment accessors — pure C memory ops, safe to call without the GIL.
+    cdef int swmm_subcatch_get_runoff_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_subcatch_get_quality_bulk(SWMM_Engine e, int pollutant_idx, double* buf, int count) nogil
+    # Phase 3 bulk getters — rainfall/evap/infil/snow_depth + ids.
+    cdef int swmm_subcatch_get_rainfall_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_subcatch_get_evap_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_subcatch_get_infil_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_subcatch_get_snow_depth_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_subcatch_get_ids_bulk(SWMM_Engine e, char* buf, int stride, int count) nogil
     # Ponded quality
     cdef int swmm_subcatch_get_ponded_quality(SWMM_Engine e, int subcatch_idx, int pollutant_idx, double* mass)
     cdef int swmm_subcatch_set_ponded_quality(SWMM_Engine e, int subcatch_idx, int pollutant_idx, double mass)
@@ -385,7 +445,7 @@ cdef extern from "openswmm_gages.h":
     cdef int swmm_gage_get_rainfall(SWMM_Engine e, int idx, double* rainfall)
     cdef int swmm_gage_set_rainfall(SWMM_Engine e, int idx, double rainfall)
     # Bulk
-    cdef int swmm_gage_get_rainfall_bulk(SWMM_Engine e, double* buf, int count)
+    cdef int swmm_gage_get_rainfall_bulk(SWMM_Engine e, double* buf, int count) nogil
     # Rename
     cdef int swmm_gage_rename(SWMM_Engine e, int idx, const char* newId)
 
@@ -406,10 +466,12 @@ cdef extern from "openswmm_massbalance.h":
     cdef int swmm_get_quality_evap_loss(SWMM_Engine e, int pollutant_idx, double* mass)
 
 cdef extern from "openswmm_hotstart.h":
-    cdef int swmm_hotstart_save(SWMM_Engine e, const char* path)
-    cdef int swmm_hotstart_open(const char* path, SWMM_HotStart* hs)
-    cdef int swmm_hotstart_apply(SWMM_Engine e, SWMM_HotStart hs)
-    cdef int swmm_hotstart_close(SWMM_HotStart hs)
+    # File I/O — heavy enough to warrant releasing the GIL while
+    # the C side reads or writes the (potentially large) hotstart blob.
+    cdef int swmm_hotstart_save(SWMM_Engine e, const char* path) nogil
+    cdef int swmm_hotstart_open(const char* path, SWMM_HotStart* hs) nogil
+    cdef int swmm_hotstart_apply(SWMM_Engine e, SWMM_HotStart hs) nogil
+    cdef int swmm_hotstart_close(SWMM_HotStart hs) nogil
     # Modify
     cdef int swmm_hotstart_set_node_depth(SWMM_HotStart hs, const char* node_id, double depth)
     cdef int swmm_hotstart_set_node_head(SWMM_HotStart hs, const char* node_id, double head)
@@ -613,9 +675,19 @@ cdef extern from "openswmm_statistics.h":
     cdef int swmm_stat_subcatch_runoff_vol(SWMM_Engine e, int idx, double* val)
     cdef int swmm_stat_subcatch_max_runoff(SWMM_Engine e, int idx, double* val)
     # Bulk
-    cdef int swmm_stat_node_max_depth_bulk(SWMM_Engine e, double* buf, int count)
-    cdef int swmm_stat_link_max_flow_bulk(SWMM_Engine e, double* buf, int count)
-    cdef int swmm_stat_subcatch_runoff_vol_bulk(SWMM_Engine e, double* buf, int count)
+    cdef int swmm_stat_node_max_depth_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_stat_link_max_flow_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_stat_subcatch_runoff_vol_bulk(SWMM_Engine e, double* buf, int count) nogil
+    # Phase 3 statistics bulk getters — flooding + max-runoff.
+    cdef int swmm_stat_node_max_overflow_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_stat_node_vol_flooded_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_stat_node_time_flooded_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_stat_subcatch_max_runoff_bulk(SWMM_Engine e, double* buf, int count) nogil
+    # Phase 4e link-stat bulks — completes the per-link statistics surface.
+    cdef int swmm_stat_link_max_velocity_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_stat_link_max_filling_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_stat_link_vol_flow_bulk(SWMM_Engine e, double* buf, int count) nogil
+    cdef int swmm_stat_link_surcharge_time_bulk(SWMM_Engine e, double* buf, int count) nogil
 
 cdef extern from "openswmm_spatial.h":
     # CRS
@@ -663,31 +735,42 @@ cdef extern from "openswmm_output.h":
     cdef const char* swmm_output_get_subcatch_id(SWMM_Output handle, int index)
     cdef const char* swmm_output_get_node_id(SWMM_Output handle, int index)
     cdef const char* swmm_output_get_link_id(SWMM_Output handle, int index)
-    # Per-period results
-    cdef int swmm_output_get_subcatch_result(SWMM_Output handle, int period, int var, float* values)
-    cdef int swmm_output_get_node_result(SWMM_Output handle, int period, int var, float* values)
-    cdef int swmm_output_get_link_result(SWMM_Output handle, int period, int var, float* values)
-    cdef int swmm_output_get_system_result(SWMM_Output handle, int period, int var, float* value)
-    # Time series
+    # Per-period results — disk-backed read into caller's float buffer.
+    # nogil: pure C I/O, no Python objects touched.
+    cdef int swmm_output_get_subcatch_result(SWMM_Output handle, int period, int var, float* values) nogil
+    cdef int swmm_output_get_node_result(SWMM_Output handle, int period, int var, float* values) nogil
+    cdef int swmm_output_get_link_result(SWMM_Output handle, int period, int var, float* values) nogil
+    cdef int swmm_output_get_system_result(SWMM_Output handle, int period, int var, float* value) nogil
+    # Time series — potentially large reads from the .out file.
     cdef int swmm_output_get_subcatch_series(SWMM_Output handle, int subcatch_idx, int var,
-                                              int start_period, int end_period, float* values)
+                                              int start_period, int end_period, float* values) nogil
     cdef int swmm_output_get_node_series(SWMM_Output handle, int node_idx, int var,
-                                          int start_period, int end_period, float* values)
+                                          int start_period, int end_period, float* values) nogil
     cdef int swmm_output_get_link_series(SWMM_Output handle, int link_idx, int var,
-                                          int start_period, int end_period, float* values)
+                                          int start_period, int end_period, float* values) nogil
     cdef int swmm_output_get_system_series(SWMM_Output handle, int var,
-                                            int start_period, int end_period, float* values)
+                                            int start_period, int end_period, float* values) nogil
     # Per-object attribute
     cdef int swmm_output_get_subcatch_attribute(SWMM_Output handle, int subcatch_idx, int period,
-                                                 float* values, int* count)
+                                                 float* values, int* count) nogil
     cdef int swmm_output_get_node_attribute(SWMM_Output handle, int node_idx, int period,
-                                             float* values, int* count)
+                                             float* values, int* count) nogil
     cdef int swmm_output_get_link_attribute(SWMM_Output handle, int link_idx, int period,
-                                             float* values, int* count)
+                                             float* values, int* count) nogil
     # Time
     cdef int swmm_output_get_period_time(SWMM_Output handle, int period, double* time)
     # Error
     cdef int swmm_output_get_error_code(SWMM_Output handle)
+    # Post-run node statistics aggregated from the .out file
+    # (added 2026-05 to the engine; bound here in the Phase 5 drift sweep).
+    cdef int swmm_output_get_node_stat_max_depth(SWMM_Output handle,
+                                                  int node_idx, double* value) nogil
+    cdef int swmm_output_get_node_stat_max_overflow(SWMM_Output handle,
+                                                     int node_idx, double* value) nogil
+    cdef int swmm_output_get_node_stat_vol_flooded(SWMM_Output handle,
+                                                    int node_idx, double* value) nogil
+    cdef int swmm_output_get_node_stat_time_flooded(SWMM_Output handle,
+                                                     int node_idx, double* value) nogil
 
 
 cdef extern from "openswmm_edit.h":

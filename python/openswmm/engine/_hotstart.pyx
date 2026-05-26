@@ -76,7 +76,9 @@ cdef class HotStart:
 
     @staticmethod
     def save(Solver solver, str path):
-        """Save the current simulation state to a hot start file.
+        """Save the current simulation state to a hot start file. The GIL
+        is released for the duration of the C write (potentially many MB
+        of state).
 
         Wraps C{swmm_hotstart_save}. Valid only when the solver is in
         C{RUNNING} or C{ENDED} state.
@@ -88,11 +90,17 @@ cdef class HotStart:
         @raise EngineError: If the state cannot be saved.
         """
         cdef bytes b = path.encode('utf-8')
-        _check(swmm_hotstart_save(solver._handle, b))
+        cdef SWMM_Engine h = solver._handle
+        cdef const char* p = b
+        cdef int err
+        with nogil:
+            err = swmm_hotstart_save(h, p)
+        _check(err)
 
     @classmethod
     def open(cls, str path):
-        """Open a hot start file for reading.
+        """Open a hot start file for reading. The GIL is released for the
+        duration of the C read.
 
         Wraps C{swmm_hotstart_open}. The returned handle should be closed
         with L{HotStart.close} or by using a C{with} block.
@@ -105,7 +113,11 @@ cdef class HotStart:
         """
         cdef bytes b = path.encode('utf-8')
         cdef SWMM_HotStart h = NULL
-        _check(swmm_hotstart_open(b, &h))
+        cdef const char* p = b
+        cdef int err
+        with nogil:
+            err = swmm_hotstart_open(p, &h)
+        _check(err)
         if h == NULL:
             raise IOError(f"Cannot open hot start file: {path}")
         cdef HotStart obj = cls.__new__(cls)
@@ -116,13 +128,19 @@ cdef class HotStart:
         """Close the hot start file and free resources.
 
         Wraps C{swmm_hotstart_close}. Safe to call multiple times; once
-        closed, the handle becomes inert.
+        closed, the handle becomes inert. The GIL is released for the
+        duration of the C close.
 
         @return: C{None}.
         @rtype: NoneType
         """
+        cdef SWMM_HotStart h
+        cdef int err
         if self._handle != NULL:
-            _check(swmm_hotstart_close(self._handle))
+            h = self._handle
+            with nogil:
+                err = swmm_hotstart_close(h)
+            _check(err)
             self._handle = NULL
 
     # ====================================================================
@@ -130,7 +148,8 @@ cdef class HotStart:
     # ====================================================================
 
     def apply(self, Solver solver):
-        """Apply this hot start state to an engine.
+        """Apply this hot start state to an engine. The GIL is released
+        for the duration of the C state copy.
 
         Wraps C{swmm_hotstart_apply}. The engine must be in C{INITIALIZED}
         state (after L{Solver.initialize} but before L{Solver.start}).
@@ -140,7 +159,12 @@ cdef class HotStart:
         @type solver: Solver
         @raise EngineError: If the state cannot be applied.
         """
-        _check(swmm_hotstart_apply(solver._handle, self._handle))
+        cdef SWMM_Engine e = solver._handle
+        cdef SWMM_HotStart h = self._handle
+        cdef int err
+        with nogil:
+            err = swmm_hotstart_apply(e, h)
+        _check(err)
 
     def set_node_depth(self, str node_id, double depth):
         """Set the depth of a node in the hot start state.

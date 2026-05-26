@@ -297,24 +297,57 @@ Per-subcatchment runoff coefficient (post-run summary)
 Bulk arrays
 ===========
 
-The :class:`Subcatchments` class does not (yet) expose bulk-array
-accessors.  Vectorise across the population manually:
+Each bulk method makes a single C call and returns a contiguous
+``np.ndarray[float64]`` of shape ``(n_subcatchments,)`` (or a
+``list[str]`` for ids). The GIL is released for the duration of the C
+call, so multi-threaded consumers can read from independent solvers
+in parallel.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Method
+     - Returns / accepts
+   * - :meth:`get_runoff_bulk`
+     - Runoff rate per subcatchment (project flow units).
+   * - :meth:`get_quality_bulk(p)`
+     - Concentration of pollutant ``p`` per subcatchment.
+   * - :meth:`get_rainfall_bulk`
+     - Rainfall rate per subcatchment *(added 6.0.0)*.
+   * - :meth:`get_evap_bulk`
+     - Evaporation loss per subcatchment *(added 6.0.0)*.
+   * - :meth:`get_infil_bulk`
+     - Infiltration loss per subcatchment *(added 6.0.0)*.
+   * - :meth:`get_snow_depth_bulk`
+     - Snow depth per subcatchment *(added 6.0.0; placeholder zeros
+       pending full snow-state integration)*.
+   * - :meth:`get_ids_bulk`
+     - ``list[str]`` of every subcatchment's id in one C call
+       *(added 6.0.0; stride-packed UTF-8)*.
+
+Whole-network water-balance pattern using the Phase 3 accessors:
 
 .. code-block:: python
 
-    import numpy as np
+   ids    = sc.get_ids_bulk()
+   rain   = sc.get_rainfall_bulk()
+   infil  = sc.get_infil_bulk()
+   evap   = sc.get_evap_bulk()
+   runoff = sc.get_runoff_bulk()
 
-    runoff = np.zeros(sc.count())
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-        for i in range(sc.count()):
-            runoff[i] += sc.get_runoff(i)
+   # Per-subcatch instantaneous residual (storage / snow can make this
+   # noisy step-by-step but it should integrate near zero over a long
+   # simulation if the model is well-balanced).
+   residual = rain - infil - evap - runoff
+   for i, name in enumerate(ids):
+       print(f"  {name:<12}  R={rain[i]:.3f}  I={infil[i]:.3f}  "
+             f"E={evap[i]:.3f}  Q={runoff[i]:.3f}  resid={residual[i]:+.3f}")
 
-If you need a strictly faster path, fall back to the
-:class:`OutputReader` after the run and use the bulk subcatchment
-methods (:doc:`output_reader`) — that's typically fastest for
-post-processing.
+For *cumulative* (post-run) statistics, prefer the bulk accessors on
+:class:`Statistics` (``subcatch_runoff_vol_bulk`` etc.) or the
+:class:`OutputReader` — those are denser and pull from the report
+file rather than recomputing from the live state.
 
 ----
 

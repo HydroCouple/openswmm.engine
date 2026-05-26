@@ -344,6 +344,87 @@ SWMM_ENGINE_API int swmm_events_clear(SWMM_Engine engine);
 SWMM_ENGINE_API int swmm_get_steady_state_skip(SWMM_Engine engine, int* enabled);
 SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled);
 
+/* =========================================================================
+ * Phase 1b: Runoff interface file (legacy "Frunoff").
+ *
+ * Persists per-subcatchment runoff snapshots to a binary file so the
+ * runoff phase of a long simulation can be cached and replayed in a
+ * downstream routing-only run.  Mirrors the legacy SWMM-5 file format
+ * (see src/engine/hydrology/RunoffInterface.hpp).
+ *
+ * SAVE mode is fully integrated: open the file in SAVE before
+ * @c swmm_engine_start, run the simulation as normal, then close.  The
+ * engine emits one record per runoff substep automatically.
+ *
+ * USE mode currently exposes the file but does NOT yet auto-skip the
+ * engine's runoff computation — callers must invoke
+ * @ref swmm_runoff_iface_read_step between simulation steps and
+ * understand that the engine will overwrite the loaded state if runoff
+ * still runs.  Full USE-mode auto-skip is tracked as a follow-up.
+ *
+ * @since 6.0.0
+ * ========================================================================= */
+
+/**
+ * @brief Open the runoff interface file for writing (SAVE mode).
+ *
+ * @param engine  Engine handle (any state).
+ * @param path    Output file path.  Existing file is truncated.
+ * @returns @c SWMM_OK on success.  Non-zero error codes include
+ *          @c SWMM_ERR_BADHANDLE (invalid engine), @c SWMM_ERR_BADPARAM
+ *          (null path), and a non-zero file-I/O error code when the
+ *          file could not be opened or a runoff file is already open.
+ */
+SWMM_ENGINE_API int swmm_runoff_iface_open_write(SWMM_Engine engine, const char* path);
+
+/**
+ * @brief Open the runoff interface file for reading (USE mode).
+ *
+ * @param engine  Engine handle.
+ * @param path    Path to an existing runoff interface file.
+ * @returns @c SWMM_OK on success; non-zero on file-open failure or
+ *          header mismatch (subcatchment count, pollutant count, or
+ *          flow units differ from the current model).
+ */
+SWMM_ENGINE_API int swmm_runoff_iface_open_read(SWMM_Engine engine, const char* path);
+
+/**
+ * @brief Manually emit one runoff substep record to the open SAVE file.
+ *
+ * @details Normally the engine emits records automatically inside
+ *          @c stepRunoff().  This entry point is exposed so plugin
+ *          authors and tests can force a snapshot at well-defined
+ *          times; it is a no-op when no file is open or the file is
+ *          in USE mode.
+ *
+ * @param engine  Engine handle.
+ * @param dt      Substep duration (seconds) to record in the file for
+ *                this snapshot.
+ */
+SWMM_ENGINE_API int swmm_runoff_iface_save_step(SWMM_Engine engine, double dt);
+
+/**
+ * @brief Read one runoff substep record from the open USE file into
+ *        the current subcatchment state.
+ *
+ * @param engine     Engine handle.
+ * @param[out] has_data  Set to @c 1 when a record was successfully
+ *                       read, @c 0 on EOF.  May be NULL.
+ * @returns @c SWMM_OK in either case (use @p has_data to tell EOF
+ *          apart from a successful read).  Returns @c SWMM_ERR_BADHANDLE
+ *          on null engine; @c SWMM_ERR_BADPARAM if no USE-mode file is
+ *          open.
+ */
+SWMM_ENGINE_API int swmm_runoff_iface_read_step(SWMM_Engine engine, int* has_data);
+
+/**
+ * @brief Close the runoff interface file.
+ *
+ * Safe to call multiple times; safe to call when no file was opened.
+ * Also called automatically as part of @c swmm_engine_close.
+ */
+SWMM_ENGINE_API int swmm_runoff_iface_close(SWMM_Engine engine);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

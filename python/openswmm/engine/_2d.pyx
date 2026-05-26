@@ -111,8 +111,32 @@ cdef class Surface2D:
         cdef np.ndarray[double, ndim=1] x = np.empty(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] y = np.empty(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] z = np.empty(n, dtype=np.float64)
-        _check(swmm_2d_vertex_get_xyz_bulk(self._engine, &x[0], &y[0], &z[0]))
+        cdef void* eng = self._engine
+        cdef double* px = <double*>x.data
+        cdef double* py = <double*>y.data
+        cdef double* pz = <double*>z.data
+        cdef int err
+        with nogil:
+            err = swmm_2d_vertex_get_xyz_bulk(eng, px, py, pz)
+        _check(err)
         return x, y, z
+
+    def set_vertex_z(self, int idx, double z) -> None:
+        """Set the ground elevation of a mesh vertex.
+
+        Updates derived geometry for every triangle incident to this
+        vertex (centroid Z, per-edge midpoint Z). XY-derived fields are
+        unaffected. When called during a running simulation, solver
+        state (head, depth) is intentionally not rewritten — the implied
+        depth = head - bed therefore changes by the same amount as bed.
+
+        @param idx: Vertex index (0-based).
+        @type idx: int
+        @param z: New ground elevation (project vertical units).
+        @type z: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        _check(swmm_2d_set_vertex_z(self._engine, idx, z))
 
     def get_triangle_vertices(self, int idx):
         """Return the (v0, v1, v2) vertex indices for a triangle.
@@ -249,11 +273,17 @@ cdef class Surface2D:
         """
         cdef int n = self.n_triangles
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        _check(swmm_2d_get_depths_bulk(self._engine, &arr[0]))
+        cdef void* eng = self._engine
+        cdef double* p = <double*>arr.data
+        cdef int err
+        with nogil:
+            err = swmm_2d_get_depths_bulk(eng, p)
+        _check(err)
         return arr
 
     def get_heads(self):
-        """Return total heads for all triangles as a NumPy array.
+        """Return total heads for all triangles as a NumPy array. The GIL
+        is released during the C call.
 
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
         @rtype: np.ndarray
@@ -261,11 +291,17 @@ cdef class Surface2D:
         """
         cdef int n = self.n_triangles
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        _check(swmm_2d_get_heads_bulk(self._engine, &arr[0]))
+        cdef void* eng = self._engine
+        cdef double* p = <double*>arr.data
+        cdef int err
+        with nogil:
+            err = swmm_2d_get_heads_bulk(eng, p)
+        _check(err)
         return arr
 
     def get_coupling_fluxes(self):
-        """Return coupling fluxes for all triangles as a NumPy array.
+        """Return coupling fluxes for all triangles as a NumPy array. The
+        GIL is released during the C call.
 
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
             Positive values denote flux into the 2D surface.
@@ -274,11 +310,17 @@ cdef class Surface2D:
         """
         cdef int n = self.n_triangles
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        _check(swmm_2d_get_coupling_fluxes_bulk(self._engine, &arr[0]))
+        cdef void* eng = self._engine
+        cdef double* p = <double*>arr.data
+        cdef int err
+        with nogil:
+            err = swmm_2d_get_coupling_fluxes_bulk(eng, p)
+        _check(err)
         return arr
 
     def get_edge_flux_bulk(self):
         """Return normal edge fluxes for all triangle edges as a NumPy array.
+        The GIL is released during the C call.
 
         The array is indexed as C{[tri*3 + localEdge]} where C{localEdge}
         is the edge opposite vertex C{localEdge} (0, 1, or 2). Positive
@@ -290,11 +332,17 @@ cdef class Surface2D:
         """
         cdef int n = self.n_triangles * 3
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        _check(swmm_2d_get_edge_flux_bulk(self._engine, &arr[0]))
+        cdef void* eng = self._engine
+        cdef double* p = <double*>arr.data
+        cdef int err
+        with nogil:
+            err = swmm_2d_get_edge_flux_bulk(eng, p)
+        _check(err)
         return arr
 
     def get_edge_geometry_bulk(self):
         """Return time-invariant edge lengths and outward unit normal components.
+        The GIL is released during the C call.
 
         Returns arrays indexed as C{[tri*3 + localEdge]}.  Use together
         with L{get_edge_flux_bulk} to reconstruct cell-centred velocity via
@@ -309,8 +357,14 @@ cdef class Surface2D:
         cdef np.ndarray[double, ndim=1] length = np.empty(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] nx = np.empty(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] ny = np.empty(n, dtype=np.float64)
-        _check(swmm_2d_edge_get_geometry_bulk(self._engine, &length[0],
-                                               &nx[0], &ny[0]))
+        cdef void* eng = self._engine
+        cdef double* pL = <double*>length.data
+        cdef double* pX = <double*>nx.data
+        cdef double* pY = <double*>ny.data
+        cdef int err
+        with nogil:
+            err = swmm_2d_edge_get_geometry_bulk(eng, pL, pX, pY)
+        _check(err)
         return length, nx, ny
 
     # ====================================================================
@@ -395,7 +449,12 @@ cdef class Surface2D:
         """
         cdef int n = self.n_vertices
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        _check(swmm_2d_vertex_get_heads_bulk(self._engine, &arr[0]))
+        cdef void* eng = self._engine
+        cdef double* p = <double*>arr.data
+        cdef int err
+        with nogil:
+            err = swmm_2d_vertex_get_heads_bulk(eng, p)
+        _check(err)
         return arr
 
     # ====================================================================

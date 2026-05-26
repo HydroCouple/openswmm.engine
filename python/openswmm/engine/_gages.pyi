@@ -142,7 +142,8 @@ class Gages:
         ...
 
     def get_rainfall_bulk(self) -> npt.NDArray[np.float64]:
-        """Return rainfall for all gages as a NumPy array.
+        """Return rainfall for all gages as a NumPy array. GIL is released
+        during the C call.
 
         @return: 1-D array of rainfall values, one per gage. Shape
             C{(n_gages,)}, dtype C{float64}.

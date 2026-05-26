@@ -923,11 +923,24 @@ class Nodes:
     # Bulk array access (numpy)
     # ====================================================================
 
+    # ------------------------------------------------------------------
+    # Bulk accessors — every method below releases the GIL for the C call.
+    #
+    # The pattern is:
+    #   1. Resolve handle and allocate the NumPy buffer with the GIL held.
+    #   2. Take a raw `double*` pointer to the buffer's storage.
+    #   3. `with nogil:` around the single C call — no Python object access
+    #      is performed inside this block, so the GIL is truly free for
+    #      other threads (eg a second engine handle stepping in parallel).
+    #   4. Check the return code with the GIL re-held.
+    # ------------------------------------------------------------------
+
     def get_depths_bulk(self):
         """Return all node depths as a NumPy array.
 
         Uses the bulk C API for a single C{memcpy} -- much faster than
-        calling L{get_depth} in a loop.
+        calling L{get_depth} in a loop. The GIL is released for the
+        duration of the C call.
 
         @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @rtype: numpy.ndarray
@@ -935,11 +948,16 @@ class Nodes:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_node_get_depths_bulk(h, &buf[0], n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_node_get_depths_bulk(h, p, n)
+        _check(err)
         return buf
 
     def get_heads_bulk(self):
-        """Return all node heads as a NumPy array.
+        """Return all node heads as a NumPy array. GIL is released during
+        the C call.
 
         @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @rtype: numpy.ndarray
@@ -947,21 +965,31 @@ class Nodes:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_node_get_heads_bulk(h, &buf[0], n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_node_get_heads_bulk(h, p, n)
+        _check(err)
         return buf
 
     def set_depths_bulk(self, np.ndarray[double, ndim=1] values):
-        """Set all node depths from a NumPy array.
+        """Set all node depths from a NumPy array. GIL is released during
+        the C call.
 
         @param values: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @type values: numpy.ndarray
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
-        _check(swmm_node_set_depths_bulk(h, &values[0], n))
+        cdef const double* p = <const double*>values.data
+        cdef int err
+        with nogil:
+            err = swmm_node_set_depths_bulk(h, p, n)
+        _check(err)
 
     def get_inflows_bulk(self):
-        """Return all node total inflows as a NumPy array.
+        """Return all node total inflows as a NumPy array. GIL is released
+        during the C call.
 
         @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @rtype: numpy.ndarray
@@ -969,11 +997,16 @@ class Nodes:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_node_get_inflows_bulk(h, &buf[0], n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_node_get_inflows_bulk(h, p, n)
+        _check(err)
         return buf
 
     def get_overflows_bulk(self):
-        """Return all node overflow rates as a NumPy array.
+        """Return all node overflow rates as a NumPy array. GIL is released
+        during the C call.
 
         @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @rtype: numpy.ndarray
@@ -981,21 +1014,31 @@ class Nodes:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_node_get_overflows_bulk(h, &buf[0], n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_node_get_overflows_bulk(h, p, n)
+        _check(err)
         return buf
 
     def set_lat_inflows_bulk(self, np.ndarray[double, ndim=1] values):
-        """Set all node lateral inflows from a NumPy array.
+        """Set all node lateral inflows from a NumPy array. GIL is released
+        during the C call.
 
         @param values: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @type values: numpy.ndarray
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
-        _check(swmm_node_set_lat_inflows_bulk(h, &values[0], n))
+        cdef const double* p = <const double*>values.data
+        cdef int err
+        with nogil:
+            err = swmm_node_set_lat_inflows_bulk(h, p, n)
+        _check(err)
 
     def get_quality_bulk(self, int pollutant_idx):
         """Return all node concentrations for a pollutant as a NumPy array.
+        GIL is released during the C call.
 
         @param pollutant_idx: Pollutant index.
         @type pollutant_idx: int
@@ -1005,8 +1048,148 @@ class Nodes:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_node_get_quality_bulk(h, pollutant_idx, &buf[0], n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_node_get_quality_bulk(h, pollutant_idx, p, n)
+        _check(err)
         return buf
+
+    # ------------------------------------------------------------------
+    # Phase 3 bulk getters — volumes / outflows / losses /
+    # lateral_inflows / ids. Each replaces a per-node Python loop in
+    # MCP-style consumers; the C side is a single memcpy (or, for ids,
+    # a single contiguous string copy). GIL is released during each
+    # C call following the same pattern as the existing bulk getters.
+    # ------------------------------------------------------------------
+
+    def get_volumes_bulk(self):
+        """Return all node stored volumes as a NumPy array. GIL is
+        released during the C call.
+
+        :returns: Array of shape ``(n_nodes,)``, dtype ``float64``,
+                  in project volume units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_node_get_volumes_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_outflows_bulk(self):
+        """Return current outflows for all nodes as a NumPy array. GIL
+        is released during the C call.
+
+        :returns: Array of shape ``(n_nodes,)``, dtype ``float64``,
+                  in project flow units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_node_get_outflows_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_losses_bulk(self):
+        """Return per-node losses (evaporation + seepage) as a NumPy
+        array. GIL is released during the C call.
+
+        :returns: Array of shape ``(n_nodes,)``, dtype ``float64``,
+                  in project flow units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_node_get_losses_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_lateral_inflows_bulk(self):
+        """Return current lateral inflows for all nodes as a NumPy
+        array. GIL is released during the C call.
+
+        .. note::
+
+           This is the explicitly-named successor to the older
+           :py:meth:`get_inflows_bulk` — both methods currently read
+           the same ``lat_flow`` SoA column on the C side. Prefer
+           :py:meth:`get_lateral_inflows_bulk` in new code; the older
+           name is retained for backward compatibility.
+
+        :returns: Array of shape ``(n_nodes,)``, dtype ``float64``,
+                  in project flow units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_node_get_lateral_inflows_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def get_ids_bulk(self, int stride=64):
+        """Return all node IDs as a Python list of strings in a single C
+        call. GIL is released during the C call; per-slot UTF-8 decoding
+        runs after with the GIL re-held.
+
+        :param stride: Per-ID slot size in bytes (default 64). The C
+                       function NUL-terminates each ID within its slot;
+                       IDs longer than ``stride - 1`` bytes are truncated.
+                       For SWMM models the legacy 31-character ID limit
+                       means the default of 64 is comfortable for all
+                       realistic models.
+        :type stride: int
+        :returns: List of ``n_nodes`` Python strings.
+        :rtype: list[str]
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_node_count(h)
+        # Single contiguous buffer; C zero-fills it so trailing bytes
+        # after each ID are NUL.
+        cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
+            n * stride, dtype=np.int8)
+        cdef char* p = <char*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_node_get_ids_bulk(h, p, stride, n)
+        _check(err)
+        # Pure-Python slice + decode; cheap compared to the avoided
+        # N round-trips through swmm_node_id.
+        raw = bytes(buf)
+        ids = []
+        for i in range(n):
+            slot = raw[i * stride:(i + 1) * stride]
+            nul = slot.find(b"\x00")
+            if nul >= 0:
+                slot = slot[:nul]
+            ids.append(slot.decode("utf-8"))
+        return ids
 
     # ====================================================================
     # Divider

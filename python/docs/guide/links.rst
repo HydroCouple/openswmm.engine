@@ -138,6 +138,41 @@ Pump-specific
    * - :meth:`get_pump_init_state` / :meth:`set_pump_init_state`
      - Initial on/off state.
 
+Pump utilization statistics
+---------------------------
+
+Accumulated during a running simulation. Read either per-link with the
+scalar accessors, or — for whole-network summaries — in one shot with
+:meth:`get_pump_stats_bulk`, which performs a single C ABI crossing
+instead of ``3 * n_links`` and releases the GIL during the call.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 45 55
+
+   * - Method
+     - Returns
+   * - :meth:`get_stat_pump_cycles(idx)`
+     - Pump on/off cycle count (``int``).
+   * - :meth:`get_stat_pump_on_time(idx)`
+     - Total pump on-time in seconds (``float``).
+   * - :meth:`get_stat_pump_volume(idx)`
+     - Total volume pumped in ft³ (``float``).
+   * - :meth:`get_pump_stats_bulk()`
+     - ``dict`` of three ``np.ndarray`` columns — ``cycles``
+       (``int32``), ``on_time`` (``float64``), ``volume`` (``float64``);
+       non-pump links carry ``cycles == -1``.
+
+.. code-block:: python
+
+   # Whole-network pump summary in one call.
+   stats = links.get_pump_stats_bulk()
+   pumps = stats["cycles"] >= 0           # filter to pump links
+   total_pumped_ft3 = stats["volume"][pumps].sum()
+   total_run_time_h = stats["on_time"][pumps].sum() / 3600.0
+   print(f"{pumps.sum()} pumps, {total_pumped_ft3:.1f} ft³ pumped, "
+         f"{total_run_time_h:.1f} pump-hours")
+
 Weir / orifice
 --------------
 
@@ -301,10 +336,51 @@ Bulk arrays
      - All link mid-point depths.
    * - :meth:`get_quality_bulk(p)`
      - Pollutant ``p`` concentration per link.
+   * - :meth:`get_pump_stats_bulk`
+     - All pump statistics in a single C call —
+       ``{"cycles": ndarray[int32], "on_time": ndarray[float64],
+       "volume": ndarray[float64]}``. Non-pump links carry
+       ``cycles == -1`` as a sentinel.
+   * - :meth:`get_velocities_bulk`
+     - Cross-sectional velocity per link *(added 6.0.0)*.
+   * - :meth:`get_capacities_bulk`
+     - Capacity ratio ``q / q_full`` per link *(added 6.0.0)*.
+   * - :meth:`get_volumes_bulk`
+     - Stored volume per link *(added 6.0.0)*.
+   * - :meth:`get_control_settings_bulk`
+     - Active control setting (0..1) per link *(added 6.0.0)*.
+   * - :meth:`get_target_settings_bulk`
+     - Target control setting per link *(added 6.0.0)*.
+   * - :meth:`get_hyd_powers_bulk`
+     - Hydraulic power per link in ft-lb/s
+       (``gamma * |Q| * |hL|``) *(added 6.0.0)*.
+   * - :meth:`get_ids_bulk`
+     - ``list[str]`` of every link's id in one C call
+       *(added 6.0.0; stride-packed UTF-8)*.
 
-Same memory-aliasing rule as :class:`Nodes`: the returned array shares
-memory with engine scratch space; ``.copy()`` if you keep it past the
-next call.
+Memory-aliasing note: ``get_flows_bulk`` and ``get_depths_bulk`` return
+arrays that share memory with engine scratch space — ``.copy()`` if you
+keep them past the next call. The other bulk getters (``get_pump_stats_bulk``
+and every Phase 3 addition) return freshly allocated arrays, so the
+result is yours to retain.
+
+Whole-network reporting pattern (mirrors the Nodes example):
+
+.. code-block:: python
+
+   ids       = links.get_ids_bulk()              # list[str]
+   flows     = links.get_flows_bulk()            # np.ndarray[float64]
+   velocities = links.get_velocities_bulk()
+   capacities = links.get_capacities_bulk()
+   powers    = links.get_hyd_powers_bulk()
+   stats     = links.get_pump_stats_bulk()
+   pumps     = stats["cycles"] >= 0              # boolean mask
+
+   # Pump-energy summary in 3 lines:
+   pump_run_hours = float(stats["on_time"][pumps].sum() / 3600.0)
+   pump_ft_lb_s   = float(powers[pumps].sum())
+   pump_hp        = pump_ft_lb_s / 550.0
+   print(f"{pumps.sum()} pumps  ran {pump_run_hours:.1f} h  ~{pump_hp:.1f} hp avg")
 
 Vectorised peak detection across all links:
 

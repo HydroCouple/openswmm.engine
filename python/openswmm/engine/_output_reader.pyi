@@ -277,7 +277,8 @@ class OutputReader:
     def get_subcatch_series(
         self, subcatch_idx: int, var: int, start: int, end: int
     ) -> npt.NDArray[np.float32]:
-        """Return a time series of a subcatchment variable.
+        """Return a time series of a subcatchment variable. GIL is
+        released for the duration of the disk read.
 
         Wraps C{swmm_output_get_subcatch_series}.
 
@@ -337,7 +338,8 @@ class OutputReader:
     def get_node_series(
         self, node_idx: int, var: int, start: int, end: int
     ) -> npt.NDArray[np.float32]:
-        """Return a time series of a node variable.
+        """Return a time series of a node variable. GIL is released for
+        the duration of the disk read.
 
         Wraps C{swmm_output_get_node_series}.
 
@@ -397,7 +399,8 @@ class OutputReader:
     def get_link_series(
         self, link_idx: int, var: int, start: int, end: int
     ) -> npt.NDArray[np.float32]:
-        """Return a time series of a link variable.
+        """Return a time series of a link variable. GIL is released for
+        the duration of the disk read.
 
         Wraps C{swmm_output_get_link_series}.
 
@@ -455,7 +458,8 @@ class OutputReader:
     def get_system_series(
         self, var: int, start: int, end: int
     ) -> npt.NDArray[np.float32]:
-        """Return a time series of a system-level variable.
+        """Return a time series of a system-level variable. GIL is
+        released for the duration of the disk read.
 
         Wraps C{swmm_output_get_system_series}.
 
@@ -468,5 +472,58 @@ class OutputReader:
         @return: Array of shape C{(end - start + 1,)} with dtype C{float32}.
         @rtype: np.ndarray
         @raise RuntimeError: If the underlying read fails.
+        """
+        ...
+
+    # ====================================================================
+    # Post-run node statistics aggregated from the .out file.
+    # Each releases the GIL during the C call.
+    # ====================================================================
+
+    def get_node_stat_max_depth(self, node_idx: int) -> float:
+        """Maximum node depth across all reporting periods.
+
+        Wraps C{swmm_output_get_node_stat_max_depth}. GIL is released
+        during the C call.
+
+        @param node_idx: Zero-based node index.
+        @type node_idx: int
+        @return: Peak depth in the model's length units.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_node_stat_max_overflow(self, node_idx: int) -> float:
+        """Maximum node overflow rate across all reporting periods.
+
+        Wraps C{swmm_output_get_node_stat_max_overflow}. GIL is released
+        during the C call.
+
+        @return: Peak overflow rate in the file's flow units.
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_node_stat_vol_flooded(self, node_idx: int) -> float:
+        """Total flood volume at the node across the simulation.
+
+        Wraps C{swmm_output_get_node_stat_vol_flooded}. GIL is released
+        during the C call.
+
+        @return: Total flooded volume in ft³ (US) or m³ (SI).
+
+        .. versionadded:: 6.0.0
+        """
+        ...
+
+    def get_node_stat_time_flooded(self, node_idx: int) -> float:
+        """Total flooded time in seconds. Divide by 3600 for hours.
+
+        Wraps C{swmm_output_get_node_stat_time_flooded}. GIL is released
+        during the C call.
+
+        .. versionadded:: 6.0.0
         """
         ...

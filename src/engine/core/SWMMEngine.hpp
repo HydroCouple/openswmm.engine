@@ -49,6 +49,7 @@
 #include "../hydrology/LID.hpp"
 #include "../hydrology/Inflow.hpp"
 #include "../hydrology/RDII.hpp"
+#include "../hydrology/RunoffInterface.hpp"
 #include "../quality/QualityRouting.hpp"
 #include "../quality/Landuse.hpp"
 #include "../controls/Controls.hpp"
@@ -199,6 +200,53 @@ public:
     SimulationContext&       context()       noexcept { return ctx_; }
     const SimulationContext& context() const noexcept { return ctx_; }
 
+    /**
+     * @brief Open the runoff interface file in SAVE mode (Phase 1b).
+     *
+     * @details Allocates a fresh @ref runoff_iface::RunoffInterfaceFile,
+     *          opens @p path for binary writing, and stamps the header
+     *          with the current subcatchment count, pollutant count,
+     *          and flow units.  Subsequent runoff substeps emit one
+     *          record each via the auto-save hook in
+     *          @ref SWMMEngine::stepRunoff.
+     *
+     * @returns 0 on success, non-zero on failure (file could not be
+     *          opened, or a runoff interface file was already open and
+     *          must be closed first).
+     */
+    int openRunoffIfaceWrite(const std::string& path) noexcept;
+
+    /**
+     * @brief Open the runoff interface file in USE mode.
+     *
+     * @details Opens @p path for binary reading and verifies that the
+     *          header matches the current model's subcatchment count,
+     *          pollutant count, and flow units. The engine does not
+     *          auto-read records yet — callers invoke
+     *          @ref swmm_runoff_iface_read_step manually between
+     *          @c step calls. USE-mode auto-skip is a follow-up.
+     */
+    int openRunoffIfaceRead(const std::string& path) noexcept;
+
+    /// Write one record to the open runoff interface file (no-op when
+    /// the file is not open in SAVE mode).  Called automatically once
+    /// per runoff substep; also callable explicitly via the C API.
+    void saveRunoffIfaceStep(double dt) noexcept;
+
+    /// Read one record from the open runoff interface file into the
+    /// subcatchment runoff/quality vectors.  Returns @c true on
+    /// success, @c false on EOF or when no file is open in READ mode.
+    bool readRunoffIfaceStep() noexcept;
+
+    /// Close and reset the runoff interface file (safe to call multiple
+    /// times; safe to call when no file was opened).
+    void closeRunoffIface() noexcept;
+
+    /// Accessor used by tests / diagnostics — returns the current mode
+    /// of the runoff interface file, or @c FileMode::NONE if no file is
+    /// open.
+    FileMode runoffIfaceMode() const noexcept;
+
     /** @brief Access the runoff solver (for hot start infil state save/restore). */
     runoff::RunoffSolver&       runoff_solver()       noexcept { return runoff_; }
     const runoff::RunoffSolver& runoff_solver() const noexcept { return runoff_; }
@@ -255,6 +303,14 @@ private:
     std::vector<double>          gw_perv_evap_; ///< Per-subcatch pervious evap rate (ft/sec)
     hydstruct::StructureSolver  hydstruct_;    ///< Pumps, orifices, weirs, outlets
     iface::InterfaceManager      iface_;        ///< Routing interface file I/O
+
+    // Phase 1b: optional runoff interface file (legacy "Frunoff").
+    // When in SAVE mode, the engine auto-emits one record per runoff substep
+    // from inside stepRunoff(). When in USE mode, no engine-side integration
+    // happens yet — the C API exposes the file but the caller is responsible
+    // for invoking swmm_runoff_iface_read_step() between simulation steps
+    // (USE-mode auto-skip is tracked as a follow-up).
+    std::unique_ptr<runoff_iface::RunoffInterfaceFile> runoff_iface_file_;
 
     // Event and steady-state tracking
     int next_event_ = 0;                        ///< Index of next event in ctx_.events

@@ -27,60 +27,66 @@ cimport numpy as np
 cdef extern from "openswmm_geopackage.h":
     ctypedef void* SWMM_Gpkg
 
-    SWMM_Gpkg swmm_gpkg_open(const char* path)
-    void swmm_gpkg_close(SWMM_Gpkg gpkg)
+    # Lifecycle — file I/O, marked nogil so the SQLite open/close
+    # does not block the interpreter on another thread.
+    SWMM_Gpkg swmm_gpkg_open(const char* path) nogil
+    void swmm_gpkg_close(SWMM_Gpkg gpkg) nogil
     const char* swmm_gpkg_last_error(SWMM_Gpkg gpkg)
 
-    int swmm_gpkg_begin(SWMM_Gpkg gpkg)
-    int swmm_gpkg_commit(SWMM_Gpkg gpkg)
-    int swmm_gpkg_rollback(SWMM_Gpkg gpkg)
+    int swmm_gpkg_begin(SWMM_Gpkg gpkg) nogil
+    int swmm_gpkg_commit(SWMM_Gpkg gpkg) nogil
+    int swmm_gpkg_rollback(SWMM_Gpkg gpkg) nogil
 
     int swmm_gpkg_register(const char* key, const char* org,
                            const char* email, const char* deploy)
     int swmm_gpkg_is_registered()
 
-    int swmm_gpkg_simulation_count(SWMM_Gpkg gpkg)
-    int swmm_gpkg_simulation_id(SWMM_Gpkg gpkg, int index, char* buf, int bufsz)
+    int swmm_gpkg_simulation_count(SWMM_Gpkg gpkg) nogil
+    int swmm_gpkg_simulation_id(SWMM_Gpkg gpkg, int index, char* buf, int bufsz) nogil
 
-    int swmm_gpkg_node_count(SWMM_Gpkg gpkg, const char* sim_id)
-    int swmm_gpkg_link_count(SWMM_Gpkg gpkg, const char* sim_id)
-    int swmm_gpkg_subcatch_count(SWMM_Gpkg gpkg, const char* sim_id)
-    int swmm_gpkg_gage_count(SWMM_Gpkg gpkg, const char* sim_id)
-    int swmm_gpkg_topology_edge_count(SWMM_Gpkg gpkg, const char* sim_id)
-    int swmm_gpkg_variable_count(SWMM_Gpkg gpkg)
+    int swmm_gpkg_node_count(SWMM_Gpkg gpkg, const char* sim_id) nogil
+    int swmm_gpkg_link_count(SWMM_Gpkg gpkg, const char* sim_id) nogil
+    int swmm_gpkg_subcatch_count(SWMM_Gpkg gpkg, const char* sim_id) nogil
+    int swmm_gpkg_gage_count(SWMM_Gpkg gpkg, const char* sim_id) nogil
+    int swmm_gpkg_topology_edge_count(SWMM_Gpkg gpkg, const char* sim_id) nogil
+    int swmm_gpkg_variable_count(SWMM_Gpkg gpkg) nogil
 
+    # Time-series read is the heaviest single call — a SQL query that
+    # may return tens of thousands of rows. Definitely worth releasing
+    # the GIL.
     int swmm_gpkg_result_ts_count(SWMM_Gpkg gpkg, const char* sim_id,
                                    const char* obj_type, const char* obj_id,
-                                   const char* var_name)
+                                   const char* var_name) nogil
     int swmm_gpkg_read_result_ts(SWMM_Gpkg gpkg, const char* sim_id,
                                   const char* obj_type, const char* obj_id,
                                   const char* var_name,
-                                  double* times, double* values, int max_count)
+                                  double* times, double* values, int max_count) nogil
 
     int swmm_gpkg_read_summary(SWMM_Gpkg gpkg, const char* sim_id,
                                 const char* obj_type, const char* obj_id,
-                                const char* var_name, double* value)
+                                const char* var_name, double* value) nogil
 
+    # Observed-data writers and readers — disk-backed SQL ops.
     int swmm_gpkg_create_observed_series(SWMM_Gpkg gpkg, const char* name,
                                           const char* var_name, const char* obj_type,
                                           const char* obj_id, const char* source,
-                                          const char* units)
+                                          const char* units) nogil
     int swmm_gpkg_write_observed_value(SWMM_Gpkg gpkg, int series_id,
                                         const char* timestamp, double value,
-                                        const char* quality_flag)
+                                        const char* quality_flag) nogil
     int swmm_gpkg_write_observed_values(SWMM_Gpkg gpkg, int series_id,
                                          const char** timestamps,
                                          const double* values,
-                                         const char** quality_flags, int count)
+                                         const char** quality_flags, int count) nogil
 
-    int swmm_gpkg_observed_series_count(SWMM_Gpkg gpkg)
-    int swmm_gpkg_observed_value_count(SWMM_Gpkg gpkg, int series_id)
+    int swmm_gpkg_observed_series_count(SWMM_Gpkg gpkg) nogil
+    int swmm_gpkg_observed_value_count(SWMM_Gpkg gpkg, int series_id) nogil
     int swmm_gpkg_read_observed_values(SWMM_Gpkg gpkg, int series_id,
                                         char* timestamps, int ts_buf_len,
-                                        double* values, int max_count)
+                                        double* values, int max_count) nogil
 
-    int swmm_gpkg_query_int(SWMM_Gpkg gpkg, const char* sql)
-    int swmm_gpkg_query_double(SWMM_Gpkg gpkg, const char* sql, double* result)
+    int swmm_gpkg_query_int(SWMM_Gpkg gpkg, const char* sql) nogil
+    int swmm_gpkg_query_double(SWMM_Gpkg gpkg, const char* sql, double* result) nogil
 
 
 cdef class GeoPackage:
@@ -300,11 +306,26 @@ cdef class GeoPackage:
 
         cdef np.ndarray[double, ndim=1] times = np.empty(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] values = np.empty(n, dtype=np.float64)
-        cdef int read = swmm_gpkg_read_result_ts(
-            self._handle, sim_id.encode('utf-8'),
-            obj_type.encode('utf-8'), obj_id.encode('utf-8'),
-            variable.encode('utf-8'),
-            <double*>times.data, <double*>values.data, n)
+        # Re-encode strings outside the nogil block so the bytes objects
+        # remain owned with the GIL held; then snapshot the raw pointers.
+        cdef bytes b_sim = sim_id.encode('utf-8')
+        cdef bytes b_otype = obj_type.encode('utf-8')
+        cdef bytes b_oid = obj_id.encode('utf-8')
+        cdef bytes b_var = variable.encode('utf-8')
+        cdef SWMM_Gpkg gpkg = self._handle
+        cdef const char* p_sim = b_sim
+        cdef const char* p_otype = b_otype
+        cdef const char* p_oid = b_oid
+        cdef const char* p_var = b_var
+        cdef double* p_times = <double*>times.data
+        cdef double* p_values = <double*>values.data
+        cdef int read
+        # SQL execution can take many milliseconds for large series — worth
+        # releasing the GIL so another thread can do useful work meanwhile.
+        with nogil:
+            read = swmm_gpkg_read_result_ts(
+                gpkg, p_sim, p_otype, p_oid, p_var,
+                p_times, p_values, n)
         return times[:read], values[:read]
 
     # ====================================================================
@@ -362,13 +383,24 @@ cdef class GeoPackage:
         @rtype: int
         @raise RuntimeError: If the series cannot be created.
         """
+        # NOTE: keep the encoded bytes alive in locals before extracting the
+        # raw `const char*` — under Cython >= 3.0.12 the conditional
+        # expression `x.encode('utf-8') if x else NULL` cannot unify
+        # `bytes` and `void*` and fails to transpile (see plan §Appendix A).
+        cdef bytes b_name = name.encode('utf-8')
+        cdef bytes b_var = variable.encode('utf-8')
+        cdef bytes b_otype = obj_type.encode('utf-8') if obj_type else b""
+        cdef bytes b_oid = obj_id.encode('utf-8') if obj_id else b""
+        cdef bytes b_src = source.encode('utf-8') if source else b""
+        cdef bytes b_units = units.encode('utf-8') if units else b""
+        cdef const char* p_otype = <const char*>b_otype if obj_type else NULL
+        cdef const char* p_oid = <const char*>b_oid if obj_id else NULL
+        cdef const char* p_src = <const char*>b_src if source else NULL
+        cdef const char* p_units = <const char*>b_units if units else NULL
         cdef int sid = swmm_gpkg_create_observed_series(
             self._handle,
-            name.encode('utf-8'), variable.encode('utf-8'),
-            obj_type.encode('utf-8') if obj_type else NULL,
-            obj_id.encode('utf-8') if obj_id else NULL,
-            source.encode('utf-8') if source else NULL,
-            units.encode('utf-8') if units else NULL)
+            b_name, b_var,
+            p_otype, p_oid, p_src, p_units)
         if sid < 0:
             raise RuntimeError(f"Failed to create series: {self.last_error}")
         return sid
@@ -389,10 +421,14 @@ cdef class GeoPackage:
         @type flag: str
         @raise RuntimeError: If the write fails.
         """
+        # See create_observed_series above for the encode/NULL pattern
+        # rationale.
+        cdef bytes b_ts = timestamp.encode('utf-8')
+        cdef bytes b_flag = flag.encode('utf-8') if flag else b""
+        cdef const char* p_flag = <const char*>b_flag if flag else NULL
         cdef int rc = swmm_gpkg_write_observed_value(
             self._handle, series_id,
-            timestamp.encode('utf-8'), value,
-            flag.encode('utf-8') if flag else NULL)
+            b_ts, value, p_flag)
         if rc != 0:
             raise RuntimeError(f"Write failed: {self.last_error}")
 
@@ -434,15 +470,21 @@ cdef class GeoPackage:
             if c_fl: free(c_fl)
             raise MemoryError()
 
+        cdef SWMM_Gpkg gpkg = self._handle
+        cdef const double* p_vals = <const double*>vals.data
+        cdef const char** c_fl_arg
+        cdef int rc_c
         try:
             for i in range(n):
                 c_ts[i] = ts_bytes[i]
                 c_fl[i] = fl_bytes[i]
-            rc = swmm_gpkg_write_observed_values(
-                self._handle, series_id,
-                c_ts, <const double*>vals.data,
-                c_fl if flags else NULL, n)
-            if rc != 0:
+            c_fl_arg = c_fl if flags else NULL
+            # Bulk SQL inserts can take a long time for large series;
+            # release the GIL so peer threads continue.
+            with nogil:
+                rc_c = swmm_gpkg_write_observed_values(
+                    gpkg, series_id, c_ts, p_vals, c_fl_arg, n)
+            if rc_c != 0:
                 raise RuntimeError(f"Bulk write failed: {self.last_error}")
         finally:
             free(c_ts)
@@ -487,11 +529,13 @@ cdef class GeoPackage:
         cdef int ts_len = 32
         cdef bytearray ts_buf = bytearray(n * ts_len)
         cdef np.ndarray[double, ndim=1] values = np.empty(n, dtype=np.float64)
-
-        cdef int read = swmm_gpkg_read_observed_values(
-            self._handle, series_id,
-            <char*>ts_buf, ts_len,
-            <double*>values.data, n)
+        cdef SWMM_Gpkg gpkg = self._handle
+        cdef char* p_ts = <char*>ts_buf
+        cdef double* p_v = <double*>values.data
+        cdef int read
+        with nogil:
+            read = swmm_gpkg_read_observed_values(
+                gpkg, series_id, p_ts, ts_len, p_v, n)
 
         timestamps = []
         for i in range(read):
@@ -550,11 +594,17 @@ def register(str key="", str org="", str email="", str deploy="") -> bool:
     @return: C{True} if registration succeeded.
     @rtype: bool
     """
-    return swmm_gpkg_register(
-        key.encode('utf-8') if key else NULL,
-        org.encode('utf-8') if org else NULL,
-        email.encode('utf-8') if email else NULL,
-        deploy.encode('utf-8') if deploy else NULL) != 0
+    # See GeoPackage.create_observed_series for the encode/NULL pattern
+    # rationale (Cython >= 3.0.12 cannot unify bytes / void* in a conditional).
+    cdef bytes b_key = key.encode('utf-8') if key else b""
+    cdef bytes b_org = org.encode('utf-8') if org else b""
+    cdef bytes b_email = email.encode('utf-8') if email else b""
+    cdef bytes b_deploy = deploy.encode('utf-8') if deploy else b""
+    cdef const char* p_key = <const char*>b_key if key else NULL
+    cdef const char* p_org = <const char*>b_org if org else NULL
+    cdef const char* p_email = <const char*>b_email if email else NULL
+    cdef const char* p_deploy = <const char*>b_deploy if deploy else NULL
+    return swmm_gpkg_register(p_key, p_org, p_email, p_deploy) != 0
 
 def is_registered() -> bool:
     """Check whether the GeoPackage plugin is registered.

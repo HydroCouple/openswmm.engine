@@ -32,6 +32,13 @@ set_target_properties(openswmm_legacy_output
         OUTPUT_NAME "openswmm.legacy.output"
         VERSION     ${PROJECT_VERSION}
         SOVERSION   ${PROJECT_VERSION_MAJOR}
+        # swmm_output.c calls fseeko()/ftello(), which glibc gates behind
+        # _POSIX_C_SOURCE/_DEFAULT_SOURCE. With the root CMAKE_C_EXTENSIONS
+        # OFF + -std=c17 they're hidden under __STRICT_ANSI__, implicit-int
+        # truncates pointers/64-bit offsets, and the program crashes at
+        # runtime on Linux. Override per-target so CMake passes -std=gnu17
+        # for this target and the rest of the project keeps strict ANSI.
+        C_EXTENSIONS ON
 )
 
 # Generate export header

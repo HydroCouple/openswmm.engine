@@ -111,7 +111,10 @@ target_link_libraries(openswmm_engine
     PUBLIC
         openswmm_common
     PRIVATE
-        $<$<NOT:$<BOOL:$<CXX_COMPILER_ID:MSVC>>>:m>
+        # On macOS, libm is part of libSystem and HDF5/SUNDIALS already pull in
+        # -lm transitively — adding it here produces an "ignoring duplicate
+        # libraries: '-lm'" ld warning. Restrict to non-APPLE UNIX.
+        $<$<AND:$<NOT:$<BOOL:$<CXX_COMPILER_ID:MSVC>>>,$<NOT:$<PLATFORM_ID:Darwin>>>:m>
 )
 
 # ---- Threads (for IOThread) ----
@@ -222,9 +225,15 @@ endif()
 # build-tree binary uses CMake's automatically-computed build rpath (link dirs)
 # rather than the wheel-layout path that does not exist in the build tree.
 if(APPLE)
-    set(LIB_ROOT "@loader_path/../.dylibs")
+    # @loader_path/../.dylibs : wheel layout (delocate places bundled deps there)
+    # @loader_path             : sibling-co-located deps when consumer puts the
+    #                            engine + its deps in the same dir
+    # @loader_path/../bin      : standalone install (cmake --install) — deps are
+    #                            bundled into bin/, engine .dylib lives in lib/
+    # @loader_path/../lib      : sibling lib dir (engine.dylib's lib/)
+    set(LIB_ROOT "@loader_path/../.dylibs;@loader_path;@loader_path/../bin;@loader_path/../lib")
 elseif(UNIX)
-    set(LIB_ROOT "$ORIGIN/../.dylibs")
+    set(LIB_ROOT "$ORIGIN/../.dylibs;$ORIGIN;$ORIGIN/../bin;$ORIGIN/../lib")
 else()
     set(LIB_ROOT "")
 endif()
@@ -243,6 +252,24 @@ install(
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+# Bundle imported third-party runtime libraries next to the executables that
+# consume openswmm_engine. The CLI install (src/cli/CMakeLists.txt) already
+# captures the full closure via RUNTIME_DEPENDENCIES; this block exists for
+# downstream consumers who install openswmm_engine without an executable
+# (e.g. a Python wheel built standalone outside cibuildwheel, or a sibling
+# C++ project that links the engine). Co-locating in bin/ matches the RPATH
+# already configured on the engine ("@loader_path/../.dylibs" stays for the
+# wheel path; "@loader_path" + "$ORIGIN" cover the standalone-install path).
+openswmm_install_runtime_deps(${CMAKE_INSTALL_BINDIR}
+    SUNDIALS::cvode
+    SUNDIALS::nvecserial
+    SUNDIALS::sunmatrixdense
+    SUNDIALS::sunlinsoldense
+    hdf5::hdf5-shared
+    unofficial::sqlite3::sqlite3
+    SQLite::SQLite3
 )
 
 install(
@@ -371,7 +398,70 @@ endif()
 # ---- Optional GeoPackage I/O library ----
 if(OPENSWMM_WITH_GEOPACKAGE)
     add_subdirectory(input/geopackage)
-    message(STATUS "OpenSWMM Engine: GeoPackage I/O library enabled")
+    # Slice RC.1 (APPROVED 2026-05-25, see §R.3 of openswmm.gui's
+    # GUI_IMPLEMENTATION_PLAN.md) — link the static GeoPackage lib into
+    # the engine SHARED so its IPluginComponentInfo singleton is
+    # resolvable from PluginFactory::register_builtin_infos AND so the
+    # PUBLIC OPENSWMM_HAS_GEOPACKAGE define propagates to the engine's
+    # own TUs (gating the explicit register_one call).
+    # PRIVATE because the cycle (engine ←→ geopackage PRIVATE both
+    # directions) collapses cleanly when geopackage's STATIC archive is
+    # absorbed into the engine SHARED at link time.
+    target_link_libraries(openswmm_engine PRIVATE openswmm_geopackage)
+    if(TARGET openswmm_engine_internal)
+        target_link_libraries(openswmm_engine_internal PRIVATE openswmm_geopackage)
+    endif()
+
+    # Linkers on every platform we target drop .obj/.o files from a static
+    # archive when no source in the consumer references their symbols. The
+    # swmm_gpkg_* C API exists solely for external consumers (Cython
+    # _geopackage, host apps) — nothing inside the engine itself calls it —
+    # so the openswmm_geopackage_impl translation unit is pruned and the
+    # C API never reaches the engine shared library's export table.
+    #
+    # On Windows the failure is loud: 27 LNK2019 errors at the Cython
+    # _geopackage link step (openswmm.engine.lib has no swmm_gpkg_* in it).
+    # On Linux/macOS the failure is silent: the wheel builds fine, but
+    # `from openswmm.engine._geopackage import GeoPackage` raises
+    # ImportError at runtime (undefined symbol), and test_geopackage.py
+    # wraps that import in try/except and skips its tests.
+    #
+    # Force whole-archive linking so every translation unit in the
+    # geopackage static archive is retained in the engine shared library:
+    #   - MSVC:    /WHOLEARCHIVE:<archive-name>
+    #   - Apple:   -Wl,-force_load,<archive-path>
+    #   - GNU ld:  -Wl,--whole-archive <archive-path> -Wl,--no-whole-archive
+    # The visibility attributes on swmm_gpkg_* (SWMM_ENGINE_API → either
+    # __declspec(dllexport) on MSVC or __attribute__((visibility("default")))
+    # elsewhere — see input/geopackage/CMakeLists.txt) then ensure the
+    # retained symbols are also exported.
+    if(MSVC)
+        target_link_options(openswmm_engine PRIVATE
+            "/WHOLEARCHIVE:$<TARGET_FILE_NAME:openswmm_geopackage>"
+        )
+    elseif(APPLE)
+        target_link_options(openswmm_engine PRIVATE
+            "LINKER:-force_load,$<TARGET_FILE:openswmm_geopackage>"
+        )
+    else()
+        # GNU ld / lld accept bracketed --whole-archive; the archive path
+        # must appear between the two flags.
+        target_link_options(openswmm_engine PRIVATE
+            "LINKER:--whole-archive"
+            "$<TARGET_FILE:openswmm_geopackage>"
+            "LINKER:--no-whole-archive"
+        )
+    endif()
+    # Re-export OPENSWMM_HAS_GEOPACKAGE on the engine target so consumers
+    # (tests, host apps) can compile-time gate on engine capabilities.
+    # The PRIVATE link above hides geopackage's own PUBLIC defines from
+    # engine consumers, but the capability is an engine-level fact once
+    # geopackage is absorbed into the engine SHARED.
+    target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAS_GEOPACKAGE=1)
+    if(TARGET openswmm_engine_internal)
+        target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAS_GEOPACKAGE=1)
+    endif()
+    message(STATUS "OpenSWMM Engine: GeoPackage I/O library enabled (built-in plugin)")
 else()
     message(STATUS "OpenSWMM Engine: GeoPackage I/O disabled (set -DOPENSWMM_WITH_GEOPACKAGE=ON to enable)")
 endif()

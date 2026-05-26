@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <time.h>
 #include "openswmm_solver.h"
+#include "legacy_version.h"
 
 /*!
 * \brief Main function for the command line version of EPA SWMM 5.3
@@ -34,16 +35,11 @@ int  main(int argc, char *argv[])
     char *binaryFile;
     char *arg1;
     char blank[] = "";
-    int  version, vMajor, vMinor, vRelease;
     char errMsg[128];
     int  msgLen = 127;
     time_t start;
     double runTime;
-    
-    version = swmm_getVersion();
-    vMajor = version / 10000;
-    vMinor = (version - 10000 * vMajor) / 1000;
-    vRelease = (version - 10000 * vMajor - 1000 * vMinor);
+
     start = time(0);
 
     // --- check for proper number of command line arguments
@@ -69,7 +65,8 @@ int  main(int argc, char *argv[])
         else if (strcmp(arg1, "--version") == 0 || strcmp(arg1, "-v") == 0)
         {
             // Output version number
-            printf("\n%d.%d.%0d\n\n", vMajor, vMinor, vRelease);
+            printf("\n%s (openswmm.legacy %s)\n\n",
+                LEGACY_SWMM_VERSION_FULL, OPENSWMM_LEGACY_FULL_VERSION);
         }
         else
         {
@@ -83,8 +80,9 @@ int  main(int argc, char *argv[])
         reportFile = argv[2];
         if (argc > 3) binaryFile = argv[3];
         else          binaryFile = blank;
-        printf("\n... EPA SWMM %d.%d (Build %d.%d.%0d)\n", vMajor, vMinor,
-            vMajor, vMinor, vRelease);
+        printf("\n... EPA SWMM %d.%d (Build %s)\n",
+            LEGACY_SWMM_VERSION_MAJOR, LEGACY_SWMM_VERSION_MINOR,
+            LEGACY_SWMM_VERSION_FULL);
 
         // --- run SWMM
         swmm_run(inputFile, reportFile, binaryFile);

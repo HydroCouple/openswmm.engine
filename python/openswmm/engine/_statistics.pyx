@@ -261,7 +261,8 @@ class Statistics:
     def node_max_depth_bulk(self) -> np.ndarray:
         """Return maximum depths for all nodes as a NumPy array.
 
-        Wraps C{swmm_stat_node_max_depth_bulk}.
+        Wraps C{swmm_stat_node_max_depth_bulk}. The GIL is released
+        during the C call.
 
         @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
         @rtype: np.ndarray
@@ -270,13 +271,18 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_stat_node_max_depth_bulk(h, <double*>buf.data, n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_stat_node_max_depth_bulk(h, p, n)
+        _check(err)
         return buf
 
     def link_max_flow_bulk(self) -> np.ndarray:
         """Return maximum flows for all links as a NumPy array.
 
-        Wraps C{swmm_stat_link_max_flow_bulk}.
+        Wraps C{swmm_stat_link_max_flow_bulk}. The GIL is released
+        during the C call.
 
         @return: Array of shape C{(n_links,)} with dtype C{float64}.
         @rtype: np.ndarray
@@ -285,13 +291,18 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_stat_link_max_flow_bulk(h, <double*>buf.data, n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_stat_link_max_flow_bulk(h, p, n)
+        _check(err)
         return buf
 
     def subcatch_runoff_vol_bulk(self) -> np.ndarray:
         """Return total runoff volumes for all subcatchments as a NumPy array.
 
-        Wraps C{swmm_stat_subcatch_runoff_vol_bulk}.
+        Wraps C{swmm_stat_subcatch_runoff_vol_bulk}. The GIL is released
+        during the C call.
 
         @return: Array of shape C{(n_subcatchments,)} with dtype C{float64}.
         @rtype: np.ndarray
@@ -300,5 +311,194 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        _check(swmm_stat_subcatch_runoff_vol_bulk(h, <double*>buf.data, n))
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_stat_subcatch_runoff_vol_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    # ------------------------------------------------------------------
+    # Phase 3 statistics bulk getters — flooding + peak runoff.
+    # Each is a simple SoA memcpy; GIL is released during the C call.
+    # ------------------------------------------------------------------
+
+    def node_max_overflow_bulk(self) -> np.ndarray:
+        """Return maximum overflow rates for all nodes as a NumPy array.
+
+        Wraps C{swmm_stat_node_max_overflow_bulk}. GIL is released during
+        the C call.
+
+        :returns: Array of shape ``(n_nodes,)``, dtype ``float64``, in
+                  project flow units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_stat_node_max_overflow_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def node_vol_flooded_bulk(self) -> np.ndarray:
+        """Return total flooded volume for all nodes as a NumPy array.
+
+        Wraps C{swmm_stat_node_vol_flooded_bulk}. GIL is released during
+        the C call.
+
+        :returns: Array of shape ``(n_nodes,)``, dtype ``float64``, in
+                  project volume units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_stat_node_vol_flooded_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def node_time_flooded_bulk(self) -> np.ndarray:
+        """Return cumulative time-flooded for all nodes as a NumPy array.
+
+        Wraps C{swmm_stat_node_time_flooded_bulk}. GIL is released during
+        the C call.
+
+        :returns: Array of shape ``(n_nodes,)``, dtype ``float64``, in
+                  hours (consistent with the scalar accessor).
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_stat_node_time_flooded_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def subcatch_max_runoff_bulk(self) -> np.ndarray:
+        """Return peak runoff rates for all subcatchments as a NumPy array.
+
+        Wraps C{swmm_stat_subcatch_max_runoff_bulk}. GIL is released
+        during the C call.
+
+        :returns: Array of shape ``(n_subcatchments,)``, dtype
+                  ``float64``, in project flow units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_subcatch_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_stat_subcatch_max_runoff_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    # ------------------------------------------------------------------
+    # Phase 4e link-stat bulks — completes the per-link statistics
+    # surface so MCP-side ``capacity_summary`` can fetch each column in
+    # a single C call instead of looping the scalar accessor per link.
+    # GIL is released for each C call.
+    # ------------------------------------------------------------------
+
+    def link_max_velocity_bulk(self) -> np.ndarray:
+        """Return peak velocities for all links as a NumPy array.
+
+        Wraps C{swmm_stat_link_max_velocity_bulk}. GIL is released
+        during the C call.
+
+        :returns: Array of shape ``(n_links,)``, dtype ``float64``, in
+                  project length/time units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_link_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_stat_link_max_velocity_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def link_max_filling_bulk(self) -> np.ndarray:
+        """Return peak depth-to-full-depth ratios for all links as a
+        NumPy array. Wraps C{swmm_stat_link_max_filling_bulk}. GIL is
+        released during the C call.
+
+        :returns: Array of shape ``(n_links,)``, dtype ``float64``,
+                  dimensionless ratio (>1 = surcharged).
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_link_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_stat_link_max_filling_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def link_vol_flow_bulk(self) -> np.ndarray:
+        """Return cumulative flow volumes for all links as a NumPy array.
+        Wraps C{swmm_stat_link_vol_flow_bulk}. GIL is released during
+        the C call.
+
+        :returns: Array of shape ``(n_links,)``, dtype ``float64``, in
+                  project volume units.
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_link_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_stat_link_vol_flow_bulk(h, p, n)
+        _check(err)
+        return buf
+
+    def link_surcharge_time_bulk(self) -> np.ndarray:
+        """Return cumulative surcharge time for all links as a NumPy
+        array. Wraps C{swmm_stat_link_surcharge_time_bulk}. GIL is
+        released during the C call.
+
+        :returns: Array of shape ``(n_links,)``, dtype ``float64``, in
+                  hours (consistent with the scalar accessor).
+        :rtype: numpy.ndarray
+
+        .. versionadded:: 6.0.0
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_link_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef double* p = <double*>buf.data
+        cdef int err
+        with nogil:
+            err = swmm_stat_link_surcharge_time_bulk(h, p, n)
+        _check(err)
         return buf

@@ -30,11 +30,19 @@ namespace openswmm::twoD {
 
 /**
  * @brief Boundary condition types for 2D mesh edges.
+ *
+ * SPECIFIED_FLOW (3) and RATING_CURVE (4) added per GUI plan §V V-E4 / V-E5.
+ * Storage + C API only at this revision — the FV-SWE flux integration for
+ * non-Wall BCs is deferred to a follow-up slice (V-E-FLUX). Today the
+ * solver treats every boundary edge as Wall regardless of type
+ * (see SurfaceFluxCalculator::computeEdgeFluxes line 131).
  */
 enum class BoundaryType : int8_t {
     WALL            = 0,   ///< Zero-flux wall (default)
     NORMAL_FLOW     = 1,   ///< Manning outflow using bed slope
-    SPECIFIED_STAGE = 2    ///< Prescribed water surface elevation
+    SPECIFIED_STAGE = 2,   ///< Prescribed water surface elevation (constant or TS)
+    SPECIFIED_FLOW  = 3,   ///< Prescribed discharge per metre of edge (constant or TS)
+    RATING_CURVE    = 4    ///< Stage → flow lookup (curve registry index)
 };
 
 /**
@@ -70,6 +78,34 @@ struct BoundaryData {
     std::vector<double> edge_bc_cum_flux;
 
     // -----------------------------------------------------------------------
+    // V-E4 — SPECIFIED_FLOW slots (per-metre-of-edge discharge).
+    // Sign convention: outward-positive (matches edge_bc_cum_flux).
+    // -----------------------------------------------------------------------
+
+    /// Prescribed discharge per metre of edge (m³/s/m) for SPECIFIED_FLOW edges.
+    /// For time-varying: updated each step from timeseries.
+    std::vector<double> edge_bc_flow;
+
+    /// Timeseries index for time-varying SPECIFIED_FLOW.
+    /// -1 = constant (use edge_bc_flow as-is), -2 = unresolved name,
+    /// >= 0 = resolved table index into SimulationContext::tables.
+    std::vector<int> edge_bc_flow_tseries;
+
+    /// Timeseries name for deferred resolution (cleared after resolve).
+    std::vector<std::string> edge_bc_flow_tseries_name;
+
+    // -----------------------------------------------------------------------
+    // V-E5 — RATING_CURVE slot (stage → flow lookup).
+    // -----------------------------------------------------------------------
+
+    /// Curve registry index for RATING_CURVE edges.
+    /// -1 = unset, -2 = unresolved name, >= 0 = resolved curve index.
+    std::vector<int> edge_bc_rating_curve;
+
+    /// Curve name for deferred resolution (cleared after resolve).
+    std::vector<std::string> edge_bc_rating_curve_name;
+
+    // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------
 
@@ -85,6 +121,11 @@ struct BoundaryData {
         edge_bc_tseries.assign(n, -1);
         edge_bc_tseries_name.resize(n);
         edge_bc_cum_flux.assign(n, 0.0);
+        edge_bc_flow.assign(n, 0.0);
+        edge_bc_flow_tseries.assign(n, -1);
+        edge_bc_flow_tseries_name.resize(n);
+        edge_bc_rating_curve.assign(n, -1);
+        edge_bc_rating_curve_name.resize(n);
     }
 
     int size() const noexcept { return static_cast<int>(edge_bc_type.size()); }

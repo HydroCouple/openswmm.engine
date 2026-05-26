@@ -202,7 +202,8 @@ class GeoPackage:
     def read_result_ts(
         self, sim_id: str, obj_type: str, obj_id: str, variable: str
     ) -> Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-        """Read a result timeseries as NumPy arrays.
+        """Read a result timeseries as NumPy arrays. GIL is released for
+        the duration of the SQL execution.
 
         @param sim_id: Simulation identifier.
         @type sim_id: str
@@ -302,7 +303,8 @@ class GeoPackage:
         values: npt.ArrayLike,
         flags: Optional[List[str]] = None,
     ) -> None:
-        """Bulk-write observed data points.
+        """Bulk-write observed data points. GIL is released for the
+        duration of the bulk SQL insert.
 
         For best performance wrap the call in a transaction::
 
@@ -350,7 +352,8 @@ class GeoPackage:
     def read_observed_values(
         self, series_id: int
     ) -> Tuple[List[str], npt.NDArray[np.float64]]:
-        """Read observed-timeseries values.
+        """Read observed-timeseries values. GIL is released for the
+        duration of the SQL read.
 
         @param series_id: Series ID.
         @type series_id: int

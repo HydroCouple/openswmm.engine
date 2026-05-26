@@ -600,6 +600,10 @@ class RoutingTotal(IntEnum):
     @cvar SEEP_LOSS: Seepage loss.
     @cvar INIT_STORAGE: Initial network storage.
     @cvar FINAL_STORAGE: Final network storage.
+    @cvar FORCING_INFLOW: Runtime-API forced lateral inflow (e.g.
+        flow injected via Nodes.set_lateral_inflow / transient
+        ForcingData). Distinct from EXTERNAL which only counts INP
+        [INFLOWS]-derived inflow.
     """
 
     DRY_WEATHER = 0
@@ -613,3 +617,4 @@ class RoutingTotal(IntEnum):
     SEEP_LOSS = 8
     INIT_STORAGE = 9
     FINAL_STORAGE = 10
+    FORCING_INFLOW = 11

@@ -27,6 +27,7 @@ std::vector<DiscoveredFilter> discover_all_filters() {
             df.plugin_id      = c.id;
             df.plugin_version = c.version;
             df.plugin_caption = c.info->caption();
+            df.is_builtin     = c.is_builtin;   // Slice RC.3
             df.filter         = std::move(f);
             out.push_back(std::move(df));
         }
@@ -50,11 +51,17 @@ std::vector<DiscoveredPlugin> discover_plugins_by_id() {
             entry.plugin_id      = df.plugin_id;
             entry.plugin_version = df.plugin_version;
             entry.plugin_caption = df.plugin_caption;
+            entry.is_builtin     = df.is_builtin;   // Slice RC.3
             out.push_back(std::move(entry));
             idx.emplace(df.plugin_id, out.size() - 1);
             dp = &out.back();
         } else {
             dp = &out[it->second];
+            // Defensive: if the same plugin_id surfaces from both a
+            // built-in and a discovered .so (shouldn't happen, but
+            // would indicate a duplicate-registration bug), keep the
+            // built-in marker so the GUI greys out Remove correctly.
+            dp->is_builtin = dp->is_builtin || df.is_builtin;
         }
 
         // Accumulate role (deduplicated) and the filter itself.

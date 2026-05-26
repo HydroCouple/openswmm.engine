@@ -299,6 +299,14 @@ struct SubcatchData {
      */
     std::vector<std::string> comments;
 
+    /**
+     * @brief Per-object tag from the INP `[TAGS]` section.
+     *
+     * @details Free-form string label. Index-keyed so `swmm_subcatch_rename`
+     *          keeps the tag attached.
+     */
+    std::vector<std::string> tags;
+
     // -----------------------------------------------------------------------
     // Report flag — per-object output filter
     // -----------------------------------------------------------------------
@@ -533,6 +541,7 @@ struct SubcatchData {
         gw_max_infil_vol.assign(un, std::numeric_limits<double>::max());
 
         comments.assign(un, std::string{});
+        tags.assign(un, std::string{});
 
         rpt_flag.assign(un, 0);
 
@@ -599,6 +608,7 @@ struct SubcatchData {
         g(gw_max_infil_vol, std::numeric_limits<double>::max());
         g(outfall_runon_vol, 0.0);
         comments.resize(un, std::string{});
+        tags.resize(un, std::string{});
 
         g(rpt_flag, static_cast<char>(0));
         g(stat_precip_vol, 0.0); g(stat_evap_vol, 0.0);
@@ -647,7 +657,7 @@ struct SubcatchData {
         e(gw_flow); e(old_runoff); e(old_gw_flow);
         e(runon_inflow); e(old_runon_inflow); e(outfall_runon_vol);
         e(gw_sw_head); e(gw_node_avail_flow); e(gw_max_infil_vol);
-        e(comments); e(rpt_flag);
+        e(comments); e(tags); e(rpt_flag);
 
         e(stat_precip_vol); e(stat_evap_vol); e(stat_infil_vol);
         e(stat_imperv_vol); e(stat_perv_vol); e(stat_runoff_vol); e(stat_max_runoff);
@@ -763,6 +773,7 @@ struct SubcatchData {
         gw_max_infil_vol.shrink_to_fit();
 
         comments.shrink_to_fit();
+        tags.shrink_to_fit();
 
         rpt_flag.shrink_to_fit();
 

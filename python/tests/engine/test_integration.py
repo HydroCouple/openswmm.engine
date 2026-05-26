@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from openswmm.engine import Solver, Nodes, Links, Subcatchments, Gages, MassBalance, EngineState
+from openswmm.engine import RoutingTotal
 
 
 class TestFullSimulationWithExpandedAPI:
@@ -131,10 +132,11 @@ class TestFullSimulationWithExpandedAPI:
 
         s.end()
 
-        # Check routing total for external inflow
+        # Runtime-API-injected lateral inflow accumulates in the FORCING_INFLOW
+        # bucket — distinct from EXTERNAL, which only counts INP [INFLOWS].
         mb = MassBalance(s)
-        ext_inflow = mb.get_routing_total(4)  # EXTERNAL
-        assert ext_inflow > 0.0, "External inflow should be positive after injection"
+        forced_inflow = mb.get_routing_total(RoutingTotal.FORCING_INFLOW)
+        assert forced_inflow > 0.0, "Forced inflow should be positive after injection"
 
         s.report()
         s.close()

@@ -70,7 +70,9 @@ class HotStart:
 
     @staticmethod
     def save(solver: Solver, path: str) -> None:
-        """Save the current simulation state to a hot start file.
+        """Save the current simulation state to a hot start file. GIL is
+        released for the duration of the C write (potentially many MB of
+        state, so this is worth knowing about in multi-threaded code).
 
         Wraps C{swmm_hotstart_save}. Valid only when the solver is in
         C{RUNNING} or C{ENDED} state.
@@ -85,7 +87,8 @@ class HotStart:
 
     @classmethod
     def open(cls, path: str) -> "HotStart":
-        """Open a hot start file for reading.
+        """Open a hot start file for reading. GIL is released during the
+        C read.
 
         Wraps C{swmm_hotstart_open}. The returned handle should be closed
         with L{HotStart.close} or by using a C{with} block.
@@ -99,7 +102,8 @@ class HotStart:
         ...
 
     def close(self) -> None:
-        """Close the hot start file and free resources.
+        """Close the hot start file and free resources. GIL is released
+        during the C close.
 
         Wraps C{swmm_hotstart_close}. Safe to call multiple times; once
         closed, the handle becomes inert.
@@ -114,7 +118,8 @@ class HotStart:
     # ====================================================================
 
     def apply(self, solver: Solver) -> None:
-        """Apply this hot start state to an engine.
+        """Apply this hot start state to an engine. GIL is released for
+        the duration of the C state copy.
 
         Wraps C{swmm_hotstart_apply}. The engine must be in C{INITIALIZED}
         state (after L{Solver.initialize} but before L{Solver.start}).
