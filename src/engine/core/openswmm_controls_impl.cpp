@@ -126,11 +126,11 @@ SWMM_ENGINE_API int swmm_control_validate_rule(SWMM_Engine engine,
 
     if (line_out) *line_out = -1;  // Line-precise reporting not yet plumbed.
 
-    if (rc < 0) {
+    // rc < 0 → parse error; rc == 0 → no rule found (e.g. empty/whitespace-only
+    // input). Both fail validation: the validator's contract is "this string
+    // is a valid control rule", and zero rules is not a valid rule.
+    if (rc <= 0) {
         if (errbuf && buflen > 0) {
-            // Generic message — parseRuleText returns -1 without context.
-            // Line-precise + token-specific messages land in a follow-up
-            // when parseRuleText itself grows error-out parameters.
             static constexpr char kMsg[] = "Control-rule parser rejected the rule text";
             const int n = std::min(static_cast<int>(sizeof(kMsg) - 1), buflen - 1);
             std::memcpy(errbuf, kMsg, static_cast<std::size_t>(n));

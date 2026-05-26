@@ -43,6 +43,23 @@ void buildMeshTopology(MeshData& mesh);
  */
 std::string validateMesh(const MeshData& mesh);
 
+/**
+ * @brief Recompute Z-derived per-triangle / per-edge geometry for triangles
+ *        incident to a vertex whose Z just changed.
+ *
+ * Updates `tri_cz` (centroid Z = mean of vertex Zs) and `edge_mz` (per-edge
+ * midpoint Z) for every triangle that references vertex `vidx`. XY-derived
+ * fields (`tri_area`, `tri_cx`, `tri_cy`, `edge_length`, `edge_nx`,
+ * `edge_ny`, `edge_mx`, `edge_my`) are not affected.
+ *
+ * Used by `swmm_2d_set_vertex_z` and exposed here so tests can verify the
+ * recompute logic without spinning up a full engine.
+ *
+ * @param mesh The mesh; `mesh.vz[vidx]` is assumed to already hold the new Z.
+ * @param vidx Index of the vertex whose Z just changed.
+ */
+void recomputeVertexZDependents(MeshData& mesh, int vidx);
+
 } // namespace openswmm::twoD
 
 #endif // OPENSWMM_ENGINE_2D_MESH_BUILDER_HPP

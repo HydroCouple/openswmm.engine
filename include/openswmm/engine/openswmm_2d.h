@@ -79,6 +79,26 @@ SWMM_ENGINE_API int swmm_2d_vertex_get_xyz(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_2d_vertex_get_xyz_bulk(SWMM_Engine engine,
                                                   double* x, double* y, double* z);
 
+/** @brief Set vertex Z (ground elevation).
+ *
+ *  Updates `vz[idx]` and recomputes the dependent geometry for every triangle
+ *  incident to this vertex: `tri_cz` (centroid Z = mean of vertex Zs) and
+ *  `edge_mz` (per-edge midpoint Z) so the solver's bed-elevation references
+ *  stay consistent on the next step. XY-derived fields (`tri_area`, `tri_cx`,
+ *  `tri_cy`, `edge_length`, `edge_nx`, `edge_ny`, `edge_mx`, `edge_my`) are
+ *  unaffected.
+ *
+ *  When called while the engine is RUNNING, the solver state (`head`,
+ *  `depth`) is intentionally **not** rewritten — `head` remains the value
+ *  CVODE is integrating; the implied `depth = head - bed` therefore changes
+ *  by the same amount as bed. This is the expected physical semantics
+ *  ("raising the bed under water reduces water depth there").
+ *
+ *  @param idx Vertex index (0-based).
+ *  @param z   New ground elevation (project vertical units).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_vertex_z(SWMM_Engine engine, int idx, double z);
+
 /** @brief Get triangle connectivity (3 vertex indices).
  *  @param idx Triangle index (0-based).
  *  @param v0,v1,v2 Output vertex indices.

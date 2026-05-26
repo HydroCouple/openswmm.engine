@@ -85,7 +85,7 @@ option(OPENSWMM_BUILD_REGRESSION_TESTS "Build regression tests only" OFF)
 option(OPENSWMM_BUILD_BENCHMARKS  "Build Google Benchmark performance tests" OFF)
 option(OPENSWMM_INSTALL           "Install openswmm libraries" ON)
 option(OPENSWMM_BUILD_PYTHON      "Build Python bindings" OFF)
-option(OPENSWMM_WITH_GEOPACKAGE   "Build GeoPackage I/O library (requires sqlite3)" OFF)
+option(OPENSWMM_WITH_GEOPACKAGE   "Build GeoPackage I/O library (requires sqlite3)" ON)
 option(OPENSWMM_BUILD_2D          "Build optional 2D surface routing module (requires SUNDIALS)" ON)
 
 # OPENSWMM_BUILD_TESTS is a convenience flag that enables both unit and regression

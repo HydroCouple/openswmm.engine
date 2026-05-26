@@ -12,6 +12,7 @@
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
 #include "../../core/SWMMEngine.hpp"
+#include "../mesh/MeshBuilder.hpp"
 
 #include <cstring>
 #include <cstdint>
@@ -90,6 +91,17 @@ int swmm_2d_vertex_get_xyz_bulk(SWMM_Engine engine,
     std::memcpy(x, m.vx.data(), nv * sizeof(double));
     std::memcpy(y, m.vy.data(), nv * sizeof(double));
     std::memcpy(z, m.vz.data(), nv * sizeof(double));
+    return SWMM_OK;
+}
+
+int swmm_2d_set_vertex_z(SWMM_Engine engine, int idx, double z) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_VERT_IDX(idx, router2d);
+
+    auto& m = router2d.mesh();
+    m.vz[idx] = z;
+    openswmm::twoD::recomputeVertexZDependents(m, idx);
     return SWMM_OK;
 }
 

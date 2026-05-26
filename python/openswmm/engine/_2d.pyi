@@ -102,6 +102,23 @@ class Surface2D:
         """
         ...
 
+    def set_vertex_z(self, idx: int, z: float) -> None:
+        """Set the ground elevation of a mesh vertex.
+
+        Updates derived geometry for every triangle incident to this
+        vertex (centroid Z, per-edge midpoint Z). XY-derived fields are
+        unaffected. When called during a running simulation, solver
+        state (head, depth) is intentionally not rewritten — the implied
+        depth = head - bed therefore changes by the same amount as bed.
+
+        @param idx: Vertex index (0-based).
+        @type idx: int
+        @param z: New ground elevation (project vertical units).
+        @type z: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
     def get_triangle_vertices(self, idx: int) -> tuple[int, int, int]:
         """Return the (v0, v1, v2) vertex indices for a triangle.
 

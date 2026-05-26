@@ -171,6 +171,59 @@ TEST(MeshBuilder, EdgeNormalsUnitLength) {
     }
 }
 
+TEST(MeshBuilder, RecomputeVertexZDependentsUpdatesIncidentTriangles) {
+    auto mesh = makeUnitSquareMesh();
+    // Both triangles reference v3 = (1,1,0). Bump v3's Z and confirm both
+    // tri_cz values shift by exactly the per-triangle share (1/3) and the
+    // three edge midpoints incident to v3 shift by exactly half each.
+    const double new_z = 3.0;
+    mesh.vz[3] = new_z;
+    recomputeVertexZDependents(mesh, 3);
+
+    // T0 vertices: v0=(0,0,0), v1=(1,0,0), v3=(1,1,3) → centroid Z = 1.0
+    EXPECT_NEAR(mesh.tri_cz[0], (0.0 + 0.0 + new_z) / 3.0, 1e-12);
+    // T1 vertices: v0=(0,0,0), v3=(1,1,3), v2=(0,1,0) → centroid Z = 1.0
+    EXPECT_NEAR(mesh.tri_cz[1], (0.0 + new_z + 0.0) / 3.0, 1e-12);
+
+    // Edges incident to v3 see midpoint Z = 0.5 * (0 + 3) = 1.5;
+    // edges not incident to v3 stay at 0.
+    for (int t = 0; t < mesh.n_triangles(); ++t) {
+        const int v0 = mesh.tri_v0[t];
+        const int v1 = mesh.tri_v1[t];
+        const int v2 = mesh.tri_v2[t];
+        const int endpoints[3][2] = {{v1, v2}, {v2, v0}, {v0, v1}};
+        for (int e = 0; e < 3; ++e) {
+            const int va = endpoints[e][0];
+            const int vb = endpoints[e][1];
+            const double expected = 0.5 * (mesh.vz[va] + mesh.vz[vb]);
+            EXPECT_NEAR(mesh.edge_mz[t * 3 + e], expected, 1e-12)
+                << "t=" << t << " e=" << e;
+        }
+    }
+}
+
+TEST(MeshBuilder, RecomputeVertexZDependentsLeavesNonIncidentTrianglesAlone) {
+    // Two disjoint triangles — modifying a vertex of one must not touch
+    // the centroid Z of the other.
+    MeshData mesh;
+    mesh.resize_vertices(6);
+    mesh.vx = {0, 1, 0,   10, 11, 10};
+    mesh.vy = {0, 0, 1,   10, 10, 11};
+    mesh.vz = {0, 0, 0,   0,  0,  0};
+
+    mesh.resize_triangles(2);
+    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
+    mesh.tri_v0[1] = 3; mesh.tri_v1[1] = 4; mesh.tri_v2[1] = 5;
+    mesh.mannings_n[0] = 0.035;
+    mesh.mannings_n[1] = 0.035;
+    buildMeshTopology(mesh);
+
+    mesh.vz[1] = 9.0;
+    recomputeVertexZDependents(mesh, 1);
+    EXPECT_NEAR(mesh.tri_cz[0], 3.0, 1e-12);  // (0 + 9 + 0) / 3
+    EXPECT_NEAR(mesh.tri_cz[1], 0.0, 1e-12);  // untouched
+}
+
 TEST(MeshBuilder, ValidationRejectsNegativeArea) {
     MeshData mesh;
     mesh.resize_vertices(3);

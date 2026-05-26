@@ -14,6 +14,7 @@ cdef extern from "openswmm_2d.h":
                                 double* x, double* y, double* z)
     int swmm_2d_vertex_get_xyz_bulk(void* engine,
                                      double* x, double* y, double* z) nogil
+    int swmm_2d_set_vertex_z(void* engine, int idx, double z)
     int swmm_2d_triangle_get_vertices(void* engine, int idx,
                                        int* v0, int* v1, int* v2)
     int swmm_2d_triangle_get_area(void* engine, int idx, double* area)
