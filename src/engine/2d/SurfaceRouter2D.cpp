@@ -73,6 +73,48 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // all initialized to WALL with zero head/slope/cum_flux).
     boundary_.resize(mesh_.n_triangles() * 3);
 
+    // V-E3 — drain any [2D_BOUNDARY_CONDITIONS] rows the parser
+    // accumulated into boundary_. Out-of-range (tri/edge beyond mesh
+    // size) rows are silently skipped — defensive against partial INPs.
+    {
+        const int n_edges = boundary_.size();
+        for (const auto& r : pending_bc_rows_) {
+            if (r.tri < 0 || r.tri >= mesh_.n_triangles()) continue;
+            if (r.edge < 0 || r.edge > 2) continue;
+            const int idx = r.tri * 3 + r.edge;
+            if (idx < 0 || idx >= n_edges) continue;
+            boundary_.edge_bc_type[idx] = static_cast<int8_t>(r.bc_type);
+            switch (static_cast<BoundaryType>(r.bc_type)) {
+            case BoundaryType::NORMAL_FLOW:
+                boundary_.edge_bed_slope[idx] = r.param1;
+                break;
+            case BoundaryType::SPECIFIED_STAGE:
+                if (!r.name.empty()) {
+                    boundary_.edge_bc_tseries_name[idx] = r.name;
+                    boundary_.edge_bc_tseries[idx]      = -2;  // deferred resolve
+                } else {
+                    boundary_.edge_bc_head[idx] = r.param1;
+                }
+                break;
+            case BoundaryType::SPECIFIED_FLOW:
+                if (!r.name.empty()) {
+                    boundary_.edge_bc_flow_tseries_name[idx] = r.name;
+                    boundary_.edge_bc_flow_tseries[idx]      = -2;
+                } else {
+                    boundary_.edge_bc_flow[idx] = r.param1;
+                }
+                break;
+            case BoundaryType::RATING_CURVE:
+                boundary_.edge_bc_rating_curve_name[idx] = r.name;
+                boundary_.edge_bc_rating_curve[idx]      = -2;
+                break;
+            case BoundaryType::WALL:
+                break;
+            }
+        }
+        pending_bc_rows_.clear();
+    }
+
     // Set initial heads from ground elevation
     for (int i = 0; i < mesh_.n_triangles(); ++i) {
         state_.head[i] = mesh_.tri_cz[i];

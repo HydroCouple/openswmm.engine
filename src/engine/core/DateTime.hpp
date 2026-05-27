@@ -6,7 +6,7 @@
  *          a double where the integer part is the number of days since
  *          December 30, 1899 and the fractional part represents time-of-day.
  *
- *          DateDelta = 693594 days from 01/01/0000 to 12/31/1899 converts
+ *          DateDelta = 693594 days from 01/01/0000 to 12/31/1899 converts 
  *          between the proleptic Gregorian calendar and the OADate epoch.
  *
  *          Replicates the exact date/time encoding, decoding, and arithmetic
