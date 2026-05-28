@@ -145,6 +145,12 @@ int table_readTimeseries(char* tok[], int ntoks)
         sstrncpy(fname, tok[2], MAXFNAME);
         sstrncpy(Tseries[j].file.name, addAbsolutePath(fname), MAXFNAME);
         Tseries[j].file.mode = USE_FILE;
+
+        // --- check for optional station ID (allows multiple nodes in one file)
+        if ( ntoks >= 4 )
+            sstrncpy(Tseries[j].file.stationID, tok[3], MAXSTAID);
+        else
+            Tseries[j].file.stationID[0] = '\0';
         return 0;
     }
 
@@ -277,6 +283,7 @@ void   table_init(TTable *table)
     table->dxMin = 0.0;
     table->file.mode = NO_FILE;
     table->file.file = NULL;
+    table->file.stationID[0] = '\0';
     table->curveType = -1;
 }
 
@@ -836,48 +843,86 @@ int  table_parseFileLine(char* line, TTable* table, double* x, double* y)
 //           x = pointer to a date (as decimal days)
 //           y = pointer to a time series value
 //  Output:  updates values of x and y;
-//           returns -1 if line was a comment, 
+//           returns -1 if line was a comment or non-matching station ID,
 //           TRUE if line successfully parsed,
 //           FALSE if line could not be parsed
 //  Purpose: parses a line of time series data from an external file.
 //
+//  Supported formats:
+//    time value
+//    date time value
+//    stationID time value
+//    stationID date time value
+//
 {
     int   n;
-    char  s1[50],
-          s2[50],
-          s3[50];
+    char  s1[MAXSTAID+1],
+          s2[MAXSTAID+1],
+          s3[MAXSTAID+1],
+          s4[MAXSTAID+1];
     char* tStr;              // time as string
     char* yStr;              // value as string
     double yy;               // value as double
     DateTime d;              // day portion of date/time value
     DateTime t;              // time portion of date/time value
+    char  hasStationFilter;  // whether table has a station ID filter
 
-    // --- get 3 string tokens from line and check if its a comment
-    n = sscanf(line, "%s %s %s", s1, s2, s3);
+    // --- get up to 4 string tokens from line
+    s4[0] = '\0';
+    n = sscanf(line, "%s %s %s %s", s1, s2, s3, s4);
 
     // --- return if line is blank or is a comment
     tStr = strtok(line, SEPSTR);
     if ( tStr == NULL || *tStr == ';' ) return -1;
 
+    hasStationFilter = (table->file.stationID[0] != '\0');
+
+    // --- line has stationID, date, time and a value
+    if ( n == 4 )
+    {
+        // --- if station filter is set, skip non-matching lines
+        if ( hasStationFilter && !strcomp(s1, table->file.stationID) )
+            return -1;
+
+        // --- convert date string to numeric value
+        if ( !datetime_strToDate(s2, &d) ) return FALSE;
+
+        // --- update last recorded calendar date
+        table->lastDate = d;
+        tStr = s3;
+        yStr = s4;
+    }
+
+    // --- line has 3 tokens: could be (date time value) or (stationID time value)
+    else if ( n == 3 )
+    {
+        // --- try to interpret first token as a date
+        if ( datetime_strToDate(s1, &d) )
+        {
+            // --- first token is a date: format is (date time value)
+            table->lastDate = d;
+            tStr = s2;
+            yStr = s3;
+        }
+        else
+        {
+            // --- first token is a stationID: format is (stationID time value)
+            if ( hasStationFilter && !strcomp(s1, table->file.stationID) )
+                return -1;
+
+            d = table->lastDate;
+            tStr = s2;
+            yStr = s3;
+        }
+    }
+
     // --- line only has a time and a value
-    if ( n == 2 )
+    else if ( n == 2 )
     {
         // --- calendar date is same as last recorded date
         d = table->lastDate;
         tStr = s1;
         yStr = s2;
-    }
-
-    // --- line has date, time and a value
-    else if ( n == 3 )
-    {
-        // --- convert date string to numeric value
-        if ( !datetime_strToDate(s1, &d) ) return FALSE;
-
-        // --- update last recorded calendar date
-        table->lastDate = d;
-        tStr = s2;
-        yStr = s3;
     }
     else return FALSE;
 

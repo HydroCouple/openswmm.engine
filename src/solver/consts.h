@@ -23,6 +23,7 @@
 #define   MAXMSG             1024           // Max. # characters in message text
 #define   MAXLINE            1024           // Max. # characters per input line
 #define   MAXFNAME           259            // Max. # characters in file name
+#define   MAXSTAID           256            // Max. # characters in file station ID
 #define   MAXTOKS            40             // Max. items per line of input
 #define   MAXSTATES          10             // Max. # computed hyd. variables
 #define   MAXODES            4              // Max. # ODE's to be solved

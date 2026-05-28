@@ -79,6 +79,7 @@ typedef struct
    char          mode;                 // NO_FILE, SCRATCH, USE, or SAVE
    char          state;                // current state (OPENED, CLOSED)
    FILE*         file;                 // FILE structure pointer
+   char          stationID[MAXSTAID+1]; // station/node ID filter for multi-node files
 }  TFile;
 
 //-----------------------------------------
