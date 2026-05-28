@@ -1,6 +1,6 @@
 """Pythonic property-based access to SWMM rain gages."""
 
-from typing import Optional, TYPE_CHECKING
+from typing import Iterator, List, Optional, TYPE_CHECKING, Union
 
 from ._solver import (
     SWMMObjects,
@@ -17,7 +17,7 @@ class LegacyRainGage:
 
     __slots__ = ("_solver", "_index", "_name")
 
-    def __init__(self, solver: "Solver", index: int, name: str = ""):
+    def __init__(self, solver: "Solver", index: int, name: str = "") -> None:
         self._solver = solver
         self._index = index
         self._name = name or str(index)
@@ -85,13 +85,15 @@ class LegacyRainGages:
 
     __slots__ = ("_solver", "_items")
 
-    def __init__(self, solver: "Solver"):
+    def __init__(self, solver: "Solver") -> None:
         self._solver = solver
         count = solver.get_object_count(SWMMObjects.RAIN_GAGE)
         names = solver.get_object_names(SWMMObjects.RAIN_GAGE)
-        self._items = [LegacyRainGage(solver, i, names[i]) for i in range(count)]
+        self._items: List[LegacyRainGage] = [
+            LegacyRainGage(solver, i, names[i]) for i in range(count)
+        ]
 
-    def __getitem__(self, key) -> LegacyRainGage:
+    def __getitem__(self, key: Union[int, str]) -> LegacyRainGage:
         if isinstance(key, str):
             idx = self._solver.get_object_index(SWMMObjects.RAIN_GAGE, key)
             return self._items[idx]
@@ -100,7 +102,7 @@ class LegacyRainGages:
     def __len__(self) -> int:
         return len(self._items)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[LegacyRainGage]:
         return iter(self._items)
 
     def __repr__(self) -> str:

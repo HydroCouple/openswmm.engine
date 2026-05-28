@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from typing import Any, Tuple, Union
 
 import numpy as np
+from numpy.typing import NDArray
 
 from ._enums import LinkType, OrificeType, OutletRatingType, WeirType, XSectShape
 from ._nodes import Node
@@ -40,7 +41,7 @@ class XSection:
     g3: float
     g4: float
     def as_tuple(self) -> Tuple[XSectShape, float, float, float, float]: ...
-    def __iter__(self) -> Iterator: ...
+    def __iter__(self) -> Iterator[Any]: ...
 
 
 class PumpView:
@@ -89,8 +90,11 @@ class Link:
     initial_flow: float
     max_flow: float
 
-    # Cross-section
-    xsect: XSection
+    # Cross-section — setter accepts XSection or (shape, g1, g2, g3, g4) tuple.
+    @property
+    def xsect(self) -> XSection: ...
+    @xsect.setter
+    def xsect(self, value: Union[XSection, Tuple[XSectShape, float, float, float, float]]) -> None: ...
 
     # Hydraulic state
     flow: float
@@ -149,17 +153,17 @@ class Links:
     def rename(self, key: _Key, new_id: str) -> None: ...
 
     # Bulk numpy properties
-    flows: np.ndarray
-    depths: np.ndarray
-    velocities: np.ndarray
-    capacities: np.ndarray
-    volumes: np.ndarray
-    control_settings: np.ndarray
-    target_settings: np.ndarray
-    hyd_powers: np.ndarray
-    ids: np.ndarray
+    flows: NDArray[Any]
+    depths: NDArray[Any]
+    velocities: NDArray[Any]
+    capacities: NDArray[Any]
+    volumes: NDArray[Any]
+    control_settings: NDArray[Any]
+    target_settings: NDArray[Any]
+    hyd_powers: NDArray[Any]
+    ids: NDArray[Any]
 
-    def qualities(self, pollutant: _Key) -> np.ndarray: ...
-    def pump_stats(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]: ...
+    def qualities(self, pollutant: _Key) -> NDArray[Any]: ...
+    def pump_stats(self) -> Tuple[NDArray[Any], NDArray[Any], NDArray[Any]]: ...
 
     def __repr__(self) -> str: ...

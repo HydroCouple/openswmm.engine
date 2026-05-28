@@ -40,6 +40,10 @@ Example::
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict
+
+if TYPE_CHECKING:
+    from ._solver import Solver
 
 
 # =============================================================================
@@ -251,7 +255,7 @@ class ReportSnapshot:
 # =============================================================================
 
 
-def get_report_snapshot(solver) -> ReportSnapshot:
+def get_report_snapshot(solver: "Solver") -> ReportSnapshot:
     """Return the full post-simulation report as a :class:`ReportSnapshot`.
 
     Assembles all data that the engine writes to the ``.rpt`` text file
@@ -293,12 +297,13 @@ def get_report_snapshot(solver) -> ReportSnapshot:
     stats  = Statistics(solver)
 
     # --- Simulation duration (for pct_time_on) ---------------------------------
-    start_t  = solver.get_start_time()
-    end_t    = solver.get_end_time()
-    sim_secs = max((end_t - start_t) * 86400.0, 1.0)  # OADate days → seconds
+    sim_secs = max(
+        (solver.end_datetime - solver.start_datetime).total_seconds(),
+        1.0,
+    )
 
     # --- Routing diagnostics (convergence) ------------------------------------
-    raw_rs = {}
+    raw_rs: Dict[str, Any] = {}
     if hasattr(mb, "get_routing_stats"):
         try:
             raw_rs = mb.get_routing_stats() or {}
@@ -330,46 +335,46 @@ def get_report_snapshot(solver) -> ReportSnapshot:
 
     # --- Runoff continuity ----------------------------------------------------
     runoff_cont = RunoffContinuity(
-        continuity_error_pct=mb.get_runoff_continuity_error(),
-        total_rainfall=mb.get_runoff_total(RunoffTotal.RAINFALL),
-        total_evaporation=mb.get_runoff_total(RunoffTotal.EVAP),
-        total_infiltration=mb.get_runoff_total(RunoffTotal.INFIL),
-        total_runoff=mb.get_runoff_total(RunoffTotal.RUNOFF),
-        total_snow_removal=mb.get_runoff_total(RunoffTotal.SNOWREMOV),
-        initial_storage=mb.get_runoff_total(RunoffTotal.INITSTORE),
-        final_storage=mb.get_runoff_total(RunoffTotal.FINALSTORE),
+        continuity_error_pct=mb.runoff_continuity_error,
+        total_rainfall=mb.runoff_total(RunoffTotal.RAINFALL),
+        total_evaporation=mb.runoff_total(RunoffTotal.EVAP),
+        total_infiltration=mb.runoff_total(RunoffTotal.INFIL),
+        total_runoff=mb.runoff_total(RunoffTotal.RUNOFF),
+        total_snow_removal=mb.runoff_total(RunoffTotal.SNOWREMOV),
+        initial_storage=mb.runoff_total(RunoffTotal.INITSTORE),
+        final_storage=mb.runoff_total(RunoffTotal.FINALSTORE),
     )
 
     # --- Routing continuity ---------------------------------------------------
     routing_cont = RoutingContinuity(
-        continuity_error_pct=mb.get_routing_continuity_error(),
-        dry_weather_inflow=mb.get_routing_total(RoutingTotal.DRY_WEATHER),
-        wet_weather_inflow=mb.get_routing_total(RoutingTotal.WET_WEATHER),
-        groundwater_inflow=mb.get_routing_total(RoutingTotal.GW_INFLOW),
-        rdii_inflow=mb.get_routing_total(RoutingTotal.RDII),
-        external_inflow=mb.get_routing_total(RoutingTotal.EXTERNAL),
-        total_flooding=mb.get_routing_total(RoutingTotal.FLOODING),
-        total_outflow=mb.get_routing_total(RoutingTotal.OUTFLOW),
-        evaporation_loss=mb.get_routing_total(RoutingTotal.EVAP_LOSS),
-        seepage_loss=mb.get_routing_total(RoutingTotal.SEEP_LOSS),
-        initial_storage=mb.get_routing_total(RoutingTotal.INIT_STORAGE),
-        final_storage=mb.get_routing_total(RoutingTotal.FINAL_STORAGE),
+        continuity_error_pct=mb.routing_continuity_error,
+        dry_weather_inflow=mb.routing_total(RoutingTotal.DRY_WEATHER),
+        wet_weather_inflow=mb.routing_total(RoutingTotal.WET_WEATHER),
+        groundwater_inflow=mb.routing_total(RoutingTotal.GW_INFLOW),
+        rdii_inflow=mb.routing_total(RoutingTotal.RDII),
+        external_inflow=mb.routing_total(RoutingTotal.EXTERNAL),
+        total_flooding=mb.routing_total(RoutingTotal.FLOODING),
+        total_outflow=mb.routing_total(RoutingTotal.OUTFLOW),
+        evaporation_loss=mb.routing_total(RoutingTotal.EVAP_LOSS),
+        seepage_loss=mb.routing_total(RoutingTotal.SEEP_LOSS),
+        initial_storage=mb.routing_total(RoutingTotal.INIT_STORAGE),
+        final_storage=mb.routing_total(RoutingTotal.FINAL_STORAGE),
     )
 
     # --- Quality continuity (per pollutant) -----------------------------------
     quality_cont: list[QualityContinuity] = []
-    for i in range(polls.count()):
+    for i in range(len(polls)):
         try:
-            seep = mb.get_quality_seep_loss(i) if hasattr(mb, "get_quality_seep_loss") else 0.0
+            seep = mb.quality_seep_loss(i)
         except Exception:
             seep = 0.0
         try:
-            evap = mb.get_quality_evap_loss(i) if hasattr(mb, "get_quality_evap_loss") else 0.0
+            evap = mb.quality_evap_loss(i)
         except Exception:
             evap = 0.0
         quality_cont.append(QualityContinuity(
             pollutant_id=polls.get_id(i),
-            continuity_error_pct=mb.get_quality_continuity_error(i),
+            continuity_error_pct=mb.quality_continuity_error(i),
             seep_loss=seep,
             evap_loss=evap,
         ))
@@ -378,24 +383,29 @@ def get_report_snapshot(solver) -> ReportSnapshot:
     node_flooding: list[NodeFloodingEntry] = []
     storage_summary: list[NodeFloodingEntry] = []
 
-    for i in range(nodes.count()):
-        ntype_code = nodes.get_type(i)
+    node_max_depth = stats.node_max_depth
+    node_max_overflow = stats.node_max_overflow
+    node_vol_flooded = stats.node_vol_flooded
+    node_time_flooded = stats.node_time_flooded
+
+    for i in range(len(nodes)):
+        ntype = nodes[i].type
         try:
-            ntype_name = NodeType(ntype_code).name
-        except ValueError:
-            ntype_name = f"TYPE_{ntype_code}"
+            ntype_name = ntype.name
+        except (ValueError, AttributeError):
+            ntype_name = f"TYPE_{int(ntype)}"
 
         entry = NodeFloodingEntry(
             node_id=nodes.get_id(i),
             node_type=ntype_name,
-            max_depth=stats.node_max_depth(i),
-            max_overflow_rate=stats.node_max_overflow(i),
-            total_flood_volume=stats.node_vol_flooded(i),
-            time_flooded=stats.node_time_flooded(i),
+            max_depth=float(node_max_depth[i]),
+            max_overflow_rate=float(node_max_overflow[i]),
+            total_flood_volume=float(node_vol_flooded[i]),
+            time_flooded=float(node_time_flooded[i]),
         )
         if entry.total_flood_volume > 0.0:
             node_flooding.append(entry)
-        if ntype_code == int(NodeType.STORAGE):
+        if ntype == NodeType.STORAGE:
             storage_summary.append(entry)
 
     node_flooding.sort(key=lambda e: e.total_flood_volume, reverse=True)
@@ -404,31 +414,38 @@ def get_report_snapshot(solver) -> ReportSnapshot:
     link_flow_summary: list[LinkFlowEntry] = []
     pump_summary: list[PumpEntry] = []
 
-    for i in range(links.count()):
-        ltype_code = links.get_type(i)
+    link_max_flow = stats.link_max_flow
+    link_max_velocity = stats.link_max_velocity
+    link_max_filling = stats.link_max_filling
+    link_vol_flow = stats.link_vol_flow
+    link_surcharge_time = stats.link_surcharge_time
+
+    for i in range(len(links)):
+        link = links[i]
+        ltype = link.type
         try:
-            ltype_name = LinkType(ltype_code).name
-        except ValueError:
-            ltype_name = f"TYPE_{ltype_code}"
+            ltype_name = ltype.name
+        except (ValueError, AttributeError):
+            ltype_name = f"TYPE_{int(ltype)}"
 
         link_flow_summary.append(LinkFlowEntry(
             link_id=links.get_id(i),
             link_type=ltype_name,
-            max_flow=stats.link_max_flow(i),
-            max_velocity=stats.link_max_velocity(i),
-            max_filling=stats.link_max_filling(i),
-            total_volume=stats.link_vol_flow(i),
-            surcharge_time=stats.link_surcharge_time(i),
+            max_flow=float(link_max_flow[i]),
+            max_velocity=float(link_max_velocity[i]),
+            max_filling=float(link_max_filling[i]),
+            total_volume=float(link_vol_flow[i]),
+            surcharge_time=float(link_surcharge_time[i]),
         ))
 
-        if ltype_code == int(LinkType.PUMP):
-            on_time = links.get_stat_pump_on_time(i)
+        if ltype == LinkType.PUMP:
+            on_time = float(link.stats.pump_on_time)
             pump_summary.append(PumpEntry(
                 link_id=links.get_id(i),
-                pump_curve_idx=links.get_pump_curve(i),
-                num_startups=links.get_stat_pump_cycles(i),
+                pump_curve_idx=link.pump.curve,
+                num_startups=link.stats.pump_cycles,
                 total_on_time=on_time,
-                total_volume=links.get_stat_pump_volume(i),
+                total_volume=float(link.stats.pump_volume),
                 pct_time_on=min(on_time / sim_secs * 100.0, 100.0),
             ))
 
@@ -437,14 +454,17 @@ def get_report_snapshot(solver) -> ReportSnapshot:
     # --- Subcatchment section -------------------------------------------------
     subcatchment_summary: list[SubcatchmentEntry] = []
 
-    for i in range(sc.count()):
-        precip = stats.subcatch_precip(i)
-        runoff = stats.subcatch_runoff_vol(i)
+    sub_runoff_vol = stats.subcatchment_runoff_vol
+    sub_max_runoff = stats.subcatchment_max_runoff
+
+    for i in range(len(sc)):
+        precip = float(sc[i].stats.precip)
+        runoff = float(sub_runoff_vol[i])
         subcatchment_summary.append(SubcatchmentEntry(
             subcatch_id=sc.get_id(i),
             total_precip=precip,
             total_runoff_vol=runoff,
-            max_runoff_rate=stats.subcatch_max_runoff(i),
+            max_runoff_rate=float(sub_max_runoff[i]),
             runoff_coefficient=runoff / precip if precip > 0.0 else 0.0,
         ))
 

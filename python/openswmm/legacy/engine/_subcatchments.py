@@ -5,7 +5,7 @@ Provides :class:`LegacySubcatchments` (collection) and
 LID access via sub_index, and mass-balance documentation.
 """
 
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING, Union
 
 from ._solver import (
     SWMMObjects,
@@ -22,15 +22,15 @@ class LegacySubcatchment:
 
     __slots__ = ("_solver", "_index", "_name")
 
-    def __init__(self, solver: "Solver", index: int, name: str = ""):
+    def __init__(self, solver: "Solver", index: int, name: str = "") -> None:
         self._solver = solver
         self._index = index
         self._name = name or str(index)
 
-    def _get(self, prop, **kw) -> float:
+    def _get(self, prop: SP, **kw: Any) -> float:
         return self._solver.get_value(SWMMObjects.SUBCATCHMENT, prop, self._index, **kw)
 
-    def _set(self, prop, value: float, **kw) -> None:
+    def _set(self, prop: SP, value: float, **kw: Any) -> None:
         self._solver.set_value(SWMMObjects.SUBCATCHMENT, prop, self._index, value, **kw)
 
     # --- identity ---
@@ -247,7 +247,7 @@ class LegacySubcatchment:
 
     # --- statistics (after end()) ---
     @property
-    def statistics(self) -> dict:
+    def statistics(self) -> Dict[str, Any]:
         """Cumulative subcatchment statistics (call after ``solver.end()``)."""
         return self._solver.get_subcatchment_statistics(self._index)
 
@@ -260,13 +260,15 @@ class LegacySubcatchments:
 
     __slots__ = ("_solver", "_items")
 
-    def __init__(self, solver: "Solver"):
+    def __init__(self, solver: "Solver") -> None:
         self._solver = solver
         count = solver.get_object_count(SWMMObjects.SUBCATCHMENT)
         names = solver.get_object_names(SWMMObjects.SUBCATCHMENT)
-        self._items = [LegacySubcatchment(solver, i, names[i]) for i in range(count)]
+        self._items: List[LegacySubcatchment] = [
+            LegacySubcatchment(solver, i, names[i]) for i in range(count)
+        ]
 
-    def __getitem__(self, key) -> LegacySubcatchment:
+    def __getitem__(self, key: Union[int, str]) -> LegacySubcatchment:
         if isinstance(key, str):
             idx = self._solver.get_object_index(SWMMObjects.SUBCATCHMENT, key)
             return self._items[idx]
@@ -275,7 +277,7 @@ class LegacySubcatchments:
     def __len__(self) -> int:
         return len(self._items)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[LegacySubcatchment]:
         return iter(self._items)
 
     def __repr__(self) -> str:

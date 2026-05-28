@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from typing import Any, Tuple, Union
 
 import numpy as np
+from numpy.typing import NDArray
 
 from ._enums import NodeType, OutfallType
 from ._solver import Solver
@@ -117,17 +118,17 @@ class Nodes:
     def rename(self, key: _Key, new_id: str) -> None: ...
 
     # Bulk numpy properties
-    depths: np.ndarray
-    heads: np.ndarray
-    inflows: np.ndarray
-    overflows: np.ndarray
-    volumes: np.ndarray
-    outflows: np.ndarray
-    losses: np.ndarray
-    lateral_inflows: np.ndarray
-    ids: np.ndarray
+    depths: NDArray[Any]
+    heads: NDArray[Any]
+    inflows: NDArray[Any]
+    overflows: NDArray[Any]
+    volumes: NDArray[Any]
+    outflows: NDArray[Any]
+    losses: NDArray[Any]
+    lateral_inflows: NDArray[Any]
+    ids: NDArray[Any]
 
-    def set_lateral_inflows(self, values: np.ndarray) -> None: ...
-    def qualities(self, pollutant: _Key) -> np.ndarray: ...
+    def set_lateral_inflows(self, values: NDArray[Any]) -> None: ...
+    def qualities(self, pollutant: _Key) -> NDArray[Any]: ...
 
     def __repr__(self) -> str: ...

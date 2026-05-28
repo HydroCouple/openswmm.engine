@@ -2,9 +2,10 @@
 
 from collections.abc import Iterator
 from datetime import datetime
-from typing import Iterable, Union
+from typing import Any, Iterable, Union
 
 import numpy as np
+from numpy.typing import NDArray
 
 from ._enums import PatternType
 from ._solver import Solver
@@ -26,13 +27,13 @@ class _PointTable:
 
 
 class TimeSeries(_PointTable):
-    points: np.ndarray  # structured: (time: datetime64[s], value: float64)
+    points: NDArray[Any]  # structured: (time: datetime64[s], value: float64)
 
     def add(self, when: Union[datetime, float], value: float) -> None: ...
 
 
 class Curve(_PointTable):
-    points: np.ndarray  # float64, shape (n_points, 2)
+    points: NDArray[Any]  # float64, shape (n_points, 2)
 
 
 class Tables:

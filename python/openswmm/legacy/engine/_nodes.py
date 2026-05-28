@@ -5,7 +5,7 @@ element) wrappers around the generic ``Solver.get_value`` / ``set_value``
 interface with typed properties, docstrings, and mass-balance documentation.
 """
 
-from typing import Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING, Union
 
 from ._solver import (
     SWMMObjects,
@@ -23,15 +23,15 @@ class LegacyNode:
 
     __slots__ = ("_solver", "_index", "_name")
 
-    def __init__(self, solver: "Solver", index: int, name: str = ""):
+    def __init__(self, solver: "Solver", index: int, name: str = "") -> None:
         self._solver = solver
         self._index = index
         self._name = name or str(index)
 
-    def _get(self, prop: SWMMNodeProperties, **kw) -> float:
+    def _get(self, prop: SWMMNodeProperties, **kw: Any) -> float:
         return self._solver.get_value(SWMMObjects.NODE, prop, self._index, **kw)
 
-    def _set(self, prop: SWMMNodeProperties, value: float, **kw) -> None:
+    def _set(self, prop: SWMMNodeProperties, value: float, **kw: Any) -> None:
         self._solver.set_value(SWMMObjects.NODE, prop, self._index, value, **kw)
 
     # --- identity ---
@@ -202,7 +202,7 @@ class LegacyNode:
 
     # --- statistics (after end()) ---
     @property
-    def statistics(self) -> dict:
+    def statistics(self) -> Dict[str, Any]:
         """Cumulative node statistics (call after ``solver.end()``)."""
         return self._solver.get_node_statistics(self._index)
 
@@ -215,13 +215,15 @@ class LegacyNodes:
 
     __slots__ = ("_solver", "_nodes")
 
-    def __init__(self, solver: "Solver"):
+    def __init__(self, solver: "Solver") -> None:
         self._solver = solver
         count = solver.get_object_count(SWMMObjects.NODE)
         names = solver.get_object_names(SWMMObjects.NODE)
-        self._nodes = [LegacyNode(solver, i, names[i]) for i in range(count)]
+        self._nodes: List[LegacyNode] = [
+            LegacyNode(solver, i, names[i]) for i in range(count)
+        ]
 
-    def __getitem__(self, key) -> LegacyNode:
+    def __getitem__(self, key: Union[int, str]) -> LegacyNode:
         if isinstance(key, str):
             idx = self._solver.get_object_index(SWMMObjects.NODE, key)
             return self._nodes[idx]
@@ -230,7 +232,7 @@ class LegacyNodes:
     def __len__(self) -> int:
         return len(self._nodes)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[LegacyNode]:
         return iter(self._nodes)
 
     def __repr__(self) -> str:

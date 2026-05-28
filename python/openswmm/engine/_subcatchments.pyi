@@ -10,9 +10,10 @@ Type stubs for :mod:`openswmm.engine._subcatchments`.
 """
 
 from collections.abc import Iterator, MutableMapping
-from typing import Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import numpy as np
+from numpy.typing import NDArray
 
 from ._enums import InfilModel
 from ._gages import Gage
@@ -113,11 +114,11 @@ class Subcatchments:
     def add(self, sub_id: str) -> Subcatchment: ...
     def rename(self, key: _Key, new_id: str) -> None: ...
 
-    runoffs: np.ndarray
-    rainfalls: np.ndarray
-    evaps: np.ndarray
-    infils: np.ndarray
-    snow_depths: np.ndarray
-    ids: np.ndarray
+    runoffs: NDArray[Any]
+    rainfalls: NDArray[Any]
+    evaps: NDArray[Any]
+    infils: NDArray[Any]
+    snow_depths: NDArray[Any]
+    ids: NDArray[Any]
 
-    def qualities(self, pollutant: _Key) -> np.ndarray: ...
+    def qualities(self, pollutant: _Key) -> NDArray[Any]: ...

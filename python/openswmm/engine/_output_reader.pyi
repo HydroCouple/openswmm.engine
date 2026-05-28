@@ -11,14 +11,15 @@ Type stubs for :mod:`openswmm.engine._output_reader`.
 
 from datetime import datetime, timedelta
 from os import PathLike
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
+from numpy.typing import NDArray
 
 from ._enums import FlowUnits, OutLinkVar, OutNodeVar, OutSubcatchVar, OutSystemVar
 
 
-_PathLike = Union[str, PathLike]
+_PathLike = Union[str, PathLike[str]]
 _Key = Union[int, str]
 
 
@@ -50,18 +51,18 @@ class OutputReader:
     subcatchment_ids: List[str]
 
     # Time axis
-    period_times: np.ndarray  # dtype = datetime64[s]
+    period_times: NDArray[Any]  # dtype = datetime64[s]
 
     def __init__(self, path: _PathLike) -> None: ...
     def close(self) -> None: ...
     def __enter__(self) -> "OutputReader": ...
-    def __exit__(self, *args) -> bool: ...
+    def __exit__(self, *args: Any) -> bool: ...
     def __repr__(self) -> str: ...
 
     # Per-period results
-    def node_result(self, period: int, var: OutNodeVar) -> np.ndarray: ...
-    def link_result(self, period: int, var: OutLinkVar) -> np.ndarray: ...
-    def subcatchment_result(self, period: int, var: OutSubcatchVar) -> np.ndarray: ...
+    def node_result(self, period: int, var: OutNodeVar) -> NDArray[Any]: ...
+    def link_result(self, period: int, var: OutLinkVar) -> NDArray[Any]: ...
+    def subcatchment_result(self, period: int, var: OutSubcatchVar) -> NDArray[Any]: ...
     def system_result(self, period: int, var: OutSystemVar) -> float: ...
 
     # Time series
@@ -72,7 +73,7 @@ class OutputReader:
         *,
         start: Optional[int] = ...,
         end: Optional[int] = ...,
-    ) -> np.ndarray: ...
+    ) -> NDArray[Any]: ...
     def link_series(
         self,
         link: _Key,
@@ -80,7 +81,7 @@ class OutputReader:
         *,
         start: Optional[int] = ...,
         end: Optional[int] = ...,
-    ) -> np.ndarray: ...
+    ) -> NDArray[Any]: ...
     def subcatchment_series(
         self,
         sub: _Key,
@@ -88,14 +89,14 @@ class OutputReader:
         *,
         start: Optional[int] = ...,
         end: Optional[int] = ...,
-    ) -> np.ndarray: ...
+    ) -> NDArray[Any]: ...
     def system_series(
         self,
         var: OutSystemVar,
         *,
         start: Optional[int] = ...,
         end: Optional[int] = ...,
-    ) -> np.ndarray: ...
+    ) -> NDArray[Any]: ...
 
     # All-attribute dicts at one period
     def node_attributes(

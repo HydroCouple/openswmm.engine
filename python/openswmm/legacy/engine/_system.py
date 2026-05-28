@@ -1,6 +1,6 @@
 """Pythonic access to SWMM system-level properties and mass balance totals."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Tuple
 
 from ._solver import (
     SWMMObjects,
@@ -22,7 +22,7 @@ class LegacySystem:
 
     __slots__ = ("_solver",)
 
-    def __init__(self, solver: "Solver"):
+    def __init__(self, solver: "Solver") -> None:
         self._solver = solver
 
     def _get(self, prop: SWMMSystemProperties) -> float:
@@ -98,7 +98,7 @@ class LegacySystem:
 
     # --- mass balance totals (call after solver.end()) ---
     @property
-    def routing_totals(self) -> dict:
+    def routing_totals(self) -> Dict[str, float]:
         """System-level flow routing mass balance totals.
 
         Returns a dict with keys: dw_inflow, ww_inflow, gw_inflow,
@@ -115,7 +115,7 @@ class LegacySystem:
         return self._solver.get_routing_totals()
 
     @property
-    def runoff_totals(self) -> dict:
+    def runoff_totals(self) -> Dict[str, float]:
         """System-level surface runoff mass balance totals.
 
         Returns a dict with keys: rainfall, evap, infil, runoff, drains,
@@ -125,7 +125,7 @@ class LegacySystem:
         return self._solver.get_runoff_totals()
 
     @property
-    def mass_balance_error(self):
+    def mass_balance_error(self) -> Tuple[float, float, float]:
         """Mass balance errors as (runoff_err%, flow_err%, quality_err%)."""
         return self._solver.get_mass_balance_error()
 

@@ -11,9 +11,10 @@ Type stubs for :mod:`openswmm.engine._gages`.
 
 from collections.abc import Iterator
 from datetime import timedelta
-from typing import Union
+from typing import Any, Union
 
 import numpy as np
+from numpy.typing import NDArray
 
 from ._enums import GageDataSource, GageRainType
 from ._solver import Solver
@@ -53,5 +54,5 @@ class Gages:
     def add(self, gage_id: str) -> Gage: ...
     def rename(self, key: _Key, new_id: str) -> None: ...
 
-    rainfalls: np.ndarray
-    ids: np.ndarray
+    rainfalls: NDArray[Any]
+    ids: NDArray[Any]

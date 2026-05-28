@@ -17,7 +17,11 @@ water quality, spatial data, and GeoPackage I/O.
 # =============================================================================
 # Engine lifecycle & errors
 # =============================================================================
-from ._solver import Solver as Solver
+from ._solver import (
+    Solver as Solver,
+    run as run,
+    run_with_callback as run_with_callback,
+)
 from ._exceptions import (
     BadHandleError as BadHandleError,
     BadIndexError as BadIndexError,
