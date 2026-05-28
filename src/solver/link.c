@@ -452,6 +452,11 @@ void  link_validate(int j)
         Node[n].fullDepth = MAX(Node[n].fullDepth,
                             Link[j].offset1 + Link[j].xsect.yFull);
     }
+    else if ( Node[n].fullDepth > 0.0 &&
+              Link[j].offset1 + Link[j].xsect.yFull > Node[n].fullDepth )
+    {
+        report_writeWarningMsg(WARN13, Node[n].ID);
+    }
 
     // --- do same for downstream node only for conduit links
     n = Link[j].node2;
