@@ -34,8 +34,8 @@
 #define   ZERO               1.E-10         // Effective zero value
 #define   MISSING            -1.E10         // Missing value code
 #define   PI                 3.141592654    // Value of pi
-#define   GRAVITY            32.2           // accel. of gravity in US units
-#define   SI_GRAVITY         9.81           // accel of gravity in SI units
+#define   GRAVITY            32.174         // accel. of gravity in US units
+#define   SI_GRAVITY         9.80665        // accel of gravity in SI units
 /* DEPRECATED
 #define   MAXFILESIZE        2147483647L    // largest file size in bytes
 */
@@ -43,7 +43,7 @@
 //-----------------------------
 // Units factor in Manning Eqn.
 //-----------------------------
-#define   PHI 1.486
+#define   PHI 1.4859
 
 //----------------------------------------------
 // Definition of measureable runoff flow & depth
