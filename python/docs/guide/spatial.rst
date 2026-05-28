@@ -4,259 +4,125 @@ Spatial  (CRS, coordinates, geometry)
 
 .. note::
 
-   **Engine:** OpenSWMM 6 — refactored.  Documents
-   :class:`openswmm.engine.Spatial`.  This is unique to the v6 engine.
+   **Engine:** OpenSWMM 6 — refactored.
 
 .. currentmodule:: openswmm.engine
 
-The :class:`Spatial` class manages the geometric / cartographic
-metadata of the model:
-
-* **CRS** — Coordinate Reference System (EPSG code or WKT string).
-* **Coordinates** — point coordinates for nodes, links, gages, and
-  subcatchment centroids.
-* **Geometry** — link vertices (polylines) and subcatchment polygons.
+``solver.spatial`` exposes the geographic side of the model: the
+coordinate reference system, node/link/subcatchment/gage coordinates,
+link polyline vertices, and subcatchment polygons.
 
 Reference: ``openswmm_spatial.h``.
 
 ----
 
-Class signature
-===============
+Quickstart
+==========
 
 .. code-block:: python
 
-    class Spatial:
-        def __init__(self, solver: Solver) -> None: ...
+    from openswmm.engine import Solver
+
+    with Solver("model.inp") as s:
+        # CRS — read or write.
+        print(s.spatial.crs)
+        s.spatial.crs = "EPSG:4326"
+
+        # Per-object coords (int or str).
+        x, y = s.spatial.node_coord("J1")
+        s.spatial.set_node_coord("J1", x + 5.0, y)
+
+        # Bulk arrays.
+        coords = s.spatial.node_coords()        # shape (n_nodes, 2)
+        s.spatial.set_node_coords(coords * 1.0)  # round-trip
+
+        # Geometry — polyline + polygon (numpy arrays).
+        verts = s.spatial.link_vertices("C1")    # (n, 2)
+        poly = s.spatial.subcatchment_polygon("S1")
 
 ----
-
-Key methods
-===========
 
 CRS
----
+===
 
 .. list-table::
+   :widths: 30 70
    :header-rows: 1
-   :widths: 35 65
 
-   * - Method
-     - Action / returns
-   * - :meth:`get_crs()`
-     - The model's CRS string (EPSG code, PROJ string, or WKT).
-   * - :meth:`set_crs(crs)`
-     - Set the CRS.  Accepts ``"EPSG:4326"``, full WKT, etc.
-
-Coordinates
------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 50 50
-
-   * - Method
-     - Action / returns
-   * - :meth:`get_node_coord(idx)` / :meth:`set_node_coord(idx, x, y)`
-     - Node point coordinates (returns ``(x, y)`` tuple).
-   * - :meth:`get_node_coords_bulk()` / :meth:`set_node_coords_bulk(x, y)`
-     - Bulk read / write of every node's coordinates.  Returns a tuple
-       of two ``ndarray[float64]`` of shape ``(n_nodes,)`` — *not* a 2-D
-       array — so unpack as ``x, y = spatial.get_node_coords_bulk()``.
-   * - :meth:`get_link_coord(idx)` / :meth:`set_link_coord(idx, x, y)`
-     - Link "centroid" / annotation point.
-   * - :meth:`get_subcatch_coord(idx)` / :meth:`set_subcatch_coord(idx, x, y)`
-     - Subcatchment centroid.
-   * - :meth:`get_gage_coord(idx)` / :meth:`set_gage_coord(idx, x, y)`
-     - Rain gage location.
-
-Link vertices  (polylines)
---------------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 50 50
-
-   * - Method
-     - Action / returns
-   * - :meth:`get_link_vertex_count(idx)`
-     - Number of polyline vertices on link ``idx`` (includes upstream
-       + downstream node coordinates as first and last entries).
-   * - :meth:`get_link_vertices(idx)`
-     - Tuple ``(x, y)`` of two ``ndarray[float64]`` of shape
-       ``(get_link_vertex_count(idx),)``.  Order is upstream node,
-       interior vertices, downstream node.
-   * - :meth:`set_link_vertices(idx, x, y)`
-     - Replace the vertex list; ``x`` and ``y`` are equal-length
-       ``ndarray[float64]``.
-
-Subcatchment polygons
----------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 50 50
-
-   * - Method
-     - Action / returns
-   * - :meth:`get_subcatch_polygon_count(idx)`
-     - Number of vertices on the subcatchment polygon.
-   * - :meth:`get_subcatch_polygon(idx)`
-     - Tuple ``(x, y)`` of two ``ndarray[float64]`` of shape
-       ``(get_subcatch_polygon_count(idx),)``.
-   * - :meth:`set_subcatch_polygon(idx, x, y)`
-     - Replace the polygon; ``x`` and ``y`` are equal-length
-       ``ndarray[float64]``.
+   * - Property / method
+     - What it does
+   * - ``s.spatial.crs``
+     - ``str`` property. Reads/writes the CRS string (EPSG token, WKT,
+       or proj string). Reading a model with no CRS raises
+       :class:`CRSError`.
 
 ----
 
-End-to-end example
-==================
+Per-object coordinates
+======================
 
-.. code-block:: python
-
-    from openswmm.engine import Solver, Spatial, Nodes
-
-    with Solver("urban.inp", "urban.rpt", "urban.out") as s:
-        spatial = Spatial(s)
-        nodes = Nodes(s)
-
-        print("CRS:", spatial.get_crs() or "<none>")
-
-        # Print every junction's coordinates
-        for i in range(nodes.count()):
-            x, y = spatial.get_node_coord(i)
-            print(f"  {nodes.get_id(i):<12}  ({x:.2f}, {y:.2f})")
-
-----
-
-Common recipes
-==============
-
-Set a CRS at edit time
-----------------------
-
-.. code-block:: python
-
-    s.open()
-    spatial.set_crs("EPSG:6433")           # Idaho West (US Survey Feet)
-    s.initialize()
-
-Bulk-read every node coordinate into NumPy
--------------------------------------------
-
-.. code-block:: python
-
-    x, y = spatial.get_node_coords_bulk()    # two ndarrays, shape (n_nodes,)
-
-Re-project node coordinates with pyproj
----------------------------------------
-
-.. code-block:: python
-
-    from pyproj import Transformer
-
-    src_crs = spatial.get_crs() or "EPSG:6433"
-    dst_crs = "EPSG:4326"
-    tx = Transformer.from_crs(src_crs, dst_crs, always_xy=True)
-
-    x, y = spatial.get_node_coords_bulk()      # detach implicitly via assignment
-    lon, lat = tx.transform(x, y)
-
-    spatial.set_node_coords_bulk(lon, lat)
-    spatial.set_crs(dst_crs)
-
-Walk every link vertex
-----------------------
-
-.. code-block:: python
-
-    for i in range(links.count()):
-        n = spatial.get_link_vertex_count(i)
-        if n == 0:
-            continue
-        xs, ys = spatial.get_link_vertices(i)
-        print(f"{links.get_id(i):<12} has {n} vertices (incl. endpoints)")
-        for x, y in zip(xs, ys):
-            print(f"     ({x:.2f}, {y:.2f})")
-
-Export every subcatchment polygon to GeoJSON
---------------------------------------------
-
-.. code-block:: python
-
-    import json
-
-    features = []
-    for i in range(sc.count()):
-        n = spatial.get_subcatch_polygon_count(i)
-        if n < 3:
-            continue
-        xs, ys = spatial.get_subcatch_polygon(i)
-        ring = list(zip(xs.tolist(), ys.tolist()))
-        ring_closed = ring + [ring[0]]
-        features.append({
-            "type": "Feature",
-            "id":   sc.get_id(i),
-            "geometry": {"type": "Polygon", "coordinates": [ring_closed]},
-            "properties": {"id": sc.get_id(i)},
-        })
-
-    with open("subcatchments.geojson", "w") as f:
-        json.dump({"type": "FeatureCollection", "features": features}, f)
-
-----
-
-Bulk arrays
-===========
+All four families have a uniform shape: ``int | str`` object selectors,
+``(x, y)`` tuples, plus explicit setters.
 
 .. list-table::
+   :widths: 36 30 34
    :header-rows: 1
-   :widths: 40 60
 
    * - Method
-     - Shape
-   * - :meth:`get_node_coords_bulk()`
-     - Tuple ``(x, y)`` of two ``ndarray[float64]``, each of shape
-       ``(n_nodes,)``.
-   * - :meth:`set_node_coords_bulk(x, y)`
-     - Same shapes; updates every node coordinate at once.
-   * - :meth:`get_link_vertices(idx)` / :meth:`get_subcatch_polygon(idx)`
-     - Tuple ``(x, y)`` of equal-length ``ndarray[float64]``.
-
-For per-link or per-subcatchment polylines there is no project-wide
-bulk surface — the vertex counts vary per object, so you must walk
-them.
+     - Object selector
+     - Returns / accepts
+   * - ``node_coord(node)`` / ``set_node_coord(node, x, y)``
+     - ``int | str``
+     - ``(x, y)`` tuple
+   * - ``link_coord(link)`` / ``set_link_coord(link, x, y)``
+     - ``int | str``
+     - ``(x, y)`` tuple
+   * - ``subcatchment_coord(sub)`` / ``set_subcatchment_coord(sub, x, y)``
+     - ``int | str``
+     - ``(x, y)`` tuple
+   * - ``gage_coord(gage)`` / ``set_gage_coord(gage, x, y)``
+     - ``int | str``
+     - ``(x, y)`` tuple
 
 ----
 
-EngineState requirements & exceptions
-=====================================
+Bulk coordinate arrays
+======================
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 25 45
+For vectorised work, use the bulk node-coord pair:
 
-   * - Method group
-     - Required state
-     - Notes
-   * - read accessors
-     - ``OPENED`` or later
-     - n/a
-   * - setters (CRS, coords, vertices)
-     - ``OPENED``
-     - Geometry is metadata; mid-run changes do not affect routing.
+.. code-block:: python
 
-Common :class:`EngineError` codes:
+    coords = s.spatial.node_coords()       # np.ndarray, shape (n_nodes, 2)
+    coords += [0.0, 100.0]                  # shift north by 100 ft
+    s.spatial.set_node_coords(coords)
 
-* ``INVALID_INDEX`` — out-of-range index.
-* ``INVALID_TYPE``  — too few vertices for a polygon (≥ 3 required).
+The C API doesn't currently expose bulk equivalents for links,
+subcatchments, or gages — those go one at a time.
+
+----
+
+Polyline + polygon geometry
+===========================
+
+.. code-block:: python
+
+    verts = s.spatial.link_vertices("C1")       # (n, 2) float64
+    poly  = s.spatial.subcatchment_polygon("S1") # (n, 2) float64
+
+    # Replace.
+    s.spatial.set_link_vertices("C1", new_verts)
+    s.spatial.set_subcatchment_polygon("S1", new_poly)
+
+Both arrays are column-stacked ``(x, y)`` pairs; reshape with NumPy as
+needed.
 
 ----
 
 See also
 ========
 
-* :doc:`hotstart` — CRS captured in / restored from hot-start files.
-* :doc:`nodes`, :doc:`links`, :doc:`subcatchments` — the objects
-  whose geometry this class manages.
+* :doc:`nodes`, :doc:`links`, :doc:`subcatchments`, :doc:`gages` — the
+  topology / property side of the same objects.
+* :doc:`plotting` — recipes for drawing the network.
+* :doc:`error_handling`.

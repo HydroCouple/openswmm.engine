@@ -293,3 +293,28 @@ addopts   = "-v --tb=short"
 markers   = [
     "slow: tests that take more than ~1s of wall time (concurrent-simulation, perf checks). Skip with -m 'not slow'.",
 ]
+
+# ============================================================================
+# mypy  (Pythonic v1 bindings)
+# ============================================================================
+# v1 ships with hand-maintained .pyi stubs for every Cython extension.
+# We run a default-mode check across openswmm.engine plus a narrower
+# strict-mode pass on the pure-Python modules. The full strict-mode
+# gate lands alongside the legacy test-suite migration (see
+# docs/PYTHONIC_BINDINGS_PLAN.md §6 P9 deferred items).
+[tool.mypy]
+python_version         = "3.10"
+files                  = ["openswmm/engine"]
+ignore_missing_imports = true
+check_untyped_defs     = true
+disallow_untyped_defs  = false
+warn_redundant_casts   = true
+warn_unused_ignores    = true
+
+[[tool.mypy.overrides]]
+module = [
+    "openswmm.engine._enums",
+    "openswmm.engine._exceptions",
+    "openswmm.engine._dates",
+]
+strict = true

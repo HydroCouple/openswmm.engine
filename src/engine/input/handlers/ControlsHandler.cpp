@@ -10,9 +10,16 @@
  * ELSE PUMP P1 STATUS = OFF
  * PRIORITY 5
  *
+ * ; SIMULATION TIME / CLOCKTIME / TIMEOPEN / TIMECLOSED accept either
+ * ; decimal hours or HH:MM:SS — the value is converted to decimal days
+ * ; internally to match the simulation clock (legacy controls.c parity).
  * RULE R2
- * IF SIMULATION TIME > 3600
+ * IF SIMULATION TIME > 2.5          ; 2.5 hours after start
  * THEN ORIFICE O1 SETTING = 0.5
+ *
+ * RULE R3
+ * IF SIMULATION TIME > 04:30:00     ; same as 4.5 hours
+ * THEN ORIFICE O2 SETTING = 0.5
  * ```
  *
  * ### [REPORT] format

@@ -101,9 +101,9 @@ def completed_solver(solver_files):
     s.open()
     s.initialize()
     s.start()
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
+    # P1: step() now returns timedelta and raises on failure; the canonical
+    # loop is ``for _ in s.steps(): pass``.
+    for _ in s.steps():
         pass
     s.end()
     yield s

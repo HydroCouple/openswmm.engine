@@ -12,6 +12,7 @@
  *            - The SWMM_ENGINE_API export macro
  *
  *          Domain-specific APIs are in separate headers:
+ *            - openswmm_datetime.h      — SWMM DateTime encode/decode utilities
  *            - openswmm_model.h         — model building, validation, serialisation, options, user flags
  *            - openswmm_nodes.h         — node creation, properties, state, forcing, bulk
  *            - openswmm_links.h         — link creation, properties, cross-sections, state, bulk
@@ -436,6 +437,7 @@ SWMM_ENGINE_API int swmm_runoff_iface_close(SWMM_Engine engine);
  * and the handle typedef), so include guards prevent recursion.
  * ========================================================================= */
 
+#include "openswmm_datetime.h"
 #include "openswmm_model.h"
 #include "openswmm_nodes.h"
 #include "openswmm_links.h"

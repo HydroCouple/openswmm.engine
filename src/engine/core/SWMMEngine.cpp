@@ -1628,6 +1628,13 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         double target = ctx_.links.target_setting[uj];
         double current = ctx_.links.setting[uj];
         if (target != current) {
+            // Update the open<->closed transition timestamp ONLY when one
+            // side of the change crosses zero, matching legacy
+            // routing.c:295-299. LINK_TIMEOPEN / LINK_TIMECLOSED rule
+            // premises read this via ctx.links.time_last_set. (P1-C09)
+            if (target * current == 0.0)
+                ctx_.links.time_last_set[uj] = ctx_.current_date;
+
             // Gradual transition (P8-G18): use orifice open/close rate
             // Legacy: link_setSetting() applies orate for time-based ramp
             // orate is stored in hours (from inp file); convert to seconds
@@ -3216,10 +3223,23 @@ void SWMMEngine::initHydraulics() noexcept {
         next_event_ = 0;
     }
 
-    // 10e. Control rule parsing from [CONTROLS] section text
+    // 10e. Control rule parsing from [CONTROLS] section text.
+    //      Surface parser errors so malformed rules don't get silently
+    //      dropped (P1-C11). Legacy input.c returns ERR_RULE / ERR_KEYWORD
+    //      / ERR_DATETIME via error_setInpError; we use the same channel
+    //      via ctx.error_code / error_message.
     if (ctx_.control_rules.count() > 0) {
-        for (const auto& text : ctx_.control_rules.rule_text) {
-            controls_.parseRuleText(text, ctx_);
+        for (size_t i = 0; i < ctx_.control_rules.rule_text.size(); ++i) {
+            const auto& text = ctx_.control_rules.rule_text[i];
+            const int rc = controls_.parseRuleText(text, ctx_);
+            if (rc < 0) {
+                ctx_.error_code = 217;  // legacy ERR_RULE (error.h:174)
+                ctx_.error_message =
+                    "Failed to parse [CONTROLS] rule block #" +
+                    std::to_string(i + 1);
+                ctx_.errors.push_back(ctx_.error_message);
+                return;
+            }
         }
     }
 }

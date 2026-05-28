@@ -5,6 +5,163 @@ All notable changes to the OpenSWMM Engine are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Pythonic Python bindings (v1)
+
+### Changed — **breaking** (Python bindings only; C API unchanged)
+
+A full property-style rewrite of the `openswmm.engine` Python surface.
+See `docs/PYTHONIC_BINDINGS_PLAN.md` and the
+`docs/PYTHONIC_BINDINGS_DONE.md` wrap-up. The C API is untouched.
+
+#### Solver lifecycle
+
+- Lifecycle methods (`open`, `initialize`, `start`, `step`, `stride`,
+  `end`, `report`, `close`) **raise on failure** instead of returning
+  integer codes. `step()` and `stride()` return a
+  `datetime.timedelta`; `timedelta(0)` is the end-of-simulation sentinel.
+- `Solver.state` now returns the `EngineState` enum.
+- `Solver.elapsed` and `Solver.routing_step` are `datetime.timedelta`.
+- New `Solver.start_datetime`, `end_datetime`, `current_datetime`,
+  `report_start_datetime` return `datetime.datetime`.
+- New `Solver.steps()` iterator and `Solver.until(target)` (accepts
+  `datetime` or `timedelta`).
+- Every file argument accepts `pathlib.Path` / `os.PathLike`.
+
+#### Views on the Solver
+
+- `solver.options` — `MutableMapping` over `[OPTIONS]` plus typed
+  shortcuts (`start_datetime`, `routing_step`, …).
+- `solver.userflags` — `MutableMapping` with auto-typed bool/int/float.
+- `solver.events` — `MutableSequence[Event]` (each entry carries
+  `datetime` `start` / `end`).
+- `solver.save_schedule` — `MutableSequence[SaveScheduleEntry]` for the
+  `[SAVE HOTSTART]` block.
+
+#### Domain collections + wrappers
+
+Each `solver.<domain>` returns a collection that is **indexable by
+`int | str`**, iterable, and `len`-able. Items are typed wrapper
+objects with property-style access:
+
+- `solver.nodes["J1"].depth = 1.2`
+- `solver.links["C1"].xsect = (XSectShape.CIRCULAR, 1.0, 0, 0, 0)`
+- `solver.subcatchments["S1"].infiltration.set_horton(...)`
+- `solver.gages["RG1"].rainfall = 25.4`
+- `solver.pollutants["TSS"].kdecay = 0.05`
+
+Per-type sub-views raise `AttributeError` on wrong-type nodes/links:
+`node.outfall` only on OUTFALL, `node.storage` only on STORAGE,
+`link.pump` only on PUMP, etc.
+
+Bulk numpy access is now a property pair:
+`solver.nodes.depths` / `solver.links.flows` / `solver.subcatchments.runoffs`.
+
+#### OutputReader
+
+- Path-agnostic constructor (`str` / `Path`).
+- Typed metadata: `start_datetime`, `report_step` (`timedelta`),
+  `flow_units` (`FlowUnits` enum), `period_times`
+  (`np.ndarray[datetime64[s]]`), `node_ids` / `link_ids` /
+  `subcatchment_ids` lists.
+- Variable-selector arguments require an enum (`OutNodeVar` etc.);
+  object selectors accept `int | str`.
+- `node_attributes(key, period)` returns `Dict[OutNodeVar, float]`.
+- `node_stats(key)` returns a typed view with `max_depth`,
+  `max_overflow`, `vol_flooded`, `time_flooded`.
+
+#### MassBalance, Statistics, HotStart, Tables
+
+- `solver.mass_balance.routing_diagnostics` returns the
+  `RoutingDiagnostics` dataclass.
+- `solver.statistics.<domain>_<stat>` are all bulk numpy properties.
+- `HotStart.open(path)` classmethod / `HotStart.save_from(solver, path)`
+  static; `sim_datetime` (`datetime`), `warnings` (`list[str]`),
+  `apply(solver)` on the hot-start.
+- `solver.tables` exposes `TimeSeries.points` as a structured numpy
+  array `(time: datetime64[s], value: float64)`. `solver.patterns` is a
+  separate indexable collection.
+
+#### Exceptions
+
+New `EngineError` hierarchy in `openswmm.engine._exceptions`. Every
+subclass **also** inherits from a standard-library exception:
+
+- `BadIndexError(EngineError, IndexError)`
+- `BadParamError(EngineError, ValueError)`
+- `LifecycleError(EngineError, RuntimeError)`
+- `HotStartError(EngineError, RuntimeError)`
+- `FileError(EngineError, IOError)`
+- `ParseError(EngineError, ValueError)`
+- `NumericalError(EngineError, RuntimeError)`
+- `CRSError(EngineError, ValueError)`
+- `DependencyError(EngineError, RuntimeError)`
+- `PluginError(EngineError, RuntimeError)`
+- `BadHandleError(EngineError, RuntimeError)`
+- `StaleObjectError(LifecycleError)` — raised when a wrapper's
+  generation counter no longer matches the solver's after a
+  rename/delete.
+
+Every `EngineError` carries `.code` (raw int), `.code_enum`
+(`ErrorCode` member), `.message` (filled by the C API).
+
+#### New enums
+
+- `OrificeType`, `WeirType`, `OutletRatingType` (in `openswmm_links.h`).
+- `ErrorCode.DEPENDENCY = 15` (was missing from the Python side).
+
+#### DateTime conversion C API
+
+- New `include/openswmm/engine/openswmm_datetime.h` exposes
+  encode/decode/`add_seconds`/`time_diff` primitives matching the
+  legacy `datetime.c` bit-for-bit.
+- Reached from Python through `openswmm.engine.datetime_api` (the
+  Cython binding) plus the high-level `oadate_to_datetime` /
+  `datetime_to_oadate` helpers.
+- All "Julian date" wording removed from the C API header
+  documentation; the convention is documented as the OLE Automation /
+  Delphi TDateTime epoch (1899-12-30) — **not** astronomical Julian.
+
+### Documentation
+
+- Sphinx CI gate (`sphinx-build -W --keep-going`) was already in place
+  and is kept; every guide page renders warning-free against the new
+  `.pyi` stubs.
+- New `guide/datetime.rst`, `guide/plotting.rst` pages.
+- `guide/concepts.rst`, `guide/error_handling.rst`, every domain
+  guide and the migration page all rewritten for the v1 surface.
+- v0 → v1 cheat sheet appended to `migration/swmm5_to_swmm6.rst`.
+
+### Test-suite migration (now landed)
+
+The legacy per-domain `test_*.py` files have been processed:
+
+- **Duplicated coverage neutralised** — `test_nodes.py`,
+  `test_links.py`, `test_subcatchments.py`, `test_gages.py`,
+  `test_massbalance.py`, `test_output_reader.py`, `test_hotstart.py`,
+  `test_spatial.py`, `test_infrastructure.py`,
+  `test_quality_pollutants.py`, `test_tables.py`, `test_new_api.py`,
+  `test_new_modules.py`, and all `*_expanded.py` files are now
+  module-level `pytest.skip()` stubs (each names its replacement
+  `*_pythonic.py` file in the docstring). They can be `git rm`-ed in
+  a subsequent sweep without changing CI behaviour.
+- **Unique-scenario tests migrated to v1** — `test_integration.py`,
+  `test_callbacks_and_xsect.py`, `test_workflow.py`,
+  `test_opened_state_editing.py`, `test_concurrent_simulation.py`,
+  `test_controls_advancement.py`, `test_controls_inflows.py`,
+  `test_rdii_advancement.py`, `test_solver.py`. Each uses the v1
+  surface (`solver.nodes["J1"].depth`, `for elapsed in solver.steps()`,
+  `solver.links[0].xsect = (...)`, etc.).
+
+### mypy gate
+
+- `python/pyproject.toml` ships a `[tool.mypy]` block: default-mode
+  check across the whole `openswmm.engine` package plus strict-mode on
+  the pure-Python modules (`_enums`, `_exceptions`, `_dates`).
+- `python/tests/typing/test_surface.py` exercises every public symbol
+  with explicit type annotations — runs under strict mode.
+- New CI workflow `.github/workflows/typing.yml` runs both passes on
+  every PR touching the bindings or the typing test.
+
 ## [6.0.0-alpha.1] — 2026-03-25
 
 ### Added

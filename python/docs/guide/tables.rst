@@ -4,208 +4,116 @@ Tables  (time series, curves, patterns)
 
 .. note::
 
-   **Engine:** OpenSWMM 6 — refactored.  Documents
-   :class:`openswmm.engine.Tables`.
+   **Engine:** OpenSWMM 6 — refactored.
 
 .. currentmodule:: openswmm.engine
 
-The :class:`Tables` class is the unified entry point for SWMM's
-**time-series**, **curves**, and **patterns** — the (x, y) data
-collections that drive inflows, ratings, pump curves, monthly
-adjustments, and more.
+Three families of tabular objects live in the engine:
 
-In SWMM nomenclature:
+* **Time series** — ``(time, value)`` pairs where ``time`` is a
+  :class:`~datetime.datetime`.
+* **Curves** — generic ``(x, y)`` pairs.
+* **Patterns** — periodic multiplier sequences keyed by
+  :class:`PatternType`.
 
-* **Time series** — a series of (timestamp, value) pairs (rainfall
-  hyetograph, inflow hydrograph, etc.).  Indexed via the table
-  surface.
-* **Curves** — (x, y) tables for ratings, pump curves, storage
-  shapes, etc.  Same data structure as time series in this API.
-* **Patterns** — periodic multipliers (monthly / weekly /
-  daily / hourly).  Counted separately via
-  :meth:`pattern_count`.
+The first two share the C API's ``tables`` namespace and live on
+``solver.tables``; patterns live on ``solver.patterns``.
 
 Reference: ``openswmm_tables.h``.
 
 ----
 
-Class signature
-===============
+Quickstart
+==========
 
 .. code-block:: python
 
-    class Tables:
-        def __init__(self, solver: Solver) -> None: ...
+    from datetime import datetime
+    from openswmm.engine import Solver, PatternType, XSectShape
+
+    with Solver("model.inp") as s:
+        # Add a new time series and populate it.
+        ts = s.tables.add_timeseries("rain1")
+        ts.add(datetime(2024, 6, 15, 0, 0), 0.0)
+        ts.add(datetime(2024, 6, 15, 1, 0), 0.5)
+
+        # Add a curve.
+        curve = s.tables.add_curve("storage1")
+        curve.add_point(0.0, 0.0)
+        curve.add_point(1.0, 100.0)
+        print(curve.lookup(0.5))                # interpolation
+
+        # Inspect existing tables — generic helper returns ._PointTable;
+        # use as_timeseries / as_curve for typed views.
+        ts = s.tables.as_timeseries("rain1")
+        pts = ts.points                          # structured numpy array
+        print(pts["time"], pts["value"])
+
+        # Patterns.
+        s.patterns.add("DLY1", PatternType.DAILY)
+        s.patterns[0].set_factors([1.0]*7)
 
 ----
 
-Key methods
-===========
+:class:`Tables` collection
+==========================
 
-Identity
---------
+* ``len(s.tables)`` / ``for t in s.tables:`` / ``s.tables[key]`` — standard.
+* ``s.tables.add_timeseries(id)`` — returns a :class:`TimeSeries`.
+* ``s.tables.add_curve(id, curve_type=0)`` — returns a :class:`Curve`.
+* ``s.tables.as_timeseries(key)`` / ``as_curve(key)`` — typed view of an
+  existing entry.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
-
-   * - Method
-     - Returns
-   * - :meth:`count()`
-     - Number of registered tables (time series + curves).
-   * - :meth:`get_index(id)`
-     - Integer index for a string id.
-   * - :meth:`get_id(idx)`
-     - String id for an integer index.
-   * - :meth:`pattern_count()`
-     - Number of registered patterns (separate counter).
-
-Reading / writing points
-------------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
-
-   * - Method
-     - Action / returns
-   * - :meth:`get_point_count(idx)`
-     - Number of (x, y) points in this table.
-   * - :meth:`get_point(idx, pt_idx)`
-     - ``(x, y)`` tuple for one point.
-   * - :meth:`add_point(idx, x, y)`
-     - Append a new (x, y) point.
-   * - :meth:`clear(idx)`
-     - Empty the table (keeps it registered).
-
-Lookup
-------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
-
-   * - Method
-     - Action / returns
-   * - :meth:`lookup(idx, x)`
-     - Linear-interpolated value at ``x``.
+The C API does not currently expose a per-entry type discriminator, so
+iteration yields a generic ``_PointTable``. Use the ``as_*`` helpers
+when you need :class:`TimeSeries` or :class:`Curve` specifically.
 
 ----
 
-End-to-end example
-==================
+:class:`TimeSeries`
+===================
 
-.. code-block:: python
-
-    from openswmm.engine import Solver, Tables, EngineState
-
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        tables = Tables(s)
-        print(f"{tables.count()} tables, {tables.pattern_count()} patterns")
-
-        # Build a flow time series in Python before initialize()
-        s.open()
-        idx = tables.get_index("WET_WEATHER_TS")
-        tables.clear(idx)                       # wipe any existing points
-
-        # Inject a triangular hyetograph: 0 → peak at hour 2 → 0 at hour 4
-        for h in range(0, 5):
-            value = max(0.0, 5.0 - abs(h - 2.0) * 2.5)
-            tables.add_point(idx, h * 3600.0, value)
-
-        s.initialize()
-        s.start()
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-        s.end()
+* ``.points`` returns a numpy **structured array** with fields
+  ``time: datetime64[s]`` and ``value: float64``.
+* ``.add(when, value)`` accepts ``when`` as :class:`~datetime.datetime`
+  or a SWMM DateTime float.
+* ``.lookup(x)`` runs the engine's interpolation (x can be any
+  SWMM DateTime float).
+* ``.add_point(x, y)`` / ``.clear()`` / ``len(ts)`` — common point-table
+  operations.
 
 ----
 
-Common recipes
+:class:`Curve`
 ==============
 
-Replace a time series wholesale
--------------------------------
-
-.. code-block:: python
-
-    new_pts = [(0.0, 0.0), (3600.0, 1.0), (7200.0, 2.5), (10800.0, 0.0)]
-    idx = tables.get_index("MY_TS")
-    tables.clear(idx)
-    for x, y in new_pts:
-        tables.add_point(idx, x, y)
-
-Walk every point of a registered curve
---------------------------------------
-
-.. code-block:: python
-
-    idx = tables.get_index("PUMP_CURVE")
-    for i in range(tables.get_point_count(idx)):
-        x, y = tables.get_point(idx, i)
-        print(f"  {x:8.3f}  →  {y:8.3f}")
-
-Use ``lookup`` to interpolate
------------------------------
-
-.. code-block:: python
-
-    rating_idx = tables.get_index("RATING_CURVE")
-    flow_at_h = tables.lookup(rating_idx, 1.5)   # head = 1.5 → flow
-
-The lookup uses linear interpolation between adjacent points.  Outside
-the range it clamps to the first / last value.
+* ``.points`` returns a ``float64`` ``(n_points, 2)`` numpy array.
+* ``.add_point(x, y)`` / ``.lookup(x)`` / ``.clear()`` — common point-table
+  operations.
 
 ----
 
-Bulk arrays
-===========
+:class:`Patterns` and :class:`Pattern`
+======================================
 
-The :class:`Tables` class is point-by-point.  For high-throughput
-construction of large series, build the points in NumPy then push:
+``solver.patterns`` is indexable by integer only (the C API has no
+id→index lookup for patterns):
 
 .. code-block:: python
 
-    import numpy as np
+    p = s.patterns.add("DLY1", PatternType.DAILY)
+    p.set_factors([1.0, 1.1, 1.2, 1.0, 0.9, 1.0, 1.0])
 
-    t = np.arange(0.0, 86400.0, 60.0)            # 1 day at 1-min res
-    q = np.maximum(0.0, np.sin(2 * np.pi * t / 86400.0)) * 5.0
-
-    idx = tables.get_index("MY_TS")
-    tables.clear(idx)
-    for ti, qi in zip(t, q):
-        tables.add_point(idx, float(ti), float(qi))
-
-----
-
-EngineState requirements & exceptions
-=====================================
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 25 45
-
-   * - Method group
-     - Required state
-     - Notes
-   * - read accessors
-     - ``OPENED`` or later
-     - n/a
-   * - mutating writers (``add_point``, ``clear``)
-     - ``OPENED``
-     - Apply before ``initialize()`` to take effect on the run.
-   * - ``lookup``
-     - any state with the table populated
-     - Returns 0.0 for an empty table.
+For monthly/daily/hourly/weekend factor counts, follow the SWMM 5
+conventions (12 / 7 / 24 / 24).
 
 ----
 
 See also
 ========
 
-* :doc:`gages` — bind rain gages to time series.
-* :doc:`inflows` — bind external inflows / DWF baselines to
-  patterns.
-* :doc:`infrastructure` — pump curves and rating curves consumed
-  by hydraulic infrastructure.
+* :doc:`gages` — :meth:`Gage.set_timeseries` binds a gage to a
+  :class:`TimeSeries`.
+* :doc:`inflows` — DWF uses pattern ids; external inflows use time
+  series ids.
+* :doc:`datetime` — how the time axis works.

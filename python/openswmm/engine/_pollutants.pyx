@@ -1,521 +1,311 @@
 """
-Pollutant Access
-================
+Pollutant access (Pythonic v1 surface)
+======================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
-The :class:`Pollutants` class provides access to pollutant properties and
-runtime water-quality injection during a simulation.
+The :class:`Pollutants` collection and :class:`Pollutant` wrapper
+mirror the shape of :doc:`nodes` / :doc:`links`.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Pollutants
+    from openswmm.engine import Solver, ConcentrationUnits
 
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        poll = Pollutants(s)
-        print(f"Pollutant count: {poll.count()}")
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-            conc = poll.get_init_conc("TSS")         # by name
-            poll.set_node_quality("J1", 0, 12.5)     # inject at node
+    with Solver("model.inp") as s:
+        tss = s.pollutants["TSS"]
+        print(tss.units, tss.kdecay, tss.init_conc)
+        tss.kdecay = 0.05
+
+        # Inject runtime concentration at a node.
+        s.pollutants.set_node_quality("J1", "TSS", 12.0)
 """
 
 # cython: language_level=3
 
 from ._common cimport *
+from ._enums import ConcentrationUnits
+from ._exceptions import StaleObjectError
 
 
-class Pollutants:
-    """Access pollutant properties and inject quality at nodes/links.
+cdef inline SWMM_Engine _h(solver):
+    return <SWMM_Engine><size_t>solver.handle
 
-    All per-element methods accept either an integer index or a string
-    pollutant ID.  When a string is passed it is resolved via
-    L{get_index}.
 
-    @ivar _solver: The owning solver instance whose engine handle is used
-        for every C call.
-    @type _solver: L{Solver}
+cdef inline int _resolve_pollutant(solver, key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_pollutant_index, swmm_pollutant_count, "Pollutant")
 
-    @param solver: An active L{Solver} instance. The solver must remain
-        alive for the lifetime of this object.
-    @type solver: L{Solver}
-    """
 
-    def __init__(self, solver):
-        """Construct a L{Pollutants} accessor bound to C{solver}.
+cdef inline int _resolve_node(solver, key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_node_index, swmm_node_count, "Node")
 
-        @param solver: An active L{Solver} instance whose engine handle
-            will be used for all subsequent pollutant operations.
-        @type solver: L{Solver}
-        """
+
+cdef inline int _resolve_link(solver, key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_link_index, swmm_link_count, "Link")
+
+
+cdef inline void _check_fresh(p) except *:
+    if p._gen != p._solver.generation:
+        raise StaleObjectError(
+            f"Pollutant wrapper (id={p._captured_id!r}, index={p._index}) is stale; "
+            "look it up again from solver.pollutants.")
+
+
+# =============================================================================
+# Pollutant wrapper
+# =============================================================================
+
+cdef class Pollutant:
+    """A single pollutant."""
+
+    cdef object _solver
+    cdef int _index
+    cdef long long _gen
+    cdef str _captured_id
+
+    def __init__(self, solver, int index):
         self._solver = solver
+        self._index = index
+        self._gen = solver.generation
+        cdef const char* raw = swmm_pollutant_id(_h(solver), index)
+        self._captured_id = raw.decode('utf-8') if raw != NULL else ""
 
-    def _resolve(self, idx) -> int:
-        """Resolve C{idx} to an integer pollutant index.
+    # ---- Identity ---------------------------------------------------
 
-        @param idx: Integer index or string pollutant ID.
-        @type idx: Union[int, str]
-        @return: Integer pollutant index.
-        @rtype: int
-        @raise KeyError: If a string ID is not found in the model.
-        """
-        cdef int i
-        if isinstance(idx, str):
-            i = self.get_index(idx)
-            if i < 0:
-                raise KeyError(f"Pollutant '{idx}' not found")
-            return i
-        return idx
-
-    def _resolve_node(self, idx) -> int:
-        """Resolve a node index (int) or node ID (str) to an integer index.
-
-        @param idx: Node index or node ID.
-        @type idx: Union[int, str]
-        @return: Integer node index.
-        @rtype: int
-        @raise KeyError: If a string ID is not found in the model.
-        """
-        cdef SWMM_Engine h
-        cdef bytes b
-        cdef int i
-        if isinstance(idx, str):
-            h = <SWMM_Engine><size_t>self._solver.handle
-            b = idx.encode('utf-8')
-            i = swmm_node_index(h, b)
-            if i < 0:
-                raise KeyError(f"Node '{idx}' not found")
-            return i
-        return idx
-
-    def _resolve_link(self, idx) -> int:
-        """Resolve a link index (int) or link ID (str) to an integer index.
-
-        @param idx: Link index or link ID.
-        @type idx: Union[int, str]
-        @return: Integer link index.
-        @rtype: int
-        @raise KeyError: If a string ID is not found in the model.
-        """
-        cdef SWMM_Engine h
-        cdef bytes b
-        cdef int i
-        if isinstance(idx, str):
-            h = <SWMM_Engine><size_t>self._solver.handle
-            b = idx.encode('utf-8')
-            i = swmm_link_index(h, b)
-            if i < 0:
-                raise KeyError(f"Link '{idx}' not found")
-            return i
-        return idx
-
-    # ====================================================================
-    # Identification & lookup
-    # ====================================================================
-
-    def count(self) -> int:
-        """Return the number of pollutants in the model.
-
-        @return: Pollutant count.
-        @rtype: int
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        return swmm_pollutant_count(h)
-
-    def get_index(self, str pollut_id) -> int:
-        """Return the integer index of a pollutant by its string ID.
-
-        @param pollut_id: Pollutant identifier string.
-        @type pollut_id: str
-        @return: Pollutant index, or C{-1} if not found.
-        @rtype: int
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bytes b = pollut_id.encode('utf-8')
-        return swmm_pollutant_index(h, b)
-
-    def get_id(self, int idx) -> str:
-        """Return the string ID of a pollutant by index.
-
-        @param idx: Pollutant index.
-        @type idx: int
-        @return: Pollutant ID string, or empty string if C{idx} is invalid.
-        @rtype: str
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef const char* raw = swmm_pollutant_id(h, idx)
+    @property
+    def id(self) -> str:
+        _check_fresh(self)
+        cdef const char* raw = swmm_pollutant_id(_h(self._solver), self._index)
         return raw.decode('utf-8') if raw != NULL else ""
 
-    def add(self, str pollut_id, int units) -> int:
-        """Add a pollutant to the model (BUILDING / OPENED state).
+    @property
+    def index(self) -> int:
+        _check_fresh(self)
+        return self._index
 
-        Wraps C{swmm_pollutant_add}. Valid in C{BUILDING} or C{OPENED}
-        state.
+    @property
+    def solver(self):
+        return self._solver
 
-        @param pollut_id: Unique pollutant identifier.
-        @type pollut_id: str
-        @param units: Concentration units code (0=MG/L, 1=UG/L, 2=#/L).
-        @type units: int
-        @return: Zero-based index of the newly added pollutant.
-        @rtype: int
-        @raise RuntimeError: On engine error.
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bytes b = pollut_id.encode('utf-8')
-        _check(swmm_pollutant_add(h, b, units))
-        return swmm_pollutant_count(h) - 1
-
-    # ====================================================================
-    # Pollutant properties (getters)
-    # ====================================================================
-
-    def get_units(self, idx) -> int:
-        """Return the concentration units code for a pollutant.
-
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @return: Units code -- see L{ConcentrationUnits}.
-        @rtype: int
-        @raise EngineError: If the underlying C{swmm_pollutant_get_units}
-            call returns a non-zero error code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def units(self):
+        _check_fresh(self)
         cdef int v = 0
-        _check(swmm_pollutant_get_units(h, i, &v))
-        return v
+        _check(swmm_pollutant_get_units(_h(self._solver), self._index, &v))
+        return ConcentrationUnits(v)
 
-    def get_kdecay(self, idx) -> float:
-        """Return the first-order decay coefficient.
+    # ---- Decay / fate properties -----------------------------------
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @return: Decay coefficient (1/day).
-        @rtype: float
-        @raise EngineError: If the underlying C{swmm_pollutant_get_kdecay}
-            call returns a non-zero error code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def kdecay(self) -> float:
+        _check_fresh(self)
         cdef double v = 0.0
-        _check(swmm_pollutant_get_kdecay(h, i, &v))
+        _check(swmm_pollutant_get_kdecay(_h(self._solver), self._index, &v))
         return v
 
-    def get_rain_conc(self, idx) -> float:
-        """Return the rain concentration.
+    @kdecay.setter
+    def kdecay(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_pollutant_set_kdecay(_h(self._solver), self._index, value))
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @return: Rain concentration.
-        @rtype: float
-        @raise EngineError: If the underlying
-            C{swmm_pollutant_get_rain_conc} call returns a non-zero error
-            code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def mwt(self) -> float:
+        _check_fresh(self)
         cdef double v = 0.0
-        _check(swmm_pollutant_get_rain_conc(h, i, &v))
+        _check(swmm_pollutant_get_mwt(_h(self._solver), self._index, &v))
         return v
 
-    def get_gw_conc(self, idx) -> float:
-        """Return the groundwater concentration.
+    @mwt.setter
+    def mwt(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_pollutant_set_mwt(_h(self._solver), self._index, value))
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @return: Groundwater concentration.
-        @rtype: float
-        @raise EngineError: If the underlying C{swmm_pollutant_get_gw_conc}
-            call returns a non-zero error code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    # ---- Inflow concentrations -------------------------------------
+
+    @property
+    def rain_conc(self) -> float:
+        _check_fresh(self)
         cdef double v = 0.0
-        _check(swmm_pollutant_get_gw_conc(h, i, &v))
+        _check(swmm_pollutant_get_rain_conc(_h(self._solver), self._index, &v))
         return v
 
-    def get_init_conc(self, idx) -> float:
-        """Return the initial concentration.
+    @rain_conc.setter
+    def rain_conc(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_pollutant_set_rain_conc(_h(self._solver), self._index, value))
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @return: Initial concentration.
-        @rtype: float
-        @raise EngineError: If the underlying
-            C{swmm_pollutant_get_init_conc} call returns a non-zero error
-            code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def gw_conc(self) -> float:
+        _check_fresh(self)
         cdef double v = 0.0
-        _check(swmm_pollutant_get_init_conc(h, i, &v))
+        _check(swmm_pollutant_get_gw_conc(_h(self._solver), self._index, &v))
         return v
 
-    def get_rdii_conc(self, idx) -> float:
-        """Return the RDII concentration.
+    @gw_conc.setter
+    def gw_conc(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_pollutant_set_gw_conc(_h(self._solver), self._index, value))
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @return: RDII concentration.
-        @rtype: float
-        @raise EngineError: If the underlying
-            C{swmm_pollutant_get_rdii_conc} call returns a non-zero error
-            code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def init_conc(self) -> float:
+        _check_fresh(self)
         cdef double v = 0.0
-        _check(swmm_pollutant_get_rdii_conc(h, i, &v))
+        _check(swmm_pollutant_get_init_conc(_h(self._solver), self._index, &v))
         return v
 
-    def get_mwt(self, idx) -> float:
-        """Return the molecular weight.
+    @init_conc.setter
+    def init_conc(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_pollutant_set_init_conc(_h(self._solver), self._index, value))
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @return: Molecular weight.
-        @rtype: float
-        @raise EngineError: If the underlying C{swmm_pollutant_get_mwt}
-            call returns a non-zero error code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def rdii_conc(self) -> float:
+        _check_fresh(self)
         cdef double v = 0.0
-        _check(swmm_pollutant_get_mwt(h, i, &v))
+        _check(swmm_pollutant_get_rdii_conc(_h(self._solver), self._index, &v))
         return v
 
-    def get_co_pollutant(self, idx) -> tuple:
-        """Return the co-pollutant index and fraction.
+    @rdii_conc.setter
+    def rdii_conc(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_pollutant_set_rdii_conc(_h(self._solver), self._index, value))
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @return: Tuple of C{(co_pollutant_index, fraction)}.
-        @rtype: tuple
-        @raise EngineError: If the underlying
-            C{swmm_pollutant_get_co_pollutant} call returns a non-zero
-            error code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int co_idx = 0
+    # ---- Snow-only flag --------------------------------------------
+
+    @property
+    def snow_only(self) -> bool:
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_pollutant_get_snow_only(_h(self._solver), self._index, &v))
+        return v != 0
+
+    @snow_only.setter
+    def snow_only(self, bint value) -> None:
+        _check_fresh(self)
+        _check(swmm_pollutant_set_snow_only(
+            _h(self._solver), self._index, 1 if value else 0))
+
+    # ---- Co-pollutant link -----------------------------------------
+
+    @property
+    def co_pollutant(self):
+        """``(Pollutant, fraction)`` or ``None`` if no co-pollutant."""
+        _check_fresh(self)
+        cdef int co_idx = -1
         cdef double frac = 0.0
-        _check(swmm_pollutant_get_co_pollutant(h, i, &co_idx, &frac))
-        return (co_idx, frac)
+        _check(swmm_pollutant_get_co_pollutant(
+            _h(self._solver), self._index, &co_idx, &frac))
+        if co_idx < 0:
+            return None
+        return (Pollutant(self._solver, co_idx), frac)
 
-    def get_snow_only(self, idx) -> bool:
-        """Return whether the pollutant applies only to snow events.
+    def set_co_pollutant(self, co, double fraction) -> None:
+        """Link this pollutant to ``co`` (id, index, or Pollutant) with
+        the given ``fraction``."""
+        _check_fresh(self)
+        cdef int co_idx
+        if isinstance(co, Pollutant):
+            co_idx = co._index
+        else:
+            co_idx = _resolve_pollutant(self._solver, co)
+        _check(swmm_pollutant_set_co_pollutant(
+            _h(self._solver), self._index, co_idx, fraction))
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @return: C{True} if the pollutant is snow-only.
-        @rtype: bool
-        @raise EngineError: If the underlying
-            C{swmm_pollutant_get_snow_only} call returns a non-zero error
-            code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int flag = 0
-        _check(swmm_pollutant_get_snow_only(h, i, &flag))
-        return bool(flag)
+    # ---- Equality / repr ------------------------------------------
 
-    # ====================================================================
-    # Pollutant properties (setters)
-    # ====================================================================
+    def __eq__(self, other):
+        if not isinstance(other, Pollutant):
+            return NotImplemented
+        return (self._solver is other._solver
+                and self._index == other._index)
 
-    def set_kdecay(self, idx, double k):
-        """Set the first-order decay coefficient.
+    def __hash__(self):
+        return hash((id(self._solver), self._index))
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @param k: Decay coefficient (1/day).
-        @type k: float
-        @return: C{None}.
-        @rtype: None
-        @raise EngineError: If the underlying C{swmm_pollutant_set_kdecay}
-            call returns a non-zero error code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_pollutant_set_kdecay(h, i, k))
+    def __repr__(self) -> str:
+        try:
+            return f"<Pollutant id={self._captured_id!r} index={self._index}>"
+        except Exception:
+            return f"<Pollutant index={self._index} (stale or closed)>"
 
-    def set_rain_conc(self, idx, double conc):
-        """Set the rain concentration.
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @param conc: Rain concentration.
-        @type conc: float
-        @return: C{None}.
-        @rtype: None
-        @raise EngineError: If the underlying
-            C{swmm_pollutant_set_rain_conc} call returns a non-zero error
-            code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_pollutant_set_rain_conc(h, i, conc))
+# =============================================================================
+# Pollutants collection
+# =============================================================================
 
-    def set_gw_conc(self, idx, double conc):
-        """Set the groundwater concentration.
+cdef class Pollutants:
+    """Indexable, iterable collection of :class:`Pollutant` wrappers."""
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @param conc: Groundwater concentration.
-        @type conc: float
-        @return: C{None}.
-        @rtype: None
-        @raise EngineError: If the underlying C{swmm_pollutant_set_gw_conc}
-            call returns a non-zero error code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_pollutant_set_gw_conc(h, i, conc))
+    cdef object _solver
 
-    def set_init_conc(self, idx, double conc):
-        """Set the initial concentration.
+    def __init__(self, solver):
+        self._solver = solver
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @param conc: Initial concentration.
-        @type conc: float
-        @return: C{None}.
-        @rtype: None
-        @raise EngineError: If the underlying
-            C{swmm_pollutant_set_init_conc} call returns a non-zero error
-            code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_pollutant_set_init_conc(h, i, conc))
+    # ---- Container protocol ----------------------------------------
 
-    def set_rdii_conc(self, idx, double conc):
-        """Set the RDII concentration.
+    def __len__(self) -> int:
+        return swmm_pollutant_count(_h(self._solver))
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @param conc: RDII concentration.
-        @type conc: float
-        @return: C{None}.
-        @rtype: None
-        @raise EngineError: If the underlying
-            C{swmm_pollutant_set_rdii_conc} call returns a non-zero error
-            code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_pollutant_set_rdii_conc(h, i, conc))
+    def __iter__(self):
+        cdef int n = swmm_pollutant_count(_h(self._solver))
+        for i in range(n):
+            yield Pollutant(self._solver, i)
 
-    def set_mwt(self, idx, double mwt):
-        """Set the molecular weight.
+    def __getitem__(self, key) -> Pollutant:
+        cdef int i = _resolve_pollutant(self._solver, key)
+        return Pollutant(self._solver, i)
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @param mwt: Molecular weight.
-        @type mwt: float
-        @return: C{None}.
-        @rtype: None
-        @raise EngineError: If the underlying C{swmm_pollutant_set_mwt}
-            call returns a non-zero error code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_pollutant_set_mwt(h, i, mwt))
+    def __contains__(self, key) -> bool:
+        try:
+            _resolve_pollutant(self._solver, key)
+            return True
+        except (KeyError, IndexError, TypeError):
+            return False
 
-    def set_co_pollutant(self, idx, int co_idx, double frac):
-        """Set the co-pollutant relationship.
+    # ---- Identity lookups -----------------------------------------
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @param co_idx: Co-pollutant index.
-        @type co_idx: int
-        @param frac: Fraction of co-pollutant contribution.
-        @type frac: float
-        @return: C{None}.
-        @rtype: None
-        @raise EngineError: If the underlying
-            C{swmm_pollutant_set_co_pollutant} call returns a non-zero
-            error code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_pollutant_set_co_pollutant(h, i, co_idx, frac))
+    def get_index(self, str pollut_id) -> int:
+        cdef bytes b = pollut_id.encode('utf-8')
+        cdef int i = swmm_pollutant_index(_h(self._solver), b)
+        if i < 0:
+            raise KeyError(pollut_id)
+        return i
 
-    def set_snow_only(self, idx, bint flag):
-        """Set whether the pollutant applies only to snow events.
+    def get_id(self, int idx) -> str:
+        if not (0 <= idx < len(self)):
+            raise IndexError(idx)
+        cdef const char* raw = swmm_pollutant_id(_h(self._solver), idx)
+        return raw.decode('utf-8') if raw != NULL else ""
 
-        @param idx: Pollutant index (int) or ID (str).
-        @type idx: Union[int, str]
-        @param flag: C{True} for snow-only.
-        @type flag: bool
-        @return: C{None}.
-        @rtype: None
-        @raise EngineError: If the underlying
-            C{swmm_pollutant_set_snow_only} call returns a non-zero error
-            code.
-        @raise KeyError: If C{idx} is a string not found in the model.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_pollutant_set_snow_only(h, i, flag))
+    # ---- Editing --------------------------------------------------
 
-    # ====================================================================
-    # Per-element concentrations (runtime injection)
-    # ====================================================================
+    def add(self, str pollut_id, units=ConcentrationUnits.MG_PER_L) -> Pollutant:
+        cdef bytes b = pollut_id.encode('utf-8')
+        _check(swmm_pollutant_add(_h(self._solver), b, int(units)))
+        self._solver._bump_generation()
+        cdef int new_idx = swmm_pollutant_index(_h(self._solver), b)
+        return Pollutant(self._solver, new_idx)
 
-    def set_node_quality(self, node_idx, int pollut_idx, double conc):
-        """Inject a pollutant concentration at a node.
+    # ---- Runtime quality injection (node + link) -----------------
 
-        @param node_idx: Node index (int) or node ID (str).
-        @type node_idx: Union[int, str]
-        @param pollut_idx: Pollutant index.
-        @type pollut_idx: int
-        @param conc: Concentration to inject.
-        @type conc: float
-        @return: C{None}.
-        @rtype: None
-        @raise EngineError: If the underlying C{swmm_node_set_quality}
-            call returns a non-zero error code.
-        @raise KeyError: If C{node_idx} is a string not found in the model.
-        """
-        cdef int ni = self._resolve_node(node_idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_quality(h, ni, pollut_idx, conc))
+    def set_node_quality(self, node, pollutant, double conc) -> None:
+        """Set runtime concentration at ``node`` for ``pollutant``."""
+        cdef int ni = _resolve_node(self._solver, node)
+        cdef int pi = _resolve_pollutant(self._solver, pollutant)
+        _check(swmm_node_set_quality(_h(self._solver), ni, pi, conc))
 
-    def set_link_quality(self, link_idx, int pollut_idx, double conc):
-        """Inject a pollutant concentration at a link.
+    def set_link_quality(self, link, pollutant, double conc) -> None:
+        """Set runtime concentration at ``link`` for ``pollutant``."""
+        cdef int li = _resolve_link(self._solver, link)
+        cdef int pi = _resolve_pollutant(self._solver, pollutant)
+        _check(swmm_link_set_quality(_h(self._solver), li, pi, conc))
 
-        @param link_idx: Link index (int) or link ID (str).
-        @type link_idx: Union[int, str]
-        @param pollut_idx: Pollutant index.
-        @type pollut_idx: int
-        @param conc: Concentration to inject.
-        @type conc: float
-        @return: C{None}.
-        @rtype: None
-        @raise EngineError: If the underlying C{swmm_link_set_quality}
-            call returns a non-zero error code.
-        @raise KeyError: If C{link_idx} is a string not found in the model.
-        """
-        cdef int li = self._resolve_link(link_idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_link_set_quality(h, li, pollut_idx, conc))
+    def __repr__(self) -> str:
+        try:
+            return f"<Pollutants n={len(self)}>"
+        except Exception:
+            return "<Pollutants (engine closed)>"

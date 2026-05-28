@@ -22,12 +22,18 @@ engine handle, loads the model, and drives the simulation forward in time.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, EngineState
+    from datetime import timedelta
+    from openswmm.engine import Solver
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break       # non-zero return = engine error
+        for elapsed in s.steps():
+            # elapsed is a datetime.timedelta after the most recent step.
+            if elapsed >= timedelta(hours=24):
+                break
+
+Failures raise :class:`~openswmm.engine.EngineError` (or a subclass like
+:class:`~openswmm.engine.LifecycleError`) — no integer return codes to
+check.
 
 The context manager:
 
@@ -49,25 +55,26 @@ duplicate state — every accessor is a thin call into the engine.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Nodes, Links, EngineState
+    from openswmm.engine import Solver
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
-        nodes = Nodes(s)
-        links = Links(s)
+        j1 = s.nodes.get_index("J1")           # name → integer index
+        c1 = s.links.get_index("C1")
 
-        j1 = nodes.get_index("J1")          # name → integer index
-        c1 = links.get_index("C1")
+        for elapsed in s.steps():
+            depth_at_j1 = s.nodes.get_depth(j1)
+            flow_in_c1  = s.links.get_flow(c1)
+            print(f"t={s.current_datetime}  J1.depth={depth_at_j1:.3f}  C1.flow={flow_in_c1:.3f}")
 
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-            depth_at_j1 = nodes.get_depth(j1)
-            flow_in_c1  = links.get_flow(c1)
-            print(f"t={s.elapsed:.4f} d  J1.depth={depth_at_j1:.3f}  C1.flow={flow_in_c1:.3f}")
+The accessors accept **either** an integer index or a string id, so
+``s.nodes.get_depth("J1")`` works too.  The integer form is faster in
+tight loops because it skips the name lookup.
 
-The accessors accept **either** an integer index or a string id, so you
-can write ``nodes.get_depth("J1")`` directly.  The integer form is
-faster in tight loops because it skips the name lookup.
+.. note::
+
+   The full object-wrapper surface (``s.nodes["J1"].depth`` etc.) lands
+   in later phases. For now the collection attributes return the legacy
+   ``Nodes`` / ``Links`` helpers.
 
 ----
 
@@ -81,20 +88,15 @@ return a contiguous :class:`numpy.ndarray` filled in one C call:
 .. code-block:: python
 
     import numpy as np
-    from openswmm.engine import Solver, Nodes, Links, EngineState
+    from openswmm.engine import Solver
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
-        nodes = Nodes(s)
-        links = Links(s)
-
         depths_history = []
         flows_history  = []
 
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-            depths_history.append(nodes.get_depths_bulk().copy())
-            flows_history.append(links.get_flows_bulk().copy())
+        for _ in s.steps():
+            depths_history.append(s.nodes.get_depths_bulk().copy())
+            flows_history.append(s.links.get_flows_bulk().copy())
 
         depths = np.stack(depths_history)   # shape (T, n_nodes)
         flows  = np.stack(flows_history)    # shape (T, n_links)
@@ -114,16 +116,15 @@ To override an inflow, rainfall, or rule action without editing the
 
 Lateral inflow (one-shot — overwritten by the engine on the next step)::
 
-    nodes.set_lateral_inflow("J1", 1.5)     # cfs (or m³/s, per FLOW_UNITS)
+    s.nodes.set_lateral_inflow("J1", 1.5)     # cfs (or m³/s, per FLOW_UNITS)
 
 Sticky override that survives every step until you clear it::
 
-    from openswmm.engine import Forcing, ForcingMode
+    from openswmm.engine import ForcingMode
 
-    forcing = Forcing(s)
-    forcing.node_lat_inflow("J1", 1.5, ForcingMode.REPLACE, persist=True)
+    s.forcing.node_lat_inflow("J1", 1.5, ForcingMode.REPLACE, persist=True)
     # … run …
-    forcing.clear_all()
+    s.forcing.clear_all()
 
 See :doc:`forcing` for the full forcing model.
 
@@ -181,9 +182,8 @@ programmatically:
 
     solver = m.to_solver()                 # ready to run
     solver.start()
-    while solver.state == EngineState.RUNNING:
-        if solver.step() != 0:
-            break
+    for _ in solver.steps():
+        pass
     solver.end()
     solver.destroy()
 

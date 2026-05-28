@@ -4,452 +4,353 @@ Nodes
 
 .. note::
 
-   **Engine:** OpenSWMM 6 — refactored.  This page documents the
-   :class:`openswmm.engine.Nodes` class.  Legacy SWMM 5 users access
-   nodes through the enum-driven ``getValue`` /
-   ``setValue`` API on :class:`openswmm.legacy.engine.Solver` — see
-   :doc:`../legacy/solver`.
+   **Engine:** OpenSWMM 6 — refactored. This page documents the
+   :class:`openswmm.engine.Nodes` collection and the
+   :class:`openswmm.engine._nodes.Node` wrapper objects it produces.
+   Legacy SWMM 5 users access nodes through the enum-driven
+   ``getValue`` / ``setValue`` API on
+   :class:`openswmm.legacy.engine.Solver` — see :doc:`../legacy/solver`.
 
 .. currentmodule:: openswmm.engine
 
 Junctions, outfalls, storage units, and dividers — every point where
-flow enters, leaves, or is stored in the network.  The :class:`Nodes`
-class is the single entry point for reading and writing node state at
-configure time AND during a running simulation.
+flow enters, leaves, or is stored in the network. The :class:`Nodes`
+collection hangs off the Solver as a lazy attribute:
+
+.. code-block:: python
+
+    from openswmm.engine import Solver
+
+    with Solver("model.inp") as s:
+        s.nodes               # → Nodes (the collection)
+        s.nodes["J1"]         # → Node  (a wrapper for one node)
+        s.nodes[0]            # → Node  (same shape; by integer index)
 
 Reference: ``openswmm_nodes.h``.
 
 ----
 
-Class signature
-===============
+Quickstart
+==========
+
+Five idioms cover most use cases.
 
 .. code-block:: python
 
-    class Nodes:
-        def __init__(self, solver: Solver) -> None: ...
+    # 1. Indexing — both ``int`` and ``str`` work.
+    j1 = s.nodes["J1"]
+    same = s.nodes[0]                  # same Node identity (different wrapper)
+    assert j1 == same
 
-* ``solver`` — an active :class:`Solver`.  The Nodes object holds a
-  reference; its lifetime is tied to the solver's.
+    # 2. Iteration.
+    for node in s.nodes:
+        print(node.id, node.invert_elev)
 
-A single :class:`Nodes` instance covers **every** node in the model.
-There is no per-node Python wrapper — work via integer indices or
-string ids.
+    # 3. Per-object property access.
+    print(s.nodes["J1"].depth)
+    s.nodes["J1"].lateral_inflow = 0.5
+
+    # 4. Bulk vectorised access.
+    depths = s.nodes.depths            # numpy float64 array
+    s.nodes.depths = depths * 1.05
+
+    # 5. Type-specific sub-views.
+    s.nodes["OUT1"].outfall.type = OutfallType.FIXED
+    s.nodes["S1"].storage.functional = (0.0, 0.0, 100.0)
+    s.nodes["J1"].stats.max_depth      # cumulative stats
 
 ----
 
-Key methods
-===========
-
-Identity & enumeration
-----------------------
+Collection: :class:`Nodes`
+==========================
 
 .. list-table::
    :header-rows: 1
-   :widths: 35 65
+   :widths: 30 70
 
-   * - Method
-     - Returns
-   * - :meth:`count`
-     - Number of nodes in the model (``int``).
-   * - :meth:`get_index(id)`
-     - Integer index for a string id.
-   * - :meth:`get_id(idx)`
-     - String id for an integer index.
-   * - :meth:`get_type(idx)`
-     - :class:`NodeType` of the node.
+   * - Operation
+     - What it does
+   * - ``len(s.nodes)``
+     - Current node count.
+   * - ``s.nodes[key]``
+     - Returns a :class:`Node`. ``key`` is ``int`` or ``str``; unknown
+       string raises :exc:`KeyError`, out-of-range int raises
+       :exc:`IndexError`.
+   * - ``for n in s.nodes:``
+     - Yields a fresh :class:`Node` per index.
+   * - ``key in s.nodes``
+     - Membership by ``int`` or ``str``.
+   * - ``s.nodes.get_index(id)``
+     - String → int. Raises :exc:`KeyError` if absent.
+   * - ``s.nodes.get_id(idx)``
+     - Int → string. Raises :exc:`IndexError` if out of range.
+   * - ``s.nodes.add(id, type)``
+     - Append a node (``BUILDING`` / ``OPENED`` only). Returns the
+       :class:`Node` and bumps the generation counter.
+   * - ``s.nodes.pop_last(id)``
+     - Remove the most recently added node.
+   * - ``s.nodes.rename(key, new_id)``
+     - Rename in place. Invalidates any :class:`Node` wrappers held by
+       Python code.
 
-Geometry & basic properties
----------------------------
+Bulk numpy properties
+---------------------
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
-
-   * - Method
-     - Returns
-   * - :meth:`get_invert_elev`
-     - Invert (bottom) elevation, model length units.
-   * - :meth:`get_max_depth`
-     - Maximum depth above invert.
-   * - :meth:`get_initial_depth`
-     - Initial depth at simulation start.
-   * - :meth:`get_surcharge_depth`
-     - Surcharge depth above ``max_depth``.
-   * - :meth:`get_ponded_area`
-     - Surface ponded area when surcharged.
-   * - :meth:`get_crown_elev`
-     - Top-of-pipe elevation at the node.
-   * - :meth:`get_full_volume`
-     - Volume at ``max_depth`` (storage nodes).
-
-Each ``get_*`` has a matching ``set_*`` that requires the solver to be in
-``OPENED`` or later.
-
-Hydraulic state (during the run)
---------------------------------
+Every per-node array is exposed as a property whose getter returns a
+fresh ``float64`` array of shape ``(n_nodes,)`` and whose setter (if
+present) accepts the same shape:
 
 .. list-table::
    :header-rows: 1
-   :widths: 35 65
+   :widths: 22 14 64
 
-   * - Method
-     - Returns
-   * - :meth:`get_depth`
-     - Current water depth above invert.
-   * - :meth:`get_head`
-     - Total hydraulic head (invert + depth).
-   * - :meth:`get_volume`
-     - Current volume in the node.
-   * - :meth:`get_inflow`
-     - Total inflow at this step.
-   * - :meth:`get_outflow`
-     - Total outflow at this step.
-   * - :meth:`get_lateral_inflow`
-     - External (lateral) inflow.
-   * - :meth:`get_overflow`
-     - Overflow (flooding) flow.
-   * - :meth:`get_losses`
+   * - Property
+     - Mode
+     - What it carries
+   * - ``depths``
+     - read/write
+     - Water depth above invert.
+   * - ``heads``
+     - read-only
+     - Hydraulic head.
+   * - ``inflows``
+     - read-only
+     - Total inflow.
+   * - ``overflows``
+     - read-only
+     - Flooding / overflow rate.
+   * - ``volumes``
+     - read-only
+     - Stored volume.
+   * - ``outflows``
+     - read-only
+     - Total outflow.
+   * - ``losses``
+     - read-only
      - Evaporation + seepage losses.
-   * - :meth:`get_degree`
-     - Number of links connected.
+   * - ``lateral_inflows``
+     - read-only
+     - Per-node lateral inflows.
+   * - ``ids``
+     - read-only
+     - String ids as a ``numpy.ndarray`` of ``dtype=object``.
 
-Forcing — overrides during a run
---------------------------------
+For lateral-inflow forcing, use the explicit method:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. code-block:: python
 
-   * - Method
-     - Action
-   * - :meth:`set_depth`
-     - Force the depth this step.
-   * - :meth:`set_lateral_inflow`
-     - Inject a lateral inflow this step.
-   * - :meth:`set_head_boundary`
-     - Force a head boundary (outfalls).
+    s.nodes.set_lateral_inflows(arr)         # float64, shape (n_nodes,)
 
-These are **one-shot** — overwritten by the engine on the next step.
-For sticky overrides that survive every step until cleared, use the
-:class:`Forcing` API (:doc:`forcing`).
+For per-pollutant concentrations, use:
 
-Water quality
--------------
+.. code-block:: python
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
-
-   * - Method
-     - Action
-   * - :meth:`get_quality`
-     - Concentration of pollutant ``p`` at the node.
-   * - :meth:`set_quality_mass_flux`
-     - Inject a mass flux for pollutant ``p``.
-
-Storage-node configuration
---------------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
-
-   * - Method
-     - Action
-   * - :meth:`get_storage_curve` / :meth:`set_storage_curve`
-     - Storage curve (depth → area) by index.
-   * - :meth:`get_storage_functional` / :meth:`set_storage_functional`
-     - ``A·h^B + C`` storage-function coefficients.
-   * - :meth:`get_storage_seep_rate` / :meth:`set_storage_seep_rate`
-     - Constant seepage out the bottom.
-   * - :meth:`get_exfil_params` / :meth:`set_exfil_params`
-     - Green-Ampt exfiltration parameters.
-
-Outfall-node configuration
---------------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
-
-   * - Method
-     - Action
-   * - :meth:`get_outfall_type` / :meth:`set_outfall_type`
-     - Free / fixed / tidal / time-series / normal.
-   * - :meth:`set_outfall_stage`
-     - Constant stage (for ``FIXED`` outfalls).
-   * - :meth:`set_outfall_tidal`
-     - Tidal curve index.
-   * - :meth:`set_outfall_timeseries`
-     - Time-series index.
-   * - :meth:`get_outfall_param`
-     - Generic outfall parameter (varies by type).
-   * - :meth:`set_outfall_flap_gate`
-     - Flap-gate present?
+    concs = s.nodes.qualities("TSS")         # or by pollutant index
 
 ----
 
-End-to-end example
-==================
+Wrapper: :class:`Node`
+======================
 
-.. code-block:: python
-
-    from openswmm.engine import Solver, Nodes, NodeType, EngineState
-
-    with Solver("site_drainage.inp", "site_drainage.rpt", "site_drainage.out") as s:
-        nodes = Nodes(s)
-        print(f"Model has {nodes.count()} nodes")
-
-        # enumerate junctions vs. outfalls
-        for i in range(nodes.count()):
-            kind = NodeType(nodes.get_type(i)).name
-            print(f"  {i:3d}  {nodes.get_id(i):<12}  {kind}")
-
-        # pick one and watch it
-        j1 = nodes.get_index("J1")
-        peak = 0.0
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-            d = nodes.get_depth(j1)
-            if d > peak:
-                peak = d
-                t_peak = s.elapsed
-        print(f"J1 peak depth = {peak:.3f} at t={t_peak*24:.2f} h")
-
-----
-
-Common recipes
-==============
-
-Inject a constant lateral inflow into a junction
-------------------------------------------------
-
-One-shot per step (overwritten at the start of every step):
-
-.. code-block:: python
-
-    j1 = nodes.get_index("J1")
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-        nodes.set_lateral_inflow(j1, 1.5)  # cfs (or m³/s, per FLOW_UNITS)
-
-Sticky (preserved by the engine across steps):
-
-.. code-block:: python
-
-    from openswmm.engine import Forcing, ForcingMode
-
-    forcing = Forcing(s)
-    j1 = nodes.get_index("J1")
-    forcing.node_lat_inflow(j1, 1.5, ForcingMode.REPLACE, persist=True)
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-    forcing.clear_all()
-
-Pulse: ramp inflow up between hours 1-3
----------------------------------------
-
-.. code-block:: python
-
-    j1 = nodes.get_index("J1")
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-        h = s.elapsed * 24.0
-        if 1.0 <= h <= 3.0:
-            ramp = 1.0 - abs((h - 2.0) / 1.0)   # triangular peak at t=2 h
-            nodes.set_lateral_inflow(j1, 5.0 * ramp)
-        else:
-            nodes.set_lateral_inflow(j1, 0.0)
-
-Tide-driven outfall
--------------------
-
-.. code-block:: python
-
-    out1 = nodes.get_index("OUT1")
-    nodes.set_outfall_type(out1, OutfallType.FIXED)
-
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-        h = s.elapsed * 24.0
-        # 12.42-hour M2 tide, mean stage 0, amplitude 1.5
-        stage = 1.5 * math.sin(2 * math.pi * h / 12.42)
-        nodes.set_head_boundary(out1, stage)
-
-(For a real model, prefer :meth:`set_outfall_tidal` with a tidal curve
-loaded from the ``.inp``.)
-
-Walk every junction's full state in one pass
---------------------------------------------
-
-.. code-block:: python
-
-    for i in range(nodes.count()):
-        if nodes.get_type(i) == NodeType.JUNCTION:
-            print(
-                f"{nodes.get_id(i):<12}  "
-                f"invert={nodes.get_invert_elev(i):7.2f}  "
-                f"max_d ={nodes.get_max_depth(i):5.2f}  "
-                f"depth ={nodes.get_depth(i):5.2f}"
-            )
-
-Convert a junction to a storage node mid-edit
----------------------------------------------
-
-See :doc:`editing` — type conversion is owned by :class:`ModelEditor`,
-not :class:`Nodes`.
-
-----
-
-Bulk arrays
-===========
-
-The bulk methods exist for the **read-heavy** quantities you most often
-want vectorised.  Each returns or accepts a contiguous
-``np.ndarray[float64]`` of shape ``(n_nodes,)``.
+The wrapper is the natural place to read and write a single node. All
+properties round-trip directly through the C API — no Python-side
+caching:
 
 .. list-table::
    :header-rows: 1
-   :widths: 40 60
+   :widths: 22 14 14 50
 
-   * - Method
-     - Returns / accepts
-   * - :meth:`get_depths_bulk`
-     - All node depths.
-   * - :meth:`get_heads_bulk`
-     - All node heads.
-   * - :meth:`set_depths_bulk(arr)`
-     - Force depths for every node from ``arr``.
-   * - :meth:`get_inflows_bulk`
-     - **Lateral** inflow per node (see naming note below).
-   * - :meth:`get_overflows_bulk`
-     - Overflow (flooding) per node.
-   * - :meth:`set_lat_inflows_bulk(arr)`
-     - Lateral inflow per node.
-   * - :meth:`get_quality_bulk(p)`
-     - Concentration of pollutant ``p`` per node.
-   * - :meth:`get_volumes_bulk`
-     - Stored volume per node *(added 6.0.0)*.
-   * - :meth:`get_outflows_bulk`
-     - Total outflow per node *(added 6.0.0)*.
-   * - :meth:`get_losses_bulk`
-     - Per-node losses (evaporation + seepage) *(added 6.0.0)*.
-   * - :meth:`get_lateral_inflows_bulk`
-     - Lateral inflow per node — explicitly named successor to
-       :meth:`get_inflows_bulk` *(added 6.0.0)*.
-   * - :meth:`get_ids_bulk`
-     - ``list[str]`` of every node's id in one C call
-       *(added 6.0.0; stride-packed UTF-8)*.
+   * - Property
+     - Type
+     - Mode
+     - Meaning
+   * - ``id``
+     - ``str``
+     - read-only
+     - Node identifier.
+   * - ``index``
+     - ``int``
+     - read-only
+     - Position in the engine's node array.
+   * - ``type``
+     - :class:`NodeType`
+     - read-only
+     - JUNCTION / OUTFALL / STORAGE / DIVIDER.
+   * - ``invert_elev``
+     - ``float``
+     - read/write
+     - Invert elevation.
+   * - ``max_depth``
+     - ``float``
+     - read/write
+     -
+   * - ``surcharge_depth``
+     - ``float``
+     - read/write
+     -
+   * - ``ponded_area``
+     - ``float``
+     - read/write
+     -
+   * - ``initial_depth``
+     - ``float``
+     - read/write
+     -
+   * - ``crown_elev``
+     - ``float``
+     - read-only
+     - Top-of-crown elevation derived from connected links.
+   * - ``full_volume``
+     - ``float``
+     - read-only
+     - Storage volume at ``max_depth``.
+   * - ``degree``
+     - ``int``
+     - read-only
+     - Number of links incident to the node.
+   * - ``depth``
+     - ``float``
+     - read/write
+     - Runtime depth above invert.
+   * - ``head``
+     - ``float``
+     - read-only
+     - Runtime hydraulic head.
+   * - ``volume``
+     - ``float``
+     - read-only
+     -
+   * - ``lateral_inflow``
+     - ``float``
+     - read/write
+     - One-shot lateral inflow for the next step.
+   * - ``overflow``
+     - ``float``
+     - read-only
+     -
+   * - ``inflow``
+     - ``float``
+     - read-only
+     - Total inflow.
+   * - ``losses``
+     - ``float``
+     - read-only
+     -
+   * - ``outflow``
+     - ``float``
+     - read-only
+     -
 
-.. note::
-
-   Naming caveat: :meth:`get_inflows_bulk` reads the *lateral* inflow
-   column on the C side despite its generic name; it is retained for
-   backward compatibility, but new code should prefer
-   :meth:`get_lateral_inflows_bulk`. Both methods return the same
-   values.
-
-Memory-aliasing rule: the array returned by a ``get_*_bulk`` method
-shares memory with an internal scratch buffer that the engine reuses
-on the **next** call.  Read-once-and-discard usage is safe; if you
-keep the array (e.g. across a step), call ``.copy()``:
-
-.. code-block:: python
-
-    import numpy as np
-
-    history = []
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-        history.append(nodes.get_depths_bulk().copy())   # detach from scratch
-    H = np.stack(history)              # shape (T, n_nodes)
-
-Whole-network reporting with the Phase 3 bulk accessors:
-
-.. code-block:: python
-
-   # Single C call per quantity — replaces N round-trips through
-   # the scalar getters. Useful when building post-run summaries,
-   # MCP / GUI dataframes, or input to a downstream tool.
-   ids       = nodes.get_ids_bulk()              # list[str]
-   depths    = nodes.get_depths_bulk()           # np.ndarray[float64]
-   volumes   = nodes.get_volumes_bulk()
-   outflows  = nodes.get_outflows_bulk()
-   losses    = nodes.get_losses_bulk()
-   lat       = nodes.get_lateral_inflows_bulk()
-
-   # Build a single DataFrame-shaped dict in one shot:
-   summary = {
-       "id":               ids,
-       "depth":            depths,
-       "volume":           volumes,
-       "outflow":          outflows,
-       "losses":           losses,
-       "lateral_inflow":   lat,
-   }
-
-   # Find the most-flooded outfall, e.g.:
-   flooded = nodes.get_overflows_bulk()
-   worst   = int(flooded.argmax())
-   print(f"max overflow at {ids[worst]}: {flooded[worst]:.3f}")
-
-----
-
-EngineState requirements & exceptions
-=====================================
+Methods:
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 25 45
+   :widths: 38 62
 
    * - Method
-     - Required state
-     - Notes
-   * - ``count``, ``get_id``, ``get_index``
-     - ``OPENED`` or later
-     - Identity is fixed once the model is parsed.
-   * - ``get_invert_elev``, ``get_max_depth``, …
-     - ``OPENED`` or later
-     - Geometry; not state.
-   * - ``set_invert_elev``, ``set_max_depth``, …
-     - ``OPENED`` or ``INITIALIZED``
-     - Editing during a run is rarely meaningful; some setters refuse.
-   * - ``get_depth``, ``get_head``, ``get_inflow``, …
-     - ``RUNNING`` or ``ENDED``
-     - Hydraulic state requires at least one step.
-   * - ``set_depth``, ``set_lateral_inflow``, ``set_head_boundary``
-     - ``RUNNING``
-     - One-shot per step.
-   * - ``set_quality_mass_flux``
-     - ``RUNNING``
-     - Requires a pollutant to be defined.
-   * - ``*_bulk``
-     - same as scalar
-     - Same state rules as the per-element form.
+     - What it does
+   * - ``set_head_boundary(head)``
+     - One-shot head boundary for the next step.
+   * - ``quality(pollutant)``
+     - Concentration of ``pollutant`` (id or int).
+   * - ``set_quality_mass_flux(pollutant, mass_rate)``
+     - Inject a mass flux.
+   * - ``depth_from_volume(volume)``
+     - Storage-curve inverse lookup.
 
-Common :class:`EngineError` codes:
+----
 
-* ``INVALID_INDEX`` — integer index out of range.
-* ``INVALID_TYPE`` — calling a storage / outfall accessor on a node of
-  the wrong type (e.g. ``set_outfall_stage`` on a junction).
-* ``NOT_FOUND`` — string id not in the model.
+Type-specific sub-views
+=======================
 
-Use :doc:`error_handling` patterns for robust scripts.
+Each node type exposes a small sub-namespace. Accessing the wrong one
+raises :exc:`AttributeError` — the wrong sub-view is **not** silently
+returned:
+
+.. code-block:: python
+
+    # OUTFALL nodes only.
+    out = s.nodes["OUT1"]
+    out.outfall.type = OutfallType.FIXED
+    out.outfall.set_stage(123.4)
+    out.outfall.flap_gate = True
+    out.outfall.route_to                  # subcatchment index, or -1
+
+    # STORAGE nodes only.
+    sto = s.nodes["S1"]
+    sto.storage.curve                     # curve index, or -1 if functional
+    sto.storage.functional = (a, b, c)    # ax² + bx + c
+    sto.storage.seep_rate = 0.01
+    sto.storage.exfil_params = (suction, ksat, imd)
+
+    # DIVIDER nodes only.
+    div = s.nodes["D1"]
+    div.divider.type                       # integer divider type code
+
+----
+
+Statistics sub-view
+===================
+
+Every node carries a ``.stats`` sub-view exposing the cumulative
+flooding/overflow statistics aggregated by the engine:
+
+.. code-block:: python
+
+    j1 = s.nodes["J1"]
+    print(j1.stats.max_depth)
+    print(j1.stats.max_overflow)
+    print(j1.stats.vol_flooded)            # cubic feet (US) / m³ (SI)
+    print(j1.stats.time_flooded)           # seconds; divide by 3600 for hours
+
+These values are only meaningful after :meth:`Solver.end` (or
+equivalently, after the simulation loop terminates).
+
+----
+
+Staleness & generation counter
+==============================
+
+Adding, removing, renaming, or converting nodes invalidates every
+:class:`Node` wrapper minted **before** the change. Touching a stale
+wrapper raises :class:`StaleObjectError` (which is also a
+:class:`LifecycleError` and therefore a :exc:`RuntimeError`):
+
+.. code-block:: python
+
+    j1 = s.nodes["J1"]
+    s.nodes.rename(0, "J1_RENAMED")
+    j1.depth                              # raises StaleObjectError
+
+Recovery is to re-look-up by the new id (or by index):
+
+.. code-block:: python
+
+    j1 = s.nodes["J1_RENAMED"]
+    j1.depth                              # OK
+
+Per-property reads/writes are cheap, so don't try to cache wrappers
+across mutations. The collection itself never goes stale — it always
+addresses the current state of the model.
+
+----
+
+Equality, hashing, repr
+=======================
+
+* ``a == b`` is ``True`` when ``a`` and ``b`` wrap the same ``(solver,
+  index)`` pair, regardless of when each wrapper was minted.
+* ``hash(node)`` is consistent with equality, so :class:`Node` is usable
+  as a dict key / set element within a single Solver.
+* ``repr(node)`` includes the captured id and integer index, e.g.
+  ``<Node id='J1' index=0>``.
 
 ----
 
 See also
 ========
 
-* :doc:`links` — analogous class for conduits / pumps / orifices / weirs / outlets.
-* :doc:`forcing` — sticky cross-step forcings.
-* :doc:`controls` — programmatic / rule-based actions.
-* :doc:`editing` — adding, deleting, converting nodes.
-* :doc:`output_reader` — read node time-series from a finished ``.out`` file.
+* :doc:`solver` — where ``s.nodes`` comes from.
+* :doc:`links` — link wrappers follow the same pattern.
+* :doc:`output_reader` — node time-series after the run.
+* :doc:`error_handling` — every exception type referenced on this page.

@@ -1,25 +1,25 @@
 """
-Rain Gage Access
-================
+Rain gage access (Pythonic v1 surface)
+======================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
-The :class:`Gages` class provides access to rain gage rainfall during a
-simulation.
+The :class:`Gages` collection and :class:`Gage` wrapper expose rain
+gages with the same shape as :mod:`openswmm.engine._nodes`.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Gages
+    from openswmm.engine import Solver, GageDataSource, GageRainType
 
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        gages = Gages(s)
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-            rain = gages.get_rainfall("RainGage")    # by name
-            gages.set_rainfall(0, 25.4)               # or by index
+    with Solver("model.inp") as s:
+        g = s.gages["RG1"]
+        print(g.rain_type, g.data_source)
+        g.rainfall = 25.4
+
+        # Bulk read of all rainfalls.
+        arr = s.gages.rainfalls           # np.ndarray
 """
 
 # cython: language_level=3
@@ -28,290 +28,236 @@ import numpy as np
 cimport numpy as np
 
 from ._common cimport *
+from ._enums import GageDataSource, GageRainType
+from ._exceptions import StaleObjectError
 
 
-class Gages:
-    """Access and override rain gage rainfall during a simulation.
+# =============================================================================
+# Helpers
+# =============================================================================
 
-    All per-element methods accept either an integer index or a string gage
-    ID.  When a string is passed it is resolved via L{get_index}.
+cdef inline SWMM_Engine _h(solver):
+    return <SWMM_Engine><size_t>solver.handle
 
-    @param solver: An active L{openswmm.engine.Solver} instance. The
-        solver must remain alive for the lifetime of this object.
-    @type solver: L{openswmm.engine.Solver}
 
-    Example::
+cdef inline int _resolve_gage(solver, object key) except -1:
+    return _resolve_index(_h(solver), key, swmm_gage_index, swmm_gage_count, "Gage")
 
-        gages = Gages(solver)
-        rain = gages.get_rainfall(0)           # by index
-        rain = gages.get_rainfall("RainGage")  # by name
-    """
+
+cdef inline void _check_fresh(gage) except *:
+    if gage._gen != gage._solver.generation:
+        raise StaleObjectError(
+            f"Gage wrapper (id={gage._captured_id!r}, index={gage._index}) is stale; "
+            "look it up again from solver.gages."
+        )
+
+
+# =============================================================================
+# Gage wrapper
+# =============================================================================
+
+cdef class Gage:
+    """A single rain gage."""
+
+    cdef object _solver
+    cdef int _index
+    cdef long long _gen
+    cdef str _captured_id
+
+    def __init__(self, solver, int index):
+        self._solver = solver
+        self._index = index
+        self._gen = solver.generation
+        cdef const char* raw = swmm_gage_id(_h(solver), index)
+        self._captured_id = raw.decode('utf-8') if raw != NULL else ""
+
+    # ---- Identity ---------------------------------------------------
+
+    @property
+    def id(self) -> str:
+        _check_fresh(self)
+        cdef const char* raw = swmm_gage_id(_h(self._solver), self._index)
+        return raw.decode('utf-8') if raw != NULL else ""
+
+    @property
+    def index(self) -> int:
+        _check_fresh(self)
+        return self._index
+
+    @property
+    def solver(self):
+        return self._solver
+
+    # ---- Configuration ---------------------------------------------
+
+    @property
+    def rain_type(self):
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_gage_get_rain_type(_h(self._solver), self._index, &v))
+        return GageRainType(v)
+
+    @rain_type.setter
+    def rain_type(self, value) -> None:
+        _check_fresh(self)
+        _check(swmm_gage_set_rain_type(
+            _h(self._solver), self._index, int(value)))
+
+    @property
+    def data_source(self):
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_gage_get_data_source(_h(self._solver), self._index, &v))
+        return GageDataSource(v)
+
+    @data_source.setter
+    def data_source(self, value) -> None:
+        _check_fresh(self)
+        _check(swmm_gage_set_data_source(
+            _h(self._solver), self._index, int(value)))
+
+    def set_rain_interval(self, seconds) -> None:
+        """Set the rain-interval duration. Accepts a number of seconds
+        or a :class:`datetime.timedelta`."""
+        from datetime import timedelta
+        _check_fresh(self)
+        cdef double s
+        if isinstance(seconds, timedelta):
+            s = seconds.total_seconds()
+        else:
+            s = float(seconds)
+        _check(swmm_gage_set_rain_interval(_h(self._solver), self._index, s))
+
+    def set_timeseries(self, ts_id: str) -> None:
+        """Configure the gage to read from a named time series."""
+        _check_fresh(self)
+        cdef bytes b = ts_id.encode('utf-8')
+        _check(swmm_gage_set_timeseries(_h(self._solver), self._index, b))
+
+    def set_file(self, path: str, station_id: str) -> None:
+        """Configure the gage to read from an external file."""
+        _check_fresh(self)
+        cdef bytes b_path = path.encode('utf-8')
+        cdef bytes b_id = station_id.encode('utf-8')
+        _check(swmm_gage_set_filename(
+            _h(self._solver), self._index, b_path, b_id))
+
+    # ---- Runtime state ---------------------------------------------
+
+    @property
+    def rainfall(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_gage_get_rainfall(_h(self._solver), self._index, &v))
+        return v
+
+    @rainfall.setter
+    def rainfall(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_gage_set_rainfall(_h(self._solver), self._index, value))
+
+    # ---- Equality / repr -------------------------------------------
+
+    def __eq__(self, other):
+        if not isinstance(other, Gage):
+            return NotImplemented
+        return (self._solver is other._solver
+                and self._index == other._index)
+
+    def __hash__(self):
+        return hash((id(self._solver), self._index))
+
+    def __repr__(self) -> str:
+        try:
+            return f"<Gage id={self._captured_id!r} index={self._index}>"
+        except Exception:
+            return f"<Gage index={self._index} (stale or closed)>"
+
+
+# =============================================================================
+# Gages collection
+# =============================================================================
+
+cdef class Gages:
+    """Indexable, iterable collection of :class:`Gage` wrappers."""
+
+    cdef object _solver
 
     def __init__(self, solver):
         self._solver = solver
 
-    def _resolve(self, idx) -> int:
-        """Resolve C{idx} to an integer index.
+    # ---- Container protocol ----------------------------------------
 
-        @param idx: Integer index or string gage ID.
-        @type idx: Union[int, str]
-        @return: Integer index.
-        @rtype: int
-        @raise KeyError: If a string ID is not found.
-        """
-        cdef int i
-        if isinstance(idx, str):
-            i = self.get_index(idx)
-            if i < 0:
-                raise KeyError(f"Gage '{idx}' not found")
-            return i
-        return idx
+    def __len__(self) -> int:
+        return swmm_gage_count(_h(self._solver))
 
-    # ====================================================================
-    # Identification & lookup
-    # ====================================================================
+    def __iter__(self):
+        cdef int n = swmm_gage_count(_h(self._solver))
+        for i in range(n):
+            yield Gage(self._solver, i)
 
-    def count(self) -> int:
-        """Return the number of rain gages in the model.
+    def __getitem__(self, key) -> Gage:
+        cdef int i = _resolve_gage(self._solver, key)
+        return Gage(self._solver, i)
 
-        @return: Gage count.
-        @rtype: int
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        return swmm_gage_count(h)
+    def __contains__(self, key) -> bool:
+        try:
+            _resolve_gage(self._solver, key)
+            return True
+        except (KeyError, IndexError, TypeError):
+            return False
+
+    # ---- Identity lookups -----------------------------------------
 
     def get_index(self, str gage_id) -> int:
-        """Return the integer index of a rain gage by its string ID.
-
-        @param gage_id: Gage identifier.
-        @type gage_id: str
-        @return: Gage index, or C{-1} if not found.
-        @rtype: int
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = gage_id.encode('utf-8')
-        return swmm_gage_index(h, b)
+        cdef int i = swmm_gage_index(_h(self._solver), b)
+        if i < 0:
+            raise KeyError(gage_id)
+        return i
 
     def get_id(self, int idx) -> str:
-        """Return the string ID of a rain gage by index.
+        if not (0 <= idx < len(self)):
+            raise IndexError(idx)
+        cdef const char* raw = swmm_gage_id(_h(self._solver), idx)
+        return raw.decode('utf-8') if raw != NULL else ""
 
-        @param idx: Gage index.
-        @type idx: int
-        @return: Gage identifier, or empty string if not found.
-        @rtype: str
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef const char* s = swmm_gage_id(h, idx)
-        if s == NULL:
-            return ""
-        return s.decode('utf-8')
+    # ---- Editing -------------------------------------------------
 
-    def add(self, str gage_id) -> int:
-        """Add a rain gage to the model (OPENED-state editing).
-
-        Wraps C{swmm_gage_add}. Valid in C{BUILDING} or C{OPENED}
-        state. For from-scratch construction without an .inp file, use
-        L{ModelBuilder.add_gage}.
-
-        @param gage_id: Unique gage identifier.
-        @type gage_id: str
-        @return: Error code (C{0} on success).
-        @rtype: int
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    def add(self, str gage_id) -> Gage:
         cdef bytes b = gage_id.encode('utf-8')
-        return swmm_gage_add(h, b)
+        _check(swmm_gage_add(_h(self._solver), b))
+        self._solver._bump_generation()
+        cdef int new_idx = swmm_gage_index(_h(self._solver), b)
+        return Gage(self._solver, new_idx)
 
-    def delete(self, idx) -> list:
-        """Delete a rain gage and cascade-nullify all referencing objects.
+    def rename(self, key, str new_id) -> None:
+        cdef int i = _resolve_gage(self._solver, key)
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_gage_rename(_h(self._solver), i, b))
+        self._solver._bump_generation()
 
-        Delegates to L{ModelEditor.delete_gage}. Valid in C{BUILDING}
-        or C{OPENED} state.
+    # ---- Bulk -----------------------------------------------------
 
-        @param idx: Gage index (int) or gage ID (str).
-        @type idx: Union[int, str]
-        @return: List of L{ImpactEntry} describing cascaded changes.
-        @rtype: list[ImpactEntry]
-        @raise KeyError: If C{idx} is a string and the gage is not found.
-        @raise RuntimeError: On engine error.
-        """
-        from ._edit import ModelEditor
-        return ModelEditor(self._solver).delete_gage(idx)
-
-    # ====================================================================
-    # Rainfall get/set
-    # ====================================================================
-
-    def get_rainfall(self, idx) -> float:
-        """Return the current rainfall rate at a gage.
-
-        @param idx: Gage index (int) or gage ID (str). Strings are
-            resolved via L{get_index}.
-        @type idx: Union[int, str]
-        @return: Rainfall rate (project rainfall units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the gage ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_gage_get_rainfall(h, i, &v))
-        return v
-
-    def set_rainfall(self, idx, double rainfall):
-        """Override rainfall at a gage for the current timestep.
-
-        Affects all subcatchments that use this gage. Applied for one
-        timestep only -- call again each step to sustain.
-
-        @param idx: Gage index (int) or gage ID (str).
-        @type idx: Union[int, str]
-        @param rainfall: Rainfall rate (project rainfall units).
-        @type rainfall: float
-        @raise KeyError: If C{idx} is a string and the gage ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_gage_set_rainfall(h, i, rainfall))
-
-    def get_rainfall_bulk(self) -> np.ndarray:
-        """Return rainfall for all gages as a NumPy array. The GIL is
-        released during the C call.
-
-        @return: 1-D array of rainfall values, one per gage. Shape
-            C{(n_gages,)}, dtype C{float64}.
-        @rtype: numpy.ndarray
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def rainfalls(self):
+        """All rainfalls as a 1-D ``float64`` array."""
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_gage_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
         cdef int err
         with nogil:
-            err = swmm_gage_get_rainfall_bulk(h, p, n)
+            err = swmm_gage_get_rainfall_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
-    # ====================================================================
-    # Gage configuration (BUILDING / OPENED)
-    # ====================================================================
+    @property
+    def ids(self):
+        return np.asarray(
+            [self.get_id(i) for i in range(len(self))], dtype=object)
 
-    def set_rain_type(self, idx, int type):
-        """Set the rain type for a gage.
-
-        @param idx: Gage index (int) or gage ID (str).
-        @type idx: Union[int, str]
-        @param type: Rain type code.
-        @type type: int
-        @raise KeyError: If C{idx} is a string and the gage ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_gage_set_rain_type(h, i, type))
-
-    def set_rain_interval(self, idx, double seconds):
-        """Set the rain recording interval for a gage.
-
-        @param idx: Gage index (int) or gage ID (str).
-        @type idx: Union[int, str]
-        @param seconds: Recording interval in seconds.
-        @type seconds: float
-        @raise KeyError: If C{idx} is a string and the gage ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_gage_set_rain_interval(h, i, seconds))
-
-    def set_data_source(self, idx, int source):
-        """Set the data source type for a gage.
-
-        @param idx: Gage index (int) or gage ID (str).
-        @type idx: Union[int, str]
-        @param source: Data source code.
-        @type source: int
-        @raise KeyError: If C{idx} is a string and the gage ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_gage_set_data_source(h, i, source))
-
-    def set_timeseries(self, idx, str ts_id):
-        """Set the timeseries data source for a gage.
-
-        @param idx: Gage index (int) or gage ID (str).
-        @type idx: Union[int, str]
-        @param ts_id: Timeseries identifier.
-        @type ts_id: str
-        @raise KeyError: If C{idx} is a string and the gage ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bytes b = ts_id.encode('utf-8')
-        _check(swmm_gage_set_timeseries(h, i, b))
-
-    def set_filename(self, idx, str path, str station_id):
-        """Set the external rainfall file and station for a gage.
-
-        @param idx: Gage index (int) or gage ID (str).
-        @type idx: Union[int, str]
-        @param path: Path to the rainfall data file.
-        @type path: str
-        @param station_id: Station identifier within the file.
-        @type station_id: str
-        @raise KeyError: If C{idx} is a string and the gage ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bytes b_path = path.encode('utf-8')
-        cdef bytes b_station = station_id.encode('utf-8')
-        _check(swmm_gage_set_filename(h, i, b_path, b_station))
-
-    def get_rain_type(self, idx) -> int:
-        """Return the rain type code for a gage.
-
-        @param idx: Gage index (int) or gage ID (str).
-        @type idx: Union[int, str]
-        @return: Rain type code.
-        @rtype: int
-        @raise KeyError: If C{idx} is a string and the gage ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = 0
-        _check(swmm_gage_get_rain_type(h, i, &v))
-        return v
-
-    def get_data_source(self, idx) -> int:
-        """Return the data source code for a gage.
-
-        @param idx: Gage index (int) or gage ID (str).
-        @type idx: Union[int, str]
-        @return: Data source code.
-        @rtype: int
-        @raise KeyError: If C{idx} is a string and the gage ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = 0
-        _check(swmm_gage_get_data_source(h, i, &v))
-        return v
-
-    # ====================================================================
-    # Rename
-    # ====================================================================
-
-    def rename(self, idx, str new_id):
-        """Rename a rain gage.
-
-        @param idx: Gage index (int) or current gage ID (str).
-        @type idx: Union[int, str]
-        @param new_id: New identifier string.
-        @type new_id: str
-        @raise KeyError: If C{idx} is a string and the gage ID is not found.
-        @raise EngineError: If the C API rejects the rename.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bytes b = new_id.encode('utf-8')
-        _check(swmm_gage_rename(h, i, b))
-
+    def __repr__(self) -> str:
+        try:
+            return f"<Gages n={len(self)}>"
+        except Exception:
+            return "<Gages (engine closed)>"

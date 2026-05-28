@@ -47,7 +47,8 @@ typedef void* SWMM_Engine;
  *
  * @param engine        The engine handle that fired the callback.
  * @param elapsed_frac  Fraction of simulation complete [0.0, 1.0].
- * @param sim_time      Current simulation time in decimal days (Julian date).
+ * @param sim_time      Current simulation time as a SWMM DateTime double
+ *                      (decimal days since 1899-12-30; see `openswmm_datetime.h`).
  * @param user_data     User-supplied context pointer from registration.
  *
  * @note This callback is called on every physical timestep, which may be

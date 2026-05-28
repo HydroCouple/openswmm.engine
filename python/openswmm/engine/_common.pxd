@@ -85,6 +85,15 @@ cdef extern from "openswmm_engine.h":
     cdef int swmm_set_step_begin_callback(SWMM_Engine e, SWMM_StepBeginCallback cb, void* ud)
     cdef int swmm_set_step_end_callback(SWMM_Engine e, SWMM_StepEndCallback cb, void* ud)
 
+cdef extern from "openswmm_datetime.h":
+    # SWMM DateTime is a double: integer days since 1899-12-30 + fractional day.
+    cdef int swmm_datetime_encode_date(int year, int month, int day, double* out)
+    cdef int swmm_datetime_encode_time(int hour, int minute, int second, double* out)
+    cdef int swmm_datetime_decode_date(double value, int* year, int* month, int* day)
+    cdef int swmm_datetime_decode_time(double value, int* hour, int* minute, int* second)
+    cdef int swmm_datetime_add_seconds(double value, double seconds, double* out)
+    cdef int swmm_datetime_time_diff(double value1, double value2, long* out)
+
 cdef extern from "openswmm_model.h":
     cdef SWMM_Engine swmm_engine_new()
     cdef int swmm_validate_model(SWMM_Engine e)
@@ -851,12 +860,90 @@ cdef extern from "openswmm_forcing.h":
     cdef int swmm_forcing_clear_all(SWMM_Engine e)
 
 
-# --- Shared helper ---
+# --- Shared helpers ---
 cdef inline void _check(int code) except *:
-    """Raise EngineError if code != 0."""
+    """Raise the right ``EngineError`` subclass for a non-zero ``code``.
+
+    ``code == 0`` is a no-op. Dispatch on the integer code is delegated to
+    :func:`openswmm.engine._exceptions.raise_for_code` so the mapping is
+    expressed once, in pure Python, and stays in lockstep with the
+    :class:`openswmm.engine.ErrorCode` enum.
+    """
     cdef const char* msg
-    if code != 0:
-        msg = swmm_error_message(code)
-        raise RuntimeError(
-            msg.decode('utf-8') if msg != NULL else f"SWMM error {code}"
+    cdef str py_msg
+    if code == 0:
+        return
+    # Resolve the engine's own message text. Import is intentionally local so
+    # the cdef inline can be used from any module without circular-import risk.
+    from openswmm.engine._exceptions import raise_for_code
+    msg = swmm_error_message(code)
+    py_msg = msg.decode('utf-8') if msg != NULL else ""
+    raise_for_code(code, py_msg)
+
+
+# Function-pointer typedefs for the polymorphic ``_resolve_index`` helper —
+# every domain has a matching ``swmm_*_count(handle)`` and
+# ``swmm_*_index(handle, id)`` pair, so we can express the resolver once.
+ctypedef int (*swmm_index_fn_t)(SWMM_Engine e, const char* id)
+ctypedef int (*swmm_count_fn_t)(SWMM_Engine e)
+
+
+cdef inline int _resolve_index(
+    SWMM_Engine handle,
+    object key,
+    swmm_index_fn_t index_fn,
+    swmm_count_fn_t count_fn,
+    str obj_name,
+) except -1:
+    """Resolve a string id or integer index to a validated integer index.
+
+    :param handle: Engine handle.
+    :param key: ``int`` index or ``str`` object id.
+    :param index_fn: C lookup function for the domain (e.g.
+        ``swmm_node_index``).
+    :param count_fn: C count function for the domain (e.g.
+        ``swmm_node_count``).
+    :param obj_name: Human-readable domain name used in error messages
+        (e.g. ``"Node"``).
+    :returns: A validated integer index in ``[0, count)``.
+    :raises KeyError: ``key`` is a string and no object with that id exists.
+    :raises IndexError: ``key`` is an int out of range.
+    :raises TypeError: ``key`` is neither ``int`` nor ``str``.
+    """
+    cdef int i
+    cdef int n
+    cdef bytes b
+    if isinstance(key, str):
+        b = (<str>key).encode('utf-8')
+        i = index_fn(handle, b)
+        if i < 0:
+            raise KeyError(f"{obj_name} '{key}' not found")
+        return i
+    # ``bool`` is a subclass of ``int`` — reject it explicitly so
+    # ``solver.nodes[True]`` doesn't silently mean index 1.
+    if isinstance(key, bool):
+        raise TypeError(
+            f"{obj_name} key must be int or str, got bool"
         )
+    if isinstance(key, int):
+        i = <int>key
+        n = count_fn(handle)
+        if i < 0 or i >= n:
+            raise IndexError(
+                f"{obj_name} index {i} out of range [0, {n})"
+            )
+        return i
+    # numpy integers — duck-typed; importing numpy here would force a
+    # hard dependency on numpy in every Cython module, so we test for
+    # the ``__index__`` protocol instead.
+    if hasattr(key, "__index__"):
+        i = <int>key.__index__()
+        n = count_fn(handle)
+        if i < 0 or i >= n:
+            raise IndexError(
+                f"{obj_name} index {i} out of range [0, {n})"
+            )
+        return i
+    raise TypeError(
+        f"{obj_name} key must be int or str, got {type(key).__name__}"
+    )

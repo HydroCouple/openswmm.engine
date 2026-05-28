@@ -61,31 +61,29 @@ state is exposed via :attr:`Solver.state`:
      - Value
      - Meaning
    * - ``CREATED``
-     - 0
+     - 1
      - Engine handle allocated, no input file parsed yet.
    * - ``OPENED``
-     - 1
+     - 2
      - ``.inp`` parsed; objects are accessible for inspection or editing.
    * - ``INITIALIZED``
-     - 2
-     - Initial conditions applied; arrays allocated.
-   * - ``RUNNING``
      - 3
-     - ``start()`` has been called; the routing loop is active and
-       ``step()`` may be called.
-   * - ``PAUSED``
+     - Initial conditions applied; arrays allocated.
+   * - ``STARTED``
      - 4
-     - Routing temporarily halted (reserved for future hot-swap support).
-   * - ``ENDED``
+     - ``start()`` returned; ready for the first ``step()``.
+   * - ``RUNNING``
      - 5
-     - ``end()`` called; cumulative results are available but no more
-       steps can be taken.
-   * - ``REPORTED``
+     - Inside the routing loop, ``step()`` / ``stride()`` callable.
+   * - ``ENDED``
      - 6
-     - ``report()`` called; summary written to the ``.rpt`` file.
+     - ``end()`` called; cumulative results & mass balance available.
    * - ``CLOSED``
      - 7
      - ``close()`` called; ``.rpt`` / ``.out`` files flushed.
+   * - ``BUILDING``
+     - 8
+     - Programmatic construction in progress (no ``.inp`` involved).
 
 Methods can require the Solver to be in:
 
@@ -160,36 +158,32 @@ keeps file handles open.
 The exception model
 ===================
 
-Every Cython binding checks the C return code.  Anything non-zero
-becomes an :class:`~openswmm.engine.EngineError`:
+Every binding checks the C return code.  A non-zero code raises an
+:class:`~openswmm.engine.EngineError` **subclass** chosen by the
+underlying ``SWMM_ERR_*``.  Each subclass also inherits from a standard
+library exception, so ``except IndexError:`` / ``except ValueError:``
+handlers work without any engine-specific imports:
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Nodes, EngineError
+    from openswmm.engine import Solver, EngineError, BadIndexError
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
-        nodes = Nodes(s)
         try:
-            nodes.get_depth("does-not-exist")
-        except EngineError as e:
-            print(f"engine returned {e.code}: {e.message}")
+            depth = s.nodes["NO_SUCH_NODE"].depth
+        except KeyError:                # also an EngineError subclass
+            depth = None
+        try:
+            depth = s.nodes[10_000].depth
+        except IndexError:              # likewise
+            depth = None
 
-The full table of error codes is in the C header
-``openswmm_engine.h`` (``SWMM_ERR_*`` constants); the Python enum
-:class:`~openswmm.engine.ErrorCode` lifts the most common ones.  The
-``message`` attribute is filled by the C API — never construct one
-manually.
+Every :class:`EngineError` carries ``.code`` (raw integer),
+``.code_enum`` (:class:`~openswmm.engine.ErrorCode` member), and
+``.message`` (filled from the C API — never construct one manually).
 
-Common Python-side exceptions worth knowing:
-
-* :exc:`KeyError`         — passed a string id that isn't in the model.
-* :exc:`IndexError`       — passed an integer index that's out of range.
-* :exc:`TypeError`        — passed the wrong argument type to a setter.
-* :exc:`ValueError`       — passed a value the engine rejects (e.g.
-  negative max-depth on a junction).
-
-These are raised before the C call dispatches, so they do **not** carry
-an engine error code.
+See :doc:`error_handling` for the full subclass table, the stdlib bases
+each one inherits from, and the recommended ``try / except`` idioms.
 
 ----
 
@@ -275,6 +269,19 @@ Threading & multiprocessing
   Solver and its domain classes assume a single-threaded caller.  If
   you need shared state, drive a single Solver from one thread and
   feed work to it via a queue.
+
+----
+
+Dates and times
+===============
+
+Date / time values exposed by the new bindings are Python
+:class:`datetime.datetime` objects; durations (timesteps, elapsed time,
+the report step) are :class:`datetime.timedelta` objects.  The
+underlying SWMM representation is a ``double`` (decimal days since
+1899-12-30) which only surfaces when you reach into the low-level C API
+yourself — see :doc:`datetime` for the conversion rules and precision
+bounds.
 
 ----
 
