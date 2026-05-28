@@ -16,6 +16,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "openswmm_solver.h"
@@ -158,4 +160,90 @@ TEST(SolverErrorRetrieval, GetErrorFromCode) {
 TEST(SolverErrorRetrieval, GetVersionIsPositive) {
     // Sanity: version is always accessible regardless of simulation state
     EXPECT_GT(swmm_getVersion(), 0);
+}
+
+// ============================================================
+// Error 227: Zero channel Manning's n in TRANSECTS
+// ============================================================
+
+// Minimal .inp content for a conduit with a transect whose channel n = 0.
+// swmm_open must reject this and set error code 227.
+static const char *kZeroManningInp = R"(
+[TITLE]
+Zero Manning transect test
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         KINWAVE
+LINK_OFFSETS         DEPTH
+MIN_SLOPE            0
+ALLOW_PONDING        NO
+SKIP_STEADY_STATE    NO
+START_DATE           01/01/2024
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2024
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2024
+END_TIME             00:30:00
+SWEEP_START          01/01
+SWEEP_END            12/31
+DRY_DAYS             0
+REPORT_STEP          00:01:00
+WET_STEP             00:01:00
+DRY_STEP             00:01:00
+ROUTING_STEP         00:00:30
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth InitDepth SurDepth Aponded
+J1      100   5        0         0        0
+J2      99    5        0         0        0
+
+[OUTFALLS]
+
+[CONDUITS]
+;;Name  From  To   Length  Manning  InOffset OutOffset InitFlow MaxFlow
+C1      J1    J2   100     0.013    0        0         0        0
+
+[XSECTIONS]
+;;Name  Shape     Geom1 Geom2 Geom3 Geom4 Barrels
+C1      IRREGULAR TZN   0     0     0     1
+
+[TRANSECTS]
+NC 0.04 0.04 0.0
+X1 TZN  3  1.0  9.0  0  0  0  0  0
+GR 100 0  90 5  100 10
+
+[REPORT]
+SUBCATCHMENTS  NONE
+NODES          NONE
+LINKS          NONE
+)";
+
+TEST(SolverTransectErrors, ZeroChannelManningIsError227) {
+    // Write minimal .inp with zero channel Manning's n to a temp file.
+    char *tname = std::tmpnam(nullptr);
+    std::string inpPath = std::string(tname) + "_zero_n.inp";
+    std::string rptPath = std::string(tname) + "_zero_n.rpt";
+    std::string outPath = std::string(tname) + "_zero_n.out";
+
+    {
+        std::FILE *f = std::fopen(inpPath.c_str(), "w");
+        ASSERT_NE(f, nullptr);
+        std::fputs(kZeroManningInp, f);
+        std::fclose(f);
+    }
+
+    int rc = swmm_open(inpPath.c_str(), rptPath.c_str(), outPath.c_str());
+    EXPECT_NE(rc, 0) << "swmm_open should fail for zero channel Manning's n";
+
+    char errMsg[512] = {};
+    int code = swmm_getError(errMsg, sizeof(errMsg));
+    EXPECT_EQ(code, 227) << "Expected error code 227 (ERR_TRANSECT_MANNING), got " << code
+                          << " message: " << errMsg;
+
+    swmm_close();
+    std::remove(inpPath.c_str());
+    std::remove(rptPath.c_str());
+    std::remove(outPath.c_str());
 }

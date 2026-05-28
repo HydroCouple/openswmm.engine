@@ -27,7 +27,9 @@
 
 namespace openswmm::input {
 
+using openswmm::format_error;
 using openswmm::format_warning;
+using openswmm::ERR_TRANSECT_MANNING;
 using openswmm::WarnCode;
 using openswmm::WARN_NEGATIVE_OFFSET;
 using openswmm::WARN_MIN_ELEV_DROP;
@@ -510,6 +512,10 @@ void resolve_cross_references(SimulationContext& ctx) {
             td.n_left    = ctx.transects.n_left[ut];
             td.n_right   = ctx.transects.n_right[ut];
             td.n_channel = ctx.transects.n_channel[ut];
+            if (td.n_channel <= 0.0) {
+                ctx.errors.push_back(format_error(ERR_TRANSECT_MANNING, td.name));
+                continue;
+            }
             td.stations  = ctx.transects.stations[ut];
             td.elevations = ctx.transects.elevations[ut];
             td.x_left_bank  = ctx.transects.x_left_bank[ut];
