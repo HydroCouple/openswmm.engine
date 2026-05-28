@@ -605,6 +605,41 @@ void resolve_cross_references(SimulationContext& ctx) {
         }
     }
 
+    // Resolve STREET_XSECT link street profile names → indices.
+    // The street profile name was stored in pump_curve_name during parsing
+    // (LinksHandler::handle_xsections), analogous to IRREGULAR transects.
+    {
+        int ns = ctx.streets.count();
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.xsect_shape[uj] != XsectShape::STREET_XSECT) continue;
+            const auto& sname = ctx.links.pump_curve_name[uj];
+            if (!sname.empty()) {
+                for (int s = 0; s < ns; ++s) {
+                    if (ctx.streets.names[static_cast<std::size_t>(s)] == sname) {
+                        ctx.links.xsect_curve[uj] = s;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Populate InletUsageStore::street_index for STREET_XSECT conduit inlets.
+    // The street index was resolved into ctx.links.xsect_curve above.
+    {
+        int nu = ctx.inlet_usages.count();
+        for (int i = 0; i < nu; ++i) {
+            int li = ctx.inlet_usages.link_index[static_cast<std::size_t>(i)];
+            if (li < 0 || li >= n_links) continue;
+            auto ul = static_cast<std::size_t>(li);
+            if (ctx.links.xsect_shape[ul] == XsectShape::STREET_XSECT) {
+                ctx.inlet_usages.street_index[static_cast<std::size_t>(i)] =
+                    ctx.links.xsect_curve[ul];
+            }
+        }
+    }
+
     // Use global constants
     using constants::PI;
     using constants::GRAVITY;
@@ -968,6 +1003,49 @@ void resolve_cross_references(SimulationContext& ctx) {
                 double p_def = 2.0 * y_full + w_max;
                 r_full = (p_def > 0.0) ? a_full / p_def : 0.0;
                 s_full = a_full * std::pow(r_full, 2.0/3.0);
+                s_max  = s_full;
+                yw_max = y_full;
+            }
+            break;
+        }
+
+        case XsectShape::STREET_XSECT: {
+            // Street cross-section: compute full-flow hydraulic properties from
+            // the resolved street geometry (xsect_curve holds the street index).
+            int si = ctx.links.xsect_curve[uj];
+            if (si >= 0 && si < ctx.streets.count()) {
+                auto us = static_cast<std::size_t>(si);
+                double sx_val = ctx.streets.sx[us];
+                double t_cr   = ctx.streets.t_crown[us];
+                double gd     = ctx.streets.gutter_depres[us];
+                double gw     = ctx.streets.gutter_width[us];
+                int    sides  = ctx.streets.sides[us];
+                // Full depth from curb bottom to crown (gutter depression + road slope)
+                double road_w = (t_cr > gw) ? (t_cr - gw) : t_cr;
+                y_full = road_w * sx_val + gd;
+                if (y_full <= 0.0) y_full = t_cr * sx_val;
+                if (y_full <= 0.0) y_full = t_cr;
+                // Effective street half-width (to crown)
+                w_max = t_cr * static_cast<double>(sides);
+                // Approximate cross-sectional area: triangular road + gutter depression strip
+                double a_road   = 0.5 * road_w * road_w * sx_val;
+                double a_gutter = gw * (gd + sx_val * gw / 2.0);
+                a_full = (a_road + a_gutter) * static_cast<double>(sides);
+                if (a_full <= 0.0) a_full = 0.5 * w_max * y_full;
+                // Approximate wet perimeter (hypotenuse of road triangle)
+                double leg_road = std::sqrt(road_w * road_w + (road_w * sx_val) * (road_w * sx_val));
+                double leg_gutter = std::sqrt(gw * gw + gd * gd);
+                double perim = (leg_road + leg_gutter) * static_cast<double>(sides);
+                r_full = (perim > 0.0) ? a_full / perim : 0.0;
+                s_full = a_full * std::pow(std::max(r_full, 1e-10), 2.0/3.0);
+                s_max  = s_full;
+                yw_max = y_full;
+            } else {
+                // Fallback: rectangular approximation
+                a_full = w_max * y_full;
+                double p_def = 2.0 * y_full + w_max;
+                r_full = (p_def > 0.0) ? a_full / p_def : 0.0;
+                s_full = a_full * std::pow(std::max(r_full, 1e-10), 2.0/3.0);
                 s_max  = s_full;
                 yw_max = y_full;
             }

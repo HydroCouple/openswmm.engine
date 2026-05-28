@@ -10,10 +10,13 @@
 
 #include "Inlet.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/ErrorCodes.hpp"
 #include "../data/InfraData.hpp"
+#include "../data/LinkData.hpp"
 #include <cmath>
 #include <algorithm>
 #include <cstring>
+#include <vector>
 
 namespace openswmm {
 namespace inlet {
@@ -257,6 +260,24 @@ double InletSolver::computeOnGradeCapture(int idx, double flow, double /*depth*/
 }
 
 // ============================================================================
+// inletCompatible() — check if an inlet type is valid for a conduit shape
+// ============================================================================
+//  Compatibility rules (matches legacy inlet_validate() in inlet.c):
+//   GRATE / CURB / COMBO / SLOTTED  →  STREET_XSECT only
+//   DROP_GRATE / DROP_CURB          →  RECT_OPEN or TRAPEZOIDAL only
+//   CUSTOM                          →  any conduit shape
+// ============================================================================
+
+static bool inletCompatible(XsectShape shape, const std::string& type_str) {
+    if (type_str == "CUSTOM") return true;
+    if (type_str == "DROP_GRATE" || type_str == "DROP_CURB") {
+        return shape == XsectShape::RECT_OPEN || shape == XsectShape::TRAPEZOIDAL;
+    }
+    // GRATE, CURB, COMBO, SLOTTED require a street cross-section
+    return shape == XsectShape::STREET_XSECT;
+}
+
+// ============================================================================
 // init() — populate InletSoA from ctx.inlet_usages and resolve geometry
 // ============================================================================
 
@@ -265,38 +286,60 @@ void InletSolver::init(SimulationContext& ctx) {
     int n = usages.count();
     if (n == 0) return;
 
-    soa_.resize(n);
-
+    // First pass: collect valid inlet indices, checking conduit-inlet compatibility.
+    // Incompatible pairs are skipped with a WARN_INLET_REMOVED warning.
+    std::vector<int> valid_indices;
+    valid_indices.reserve(static_cast<std::size_t>(n));
     for (int i = 0; i < n; ++i) {
-        int li = usages.link_index[i];
-        int di = usages.design_index[i];
+        int li = usages.link_index[static_cast<std::size_t>(i)];
+        int di = usages.design_index[static_cast<std::size_t>(i)];
+        if (li >= 0 && li < ctx.n_links() && di >= 0 && di < ctx.inlets.count()) {
+            XsectShape link_shape = ctx.links.xsect_shape[static_cast<std::size_t>(li)];
+            const auto& type_str  = ctx.inlets.inlet_type[static_cast<std::size_t>(di)];
+            if (!inletCompatible(link_shape, type_str)) {
+                ctx.warnings.push_back(
+                    format_warning(WARN_INLET_REMOVED, ctx.link_names.name_of(li)));
+                continue;
+            }
+        }
+        valid_indices.push_back(i);
+    }
 
-        soa_.link_idx[i]      = li;
-        soa_.node_idx[i]      = usages.node_index[i];
-        soa_.bypass_node[i]   = ctx.links.node2[li];  // downstream node
-        soa_.num_inlets[i]    = usages.num_inlets[i];
-        soa_.clog_factor[i]   = usages.clog_factor[i];
-        soa_.flow_limit[i]    = usages.flow_limit[i];
-        soa_.local_depress[i] = usages.local_depress[i];
-        soa_.local_width[i]   = usages.local_width[i];
+    int nv = static_cast<int>(valid_indices.size());
+    soa_.resize(nv);
+
+    for (int k = 0; k < nv; ++k) {
+        int i  = valid_indices[static_cast<std::size_t>(k)];
+        int li = usages.link_index[static_cast<std::size_t>(i)];
+        int di = usages.design_index[static_cast<std::size_t>(i)];
+
+        soa_.link_idx[k]      = li;
+        soa_.node_idx[k]      = usages.node_index[static_cast<std::size_t>(i)];
+        soa_.bypass_node[k]   = ctx.links.node2[static_cast<std::size_t>(li)];  // downstream node
+        soa_.num_inlets[k]    = usages.num_inlets[static_cast<std::size_t>(i)];
+        soa_.clog_factor[k]   = usages.clog_factor[static_cast<std::size_t>(i)];
+        soa_.flow_limit[k]    = usages.flow_limit[static_cast<std::size_t>(i)];
+        soa_.local_depress[k] = usages.local_depress[static_cast<std::size_t>(i)];
+        soa_.local_width[k]   = usages.local_width[static_cast<std::size_t>(i)];
 
         // Resolve inlet design parameters
         if (di >= 0 && di < ctx.inlets.count()) {
+            auto udi = static_cast<std::size_t>(di);
             // Parse inlet type string to enum
-            const auto& type_str = ctx.inlets.inlet_type[di];
-            if (type_str == "GRATE")           soa_.inlet_type[i] = static_cast<int>(InletType::GRATE);
-            else if (type_str == "CURB")        soa_.inlet_type[i] = static_cast<int>(InletType::CURB);
-            else if (type_str == "COMBO")       soa_.inlet_type[i] = static_cast<int>(InletType::COMBO);
-            else if (type_str == "SLOTTED")     soa_.inlet_type[i] = static_cast<int>(InletType::SLOTTED);
-            else if (type_str == "DROP_GRATE")  soa_.inlet_type[i] = static_cast<int>(InletType::DROP_GRATE);
-            else if (type_str == "DROP_CURB")   soa_.inlet_type[i] = static_cast<int>(InletType::DROP_CURB);
-            else if (type_str == "CUSTOM")      soa_.inlet_type[i] = static_cast<int>(InletType::CUSTOM);
+            const auto& type_str = ctx.inlets.inlet_type[udi];
+            if (type_str == "GRATE")           soa_.inlet_type[k] = static_cast<int>(InletType::GRATE);
+            else if (type_str == "CURB")        soa_.inlet_type[k] = static_cast<int>(InletType::CURB);
+            else if (type_str == "COMBO")       soa_.inlet_type[k] = static_cast<int>(InletType::COMBO);
+            else if (type_str == "SLOTTED")     soa_.inlet_type[k] = static_cast<int>(InletType::SLOTTED);
+            else if (type_str == "DROP_GRATE")  soa_.inlet_type[k] = static_cast<int>(InletType::DROP_GRATE);
+            else if (type_str == "DROP_CURB")   soa_.inlet_type[k] = static_cast<int>(InletType::DROP_CURB);
+            else if (type_str == "CUSTOM")      soa_.inlet_type[k] = static_cast<int>(InletType::CUSTOM);
 
-            soa_.grate_length[i] = ctx.inlets.length[di];
-            soa_.grate_width[i]  = ctx.inlets.width[di];
+            soa_.grate_length[k] = ctx.inlets.length[udi];
+            soa_.grate_width[k]  = ctx.inlets.width[udi];
 
             // Parse grate type string
-            const auto& gt_str = ctx.inlets.grate_type[di];
+            const auto& gt_str = ctx.inlets.grate_type[udi];
             int gt = static_cast<int>(GrateType::GENERIC);
             if (gt_str == "P_BAR-50" || gt_str == "P_BAR_50")
                 gt = static_cast<int>(GrateType::P_BAR_50);
@@ -312,54 +355,69 @@ void InletSolver::init(SimulationContext& ctx) {
                 gt = static_cast<int>(GrateType::TILT_BAR_30);
             else if (gt_str == "RETICULINE")
                 gt = static_cast<int>(GrateType::RETICULINE);
-            soa_.grate_type[i] = gt;
+            soa_.grate_type[k] = gt;
 
             // Set opening ratio from standard table or custom value
             if (gt >= 0 && gt <= static_cast<int>(GrateType::GENERIC)) {
-                soa_.opening_ratio[i] = GRATE_OPEN_RATIOS[gt];
+                soa_.opening_ratio[k] = GRATE_OPEN_RATIOS[gt];
             }
-            if (ctx.inlets.open_area[di] > 0.0) {
-                soa_.opening_ratio[i] = ctx.inlets.open_area[di];
+            if (ctx.inlets.open_area[udi] > 0.0) {
+                soa_.opening_ratio[k] = ctx.inlets.open_area[udi];
             }
 
             // For curb/combo inlets, the length field is curb length,
             // width is curb height. These are set from the second design
             // line in legacy. For simplicity, if type is CURB or COMBO,
             // store curb dimensions.
-            if (soa_.inlet_type[i] == static_cast<int>(InletType::CURB) ||
-                soa_.inlet_type[i] == static_cast<int>(InletType::DROP_CURB)) {
-                soa_.curb_length[i] = ctx.inlets.length[di];
-                soa_.curb_height[i] = ctx.inlets.width[di];
-                soa_.grate_length[i] = 0.0;
-                soa_.grate_width[i] = 0.0;
+            if (soa_.inlet_type[k] == static_cast<int>(InletType::CURB) ||
+                soa_.inlet_type[k] == static_cast<int>(InletType::DROP_CURB)) {
+                soa_.curb_length[k] = ctx.inlets.length[udi];
+                soa_.curb_height[k] = ctx.inlets.width[udi];
+                soa_.grate_length[k] = 0.0;
+                soa_.grate_width[k] = 0.0;
             }
 
-            if (soa_.inlet_type[i] == static_cast<int>(InletType::SLOTTED)) {
-                soa_.slotted_length[i] = ctx.inlets.length[di];
-                soa_.slotted_width[i]  = ctx.inlets.width[di];
-                soa_.grate_length[i] = 0.0;
-                soa_.grate_width[i] = 0.0;
+            if (soa_.inlet_type[k] == static_cast<int>(InletType::SLOTTED)) {
+                soa_.slotted_length[k] = ctx.inlets.length[udi];
+                soa_.slotted_width[k]  = ctx.inlets.width[udi];
+                soa_.grate_length[k] = 0.0;
+                soa_.grate_width[k] = 0.0;
             }
         }
 
-        // Resolve street geometry from the street store (if link has a street xsect)
-        int si = (usages.street_index.size() > static_cast<size_t>(i))
-                 ? usages.street_index[i] : -1;
+        // Resolve street geometry from the street store.
+        // For STREET_XSECT conduits the street index was resolved into
+        // xsect_curve by PostParseResolver; fall back to usages.street_index
+        // for backward compatibility.
+        int si = -1;
+        if (li >= 0 && li < ctx.n_links()) {
+            auto uli = static_cast<std::size_t>(li);
+            if (ctx.links.xsect_shape[uli] == XsectShape::STREET_XSECT) {
+                si = ctx.links.xsect_curve[uli];
+            }
+        }
+        if (si < 0 && usages.street_index.size() > static_cast<std::size_t>(i)) {
+            si = usages.street_index[static_cast<std::size_t>(i)];
+        }
+
         if (si >= 0 && si < ctx.streets.count()) {
-            soa_.sx[i]                = ctx.streets.sx[si];
-            soa_.gutter_depression[i] = ctx.streets.gutter_depres[si];
-            soa_.gutter_width[i]      = ctx.streets.gutter_width[si];
-            soa_.road_roughness[i]    = ctx.streets.n_road[si];
-            soa_.n_sides[i]           = ctx.streets.sides[si];
-            soa_.t_crown[i]           = ctx.streets.t_crown[si];
+            auto us = static_cast<std::size_t>(si);
+            soa_.sx[k]                = ctx.streets.sx[us];
+            soa_.gutter_depression[k] = ctx.streets.gutter_depres[us];
+            soa_.gutter_width[k]      = ctx.streets.gutter_width[us];
+            soa_.road_roughness[k]    = ctx.streets.n_road[us];
+            soa_.n_sides[k]           = ctx.streets.sides[us];
+            soa_.t_crown[k]           = ctx.streets.t_crown[us];
         } else {
             // Non-street conduit defaults
-            soa_.sx[i]                = 0.01;
-            soa_.gutter_depression[i] = 0.0;
-            soa_.gutter_width[i]      = 0.0;
-            soa_.road_roughness[i]    = ctx.links.roughness[li];
-            soa_.n_sides[i]           = 1;
-            soa_.t_crown[i]           = 100.0;  // effectively unlimited spread
+            soa_.sx[k]                = 0.01;
+            soa_.gutter_depression[k] = 0.0;
+            soa_.gutter_width[k]      = 0.0;
+            soa_.road_roughness[k]    = (li >= 0 && li < ctx.n_links())
+                                        ? ctx.links.roughness[static_cast<std::size_t>(li)]
+                                        : 0.013;
+            soa_.n_sides[k]           = 1;
+            soa_.t_crown[k]           = 100.0;  // effectively unlimited spread
         }
     }
 

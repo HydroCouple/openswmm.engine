@@ -3471,3 +3471,135 @@ TEST(CyclicTreatment85, LinearDependencyNoCycle) {
 
     EXPECT_FALSE(cycle) << "Linear p0→p1 DAG should not detect cycle";
 }
+
+// ============================================================================
+// Inlet Conduit Compatibility Tests (Issue: incompatible conduit/inlet pairs
+// should emit WARN_INLET_REMOVED and be excluded from the solver).
+// ============================================================================
+#include "hydraulics/Inlet.hpp"
+#include "data/InfraData.hpp"
+
+namespace {
+
+using openswmm::inlet::InletSolver;
+
+/// Build a minimal SimulationContext with one link and one inlet usage.
+/// @param link_shape     XsectShape for the conduit
+/// @param inlet_type_str Inlet type string (e.g., "GRATE", "DROP_GRATE", "CUSTOM")
+SimulationContext makeInletCtx(XsectShape link_shape,
+                               const std::string& inlet_type_str)
+{
+    SimulationContext ctx;
+
+    // Register one link name
+    ctx.link_names.add("conduit_A");
+
+    // Register two node names (upstream = 0, downstream = 1)
+    ctx.node_names.add("node_up");
+    ctx.node_names.add("node_down");
+
+    // Set up nodes (minimal junction data)
+    ctx.nodes.resize(2);
+    for (std::size_t i = 0; i < 2u; ++i) {
+        ctx.nodes.type[i]        = NodeType::JUNCTION;
+        ctx.nodes.full_depth[i]  = 5.0;
+        ctx.nodes.invert_elev[i] = 0.0;
+    }
+
+    // Set up one conduit link
+    ctx.links.resize(1);
+    const std::size_t ul = 0u;
+    ctx.links.type[ul]        = LinkType::CONDUIT;
+    ctx.links.node1[ul]       = 0;
+    ctx.links.node2[ul]       = 1;
+    ctx.links.xsect_shape[ul] = link_shape;
+    ctx.links.roughness[ul]   = 0.015;
+    ctx.links.xsect_curve[ul] = -1;  // no street profile
+
+    // Set up one inlet design
+    ctx.inlets.names.push_back("inlet_design_1");
+    ctx.inlets.inlet_type.push_back(inlet_type_str);
+    ctx.inlets.length.push_back(1.0);
+    ctx.inlets.width.push_back(0.5);
+    ctx.inlets.grate_type.push_back("GENERIC");
+    ctx.inlets.open_area.push_back(0.0);
+    ctx.inlets.splash_veloc.push_back(0.0);
+
+    // Set up one inlet usage: conduit_A uses inlet_design_1, captures to node 0
+    ctx.inlet_usages.link_index.push_back(0);
+    ctx.inlet_usages.design_index.push_back(0);
+    ctx.inlet_usages.node_index.push_back(0);
+    ctx.inlet_usages.num_inlets.push_back(1);
+    ctx.inlet_usages.placement.push_back(0);
+    ctx.inlet_usages.clog_factor.push_back(1.0);
+    ctx.inlet_usages.flow_limit.push_back(0.0);
+    ctx.inlet_usages.local_depress.push_back(0.0);
+    ctx.inlet_usages.local_width.push_back(0.0);
+    ctx.inlet_usages.street_index.push_back(-1);
+    ctx.inlet_usages.resize_stats(1);
+
+    return ctx;
+}
+
+} // anonymous namespace
+
+TEST(InletCompatibility, StreetConduitWithGrateIsValid) {
+    // STREET_XSECT + GRATE is a compatible pair → no warning, inlet kept
+    auto ctx = makeInletCtx(XsectShape::STREET_XSECT, "GRATE");
+    InletSolver solver;
+    solver.init(ctx);
+    EXPECT_TRUE(ctx.warnings.empty())
+        << "Street conduit with GRATE inlet should not emit a warning";
+}
+
+TEST(InletCompatibility, StreetConduitWithDropGrateEmitsWarning) {
+    // STREET_XSECT + DROP_GRATE is incompatible → warning emitted, inlet skipped
+    auto ctx = makeInletCtx(XsectShape::STREET_XSECT, "DROP_GRATE");
+    InletSolver solver;
+    solver.init(ctx);
+    EXPECT_EQ(ctx.warnings.size(), 1u)
+        << "Street conduit with DROP_GRATE inlet should emit exactly one warning";
+    if (!ctx.warnings.empty()) {
+        EXPECT_NE(ctx.warnings[0].find("conduit_A"), std::string::npos)
+            << "Warning should reference the conduit name";
+    }
+}
+
+TEST(InletCompatibility, RectOpenWithDropGrateIsValid) {
+    // RECT_OPEN + DROP_GRATE is a compatible pair → no warning
+    auto ctx = makeInletCtx(XsectShape::RECT_OPEN, "DROP_GRATE");
+    InletSolver solver;
+    solver.init(ctx);
+    EXPECT_TRUE(ctx.warnings.empty())
+        << "Open-rectangular conduit with DROP_GRATE inlet should not emit a warning";
+}
+
+TEST(InletCompatibility, RectOpenWithGrateEmitsWarning) {
+    // RECT_OPEN + GRATE is incompatible → warning emitted
+    auto ctx = makeInletCtx(XsectShape::RECT_OPEN, "GRATE");
+    InletSolver solver;
+    solver.init(ctx);
+    EXPECT_EQ(ctx.warnings.size(), 1u)
+        << "Open-rectangular conduit with GRATE inlet should emit exactly one warning";
+}
+
+TEST(InletCompatibility, TrapezoidalWithDropCurbIsValid) {
+    // TRAPEZOIDAL + DROP_CURB is a compatible pair → no warning
+    auto ctx = makeInletCtx(XsectShape::TRAPEZOIDAL, "DROP_CURB");
+    InletSolver solver;
+    solver.init(ctx);
+    EXPECT_TRUE(ctx.warnings.empty())
+        << "Trapezoidal conduit with DROP_CURB inlet should not emit a warning";
+}
+
+TEST(InletCompatibility, CustomInletAnyConduitIsValid) {
+    // CUSTOM inlets are valid for any conduit shape → no warning
+    for (XsectShape shape : {XsectShape::CIRCULAR, XsectShape::RECT_OPEN,
+                              XsectShape::TRAPEZOIDAL, XsectShape::STREET_XSECT}) {
+        auto ctx = makeInletCtx(shape, "CUSTOM");
+        InletSolver solver;
+        solver.init(ctx);
+        EXPECT_TRUE(ctx.warnings.empty())
+            << "CUSTOM inlet should be valid for any conduit shape";
+    }
+}
