@@ -112,7 +112,7 @@ class Spatial:
         if arr.shape[0] != n or arr.shape[1] != 2:
             raise ValueError(
                 f"node coords array must have shape ({n}, 2), got "
-                f"{arr.shape}")
+                f"({arr.shape[0]}, {arr.shape[1]})")
         cdef np.ndarray[double, ndim=1] xs = np.ascontiguousarray(arr[:, 0])
         cdef np.ndarray[double, ndim=1] ys = np.ascontiguousarray(arr[:, 1])
         _check(swmm_spatial_set_node_coords_bulk(
@@ -153,7 +153,8 @@ class Spatial:
             vertices, dtype=np.float64)
         if arr.ndim != 2 or arr.shape[1] != 2:
             raise ValueError(
-                f"link vertices must be shape (n, 2); got {arr.shape}")
+                f"link vertices must be shape (n, 2); got "
+                f"({arr.shape[0]}, {arr.shape[1]})")
         cdef int n = arr.shape[0]
         cdef np.ndarray[double, ndim=1] xs = np.ascontiguousarray(arr[:, 0])
         cdef np.ndarray[double, ndim=1] ys = np.ascontiguousarray(arr[:, 1])
@@ -194,7 +195,8 @@ class Spatial:
             polygon, dtype=np.float64)
         if arr.ndim != 2 or arr.shape[1] != 2:
             raise ValueError(
-                f"polygon must be shape (n, 2); got {arr.shape}")
+                f"polygon must be shape (n, 2); got "
+                f"({arr.shape[0]}, {arr.shape[1]})")
         cdef int n = arr.shape[0]
         cdef np.ndarray[double, ndim=1] xs = np.ascontiguousarray(arr[:, 0])
         cdef np.ndarray[double, ndim=1] ys = np.ascontiguousarray(arr[:, 1])

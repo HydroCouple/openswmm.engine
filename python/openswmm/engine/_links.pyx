@@ -629,7 +629,7 @@ cdef class Link:
     def hyd_power(self) -> float:
         _check_fresh(self)
         cdef double v = 0.0
-        _check(swmm_link_hyd_power(_h(self._solver), self._index, &v))
+        _check(swmm_link_get_hyd_power(_h(self._solver), self._index, &v))
         return v
 
     # ---- Control settings -----------------------------------------
