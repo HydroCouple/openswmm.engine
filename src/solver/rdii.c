@@ -229,7 +229,7 @@ int rdii_readUnitHydParams(char* tok[], int ntoks)
 //  Purpose: reads parameters of an RDII unit hydrograph from a line of input.
 //
 {
-    int i, j, k, m, g;
+    int i, j, k, m, g, mn;
     double x[6];
 
     // --- check that RDII UH object exists in database
@@ -283,6 +283,26 @@ int rdii_readUnitHydParams(char* tok[], int ntoks)
         }
     }
 
+    // --- warn if UH params for this month/type have already been defined
+    if ( m == 0 )
+    {
+        // ALL months: check if any specific month already has params for this type
+        for ( mn = 0; mn < 12; mn++ )
+        {
+            if ( UnitHyd[j].r[mn][k] != 0.0 )
+            {
+                report_writeWarningMsg(WARN13, UnitHyd[j].ID);
+                break;
+            }
+        }
+    }
+    else
+    {
+        // Specific month: check if this month already has params for this type
+        if ( UnitHyd[j].r[m-1][k] != 0.0 )
+            report_writeWarningMsg(WARN13, UnitHyd[j].ID);
+    }
+
     // --- save UH params
     setUnitHydParams(j, k, m, x);
     return 0;
@@ -301,7 +321,8 @@ int readOldUHFormat(int j, int m, char* tok[], int ntoks)
 //           input.
 //
 {
-    int    i, k;
+    int    i, k, mn;
+    int    m1, m2;
     double p[9], x[6];
 
     // --- check for proper number of tokens
@@ -322,6 +343,22 @@ int readOldUHFormat(int j, int m, char* tok[], int ntoks)
         {
             if ( ! getDouble(tok[i+11], &x[i+3]) )
                 return error_setInpError(ERR_NUMBER, tok[i+11]);
+        }
+    }
+
+    // --- warn if UH params for these months have already been defined
+    m1 = (m == 0) ? 0 : m-1;
+    m2 = (m == 0) ? 11 : m-1;
+    for ( k = 0; k < 3; k++ )
+    {
+        for ( mn = m1; mn <= m2; mn++ )
+        {
+            if ( UnitHyd[j].r[mn][k] != 0.0 )
+            {
+                report_writeWarningMsg(WARN13, UnitHyd[j].ID);
+                k = 3;  // break out of outer loop
+                break;
+            }
         }
     }
 
