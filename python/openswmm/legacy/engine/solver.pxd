@@ -136,6 +136,7 @@ cdef extern from "openswmm_solver.h":
         swmm_NODE_INITIAL_DEPTH # Initial depth
         swmm_NODE_POLLUTANT_CONCENTRATION # Pollutant concentration
         swmm_NODE_POLLUTANT_LATMASS_FLUX  # Pollutant lateral mass flux
+        swmm_NODE_OUTFLOW                 # Total outflow
 
     # SWMM Link properties
     ctypedef enum swmm_LinkProperty:

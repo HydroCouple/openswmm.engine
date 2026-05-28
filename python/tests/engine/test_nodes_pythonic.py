@@ -124,6 +124,12 @@ class TestNodeProperties:
         assert isinstance(n0.overflow, float)
         assert isinstance(n0.inflow, float)
 
+    def test_outflow_property(self, stepped_solver):
+        """Node.outflow returns a float >= 0 after stepping."""
+        n0 = stepped_solver.nodes[0]
+        assert isinstance(n0.outflow, float)
+        assert n0.outflow >= 0.0
+
     def test_lateral_inflow_setter(self, running_solver):
         n0 = running_solver.nodes[0]
         n0.lateral_inflow = 0.42
