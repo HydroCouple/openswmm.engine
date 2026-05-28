@@ -278,6 +278,22 @@ class TestSolverGetSetValues(unittest.TestCase):
             )
             self.assertAlmostEqual(val, 58.58717843671191)
 
+    def test_get_node_outflow(self):
+        with solver.Solver(
+            inp_file=self.inp,
+            rpt_file=example_solver_data.NON_EXISTENT_INPUT_FILE.replace(".inp", ".rpt"),
+            out_file=self.out,
+        ) as s:
+            s.start()
+            self._run_steps(s)
+            val = s.get_value(
+                object_type=solver.SWMMObjects.NODE,
+                property_type=solver.SWMMNodeProperties.OUTFLOW,
+                index=5,
+            )
+            self.assertIsInstance(val, float)
+            self.assertGreaterEqual(val, 0.0)
+
     def test_set_node_value(self):
         with solver.Solver(
             inp_file=self.inp,

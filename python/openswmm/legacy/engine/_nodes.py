@@ -108,6 +108,11 @@ class LegacyNode:
         """Current flooding (overflow) rate."""
         return self._get(SWMMNodeProperties.FLOODING)
 
+    @property
+    def outflow(self) -> float:
+        """Current total outflow through downstream links."""
+        return self._get(SWMMNodeProperties.OUTFLOW)
+
     # --- pollutants ---
     def get_pollutant_concentration(self, pollutant_index: int = 0) -> float:
         """Get pollutant concentration at this node.
