@@ -14,6 +14,7 @@ include(../extern/boost.cmake)
 
 
 add_subdirectory(outfile)
+add_subdirectory(solver)
 
 
 # Setting up tests to run from build tree
@@ -24,4 +25,9 @@ set(TEST_BIN_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIGURATION>")
 add_test(NAME test_output
     COMMAND "${TEST_BIN_DIRECTORY}/test_output"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/outfile/data
+    )
+
+add_test(NAME test_gage_scalefactor
+    COMMAND "${TEST_BIN_DIRECTORY}/test_gage_scalefactor"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/solver
     )

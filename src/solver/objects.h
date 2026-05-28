@@ -127,6 +127,7 @@ typedef struct
    int           rainInterval;    // recording time interval (seconds)
    int           rainUnits;       // rain depth units (US or SI)
    double        snowFactor;      // snow catch deficiency correction
+   double        scaleFactor;     // rainfall scale factor
    //-----------------------------
    long          startFilePos;    // starting byte position in Rain file
    long          endFilePos;      // ending byte position in Rain file
