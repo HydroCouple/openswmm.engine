@@ -1922,6 +1922,8 @@ static double getNodeValue(int property, int index, int subIndex, int pollutantI
             return node->inflow * UCF(FLOW);
         case swmm_NODE_OVERFLOW:
             return node->overflow * UCF(FLOW);
+        case swmm_NODE_OUTFLOW:
+            return node->outflow * UCF(FLOW);
         case swmm_NODE_RPTFLAG:
             return (node->rptFlag > 0);
         case swmm_NODE_SURCHARGE_DEPTH:
