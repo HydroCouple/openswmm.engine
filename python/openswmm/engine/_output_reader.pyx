@@ -322,6 +322,7 @@ cdef class OutputReader:
         cdef int idx = self._resolve(node, "node")
         cdef int v = int(var)
         cdef int period_count = swmm_output_get_period_count(self._handle)
+        cdef int s, e
         s, e = self._series_range(period_count, start, end)
         cdef int n = e - s + 1
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
@@ -339,6 +340,7 @@ cdef class OutputReader:
         cdef int idx = self._resolve(link, "link")
         cdef int v = int(var)
         cdef int period_count = swmm_output_get_period_count(self._handle)
+        cdef int s, e
         s, e = self._series_range(period_count, start, end)
         cdef int n = e - s + 1
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
@@ -356,6 +358,7 @@ cdef class OutputReader:
         cdef int idx = self._resolve(sub, "subcatchment")
         cdef int v = int(var)
         cdef int period_count = swmm_output_get_period_count(self._handle)
+        cdef int s, e
         s, e = self._series_range(period_count, start, end)
         cdef int n = e - s + 1
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
@@ -372,6 +375,7 @@ cdef class OutputReader:
     def system_series(self, var, *, start=None, end=None) -> np.ndarray:
         cdef int v = int(var)
         cdef int period_count = swmm_output_get_period_count(self._handle)
+        cdef int s, e
         s, e = self._series_range(period_count, start, end)
         cdef int n = e - s + 1
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
