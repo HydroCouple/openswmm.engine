@@ -107,6 +107,17 @@ function(add_cython_extension)
     list(APPEND _cython_inc_args
         --include-dir "${CMAKE_CURRENT_SOURCE_DIR}")
 
+    # WORKING_DIRECTORY is set to the per-target generated-source folder
+    # (${_gen_dir}) so the Python interpreter invoking Cython prepends *that*
+    # directory to sys.path, not the build-tree package directory.  Without
+    # this, on Linux the build order can place a freshly linked
+    # openswmm.engine module (e.g. _datetime.cpython-3??.so) into ninja's
+    # cwd before _model.pyx is Cythonized; the stdlib's
+    # `from _datetime import *` then picks up our SWMM module instead of
+    # CPython's datetime C accelerator, deleting `_check_date_fields` from
+    # `datetime`'s namespace and breaking every later `datetime.date(...)`
+    # call.  ${_gen_dir} only ever contains Cython output, never importable
+    # top-level names that could shadow the stdlib.
     add_custom_command(
         OUTPUT  "${_cxx_out}"
         COMMAND ${OPENSWMM_CYTHON_EXECUTABLE}
@@ -115,6 +126,7 @@ function(add_cython_extension)
                 ${OPENSWMM_CYTHON_DIRECTIVES}
                 "${_pyx_abs}"
                 --output-file "${_cxx_out}"
+        WORKING_DIRECTORY "${_gen_dir}"
         DEPENDS "${_pyx_abs}"
         COMMENT "Cythonizing ${ACE_SOURCE} → ${ACE_NAME}.cxx"
         VERBATIM
