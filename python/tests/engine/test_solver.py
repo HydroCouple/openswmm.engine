@@ -44,10 +44,9 @@ class TestSolverManualLifecycle:
         s.start()
 
         stepped = False
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-            stepped = True
+        for _ in s.steps():
+            pass
+             = True
         assert stepped, "Simulation should advance at least one timestep"
 
         s.end()
@@ -58,10 +57,11 @@ class TestSolverManualLifecycle:
         assert os.path.exists(out)
 
     def test_step_signals_completion_via_state(self, running_solver):
-        # step() returns int rc; simulation completion is reported via the
-        # state property transitioning to ENDED, NOT via the rc.
-        while running_solver.state == EngineState.RUNNING:
-            assert running_solver.step() == 0
+        # v1: step() returns timedelta, simulation completion is reported via
+        # both the state property transitioning to ENDED and the
+        # steps() iterator terminating.
+        for _ in running_solver.steps():
+            pass
         assert running_solver.state == EngineState.ENDED
 
 
@@ -75,19 +75,17 @@ class TestSolverContextManager:
         inp, rpt, out = solver_files
         with Solver(inp, rpt, out) as s:
             count = 0
-            while s.state == EngineState.RUNNING:
-                if s.step() != 0:
-                    break
-                count += 1
+            for _ in s.steps():
+            pass
+             += 1
             assert count > 0
 
     def test_context_manager_cleanup(self, solver_files):
         inp, rpt, out = solver_files
         with Solver(inp, rpt, out) as s:
-            while s.state == EngineState.RUNNING:
-                if s.step() != 0:
-                    break
-                pass
+            for _ in s.steps():
+            pass
+            
         # After exiting, handle should be NULL (destroyed)
         assert s.handle == 0
 

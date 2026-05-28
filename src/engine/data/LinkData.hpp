@@ -288,6 +288,16 @@ struct LinkData {
     std::vector<double>     target_setting;
 
     /**
+     * @brief Absolute date (decimal days) when target_setting last crossed
+     *        an open<->closed boundary. Consulted by the control engine for
+     *        LINK_TIMEOPEN / LINK_TIMECLOSED premises. Updated by the
+     *        routing layer (SWMMEngine::stepRouting) only on open<->closed
+     *        transitions, matching legacy routing.c:295-299.
+     * @see Legacy: Link[j].timeLastSet
+     */
+    std::vector<double>     time_last_set;
+
+    /**
      * @brief Flow direction: +1 = node1→node2, -1 = reversed.
      * @see Legacy: Link[j].direction
      */
@@ -652,6 +662,7 @@ struct LinkData {
         xsect_batch_shape.assign(un, 0);
         setting.assign(un, 1.0);
         target_setting.assign(un, 1.0);
+        time_last_set.assign(un, 0.0);
         direction.assign(un, 1);
 
         loss_inlet.assign(un, 0.0);

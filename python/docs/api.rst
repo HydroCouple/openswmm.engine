@@ -53,6 +53,34 @@ Solver lifecycle
    :undoc-members:
    :show-inheritance:
 
+Exceptions
+----------
+
+The :class:`EngineError` hierarchy and the dispatch helper used by
+``_check()``. Each subclass also inherits from a standard-library
+exception so idiomatic ``except IndexError:`` / ``except ValueError:``
+handlers do the right thing.
+
+.. automodule:: openswmm.engine._exceptions
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+DateTime conversion
+-------------------
+
+The low-level C API encode/decode primitives plus the high-level
+``oadate_to_datetime`` / ``datetime_to_oadate`` helpers used throughout
+the bindings.
+
+.. automodule:: openswmm.engine._datetime
+   :members:
+   :undoc-members:
+
+.. automodule:: openswmm.engine._dates
+   :members:
+   :undoc-members:
+
 Model construction
 ------------------
 

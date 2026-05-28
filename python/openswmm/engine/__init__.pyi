@@ -18,8 +18,24 @@ water quality, spatial data, and GeoPackage I/O.
 # Engine lifecycle & errors
 # =============================================================================
 from ._solver import (
-    EngineError as EngineError,
     Solver as Solver,
+    run as run,
+    run_with_callback as run_with_callback,
+)
+from ._exceptions import (
+    BadHandleError as BadHandleError,
+    BadIndexError as BadIndexError,
+    BadParamError as BadParamError,
+    CRSError as CRSError,
+    DependencyError as DependencyError,
+    EngineError as EngineError,
+    FileError as FileError,
+    HotStartError as HotStartError,
+    LifecycleError as LifecycleError,
+    NumericalError as NumericalError,
+    ParseError as ParseError,
+    PluginError as PluginError,
+    StaleObjectError as StaleObjectError,
 )
 
 # =============================================================================
@@ -71,6 +87,15 @@ from ._2d import Surface2D as Surface2D
 from ._geopackage import GeoPackage as GeoPackage
 
 # =============================================================================
+# DateTime conversion (SWMM DateTime double <-> Python datetime / calendar parts)
+# =============================================================================
+from . import _datetime as datetime_api
+from ._dates import (
+    datetime_to_oadate as datetime_to_oadate,
+    oadate_to_datetime as oadate_to_datetime,
+)
+
+# =============================================================================
 # Enumerations
 # =============================================================================
 from ._enums import (
@@ -84,7 +109,10 @@ from ._enums import (
     LinkType as LinkType,
     NodeType as NodeType,
     OutfallType as OutfallType,
+    OrificeType as OrificeType,
+    OutletRatingType as OutletRatingType,
     RouteModel as RouteModel,
+    WeirType as WeirType,
     XSectShape as XSectShape,
     # Hydrology
     GageDataSource as GageDataSource,

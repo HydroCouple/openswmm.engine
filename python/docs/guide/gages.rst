@@ -4,222 +4,122 @@ Rain gages
 
 .. note::
 
-   **Engine:** OpenSWMM 6 — refactored.  Documents
-   :class:`openswmm.engine.Gages`.  Legacy users see :doc:`../legacy/solver`.
+   **Engine:** OpenSWMM 6 — refactored.
 
 .. currentmodule:: openswmm.engine
 
-The :class:`Gages` class manages every rain gage in the model — the
-sources of rainfall data that drive subcatchment runoff.  A gage may
-draw rainfall from a time series, an external file (NWS / NCDC formats),
-or live runtime overrides.
+Rain gages drive rainfall onto subcatchments. The shape mirrors
+:doc:`nodes` and :doc:`links` — a collection on ``solver.gages`` that
+yields :class:`Gage` wrappers.
 
 Reference: ``openswmm_gages.h``.
 
 ----
 
-Class signature
-===============
+Quickstart
+==========
 
 .. code-block:: python
 
-    class Gages:
-        def __init__(self, solver: Solver) -> None: ...
+    from openswmm.engine import Solver, GageDataSource, GageRainType
+
+    with Solver("model.inp") as s:
+        g = s.gages["RG1"]
+        print(g.rain_type, g.data_source)
+
+        # Read / inject runtime rainfall.
+        print(g.rainfall)
+        g.rainfall = 25.4
+
+        # Bulk numpy read across all gages.
+        arr = s.gages.rainfalls
 
 ----
 
-Key methods
-===========
-
-Identity
---------
+Collection: :class:`Gages`
+==========================
 
 .. list-table::
    :header-rows: 1
-   :widths: 35 65
+   :widths: 30 70
 
-   * - Method
-     - Returns
-   * - :meth:`count`
-     - Number of rain gages.
-   * - :meth:`get_index(id)`
-     - Integer index for a string id.
-   * - :meth:`get_id(idx)`
-     - String id for an integer index.
-   * - :meth:`add(id)`
-     - Append a new gage; returns its index.
+   * - Operation
+     - What it does
+   * - ``len(s.gages)``
+     - Gage count.
+   * - ``s.gages[key]``
+     - Returns a :class:`Gage` (``key`` is ``int`` or ``str``).
+   * - ``for g in s.gages:``
+     - Yields a fresh :class:`Gage` per index.
+   * - ``s.gages.get_index(id)`` / ``get_id(idx)``
+     - Id ↔ index lookup.
+   * - ``s.gages.add(id)``
+     - Append a gage. Returns the :class:`Gage`.
+   * - ``s.gages.rename(key, new_id)``
+     - Rename in place. Invalidates wrappers.
+   * - ``s.gages.rainfalls``
+     - ``float64`` numpy array, shape ``(n_gages,)``.
+   * - ``s.gages.ids``
+     - ``object`` numpy array of string ids.
 
-Configuration
--------------
+----
+
+Wrapper: :class:`Gage`
+======================
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 18 14 46
+
+   * - Property
+     - Type
+     - Mode
+     - Meaning
+   * - ``id``
+     - ``str``
+     - read-only
+     -
+   * - ``index``
+     - ``int``
+     - read-only
+     -
+   * - ``rain_type``
+     - :class:`GageRainType`
+     - read/write
+     - INTENSITY / VOLUME / CUMULATIVE.
+   * - ``data_source``
+     - :class:`GageDataSource`
+     - read/write
+     - TIMESERIES / FILE.
+   * - ``rainfall``
+     - ``float``
+     - read/write
+     - Runtime rainfall.
+
+Methods:
 
 .. list-table::
    :header-rows: 1
    :widths: 40 60
 
    * - Method
-     - Action
-   * - :meth:`set_rain_type(idx, type)`
-     - :class:`GageRainType` (intensity / volume / cumulative).
-   * - :meth:`set_rain_interval(idx, seconds)`
-     - Time interval between recorded rainfall samples.
-   * - :meth:`set_data_source(idx, source)`
-     - :class:`GageDataSource` (timeseries vs. file).
-   * - :meth:`set_timeseries(idx, ts_id)`
-     - Bind to an existing time-series id.
-   * - :meth:`set_filename(idx, path, station_id)`
-     - Bind to an external NWS/NCDC file.
+     - What it does
+   * - ``set_rain_interval(seconds)``
+     - Set the interval. Accepts ``float`` seconds or a
+       :class:`~datetime.timedelta`.
+   * - ``set_timeseries(ts_id)``
+     - Configure ``data_source = TIMESERIES`` and bind the named time series.
+   * - ``set_file(path, station_id)``
+     - Configure ``data_source = FILE`` and bind the external file.
 
-Per-step rainfall  (read & override)
-------------------------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
-
-   * - Method
-     - Action / returns
-   * - :meth:`get_rainfall(idx)`
-     - Current rainfall intensity at the gage.
-   * - :meth:`set_rainfall(idx, r)`
-     - Override the gage's rainfall this step (one-shot).
-   * - :meth:`get_rainfall_bulk()`
-     - All gage rainfall as ``np.ndarray[float64]``.
-
-For sticky cross-step rainfall overrides, use
-:meth:`Forcing.gage_rainfall` (see :doc:`forcing`).
-
-----
-
-End-to-end example
-==================
-
-.. code-block:: python
-
-    from openswmm.engine import Solver, Gages, EngineState
-
-    with Solver("site_drainage.inp", "site_drainage.rpt", "site_drainage.out") as s:
-        gages = Gages(s)
-        print(f"{gages.count()} rain gages")
-
-        rg1 = gages.get_index("RG1")
-        peak_r, t_peak = 0.0, 0.0
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-            r = gages.get_rainfall(rg1)
-            if r > peak_r:
-                peak_r, t_peak = r, s.elapsed
-        print(f"RG1 peak rainfall = {peak_r:.4f} at t={t_peak*24:.2f} h")
-
-----
-
-Common recipes
-==============
-
-Inject a custom hyetograph (one-shot per step)
------------------------------------------------
-
-.. code-block:: python
-
-    rg1 = gages.get_index("RG1")
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-        h = s.elapsed * 24.0
-        if 1.0 <= h < 4.0:
-            gages.set_rainfall(rg1, 0.8)        # heavy rain hours 1-4
-        else:
-            gages.set_rainfall(rg1, 0.0)
-
-Sticky override via Forcing
----------------------------
-
-.. code-block:: python
-
-    from openswmm.engine import Forcing, ForcingMode
-
-    forcing = Forcing(s)
-    forcing.gage_rainfall("RG1", 1.2, ForcingMode.REPLACE, persist=True)
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-    forcing.clear_all()
-
-Bulk rainfall snapshot for every gage
--------------------------------------
-
-.. code-block:: python
-
-    import numpy as np
-
-    history = []
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-        history.append(gages.get_rainfall_bulk().copy())
-    R = np.stack(history)        # shape (T, n_gages)
-
-Switch a gage from time-series to runtime control
--------------------------------------------------
-
-.. code-block:: python
-
-    from openswmm.engine import GageDataSource
-
-    rg1 = gages.get_index("RG1")
-    gages.set_data_source(rg1, int(GageDataSource.TIMESERIES))   # default
-    # ... at runtime, drive via set_rainfall() each step
-
-----
-
-Bulk arrays
-===========
-
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
-
-   * - Method
-     - Returns / accepts
-   * - :meth:`get_rainfall_bulk`
-     - All gage rainfall (``np.ndarray[float64]``, shape ``(n_gages,)``).
-
-The standard memory-aliasing rule applies: the array shares scratch
-memory; call ``.copy()`` on it if you keep it across steps.
-
-----
-
-EngineState requirements & exceptions
-=====================================
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 25 45
-
-   * - Method group
-     - Required state
-     - Notes
-   * - identity / count
-     - ``OPENED`` or later
-     - n/a
-   * - configuration setters (data source, file, etc.)
-     - ``OPENED``
-     - Best done before ``initialize()``.
-   * - ``get_rainfall``
-     - ``RUNNING`` or ``ENDED``
-     - n/a
-   * - ``set_rainfall``
-     - ``RUNNING``
-     - One-shot.
-   * - ``get_rainfall_bulk``
-     - ``RUNNING`` or ``ENDED``
-     - Same memory-aliasing rules as other ``*_bulk`` methods.
+The wrapper has no sub-views (gages are simple). Staleness and equality
+follow the same model as :class:`Node` / :class:`Link`.
 
 ----
 
 See also
 ========
 
-* :doc:`subcatchments` — the consumers of gage rainfall.
-* :doc:`forcing` — cross-step persistent rainfall overrides.
-* :doc:`tables` — manage time series that gages can bind to.
+* :doc:`solver` — where ``s.gages`` comes from.
+* :doc:`subcatchments` — :attr:`Subcatchment.gage` yields a :class:`Gage`.
+* :doc:`error_handling`.

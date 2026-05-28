@@ -4,247 +4,101 @@ Water quality  (landuse, buildup, washoff, treatment)
 
 .. note::
 
-   **Engine:** OpenSWMM 6 — refactored.  Documents
-   :class:`openswmm.engine.Quality`.
+   **Engine:** OpenSWMM 6 — refactored.
 
 .. currentmodule:: openswmm.engine
 
-The :class:`Quality` class manages water-quality processes that act
-on top of the pollutant list (see :doc:`pollutants`):
-
-* **Landuse** — categorical surface types attached to subcatchments.
-* **Buildup** — pollutant accumulation on the surface during dry weather.
-* **Washoff** — release of accumulated pollutants during runoff events.
-* **Treatment** — node-based concentration reductions
-  (settling, removal, custom expressions).
-* **Sweeping** — periodic mechanical removal of buildup.
+``solver.quality`` configures landuses and their pollutant
+buildup/washoff functions, plus node-level treatment expressions.
 
 Reference: ``openswmm_quality.h``.
 
 ----
 
-Class signature
-===============
+Quickstart
+==========
 
 .. code-block:: python
 
-    class Quality:
-        def __init__(self, solver: Solver) -> None: ...
+    from openswmm.engine import Solver, BuildupFunc, WashoffFunc
+
+    with Solver("model.inp") as s:
+        s.quality.landuses.add("RESIDENTIAL")
+
+        s.quality.set_buildup(
+            "RESIDENTIAL", "TSS",
+            func=BuildupFunc.POW, c1=10.0, c2=0.1, c3=2.0)
+        info = s.quality.get_buildup("RESIDENTIAL", "TSS")
+        print(info["func"], info["c1"])
+
+        s.quality.set_washoff(
+            "RESIDENTIAL", "TSS",
+            func=WashoffFunc.EXP, coeff=0.5, expon=2.0)
+
+        # Per-node treatment expression.
+        s.quality.set_treatment("J1", "TSS", "R = 0.5*C")
 
 ----
 
-Key methods
-===========
+Landuses sub-collection
+=======================
 
-Landuse
--------
+.. code-block:: python
 
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
+    lu = s.quality.landuses["RESIDENTIAL"]
+    lu.sweep_interval = 7.0       # days
+    lu.sweep_removal = 0.6
 
-   * - Method
-     - Action / returns
-   * - :meth:`landuse_count()`
-     - Number of registered landuses.
-   * - :meth:`landuse_index(id)`
-     - Integer index for a landuse string id.
-   * - :meth:`landuse_id(idx)`
-     - String id for an integer index.
-   * - :meth:`landuse_set_sweep_interval(idx, days)` / :meth:`landuse_get_sweep_interval`
-     - Days between street sweepings.
-   * - :meth:`landuse_set_sweep_removal(idx, frac)` / :meth:`landuse_get_sweep_removal`
-     - Fraction of buildup removed per sweep.
+    for lu in s.quality.landuses:
+        print(lu.id, lu.sweep_interval)
 
-Buildup
--------
+    s.quality.landuses.add("COMMERCIAL")
 
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
+``solver.quality.landuses`` is indexable by ``int | str`` and iterable;
+items are :class:`Landuse` wrappers with typed properties.
 
-   * - Method
-     - Action / returns
-   * - :meth:`buildup_set(lu_idx, pollut_idx, func_type, c1, c2, c3, normalizer)`
-     - Configure :class:`BuildupFunc` (NONE / POW / EXP / SAT) with
-       coefficients ``c1``, ``c2``, ``c3`` and the normalizer code
-       (e.g. by area or curb-length).
-   * - :meth:`buildup_get(lu_idx, pollut_idx)`
-     - Returns a dict of the active buildup model parameters.
+----
 
-Washoff
--------
+Buildup / washoff
+=================
 
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
+Both APIs accept ``int | str`` for the landuse and pollutant
+selectors. The function-type argument is an enum
+(:class:`BuildupFunc` / :class:`WashoffFunc`) — passing an integer
+still works.
 
-   * - Method
-     - Action / returns
-   * - :meth:`washoff_set(lu_idx, pollut_idx, func_type, coeff, expon, sweep_effic, bmp_effic)`
-     - Configure :class:`WashoffFunc` (EXP / RATING / EMC) plus the
-       street-sweeping and BMP removal efficiencies.
-   * - :meth:`washoff_get(lu_idx, pollut_idx)`
-     - Returns a dict of the active washoff model parameters.
+``set_buildup(landuse, pollutant, *, func, c1, c2, c3, normalizer=0)``
+``get_buildup(landuse, pollutant) -> Dict[str, ...]`` returns
+``{"func": BuildupFunc, "c1": float, "c2": float, "c3": float,
+"normalizer": int}``.
+
+``set_washoff(landuse, pollutant, *, func, coeff, expon,
+sweep_effic=0.0, bmp_effic=0.0)``
+``get_washoff(landuse, pollutant) -> Dict[str, ...]`` returns
+``{"func": WashoffFunc, "coeff": float, "expon": float,
+"sweep_effic": float, "bmp_effic": float}``.
+
+----
 
 Treatment
----------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
-
-   * - Method
-     - Action / returns
-   * - :meth:`treatment_set(node_idx, p, expr)`
-     - Set a treatment expression at a node for pollutant ``p``.
-   * - :meth:`treatment_get(node_idx, p)`
-     - Retrieve the expression text.
-   * - :meth:`treatment_clear(node_idx, p)`
-     - Remove the treatment.
-
-Treatment expressions are full SWMM math expressions evaluated each
-step — e.g. ``"R = 0.85 * EXP(-0.05 * HRT)"`` for first-order
-removal in a settling tank.
-
-----
-
-End-to-end example
-==================
+=========
 
 .. code-block:: python
 
-    from openswmm.engine import (
-        Solver, Quality, Pollutants, Nodes,
-        BuildupFunc, WashoffFunc,
-    )
+    s.quality.set_treatment("J1", "TSS", "R = 0.5*C")
+    print(s.quality.get_treatment("J1", "TSS"))
+    s.quality.clear_treatment("J1", "TSS")
 
-    with Solver("water_quality.inp", "wq.rpt", "wq.out") as s:
-        q = Quality(s)
-        polls = Pollutants(s)
-        nodes = Nodes(s)
-
-        s.open()
-        # Strengthen TSS buildup on RESIDENTIAL landuse
-        lu = q.landuse_index("RESIDENTIAL")
-        tss = polls.get_index("TSS")
-        q.buildup_set(
-            lu, tss,
-            func_type=int(BuildupFunc.SAT),
-            c1=80.0,         # max buildup (lb/acre)
-            c2=10.0,         # half-saturation time (days)
-            c3=0.0,          # function-specific (e.g. event-mean rain)
-            normalizer=0,    # buildup per unit area
-        )
-        # Add settling-tank treatment at outfall OUT1
-        q.treatment_set(
-            nodes.get_index("OUT1"),
-            tss,
-            "R = 0.85 * EXP(-0.05 * HRT)",
-        )
-
-        from openswmm.engine import EngineState
-        s.initialize()
-        s.start()
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-        s.end()
-
-----
-
-Common recipes
-==============
-
-Add street sweeping to a landuse
---------------------------------
-
-.. code-block:: python
-
-    lu = q.landuse_index("RESIDENTIAL")
-    q.landuse_set_sweep_interval(lu, 7.0)        # weekly
-    q.landuse_set_sweep_removal(lu, 0.4)         # 40% removed per sweep
-
-Remove a treatment expression mid-edit
---------------------------------------
-
-.. code-block:: python
-
-    q.treatment_clear(nodes.get_index("OUT1"), polls.get_index("TSS"))
-
-Inspect the active buildup parameters
--------------------------------------
-
-.. code-block:: python
-
-    params = q.buildup_get(q.landuse_index("RESIDENTIAL"),
-                           polls.get_index("TSS"))
-    print(params)  # → {'func_type': 2, 'c1': 80.0, 'c2': 10.0, 'c3': 0.0, 'normalizer': 0}
-
-Run a sensitivity sweep on washoff coefficient
-----------------------------------------------
-
-.. code-block:: python
-
-    from openswmm.engine import EngineState
-
-    for coeff in [0.005, 0.01, 0.02, 0.05]:
-        # Re-open / re-edit / re-run pattern
-        with Solver("model.inp", f"sweep_{coeff}.rpt", f"sweep_{coeff}.out") as s:
-            q = Quality(s); polls = Pollutants(s)
-            s.open()
-            q.washoff_set(
-                q.landuse_index("RESIDENTIAL"),
-                polls.get_index("TSS"),
-                func_type=int(WashoffFunc.EXP),
-                coeff=coeff,
-                expon=2.0,
-                sweep_effic=0.0,
-                bmp_effic=0.0,
-            )
-            s.initialize(); s.start()
-            while s.state == EngineState.RUNNING:
-                if s.step() != 0:
-                    break
-            s.end()
-
-----
-
-EngineState requirements & exceptions
-=====================================
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 25 45
-
-   * - Method group
-     - Required state
-     - Notes
-   * - landuse identity / count
-     - ``OPENED`` or later
-     - n/a
-   * - buildup / washoff setters
-     - ``OPENED``
-     - Apply before ``initialize()`` to take effect.
-   * - sweep parameter setters
-     - ``OPENED`` or ``RUNNING``
-     - Mid-run changes are honoured at the next sweep.
-   * - treatment setters
-     - ``OPENED``
-     - Treatment expressions are compiled at ``initialize()``.
-
-Common :class:`EngineError` codes:
-
-* ``INVALID_INDEX`` — landuse / pollutant / node out of range.
-* ``INVALID_TYPE``  — function code or expression rejected by the
-  parser; the message includes the offending text.
+Treatment expressions follow SWMM's standard syntax (see the SWMM 5
+reference manual).
 
 ----
 
 See also
 ========
 
-* :doc:`pollutants` — the pollutant list this module operates on.
-* :doc:`subcatchments` — assign landuse coverage fractions
-  (:meth:`Subcatchments.set_coverage`).
-* :doc:`output_reader` — post-run pollutant time series.
+* :doc:`pollutants` — pollutant configuration.
+* :doc:`subcatchments` — :attr:`Subcatchment.coverage` connects
+  landuses to subcatchments.
+* :doc:`massbalance` — :meth:`MassBalance.quality_continuity_error`.
+* :doc:`error_handling`.

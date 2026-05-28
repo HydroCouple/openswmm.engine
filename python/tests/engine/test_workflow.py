@@ -70,6 +70,8 @@ class TestStrideBasedStepping:
     """Use stride() to advance multiple steps at once."""
 
     def test_stride_loop(self, tmp_path):
+        from datetime import timedelta
+
         rpt = str(tmp_path / "stride.rpt")
         out = str(tmp_path / "stride.out")
         s = Solver(SITE_DRAINAGE_INP, rpt, out)
@@ -77,15 +79,13 @@ class TestStrideBasedStepping:
         s.initialize()
         s.start()
 
-        total_elapsed = 0.0
+        total_elapsed = timedelta(0)
         for _ in range(5):
-            rc = s.stride(10)
-            assert rc == 0
-            elapsed = s.elapsed
-            if elapsed <= 0:
+            elapsed = s.stride(10)
+            if elapsed <= timedelta(0):
                 break
             total_elapsed = elapsed
-        assert total_elapsed > 0.0
+        assert total_elapsed > timedelta(0)
 
         s.end()
         s.report()

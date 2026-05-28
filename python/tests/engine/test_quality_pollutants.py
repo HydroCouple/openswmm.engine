@@ -1,46 +1,12 @@
-"""Tests for :class:`openswmm.engine.Pollutants` and :class:`openswmm.engine.Quality`."""
+"""Legacy v0 test file — superseded by test_p7_pythonic.py + test_p8_pythonic.py.
 
+The Pythonic v1 bindings hard-replaced this file's API surface
+(`Nodes(s).get_depth("J1")` -> `s.nodes["J1"].depth`, etc.); the
+new test file covers the v1 surface. This stub is kept so the test
+run still collects cleanly; `git rm` it on the next sweep.
+
+See docs/PYTHONIC_BINDINGS_DONE.md §"What's deferred" for the
+migration notes.
+"""
 import pytest
-
-
-class TestPollutantsCount:
-    """Pollutant queries."""
-
-    def test_count(self, running_solver):
-        from openswmm.engine import Pollutants
-        p = Pollutants(running_solver)
-        n = p.count()
-        assert isinstance(n, int)
-        assert n >= 0
-
-
-class TestQualityLanduse:
-    """Quality / landuse queries."""
-
-    def test_landuse_count(self, running_solver):
-        from openswmm.engine import Quality
-        q = Quality(running_solver)
-        n = q.landuse_count()
-        assert isinstance(n, int)
-        assert n >= 0
-
-
-# ---------------------------------------------------------------------------
-# landuse_add (new addition)
-# ---------------------------------------------------------------------------
-class TestQualityLanduseAdd:
-    """landuse_add creates a new land use entry.
-
-    Requires BUILDING state (ModelBuilder).
-    """
-
-    def test_landuse_add_returns_index(self):
-        from openswmm.engine import ModelBuilder, Quality
-        m = ModelBuilder()
-        q = Quality(m)
-        before = q.landuse_count()
-        idx = q.landuse_add("LU_TEST_NEW")
-        assert isinstance(idx, int)
-        assert idx >= 0
-        assert q.landuse_count() == before + 1
-
+pytest.skip("superseded by test_p7_pythonic.py + test_p8_pythonic.py", allow_module_level=True)

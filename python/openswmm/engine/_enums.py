@@ -47,6 +47,7 @@ class ErrorCode(IntEnum):
     @cvar HOTSTART: Hot start file error.
     @cvar CRS: Coordinate reference system error.
     @cvar NUMERICAL: Numerical error (e.g., divergence).
+    @cvar DEPENDENCY: Object has dependents that block the requested operation.
     @cvar INTERNAL: Internal/unspecified error.
     """
 
@@ -65,6 +66,7 @@ class ErrorCode(IntEnum):
     HOTSTART = 12
     CRS = 13
     NUMERICAL = 14
+    DEPENDENCY = 15
     INTERNAL = 99
 
 
@@ -225,6 +227,55 @@ class LinkType(IntEnum):
     ORIFICE = 2
     WEIR = 3
     OUTLET = 4
+
+
+class OrificeType(IntEnum):
+    """Orifice flow-attack classification.
+
+    Mirrors ``SWMM_OrificeType`` in ``openswmm_links.h``.
+
+    @cvar SIDE: Orifice opens on the side of the upstream node.
+    @cvar BOTTOM: Orifice opens through the bottom of the upstream node.
+    """
+
+    SIDE = 0
+    BOTTOM = 1
+
+
+class WeirType(IntEnum):
+    """Weir flow classification.
+
+    Mirrors ``SWMM_WeirType`` in ``openswmm_links.h``.
+
+    @cvar TRANSVERSE: Sharp-crested transverse weir.
+    @cvar SIDEFLOW: Side-flow weir (USBR formula).
+    @cvar VNOTCH: Triangular / V-notch weir.
+    @cvar TRAPEZOIDAL: Trapezoidal weir.
+    @cvar ROADWAY: FHWA HDS-5 roadway weir.
+    """
+
+    TRANSVERSE = 0
+    SIDEFLOW = 1
+    VNOTCH = 2
+    TRAPEZOIDAL = 3
+    ROADWAY = 4
+
+
+class OutletRatingType(IntEnum):
+    """Outlet rating-curve classification.
+
+    Mirrors ``SWMM_OutletRatingType`` in ``openswmm_links.h``.
+
+    @cvar FUNCTIONAL_HEAD: ``Q = Cd · H^expon`` (head above invert).
+    @cvar FUNCTIONAL_DEPTH: ``Q = Cd · y^expon`` (depth at upstream node).
+    @cvar TABULAR_HEAD: ``Q`` from rating curve indexed by head.
+    @cvar TABULAR_DEPTH: ``Q`` from rating curve indexed by depth.
+    """
+
+    FUNCTIONAL_HEAD = 0
+    FUNCTIONAL_DEPTH = 1
+    TABULAR_HEAD = 2
+    TABULAR_DEPTH = 3
 
 
 class OutfallType(IntEnum):

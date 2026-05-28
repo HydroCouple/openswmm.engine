@@ -273,13 +273,18 @@ class Output:
         """
         ...
     
-    def __enter__(self): # -> Self@Output:
+    def __enter__(self) -> "Output":
         """
         Method to return the SWMM output file instance.
         """
         ...
-    
-    def __exit__(self, exc_type, exc_value, traceback): # -> None:
+
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_value: Optional[BaseException],
+        traceback: Optional[object],
+    ) -> None:
         """
         Method to close the SWMM output file instance.
         """

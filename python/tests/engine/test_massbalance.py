@@ -1,47 +1,12 @@
-"""Tests for :class:`openswmm.engine.MassBalance` continuity error queries."""
+"""Legacy v0 test file — superseded by test_mass_balance_pythonic.py.
 
+The Pythonic v1 bindings hard-replaced this file's API surface
+(`Nodes(s).get_depth("J1")` -> `s.nodes["J1"].depth`, etc.); the
+new test file covers the v1 surface. This stub is kept so the test
+run still collects cleanly; `git rm` it on the next sweep.
+
+See docs/PYTHONIC_BINDINGS_DONE.md §"What's deferred" for the
+migration notes.
+"""
 import pytest
-
-from openswmm.engine import MassBalance
-
-
-# ---------------------------------------------------------------------------
-# Construction
-# ---------------------------------------------------------------------------
-class TestMassBalanceConstruction:
-    """MassBalance instantiation from a Solver."""
-
-    def test_create_from_solver(self, completed_solver):
-        mb = MassBalance(completed_solver)
-        assert mb is not None
-
-
-# ---------------------------------------------------------------------------
-# Continuity errors
-# ---------------------------------------------------------------------------
-class TestMassBalanceContinuityErrors:
-    """Query continuity errors after a completed simulation."""
-
-    def test_runoff_continuity_error_type(self, mass_balance):
-        err = mass_balance.get_runoff_continuity_error()
-        assert isinstance(err, float)
-
-    def test_runoff_continuity_error_reasonable(self, mass_balance):
-        err = mass_balance.get_runoff_continuity_error()
-        # Continuity error should be a small fraction (< 10%)
-        assert abs(err) < 0.10
-
-    def test_routing_continuity_error_type(self, mass_balance):
-        err = mass_balance.get_routing_continuity_error()
-        assert isinstance(err, float)
-
-    def test_routing_continuity_error_reasonable(self, mass_balance):
-        err = mass_balance.get_routing_continuity_error()
-        assert abs(err) < 0.10
-
-    def test_both_errors_available(self, mass_balance):
-        r_err = mass_balance.get_runoff_continuity_error()
-        q_err = mass_balance.get_routing_continuity_error()
-        # Both should return without error
-        assert isinstance(r_err, float)
-        assert isinstance(q_err, float)
+pytest.skip("superseded by test_mass_balance_pythonic.py", allow_module_level=True)

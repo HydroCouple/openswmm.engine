@@ -59,37 +59,24 @@ class ErrorCode(IntEnum):
     HOTSTART = 12
     CRS = 13
     NUMERICAL = 14
+    DEPENDENCY = 15
     INTERNAL = 99
 
 
 class EngineState(IntEnum):
     """Engine lifecycle states.
 
-    Values match the C++ internal C{openswmm::EngineState} enum (which is
-    what C{swmm_engine_get_state} actually returns).
-
-    @cvar CREATED: Context allocated, no input loaded.
-    @cvar OPENED: Input file parsed, objects allocated.
-    @cvar INITIALIZED: Initial conditions applied.
-    @cvar RUNNING: Simulation loop in progress.
-    @cvar PAUSED: Simulation paused (future hot-swap support).
-    @cvar ENDED: Simulation loop completed.
-    @cvar REPORTED: Summary report written.
-    @cvar CLOSED: Resources released.
-    @cvar ERROR_STATE: Fatal error.
-    @cvar BUILDING: Programmatic model construction in progress (no .inp).
+    Mirrors ``SWMM_EngineState`` in ``openswmm_engine.h``.
     """
 
-    CREATED = 0
-    OPENED = 1
-    INITIALIZED = 2
-    RUNNING = 3
-    PAUSED = 4
-    ENDED = 5
-    REPORTED = 6
+    CREATED = 1
+    OPENED = 2
+    INITIALIZED = 3
+    STARTED = 4
+    RUNNING = 5
+    ENDED = 6
     CLOSED = 7
-    ERROR_STATE = 8
-    BUILDING = 9
+    BUILDING = 8
 
 
 class WarnCode(IntEnum):
@@ -217,20 +204,48 @@ class LinkType(IntEnum):
 
 
 class OutfallType(IntEnum):
-    """Outfall boundary condition type.
-
-    @cvar FREE: Free outfall.
-    @cvar NORMAL: Normal depth outfall.
-    @cvar FIXED: Fixed head outfall.
-    @cvar TIDAL: Tidal stage outfall.
-    @cvar TIMESERIES: Time-series stage outfall.
-    """
+    """Outfall boundary condition type."""
 
     FREE = 0
     NORMAL = 1
     FIXED = 2
     TIDAL = 3
     TIMESERIES = 4
+
+
+class OrificeType(IntEnum):
+    """Orifice flow-attack classification.
+
+    Mirrors ``SWMM_OrificeType`` in ``openswmm_links.h``.
+    """
+
+    SIDE = 0
+    BOTTOM = 1
+
+
+class WeirType(IntEnum):
+    """Weir flow classification.
+
+    Mirrors ``SWMM_WeirType`` in ``openswmm_links.h``.
+    """
+
+    TRANSVERSE = 0
+    SIDEFLOW = 1
+    VNOTCH = 2
+    TRAPEZOIDAL = 3
+    ROADWAY = 4
+
+
+class OutletRatingType(IntEnum):
+    """Outlet rating-curve classification.
+
+    Mirrors ``SWMM_OutletRatingType`` in ``openswmm_links.h``.
+    """
+
+    FUNCTIONAL_HEAD = 0
+    FUNCTIONAL_DEPTH = 1
+    TABULAR_HEAD = 2
+    TABULAR_DEPTH = 3
 
 
 class XSectShape(IntEnum):

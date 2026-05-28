@@ -34,6 +34,7 @@ Running a simulation
 
    solver
    error_handling
+   datetime
 
 Domain access
 =============
@@ -84,6 +85,7 @@ balance, accumulated statistics.
    :maxdepth: 1
 
    output_reader
+   plotting
    hotstart
    massbalance
    statistics

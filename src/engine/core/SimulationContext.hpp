@@ -323,12 +323,22 @@ struct SimulationContext {
     // =========================================================================
 
     /**
-     * @brief Current simulation time (decimal days from start_date).
+     * @brief Current simulation time in SECONDS from start_date.
      *
-     * @details Updated by TimestepController::advance(). The value 0.0
+     * @details Updated by TimestepController::advance() with the routing
+     *          step in seconds (TimestepController.cpp:88). The value 0.0
      *          corresponds to options.start_date.
      *
-     * @see Legacy: ElapsedTime in globals.h
+     *          The companion field current_date is the OADate (decimal
+     *          days since 12/30/1899) computed via
+     *          datetime::addSeconds(start_date, current_time).
+     *
+     *          Callers that need elapsed time in decimal days (e.g. the
+     *          control engine's SIM_TIME premise) must divide by
+     *          constants::SEC_PER_DAY.  Legacy `ElapsedTime` is in days;
+     *          this field stores seconds.
+     *
+     * @see Legacy: ElapsedTime in globals.h (legacy is in days)
      */
     double current_time = 0.0;
 

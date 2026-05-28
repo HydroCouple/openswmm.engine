@@ -8,9 +8,9 @@ Error handling, edge cases & debugging
 
 .. currentmodule:: openswmm.engine
 
-This page is a cross-cutting reference for the exception model, the
-:class:`EngineState` rules that govern when each method is callable,
-and the patterns we recommend for robust scripts.
+This page is a cross-cutting reference for the :class:`EngineError`
+hierarchy, the :class:`EngineState` rules that govern when each method
+is callable, and the idioms we recommend for robust scripts.
 
 For the underlying lifecycle see :doc:`concepts`.
 
@@ -19,301 +19,239 @@ For the underlying lifecycle see :doc:`concepts`.
 The exception model in one paragraph
 ====================================
 
-Every Cython binding checks the C return code.  Anything non-zero
-raises an :class:`EngineError`, and the message is filled in by the C
-API — you don't construct one yourself.  Pure-Python checks
-(wrong-type argument, out-of-range index, missing id) raise
-:exc:`TypeError` / :exc:`IndexError` / :exc:`KeyError` *before* the C
-call dispatches, so they don't carry an engine error code.
+Every binding checks the C return code. A non-zero code raises an
+:class:`EngineError` — but *which* :class:`EngineError` depends on the
+underlying ``SWMM_ERR_*``. Each subclass **also** inherits from a
+standard library exception so existing ``except IndexError:`` /
+``except ValueError:`` handlers do the right thing without any
+engine-specific imports.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Nodes, EngineError, EngineState
+    from openswmm.engine import Solver
 
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        nodes = Nodes(s)
+    with Solver("model.inp") as s:
         try:
-            nodes.get_depth("does-not-exist")
-        except EngineError as e:
-            print(f"engine returned {e.code}: {e.message}")
-        except KeyError as e:
-            print(f"missing id: {e}")
+            depth = s.nodes["DOES_NOT_EXIST"].depth
+        except KeyError as e:                    # also an EngineError subclass
+            print(f"missing node: {e}")
+        try:
+            depth = s.nodes[10_000].depth
+        except IndexError as e:                  # likewise
+            print(f"out of range: {e}")
 
 ----
 
-EngineState reference (cheat-sheet)
-====================================
+The :class:`EngineError` hierarchy
+==================================
+
+The :func:`~openswmm.engine._exceptions.raise_for_code` dispatcher maps
+every documented ``SWMM_ERR_*`` to the corresponding subclass:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 32 44
+
+   * - Subclass
+     - Also inherits from
+     - Raised when …
+   * - :class:`BadHandleError`
+     - :exc:`RuntimeError`
+     - Engine handle is ``NULL`` or invalid.
+   * - :class:`BadIndexError`
+     - :exc:`IndexError`
+     - Integer index is out of range.
+   * - :class:`BadParamError`
+     - :exc:`ValueError`
+     - Argument fails range / shape / domain check.
+   * - :class:`LifecycleError`
+     - :exc:`RuntimeError`
+     - Method called in the wrong :class:`EngineState`.
+   * - :class:`HotStartError`
+     - :exc:`RuntimeError`
+     - Hot start file is missing, corrupt, or schema-mismatched.
+   * - :class:`PluginError`
+     - :exc:`RuntimeError`
+     - A loaded plugin returned a failure or refused to initialise.
+   * - :class:`FileError`
+     - :exc:`IOError`
+     - Any of input / report / output file I/O failures.
+   * - :class:`ParseError`
+     - :exc:`ValueError`
+     - Input file has a syntactically invalid token or section.
+   * - :class:`NumericalError`
+     - :exc:`RuntimeError`
+     - Solver divergence, NaN propagation, instability.
+   * - :class:`CRSError`
+     - :exc:`ValueError`
+     - Coordinate reference system string is missing or invalid.
+   * - :class:`DependencyError`
+     - :exc:`RuntimeError`
+     - Object can't be deleted / converted because other objects still
+       reference it.
+   * - :class:`EngineError`
+     - :exc:`Exception`
+     - Base class. Catches everything above; also raised directly for
+       :attr:`ErrorCode.NOMEM` and :attr:`ErrorCode.INTERNAL`.
+
+Every instance carries three attributes:
+
+* ``.code`` — the raw integer (``SWMM_ERR_*`` value).
+* ``.code_enum`` — the same value as an :class:`ErrorCode` enum member,
+  or :attr:`ErrorCode.INTERNAL` if the code is unrecognised.
+* ``.message`` — human-readable description filled from
+  ``swmm_error_message()`` when not given explicitly.
+
+.. code-block:: python
+
+    from openswmm.engine import EngineError, ErrorCode
+
+    try:
+        s.nodes[-1].depth = 0.0
+    except EngineError as e:
+        print(e.code, e.code_enum, e.message)
+        # 8 ErrorCode.BADINDEX 'index out of range'
+
+----
+
+EngineState reference
+=====================
 
 The Solver moves through these states in strict order:
 
 .. list-table::
    :header-rows: 1
-   :widths: 18 12 70
+   :widths: 18 10 72
 
    * - State
      - Value
      - Meaning
    * - ``CREATED``
-     - 0
+     - 1
      - Engine handle allocated; no input parsed.
    * - ``OPENED``
-     - 1
+     - 2
      - ``.inp`` parsed; objects accessible for inspection / editing.
    * - ``INITIALIZED``
-     - 2
-     - Initial conditions applied; arrays allocated.
-   * - ``RUNNING``
      - 3
-     - ``start()`` called; routing loop active, ``step()`` callable.
-   * - ``PAUSED``
+     - Initial conditions applied; arrays allocated.
+   * - ``STARTED``
      - 4
-     - Routing temporarily halted (reserved for future hot-swap support).
-   * - ``ENDED``
+     - ``start()`` returned; ready for the first ``step()``.
+   * - ``RUNNING``
      - 5
-     - ``end()`` called; cumulative results available.
-   * - ``REPORTED``
+     - Inside the routing loop, ``step()`` / ``stride()`` callable.
+   * - ``ENDED``
      - 6
-     - ``report()`` called; summary written.
+     - ``end()`` called; cumulative statistics & mass balance available.
    * - ``CLOSED``
      - 7
-     - ``close()`` called; ``.rpt`` / ``.out`` flushed.
+     - ``close()`` called; files flushed.
+   * - ``BUILDING``
+     - 8
+     - Programmatic construction in progress (no ``.inp`` involved).
 
-What you can do in each state
------------------------------
+Calling a method in the wrong state raises :class:`LifecycleError`
+(which is also a :exc:`RuntimeError`):
 
-.. list-table::
-   :header-rows: 1
-   :widths: 25 25 50
+.. code-block:: python
 
-   * - You want to …
-     - Required state(s)
-     - See
-   * - Add objects (``ModelBuilder``)
-     - pre-Solver
-     - :doc:`model_builder`
-   * - Edit / delete / convert objects
-     - ``OPENED``
-     - :doc:`editing`
-   * - Read object identity / topology
-     - ``OPENED`` …
-     - :doc:`nodes`, :doc:`links`, :doc:`subcatchments`
-   * - Read geometry (invert, length, …)
-     - ``OPENED`` …
-     - :doc:`nodes`, :doc:`links`
-   * - Set geometry / parameters (invert, n, …)
-     - ``OPENED``
-     - same
-   * - Apply initial conditions
-     - ``INITIALIZED``
-     - :doc:`solver`
-   * - Read hydraulic state (depth, flow, …)
-     - ``RUNNING`` or ``ENDED``
-     - :doc:`nodes`, :doc:`links`
-   * - One-shot per-step setters (``set_depth``, ``set_flow``, …)
-     - ``RUNNING``
-     - :doc:`nodes`, :doc:`links`
-   * - Persistent runtime forcing
-     - ``RUNNING``
-     - :doc:`forcing`
-   * - Add / clear control rules
-     - ``OPENED`` or ``RUNNING``
-     - :doc:`controls`
-   * - Read continuity / mass-balance
-     - ``ENDED`` (final), ``RUNNING`` (partial)
-     - :doc:`massbalance`
-   * - Read accumulated statistics
-     - ``RUNNING`` or ``ENDED``
-     - :doc:`statistics`
-   * - Save a hot-start
-     - ``RUNNING`` or ``ENDED``
-     - :doc:`hotstart`
-   * - Apply a hot-start
-     - ``OPENED`` or ``INITIALIZED``
-     - :doc:`hotstart`
-   * - Persist edits to ``.inp``
-     - ``OPENED`` …
-     - :doc:`solver`
-       (:meth:`Solver.model_write`)
+    from openswmm.engine import Solver, LifecycleError
 
-A method called outside its state envelope raises
-:class:`EngineError`.  The most common codes:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 12 22 66
-
-   * - Code
-     - Name
-     - Meaning
-   * - ``20``
-     - ``ERR_API_NOT_OPEN``
-     - Method needs ``OPENED``; solver still ``CREATED``.
-   * - ``21``
-     - ``ERR_API_NOT_STARTED``
-     - Called ``step()`` before ``start()``.
-   * - ``22``
-     - ``ERR_API_NOT_ENDED``
-     - Called ``report()`` before ``end()``.
-   * - ``23``
-     - ``ERR_API_INVALID_TYPE``
-     - Wrong object kind (e.g. setting a pump curve on a conduit).
-
-The full enum is :class:`ErrorCode`.
+    s = Solver("model.inp")
+    try:
+        s.step()                                 # not started yet
+    except LifecycleError as e:
+        print(f"can't step in state {s.state.name}: {e}")
 
 ----
 
-Defensive patterns
-==================
-
-Always use the context manager for the Solver
----------------------------------------------
-
-.. code-block:: python
-
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        ...                # raises here are still cleaned up
-
-The context manager runs ``end → report → close → destroy`` even if
-your loop body raises.  Skipping it leaks the engine handle on error.
-
-Resolve names once, outside the loop
-------------------------------------
-
-.. code-block:: python
-
-    j1 = nodes.get_index("J1")     # raises KeyError if not in model
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-        d = nodes.get_depth(j1)    # no per-step name-lookup overhead
-
-This catches typos at startup rather than after a long run.
-
-Validate model state before running
------------------------------------
-
-.. code-block:: python
-
-    s.open()
-    if nodes.count() == 0:
-        raise RuntimeError("model has no nodes")
-    if links.count() == 0:
-        raise RuntimeError("model has no links")
-
-    # Programmatic edits: catch issues now, not at step()
-    s.initialize()
-
-Verify continuity after the run
--------------------------------
-
-.. code-block:: python
-
-    from openswmm.engine import MassBalance
-
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-        mb = MassBalance(s)
-        if abs(mb.get_routing_continuity_error()) > 2.0:
-            raise RuntimeError(
-                f"routing continuity {mb.get_routing_continuity_error():+.4f}% > 2%"
-            )
-
-Wrap third-party callbacks
---------------------------
-
-If you register progress / step callbacks that call back into your
-own Python code, isolate exceptions so a callback bug doesn't tear
-down the run mid-way:
-
-.. code-block:: python
-
-    def _safe(fn):
-        def wrapper(*a, **kw):
-            try:
-                return fn(*a, **kw)
-            except Exception as e:
-                import traceback; traceback.print_exc()
-                # swallow — never propagate into the C engine
-        return wrapper
-
-    run_with_callback("model.inp", "model.rpt", "model.out",
-                      callback=_safe(my_progress_handler))
-
-----
-
-Edge cases & gotchas
+Recommended patterns
 ====================
 
-* **Bulk-array memory aliasing.**  ``*_bulk()`` methods return arrays
-  that share memory with an internal scratch buffer.  Read-once is
-  fine; if you keep the array, ``.copy()`` it.
-* **Index stability.**  Integer indices are stable for the lifetime
-  of a single Solver but not across runs of different models.  Always
-  re-resolve via :meth:`get_index` after :meth:`Solver.open`.
-* **Float precision in `set_*` / `get_*` round-trips.**  The C engine
-  stores most values in double precision; a few legacy code paths
-  use single precision internally.  ``set_x(v); get_x() == v`` is
-  not guaranteed to be exact for those paths.
-* **String ids are bytes-encoded UTF-8 on the C side.**  Non-ASCII
-  ids work, but the C engine truncates at the first NUL byte and
-  caps at ~80 chars.
-* **Threading.**  One Solver per thread is supported; a single
-  Solver is not thread-safe.  See :doc:`concepts` for the full
-  contract.
+Catch the broadest sensible base
+--------------------------------
+
+If you don't care which specific failure occurred, catch
+:class:`EngineError`:
+
+.. code-block:: python
+
+    try:
+        s.run()
+    except EngineError as e:
+        log.error("simulation failed: %s (code=%s)", e.message, e.code_enum)
+
+Catch the stdlib base when interop matters
+------------------------------------------
+
+When the engine call is part of a larger pipeline that uses standard
+exceptions, the stdlib base classes give you uniform handlers:
+
+.. code-block:: python
+
+    def lookup(coll, key):
+        try:
+            return coll[key]
+        except (IndexError, KeyError):
+            return None
+
+Use ``code_enum`` for decision logic
+------------------------------------
+
+When you do need to distinguish failures, compare against
+:class:`ErrorCode` — never against raw integers:
+
+.. code-block:: python
+
+    from openswmm.engine import ErrorCode
+
+    try:
+        s.hotstart.apply(other)
+    except EngineError as e:
+        if e.code_enum is ErrorCode.HOTSTART:
+            log.warning("hotstart skipped: %s", e.message)
+        else:
+            raise
 
 ----
 
-Debugging tips
-==============
+Common pitfalls
+===============
 
-Build with ``DEBUG=1``
-----------------------
+Mutating during iteration
+-------------------------
 
-.. code-block:: bash
+Adding or deleting objects through ``solver.nodes`` / ``solver.links``
+invalidates any wrapper objects currently held by Python code via a
+generation counter — accessing a stale wrapper raises a
+:class:`LifecycleError` with a message naming the operation that
+invalidated it. Re-look up by id after a structural change.
 
-    DEBUG=1 pip install -e . --no-build-isolation
+Reading state too early
+-----------------------
 
-Produces unoptimised binaries with full debug symbols, suitable for
-``lldb`` / ``gdb`` / IDE step-through into the C engine.  See
-:doc:`install` for the rest of the env-var matrix.
+``Node.depth`` / ``Link.flow`` / etc. only have meaningful values once
+the engine is at :attr:`EngineState.RUNNING` (or later). Accessing them
+before ``start()`` raises :class:`LifecycleError`.
 
-Inspect the parsed model before stepping
-----------------------------------------
+Confusing ``KeyError`` and :class:`BadIndexError`
+-------------------------------------------------
 
-.. code-block:: python
+* ``coll["NO_SUCH_ID"]`` → :exc:`KeyError` (str didn't match any object).
+* ``coll[10_000]`` → :class:`BadIndexError` (also catchable as
+  :exc:`IndexError`).
+* ``coll[None]`` → :exc:`TypeError`.
 
-    s = Solver("model.inp", "", "")
-    s.create()
-    s.open()
-    print(f"nodes: {Nodes(s).count()}, links: {Links(s).count()}")
-    # … check every domain class you care about …
-    s.destroy()         # without initializing / starting
-
-This is the fastest way to confirm a parse without paying for the
-full simulation.
-
-Print the report file
----------------------
-
-.. code-block:: python
-
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-    print(open("model.rpt").read())
-
-The ``.rpt`` file contains the engine's own warnings / errors and
-continuity summary — read it before debugging the Python side.
+This split lets you write ``try / except KeyError:`` for the
+"check-if-name-exists" idiom without accidentally swallowing
+out-of-range integer accesses.
 
 ----
 
 See also
 ========
 
-* :doc:`concepts` — the conceptual model behind the rules above.
-* :doc:`solver` — the methods whose state requirements this page
-  cross-references.
-* :doc:`massbalance` — continuity diagnostics worth gating CI on.
+* :doc:`concepts` — engine lifecycle and the :class:`EngineState` machine.
+* :doc:`datetime` — the SWMM DateTime double and Python ``datetime`` interop.
+* :doc:`../api` — generated reference for every symbol surfaced above.

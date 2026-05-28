@@ -1,25 +1,34 @@
 """
-Subcatchment Access
-===================
+Subcatchment access (Pythonic v1 surface)
+=========================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
-The :class:`Subcatchments` class provides access to subcatchment properties
-during a simulation.
+The :class:`Subcatchments` collection and :class:`Subcatchment` wrapper
+follow the same shape as :mod:`openswmm.engine._nodes`. Each wrapper
+exposes a property surface for geometry, runtime state, infiltration
+parameters, coverage, and statistics.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Subcatchments
+    from openswmm.engine import Solver, InfilModel
 
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        subcatchments = Subcatchments(s)
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-            runoff = subcatchments.get_runoff("S1")      # by name
-            subcatchments.set_rainfall(0, 0.5)            # or by index
+    with Solver("model.inp") as s:
+        s1 = s.subcatchments["S1"]
+        print(s1.area, s1.imperv_pct, s1.slope)
+
+        # Infiltration as a tagged-union view.
+        print(s1.infiltration.model)            # InfilModel enum
+        s1.infiltration.set_horton(3.0, 0.5, 4.0, 7.0)
+
+        # Coverage as a MutableMapping over landuse ids.
+        s1.coverage["RESIDENTIAL"] = 0.6
+
+        # Runtime state + bulk numpy.
+        print(s1.runoff, s1.rainfall, s1.evap)
+        depths = s.subcatchments.runoffs
 """
 
 # cython: language_level=3
@@ -27,989 +36,692 @@ during a simulation.
 import numpy as np
 cimport numpy as np
 
+from collections.abc import MutableMapping
+
 from ._common cimport *
+from ._enums import InfilModel
+from ._exceptions import StaleObjectError
 
 
-class Subcatchments:
-    """Access subcatchment properties during a simulation.
+# =============================================================================
+# Helpers
+# =============================================================================
 
-    All per-element methods accept either an integer index or a string
-    subcatchment ID.  When a string is passed it is resolved via
-    L{get_index}.
+cdef inline SWMM_Engine _h(solver):
+    return <SWMM_Engine><size_t>solver.handle
 
-    @param solver: An active L{openswmm.engine.Solver} instance. The
-        solver must remain alive for the lifetime of this object.
-    @type solver: L{openswmm.engine.Solver}
 
-    Example::
+cdef inline int _resolve_subcatch(solver, object key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_subcatch_index, swmm_subcatch_count, "Subcatchment")
 
-        subcatchments = Subcatchments(solver)
-        runoff = subcatchments.get_runoff(0)      # by index
-        runoff = subcatchments.get_runoff("S1")   # by name
+
+cdef inline void _check_fresh(sub) except *:
+    if sub._gen != sub._solver.generation:
+        raise StaleObjectError(
+            f"Subcatchment wrapper (id={sub._captured_id!r}, index={sub._index}) "
+            "is stale; look it up again from solver.subcatchments."
+        )
+
+
+cdef int _resolve_pollutant(solver, key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_pollutant_index, swmm_pollutant_count, "Pollutant")
+
+
+cdef int _resolve_landuse(solver, key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_landuse_index, swmm_landuse_count, "Landuse")
+
+
+# =============================================================================
+# Sub-views
+# =============================================================================
+
+cdef class SubcatchmentStatsView:
+    """Per-subcatchment cumulative statistics."""
+    cdef object _sub
+
+    def __init__(self, sub):
+        self._sub = sub
+
+    @property
+    def precip(self) -> float:
+        _check_fresh(self._sub)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_stat_precip(
+            _h(self._sub._solver), self._sub._index, &v))
+        return v
+
+    @property
+    def runoff_vol(self) -> float:
+        _check_fresh(self._sub)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_stat_runoff_vol(
+            _h(self._sub._solver), self._sub._index, &v))
+        return v
+
+    @property
+    def max_runoff(self) -> float:
+        _check_fresh(self._sub)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_stat_max_runoff(
+            _h(self._sub._solver), self._sub._index, &v))
+        return v
+
+    def __repr__(self) -> str:
+        return f"<SubcatchmentStatsView for {self._sub!r}>"
+
+
+cdef class InfiltrationView:
+    """Tagged-union view of the per-subcatchment infiltration model.
+
+    .. code-block:: python
+
+        s1.infiltration.model            # InfilModel.HORTON / GREEN_AMPT / CURVE_NUMBER
+
+        # Read whichever set of parameters matches the active model.
+        if s1.infiltration.model in (InfilModel.HORTON, InfilModel.MOD_HORTON):
+            f0, fmin, decay, dry_time = s1.infiltration.horton
+        elif s1.infiltration.model in (InfilModel.GREEN_AMPT, InfilModel.MOD_GREEN_AMPT):
+            suction, ksat, deficit = s1.infiltration.green_ampt
+        else:
+            cn = s1.infiltration.curve_number
+
+        # Writers — each forces the model to the corresponding kind.
+        s1.infiltration.set_horton(3.0, 0.5, 4.0, 7.0)
+        s1.infiltration.set_green_ampt(3.5, 0.06, 0.26)
+        s1.infiltration.set_curve_number(85.0)
     """
+    cdef object _sub
+
+    def __init__(self, sub):
+        self._sub = sub
+
+    @property
+    def model(self):
+        _check_fresh(self._sub)
+        cdef int v = 0
+        _check(swmm_subcatch_get_infil_model(
+            _h(self._sub._solver), self._sub._index, &v))
+        return InfilModel(v)
+
+    @property
+    def horton(self) -> tuple:
+        """``(f0, fmin, decay, dry_time)`` — Horton parameters."""
+        _check_fresh(self._sub)
+        cdef double a = 0.0, b = 0.0, c = 0.0, d = 0.0
+        _check(swmm_subcatch_get_infil_horton(
+            _h(self._sub._solver), self._sub._index, &a, &b, &c, &d))
+        return (a, b, c, d)
+
+    def set_horton(self,
+                   double f0, double fmin,
+                   double decay, double dry_time) -> None:
+        _check_fresh(self._sub)
+        _check(swmm_subcatch_set_infil_horton(
+            _h(self._sub._solver), self._sub._index, f0, fmin, decay, dry_time))
+
+    @property
+    def green_ampt(self) -> tuple:
+        """``(suction, conductivity, initial_deficit)`` Green-Ampt parameters."""
+        _check_fresh(self._sub)
+        cdef double s = 0.0, k = 0.0, d = 0.0
+        _check(swmm_subcatch_get_infil_green_ampt(
+            _h(self._sub._solver), self._sub._index, &s, &k, &d))
+        return (s, k, d)
+
+    def set_green_ampt(self,
+                       double suction, double conductivity,
+                       double initial_deficit) -> None:
+        _check_fresh(self._sub)
+        _check(swmm_subcatch_set_infil_green_ampt(
+            _h(self._sub._solver), self._sub._index,
+            suction, conductivity, initial_deficit))
+
+    @property
+    def curve_number(self) -> float:
+        _check_fresh(self._sub)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_infil_curve_number(
+            _h(self._sub._solver), self._sub._index, &v))
+        return v
+
+    def set_curve_number(self, double cn) -> None:
+        _check_fresh(self._sub)
+        _check(swmm_subcatch_set_infil_curve_number(
+            _h(self._sub._solver), self._sub._index, cn))
+
+    def __repr__(self) -> str:
+        try:
+            return f"<InfiltrationView model={self.model.name}>"
+        except Exception:
+            return "<InfiltrationView (stale or closed)>"
+
+
+class CoverageView(MutableMapping):
+    """``subcatchment.coverage`` — landuse-id → fraction mapping.
+
+    .. code-block:: python
+
+        s1.coverage["RESIDENTIAL"] = 0.6
+        s1.coverage["COMMERCIAL"] = 0.4
+        sum(s1.coverage.values())    # ≤ 1.0
+    """
+
+    def __init__(self, sub):
+        self._sub = sub
+
+    def __getitem__(self, key):
+        _check_fresh(self._sub)
+        cdef int lu = _resolve_landuse(self._sub._solver, key)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_coverage(
+            _h(self._sub._solver), self._sub._index, lu, &v))
+        return v
+
+    def __setitem__(self, key, value):
+        _check_fresh(self._sub)
+        cdef int lu = _resolve_landuse(self._sub._solver, key)
+        _check(swmm_subcatch_set_coverage(
+            _h(self._sub._solver), self._sub._index, lu, float(value)))
+
+    def __delitem__(self, key):
+        raise TypeError(
+            "coverage entries can't be deleted; set fraction to 0.0 instead")
+
+    def __iter__(self):
+        # Iterate landuses; yield ids that have nonzero coverage. This is the
+        # honest semantics — the C side stores a dense per-landuse array.
+        n = swmm_landuse_count(_h(self._sub._solver))
+        for i in range(n):
+            raw = swmm_landuse_id(_h(self._sub._solver), i)
+            lid = raw.decode('utf-8') if raw != NULL else ""
+            if not lid:
+                continue
+            if self[lid] != 0.0:
+                yield lid
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+# =============================================================================
+# Subcatchment wrapper
+# =============================================================================
+
+cdef class Subcatchment:
+    """A single subcatchment."""
+
+    cdef object _solver
+    cdef int _index
+    cdef long long _gen
+    cdef str _captured_id
+    cdef object _stats
+    cdef object _infiltration
+    cdef object _coverage
+
+    def __init__(self, solver, int index):
+        self._solver = solver
+        self._index = index
+        self._gen = solver.generation
+        cdef const char* raw = swmm_subcatch_id(_h(solver), index)
+        self._captured_id = raw.decode('utf-8') if raw != NULL else ""
+        self._stats = None
+        self._infiltration = None
+        self._coverage = None
+
+    # ---- Identity ---------------------------------------------------
+
+    @property
+    def id(self) -> str:
+        _check_fresh(self)
+        cdef const char* raw = swmm_subcatch_id(_h(self._solver), self._index)
+        return raw.decode('utf-8') if raw != NULL else ""
+
+    @property
+    def index(self) -> int:
+        _check_fresh(self)
+        return self._index
+
+    @property
+    def solver(self):
+        return self._solver
+
+    # ---- Geometry / properties -------------------------------------
+
+    @property
+    def area(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_area(_h(self._solver), self._index, &v))
+        return v
+
+    @area.setter
+    def area(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_subcatch_set_area(_h(self._solver), self._index, value))
+
+    @property
+    def width(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_width(_h(self._solver), self._index, &v))
+        return v
+
+    @width.setter
+    def width(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_subcatch_set_width(_h(self._solver), self._index, value))
+
+    @property
+    def slope(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_slope(_h(self._solver), self._index, &v))
+        return v
+
+    @slope.setter
+    def slope(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_subcatch_set_slope(_h(self._solver), self._index, value))
+
+    @property
+    def imperv_pct(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_imperv_pct(_h(self._solver), self._index, &v))
+        return v
+
+    @imperv_pct.setter
+    def imperv_pct(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_subcatch_set_imperv_pct(_h(self._solver), self._index, value))
+
+    @property
+    def n_imperv(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_n_imperv(_h(self._solver), self._index, &v))
+        return v
+
+    @n_imperv.setter
+    def n_imperv(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_subcatch_set_n_imperv(_h(self._solver), self._index, value))
+
+    @property
+    def n_perv(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_n_perv(_h(self._solver), self._index, &v))
+        return v
+
+    @n_perv.setter
+    def n_perv(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_subcatch_set_n_perv(_h(self._solver), self._index, value))
+
+    @property
+    def ds_imperv(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_ds_imperv(_h(self._solver), self._index, &v))
+        return v
+
+    @ds_imperv.setter
+    def ds_imperv(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_subcatch_set_ds_imperv(_h(self._solver), self._index, value))
+
+    @property
+    def ds_perv(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_ds_perv(_h(self._solver), self._index, &v))
+        return v
+
+    @ds_perv.setter
+    def ds_perv(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_subcatch_set_ds_perv(_h(self._solver), self._index, value))
+
+    # ---- Topology --------------------------------------------------
+
+    @property
+    def gage(self):
+        """The :class:`Gage` wrapper assigned to this subcatchment."""
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_subcatch_get_gage(_h(self._solver), self._index, &v))
+        from ._gages import Gage
+        return Gage(self._solver, v)
+
+    @gage.setter
+    def gage(self, value) -> None:
+        _check_fresh(self)
+        from ._gages import Gage
+        cdef int gi
+        if isinstance(value, Gage):
+            gi = value._index
+        else:
+            gi = _resolve_index(
+                _h(self._solver), value,
+                swmm_gage_index, swmm_gage_count, "Gage")
+        _check(swmm_subcatch_set_gage(_h(self._solver), self._index, gi))
+
+    @property
+    def outlet(self):
+        """The downstream :class:`Node` (or :class:`Subcatchment` if the
+        outlet is another subcatchment).
+
+        Returns whichever assignment is currently active; checks the
+        node outlet first, then falls back to the subcatchment outlet.
+        """
+        _check_fresh(self)
+        cdef int v = 0
+        cdef int rc = swmm_subcatch_get_outlet(_h(self._solver), self._index, &v)
+        if rc == 0 and v >= 0:
+            from ._nodes import Node
+            return Node(self._solver, v)
+        # Try outlet-subcatchment.
+        _check(swmm_subcatch_get_outlet_subcatch(
+            _h(self._solver), self._index, &v))
+        if v >= 0:
+            return Subcatchment(self._solver, v)
+        return None
+
+    def set_outlet_node(self, node) -> None:
+        """Route runoff to ``node`` (a :class:`Node` wrapper, index, or id)."""
+        _check_fresh(self)
+        from ._nodes import Node
+        cdef int ni
+        if isinstance(node, Node):
+            ni = node._index
+        else:
+            ni = _resolve_index(
+                _h(self._solver), node,
+                swmm_node_index, swmm_node_count, "Node")
+        _check(swmm_subcatch_set_outlet(_h(self._solver), self._index, ni))
+
+    def set_outlet_subcatchment(self, sub) -> None:
+        """Route runoff to another :class:`Subcatchment`."""
+        _check_fresh(self)
+        cdef int si
+        if isinstance(sub, Subcatchment):
+            si = sub._index
+        else:
+            si = _resolve_subcatch(self._solver, sub)
+        _check(swmm_subcatch_set_outlet_subcatch(
+            _h(self._solver), self._index, si))
+
+    # ---- Runtime state ---------------------------------------------
+
+    @property
+    def runoff(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_runoff(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def groundwater(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_groundwater(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def rainfall(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_rainfall(_h(self._solver), self._index, &v))
+        return v
+
+    @rainfall.setter
+    def rainfall(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_subcatch_set_rainfall(_h(self._solver), self._index, value))
+
+    @property
+    def snow_depth(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_snow_depth(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def evap(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_evap(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def infil(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_infil(_h(self._solver), self._index, &v))
+        return v
+
+    # ---- Quality ---------------------------------------------------
+
+    def quality(self, pollutant) -> float:
+        _check_fresh(self)
+        cdef int p = _resolve_pollutant(self._solver, pollutant)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_quality(
+            _h(self._solver), self._index, p, &v))
+        return v
+
+    def ponded_quality(self, pollutant) -> float:
+        _check_fresh(self)
+        cdef int p = _resolve_pollutant(self._solver, pollutant)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_ponded_quality(
+            _h(self._solver), self._index, p, &v))
+        return v
+
+    def set_ponded_quality(self, pollutant, double mass) -> None:
+        _check_fresh(self)
+        cdef int p = _resolve_pollutant(self._solver, pollutant)
+        _check(swmm_subcatch_set_ponded_quality(
+            _h(self._solver), self._index, p, mass))
+
+    # ---- Sub-views -------------------------------------------------
+
+    @property
+    def stats(self) -> SubcatchmentStatsView:
+        if self._stats is None:
+            self._stats = SubcatchmentStatsView(self)
+        return self._stats
+
+    @property
+    def infiltration(self) -> InfiltrationView:
+        if self._infiltration is None:
+            self._infiltration = InfiltrationView(self)
+        return self._infiltration
+
+    @property
+    def coverage(self) -> CoverageView:
+        if self._coverage is None:
+            self._coverage = CoverageView(self)
+        return self._coverage
+
+    # ---- Equality / repr ------------------------------------------
+
+    def __eq__(self, other):
+        if not isinstance(other, Subcatchment):
+            return NotImplemented
+        return (self._solver is other._solver
+                and self._index == other._index)
+
+    def __hash__(self):
+        return hash((id(self._solver), self._index))
+
+    def __repr__(self) -> str:
+        try:
+            return f"<Subcatchment id={self._captured_id!r} index={self._index}>"
+        except Exception:
+            return f"<Subcatchment index={self._index} (stale or closed)>"
+
+
+# =============================================================================
+# Subcatchments collection
+# =============================================================================
+
+cdef class Subcatchments:
+    """Indexable, iterable collection of :class:`Subcatchment` wrappers."""
+
+    cdef object _solver
 
     def __init__(self, solver):
         self._solver = solver
 
-    def _resolve(self, idx) -> int:
-        """Resolve C{idx} to an integer index.
+    # ---- Container protocol ----------------------------------------
 
-        @param idx: Integer index or string subcatchment ID.
-        @type idx: Union[int, str]
-        @return: Integer index.
-        @rtype: int
-        @raise KeyError: If a string ID is not found.
-        """
-        cdef int i
-        if isinstance(idx, str):
-            i = self.get_index(idx)
-            if i < 0:
-                raise KeyError(f"Subcatchment '{idx}' not found")
-            return i
-        return idx
+    def __len__(self) -> int:
+        return swmm_subcatch_count(_h(self._solver))
 
-    # ====================================================================
-    # Identification & lookup
-    # ====================================================================
+    def __iter__(self):
+        cdef int n = swmm_subcatch_count(_h(self._solver))
+        for i in range(n):
+            yield Subcatchment(self._solver, i)
 
-    def count(self) -> int:
-        """Return the number of subcatchments in the model.
+    def __getitem__(self, key) -> Subcatchment:
+        cdef int i = _resolve_subcatch(self._solver, key)
+        return Subcatchment(self._solver, i)
 
-        @return: Subcatchment count.
-        @rtype: int
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        return swmm_subcatch_count(h)
+    def __contains__(self, key) -> bool:
+        try:
+            _resolve_subcatch(self._solver, key)
+            return True
+        except (KeyError, IndexError, TypeError):
+            return False
 
-    def get_index(self, str sc_id) -> int:
-        """Return the integer index of a subcatchment by its string ID.
+    # ---- Identity lookups -----------------------------------------
 
-        @param sc_id: Subcatchment identifier.
-        @type sc_id: str
-        @return: Index, or C{-1} if not found.
-        @rtype: int
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bytes b = sc_id.encode('utf-8')
-        return swmm_subcatch_index(h, b)
+    def get_index(self, str sub_id) -> int:
+        cdef bytes b = sub_id.encode('utf-8')
+        cdef int i = swmm_subcatch_index(_h(self._solver), b)
+        if i < 0:
+            raise KeyError(sub_id)
+        return i
 
     def get_id(self, int idx) -> str:
-        """Return the string ID of a subcatchment by index.
-
-        @param idx: Subcatchment index.
-        @type idx: int
-        @return: Subcatchment ID string.
-        @rtype: str
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef const char* raw = swmm_subcatch_id(h, idx)
+        if not (0 <= idx < len(self)):
+            raise IndexError(idx)
+        cdef const char* raw = swmm_subcatch_id(_h(self._solver), idx)
         return raw.decode('utf-8') if raw != NULL else ""
 
-    def add(self, str sc_id) -> int:
-        """Add a subcatchment to the model (OPENED-state editing).
-
-        Wraps C{swmm_subcatch_add}. Valid in C{BUILDING} or C{OPENED}
-        state. For from-scratch construction without an .inp file, use
-        L{ModelBuilder.add_subcatchment}.
-
-        @param sc_id: Unique subcatchment identifier.
-        @type sc_id: str
-        @return: Error code (C{0} on success).
-        @rtype: int
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bytes b = sc_id.encode('utf-8')
-        return swmm_subcatch_add(h, b)
-
-    def delete(self, idx) -> list:
-        """Delete a subcatchment and cascade-nullify all referencing objects.
-
-        Delegates to L{ModelEditor.delete_subcatch}. Valid in C{BUILDING}
-        or C{OPENED} state.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: List of L{ImpactEntry} describing cascaded changes.
-        @rtype: list[ImpactEntry]
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        @raise RuntimeError: On engine error.
-        """
-        from ._edit import ModelEditor
-        return ModelEditor(self._solver).delete_subcatch(idx)
-
-    # ====================================================================
-    # Property setters (BUILDING / OPENED)
-    # ====================================================================
-
-    def set_outlet(self, idx, int node_idx):
-        """Set the outlet node for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param node_idx: Index of the outlet node.
-        @type node_idx: int
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_outlet(h, i, node_idx))
-
-    def set_area(self, idx, double area):
-        """Set the area of a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param area: Subcatchment area (project area units).
-        @type area: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_area(h, i, area))
-
-    def set_width(self, idx, double width):
-        """Set the characteristic width of a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param width: Overland flow width (project length units).
-        @type width: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_width(h, i, width))
-
-    def set_slope(self, idx, double slope):
-        """Set the average surface slope of a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param slope: Average slope (fraction).
-        @type slope: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_slope(h, i, slope))
-
-    def set_imperv_pct(self, idx, double pct):
-        """Set the percent imperviousness of a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param pct: Percent imperviousness (C{0}-C{100}).
-        @type pct: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_imperv_pct(h, i, pct))
-
-    def set_n_imperv(self, idx, double n):
-        """Set Manning's N for the impervious area.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param n: Manning's roughness coefficient.
-        @type n: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_n_imperv(h, i, n))
-
-    def set_n_perv(self, idx, double n):
-        """Set Manning's N for the pervious area.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param n: Manning's roughness coefficient.
-        @type n: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_n_perv(h, i, n))
-
-    def set_ds_imperv(self, idx, double ds):
-        """Set the depression storage for the impervious area.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param ds: Depression storage depth (project length units).
-        @type ds: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_ds_imperv(h, i, ds))
-
-    def set_ds_perv(self, idx, double ds):
-        """Set the depression storage for the pervious area.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param ds: Depression storage depth (project length units).
-        @type ds: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_ds_perv(h, i, ds))
-
-    def set_gage(self, idx, int gage_idx):
-        """Set the rain gage assigned to a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param gage_idx: Index of the rain gage.
-        @type gage_idx: int
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_gage(h, i, gage_idx))
-
-    def set_outlet_subcatch(self, idx, int sc_idx):
-        """Set the outlet subcatchment for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param sc_idx: Index of the outlet subcatchment.
-        @type sc_idx: int
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_outlet_subcatch(h, i, sc_idx))
-
-    # ====================================================================
-    # Infiltration setters
-    # ====================================================================
-
-    def set_infil_horton(self, idx, double f0, double fmin, double decay, double dry_time):
-        """Set Horton infiltration parameters for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param f0: Maximum infiltration rate.
-        @type f0: float
-        @param fmin: Minimum infiltration rate.
-        @type fmin: float
-        @param decay: Decay constant.
-        @type decay: float
-        @param dry_time: Drying time.
-        @type dry_time: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_infil_horton(h, i, f0, fmin, decay, dry_time))
-
-    def set_infil_green_ampt(self, idx, double suction, double conductivity, double initial_deficit):
-        """Set Green-Ampt infiltration parameters for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param suction: Soil capillary suction.
-        @type suction: float
-        @param conductivity: Soil saturated hydraulic conductivity.
-        @type conductivity: float
-        @param initial_deficit: Initial moisture deficit.
-        @type initial_deficit: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_infil_green_ampt(h, i, suction, conductivity, initial_deficit))
-
-    def set_infil_curve_number(self, idx, double cn):
-        """Set SCS Curve Number infiltration parameter for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param cn: SCS curve number.
-        @type cn: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_infil_curve_number(h, i, cn))
-
-    # ====================================================================
-    # Property getters
-    # ====================================================================
-
-    def get_area(self, idx) -> float:
-        """Return the area of a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Subcatchment area (project area units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_area(h, i, &v))
-        return v
-
-    def get_imperv_pct(self, idx) -> float:
-        """Return the percent imperviousness of a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Percent imperviousness (C{0}-C{100}).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_imperv_pct(h, i, &v))
-        return v
-
-    def get_outlet(self, idx) -> int:
-        """Return the outlet node index for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Outlet node index.
-        @rtype: int
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = 0
-        _check(swmm_subcatch_get_outlet(h, i, &v))
-        return v
-
-    def get_width(self, idx) -> float:
-        """Return the characteristic width of a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Overland flow width (project length units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_width(h, i, &v))
-        return v
-
-    def get_slope(self, idx) -> float:
-        """Return the average surface slope of a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Average slope (fraction).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_slope(h, i, &v))
-        return v
-
-    def get_n_imperv(self, idx) -> float:
-        """Return Manning's N for the impervious area.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Manning's roughness coefficient.
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_n_imperv(h, i, &v))
-        return v
-
-    def get_n_perv(self, idx) -> float:
-        """Return Manning's N for the pervious area.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Manning's roughness coefficient.
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_n_perv(h, i, &v))
-        return v
-
-    def get_ds_imperv(self, idx) -> float:
-        """Return the depression storage for the impervious area.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Depression storage depth (project length units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_ds_imperv(h, i, &v))
-        return v
-
-    def get_ds_perv(self, idx) -> float:
-        """Return the depression storage for the pervious area.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Depression storage depth (project length units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_ds_perv(h, i, &v))
-        return v
-
-    def get_gage(self, idx) -> int:
-        """Return the rain gage index assigned to a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Rain gage index.
-        @rtype: int
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = 0
-        _check(swmm_subcatch_get_gage(h, i, &v))
-        return v
-
-    def get_outlet_subcatch(self, idx) -> int:
-        """Return the outlet subcatchment index for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Outlet subcatchment index.
-        @rtype: int
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = 0
-        _check(swmm_subcatch_get_outlet_subcatch(h, i, &v))
-        return v
-
-    # ====================================================================
-    # Infiltration getters
-    # ====================================================================
-
-    def get_infil_model(self, idx) -> int:
-        """Return the infiltration model type for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Infiltration model type code.
-        @rtype: int
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = 0
-        _check(swmm_subcatch_get_infil_model(h, i, &v))
-        return v
-
-    def get_infil_horton(self, idx) -> tuple:
-        """Return Horton infiltration parameters for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Tuple of C{(f0, fmin, decay, dry_time)}.
-        @rtype: tuple
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double f0 = 0.0
-        cdef double fmin = 0.0
-        cdef double decay = 0.0
-        cdef double dry_time = 0.0
-        _check(swmm_subcatch_get_infil_horton(h, i, &f0, &fmin, &decay, &dry_time))
-        return (f0, fmin, decay, dry_time)
-
-    def get_infil_green_ampt(self, idx) -> tuple:
-        """Return Green-Ampt infiltration parameters for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Tuple of C{(suction, conductivity, deficit)}.
-        @rtype: tuple
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double suction = 0.0
-        cdef double conductivity = 0.0
-        cdef double deficit = 0.0
-        _check(swmm_subcatch_get_infil_green_ampt(h, i, &suction, &conductivity, &deficit))
-        return (suction, conductivity, deficit)
-
-    def get_infil_curve_number(self, idx) -> float:
-        """Return the SCS Curve Number for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: SCS curve number.
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_infil_curve_number(h, i, &v))
-        return v
-
-    # ====================================================================
-    # Statistics
-    # ====================================================================
-
-    def get_stat_precip(self, idx) -> float:
-        """Return the total precipitation volume for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Precipitation volume.
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_stat_precip(h, i, &v))
-        return v
-
-    def get_stat_runoff_vol(self, idx) -> float:
-        """Return the total runoff volume for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Runoff volume.
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_stat_runoff_vol(h, i, &v))
-        return v
-
-    def get_stat_max_runoff(self, idx) -> float:
-        """Return the maximum runoff rate for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Maximum runoff rate.
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_stat_max_runoff(h, i, &v))
-        return v
-
-    # ====================================================================
-    # Coverage
-    # ====================================================================
-
-    def set_coverage(self, idx, int lu_idx, double fraction):
-        """Set the land-use coverage fraction for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param lu_idx: Land-use index.
-        @type lu_idx: int
-        @param fraction: Coverage fraction (C{0}-C{1}).
-        @type fraction: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_coverage(h, i, lu_idx, fraction))
-
-    def get_coverage(self, idx, int lu_idx) -> float:
-        """Return the land-use coverage fraction for a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param lu_idx: Land-use index.
-        @type lu_idx: int
-        @return: Coverage fraction (C{0}-C{1}).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_coverage(h, i, lu_idx, &v))
-        return v
-
-    # ====================================================================
-    # Runoff state (runtime getters)
-    # ====================================================================
-
-    def get_runoff(self, idx) -> float:
-        """Return the current runoff rate from a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Runoff rate (project flow units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_runoff(h, i, &v))
-        return v
-
-    def get_groundwater(self, idx) -> float:
-        """Return the groundwater outflow from a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Groundwater flow rate (project flow units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_groundwater(h, i, &v))
-        return v
-
-    def get_rainfall(self, idx) -> float:
-        """Return the current rainfall rate on a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Rainfall rate (project rainfall units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_rainfall(h, i, &v))
-        return v
-
-    def get_snow_depth(self, idx) -> float:
-        """Return the current snow depth on a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Snow depth (project length units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_snow_depth(h, i, &v))
-        return v
-
-    def get_evap(self, idx) -> float:
-        """Return the current evaporation rate from a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Evaporation rate (project length units per time).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_evap(h, i, &v))
-        return v
-
-    def get_infil(self, idx) -> float:
-        """Return the current infiltration rate on a subcatchment.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @return: Infiltration rate (project length units per time).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_infil(h, i, &v))
-        return v
-
-    # ====================================================================
-    # Rainfall override
-    # ====================================================================
-
-    def set_rainfall(self, idx, double rainfall):
-        """Override rainfall on a subcatchment for the current timestep.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param rainfall: Rainfall rate (project rainfall units).
-            Negative value reverts to gage-driven.
-        @type rainfall: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_rainfall(h, i, rainfall))
-
-    # ====================================================================
-    # Pollutant/quality
-    # ====================================================================
-
-    def get_quality(self, idx, int pollutant_idx) -> float:
-        """Return the pollutant concentration in subcatchment runoff.
-
-        @param idx: Subcatchment index (int) or subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param pollutant_idx: Pollutant index.
-        @type pollutant_idx: int
-        @return: Concentration (project quality units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_quality(h, i, pollutant_idx, &v))
-        return v
-
-    def get_ponded_quality(self, idx, int pollutant_idx) -> float:
-        """Return ponded quality mass for a subcatchment-pollutant pair.
-
-        Ponded quality persists between wet/dry events and represents
-        pollutant mass in standing water on the subcatchment surface.
-
-        @param idx: Subcatchment index (int) or ID (str).
-        @type idx: Union[int, str]
-        @param pollutant_idx: Pollutant index.
-        @type pollutant_idx: int
-        @return: Ponded quality mass (project mass units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_subcatch_get_ponded_quality(h, i, pollutant_idx, &v))
-        return v
-
-    def set_ponded_quality(self, idx, int pollutant_idx, double mass):
-        """Set ponded quality mass for a subcatchment-pollutant pair.
-
-        @param idx: Subcatchment index (int) or ID (str).
-        @type idx: Union[int, str]
-        @param pollutant_idx: Pollutant index.
-        @type pollutant_idx: int
-        @param mass: Ponded quality mass (project mass units).
-        @type mass: float
-        @raise KeyError: If C{idx} is a string and the subcatchment is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_subcatch_set_ponded_quality(h, i, pollutant_idx, mass))
-
-    # ====================================================================
-    # Bulk array access (numpy)
-    # ====================================================================
-
-    def get_runoff_bulk(self):
-        """Return all subcatchment runoff rates as a NumPy array.
-
-        Uses the bulk C API for a single C{memcpy} -- much faster than
-        calling L{get_runoff} in a loop. GIL is released during the C call,
-        so a peer thread can step an independent engine in parallel.
-
-        @return: Array of shape C{(n_subcatchments,)} with dtype C{float64}.
-        @rtype: numpy.ndarray
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    # ---- Editing (bumps generation) -------------------------------
+
+    def add(self, str sub_id) -> Subcatchment:
+        cdef bytes b = sub_id.encode('utf-8')
+        _check(swmm_subcatch_add(_h(self._solver), b))
+        self._solver._bump_generation()
+        cdef int new_idx = swmm_subcatch_index(_h(self._solver), b)
+        return Subcatchment(self._solver, new_idx)
+
+    def rename(self, key, str new_id) -> None:
+        cdef int i = _resolve_subcatch(self._solver, key)
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_subcatch_rename(_h(self._solver), i, b))
+        self._solver._bump_generation()
+
+    # ---- Bulk numpy properties ------------------------------------
+
+    @property
+    def runoffs(self):
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
         cdef int err
         with nogil:
-            err = swmm_subcatch_get_runoff_bulk(h, p, n)
+            err = swmm_subcatch_get_runoff_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
-    def get_quality_bulk(self, int pollutant_idx):
-        """Return all subcatchment pollutant concentrations as a NumPy array.
-        GIL is released during the C call.
-
-        @param pollutant_idx: Pollutant index.
-        @type pollutant_idx: int
-        @return: Array of shape C{(n_subcatchments,)} with dtype C{float64}.
-        @rtype: numpy.ndarray
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def rainfalls(self):
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
         cdef int err
         with nogil:
-            err = swmm_subcatch_get_quality_bulk(h, pollutant_idx, p, n)
+            err = swmm_subcatch_get_rainfall_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
-    # ------------------------------------------------------------------
-    # Phase 3 bulk getters — rainfall / evap / infil / snow_depth / ids.
-    # GIL is released for each C call following the established pattern.
-    # ------------------------------------------------------------------
-
-    def get_rainfall_bulk(self):
-        """Return rainfall rates for all subcatchments as a NumPy array.
-        GIL is released during the C call.
-
-        :returns: Array of shape ``(n_subcatchments,)``, dtype
-                  ``float64``, in project rainfall units.
-        :rtype: numpy.ndarray
-
-        .. versionadded:: 6.0.0
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def evaps(self):
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
         cdef int err
         with nogil:
-            err = swmm_subcatch_get_rainfall_bulk(h, p, n)
+            err = swmm_subcatch_get_evap_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
-    def get_evap_bulk(self):
-        """Return evaporation losses for all subcatchments as a NumPy
-        array. GIL is released during the C call.
-
-        :returns: Array of shape ``(n_subcatchments,)``, dtype
-                  ``float64``, in project flow/rainfall units.
-        :rtype: numpy.ndarray
-
-        .. versionadded:: 6.0.0
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def infils(self):
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
         cdef int err
         with nogil:
-            err = swmm_subcatch_get_evap_bulk(h, p, n)
+            err = swmm_subcatch_get_infil_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
-    def get_infil_bulk(self):
-        """Return infiltration losses for all subcatchments as a NumPy
-        array. GIL is released during the C call.
-
-        :returns: Array of shape ``(n_subcatchments,)``, dtype
-                  ``float64``, in project flow/rainfall units.
-        :rtype: numpy.ndarray
-
-        .. versionadded:: 6.0.0
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def snow_depths(self):
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
         cdef int err
         with nogil:
-            err = swmm_subcatch_get_infil_bulk(h, p, n)
+            err = swmm_subcatch_get_snow_depth_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
-    def get_snow_depth_bulk(self):
-        """Return snow depths for all subcatchments as a NumPy array.
-        GIL is released during the C call.
-
-        .. note::
-
-           Mirrors the scalar :py:meth:`get_snow_depth` placeholder:
-           returns zeros for every entry until full snow-state
-           integration with ``SubcatchData`` lands.
-
-        :returns: Array of shape ``(n_subcatchments,)``, dtype
-                  ``float64``.
-        :rtype: numpy.ndarray
-
-        .. versionadded:: 6.0.0
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    def qualities(self, pollutant):
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
+        cdef int p = _resolve_pollutant(self._solver, pollutant)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
         cdef int err
         with nogil:
-            err = swmm_subcatch_get_snow_depth_bulk(h, p, n)
+            err = swmm_subcatch_get_quality_bulk(h, p, <double*>buf.data, n)
         _check(err)
         return buf
 
-    def get_ids_bulk(self, int stride=64):
-        """Return all subcatchment IDs as a Python list of strings in a
-        single C call (stride-packed UTF-8). GIL is released during the
-        C copy; per-slot decoding runs afterwards.
+    @property
+    def ids(self):
+        return np.asarray(self._ids_list(), dtype=object)
 
-        :param stride: Per-ID slot size in bytes (default 64). IDs
-                       longer than ``stride - 1`` are truncated.
-        :type stride: int
-        :returns: List of ``n_subcatchments`` Python strings.
-        :rtype: list[str]
-
-        .. versionadded:: 6.0.0
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    def _ids_list(self, int stride=64):
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
             n * stride, dtype=np.int8)
-        cdef char* p = <char*>buf.data
         cdef int err
         with nogil:
-            err = swmm_subcatch_get_ids_bulk(h, p, stride, n)
+            err = swmm_subcatch_get_ids_bulk(h, <char*>buf.data, stride, n)
         _check(err)
         raw = bytes(buf)
-        ids = []
+        out = []
         for i in range(n):
             slot = raw[i * stride:(i + 1) * stride]
             nul = slot.find(b"\x00")
             if nul >= 0:
                 slot = slot[:nul]
-            ids.append(slot.decode("utf-8"))
-        return ids
+            out.append(slot.decode("utf-8"))
+        return out
 
-    # ====================================================================
-    # Rename
-    # ====================================================================
-
-    def rename(self, idx, str new_id):
-        """Rename a subcatchment.
-
-        @param idx: Subcatchment index (int) or current subcatchment ID (str).
-        @type idx: Union[int, str]
-        @param new_id: New identifier string.
-        @type new_id: str
-        @raise KeyError: If C{idx} is a string and the subcatchment ID is not found.
-        @raise EngineError: If the C API rejects the rename.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bytes b = new_id.encode('utf-8')
-        _check(swmm_subcatch_rename(h, i, b))
-
+    def __repr__(self) -> str:
+        try:
+            return f"<Subcatchments n={len(self)}>"
+        except Exception:
+            return "<Subcatchments (engine closed)>"

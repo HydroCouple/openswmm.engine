@@ -148,7 +148,22 @@ Advanced forcing
 # =============================================================================
 # Engine lifecycle & errors
 # =============================================================================
-from ._solver import Solver, EngineError, run, run_with_callback
+from ._solver import Solver, run, run_with_callback
+from ._exceptions import (
+    EngineError,
+    BadHandleError,
+    BadIndexError,
+    BadParamError,
+    LifecycleError,
+    HotStartError,
+    PluginError,
+    FileError,
+    ParseError,
+    NumericalError,
+    CRSError,
+    DependencyError,
+    StaleObjectError,
+)
 
 # =============================================================================
 # Programmatic model building & editing
@@ -217,6 +232,12 @@ except ImportError:
     HAS_GEOPACKAGE = False
 
 # =============================================================================
+# DateTime conversion (SWMM DateTime double <-> Python datetime / calendar parts)
+# =============================================================================
+from ._dates import oadate_to_datetime, datetime_to_oadate
+from . import _datetime as datetime_api  # low-level C API wrappers
+
+# =============================================================================
 # Enumerations
 # =============================================================================
 from ._enums import (
@@ -224,6 +245,7 @@ from ._enums import (
     ErrorCode, EngineState, WarnCode, ObjectType,
     # Hydraulics
     FlowUnits, RouteModel, NodeType, LinkType, OutfallType, XSectShape,
+    OrificeType, WeirType, OutletRatingType,
     # Hydrology
     InfilModel, GageDataSource, GageRainType,
     # Water quality / LID
@@ -237,8 +259,15 @@ from ._enums import (
 )
 
 __all__ = [
+    # --- DateTime conversion (SWMM DateTime <-> Python datetime) ---
+    "oadate_to_datetime", "datetime_to_oadate", "datetime_api",
     # --- Engine lifecycle & errors ---
-    "Solver", "EngineError", "run", "run_with_callback",
+    "Solver", "run", "run_with_callback",
+    "EngineError",
+    "BadHandleError", "BadIndexError", "BadParamError",
+    "LifecycleError", "HotStartError", "PluginError",
+    "FileError", "ParseError", "NumericalError",
+    "CRSError", "DependencyError", "StaleObjectError",
     # --- Programmatic model building & editing ---
     "ModelBuilder", "ModelEditor", "ImpactEntry", "ConversionResult",
     # --- Geometry helpers ---
@@ -264,6 +293,7 @@ __all__ = [
     # --- Enumerations: hydraulics ---
     "FlowUnits", "RouteModel", "NodeType", "LinkType",
     "OutfallType", "XSectShape",
+    "OrificeType", "WeirType", "OutletRatingType",
     # --- Enumerations: hydrology ---
     "InfilModel", "GageDataSource", "GageRainType",
     # --- Enumerations: water quality / LID ---

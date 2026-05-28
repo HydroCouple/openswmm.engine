@@ -36,7 +36,7 @@ import time
 import numpy as np
 import pytest
 
-from openswmm.engine import EngineState, Links, Nodes, Solver, Subcatchments
+from openswmm.engine import EngineState, Solver
 
 from tests.engine.conftest import SITE_DRAINAGE_INP
 
@@ -58,10 +58,7 @@ def _run_full_simulation(inp: str, rpt: str, out: str) -> int:
         s.initialize()
         s.start()
         n = 0
-        while s.state == EngineState.RUNNING:
-            rc = s.step()
-            if rc != 0:
-                break
+        for _ in s.steps():
             n += 1
         s.end()
         s.close()
@@ -225,19 +222,14 @@ def test_bulk_getters_concurrent_reads(solver_files):
         s.open()
         s.initialize()
         s.start()
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
+        for _ in s.steps():
+            pass
         s.end()
 
-        nodes = Nodes(s)
-        links = Links(s)
-        subs = Subcatchments(s)
-
-        # Baseline (single-threaded snapshot).
-        baseline_node_depths = nodes.get_depths_bulk()
-        baseline_link_flows = links.get_flows_bulk()
-        baseline_runoff = subs.get_runoff_bulk()
+        # Baseline (single-threaded snapshot) via v1 property access.
+        baseline_node_depths = s.nodes.depths
+        baseline_link_flows = s.links.flows
+        baseline_runoff = s.subcatchments.runoffs
 
         N_THREADS = 8
         N_ITERS = 16
@@ -246,17 +238,14 @@ def test_bulk_getters_concurrent_reads(solver_files):
         def reader() -> None:
             try:
                 for _ in range(N_ITERS):
-                    nd = nodes.get_depths_bulk()
-                    nh = nodes.get_heads_bulk()
-                    lf = links.get_flows_bulk()
-                    ld = links.get_depths_bulk()
-                    sr = subs.get_runoff_bulk()
-                    # Each call should return arrays equal to the baseline.
+                    nd = s.nodes.depths
+                    nh = s.nodes.heads
+                    lf = s.links.flows
+                    ld = s.links.depths
+                    sr = s.subcatchments.runoffs
                     np.testing.assert_array_equal(nd, baseline_node_depths)
                     np.testing.assert_array_equal(lf, baseline_link_flows)
                     np.testing.assert_array_equal(sr, baseline_runoff)
-                    # Shape sanity for the heads/depths reads even though
-                    # we don't have a snapshot of them above.
                     assert nh.shape == nd.shape
                     assert ld.shape == lf.shape
             except BaseException as e:  # noqa: BLE001

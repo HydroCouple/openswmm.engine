@@ -1,35 +1,47 @@
 """
-Node Access
-===========
+Node access (Pythonic v1 surface)
+=================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
-The :class:`Nodes` class provides access to node properties during a
-simulation. Create an instance by passing an active :class:`Solver`:
+The :class:`Nodes` collection and :class:`Node` wrapper are the entry
+point for reading and writing node state in the new bindings. The
+collection acts like an ordered mapping over the engine's node array;
+items returned by indexing or iteration are :class:`Node` wrappers
+exposing a property-style API.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Nodes
+    from openswmm.engine import Solver
 
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        nodes = Nodes(s)
-        print(f"Node count: {nodes.count()}")
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-            depth = nodes.get_depth("J1")       # by name
-            nodes.set_lateral_inflow(0, 0.5)     # or by index
+    with Solver("model.inp") as s:
+        # Indexing — by integer or by string id, both accepted.
+        j1 = s.nodes["J1"]
+        same = s.nodes[0]
+        assert j1.id == same.id
 
-Bulk array access (numpy)
--------------------------
+        # Iteration.
+        for node in s.nodes:
+            if node.type == NodeType.OUTFALL:
+                print(node.id, node.invert_elev)
 
-.. code-block:: python
+        # Per-object property access.
+        print(j1.depth, j1.head, j1.lateral_inflow)
+        j1.lateral_inflow = 0.5
 
-    depths = nodes.get_depths_bulk()   # np.ndarray, shape (n_nodes,)
-    depths *= 1.1                      # modify in-place
-    nodes.set_depths_bulk(depths)      # write back
+        # Bulk vectorised access — same memory model as before.
+        depths = s.nodes.depths               # np.ndarray, dtype float64
+        s.nodes.depths = depths * 1.1         # vectorised write
+
+        # Sub-views per type.
+        s.nodes["OUT1"].outfall.type = OutfallType.FIXED
+        s.nodes["S1"].storage.functional = (0.0, 0.0, 100.0)
+        # ``s.nodes["J1"].outfall`` raises AttributeError (J1 is a junction).
+
+        # Statistics sub-view.
+        print(s.nodes["J1"].stats.max_depth)
 """
 
 # cython: language_level=3
@@ -38,914 +50,646 @@ import numpy as np
 cimport numpy as np
 
 from ._common cimport *
+from ._enums import NodeType, OutfallType
+from ._exceptions import StaleObjectError
 
 
-class Nodes:
-    """Access node properties during a simulation.
+# =============================================================================
+# Helpers
+# =============================================================================
 
-    All per-element methods accept either an integer index or a string node
-    ID.  When a string is passed it is resolved via L{get_index}.
+cdef inline SWMM_Engine _h(solver):
+    return <SWMM_Engine><size_t>solver.handle
 
-    @param solver: An active L{openswmm.engine.Solver} instance. The
-        solver must remain alive for the lifetime of this object.
-    @type solver: L{openswmm.engine.Solver}
 
-    Example::
+cdef inline int _resolve_node(solver, object key) except -1:
+    return _resolve_index(_h(solver), key, swmm_node_index, swmm_node_count, "Node")
 
-        nodes = Nodes(solver)
-        depth = nodes.get_depth(0)      # by index
-        depth = nodes.get_depth("J1")   # by name
+
+cdef inline void _check_fresh(node) except *:
+    """Raise StaleObjectError when a wrapper's captured generation no longer
+    matches the solver's. Called from every Node property/method that
+    addresses the engine by index."""
+    if node._gen != node._solver.generation:
+        raise StaleObjectError(
+            f"Node wrapper (id={node._captured_id!r}, index={node._index}) is stale; "
+            "look it up again from solver.nodes."
+        )
+
+
+# =============================================================================
+# Sub-views (StorageView, OutfallView, DividerView, NodeStatsView)
+# =============================================================================
+
+cdef class NodeStatsView:
+    """Per-node summary statistics view. Available on every :class:`Node`."""
+    cdef object _node
+
+    def __init__(self, node):
+        self._node = node
+
+    @property
+    def max_depth(self) -> float:
+        _check_fresh(self._node)
+        cdef double v = 0.0
+        _check(swmm_node_get_stat_max_depth(_h(self._node._solver), self._node._index, &v))
+        return v
+
+    @property
+    def max_overflow(self) -> float:
+        _check_fresh(self._node)
+        cdef double v = 0.0
+        _check(swmm_node_get_stat_max_overflow(_h(self._node._solver), self._node._index, &v))
+        return v
+
+    @property
+    def vol_flooded(self) -> float:
+        _check_fresh(self._node)
+        cdef double v = 0.0
+        _check(swmm_node_get_stat_vol_flooded(_h(self._node._solver), self._node._index, &v))
+        return v
+
+    @property
+    def time_flooded(self) -> float:
+        """Cumulative seconds the node has been flooded."""
+        _check_fresh(self._node)
+        cdef double v = 0.0
+        _check(swmm_node_get_stat_time_flooded(_h(self._node._solver), self._node._index, &v))
+        return v
+
+    def __repr__(self) -> str:
+        return f"<NodeStatsView for {self._node!r}>"
+
+
+cdef class StorageView:
+    """``node.storage`` — storage-node-only properties. Accessing on a
+    non-storage node raises :class:`AttributeError`."""
+    cdef object _node
+
+    def __init__(self, node):
+        self._node = node
+
+    @property
+    def curve(self) -> int:
+        """Index of the storage curve (or -1 if functional)."""
+        _check_fresh(self._node)
+        cdef int v = 0
+        _check(swmm_node_get_storage_curve(_h(self._node._solver), self._node._index, &v))
+        return v
+
+    @curve.setter
+    def curve(self, int curve_idx) -> None:
+        _check_fresh(self._node)
+        _check(swmm_node_set_storage_curve(_h(self._node._solver), self._node._index, curve_idx))
+
+    @property
+    def functional(self) -> tuple:
+        """``(a, b, c)`` coefficients of the functional storage relation."""
+        _check_fresh(self._node)
+        cdef double a = 0.0, b = 0.0, c = 0.0
+        _check(swmm_node_get_storage_functional(_h(self._node._solver), self._node._index, &a, &b, &c))
+        return (a, b, c)
+
+    @functional.setter
+    def functional(self, value) -> None:
+        _check_fresh(self._node)
+        a, b, c = value
+        _check(swmm_node_set_storage_functional(
+            _h(self._node._solver), self._node._index, a, b, c))
+
+    @property
+    def seep_rate(self) -> float:
+        _check_fresh(self._node)
+        cdef double v = 0.0
+        _check(swmm_node_get_storage_seep_rate(_h(self._node._solver), self._node._index, &v))
+        return v
+
+    @seep_rate.setter
+    def seep_rate(self, double rate) -> None:
+        _check_fresh(self._node)
+        _check(swmm_node_set_storage_seep_rate(_h(self._node._solver), self._node._index, rate))
+
+    @property
+    def exfil_params(self) -> tuple:
+        """``(suction, ksat, imd)`` Green-Ampt exfiltration parameters."""
+        _check_fresh(self._node)
+        cdef double s = 0.0, k = 0.0, i = 0.0
+        _check(swmm_node_get_exfil_params(_h(self._node._solver), self._node._index, &s, &k, &i))
+        return (s, k, i)
+
+    @exfil_params.setter
+    def exfil_params(self, value) -> None:
+        _check_fresh(self._node)
+        suction, ksat, imd = value
+        _check(swmm_node_set_exfil_params(
+            _h(self._node._solver), self._node._index, suction, ksat, imd))
+
+    def __repr__(self) -> str:
+        return f"<StorageView for {self._node!r}>"
+
+
+cdef class OutfallView:
+    """``node.outfall`` — outfall-only properties."""
+    cdef object _node
+
+    def __init__(self, node):
+        self._node = node
+
+    @property
+    def type(self):
+        _check_fresh(self._node)
+        cdef int v = 0
+        _check(swmm_node_get_outfall_type(_h(self._node._solver), self._node._index, &v))
+        return OutfallType(v)
+
+    @type.setter
+    def type(self, value) -> None:
+        _check_fresh(self._node)
+        _check(swmm_node_set_outfall_type(
+            _h(self._node._solver), self._node._index, int(value)))
+
+    def set_stage(self, double stage) -> None:
+        """Configure a FIXED outfall with the given stage."""
+        _check_fresh(self._node)
+        _check(swmm_node_set_outfall_stage(
+            _h(self._node._solver), self._node._index, stage))
+
+    def set_tidal_curve(self, int curve_idx) -> None:
+        """Configure a TIDAL outfall with the given tidal curve."""
+        _check_fresh(self._node)
+        _check(swmm_node_set_outfall_tidal(
+            _h(self._node._solver), self._node._index, curve_idx))
+
+    def set_timeseries(self, int ts_idx) -> None:
+        """Configure a TIMESERIES outfall with the given time series."""
+        _check_fresh(self._node)
+        _check(swmm_node_set_outfall_timeseries(
+            _h(self._node._solver), self._node._index, ts_idx))
+
+    @property
+    def param(self) -> float:
+        _check_fresh(self._node)
+        cdef double v = 0.0
+        _check(swmm_node_get_outfall_param(_h(self._node._solver), self._node._index, &v))
+        return v
+
+    @property
+    def flap_gate(self) -> bool:
+        _check_fresh(self._node)
+        cdef int v = 0
+        _check(swmm_node_get_outfall_flap_gate(_h(self._node._solver), self._node._index, &v))
+        return v != 0
+
+    @flap_gate.setter
+    def flap_gate(self, bint value) -> None:
+        _check_fresh(self._node)
+        _check(swmm_node_set_outfall_flap_gate(
+            _h(self._node._solver), self._node._index, 1 if value else 0))
+
+    @property
+    def route_to(self) -> int:
+        """Index of the subcatchment that receives outfall discharge,
+        or ``-1`` when none configured."""
+        _check_fresh(self._node)
+        cdef int v = 0
+        _check(swmm_node_get_outfall_route_to(_h(self._node._solver), self._node._index, &v))
+        return v
+
+    @route_to.setter
+    def route_to(self, int subcatch_idx) -> None:
+        _check_fresh(self._node)
+        _check(swmm_node_set_outfall_route_to(
+            _h(self._node._solver), self._node._index, subcatch_idx))
+
+    def __repr__(self) -> str:
+        return f"<OutfallView for {self._node!r}>"
+
+
+cdef class DividerView:
+    """``node.divider`` — divider-only properties."""
+    cdef object _node
+
+    def __init__(self, node):
+        self._node = node
+
+    @property
+    def type(self) -> int:
+        _check_fresh(self._node)
+        cdef int v = 0
+        _check(swmm_node_get_divider_type(_h(self._node._solver), self._node._index, &v))
+        return v
+
+    @type.setter
+    def type(self, int value) -> None:
+        _check_fresh(self._node)
+        _check(swmm_node_set_divider_type(_h(self._node._solver), self._node._index, value))
+
+    def __repr__(self) -> str:
+        return f"<DividerView for {self._node!r}>"
+
+
+# =============================================================================
+# Node wrapper
+# =============================================================================
+
+cdef class Node:
+    """A single node, addressed by index relative to the parent
+    :class:`Nodes` collection.
+
+    The wrapper is cheap — it holds a reference to the :class:`Solver`,
+    the integer index, the captured generation counter, and the id at
+    creation time (for nicer error messages). It carries no state of
+    its own; every property/method round-trips through the C API.
+
+    Equality compares ``(solver, index)``; hashing is consistent with
+    that. After a structural mutation (rename, delete, type-convert,
+    or add) wrappers minted before the mutation become **stale** and
+    raise :class:`StaleObjectError` on access — re-look up the node from
+    the collection.
     """
+
+    cdef object _solver
+    cdef int _index
+    cdef long long _gen
+    cdef str _captured_id
+    cdef object _stats
+    cdef object _storage
+    cdef object _outfall
+    cdef object _divider
+
+    def __init__(self, solver, int index):
+        self._solver = solver
+        self._index = index
+        self._gen = solver.generation
+        cdef const char* raw = swmm_node_id(_h(solver), index)
+        self._captured_id = raw.decode('utf-8') if raw != NULL else ""
+        self._stats = None
+        self._storage = None
+        self._outfall = None
+        self._divider = None
+
+    # ---- Identity ---------------------------------------------------
+
+    @property
+    def id(self) -> str:
+        _check_fresh(self)
+        cdef const char* raw = swmm_node_id(_h(self._solver), self._index)
+        return raw.decode('utf-8') if raw != NULL else ""
+
+    @property
+    def index(self) -> int:
+        _check_fresh(self)
+        return self._index
+
+    @property
+    def type(self):
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_node_get_type(_h(self._solver), self._index, &v))
+        return NodeType(v)
+
+    @property
+    def solver(self):
+        """The parent :class:`Solver`. Useful for cross-domain access."""
+        return self._solver
+
+    # ---- Geometry ---------------------------------------------------
+
+    @property
+    def invert_elev(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_invert_elev(_h(self._solver), self._index, &v))
+        return v
+
+    @invert_elev.setter
+    def invert_elev(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_invert_elev(_h(self._solver), self._index, value))
+
+    @property
+    def max_depth(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_max_depth(_h(self._solver), self._index, &v))
+        return v
+
+    @max_depth.setter
+    def max_depth(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_max_depth(_h(self._solver), self._index, value))
+
+    @property
+    def surcharge_depth(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_surcharge_depth(_h(self._solver), self._index, &v))
+        return v
+
+    @surcharge_depth.setter
+    def surcharge_depth(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_surcharge_depth(_h(self._solver), self._index, value))
+
+    @property
+    def ponded_area(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_ponded_area(_h(self._solver), self._index, &v))
+        return v
+
+    @ponded_area.setter
+    def ponded_area(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_pond_area(_h(self._solver), self._index, value))
+
+    @property
+    def initial_depth(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_initial_depth(_h(self._solver), self._index, &v))
+        return v
+
+    @initial_depth.setter
+    def initial_depth(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_initial_depth(_h(self._solver), self._index, value))
+
+    @property
+    def crown_elev(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_crown_elev(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def full_volume(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_full_volume(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def degree(self) -> int:
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_node_get_degree(_h(self._solver), self._index, &v))
+        return v
+
+    # ---- Hydraulic state -------------------------------------------
+
+    @property
+    def depth(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_depth(_h(self._solver), self._index, &v))
+        return v
+
+    @depth.setter
+    def depth(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_depth(_h(self._solver), self._index, value))
+
+    @property
+    def head(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_head(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def volume(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_volume(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def lateral_inflow(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_lateral_inflow(_h(self._solver), self._index, &v))
+        return v
+
+    @lateral_inflow.setter
+    def lateral_inflow(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_lateral_inflow(_h(self._solver), self._index, value))
+
+    @property
+    def overflow(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_overflow(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def inflow(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_inflow(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def losses(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_losses(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def outflow(self) -> float:
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_outflow(_h(self._solver), self._index, &v))
+        return v
+
+    def set_head_boundary(self, double head) -> None:
+        """Apply a one-shot head boundary value for this step."""
+        _check_fresh(self)
+        _check(swmm_node_set_head_boundary(_h(self._solver), self._index, head))
+
+    # ---- Quality ---------------------------------------------------
+
+    def quality(self, pollutant) -> float:
+        """Return the concentration of ``pollutant`` (index or id)."""
+        _check_fresh(self)
+        cdef int p_idx = _resolve_pollutant(self._solver, pollutant)
+        cdef double v = 0.0
+        _check(swmm_node_get_quality(_h(self._solver), self._index, p_idx, &v))
+        return v
+
+    def set_quality_mass_flux(self, pollutant, double mass_rate) -> None:
+        """Inject a mass flux (model units / time) for ``pollutant``."""
+        _check_fresh(self)
+        cdef int p_idx = _resolve_pollutant(self._solver, pollutant)
+        _check(swmm_node_set_quality_mass_flux(
+            _h(self._solver), self._index, p_idx, mass_rate))
+
+    # ---- Derived ---------------------------------------------------
+
+    def depth_from_volume(self, double volume) -> float:
+        """Storage-curve lookup: depth corresponding to ``volume``."""
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_depth_from_volume(
+            _h(self._solver), self._index, volume, &v))
+        return v
+
+    # ---- Sub-views -------------------------------------------------
+
+    @property
+    def stats(self) -> NodeStatsView:
+        if self._stats is None:
+            self._stats = NodeStatsView(self)
+        return self._stats
+
+    @property
+    def storage(self) -> StorageView:
+        if self.type != NodeType.STORAGE:
+            raise AttributeError(
+                f"node {self.id!r} is a {self.type.name}, not STORAGE; "
+                "the .storage sub-view is only valid for storage nodes"
+            )
+        if self._storage is None:
+            self._storage = StorageView(self)
+        return self._storage
+
+    @property
+    def outfall(self) -> OutfallView:
+        if self.type != NodeType.OUTFALL:
+            raise AttributeError(
+                f"node {self.id!r} is a {self.type.name}, not OUTFALL; "
+                "the .outfall sub-view is only valid for outfall nodes"
+            )
+        if self._outfall is None:
+            self._outfall = OutfallView(self)
+        return self._outfall
+
+    @property
+    def divider(self) -> DividerView:
+        if self.type != NodeType.DIVIDER:
+            raise AttributeError(
+                f"node {self.id!r} is a {self.type.name}, not DIVIDER; "
+                "the .divider sub-view is only valid for divider nodes"
+            )
+        if self._divider is None:
+            self._divider = DividerView(self)
+        return self._divider
+
+    # ---- Equality / repr ------------------------------------------
+
+    def __eq__(self, other):
+        if not isinstance(other, Node):
+            return NotImplemented
+        return (self._solver is other._solver
+                and self._index == other._index)
+
+    def __hash__(self):
+        return hash((id(self._solver), self._index))
+
+    def __repr__(self) -> str:
+        try:
+            return f"<Node id={self._captured_id!r} index={self._index}>"
+        except Exception:
+            return f"<Node index={self._index} (stale or closed)>"
+
+
+# Helper: resolve pollutant identifier via the pollutants C API.
+cdef int _resolve_pollutant(solver, key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_pollutant_index, swmm_pollutant_count, "Pollutant")
+
+
+# =============================================================================
+# Nodes collection
+# =============================================================================
+
+cdef class Nodes:
+    """Indexable, iterable collection of :class:`Node` wrappers.
+
+    Constructed lazily via ``solver.nodes`` — users rarely need to
+    instantiate ``Nodes`` directly.
+    """
+
+    cdef object _solver
 
     def __init__(self, solver):
         self._solver = solver
 
-    def _resolve(self, idx) -> int:
-        """Resolve C{idx} to an integer index.
+    # ---- Sized / Container / Iterable ------------------------------
 
-        @param idx: Integer index or string node ID.
-        @type idx: Union[int, str]
-        @return: Integer index.
-        @rtype: int
-        @raise KeyError: If a string ID is not found.
-        """
-        cdef int i
-        if isinstance(idx, str):
-            i = self.get_index(idx)
-            if i < 0:
-                raise KeyError(f"Node '{idx}' not found")
-            return i
-        return idx
+    def __len__(self) -> int:
+        return swmm_node_count(_h(self._solver))
 
-    # ====================================================================
-    # Identification & lookup
-    # ====================================================================
+    def __iter__(self):
+        cdef int n = swmm_node_count(_h(self._solver))
+        for i in range(n):
+            yield Node(self._solver, i)
 
-    def count(self) -> int:
-        """Return the number of nodes in the model.
+    def __getitem__(self, key) -> Node:
+        cdef int i = _resolve_node(self._solver, key)
+        return Node(self._solver, i)
 
-        @return: Node count.
-        @rtype: int
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        return swmm_node_count(h)
+    def __contains__(self, key) -> bool:
+        try:
+            _resolve_node(self._solver, key)
+            return True
+        except (KeyError, IndexError, TypeError):
+            return False
+
+    # ---- Identity lookups -----------------------------------------
 
     def get_index(self, str node_id) -> int:
-        """Return the integer index of a node by its string ID.
-
-        @param node_id: Node identifier string.
-        @type node_id: str
-        @return: Node index, or C{-1} if not found.
-        @rtype: int
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        """Return the integer index of a node by id, or raise
+        :exc:`KeyError`."""
         cdef bytes b = node_id.encode('utf-8')
-        return swmm_node_index(h, b)
+        cdef int i = swmm_node_index(_h(self._solver), b)
+        if i < 0:
+            raise KeyError(node_id)
+        return i
 
     def get_id(self, int idx) -> str:
-        """Return the string ID of a node by index.
-
-        @param idx: Node index.
-        @type idx: int
-        @return: Node ID string.
-        @rtype: str
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef const char* raw = swmm_node_id(h, idx)
+        """Return the string id of the node at integer index ``idx``."""
+        if not (0 <= idx < len(self)):
+            raise IndexError(idx)
+        cdef const char* raw = swmm_node_id(_h(self._solver), idx)
         return raw.decode('utf-8') if raw != NULL else ""
 
-    # ====================================================================
-    # Construction (add/pop_last)
-    # ====================================================================
+    # ---- Editing (structural — bumps generation) ------------------
 
-    def add(self, str node_id, int node_type) -> int:
-        """Add a node to the model (OPENED-state editing).
-
-        Wraps C{swmm_node_add}. Valid in C{BUILDING} or C{OPENED} state.
-        Use this on a L{Solver} that has been opened for interactive
-        editing of an existing model. For from-scratch construction without
-        an .inp file, use L{ModelBuilder.add_node} instead.
-
-        @param node_id: Unique node identifier.
-        @type node_id: str
-        @param node_type: Node type code (see L{NodeType}).
-        @type node_type: int
-        @return: Error code (C{0} on success, C{SWMM_ERR_LIFECYCLE} if the
-            engine is not in an editable state).
-        @rtype: int
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    def add(self, str node_id, node_type) -> Node:
+        """Append a new node and return a wrapper for it."""
         cdef bytes b = node_id.encode('utf-8')
-        return swmm_node_add(h, b, node_type)
+        _check(swmm_node_add(_h(self._solver), b, int(node_type)))
+        self._solver._bump_generation()
+        cdef int new_idx = swmm_node_index(_h(self._solver), b)
+        return Node(self._solver, new_idx)
 
-    def pop_last(self, str node_id) -> int:
-        """Remove the most recently added node (undo-of-add).
-
-        Wraps C{swmm_node_pop_last}. Valid in C{BUILDING} or C{OPENED}
-        state. C{node_id} must match the current tail; otherwise
-        C{SWMM_ERR_BADINDEX} is returned. Returns C{SWMM_ERR_BADPARAM}
-        if any link still references the tail node — pop those links
-        first via L{Links.pop_last}.
-
-        @param node_id: Expected tail node identifier.
-        @type node_id: str
-        @return: Error code (C{0} on success).
-        @rtype: int
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    def pop_last(self, str node_id) -> None:
+        """Remove the most recently added node (must match ``node_id``)."""
         cdef bytes b = node_id.encode('utf-8')
-        return swmm_node_pop_last(h, b)
+        _check(swmm_node_pop_last(_h(self._solver), b))
+        self._solver._bump_generation()
 
-    # ====================================================================
-    # Geometry getters (single element)
-    # ====================================================================
+    def rename(self, key, str new_id) -> None:
+        """Rename the node addressed by ``key``."""
+        cdef int i = _resolve_node(self._solver, key)
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_node_rename(_h(self._solver), i, b))
+        self._solver._bump_generation()
 
-    def get_type(self, idx) -> int:
-        """Return the node type code.
+    # ---- Bulk numpy properties ------------------------------------
 
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Node type code.
-        @rtype: int
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
+    @property
+    def depths(self):
+        """All node depths as a 1-D ``float64`` array, length ``len(self)``.
+
+        Returned array shares an internal scratch buffer the engine
+        reuses on the next call — copy it (``.copy()``) if you need to
+        hold the values across a step.
         """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = 0
-        _check(swmm_node_get_type(h, i, &v))
-        return v
-
-    def get_invert_elev(self, idx) -> float:
-        """Return the invert elevation of a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Invert elevation (project length units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_invert_elev(h, i, &v))
-        return v
-
-    def get_max_depth(self, idx) -> float:
-        """Return the maximum depth of a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Maximum depth (project length units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_max_depth(h, i, &v))
-        return v
-
-    def get_surcharge_depth(self, idx) -> float:
-        """Return the surcharge depth of a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Surcharge depth (project length units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_surcharge_depth(h, i, &v))
-        return v
-
-    def get_ponded_area(self, idx) -> float:
-        """Return the ponded area of a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Ponded area (project area units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_ponded_area(h, i, &v))
-        return v
-
-    def get_initial_depth(self, idx) -> float:
-        """Return the initial depth of a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Initial depth (project length units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_initial_depth(h, i, &v))
-        return v
-
-    def get_crown_elev(self, idx) -> float:
-        """Return the crown elevation of a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Crown elevation (project length units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_crown_elev(h, i, &v))
-        return v
-
-    def get_full_volume(self, idx) -> float:
-        """Return the full volume of a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Full volume (project volume units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_full_volume(h, i, &v))
-        return v
-
-    def get_losses(self, idx) -> float:
-        """Return the losses at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Losses (project flow units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_losses(h, i, &v))
-        return v
-
-    def get_outflow(self, idx) -> float:
-        """Return the outflow from a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Outflow (project flow units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_outflow(h, i, &v))
-        return v
-
-    def get_degree(self, idx) -> int:
-        """Return the number of links connected to a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Node degree (number of connected links).
-        @rtype: int
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = 0
-        _check(swmm_node_get_degree(h, i, &v))
-        return v
-
-    # ====================================================================
-    # Per-element hydraulic state (depth/head/volume/inflow)
-    # ====================================================================
-
-    def get_depth(self, idx) -> float:
-        """Return the current water depth at a node.
-
-        @param idx: Node index (int) or node ID (str). Strings are
-            resolved via L{get_index}.
-        @type idx: Union[int, str]
-        @return: Water depth in project length units (feet for US, metres for SI).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_depth(h, i, &v))
-        return v
-
-    def get_head(self, idx) -> float:
-        """Return the hydraulic head at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Hydraulic head (project length units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_head(h, i, &v))
-        return v
-
-    def get_volume(self, idx) -> float:
-        """Return the volume stored at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Volume (project volume units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_volume(h, i, &v))
-        return v
-
-    def get_lateral_inflow(self, idx) -> float:
-        """Return the lateral inflow at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Lateral inflow (project flow units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_lateral_inflow(h, i, &v))
-        return v
-
-    def get_overflow(self, idx) -> float:
-        """Return the overflow rate at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Overflow rate (project flow units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_overflow(h, i, &v))
-        return v
-
-    def get_inflow(self, idx) -> float:
-        """Return the total inflow at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Total inflow (project flow units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_inflow(h, i, &v))
-        return v
-
-    # ====================================================================
-    # Per-element setters (geometry & runtime forcing)
-    # ====================================================================
-
-    def set_depth(self, idx, double value):
-        """Set the water depth at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param value: New depth (project length units).
-        @type value: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_depth(h, i, value))
-
-    def set_lateral_inflow(self, idx, double flow):
-        """Prescribe a lateral inflow at a node (RUNNING state only).
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param flow: Lateral inflow rate (project flow units).
-        @type flow: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_lateral_inflow(h, i, flow))
-
-    def set_head_boundary(self, idx, double head):
-        """Set a fixed head boundary condition at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param head: Boundary head value (project length units).
-        @type head: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_head_boundary(h, i, head))
-
-    def set_invert_elev(self, idx, double elev):
-        """Set the invert elevation of a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param elev: Invert elevation (project length units).
-        @type elev: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_invert_elev(h, i, elev))
-
-    def set_max_depth(self, idx, double depth):
-        """Set the maximum depth of a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param depth: Maximum depth (project length units).
-        @type depth: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_max_depth(h, i, depth))
-
-    def set_surcharge_depth(self, idx, double depth):
-        """Set the surcharge depth of a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param depth: Surcharge depth (project length units).
-        @type depth: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_surcharge_depth(h, i, depth))
-
-    def set_pond_area(self, idx, double area):
-        """Set the ponded area of a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param area: Ponded area (project area units).
-        @type area: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_pond_area(h, i, area))
-
-    def set_initial_depth(self, idx, double depth):
-        """Set the initial depth of a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param depth: Initial depth (project length units).
-        @type depth: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_initial_depth(h, i, depth))
-
-    # ====================================================================
-    # Pollutant/quality
-    # ====================================================================
-
-    def get_quality(self, idx, int pollutant_idx) -> float:
-        """Return the concentration of a pollutant at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param pollutant_idx: Pollutant index.
-        @type pollutant_idx: int
-        @return: Pollutant concentration.
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_quality(h, i, pollutant_idx, &v))
-        return v
-
-    def set_quality_mass_flux(self, idx, int pollutant_idx, double mass_rate):
-        """Inject a pollutant mass flux at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param pollutant_idx: Pollutant index.
-        @type pollutant_idx: int
-        @param mass_rate: Mass injection rate (mass/time in model units).
-        @type mass_rate: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_quality_mass_flux(h, i, pollutant_idx, mass_rate))
-
-    # ====================================================================
-    # Storage node methods
-    # ====================================================================
-
-    def set_storage_curve(self, idx, int curve_idx):
-        """Assign a storage curve to a storage node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param curve_idx: Curve index.
-        @type curve_idx: int
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_storage_curve(h, i, curve_idx))
-
-    def get_storage_curve(self, idx) -> int:
-        """Return the storage curve index for a storage node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Curve index.
-        @rtype: int
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = 0
-        _check(swmm_node_get_storage_curve(h, i, &v))
-        return v
-
-    def set_storage_functional(self, idx, double a, double b, double c):
-        """Set the functional storage parameters (A, B, C) for a storage node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param a: Coefficient A.
-        @type a: float
-        @param b: Coefficient B.
-        @type b: float
-        @param c: Coefficient C.
-        @type c: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_storage_functional(h, i, a, b, c))
-
-    def get_storage_functional(self, idx) -> tuple:
-        """Return the functional storage parameters (A, B, C) for a storage node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Tuple of C{(a, b, c)} coefficients.
-        @rtype: tuple
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double a = 0.0
-        cdef double b = 0.0
-        cdef double c = 0.0
-        _check(swmm_node_get_storage_functional(h, i, &a, &b, &c))
-        return (a, b, c)
-
-    def set_storage_seep_rate(self, idx, double rate):
-        """Set the seepage rate for a storage node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param rate: Seepage rate.
-        @type rate: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_storage_seep_rate(h, i, rate))
-
-    def get_storage_seep_rate(self, idx) -> float:
-        """Return the seepage rate for a storage node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Seepage rate.
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_storage_seep_rate(h, i, &v))
-        return v
-
-    def set_exfil_params(self, idx, double suction, double ksat, double imd):
-        """Set exfiltration parameters for a storage node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param suction: Suction head.
-        @type suction: float
-        @param ksat: Saturated hydraulic conductivity.
-        @type ksat: float
-        @param imd: Initial moisture deficit.
-        @type imd: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_exfil_params(h, i, suction, ksat, imd))
-
-    def get_exfil_params(self, idx) -> tuple:
-        """Return exfiltration parameters for a storage node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Tuple of C{(suction, ksat, imd)}.
-        @rtype: tuple
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double suction = 0.0
-        cdef double ksat = 0.0
-        cdef double imd = 0.0
-        _check(swmm_node_get_exfil_params(h, i, &suction, &ksat, &imd))
-        return (suction, ksat, imd)
-
-    # ====================================================================
-    # Outfall node methods
-    # ====================================================================
-
-    def set_outfall_type(self, idx, int type):
-        """Set the outfall type for an outfall node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param type: Outfall type code.
-        @type type: int
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_outfall_type(h, i, type))
-
-    def get_outfall_type(self, idx) -> int:
-        """Return the outfall type code for an outfall node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Outfall type code.
-        @rtype: int
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = 0
-        _check(swmm_node_get_outfall_type(h, i, &v))
-        return v
-
-    def set_outfall_stage(self, idx, double stage):
-        """Set a fixed stage for an outfall node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param stage: Fixed stage value (project length units).
-        @type stage: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_outfall_stage(h, i, stage))
-
-    def set_outfall_tidal(self, idx, int curve_idx):
-        """Assign a tidal curve to an outfall node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param curve_idx: Tidal curve index.
-        @type curve_idx: int
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_outfall_tidal(h, i, curve_idx))
-
-    def set_outfall_timeseries(self, idx, int ts_idx):
-        """Assign a time series to an outfall node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param ts_idx: Time series index.
-        @type ts_idx: int
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_outfall_timeseries(h, i, ts_idx))
-
-    def get_outfall_param(self, idx) -> float:
-        """Return the outfall parameter value for an outfall node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Outfall parameter value.
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_outfall_param(h, i, &v))
-        return v
-
-    def set_outfall_flap_gate(self, idx, bint has_gate):
-        """Set whether an outfall node has a flap gate.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param has_gate: C{True} if the outfall has a flap gate.
-        @type has_gate: bool
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_outfall_flap_gate(h, i, has_gate))
-
-    def get_outfall_flap_gate(self, idx) -> bool:
-        """Return whether an outfall node has a flap gate.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: C{True} if the outfall has a flap gate.
-        @rtype: bool
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = 0
-        _check(swmm_node_get_outfall_flap_gate(h, i, &v))
-        return bool(v)
-
-    def set_outfall_route_to(self, idx, int subcatch_idx):
-        """Set the subcatchment to route outfall discharge to.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param subcatch_idx: Subcatchment index (C{-1} = no routing).
-        @type subcatch_idx: int
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_outfall_route_to(h, i, subcatch_idx))
-
-    def get_outfall_route_to(self, idx) -> int:
-        """Get the subcatchment index outfall discharge is routed to.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Subcatchment index (C{-1} = no routing).
-        @rtype: int
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = -1
-        _check(swmm_node_get_outfall_route_to(h, i, &v))
-        return v
-
-    # ====================================================================
-    # Statistics
-    # ====================================================================
-
-    def get_stat_max_depth(self, idx) -> float:
-        """Return the maximum depth recorded at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Maximum depth (project length units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_stat_max_depth(h, i, &v))
-        return v
-
-    def get_stat_max_overflow(self, idx) -> float:
-        """Return the maximum overflow rate recorded at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Maximum overflow rate (project flow units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_stat_max_overflow(h, i, &v))
-        return v
-
-    def get_stat_vol_flooded(self, idx) -> float:
-        """Return the total volume flooded at a node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Volume flooded (project volume units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_stat_vol_flooded(h, i, &v))
-        return v
-
-    def get_stat_time_flooded(self, idx) -> float:
-        """Return the total time a node was flooded.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Time flooded (hours).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_stat_time_flooded(h, i, &v))
-        return v
-
-    # ====================================================================
-    # Depth from volume (inverse)
-    # ====================================================================
-
-    def get_depth_from_volume(self, idx, double volume) -> float:
-        """Compute depth from volume (inverse of volume-depth relationship).
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param volume: Volume (project volume units).
-        @type volume: float
-        @return: Depth (project length units).
-        @rtype: float
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double v = 0.0
-        _check(swmm_node_get_depth_from_volume(h, i, volume, &v))
-        return v
-
-    # ====================================================================
-    # Bulk array access (numpy)
-    # ====================================================================
-
-    # ------------------------------------------------------------------
-    # Bulk accessors — every method below releases the GIL for the C call.
-    #
-    # The pattern is:
-    #   1. Resolve handle and allocate the NumPy buffer with the GIL held.
-    #   2. Take a raw `double*` pointer to the buffer's storage.
-    #   3. `with nogil:` around the single C call — no Python object access
-    #      is performed inside this block, so the GIL is truly free for
-    #      other threads (eg a second engine handle stepping in parallel).
-    #   4. Check the return code with the GIL re-held.
-    # ------------------------------------------------------------------
-
-    def get_depths_bulk(self):
-        """Return all node depths as a NumPy array.
-
-        Uses the bulk C API for a single C{memcpy} -- much faster than
-        calling L{get_depth} in a loop. The GIL is released for the
-        duration of the C call.
-
-        @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
-        @rtype: numpy.ndarray
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef double* p = <double*>buf.data
@@ -955,292 +699,154 @@ class Nodes:
         _check(err)
         return buf
 
-    def get_heads_bulk(self):
-        """Return all node heads as a NumPy array. GIL is released during
-        the C call.
-
-        @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
-        @rtype: numpy.ndarray
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @depths.setter
+    def depths(self, values) -> None:
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
-        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
-        cdef int err
-        with nogil:
-            err = swmm_node_get_heads_bulk(h, p, n)
-        _check(err)
-        return buf
-
-    def set_depths_bulk(self, np.ndarray[double, ndim=1] values):
-        """Set all node depths from a NumPy array. GIL is released during
-        the C call.
-
-        @param values: Array of shape C{(n_nodes,)} with dtype C{float64}.
-        @type values: numpy.ndarray
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int n = swmm_node_count(h)
-        cdef const double* p = <const double*>values.data
+        cdef np.ndarray[double, ndim=1] arr = np.ascontiguousarray(values, dtype=np.float64)
+        if arr.shape[0] != n:
+            raise ValueError(
+                f"depths array length {arr.shape[0]} != node count {n}")
+        cdef const double* p = <const double*>arr.data
         cdef int err
         with nogil:
             err = swmm_node_set_depths_bulk(h, p, n)
         _check(err)
 
-    def get_inflows_bulk(self):
-        """Return all node total inflows as a NumPy array. GIL is released
-        during the C call.
-
-        @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
-        @rtype: numpy.ndarray
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def heads(self):
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
         cdef int err
         with nogil:
-            err = swmm_node_get_inflows_bulk(h, p, n)
+            err = swmm_node_get_heads_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
-    def get_overflows_bulk(self):
-        """Return all node overflow rates as a NumPy array. GIL is released
-        during the C call.
-
-        @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
-        @rtype: numpy.ndarray
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def inflows(self):
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
         cdef int err
         with nogil:
-            err = swmm_node_get_overflows_bulk(h, p, n)
+            err = swmm_node_get_inflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
-    def set_lat_inflows_bulk(self, np.ndarray[double, ndim=1] values):
-        """Set all node lateral inflows from a NumPy array. GIL is released
-        during the C call.
-
-        @param values: Array of shape C{(n_nodes,)} with dtype C{float64}.
-        @type values: numpy.ndarray
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    @property
+    def overflows(self):
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
-        cdef const double* p = <const double*>values.data
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef int err
+        with nogil:
+            err = swmm_node_get_overflows_bulk(h, <double*>buf.data, n)
+        _check(err)
+        return buf
+
+    @property
+    def volumes(self):
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef int err
+        with nogil:
+            err = swmm_node_get_volumes_bulk(h, <double*>buf.data, n)
+        _check(err)
+        return buf
+
+    @property
+    def outflows(self):
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef int err
+        with nogil:
+            err = swmm_node_get_outflows_bulk(h, <double*>buf.data, n)
+        _check(err)
+        return buf
+
+    @property
+    def losses(self):
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef int err
+        with nogil:
+            err = swmm_node_get_losses_bulk(h, <double*>buf.data, n)
+        _check(err)
+        return buf
+
+    @property
+    def lateral_inflows(self):
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
+        cdef int err
+        with nogil:
+            err = swmm_node_get_lateral_inflows_bulk(h, <double*>buf.data, n)
+        _check(err)
+        return buf
+
+    def set_lateral_inflows(self, values) -> None:
+        """Vectorised setter for lateral inflows (write-only; no
+        symmetric read property because the engine *also* updates this
+        field internally, so a property would be misleading)."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=1] arr = np.ascontiguousarray(values, dtype=np.float64)
+        if arr.shape[0] != n:
+            raise ValueError(
+                f"lateral_inflows array length {arr.shape[0]} != node count {n}")
+        cdef const double* p = <const double*>arr.data
         cdef int err
         with nogil:
             err = swmm_node_set_lat_inflows_bulk(h, p, n)
         _check(err)
 
-    def get_quality_bulk(self, int pollutant_idx):
-        """Return all node concentrations for a pollutant as a NumPy array.
-        GIL is released during the C call.
-
-        @param pollutant_idx: Pollutant index.
-        @type pollutant_idx: int
-        @return: Array of shape C{(n_nodes,)} with dtype C{float64}.
-        @rtype: numpy.ndarray
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    def qualities(self, pollutant):
+        """Per-node concentration of ``pollutant`` as a numpy array."""
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
+        cdef int p_idx = _resolve_pollutant(self._solver, pollutant)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
         cdef int err
         with nogil:
-            err = swmm_node_get_quality_bulk(h, pollutant_idx, p, n)
+            err = swmm_node_get_quality_bulk(h, p_idx, <double*>buf.data, n)
         _check(err)
         return buf
 
-    # ------------------------------------------------------------------
-    # Phase 3 bulk getters — volumes / outflows / losses /
-    # lateral_inflows / ids. Each replaces a per-node Python loop in
-    # MCP-style consumers; the C side is a single memcpy (or, for ids,
-    # a single contiguous string copy). GIL is released during each
-    # C call following the same pattern as the existing bulk getters.
-    # ------------------------------------------------------------------
+    @property
+    def ids(self):
+        """All node ids as a ``numpy.ndarray`` of dtype ``object``."""
+        return np.asarray(self._ids_list(), dtype=object)
 
-    def get_volumes_bulk(self):
-        """Return all node stored volumes as a NumPy array. GIL is
-        released during the C call.
-
-        :returns: Array of shape ``(n_nodes,)``, dtype ``float64``,
-                  in project volume units.
-        :rtype: numpy.ndarray
-
-        .. versionadded:: 6.0.0
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+    def _ids_list(self, int stride=64):
+        cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
-        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
-        cdef int err
-        with nogil:
-            err = swmm_node_get_volumes_bulk(h, p, n)
-        _check(err)
-        return buf
-
-    def get_outflows_bulk(self):
-        """Return current outflows for all nodes as a NumPy array. GIL
-        is released during the C call.
-
-        :returns: Array of shape ``(n_nodes,)``, dtype ``float64``,
-                  in project flow units.
-        :rtype: numpy.ndarray
-
-        .. versionadded:: 6.0.0
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int n = swmm_node_count(h)
-        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
-        cdef int err
-        with nogil:
-            err = swmm_node_get_outflows_bulk(h, p, n)
-        _check(err)
-        return buf
-
-    def get_losses_bulk(self):
-        """Return per-node losses (evaporation + seepage) as a NumPy
-        array. GIL is released during the C call.
-
-        :returns: Array of shape ``(n_nodes,)``, dtype ``float64``,
-                  in project flow units.
-        :rtype: numpy.ndarray
-
-        .. versionadded:: 6.0.0
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int n = swmm_node_count(h)
-        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
-        cdef int err
-        with nogil:
-            err = swmm_node_get_losses_bulk(h, p, n)
-        _check(err)
-        return buf
-
-    def get_lateral_inflows_bulk(self):
-        """Return current lateral inflows for all nodes as a NumPy
-        array. GIL is released during the C call.
-
-        .. note::
-
-           This is the explicitly-named successor to the older
-           :py:meth:`get_inflows_bulk` — both methods currently read
-           the same ``lat_flow`` SoA column on the C side. Prefer
-           :py:meth:`get_lateral_inflows_bulk` in new code; the older
-           name is retained for backward compatibility.
-
-        :returns: Array of shape ``(n_nodes,)``, dtype ``float64``,
-                  in project flow units.
-        :rtype: numpy.ndarray
-
-        .. versionadded:: 6.0.0
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int n = swmm_node_count(h)
-        cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef double* p = <double*>buf.data
-        cdef int err
-        with nogil:
-            err = swmm_node_get_lateral_inflows_bulk(h, p, n)
-        _check(err)
-        return buf
-
-    def get_ids_bulk(self, int stride=64):
-        """Return all node IDs as a Python list of strings in a single C
-        call. GIL is released during the C call; per-slot UTF-8 decoding
-        runs after with the GIL re-held.
-
-        :param stride: Per-ID slot size in bytes (default 64). The C
-                       function NUL-terminates each ID within its slot;
-                       IDs longer than ``stride - 1`` bytes are truncated.
-                       For SWMM models the legacy 31-character ID limit
-                       means the default of 64 is comfortable for all
-                       realistic models.
-        :type stride: int
-        :returns: List of ``n_nodes`` Python strings.
-        :rtype: list[str]
-
-        .. versionadded:: 6.0.0
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int n = swmm_node_count(h)
-        # Single contiguous buffer; C zero-fills it so trailing bytes
-        # after each ID are NUL.
         cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
             n * stride, dtype=np.int8)
-        cdef char* p = <char*>buf.data
         cdef int err
         with nogil:
-            err = swmm_node_get_ids_bulk(h, p, stride, n)
+            err = swmm_node_get_ids_bulk(h, <char*>buf.data, stride, n)
         _check(err)
-        # Pure-Python slice + decode; cheap compared to the avoided
-        # N round-trips through swmm_node_id.
         raw = bytes(buf)
-        ids = []
+        out = []
         for i in range(n):
             slot = raw[i * stride:(i + 1) * stride]
             nul = slot.find(b"\x00")
             if nul >= 0:
                 slot = slot[:nul]
-            ids.append(slot.decode("utf-8"))
-        return ids
+            out.append(slot.decode("utf-8"))
+        return out
 
-    # ====================================================================
-    # Divider
-    # ====================================================================
+    # ---- Repr -----------------------------------------------------
 
-    def set_divider_type(self, idx, int type):
-        """Set the divider type for a divider node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @param type: Divider type code.
-        @type type: int
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        @raise EngineError: If the C API rejects the assignment.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_node_set_divider_type(h, i, type))
-
-    def get_divider_type(self, idx) -> int:
-        """Return the divider type for a divider node.
-
-        @param idx: Node index (int) or node ID (str).
-        @type idx: Union[int, str]
-        @return: Divider type code.
-        @rtype: int
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        @raise EngineError: If the C API call fails.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int v = 0
-        _check(swmm_node_get_divider_type(h, i, &v))
-        return v
-
-    # ====================================================================
-    # Rename
-    # ====================================================================
-
-    def rename(self, idx, str new_id):
-        """Rename a node.
-
-        @param idx: Node index (int) or current node ID (str).
-        @type idx: Union[int, str]
-        @param new_id: New identifier string.
-        @type new_id: str
-        @raise KeyError: If C{idx} is a string and the node ID is not found.
-        @raise EngineError: If the C API rejects the rename.
-        """
-        cdef int i = self._resolve(idx)
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bytes b = new_id.encode('utf-8')
-        _check(swmm_node_rename(h, i, b))
-
+    def __repr__(self) -> str:
+        try:
+            n = len(self)
+            return f"<Nodes n={n}>"
+        except Exception:
+            return "<Nodes (engine closed)>"

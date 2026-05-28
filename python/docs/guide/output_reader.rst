@@ -4,192 +4,191 @@ Output reader  (binary ``.out`` file)
 
 .. note::
 
-   **Engine:** OpenSWMM 6 — refactored.  Documents
-   :class:`openswmm.engine.OutputReader`.  For the legacy SWMM 5
-   reader see :doc:`../legacy/output`.
+   **Engine:** OpenSWMM 6 — refactored.
 
 .. currentmodule:: openswmm.engine
 
-The :class:`OutputReader` reads the binary ``.out`` file produced by
-either the v6 or the legacy engine.  It is independent of any running
-solver — open it on a path and query results.
+The :class:`OutputReader` reads a SWMM binary ``.out`` file
+**independently** of any running engine. It needs only the file path
+and supports the context-manager protocol.
 
 Reference: ``openswmm_output.h``.
 
 ----
 
-Class signature
-===============
+Quickstart
+==========
 
 .. code-block:: python
 
-    class OutputReader:
-        def __init__(self, path: str) -> None: ...
-        def __enter__(self) -> "OutputReader": ...
-        def __exit__(self, exc_type, exc_value, traceback) -> None: ...
-        def close(self) -> None: ...
+    from pathlib import Path
+    from openswmm.engine import OutputReader, OutNodeVar, OutLinkVar
 
-Use the context-manager form so the file handle closes on error:
+    with OutputReader(Path("model.out")) as out:
+        # Metadata is typed.
+        print(out.start_datetime)        # datetime
+        print(out.report_step)           # timedelta
+        print(out.period_count)
+        print(out.flow_units)            # FlowUnits enum
+
+        # Enum-typed variable selection; int|str object selector.
+        depths = out.node_series("J1", OutNodeVar.DEPTH)
+        flows  = out.link_series(0,    OutLinkVar.FLOW)
+
+        # Time axis as datetime64[s] — plug straight into matplotlib.
+        ax.plot(out.period_times, depths)
+
+----
+
+Lifecycle
+=========
 
 .. code-block:: python
 
+    out = OutputReader("model.out")
+    # ... use ...
+    out.close()
+
+    # Or, more typically:
     with OutputReader("model.out") as out:
         ...
 
+The reader does **not** require an active :class:`Solver`. It can be
+opened on any historic ``.out`` file.
+
+Path argument accepts ``str``, :class:`pathlib.Path`, or any
+:class:`os.PathLike`. Open failures raise :class:`FileError` (which is
+also an :exc:`IOError`).
+
 ----
 
-Key methods
-===========
-
-File metadata
--------------
+Metadata properties
+===================
 
 .. list-table::
    :header-rows: 1
-   :widths: 35 65
+   :widths: 28 22 50
 
-   * - Method
-     - Returns
-   * - :meth:`get_version()`
-     - Output-file format version.
-   * - :meth:`get_flow_units()`
-     - :class:`FlowUnits`.
-   * - :meth:`get_period_count()`
+   * - Property
+     - Type
+     - Meaning
+   * - ``version``
+     - ``int``
+     - SWMM version that produced the file.
+   * - ``flow_units``
+     - :class:`FlowUnits`
+     - Enum, not bare int.
+   * - ``start_datetime``
+     - :class:`~datetime.datetime`
+     - Simulation start moment.
+   * - ``report_step``
+     - :class:`~datetime.timedelta`
+     - Reporting interval.
+   * - ``period_count``
+     - ``int``
      - Number of reporting periods written.
-   * - :meth:`get_start_date()`
-     - Decimal-day timestamp of the first report.
-   * - :meth:`get_report_step()`
-     - Reporting interval in seconds.
-   * - :meth:`get_period_time(period)`
-     - Time at reporting period ``period``.
-   * - :meth:`get_error_code()`
-     - Non-zero if the engine flagged an error.
-
-Element counts & ids
---------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
-
-   * - Method
-     - Returns
-   * - :meth:`get_subcatch_count` / :meth:`get_node_count` /
-       :meth:`get_link_count` / :meth:`get_pollut_count`
-     - Counts per element kind.
-   * - :meth:`get_subcatch_id(idx)` / :meth:`get_node_id(idx)` /
-       :meth:`get_link_id(idx)`
-     - String id for an integer index.
-
-Time-series queries  (one element, slice of times)
---------------------------------------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 55 45
-
-   * - Method
-     - Returns
-   * - :meth:`get_subcatch_series(subcatch_idx, var, start, end)`
-     - Time series of one subcatchment variable over periods
-       ``start..end`` (inclusive); ``ndarray[float32]`` of shape
-       ``(end - start + 1,)``.
-   * - :meth:`get_node_series(node_idx, var, start, end)`
-     - Time series for one node variable.
-   * - :meth:`get_link_series(link_idx, var, start, end)`
-     - Time series for one link variable.
-   * - :meth:`get_system_series(var, start, end)`
-     - Time series for a system-level variable.
-
-The variable enums are :class:`OutSubcatchVar`, :class:`OutNodeVar`,
-:class:`OutLinkVar`, :class:`OutSystemVar`.  All ``*_series`` methods
-require zero-based ``start`` / ``end`` period indices — use
-``0`` and ``out.get_period_count() - 1`` for the full run.
-
-Snapshot queries  (all elements at one time)
---------------------------------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 55 45
-
-   * - Method
-     - Returns
-   * - :meth:`get_subcatch_result(period, var)`
-     - One variable, all subcatchments at ``period``;
-       ``ndarray[float32]`` of shape ``(n_subcatch,)``.
-   * - :meth:`get_node_result(period, var)`
-     - One variable, all nodes at ``period``; shape ``(n_nodes,)``.
-   * - :meth:`get_link_result(period, var)`
-     - One variable, all links at ``period``; shape ``(n_links,)``.
-   * - :meth:`get_system_result(period, var)`
-     - One system-level value at ``period`` (scalar).
-
-Per-element attribute queries  (one element, all variables)
------------------------------------------------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 55 45
-
-   * - Method
-     - Returns
-   * - :meth:`get_subcatch_attribute(subcatch_idx, period)`
-     - All output attributes for one subcatchment at ``period``;
-       ``ndarray[float32]``.
-   * - :meth:`get_node_attribute(node_idx, period)`
-     - All output attributes for one node at ``period``.
-   * - :meth:`get_link_attribute(link_idx, period)`
-     - All output attributes for one link at ``period``.
-
-Use ``*_attribute`` when you want every reported variable for a single
-element (e.g. depth + head + lateral inflow + flooding + … at one
-snapshot); use ``*_result`` when you want one variable across every
-element.
+   * - ``period_times``
+     - ``numpy.ndarray[datetime64[s]]``
+     - One moment per period. Cached after first access.
+   * - ``pollutant_count``
+     - ``int``
+     -
+   * - ``node_count`` / ``link_count`` / ``subcatchment_count``
+     - ``int``
+     -
+   * - ``node_ids`` / ``link_ids`` / ``subcatchment_ids``
+     - ``list[str]``
+     - Ordered by integer index.
+   * - ``error_code``
+     - ``int``
+     - SWMM error code in the footer; ``0`` is a clean run.
 
 ----
 
-End-to-end example
+Reading results
+===============
+
+Per-period (all objects at one period)
+--------------------------------------
+
+.. code-block:: python
+
+    depths_at_t5 = out.node_result(5, OutNodeVar.DEPTH)        # → np.ndarray
+    flows_at_t5  = out.link_result(5, OutLinkVar.FLOW)
+    runoff_at_t5 = out.subcatchment_result(5, OutSubcatchVar.RUNOFF)
+    sys_runoff   = out.system_result(5, OutSystemVar.RUNOFF)   # → float
+
+The ``var`` argument is the enum, **not** a bare integer. IntEnum
+implements ``__int__``, so passing an int still works but loses the
+type-check benefit.
+
+Time series (one object across periods)
+---------------------------------------
+
+.. code-block:: python
+
+    # By string id:
+    depths = out.node_series("J1", OutNodeVar.DEPTH)
+
+    # By integer index:
+    depths = out.node_series(0, OutNodeVar.DEPTH)
+
+    # Slice by period range (defaults to the full run):
+    snip = out.node_series(0, OutNodeVar.DEPTH, start=10, end=20)
+
+Same shape for ``link_series``, ``subcatchment_series``, and
+``system_series`` (which takes no object selector — it's the
+system-wide series).
+
+Unknown ids raise :exc:`KeyError`; out-of-range periods raise
+:exc:`IndexError`.
+
+----
+
+All-attribute dict
 ==================
 
+When you want every attribute for one object at one period, the
+``*_attributes`` methods return a dictionary keyed by the appropriate
+enum:
+
 .. code-block:: python
 
-    from openswmm.engine import OutputReader, OutNodeVar, OutLinkVar
+    attrs = out.node_attributes("J1", period=10)
+    # Base attributes are keyed by OutNodeVar; pollutant slots by int.
+    print(attrs[OutNodeVar.DEPTH], attrs[OutNodeVar.HEAD])
 
-    with OutputReader("model.out") as out:
-        n = out.get_period_count()
-        print(f"{n} reporting periods, step = {out.get_report_step()} s")
-
-        # Time series for one node and one link over the full run:
-        t  = [out.get_period_time(i) for i in range(n)]
-        d  = out.get_node_series(0, OutNodeVar.DEPTH,     start=0, end=n - 1)
-        q  = out.get_link_series(0, OutLinkVar.FLOW_RATE, start=0, end=n - 1)
-        print(f"first node depth: peak = {d.max():.3f}")
-        print(f"first link flow:  peak = {q.max():.3f}")
+Pollutant concentration slots live past ``OutNodeVar.POLLUT_BASE`` and
+are keyed by their integer index (because the enum doesn't enumerate
+individual pollutants).
 
 ----
 
-Common recipes
-==============
+Node summary statistics
+=======================
 
-Build a NumPy depth matrix (T × n_nodes)
-----------------------------------------
+The C API aggregates flooding/overflow stats per node *from the .out
+file* (independently of the engine-side stats):
 
 .. code-block:: python
 
-    import numpy as np
-    from openswmm.engine import OutputReader, OutNodeVar
+    stats = out.node_stats("J1")
+    print(stats.max_depth)
+    print(stats.max_overflow)
+    print(stats.vol_flooded)       # ft³ (US) / m³ (SI)
+    print(stats.time_flooded)      # seconds
 
-    with OutputReader("model.out") as out:
-        T = out.get_period_count()
-        N = out.get_node_count()
-        depths = np.empty((T, N), dtype=np.float32)
-        for t in range(T):
-            depths[t] = out.get_node_result(t, OutNodeVar.DEPTH)
-        # depths.shape == (T, N) ; ready for vectorised analysis
+These values are aggregated over **report-step** samples, so for runs
+with a finer routing step the engine-side :attr:`Node.stats` is more
+precise.
 
-Plot one node's depth with matplotlib
--------------------------------------
+----
+
+Plotting recipe
+===============
+
+``period_times`` is a ``datetime64[s]`` numpy array that matplotlib
+understands without further conversion:
 
 .. code-block:: python
 
@@ -197,96 +196,22 @@ Plot one node's depth with matplotlib
     from openswmm.engine import OutputReader, OutNodeVar
 
     with OutputReader("model.out") as out:
-        n = out.get_period_count()
-        # Resolve "J1" to its zero-based index by scanning ids
-        j1 = next(i for i in range(out.get_node_count())
-                  if out.get_node_id(i) == "J1")
-        t = [out.get_period_time(i) for i in range(n)]
-        d = out.get_node_series(j1, OutNodeVar.DEPTH, start=0, end=n - 1)
-
-    plt.plot(t, d); plt.title("J1 depth"); plt.xlabel("time (days)")
-    plt.ylabel("depth"); plt.show()
-
-Convert one snapshot to pandas
-------------------------------
-
-.. code-block:: python
-
-    import pandas as pd
-    from openswmm.engine import OutputReader, OutLinkVar
-
-    with OutputReader("model.out") as out:
-        last = out.get_period_count() - 1
-        flows = out.get_link_result(last, OutLinkVar.FLOW_RATE)
-        ids = [out.get_link_id(i) for i in range(out.get_link_count())]
-    df = pd.DataFrame({"link": ids, "flow": flows}).set_index("link")
-
-Detect peak flooding across the run
------------------------------------
-
-.. code-block:: python
-
-    import numpy as np
-
-    with OutputReader("model.out") as out:
-        T = out.get_period_count()
-        N = out.get_node_count()
-        peak = np.zeros(N, dtype=np.float32)
-        for t in range(T):
-            peak = np.maximum(peak, out.get_node_result(t, OutNodeVar.OVERFLOW))
-
-        flooded = [
-            (out.get_node_id(i), peak[i])
-            for i in range(N) if peak[i] > 0.0
-        ]
-        for name, q in sorted(flooded, key=lambda kv: -kv[1]):
-            print(f"  {name:<12}  peak overflow = {q:.3f}")
-
-----
-
-Bulk arrays
-===========
-
-The ``*_result`` methods are the bulk surface — they return
-``np.ndarray[float32]`` of the appropriate length:
-
-* ``get_subcatch_result(period, var)`` → shape ``(n_subcatch,)``
-* ``get_node_result(period, var)``     → shape ``(n_nodes,)``
-* ``get_link_result(period, var)``     → shape ``(n_links,)``
-
-For one-element-many-times queries, the ``*_series`` methods also
-return ``ndarray[float32]`` — shape ``(end - start + 1,)``.
-
-The ``*_attribute`` methods are the orthogonal slice: one element,
-every output variable at the given period.  They are useful when
-hooking a row of values into a tabular post-processor.
-
-----
-
-EngineState requirements & exceptions
-=====================================
-
-The :class:`OutputReader` is independent of the engine — there is no
-:class:`EngineState` to honour.  All queries are valid as long as the
-file is open.
-
-Common exceptions:
-
-* :exc:`FileNotFoundError`     — path does not exist.
-* :exc:`ValueError`            — file format incompatible.
-* :class:`EngineError`         — file present but corrupt
-  (truncated, bad header, schema mismatch).
-
-Open files are closed automatically when the context manager exits or
-when the object is garbage-collected; calling :meth:`close` is safe at
-any time and is a no-op on a closed reader.
+        depths = out.node_series("J1", OutNodeVar.DEPTH)
+        fig, ax = plt.subplots()
+        ax.plot(out.period_times, depths)
+        ax.set_ylabel("Depth")
+        ax.set_xlabel("Time")
+        fig.autofmt_xdate()
+        plt.show()
 
 ----
 
 See also
 ========
 
-* :doc:`solver` — runs that produce the ``.out`` file.
-* :doc:`statistics` — accumulated cumulative statistics during the
-  run (peaks, durations) without needing the ``.out`` file.
-* :doc:`../legacy/output` — the legacy SWMM 5 reader.
+* :doc:`solver` — :attr:`Solver.out` is the runtime equivalent for the
+  same data while the engine is still open.
+* :doc:`nodes`, :doc:`links` — engine-side wrappers cover the same
+  variables for the active run.
+* :doc:`datetime` — SWMM DateTime ↔ Python ``datetime`` rules.
+* :doc:`error_handling`.

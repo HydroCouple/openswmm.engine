@@ -17,7 +17,7 @@ with ``OPENSWMM_WITH_GEOPACKAGE=ON``.
 """
 
 from types import TracebackType
-from typing import List, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 import numpy as np
 import numpy.typing as npt
@@ -147,7 +147,7 @@ class GeoPackage:
         """
         ...
 
-    def object_counts(self, sim_id: str) -> dict:
+    def object_counts(self, sim_id: str) -> Dict[str, int]:
         """Return model object counts for a simulation.
 
         @param sim_id: Simulation identifier.

@@ -323,6 +323,7 @@ int  setManning(double n[])
     {
         if ( n[i] < 0.0 ) return ERR_NUMBER;
     }
+    if ( n[3] == 0.0 ) return ERR_TRANSECT_MANNING;
     if ( n[1] > 0.0 ) Nleft = n[1];
     if ( n[2] > 0.0 ) Nright = n[2];
     if ( n[3] > 0.0 ) Nchannel = n[3];

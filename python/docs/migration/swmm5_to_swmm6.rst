@@ -348,3 +348,183 @@ Where to next?
 * If you're dynamically modifying ``.inp`` files via string
   manipulation today, replace that with
   :doc:`../guide/model_builder` and :doc:`../guide/editing`.
+
+----
+
+OpenSWMM 6 — Pythonic bindings v0 → v1
+======================================
+
+OpenSWMM 6 pre-release shipped a thin, mechanical Cython surface
+("v0"). v1 hard-replaces it with a property-style API: collections,
+wrapper objects, typed enums, ``int | str`` selectors, and
+:class:`~datetime.datetime` / :class:`~datetime.timedelta` everywhere
+instead of raw doubles.
+
+This section is a side-by-side cheat sheet for porting v0 scripts to
+v1. The package import paths
+(``from openswmm.engine import Solver, Nodes, ...``) are unchanged.
+
+.. currentmodule:: openswmm.engine
+
+Solver lifecycle
+----------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - v0
+     - v1
+   * - ``rc = s.open(); if rc: ...``
+     - ``s.open()  # raises EngineError on failure``
+   * - ``while s.state == EngineState.RUNNING: if s.step() != 0: break``
+     - ``for elapsed in s.steps(): ...``
+   * - ``s.get_start_time() -> float (decimal days)``
+     - ``s.start_datetime -> datetime``
+   * - ``s.get_current_time(), get_end_time(), get_routing_step()``
+     - ``s.current_datetime, s.end_datetime, s.routing_step (timedelta)``
+   * - ``s.state -> int``
+     - ``s.state -> EngineState``
+   * - ``s.elapsed -> float (decimal days)``
+     - ``s.elapsed -> timedelta``
+   * - ``s.get_option(key)``, ``s.set_option(key, v)``
+     - ``s.options[key]``, ``s.options[key] = v``
+   * - ``s.userflag_get_bool(name) / userflag_set_bool(name, v)`` (and ``_int``/``_real``)
+     - ``s.userflags[name]`` (auto-typed)
+   * - ``s.events_count(), events_get(i), events_add(start, end)``
+     - ``len(s.events), s.events[i], s.events.append(Event(start, end))``
+
+Nodes
+-----
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - v0
+     - v1
+   * - ``Nodes(s).get_depth("J1")``
+     - ``s.nodes["J1"].depth``
+   * - ``Nodes(s).set_lateral_inflow("J1", 0.5)``
+     - ``s.nodes["J1"].lateral_inflow = 0.5``
+   * - ``Nodes(s).get_invert_elev(idx)``
+     - ``s.nodes[idx].invert_elev``
+   * - ``Nodes(s).get_depths_bulk() / set_depths_bulk(arr)``
+     - ``s.nodes.depths`` (read/write property)
+   * - ``Nodes(s).get_stat_max_depth(idx)``
+     - ``s.nodes[idx].stats.max_depth``
+   * - ``Nodes(s).get_outfall_type(idx)``
+     - ``s.nodes[idx].outfall.type`` (raises if not OUTFALL)
+   * - ``Nodes(s).set_storage_functional(idx, a, b, c)``
+     - ``s.nodes[idx].storage.functional = (a, b, c)``
+
+Links
+-----
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - v0
+     - v1
+   * - ``Links(s).get_flow("C1")``
+     - ``s.links["C1"].flow``
+   * - ``Links(s).get_from_node(idx)``
+     - ``s.links[idx].from_node`` → :class:`Node` wrapper
+   * - ``Links(s).set_xsect(idx, shape, g1, g2, g3, g4)``
+     - ``s.links[idx].xsect = (shape, g1, g2, g3, g4)``
+   * - ``Links(s).set_pump_curve(idx, c)``
+     - ``s.links[idx].pump.curve = c`` (raises if not PUMP)
+   * - ``Links(s).get_stat_max_flow(idx)``
+     - ``s.links[idx].stats.max_flow``
+   * - ``Links(s).get_flows_bulk()``
+     - ``s.links.flows``
+
+Subcatchments and gages
+-----------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - v0
+     - v1
+   * - ``Subcatchments(s).get_area("S1")``
+     - ``s.subcatchments["S1"].area``
+   * - ``Subcatchments(s).set_infil_horton(idx, f0, fmin, decay, dry)``
+     - ``s.subcatchments[idx].infiltration.set_horton(f0, fmin, decay, dry)``
+   * - ``Subcatchments(s).set_coverage(idx, lu_idx, frac)``
+     - ``s.subcatchments[idx].coverage["RESIDENTIAL"] = frac``
+   * - ``Gages(s).get_rainfall(idx)``
+     - ``s.gages[idx].rainfall``
+   * - ``Gages(s).set_rain_type(idx, t)``
+     - ``s.gages[idx].rain_type = GageRainType.INTENSITY``
+
+OutputReader
+------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - v0
+     - v1
+   * - ``out.get_start_date() -> float``
+     - ``out.start_datetime -> datetime``
+   * - ``out.get_report_step() -> int``
+     - ``out.report_step -> timedelta``
+   * - ``out.get_period_count() -> int``
+     - ``out.period_count`` (property)
+   * - ``out.get_node_series(idx, var, start, end)``
+     - ``out.node_series("J1", OutNodeVar.DEPTH, start=..., end=...)``
+   * - ``out.get_node_attribute(idx, period) -> np.ndarray``
+     - ``out.node_attributes("J1", period) -> Dict[OutNodeVar, float]``
+   * - ``out.get_node_stat_max_depth(idx)``
+     - ``out.node_stats("J1").max_depth``
+
+Pollutants, controls, forcing, hot-start
+----------------------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - v0
+     - v1
+   * - ``Pollutants(s).get_kdecay(idx)``
+     - ``s.pollutants["TSS"].kdecay``
+   * - ``Controls(s).add_rule(text)``
+     - ``s.controls.append(text)``
+   * - ``Controls(s).count() / get_rule(i)``
+     - ``len(s.controls) / s.controls[i].text``
+   * - ``Forcing(s).node_lat_inflow(idx, v, mode=0, persist=1)``
+     - ``s.forcing.node_lat_inflow("J1", v, mode=ForcingMode.REPLACE, persist=True)``
+   * - ``HotStart.save(s, path)`` / ``HotStart.open(path)``
+     - ``HotStart.save_from(s, path)`` / ``HotStart.open(path)`` (unchanged)
+   * - ``hs.get_sim_time() -> float`` / ``hs.warning_count() / get_warning(i)``
+     - ``hs.sim_datetime -> datetime`` / ``hs.warnings -> list[str]``
+   * - ``HotStart.saves_add(s, path, when)``
+     - ``s.save_schedule.append(SaveScheduleEntry(when=dt, path=p))``
+
+Exceptions
+----------
+
+v1's :class:`EngineError` is now a hierarchy where each subclass also
+inherits from the closest stdlib exception:
+
+.. code-block:: python
+
+    # v0 — only EngineError available; you had to check e.code yourself.
+    try:
+        s.nodes.get_depth("NO_SUCH_NODE")
+    except EngineError as e:
+        if e.code == ErrorCode.BADINDEX:
+            ...
+
+    # v1 — write the idiomatic handler:
+    try:
+        depth = s.nodes["NO_SUCH_NODE"].depth
+    except KeyError:                     # also an EngineError subclass
+        ...
+
+See :doc:`../guide/error_handling` for the full subclass table.

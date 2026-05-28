@@ -4,448 +4,344 @@ Links
 
 .. note::
 
-   **Engine:** OpenSWMM 6 — refactored.  This page documents the
-   :class:`openswmm.engine.Links` class.  Legacy SWMM 5 users access
-   links through the enum-driven ``getValue`` /
-   ``setValue`` API on :class:`openswmm.legacy.engine.Solver` — see
+   **Engine:** OpenSWMM 6 — refactored. This page documents the
+   :class:`openswmm.engine.Links` collection and the
+   :class:`openswmm.engine._links.Link` wrapper. Legacy SWMM 5 users
+   access links through the enum-driven ``getValue`` / ``setValue`` API
+   on :class:`openswmm.legacy.engine.Solver` — see
    :doc:`../legacy/solver`.
 
 .. currentmodule:: openswmm.engine
 
 Conduits, pumps, orifices, weirs, and outlets — every connection
-between two nodes.  The :class:`Links` class is the single entry point
-for reading link properties at configure time and link state during a
-running simulation.
+between two nodes. The shape mirrors :doc:`nodes`:
+
+.. code-block:: python
+
+    from openswmm.engine import Solver
+
+    with Solver("model.inp") as s:
+        s.links             # → Links collection
+        s.links["C1"]       # → Link wrapper
+        s.links[0]          # → Link wrapper (by index)
 
 Reference: ``openswmm_links.h``.
 
 ----
 
-Class signature
-===============
+Quickstart
+==========
 
 .. code-block:: python
 
-    class Links:
-        def __init__(self, solver: Solver) -> None: ...
+    # Indexing.
+    c1 = s.links["C1"]
 
-* ``solver`` — an active :class:`Solver`.
+    # Iteration.
+    for link in s.links:
+        print(link.id, link.type.name, link.length)
 
-A single :class:`Links` instance covers **every** link in the model.
-Work via integer indices (fast) or string ids (convenient).
+    # Per-object property access.
+    print(c1.flow, c1.depth, c1.velocity)
+    c1.control_setting = 0.5
+    c1.closed = True
+
+    # Topology — yields Node wrappers, not bare indices.
+    print(c1.from_node.id, "->", c1.to_node.id)
+
+    # Bulk numpy access.
+    flows = s.links.flows               # np.ndarray
+    s.links.flows = flows * 0.95
+
+    # Cross-section.
+    c1.xsect = (XSectShape.CIRCULAR, 1.0, 0.0, 0.0, 0.0)
+    print(c1.xsect.shape, c1.xsect.g1)
+
+    # Type-specific sub-views — raise AttributeError on wrong type.
+    s.links["P1"].pump.curve = 0
+    s.links["W1"].weir.type = WeirType.TRANSVERSE
+    s.links["OR1"].orifice.type = OrificeType.BOTTOM
+    s.links["OUT1"].outlet.rating_type = OutletRatingType.FUNCTIONAL_HEAD
+
+    # Stats.
+    print(s.links["C1"].stats.max_flow, s.links["C1"].stats.max_velocity)
 
 ----
 
-Key methods
-===========
-
-Identity & topology
--------------------
+Collection: :class:`Links`
+==========================
 
 .. list-table::
    :header-rows: 1
-   :widths: 35 65
+   :widths: 30 70
 
-   * - Method
-     - Returns
-   * - :meth:`count`
-     - Number of links.
-   * - :meth:`get_index(id)`
-     - Integer index for a string id.
-   * - :meth:`get_id(idx)`
-     - String id for an integer index.
-   * - :meth:`get_type(idx)`
-     - :class:`LinkType` (CONDUIT, PUMP, …).
-   * - :meth:`get_from_node(idx)`
-     - Upstream node integer index.
-   * - :meth:`get_to_node(idx)`
-     - Downstream node integer index.
+   * - Operation
+     - What it does
+   * - ``len(s.links)``
+     - Current link count.
+   * - ``s.links[key]``
+     - Returns a :class:`Link`. ``key`` is ``int`` or ``str``.
+   * - ``for l in s.links:``
+     - Yields a fresh :class:`Link` per index.
+   * - ``s.links.get_index(id)``
+     - String → int. Raises :exc:`KeyError`.
+   * - ``s.links.get_id(idx)``
+     - Int → string. Raises :exc:`IndexError`.
+   * - ``s.links.add(id, type)``
+     - Append a link. Returns the :class:`Link` and bumps generation.
+   * - ``s.links.pop_last(id)``
+     - Remove the most recently added link.
+   * - ``s.links.rename(key, new_id)``
+     - Rename in place. Invalidates wrappers.
 
-Geometry
---------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
-
-   * - Method
-     - Returns
-   * - :meth:`get_length`
-     - Conduit length, model length units.
-   * - :meth:`get_roughness`
-     - Manning's *n*.
-   * - :meth:`get_slope`
-     - Slope (computed from invert offsets).
-   * - :meth:`get_offset_up`
-     - Upstream offset above the from-node invert.
-   * - :meth:`get_offset_dn`
-     - Downstream offset above the to-node invert.
-   * - :meth:`get_xsect`
-     - ``(shape, geom1, geom2, geom3, geom4)``.
-
-Each ``get_*`` has a matching ``set_*`` valid in ``OPENED``.  Use
-:meth:`set_xsect` to update the cross-section; :meth:`get_xsect_info`
-returns the shape and geometry as a structured object instead of a
-plain tuple.
-
-Hydraulic state
----------------
+Bulk numpy properties
+---------------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 35 65
+   :widths: 24 14 62
 
-   * - Method
-     - Returns
-   * - :meth:`get_flow`
-     - Current flow.
-   * - :meth:`get_depth`
-     - Current depth at the link midpoint.
-   * - :meth:`get_velocity`
-     - Current cross-sectional velocity.
-   * - :meth:`get_capacity`
-     - Fraction of full-depth capacity used.
-   * - :meth:`get_volume`
-     - Current volume in the link.
+   * - Property
+     - Mode
+     - What it carries
+   * - ``flows``
+     - read/write
+     - Per-link flow rate.
+   * - ``depths``
+     - read-only
+     - Water depth.
+   * - ``velocities``
+     - read-only
+     -
+   * - ``capacities``
+     - read-only
+     - Flow / full-flow ratio.
+   * - ``volumes``
+     - read-only
+     -
+   * - ``control_settings``
+     - read-only
+     -
+   * - ``target_settings``
+     - read-only
+     -
+   * - ``hyd_powers``
+     - read-only
+     - Hydraulic power (for pumps).
+   * - ``ids``
+     - read-only
+     - String ids as ``numpy.ndarray`` (``dtype=object``).
 
-Control settings
-----------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 45 55
-
-   * - Method
-     - Action
-   * - :meth:`set_control_setting` / :meth:`get_control_setting`
-     - Active control setting (0–1).
-   * - :meth:`set_target_setting` / :meth:`get_target_setting`
-     - Target setting (controls ramp toward).
-   * - :meth:`set_closed` / :meth:`get_closed`
-     - Force link fully closed / open.
-
-Pump-specific
--------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 45 55
-
-   * - Method
-     - Action / returns
-   * - :meth:`get_pump_curve` / :meth:`set_pump_curve`
-     - Pump curve index.
-   * - :meth:`get_pump_init_state` / :meth:`set_pump_init_state`
-     - Initial on/off state.
-
-Pump utilization statistics
----------------------------
-
-Accumulated during a running simulation. Read either per-link with the
-scalar accessors, or — for whole-network summaries — in one shot with
-:meth:`get_pump_stats_bulk`, which performs a single C ABI crossing
-instead of ``3 * n_links`` and releases the GIL during the call.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 45 55
-
-   * - Method
-     - Returns
-   * - :meth:`get_stat_pump_cycles(idx)`
-     - Pump on/off cycle count (``int``).
-   * - :meth:`get_stat_pump_on_time(idx)`
-     - Total pump on-time in seconds (``float``).
-   * - :meth:`get_stat_pump_volume(idx)`
-     - Total volume pumped in ft³ (``float``).
-   * - :meth:`get_pump_stats_bulk()`
-     - ``dict`` of three ``np.ndarray`` columns — ``cycles``
-       (``int32``), ``on_time`` (``float64``), ``volume`` (``float64``);
-       non-pump links carry ``cycles == -1``.
+For per-pollutant concentrations:
 
 .. code-block:: python
 
-   # Whole-network pump summary in one call.
-   stats = links.get_pump_stats_bulk()
-   pumps = stats["cycles"] >= 0           # filter to pump links
-   total_pumped_ft3 = stats["volume"][pumps].sum()
-   total_run_time_h = stats["on_time"][pumps].sum() / 3600.0
-   print(f"{pumps.sum()} pumps, {total_pumped_ft3:.1f} ft³ pumped, "
-         f"{total_run_time_h:.1f} pump-hours")
+    s.links.qualities("TSS")     # str id or int index
 
-Weir / orifice
---------------
+For pump statistics in bulk:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 45 55
+.. code-block:: python
 
-   * - Method
-     - Action / returns
-   * - :meth:`get_crest_height` / :meth:`set_crest_height`
-     - Crest height above invert.
-   * - :meth:`get_discharge_coeff` / :meth:`set_discharge_coeff`
-     - Discharge coefficient.
-   * - :meth:`get_end_contractions` / :meth:`set_end_contractions`
-     - Number of end contractions (rect weirs).
-   * - :meth:`get_loss_coeff` / :meth:`set_loss_coeff`
-     - Entrance / mid / exit loss coefficients.
-   * - :meth:`get_flap_gate` / :meth:`set_flap_gate`
-     - Has flap gate?
-
-Other
------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 45 55
-
-   * - Method
-     - Action / returns
-   * - :meth:`set_initial_flow`
-     - Initial flow at start of simulation.
-   * - :meth:`set_max_flow`
-     - Cap on link flow magnitude.
-   * - :meth:`set_seep_rate` / :meth:`get_seep_rate`
-     - Seepage rate (conduits).
-   * - :meth:`set_culvert_code`
-     - HDS-5 culvert geometry code.
-   * - :meth:`set_flow`
-     - Force flow this step (one-shot).
+    cycles, on_time, volume = s.links.pump_stats()
 
 ----
 
-End-to-end example
-==================
-
-.. code-block:: python
-
-    from openswmm.engine import Solver, Links, Nodes, LinkType, EngineState
-
-    with Solver("site_drainage.inp", "site_drainage.rpt", "site_drainage.out") as s:
-        links = Links(s)
-        nodes = Nodes(s)
-        print(f"Model has {links.count()} links")
-
-        # describe the network
-        for i in range(links.count()):
-            kind = LinkType(links.get_type(i)).name
-            up = nodes.get_id(links.get_from_node(i))
-            dn = nodes.get_id(links.get_to_node(i))
-            print(f"  {links.get_id(i):<12}  {kind:<10}  {up} → {dn}")
-
-        # watch a single conduit
-        c1 = links.get_index("C1")
-        peak_q = 0.0
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-            q = links.get_flow(c1)
-            if q > peak_q:
-                peak_q, t_peak = q, s.elapsed
-        print(f"C1 peak flow = {peak_q:.3f} cfs at t={t_peak*24:.2f} h")
-
-----
-
-Common recipes
-==============
-
-Open / close a regulator on schedule
-------------------------------------
-
-.. code-block:: python
-
-    gate = links.get_index("G1")
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-        h = s.elapsed * 24.0
-        # close the gate during peak rainfall (hour 6-9)
-        links.set_target_setting(gate, 0.0 if 6.0 <= h <= 9.0 else 1.0)
-
-(For declarative / rule-based control, prefer :doc:`controls`.)
-
-Pump on / off based on upstream depth
--------------------------------------
-
-.. code-block:: python
-
-    p1   = links.get_index("PUMP1")
-    sumi = nodes.get_index("WET_WELL")
-    on_threshold, off_threshold = 4.0, 1.5
-    pumping = False
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-        d = nodes.get_depth(sumi)
-        if not pumping and d >= on_threshold:
-            pumping = True
-            links.set_target_setting(p1, 1.0)
-        elif pumping and d <= off_threshold:
-            pumping = False
-            links.set_target_setting(p1, 0.0)
-
-Re-jig a conduit's geometry mid-warm-up
----------------------------------------
-
-.. code-block:: python
-
-    from openswmm.engine import XSectShape
-
-    # Done once after open(), before initialize()
-    s.open()
-    c1 = links.get_index("C1")
-    links.set_xsect(c1, XSectShape.CIRCULAR, 1.5)        # bump from 1.0 to 1.5 m
-    s.initialize()
-    s.start()
-    # ... loop ...
-
-Identify pipes that ran over capacity
--------------------------------------
-
-.. code-block:: python
-
-    overcap = []
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-        for i in range(links.count()):
-            if links.get_capacity(i) >= 0.999 and i not in overcap:
-                overcap.append(i)
-    print("overcapacity:", [links.get_id(i) for i in overcap])
-
-(For accumulated link statistics, prefer :doc:`statistics` —
-``Statistics.link_stats(...)`` exposes this directly.)
-
-----
-
-Bulk arrays
-===========
+Wrapper: :class:`Link`
+======================
 
 .. list-table::
    :header-rows: 1
-   :widths: 35 65
+   :widths: 22 14 14 50
+
+   * - Property
+     - Type
+     - Mode
+     - Meaning
+   * - ``id``
+     - ``str``
+     - read-only
+     -
+   * - ``index``
+     - ``int``
+     - read-only
+     -
+   * - ``type``
+     - :class:`LinkType`
+     - read-only
+     - CONDUIT / PUMP / ORIFICE / WEIR / OUTLET.
+   * - ``from_node``
+     - :class:`Node`
+     - read-only
+     - Upstream node wrapper.
+   * - ``to_node``
+     - :class:`Node`
+     - read-only
+     - Downstream node wrapper.
+   * - ``length``
+     - ``float``
+     - read/write
+     - Conduit length (other types use slot for type-specific data).
+   * - ``roughness``
+     - ``float``
+     - read/write
+     -
+   * - ``slope``
+     - ``float``
+     - read-only
+     - Computed from invert elevations.
+   * - ``offset_up`` / ``offset_dn``
+     - ``float``
+     - read/write
+     -
+   * - ``initial_flow`` / ``max_flow``
+     - ``float``
+     - read/write
+     -
+   * - ``xsect``
+     - :class:`XSection`
+     - read/write
+     - Assign ``(shape, g1, g2, g3, g4)`` to write through.
+   * - ``flow``
+     - ``float``
+     - read/write
+     -
+   * - ``depth`` / ``velocity`` / ``capacity`` / ``volume``
+     - ``float``
+     - read-only
+     -
+   * - ``hyd_power``
+     - ``float``
+     - read-only
+     -
+   * - ``control_setting`` / ``target_setting``
+     - ``float``
+     - read/write
+     -
+   * - ``closed``
+     - ``bool``
+     - read/write
+     -
+   * - ``loss_coeff``
+     - ``(inlet, outlet, avg)``
+     - read/write
+     -
+   * - ``flap_gate`` / ``seep_rate`` / ``culvert_code`` / ``barrels``
+     - mixed
+     - read/write
+     - Conduit-flavoured knobs.
+
+Methods:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 62
 
    * - Method
-     - Returns / accepts
-   * - :meth:`get_flows_bulk`
-     - All link flows (``np.ndarray[float64]``, shape ``(n_links,)``).
-   * - :meth:`set_flows_bulk(arr)`
-     - Force flows for every link.
-   * - :meth:`get_depths_bulk`
-     - All link mid-point depths.
-   * - :meth:`get_quality_bulk(p)`
-     - Pollutant ``p`` concentration per link.
-   * - :meth:`get_pump_stats_bulk`
-     - All pump statistics in a single C call —
-       ``{"cycles": ndarray[int32], "on_time": ndarray[float64],
-       "volume": ndarray[float64]}``. Non-pump links carry
-       ``cycles == -1`` as a sentinel.
-   * - :meth:`get_velocities_bulk`
-     - Cross-sectional velocity per link *(added 6.0.0)*.
-   * - :meth:`get_capacities_bulk`
-     - Capacity ratio ``q / q_full`` per link *(added 6.0.0)*.
-   * - :meth:`get_volumes_bulk`
-     - Stored volume per link *(added 6.0.0)*.
-   * - :meth:`get_control_settings_bulk`
-     - Active control setting (0..1) per link *(added 6.0.0)*.
-   * - :meth:`get_target_settings_bulk`
-     - Target control setting per link *(added 6.0.0)*.
-   * - :meth:`get_hyd_powers_bulk`
-     - Hydraulic power per link in ft-lb/s
-       (``gamma * |Q| * |hL|``) *(added 6.0.0)*.
-   * - :meth:`get_ids_bulk`
-     - ``list[str]`` of every link's id in one C call
-       *(added 6.0.0; stride-packed UTF-8)*.
-
-Memory-aliasing note: ``get_flows_bulk`` and ``get_depths_bulk`` return
-arrays that share memory with engine scratch space — ``.copy()`` if you
-keep them past the next call. The other bulk getters (``get_pump_stats_bulk``
-and every Phase 3 addition) return freshly allocated arrays, so the
-result is yours to retain.
-
-Whole-network reporting pattern (mirrors the Nodes example):
-
-.. code-block:: python
-
-   ids       = links.get_ids_bulk()              # list[str]
-   flows     = links.get_flows_bulk()            # np.ndarray[float64]
-   velocities = links.get_velocities_bulk()
-   capacities = links.get_capacities_bulk()
-   powers    = links.get_hyd_powers_bulk()
-   stats     = links.get_pump_stats_bulk()
-   pumps     = stats["cycles"] >= 0              # boolean mask
-
-   # Pump-energy summary in 3 lines:
-   pump_run_hours = float(stats["on_time"][pumps].sum() / 3600.0)
-   pump_ft_lb_s   = float(powers[pumps].sum())
-   pump_hp        = pump_ft_lb_s / 550.0
-   print(f"{pumps.sum()} pumps  ran {pump_run_hours:.1f} h  ~{pump_hp:.1f} hp avg")
-
-Vectorised peak detection across all links:
-
-.. code-block:: python
-
-    import numpy as np
-
-    peaks = np.zeros(links.count(), dtype=np.float64)
-    while s.state == EngineState.RUNNING:
-        if s.step() != 0:
-            break
-        peaks = np.maximum(peaks, np.abs(links.get_flows_bulk()))
-
-    for i, q in enumerate(peaks):
-        print(f"  {links.get_id(i):<12}  peak |Q| = {q:.3f}")
+     - What it does
+   * - ``set_nodes(from_node, to_node)``
+     - Reconnect this link. Accepts indices, ids, or :class:`Node` wrappers.
+   * - ``quality(pollutant)``
+     - Concentration of ``pollutant`` (id or int).
 
 ----
 
-EngineState requirements & exceptions
-=====================================
+Cross-section: :class:`XSection`
+================================
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 25 40
+``link.xsect`` returns an :class:`XSection` view. Access individual
+fields by attribute, the snapshot tuple via ``as_tuple()``, or rewrite
+all five fields by assigning a tuple:
 
-   * - Method group
-     - Required state
-     - Notes
-   * - identity / topology accessors
-     - ``OPENED`` or later
-     - Topology is fixed once parsed.
-   * - geometry accessors (``get_*``)
-     - ``OPENED`` or later
-     - n/a
-   * - geometry setters (``set_*``)
-     - ``OPENED``
-     - Modifying mid-run is generally invalid.
-   * - hydraulic state accessors
-     - ``RUNNING`` or ``ENDED``
-     - Need at least one step.
-   * - control setters
-     - ``RUNNING``
-     - One-shot; overwritten if a control rule fires next step.
-   * - pump / weir / orifice config
-     - ``OPENED`` or ``RUNNING``
-     - Some setters check ``LinkType`` and raise
-       ``INVALID_TYPE`` for the wrong link kind.
-   * - ``*_bulk`` accessors
-     - same as scalar
-     - n/a
+.. code-block:: python
 
-Common :class:`EngineError` codes:
+    x = c1.xsect
+    print(x.shape, x.g1, x.g2, x.g3, x.g4)
+    shape, g1, g2, g3, g4 = x.as_tuple()
 
-* ``INVALID_INDEX``  — integer index out of range.
-* ``INVALID_TYPE``   — calling a pump-only accessor on a conduit, etc.
-* ``NOT_FOUND``      — string id not in the model.
+    c1.xsect = (XSectShape.CIRCULAR, 1.0, 0.0, 0.0, 0.0)
+
+The shape is a :class:`XSectShape` enum; the four ``g`` parameters are
+shape-specific (diameter, width, height, depth, …).
+
+----
+
+Type-specific sub-views
+=======================
+
+Each link type exposes a small sub-namespace; accessing the wrong one
+raises :exc:`AttributeError`:
+
+.. code-block:: python
+
+    # PUMP only.
+    p = s.links["P1"]
+    p.pump.curve = 0                       # curve index
+    p.pump.init_state = True               # starts on
+    p.pump.startup_depth = 1.0
+    p.pump.shutoff_depth = 0.1
+
+    # WEIR only.
+    w = s.links["W1"]
+    w.weir.type = WeirType.TRANSVERSE
+    w.weir.crest_height = 0.5
+    w.weir.discharge_coeff = 3.33
+    w.weir.end_contractions = 2
+
+    # ORIFICE only.
+    o = s.links["OR1"]
+    o.orifice.type = OrificeType.BOTTOM
+    o.orifice.open_close_rate = 0.5        # 1 / second
+
+    # OUTLET only.
+    out = s.links["OUT1"]
+    out.outlet.rating_type = OutletRatingType.FUNCTIONAL_HEAD
+    out.outlet.expon = 0.5
+
+----
+
+Statistics sub-view
+===================
+
+Every link carries a ``.stats`` view; pump-specific entries raise
+:class:`BadParamError` (which is also a :exc:`ValueError`) on non-pump
+links:
+
+.. code-block:: python
+
+    c1 = s.links["C1"]
+    print(c1.stats.max_flow)
+    print(c1.stats.max_velocity)
+    print(c1.stats.max_filling)
+    print(c1.stats.vol_flow)
+    print(c1.stats.surcharge_time)
+
+    p1 = s.links["P1"]
+    print(p1.stats.pump_cycles)
+    print(p1.stats.pump_on_time)
+    print(p1.stats.pump_volume)
+
+These values are only meaningful after :meth:`Solver.end`.
+
+----
+
+Staleness, equality, repr
+=========================
+
+Same contract as :class:`Node`:
+
+* Adding, removing, renaming, or converting links invalidates every
+  :class:`Link` minted before. Access raises :class:`StaleObjectError`.
+* ``a == b`` is ``True`` when ``a`` and ``b`` wrap the same ``(solver,
+  index)`` pair; hashing is consistent.
+* ``repr(link)`` includes the captured id and index.
 
 ----
 
 See also
 ========
 
-* :doc:`nodes` — the upstream / downstream endpoints.
-* :doc:`controls` — declarative rules for open / close / setting changes.
-* :doc:`forcing` — sticky cross-step overrides on a link's flow.
-* :doc:`statistics` — accumulated peak flow, peak depth, hours
-  surcharged, etc., per link.
-* :doc:`output_reader` — link time-series from a finished ``.out`` file.
+* :doc:`solver` — where ``s.links`` comes from.
+* :doc:`nodes` — :attr:`Link.from_node` / :attr:`Link.to_node` return :class:`Node` wrappers.
+* :doc:`controls` — runtime control of link ``control_setting`` and
+  ``target_setting``.
+* :doc:`error_handling` — every exception type referenced on this page.

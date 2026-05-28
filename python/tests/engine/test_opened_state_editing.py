@@ -1,147 +1,104 @@
-"""Runtime coverage of every *_add wrapper that's valid in OPENED state.
+"""Runtime coverage of every collection-level add/pop_last in OPENED state.
 
-The C engine widened the lifecycle contract so that node, link,
-subcatchment, gage, and inflow additions are valid in BUILDING *or*
-OPENED state. These tests assert that each wrapped call succeeds
-against a Solver that has been ``open()``-ed but not yet initialized,
-and that the resulting object is observable via the existing query API.
+The C engine widened the lifecycle contract so node, link, subcatchment,
+gage, and inflow additions are valid in BUILDING *or* OPENED state.
+These tests verify that v1's collection-level editors succeed against a
+Solver that has been ``open()``-ed but not initialized.
 
-Pop-last symmetry (Nodes.pop_last, Links.pop_last) is also covered.
+Migrated to the v1 Pythonic bindings.
 """
 
 import pytest
 
 from openswmm.engine import (
-    Solver,
-    Nodes,
-    Links,
-    Subcatchments,
-    Gages,
-    Inflows,
-    NodeType,
+    BadIndexError,
     LinkType,
+    NodeType,
 )
-
-# SWMM_ERR_BADINDEX — returned when pop_last is given a non-tail id.
-SWMM_ERR_BADINDEX = 8
 
 
 class TestOpenedStateNodeEditing:
     def test_add_node_round_trip(self, opened_solver):
-        n = Nodes(opened_solver)
-        before = n.count()
-        rc = n.add("PY_TEST_NODE", int(NodeType.JUNCTION))
-        assert rc == 0, f"node add returned {rc}"
-        assert n.count() == before + 1
-        assert n.get_index("PY_TEST_NODE") == before
+        before = len(opened_solver.nodes)
+        node = opened_solver.nodes.add("PY_TEST_NODE", NodeType.JUNCTION)
+        assert len(opened_solver.nodes) == before + 1
+        assert opened_solver.nodes.get_index("PY_TEST_NODE") == before
+        assert node.id == "PY_TEST_NODE"
 
     def test_pop_last_node_undoes_add(self, opened_solver):
-        n = Nodes(opened_solver)
-        before = n.count()
-        n.add("PY_TMP_NODE", int(NodeType.JUNCTION))
-        rc = n.pop_last("PY_TMP_NODE")
-        assert rc == 0
-        assert n.count() == before
-        assert n.get_index("PY_TMP_NODE") == -1
+        before = len(opened_solver.nodes)
+        opened_solver.nodes.add("PY_TMP_NODE", NodeType.JUNCTION)
+        opened_solver.nodes.pop_last("PY_TMP_NODE")
+        assert len(opened_solver.nodes) == before
+        with pytest.raises(KeyError):
+            opened_solver.nodes.get_index("PY_TMP_NODE")
 
-    def test_pop_last_node_wrong_tail_returns_badindex(self, opened_solver):
-        n = Nodes(opened_solver)
-        n.add("PY_REAL_TAIL", int(NodeType.JUNCTION))
-        rc = n.pop_last("NOT_THE_TAIL")
-        assert rc == SWMM_ERR_BADINDEX, (
-            f"wrong-tail pop should return BADINDEX (8); got {rc}"
-        )
-        # Tail still present after the failed pop.
-        assert n.get_index("PY_REAL_TAIL") >= 0
+    def test_pop_last_node_wrong_tail_raises(self, opened_solver):
+        opened_solver.nodes.add("PY_REAL_TAIL", NodeType.JUNCTION)
+        # v1 raises BadIndexError (also IndexError) instead of returning rc.
+        with pytest.raises((BadIndexError, IndexError)):
+            opened_solver.nodes.pop_last("NOT_THE_TAIL")
+        assert opened_solver.nodes.get_index("PY_REAL_TAIL") >= 0
 
 
 class TestOpenedStateLinkEditing:
     def test_add_link_round_trip(self, opened_solver):
-        # Need two nodes for a link to reference.
-        n = Nodes(opened_solver)
-        u = "PY_LINK_U"
-        d = "PY_LINK_D"
-        n.add(u, int(NodeType.JUNCTION))
-        n.add(d, int(NodeType.OUTFALL))
-
-        ll = Links(opened_solver)
-        before = ll.count()
-        rc = ll.add("PY_TEST_LINK", int(LinkType.CONDUIT))
-        assert rc == 0, f"link add returned {rc}"
-        assert ll.count() == before + 1
-        assert ll.get_index("PY_TEST_LINK") == before
+        opened_solver.nodes.add("PY_LINK_U", NodeType.JUNCTION)
+        opened_solver.nodes.add("PY_LINK_D", NodeType.OUTFALL)
+        before = len(opened_solver.links)
+        link = opened_solver.links.add("PY_TEST_LINK", LinkType.CONDUIT)
+        assert len(opened_solver.links) == before + 1
+        assert opened_solver.links.get_index("PY_TEST_LINK") == before
+        assert link.id == "PY_TEST_LINK"
 
     def test_pop_last_link_undoes_add(self, opened_solver):
-        n = Nodes(opened_solver)
-        n.add("PY_PL_U", int(NodeType.JUNCTION))
-        n.add("PY_PL_D", int(NodeType.OUTFALL))
+        opened_solver.nodes.add("PY_PL_U", NodeType.JUNCTION)
+        opened_solver.nodes.add("PY_PL_D", NodeType.OUTFALL)
+        before = len(opened_solver.links)
+        opened_solver.links.add("PY_TMP_LINK", LinkType.CONDUIT)
+        opened_solver.links.pop_last("PY_TMP_LINK")
+        assert len(opened_solver.links) == before
+        with pytest.raises(KeyError):
+            opened_solver.links.get_index("PY_TMP_LINK")
 
-        ll = Links(opened_solver)
-        before = ll.count()
-        ll.add("PY_TMP_LINK", int(LinkType.CONDUIT))
-        rc = ll.pop_last("PY_TMP_LINK")
-        assert rc == 0
-        assert ll.count() == before
-        assert ll.get_index("PY_TMP_LINK") == -1
-
-    def test_pop_last_link_wrong_tail_returns_badindex(self, opened_solver):
-        n = Nodes(opened_solver)
-        n.add("PY_PLW_U", int(NodeType.JUNCTION))
-        n.add("PY_PLW_D", int(NodeType.OUTFALL))
-
-        ll = Links(opened_solver)
-        ll.add("PY_REAL_LINK_TAIL", int(LinkType.CONDUIT))
-        rc = ll.pop_last("NOT_THE_LINK_TAIL")
-        assert rc == SWMM_ERR_BADINDEX
-        assert ll.get_index("PY_REAL_LINK_TAIL") >= 0
+    def test_pop_last_link_wrong_tail_raises(self, opened_solver):
+        opened_solver.nodes.add("PY_PLW_U", NodeType.JUNCTION)
+        opened_solver.nodes.add("PY_PLW_D", NodeType.OUTFALL)
+        opened_solver.links.add("PY_REAL_LINK_TAIL", LinkType.CONDUIT)
+        with pytest.raises((BadIndexError, IndexError)):
+            opened_solver.links.pop_last("NOT_THE_LINK_TAIL")
+        assert opened_solver.links.get_index("PY_REAL_LINK_TAIL") >= 0
 
 
 class TestOpenedStateSubcatchmentEditing:
     def test_add_subcatchment_round_trip(self, opened_solver):
-        sc = Subcatchments(opened_solver)
-        before = sc.count()
-        rc = sc.add("PY_TEST_SC")
-        assert rc == 0, f"subcatch add returned {rc}"
-        assert sc.count() == before + 1
-        assert sc.get_index("PY_TEST_SC") == before
+        before = len(opened_solver.subcatchments)
+        sub = opened_solver.subcatchments.add("PY_TEST_SC")
+        assert len(opened_solver.subcatchments) == before + 1
+        assert opened_solver.subcatchments.get_index("PY_TEST_SC") == before
+        assert sub.id == "PY_TEST_SC"
 
 
 class TestOpenedStateGageEditing:
     def test_add_gage_round_trip(self, opened_solver):
-        g = Gages(opened_solver)
-        before = g.count()
-        rc = g.add("PY_TEST_GAGE")
-        assert rc == 0, f"gage add returned {rc}"
-        assert g.count() == before + 1
-        assert g.get_index("PY_TEST_GAGE") == before
+        before = len(opened_solver.gages)
+        gage = opened_solver.gages.add("PY_TEST_GAGE")
+        assert len(opened_solver.gages) == before + 1
+        assert opened_solver.gages.get_index("PY_TEST_GAGE") == before
+        assert gage.id == "PY_TEST_GAGE"
 
 
 class TestOpenedStateInflowEditing:
-    """Inflows.add_* wraps swmm_ext_inflow_add / swmm_dwf_add / swmm_rdii_add.
-
-    Header docs do not state a state restriction — these tests verify that
-    OPENED state is in fact accepted.
-    """
+    """OPENED state must accept inflow additions."""
 
     def test_add_external_inflow_in_opened_state(self, opened_solver):
-        nodes = Nodes(opened_solver)
-        # site_drainage fixture has at least one node — use index 0.
-        assert nodes.count() > 0
-        inflows = Inflows(opened_solver)
-        # Constant baseline inflow, no time series — minimum-required arguments.
-        inflows.add_external(0, "FLOW", baseline=0.5)
-        assert inflows.ext_inflow_count() >= 1
+        assert len(opened_solver.nodes) > 0
+        opened_solver.inflows.add_external(0, "FLOW", baseline=0.5)
+        assert opened_solver.inflows.external_count >= 1
 
     def test_add_dwf_in_opened_state(self, opened_solver):
-        nodes = Nodes(opened_solver)
-        assert nodes.count() > 0
-        inflows = Inflows(opened_solver)
-        inflows.add_dwf(0, "FLOW", 1.5)
+        assert len(opened_solver.nodes) > 0
+        opened_solver.inflows.add_dwf(0, "FLOW", avg_value=1.5)
 
     def test_add_rdii_in_opened_state(self, opened_solver):
-        # The binding dispatches into the C engine in OPENED state
-        # without raising EngineError for the LIFECYCLE check. The
-        # engine accepts the call and stores the entry; we only assert
-        # that the binding completes (no exception).
-        inflows = Inflows(opened_solver)
-        inflows.add_rdii(0, "NONEXISTENT_UH", 100.0)
+        opened_solver.inflows.add_rdii(0, "NONEXISTENT_UH", 100.0)
