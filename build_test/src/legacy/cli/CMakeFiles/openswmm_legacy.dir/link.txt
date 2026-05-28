@@ -1,1 +1,0 @@
-/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/openswmm_legacy.dir/link.d CMakeFiles/openswmm_legacy.dir/main.c.o -o openswmm-legacy  -Wl,-rpath,/tmp/workspace/HydroCouple/openswmm.engine/build_test/src/legacy/engine: ../engine/libopenswmm.legacy.engine.so.6.0.0

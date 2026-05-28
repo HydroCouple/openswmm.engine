@@ -1,1 +1,0 @@
-/usr/bin/cc -fPIC -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/openswmm_legacy_output.dir/link.d -shared -Wl,-soname,libopenswmm.legacy.output.so.6 -o libopenswmm.legacy.output.so.6.0.0 CMakeFiles/openswmm_legacy_output.dir/swmm_output.c.o CMakeFiles/openswmm_legacy_output.dir/errormanager.c.o  -Wl,-rpath,:::::::
