@@ -21,6 +21,7 @@
 #ifndef OPENSWMM_CONTROLS_HPP
 #define OPENSWMM_CONTROLS_HPP
 
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <unordered_map>
