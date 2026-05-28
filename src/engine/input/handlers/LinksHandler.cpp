@@ -292,7 +292,8 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
 
         // IRREGULAR shapes: tok[2] is transect name, not a dimension.
         // CUSTOM shapes: tok[2] = y_full, tok[3] = shape curve name.
-        // Both need deferred resolution (TRANSECTS/CURVES may not be parsed yet).
+        // STREET_XSECT shapes: tok[2] is street profile name, not a dimension.
+        // All three need deferred resolution (TRANSECTS/CURVES/STREETS may not be parsed yet).
         if (ctx.links.xsect_shape[idx] == XsectShape::IRREGULAR) {
             if (tok.size() > 2) {
                 ctx.links.pump_curve_name[idx] = tok[2]; // Reuse field for transect name
@@ -303,6 +304,11 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
             if (tok.size() > 3) {
                 ctx.links.pump_curve_name[idx] = tok[3]; // Shape curve name
                 ctx.links.xsect_curve[idx] = -1;
+            }
+        } else if (ctx.links.xsect_shape[idx] == XsectShape::STREET_XSECT) {
+            if (tok.size() > 2) {
+                ctx.links.pump_curve_name[idx] = tok[2]; // Reuse field for street profile name
+                ctx.links.xsect_curve[idx] = -1;        // resolved later in PostParseResolver
             }
         } else {
             // Geom1 = full depth (diameter for circular, etc.)
