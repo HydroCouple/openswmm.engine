@@ -112,8 +112,7 @@ LIDs
 ``lids.set_storage(idx, *, thick, void_frac, ksat)``
 ``lids.set_drain(idx, *, coeff, expon, offset)``
 
-``lids.usage_add(subcatchment, lid, *, number, area, width, init_sat,
-from_imperv)``
+``lids.usage_add(subcatchment, lid, *, number, area, width, init_sat, from_imperv)``
    Place a LID control on a subcatchment. ``subcatchment`` accepts
    ``int | str``; ``lid`` is currently an integer index because the C
    API has no id→index lookup for LID controls (passing a string
