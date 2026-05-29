@@ -4,7 +4,7 @@ Provides :class:`LegacyLinks` (collection) and :class:`LegacyLink` (single
 element) wrappers with typed properties and mass-balance documentation.
 """
 
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING, Union
 
 from ._solver import (
     SWMMObjects,
@@ -22,15 +22,15 @@ class LegacyLink:
 
     __slots__ = ("_solver", "_index", "_name")
 
-    def __init__(self, solver: "Solver", index: int, name: str = ""):
+    def __init__(self, solver: "Solver", index: int, name: str = "") -> None:
         self._solver = solver
         self._index = index
         self._name = name or str(index)
 
-    def _get(self, prop: SWMMLinkProperties, **kw) -> float:
+    def _get(self, prop: SWMMLinkProperties, **kw: Any) -> float:
         return self._solver.get_value(SWMMObjects.LINK, prop, self._index, **kw)
 
-    def _set(self, prop: SWMMLinkProperties, value: float, **kw) -> None:
+    def _set(self, prop: SWMMLinkProperties, value: float, **kw: Any) -> None:
         self._solver.set_value(SWMMObjects.LINK, prop, self._index, value, **kw)
 
     # --- identity ---
@@ -225,12 +225,12 @@ class LegacyLink:
 
     # --- statistics (after end()) ---
     @property
-    def statistics(self) -> dict:
+    def statistics(self) -> Dict[str, Any]:
         """Cumulative link statistics (call after ``solver.end()``)."""
         return self._solver.get_link_statistics(self._index)
 
     @property
-    def pump_statistics(self) -> dict:
+    def pump_statistics(self) -> Dict[str, Any]:
         """Cumulative pump statistics (only valid for PUMP links)."""
         return self._solver.get_pump_statistics(self._index)
 
@@ -243,13 +243,15 @@ class LegacyLinks:
 
     __slots__ = ("_solver", "_links")
 
-    def __init__(self, solver: "Solver"):
+    def __init__(self, solver: "Solver") -> None:
         self._solver = solver
         count = solver.get_object_count(SWMMObjects.LINK)
         names = solver.get_object_names(SWMMObjects.LINK)
-        self._links = [LegacyLink(solver, i, names[i]) for i in range(count)]
+        self._links: List[LegacyLink] = [
+            LegacyLink(solver, i, names[i]) for i in range(count)
+        ]
 
-    def __getitem__(self, key) -> LegacyLink:
+    def __getitem__(self, key: Union[int, str]) -> LegacyLink:
         if isinstance(key, str):
             idx = self._solver.get_object_index(SWMMObjects.LINK, key)
             return self._links[idx]
@@ -258,7 +260,7 @@ class LegacyLinks:
     def __len__(self) -> int:
         return len(self._links)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[LegacyLink]:
         return iter(self._links)
 
     def __repr__(self) -> str:

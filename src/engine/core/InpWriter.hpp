@@ -9,7 +9,7 @@
  * @ingroup engine_core
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -38,7 +38,7 @@ namespace inp_writer {
  *   [POLLUTANTS], [LANDUSES], [BUILDUP], [WASHOFF], [TREATMENT],
  *   [TIMESERIES], [CURVES], [PATTERNS],
  *   [USER_FLAGS], [PLUGINS],
- *   [COORDINATES], [MAP]
+ *   [MAP], [COORDINATES], [VERTICES], [Polygons], [SYMBOLS]
  *
  * @param ctx   Simulation context with all model data.
  * @param path  Output file path.

@@ -6,12 +6,16 @@
  * @ingroup engine_api
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_subcatchments.h"
+
+#include <algorithm>
+#include <cstring>
+#include <string>
 
 extern "C" {
 
@@ -52,7 +56,12 @@ SWMM_ENGINE_API int swmm_subcatch_add(SWMM_Engine engine, const char* id) {
 
     ctx.subcatch_names.add(id);
     int n = ctx.subcatch_names.size();
-    ctx.subcatches.resize(n);
+    ctx.subcatches.grow_to(n);
+    const auto un = static_cast<std::size_t>(n);
+    if (ctx.spatial.subcatch_x.size() < un)          ctx.spatial.subcatch_x.resize(un, 0.0);
+    if (ctx.spatial.subcatch_y.size() < un)          ctx.spatial.subcatch_y.resize(un, 0.0);
+    if (ctx.spatial.subcatch_polygon_x.size() < un)  ctx.spatial.subcatch_polygon_x.resize(un);
+    if (ctx.spatial.subcatch_polygon_y.size() < un)  ctx.spatial.subcatch_polygon_y.resize(un);
 
     return SWMM_OK;
 }
@@ -530,6 +539,77 @@ SWMM_ENGINE_API int swmm_subcatch_get_quality_bulk(SWMM_Engine engine, int pollu
     return SWMM_OK;
 }
 
+// ----------------------------------------------------------------------------
+// Phase 3 bulk getters — Subcatchments.
+//
+// rainfall, evap_loss, infil_loss are simple SoA memcpys. snow_depth mirrors
+// the scalar accessor (which currently returns 0.0 since snow state lives in
+// the SnowSolver, not SubcatchData) — when snow integration lands, both the
+// scalar and bulk variants get updated together. IDs follow the stride-packed
+// UTF-8 format established by swmm_node_get_ids_bulk.
+// ----------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_subcatch_get_rainfall_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    std::copy(ctx.subcatches.rainfall.begin(),
+              ctx.subcatches.rainfall.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_evap_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    std::copy(ctx.subcatches.evap_loss.begin(),
+              ctx.subcatches.evap_loss.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_infil_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    std::copy(ctx.subcatches.infil_loss.begin(),
+              ctx.subcatches.infil_loss.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_snow_depth_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    // Mirror the scalar accessor's placeholder behavior: zero-fill until
+    // snow state is integrated with SubcatchData.
+    std::fill_n(buf, n, 0.0);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_ids_bulk(SWMM_Engine engine,
+                                                char* buf,
+                                                int stride,
+                                                int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || stride < 2 || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    const std::size_t s = static_cast<std::size_t>(stride);
+
+    std::fill_n(buf, s * static_cast<std::size_t>(n), '\0');
+    for (int i = 0; i < n; ++i) {
+        const std::string& name = ctx.subcatch_names.name_of(i);
+        const std::size_t copy_n = std::min(name.size(), s - 1);
+        std::memcpy(buf + static_cast<std::size_t>(i) * s,
+                    name.data(), copy_n);
+    }
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Ponded quality
 // ============================================================================
@@ -559,6 +639,135 @@ SWMM_ENGINE_API int swmm_subcatch_set_ponded_quality(SWMM_Engine engine,
                static_cast<std::size_t>(pollutant_idx);
     if (idx < ctx.subcatches.ponded_qual.size())
         ctx.subcatches.ponded_qual[idx] = mass;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_rename(SWMM_Engine engine, int idx, const char* newId) {
+    CHECK_HANDLE(engine);
+    if (!newId || newId[0] == '\0') return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    return ctx.subcatch_names.rename(idx, newId) ? SWMM_OK : SWMM_ERR_BADPARAM;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_tag(SWMM_Engine engine, int idx,
+                                            char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    const auto u = static_cast<std::size_t>(idx);
+    const std::string& s = (u < ctx.subcatches.tags.size()) ? ctx.subcatches.tags[u]
+                                                            : std::string{};
+    const int copy_len = std::min(static_cast<int>(s.size()), buflen - 1);
+    if (copy_len > 0) std::memcpy(buf, s.c_str(), static_cast<std::size_t>(copy_len));
+    buf[copy_len] = '\0';
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_set_tag(SWMM_Engine engine, int idx,
+                                            const char* tag) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    const auto u = static_cast<std::size_t>(idx);
+    if (u >= ctx.subcatches.tags.size()) ctx.subcatches.tags.resize(u + 1);
+    ctx.subcatches.tags[u] = (tag != nullptr) ? std::string(tag) : std::string{};
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Aquifers ([AQUIFERS] section) — Slice BM.0 list + add; setters land with BP
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_aquifer_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return to_engine(engine)->context().aquifers.count();
+}
+
+SWMM_ENGINE_API int swmm_aquifer_index(SWMM_Engine engine, const char* id) {
+    if (!engine || !id) return -1;
+    const auto& names = to_engine(engine)->context().aquifers.names;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+SWMM_ENGINE_API const char* swmm_aquifer_id(SWMM_Engine engine, int idx) {
+    if (!engine) return nullptr;
+    const auto& names = to_engine(engine)->context().aquifers.names;
+    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    return names[static_cast<std::size_t>(idx)].c_str();
+}
+
+SWMM_ENGINE_API int swmm_aquifer_add(SWMM_Engine engine, const char* id) {
+    CHECK_HANDLE(engine);
+    if (!id) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+
+    auto& aq = ctx.aquifers;
+    aq.names.push_back(id);
+    aq.porosity.push_back(0.0);
+    aq.wilting_point.push_back(0.0);
+    aq.field_capacity.push_back(0.0);
+    aq.conductivity.push_back(0.0);
+    aq.conduct_slope.push_back(0.0);
+    aq.tension_slope.push_back(0.0);
+    aq.upper_evap.push_back(0.0);
+    aq.lower_evap.push_back(0.0);
+    aq.lower_loss.push_back(0.0);
+    aq.bottom_elev.push_back(0.0);
+    aq.water_table_elev.push_back(0.0);
+    aq.upper_moist.push_back(0.0);
+    aq.upper_evap_pat.push_back("");
+
+    ctx.aquifer_names.add(id);
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Snowpacks ([SNOWPACKS] section) — Slice BM.0 list + add; setters land with BP
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_snowpack_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return to_engine(engine)->context().snowpacks.count();
+}
+
+SWMM_ENGINE_API int swmm_snowpack_index(SWMM_Engine engine, const char* id) {
+    if (!engine || !id) return -1;
+    const auto& names = to_engine(engine)->context().snowpacks.names;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+SWMM_ENGINE_API const char* swmm_snowpack_id(SWMM_Engine engine, int idx) {
+    if (!engine) return nullptr;
+    const auto& names = to_engine(engine)->context().snowpacks.names;
+    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    return names[static_cast<std::size_t>(idx)].c_str();
+}
+
+SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id) {
+    CHECK_HANDLE(engine);
+    if (!id) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+
+    auto& sp = ctx.snowpacks;
+    sp.names.push_back(id);
+    sp.plowable.push_back({});
+    sp.impervious.push_back({});
+    sp.pervious.push_back({});
+    sp.removal.push_back({});
+    sp.removal_subcatch.push_back("");
+
+    ctx.snowpack_names.add(id);
     return SWMM_OK;
 }
 

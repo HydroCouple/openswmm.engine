@@ -44,8 +44,9 @@ class TestSolverManualLifecycle:
         s.start()
 
         stepped = False
-        while s.step():
-            stepped = True
+        for _ in s.steps():
+            pass
+             = True
         assert stepped, "Simulation should advance at least one timestep"
 
         s.end()
@@ -55,11 +56,13 @@ class TestSolverManualLifecycle:
         assert os.path.exists(rpt)
         assert os.path.exists(out)
 
-    def test_step_returns_false_at_end(self, running_solver):
-        last = True
-        while last:
-            last = running_solver.step()
-        assert last is False
+    def test_step_signals_completion_via_state(self, running_solver):
+        # v1: step() returns timedelta, simulation completion is reported via
+        # both the state property transitioning to ENDED and the
+        # steps() iterator terminating.
+        for _ in running_solver.steps():
+            pass
+        assert running_solver.state == EngineState.ENDED
 
 
 # ---------------------------------------------------------------------------
@@ -72,15 +75,17 @@ class TestSolverContextManager:
         inp, rpt, out = solver_files
         with Solver(inp, rpt, out) as s:
             count = 0
-            while s.step():
-                count += 1
+            for _ in s.steps():
+            pass
+             += 1
             assert count > 0
 
     def test_context_manager_cleanup(self, solver_files):
         inp, rpt, out = solver_files
         with Solver(inp, rpt, out) as s:
-            while s.step():
-                pass
+            for _ in s.steps():
+            pass
+            
         # After exiting, handle should be NULL (destroyed)
         assert s.handle == 0
 
@@ -156,12 +161,14 @@ class TestSolverStride:
     """Test stride() multi-step advancement."""
 
     def test_stride_advances(self, running_solver):
-        elapsed = running_solver.stride(5)
-        assert elapsed > 0.0
+        # stride() now returns an int rc (0 = success); elapsed is exposed via
+        # the .elapsed property as a side effect.
+        assert running_solver.stride(5) == 0
+        assert running_solver.elapsed > 0.0
 
     def test_stride_single(self, running_solver):
-        elapsed = running_solver.stride(1)
-        assert elapsed > 0.0
+        assert running_solver.stride(1) == 0
+        assert running_solver.elapsed > 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -229,10 +236,10 @@ class TestModuleLevelRun:
 class TestSolverErrors:
     """Error paths and invalid usage."""
 
-    def test_open_nonexistent_raises(self, tmp_path):
+    def test_open_nonexistent_returns_rc(self, tmp_path):
+        # open() now returns a non-zero error code rather than raising.
         s = Solver(NON_EXISTENT_INP, str(tmp_path / "x.rpt"), str(tmp_path / "x.out"))
-        with pytest.raises(RuntimeError):
-            s.open()
+        assert s.open() != 0
 
     def test_double_destroy_safe(self, solver_files):
         inp, rpt, out = solver_files

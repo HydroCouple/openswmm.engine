@@ -12,8 +12,10 @@
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
 #include "../../core/SWMMEngine.hpp"
+#include "../mesh/MeshBuilder.hpp"
 
 #include <cstring>
+#include <cstdint>
 #include <algorithm>
 
 // Helper macros for common validation patterns
@@ -89,6 +91,17 @@ int swmm_2d_vertex_get_xyz_bulk(SWMM_Engine engine,
     std::memcpy(x, m.vx.data(), nv * sizeof(double));
     std::memcpy(y, m.vy.data(), nv * sizeof(double));
     std::memcpy(z, m.vz.data(), nv * sizeof(double));
+    return SWMM_OK;
+}
+
+int swmm_2d_set_vertex_z(SWMM_Engine engine, int idx, double z) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_VERT_IDX(idx, router2d);
+
+    auto& m = router2d.mesh();
+    m.vz[idx] = z;
+    openswmm::twoD::recomputeVertexZDependents(m, idx);
     return SWMM_OK;
 }
 
@@ -284,6 +297,31 @@ int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine, double* fluxes) {
     auto& s = router2d.state();
     std::memcpy(fluxes, s.coupling_flux.data(),
                 s.coupling_flux.size() * sizeof(double));
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine, double* flux) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!flux) return SWMM_ERR_BADPARAM;
+
+    auto& s = router2d.state();
+    std::memcpy(flux, s.edge_flux.data(),
+                s.edge_flux.size() * sizeof(double));
+    return SWMM_OK;
+}
+
+int swmm_2d_edge_get_geometry_bulk(SWMM_Engine engine,
+                                     double* length, double* nx, double* ny) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!length || !nx || !ny) return SWMM_ERR_BADPARAM;
+
+    auto& m = router2d.mesh();
+    const size_t n3 = m.edge_length.size();
+    std::memcpy(length, m.edge_length.data(), n3 * sizeof(double));
+    std::memcpy(nx,     m.edge_nx.data(),     n3 * sizeof(double));
+    std::memcpy(ny,     m.edge_ny.data(),     n3 * sizeof(double));
     return SWMM_OK;
 }
 
@@ -489,6 +527,214 @@ int swmm_2d_set_abs_tolerance(SWMM_Engine engine, double atol) {
 
     const_cast<openswmm::twoD::SolverOptions2D&>(router2d.options()).abs_tolerance
         = atol;
+    return SWMM_OK;
+}
+
+// ============================================================================
+// 2D Boundary Conditions (per-edge)
+// ============================================================================
+//
+// Edges are addressed as (tri_idx, edge) where edge ∈ {0,1,2} is the local
+// edge opposite vertex `edge`. Boundary edges are those whose neighbour
+// triangle index (mesh.tri_nbr{0,1,2}) is -1; per-edge BC storage is allocated
+// for every edge but only meaningful for boundary edges.
+
+namespace {
+
+inline int tri_nbr(const openswmm::twoD::MeshData& mesh, int t, int e) {
+    switch (e) {
+        case 0:  return mesh.tri_nbr0[t];
+        case 1:  return mesh.tri_nbr1[t];
+        default: return mesh.tri_nbr2[t];
+    }
+}
+
+} // namespace
+
+int swmm_2d_boundary_edge_count(SWMM_Engine engine, int* count) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!count) return SWMM_ERR_BADPARAM;
+
+    const auto& mesh = router2d.mesh();
+    int n = 0;
+    for (int t = 0; t < mesh.n_triangles(); ++t) {
+        if (mesh.tri_nbr0[t] < 0) ++n;
+        if (mesh.tri_nbr1[t] < 0) ++n;
+        if (mesh.tri_nbr2[t] < 0) ++n;
+    }
+    *count = n;
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
+                              int* bc_type) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2 || !bc_type) return SWMM_ERR_BADPARAM;
+
+    *bc_type = router2d.boundary().edge_bc_type[tri_idx * 3 + edge];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
+                              int bc_type) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    if (bc_type != SWMM_2D_BC_WALL &&
+        bc_type != SWMM_2D_BC_NORMAL_FLOW &&
+        bc_type != SWMM_2D_BC_SPECIFIED_STAGE &&
+        bc_type != SWMM_2D_BC_SPECIFIED_FLOW &&  // V-E4
+        bc_type != SWMM_2D_BC_RATING_CURVE) {    // V-E5
+        return SWMM_ERR_BADPARAM;
+    }
+
+    router2d.boundary().edge_bc_type[tri_idx * 3 + edge] =
+        static_cast<int8_t>(bc_type);
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
+                              double* head) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2 || !head) return SWMM_ERR_BADPARAM;
+
+    *head = router2d.boundary().edge_bc_head[tri_idx * 3 + edge];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
+                              double head) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+
+    router2d.boundary().edge_bc_head[tri_idx * 3 + edge] = head;
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_bc_slope(SWMM_Engine engine, int tri_idx, int edge,
+                               double* slope) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2 || !slope) return SWMM_ERR_BADPARAM;
+
+    *slope = router2d.boundary().edge_bed_slope[tri_idx * 3 + edge];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_edge_bc_slope(SWMM_Engine engine, int tri_idx, int edge,
+                               double slope) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    if (slope < 0.0) return SWMM_ERR_BADPARAM;
+
+    router2d.boundary().edge_bed_slope[tri_idx * 3 + edge] = slope;
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_bc_cum_flux(SWMM_Engine engine, int tri_idx, int edge,
+                                  double* cum_flux) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2 || !cum_flux) return SWMM_ERR_BADPARAM;
+
+    *cum_flux = router2d.boundary().edge_bc_cum_flux[tri_idx * 3 + edge];
+    return SWMM_OK;
+}
+
+// =============================================================================
+// V-E2 / V-E4 / V-E5 — TS-name + SPECIFIED_FLOW + RATING_CURVE storage APIs.
+// Solver flux integration deferred to V-E-FLUX; today these are storage-only
+// (the solver still walls every boundary edge regardless of type).
+// =============================================================================
+
+int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine, int tri_idx, int edge,
+                                       const char* name) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+
+    const int idx = tri_idx * 3 + edge;
+    auto& b = router2d.boundary();
+    if (!name || name[0] == '\0') {
+        b.edge_bc_tseries_name[idx].clear();
+        b.edge_bc_tseries[idx] = -1;
+    } else {
+        b.edge_bc_tseries_name[idx] = name;
+        b.edge_bc_tseries[idx]      = -2;  // deferred resolution
+    }
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_bc_flow(SWMM_Engine engine, int tri_idx, int edge,
+                               double* flow) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2 || !flow) return SWMM_ERR_BADPARAM;
+
+    *flow = router2d.boundary().edge_bc_flow[tri_idx * 3 + edge];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_edge_bc_flow(SWMM_Engine engine, int tri_idx, int edge,
+                               double flow) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+
+    router2d.boundary().edge_bc_flow[tri_idx * 3 + edge] = flow;
+    return SWMM_OK;
+}
+
+int swmm_2d_set_edge_bc_flow_tseries_name(SWMM_Engine engine, int tri_idx, int edge,
+                                            const char* name) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+
+    const int idx = tri_idx * 3 + edge;
+    auto& b = router2d.boundary();
+    if (!name || name[0] == '\0') {
+        b.edge_bc_flow_tseries_name[idx].clear();
+        b.edge_bc_flow_tseries[idx] = -1;
+    } else {
+        b.edge_bc_flow_tseries_name[idx] = name;
+        b.edge_bc_flow_tseries[idx]      = -2;
+    }
+    return SWMM_OK;
+}
+
+int swmm_2d_set_edge_bc_rating_curve_name(SWMM_Engine engine, int tri_idx, int edge,
+                                            const char* name) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+
+    const int idx = tri_idx * 3 + edge;
+    auto& b = router2d.boundary();
+    if (!name || name[0] == '\0') {
+        b.edge_bc_rating_curve_name[idx].clear();
+        b.edge_bc_rating_curve[idx] = -1;
+    } else {
+        b.edge_bc_rating_curve_name[idx] = name;
+        b.edge_bc_rating_curve[idx]      = -2;
+    }
     return SWMM_OK;
 }
 

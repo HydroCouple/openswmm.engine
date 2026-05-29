@@ -15,7 +15,7 @@
  * @ingroup engine_data
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -187,6 +187,13 @@ struct GageData {
     std::vector<double>         cumul_rain_accum;
 
     /**
+     * @brief Object comment from the INP file (';'-prefixed lines immediately
+     *        above this gage's data row), joined by literal "\\n".
+     *        Empty string means no comment.
+     */
+    std::vector<std::string>    comments;
+
+    /**
      * @brief Gap #53: Co-gage index — index of the primary gage sharing the
      *        same timeseries, or -1 if this gage reads independently.
      * @details When two gages use the same TIMESERIES source and the same
@@ -225,6 +232,56 @@ struct GageData {
         past_rain_time.assign(un, 0.0);
         cumul_rain_accum.assign(un, 0.0);
         co_gage_index.assign(un, -1);
+        comments.assign(un, std::string{});
+    }
+
+    /**
+     * @brief Append one new gage with defaults, preserving existing data.
+     * @details Uses std::vector::resize (extend-only) so existing gages are
+     *          not overwritten. Call instead of resize() when adding a single
+     *          gage interactively.
+     */
+    void grow_to(int n) {
+        if (n <= count()) return;
+        const auto un = static_cast<std::size_t>(n);
+        auto g = [&](auto& v, auto def) { v.resize(un, def); };
+        g(rain_type, 0); g(source, RainSource::TIMESERIES); g(ts_index, -1);
+        ts_name.resize(un, std::string{});
+        file_path.resize(un, std::string{});
+        col_name.resize(un, std::string{});
+        g(file_format, RainFileFormat::UNKNOWN); g(interval_sec, 3600); g(snow_factor, 1.0);
+        g(rainfall, 0.0); g(next_rainfall, 0.0);
+        g(api_rainfall, -1.0); g(next_rain_date, 0.0); g(is_raining, false);
+        // Flat 2D: [gage * MAXPASTRAIN + hour]
+        past_rain.resize(un * static_cast<std::size_t>(MAXPASTRAIN), 0.0);
+        g(past_rain_accum, 0.0); g(past_rain_time, 0.0); g(cumul_rain_accum, 0.0);
+        g(co_gage_index, -1);
+        comments.resize(un, std::string{});
+    }
+
+    /**
+     * @brief Erase the rain gage at index `idx` from every parallel array.
+     *
+     * @details Removes element `idx` from every SoA vector. The flat-2D
+     *          past_rain array ([gage * MAXPASTRAIN + hour]) has its full
+     *          stride for `idx` removed. Spatial arrays are erased separately.
+     */
+    void erase_at(int idx) {
+        const auto ui = static_cast<std::size_t>(idx);
+        auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
+
+        e(rain_type); e(source); e(ts_index); e(ts_name);
+        e(file_path); e(col_name); e(file_format); e(interval_sec); e(snow_factor);
+        e(rainfall); e(next_rainfall); e(api_rainfall); e(next_rain_date); e(is_raining);
+        e(past_rain_accum); e(past_rain_time); e(cumul_rain_accum); e(co_gage_index);
+        e(comments);
+
+        // Flat 2D past_rain: [gage * MAXPASTRAIN + hour]
+        const auto base = ui * static_cast<std::size_t>(MAXPASTRAIN);
+        const auto end  = base + static_cast<std::size_t>(MAXPASTRAIN);
+        if (end <= past_rain.size())
+            past_rain.erase(past_rain.begin() + static_cast<std::ptrdiff_t>(base),
+                            past_rain.begin() + static_cast<std::ptrdiff_t>(end));
     }
 
     /**
@@ -252,6 +309,7 @@ struct GageData {
         past_rain_time.shrink_to_fit();
         cumul_rain_accum.shrink_to_fit();
         co_gage_index.shrink_to_fit();
+        comments.shrink_to_fit();
     }
 
     void reset_state() noexcept {

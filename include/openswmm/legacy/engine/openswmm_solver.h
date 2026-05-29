@@ -256,6 +256,8 @@ typedef enum
     swmm_NODE_POLLUTANT_CONCENTRATION,
     /*! \brief Pollutant lateral mass flux inflow */
     swmm_NODE_POLLUTANT_LATMASS_FLUX,
+    /*! \brief Total outflow */
+    swmm_NODE_OUTFLOW,
 } swmm_NodeProperty;
 
 /*!

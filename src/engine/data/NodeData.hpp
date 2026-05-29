@@ -18,7 +18,7 @@
  * @ingroup engine_data
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -159,6 +159,25 @@ struct NodeData {
      *         in outfall_link_idx. Zero for non-outfalls. */
     std::vector<double>     outfall_link_offset;
 
+    /**
+     * @brief Cached 2D surface head at the outfall coupling point (project length).
+     *
+     * @details Populated by SurfaceRouter2D::updateOutfallsPreRouting at the
+     *          start of every routing step for 2D-coupled outfalls; left at
+     *          the sentinel value (-1e30) for non-coupled outfalls and for
+     *          non-outfall nodes. Read inside Outfall::setAllOutfallDepths to
+     *          apply the C4 tailwater override (max(h_standard, h_2d) when
+     *          h_2d > invert_elev, gated by the optional flap gate).
+     *
+     *          The sentinel is chosen so that the predicate `h_2d > z_inv`
+     *          is false by construction for every non-coupled outfall, which
+     *          keeps the legacy path bit-for-bit unchanged when no 2D module
+     *          is attached.
+     *
+     * @see docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C4)
+     */
+    std::vector<double>     outfall_2d_head;
+
     // -----------------------------------------------------------------------
     // Storage-specific properties (valid when type[i] == STORAGE)
     // -----------------------------------------------------------------------
@@ -287,6 +306,29 @@ struct NodeData {
     /** @brief Interface file (upstream model coupling) inflows (project flow units). */
     std::vector<double>     iface_inflow;
 
+    /**
+     * @brief 2D ↔ 1D coupling exchange flow at the node (project flow units).
+     *
+     * @details Signed: positive = 2D → 1D (surface drainage into the node),
+     *          negative = 1D → 2D (surcharge spill onto the surface).
+     *          Written by SurfaceRouter2D::advancePostRouting at the end of
+     *          step N; read by assembleLateralInflows at the start of step
+     *          N+1 (so the value persists across the step boundary and is
+     *          consumed exactly once by the DW solver).
+     *
+     *          For mass-balance accounting the signed value is split:
+     *          - positive side folds into step_ext_inflow → routing_external
+     *          - negative side folds into routing_flooding (absolute value)
+     *
+     *          This replaces the earlier scheme of routing coupling Q through
+     *          forcing.node_lat_inflow_value, which conflated user forcing
+     *          with 2D coupling and dropped the negative (1D→2D) volume from
+     *          the mass balance entirely.
+     *
+     * @see docs/1D_2D_COUPLING_GATE_REVIEW.md §11
+     */
+    std::vector<double>     coupling_inflow;
+
     // -----------------------------------------------------------------------
     // Quality mass inflow assembly arrays
     // assembleQualityInflows() writes these; mixAtNodes() reads them.
@@ -409,6 +451,34 @@ struct NodeData {
 
     /** @brief Lateral flow at the previous timestep. */
     std::vector<double>     old_lat_flow;
+
+    // -----------------------------------------------------------------------
+    // Per-object INP comment
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Object comment from the INP file (lines with a single ';' prefix
+     *        immediately above this object's data row).
+     *
+     * @details Multiple comment lines are joined by the literal two-character
+     *          token "\\n" (backslash + n).  Empty string means no comment.
+     *          Written back to INP by InpWriter as one ';'-prefixed row per
+     *          part.  Also stored verbatim in the GeoPackage 'comment' column.
+     */
+    std::vector<std::string> comments;
+
+    /**
+     * @brief Per-object tag from the INP `[TAGS]` section.
+     *
+     * @details Free-form string label, used by GUIs for filtering and grouping
+     *          (e.g. catchment-name labels, asset IDs, user-defined groups).
+     *          Empty string means no tag. Written back to INP by InpWriter as
+     *          a `Node <name> <tag>` row in `[TAGS]`. Index-keyed (per-`NodeData`
+     *          field) so `swmm_node_rename` keeps the tag attached — the
+     *          earlier name-keyed `SimulationContext::node_tags` map lost
+     *          tags on rename.
+     */
+    std::vector<std::string> tags;
 
     // -----------------------------------------------------------------------
     // Report flag — per-object output filter
@@ -565,6 +635,7 @@ struct NodeData {
         outfall_route_to.assign(un, -1);
         outfall_link_idx.assign(un, -1);
         outfall_link_offset.assign(un, 0.0);
+        outfall_2d_head.assign(un, -1.0e30);
 
         storage_curve.assign(un, -1);
         storage_curve_name.resize(un);
@@ -599,6 +670,7 @@ struct NodeData {
         dwf_inflow.assign(un, 0.0);
         rdii_inflow.assign(un, 0.0);
         iface_inflow.assign(un, 0.0);
+        coupling_inflow.assign(un, 0.0);
         qual_mass_in.clear();
         qual_vol_in.assign(un, 0.0);
         lid_drain_qual_load.clear();
@@ -614,6 +686,9 @@ struct NodeData {
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
         old_lat_flow.assign(un, 0.0);
+
+        comments.assign(un, std::string{});
+        tags.assign(un, std::string{});
 
         rpt_flag.assign(un, 0);
 
@@ -657,6 +732,7 @@ struct NodeData {
         g(outfall_type, OutfallType::FREE); g(outfall_param, 0.0);
         g(outfall_has_flap_gate, uint8_t{0}); g(outfall_route_to, -1);
         g(outfall_link_idx, -1); g(outfall_link_offset, 0.0);
+        g(outfall_2d_head, -1.0e30);
         g(storage_curve, -1); storage_curve_name.resize(un);
         g(storage_a, 0.0); g(storage_b, 0.0); g(storage_c, 0.0);
         g(storage_seep_rate, 0.0); g(storage_evap_frac, 0.0);
@@ -670,12 +746,16 @@ struct NodeData {
         g(lat_flow, 0.0); g(user_lat_flow, 0.0);
         g(runoff_inflow, 0.0); g(gw_inflow, 0.0); g(ext_inflow, 0.0);
         g(dwf_inflow, 0.0); g(rdii_inflow, 0.0); g(iface_inflow, 0.0);
+        g(coupling_inflow, 0.0);
         qual_vol_in.resize(un, 0.0);
         lid_drain_qual_vol.resize(un, 0.0);
         g(inflow, 0.0); g(outflow, 0.0); g(overflow, 0.0);
         g(losses, 0.0); g(crown_elev, 0.0); g(degree, 0);
         g(old_net_inflow, 0.0); g(full_volume, 0.0);
         g(old_depth, 0.0); g(old_volume, 0.0); g(old_lat_flow, 0.0);
+        comments.resize(un, std::string{});
+        tags.resize(un, std::string{});
+
         g(rpt_flag, static_cast<char>(0));
         g(stat_vol_flooded, 0.0); g(stat_time_flooded, 0.0);
         g(stat_max_depth, 0.0); g(stat_max_overflow, 0.0);
@@ -690,6 +770,77 @@ struct NodeData {
         g(stat_outfall_periods, 0L);
         g(stat_non_converged_count, 0); g(stat_time_courant_critical, 0.0);
         // Note: qual_mass_in, conc, conc_old, hrt handled by resize_quality()
+    }
+
+    /**
+     * @brief Erase the node at index `idx` from every parallel array.
+     *
+     * @details Removes the element at `idx` from every SoA vector. For flat-2D
+     *          quality arrays indexed as [node * n_pollutants + p], the full
+     *          stride for `idx` is removed. Spatial arrays are NOT touched here;
+     *          ObjectDeleter erases spatial data separately after calling this.
+     *          Only call in BUILDING or OPENED state.
+     */
+    void erase_at(int idx) {
+        const auto ui = static_cast<std::size_t>(idx);
+        auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
+
+        e(type); e(invert_elev); e(full_depth); e(init_depth); e(sur_depth); e(ponded_area);
+
+        e(outfall_type); e(outfall_param); e(outfall_has_flap_gate);
+        e(outfall_route_to); e(outfall_link_idx); e(outfall_link_offset);
+        e(outfall_2d_head);
+
+        e(storage_curve); e(storage_curve_name);
+        e(storage_a); e(storage_b); e(storage_c);
+        e(storage_seep_rate); e(storage_evap_frac); e(storage_evap_loss); e(storage_exfil_loss);
+        e(exfil_suction); e(exfil_ksat); e(exfil_imd);
+
+        e(divider_type); e(divider_cutoff); e(divider_cd); e(divider_max_depth);
+        e(divider_curve); e(divider_link); e(divider_link_name); e(divider_curve_name);
+
+        e(depth); e(head); e(volume);
+        e(lat_flow); e(user_lat_flow);
+        e(runoff_inflow); e(gw_inflow); e(ext_inflow); e(dwf_inflow);
+        e(rdii_inflow); e(iface_inflow);
+        e(coupling_inflow);
+        e(qual_vol_in); e(lid_drain_qual_vol);
+        e(inflow); e(outflow); e(overflow); e(losses);
+        e(crown_elev); e(degree); e(old_net_inflow); e(full_volume);
+        e(old_depth); e(old_volume); e(old_lat_flow);
+        e(comments); e(tags); e(rpt_flag);
+
+        e(stat_vol_flooded); e(stat_time_flooded); e(stat_max_depth); e(stat_max_overflow);
+        e(stat_max_overflow_date); e(stat_sum_depth); e(stat_max_depth_date);
+        e(stat_max_rpt_depth); e(stat_max_inflow_date); e(stat_time_surcharged);
+        e(stat_max_surcharge_height); e(stat_outfall_avg_flow); e(stat_max_lat_inflow);
+        e(stat_max_total_inflow); e(stat_lat_inflow_vol); e(stat_total_inflow_vol);
+        e(stat_total_outflow_vol); e(stat_outfall_max_flow); e(stat_outfall_periods);
+        e(stat_non_converged_count); e(stat_time_courant_critical);
+
+        // Flat 2D quality arrays: [node * np + p] → erase the stride for idx
+        if (conc_n_pollutants > 0) {
+            const auto np = static_cast<std::size_t>(conc_n_pollutants);
+            const auto base = ui * np;
+            auto erase2d = [&](auto& v) {
+                if (base + np <= v.size())
+                    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
+                            v.begin() + static_cast<std::ptrdiff_t>(base + np));
+            };
+            erase2d(conc); erase2d(conc_old);
+            erase2d(qual_mass_in); erase2d(lid_drain_qual_load); erase2d(user_conc_mass_flux);
+            if (ui < hrt.size()) hrt.erase(hrt.begin() + static_cast<std::ptrdiff_t>(idx));
+        }
+
+        // Flat 2D stat load: [node * np + p]
+        if (stat_n_pollutants > 0) {
+            const auto np = static_cast<std::size_t>(stat_n_pollutants);
+            const auto base = ui * np;
+            if (base + np <= stat_total_load.size())
+                stat_total_load.erase(
+                    stat_total_load.begin() + static_cast<std::ptrdiff_t>(base),
+                    stat_total_load.begin() + static_cast<std::ptrdiff_t>(base + np));
+        }
     }
 
     /**
@@ -742,6 +893,7 @@ struct NodeData {
         outfall_route_to.shrink_to_fit();
         outfall_link_idx.shrink_to_fit();
         outfall_link_offset.shrink_to_fit();
+        outfall_2d_head.shrink_to_fit();
 
         storage_curve.shrink_to_fit();
         storage_curve_name.shrink_to_fit();
@@ -776,6 +928,7 @@ struct NodeData {
         dwf_inflow.shrink_to_fit();
         rdii_inflow.shrink_to_fit();
         iface_inflow.shrink_to_fit();
+        coupling_inflow.shrink_to_fit();
         qual_mass_in.shrink_to_fit();
         qual_vol_in.shrink_to_fit();
         conc.shrink_to_fit();
@@ -792,6 +945,9 @@ struct NodeData {
         old_depth.shrink_to_fit();
         old_volume.shrink_to_fit();
         old_lat_flow.shrink_to_fit();
+
+        comments.shrink_to_fit();
+        tags.shrink_to_fit();
 
         rpt_flag.shrink_to_fit();
 
@@ -856,6 +1012,10 @@ struct NodeData {
         std::fill(losses.begin(),   losses.end(),   0.0);
         std::fill(old_net_inflow.begin(), old_net_inflow.end(), 0.0);
         std::fill(old_lat_flow.begin(), old_lat_flow.end(), 0.0);
+        // coupling_inflow is NOT cleared by clearInflowSources (its end-of-
+        // step value must persist into the next step's assembly), so zero it
+        // explicitly on cold start.
+        std::fill(coupling_inflow.begin(), coupling_inflow.end(), 0.0);
         clearInflowSources();
         std::fill(conc.begin(), conc.end(), 0.0);
         std::fill(conc_old.begin(), conc_old.end(), 0.0);

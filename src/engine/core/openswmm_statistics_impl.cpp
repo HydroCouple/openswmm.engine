@@ -6,7 +6,7 @@
  * @ingroup engine_api
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -192,6 +192,96 @@ SWMM_ENGINE_API int swmm_stat_spectral_corrections(SWMM_Engine engine,
     if (attempted) *attempted = sc.corrections_attempted;
     if (accepted)  *accepted  = sc.corrections_accepted;
     if (rejected)  *rejected  = sc.corrections_rejected;
+    return SWMM_OK;
+}
+
+// ----------------------------------------------------------------------------
+// Phase 3 statistics bulk getters — node max_overflow, vol_flooded,
+// time_flooded; subcatch max_runoff.
+// ----------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_stat_node_max_overflow_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_nodes());
+    std::copy(ctx.nodes.stat_max_overflow.begin(),
+              ctx.nodes.stat_max_overflow.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_stat_node_vol_flooded_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_nodes());
+    std::copy(ctx.nodes.stat_vol_flooded.begin(),
+              ctx.nodes.stat_vol_flooded.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_stat_node_time_flooded_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_nodes());
+    std::copy(ctx.nodes.stat_time_flooded.begin(),
+              ctx.nodes.stat_time_flooded.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_stat_subcatch_max_runoff_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    std::copy(ctx.subcatches.stat_max_runoff.begin(),
+              ctx.subcatches.stat_max_runoff.begin() + n, buf);
+    return SWMM_OK;
+}
+
+// ----------------------------------------------------------------------------
+// Phase 4e: link-stat bulks (max_velocity, max_filling, vol_flow,
+// surcharge_time).
+// ----------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_stat_link_max_velocity_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    std::copy(ctx.links.stat_max_veloc.begin(),
+              ctx.links.stat_max_veloc.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_stat_link_max_filling_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    std::copy(ctx.links.stat_max_filling.begin(),
+              ctx.links.stat_max_filling.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_stat_link_vol_flow_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    std::copy(ctx.links.stat_vol_flow.begin(),
+              ctx.links.stat_vol_flow.begin() + n, buf);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_stat_link_surcharge_time_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_links());
+    std::copy(ctx.links.stat_time_surcharged.begin(),
+              ctx.links.stat_time_surcharged.begin() + n, buf);
     return SWMM_OK;
 }
 

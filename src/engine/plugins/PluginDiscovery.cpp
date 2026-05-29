@@ -3,13 +3,16 @@
  * @brief Public filter-discovery facade — implementation.
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #include "../../../include/openswmm/plugin_sdk/PluginDiscovery.hpp"
 
 #include "PluginFactory.hpp"
+
+#include <algorithm>
+#include <unordered_map>
 
 namespace openswmm {
 
@@ -24,9 +27,48 @@ std::vector<DiscoveredFilter> discover_all_filters() {
             df.plugin_id      = c.id;
             df.plugin_version = c.version;
             df.plugin_caption = c.info->caption();
+            df.is_builtin     = c.is_builtin;   // Slice RC.3
             df.filter         = std::move(f);
             out.push_back(std::move(df));
         }
+    }
+
+    return out;
+}
+
+std::vector<DiscoveredPlugin> discover_plugins_by_id() {
+    // Walk discover_all_filters() once and fold entries by plugin_id.
+    // Index map keeps O(1) lookup; a parallel vector preserves
+    // first-encounter order for callers that want stable iteration.
+    std::vector<DiscoveredPlugin> out;
+    std::unordered_map<std::string, std::size_t> idx;
+
+    for (auto& df : discover_all_filters()) {
+        auto it = idx.find(df.plugin_id);
+        DiscoveredPlugin* dp;
+        if (it == idx.end()) {
+            DiscoveredPlugin entry;
+            entry.plugin_id      = df.plugin_id;
+            entry.plugin_version = df.plugin_version;
+            entry.plugin_caption = df.plugin_caption;
+            entry.is_builtin     = df.is_builtin;   // Slice RC.3
+            out.push_back(std::move(entry));
+            idx.emplace(df.plugin_id, out.size() - 1);
+            dp = &out.back();
+        } else {
+            dp = &out[it->second];
+            // Defensive: if the same plugin_id surfaces from both a
+            // built-in and a discovered .so (shouldn't happen, but
+            // would indicate a duplicate-registration bug), keep the
+            // built-in marker so the GUI greys out Remove correctly.
+            dp->is_builtin = dp->is_builtin || df.is_builtin;
+        }
+
+        // Accumulate role (deduplicated) and the filter itself.
+        const PluginRole role = df.filter.role;
+        if (std::find(dp->roles.begin(), dp->roles.end(), role) == dp->roles.end())
+            dp->roles.push_back(role);
+        dp->filters.push_back(std::move(df.filter));
     }
 
     return out;

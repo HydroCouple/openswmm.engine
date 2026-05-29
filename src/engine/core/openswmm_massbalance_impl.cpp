@@ -6,7 +6,7 @@
  * @ingroup engine_api
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -108,6 +108,7 @@ SWMM_ENGINE_API int swmm_get_routing_total(SWMM_Engine engine, int component, do
         case SWMM_ROUTING_SEEP_LOSS:     *volume = mb.routing_seep_loss;     break;
         case SWMM_ROUTING_INIT_STORAGE:  *volume = mb.routing_init_storage;  break;
         case SWMM_ROUTING_FINAL_STORAGE: *volume = mb.routing_final_storage; break;
+        case SWMM_ROUTING_FORCING_INFLOW: *volume = mb.routing_forcing_inflow; break;
         default: return SWMM_ERR_BADPARAM;
     }
     return SWMM_OK;

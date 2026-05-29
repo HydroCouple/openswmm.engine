@@ -51,7 +51,7 @@ set_target_properties(test_engine_regression PROPERTIES
 add_test(
     NAME    regression_example1
     COMMAND $<TARGET_FILE:test_engine_regression>
-            --gtest_filter="RegressionTest/RegressionTest*"
+            --gtest_filter=RegressionTest/RegressionTest*
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 set_tests_properties(regression_example1 PROPERTIES LABELS "regression")
@@ -61,3 +61,12 @@ add_custom_command(TARGET test_engine_regression POST_BUILD
         $<TARGET_FILE:test_engine_regression>
         ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:test_engine_regression>
 )
+
+# Stage every runtime shared library the test depends on (project libs +
+# vcpkg imported targets like SUNDIALS / HDF5 / sqlite3 / libomp) next to
+# the exe. On Windows, the loader fails with STATUS_DLL_NOT_FOUND otherwise.
+# On Unix the rpath finds dylibs in lib/ at install time, but ctest runs
+# from the build tree where the engine dylibs live in a sibling dir; the
+# helper colocates them next to the test exe so $<ORIGIN>/@loader_path
+# resolves them.
+openswmm_stage_test_runtime_deps(test_engine_regression)

@@ -1,212 +1,178 @@
 """
-Runtime Forcing
-===============
+Runtime forcing (Pythonic v1 surface)
+=====================================
 
 :author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
+:copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
-The :class:`Forcing` class provides advanced runtime forcing of node, link,
-subcatchment, and gage values during a simulation.  Unlike the simple
-``set_*`` methods on the domain classes, forcing supports **mode** (replace
-or add) and **persistence** (single-step vs. held until cleared).
-
-The forcing API is accessed via :attr:`Solver.forcing`:
+The :class:`Forcing` view, reached via ``solver.forcing``, applies
+runtime overrides to node/link/subcatchment/gage state.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, ForcingMode
+    from openswmm.engine import Solver, ForcingMode, ForcingTarget
 
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        # Apply a persistent lateral inflow of 1.5 at node "J1"
-        j1 = s.nodes.get_index("J1")
-        s.forcing.node_lat_inflow(j1, 1.5, ForcingMode.REPLACE, persist=True)
+    with Solver("model.inp") as s:
+        # One-shot: replaces the engine-computed value for the next step.
+        s.forcing.node_lat_inflow("J1", 0.5)
 
-        while s.step():
-            pass  # inflow stays applied every step
+        # Sticky: persists every step until cleared.
+        s.forcing.node_lat_inflow(
+            "J1", 0.5, mode=ForcingMode.REPLACE, persist=True)
 
-        # Clear all forcing before ending
+        # Run.
+        for _ in s.steps():
+            pass
+
+        # Clear.
+        s.forcing.clear(ForcingTarget.NODE, "J1")
         s.forcing.clear_all()
-
-Forcing modes
--------------
-
-=================  ===========================================================
-Mode               Behaviour
-=================  ===========================================================
-``REPLACE`` (0)    The forced value **replaces** the model-computed value.
-``ADD`` (1)        The forced value is **added** to the model-computed value.
-=================  ===========================================================
-
-Persistence
------------
-
-When ``persist=False`` (default), the forcing is applied for a single
-timestep and automatically removed.  When ``persist=True`` the value is
-held every step until explicitly removed with :meth:`clear` or
-:meth:`clear_all`.
 """
 
 # cython: language_level=3
 
 from ._common cimport *
+from ._enums import ForcingMode, ForcingTarget
+
+
+cdef inline SWMM_Engine _h(solver):
+    return <SWMM_Engine><size_t>solver.handle
+
+
+cdef inline int _resolve_node(solver, key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_node_index, swmm_node_count, "Node")
+
+
+cdef inline int _resolve_link(solver, key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_link_index, swmm_link_count, "Link")
+
+
+cdef inline int _resolve_subcatch(solver, key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_subcatch_index, swmm_subcatch_count,
+        "Subcatchment")
+
+
+cdef inline int _resolve_gage(solver, key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_gage_index, swmm_gage_count, "Gage")
+
+
+cdef inline int _resolve_pollutant(solver, key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_pollutant_index, swmm_pollutant_count, "Pollutant")
 
 
 class Forcing:
-    """Advanced runtime forcing for nodes, links, subcatchments, and gages.
+    """Runtime forcing accessor exposed as ``solver.forcing``.
 
-    :param solver: An active :class:`~openswmm.engine.Solver` instance.
-        The solver must remain alive for the lifetime of this object.
+    Every entry point takes:
 
-    All per-element methods accept an integer index.  Use the corresponding
-    domain accessor (e.g. ``solver.nodes.get_index("J1")``) to resolve
-    string IDs to indices.
+    * The object as ``int | str`` (or a wrapper — its index is used).
+    * ``mode`` defaulting to :attr:`ForcingMode.REPLACE`; can be
+      :attr:`ForcingMode.ADD` for additive forcing.
+    * ``persist`` defaulting to ``False`` (one-shot for the next step).
+
+    All methods raise :class:`EngineError` on C API failure.
     """
 
     def __init__(self, solver):
         self._solver = solver
 
-    # ------------------------------------------------------------------
-    # Node forcing
-    # ------------------------------------------------------------------
+    # ---- Node forcing ---------------------------------------------
 
-    def node_lat_inflow(self, int idx, double value, int mode=0,
-                        bint persist=False):
-        """Force a lateral inflow at a node.
-
-        :param idx: Node index.
-        :param value: Lateral inflow rate (project flow units).
-        :param mode: :class:`~openswmm.engine.ForcingMode` — ``REPLACE`` (0)
-            or ``ADD`` (1).
-        :param persist: If ``True``, hold the value every step until cleared.
-        """
+    def node_lat_inflow(self, node, double value, *,
+                        mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        cdef int i = _resolve_node(self._solver, node)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_forcing_node_lat_inflow(h, idx, value, mode,
-                                             1 if persist else 0))
+        _check(swmm_forcing_node_lat_inflow(
+            h, i, value, int(mode), 1 if persist else 0))
 
-    def node_head_boundary(self, int idx, double value, int mode=0,
-                           bint persist=False):
-        """Force a head boundary condition at a node.
-
-        :param idx: Node index.
-        :param value: Boundary head (project length units).
-        :param mode: :class:`~openswmm.engine.ForcingMode`.
-        :param persist: Hold until cleared.
-        """
+    def node_head_boundary(self, node, double value, *,
+                           mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        cdef int i = _resolve_node(self._solver, node)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_forcing_node_head_boundary(h, idx, value, mode,
-                                                1 if persist else 0))
+        _check(swmm_forcing_node_head_boundary(
+            h, i, value, int(mode), 1 if persist else 0))
 
-    def node_quality(self, int node_idx, int pollutant_idx,
-                     double mass_rate, int mode=0, bint persist=False):
-        """Force a pollutant mass-rate injection at a node.
-
-        :param node_idx: Node index.
-        :param pollutant_idx: Pollutant index.
-        :param mass_rate: Mass rate (mass / time).
-        :param mode: :class:`~openswmm.engine.ForcingMode`.
-        :param persist: Hold until cleared.
-        """
+    def node_quality(self, node, pollutant, double mass_rate, *,
+                     mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        cdef int ni = _resolve_node(self._solver, node)
+        cdef int pi = _resolve_pollutant(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_forcing_node_quality(h, node_idx, pollutant_idx,
-                                          mass_rate, mode,
-                                          1 if persist else 0))
+        _check(swmm_forcing_node_quality(
+            h, ni, pi, mass_rate, int(mode), 1 if persist else 0))
 
-    # ------------------------------------------------------------------
-    # Link forcing
-    # ------------------------------------------------------------------
+    # ---- Link forcing ---------------------------------------------
 
-    def link_flow(self, int idx, double value, int mode=0,
-                  bint persist=False):
-        """Force a flow rate in a link.
-
-        :param idx: Link index.
-        :param value: Flow rate (project flow units).
-        :param mode: :class:`~openswmm.engine.ForcingMode`.
-        :param persist: Hold until cleared.
-        """
+    def link_flow(self, link, double value, *,
+                  mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        cdef int i = _resolve_link(self._solver, link)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_forcing_link_flow(h, idx, value, mode,
-                                       1 if persist else 0))
+        _check(swmm_forcing_link_flow(
+            h, i, value, int(mode), 1 if persist else 0))
 
-    def link_setting(self, int idx, double value, int mode=0,
-                     bint persist=False):
-        """Force a control setting on a link (pump speed, gate opening, etc.).
-
-        :param idx: Link index.
-        :param value: Setting value (0.0--1.0 for gates; speed multiplier
-            for pumps).
-        :param mode: :class:`~openswmm.engine.ForcingMode`.
-        :param persist: Hold until cleared.
-        """
+    def link_setting(self, link, double value, *,
+                     mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        cdef int i = _resolve_link(self._solver, link)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_forcing_link_setting(h, idx, value, mode,
-                                          1 if persist else 0))
+        _check(swmm_forcing_link_setting(
+            h, i, value, int(mode), 1 if persist else 0))
 
-    # ------------------------------------------------------------------
-    # Subcatchment forcing
-    # ------------------------------------------------------------------
+    # ---- Subcatchment forcing -------------------------------------
 
-    def subcatch_rainfall(self, int idx, double value, int mode=0,
-                          bint persist=False):
-        """Force a rainfall rate on a subcatchment.
-
-        :param idx: Subcatchment index.
-        :param value: Rainfall rate (project rainfall units).
-        :param mode: :class:`~openswmm.engine.ForcingMode`.
-        :param persist: Hold until cleared.
-        """
+    def subcatchment_rainfall(self, sub, double value, *,
+                              mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_forcing_subcatch_rainfall(h, idx, value, mode,
-                                               1 if persist else 0))
+        _check(swmm_forcing_subcatch_rainfall(
+            h, i, value, int(mode), 1 if persist else 0))
 
-    def subcatch_evap(self, int idx, double value, int mode=0,
-                      bint persist=False):
-        """Force an evaporation rate on a subcatchment.
-
-        :param idx: Subcatchment index.
-        :param value: Evaporation rate (project length / time units).
-        :param mode: :class:`~openswmm.engine.ForcingMode`.
-        :param persist: Hold until cleared.
-        """
+    def subcatchment_evap(self, sub, double value, *,
+                          mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_forcing_subcatch_evap(h, idx, value, mode,
-                                           1 if persist else 0))
+        _check(swmm_forcing_subcatch_evap(
+            h, i, value, int(mode), 1 if persist else 0))
 
-    # ------------------------------------------------------------------
-    # Gage forcing
-    # ------------------------------------------------------------------
+    # ---- Gage forcing ---------------------------------------------
 
-    def gage_rainfall(self, int idx, double value, int mode=0,
-                      bint persist=False):
-        """Force a rainfall rate at a rain gage.
-
-        This affects all subcatchments assigned to the gage.
-
-        :param idx: Gage index.
-        :param value: Rainfall rate (project rainfall units).
-        :param mode: :class:`~openswmm.engine.ForcingMode`.
-        :param persist: Hold until cleared.
-        """
+    def gage_rainfall(self, gage, double value, *,
+                      mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        cdef int i = _resolve_gage(self._solver, gage)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_forcing_gage_rainfall(h, idx, value, mode,
-                                           1 if persist else 0))
+        _check(swmm_forcing_gage_rainfall(
+            h, i, value, int(mode), 1 if persist else 0))
 
-    # ------------------------------------------------------------------
-    # Clear
-    # ------------------------------------------------------------------
+    # ---- Clearing -------------------------------------------------
 
-    def clear(self, int target_type, int idx):
-        """Remove all active forcing on a specific object.
+    def clear(self, target, key) -> None:
+        """Clear forcing for one object.
 
-        :param target_type: :class:`~openswmm.engine.ForcingTarget` code
-            (``NODE=0``, ``LINK=1``, ``SUBCATCH=2``, ``GAGE=3``).
-        :param idx: Object index within its type.
+        :param target: :class:`ForcingTarget` (NODE/LINK/SUBCATCH/GAGE).
+        :param key: object id or index, resolved against the matching domain.
         """
+        cdef int t = int(target)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_forcing_clear(h, target_type, idx))
+        cdef int i
+        if t == int(ForcingTarget.NODE):
+            i = _resolve_node(self._solver, key)
+        elif t == int(ForcingTarget.LINK):
+            i = _resolve_link(self._solver, key)
+        elif t == int(ForcingTarget.SUBCATCH):
+            i = _resolve_subcatch(self._solver, key)
+        elif t == int(ForcingTarget.GAGE):
+            i = _resolve_gage(self._solver, key)
+        else:
+            raise ValueError(f"unknown ForcingTarget {target!r}")
+        _check(swmm_forcing_clear(h, t, i))
 
-    def clear_all(self):
-        """Remove **all** active forcing across all object types."""
+    def clear_all(self) -> None:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_forcing_clear_all(h))
+
+    def __repr__(self) -> str:
+        return f"<Forcing for {self._solver!r}>"

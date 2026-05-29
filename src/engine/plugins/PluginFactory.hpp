@@ -33,7 +33,7 @@
  * @ingroup engine_plugins
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -148,6 +148,14 @@ public:
         bool                   has_report   = false;
         bool                   has_state_io = false;
         IPluginComponentInfo*  info = nullptr;
+
+        /// Slice RC.3 — true when this component was registered via
+        /// `register_builtin_infos` (statically linked into the engine)
+        /// rather than discovered through the on-disk shared-library scan.
+        /// Built-ins have no `dlopen` handle and a synthetic `<built-in>`
+        /// path; this flag exposes that distinction to public callers
+        /// without leaking the internal LibEntry layout.
+        bool                   is_builtin = false;
     };
     std::vector<ComponentEntry> discovered_components() const;
 

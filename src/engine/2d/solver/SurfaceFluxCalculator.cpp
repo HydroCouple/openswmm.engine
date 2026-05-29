@@ -7,7 +7,6 @@
  */
 
 #include "SurfaceFluxCalculator.hpp"
-#include "DiffusiveConductance.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -68,56 +67,54 @@ void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state,
     double eps2 = epsilon * epsilon;
 
     for (int i = 0; i < nt; ++i) {
-        // Squared L2 norms of unlimited gradients
-        double g1 = sq(state.grad_hx[i]) + sq(state.grad_hy[i]);
+        // Regularised squared L2 norms of the unlimited gradients of this
+        // cell (q0) and its three neighbours (q1..q3). Adding eps² inside
+        // each q_k makes every weight strictly positive and gives uniform
+        // 1/4 weights as all |∇h| → 0, avoiding a degenerate-division branch.
+        double q0 = sq(state.grad_hx[i]) + sq(state.grad_hy[i]) + eps2;
 
-        // Collect neighbour gradients (use cell's own if boundary)
-        double g_nbr[3];
+        double q[3];
         double gx_nbr[3], gy_nbr[3];
 
         for (int e = 0; e < 3; ++e) {
             int nbr = tri_nbr(mesh, i, e);
             if (nbr >= 0) {
-                g_nbr[e] = sq(state.grad_hx[nbr]) + sq(state.grad_hy[nbr]);
+                q[e] = sq(state.grad_hx[nbr]) + sq(state.grad_hy[nbr]) + eps2;
                 gx_nbr[e] = state.grad_hx[nbr];
                 gy_nbr[e] = state.grad_hy[nbr];
             } else {
-                g_nbr[e] = g1;
+                // Boundary: mirror the cell's own gradient.
+                q[e] = q0;
                 gx_nbr[e] = state.grad_hx[i];
                 gy_nbr[e] = state.grad_hy[i];
             }
         }
 
-        // Jawahar-Kamath weights (Eq. [23]–[24])
-        // Using 3 neighbours: weighted blend of the cell and 3 neighbour gradients
-        // Simplified to: w_k = (product of other g's + eps²) / denom
-        double g2 = g_nbr[0], g3 = g_nbr[1], g4 = g_nbr[2];
+        // Canonical Jawahar-Kamath (JK 2000) weights for 4 contributing
+        // gradients: w_k = (∏_{j≠k} q_j) / Σ_k (∏_{j≠k} q_j).
+        //
+        // The numerator for each weight is the product of the other three
+        // regularised norms — so a value with a large |∇h| (an outlier)
+        // appears in three numerators with itself absent and in zero
+        // numerators with itself present, damping its own weight as 1/q_k.
+        // Uniform inputs → all numerators equal → uniform 1/4 weights.
+        // Sum of numerators is positive by construction (each q_j ≥ eps²)
+        // so no normalisation pass is required.
+        double n0 = q[0] * q[1] * q[2];   // skip self
+        double n1 = q0   * q[1] * q[2];   // skip nbr 0
+        double n2 = q0   * q[0] * q[2];   // skip nbr 1
+        double n3 = q0   * q[0] * q[1];   // skip nbr 2
 
-        double denom = sq(g1) + g2 * g3 + g3 * g4 + g4 * g2 + 4.0 * eps2;
-        if (denom < 1.0e-30) {
-            // All gradients zero — limited gradient is zero
-            state.grad_hx_lim[i] = 0.0;
-            state.grad_hy_lim[i] = 0.0;
-            continue;
-        }
+        double denom = n0 + n1 + n2 + n3;
+        double w0 = n0 / denom;
+        double w1 = n1 / denom;
+        double w2 = n2 / denom;
+        double w3 = n3 / denom;
 
-        // Weight for the cell's own gradient
-        double w1 = (g2 * g3 + eps2) / denom;
-        // Weights for each neighbour's gradient contribution
-        double w2 = (g3 * g4 + eps2) / denom;
-        double w3 = (g4 * g1 + eps2) / denom;
-        double w4 = (g1 * g2 + eps2) / denom;
-
-        // Normalize
-        double w_sum = w1 + w2 + w3 + w4;
-        if (w_sum > 1.0e-30) {
-            w1 /= w_sum; w2 /= w_sum; w3 /= w_sum; w4 /= w_sum;
-        }
-
-        state.grad_hx_lim[i] = w1 * state.grad_hx[i]
-                              + w2 * gx_nbr[0] + w3 * gx_nbr[1] + w4 * gx_nbr[2];
-        state.grad_hy_lim[i] = w1 * state.grad_hy[i]
-                              + w2 * gy_nbr[0] + w3 * gy_nbr[1] + w4 * gy_nbr[2];
+        state.grad_hx_lim[i] = w0 * state.grad_hx[i]
+                              + w1 * gx_nbr[0] + w2 * gx_nbr[1] + w3 * gx_nbr[2];
+        state.grad_hy_lim[i] = w0 * state.grad_hy[i]
+                              + w1 * gy_nbr[0] + w2 * gy_nbr[1] + w3 * gy_nbr[2];
     }
 }
 
@@ -132,44 +129,71 @@ void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
             int nbr = tri_nbr(mesh, i, e);
 
             if (nbr < 0) {
-                // Boundary edge: zero-flux (wall) condition
+                // Boundary edge: zero-flux (wall) condition.
                 state.edge_flux[idx] = 0.0;
                 continue;
             }
 
-            // Determine upstream cell based on head comparison
+            // Hydrostatic upwinding by total head — standard FV-SWE choice.
             double h_L = state.head[i];
             double h_R = state.head[nbr];
             int upstream = (h_L >= h_R) ? i : nbr;
+            double depth_up = state.depth[upstream];
 
-            // Reconstruct head at edge using upstream cell's limited gradient
-            // h_edge = h_centre + r · ∇h_lim
-            // where r = (edge_midpoint - cell_centroid)
-            double rx = mesh.edge_mx[idx] - mesh.tri_cx[upstream];
-            double ry = mesh.edge_my[idx] - mesh.tri_cy[upstream];
-            double h_edge = state.head[upstream]
-                          + rx * state.grad_hx_lim[upstream]
-                          + ry * state.grad_hy_lim[upstream];
+            if (depth_up <= 0.0) {
+                state.edge_flux[idx] = 0.0;
+                continue;
+            }
 
-            // C-property: reconstruct depth from total head - bed elevation
-            double z_edge = mesh.edge_mz[idx];
-            double depth_edge = std::max(h_edge - z_edge, 0.0);
+            // Unified well-balanced flux for the Manning diffusive wave.
+            //
+            // Continuity:  dh/dt = R − ∇·q  with  q = −K·h·∇H  and
+            //   K(h, |∇H|) = h^(2/3) / (n · √|∇H|).
+            // The FV inflow contribution to cell i across edge e is
+            //   F_e = −(q · n_e) · L_e.
+            // Substituting the FD estimate ∇H · n_e ≈ −(h_L − h_R) / Δx
+            // (Δx = centroid-to-centroid distance, L = this cell,
+            // R = neighbour) collapses the K · Δh subexpression to
+            //   K · Δh = h_up^(2/3) · sign(Δh) · √(|Δh| · Δx) / n_up,
+            // which removes the removable 1/√|∇H| singularity at flat
+            // regions, vanishes correctly as Δh → 0 (C-property), and
+            // gives the dimensionally consistent F_e units of m³/s.
+            //
+            // Sign convention: state.edge_flux holds the INFLOW
+            // contribution to cell i across edge e — a positive value
+            // increases h_i.  assembleRHS adds it as +flux_sum / A.
+            double dx_x = mesh.tri_cx[i] - mesh.tri_cx[nbr];
+            double dx_y = mesh.tri_cy[i] - mesh.tri_cy[nbr];
+            double dx   = std::sqrt(dx_x * dx_x + dx_y * dx_y);
+            if (dx < 1.0e-12) {
+                state.edge_flux[idx] = 0.0;
+                continue;
+            }
 
-            // Gradient magnitude at the edge (for conductance)
-            double grad_mag = std::sqrt(
-                sq(state.grad_hx_lim[upstream]) + sq(state.grad_hy_lim[upstream]));
+            double dh      = h_L - h_R;
+            double abs_dh  = std::abs(dh);
+            double sign_dh = (dh > 0.0) ? 1.0 : (dh < 0.0 ? -1.0 : 0.0);
 
-            // Diffusive conductance
-            double K = diffusiveConductanceSmooth(
-                depth_edge, mesh.mannings_n[upstream], grad_mag, opts.dry_depth);
+            // h_up^(5/3) = depth · depth^(2/3)
+            double h53 = depth_up * std::cbrt(depth_up * depth_up);
 
-            // Head gradient projected onto the edge normal direction
-            double dh_dn = (h_L - h_R);  // Simple difference for normal gradient
+            double n_up = mesh.mannings_n[upstream];
+            double xi   = mesh.edge_length[idx];
 
-            // Normal flux through edge: F = depth * K * (dh/dn) * edge_length
-            // Sign convention: positive flux = flow in outward normal direction
-            double xi = mesh.edge_length[idx];
-            state.edge_flux[idx] = depth_edge * K * dh_dn * xi;
+            double F_e = -h53 * sign_dh * std::sqrt(abs_dh) * xi
+                         / (n_up * std::sqrt(dx));
+
+            // Cubic Hermite wet/dry shutoff on the source-side depth.
+            // s(t) = 3t² − 2t³ for t = depth_up/dry_depth ∈ [0, 1]: C¹ at
+            // both endpoints, vanishing flux as the source-side cell
+            // approaches dry. Applied at the flux level so the wet/dry
+            // transition behaviour is contained in this one place.
+            if (depth_up < opts.dry_depth) {
+                double t = depth_up / opts.dry_depth;
+                F_e *= t * t * (3.0 - 2.0 * t);
+            }
+
+            state.edge_flux[idx] = F_e;
         }
     }
 }

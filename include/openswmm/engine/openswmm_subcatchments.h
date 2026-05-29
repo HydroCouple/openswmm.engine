@@ -9,7 +9,7 @@
  * @see openswmm_engine.h
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -516,6 +516,66 @@ SWMM_ENGINE_API int swmm_subcatch_get_quality_bulk(SWMM_Engine engine, int pollu
                                                     double* buf, int count);
 
 /* =========================================================================
+ * Phase 3 bulk getters — added in OpenSWMM 6.0.0 to eliminate the N
+ * round-trip cost of per-subcatchment scalar accessors. All return a
+ * caller-allocated @c double buffer of length @c count (clipped at
+ * @c swmm_subcatch_count()); the IDs variant returns a stride-packed
+ * UTF-8 buffer following the same format as @ref swmm_node_get_ids_bulk.
+ * ========================================================================= */
+
+/**
+ * @brief Get rainfall rates for all subcatchments in a single call.
+ * @details Bulk variant of @ref swmm_subcatch_get_rainfall. Simple SoA copy.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_rainfall_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get evaporation losses for all subcatchments in a single call.
+ * @details Bulk variant of @ref swmm_subcatch_get_evap. Simple SoA copy of
+ *          the @c evap_loss column.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_evap_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get infiltration losses for all subcatchments in a single call.
+ * @details Bulk variant of @ref swmm_subcatch_get_infil. Simple SoA copy
+ *          of the @c infil_loss column.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_infil_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get snow depths for all subcatchments in a single call.
+ * @details Bulk variant of @ref swmm_subcatch_get_snow_depth. Snow state
+ *          currently lives in the SnowSolver, not SubcatchData; like the
+ *          scalar accessor this returns zeros for every entry pending
+ *          full snow-state integration (see plan Appendix A).
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_snow_depth_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get subcatchment IDs for all subcatchments in a single call
+ *        (stride-packed UTF-8).
+ * @details Format identical to @ref swmm_node_get_ids_bulk.
+ * @param engine  Engine handle.
+ * @param[out] buf Caller-allocated buffer of @c stride*count bytes.
+ * @param stride  Per-ID slot size in bytes (must be > 1).
+ * @param count   Number of IDs to read.
+ * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
+ *          invalid; @c SWMM_ERR_BADPARAM if @p buf is NULL,
+ *          @p stride < 2, or @p count <= 0.
+ * @see swmm_subcatch_id, swmm_node_get_ids_bulk
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_ids_bulk(SWMM_Engine engine,
+                                                char* buf,
+                                                int stride,
+                                                int count);
+
+/* =========================================================================
  * Ponded quality (mass in standing water between events)
  * ========================================================================= */
 
@@ -526,6 +586,105 @@ SWMM_ENGINE_API int swmm_subcatch_get_ponded_quality(SWMM_Engine engine,
 /** @brief Set ponded quality mass for a subcatchment-pollutant pair. */
 SWMM_ENGINE_API int swmm_subcatch_set_ponded_quality(SWMM_Engine engine,
     int subcatch_idx, int pollutant_idx, double mass);
+
+/** @brief Rename the subcatchment at `idx` to `newId`.
+ *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
+ *  idx is out of range. */
+SWMM_ENGINE_API int swmm_subcatch_rename(SWMM_Engine engine, int idx, const char* newId);
+
+/* =========================================================================
+ * Aquifer definitions ([AQUIFERS] section) — Slice BM.0 / BP.6.6.4
+ * ========================================================================= */
+
+/**
+ * @brief Get the total number of aquifer definitions in the model.
+ * @param engine  Engine handle.
+ * @returns Number of aquifer definitions, or -1 on error.
+ */
+SWMM_ENGINE_API int swmm_aquifer_count(SWMM_Engine engine);
+
+/**
+ * @brief Look up an aquifer's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated aquifer identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_aquifer_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of an aquifer definition by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based aquifer index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_aquifer_id(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Add a new aquifer definition with default (zero) parameters.
+ *
+ * @details Parameters default to 0.0 / empty strings — use the property
+ *          setters from Slice BP `AquiferEditor` to configure porosity,
+ *          conductivity, etc. Lifecycle: BUILDING or OPENED.
+ *
+ * @param engine  Engine handle.
+ * @param id      Unique null-terminated identifier.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_aquifer_add(SWMM_Engine engine, const char* id);
+
+/* =========================================================================
+ * Snowpack definitions ([SNOWPACKS] section) — Slice BM.0 / BP.6.6.5
+ * ========================================================================= */
+
+/**
+ * @brief Get the total number of snowpack definitions in the model.
+ * @param engine  Engine handle.
+ * @returns Number of snowpack definitions, or -1 on error.
+ */
+SWMM_ENGINE_API int swmm_snowpack_count(SWMM_Engine engine);
+
+/**
+ * @brief Look up a snowpack's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated snowpack identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_snowpack_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of a snowpack definition by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based snowpack index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_snowpack_id(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Add a new snowpack definition with default (zero) parameters.
+ *
+ * @details All three surface arrays (plowable / impervious / pervious) and
+ *          the removal row are zero-initialised. Use the property setters
+ *          from Slice BP `SnowpackEditor` to configure melt coefficients,
+ *          ATI, negative-melt-ratio, and removal fractions.
+ *          Lifecycle: BUILDING or OPENED.
+ *
+ * @param engine  Engine handle.
+ * @param id      Unique null-terminated identifier.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id);
+
+/* =========================================================================
+ * Tag — free-form string label from the INP `[TAGS]` section
+ * ========================================================================= */
+
+/** @brief Read the subcatchment's tag into `buf` (NUL-terminated, truncated if too small). */
+SWMM_ENGINE_API int swmm_subcatch_get_tag(SWMM_Engine engine, int idx,
+                                            char* buf, int buflen);
+
+/** @brief Set or clear the subcatchment's tag. Null/empty clears. Persists across rename. */
+SWMM_ENGINE_API int swmm_subcatch_set_tag(SWMM_Engine engine, int idx,
+                                            const char* tag);
 
 #ifdef __cplusplus
 } /* extern "C" */

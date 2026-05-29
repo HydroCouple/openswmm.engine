@@ -1,6 +1,7 @@
 [TITLE]
 ;;Project Title/Notes
-Example 1: site drainage, DYNWAVE routing, 2-yr storm event.
+A site surface drainage model.
+See Site_Drainage_Model.txt for more details.
 
 [OPTIONS]
 ;;Option             Value

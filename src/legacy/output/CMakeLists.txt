@@ -32,6 +32,13 @@ set_target_properties(openswmm_legacy_output
         OUTPUT_NAME "openswmm.legacy.output"
         VERSION     ${PROJECT_VERSION}
         SOVERSION   ${PROJECT_VERSION_MAJOR}
+        # swmm_output.c calls fseeko()/ftello(), which glibc gates behind
+        # _POSIX_C_SOURCE/_DEFAULT_SOURCE. With the root CMAKE_C_EXTENSIONS
+        # OFF + -std=c17 they're hidden under __STRICT_ANSI__, implicit-int
+        # truncates pointers/64-bit offsets, and the program crashes at
+        # runtime on Linux. Override per-target so CMake passes -std=gnu17
+        # for this target and the rest of the project keeps strict ANSI.
+        C_EXTENSIONS ON
 )
 
 # Generate export header
@@ -67,21 +74,22 @@ target_link_libraries(openswmm_legacy_output
         openswmm_common   # INTERFACE library — exposes include/
 )
 
-# RPATH settings
+# RPATH — no external bundled deps beyond system libs; @loader_path/$ORIGIN
+# so co-located dylibs (if any) are found.  Build-tree rpath is automatic.
 if(APPLE)
     set(LIB_ROOT "@loader_path")
-else()
+elseif(UNIX)
     set(LIB_ROOT "$ORIGIN")
+else()
+    set(LIB_ROOT "")
 endif()
 
-set_target_properties(openswmm_legacy_output
-    PROPERTIES
-        MACOSX_RPATH             TRUE
-        SKIP_BUILD_RPATH         FALSE
-        BUILD_WITH_INSTALL_RPATH FALSE
-        INSTALL_RPATH            "${LIB_ROOT};${PACKAGE_RPATH};"
-        INSTALL_RPATH_USE_LINK_PATH TRUE
-)
+if(NOT WIN32)
+    set_target_properties(openswmm_legacy_output PROPERTIES
+        MACOSX_RPATH  TRUE
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+endif()
 
 # Install public headers
 install(

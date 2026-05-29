@@ -1,0 +1,56 @@
+name: Typing (mypy)
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'python/openswmm/**/*.py'
+      - 'python/openswmm/**/*.pyi'
+      - 'python/tests/typing/**'
+      - 'python/pyproject.toml'
+      - '.github/workflows/typing.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'python/openswmm/**/*.py'
+      - 'python/openswmm/**/*.pyi'
+      - 'python/tests/typing/**'
+      - 'python/pyproject.toml'
+      - '.github/workflows/typing.yml'
+  workflow_dispatch:
+
+# This workflow does NOT build the compiled engine — mypy walks the
+# .pyi stubs and pure-Python modules directly. Cheap to run (~30s).
+jobs:
+  mypy:
+    name: mypy ${{ matrix.config.label }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - label: "openswmm.engine (default mode)"
+            args: "openswmm/engine"
+          - label: "tests/typing/ (strict mode)"
+            args: "--strict tests/typing/test_surface.py"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install mypy + numpy + typing dependencies
+        # mypy needs the .pyi files plus numpy stubs. The package itself
+        # isn't installed — we run against the source tree.
+        run: |
+          pip install mypy numpy
+
+      - name: Run mypy
+        working-directory: python
+        run: mypy ${{ matrix.config.args }}

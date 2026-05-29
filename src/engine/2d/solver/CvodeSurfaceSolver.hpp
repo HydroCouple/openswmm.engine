@@ -4,18 +4,23 @@
  *
  * @details Wraps the SUNDIALS CVODE solver for time integration of the
  *          semi-discrete finite volume surface flow equations. Uses BDF
- *          method with iterative linear solver (GMRES/BiCGStab/TFQMR).
+ *          for time discretisation, CVODE's default Newton corrector
+ *          with inexact tolerance, and SPGMR (Krylov GMRES) for the
+ *          inner linear solves. A Jacobi preconditioner is wired by
+ *          default (per-cell diagonal approximation rebuilt each
+ *          Jacobian refresh); see SolverOptions2D for the menu of other
+ *          linear solver / preconditioner tiers reserved for future use.
  *
  *          The ODE system is:
  *            dy/dt = f(t, y)
- *          where y[i] = ψ_o[i] (depth at triangle i) and f computes the
- *          RHS from the finite volume formulation.
+ *          where y[i] = H_i (water-surface elevation at triangle i) and
+ *          f computes the RHS from the finite volume formulation.
  *
  * @see TWO_DIMENSIONAL_SURFACE_ROUTING_IMPLEMENTATION_STRATEGY.md §4.2
  * @ingroup engine_2d
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -34,6 +39,8 @@ namespace openswmm::uncertainty { struct SpectralROM1D; }
 
 #ifdef OPENSWMM_HAS_2D
 
+#include <vector>
+
 // Forward declarations for SUNDIALS types (avoid pulling in full headers)
 struct SUNContext_;
 typedef struct SUNContext_* SUNContext;
@@ -42,17 +49,23 @@ typedef struct _generic_SUNLinearSolver* SUNLinearSolver;
 
 namespace openswmm::twoD {
 
+class CvodeSurfaceSolver;
+
 /**
  * @brief Context passed to the CVODE RHS and preconditioner callbacks.
  *
- * Contains all data needed to evaluate f(t, y) and to apply the optional
- * spectral preconditioner. Passed as user_data to CVodeSetUserData().
+ * Contains all data needed to evaluate f(t, y) and to apply preconditioners.
+ * Passed as user_data to CVodeSetUserData().
+ *
+ * The `solver` back-pointer lets Jacobi preconditioner callbacks reach the
+ * owning solver's per-instance scratch storage.
  */
 struct CvodeSolverContext {
-    MeshData*          mesh   = nullptr;
-    SurfaceStateData*  state  = nullptr;
-    SolverOptions2D*   opts   = nullptr;
-    SpectralPrecond2D* precond = nullptr;  ///< null if no spectral precond
+    MeshData*           mesh    = nullptr;
+    SurfaceStateData*   state   = nullptr;
+    SolverOptions2D*    opts    = nullptr;
+    SpectralPrecond2D*  precond = nullptr;  ///< null if no spectral precond
+    CvodeSurfaceSolver* solver  = nullptr;  ///< back-pointer for Jacobi precond
 };
 
 /**
@@ -167,10 +180,10 @@ public:
     const SpectralROM* rom() const noexcept { return rom_.get(); }
 
 private:
-    void* cvode_mem_          = nullptr;  ///< CVODE memory block
-    SUNLinearSolver ls_       = nullptr;  ///< Iterative linear solver
-    N_Vector y_               = nullptr;  ///< State vector (wraps state.depth)
-    SUNContext sun_ctx_        = nullptr;  ///< SUNDIALS context
+    void*           cvode_mem_ = nullptr;  ///< CVODE memory block
+    SUNLinearSolver ls_        = nullptr;  ///< SPGMR Krylov linear solver
+    N_Vector        y_         = nullptr;  ///< State vector (water-surface elevation H)
+    SUNContext      sun_ctx_   = nullptr;  ///< SUNDIALS context
 
     CvodeSolverContext ctx_;               ///< RHS / precond callback context
     std::unique_ptr<SpectralPrecond2D> precond_;  ///< null unless SPECTRAL precond
@@ -210,6 +223,13 @@ private:
     /// else h_mean^(5/3) / (2 * n_mean * sqrt(S_mean)) with flat-domain floor.
     double computeAutoKEff() const noexcept;
 
+    /// Cached diagonal of the Jacobi preconditioner, sized to n_triangles.
+    std::vector<double> precond_diag_;
+
+    // ------------------------------------------------------------------
+    // SUNDIALS callbacks.
+    // ------------------------------------------------------------------
+
     /**
      * @brief RHS function: f(t, y, ydot).
      *
@@ -217,6 +237,32 @@ private:
      * finite volume RHS from the current state.
      */
     static int rhs_fn(double t, N_Vector y, N_Vector ydot, void* user_data);
+
+    /**
+     * @brief Preconditioner setup: cache diag(J) for Jacobi.
+     *
+     * Registered as CVLsPrecSetupFn. Called by CVODE when the linear
+     * system's Jacobian needs refreshing. Reads the current edge fluxes
+     * (held in state.edge_flux from the most recent rhs_fn call) and
+     * builds a per-cell diagonal approximation:
+     *   D[i] ≈ -(Σ_e |F_e| / max(|Δh_e|, ε)) / A_i
+     * This is the negative sum of edge transmissivities per unit area —
+     * the dominant self-derivative of the diffusive-wave RHS.
+     */
+    static int psetup_fn(double t, N_Vector y, N_Vector fy,
+                          int jok, int* jcurPtr, double gamma,
+                          void* user_data);
+
+    /**
+     * @brief Preconditioner apply: solve (I − γD) z = r element-wise.
+     *
+     * Registered as CVLsPrecSolveFn. Applied by GMRES at each Krylov
+     * iteration. Uses the diagonal cached by psetup_fn.
+     */
+    static int psolve_fn(double t, N_Vector y, N_Vector fy,
+                          N_Vector r, N_Vector z,
+                          double gamma, double delta, int lr,
+                          void* user_data);
 };
 
 } // namespace openswmm::twoD

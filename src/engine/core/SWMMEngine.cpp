@@ -6,7 +6,7 @@
  * @ingroup engine_core
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -31,6 +31,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/input/SectionHandlers2D.hpp"
+#include "../2d/output/Default2DOutputPlugin.hpp"
 #include <filesystem>
 #endif
 
@@ -135,6 +136,7 @@ int SWMMEngine::open(const char* inp_path,
         twoD::register2DSections(surface_router_.mesh(),
                                  surface_router_.options(),
                                  uncertainty_config_,
+                                 surface_router_.pendingBCRows(),
                                  dip->registry());
     }
 #endif
@@ -152,7 +154,8 @@ int SWMMEngine::open(const char* inp_path,
             if (inp_path && inp_path[0] != '\0')
                 base_dir = std::filesystem::path(inp_path).parent_path().string();
             std::string err = twoD::load2DMeshExternalFile(
-                surface_router_.mesh(), surface_router_.options(), mf, base_dir);
+                surface_router_.mesh(), surface_router_.options(),
+                surface_router_.pendingBCRows(), mf, base_dir);
             if (!err.empty()) {
                 ctx_.error_code    = SWMM_ERR_PARSE;
                 ctx_.error_message = err;
@@ -193,6 +196,27 @@ int SWMMEngine::open(const char* inp_path,
         rp->validate(ctx_);
         plugins_.add_report_plugin(rp);
     }
+
+#ifdef OPENSWMM_HAS_2D
+    // Inject built-in 2D HDF5 output plugin when [2D_OPTIONS] OUTPUT_FILE is set.
+    // Mesh prep is deferred to start() because the mesh topology is not built
+    // until SurfaceRouter2D::initialize() runs (called from SWMMEngine::initialize).
+    {
+        const std::string& of = surface_router_.options().output_file;
+        if (!of.empty()) {
+            std::string resolved = of;
+            std::filesystem::path p(of);
+            if (p.is_relative() && inp_path && inp_path[0] != '\0') {
+                resolved = (std::filesystem::path(inp_path).parent_path() / p).string();
+            }
+            auto* op = new twoD::Default2DOutputPlugin(resolved);
+            op->initialize({}, nullptr);
+            op->validate(ctx_);
+            plugins_.add_output_plugin(op);
+            surface_output_plugin_ = op;
+        }
+    }
+#endif
 
     // Wire solver-neutral state accessors so state-IO plugins can read/write
     // infiltration and groundwater state through SimulationContext alone.
@@ -340,6 +364,16 @@ int SWMMEngine::start(int save_results) noexcept {
             return SWMM_ERR_PLUGIN;
         }
     }
+
+#ifdef OPENSWMM_HAS_2D
+    // After plugin->prepare() created the HDF5 file (root attrs only), write
+    // the static mesh topology and create the time-varying datasets. This is
+    // a separate step because the IOutputPlugin contract has no mesh access
+    // through SimulationContext — SurfaceRouter2D owns the mesh privately.
+    if (surface_output_plugin_ && surface_router_.isActive()) {
+        surface_output_plugin_->prepareMeshAndDatasets(surface_router_.mesh());
+    }
+#endif
 
     // Phase 5: start the IO writer thread
     io_thread_.start();
@@ -491,7 +525,15 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     // infil/evap/runoff reflect the interval STARTING at the report
     // boundary. Legacy achieves this accidentally via variable timestep
     // Legacy uses strict < (runoff.c line 164: while(NewRunoffTime < nextRoutingTime))
-    double next_routing_time = routing_time + dt_routing;
+    //
+    // Clamp next_routing_time to the simulation end, matching legacy
+    // swmm5.c::execRouting() line 900-905. Without this clamp, floating-point
+    // drift in `routing_time + dt_routing` can leave next_routing_time slightly
+    // above total_sec while new_runoff_time_ has already been clamped to
+    // total_sec inside this loop body — causing the while-loop to fire
+    // indefinitely with dt_runoff = 0.
+    const double total_sec_clamp = (ctx_.options.end_date - ctx_.options.start_date) * 86400.0;
+    double next_routing_time = std::min(routing_time + dt_routing, total_sec_clamp);
     while (new_runoff_time_ < next_routing_time) {
         // Save old runoff, runon, and GW state for interpolation
         // (matching legacy subcatch_setOldState + gw oldFlow/newFlow)
@@ -534,86 +576,86 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
 
         // A2a. Temperature source (before updateDailyClimate so
         //       Hargreaves/gamma/ea use the current temperature)
-        if (climate_.temp_ts_index >= 0) {
+        if (ctx_.climate_state.temp_ts_index >= 0) {
             // Temperature from timeseries
-            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(climate_.temp_ts_index)];
-            climate_.temperature = table_lookup_cursor(tbl, abs_time);
-            climate_.temperature += climate_.adjust_temp[mon];
+            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ctx_.climate_state.temp_ts_index)];
+            ctx_.climate_state.temperature = table_lookup_cursor(tbl, abs_time);
+            ctx_.climate_state.temperature += ctx_.climate_state.adjust_temp[mon];
         } else if (ctx_.options.temp_source == 2 && climate_file_.isOpen()) {
             // Temperature from climate file (Gap #9: sub-daily sinusoidal interp)
             climate::DailyClimateRecord rec;
             if (climate_file_.getRecord(abs_time, rec)) {
                 if (!std::isnan(rec.tmin) && !std::isnan(rec.tmax)) {
-                    double tmin = rec.tmin + climate_.adjust_temp[mon];
-                    double tmax = rec.tmax + climate_.adjust_temp[mon];
-                    climate_.temp_range = tmax - tmin;
+                    double tmin = rec.tmin + ctx_.climate_state.adjust_temp[mon];
+                    double tmax = rec.tmax + ctx_.climate_state.adjust_temp[mon];
+                    ctx_.climate_state.temp_range = tmax - tmin;
 
-                    if (doy != climate_.last_temp_doy) {
+                    if (doy != ctx_.climate_state.last_temp_doy) {
                         // New day: update sunrise/sunset params and roll over prev max.
-                        climate_.prev_tmax     = climate_.has_minmax
-                                                 ? climate_.tmax_daily : tmax;
-                        climate_.tmin_daily    = tmin;
-                        climate_.tmax_daily    = tmax;
-                        climate_.has_minmax    = true;
-                        climate_.last_temp_doy = doy;
-                        climate::updateTempTimes(climate_, doy);
+                        ctx_.climate_state.prev_tmax     = ctx_.climate_state.has_minmax
+                                                 ? ctx_.climate_state.tmax_daily : tmax;
+                        ctx_.climate_state.tmin_daily    = tmin;
+                        ctx_.climate_state.tmax_daily    = tmax;
+                        ctx_.climate_state.has_minmax    = true;
+                        ctx_.climate_state.last_temp_doy = doy;
+                        climate::updateTempTimes(ctx_.climate_state, doy);
                     } else {
                         // Same day: refresh min/max (unchanged; tmax may update).
-                        climate_.tmin_daily = tmin;
-                        climate_.tmax_daily = tmax;
+                        ctx_.climate_state.tmin_daily = tmin;
+                        ctx_.climate_state.tmax_daily = tmax;
                     }
 
                     // Sub-daily sinusoidal interpolation (Gap #9).
                     // hour = fractional part of OADate × 24.
                     double hour = (abs_time - std::floor(abs_time)) * 24.0;
-                    climate_.temperature = climate::getSubdailyTemp(climate_, hour);
+                    ctx_.climate_state.temperature = climate::getSubdailyTemp(ctx_.climate_state, hour);
                 }
             }
         }
 
-        climate::updateDailyClimate(climate_, doy, mon);
+        climate::updateDailyClimate(ctx_.climate_state, doy, mon);
 
         // A2b. Evaporation from timeseries or climate file
-        if (climate_.evap_method == climate::EvapMethod::TIMESERIES &&
-            climate_.evap_ts_index >= 0) {
-            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(climate_.evap_ts_index)];
+        if (ctx_.climate_state.evap_method == climate::EvapMethod::TIMESERIES &&
+            ctx_.climate_state.evap_ts_index >= 0) {
+            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ctx_.climate_state.evap_ts_index)];
             double evap_user = table_lookup_cursor(tbl, abs_time);
-            climate_.evap_rate = evap_user / ucf::Ucf[ucf::EVAPRATE][unit_sys];
-            climate_.evap_rate *= climate_.adjust_evap[mon];
+            ctx_.climate_state.evap_rate = evap_user / ucf::Ucf[ucf::EVAPRATE][unit_sys];
+            ctx_.climate_state.evap_rate *= ctx_.climate_state.adjust_evap[mon];
         }
-        else if (climate_.evap_method == climate::EvapMethod::PAN &&
+        else if (ctx_.climate_state.evap_method == climate::EvapMethod::PAN &&
                  climate_file_.isOpen()) {
             // Pan evaporation from climate file × monthly pan coefficient
             climate::DailyClimateRecord rec;
             if (climate_file_.getRecord(abs_time, rec) && !std::isnan(rec.evap)) {
                 // rec.evap is in user units (in/day US, mm/day SI)
-                climate_.evap_rate = rec.evap / ucf::Ucf[ucf::EVAPRATE][unit_sys];
-                climate_.evap_rate *= ctx_.options.pan_coeff[mon];
-                climate_.evap_rate *= climate_.adjust_evap[mon];
+                ctx_.climate_state.evap_rate = rec.evap / ucf::Ucf[ucf::EVAPRATE][unit_sys];
+                ctx_.climate_state.evap_rate *= ctx_.options.pan_coeff[mon];
+                ctx_.climate_state.evap_rate *= ctx_.climate_state.adjust_evap[mon];
             }
         }
 
         // A2c. Wind speed lookup
         if (ctx_.options.wind_type == 0) {
-            climate_.wind_speed = ctx_.options.wind_speed[mon];
+            ctx_.climate_state.wind_speed = ctx_.options.wind_speed[mon];
         } else if (ctx_.options.wind_type == 1 && climate_file_.isOpen()) {
             // Wind from climate file
             climate::DailyClimateRecord rec;
             if (climate_file_.getRecord(abs_time, rec) && !std::isnan(rec.wind)) {
-                climate_.wind_speed = rec.wind;
+                ctx_.climate_state.wind_speed = rec.wind;
             }
         }
 
         // A2d. Monthly adjustment factors
-        climate_.infil_factor = ctx_.adjust_hydcon[mon];
+        ctx_.climate_state.infil_factor = ctx_.adjust_hydcon[mon];
 
         // A2e. Recovery pattern lookup (monthly pattern for soil recovery)
-        if (climate_.recovery_pat_index >= 0) {
-            auto ui = static_cast<std::size_t>(climate_.recovery_pat_index);
+        if (ctx_.climate_state.recovery_pat_index >= 0) {
+            auto ui = static_cast<std::size_t>(ctx_.climate_state.recovery_pat_index);
             if (ui < ctx_.patterns.factors.size()) {
                 const auto& facs = ctx_.patterns.factors[ui];
                 auto umon = static_cast<std::size_t>(mon);
-                climate_.recovery_factor = (umon < facs.size()) ? facs[umon] : 1.0;
+                ctx_.climate_state.recovery_factor = (umon < facs.size()) ? facs[umon] : 1.0;
             }
         }
 
@@ -674,12 +716,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
 
             // Split into rainfall vs. snowfall based on air temperature.
             double snow_divt = ctx_.options.snow_divt;   // deg F threshold
-            double rain_bc   = (climate_.temperature > snow_divt) ? avg_precip : 0.0;
-            double snow_bc   = (climate_.temperature <= snow_divt) ? avg_precip : 0.0;
+            double rain_bc   = (ctx_.climate_state.temperature > snow_divt) ? avg_precip : 0.0;
+            double snow_bc   = (ctx_.climate_state.temperature <= snow_divt) ? avg_precip : 0.0;
 
-            snow_.execute(ctx_, dt_runoff, climate_.temperature,
-                          climate_.wind_speed, rain_bc, snow_bc,
-                          climate_.gamma, climate_.ea);
+            snow_.execute(ctx_, dt_runoff, ctx_.climate_state.temperature,
+                          ctx_.climate_state.wind_speed, rain_bc, snow_bc,
+                          ctx_.climate_state.gamma, ctx_.climate_state.ea);
 
             // A3a (Gap #20): Build per-subcatch snow-modified net precip.
             // netPrecip[i] = imelt[i] + rainfall*(1-asc[i])  (matching legacy)
@@ -738,7 +780,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     }
                 }
                 // INFIL pattern: scales infil_factor for this subcatchment
-                // (applied globally via climate_.infil_factor already;
+                // (applied globally via ctx_.climate_state.infil_factor already;
                 //  per-subcatchment INFIL pattern would require per-subcatch
                 //  infil_factor which is a deeper refactor — noted for future)
             }
@@ -747,8 +789,8 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // A4. Runoff (computes subcatches.runoff[i] = newRunoff rate)
         //     Runoff solver is self-contained; output is subcatches.runoff[i].
         //     Routing picks it up via Phase 2 interpolation → nodes.runoff_inflow[].
-        runoff_.execute(ctx_, dt_runoff, climate_.evap_rate,
-                        climate_.infil_factor, climate_.recovery_factor, mon);
+        runoff_.execute(ctx_, dt_runoff, ctx_.climate_state.evap_rate,
+                        ctx_.climate_state.infil_factor, ctx_.climate_state.recovery_factor, mon);
 
         // Update state flags for next timestep selection
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
@@ -758,6 +800,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
 
         // A4b. Accumulate runoff mass balance totals
         accumulateRunoffMassBalance(dt_runoff);
+
+        // A4b'. Phase 1b auto-save hook — when the runoff interface file
+        // is open in SAVE mode, emit one record per substep. saveResults
+        // is a cheap no-op when the file is not in SAVE mode, so the
+        // unconditional call here costs nothing for ordinary runs.
+        saveRunoffIfaceStep(dt_runoff);
 
         // A4c. Surface quality: buildup + washoff
         stepSurfaceQuality(dt_runoff);
@@ -801,7 +849,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             }
         }
 
-        lid_.execute(ctx_, dt_runoff, 0.0, climate_.evap_rate);
+        lid_.execute(ctx_, dt_runoff, 0.0, ctx_.climate_state.evap_rate);
 
         // A6b. Route LID outputs back to subcatchment runoff totals
         for (int t = 0; t < lid_.numGroups(); ++t) {
@@ -1491,7 +1539,7 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
 
     // Pass actual infiltration rate to groundwater (upper zone percolation input).
     // sw_head is read from the pre-assembled subcatches.gw_sw_head[].
-    groundwater_.execute(ctx_, dt_runoff, climate_.evap_rate,
+    groundwater_.execute(ctx_, dt_runoff, ctx_.climate_state.evap_rate,
                          ctx_.subcatches.infil_loss.data(),
                          ctx_.subcatches.gw_sw_head.data(),
                          gw_frac_perv_.data(), gw_perv_evap_.data());
@@ -1589,6 +1637,13 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         double target = ctx_.links.target_setting[uj];
         double current = ctx_.links.setting[uj];
         if (target != current) {
+            // Update the open<->closed transition timestamp ONLY when one
+            // side of the change crosses zero, matching legacy
+            // routing.c:295-299. LINK_TIMEOPEN / LINK_TIMECLOSED rule
+            // premises read this via ctx.links.time_last_set. (P1-C09)
+            if (target * current == 0.0)
+                ctx_.links.time_last_set[uj] = ctx_.current_date;
+
             // Gradual transition (P8-G18): use orifice open/close rate
             // Legacy: link_setSetting() applies orate for time-based ramp
             // orate is stored in hours (from inp file); convert to seconds
@@ -1745,7 +1800,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //         Router::initNodeFlows() for joint evap+exfil capping.
     exfil_.computeAll(ctx_, dt_routing);
 
-    int iters = router_.step(ctx_, dt_routing, climate_.evap_rate, non_conduit_fn);
+    int iters = router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
     ctx_.routing_stats.update_iterations(iters, iters < ctx_.options.max_trials);
 
 #ifdef OPENSWMM_HAS_2D
@@ -2154,18 +2209,30 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     {
         double runoff_q = 0.0;
         double user_q_total = 0.0;
+        double coupling_out_q = 0.0;   // 1D → 2D, absolute Σ over coupled nodes
         for (int j = 0; j < ctx_.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx_.nodes.runoff_inflow[uj] > 0.0)
                 runoff_q += ctx_.nodes.runoff_inflow[uj];
             if (ctx_.nodes.user_lat_flow[uj] > 0.0)
                 user_q_total += ctx_.nodes.user_lat_flow[uj];
+            if (ctx_.nodes.coupling_inflow[uj] < 0.0)
+                coupling_out_q += -ctx_.nodes.coupling_inflow[uj];
         }
         if (runoff_q > 0.0) {
             ctx_.mass_balance.routing_wet_weather += runoff_q * dt_routing;
         }
         if (user_q_total > 0.0) {
             ctx_.mass_balance.routing_forcing_inflow += user_q_total * dt_routing;
+        }
+        // 1D → 2D coupling spill folds into routing_flooding (and the
+        // per-step accumulator) so it appears under the existing "Flooding
+        // Loss" row in the continuity report. The positive (2D → 1D) side
+        // was already added to step_ext_inflow → routing_external by
+        // assembleLateralInflows. See review §11.
+        if (coupling_out_q > 0.0) {
+            ctx_.mass_balance.routing_flooding += coupling_out_q * dt_routing;
+            ctx_.mass_balance.step_flooding    += coupling_out_q;
         }
     }
 
@@ -2239,21 +2306,11 @@ void SWMMEngine::computeFinalStorage() noexcept {
     ctx_.mass_balance.routing_final_storage = 0.0;
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        double v = ctx_.nodes.volume[uj];
-        if (std::isnan(v)) {
-            std::fprintf(stderr, "[NAN] node %d (%s) volume=nan\n",
-                j, ctx_.node_names.name_of(j).c_str());
-        }
-        ctx_.mass_balance.routing_final_storage += v;
+        ctx_.mass_balance.routing_final_storage += ctx_.nodes.volume[uj];
     }
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        double v = ctx_.links.volume[uj];
-        if (std::isnan(v)) {
-            std::fprintf(stderr, "[NAN] link %d (%s) volume=nan\n",
-                j, ctx_.link_names.name_of(j).c_str());
-        }
-        ctx_.mass_balance.routing_final_storage += v;
+        ctx_.mass_balance.routing_final_storage += ctx_.links.volume[uj];
     }
 }
 
@@ -2436,7 +2493,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             }
 
             // System-level results
-            snap.sys_temperature = climate_.temperature;
+            snap.sys_temperature = ctx_.climate_state.temperature;
 
             // Area-weighted average rainfall across subcatchments
             // (matching legacy output_saveSubcatchResults accumulation)
@@ -2469,7 +2526,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 }
                 snap.sys_snow_depth = (total_area > 0.0) ? total_snow / total_area : 0.0;
             }
-            snap.sys_pet = climate_.evap_rate;
+            snap.sys_pet = ctx_.climate_state.evap_rate;
 
             // Area-weighted averages of evap and infil; total runoff
             // Legacy adds GW evaporation (gw->evapLoss) to system evap
@@ -2513,6 +2570,29 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     tot_store += ctx_.links.volume[static_cast<std::size_t>(j)];
                 snap.sys_storage = tot_store;
             }
+
+#ifdef OPENSWMM_HAS_2D
+            // 2D surface routing state. Deep-copied like the 1D arrays so the
+            // IO thread can read without synchronization. Empty when 2D
+            // inactive; Default2DOutputPlugin::update() short-circuits on
+            // surface_tri_count == 0.
+            if (surface_router_.isActive()) {
+                const auto& st  = surface_router_.state();
+                snap.surface_tri_count    = surface_router_.mesh().n_triangles();
+                snap.surface_vert_count   = surface_router_.mesh().n_vertices();
+                snap.surface_depth         = st.depth;
+                snap.surface_head          = st.head;
+                snap.surface_grad_hx       = st.grad_hx;
+                snap.surface_grad_hy       = st.grad_hy;
+                snap.surface_grad_hx_lim   = st.grad_hx_lim;
+                snap.surface_grad_hy_lim   = st.grad_hy_lim;
+                snap.surface_rainfall      = st.rainfall;
+                snap.surface_coupling_flux = st.coupling_flux;
+                snap.surface_net_source    = st.net_source;
+                snap.surface_edge_flux     = st.edge_flux;
+                snap.surface_vert_head     = st.vert_head;
+            }
+#endif
 
             // Attach name table pointers (valid for lifetime of ctx_)
             snap.node_ids     = &ctx_.node_names.names();
@@ -2769,6 +2849,11 @@ int SWMMEngine::close() noexcept {
     // Close routing interface files
     iface_.closeFiles();
 
+    // Phase 1b: close the runoff interface file (no-op if never opened).
+    // Done before plugins_.unload_all so that any plugin holding the
+    // runoff file open via swmm_runoff_iface_* sees a clean shutdown.
+    closeRunoffIface();
+
     // Unload all dynamically loaded plugin libraries
     plugins_.unload_all();
 
@@ -2797,13 +2882,18 @@ void SWMMEngine::applyForcings(double dt) noexcept {
     }
 
     // ---- Node head boundary forcing (outfalls only) ----
-    for (int i = 0; i < ctx_.n_nodes(); ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (f.node_head_boundary_mode[ui] == ForcingMode::NONE) continue;
-        if (ctx_.nodes.type[ui] != NodeType::OUTFALL) continue;
-        ctx_.nodes.outfall_param[ui] = f.node_head_boundary_value[ui];
-        ctx_.nodes.outfall_type[ui]  = OutfallType::FIXED;
-    }
+    //
+    // C6: the prescribed-HGL value stays in forcing.node_head_boundary_value
+    // and is consumed by Outfall::setAllOutfallDepths as an overlay on top of
+    // the legacy outfall logic and the C4 2D-coupling override. Do NOT
+    // mutate outfall_type or outfall_param here — the original outfall_type
+    // must survive a prescribed step so that "unfix" (mode = NONE) returns
+    // the outfall to its original FREE / NORMAL / FIXED / TIDAL / TIMESERIES
+    // behaviour without any state restoration. See
+    // docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C6).
+    //
+    // This block is intentionally a no-op now; staging into the forcing
+    // buffer is handled by swmm_forcing_node_head_boundary() in the API.
 
     // ---- Gage rainfall forcing (before runoff substeps read gages) ----
     for (int g = 0; g < ctx_.n_gages(); ++g) {
@@ -2902,6 +2992,68 @@ void SWMMEngine::applyForcings(double dt) noexcept {
             }
         }
     }
+}
+
+// ============================================================================
+// Phase 1b: runoff interface file management
+// ============================================================================
+//
+// Thin wrappers around runoff_iface::RunoffInterfaceFile. The auto-save
+// hook lives in stepRunoff() right after accumulateRunoffMassBalance —
+// see the call site in this file for the in-loop emit.
+
+int SWMMEngine::openRunoffIfaceWrite(const std::string& path) noexcept {
+    if (runoff_iface_file_ && runoff_iface_file_->isOpen()) {
+        // Refuse to silently leak the previous file — caller must close
+        // explicitly so it's obvious in tests / debug logs.
+        return -10;
+    }
+    runoff_iface_file_ = std::make_unique<runoff_iface::RunoffInterfaceFile>();
+    const int rc = runoff_iface_file_->openForWrite(
+        path,
+        ctx_.n_subcatches(),
+        ctx_.n_pollutants(),
+        static_cast<int>(ctx_.options.flow_units));
+    if (rc != 0) runoff_iface_file_.reset();
+    return rc;
+}
+
+int SWMMEngine::openRunoffIfaceRead(const std::string& path) noexcept {
+    if (runoff_iface_file_ && runoff_iface_file_->isOpen()) return -10;
+    runoff_iface_file_ = std::make_unique<runoff_iface::RunoffInterfaceFile>();
+    const int rc = runoff_iface_file_->openForRead(
+        path,
+        ctx_.n_subcatches(),
+        ctx_.n_pollutants(),
+        static_cast<int>(ctx_.options.flow_units));
+    if (rc != 0) runoff_iface_file_.reset();
+    return rc;
+}
+
+void SWMMEngine::saveRunoffIfaceStep(double dt) noexcept {
+    if (!runoff_iface_file_) return;
+    // saveResults is a no-op if the file is not in SAVE mode.
+    runoff_iface_file_->saveResults(ctx_, dt);
+}
+
+bool SWMMEngine::readRunoffIfaceStep() noexcept {
+    if (!runoff_iface_file_) return false;
+    return runoff_iface_file_->readResults(ctx_);
+}
+
+void SWMMEngine::closeRunoffIface() noexcept {
+    if (!runoff_iface_file_) return;
+    runoff_iface_file_->close();
+    runoff_iface_file_.reset();
+}
+
+FileMode SWMMEngine::runoffIfaceMode() const noexcept {
+    if (!runoff_iface_file_ || !runoff_iface_file_->isOpen())
+        return FileMode::NONE;
+    // RunoffInterfaceFile doesn't expose its mode directly; infer from
+    // the FilesSpec which is set by the C API entry points before
+    // calling open*. Falling back to SAVE keeps the diagnostic non-NONE.
+    return ctx_.files.runoff_mode;
 }
 
 // ============================================================================
@@ -3192,10 +3344,23 @@ void SWMMEngine::initHydraulics() noexcept {
         next_event_ = 0;
     }
 
-    // 10e. Control rule parsing from [CONTROLS] section text
+    // 10e. Control rule parsing from [CONTROLS] section text.
+    //      Surface parser errors so malformed rules don't get silently
+    //      dropped (P1-C11). Legacy input.c returns ERR_RULE / ERR_KEYWORD
+    //      / ERR_DATETIME via error_setInpError; we use the same channel
+    //      via ctx.error_code / error_message.
     if (ctx_.control_rules.count() > 0) {
-        for (const auto& text : ctx_.control_rules.rule_text) {
-            controls_.parseRuleText(text, ctx_);
+        for (size_t i = 0; i < ctx_.control_rules.rule_text.size(); ++i) {
+            const auto& text = ctx_.control_rules.rule_text[i];
+            const int rc = controls_.parseRuleText(text, ctx_);
+            if (rc < 0) {
+                ctx_.error_code = 217;  // legacy ERR_RULE (error.h:174)
+                ctx_.error_message =
+                    "Failed to parse [CONTROLS] rule block #" +
+                    std::to_string(i + 1);
+                ctx_.errors.push_back(ctx_.error_message);
+                return;
+            }
         }
     }
 }
@@ -3318,42 +3483,42 @@ void SWMMEngine::initHydrology() noexcept {
         int evap_type = ctx_.options.evap_type;
         if (evap_type == 0) {
             // CONSTANT
-            climate_.evap_method = climate::EvapMethod::CONSTANT;
-            climate_.evap_rate = ctx_.options.evap_values[0]
+            ctx_.climate_state.evap_method = climate::EvapMethod::CONSTANT;
+            ctx_.climate_state.evap_rate = ctx_.options.evap_values[0]
                                / ucf::Ucf[ucf::EVAPRATE][0];
         } else if (evap_type == 1) {
             // MONTHLY
-            climate_.evap_method = climate::EvapMethod::MONTHLY;
+            ctx_.climate_state.evap_method = climate::EvapMethod::MONTHLY;
             for (int i = 0; i < 12; ++i)
-                climate_.monthly_evap[i] = ctx_.options.evap_values[i];
+                ctx_.climate_state.monthly_evap[i] = ctx_.options.evap_values[i];
         } else if (evap_type == 2) {
-            climate_.evap_method = climate::EvapMethod::TIMESERIES;
+            ctx_.climate_state.evap_method = climate::EvapMethod::TIMESERIES;
         } else if (evap_type == 3) {
-            climate_.evap_method = climate::EvapMethod::TEMPERATURE;
+            ctx_.climate_state.evap_method = climate::EvapMethod::TEMPERATURE;
         } else if (evap_type == 4) {
-            climate_.evap_method = climate::EvapMethod::PAN;
+            ctx_.climate_state.evap_method = climate::EvapMethod::PAN;
         }
 
         // Transfer latitude for Hargreaves ET calculation
-        climate_.latitude = ctx_.options.snow_lat;
+        ctx_.climate_state.latitude = ctx_.options.snow_lat;
 
         // Transfer site elevation for psychrometric constant (Gap #8)
-        climate_.elev = ctx_.options.snow_elev;
+        ctx_.climate_state.elev = ctx_.options.snow_elev;
 
         // Transfer monthly adjustment arrays
         for (int i = 0; i < 12; ++i) {
-            climate_.adjust_temp[i] = ctx_.adjust_temp[i];
-            climate_.adjust_evap[i] = ctx_.adjust_evap[i];
-            climate_.adjust_rain[i] = ctx_.adjust_rain[i];
-            climate_.adjust_hydcon[i] = ctx_.adjust_hydcon[i];
+            ctx_.climate_state.adjust_temp[i] = ctx_.adjust_temp[i];
+            ctx_.climate_state.adjust_evap[i] = ctx_.adjust_evap[i];
+            ctx_.climate_state.adjust_rain[i] = ctx_.adjust_rain[i];
+            ctx_.climate_state.adjust_hydcon[i] = ctx_.adjust_hydcon[i];
         }
 
         // Resolve timeseries names to table indices
         if (ctx_.options.temp_source == 1 && !ctx_.options.temp_ts_name.empty()) {
-            climate_.temp_ts_index = ctx_.table_names.find(ctx_.options.temp_ts_name);
+            ctx_.climate_state.temp_ts_index = ctx_.table_names.find(ctx_.options.temp_ts_name);
         }
         if (evap_type == 2 && !ctx_.options.evap_ts_name.empty()) {
-            climate_.evap_ts_index = ctx_.table_names.find(ctx_.options.evap_ts_name);
+            ctx_.climate_state.evap_ts_index = ctx_.table_names.find(ctx_.options.evap_ts_name);
         }
 
         // Resolve recovery pattern name to pattern index
@@ -3361,7 +3526,7 @@ void SWMMEngine::initHydrology() noexcept {
             int np = ctx_.patterns.count();
             for (int i = 0; i < np; ++i) {
                 if (ctx_.patterns.names[static_cast<std::size_t>(i)] == ctx_.options.evap_recovery_pat) {
-                    climate_.recovery_pat_index = i;
+                    ctx_.climate_state.recovery_pat_index = i;
                     break;
                 }
             }
@@ -3890,12 +4055,20 @@ void SWMMEngine::assembleLateralInflows() noexcept {
                                 + ctx_.nodes.dwf_inflow[uj]
                                 + ctx_.nodes.rdii_inflow[uj]
                                 + ctx_.nodes.iface_inflow[uj]
-                                + ctx_.nodes.user_lat_flow[uj];
+                                + ctx_.nodes.user_lat_flow[uj]
+                                + ctx_.nodes.coupling_inflow[uj];
 
         sum_dw   += ctx_.nodes.dwf_inflow[uj];
         sum_gw   += ctx_.nodes.gw_inflow[uj];
         sum_rdii += ctx_.nodes.rdii_inflow[uj];
         sum_ext  += ctx_.nodes.ext_inflow[uj];
+
+        // 2D → 1D coupling (positive coupling_inflow) folds into the
+        // routing_external category for continuity reporting; the negative
+        // side (1D → 2D spill) is accumulated separately in
+        // updateRoutingMassBalance as routing_flooding. See review §11.
+        if (ctx_.nodes.coupling_inflow[uj] > 0.0)
+            sum_ext += ctx_.nodes.coupling_inflow[uj];
     }
 
     ctx_.mass_balance.step_dw_inflow   = sum_dw;

@@ -2,11 +2,12 @@ name: Documentation
 
 on:
   push:
-    # branches: [main, develop, swmm6_rel]
     branches: [main, develop]
     tags: ["v*.*.*"]
+    paths: ['docs/**', 'python/docs/**', 'python/openswmm/**', 'include/**', '**/*.md']
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+    paths: ['docs/**', 'python/docs/**', 'python/openswmm/**', 'include/**', '**/*.md']
   workflow_dispatch:
 
 # Allow only one concurrent deployment.  Do NOT cancel in-progress runs so
@@ -35,19 +36,21 @@ jobs:
           python-version: "3.12"
 
       - name: Install Sphinx and theme dependencies
+        # Install from requirements.txt (single source of truth — keeps
+        # CI in lockstep with the doc-author's local environment, including
+        # sphinx-design for the grid/tab-set directives in the User Guide
+        # and Migration pages).
         run: |
-          pip install \
-            "sphinx>=7.0" \
-            "pydata-sphinx-theme>=0.15.0" \
-            "myst-parser>=3.0" \
-            "sphinx-autodoc-typehints>=2.0" \
-            numpy
+          pip install -r python/docs/requirements.txt
+          pip install numpy
 
       - name: Build Sphinx HTML docs
         # conf.py adds python/ to sys.path and installs the Cython stub-file
         # finder, so no compiled extensions or package installation is needed.
+        # -W promotes warnings to errors so a regression in the docs blocks
+        # the build; --keep-going still surfaces every issue in one pass.
         run: |
-          sphinx-build -b html python/docs python/docs/_build/html
+          sphinx-build -b html -W --keep-going python/docs python/docs/_build/html
 
       - name: Upload Python docs artifact
         uses: actions/upload-artifact@v5
@@ -93,7 +96,17 @@ jobs:
 # ─────────────────────────────────────────────────────────────────────────────
   deploy:
     name: Deploy to GitHub Pages
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/swmm6_rel')
+    # Deploys fire on direct pushes to a whitelisted branch and on manual
+    # workflow_dispatch runs targeting one of those same branches. PR events
+    # are intentionally excluded — PR builds verify the docs compile but must
+    # not overwrite the live Pages site. To preview a PR, push the source
+    # branch (swmm6_rel) or dispatch the workflow manually against it from
+    # the Actions tab.
+    if: |
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && (github.ref == 'refs/heads/main'
+          || github.ref == 'refs/heads/develop'
+          || github.ref == 'refs/heads/swmm6_rel')
     needs: [build_python_docs, build_doxygen_docs]
     runs-on: ubuntu-latest
     permissions:

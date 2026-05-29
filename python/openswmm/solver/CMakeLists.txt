@@ -20,21 +20,22 @@ target_link_libraries(
 # Specify that this is a Python extension module
 python_extension_module(_solver)
 
+# RPATH — three layouts covered:
+#   @loader_path / $ORIGIN          — wheel (dylib bundled next to .so by delocate/auditwheel)
+#   ../../../lib (3 levels up)      — conda/venv env lib/  from site-packages/openswmm/engine/
+# CMAKE_INSTALL_RPATH_USE_LINK_PATH appends the linked library's install dir
+# (prefix/lib for a pre-built engine, build dir for an editable build).
 if(APPLE)
-    set(INSTALL_LIB_ROOT "@loader_path;@rpath;@loader_path/../../../..;${SOLVER_BUILD_DIR}")
-    set(BUILD_LIB_ROOT "@loader_path;@rpath;${SOLVER_BUILD_DIR}")
+    set(INSTALL_LIB_ROOT "@loader_path;@loader_path/../../../lib")
 elseif(UNIX)
-    set(INSTALL_LIB_ROOT "$ORIGIN;$ORIGIN/../../../..;${SOLVER_BUILD_DIR}")
-    set(BUILD_LIB_ROOT "$ORIGIN;${SOLVER_BUILD_DIR}")
+    set(INSTALL_LIB_ROOT "$ORIGIN;$ORIGIN/../../../lib")
 endif()
 
-# Set up rpath for runswmm inside install package
-set_target_properties(_solver
-    PROPERTIES
-        BUILD_RPATH "${BUILD_LIB_ROOT}"
+if(NOT WIN32)
+    set_target_properties(_solver PROPERTIES
         INSTALL_RPATH "${INSTALL_LIB_ROOT}"
-        BUILD_WITH_INSTALL_RPATH True 
-)
+    )
+endif()
 
 # Install the target
 install(TARGETS _solver LIBRARY DESTINATION openswmm/solver)

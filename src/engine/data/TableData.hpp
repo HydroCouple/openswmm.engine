@@ -25,7 +25,7 @@
  * @ingroup engine_data
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -119,6 +119,13 @@ struct TableBlock {
 struct Table {
     std::string         id;      ///< Table identifier (from input file)
     TableType           type;    ///< Table type (TIMESERIES, CURVE_*, etc.)
+
+    /**
+     * @brief Object comment from the INP file (';'-prefixed lines immediately
+     *        above the first row of this table), joined by literal "\\n".
+     *        Empty string means no comment.
+     */
+    std::string         comment;
     std::vector<double> x;       ///< Independent variable (time, depth, etc.)
     std::vector<double> y;       ///< Dependent variable (flow, volume, etc.)
     TableCursor         cursor;  ///< Bidirectional lookup cursor

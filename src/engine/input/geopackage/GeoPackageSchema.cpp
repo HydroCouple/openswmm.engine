@@ -379,6 +379,22 @@ CREATE TABLE IF NOT EXISTS unit_hydrographs (
     dinit           REAL DEFAULT 0
 );
 
+-- RDII exponential-decay IA parameters (one row per UH group x response).
+-- @see docs/RDII_ExpDecay_Implementation.md
+CREATE TABLE IF NOT EXISTS rdii_decay (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    uh_name         TEXT NOT NULL,
+    response        TEXT NOT NULL,   -- 'SHORT' | 'MEDIUM' | 'LONG'
+    k_dep           REAL NOT NULL,
+    k_0             REAL NOT NULL,
+    k_T             REAL NOT NULL,
+    T_ref           REAL NOT NULL,
+    theta_rec       REAL NOT NULL,
+    T_freeze        REAL NOT NULL,
+    UNIQUE(simulation_id, uh_name, response)
+);
+
 -- Treatment expressions (one row per node-pollutant pair)
 CREATE TABLE IF NOT EXISTS treatment (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,

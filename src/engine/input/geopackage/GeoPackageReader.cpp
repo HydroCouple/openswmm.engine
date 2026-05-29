@@ -18,11 +18,34 @@
 #include "data/InflowData.hpp"
 #include "data/HydrologyData.hpp"
 
+#include "core/DateTime.hpp"
+
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <sstream>
 
 namespace openswmm::gpkg {
+
+namespace {
+// Parse a timestamp string written by GeoPackageWriter back to an OADate.
+// Accepts "MM/DD/YYYY HH:MM" (absolute) or decimal-hours string (relative).
+static double parse_ts_timestamp(const std::string& s) {
+    int mo = 0, d = 0, y = 0, h = 0, mi = 0;
+    if (s.find('/') != std::string::npos) {
+        // Absolute: "MM/DD/YYYY HH:MM"
+        std::sscanf(s.c_str(), "%d/%d/%d %d:%d", &mo, &d, &y, &h, &mi);
+        return datetime::encodeDate(y, mo, d)
+             + datetime::encodeTime(h, mi, 0);
+    }
+    // Relative or legacy raw-OADate float: decimal hours or raw OADate
+    double v = std::stod(s);
+    // If value looks like a raw OADate (>= threshold), return as-is;
+    // otherwise it's decimal hours → convert to fractional days.
+    if (v >= 3650.0) return v;       // legacy raw OADate float
+    return v / 24.0;                 // decimal hours → fractional days
+}
+} // anonymous namespace
 
 // ============================================================================
 // Enum parsing helpers
@@ -206,6 +229,11 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
             }
         }
         else if (key == "CRS") ctx.spatial.crs = val;
+        else if (key == "MAP_UNITS") ctx.spatial.map_units = val;
+        else if (key == "MAP_X1") ctx.spatial.map_x1 = std::stod(val);
+        else if (key == "MAP_Y1") ctx.spatial.map_y1 = std::stod(val);
+        else if (key == "MAP_X2") ctx.spatial.map_x2 = std::stod(val);
+        else if (key == "MAP_Y2") ctx.spatial.map_y2 = std::stod(val);
     }
 }
 
@@ -264,8 +292,11 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
             ctx.nodes.storage_c[idx] = column_double(stmt.get(), 17);
         }
 
-        if (!column_is_null(stmt.get(), 18))
-            ctx.node_tags[name] = column_text(stmt.get(), 18);
+        if (!column_is_null(stmt.get(), 18)) {
+            const auto u = static_cast<std::size_t>(idx);
+            if (u >= ctx.nodes.tags.size()) ctx.nodes.tags.resize(u + 1);
+            ctx.nodes.tags[u] = column_text(stmt.get(), 18);
+        }
     }
 }
 
@@ -387,8 +418,11 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
         ctx.links.crest_height[idx] = column_double(stmt.get(), 28);
         ctx.links.cd[idx] = column_double(stmt.get(), 29);
 
-        if (!column_is_null(stmt.get(), 30))
-            ctx.link_tags[name] = column_text(stmt.get(), 30);
+        if (!column_is_null(stmt.get(), 30)) {
+            const auto u = static_cast<std::size_t>(idx);
+            if (u >= ctx.links.tags.size()) ctx.links.tags.resize(u + 1);
+            ctx.links.tags[u] = column_text(stmt.get(), 30);
+        }
     }
 }
 
@@ -462,8 +496,11 @@ static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::s
         ctx.subcatches.infil_p4[idx] = column_double(stmt.get(), 21);
         ctx.subcatches.infil_p5[idx] = column_double(stmt.get(), 22);
 
-        if (!column_is_null(stmt.get(), 23))
-            ctx.subcatch_tags[name] = column_text(stmt.get(), 23);
+        if (!column_is_null(stmt.get(), 23)) {
+            const auto u = static_cast<std::size_t>(idx);
+            if (u >= ctx.subcatches.tags.size()) ctx.subcatches.tags.resize(u + 1);
+            ctx.subcatches.tags[u] = column_text(stmt.get(), 23);
+        }
     }
 }
 
@@ -554,7 +591,7 @@ static void read_timeseries(sqlite3* db, SimulationContext& ctx, const std::stri
             }
             prev_name = name;
         }
-        double ts = std::stod(column_text(stmt.get(), 1));
+        double ts = parse_ts_timestamp(column_text(stmt.get(), 1));
         double val = column_double(stmt.get(), 2);
         ctx.tables[idx].x.push_back(ts);
         ctx.tables[idx].y.push_back(val);
@@ -987,6 +1024,30 @@ static void read_rdii(sqlite3* db, SimulationContext& ctx,
             e.drecov = sqlite3_column_double(stmt.get(), 8);
             e.dinit  = sqlite3_column_double(stmt.get(), 9);
             ctx.unit_hyds.add(e);
+        }
+    }
+
+    // RDII exponential-decay parameters (optional — older GeoPackages won't have it)
+    if (table_exists(db, "rdii_decay")) {
+        auto stmt = prepare(db,
+            "SELECT uh_name, response, k_dep, k_0, k_T, T_ref, theta_rec, T_freeze "
+            "FROM rdii_decay WHERE simulation_id = ?");
+        bind_text(stmt.get(), 1, sim_id);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            RDIIDecayEntry e{};
+            e.uh_name = column_text(stmt.get(), 0);
+            std::string resp = column_text(stmt.get(), 1);
+            if      (resp == "SHORT")  e.response = 0;
+            else if (resp == "MEDIUM") e.response = 1;
+            else if (resp == "LONG")   e.response = 2;
+            else continue;
+            e.k_dep     = sqlite3_column_double(stmt.get(), 2);
+            e.k_0       = sqlite3_column_double(stmt.get(), 3);
+            e.k_T       = sqlite3_column_double(stmt.get(), 4);
+            e.T_ref     = sqlite3_column_double(stmt.get(), 5);
+            e.theta_rec = sqlite3_column_double(stmt.get(), 6);
+            e.T_freeze  = sqlite3_column_double(stmt.get(), 7);
+            ctx.rdii_decay.add(e);
         }
     }
 }

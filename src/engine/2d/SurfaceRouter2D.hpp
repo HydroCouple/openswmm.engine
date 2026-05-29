@@ -15,7 +15,7 @@
  * @ingroup engine_2d
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -25,6 +25,7 @@
 #include "data/MeshData.hpp"
 #include "data/SurfaceStateData.hpp"
 #include "data/SolverOptions2D.hpp"
+#include "data/BoundaryData.hpp"
 #include "coupling/NodeCoupling.hpp"
 
 #ifdef OPENSWMM_HAS_2D
@@ -144,6 +145,31 @@ public:
     /// Access solver options (mutable).
     SolverOptions2D& options() noexcept { return options_; }
 
+    /// Access per-edge boundary-condition data (read-only).
+    const BoundaryData& boundary() const noexcept { return boundary_; }
+
+    /// Access per-edge boundary-condition data (mutable, for forcing/parsing).
+    BoundaryData& boundary() noexcept { return boundary_; }
+
+    /**
+     * @brief Per-row buffer for `[2D_BOUNDARY_CONDITIONS]` parse output.
+     *
+     * V-E3. Populated by the input parser during reading (before the
+     * mesh is finalized), drained into `boundary_` during `initialize()`
+     * after `boundary_.resize()` allocates the per-edge slots. Cleared
+     * after drain.
+     */
+    struct PendingBoundaryRow {
+        int         tri      = 0;
+        int         edge     = 0;     ///< 0..2
+        int         bc_type  = 0;     ///< openswmm::twoD::BoundaryType cast
+        double      param1   = 0.0;   ///< slope (NormalFlow) / head (Stage) / flow (Flow)
+        std::string name;             ///< TS name or curve name (TS_/Rating variants)
+        std::string group;            ///< named group ("" = none)
+    };
+    std::vector<PendingBoundaryRow>& pendingBCRows() noexcept { return pending_bc_rows_; }
+    const std::vector<PendingBoundaryRow>& pendingBCRows() const noexcept { return pending_bc_rows_; }
+
     /// Get total 2D surface volume (sum of depth * area).
     double totalVolume() const;
 
@@ -190,6 +216,10 @@ private:
     MeshData         mesh_;
     SurfaceStateData state_;
     SolverOptions2D  options_;
+    BoundaryData     boundary_;
+
+    /// V-E3 — parse-time scratch for [2D_BOUNDARY_CONDITIONS] rows.
+    std::vector<PendingBoundaryRow> pending_bc_rows_;
 
     std::vector<CouplingPoint> coupling_points_;
 

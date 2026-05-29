@@ -2,16 +2,17 @@ name: Unit Testing
 
 on:
   push:
-    branches: [master, main, develop]
+    branches: [main, develop]
   pull_request:
-    branches: [master, main, develop]
+    branches: [main, develop]
 
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_EXE: ${{ github.workspace }}/vcpkg/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  # Pull only what the unit-test build needs: default features (2d) + tests.
-  VCPKG_MANIFEST_FEATURES: "tests"
+  # Note: the vcpkg `tests` feature is enabled via -DVCPKG_MANIFEST_FEATURES on
+  # the Configure step below; the env-var form isn't honored by the vcpkg
+  # toolchain at CMake configure time.
   OMP_NUM_THREADS: 1
 
 jobs:
@@ -110,9 +111,10 @@ jobs:
           cmake
           --preset=${{ matrix.cmake_preset }}-debug
           -B build-${{ matrix.vcpkg_triplet }}
-          -DVCPKG_MANIFEST_FEATURES=tests
+          -DVCPKG_MANIFEST_FEATURES="tests;geopackage"
           -DOPENSWMM_BUILD_TESTS=OFF
           -DOPENSWMM_BUILD_UNIT_TESTS=ON
+          -DOPENSWMM_WITH_GEOPACKAGE=ON
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
       - name: Build
@@ -120,6 +122,27 @@ jobs:
 
       - name: Unit tests
         run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit --output-on-failure
+
+      - name: Diagnose Linux unit-test segfaults (gdb)
+        if: failure() && runner.os == 'Linux'
+        working-directory: tests/unit/legacy/engine/data
+        run: |
+          sudo apt-get install -y gdb
+          for t in test_solver_api test_solver_errors test_solver_hotstart test_solver_shapes test_solver_expanded_api; do
+            bin=$(find ${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }} -name "$t" -type f -executable | head -1)
+            if [ -z "$bin" ]; then echo "Binary $t not found"; continue; fi
+            echo "==================================================="
+            echo "==== gdb backtrace: $t"
+            echo "==================================================="
+            gdb -batch \
+              -ex 'set pagination off' \
+              -ex 'set confirm off' \
+              -ex 'handle SIGSEGV stop print nopass' \
+              -ex run \
+              -ex 'thread apply all bt full' \
+              -ex quit \
+              "$bin" 2>&1 | head -400 || true
+          done
 
       - name: Package
         run: cmake --build build-${{ matrix.vcpkg_triplet }} --target package
@@ -133,101 +156,60 @@ jobs:
             build-${{ matrix.vcpkg_triplet }}/*.tar.gz
             build-${{ matrix.vcpkg_triplet }}/*.zip
 
-  # ──────────────────────────────────────────────────────────────────────
-  #  Python bindings — build, test, and wheel packaging
-  # ──────────────────────────────────────────────────────────────────────
-  # python:
-  #   name: "Python (${{ matrix.alias }})"
-  #   needs: engine
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       include:
-  #         - os: ubuntu-latest
-  #           alias: Linux-x64
-  #           vcpkg_triplet: x64-linux
-  #           cmake_osx_arch: ""
+      # ── Release build for Python wheel consumption ────────────────────────
+      # vcpkg packages are already in the binary cache from the Debug build
+      # above, so this configure is fast (no SUNDIALS recompilation).
+      - name: Configure (Release, for Python wheel)
+        run: >
+          cmake
+          --preset=${{ matrix.cmake_preset }}
+          -B build-${{ matrix.vcpkg_triplet }}-release
+          -DVCPKG_MANIFEST_FEATURES="geopackage"
+          -DOPENSWMM_BUILD_TESTS=OFF
+          -DOPENSWMM_BUILD_UNIT_TESTS=OFF
+          -DOPENSWMM_BUILD_REGRESSION_TESTS=OFF
+          -DOPENSWMM_BUILD_BENCHMARKS=OFF
+          -DOPENSWMM_WITH_GEOPACKAGE=ON
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
-  #         - os: macos-latest
-  #           alias: macOS-arm64
-  #           vcpkg_triplet: arm64-osx
-  #           cmake_osx_arch: arm64
+      - name: Build (Release, for Python wheel)
+        run: cmake --build build-${{ matrix.vcpkg_triplet }}-release --config Release
 
-  #         - os: macos-15-intel
-  #           alias: macOS-x64
-  #           vcpkg_triplet: x64-osx
-  #           cmake_osx_arch: x86_64
+      - name: Install (Release, for Python wheel)
+        run: >
+          cmake --install build-${{ matrix.vcpkg_triplet }}-release
+          --config Release
+          --prefix "${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}"
 
-  #         - os: windows-latest
-  #           alias: Windows-x64
-  #           vcpkg_triplet: x64-windows
-  #           cmake_osx_arch: ""
+      - name: Verify bundled runtime libs (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}/bin"
+          echo "--- bin/ contents ---"
+          ls -la
+          echo
+          for exe in openswmm openswmm-legacy; do
+            [ -x "$exe" ] || continue
+            echo "--- $exe linkage ---"
+            if [[ "${{ runner.os }}" == "macOS" ]]; then
+              otool -L "$exe"
+            else
+              ldd "$exe"
+            fi
+          done
 
-  #   runs-on: ${{ matrix.os }}
-  #   steps:
-  #     - name: Checkout repository
-  #       uses: actions/checkout@v5
+      - name: Verify bundled runtime libs (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location "${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}/bin"
+          Write-Host "--- bin/ contents ---"
+          Get-ChildItem | Format-Table Mode,Length,Name
 
-  #     - name: Install OpenMP and Ninja (macOS)
-  #       if: runner.os == 'macOS'
-  #       run: brew install libomp ninja
-
-  #     - name: Install Ninja (Linux)
-  #       if: runner.os == 'Linux'
-  #       run: sudo apt-get update && sudo apt-get install -y ninja-build
-
-  #     - name: Set up Python
-  #       uses: actions/setup-python@v5
-  #       with:
-  #         python-version: "3.13"
-
-  #     - name: Install Python requirements
-  #       working-directory: python
-  #       run: |
-  #         python -m pip install --upgrade pip
-  #         python -m pip install -r requirements.txt
-
-  #     - name: Build and install (Windows)
-  #       if: runner.os == 'Windows'
-  #       working-directory: python
-  #       env:
-  #         CMAKE_GENERATOR: "Visual Studio 17 2022"
-  #       run: python -m pip install .
-
-  #     - name: Build and install (Unix)
-  #       if: runner.os != 'Windows'
-  #       working-directory: python
-  #       env:
-  #         CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-  #       run: python -m pip install .
-
-  #     - name: Run Python tests
-  #       env:
-  #         CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-  #       working-directory: python
-  #       run: |
-  #         # Temporarily hide source tree so installed package is used
-  #         mv openswmm openswmm_src
-  #         python -m pytest -v tests
-  #         mv openswmm_src openswmm
-
-  #     - name: Build wheel (Windows)
-  #       if: runner.os == 'Windows'
-  #       working-directory: python
-  #       env:
-  #         CMAKE_GENERATOR: "Visual Studio 17 2022"
-  #       run: python setup.py bdist_wheel
-
-  #     - name: Build wheel (Unix)
-  #       if: runner.os != 'Windows'
-  #       working-directory: python
-  #       env:
-  #         CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-  #       run: python setup.py bdist_wheel
-
-  #     - name: Upload Python wheel
-  #       if: always()
-  #       uses: actions/upload-artifact@v5
-  #       with:
-  #         name: python-wheel-${{ matrix.vcpkg_triplet }}
-  #         path: python/dist/*.whl
+      - name: Upload engine install artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: engine-install-${{ matrix.vcpkg_triplet }}
+          path: engine-install-${{ matrix.vcpkg_triplet }}/

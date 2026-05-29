@@ -10,7 +10,7 @@
  * @ingroup engine_plugins
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -487,7 +487,11 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     std::fprintf(f, "\n  Process Models:");
     std::fprintf(f, "\n    Rainfall/Runoff ........ %s",
                  (ctx.n_subcatches() > 0 && ctx.n_gages() > 0) ? "YES" : "NO");
-    std::fprintf(f, "\n    RDII ................... %s", has_rdii ? "YES" : "NO");
+    bool has_exp_decay = (ctx.rdii_decay.count() > 0);
+    std::fprintf(f, "\n    RDII ................... %s",
+                 has_rdii ? (has_exp_decay ? "YES (Exponential IA)"
+                                           : "YES (Linear IA)")
+                          : "NO");
     std::fprintf(f, "\n    Snowmelt ............... %s", has_snow ? "YES" : "NO");
     std::fprintf(f, "\n    Groundwater ............ %s", has_gw ? "YES" : "NO");
     std::fprintf(f, "\n    Flow Routing ........... %s",
@@ -930,16 +934,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "********************************");
     WRITE(f, "Highest Flow Instability Indexes");
     WRITE(f, "********************************");
-    {
-        if (ctx.max_flow_turns[0].index < 0 || ctx.max_flow_turns[0].value <= 0.0) {
-            std::fprintf(f, "\n  All links are stable.");
-        } else {
-            for (int i = 0; i < SimulationContext::MAX_STATS; ++i) {
-                const auto& ms = ctx.max_flow_turns[i];
-                if (ms.index < 0) continue;
-                std::fprintf(f, "\n  Link %s (%.0f)",
-                             ctx.link_names.name_of(ms.index).c_str(), ms.value);
-            }
+    if (ctx.max_flow_turns[0].index < 0 || ctx.max_flow_turns[0].value <= 0.0) {
+        std::fprintf(f, "\n  All links are stable.");
+    } else {
+        for (int i = 0; i < SimulationContext::MAX_STATS; ++i) {
+            const auto& ms = ctx.max_flow_turns[i];
+            if (ms.index < 0) continue;
+            std::fprintf(f, "\n  Link %s (%.0f)",
+                         ctx.link_names.name_of(ms.index).c_str(), ms.value);
         }
     }
 

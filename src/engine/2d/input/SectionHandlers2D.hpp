@@ -16,7 +16,7 @@
  * @ingroup engine_2d
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -25,6 +25,7 @@
 
 #include "../data/MeshData.hpp"
 #include "../data/SolverOptions2D.hpp"
+#include "../SurfaceRouter2D.hpp"
 #include "../../input/SectionRegistry.hpp"
 #include "../../uncertainty/UncertaintyConfig.hpp"
 
@@ -129,6 +130,25 @@ std::string parseUncertaintyLine(const std::vector<std::string>& tokens,
                                   openswmm::uncertainty::UncertaintyConfig& config);
 
 /**
+ * @brief V-E3 — parse a single line from the [2D_BOUNDARY_CONDITIONS]
+ *        section into a SurfaceRouter2D::PendingBoundaryRow appended to
+ *        @p pending_rows.
+ *
+ * Format: TRI EDGE TYPE [PARAM_1 [PARAM_2 [GROUP]]]
+ *   TYPE ∈ WALL / NORMAL_FLOW / SPECIFIED_STAGE / TS_STAGE /
+ *          SPECIFIED_FLOW / TS_FLOW / RATING_CURVE
+ *   PARAM_1 = slope / head / TS name / flow / TS name / curve name (by type)
+ *   PARAM_2 reserved, always "*"
+ *   GROUP   optional named group ("*" = none)
+ *
+ * Rows are drained into BoundaryData inside SurfaceRouter2D::initialize()
+ * after boundary_.resize() has sized the per-edge slots.
+ */
+std::string parse2DBoundaryConditionsLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_rows);
+
+/**
  * @brief Register all 2D input section handlers with the section registry.
  *
  * Call during input reader setup (conditional on OPENSWMM_HAS_2D).
@@ -142,6 +162,7 @@ std::string parseUncertaintyLine(const std::vector<std::string>& tokens,
 void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
                         openswmm::uncertainty::UncertaintyConfig& config,
+                        std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                         input::SectionRegistry& registry);
 
 /**
@@ -160,6 +181,7 @@ void register2DSections(MeshData& mesh,
  */
 std::string load2DMeshExternalFile(MeshData& mesh,
                                    SolverOptions2D& opts,
+                                   std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                                    const std::string& mesh_file,
                                    const std::string& inp_base_dir);
 

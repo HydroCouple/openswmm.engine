@@ -69,6 +69,52 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Initialize surface state
     state_.resize(mesh_.n_triangles(), mesh_.n_vertices());
 
+    // Initialize per-edge boundary condition storage (n_triangles * 3 slots,
+    // all initialized to WALL with zero head/slope/cum_flux).
+    boundary_.resize(mesh_.n_triangles() * 3);
+
+    // V-E3 — drain any [2D_BOUNDARY_CONDITIONS] rows the parser
+    // accumulated into boundary_. Out-of-range (tri/edge beyond mesh
+    // size) rows are silently skipped — defensive against partial INPs.
+    {
+        const int n_edges = boundary_.size();
+        for (const auto& r : pending_bc_rows_) {
+            if (r.tri < 0 || r.tri >= mesh_.n_triangles()) continue;
+            if (r.edge < 0 || r.edge > 2) continue;
+            const int idx = r.tri * 3 + r.edge;
+            if (idx < 0 || idx >= n_edges) continue;
+            boundary_.edge_bc_type[idx] = static_cast<int8_t>(r.bc_type);
+            switch (static_cast<BoundaryType>(r.bc_type)) {
+            case BoundaryType::NORMAL_FLOW:
+                boundary_.edge_bed_slope[idx] = r.param1;
+                break;
+            case BoundaryType::SPECIFIED_STAGE:
+                if (!r.name.empty()) {
+                    boundary_.edge_bc_tseries_name[idx] = r.name;
+                    boundary_.edge_bc_tseries[idx]      = -2;  // deferred resolve
+                } else {
+                    boundary_.edge_bc_head[idx] = r.param1;
+                }
+                break;
+            case BoundaryType::SPECIFIED_FLOW:
+                if (!r.name.empty()) {
+                    boundary_.edge_bc_flow_tseries_name[idx] = r.name;
+                    boundary_.edge_bc_flow_tseries[idx]      = -2;
+                } else {
+                    boundary_.edge_bc_flow[idx] = r.param1;
+                }
+                break;
+            case BoundaryType::RATING_CURVE:
+                boundary_.edge_bc_rating_curve_name[idx] = r.name;
+                boundary_.edge_bc_rating_curve[idx]      = -2;
+                break;
+            case BoundaryType::WALL:
+                break;
+            }
+        }
+        pending_bc_rows_.clear();
+    }
+
     // Set initial heads from ground elevation
     for (int i = 0; i < mesh_.n_triangles(); ++i) {
         state_.head[i] = mesh_.tri_cz[i];
@@ -77,13 +123,38 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Build coupling point descriptors
     coupling_points_ = buildCouplingPoints(mesh_, ctx);
 
-    // Suppress ponding for 2D-coupled nodes
+    // Suppress ponding for 2D-coupled nodes. The 2D surface owns the
+    // surface storage, so any legacy ponded_area would double-count.
+    //
+    // C3a: warn (don't fail) when the user-supplied INP marks a coupled
+    // node with sur_depth > 0 or ponded_area > 0. The engine still proceeds
+    // — the surcharge gate in computeCouplingExchange honours sur_depth
+    // (C1+C2), and ponded_area is zeroed below — but the user should know
+    // that membership in [2D_VERTEX_NODE_MAP] / [2D_TRIANGLE_NODE_MAP] is
+    // the unambiguous "uncapped" flag and the other two attributes have
+    // their meaning narrowed to "physical surcharge cap" only.
+    // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C3a).
     for (const auto& cp : coupling_points_) {
-        if (!cp.is_outfall) {
-            auto ni = static_cast<std::size_t>(cp.node_idx);
-            // Set ponded area to zero — 2D surface handles excess
-            ctx.nodes.ponded_area[ni] = 0.0;
+        if (cp.is_outfall) continue;
+        auto ni = static_cast<std::size_t>(cp.node_idx);
+        const auto& nname = ctx.node_names.name_of(cp.node_idx);
+        if (ctx.nodes.sur_depth[ni] > 0.0) {
+            ctx.warnings.push_back(
+                "WARNING: 2D-coupled node '" + nname
+                + "' has sur_depth > 0 — surcharge gate uses invert + "
+                  "full_depth + sur_depth as the spill threshold "
+                  "(z_top). Below z_top the orifice ramp is closed in "
+                  "both directions; above z_top it opens.");
         }
+        if (ctx.nodes.ponded_area[ni] > 0.0) {
+            ctx.warnings.push_back(
+                "WARNING: 2D-coupled node '" + nname
+                + "' has ponded_area > 0 — the 2D mesh owns surface "
+                  "storage for coupled nodes; ponded_area is being "
+                  "zeroed.");
+        }
+        // Set ponded area to zero — 2D surface handles excess
+        ctx.nodes.ponded_area[ni] = 0.0;
     }
 
 #ifdef OPENSWMM_HAS_2D
@@ -132,7 +203,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
     state_.save_state();
 
     // Compute coupling exchange flows
-    computeCouplingExchange(coupling_points_, mesh_, state_, ctx, dt);
+    computeCouplingExchange(coupling_points_, mesh_, state_, ctx, options_, dt);
 
     // Transfer outfall discharges into 2D cells
     transferOutfallDischarges(coupling_points_, mesh_, state_, ctx, dt);

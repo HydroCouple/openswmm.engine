@@ -1,100 +1,82 @@
-"""Integration tests exercising the full expanded engine API in a simulation."""
+"""Integration tests exercising the full engine surface in a simulation.
 
-import numpy as np
+Migrated to the v1 Pythonic bindings (see
+``docs/PYTHONIC_BINDINGS_DONE.md``).
+"""
+
 import pytest
 
-from openswmm.engine import Solver, Nodes, Links, Subcatchments, Gages, MassBalance
+from openswmm.engine import RoutingTotal, Solver
 
 
 class TestFullSimulationWithExpandedAPI:
-    """Run a full simulation using all expanded accessor methods."""
+    """Run a full simulation using the v1 property-style API."""
 
     def test_read_all_properties_during_simulation(self, solver_files):
-        """Read every expanded property from every object during a live sim."""
+        """Read every wrapper property during a live sim."""
         inp, rpt, out = solver_files
         s = Solver(inp, rpt, out)
         s.open()
         s.initialize()
         s.start()
 
-        nodes = Nodes(s)
-        links = Links(s)
-        sc = Subcatchments(s)
-        gages = Gages(s)
-
-        n_nodes = nodes.count()
-        n_links = links.count()
-        n_sc = sc.count()
-        n_gages = gages.count()
+        # Pre-fetch counts via the container protocol.
+        n_nodes = len(s.nodes)
+        n_links = len(s.links)
+        n_sc = len(s.subcatchments)
+        n_gages = len(s.gages)
 
         step_count = 0
-        while s.step() and step_count < 20:
+        for _ in s.steps():
             step_count += 1
+            if step_count > 20:
+                break
 
-            # Node properties
-            for i in range(n_nodes):
-                assert nodes.get_depth(i) >= 0.0
-                nodes.get_head(i)
-                nodes.get_volume(i)
-                nodes.get_lateral_inflow(i)
-                nodes.get_overflow(i)
-                nodes.get_inflow(i)
-                nodes.get_type(i)
-                nodes.get_invert_elev(i)
-                nodes.get_max_depth(i)
+            # Per-object property reads — same iteration via wrappers.
+            for node in s.nodes:
+                assert node.depth >= 0.0
+                _ = node.head, node.volume, node.lateral_inflow
+                _ = node.overflow, node.inflow, node.type
+                _ = node.invert_elev, node.max_depth
 
-            # Link properties
-            for i in range(n_links):
-                links.get_flow(i)
-                links.get_depth(i)
-                links.get_velocity(i)
-                links.get_capacity(i)
-                links.get_volume(i)
-                links.get_type(i)
-                links.get_length(i)
-                links.get_from_node(i)
-                links.get_to_node(i)
+            for link in s.links:
+                _ = link.flow, link.depth, link.velocity
+                _ = link.capacity, link.volume, link.type, link.length
+                _ = link.from_node, link.to_node
 
-            # Subcatchment properties
-            for i in range(n_sc):
-                sc.get_runoff(i)
-                sc.get_rainfall(i)
-                sc.get_area(i)
-                sc.get_width(i)
-                sc.get_slope(i)
+            for sub in s.subcatchments:
+                _ = sub.runoff, sub.rainfall, sub.area, sub.width, sub.slope
 
-            # Gage properties
-            for i in range(n_gages):
-                gages.get_rainfall(i)
-                gages.get_rain_type(i)
+            for gage in s.gages:
+                _ = gage.rainfall, gage.rain_type
 
-            # Bulk operations
-            depths = nodes.get_depths_bulk()
+            # Bulk operations — properties now.
+            depths = s.nodes.depths
             assert depths.shape == (n_nodes,)
-            heads = nodes.get_heads_bulk()
+            heads = s.nodes.heads
             assert heads.shape == (n_nodes,)
-            flows = links.get_flows_bulk()
+            flows = s.links.flows
             assert flows.shape == (n_links,)
+
+        # Drive the rest of the simulation to completion so the continuity
+        # checks below have a complete mass balance.
+        for _ in s.steps():
+            pass
 
         s.end()
 
-        # Post-simulation statistics
-        for i in range(n_nodes):
-            nodes.get_stat_max_depth(i)
-            nodes.get_stat_vol_flooded(i)
-        for i in range(n_links):
-            links.get_stat_max_flow(i)
-            links.get_stat_vol_flow(i)
-        for i in range(n_sc):
-            sc.get_stat_precip(i)
-            sc.get_stat_runoff_vol(i)
+        # Post-simulation per-object statistics via the .stats sub-view.
+        for node in s.nodes:
+            _ = node.stats.max_depth, node.stats.vol_flooded
+        for link in s.links:
+            _ = link.stats.max_flow, link.stats.vol_flow
+        for sub in s.subcatchments:
+            _ = sub.stats.precip, sub.stats.runoff_vol
 
-        # Mass balance
-        mb = MassBalance(s)
-        runoff_err = mb.get_runoff_continuity_error()
-        routing_err = mb.get_routing_continuity_error()
-        assert abs(runoff_err) < 0.10  # < 10%
-        assert abs(routing_err) < 0.10
+        # Mass balance.
+        mb = s.mass_balance
+        assert abs(mb.runoff_continuity_error) < 0.10
+        assert abs(mb.routing_continuity_error) < 0.10
 
         s.report()
         s.close()
@@ -108,21 +90,25 @@ class TestFullSimulationWithExpandedAPI:
         s.initialize()
         s.start()
 
-        nodes = Nodes(s)
+        # Inject for the first 50 steps via the wrapper.
+        n0 = s.nodes[0]
+        step_count = 0
+        for _ in s.steps():
+            step_count += 1
+            if step_count > 50:
+                break
+            n0.lateral_inflow = 1.0
 
-        for _ in range(50):
-            nodes.set_lateral_inflow(0, 1.0)
-            s.step()
-
-        while s.step():
+        # Drive to end.
+        for _ in s.steps():
             pass
 
         s.end()
 
-        # Check routing total for external inflow
-        mb = MassBalance(s)
-        ext_inflow = mb.get_routing_total(4)  # EXTERNAL
-        assert ext_inflow > 0.0, "External inflow should be positive after injection"
+        # Runtime-API-injected lateral inflow accumulates in the FORCING_INFLOW
+        # bucket — distinct from EXTERNAL.
+        forced_inflow = s.mass_balance.routing_total(RoutingTotal.FORCING_INFLOW)
+        assert forced_inflow > 0.0, "Forced inflow should be positive after injection"
 
         s.report()
         s.close()
@@ -136,16 +122,18 @@ class TestFullSimulationWithExpandedAPI:
         s.initialize()
         s.start()
 
-        sc = Subcatchments(s)
+        sub0 = s.subcatchments[0]
         max_runoff = 0.0
+        step_count = 0
 
-        for _ in range(100):
-            sc.set_rainfall(0, 25.4)  # 1 inch/hr
-            s.step()
-            r = sc.get_runoff(0)
-            max_runoff = max(max_runoff, r)
+        for _ in s.steps():
+            step_count += 1
+            if step_count > 100:
+                break
+            sub0.rainfall = 25.4         # 1 inch/hr
+            max_runoff = max(max_runoff, sub0.runoff)
 
-        while s.step():
+        for _ in s.steps():
             pass
 
         s.end()

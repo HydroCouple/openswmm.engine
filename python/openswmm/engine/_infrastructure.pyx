@@ -1,23 +1,30 @@
 """
-Infrastructure Access
-=====================
+Infrastructure (Pythonic v1 surface)
+====================================
 
 :author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
+:copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
-The :class:`Infrastructure` class provides access to transects, streets,
-inlets, and LID controls/usage within the model.
+``solver.infrastructure`` exposes the four hydraulic-infrastructure
+families: transects, streets, inlets, and LID controls/usage. The C
+API supports ``add`` + ``count`` + per-row parameter setters but no
+generic id→index resolver for these families, so the Python view stays
+flat (``add_*`` / ``*_count``) rather than dressing it as a collection.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Infrastructure
+    from openswmm.engine import Solver, LidType
 
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        infra = Infrastructure(s)
-        print(f"Transects: {infra.transect_count()}")
-        print(f"Streets:   {infra.street_count()}")
-        print(f"LIDs:      {infra.lid_count()}")
+    with Solver("model.inp") as s:
+        s.infrastructure.transects.add("T1")
+        s.infrastructure.transects.set_roughness(0, 0.05, 0.05, 0.03)
+        s.infrastructure.transects.add_station(0, 0.0, 100.0)
+
+        s.infrastructure.lids.add("BC1", LidType.BIO_CELL)
+        s.infrastructure.lids.set_surface(0, storage=0.0, roughness=0.0, slope=0.5)
+        s.infrastructure.lids.usage_add("S1", "BC1", number=1, area=100.0,
+                                        width=10.0, init_sat=0.0, from_imperv=25.0)
 """
 
 # cython: language_level=3
@@ -25,182 +32,210 @@ inlets, and LID controls/usage within the model.
 from ._common cimport *
 
 
-class Infrastructure:
-    """Access transects, streets, inlets, and LID controls.
+cdef inline SWMM_Engine _h(solver):
+    return <SWMM_Engine><size_t>solver.handle
 
-    :param solver: An active :class:`~openswmm.engine.Solver` instance.
-        The solver must remain alive for the lifetime of this object.
+
+cdef inline int _resolve_subcatch(solver, key) except -1:
+    return _resolve_index(_h(solver), key,
+                          swmm_subcatch_index, swmm_subcatch_count,
+                          "Subcatchment")
+
+
+# ---- Transects ------------------------------------------------------
+
+class Transects:
+    """``solver.infrastructure.transects`` view."""
+
+    def __init__(self, solver):
+        self._solver = solver
+
+    def __len__(self) -> int:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        return swmm_transect_count(h)
+
+    def add(self, str transect_id) -> int:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = transect_id.encode('utf-8')
+        _check(swmm_transect_add(h, b))
+        self._solver._bump_generation()
+        return len(self) - 1
+
+    def set_roughness(self, int idx,
+                      double n_left, double n_right, double n_channel) -> None:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_transect_set_roughness(h, idx, n_left, n_right, n_channel))
+
+    def add_station(self, int idx, double station, double elevation) -> None:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_transect_add_station(h, idx, station, elevation))
+
+
+# ---- Streets --------------------------------------------------------
+
+class Streets:
+    """``solver.infrastructure.streets`` view."""
+
+    def __init__(self, solver):
+        self._solver = solver
+
+    def __len__(self) -> int:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        return swmm_street_count(h)
+
+    def add(self, str street_id) -> int:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = street_id.encode('utf-8')
+        _check(swmm_street_add(h, b))
+        self._solver._bump_generation()
+        return len(self) - 1
+
+    def set_params(self, int idx, *,
+                   double t_crown, double h_curb, double sx, double n_road,
+                   double gutter_depres=0.0, double gutter_width=0.0,
+                   int sides=2,
+                   double back_width=0.0, double back_slope=0.0,
+                   double back_n=0.0) -> None:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_street_set_params(
+            h, idx, t_crown, h_curb, sx, n_road,
+            gutter_depres, gutter_width, sides,
+            back_width, back_slope, back_n))
+
+
+# ---- Inlets ---------------------------------------------------------
+
+class Inlets:
+    """``solver.infrastructure.inlets`` view."""
+
+    def __init__(self, solver):
+        self._solver = solver
+
+    def __len__(self) -> int:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        return swmm_inlet_count(h)
+
+    def add(self, str inlet_id, str inlet_type) -> int:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b_id = inlet_id.encode('utf-8')
+        cdef bytes b_type = inlet_type.encode('utf-8')
+        _check(swmm_inlet_add(h, b_id, b_type))
+        self._solver._bump_generation()
+        return len(self) - 1
+
+    def set_params(self, int idx, *,
+                   double length=0.0, double width=0.0,
+                   str grate_type="",
+                   double open_area=0.0, double splash_veloc=0.0) -> None:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b_grate = grate_type.encode('utf-8')
+        _check(swmm_inlet_set_params(
+            h, idx, length, width, b_grate, open_area, splash_veloc))
+
+
+# ---- LID controls + usage ------------------------------------------
+
+class LIDs:
+    """``solver.infrastructure.lids`` view.
+
+    Handles both the ``[LID_CONTROLS]`` family (the ``add`` /
+    ``set_*`` methods) and the ``[LID_USAGE]`` placement records
+    (``usage_add``).
     """
 
     def __init__(self, solver):
         self._solver = solver
 
-    # ==================================================================
-    # Transects
-    # ==================================================================
-
-    def transect_count(self) -> int:
-        """Return the number of transects in the model."""
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        return swmm_transect_count(h)
-
-    def transect_set_roughness(self, int idx, double n_left, double n_right,
-                               double n_channel):
-        """Set Manning's roughness values for a transect.
-
-        :param idx: Transect index.
-        :param n_left: Left overbank roughness.
-        :param n_right: Right overbank roughness.
-        :param n_channel: Channel roughness.
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_transect_set_roughness(h, idx, n_left, n_right, n_channel))
-
-    def transect_add_station(self, int idx, double station, double elevation):
-        """Add a station-elevation point to a transect.
-
-        :param idx: Transect index.
-        :param station: Station (horizontal distance).
-        :param elevation: Elevation at this station.
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_transect_add_station(h, idx, station, elevation))
-
-    # ==================================================================
-    # Streets
-    # ==================================================================
-
-    def street_count(self) -> int:
-        """Return the number of streets in the model."""
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        return swmm_street_count(h)
-
-    def street_set_params(self, int idx, double t_crown, double h_curb,
-                          double sx, double n_road, double gutter_depres,
-                          double gutter_width, int sides, double back_width,
-                          double back_slope, double back_n):
-        """Set the geometric parameters for a street cross-section.
-
-        :param idx: Street index.
-        :param t_crown: Crown width.
-        :param h_curb: Curb height.
-        :param sx: Cross slope.
-        :param n_road: Road roughness (Manning's n).
-        :param gutter_depres: Gutter depression depth.
-        :param gutter_width: Gutter width.
-        :param sides: Number of sides (1 or 2).
-        :param back_width: Backing width.
-        :param back_slope: Backing slope.
-        :param back_n: Backing roughness.
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_street_set_params(h, idx, t_crown, h_curb, sx, n_road,
-                                       gutter_depres, gutter_width, sides,
-                                       back_width, back_slope, back_n))
-
-    # ==================================================================
-    # Inlets
-    # ==================================================================
-
-    def inlet_count(self) -> int:
-        """Return the number of inlets in the model."""
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        return swmm_inlet_count(h)
-
-    def inlet_set_params(self, int idx, double length, double width,
-                         str grate_type, double open_area,
-                         double splash_veloc):
-        """Set the parameters for an inlet.
-
-        :param idx: Inlet index.
-        :param length: Inlet length.
-        :param width: Inlet width.
-        :param grate_type: Grate type string.
-        :param open_area: Open area fraction.
-        :param splash_veloc: Splash-over velocity.
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bytes b_grate = grate_type.encode('utf-8')
-        _check(swmm_inlet_set_params(h, idx, length, width, b_grate,
-                                      open_area, splash_veloc))
-
-    # ==================================================================
-    # LID Controls
-    # ==================================================================
-
-    def lid_count(self) -> int:
-        """Return the number of LID controls in the model."""
+    def __len__(self) -> int:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_lid_count(h)
 
-    def lid_set_surface(self, int idx, double storage, double roughness,
-                        double slope):
-        """Set LID surface-layer parameters.
+    def add(self, str lid_id, lid_type) -> int:
+        """``lid_type`` is a :class:`LidType` enum."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = lid_id.encode('utf-8')
+        _check(swmm_lid_add(h, b, int(lid_type)))
+        self._solver._bump_generation()
+        return len(self) - 1
 
-        :param idx: LID index.
-        :param storage: Surface storage depth.
-        :param roughness: Surface roughness (Manning's n).
-        :param slope: Surface slope.
-        """
+    def set_surface(self, int idx, *,
+                    double storage, double roughness, double slope) -> None:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_surface(h, idx, storage, roughness, slope))
 
-    def lid_set_soil(self, int idx, double thick, double porosity, double fc,
-                     double wp, double ksat, double kslope):
-        """Set LID soil-layer parameters.
-
-        :param idx: LID index.
-        :param thick: Soil thickness.
-        :param porosity: Porosity.
-        :param fc: Field capacity.
-        :param wp: Wilting point.
-        :param ksat: Saturated hydraulic conductivity.
-        :param kslope: Conductivity slope.
-        """
+    def set_soil(self, int idx, *,
+                 double thick, double porosity, double fc,
+                 double wp, double ksat, double kslope) -> None:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_lid_set_soil(h, idx, thick, porosity, fc, wp, ksat,
-                                  kslope))
+        _check(swmm_lid_set_soil(h, idx, thick, porosity, fc, wp, ksat, kslope))
 
-    def lid_set_storage(self, int idx, double thick, double void_frac,
-                        double ksat):
-        """Set LID storage-layer parameters.
-
-        :param idx: LID index.
-        :param thick: Storage thickness.
-        :param void_frac: Void fraction.
-        :param ksat: Saturated hydraulic conductivity.
-        """
+    def set_storage(self, int idx, *,
+                    double thick, double void_frac, double ksat) -> None:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_storage(h, idx, thick, void_frac, ksat))
 
-    def lid_set_drain(self, int idx, double coeff, double expon, double offset):
-        """Set LID underdrain parameters.
-
-        :param idx: LID index.
-        :param coeff: Drain coefficient.
-        :param expon: Drain exponent.
-        :param offset: Drain offset height.
-        """
+    def set_drain(self, int idx, *,
+                  double coeff, double expon, double offset) -> None:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_drain(h, idx, coeff, expon, offset))
 
-    # ==================================================================
-    # LID Usage
-    # ==================================================================
-
-    def lid_usage_add(self, int subcatch_idx, int lid_idx, int number,
-                      double area, double width, double init_sat,
-                      double from_imperv):
-        """Assign a LID control to a subcatchment.
-
-        :param subcatch_idx: Subcatchment index.
-        :param lid_idx: LID control index.
-        :param number: Number of LID units.
-        :param area: Area of each unit.
-        :param width: Top width of overland flow.
-        :param init_sat: Initial saturation (0.0--1.0).
-        :param from_imperv: Fraction of impervious area treated (0.0--1.0).
-        """
+    def usage_add(self, subcatchment, lid, *,
+                  int number, double area, double width,
+                  double init_sat=0.0, double from_imperv=0.0) -> None:
+        """Place ``lid`` (id or index) on ``subcatchment`` (id or index)."""
+        cdef int si = _resolve_subcatch(self._solver, subcatchment)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_lid_usage_add(h, subcatch_idx, lid_idx, number, area,
-                                   width, init_sat, from_imperv))
+        # No id→index resolver for LID controls; accept int or look up by
+        # scanning isn't supported by the C API. Hard-require int here.
+        if isinstance(lid, str):
+            raise TypeError(
+                "LID lookup by id is not supported by the C API; pass the "
+                "integer index returned from .add(id, type) instead.")
+        cdef int li = int(lid)
+        _check(swmm_lid_usage_add(
+            h, si, li, number, area, width, init_sat, from_imperv))
+
+
+# ---- Top-level Infrastructure view ----------------------------------
+
+class Infrastructure:
+    """``solver.infrastructure`` — entry point for the four sub-views."""
+
+    def __init__(self, solver):
+        self._solver = solver
+        self._transects = None
+        self._streets = None
+        self._inlets = None
+        self._lids = None
+
+    @property
+    def transects(self) -> Transects:
+        if self._transects is None:
+            self._transects = Transects(self._solver)
+        return self._transects
+
+    @property
+    def streets(self) -> Streets:
+        if self._streets is None:
+            self._streets = Streets(self._solver)
+        return self._streets
+
+    @property
+    def inlets(self) -> Inlets:
+        if self._inlets is None:
+            self._inlets = Inlets(self._solver)
+        return self._inlets
+
+    @property
+    def lids(self) -> LIDs:
+        if self._lids is None:
+            self._lids = LIDs(self._solver)
+        return self._lids
+
+    def __repr__(self) -> str:
+        try:
+            return (f"<Infrastructure transects={len(self.transects)} "
+                    f"streets={len(self.streets)} inlets={len(self.inlets)} "
+                    f"lids={len(self.lids)}>")
+        except Exception:
+            return "<Infrastructure (engine closed)>"

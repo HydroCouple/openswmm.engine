@@ -8,6 +8,7 @@
 
 #include "SectionHandlers2D.hpp"
 
+#include "../data/BoundaryData.hpp"
 #include "../../input/InputReader.hpp"
 #include "../../input/Tokenizer.hpp"
 #include "../../core/SimulationContext.hpp"
@@ -131,6 +132,10 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.report_2d = false;
         else
             return "Invalid REPORT_2D value (YES/NO)";
+    } else if (iequals(key, "OUTPUT_FILE")) {
+        // Stored as the raw token; resolved against the .inp directory in
+        // SWMMEngine::open when the Default2DOutputPlugin is instantiated.
+        opts.output_file = val;
     } else {
         return "Unknown 2D_OPTIONS parameter: " + key;
     }
@@ -451,12 +456,77 @@ input::SectionHandler makeSectionHandler(LineParser line_parser) {
 
 
 // ============================================================================
+// V-E3 — [2D_BOUNDARY_CONDITIONS] line parser
+// ============================================================================
+
+std::string parse2DBoundaryConditionsLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_rows)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() < 3) {
+        return "[2D_BOUNDARY_CONDITIONS] needs TRI EDGE TYPE [PARAM_1 [PARAM_2 [GROUP]]]";
+    }
+
+    bool ok = false;
+    SurfaceRouter2D::PendingBoundaryRow row;
+    row.tri  = tryParseInt(tokens[0], ok);
+    if (!ok || row.tri < 0)
+        return "[2D_BOUNDARY_CONDITIONS] invalid TRI index";
+    row.edge = tryParseInt(tokens[1], ok);
+    if (!ok || row.edge < 0 || row.edge > 2)
+        return "[2D_BOUNDARY_CONDITIONS] invalid EDGE (must be 0..2)";
+
+    const std::string &type_tok = tokens[2];
+    if      (iequals(type_tok, "WALL"))            row.bc_type = static_cast<int>(BoundaryType::WALL);
+    else if (iequals(type_tok, "NORMAL_FLOW"))     row.bc_type = static_cast<int>(BoundaryType::NORMAL_FLOW);
+    else if (iequals(type_tok, "SPECIFIED_STAGE")) row.bc_type = static_cast<int>(BoundaryType::SPECIFIED_STAGE);
+    else if (iequals(type_tok, "TS_STAGE"))        row.bc_type = static_cast<int>(BoundaryType::SPECIFIED_STAGE);
+    else if (iequals(type_tok, "SPECIFIED_FLOW"))  row.bc_type = static_cast<int>(BoundaryType::SPECIFIED_FLOW);
+    else if (iequals(type_tok, "TS_FLOW"))         row.bc_type = static_cast<int>(BoundaryType::SPECIFIED_FLOW);
+    else if (iequals(type_tok, "RATING_CURVE"))    row.bc_type = static_cast<int>(BoundaryType::RATING_CURVE);
+    else return "[2D_BOUNDARY_CONDITIONS] unknown TYPE: " + type_tok;
+
+    // PARAM_1: typed by TYPE. For *_TS variants and RATING_CURVE the
+    // parameter is a name. For NORMAL_FLOW it's the slope. For
+    // SPECIFIED_STAGE it's the head. For SPECIFIED_FLOW it's the
+    // per-metre discharge. "*" means "no value supplied".
+    std::string p1 = (tokens.size() > 3) ? tokens[3] : "*";
+    if (p1 == "*") p1.clear();
+
+    // For Wall: PARAM_1 is irrelevant.
+    if (!p1.empty()) {
+        if (iequals(type_tok, "NORMAL_FLOW") ||
+            iequals(type_tok, "SPECIFIED_STAGE") ||
+            iequals(type_tok, "SPECIFIED_FLOW"))
+        {
+            row.param1 = tryParseDouble(p1, ok);
+            if (!ok) return "[2D_BOUNDARY_CONDITIONS] non-numeric PARAM_1: " + p1;
+        } else {
+            // TS or curve name.
+            row.name = p1;
+        }
+    }
+
+    // PARAM_2 reserved; ignored today.
+    // GROUP (optional).
+    if (tokens.size() > 5 && tokens[5] != "*") {
+        row.group = tokens[5];
+    }
+
+    pending_rows.push_back(std::move(row));
+    return {};
+}
+
+
+// ============================================================================
 // register2DSections
 // ============================================================================
 
 void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
                         openswmm::uncertainty::UncertaintyConfig& config,
+                        std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                         input::SectionRegistry& registry)
 {
     registry.register_custom("2D_OPTIONS",
@@ -482,6 +552,13 @@ void register2DSections(MeshData& mesh,
     registry.register_custom("2D_TRIANGLE_NODE_MAP",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
             return parse2DTriangleNodeMapLine(tokens, mesh);
+        }));
+
+    // V-E3 — [2D_BOUNDARY_CONDITIONS] accumulates pending rows; drained
+    // during SurfaceRouter2D::initialize() after BoundaryData::resize.
+    registry.register_custom("2D_BOUNDARY_CONDITIONS",
+        makeSectionHandler([&pending_bc_rows](const std::vector<std::string>& tokens) {
+            return parse2DBoundaryConditionsLine(tokens, pending_bc_rows);
         }));
 
     // [2D_MESH_FILE] — capture only the first FILE token; mesh is loaded
@@ -520,6 +597,7 @@ void register2DSections(MeshData& mesh,
 
 std::string load2DMeshExternalFile(MeshData& mesh,
                                    SolverOptions2D& opts,
+                                   std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                                    const std::string& mesh_file,
                                    const std::string& inp_base_dir)
 {
@@ -551,6 +629,12 @@ std::string load2DMeshExternalFile(MeshData& mesh,
     mini.register_custom("2D_TRIANGLE_NODE_MAP",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
             return parse2DTriangleNodeMapLine(tokens, mesh);
+        }));
+
+    // V-E3 — external .2dm may carry its own [2D_BOUNDARY_CONDITIONS].
+    mini.register_custom("2D_BOUNDARY_CONDITIONS",
+        makeSectionHandler([&pending_bc_rows](const std::vector<std::string>& tokens) {
+            return parse2DBoundaryConditionsLine(tokens, pending_bc_rows);
         }));
 
     openswmm::input::InputReader reader(mini);

@@ -11,7 +11,7 @@
  * @ingroup engine_output
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -251,6 +251,42 @@ SWMM_ENGINE_API int swmm_output_get_period_time(SWMM_Output handle,
                                                   double* time) {
     CHECK_READER(handle);
     return to_reader(handle)->get_period_time(period, time) ? 0 : -1;
+}
+
+/* =========================================================================
+ * Per-node summary statistics — Slice QA-01
+ *
+ * Thin C-FFI wrappers over OutputReader::get_node_stat_*; see the header
+ * (openswmm_output.h) for unit conventions and the report-step
+ * precision caveat.
+ * ========================================================================= */
+
+SWMM_ENGINE_API int swmm_output_get_node_stat_max_depth(SWMM_Output handle,
+                                                          int          node_idx,
+                                                          double*      value) {
+    CHECK_READER(handle);
+    return to_reader(handle)->get_node_stat_max_depth(node_idx, value) ? 0 : -1;
+}
+
+SWMM_ENGINE_API int swmm_output_get_node_stat_max_overflow(SWMM_Output handle,
+                                                             int          node_idx,
+                                                             double*      value) {
+    CHECK_READER(handle);
+    return to_reader(handle)->get_node_stat_max_overflow(node_idx, value) ? 0 : -1;
+}
+
+SWMM_ENGINE_API int swmm_output_get_node_stat_vol_flooded(SWMM_Output handle,
+                                                            int          node_idx,
+                                                            double*      value) {
+    CHECK_READER(handle);
+    return to_reader(handle)->get_node_stat_vol_flooded(node_idx, value) ? 0 : -1;
+}
+
+SWMM_ENGINE_API int swmm_output_get_node_stat_time_flooded(SWMM_Output handle,
+                                                             int          node_idx,
+                                                             double*      value) {
+    CHECK_READER(handle);
+    return to_reader(handle)->get_node_stat_time_flooded(node_idx, value) ? 0 : -1;
 }
 
 /* =========================================================================

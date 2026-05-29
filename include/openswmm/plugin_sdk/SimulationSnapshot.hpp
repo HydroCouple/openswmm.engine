@@ -19,7 +19,7 @@
  * @see IOutputPlugin.hpp
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -196,64 +196,43 @@ struct SimulationSnapshot {
     int flow_units_code = 0;
 
     // -----------------------------------------------------------------------
-    // 2D surface routing state (populated only when OPENSWMM_HAS_2D is active)
+    // 2D surface routing state (optional; populated only when the engine was
+    // built with OPENSWMM_BUILD_2D and the input file contains a 2D mesh)
+    //
+    // Layout: per-triangle vectors are sized `surface_tri_count`; per-vertex
+    // vectors are sized `surface_vert_count`. `surface_edge_flux` is flat
+    // [tri * 3 + edge] of size `surface_tri_count * 3`.
+    //
+    // Fields are deep-copied from `SurfaceRouter2D::state()` on the main
+    // simulation thread; consumers (Default2DOutputPlugin and any third-party
+    // 2D output plugins) read them through the IO-thread snapshot reference
+    // without further synchronization.
+    //
+    // Vectors are empty when 2D is inactive (either OPENSWMM_BUILD_2D=OFF or
+    // the input file contained no [2D_VERTICES] section). Plugins must check
+    // `surface_tri_count == 0` to skip 2D-specific work in that case.
     // -----------------------------------------------------------------------
 
-    /** @brief Number of 2D mesh triangles. Zero when 2D routing is not active. */
-    int surface_tri_count  = 0;
+    int surface_tri_count  = 0;             ///< Number of triangles (faces)
+    int surface_vert_count = 0;             ///< Number of vertices (nodes)
 
-    /** @brief Number of 2D mesh vertices. Zero when 2D routing is not active. */
-    int surface_vert_count = 0;
-
-    /** @brief Overland flow depth per triangle (m). Length: surface_tri_count. */
-    std::vector<double> surface_depth;
-
-    /** @brief Total hydraulic head per triangle (m). Length: surface_tri_count. */
-    std::vector<double> surface_head;
-
-    /** @brief Unlimited head gradient dh/dx per triangle. Length: surface_tri_count. */
-    std::vector<double> surface_grad_hx;
-
-    /** @brief Unlimited head gradient dh/dy per triangle. Length: surface_tri_count. */
-    std::vector<double> surface_grad_hy;
-
-    /** @brief Slope-limited head gradient dh/dx per triangle. Length: surface_tri_count. */
-    std::vector<double> surface_grad_hx_lim;
-
-    /** @brief Slope-limited head gradient dh/dy per triangle. Length: surface_tri_count. */
-    std::vector<double> surface_grad_hy_lim;
-
-    /** @brief Rainfall intensity per triangle (m/s). Length: surface_tri_count. */
-    std::vector<double> surface_rainfall;
-
-    /** @brief Coupling flux with SWMM node per triangle (m/s). Length: surface_tri_count. */
-    std::vector<double> surface_coupling_flux;
-
-    /** @brief Net source/sink per triangle (m/s). Length: surface_tri_count. */
-    std::vector<double> surface_net_source;
-
-    /**
-     * @brief Normal flux through each cell edge (m²/s).
-     * Layout: [triangle_index * 3 + edge_local]. Length: surface_tri_count * 3.
-     */
-    std::vector<double> surface_edge_flux;
-
-    /**
-     * @brief Reconstructed hydraulic head at mesh vertices (m).
-     * Length: surface_vert_count.
-     */
-    std::vector<double> surface_vert_head;
+    std::vector<double> surface_depth;          ///< Overland flow depth ψ_o (m), per face
+    std::vector<double> surface_head;           ///< Total head h_o = z_s + ψ_o (m), per face
+    std::vector<double> surface_grad_hx;        ///< Unlimited head gradient ∂h/∂x, per face
+    std::vector<double> surface_grad_hy;        ///< Unlimited head gradient ∂h/∂y, per face
+    std::vector<double> surface_grad_hx_lim;    ///< Slope-limited head gradient ∂h/∂x, per face
+    std::vector<double> surface_grad_hy_lim;    ///< Slope-limited head gradient ∂h/∂y, per face
+    std::vector<double> surface_rainfall;       ///< Rainfall intensity (m/s), per face
+    std::vector<double> surface_coupling_flux;  ///< Coupling flux to SWMM node (m/s, + = into 2D), per face
+    std::vector<double> surface_net_source;     ///< Net source/sink (m/s), per face
+    std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
+    std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m)
 
     // ---- ROM quantile fields (empty when ROM is not active) ----------------
 
-    /** @brief 5th-percentile depth per triangle (m). Empty if ROM not active. */
-    std::vector<double> surface_depth_q05;
-
-    /** @brief Median depth per triangle (m). Empty if ROM not active. */
-    std::vector<double> surface_depth_q50;
-
-    /** @brief 95th-percentile depth per triangle (m). Empty if ROM not active. */
-    std::vector<double> surface_depth_q95;
+    std::vector<double> surface_depth_q05;  ///< 5th-percentile depth per triangle (m)
+    std::vector<double> surface_depth_q50;  ///< Median depth per triangle (m)
+    std::vector<double> surface_depth_q95;  ///< 95th-percentile depth per triangle (m)
 };
 
 } /* namespace openswmm */

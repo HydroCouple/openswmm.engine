@@ -49,6 +49,8 @@ function(add_solver_test TEST_NAME SOURCE_FILE)
             RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
             INSTALL_RPATH "${LIB_ROOT}"
     )
+
+    openswmm_stage_test_runtime_deps(${TEST_NAME})
 endfunction()
 
 add_solver_test(test_solver_api          test_solver_api.cpp)

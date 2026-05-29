@@ -62,6 +62,8 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
         INSTALL_RPATH "${LIB_ROOT}"
     )
 
+    openswmm_stage_test_runtime_deps(${TEST_NAME})
+
     add_test(
         NAME    ${TEST_NAME}
         COMMAND $<TARGET_FILE:${TEST_NAME}>
@@ -80,6 +82,14 @@ add_gtest_unit(test_engine_options_parser    test_options_parser.cpp)
 add_gtest_unit(test_engine_csv_timeseries    test_csv_timeseries.cpp)
 add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
 add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.cpp)
+# Slice RC.5 — GeoPackage explicit-builtin registration + is_builtin flag.
+add_gtest_unit(test_engine_pluginfactory_builtins test_pluginfactory_builtins.cpp)
+# Slice QA-01.4 — per-node summary stats read from a SWMM_Output handle.
+add_gtest_unit(test_engine_output_node_stats     test_output_node_stats.cpp)
+add_gtest_unit(test_engine_model_write_with_plugin test_model_write_with_plugin.cpp)
+add_gtest_unit(test_engine_files_section          test_files_section.cpp)
+add_gtest_unit(test_engine_events_section         test_events_section.cpp)
+add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
 add_gtest_unit(test_engine_io_thread         test_io_thread.cpp)
 add_gtest_unit(test_engine_timestep_ctrl     test_timestep_controller.cpp)
@@ -128,8 +138,29 @@ target_compile_definitions(test_engine_exfiltration PRIVATE
 add_gtest_unit(test_engine_treatment        test_treatment.cpp)
 add_gtest_unit(test_engine_rdii             test_rdii.cpp)
 add_gtest_unit(test_engine_runoff_ensemble  test_runoff_ensemble.cpp)
+add_gtest_unit(test_engine_hydrograph_mutation test_hydrograph_mutation_api.cpp)
+add_gtest_unit(test_engine_pattern_mutation  test_pattern_mutation_api.cpp)
+add_gtest_unit(test_engine_transect_mutation test_transect_mutation_api.cpp)
+add_gtest_unit(test_engine_transect_inp_parser test_transect_inp_parser.cpp)
+add_gtest_unit(test_engine_da4_api          test_da4_engine_api.cpp)
+add_gtest_unit(test_engine_controls         test_controls.cpp)
+add_gtest_unit(test_engine_control_rule_validate test_control_rule_validate_api.cpp)
+add_gtest_unit(test_engine_controls_legacy_parity test_controls_legacy_parity.cpp)
 add_gtest_unit(test_engine_gap_fixes       test_gap_fixes.cpp)
+add_gtest_unit(test_engine_links_pump_stats_bulk test_links_pump_stats_bulk.cpp)
+add_gtest_unit(test_engine_nodes_bulk_phase3 test_nodes_bulk_phase3.cpp)
+add_gtest_unit(test_engine_links_bulk_phase3 test_links_bulk_phase3.cpp)
+add_gtest_unit(test_engine_subcatchments_bulk_phase3 test_subcatchments_bulk_phase3.cpp)
+add_gtest_unit(test_engine_statistics_bulk_phase3 test_statistics_bulk_phase3.cpp)
+add_gtest_unit(test_engine_runoff_interface_capi test_runoff_interface_capi.cpp)
 add_gtest_unit(test_engine_report_section  test_report_section.cpp)
+add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
+add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
+add_gtest_unit(test_engine_type_conversion test_type_conversion.cpp)
+add_gtest_unit(test_engine_tags           test_tags.cpp)
+# Engine gaps BN-LINK-01a / -01b — symmetric getters for initial-flow /
+# max-flow (added 2026-05-25 for Slice SB of the GUI plan).
+add_gtest_unit(test_engine_link_flow_roundtrip test_link_flow_roundtrip.cpp)
 
 # Spectral coarse correction — compiled from source (no engine shared-lib dependency)
 add_executable(test_engine_spectral_correction
@@ -285,9 +316,10 @@ add_test(
 )
 set_tests_properties(test_engine_2d_spatial_field PROPERTIES LABELS "unit")
 
-# 2D surface routing tests — geometry, gradients, flux, parsing
-# These tests exercise the non-CVODE portions of the 2D module and
-# can be built without SUNDIALS by compiling the needed sources directly.
+# 2D surface routing tests — geometry, gradients, flux, parsing.
+# Non-CVODE portions can be built without SUNDIALS by compiling the needed
+# sources directly; the HDF5 output plugin test is gated on OPENSWMM_BUILD_2D
+# because it needs the real Default2DOutputPlugin + libhdf5.
 set(TEST_2D_SOURCES
     test_2d_surface_routing.cpp
     ${PROJECT_SOURCE_DIR}/src/engine/2d/mesh/MeshBuilder.cpp
@@ -295,6 +327,10 @@ set(TEST_2D_SOURCES
     ${PROJECT_SOURCE_DIR}/src/engine/2d/solver/SurfaceFluxCalculator.cpp
     ${PROJECT_SOURCE_DIR}/src/engine/2d/input/SectionHandlers2D.cpp
 )
+if(OPENSWMM_BUILD_2D)
+    list(APPEND TEST_2D_SOURCES
+        ${PROJECT_SOURCE_DIR}/src/engine/2d/output/Default2DOutputPlugin.cpp)
+endif()
 add_executable(test_engine_2d_surface ${TEST_2D_SOURCES})
 target_link_libraries(test_engine_2d_surface
     PRIVATE
@@ -302,6 +338,22 @@ target_link_libraries(test_engine_2d_surface
         $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
         openswmm_legacy_engine
 )
+if(OPENSWMM_BUILD_2D)
+    # HDF5 is required by Default2DOutputPlugin. The engine target resolves it
+    # at configure time — prefer the imported target it set up (visible globally),
+    # falling back to FindHDF5 variables for system installs.
+    if(TARGET hdf5::hdf5-shared)
+        target_link_libraries(test_engine_2d_surface PRIVATE hdf5::hdf5-shared)
+    elseif(TARGET hdf5::hdf5-static)
+        target_link_libraries(test_engine_2d_surface PRIVATE hdf5::hdf5-static)
+    else()
+        if(NOT HDF5_FOUND)
+            find_package(HDF5 REQUIRED COMPONENTS C)
+        endif()
+        target_link_libraries(test_engine_2d_surface PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(test_engine_2d_surface PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
+endif()
 target_include_directories(test_engine_2d_surface
     PRIVATE
         ${PROJECT_SOURCE_DIR}/include
@@ -316,6 +368,7 @@ set_target_properties(test_engine_2d_surface PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
     INSTALL_RPATH "${LIB_ROOT}"
 )
+openswmm_stage_test_runtime_deps(test_engine_2d_surface)
 add_test(
     NAME    test_engine_2d_surface
     COMMAND $<TARGET_FILE:test_engine_2d_surface>
@@ -406,6 +459,7 @@ if(OPENSWMM_WITH_GEOPACKAGE)
         RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
         INSTALL_RPATH "${LIB_ROOT}"
     )
+    openswmm_stage_test_runtime_deps(test_engine_geopackage)
     add_test(
         NAME    test_engine_geopackage
         COMMAND $<TARGET_FILE:test_engine_geopackage>

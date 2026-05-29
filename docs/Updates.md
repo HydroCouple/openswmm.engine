@@ -9,15 +9,15 @@
 
 SWMM 5 now has the capability to compute the amount of surface runoff flow captured by street inlet structures and sent into a below ground drainage system using the FHWA HEC-22 methodology (see Figure 1). 
 
-![ ](./Images/Fig1.png)
+![ ](images/Fig1.png)
 
 Figure 1. Conceptual diagram of a dual drainage system with street inlets
 
 Figure 2 shows the most common types of storm drain inlets used to collect street runoff. While SWMM has some capability to model the capture efficiency of these inlets using its regulator links (orifices, weirs, and outlets), their use for this purpose is not straightforward. Many drainage engineers (and some regulatory agencies) would prefer to use the standard methodology described in the [U.S. Federal Highway Administration�s Urban Drainage Design Manual (HEC-22)](https://www.fhwa.dot.gov/engineering/hydraulics/pubs/10009/10009.pdf).
 
-![ ](./Images/Fig2a.png)
+![ ](images/Fig2a.png)
 Figure 2a. Types of Curb & Gutter street inlets
-![ ](./Images/Fig2b.png)
+![ ](images/Fig2b.png)
 Figure 2b. Types of channel Drop inlets
 
 To implement this feature three new sections have been added to the standard SWMM 5 input file:
@@ -71,7 +71,7 @@ where
 | `Sback` | street backing slope (%) |
 | `nBack` | street backing Manning's n
 
-![Figure 3. Definition of street section parameters.](./Images/Fig3.png)
+![Figure 3. Definition of street section parameters.](images/Fig3.png)
 
 **Remarks:**
 
@@ -172,12 +172,12 @@ where
 ### 2.  New Storage Unit Shapes
 
 Two new functional types of surface area v. depth curves have been added to represent the following shaped storage units:
- - **Conical** (truncated elliptical cone): ![ ](./Images/Fig4.png) with surface area equation:
+ - **Conical** (truncated elliptical cone): ![ ](images/Fig4.png) with surface area equation:
 ```
 Area = PI * (L*W/4 + W*Z*Depth + (W/L)*(Z*Depth)^2)
 ```
 where L = base major axis length, W = base minor axis width and Z = side slope (run/rise).
- - **Pyramidal** (truncated rectangular pyramid): ![ ](./Images/Fig5.png) with surface area equation:
+ - **Pyramidal** (truncated rectangular pyramid): ![ ](images/Fig5.png) with surface area equation:
 ```
 Area = L*W + (L+W)*Z*Depth + (2*Z*Depth)^2
 ```
@@ -205,7 +205,7 @@ where
 
 A new **Type5** pump curve has been introduced to represent a variable speed pump. The curve itself specifies how the pump head decreases with increasing flow (same as a Type3 pump) at some nominal speed which represents a setting of 1.0. At any other speed setting `S` (as adjusted by control rules) a point with head `H` and flow `Q` on the curve becomes `H*S^2` and `Q*S`, respectively on a speed-adjusted curve.
 \
-![ ](./Images/Fig6.png)
+![ ](images/Fig6.png)
 \
 To define a Type5 pump curve add the following line to the `[CURVES]` section of the input file
 ```

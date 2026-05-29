@@ -5,6 +5,7 @@
             "name": "base",
             "hidden": true,
             "generator": "Ninja",
+            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
             "cacheVariables": {
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES"
             }
@@ -22,6 +23,10 @@
             "inherits": "base",
             "description": "Windows release build",
             "generator": "Visual Studio 17 2022",
+            "toolset": {
+                "value": "v143",
+                "strategy": "external"
+            },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_C_FLAGS": "/O2 /GL /fp:precise /W4",
@@ -42,6 +47,10 @@
             "inherits": "base-debug",
             "description": "Windows debug build",
             "generator": "Visual Studio 17 2022",
+            "toolset": {
+                "value": "v143",
+                "strategy": "external"
+            },
             "cacheVariables": {
                 "CMAKE_C_FLAGS": "/Zi /Od /DDEBUG /W4 /fp:precise",
                 "CMAKE_CXX_FLAGS": "/Zi /Od /DDEBUG /W4 /fp:precise",

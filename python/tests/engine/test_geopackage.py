@@ -201,6 +201,65 @@ class TestRegistration:
         v = is_registered()
         assert isinstance(v, bool)
 
+    def test_register_accepts_all_empty(self):
+        """Regression for Phase 2c: ``register()`` previously used the
+        unsafe ``x.encode('utf-8') if x else NULL`` conditional pattern
+        which fails to transpile under Cython 3.0.12+. Calling with all
+        default empty strings must now succeed; the underlying
+        ``swmm_gpkg_register`` is permitted to return False on a vanilla
+        plugin install so we only assert that the call does not raise
+        and the return is bool.
+        """
+        v = register()
+        assert isinstance(v, bool)
+
+    def test_register_accepts_partial_strings(self):
+        """Same regression — exercise the path where some args are
+        non-empty and others fall back to the NULL sentinel.
+        """
+        v = register(key="", org="test-org", email="", deploy="test-deploy")
+        assert isinstance(v, bool)
+
+
+class TestObservedSeriesOptionalArgs:
+    """Regression for Phase 2c: ``create_observed_series`` and
+    ``write_observed_value`` both used the unsafe conditional pattern for
+    nullable string arguments. Each combination must transpile and run.
+    """
+
+    def test_create_series_all_optional_empty(self, gpkg_with_schema):
+        sid = gpkg_with_schema.create_observed_series("p2c_a", "depth")
+        assert sid >= 0
+
+    def test_create_series_all_optional_set(self, gpkg_with_schema):
+        sid = gpkg_with_schema.create_observed_series(
+            "p2c_b", "flow",
+            obj_type="NODE", obj_id="J1",
+            source="Phase2c", units="CFS")
+        assert sid >= 0
+
+    def test_create_series_mixed_optionals(self, gpkg_with_schema):
+        # obj_type set, obj_id empty, source set, units empty —
+        # forces the per-arg branch in the Cython wrapper.
+        sid = gpkg_with_schema.create_observed_series(
+            "p2c_c", "depth",
+            obj_type="NODE", obj_id="",
+            source="src", units="")
+        assert sid >= 0
+
+    def test_write_observed_value_no_flag(self, gpkg_with_schema):
+        sid = gpkg_with_schema.create_observed_series("p2c_d", "depth")
+        # flag="" triggers the NULL path in the C call.
+        gpkg_with_schema.write_observed_value(
+            sid, "2026-05-25T00:00:00Z", 1.23)
+        assert gpkg_with_schema.observed_value_count(sid) == 1
+
+    def test_write_observed_value_with_flag(self, gpkg_with_schema):
+        sid = gpkg_with_schema.create_observed_series("p2c_e", "depth")
+        gpkg_with_schema.write_observed_value(
+            sid, "2026-05-25T01:00:00Z", 4.56, "A")
+        assert gpkg_with_schema.observed_value_count(sid) == 1
+
 
 # ============================================================================
 # Topology edge count
@@ -210,9 +269,11 @@ class TestTopologyEdgeCount:
     """Test topology_edge_count method."""
 
     def test_topology_edge_count(self, gpkg_with_schema):
-        # The count may be 0 if no topology edges exist, but the call
-        # should succeed and return a non-negative integer.
-        sid = gpkg_with_schema.simulation_ids()[0]
-        count = gpkg_with_schema.topology_edge_count(sid)
+        # A freshly-opened gpkg has no simulations (see
+        # TestSimulationMetadata.test_simulation_ids_empty), so we pass a
+        # synthetic sim_id rather than indexing simulation_ids()[0]. The
+        # contract under test is that the call succeeds and returns a
+        # non-negative integer regardless of whether the sim_id exists.
+        count = gpkg_with_schema.topology_edge_count("none")
         assert isinstance(count, int)
         assert count >= 0

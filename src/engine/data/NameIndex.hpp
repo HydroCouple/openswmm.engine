@@ -18,7 +18,7 @@
  * @ingroup engine_data
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -137,6 +137,40 @@ public:
         const std::string tail = names_.back();
         map_.erase(tail);
         names_.pop_back();
+    }
+
+    /**
+     * @brief Rename the entry at `idx` to `newName`.
+     *
+     * @param idx     Index of the entry to rename.
+     * @param newName New name (must not already be registered).
+     * @returns       true on success; false if idx is out of range or newName
+     *                is already in use.
+     */
+    bool rename(int idx, const std::string& newName) noexcept {
+        if (idx < 0 || idx >= static_cast<int>(names_.size())) return false;
+        if (map_.count(newName)) return false; // would create a duplicate
+        map_.erase(names_[static_cast<std::size_t>(idx)]);
+        names_[static_cast<std::size_t>(idx)] = newName;
+        map_[newName] = idx;
+        return true;
+    }
+
+    /**
+     * @brief Remove the entry at `idx` and rebuild the name→index map.
+     *
+     * @details All entries at indices > idx are shifted down by one.
+     *          The map is rebuilt from scratch — O(n) — which is acceptable
+     *          since this is only called in BUILDING or OPENED state.
+     *          No-op if idx is out of range.
+     */
+    void remove_at(int idx) noexcept {
+        if (idx < 0 || idx >= static_cast<int>(names_.size())) return;
+        names_.erase(names_.begin() + idx);
+        map_.clear();
+        map_.reserve(names_.size());
+        for (int i = 0; i < static_cast<int>(names_.size()); ++i)
+            map_[names_[i]] = i;
     }
 
     // -----------------------------------------------------------------------

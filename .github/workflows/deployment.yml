@@ -2,7 +2,10 @@ name: Deployment
 
 on:
   push:
+    branches: [main]
     tags: ["v*.*.*"]
+  pull_request:
+    branches: [main, develop]
   workflow_dispatch:
 
 env:
@@ -124,96 +127,123 @@ jobs:
             build-${{ matrix.vcpkg_triplet }}/*.zip
 
   # ──────────────────────────────────────────────────────────────────────
-  #  Python wheels
+  #  Python wheels — cibuildwheel matrix (one runner per OS/arch).
+  #
+  #  Each runner produces wheels for every supported CPython version
+  #  (3.10–3.13) in a single job. Linux builds run inside manylinux_2_28
+  #  containers; vcpkg is bootstrapped INSIDE the container by the
+  #  `before-all` hook in pyproject.toml's [tool.cibuildwheel.linux]
+  #  block. macOS / Windows run on the host runner and use the vcpkg
+  #  checkout below.
+  #
+  #  See docs/CIBUILDWHEEL_REVERT_PLAN.md for full rationale.
   # ──────────────────────────────────────────────────────────────────────
   wheels:
-    name: "Python Wheels (${{ matrix.alias }})"
+    name: "Wheels (${{ matrix.os }})"
     needs: build
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            alias: Linux-x64
-            vcpkg_triplet: x64-linux
-            cmake_osx_arch: ""
-
-          - os: macos-latest
-            alias: macOS-arm64
-            cmake_preset: Darwin
-            shell_ext: .sh
-            vcpkg_triplet: arm64-osx
-            cmake_osx_arch: arm64
-
-          - os: macos-15-intel
-            alias: macOS-x64
-            cmake_preset: Darwin
-            shell_ext: .sh
-            vcpkg_triplet: x64-osx
-            cmake_osx_arch: x86_64
-
-          - os: windows-latest
-            alias: Windows-x64
-            vcpkg_triplet: x64-windows
-            cmake_osx_arch: ""
-
+        os:
+          - ubuntu-24.04          # Linux x86_64
+          - ubuntu-24.04-arm      # Linux aarch64 (native, no QEMU)
+          - windows-2025          # Windows x86_64
+          - macos-15              # macOS arm64
+          - macos-15-intel        # macOS x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Install OpenMP and Ninja (macOS)
+      # Export GHA cache creds so the in-container vcpkg (Linux) and the
+      # host vcpkg (macOS/Windows) can both reuse the x-gha binary cache.
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v8
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      # On macOS and Windows there is no container; vcpkg lives on the host
+      # and is referenced by python/CMakePresets.json via $env{VCPKG_ROOT}.
+      - name: Checkout vcpkg (host-side, macOS/Windows)
+        if: runner.os != 'Linux'
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: 2025.02.14
+          path: vcpkg
+
+      - name: Bootstrap vcpkg (macOS)
         if: runner.os == 'macOS'
-        run: brew install libomp ninja
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v3.1.4
+        with:
+          package-dir: ./python
+          output-dir:  ./wheelhouse
+        env:
+          # Host-side VCPKG_ROOT consumed by macOS/Windows builds.
+          # Linux ignores this (VCPKG_ROOT is set to /host/vcpkg inside
+          # the container by pyproject.toml's before-all hook).
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+          # Force the macOS deployment target via cibuildwheel's env channel.
+          # Setting it ONLY in pyproject.toml [tool.cibuildwheel.macos].environment
+          # was not propagating to the x86_64 build's wheel-tag computation
+          # (wheel ended up tagged macosx_10_9 despite the toml override).
+          # CIBW_ENVIRONMENT_MACOS is read early and applied uniformly.
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0 VCPKG_ROOT=${{ github.workspace }}/vcpkg
+
+      - name: Upload Python wheels
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: python-wheels-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+
+  # ──────────────────────────────────────────────────────────────────────
+  #  Python source distribution (sdist) — platform-independent, built once.
+  # ──────────────────────────────────────────────────────────────────────
+  sdist:
+    name: "Python sdist"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Install Python requirements
-        working-directory: python
+      - name: Install build frontend
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install build
 
-      - name: Clean stale build cache
-        run: python -c "import shutil, os; shutil.rmtree('python/_skbuild', ignore_errors=True)"
+      - name: Build sdist
+        working-directory: python
+        run: python -m build --sdist
 
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v2.23.2
-        with:
-          package-dir: ./python
-          output-dir: ./python/wheelhouse
-        env:
-          CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-          CIBW_BUILD_VERBOSITY: 3
-          CIBW_BEFORE_BUILD_LINUX: pip install ninja
-          CIBW_BEFORE_BUILD_MACOS: brew install ninja libomp && pip install delocate
-          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0 CMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
-          CIBW_BEFORE_BUILD_WINDOWS: pip install delvewheel
-          CIBW_ENVIRONMENT_WINDOWS: CMAKE_GENERATOR="Visual Studio 17 2022"
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: auditwheel repair -w {dest_dir} {wheel}
-          CIBW_REPAIR_WHEEL_COMMAND_MACOS: delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
-          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
-          CIBW_TEST_REQUIRES: pytest numpy
-          CIBW_TEST_COMMAND: pytest {package}/tests -v --import-mode=importlib
-
-      - name: Upload Python wheels
-        if: always()
+      - name: Upload sdist
         uses: actions/upload-artifact@v5
         with:
-          name: python-wheels-${{ matrix.vcpkg_triplet }}
-          path: |
-            python/wheelhouse/*.whl
-            python/dist/*.whl
+          name: python-sdist
+          path: python/dist/*.tar.gz
+
   # ──────────────────────────────────────────────────────────────────────
   #  Create GitHub Release
   # ──────────────────────────────────────────────────────────────────────
   release:
     name: Create GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, wheels]
+    needs: [build, wheels, sdist]
     runs-on: ubuntu-latest
     permissions:
       contents: write

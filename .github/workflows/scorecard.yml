@@ -1,0 +1,59 @@
+name: Scorecard supply-chain security
+
+on:
+  # Some checks (branch protection, code review enforcement) only run when
+  # the workflow is triggered by a branch-protection-rule change.
+  branch_protection_rule:
+  # Weekly scan so new scorecard checks land here as they ship.
+  schedule:
+    - cron: "20 7 * * 1"
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed to upload the SARIF results to Security > Code scanning and to publish the score to the OpenSSF Scorecard API.
+      security-events: write
+      # Needed to publish the score to the OpenSSF Scorecard API and to
+      # mint short-lived OIDC tokens that prove the run came from this repo.
+      id-token: write
+      # Read access only — no write to repo contents.
+      contents: read
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@v2.4.1
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # publish_results uploads the score to securityscorecards.dev so
+          # the README badge and the public dashboard stay current. Toggle
+          # to false if you'd rather keep results internal to this repo.
+          publish_results: true
+
+      # Persist the SARIF for 5 days so it can be downloaded and inspected
+      # outside the GitHub Security tab.
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      # Surface findings in Security > Code scanning alongside CodeQL.
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif

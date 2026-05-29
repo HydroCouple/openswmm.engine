@@ -20,11 +20,42 @@
 #include "data/InflowData.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 #include "data/HydrologyData.hpp"
+#include "core/DateTime.hpp"
 
 namespace openswmm::gpkg {
+
+namespace {
+// OADates for years >= 1910 are > 3650; no relative storm exceeds 10 years.
+static constexpr double kAbsoluteTsThreshold = 3650.0;
+
+// Format a time series x value for storage in the GeoPackage.
+// PostParseResolver adds start_date to relative series; strip it back out
+// using the same detection condition before formatting.
+static std::string format_ts_timestamp(double x, double startDate) {
+    const double xRel = x - startDate;
+    const bool wasRelative = xRel >= 0.0 && xRel < 366.0;
+    const double xv = wasRelative ? xRel : x;
+
+    if (!wasRelative && xv >= kAbsoluteTsThreshold) {
+        // True absolute calendar date entered by user.
+        int y, mo, d, h, mi, s;
+        datetime::decodeDate(xv, y, mo, d);
+        datetime::decodeTime(xv, h, mi, s);
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%02d/%02d/%04d %02d:%02d", mo, d, y, h, mi);
+        return buf;
+    } else {
+        // Relative: fractional days → decimal hours string
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.6f", xv * 24.0);
+        return buf;
+    }
+}
+} // anonymous namespace
 
 // ============================================================================
 // Helper: enum to string conversions
@@ -225,6 +256,14 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
 
     if (!ctx.spatial.crs.empty())
         insert("CRS", ctx.spatial.crs);
+    if (!ctx.spatial.map_units.empty())
+        insert("MAP_UNITS", ctx.spatial.map_units);
+    if (ctx.spatial.map_x2 != 0.0 || ctx.spatial.map_y2 != 0.0) {
+        insert("MAP_X1", std::to_string(ctx.spatial.map_x1));
+        insert("MAP_Y1", std::to_string(ctx.spatial.map_y1));
+        insert("MAP_X2", std::to_string(ctx.spatial.map_x2));
+        insert("MAP_Y2", std::to_string(ctx.spatial.map_y2));
+    }
 }
 
 static void write_nodes(sqlite3* db, const SimulationContext& ctx,
@@ -267,7 +306,7 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
         if (ntype == NodeType::OUTFALL) {
             bind_text(stmt.get(), 10, outfall_type_str(safe_get(ctx.nodes.outfall_type, (size_t)i, OutfallType::FREE)));
             bind_double(stmt.get(), 11, safe_dbl(ctx.nodes.outfall_param, i));
-            bind_int(stmt.get(), 12, safe_get(ctx.nodes.outfall_has_flap_gate, (size_t)i, false) ? 1 : 0);
+            bind_int(stmt.get(), 12, safe_get(ctx.nodes.outfall_has_flap_gate, (size_t)i, uint8_t{0}) ? 1 : 0);
         } else {
             bind_null(stmt.get(), 10);
             bind_null(stmt.get(), 11);
@@ -302,10 +341,10 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
             bind_null(stmt.get(), 19);
         }
 
-        // Tag
-        auto tag_it = ctx.node_tags.find(name);
-        if (tag_it != ctx.node_tags.end())
-            bind_text(stmt.get(), 20, tag_it->second);
+        // Tag — pulled from per-NodeData field (was: ctx.node_tags map).
+        const auto utag = static_cast<std::size_t>(i);
+        if (utag < ctx.nodes.tags.size() && !ctx.nodes.tags[utag].empty())
+            bind_text(stmt.get(), 20, ctx.nodes.tags[utag]);
         else
             bind_null(stmt.get(), 20);
 
@@ -392,7 +431,7 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 19, safe_dbl(ctx.links.loss_inlet, i));
         bind_double(stmt.get(), 20, safe_dbl(ctx.links.loss_outlet, i));
         bind_double(stmt.get(), 21, safe_dbl(ctx.links.loss_avg, i));
-        bind_int(stmt.get(), 22, safe_get(ctx.links.has_flap_gate, (size_t)i, false) ? 1 : 0);
+        bind_int(stmt.get(), 22, safe_get(ctx.links.has_flap_gate, (size_t)i, uint8_t{0}) ? 1 : 0);
         bind_double(stmt.get(), 23, safe_dbl(ctx.links.seep_rate, i));
         bind_double(stmt.get(), 24, safe_dbl(ctx.links.q0, i));
         bind_double(stmt.get(), 25, safe_dbl(ctx.links.q_limit, i));
@@ -416,10 +455,10 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 30, safe_dbl(ctx.links.crest_height, i));
         bind_double(stmt.get(), 31, safe_dbl(ctx.links.cd, i));
 
-        // Tag
-        auto tag_it = ctx.link_tags.find(name);
-        if (tag_it != ctx.link_tags.end())
-            bind_text(stmt.get(), 32, tag_it->second);
+        // Tag — per-LinkData field.
+        const auto utag = static_cast<std::size_t>(i);
+        if (utag < ctx.links.tags.size() && !ctx.links.tags[utag].empty())
+            bind_text(stmt.get(), 32, ctx.links.tags[utag]);
         else
             bind_null(stmt.get(), 32);
 
@@ -495,9 +534,9 @@ static void write_subcatchments(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 23, safe_dbl(ctx.subcatches.infil_p4, i));
         bind_double(stmt.get(), 24, safe_dbl(ctx.subcatches.infil_p5, i));
 
-        auto tag_it = ctx.subcatch_tags.find(name);
-        if (tag_it != ctx.subcatch_tags.end())
-            bind_text(stmt.get(), 25, tag_it->second);
+        const auto utag = static_cast<std::size_t>(i);
+        if (utag < ctx.subcatches.tags.size() && !ctx.subcatches.tags[utag].empty())
+            bind_text(stmt.get(), 25, ctx.subcatches.tags[utag]);
         else
             bind_null(stmt.get(), 25);
 
@@ -646,7 +685,7 @@ static void write_timeseries(sqlite3* db, const SimulationContext& ctx,
             sqlite3_clear_bindings(stmt.get());
             bind_text(stmt.get(), 1, sim_id);
             bind_text(stmt.get(), 2, name);
-            bind_text(stmt.get(), 3, std::to_string(tbl.x[j]));
+            bind_text(stmt.get(), 3, format_ts_timestamp(tbl.x[j], ctx.options.start_date));
             bind_double(stmt.get(), 4, tbl.y[j]);
             bind_int(stmt.get(), 5, j);
             sqlite3_step(stmt.get());
@@ -1035,6 +1074,30 @@ static void write_rdii(sqlite3* db, const SimulationContext& ctx,
             sqlite3_bind_double(stmt.get(), 8, e.dmax);
             sqlite3_bind_double(stmt.get(), 9, e.drecov);
             sqlite3_bind_double(stmt.get(), 10, e.dinit);
+            sqlite3_step(stmt.get());
+        }
+    }
+
+    // RDII exponential-decay parameters
+    if (ctx.rdii_decay.count() > 0) {
+        auto stmt = prepare(db,
+            "INSERT INTO rdii_decay (simulation_id, uh_name, response, "
+            "k_dep, k_0, k_T, T_ref, theta_rec, T_freeze) "
+            "VALUES (?,?,?,?,?,?,?,?,?)");
+        static const char* responses[] = {"SHORT","MEDIUM","LONG"};
+        for (const auto& e : ctx.rdii_decay.entries) {
+            if (e.response < 0 || e.response > 2) continue;
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_text(stmt.get(), 2, e.uh_name);
+            bind_text(stmt.get(), 3, responses[e.response]);
+            sqlite3_bind_double(stmt.get(), 4, e.k_dep);
+            sqlite3_bind_double(stmt.get(), 5, e.k_0);
+            sqlite3_bind_double(stmt.get(), 6, e.k_T);
+            sqlite3_bind_double(stmt.get(), 7, e.T_ref);
+            sqlite3_bind_double(stmt.get(), 8, e.theta_rec);
+            sqlite3_bind_double(stmt.get(), 9, e.T_freeze);
             sqlite3_step(stmt.get());
         }
     }

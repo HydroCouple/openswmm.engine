@@ -4,7 +4,7 @@
  * @ingroup engine_input
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -32,6 +32,9 @@ void handle_rdii(SimulationContext& ctx, const std::vector<std::string>& lines);
 
 /** @brief Parse [HYDROGRAPHS] into UnitHydData. */
 void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& lines);
+
+/** @brief Parse [RDII_DECAY] into RDIIDecayData (exponential IA model). */
+void handle_rdii_decay(SimulationContext& ctx, const std::vector<std::string>& lines);
 
 } /* namespace openswmm::input */
 

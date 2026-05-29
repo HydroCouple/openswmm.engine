@@ -6,13 +6,84 @@
  * @ingroup engine_api
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #include "openswmm_api_common.hpp"
 #include "InpWriter.hpp"
+#include "DateTime.hpp"
+#include "../input/InputParseUtils.hpp"
 #include "../../../include/openswmm/engine/openswmm_model.h"
+#include "../../../include/openswmm/engine/openswmm_hotstart.h"
+#include "../../../include/openswmm/plugin_sdk/IInputPlugin.hpp"
+#include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
+
+#include <cstdio>
+#include <sstream>
+
+namespace {
+
+// Split a space-separated args string into a vector<string>, dropping
+// empty tokens.  Mirrors the [PLUGINS]-line tokenizer for the common
+// (no-quoting) case the GUI's free-form args field produces.
+std::vector<std::string> split_args(const char* s) {
+    std::vector<std::string> out;
+    if (!s || s[0] == '\0') return out;
+    std::istringstream is(s);
+    std::string tok;
+    while (is >> tok) out.push_back(std::move(tok));
+    return out;
+}
+
+// Inverse: join init_args with single spaces.
+std::string join_args(const std::vector<std::string>& args) {
+    std::string out;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (i) out += ' ';
+        out += args[i];
+    }
+    return out;
+}
+
+// Common buffer-fill helper: NUL-terminated, truncated at sz - 1.
+void fill_buf(char* buf, int sz, const std::string& s) {
+    if (!buf || sz <= 0) return;
+    std::size_t n = std::min(static_cast<std::size_t>(sz - 1), s.size());
+    std::memcpy(buf, s.data(), n);
+    buf[n] = '\0';
+}
+
+// [FILES] helpers — kept outside extern "C" so std::string return
+// types don't trigger the -Wreturn-type-c-linkage warning.
+const char* file_mode_to_str(openswmm::FileMode m) noexcept {
+    switch (m) {
+        case openswmm::FileMode::SAVE: return "SAVE";
+        case openswmm::FileMode::USE:  return "USE";
+        case openswmm::FileMode::NONE:
+        default:                       return "";
+    }
+}
+
+bool file_mode_from_str(const char* s, openswmm::FileMode& out) {
+    if (!s) return false;
+    std::string up(s);
+    for (auto& c : up) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+    if      (up.empty())     out = openswmm::FileMode::NONE;
+    else if (up == "SAVE")   out = openswmm::FileMode::SAVE;
+    else if (up == "USE")    out = openswmm::FileMode::USE;
+    else if (up == "NONE")   out = openswmm::FileMode::NONE;
+    else                     return false;
+    return true;
+}
+
+std::string upper_key(const char* key) {
+    std::string k(key);
+    for (auto& c : k) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+    return k;
+}
+
+} // anonymous
 
 extern "C" {
 
@@ -111,6 +182,286 @@ SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_pat
     return openswmm::inp_writer::writeInpFile(to_engine(engine)->context(), new_inp_path);
 }
 
+SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine,
+                                                  const char* new_path,
+                                                  const char* output_plugin_id) {
+    CHECK_HANDLE(engine);
+    if (!new_path) return SWMM_ERR_BADPARAM;
+
+    // Empty / NULL plugin id → built-in .inp writer.
+    if (!output_plugin_id || output_plugin_id[0] == '\0') {
+        return openswmm::inp_writer::writeInpFile(
+            to_engine(engine)->context(), new_path);
+    }
+
+    auto* eng = to_engine(engine);
+
+    // Resolve the writer plugin via the same id/path logic used by
+    // swmm_engine_open's input_plugin_lib argument.  No load warnings
+    // emitted to the engine's warn channel here — the GUI surfaces
+    // resolution failures via the SWMM_ERR_BADPARAM return code.
+    openswmm::IPluginComponentInfo* info =
+        eng->plugin_factory().find_component(output_plugin_id);
+    if (!info) return SWMM_ERR_BADPARAM;
+    if (!info->has_input()) return SWMM_ERR_PLUGIN;
+
+    // Always create a transient writer instance so the engine's primary
+    // input plugin (which may be in any state) is left undisturbed.
+    openswmm::IInputPlugin* writer = info->create_input_plugin();
+    if (!writer) return SWMM_ERR_PLUGIN;
+
+    int rc = writer->initialize({}, info);
+    if (rc == 0)
+        rc = writer->write(new_path, eng->context());
+    // Best-effort finalize; ignore its return so we surface the write rc.
+    (void)writer->finalize(eng->context());
+    delete writer;
+
+    return rc == 0 ? SWMM_OK : SWMM_ERR_PLUGIN;
+}
+
+// ============================================================================
+// [PLUGINS] section accessors (Slice AA-3.1 Phase B)
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_plugins_count(SWMM_Engine engine, int* count) {
+    CHECK_HANDLE(engine);
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = static_cast<int>(to_engine(engine)->context().plugin_specs.size());
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_plugin_get(SWMM_Engine engine,
+                                     int          idx,
+                                     char*        path_buf,
+                                     int          path_buf_sz,
+                                     char*        args_buf,
+                                     int          args_buf_sz) {
+    CHECK_HANDLE(engine);
+    const auto& specs = to_engine(engine)->context().plugin_specs;
+    if (idx < 0 || idx >= static_cast<int>(specs.size())) return SWMM_ERR_BADINDEX;
+
+    const auto& spec = specs[static_cast<std::size_t>(idx)];
+    fill_buf(path_buf, path_buf_sz, spec.path);
+    fill_buf(args_buf, args_buf_sz, join_args(spec.init_args));
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_plugin_set(SWMM_Engine engine,
+                                     const char* path_or_id,
+                                     const char* args) {
+    CHECK_HANDLE(engine);
+    if (!path_or_id || path_or_id[0] == '\0') return SWMM_ERR_BADPARAM;
+
+    auto& specs = to_engine(engine)->context().plugin_specs;
+    const std::string key(path_or_id);
+    auto tokens = split_args(args);
+
+    for (auto& spec : specs) {
+        if (spec.path == key) {
+            spec.init_args = std::move(tokens);
+            return SWMM_OK;
+        }
+    }
+
+    openswmm::PluginSpec spec;
+    spec.path = key;
+    spec.init_args = std::move(tokens);
+    specs.push_back(std::move(spec));
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_plugin_remove(SWMM_Engine engine, const char* path_or_id) {
+    CHECK_HANDLE(engine);
+    if (!path_or_id) return SWMM_ERR_BADPARAM;
+
+    auto& specs = to_engine(engine)->context().plugin_specs;
+    const std::string key(path_or_id);
+    for (auto it = specs.begin(); it != specs.end(); ++it) {
+        if (it->path == key) { specs.erase(it); break; }
+    }
+    return SWMM_OK;  // idempotent
+}
+
+// ============================================================================
+// [FILES] section accessors (Slice AA-3 follow-up)
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_files_get(SWMM_Engine engine,
+                                    const char* key, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!key || !buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+
+    const auto& f = to_engine(engine)->context().files;
+    const std::string k = upper_key(key);
+    std::string val;
+
+    if      (k == "RAINFALL_PATH")           val = f.rainfall_path;
+    else if (k == "RAINFALL_MODE")           val = file_mode_to_str(f.rainfall_mode);
+    else if (k == "RUNOFF_PATH")             val = f.runoff_path;
+    else if (k == "RUNOFF_MODE")             val = file_mode_to_str(f.runoff_mode);
+    else if (k == "RDII_PATH")               val = f.rdii_path;
+    else if (k == "RDII_MODE")               val = file_mode_to_str(f.rdii_mode);
+    else if (k == "INFLOWS_PATH")            val = f.inflows_path;
+    else if (k == "OUTFLOWS_PATH")           val = f.outflows_path;
+    else if (k == "HOTSTART_USE_PATH")       val = f.hotstart_use_path;
+    // HOTSTART_SAVE_* operate on slot 0 of the vector as back-compat
+    // sugar for clients that only surface a single hot-start save.
+    else if (k == "HOTSTART_SAVE_PATH")
+        val = f.hotstart_saves.empty() ? std::string{} : f.hotstart_saves.front().path;
+    else if (k == "HOTSTART_SAVE_DATETIME")
+        val = std::to_string(f.hotstart_saves.empty()
+                              ? 0.0 : f.hotstart_saves.front().datetime);
+    else if (k == "HOTSTART_SAVE_COUNT")
+        val = std::to_string(static_cast<int>(f.hotstart_saves.size()));
+    else return SWMM_ERR_BADPARAM;
+
+    fill_buf(buf, buflen, val);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_files_set(SWMM_Engine engine,
+                                    const char* key, const char* value) {
+    CHECK_HANDLE(engine);
+    if (!key || !value) return SWMM_ERR_BADPARAM;
+
+    auto& f = to_engine(engine)->context().files;
+    const std::string k = upper_key(key);
+    const std::string v(value);
+
+    auto set_mode = [&](openswmm::FileMode& slot) -> int {
+        if (!file_mode_from_str(value, slot)) return SWMM_ERR_BADPARAM;
+        return SWMM_OK;
+    };
+
+    if      (k == "RAINFALL_PATH")           f.rainfall_path = v;
+    else if (k == "RAINFALL_MODE")           return set_mode(f.rainfall_mode);
+    else if (k == "RUNOFF_PATH")             f.runoff_path = v;
+    else if (k == "RUNOFF_MODE")             return set_mode(f.runoff_mode);
+    else if (k == "RDII_PATH")               f.rdii_path = v;
+    else if (k == "RDII_MODE")               return set_mode(f.rdii_mode);
+    else if (k == "INFLOWS_PATH")            f.inflows_path = v;
+    else if (k == "OUTFLOWS_PATH")           f.outflows_path = v;
+    else if (k == "HOTSTART_USE_PATH")       f.hotstart_use_path = v;
+    // HOTSTART_SAVE_PATH operates on slot 0 of the vector.  Empty
+    // value clears slot 0 (and removes the row if its datetime is
+    // also zero) so existing single-slot client code keeps working.
+    else if (k == "HOTSTART_SAVE_PATH") {
+        if (f.hotstart_saves.empty()) f.hotstart_saves.emplace_back();
+        f.hotstart_saves.front().path = v;
+        if (v.empty() && f.hotstart_saves.front().datetime == 0.0)
+            f.hotstart_saves.erase(f.hotstart_saves.begin());
+    }
+    else if (k == "HOTSTART_SAVE_DATETIME") {
+        double dt = 0.0;
+        try { dt = v.empty() ? 0.0 : std::stod(v); }
+        catch (...) { return SWMM_ERR_BADPARAM; }
+        if (f.hotstart_saves.empty()) f.hotstart_saves.emplace_back();
+        f.hotstart_saves.front().datetime = dt;
+        if (f.hotstart_saves.front().path.empty() && dt == 0.0)
+            f.hotstart_saves.erase(f.hotstart_saves.begin());
+    }
+    else return SWMM_ERR_BADPARAM;
+
+    return SWMM_OK;
+}
+
+// ============================================================================
+// [FILES] section — multi-slot SAVE HOTSTART entries (Slice BV-01)
+//
+// Generalizes the slot-0 HOTSTART_SAVE_* sugar above to address the full
+// hotstart_saves vector by index.  See openswmm_hotstart.h for the public
+// API contract.
+// ============================================================================
+
+namespace {
+
+// Bounds-checked accessor.  Returns nullptr if idx out of range or engine
+// invalid.  Caller must have already done CHECK_HANDLE(engine).
+openswmm::HotstartSaveEntry* hs_save_at(SWMM_Engine engine, int idx) noexcept {
+    auto& v = to_engine(engine)->context().files.hotstart_saves;
+    if (idx < 0 || static_cast<std::size_t>(idx) >= v.size()) return nullptr;
+    return &v[static_cast<std::size_t>(idx)];
+}
+
+} // anonymous
+
+SWMM_ENGINE_API int swmm_hotstart_saves_count(SWMM_Engine engine, int* count) {
+    CHECK_HANDLE(engine);
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = static_cast<int>(
+        to_engine(engine)->context().files.hotstart_saves.size());
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_hotstart_saves_get_path(
+    SWMM_Engine engine, int idx, char* buf, int buflen)
+{
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    auto* e = hs_save_at(engine, idx);
+    if (!e) return SWMM_ERR_BADPARAM;
+    fill_buf(buf, buflen, e->path);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_hotstart_saves_get_datetime(
+    SWMM_Engine engine, int idx, double* datetime)
+{
+    CHECK_HANDLE(engine);
+    if (!datetime) return SWMM_ERR_BADPARAM;
+    auto* e = hs_save_at(engine, idx);
+    if (!e) return SWMM_ERR_BADPARAM;
+    *datetime = e->datetime;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_hotstart_saves_set_path(
+    SWMM_Engine engine, int idx, const char* path)
+{
+    CHECK_HANDLE(engine);
+    if (!path) return SWMM_ERR_BADPARAM;
+    auto* e = hs_save_at(engine, idx);
+    if (!e) return SWMM_ERR_BADPARAM;
+    e->path = path;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_hotstart_saves_set_datetime(
+    SWMM_Engine engine, int idx, double datetime)
+{
+    CHECK_HANDLE(engine);
+    auto* e = hs_save_at(engine, idx);
+    if (!e) return SWMM_ERR_BADPARAM;
+    e->datetime = datetime;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_hotstart_saves_add(
+    SWMM_Engine engine, const char* path, double datetime)
+{
+    CHECK_HANDLE(engine);
+    if (!path) return SWMM_ERR_BADPARAM;
+    to_engine(engine)->context().files.hotstart_saves.push_back(
+        openswmm::HotstartSaveEntry{std::string(path), datetime});
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_hotstart_saves_remove(SWMM_Engine engine, int idx) {
+    CHECK_HANDLE(engine);
+    auto& v = to_engine(engine)->context().files.hotstart_saves;
+    if (idx < 0 || static_cast<std::size_t>(idx) >= v.size())
+        return SWMM_ERR_BADPARAM;
+    v.erase(v.begin() + idx);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_hotstart_saves_clear(SWMM_Engine engine) {
+    CHECK_HANDLE(engine);
+    to_engine(engine)->context().files.hotstart_saves.clear();
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Title / notes access
 // ============================================================================
@@ -182,11 +533,224 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     std::string k(key);
     for (auto& c : k) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 
-    if      (k == "FLOW_UNITS")    val = std::to_string(static_cast<int>(opt.flow_units));
-    else if (k == "FLOW_ROUTING")  val = std::to_string(static_cast<int>(opt.routing_model));
+    // Encoding contract: get/set are symmetric — the value returned here MUST
+    // be a string that swmm_options_set accepts for the same key. The GUI
+    // (UnitSystem::syncFromEngine, SimulationOptionsDialog::readFromEngine)
+    // and the Python bindings rely on this round-trip. Enum keys therefore
+    // return the canonical token, never the underlying int.
+    if      (k == "FLOW_UNITS") {
+        switch (opt.flow_units) {
+            case openswmm::FlowUnits::CFS: val = "CFS"; break;
+            case openswmm::FlowUnits::GPM: val = "GPM"; break;
+            case openswmm::FlowUnits::MGD: val = "MGD"; break;
+            case openswmm::FlowUnits::CMS: val = "CMS"; break;
+            case openswmm::FlowUnits::LPS: val = "LPS"; break;
+            case openswmm::FlowUnits::MLD: val = "MLD"; break;
+        }
+    }
+    else if (k == "FLOW_ROUTING" || k == "ROUTING_MODEL") {
+        switch (opt.routing_model) {
+            case openswmm::RoutingModel::STEADY:  val = "STEADY";  break;
+            case openswmm::RoutingModel::KINWAVE: val = "KINWAVE"; break;
+            case openswmm::RoutingModel::DYNWAVE: val = "DYNWAVE"; break;
+        }
+    }
+    else if (k == "LINK_OFFSETS")  val = (opt.link_offsets == 1) ? "ELEVATION" : "DEPTH";
     else if (k == "ROUTING_STEP")  val = std::to_string(opt.routing_step);
     else if (k == "REPORT_STEP")   val = std::to_string(opt.report_step);
     else if (k == "CRS")           val = opt.crs;
+
+    // [REPORT] section keys (Slice BV.1 — added 2026-05-22).
+    // Bool keys serialize as YES/NO; selector keys serialize as
+    // ALL / NONE / comma-joined names.  Symmetric with swmm_options_set.
+    else if (k == "RPT_DISABLED")   val = opt.rpt_disabled   ? "YES" : "NO";
+    else if (k == "RPT_INPUT")      val = opt.rpt_input      ? "YES" : "NO";
+    else if (k == "RPT_CONTINUITY") val = opt.rpt_continuity ? "YES" : "NO";
+    else if (k == "RPT_FLOWSTATS")  val = opt.rpt_flowstats  ? "YES" : "NO";
+    else if (k == "RPT_CONTROLS")   val = opt.rpt_controls   ? "YES" : "NO";
+    else if (k == "RPT_AVERAGES")   val = opt.rpt_averages   ? "YES" : "NO";
+    else if (k == "RPT_SUBCATCHMENTS") {
+        if      (opt.rpt_subcatchments == 0) val = "NONE";
+        else if (opt.rpt_subcatchments == 1) val = "ALL";
+        else {
+            for (size_t i = 0; i < opt.rpt_subcatch_names.size(); ++i) {
+                if (i) val += ',';
+                val += opt.rpt_subcatch_names[i];
+            }
+        }
+    }
+    else if (k == "RPT_NODES") {
+        if      (opt.rpt_nodes == 0) val = "NONE";
+        else if (opt.rpt_nodes == 1) val = "ALL";
+        else {
+            for (size_t i = 0; i < opt.rpt_node_names.size(); ++i) {
+                if (i) val += ',';
+                val += opt.rpt_node_names[i];
+            }
+        }
+    }
+    else if (k == "RPT_LINKS") {
+        if      (opt.rpt_links == 0) val = "NONE";
+        else if (opt.rpt_links == 1) val = "ALL";
+        else {
+            for (size_t i = 0; i < opt.rpt_link_names.size(); ++i) {
+                if (i) val += ',';
+                val += opt.rpt_link_names[i];
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Slice CY (2026-05-22) — Close the §M.4 deferred OPTIONS keys so the
+    // SimulationOptionsDialog can hydrate every dialog control from the
+    // active engine on project open. Encoding is symmetric with the
+    // companion swmm_options_set branches further down. See
+    // openswmm.gui/docs/GUI_IMPLEMENTATION_PLAN.md §M.4 / Slice CY.
+    // ------------------------------------------------------------------
+
+    // Dates & Times — date+time are stored combined in a single OADate
+    // double (date in integer part, time-of-day in fractional). Get
+    // returns the date portion for *_DATE keys and the time portion for
+    // *_TIME keys so the GUI can populate START/END/REPORT controls
+    // independently.
+    else if (k == "START_DATE") {
+        int y, m, d;
+        openswmm::datetime::decodeDate(opt.start_date, y, m, d);
+        char tmp[16];
+        std::snprintf(tmp, sizeof(tmp), "%02d/%02d/%04d", m, d, y);
+        val = tmp;
+    }
+    else if (k == "START_TIME") {
+        int h, m, s;
+        openswmm::datetime::decodeTime(opt.start_date, h, m, s);
+        char tmp[16];
+        std::snprintf(tmp, sizeof(tmp), "%02d:%02d:%02d", h, m, s);
+        val = tmp;
+    }
+    else if (k == "END_DATE") {
+        int y, m, d;
+        openswmm::datetime::decodeDate(opt.end_date, y, m, d);
+        char tmp[16];
+        std::snprintf(tmp, sizeof(tmp), "%02d/%02d/%04d", m, d, y);
+        val = tmp;
+    }
+    else if (k == "END_TIME") {
+        int h, m, s;
+        openswmm::datetime::decodeTime(opt.end_date, h, m, s);
+        char tmp[16];
+        std::snprintf(tmp, sizeof(tmp), "%02d:%02d:%02d", h, m, s);
+        val = tmp;
+    }
+    else if (k == "REPORT_START_DATE") {
+        int y, m, d;
+        openswmm::datetime::decodeDate(opt.report_start, y, m, d);
+        char tmp[16];
+        std::snprintf(tmp, sizeof(tmp), "%02d/%02d/%04d", m, d, y);
+        val = tmp;
+    }
+    else if (k == "REPORT_START_TIME") {
+        int h, m, s;
+        openswmm::datetime::decodeTime(opt.report_start, h, m, s);
+        char tmp[16];
+        std::snprintf(tmp, sizeof(tmp), "%02d:%02d:%02d", h, m, s);
+        val = tmp;
+    }
+
+    // Step keys — emitted as integer seconds (GUI parseStepSeconds
+    // accepts both seconds and HH:MM:SS; seconds matches REPORT_STEP).
+    else if (k == "DRY_STEP")  val = std::to_string(static_cast<long long>(opt.dry_step));
+    else if (k == "WET_STEP")  val = std::to_string(static_cast<long long>(opt.wet_step));
+    else if (k == "RULE_STEP") val = std::to_string(static_cast<long long>(opt.rule_step));
+    else if (k == "DRY_DAYS")  val = std::to_string(opt.dry_days);
+
+    // Sweep day-of-year → MM/DD via year-2000 anchor (matches the
+    // OptionsHandler parser's convention).
+    else if (k == "SWEEP_START") {
+        const auto dt = openswmm::datetime::encodeDate(2000, 1, 1)
+                      + (opt.sweep_start - 1);
+        int y, m, d;
+        openswmm::datetime::decodeDate(dt, y, m, d);
+        char tmp[8];
+        std::snprintf(tmp, sizeof(tmp), "%02d/%02d", m, d);
+        val = tmp;
+    }
+    else if (k == "SWEEP_END") {
+        const auto dt = openswmm::datetime::encodeDate(2000, 1, 1)
+                      + (opt.sweep_end - 1);
+        int y, m, d;
+        openswmm::datetime::decodeDate(dt, y, m, d);
+        char tmp[8];
+        std::snprintf(tmp, sizeof(tmp), "%02d/%02d", m, d);
+        val = tmp;
+    }
+
+    // Models / Processes — INFILTRATION + booleans.
+    else if (k == "INFILTRATION") {
+        switch (opt.infiltration) {
+            case openswmm::InfiltrationModel::HORTON:         val = "HORTON"; break;
+            case openswmm::InfiltrationModel::MOD_HORTON:     val = "MOD_HORTON"; break;
+            case openswmm::InfiltrationModel::GREEN_AMPT:     val = "GREEN_AMPT"; break;
+            case openswmm::InfiltrationModel::MOD_GREEN_AMPT: val = "MOD_GREEN_AMPT"; break;
+            case openswmm::InfiltrationModel::CURVE_NUMBER:   val = "CURVE_NUMBER"; break;
+        }
+    }
+    else if (k == "ALLOW_PONDING")      val = opt.allow_ponding     ? "YES" : "NO";
+    else if (k == "SKIP_STEADY_STATE")  val = opt.skip_steady_state ? "YES" : "NO";
+    else if (k == "IGNORE_RAINFALL")    val = opt.ignore_rainfall   ? "YES" : "NO";
+    else if (k == "IGNORE_SNOWMELT")    val = opt.ignore_snow_melt  ? "YES" : "NO";
+    else if (k == "IGNORE_GROUNDWATER") val = opt.ignore_groundwater? "YES" : "NO";
+    else if (k == "IGNORE_RDII")        val = opt.ignore_rdii       ? "YES" : "NO";
+    else if (k == "IGNORE_QUALITY")     val = opt.ignore_quality    ? "YES" : "NO";
+    else if (k == "IGNORE_ROUTING")     val = opt.ignore_routing    ? "YES" : "NO";
+
+    // Routing & Hydraulics — enums + scalars.
+    else if (k == "SURCHARGE_METHOD") {
+        if      (opt.surcharge_method == 0) val = "EXTRAN";
+        else if (opt.surcharge_method == 1) val = "SLOT";
+        else                                val = "DYNAMIC_SLOT";
+    }
+    else if (k == "NODE_CONTINUITY") {
+        val = (opt.node_continuity == openswmm::NodeContinuity::SEMI_IMPLICIT)
+              ? "SEMI_IMPLICIT" : "EXPLICIT";
+    }
+    else if (k == "FORCE_MAIN_EQUATION") {
+        val = (opt.force_main_eqn == 1) ? "D-W" : "H-W";
+    }
+    else if (k == "NORMAL_FLOW_LIMITED") {
+        switch (opt.normal_flow_ltd) {
+            case 0:  val = "SLOPE";   break;
+            case 1:  val = "FROUDE";  break;
+            case 2:  val = "BOTH";    break;
+            default: val = "NEITHER"; break;
+        }
+    }
+    else if (k == "INERTIAL_DAMPING") {
+        switch (opt.inertial_damping) {
+            case 0:  val = "NONE";    break;
+            case 1:  val = "PARTIAL"; break;
+            default: val = "FULL";    break;
+        }
+    }
+    else if (k == "ANDERSON_ACCEL")    val = opt.anderson_accel ? "YES" : "NO";
+    else if (k == "DPS_CELERITY")      val = std::to_string(opt.dps_target_celerity);
+    else if (k == "DPS_ALPHA")         val = std::to_string(opt.dps_alpha);
+    else if (k == "DPS_DECAY_TIME")    val = std::to_string(opt.dps_decay_time);
+    else if (k == "LENGTHENING_STEP")  val = std::to_string(opt.lengthening_step);
+    else if (k == "VARIABLE_STEP")     val = std::to_string(opt.variable_step);
+    else if (k == "MAX_TRIALS")        val = std::to_string(opt.max_trials);
+    else if (k == "HEAD_TOLERANCE")    val = std::to_string(opt.head_tol);
+    // LAT_FLOW_TOL / SYS_FLOW_TOL are stored as fractions; the GUI uses
+    // fractions on both read and write (see readFromEngine fallback +
+    // writeToEngine). The percent⇄fraction conversion happens only at
+    // the [OPTIONS] parser / InpWriter boundary, never through this API.
+    else if (k == "LAT_FLOW_TOL")      val = std::to_string(opt.lat_flow_tol);
+    else if (k == "SYS_FLOW_TOL")      val = std::to_string(opt.sys_flow_tol);
+    else if (k == "MIN_SURFAREA")      val = std::to_string(opt.min_surf_area);
+    else if (k == "MIN_SLOPE")         val = std::to_string(opt.min_slope);
+
+    // System / Performance
+    else if (k == "THREADS")           val = std::to_string(opt.num_threads);
+
     else return SWMM_ERR_BADPARAM;
 
     std::strncpy(buf, val.c_str(), static_cast<std::size_t>(buflen - 1));
@@ -223,21 +787,243 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         else if (vu == "STEADY")   opt.routing_model = openswmm::RoutingModel::STEADY;
         else return SWMM_ERR_BADPARAM;
     }
+    else if (k == "LINK_OFFSETS") {
+        std::string vu(v);
+        for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if      (vu == "DEPTH" || vu == "DEPTH_OFFSET" || vu == "0") opt.link_offsets = 0;
+        else if (vu == "ELEVATION" || vu == "ELEV_OFFSET" || vu == "1") opt.link_offsets = 1;
+        else return SWMM_ERR_BADPARAM;
+    }
     else if (k == "ROUTING_STEP") {
         opt.routing_step = std::stod(v);
     }
     else if (k == "REPORT_STEP") {
         opt.report_step = std::stod(v);
     }
+    // Date/time keys are stored combined in a single OADate double. Get/set
+    // for *_DATE addresses the integer (date) portion only and *_TIME the
+    // fractional (time-of-day) portion, so the GUI can write them
+    // independently — matching the OptionsHandler parser composition rule.
+    // The previous std::stod(v) implementation for START_DATE/END_DATE was
+    // a pre-existing bug — std::stod("01/01/2004") writes 1.0 — fixed here
+    // as part of Slice CY (closes the §M.4 deferred get/set parity gap).
     else if (k == "START_DATE") {
-        opt.start_date = std::stod(v);
+        opt.start_date = openswmm::input::parse_date(v)
+                       + (opt.start_date - std::floor(opt.start_date));
+    }
+    else if (k == "START_TIME") {
+        opt.start_date = std::floor(opt.start_date)
+                       + openswmm::input::parse_time_seconds(v)
+                         / openswmm::datetime::SecsPerDay;
     }
     else if (k == "END_DATE") {
-        opt.end_date = std::stod(v);
+        opt.end_date = openswmm::input::parse_date(v)
+                     + (opt.end_date - std::floor(opt.end_date));
+    }
+    else if (k == "END_TIME") {
+        opt.end_date = std::floor(opt.end_date)
+                     + openswmm::input::parse_time_seconds(v)
+                       / openswmm::datetime::SecsPerDay;
+    }
+    else if (k == "REPORT_START_DATE") {
+        opt.report_start = openswmm::input::parse_date(v)
+                         + (opt.report_start - std::floor(opt.report_start));
+    }
+    else if (k == "REPORT_START_TIME") {
+        opt.report_start = std::floor(opt.report_start)
+                         + openswmm::input::parse_time_seconds(v)
+                           / openswmm::datetime::SecsPerDay;
     }
     else if (k == "CRS") {
         opt.crs = v;
     }
+
+    // [REPORT] section keys (Slice BV.1 — added 2026-05-22). Boolean keys
+    // accept YES/NO/TRUE/FALSE/1/0; selector keys accept ALL, NONE, or a
+    // comma- or whitespace-delimited list of names (mode set to 2 = SOME
+    // and names pushed onto the matching rpt_*_names vector).
+    else if (k.rfind("RPT_", 0) == 0) {
+        auto parse_bool = [&v]() -> int {
+            std::string vu(v);
+            for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+            if (vu == "YES" || vu == "TRUE"  || vu == "1") return 1;
+            if (vu == "NO"  || vu == "FALSE" || vu == "0") return 0;
+            return -1;
+        };
+        auto parse_selector = [&v](int& mode, std::vector<std::string>& names) -> int {
+            std::string vu(v);
+            for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+            // Trim outer whitespace
+            auto ltrim = vu.find_first_not_of(" \t");
+            auto rtrim = vu.find_last_not_of(" \t");
+            const std::string trimmed = (ltrim == std::string::npos)
+                ? std::string()
+                : vu.substr(ltrim, rtrim - ltrim + 1);
+            if (trimmed == "NONE" || trimmed.empty()) { mode = 0; names.clear(); return 0; }
+            if (trimmed == "ALL")                     { mode = 1; names.clear(); return 0; }
+            // SOME mode — tokenize the original (case-preserving) value on
+            // commas or whitespace. Skip empty tokens.
+            names.clear();
+            std::string token;
+            for (char c : v) {
+                if (c == ',' || c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                    if (!token.empty()) { names.push_back(token); token.clear(); }
+                } else {
+                    token.push_back(c);
+                }
+            }
+            if (!token.empty()) names.push_back(token);
+            mode = 2;
+            return 0;
+        };
+
+        if      (k == "RPT_DISABLED")   { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_disabled   = (b == 1); }
+        else if (k == "RPT_INPUT")      { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_input      = (b == 1); }
+        else if (k == "RPT_CONTINUITY") { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_continuity = (b == 1); }
+        else if (k == "RPT_FLOWSTATS")  { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_flowstats  = (b == 1); }
+        else if (k == "RPT_CONTROLS")   { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_controls   = (b == 1); }
+        else if (k == "RPT_AVERAGES")   { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_averages   = (b == 1); }
+        else if (k == "RPT_SUBCATCHMENTS") parse_selector(opt.rpt_subcatchments, opt.rpt_subcatch_names);
+        else if (k == "RPT_NODES")         parse_selector(opt.rpt_nodes,         opt.rpt_node_names);
+        else if (k == "RPT_LINKS")         parse_selector(opt.rpt_links,         opt.rpt_link_names);
+        else return SWMM_ERR_BADPARAM;
+    }
+
+    // ------------------------------------------------------------------
+    // Slice CY (2026-05-22) — closure of §M.4 deferred OPTIONS keys.
+    // Symmetric with the swmm_options_get branches above. Aliases mirror
+    // the OptionsHandler parser so legacy .inp values and GUI tokens
+    // both round-trip.
+    // ------------------------------------------------------------------
+
+    // Step keys — accept seconds or HH:MM:SS per parse_time_seconds.
+    else if (k == "DRY_STEP")  opt.dry_step  = openswmm::input::parse_time_seconds(v);
+    else if (k == "WET_STEP")  opt.wet_step  = openswmm::input::parse_time_seconds(v);
+    else if (k == "RULE_STEP") opt.rule_step = openswmm::input::parse_time_seconds(v);
+    else if (k == "DRY_DAYS")  opt.dry_days  = std::stod(v);
+
+    // Sweep — accept MM/DD (legacy form, what the GUI writes), convert to
+    // day-of-year via year-2000 anchor matching the parser convention.
+    else if (k == "SWEEP_START" || k == "SWEEP_END") {
+        unsigned sm = 0, sd = 0;
+        const char* sp = v.data();
+        const char* se = sp + v.size();
+        std::from_chars(sp, se, sm);
+        while (sp < se && *sp != '/') ++sp;
+        if (sp < se) ++sp;
+        std::from_chars(sp, se, sd);
+        if (sm < 1 || sm > 12 || sd < 1 || sd > 31) return SWMM_ERR_BADPARAM;
+        const int doy = openswmm::datetime::dayOfYear(
+            openswmm::datetime::encodeDate(2000,
+                                           static_cast<int>(sm),
+                                           static_cast<int>(sd)));
+        if (k == "SWEEP_START") opt.sweep_start = doy;
+        else                    opt.sweep_end   = doy;
+    }
+
+    // Infiltration — token (aliases mirror OptionsHandler).
+    else if (k == "INFILTRATION") {
+        std::string vu(v);
+        for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if      (vu == "HORTON")
+            opt.infiltration = openswmm::InfiltrationModel::HORTON;
+        else if (vu == "MOD_HORTON" || vu == "MODIFIED_HORTON")
+            opt.infiltration = openswmm::InfiltrationModel::MOD_HORTON;
+        else if (vu == "GREEN_AMPT")
+            opt.infiltration = openswmm::InfiltrationModel::GREEN_AMPT;
+        else if (vu == "MOD_GREEN_AMPT" || vu == "MODIFIED_GREEN_AMPT")
+            opt.infiltration = openswmm::InfiltrationModel::MOD_GREEN_AMPT;
+        else if (vu == "CURVE_NUMBER")
+            opt.infiltration = openswmm::InfiltrationModel::CURVE_NUMBER;
+        else return SWMM_ERR_BADPARAM;
+    }
+
+    // Boolean flags — common parser inline (cannot reach the RPT_ block's
+    // parse_bool lambda from here).
+    else if (k == "ALLOW_PONDING"
+          || k == "SKIP_STEADY_STATE"
+          || k == "IGNORE_RAINFALL"
+          || k == "IGNORE_SNOWMELT"
+          || k == "IGNORE_GROUNDWATER"
+          || k == "IGNORE_RDII"
+          || k == "IGNORE_QUALITY"
+          || k == "IGNORE_ROUTING"
+          || k == "ANDERSON_ACCEL") {
+        std::string vu(v);
+        for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        bool b;
+        if      (vu == "YES" || vu == "TRUE"  || vu == "1") b = true;
+        else if (vu == "NO"  || vu == "FALSE" || vu == "0") b = false;
+        else return SWMM_ERR_BADPARAM;
+        if      (k == "ALLOW_PONDING")      opt.allow_ponding      = b;
+        else if (k == "SKIP_STEADY_STATE")  opt.skip_steady_state  = b;
+        else if (k == "IGNORE_RAINFALL")    opt.ignore_rainfall    = b;
+        else if (k == "IGNORE_SNOWMELT")    opt.ignore_snow_melt   = b;
+        else if (k == "IGNORE_GROUNDWATER") opt.ignore_groundwater = b;
+        else if (k == "IGNORE_RDII")        opt.ignore_rdii        = b;
+        else if (k == "IGNORE_QUALITY")     opt.ignore_quality     = b;
+        else if (k == "IGNORE_ROUTING")     opt.ignore_routing     = b;
+        else if (k == "ANDERSON_ACCEL")     opt.anderson_accel     = b;
+    }
+
+    // Routing & Hydraulics — enums.
+    else if (k == "SURCHARGE_METHOD") {
+        std::string vu(v);
+        for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if      (vu == "EXTRAN")       opt.surcharge_method = 0;
+        else if (vu == "SLOT")         opt.surcharge_method = 1;
+        else if (vu == "DYNAMIC_SLOT") opt.surcharge_method = 2;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "NODE_CONTINUITY") {
+        std::string vu(v);
+        for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if      (vu == "EXPLICIT")      opt.node_continuity = openswmm::NodeContinuity::EXPLICIT;
+        else if (vu == "SEMI_IMPLICIT") opt.node_continuity = openswmm::NodeContinuity::SEMI_IMPLICIT;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "FORCE_MAIN_EQUATION") {
+        std::string vu(v);
+        for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if      (vu == "H-W" || vu == "HW" || vu == "HAZEN-WILLIAMS") opt.force_main_eqn = 0;
+        else if (vu == "D-W" || vu == "DW" || vu == "DARCY-WEISBACH") opt.force_main_eqn = 1;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "NORMAL_FLOW_LIMITED") {
+        std::string vu(v);
+        for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if      (vu == "SLOPE")   opt.normal_flow_ltd = 0;
+        else if (vu == "FROUDE")  opt.normal_flow_ltd = 1;
+        else if (vu == "BOTH")    opt.normal_flow_ltd = 2;
+        else if (vu == "NEITHER") opt.normal_flow_ltd = 3;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "INERTIAL_DAMPING") {
+        std::string vu(v);
+        for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if      (vu == "NONE")    opt.inertial_damping = 0;
+        else if (vu == "PARTIAL") opt.inertial_damping = 1;
+        else if (vu == "FULL")    opt.inertial_damping = 2;
+        else return SWMM_ERR_BADPARAM;
+    }
+
+    // Numeric scalars.
+    else if (k == "DPS_CELERITY")      opt.dps_target_celerity = std::stod(v);
+    else if (k == "DPS_ALPHA")         opt.dps_alpha           = std::stod(v);
+    else if (k == "DPS_DECAY_TIME")    opt.dps_decay_time      = std::stod(v);
+    else if (k == "LENGTHENING_STEP")  opt.lengthening_step    = std::stod(v);
+    else if (k == "VARIABLE_STEP")     opt.variable_step       = std::stod(v);
+    else if (k == "MAX_TRIALS")        opt.max_trials          = std::stoi(v);
+    else if (k == "HEAD_TOLERANCE")    opt.head_tol            = std::stod(v);
+    // LAT_FLOW_TOL / SYS_FLOW_TOL: fraction in / fraction out via this API
+    // (see read comment above). The percent⇄fraction conversion stays at
+    // the [OPTIONS] parser / InpWriter boundary.
+    else if (k == "LAT_FLOW_TOL")      opt.lat_flow_tol        = std::stod(v);
+    else if (k == "SYS_FLOW_TOL")      opt.sys_flow_tol        = std::stod(v);
+    else if (k == "MIN_SURFAREA")      opt.min_surf_area       = std::stod(v);
+    else if (k == "MIN_SLOPE")         opt.min_slope           = std::stod(v);
+    else if (k == "THREADS")           opt.num_threads         = std::stoi(v);
+
     else {
         return SWMM_ERR_BADPARAM;
     }
@@ -274,6 +1060,49 @@ SWMM_ENGINE_API int swmm_get_crs(SWMM_Engine engine, char* buf, int buflen) {
     if (crs.empty()) return SWMM_ERR_CRS;
     std::strncpy(buf, crs.c_str(), static_cast<std::size_t>(buflen - 1));
     buf[buflen - 1] = '\0';
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Typed time-control accessors (OADate doubles)
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_options_get_start_date(SWMM_Engine engine, double* value) {
+    CHECK_HANDLE(engine);
+    if (!value) return SWMM_ERR_BADPARAM;
+    *value = to_engine(engine)->context().options.start_date;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_options_set_start_date(SWMM_Engine engine, double value) {
+    CHECK_HANDLE(engine);
+    to_engine(engine)->context().options.start_date = value;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_options_get_end_date(SWMM_Engine engine, double* value) {
+    CHECK_HANDLE(engine);
+    if (!value) return SWMM_ERR_BADPARAM;
+    *value = to_engine(engine)->context().options.end_date;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_options_set_end_date(SWMM_Engine engine, double value) {
+    CHECK_HANDLE(engine);
+    to_engine(engine)->context().options.end_date = value;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_options_get_report_start(SWMM_Engine engine, double* value) {
+    CHECK_HANDLE(engine);
+    if (!value) return SWMM_ERR_BADPARAM;
+    *value = to_engine(engine)->context().options.report_start;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_options_set_report_start(SWMM_Engine engine, double value) {
+    CHECK_HANDLE(engine);
+    to_engine(engine)->context().options.report_start = value;
     return SWMM_OK;
 }
 

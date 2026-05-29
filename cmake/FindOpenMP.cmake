@@ -29,9 +29,13 @@ if(APPLE AND NOT OpenMP_FOUND)
                 target_link_libraries(OpenMP::OpenMP_CXX INTERFACE "${HOMEBREW_PATH}/lib/libomp.dylib")
             endif()
             
-            set(OpenMP_FOUND TRUE PARENT_SCOPE)
-            set(OpenMP_C_FOUND TRUE PARENT_SCOPE)
-            set(OpenMP_CXX_FOUND TRUE PARENT_SCOPE)
+            # No PARENT_SCOPE — include() runs in the caller's scope, so
+            # PARENT_SCOPE would skip over src/legacy/engine/CMakeLists.txt
+            # (the file that included this finder) and leave OpenMP_FOUND
+            # unset there, defeating the if(OpenMP_FOUND) gate below.
+            set(OpenMP_FOUND TRUE)
+            set(OpenMP_C_FOUND TRUE)
+            set(OpenMP_CXX_FOUND TRUE)
             
             return()
         endif()

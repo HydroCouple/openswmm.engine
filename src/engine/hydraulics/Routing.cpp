@@ -5,7 +5,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -129,39 +129,60 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
     }
 
     // Compute modified conduit lengths for CFL stability
-    // (matching legacy conduit_getLengthFactor in link.c)
+    // (matching legacy link.c conduit_getLengthFactor / conduit_validate:
+    //  lengthening is only applied when LENGTHENING_STEP > 0 in OPTIONS)
     {
         using constants::PHI;
         using constants::GRAVITY;
         double route_step = ctx.options.routing_step;
         double lengthening_step = ctx.options.lengthening_step;
-        double tStep = (lengthening_step > 0.0)
-                        ? std::min(route_step, lengthening_step)
-                        : route_step;
 
-        for (int j = 0; j < n_links; ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            if (ctx.links.type[uj] != LinkType::CONDUIT) {
-                ctx.links.mod_length[uj] = ctx.links.length[uj];
-                continue;
+        if (lengthening_step <= 0.0) {
+            // Legacy: skip Courant lengthening when LENGTHENING_STEP not set
+            for (int j = 0; j < n_links; ++j) {
+                ctx.links.mod_length[static_cast<std::size_t>(j)] =
+                    ctx.links.length[static_cast<std::size_t>(j)];
             }
+        } else {
+            double tStep = std::min(route_step, lengthening_step);
 
-            double L = ctx.links.length[uj];
-            if (L <= 0.0) { ctx.links.mod_length[uj] = L; continue; }
+            for (int j = 0; j < n_links; ++j) {
+                auto uj = static_cast<std::size_t>(j);
+                if (ctx.links.type[uj] != LinkType::CONDUIT) {
+                    ctx.links.mod_length[uj] = ctx.links.length[uj];
+                    continue;
+                }
 
-            double yFull = ctx.links.xsect_y_full[uj];
-            double aFull = ctx.links.xsect_a_full[uj];
-            double sFull = ctx.links.xsect_s_full[uj];
-            double n_rough = ctx.links.roughness[uj];
-            double slope_abs = std::fabs(ctx.links.slope[uj]);
+                double L = ctx.links.length[uj];
+                if (L <= 0.0) { ctx.links.mod_length[uj] = L; continue; }
 
-            if (aFull > 0.0 && n_rough > 0.0 && slope_abs > 0.0) {
-                double vFull = PHI / n_rough * sFull * std::sqrt(slope_abs) / aFull;
-                double ratio = (std::sqrt(GRAVITY * yFull) + vFull) * tStep / L;
-                double factor = (ratio > 1.0) ? ratio : 1.0;
-                ctx.links.mod_length[uj] = factor * L;
-            } else {
-                ctx.links.mod_length[uj] = L;
+                double yFull = ctx.links.xsect_y_full[uj];
+                double aFull = ctx.links.xsect_a_full[uj];
+                double sFull = ctx.links.xsect_s_full[uj];
+                double n_rough = ctx.links.roughness[uj];
+                double slope_abs = std::fabs(ctx.links.slope[uj]);
+
+                // For open channels, use hydraulic depth (aFull / top-width)
+                // rather than geometric full depth for the wave-speed term.
+                // Matches legacy link.c:1241-1243:
+                //   if (xsect_isOpen(type)) yFull = aFull / getWofY(yFull)
+                bool is_open = (ctx.links.xsect_shape[uj] == XsectShape::TRAPEZOIDAL ||
+                                ctx.links.xsect_shape[uj] == XsectShape::RECT_OPEN   ||
+                                ctx.links.xsect_shape[uj] == XsectShape::TRIANGULAR  ||
+                                ctx.links.xsect_shape[uj] == XsectShape::PARABOLIC);
+                if (is_open) {
+                    double wFull = ctx.links.xsect_w_max[uj];
+                    if (wFull > 0.0) yFull = aFull / wFull;
+                }
+
+                if (aFull > 0.0 && n_rough > 0.0 && slope_abs > 0.0) {
+                    double vFull = PHI / n_rough * sFull * std::sqrt(slope_abs) / aFull;
+                    double ratio = (std::sqrt(GRAVITY * yFull) + vFull) * tStep / L;
+                    double factor = (ratio > 1.0) ? ratio : 1.0;
+                    ctx.links.mod_length[uj] = factor * L;
+                } else {
+                    ctx.links.mod_length[uj] = L;
+                }
             }
         }
     }

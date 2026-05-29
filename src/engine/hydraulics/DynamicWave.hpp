@@ -21,7 +21,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -102,21 +102,34 @@ struct DPSConfig {
 
 /// Per-conduit DPS state — Structure of Arrays (persistent across timesteps).
 /// Each vector is indexed by conduit index [0..n_conduits_).
+///
+/// The head-first link-node formulation treats `hs` as a diagnostic of the
+/// node-head solution (`hs = max(depth_mid − y_full, 0)`) and accumulates
+/// `As` from `dAs = T_s · dhs` so the slot storage is path-dependent and
+/// invariant under P-only evolution.  `hs_prev_iter` snapshots `hs` at the
+/// start of each timestep so the Picard-iter increment `dhs = hs_iter − hs_prev_iter`
+/// is anchored to the previous *converged* head rather than the previous iterate.
+/// `T_s_target = g · A_C / c_pT²` is cached so the per-iter `T_s = T_s_target · P²`
+/// reduces to a single multiply.
 struct DPSLinkArrays {
-    std::vector<double>  As;          ///< Accumulated slot area (ft²)
-    std::vector<double>  hs;          ///< Current surcharge head (ft)
-    std::vector<double>  P;           ///< Current Preissmann Number (smoothed)
-    std::vector<double>  P_hat;       ///< Provisional Preissmann Number (before smoothing)
-    std::vector<double>  P_hat_0;     ///< Initial P for unpressurized conduit
-    std::vector<double>  t_s;         ///< Time when element last became surcharged (sec)
-    std::vector<uint8_t> surcharged;  ///< Currently surcharged flag
+    std::vector<double>  As;            ///< Accumulated slot area (ft²)
+    std::vector<double>  hs;            ///< Current surcharge head (ft)
+    std::vector<double>  hs_prev_iter;  ///< hs at start of current timestep (ft)
+    std::vector<double>  P;             ///< Current Preissmann Number (smoothed)
+    std::vector<double>  P_hat;         ///< Provisional Preissmann Number (before smoothing)
+    std::vector<double>  P_hat_0;       ///< Initial P for unpressurized conduit
+    std::vector<double>  T_s_target;    ///< g · A_C / c_pT² (cached at init)
+    std::vector<double>  t_s;           ///< Time when element last became surcharged (sec)
+    std::vector<uint8_t> surcharged;    ///< Currently surcharged flag
 
     void resize(std::size_t n) {
         As.assign(n, 0.0);
         hs.assign(n, 0.0);
+        hs_prev_iter.assign(n, 0.0);
         P.assign(n, 1.0);
         P_hat.assign(n, 1.0);
         P_hat_0.assign(n, 1.0);
+        T_s_target.assign(n, 0.0);
         t_s.assign(n, 0.0);
         surcharged.assign(n, 0);
     }
@@ -482,6 +495,12 @@ public:
     /// True once execute() has been called at least once.
     bool isHSnapshotValid() const noexcept { return snap_valid_; }
 
+    /// Read-only access to DPS per-conduit state arrays (for tests/diagnostics).
+    const DPSLinkArrays& dpsState() const { return dps_; }
+    /// Read-only access to DPS configuration (for tests/diagnostics).
+    const DPSConfig& dpsConfig() const { return dps_config_; }
+    /// Mutable access to DPS state for tests that need to seed slot conditions.
+    DPSLinkArrays& dpsStateMut() { return dps_; }
 private:
 
     // Preissmann slot helpers (matching legacy dwflow.c)

@@ -8,7 +8,7 @@
  * @ingroup engine_data
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -44,6 +44,21 @@ struct ExtInflowData {
         m_factor.push_back(mf); s_factor.push_back(sf);
         baseline.push_back(base); pattern_name.push_back(pat);
     }
+
+    /// Remove the entry at @p idx. No-op if out of range. Subsequent entries
+    /// shift down by one — callers that hold cached indices must re-resolve.
+    void erase(int idx) {
+        if (idx < 0 || idx >= count()) return;
+        const auto u = static_cast<std::size_t>(idx);
+        node_idx.erase(node_idx.begin() + u);
+        constituent.erase(constituent.begin() + u);
+        ts_name.erase(ts_name.begin() + u);
+        inflow_type.erase(inflow_type.begin() + u);
+        m_factor.erase(m_factor.begin() + u);
+        s_factor.erase(s_factor.begin() + u);
+        baseline.erase(baseline.begin() + u);
+        pattern_name.erase(pattern_name.begin() + u);
+    }
 };
 
 // ============================================================================
@@ -69,6 +84,18 @@ struct DwfData {
         pat1.push_back(p1); pat2.push_back(p2);
         pat3.push_back(p3); pat4.push_back(p4);
     }
+
+    void erase(int idx) {
+        if (idx < 0 || idx >= count()) return;
+        const auto u = static_cast<std::size_t>(idx);
+        node_idx.erase(node_idx.begin() + u);
+        constituent.erase(constituent.begin() + u);
+        avg_value.erase(avg_value.begin() + u);
+        pat1.erase(pat1.begin() + u);
+        pat2.erase(pat2.begin() + u);
+        pat3.erase(pat3.begin() + u);
+        pat4.erase(pat4.begin() + u);
+    }
 };
 
 // ============================================================================
@@ -86,6 +113,14 @@ struct RDIIAssignData {
         node_idx.push_back(ni); uh_name.push_back(uh);
         sewer_area.push_back(area);
     }
+
+    void erase(int idx) {
+        if (idx < 0 || idx >= count()) return;
+        const auto u = static_cast<std::size_t>(idx);
+        node_idx.erase(node_idx.begin() + u);
+        uh_name.erase(uh_name.begin() + u);
+        sewer_area.erase(sewer_area.begin() + u);
+    }
 };
 
 // ============================================================================
@@ -99,7 +134,7 @@ struct UnitHydEntry {
     int response;           ///< 0=SHORT, 1=MEDIUM, 2=LONG
     double r;               ///< Fraction of rainfall volume
     double t;               ///< Time to peak (hours)
-    double k;               ///< Recession limb ratio (tBase/tPeak)
+    double k;               ///< Recession-limb-to-peak-time ratio (tBase = t*(1+k); k >= 0)
     double dmax;            ///< Max initial abstraction depth
     double drecov;          ///< IA recovery rate
     double dinit;           ///< Initial IA used
@@ -120,6 +155,39 @@ struct UnitHydData {
     }
 
     void add(const UnitHydEntry& e) { entries.push_back(e); }
+};
+
+// ============================================================================
+// RDII exponential-decay parameters (from [RDII_DECAY] section)
+// ============================================================================
+//
+// One row per (UH group, response). Granularity is per-response, NOT per-month
+// — the whole point of the exponential model is that seasonal variation in
+// IA recovery emerges from temperature dynamics, not from a monthly lookup.
+//
+// A UH group with no row here uses the legacy linear IA recovery for every
+// response. A group with one row falls back to linear for the two unspecified
+// responses, so adoption is incremental.
+//
+// @see docs/RDII_ExpDecay_Implementation.md
+
+struct RDIIDecayEntry {
+    std::string uh_name;    ///< Matches UnitHydEntry::name
+    int    response  = -1;  ///< 0=SHORT, 1=MEDIUM, 2=LONG
+    double k_dep     = 0.0; ///< Depletion rate (1/mm) — temperature-independent
+    double k_0       = 0.0; ///< Base recovery rate (1/hr)
+    double k_T       = 0.0; ///< Thermal recovery rate at T_ref (1/hr)
+    double T_ref     = 10.0;///< Reference temperature (deg C)
+    double theta_rec = 0.0; ///< Temperature sensitivity (1/deg C)
+    double T_freeze  = 0.0; ///< Recovery suppressed when T <= T_freeze (deg C)
+};
+
+struct RDIIDecayData {
+    int count() const { return static_cast<int>(entries.size()); }
+
+    std::vector<RDIIDecayEntry> entries;
+
+    void add(const RDIIDecayEntry& e) { entries.push_back(e); }
 };
 
 // ============================================================================

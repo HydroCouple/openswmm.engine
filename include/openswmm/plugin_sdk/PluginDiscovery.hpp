@@ -14,7 +14,7 @@
  *          cache the result.
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -42,6 +42,13 @@ struct DiscoveredFilter {
     std::string  plugin_version;  ///< IPluginComponentInfo::version() of the source plugin
     std::string  plugin_caption;  ///< IPluginComponentInfo::caption() — human-readable
     FileFilter   filter;          ///< The advertised filter
+
+    /// Slice RC.3 — true when the source plugin is an engine built-in
+    /// (statically linked into the engine, registered via
+    /// PluginFactory::register_builtin_infos). False for plugins
+    /// discovered through the on-disk shared-library scan. Propagated
+    /// up to DiscoveredPlugin's matching field by discover_plugins_by_id.
+    bool         is_builtin = false;
 };
 
 /**
@@ -54,6 +61,61 @@ struct DiscoveredFilter {
  * @returns Flat snapshot of all advertised filters.
  */
 std::vector<DiscoveredFilter> discover_all_filters();
+
+/**
+ * @brief A plugin grouped by id with all the roles and filters it advertises.
+ *
+ * @details Companion view to `DiscoveredFilter` for hosts that need to
+ *          reason about plugin capabilities at the *plugin* level rather
+ *          than per-filter.  The driving use case is detecting tri-role
+ *          plugins (e.g., the GeoPackage trio sharing a single
+ *          `plugin_id`) so a GUI can offer a "single container" toggle
+ *          when one plugin handles INPUT_READ + REPORT_WRITE +
+ *          OUTPUT_WRITE for the same extension.
+ *
+ *          A plugin appears once per `plugin_id`, with `roles` and
+ *          `filters` accumulated across every IPluginComponentInfo
+ *          registered under that id.
+ *
+ * @ingroup engine_plugin_sdk
+ */
+struct DiscoveredPlugin {
+    std::string                plugin_id;       ///< IPluginComponentInfo::id()
+    std::string                plugin_version;  ///< IPluginComponentInfo::version()
+    std::string                plugin_caption;  ///< IPluginComponentInfo::caption()
+    std::vector<PluginRole>    roles;           ///< Distinct roles advertised across all filters
+    std::vector<FileFilter>    filters;         ///< Every filter the plugin advertises
+
+    /**
+     * @brief True when the plugin was registered as an engine built-in
+     *        (via PluginFactory::register_builtin_infos) rather than
+     *        discovered through the on-disk shared-library scan.
+     *
+     * @details Slice RC.3 (APPROVED 2026-05-25). Hosts use this to gate
+     *          UI affordances that don't make sense for built-ins — e.g.
+     *          the Simulation Options Plugins-tab Remove button cannot
+     *          dlclose a statically-linked plugin, so it's greyed out
+     *          when `is_builtin == true`. The default (`false`) keeps
+     *          older callers' behavior unchanged: any plugin discovered
+     *          via the directory scan is treated as a non-builtin.
+     */
+    bool                       is_builtin = false;
+};
+
+/**
+ * @brief Enumerate every discovered plugin, grouped by `plugin_id`.
+ *
+ * @details Walks `discover_all_filters()` and folds entries that share
+ *          a `plugin_id` into a single `DiscoveredPlugin`.  `roles` is
+ *          de-duplicated.  Order of plugins follows the order in which
+ *          their first filter is encountered (stable across calls).
+ *
+ *          Use this when you need "what does plugin X support overall"
+ *          rather than "give me every (plugin, filter) pair".
+ *
+ * @returns Flat snapshot of plugins, one entry per `plugin_id`.
+ */
+std::vector<DiscoveredPlugin> discover_plugins_by_id();
 
 } /* namespace openswmm */
 

@@ -53,7 +53,7 @@
  * @ingroup engine_core
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -78,6 +78,7 @@
 #include "../hydraulics/Transect.hpp"
 #include "../data/HydrologyData.hpp"
 #include "../data/ForcingData.hpp"
+#include "../hydrology/Climate.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -102,6 +103,89 @@ namespace openswmm {
 struct PluginSpec {
     std::string              path;       ///< Shared library path
     std::vector<std::string> init_args;  ///< Extra tokens from the [PLUGINS] row
+};
+
+// ============================================================================
+// [FILES] section spec — secondary file references
+// ============================================================================
+
+/**
+ * @brief Mode keyword for one [FILES] row — `SAVE` or `USE`.
+ *
+ * @details `NONE` is the in-memory default for unconfigured slots so the
+ *          writer can skip them.  `SAVE` writes data out at simulation end;
+ *          `USE` reads data in at simulation start.
+ *
+ * @ingroup engine_core
+ */
+enum class FileMode {
+    NONE,
+    SAVE,
+    USE
+};
+
+/**
+ * @brief Configuration parsed from the `[FILES]` section.
+ *
+ * @details Mirrors legacy SWMM5's `Frainfall`, `Frunoff`, `Frdii`,
+ *          `Finflows`, `Foutflows`, `FhotstartInput`, `FhotstartOutputs`
+ *          structs (see `legacy/engine/iface.c`).  Each kind has an
+ *          (`mode`, `path`) pair; modes that the legacy parser doesn't
+ *          accept (e.g. RAINFALL only ever reads `USE`) are still stored
+ *          so a faithful round-trip is possible — validation can flag
+ *          illegal combinations later.
+ *
+ *          Multi-save HOTSTART (legacy supported up to 10 SAVE rows
+ *          with optional datetimes) is now honoured: `hotstart_saves`
+ *          is a vector and the parser appends per row.  The C API's
+ *          singular `HOTSTART_SAVE_PATH` / `_DATETIME` keys operate on
+ *          slot 0 as a back-compat sugar for GUI clients that only
+ *          surface a single hot-start save.
+ *
+ * @ingroup engine_core
+ */
+struct HotstartSaveEntry {
+    std::string path;
+    /// Optional `SAVE HOTSTART` datetime as a SWMM decimal day.
+    /// `0.0` means "no datetime — write at end of run".
+    double      datetime = 0.0;
+};
+
+struct FilesSpec {
+    FileMode    rainfall_mode = FileMode::NONE;
+    std::string rainfall_path;
+
+    FileMode    runoff_mode   = FileMode::NONE;
+    std::string runoff_path;
+
+    FileMode    rdii_mode     = FileMode::NONE;
+    std::string rdii_path;
+
+    /// Legacy semantics: USE only.
+    std::string inflows_path;
+
+    /// Legacy semantics: SAVE only.
+    std::string outflows_path;
+
+    /// Legacy semantics: USE — single hot-start input file.
+    std::string hotstart_use_path;
+
+    /// Legacy semantics: SAVE — one or more hot-start output files,
+    /// each with an optional datetime (SWMM decimal day, 0 = end of
+    /// run).  Legacy supported up to 10; we don't enforce that here.
+    std::vector<HotstartSaveEntry> hotstart_saves;
+
+    /// True when at least one slot is set; used by InpWriter to decide
+    /// whether to emit a `[FILES]` section.
+    [[nodiscard]] bool has_any() const noexcept {
+        return rainfall_mode != FileMode::NONE
+            || runoff_mode   != FileMode::NONE
+            || rdii_mode     != FileMode::NONE
+            || !inflows_path.empty()
+            || !outflows_path.empty()
+            || !hotstart_use_path.empty()
+            || !hotstart_saves.empty();
+    }
 };
 
 // ============================================================================
@@ -221,17 +305,40 @@ struct SimulationContext {
      */
     SimulationOptions options;
 
+    /**
+     * @brief Daily climate state — temperature, evaporation, wind, humidity.
+     *
+     * @details Scalar broadcast to all subcatchments; updated at the runoff
+     *          step boundary by SWMMEngine. Lives on the context so that
+     *          downstream solvers (RDII exponential IA, future models)
+     *          can read it through `ctx.climate_state` without reaching
+     *          into the engine.
+     *
+     * @see Legacy: Temp, Evap, Wind, Humidity in globals.h
+     */
+    climate::ClimateState climate_state;
+
     // =========================================================================
     // Simulation clock
     // =========================================================================
 
     /**
-     * @brief Current simulation time (decimal days from start_date).
+     * @brief Current simulation time in SECONDS from start_date.
      *
-     * @details Updated by TimestepController::advance(). The value 0.0
+     * @details Updated by TimestepController::advance() with the routing
+     *          step in seconds (TimestepController.cpp:88). The value 0.0
      *          corresponds to options.start_date.
      *
-     * @see Legacy: ElapsedTime in globals.h
+     *          The companion field current_date is the OADate (decimal
+     *          days since 12/30/1899) computed via
+     *          datetime::addSeconds(start_date, current_time).
+     *
+     *          Callers that need elapsed time in decimal days (e.g. the
+     *          control engine's SIM_TIME premise) must divide by
+     *          constants::SEC_PER_DAY.  Legacy `ElapsedTime` is in days;
+     *          this field stores seconds.
+     *
+     * @see Legacy: ElapsedTime in globals.h (legacy is in days)
      */
     double current_time = 0.0;
 
@@ -360,6 +467,7 @@ struct SimulationContext {
     DwfData          dwf_inflows;
     RDIIAssignData   rdii_assigns;
     UnitHydData      unit_hyds;      ///< Parsed [HYDROGRAPHS] data
+    RDIIDecayData    rdii_decay;     ///< Parsed [RDII_DECAY] data (exponential IA model)
     PatternData      patterns;
 
     // =========================================================================
@@ -455,15 +563,10 @@ struct SimulationContext {
     // Object tags (from [TAGS] section)
     // =========================================================================
 
-    /**
-     * @brief Tags assigned to objects for categorization/filtering.
-     * @details Parsed from the [TAGS] section. Format: ObjectType  Name  Tag
-     *          Used by GUI tools for filtering; preserved through read/write.
-     * @see Legacy: s_TAG section in enums.h (GUI-only in legacy SWMM)
-     */
-    std::unordered_map<std::string, std::string> node_tags;
-    std::unordered_map<std::string, std::string> link_tags;
-    std::unordered_map<std::string, std::string> subcatch_tags;
+    // Tags from the [TAGS] section now live per-index on
+    // NodeData::tags / LinkData::tags / SubcatchData::tags. Storing
+    // them name-keyed here was a latent rename bug — a tagged node
+    // would lose its tag the moment `swmm_node_rename` was called.
 
     // =========================================================================
     // Runtime forcing data
@@ -489,6 +592,16 @@ struct SimulationContext {
      *          New in 6.0.0 — no legacy equivalent.
      */
     std::vector<PluginSpec> plugin_specs;
+
+    /**
+     * @brief Secondary file references parsed from [FILES].
+     * @details Mirrors legacy SWMM5's TFile struct array — rainfall,
+     *          runoff, RDII, inflows, outflows, hotstart save/use.
+     *          The simulation engine consults specific slots when the
+     *          corresponding feature is requested (e.g. interfacing
+     *          a routing run with a separately-saved runoff file).
+     */
+    FilesSpec files;
 
     /**
      * @brief Solver-neutral accessors for reading and writing solver-internal
@@ -946,12 +1059,17 @@ struct SimulationContext {
         pollutant_names.clear();
         table_names.clear();
 
-        // Clear spatial, flags, tags, events, and forcing
+        // Clear inflow-related stores that aren't reset by their owning solvers
+        rdii_decay = RDIIDecayData{};
+
+        // Clear daily climate state (re-initialized by SWMMEngine on next run)
+        climate_state = climate::ClimateState{};
+
+        // Clear spatial, flags, events, and forcing. Per-object tags
+        // are owned by NodeData/LinkData/SubcatchData and cleared when
+        // those SoAs are resized/cleared by the wider reset path.
         spatial    = SpatialFrame{};
         user_flags.clear();
-        node_tags.clear();
-        link_tags.clear();
-        subcatch_tags.clear();
         events.clear();
         std::fill(std::begin(adjust_temp), std::end(adjust_temp), 0.0);
         std::fill(std::begin(adjust_evap), std::end(adjust_evap), 1.0);

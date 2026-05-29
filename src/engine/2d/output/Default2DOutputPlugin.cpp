@@ -292,6 +292,47 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
 
         H5Sclose(space);
     }
+
+    // --- Edge geometry [nFace, 3] — time-invariant, indexed (tri, localEdge) ---
+    // Paired with the time-varying /Mesh2_edge_flux dataset so post-run readers
+    // can reconstruct cell-centred velocity via RT0 without re-deriving edge
+    // length / outward normals from the vertex coordinates.
+    {
+        hsize_t dims[2] = { n_faces, 3 };
+        hid_t space = H5Screate_simple(2, dims, nullptr);
+
+        hid_t ds_len = H5Dcreate2(file_id, "Mesh2_edge_length", H5T_NATIVE_DOUBLE,
+                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Dwrite(ds_len, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                 mesh.edge_length.data());
+        writeStringAttrFn(ds_len, "long_name", "edge length");
+        writeStringAttrFn(ds_len, "units", "m");
+        writeStringAttrFn(ds_len, "mesh", "Mesh2");
+        writeStringAttrFn(ds_len, "location", "edge");
+        H5Dclose(ds_len);
+
+        hid_t ds_nx = H5Dcreate2(file_id, "Mesh2_edge_nx", H5T_NATIVE_DOUBLE,
+                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Dwrite(ds_nx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                 mesh.edge_nx.data());
+        writeStringAttrFn(ds_nx, "long_name", "edge outward unit normal x component");
+        writeStringAttrFn(ds_nx, "units", "1");
+        writeStringAttrFn(ds_nx, "mesh", "Mesh2");
+        writeStringAttrFn(ds_nx, "location", "edge");
+        H5Dclose(ds_nx);
+
+        hid_t ds_ny = H5Dcreate2(file_id, "Mesh2_edge_ny", H5T_NATIVE_DOUBLE,
+                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Dwrite(ds_ny, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                 mesh.edge_ny.data());
+        writeStringAttrFn(ds_ny, "long_name", "edge outward unit normal y component");
+        writeStringAttrFn(ds_ny, "units", "1");
+        writeStringAttrFn(ds_ny, "mesh", "Mesh2");
+        writeStringAttrFn(ds_ny, "location", "edge");
+        H5Dclose(ds_ny);
+
+        H5Sclose(space);
+    }
 }
 
 void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
