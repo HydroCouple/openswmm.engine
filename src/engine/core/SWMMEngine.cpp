@@ -174,6 +174,20 @@ int SWMMEngine::open(const char* inp_path,
     // Resolve cross-references (forward refs, final array sizing, head init)
     input::resolve_cross_references(ctx_);
 
+    // Validate transect Manning's n — mirrors legacy transect.c: Nchannel <= 0 → error 227.
+    {
+        const int n_tr = ctx_.transects.count();
+        for (int j = 0; j < n_tr; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx_.transects.n_channel[uj] <= 0.0) {
+                ctx_.errors.push_back(
+                    format_error(ERR_TRANSECT_MANNING, ctx_.transects.names[uj]));
+                set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+                return SWMM_ERR_PARSE;
+            }
+        }
+    }
+
     // Phase 4: load plugins listed in [PLUGINS]
     if (!ctx_.plugin_specs.empty()) {
         plugins_.load_plugins(ctx_.plugin_specs, [this](const std::string& msg) {
@@ -4244,12 +4258,20 @@ void SWMMEngine::buildROM1D() noexcept {
 
 #ifdef OPENSWMM_HAS_2D
     if (surface_router_.isActive()) {
-        const auto& opts     = surface_router_.options();
-        rom1d_->n_ensemble    = opts.rom_members;
+        const auto& opts  = surface_router_.options();
+        rom1d_->n_ensemble = opts.rom_members;
         rom1d_->mannings_pert = opts.rom_mannings_pert;
-        rom1d_->runoff_pert   = opts.rom_rainfall_pert;
+        // runoff_pert intentionally NOT inherited from 2D opts: the 1D ROM forcing
+        // is dh/dt (not rainfall), so applying 2D rainfall_pert here creates
+        // spurious rm_i × mm_i decorrelation that inverts the spread ordering.
+        // Only set via explicit "1D RAINFALL" in [UNCERTAINTY].
     }
 #endif
+
+    // Default: no runoff perturbation for 1D ROM unless explicitly configured.
+    // (The SpectralROM1D struct default is 0.20 but that is meant for standalone
+    //  unit tests; in the engine the caller sets it explicitly.)
+    rom1d_->runoff_pert = 0.0;
 
     // Override with explicit 1D uncertainty specs from [UNCERTAINTY] section
     for (const auto& s : uncertainty_config_.sources) {

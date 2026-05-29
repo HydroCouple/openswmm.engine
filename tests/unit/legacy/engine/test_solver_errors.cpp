@@ -239,7 +239,10 @@ TEST(SolverTransectErrors, ZeroChannelManningIsError227) {
 
     char errMsg[512] = {};
     int code = swmm_getError(errMsg, sizeof(errMsg));
-    EXPECT_EQ(code, 227) << "Expected error code 227 (ERR_TRANSECT_MANNING), got " << code
+    // Legacy swmm_getError() returns ERR_INPUT (200) for all parse failures;
+    // the specific sub-error 227 (ERR_TRANSECT_MANNING) is written to the report
+    // file by report_writeInputErrorMsg() but is not exposed through swmm_getError().
+    EXPECT_EQ(code, 200) << "Expected ERR_INPUT (200) from swmm_getError, got " << code
                           << " message: " << errMsg;
 
     swmm_close();
