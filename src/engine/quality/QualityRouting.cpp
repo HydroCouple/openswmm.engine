@@ -207,8 +207,9 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
     // Batch over all nodes — inner loop over pollutants is vectorisable
     // Outer node loop is parallelisable: each node reads only its own
     // pre-computed mass_in and vol_in (scatter phase is complete).
+    // Legacy parity: src/legacy/engine/qualrout.c runs this loop serially.
 #if defined(SWMM_USE_OPENMP)
-#pragma omp parallel for schedule(static)
+// #pragma omp parallel for schedule(static)
 #endif
     for (int i = 0; i < ctx.n_nodes(); ++i) {
         auto ui = static_cast<size_t>(i);
@@ -294,8 +295,9 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
     const bool is_steady = (ctx.options.routing_model == RoutingModel::STEADY);
 
     // Batch over all links — parallelisable (each link writes to its own slot)
+    // Legacy parity: src/legacy/engine/qualrout.c runs this loop serially.
 #if defined(SWMM_USE_OPENMP)
-#pragma omp parallel for schedule(static)
+// #pragma omp parallel for schedule(static)
 #endif
     for (int j = 0; j < ctx.n_links(); ++j) {
         auto uj = static_cast<size_t>(j);

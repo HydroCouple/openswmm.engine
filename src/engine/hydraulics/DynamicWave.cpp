@@ -794,10 +794,6 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
-#if defined(SWMM_USE_OPENMP)
-    const int nt_cg = (n_conduits_ >= 8 * num_threads_) ? num_threads_ : 1;
-#endif
-
     // ---- STEP A + STEP B prep (fused): depths/heads + width-cap buffers ----
     // Phase B-1: collapse the previous two per-conduit passes into one. STEP B
     // prep wrote wcap_d1/d2/dm based on STEP A's freshly written depth1/2/mid
@@ -810,10 +806,8 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     // node depth has clearly exceeded the crown.
     const bool slot_mode = (surcharge_method == SurchargeMethod::SLOT ||
                             surcharge_method == SurchargeMethod::DYNAMIC_SLOT);
-#if defined(SWMM_USE_OPENMP)
-#pragma omp parallel for num_threads(nt_cg) if(nt_cg > 1) schedule(static) \
-    default(none) shared(ctx, links, nodes, slot_mode)
-#endif
+    // Legacy parity: geometry passes are serial in src/legacy/engine/dynwave.c.
+    // SIMD inside each shape-kernel call is preserved.
     for (int ci = 0; ci < n_conduits_; ++ci) {
         auto uci = static_cast<std::size_t>(ci);
         int j = tile_uj_[uci];
@@ -876,14 +870,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     // so the expensive getYnorm/getYcrit Newton solves are rarely needed.
     // Per-conduit writes (surf_area1/2, flow_class, fasnh_, depth_mid_,
     // h1_/h2_, width_mid_) are single-producer so parallel-safe.
-    // `schedule(dynamic, 64)` re-tested after the KMP_BLOCKTIME fix and
-    // regressed by ~10 % (145 s vs 133 s) because libomp's per-chunk
-    // atomic-increment overhead exceeds the load-imbalance benefit at
-    // n_conduits ≈ 1 285. Static scheduling stays.
-#if defined(SWMM_USE_OPENMP)
-#pragma omp parallel for num_threads(nt_cg) if(nt_cg > 1) schedule(static) \
-    default(none) shared(ctx, links, nodes)
-#endif
+    // Legacy parity: geometry passes are serial in src/legacy/engine/dynwave.c.
     for (int ci = 0; ci < n_conduits_; ++ci) {
         auto uci = static_cast<std::size_t>(ci);
         // Phase A: timestep-invariant data is read from the conduit-dense
@@ -1156,11 +1143,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         applyDPSGeometry(ctx);
     } else {
         // Static slot (Sjoberg formula) or EXTRAN (no slot).
-        // Per-conduit single-producer writes — safe to parallelise.
-#if defined(SWMM_USE_OPENMP)
-#pragma omp parallel for num_threads(nt_cg) if(nt_cg > 1) schedule(static) \
-    default(none) shared(links)
-#endif
+        // Legacy parity: geometry passes are serial in src/legacy/engine/dynwave.c.
         for (int ci = 0; ci < n_conduits_; ++ci) {
             auto uci = static_cast<std::size_t>(ci);
             // Phase A: invariants from conduit-dense tile.
@@ -1217,12 +1200,12 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
     // Classify each conduit into a momentum category.
     classifyMomentumCategories(ctx);
 
-    // Single parallel-for over all conduits with per-element category dispatch.
-#if defined(SWMM_USE_OPENMP)
-    const int nt = (n_conduits_ >= 4 * num_threads_) ? num_threads_ : 1;
-#pragma omp parallel for num_threads(nt) if(nt > 1) schedule(static) \
-    default(none) shared(ctx, links, dt, step)
-#endif
+    // Per-link momentum solve, parallel by analogy with legacy findLinkFlows
+    // (src/legacy/engine/dynwave.c:370). Same calling convention: structured
+    // parallel block + nested #pragma omp for, no size gate, default sharing.
+#pragma omp parallel num_threads(num_threads_)
+{
+    #pragma omp for
     for (int ci = 0; ci < n_conduits_; ++ci) {
         int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
@@ -1247,6 +1230,7 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
                 break;
         }
     }
+}
 }
 
 // ============================================================================
@@ -1862,10 +1846,11 @@ bool DWSolver::updateNodeDepths(SimulationContext& ctx, double dt, int step) {
     // Phase 1: Compute G(y) for each node via setNodeDepth.
     // Each thread handles a subset of nodes; per-node data (xnode_, nodes.depth,
     // etc.) is written only by the owning thread (no cross-node dependencies).
-#if defined(SWMM_USE_OPENMP)
-#pragma omp parallel for num_threads(num_threads_) schedule(static) default(none) \
-    shared(nodes, ctx, dt, step, use_anderson)
-#endif
+    // Parallel by analogy with legacy findNodeDepths (src/legacy/engine/dynwave.c:580).
+    // Same calling convention: structured parallel block + nested #pragma omp for.
+#pragma omp parallel num_threads(num_threads_)
+{
+    #pragma omp for
     for (int i = 0; i < n_nodes_; ++i) {
         auto ui = static_cast<std::size_t>(i);
 
@@ -1927,6 +1912,7 @@ bool DWSolver::updateNodeDepths(SimulationContext& ctx, double dt, int step) {
         // Convergence check
         xnode_.converged[ui] = (std::fabs(nodes.depth[ui] - y_last) <= head_tol) ? 1 : 0;
     }
+}
 
     // Sequential convergence check (matching legacy: separate pass after parallel region)
     int n_unconverged = 0;
