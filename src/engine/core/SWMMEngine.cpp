@@ -41,6 +41,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <functional>
 #include "ErrorCodes.hpp"
 
@@ -1755,9 +1756,42 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
 
     // B3++. Advance 1D spectral ROM for uncertainty propagation.
     if (rom1d_ && rom1d_->is_ready()) {
+        // Update eigenbasis from last-converged DYNWAVE Jacobian (warm-start re-solve).
+        if (router_.dwSolver().isHSnapshotValid()) {
+            const auto snap = router_.dwSolver().lastConvergedH();
+            rom1d_->updateBasis(snap.conduit_off, snap.conduit_n1, snap.conduit_n2,
+                                snap.n_conduits, ctx_.current_time);
+        }
         const double K1d = computeK1d();
-        rom1d_->advance(dt_routing, K1d, nullptr);
-        rom1d_->computeQuantiles();
+
+        // Build per-node dh/dt forcing from the just-completed DynWave step.
+        // Using actual head-rate change instead of lat_flow/area avoids needing
+        // junction storage areas and captures all flow contributions correctly.
+        // Members with different Manning's n decay at different rates from this
+        // common forcing, producing physically meaningful head spread.
+        if (!rom1d_dh_buf_.empty()) {
+            const int n_active = static_cast<int>(rom1d_active_map_.size());
+            for (int ai = 0; ai < n_active; ++ai) {
+                const auto ui = static_cast<std::size_t>(
+                    rom1d_active_map_[static_cast<std::size_t>(ai)]);
+                rom1d_dh_buf_[static_cast<std::size_t>(ai)] =
+                    (ctx_.nodes.depth[ui] - ctx_.nodes.old_depth[ui]) / dt_routing;
+            }
+        }
+        rom1d_->advance(dt_routing, K1d,
+                        rom1d_dh_buf_.empty() ? nullptr : rom1d_dh_buf_.data());
+        // computeQuantiles() is called only at report boundaries (postOutputSnapshot)
+
+        // Reseed if hydraulic state has drifted significantly from seed state
+        if (!rom1d_active_map_.empty()) {
+            const int n_active = static_cast<int>(rom1d_active_map_.size());
+            std::vector<double> h_active(static_cast<std::size_t>(n_active));
+            for (int ai = 0; ai < n_active; ++ai) {
+                auto ui = static_cast<std::size_t>(rom1d_active_map_[static_cast<std::size_t>(ai)]);
+                h_active[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
+            }
+            rom1d_->checkAndReseed(h_active.data(), ctx_.current_time);
+        }
     }
 
     // B3a. Inlet capture (street inlet HEC-22 calculations)
@@ -2517,6 +2551,29 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
 
             io_thread_.post(std::move(snap));
         }
+
+        // Compute 1D ROM quantiles and flush CSV row for every active node.
+        // q50 = actual DynWave head (best deterministic estimate).
+        // q05/q95 = DynWave head ± ROM ensemble spread around the ROM median.
+        // This corrects for the excluded null Laplacian mode: the ROM captures
+        // only spatial deviation, so we anchor the central value to DynWave.
+        if (rom1d_ && rom1d_->is_ready() && rom1d_csv_.is_open()) {
+            rom1d_->computeQuantiles();
+            const int n_active = static_cast<int>(rom1d_active_map_.size());
+            for (int ai = 0; ai < n_active; ++ai) {
+                const auto ui  = static_cast<std::size_t>(rom1d_active_map_[static_cast<std::size_t>(ai)]);
+                const auto uai = static_cast<std::size_t>(ai);
+                const double h_det = ctx_.nodes.head[ui];
+                const double spread_lo = rom1d_->q50[uai] - rom1d_->q05[uai];
+                const double spread_hi = rom1d_->q95[uai] - rom1d_->q50[uai];
+                rom1d_csv_ << ctx_.current_time                   << ','
+                           << ctx_.node_names.name_of(static_cast<int>(ui)) << ','
+                           << (h_det - spread_lo)                 << ','
+                           << h_det                               << ','
+                           << (h_det + spread_hi)                 << '\n';
+            }
+        }
+
         hydraulics::TimestepController::reset_output_timer(ctx_);
     }
 }
@@ -2630,6 +2687,10 @@ int SWMMEngine::end() noexcept {
     // Finalize 2D surface routing module (release CVODE resources)
     surface_router_.finalize();
 #endif
+
+    if (rom1d_csv_.is_open()) {
+        rom1d_csv_.close();
+    }
 
     // Phase 5: drain and join the IO thread (all writes must complete first)
     io_thread_.stop();
@@ -3955,10 +4016,35 @@ void SWMMEngine::buildROM1D() noexcept {
             is_outfall[ui] = 1;
     }
 
+    // Build per-conduit conductance weights from the last-converged H snapshot.
+    // conduit_off[ci] = 0.5*dt*dqdh, which is proportional to hydraulic
+    // conductance.  At initialize() time the DW solver has not yet run, so
+    // the snapshot is empty (valid == false) and we fall back to uniform weights
+    // (the topological Laplacian).  After the first DYNWAVE step the snapshot
+    // contains real weights reflecting actual pipe depths and roughnesses.
+    const int n_conduits = static_cast<int>(n1_vec.size());
+    std::vector<double> weights(static_cast<std::size_t>(n_conduits), 1.0);
+    {
+        const auto snap = router_.dwSolver().lastConvergedH();
+        if (snap.valid && snap.n_conduits == n_conduits) {
+            bool any_nonzero = false;
+            for (int ci = 0; ci < n_conduits; ++ci) {
+                double w = std::max(snap.conduit_off[ci], 1e-6);
+                weights[static_cast<std::size_t>(ci)] = w;
+                if (snap.conduit_off[ci] > 1e-6) any_nonzero = true;
+            }
+            if (!any_nonzero) {
+                // Dry-start: all dqdh == 0 — fall back to uniform weights
+                std::fill(weights.begin(), weights.end(), 1.0);
+            }
+        }
+        // If !snap.valid: keep uniform weights (cold start or first initialize())
+    }
+
     std::vector<int> active_map, full_to_active;
-    uncertainty::CsrGraph g = uncertainty::NetworkLaplacian1D::buildUniform(
-        n_full, static_cast<int>(n1_vec.size()),
-        n1_vec.data(), n2_vec.data(), is_outfall.data(),
+    uncertainty::CsrGraph g = uncertainty::NetworkLaplacian1D::buildWeighted(
+        n_full, n_conduits,
+        n1_vec.data(), n2_vec.data(), is_outfall.data(), weights.data(),
         active_map, full_to_active);
 
     const int n_active = static_cast<int>(active_map.size());
@@ -3981,6 +4067,7 @@ void SWMMEngine::buildROM1D() noexcept {
     rom1d_ = std::make_unique<uncertainty::SpectralROM1D>();
     rom1d_->basis          = rom1d_basis_.get();
     rom1d_->full_to_active = std::move(full_to_active);
+    rom1d_->n_full_nodes   = n_full;
 
 #ifdef OPENSWMM_HAS_2D
     if (surface_router_.isActive()) {
@@ -4000,6 +4087,10 @@ void SWMMEngine::buildROM1D() noexcept {
 
     rom1d_->initialize();
 
+    // Store active map for head extraction in stepRouting (checkAndReseed)
+    rom1d_active_map_ = active_map;
+    rom1d_dh_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+
     // Seed from current node heads (all members start identical)
     std::vector<double> h0(static_cast<std::size_t>(n_active));
     for (int ai = 0; ai < n_active; ++ai) {
@@ -4007,6 +4098,22 @@ void SWMMEngine::buildROM1D() noexcept {
         h0[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
     }
     rom1d_->seed(h0.data());
+
+    // Open CSV for quantile output at report intervals (path = rpt with .uncertainty.csv)
+    if (!rpt_path_.empty()) {
+        std::string csv_path = rpt_path_;
+        const std::string rpt_ext = ".rpt";
+        if (csv_path.size() >= rpt_ext.size() &&
+            csv_path.compare(csv_path.size() - rpt_ext.size(), rpt_ext.size(), rpt_ext) == 0) {
+            csv_path.replace(csv_path.size() - rpt_ext.size(), rpt_ext.size(), ".uncertainty.csv");
+        } else {
+            csv_path += ".uncertainty.csv";
+        }
+        rom1d_csv_.open(csv_path);
+        if (rom1d_csv_.is_open()) {
+            rom1d_csv_ << "time_s,node_name,q05,q50,q95\n";
+        }
+    }
 }
 
 // ============================================================================

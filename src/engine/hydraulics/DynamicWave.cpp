@@ -784,6 +784,20 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         updateDPSState(ctx, dt);
     }
 
+    // Capture H snapshot after Picard loop (read dqdh_ into ci-indexed copy).
+    // The snapshot is valid until the next execute() call.
+    if (n_conduits_ > 0) {
+        snap_conduit_off_.resize(static_cast<std::size_t>(n_conduits_));
+        const double half_dt = 0.5 * dt;
+        for (int ci = 0; ci < n_conduits_; ++ci) {
+            auto uci = static_cast<std::size_t>(ci);
+            auto uj  = static_cast<std::size_t>(tile_uj_[ci]);
+            snap_conduit_off_[uci] = half_dt * dqdh_[uj];
+        }
+    }
+    snap_dt_    = dt;
+    snap_valid_ = true;
+
     total_picard_sweeps_ += steps;
     return steps;
 }

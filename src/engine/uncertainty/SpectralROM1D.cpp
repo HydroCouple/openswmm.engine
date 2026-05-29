@@ -116,6 +116,42 @@ void SpectralROM1D::seed(const double* h_nodes) {
         for (int m = 0; m < n_ensemble; ++m)
             a_ensemble[static_cast<std::size_t>(m) * nk + j] = dot;
     }
+
+    // Update reseed bookkeeping so checkAndReseed() has a valid baseline
+    seed_heads_.assign(h_nodes, h_nodes + nn);
+    double sum = 0.0;
+    for (std::size_t i = 0; i < nn; ++i) sum += h_nodes[i];
+    seed_mean_head_ = sum / static_cast<double>(nn);
+}
+
+// ============================================================================
+// checkAndReseed
+// ============================================================================
+
+void SpectralROM1D::checkAndReseed(const double* current_heads, double sim_time) {
+    if (!is_ready() || seed_heads_.empty()) return;
+
+    auto nn = static_cast<std::size_t>(n_nodes);
+
+    // Compute mean absolute change from seed state
+    double mean_change = 0.0;
+    for (std::size_t i = 0; i < nn; ++i)
+        mean_change += std::abs(current_heads[i] - seed_heads_[i]);
+    mean_change /= static_cast<double>(nn);
+
+    const double threshold = reseed_head_fraction * std::max(seed_mean_head_, 0.01);
+    if (mean_change <= threshold) return;
+    // Only apply interval guard after the first reseed (last_reseed_time_==0 means never reseeded)
+    if (last_reseed_time_ > 0.0 && sim_time - last_reseed_time_ <= reseed_min_interval) return;
+
+    seed(current_heads);
+
+    // Update bookkeeping
+    seed_heads_.assign(current_heads, current_heads + nn);
+    last_reseed_time_ = sim_time;
+    double sum = 0.0;
+    for (std::size_t i = 0; i < nn; ++i) sum += current_heads[i];
+    seed_mean_head_ = sum / static_cast<double>(nn);
 }
 
 // ============================================================================
@@ -233,27 +269,149 @@ void SpectralROM1D::computeQuantiles() {
 
     auto nn = static_cast<std::size_t>(n_nodes);
     auto nk = static_cast<std::size_t>(n_kept);
+    auto M  = static_cast<std::size_t>(n_ensemble);
 
-    double M  = static_cast<double>(n_ensemble);
-    int idx05 = std::max(0, static_cast<int>(0.05 * (M - 1.0) + 0.5));
-    int idx50 = static_cast<int>(0.50 * (M - 1.0) + 0.5);
-    int idx95 = std::min(n_ensemble - 1, static_cast<int>(0.95 * (M - 1.0) + 0.5));
+    int idx05 = std::max(0, static_cast<int>(0.05 * (static_cast<double>(M) - 1.0) + 0.5));
+    int idx50 = static_cast<int>(0.50 * (static_cast<double>(M) - 1.0) + 0.5);
+    int idx95 = std::min(n_ensemble - 1,
+                         static_cast<int>(0.95 * (static_cast<double>(M) - 1.0) + 0.5));
 
-    for (std::size_t t = 0; t < nn; ++t) {
-        for (int i = 0; i < n_ensemble; ++i) {
-            const double* ai = &a_ensemble[static_cast<std::size_t>(i) * nk];
-            double h = 0.0;
-            for (std::size_t j = 0; j < nk; ++j) {
-                if (!mode_active[j]) continue;
-                h += basis->P[j * nn + t] * ai[j];
-            }
-            sort_buf_[static_cast<std::size_t>(i)] = std::max(h, 0.0);
+    // Recon buffer: H[node, member] = Σ_j P[j,node] * a[member,j]  (nn × M).
+    // Compute as H = P_active^T * A_active^T in a single node-major pass:
+    //   for each active mode j: H[t, i] += P[j,t] * a[i,j]
+    // Intermediate storage is recon_buf_ (nn × M, row-major: row = node).
+    recon_buf_.assign(nn * M, 0.0);
+
+    for (std::size_t j = 0; j < nk; ++j) {
+        if (!mode_active[j]) continue;
+        const double* Pj = &basis->P[j * nn];       // P[:,j]: length nn
+        for (std::size_t t = 0; t < nn; ++t) {
+            double pjt = Pj[t];
+            double* row = &recon_buf_[t * M];        // H[t,:]: length M
+            for (std::size_t i = 0; i < M; ++i)
+                row[i] += pjt * a_ensemble[i * nk + j];
         }
-        std::sort(sort_buf_.begin(), sort_buf_.end());
-        q05[t] = sort_buf_[static_cast<std::size_t>(idx05)];
-        q50[t] = sort_buf_[static_cast<std::size_t>(idx50)];
-        q95[t] = sort_buf_[static_cast<std::size_t>(idx95)];
     }
+
+    // Clamp, sort each node's row, extract quantiles.
+    for (std::size_t t = 0; t < nn; ++t) {
+        double* row = &recon_buf_[t * M];
+        for (std::size_t i = 0; i < M; ++i)
+            row[i] = std::max(row[i], 0.0);
+        std::sort(row, row + M);
+        q05[t] = row[static_cast<std::size_t>(idx05)];
+        q50[t] = row[static_cast<std::size_t>(idx50)];
+        q95[t] = row[static_cast<std::size_t>(idx95)];
+    }
+}
+
+// ============================================================================
+// updateBasis
+// ============================================================================
+
+void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1,
+                                 const int* conduit_n2, int n_conduits,
+                                 double sim_time) {
+    if (!is_ready() || n_full_nodes < 4 || n_conduits <= 0) return;
+
+    // --- Time-interval guard --------------------------------------------
+    if (sim_time - last_basis_update_time_ < basis_update_interval) return;
+
+    // --- Skip criterion -------------------------------------------------
+    if (!conduit_off_prev_.empty() &&
+        static_cast<int>(conduit_off_prev_.size()) == n_conduits) {
+        double max_prev  = 0.0;
+        double max_delta = 0.0;
+        for (int ci = 0; ci < n_conduits; ++ci) {
+            auto uci = static_cast<std::size_t>(ci);
+            max_prev  = std::max(max_prev,  std::abs(conduit_off_prev_[uci]));
+            max_delta = std::max(max_delta, std::abs(conduit_off[ci] - conduit_off_prev_[uci]));
+        }
+        if (max_delta / (max_prev + 1.0e-12) < basis_update_tol) return;
+    }
+
+    // --- Build new weighted Laplacian ------------------------------------
+    // Dry-start guard: if all weights are zero/floor, skip this update.
+    std::vector<double> weights(static_cast<std::size_t>(n_conduits));
+    bool any_wet = false;
+    for (int ci = 0; ci < n_conduits; ++ci) {
+        double w = std::max(conduit_off[ci], 1.0e-6);
+        weights[static_cast<std::size_t>(ci)] = w;
+        if (conduit_off[ci] > 1.0e-6) any_wet = true;
+    }
+    if (!any_wet) {
+        conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
+        return;
+    }
+
+    // Derive is_outfall from full_to_active: negative entry → outfall.
+    std::vector<int> is_outfall(static_cast<std::size_t>(n_full_nodes), 0);
+    for (int i = 0; i < n_full_nodes && i < static_cast<int>(full_to_active.size()); ++i) {
+        if (full_to_active[static_cast<std::size_t>(i)] < 0)
+            is_outfall[static_cast<std::size_t>(i)] = 1;
+    }
+
+    std::vector<int> active_map_new, full_to_active_new;
+    CsrGraph L_new = NetworkLaplacian1D::buildWeighted(
+        n_full_nodes, n_conduits,
+        conduit_n1, conduit_n2, is_outfall.data(), weights.data(),
+        active_map_new, full_to_active_new);
+
+    // Guard: active node count must match (topology must be stable).
+    if (static_cast<int>(active_map_new.size()) != n_nodes ||
+        static_cast<int>(active_map_new.size()) < 4) {
+        conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
+        return;
+    }
+
+    // --- Warm-start re-solve --------------------------------------------
+    std::vector<double> P_old = basis->P;  // column-major n_nodes × n_kept copy
+
+    if (!basis_owned_) {
+        basis_owned_ = std::make_unique<GraphEigenBasis>();
+        basis_owned_->null_tol = basis->null_tol;
+    }
+    if (!basis_owned_->build(L_new, n_kept, P_old.data())) return;
+    // Sanity check: basis must have exactly n_kept modes (Lanczos must not have
+    // broken down prematurely — the combo v0 starting vector prevents this for
+    // normal networks, but guard against degenerate geometry).
+    if (basis_owned_->num_kept != n_kept) return;
+
+    basis = basis_owned_.get();  // switch raw pointer to new owned basis
+
+    // --- Re-project ensemble coefficients: a_new = R * a_old  ----------
+    // R[j_new, j_old] = P_new[:,j_new]^T · P_old[:,j_old]
+    auto nn = static_cast<std::size_t>(n_nodes);
+    auto nk = static_cast<std::size_t>(n_kept);
+
+    work_R_.resize(nk * nk);
+    for (std::size_t jn = 0; jn < nk; ++jn) {
+        const double* Pn = &basis->P[jn * nn];
+        for (std::size_t jo = 0; jo < nk; ++jo) {
+            const double* Po = &P_old[jo * nn];
+            double dot = 0.0;
+            for (std::size_t i = 0; i < nn; ++i)
+                dot += Pn[i] * Po[i];
+            work_R_[jn * nk + jo] = dot;
+        }
+    }
+
+    std::vector<double> a_tmp(nk);
+    for (int m = 0; m < n_ensemble; ++m) {
+        auto um = static_cast<std::size_t>(m);
+        double* ai = &a_ensemble[um * nk];
+        for (std::size_t jn = 0; jn < nk; ++jn) {
+            double val = 0.0;
+            for (std::size_t jo = 0; jo < nk; ++jo)
+                val += work_R_[jn * nk + jo] * ai[jo];
+            a_tmp[jn] = val;
+        }
+        for (std::size_t j = 0; j < nk; ++j)
+            ai[j] = a_tmp[j];
+    }
+
+    conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
+    last_basis_update_time_ = sim_time;
 }
 
 // ============================================================================

@@ -1101,10 +1101,11 @@ TEST(InputParsing, ParseUncertaintyScalarRainfall2D) {
 }
 
 TEST(InputParsing, ParseUncertaintyUnsupportedLayerReturnsError) {
+    // '1D' and '2D' are now valid layers; use a truly unsupported name.
     SolverOptions2D opts;
     UncertaintyConfig config;
-    auto err = parseUncertaintyLine({"1D", "MANNINGS_N", "0.20"}, opts, config);
-    EXPECT_FALSE(err.empty()) << "Expected error for unsupported layer 1D";
+    auto err = parseUncertaintyLine({"3D", "MANNINGS_N", "0.20"}, opts, config);
+    EXPECT_FALSE(err.empty()) << "Expected error for unsupported layer 3D";
     EXPECT_TRUE(config.sources.empty());
 }
 

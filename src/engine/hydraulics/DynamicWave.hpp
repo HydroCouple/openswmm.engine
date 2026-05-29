@@ -60,6 +60,34 @@ using constants::FUDGE;
 using constants::MIN_SURFAREA;
 
 // ============================================================================
+// HSnapshot — read-only view of the last-converged DYNWAVE Picard Jacobian H
+//
+// Exposed by DWSolver::lastConvergedH() after each execute() call.
+// Contains only const pointers/values — nothing can be written through them.
+// Valid until the next execute() call.
+// ============================================================================
+
+/**
+ * @brief Read-only snapshot of H = surfArea/dt − dQ/dH components after
+ *        the last converged DYNWAVE Picard iteration.
+ *
+ * Used by the ROM sidecar to build a Jacobian-informed Laplacian basis
+ * (H_sym = (H+H^T)/2) without touching any solver state.
+ */
+struct HSnapshot {
+    /// 0.5*dt*dqdh per conduit (ci-indexed, length n_conduits).
+    /// Proportional to the off-diagonal conductance of H.
+    const double* conduit_off  = nullptr;
+    /// Upstream node index per conduit (ci-indexed), full node space.
+    const int*    conduit_n1   = nullptr;
+    /// Downstream node index per conduit (ci-indexed), full node space.
+    const int*    conduit_n2   = nullptr;
+    int    n_conduits = 0;
+    double dt         = 0.0;
+    bool   valid      = false;  ///< false until first execute() completes
+};
+
+// ============================================================================
 // Dynamic Preissmann Slot (DPS) configuration and per-link state
 // Sharior, Hodges & Vasconcelos (2023), J. Hydraul. Eng. 149(11)
 // ============================================================================
@@ -377,6 +405,11 @@ private:
 
     int64_t total_picard_sweeps_ = 0;     ///< Cumulative Picard sweeps this instance
 
+    // H snapshot — populated once per execute() call after Picard convergence
+    std::vector<double> snap_conduit_off_;  ///< 0.5*dt*dqdh[ci], ci-indexed
+    double snap_dt_    = 0.0;
+    bool   snap_valid_ = false;
+
     // Per-conduit momentum category (rebuilt each Picard iteration).
     // solveMomentumBatch dispatches on category_[uj] inline — no auxiliary
     // per-category index list is needed.
@@ -427,6 +460,28 @@ public:
 
     /// Cumulative Picard sweeps executed across all routing steps since init().
     int64_t totalPicardSweeps() const { return total_picard_sweeps_; }
+
+    /**
+     * @brief Return a read-only snapshot of the last-converged H components.
+     *
+     * Valid after the first execute() call; valid() is false beforehand.
+     * The snapshot's pointers remain valid until the next execute() call.
+     */
+    HSnapshot lastConvergedH() const noexcept {
+        HSnapshot s;
+        s.conduit_off = snap_conduit_off_.empty()
+                        ? nullptr : snap_conduit_off_.data();
+        s.conduit_n1  = tile_n1_.empty()  ? nullptr : tile_n1_.data();
+        s.conduit_n2  = tile_n2_.empty()  ? nullptr : tile_n2_.data();
+        s.n_conduits  = n_conduits_;
+        s.dt          = snap_dt_;
+        s.valid       = snap_valid_;
+        return s;
+    }
+
+    /// True once execute() has been called at least once.
+    bool isHSnapshotValid() const noexcept { return snap_valid_; }
+
 private:
 
     // Preissmann slot helpers (matching legacy dwflow.c)

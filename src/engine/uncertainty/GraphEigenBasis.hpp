@@ -123,9 +123,19 @@ struct GraphEigenBasis {
      *
      * @param L              Symmetric PSD CSR Laplacian of the graph.
      * @param num_modes_req  Number of nontrivial eigenmodes to retain.
+     * @param v0_block       Optional warm-start block: column-major
+     *                       n_nodes × num_modes_req matrix of starting vectors
+     *                       (e.g., the previous eigenvectors P).  When non-null,
+     *                       the first column is used as the Krylov starting vector
+     *                       instead of the cold-start linear ramp.  Sign alignment
+     *                       is applied after the solve so that each returned
+     *                       eigenvector has a positive inner product with the
+     *                       corresponding column of v0_block.
+     *                       null → cold-start (original behaviour, unchanged).
      * @return true on success (num_kept > 0); false otherwise (last_error set).
      */
-    bool build(const CsrGraph& L, int num_modes_req);
+    bool build(const CsrGraph& L, int num_modes_req,
+               const double* v0_block = nullptr);
 
     /// true if build() succeeded and num_kept > 0.
     bool is_ready() const noexcept { return num_kept > 0 && !P.empty(); }
@@ -133,7 +143,8 @@ struct GraphEigenBasis {
 private:
     bool lanczos(const CsrGraph& L, int k_want,
                  std::vector<double>& eigvals_out,
-                 std::vector<double>& eigvecs_out);
+                 std::vector<double>& eigvecs_out,
+                 const double* v0 = nullptr);
 
     static bool symTridiagQL(std::vector<double>& diag,
                              std::vector<double>& subdiag,

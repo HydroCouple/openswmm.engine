@@ -834,3 +834,508 @@ TEST(FiedlerDiagnostic1D, CouplingAnnotation) {
     EXPECT_DOUBLE_EQ(fd.gradAtFullNode(0, f2a), 0.0);
     EXPECT_DOUBLE_EQ(fd.gradAtFullNode(5, f2a), 0.0);
 }
+
+// ============================================================================
+// PR 3 — Weighted Laplacian (H_sym static basis)
+// ============================================================================
+
+// Helper: build a 5-node chain with heterogeneous weights.
+// Weights: conduit 0 = w_low, conduit 1 = w_high, conduit 2 = w_low, conduit 3 = w_low.
+// n1/n2 connectivity: 0-1-2-3-4, no outfalls.
+static CsrGraph make_weighted_chain(int n, const double* weights) {
+    int nc = n - 1;
+    std::vector<int> n1v(static_cast<std::size_t>(nc));
+    std::vector<int> n2v(static_cast<std::size_t>(nc));
+    for (int k = 0; k < nc; ++k) {
+        n1v[static_cast<std::size_t>(k)] = k;
+        n2v[static_cast<std::size_t>(k)] = k + 1;
+    }
+    std::vector<int> is_outfall(static_cast<std::size_t>(n), 0);
+    std::vector<int> active_map, full_to_active;
+    return NetworkLaplacian1D::buildWeighted(n, nc, n1v.data(), n2v.data(),
+                                             is_outfall.data(), weights,
+                                             active_map, full_to_active);
+}
+
+// ============================================================================
+// PR 1 — Warm-start Lanczos
+// ============================================================================
+
+TEST(GraphEigenBasisWarmStart, ColdStartFallbackWhenV0Null) {
+    // v0_block == nullptr must produce the same result as before (regression guard).
+    CsrGraph L = make_chain_laplacian(20);
+    GraphEigenBasis b1, b2;
+    ASSERT_TRUE(b1.build(L, 5, nullptr));
+    ASSERT_TRUE(b2.build(L, 5));  // default v0_block=nullptr
+    ASSERT_EQ(b1.num_kept, b2.num_kept);
+    for (int j = 0; j < b1.num_kept; ++j)
+        EXPECT_NEAR(b1.eigenvalues[static_cast<std::size_t>(j)],
+                    b2.eigenvalues[static_cast<std::size_t>(j)], 1e-10)
+            << "eigenvalue " << j;
+}
+
+TEST(GraphEigenBasisWarmStart, WarmStartMatchesColdStart) {
+    // Warm-start (v0_block = cold.P) must produce the 5 smallest nontrivial
+    // eigenvalues of the 20-node path graph, matching the analytic values
+    // λ_k = 2*(1-cos(k*π/20)), k=1..5.
+    //
+    // Note: the cold-start linear ramp is anti-symmetric → it can only excite
+    // odd-k eigenmodes (k=1,3,5,7,9) and misses even modes.  The warm-start
+    // sum-of-columns starting vector is not purely anti-symmetric and correctly
+    // finds all k=1..5 modes.
+    CsrGraph L = make_chain_laplacian(20);
+    GraphEigenBasis cold;
+    ASSERT_TRUE(cold.build(L, 5));
+
+    GraphEigenBasis warm;
+    ASSERT_TRUE(warm.build(L, 5, cold.P.data()));
+
+    ASSERT_EQ(warm.num_kept, 5);
+
+    // Analytic eigenvalues of the 20-node path-graph Laplacian
+    for (int j = 0; j < warm.num_kept; ++j) {
+        double expected = 2.0 * (1.0 - std::cos((j + 1) * M_PI / 20.0));
+        EXPECT_NEAR(warm.eigenvalues[static_cast<std::size_t>(j)],
+                    expected, 1e-6)
+            << "warm eigenvalue " << j;
+    }
+}
+
+TEST(GraphEigenBasisWarmStart, WarmStartSignsAligned) {
+    // After a warm-start rebuild, every eigenvector must have a NON-NEGATIVE
+    // inner product with the corresponding column of v0_block.
+    CsrGraph L = make_chain_laplacian(20);
+    GraphEigenBasis cold;
+    ASSERT_TRUE(cold.build(L, 5));
+
+    GraphEigenBasis warm;
+    ASSERT_TRUE(warm.build(L, 5, cold.P.data()));
+
+    const int n = warm.n_nodes;
+    for (int j = 0; j < warm.num_kept; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        const double* pj  = &warm.P[uj * static_cast<std::size_t>(n)];
+        const double* ref = &cold.P[uj * static_cast<std::size_t>(n)];
+        double dot = 0.0;
+        for (int i = 0; i < n; ++i)
+            dot += pj[static_cast<std::size_t>(i)]
+                 * ref[static_cast<std::size_t>(i)];
+        EXPECT_GE(dot, 0.0) << "mode " << j << " has negative alignment";
+    }
+}
+
+TEST(GraphEigenBasisWarmStart, SignFlipInV0IsCompensated) {
+    // Sign alignment aligns each P[:,j] WITH v0_block[:,j].
+    // So if v0_block[:,0] = -cold.P[:,0], the warm result aligns with that
+    // flipped reference (warm.P[:,0] · v0_block[:,0] >= 0), NOT with cold.P[:,0].
+    // This test verifies the actual invariant: alignment with the provided v0.
+    CsrGraph L = make_chain_laplacian(20);
+    GraphEigenBasis cold;
+    ASSERT_TRUE(cold.build(L, 5));
+
+    // Flip sign of column 0 in a copy
+    std::vector<double> v0_flipped(cold.P);
+    const int n = cold.n_nodes;
+    for (int i = 0; i < n; ++i)
+        v0_flipped[static_cast<std::size_t>(i)] =
+            -v0_flipped[static_cast<std::size_t>(i)];
+
+    GraphEigenBasis warm;
+    ASSERT_TRUE(warm.build(L, 5, v0_flipped.data()));
+
+    // After sign alignment: warm.P[:,j] must have non-negative dot with
+    // v0_block[:,j] for all j.
+    for (int j = 0; j < warm.num_kept; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        const double* pw = &warm.P[uj * static_cast<std::size_t>(n)];
+        const double* rv = &v0_flipped[uj * static_cast<std::size_t>(n)];
+        double dot = 0.0;
+        for (int i = 0; i < n; ++i)
+            dot += pw[static_cast<std::size_t>(i)] * rv[static_cast<std::size_t>(i)];
+        EXPECT_GE(dot, 0.0) << "mode " << j << " must align with its v0 column";
+    }
+}
+
+// ============================================================================
+// PR 3 — Weighted Laplacian (H_sym static basis)
+// ============================================================================
+
+TEST(WeightedLaplacian, DiffersFromUniform) {
+    // A 5-node chain where conduit 1 has 10× higher conductance.
+    // Uniform and weighted Laplacians should yield different eigenvalues.
+    const int N = 5;
+    const double w_low = 1.0, w_high = 10.0;
+    double weights[4] = {w_low, w_high, w_low, w_low};
+
+    CsrGraph L_unif = make_chain_laplacian(N);
+    CsrGraph L_wt   = make_weighted_chain(N, weights);
+
+    GraphEigenBasis b_unif, b_wt;
+    ASSERT_TRUE(b_unif.build(L_unif, 3));
+    ASSERT_TRUE(b_wt.build(L_wt, 3));
+
+    // At least one eigenvalue must differ by more than numerical noise.
+    bool any_different = false;
+    for (int j = 0; j < b_unif.num_kept && j < b_wt.num_kept; ++j) {
+        if (std::fabs(b_unif.eigenvalues[static_cast<std::size_t>(j)]
+                    - b_wt.eigenvalues[static_cast<std::size_t>(j)]) > 1e-6)
+            any_different = true;
+    }
+    EXPECT_TRUE(any_different)
+        << "Weighted Laplacian with 10× conductance ratio must yield different eigenvalues";
+}
+
+TEST(WeightedLaplacian, FiedlerPlacesHighConductanceCorrectly) {
+    // On a 5-node chain with one high-conductance conduit (index 1, between
+    // nodes 1 and 2), the Fiedler vector should show that the network splits
+    // most easily somewhere other than across conduit 1.
+    // We verify: the Fiedler vector components at nodes 1 and 2 (flanking the
+    // high-conductance conduit) are closer together than for the uniform case.
+    const int N = 5;
+    double weights[4] = {1.0, 10.0, 1.0, 1.0};
+
+    CsrGraph L_unif = make_chain_laplacian(N);
+    CsrGraph L_wt   = make_weighted_chain(N, weights);
+
+    GraphEigenBasis b_unif, b_wt;
+    ASSERT_TRUE(b_unif.build(L_unif, 1));
+    ASSERT_TRUE(b_wt.build(L_wt, 1));
+
+    // Fiedler vector = P[:,0] (first retained mode after null filtering)
+    // Difference across conduit 1 (nodes 1-2)
+    auto diff = [](const GraphEigenBasis& b, int n_a, int n_b) {
+        return std::fabs(b.P[static_cast<std::size_t>(n_a)]
+                       - b.P[static_cast<std::size_t>(n_b)]);
+    };
+    double delta_unif = diff(b_unif, 1, 2);
+    double delta_wt   = diff(b_wt,   1, 2);
+
+    // High conductance between 1-2 → Fiedler gap there is SMALLER than uniform.
+    EXPECT_LT(delta_wt, delta_unif)
+        << "High-conductance conduit should reduce Fiedler gap across it";
+}
+
+TEST(WeightedLaplacian, DryNetworkFallsBackToUniform) {
+    // All weights at or below floor (1e-10) → buildWeighted clamps to 1e-10,
+    // which produces a valid Laplacian proportional to the uniform one.
+    // null_tol must be set below the floor eigenvalue (~7.6e-11 for a 5-node
+    // chain at weight 1e-10) so the modes are not discarded as null modes.
+    const int N = 5;
+    double weights[4] = {0.0, 0.0, 0.0, 0.0};  // all zero — floor applied
+
+    CsrGraph L_wt = make_weighted_chain(N, weights);
+
+    GraphEigenBasis basis;
+    basis.null_tol = 1.0e-12;  // below floor eigenvalue (~7.6e-11)
+    bool ok = basis.build(L_wt, 3);
+
+    // Must build successfully (fallback to floor weights, not NaN/crash).
+    EXPECT_TRUE(ok);
+    EXPECT_GT(basis.num_kept, 0);
+    for (int j = 0; j < basis.num_kept; ++j)
+        EXPECT_GT(basis.eigenvalues[static_cast<std::size_t>(j)], 0.0);
+}
+
+// ============================================================================
+// PR 4 — time-varying basis update (updateBasis)
+// ============================================================================
+
+// Helper: build a minimal SpectralROM1D on a 6-node chain, seeded with a
+// ramp head field.  Caller takes ownership of the returned basis.
+static std::unique_ptr<GraphEigenBasis>
+make_rom1d_chain(int n_nodes, SpectralROM1D& rom, double mann_pert = 0.10) {
+    // Build uniform-weight Laplacian for a chain: node 0-1-2-..-(n-1)
+    // with no outfalls (n_full_nodes == n_active == n_nodes)
+    const int n_conduits = n_nodes - 1;
+    std::vector<double> w(static_cast<std::size_t>(n_conduits), 1.0);
+    std::vector<int> n1(static_cast<std::size_t>(n_conduits));
+    std::vector<int> n2(static_cast<std::size_t>(n_conduits));
+    for (int ci = 0; ci < n_conduits; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<int> is_outfall(static_cast<std::size_t>(n_nodes), 0);
+    std::vector<int> active_map, full_to_active;
+    CsrGraph L = NetworkLaplacian1D::buildWeighted(
+        n_nodes, n_conduits, n1.data(), n2.data(),
+        is_outfall.data(), w.data(), active_map, full_to_active);
+
+    auto basis_owned = std::make_unique<GraphEigenBasis>();
+    EXPECT_TRUE(basis_owned->build(L, 4));
+
+    rom.basis          = basis_owned.get();
+    rom.full_to_active = std::move(full_to_active);
+    rom.n_full_nodes   = n_nodes;
+    rom.n_ensemble     = 10;
+    rom.mannings_pert  = mann_pert;
+    rom.runoff_pert    = 0.0;
+    rom.initialize();
+
+    // Seed with a linear ramp: h[i] = (i+1) * 0.1
+    std::vector<double> h(static_cast<std::size_t>(n_nodes));
+    for (int i = 0; i < n_nodes; ++i)
+        h[static_cast<std::size_t>(i)] = (i + 1) * 0.1;
+    rom.seed(h.data());
+    return basis_owned;
+}
+
+TEST(UpdateBasis, SkippedWhenOperatorUnchanged) {
+    // Call updateBasis twice with identical conduit_off → second call returns
+    // early and does not rebuild (basis pointer stays the same).
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;  // disable time guard for unit test
+
+    std::vector<int> n1(static_cast<std::size_t>(NC));
+    std::vector<int> n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w(static_cast<std::size_t>(NC), 0.01);  // some non-trivial weight
+
+    // First call: establishes prev snapshot
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC);
+    const GraphEigenBasis* ptr_after_first = rom.basis;
+
+    // Second call with identical weights: should skip
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC);
+    const GraphEigenBasis* ptr_after_second = rom.basis;
+
+    EXPECT_EQ(ptr_after_first, ptr_after_second)
+        << "updateBasis must return early when operator is unchanged";
+}
+
+TEST(UpdateBasis, FiresWhenOperatorChangesSignificantly) {
+    // Call updateBasis with weights that differ by > 5% → rebuild fires and
+    // eigenvalues change.
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;  // disable time guard for unit test
+
+    std::vector<int> n1(static_cast<std::size_t>(NC));
+    std::vector<int> n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+
+    // Initial call with uniform weights
+    std::vector<double> w0(static_cast<std::size_t>(NC), 0.01);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC);
+    std::vector<double> eigs_before(rom.basis->eigenvalues);
+
+    // Second call: central conduit weight doubles (50% change > 5% tol)
+    std::vector<double> w1 = w0;
+    w1[NC / 2] *= 2.0;
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC);
+    std::vector<double> eigs_after(rom.basis->eigenvalues);
+
+    bool any_changed = false;
+    for (std::size_t j = 0; j < eigs_before.size() && j < eigs_after.size(); ++j)
+        if (std::fabs(eigs_before[j] - eigs_after[j]) > 1e-6)
+            any_changed = true;
+
+    EXPECT_TRUE(any_changed)
+        << "50% conduit weight change must trigger eigenbasis rebuild";
+}
+
+TEST(UpdateBasis, ReProjectionPreservesCoeffNorm) {
+    // After a small weight perturbation (20%), the eigenvectors rotate slightly
+    // so R = P_new^T*P_old ≈ I, and the Frobenius norm of the coefficient matrix
+    // is approximately preserved (within 20% relative).
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom, 0.0);  // no pert so all members equal
+    rom.basis_update_interval = 0.0;  // disable time guard for unit test
+
+    std::vector<int> n1(static_cast<std::size_t>(NC));
+    std::vector<int> n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+
+    // Advance briefly to build non-zero coefficients
+    rom.advance(1.0, 1e-3, nullptr);
+
+    // Record Frobenius norm before
+    double norm_before = 0.0;
+    for (double v : rom.a_ensemble) norm_before += v * v;
+
+    // Prime the skip criterion with current uniform weights
+    std::vector<double> w0(static_cast<std::size_t>(NC), 1.0);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC);
+
+    // 20% increase on one conduit — above the 5% skip threshold, below the
+    // level where eigenvectors rotate dramatically.
+    std::vector<double> w1 = w0;
+    w1[2] = 1.2;
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC);
+
+    double norm_after = 0.0;
+    for (double v : rom.a_ensemble) norm_after += v * v;
+
+    // Re-projection with small rotation: norm should be within 20% of original.
+    EXPECT_NEAR(norm_after, norm_before, norm_before * 0.20 + 1e-15)
+        << "20% weight change should preserve coefficient norm within 20%";
+}
+
+TEST(UpdateBasis, QuantilesRemainValidAfterUpdate) {
+    // updateBasis + advance + computeQuantiles must always give q05 <= q50 <= q95.
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;  // disable time guard for unit test
+
+    std::vector<int> n1(static_cast<std::size_t>(NC));
+    std::vector<int> n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+
+    // Simulate a series of weight updates (growing conductance over time)
+    for (int step = 0; step < 5; ++step) {
+        double scale = 0.005 * (1.0 + step * 0.5);
+        std::vector<double> w(static_cast<std::size_t>(NC), scale);
+        w[2] = scale * 3.0;  // one conduit always wetter
+        rom.updateBasis(w.data(), n1.data(), n2.data(), NC);
+        rom.advance(10.0, scale * 100.0, nullptr);
+        rom.computeQuantiles();
+
+        for (int i = 0; i < rom.n_nodes; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            EXPECT_LE(rom.q05[ui], rom.q50[ui] + 1e-10)
+                << "step " << step << " node " << i;
+            EXPECT_LE(rom.q50[ui], rom.q95[ui] + 1e-10)
+                << "step " << step << " node " << i;
+            EXPECT_GE(rom.q05[ui], 0.0)
+                << "step " << step << " node " << i;
+        }
+    }
+}
+
+// ============================================================================
+// PR 6 — checkAndReseed
+// ============================================================================
+
+TEST(CheckAndReseed, ReseedFiresAfterLargeHeadChange) {
+    // Seed with near-zero heads, then present 1.0 m heads → mean change >> 10%.
+    const int N = 6;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+
+    // Override seed with zeros
+    std::vector<double> h_zero(static_cast<std::size_t>(N), 0.0);
+    rom.seed(h_zero.data());
+    EXPECT_EQ(rom.last_reseed_time_, 0.0);
+
+    std::vector<double> h_one(static_cast<std::size_t>(N), 1.0);
+    rom.reseed_head_fraction = 0.10;
+    rom.reseed_min_interval  = 0.0;   // no interval restriction
+    rom.checkAndReseed(h_one.data(), 120.0);
+
+    EXPECT_DOUBLE_EQ(rom.last_reseed_time_, 120.0)
+        << "last_reseed_time_ must update after reseed";
+    for (int i = 0; i < N; ++i)
+        EXPECT_DOUBLE_EQ(rom.seed_heads_[static_cast<std::size_t>(i)], 1.0)
+            << "seed_heads_ must hold new values";
+}
+
+TEST(CheckAndReseed, ReseedDoesNotFireWhenChangeSmall) {
+    // Seed with 1.0 m, present 1.02 m (2% change < 10% threshold).
+    const int N = 6;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+
+    std::vector<double> h_base(static_cast<std::size_t>(N), 1.0);
+    rom.seed(h_base.data());
+    rom.reseed_head_fraction = 0.10;
+    rom.reseed_min_interval  = 0.0;
+
+    std::vector<double> h_small(static_cast<std::size_t>(N), 1.02);
+    rom.checkAndReseed(h_small.data(), 60.0);
+
+    EXPECT_DOUBLE_EQ(rom.last_reseed_time_, 0.0)
+        << "No reseed should fire for a 2% head change";
+}
+
+TEST(CheckAndReseed, ReseedMinIntervalRespected) {
+    // Fire two large changes within reseed_min_interval; only first should reseed.
+    const int N = 6;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+
+    std::vector<double> h_zero(static_cast<std::size_t>(N), 0.0);
+    rom.seed(h_zero.data());
+    rom.reseed_head_fraction = 0.10;
+    rom.reseed_min_interval  = 60.0;
+
+    std::vector<double> h_large(static_cast<std::size_t>(N), 2.0);
+
+    // First call at t=10 — should reseed
+    rom.checkAndReseed(h_large.data(), 10.0);
+    EXPECT_DOUBLE_EQ(rom.last_reseed_time_, 10.0);
+
+    // Second call at t=50 (only 40 s later, < 60 s interval) — must NOT reseed
+    std::vector<double> h_large2(static_cast<std::size_t>(N), 5.0);
+    rom.checkAndReseed(h_large2.data(), 50.0);
+    EXPECT_DOUBLE_EQ(rom.last_reseed_time_, 10.0)
+        << "Second reseed within min_interval must be suppressed";
+}
+
+TEST(CheckAndReseed, SpreadRebuildAfterReseed) {
+    // After advance (spread grows), force a reseed (spread collapses), then
+    // advance again — spread must grow back.
+    const int N = 6;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom, 0.20);  // 20% Manning pert
+
+    // Advance 5 steps to build spread
+    for (int s = 0; s < 5; ++s)
+        rom.advance(30.0, 0.01, nullptr);
+    rom.computeQuantiles();
+
+    double spread_before = 0.0;
+    for (int i = 0; i < N; ++i)
+        spread_before = std::max(spread_before,
+            rom.q95[static_cast<std::size_t>(i)] -
+            rom.q05[static_cast<std::size_t>(i)]);
+    EXPECT_GT(spread_before, 1e-10) << "spread must exist before reseed";
+
+    // Force reseed: non-uniform ramp (constant vector projects to zero on Laplacian modes)
+    std::vector<double> h_new(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) h_new[static_cast<std::size_t>(i)] = (i + 1) * 0.05;
+    rom.reseed_head_fraction = 0.01;  // very sensitive
+    rom.reseed_min_interval  = 0.0;
+    rom.checkAndReseed(h_new.data(), 200.0);
+    EXPECT_DOUBLE_EQ(rom.last_reseed_time_, 200.0) << "reseed must fire";
+
+    // Right after reseed, all members are identical → spread ≈ 0
+    rom.computeQuantiles();
+    double spread_after_reseed = 0.0;
+    for (int i = 0; i < N; ++i)
+        spread_after_reseed = std::max(spread_after_reseed,
+            rom.q95[static_cast<std::size_t>(i)] -
+            rom.q05[static_cast<std::size_t>(i)]);
+    EXPECT_LT(spread_after_reseed, 1e-10) << "spread must collapse immediately after reseed";
+
+    // Advance again — spread must rebuild
+    for (int s = 0; s < 5; ++s)
+        rom.advance(30.0, 0.01, nullptr);
+    rom.computeQuantiles();
+
+    double spread_rebuilt = 0.0;
+    for (int i = 0; i < N; ++i)
+        spread_rebuilt = std::max(spread_rebuilt,
+            rom.q95[static_cast<std::size_t>(i)] -
+            rom.q05[static_cast<std::size_t>(i)]);
+    EXPECT_GT(spread_rebuilt, 1e-10) << "spread must rebuild after reseed + advance";
+}

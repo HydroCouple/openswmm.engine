@@ -66,6 +66,7 @@
 #include "../uncertainty/NetworkLaplacian1D.hpp"
 #include "../uncertainty/SpectralROM1D.hpp"
 
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <string>
@@ -280,9 +281,12 @@ private:
     // 1D spectral ROM for uncertainty propagation (owned)
     std::unique_ptr<uncertainty::GraphEigenBasis> rom1d_basis_;
     std::unique_ptr<uncertainty::SpectralROM1D>   rom1d_;
+    std::vector<int>    rom1d_active_map_;   ///< active_idx → full_node_idx (for head extraction)
+    std::vector<double> rom1d_dh_buf_;       ///< per-active-node dh/dt forcing buffer (reused each step)
 
     std::string rpt_path_;  ///< Report file path
     std::string out_path_;  ///< Binary output file path
+    std::ofstream rom1d_csv_; ///< 1D ROM quantile CSV (written at report intervals)
 
     // Runoff clock (matching legacy OldRunoffTime / NewRunoffTime)
     // Runoff advances on its own timestep (300 sec wet, 3600 sec dry);

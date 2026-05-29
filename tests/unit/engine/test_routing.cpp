@@ -1929,3 +1929,143 @@ TEST(DWSolverRitter, DryBedDamBreak) {
             << "  ref=" << x_front_ref << " ft";
     }
 }
+
+// ============================================================================
+// HSnapshot tests — PR 2
+// ============================================================================
+
+namespace {
+
+// Build a minimal 4-node, 3-conduit chain (J0→J1→J2→J3_outfall) and return
+// a solver that has executed one DW step.  Nodes use RECT_OPEN geometry.
+//
+// Topology (ft units, matching DWSolver conventions):
+//   J0 (junction) ─ C0 ─ J1 (junction) ─ C1 ─ J2 (junction) ─ C2 ─ J3 (outfall)
+struct HSnapshotFixture {
+    SimulationContext ctx;
+    DWSolver          solver;
+    XSectGroups       groups;
+
+    HSnapshotFixture() {
+        const int N = 4;
+        const int M = 3;
+        ctx.nodes.resize(N);
+        ctx.links.resize(M);
+
+        const double z_inv[4] = {0.3, 0.2, 0.1, 0.0};
+        const double S0  = 0.001;
+        const double L   = 100.0;       // ft
+        const double mann= 0.013;
+        const double y0  = 0.5;         // initial depth ft
+
+        for (int i = 0; i < N; ++i) {
+            ctx.nodes.invert_elev[i] = z_inv[i];
+            ctx.nodes.full_depth[i]  = 10.0;
+            ctx.nodes.crown_elev[i]  = z_inv[i] + 10.0;
+            ctx.nodes.type[i]        = NodeType::JUNCTION;
+            ctx.nodes.depth[i]       = y0;
+            ctx.nodes.old_depth[i]   = y0;
+            ctx.nodes.head[i]        = z_inv[i] + y0;
+        }
+        ctx.nodes.type[3]          = NodeType::OUTFALL;
+        ctx.nodes.outfall_type[3]  = OutfallType::FREE;
+        ctx.nodes.outfall_link_idx[3] = M - 1;
+
+        double beta = std::pow(1.0 / mann, 1.0) * std::pow(1.0, 2.0/3.0)
+                      * std::sqrt(S0);  // rough_factor = beta * roughness
+        const double w = 1.0;          // 1 ft wide rectangular
+
+        XSectParams xs;
+        xs.y_full = 10.0; xs.a_full = w * xs.y_full;
+        xs.r_full = xs.a_full / (w + 2.0 * xs.y_full);
+        xs.w_max  = w; xs.s_full = xs.a_full; xs.s_max = xs.s_full;
+
+        for (int i = 0; i < M; ++i) {
+            ctx.links.type[i]              = LinkType::CONDUIT;
+            ctx.links.xsect_shape[i]       = XsectShape::RECT_OPEN;
+            ctx.links.xsect_batch_shape[i] = static_cast<int>(XSectShape::RECT_OPEN);
+            ctx.links.xsect_y_full[i]      = xs.y_full;
+            ctx.links.xsect_a_full[i]      = xs.a_full;
+            ctx.links.xsect_w_max[i]       = xs.w_max;
+            ctx.links.xsect_r_full[i]      = xs.r_full;
+            ctx.links.xsect_s_full[i]      = xs.s_full;
+            ctx.links.xsect_s_max[i]       = xs.s_max;
+            ctx.links.beta[i]              = beta;
+            ctx.links.rough_factor[i]      = mann;
+            ctx.links.length[i]            = L;
+            ctx.links.mod_length[i]        = L;
+            ctx.links.slope[i]             = S0;
+            ctx.links.roughness[i]         = mann;
+            ctx.links.barrels[i]           = 1;
+            ctx.links.node1[i]             = i;
+            ctx.links.node2[i]             = i + 1;
+            ctx.links.q_max[i]             = 1e6;
+        }
+
+        std::vector<XSectParams> xparams(static_cast<std::size_t>(M), xs);
+        groups.build(xparams.data(), M);
+        solver.surcharge_method = SurchargeMethod::EXTRAN;
+        solver.head_tol         = 0.005;
+        solver.max_trials       = 8;
+        solver.init(N, M, groups, ctx);
+        ctx.nodes.save_state();
+        ctx.links.save_state();
+        solver.execute(ctx, 30.0);  // one step — populates snapshot
+    }
+};
+
+} // anonymous namespace
+
+TEST(HSnapshot, InvalidBeforeFirstExecute) {
+    SimulationContext ctx;
+    ctx.nodes.resize(4);
+    ctx.links.resize(3);
+    XSectGroups groups;
+    DWSolver solver;
+    solver.init(4, 3, groups, ctx);
+    EXPECT_FALSE(solver.isHSnapshotValid());
+    const auto s = solver.lastConvergedH();
+    EXPECT_FALSE(s.valid);
+}
+
+TEST(HSnapshot, ValidAfterExecute) {
+    HSnapshotFixture f;
+    EXPECT_TRUE(f.solver.isHSnapshotValid());
+    const auto s = f.solver.lastConvergedH();
+    EXPECT_TRUE(s.valid);
+}
+
+TEST(HSnapshot, ConduitCountMatchesNetwork) {
+    HSnapshotFixture f;
+    const auto s = f.solver.lastConvergedH();
+    ASSERT_TRUE(s.valid);
+    EXPECT_EQ(s.n_conduits, 3);
+}
+
+TEST(HSnapshot, ConduitOffNonNegative) {
+    HSnapshotFixture f;
+    const auto s = f.solver.lastConvergedH();
+    ASSERT_NE(s.conduit_off, nullptr);
+    for (int ci = 0; ci < s.n_conduits; ++ci)
+        EXPECT_GE(s.conduit_off[ci], 0.0) << "ci=" << ci;
+}
+
+TEST(HSnapshot, NodeIndicesConsistent) {
+    HSnapshotFixture f;
+    const auto s = f.solver.lastConvergedH();
+    ASSERT_NE(s.conduit_n1, nullptr);
+    ASSERT_NE(s.conduit_n2, nullptr);
+    // For a chain J0→J1→J2→J3 each conduit i connects nodes i and i+1
+    for (int ci = 0; ci < s.n_conduits; ++ci) {
+        EXPECT_EQ(s.conduit_n1[ci], ci)   << "ci=" << ci;
+        EXPECT_EQ(s.conduit_n2[ci], ci+1) << "ci=" << ci;
+    }
+}
+
+TEST(HSnapshot, DeterministicResultUnchanged) {
+    // Run solver twice on identical ICs; heads must be bit-identical.
+    HSnapshotFixture f1;
+    HSnapshotFixture f2;
+    for (int i = 0; i < 4; ++i)
+        EXPECT_EQ(f1.ctx.nodes.head[i], f2.ctx.nodes.head[i]) << "node=" << i;
+}

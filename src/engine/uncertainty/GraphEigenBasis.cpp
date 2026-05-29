@@ -161,7 +161,8 @@ bool GraphEigenBasis::symTridiagQL(std::vector<double>& diag,
 
 bool GraphEigenBasis::lanczos(const CsrGraph& L, int k_want,
                                std::vector<double>& eigvals_out,
-                               std::vector<double>& eigvecs_out) {
+                               std::vector<double>& eigvecs_out,
+                               const double* v0) {
     int n = L.n;
     if (n < 2 || k_want < 1) return false;
 
@@ -174,9 +175,25 @@ bool GraphEigenBasis::lanczos(const CsrGraph& L, int k_want,
     std::vector<double> alpha(static_cast<std::size_t>(m), 0.0);
     std::vector<double> beta (static_cast<std::size_t>(m), 0.0);
 
-    // Starting vector: zero-mean linear ramp, orthogonal to the Laplacian
-    // null space (constant vector 1/sqrt(n) would cause immediate breakdown).
-    {
+    // Starting vector.
+    // Warm-start: use v0 (first column of v0_block) when provided.
+    // Cold-start: zero-mean linear ramp, orthogonal to the Laplacian null
+    // space (constant vector 1/sqrt(n) would cause immediate breakdown).
+    if (v0 != nullptr) {
+        // Copy v0 and normalize, with fallback to cold-start on zero norm.
+        double sq = 0.0;
+        for (int i = 0; i < n; ++i)
+            sq += v0[static_cast<std::size_t>(i)] * v0[static_cast<std::size_t>(i)];
+        if (sq > 1e-30) {
+            double inv = 1.0 / std::sqrt(sq);
+            for (int i = 0; i < n; ++i)
+                V[static_cast<std::size_t>(i)] =
+                    v0[static_cast<std::size_t>(i)] * inv;
+        } else {
+            v0 = nullptr;  // degenerate warm-start → fall through to cold-start
+        }
+    }
+    if (v0 == nullptr) {
         double mean = (n - 1) * 0.5;
         double sq = 0.0;
         for (int i = 0; i < n; ++i) {
@@ -306,7 +323,8 @@ bool GraphEigenBasis::lanczos(const CsrGraph& L, int k_want,
 // build
 // ============================================================================
 
-bool GraphEigenBasis::build(const CsrGraph& L, int num_modes_req) {
+bool GraphEigenBasis::build(const CsrGraph& L, int num_modes_req,
+                             const double* v0_block) {
     last_error = 0;
     n_nodes    = L.n;
     num_kept   = 0;
@@ -317,8 +335,24 @@ bool GraphEigenBasis::build(const CsrGraph& L, int num_modes_req) {
     int k_req = std::min(n_nodes - 1, num_modes_req + 3);
     if (k_req < 1) { last_error = 1; return false; }
 
+    // Warm-start: use a uniform linear combination of all v0_block columns as
+    // the Krylov starting vector.  A single column risks lucky breakdown when
+    // it happens to be a near-exact eigenvector of L (common when the operator
+    // changes slowly), leaving only 1 Ritz pair computable.
+    std::vector<double> v0_combo;
+    if (v0_block != nullptr) {
+        v0_combo.assign(static_cast<std::size_t>(n_nodes), 0.0);
+        for (int q = 0; q < num_modes_req; ++q)
+            for (int i = 0; i < n_nodes; ++i)
+                v0_combo[static_cast<std::size_t>(i)] +=
+                    v0_block[static_cast<std::size_t>(q) *
+                             static_cast<std::size_t>(n_nodes) +
+                             static_cast<std::size_t>(i)];
+    }
+    const double* v0 = v0_combo.empty() ? nullptr : v0_combo.data();
+
     std::vector<double> raw_vals, raw_vecs;
-    if (!lanczos(L, k_req, raw_vals, raw_vecs)) {
+    if (!lanczos(L, k_req, raw_vals, raw_vecs, v0)) {
         last_error = 2;
         return false;
     }
@@ -356,6 +390,29 @@ bool GraphEigenBasis::build(const CsrGraph& L, int num_modes_req) {
         std::memcpy(dst, src,
                     static_cast<std::size_t>(n_nodes) * sizeof(double));
     }
+
+    // Sign alignment: when a warm-start block is provided, flip the sign of
+    // each eigenvector so that P[:,j]^T · v0_block[:,j] >= 0.
+    // This prevents spurious sign flips between consecutive solves from
+    // inverting modal coordinates in the re-projection step.
+    if (v0_block != nullptr) {
+        for (int q = 0; q < num_kept; ++q) {
+            auto uq = static_cast<std::size_t>(q);
+            double* pq = &P[uq * static_cast<std::size_t>(n_nodes)];
+            const double* ref = v0_block
+                              + uq * static_cast<std::size_t>(n_nodes);
+            double dot = 0.0;
+            for (int i = 0; i < n_nodes; ++i)
+                dot += pq[static_cast<std::size_t>(i)]
+                     * ref[static_cast<std::size_t>(i)];
+            if (dot < 0.0) {
+                for (int i = 0; i < n_nodes; ++i)
+                    pq[static_cast<std::size_t>(i)] =
+                        -pq[static_cast<std::size_t>(i)];
+            }
+        }
+    }
+
     return true;
 }
 
