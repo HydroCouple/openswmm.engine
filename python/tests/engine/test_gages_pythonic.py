@@ -51,6 +51,29 @@ class TestGageProperties:
         g0.rainfall = 12.5
         assert g0.rainfall == pytest.approx(12.5)
 
+    def test_scale_factor_default_is_one(self, opened_solver):
+        g0 = opened_solver.gages[0]
+        assert g0.scale_factor == pytest.approx(1.0)
+
+    def test_scale_factor_round_trip(self, opened_solver):
+        g0 = opened_solver.gages[0]
+        g0.scale_factor = 2.5
+        assert g0.scale_factor == pytest.approx(2.5)
+
+    def test_scale_factor_rejects_nonpositive(self, opened_solver):
+        g0 = opened_solver.gages[0]
+        with pytest.raises(Exception):
+            g0.scale_factor = 0.0
+        with pytest.raises(Exception):
+            g0.scale_factor = -1.0
+        # Value must remain at its prior default.
+        assert g0.scale_factor == pytest.approx(1.0)
+
+    def test_scale_factor_settable_while_running(self, running_solver):
+        g0 = running_solver.gages[0]
+        g0.scale_factor = 3.0
+        assert g0.scale_factor == pytest.approx(3.0)
+
 
 class TestBulk:
     def test_rainfalls_array(self, running_solver):

@@ -29,6 +29,7 @@ class Gage:
     solver: Solver
     rain_type: GageRainType
     data_source: GageDataSource
+    scale_factor: float
     rainfall: float
 
     def __init__(self, solver: Solver, index: int) -> None: ...

@@ -100,10 +100,13 @@ class SWMMRainGageProperties(Enum):
     :type GAGE_RAINFALL: int
     :ivar GAGE_SNOWFALL: Snowfall
     :type GAGE_SNOWFALL: int
+    :ivar GAGE_SCALEFACTOR: Rainfall scaling factor (dimensionless, > 0)
+    :type GAGE_SCALEFACTOR: int
     """
     GAGE_TOTAL_PRECIPITATION = ...
     GAGE_RAINFALL = ...
     GAGE_SNOWFALL = ...
+    GAGE_SCALEFACTOR = ...
 
 
 class SWMMSubcatchmentProperties(Enum):

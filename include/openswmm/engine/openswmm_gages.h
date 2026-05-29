@@ -129,6 +129,21 @@ SWMM_ENGINE_API int swmm_gage_set_timeseries(SWMM_Engine engine, int idx, const 
 SWMM_ENGINE_API int swmm_gage_set_filename(SWMM_Engine engine, int idx, const char* path,
                                                    const char* station_id);
 
+/**
+ * @brief Set the rainfall scaling factor for a gage.
+ *
+ * @details The scaling factor multiplies the gage's rainfall intensity after
+ *          rain-type and unit conversion. May be changed at any time (including
+ *          while the simulation is RUNNING) to support parameter sweeps; the
+ *          new value takes effect on the next timestep.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based gage index.
+ * @param factor  Strictly positive scaling factor (1.0 = no scaling).
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if factor <= 0.0.
+ */
+SWMM_ENGINE_API int swmm_gage_set_scale_factor(SWMM_Engine engine, int idx, double factor);
+
 /* =========================================================================
  * Property getters
  * ========================================================================= */
@@ -150,6 +165,15 @@ SWMM_ENGINE_API int swmm_gage_get_rain_type(SWMM_Engine engine, int idx, int* ty
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_gage_get_data_source(SWMM_Engine engine, int idx, int* source);
+
+/**
+ * @brief Get the rainfall scaling factor for a gage.
+ * @param engine       Engine handle.
+ * @param idx          Zero-based gage index.
+ * @param[out] factor  Receives the current scaling factor (1.0 = no scaling).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_scale_factor(SWMM_Engine engine, int idx, double* factor);
 
 /* =========================================================================
  * State

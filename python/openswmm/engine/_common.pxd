@@ -447,9 +447,11 @@ cdef extern from "openswmm_gages.h":
     cdef int swmm_gage_set_data_source(SWMM_Engine e, int idx, int source)
     cdef int swmm_gage_set_timeseries(SWMM_Engine e, int idx, const char* ts_id)
     cdef int swmm_gage_set_filename(SWMM_Engine e, int idx, const char* path, const char* station_id)
+    cdef int swmm_gage_set_scale_factor(SWMM_Engine e, int idx, double factor)
     # Property getters
     cdef int swmm_gage_get_rain_type(SWMM_Engine e, int idx, int* type)
     cdef int swmm_gage_get_data_source(SWMM_Engine e, int idx, int* source)
+    cdef int swmm_gage_get_scale_factor(SWMM_Engine e, int idx, double* factor)
     # State
     cdef int swmm_gage_get_rainfall(SWMM_Engine e, int idx, double* rainfall)
     cdef int swmm_gage_set_rainfall(SWMM_Engine e, int idx, double rainfall)

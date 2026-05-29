@@ -67,6 +67,7 @@ cdef extern from "openswmm_solver.h":
         swmm_GAGE_TOTAL_PRECIPITATION # Total precipitation
         swmm_GAGE_RAINFALL          # Snow depth
         swmm_GAGE_SNOWFALL            # Snowfall
+        swmm_GAGE_SCALEFACTOR         # Rainfall scaling factor
     
     # SWMM Subcatchment properties
     ctypedef enum swmm_SubcatchProperty:

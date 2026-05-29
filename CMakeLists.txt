@@ -34,7 +34,7 @@ project(
 )
 
 # Pre-release label for the refactored engine (e.g. "alpha.1", "beta.1", "rc.1"). Leave empty for a final release.
-set(OPENSWMM_PRERELEASE "alpha.1" CACHE STRING "Pre-release tag for the refactored engine (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
+set(OPENSWMM_PRERELEASE "alpha.2" CACHE STRING "Pre-release tag for the refactored engine (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
 
 # Pre-release label for the legacy engine wrapper. Advances to beta ahead of the refactored engine.
 set(OPENSWMM_LEGACY_PRERELEASE "beta.1" CACHE STRING "Pre-release tag for the legacy engine wrapper (e.g. beta.1, rc.1). Empty for a final release.")

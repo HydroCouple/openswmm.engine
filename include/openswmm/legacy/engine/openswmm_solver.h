@@ -113,6 +113,8 @@ typedef enum
     swmm_GAGE_RAINFALL,
     /*! \brief Snowfall */
     swmm_GAGE_SNOWFALL,
+    /*! \brief Rainfall scaling factor (dimensionless, > 0). */
+    swmm_GAGE_SCALEFACTOR,
 } swmm_GageProperty;
 
 /*!

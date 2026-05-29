@@ -116,6 +116,24 @@ cdef class Gage:
         _check(swmm_gage_set_data_source(
             _h(self._solver), self._index, int(value)))
 
+    @property
+    def scale_factor(self) -> float:
+        """Rainfall scaling factor (dimensionless, > 0; 1.0 = no scaling).
+
+        May be mutated at any time, including while the simulation is running,
+        to support parameter sweeps. The new value takes effect on the next
+        timestep. Raises if assigned a non-positive value.
+        """
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_gage_get_scale_factor(_h(self._solver), self._index, &v))
+        return v
+
+    @scale_factor.setter
+    def scale_factor(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_gage_set_scale_factor(_h(self._solver), self._index, value))
+
     def set_rain_interval(self, seconds) -> None:
         """Set the rain-interval duration. Accepts a number of seconds
         or a :class:`datetime.timedelta`."""

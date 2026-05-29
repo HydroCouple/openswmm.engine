@@ -119,6 +119,15 @@ SWMM_ENGINE_API int swmm_gage_set_filename(SWMM_Engine engine, int idx, const ch
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_gage_set_scale_factor(SWMM_Engine engine, int idx, double factor) {
+    CHECK_HANDLE(engine);
+    if (factor <= 0.0) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    ctx.gages.scale_factor[static_cast<std::size_t>(idx)] = factor;
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Property getters
 // ============================================================================
@@ -136,6 +145,14 @@ SWMM_ENGINE_API int swmm_gage_get_data_source(SWMM_Engine engine, int idx, int* 
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     if (source) *source = static_cast<int>(ctx.gages.source[static_cast<std::size_t>(idx)]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_get_scale_factor(SWMM_Engine engine, int idx, double* factor) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    if (factor) *factor = ctx.gages.scale_factor[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 

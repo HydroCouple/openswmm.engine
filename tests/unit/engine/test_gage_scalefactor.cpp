@@ -26,6 +26,9 @@
 #include "data/GageData.hpp"
 #include "data/TableData.hpp"
 
+#include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_gages.h>
+
 using namespace openswmm;
 
 // ============================================================================
@@ -249,4 +252,113 @@ TEST(GageGetReportRainfall, ScaleFactorAppliedToReport) {
 
     ASSERT_GT(r_a, 0.0);
     EXPECT_NEAR(r_b, 2.0 * r_a, std::abs(2.0 * r_a) * 1e-9);
+}
+
+// ============================================================================
+// C API — swmm_gage_get_scale_factor / swmm_gage_set_scale_factor
+// ============================================================================
+//
+// Working directory is set to tests/unit/engine/data/ by
+// tests/unit/engine/CMakeLists.txt.  Fixtures gage_scalefactor.inp and
+// gage_noscalefactor.inp are mirrored from tests/unit/legacy/engine/data/.
+
+namespace {
+
+class GageScaleFactorCApi : public ::testing::Test {
+protected:
+    SWMM_Engine engine_ = nullptr;
+
+    void openModel(const char* inp, const char* rpt, const char* out) {
+        engine_ = swmm_engine_create();
+        ASSERT_NE(engine_, nullptr);
+        ASSERT_EQ(swmm_engine_open(engine_, inp, rpt, out, nullptr), SWMM_OK);
+    }
+
+    void TearDown() override {
+        if (engine_) {
+            swmm_engine_close(engine_);
+            swmm_engine_destroy(engine_);
+            engine_ = nullptr;
+        }
+    }
+};
+
+} // namespace
+
+TEST_F(GageScaleFactorCApi, GetReturnsParsedValue) {
+    openModel("gage_scalefactor.inp",
+              "_gage_scalefactor_get.rpt",
+              "_gage_scalefactor_get.out");
+
+    ASSERT_EQ(swmm_gage_count(engine_), 1);
+
+    double sf = 0.0;
+    EXPECT_EQ(swmm_gage_get_scale_factor(engine_, 0, &sf), SWMM_OK);
+    EXPECT_DOUBLE_EQ(sf, 2.0);
+}
+
+TEST_F(GageScaleFactorCApi, GetReturnsDefaultOneWhenUnset) {
+    openModel("gage_noscalefactor.inp",
+              "_gage_noscalefactor_get.rpt",
+              "_gage_noscalefactor_get.out");
+
+    double sf = 0.0;
+    EXPECT_EQ(swmm_gage_get_scale_factor(engine_, 0, &sf), SWMM_OK);
+    EXPECT_DOUBLE_EQ(sf, 1.0);
+}
+
+TEST_F(GageScaleFactorCApi, SetRoundTrips) {
+    openModel("gage_noscalefactor.inp",
+              "_gage_set_roundtrip.rpt",
+              "_gage_set_roundtrip.out");
+
+    EXPECT_EQ(swmm_gage_set_scale_factor(engine_, 0, 3.5), SWMM_OK);
+
+    double sf = 0.0;
+    EXPECT_EQ(swmm_gage_get_scale_factor(engine_, 0, &sf), SWMM_OK);
+    EXPECT_DOUBLE_EQ(sf, 3.5);
+}
+
+TEST_F(GageScaleFactorCApi, SetRejectsNonPositive) {
+    openModel("gage_noscalefactor.inp",
+              "_gage_set_invalid.rpt",
+              "_gage_set_invalid.out");
+
+    // baseline default is 1.0
+    EXPECT_NE(swmm_gage_set_scale_factor(engine_, 0,  0.0), SWMM_OK);
+    EXPECT_NE(swmm_gage_set_scale_factor(engine_, 0, -1.0), SWMM_OK);
+
+    double sf = 0.0;
+    EXPECT_EQ(swmm_gage_get_scale_factor(engine_, 0, &sf), SWMM_OK);
+    EXPECT_DOUBLE_EQ(sf, 1.0) << "Rejected set must not mutate the stored value.";
+}
+
+TEST_F(GageScaleFactorCApi, SetRejectsBadIndex) {
+    openModel("gage_noscalefactor.inp",
+              "_gage_set_badidx.rpt",
+              "_gage_set_badidx.out");
+
+    EXPECT_NE(swmm_gage_set_scale_factor(engine_, -1, 2.0), SWMM_OK);
+    EXPECT_NE(swmm_gage_set_scale_factor(engine_,  5, 2.0), SWMM_OK);
+}
+
+TEST_F(GageScaleFactorCApi, SetAllowedDuringRunning) {
+    openModel("gage_noscalefactor.inp",
+              "_gage_set_running.rpt",
+              "_gage_set_running.out");
+
+    ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine_, 1),   SWMM_OK);
+
+    double elapsed = 0.0;
+    ASSERT_EQ(swmm_engine_step(engine_, &elapsed), SWMM_OK);
+
+    // Mutate mid-run — the recommended use case (parameter sweep / sensitivity).
+    EXPECT_EQ(swmm_gage_set_scale_factor(engine_, 0, 4.0), SWMM_OK);
+
+    double sf = 0.0;
+    EXPECT_EQ(swmm_gage_get_scale_factor(engine_, 0, &sf), SWMM_OK);
+    EXPECT_DOUBLE_EQ(sf, 4.0);
+
+    swmm_engine_end(engine_);
 }

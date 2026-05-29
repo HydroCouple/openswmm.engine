@@ -157,10 +157,12 @@ class SWMMRainGageProperties(Enum):
     @cvar GAGE_TOTAL_PRECIPITATION: Total precipitation.
     @cvar GAGE_RAINFALL: Rainfall.
     @cvar GAGE_SNOWFALL: Snowfall.
+    @cvar GAGE_SCALEFACTOR: Rainfall scaling factor (dimensionless, > 0).
     """
     GAGE_TOTAL_PRECIPITATION = swmm_GageProperty.swmm_GAGE_TOTAL_PRECIPITATION # Total precipitation
     GAGE_RAINFALL = swmm_GageProperty.swmm_GAGE_RAINFALL # Rainfall
     GAGE_SNOWFALL = swmm_GageProperty.swmm_GAGE_SNOWFALL # Snowfall
+    GAGE_SCALEFACTOR = swmm_GageProperty.swmm_GAGE_SCALEFACTOR # Rainfall scaling factor
     
 class SWMMSubcatchmentProperties(Enum):
     """Enumeration of SWMM subcatchment properties.

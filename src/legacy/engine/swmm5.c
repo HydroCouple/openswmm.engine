@@ -1272,6 +1272,12 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValue(int property, int index, double
         if (value >= 0.0)
             Gage[index].apiRainfall = value;
         return 0;
+    case swmm_GAGE_SCALEFACTOR:
+        if (index < 0 || index >= Nobjects[GAGE])
+            return 0;
+        if (value > 0.0)
+            Gage[index].scaleFactor = value;
+        return 0;
     case swmm_SUBCATCH_RPTFLAG:
         if (!IsStartedFlag && index >= 0 && index < Nobjects[SUBCATCH])
             Subcatch[index].rptFlag = (value > 0.0);
@@ -1349,6 +1355,14 @@ int setGageValue(int property, int index, int subIndex, double value)
         if (value >= 0.0)
         {
             Gage[index].apiRainfall = value;
+            return 0;
+        }
+        else
+            return ERR_API_PROPERTY_VALUE;
+    case swmm_GAGE_SCALEFACTOR:
+        if (value > 0.0)
+        {
+            Gage[index].scaleFactor = value;
             return 0;
         }
         else
@@ -1751,6 +1765,8 @@ static double getGageValue(int property, int index)
         return rain * UCF(RAINFALL);
     case swmm_GAGE_SNOWFALL:
         return snow * UCF(RAINFALL);
+    case swmm_GAGE_SCALEFACTOR:
+        return Gage[index].scaleFactor;
     default:
         return ERR_API_PROPERTY_TYPE;
     }
