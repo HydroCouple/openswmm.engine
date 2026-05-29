@@ -61,6 +61,7 @@
 *     - Added a project structure to hold project-wide settings to for thread safety and rentrancy.
 *     - Use vectors instead of linked lists for computational efficiency.
 *     - Use structures of arrays for selected data structures to improve cache performance.
+*.    - Added support for reporting rain gage scaling factor. 
 */
 
 #ifndef OBJECTS_H
@@ -151,6 +152,7 @@ typedef struct
    int           coGage;          // index of gage with same rain timeseries
    int           isUsed;          // TRUE if gage used by any subcatchment
    int           isCurrent;       // TRUE if gage's rainfall is current 
+   double        scaleFactor;     // rainfall scaling factor added in Build 5.3.0
 }  TGage;
 
 //-------------------

@@ -129,6 +129,19 @@ struct GageData {
      */
     std::vector<double>         snow_factor;
 
+    /**
+     * @brief Rainfall scaling factor (1.0 = no scaling).
+     * @details Multiplies the gage's converted rainfall intensity after the
+     *          rain-type conversion (INTENSITY/VOLUME/CUMULATIVE) and unit
+     *          conversion.  For co-gages sharing a timeseries, the secondary
+     *          gage's rainfall is scaled by
+     *          `scale_factor[secondary] / scale_factor[primary]` so the
+     *          primary's already-applied factor is removed and the
+     *          secondary's substituted.
+     * @see Legacy: Gage[i].scaleFactor (Build 5.3.0+)
+     */
+    std::vector<double>         scale_factor;
+
     // -----------------------------------------------------------------------
     // State variables — updated each timestep
     // -----------------------------------------------------------------------
@@ -220,6 +233,7 @@ struct GageData {
         file_format.assign(un, RainFileFormat::UNKNOWN);
         interval_sec.assign(un, 3600);
         snow_factor.assign(un, 1.0);
+        scale_factor.assign(un, 1.0);
 
         rainfall.assign(un, 0.0);
         next_rainfall.assign(un, 0.0);
@@ -250,6 +264,7 @@ struct GageData {
         file_path.resize(un, std::string{});
         col_name.resize(un, std::string{});
         g(file_format, RainFileFormat::UNKNOWN); g(interval_sec, 3600); g(snow_factor, 1.0);
+        g(scale_factor, 1.0);
         g(rainfall, 0.0); g(next_rainfall, 0.0);
         g(api_rainfall, -1.0); g(next_rain_date, 0.0); g(is_raining, false);
         // Flat 2D: [gage * MAXPASTRAIN + hour]
@@ -272,6 +287,7 @@ struct GageData {
 
         e(rain_type); e(source); e(ts_index); e(ts_name);
         e(file_path); e(col_name); e(file_format); e(interval_sec); e(snow_factor);
+        e(scale_factor);
         e(rainfall); e(next_rainfall); e(api_rainfall); e(next_rain_date); e(is_raining);
         e(past_rain_accum); e(past_rain_time); e(cumul_rain_accum); e(co_gage_index);
         e(comments);
@@ -297,6 +313,7 @@ struct GageData {
         file_format.shrink_to_fit();
         interval_sec.shrink_to_fit();
         snow_factor.shrink_to_fit();
+        scale_factor.shrink_to_fit();
 
         rainfall.shrink_to_fit();
         next_rainfall.shrink_to_fit();

@@ -16,10 +16,16 @@
  *
  * ### [RAINGAGES] format
  * ```
- * ;; Name   Format    Interval  SCF   Source
- * RG1       VOLUME    0:15      1.0   TIMESERIES RAIN1
- * RG2       VOLUME    0:15      1.0   FILE "rain.csv:EAST_GAGE"
+ * ;; Name   Format    Interval  SCF   Source                 [ScaleFactor]
+ * RG1       VOLUME    0:15      1.0   TIMESERIES RAIN1        2.0
+ * RG2       VOLUME    0:15      1.0   FILE "rain.csv:EAST"    1.5
  * ```
+ *
+ * The trailing `ScaleFactor` token is optional; it multiplies the gage's
+ * rainfall intensity after unit conversion (Build 5.3.0+, parity with
+ * legacy `gage.c`).  When two gages share the same TIMESERIES (co-gages),
+ * the secondary's rainfall is rescaled by the ratio
+ * `scale_factor[secondary] / scale_factor[primary]`.
  *
  * @see Legacy reference: src/solver/input.c — readSubcatch(), readGage()
  * @ingroup engine_input
@@ -61,6 +67,7 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.gages.file_format,   RainFileFormat::UNKNOWN);
     grow(ctx.gages.interval_sec,  3600);
     grow(ctx.gages.snow_factor,   1.0);
+    grow(ctx.gages.scale_factor,  1.0);
     grow(ctx.gages.rain_type,     0);
     grow(ctx.gages.rainfall,      0.0);
     grow(ctx.gages.next_rainfall, 0.0);
@@ -228,6 +235,12 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
             ctx.gages.ts_name[idx]  = tok[5]; // Store name for deferred resolution
             ctx.gages.ts_index[idx] = ctx.table_names.find(tok[5]);
             // ts_index may be -1 if TIMESERIES section appears after RAINGAGES
+
+            // Optional trailing rainfall scaling factor (legacy gage.c readGageSeriesFormat tok[6])
+            if (tok.size() > 6) {
+                double sf = to_double(tok[6], 1.0);
+                if (sf > 0.0) ctx.gages.scale_factor[idx] = sf;
+            }
         } else if (src == "FILE" && tok.size() > 5) {
             ctx.gages.source[idx] = RainSource::FILE_RAIN;
 
@@ -249,6 +262,15 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
                 ctx.gages.file_format[idx] = RainFileFormat::STAN_PRCP;
             }
             (void)colon; // suppress warning
+
+            // Optional trailing rainfall scaling factor.  The new-engine FILE
+            // grammar is more compact than legacy (no staID/units in the
+            // token stream), so the trailing token — if a positive
+            // double — is interpreted as the scale factor.
+            if (tok.size() > 6) {
+                double sf = to_double(tok[6], 1.0);
+                if (sf > 0.0) ctx.gages.scale_factor[idx] = sf;
+            }
         }
         if (!pl.comment.empty())
             ctx.gages.comments[static_cast<std::size_t>(idx)] = pl.comment;
