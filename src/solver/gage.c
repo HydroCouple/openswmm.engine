@@ -355,10 +355,13 @@ void gage_setState(int j, DateTime t)
     }
 
     // --- use rainfall from co-gage (gage with lower index that uses
-    //     same rainfall time series or file) if it exists
+    //     same rainfall time series or file) if it exists, adjusting
+    //     for any difference in per-gage scale factors
     if ( Gage[j].coGage >= 0)
     {
-        Gage[j].rainfall = Gage[Gage[j].coGage].rainfall;
+        int cg = Gage[j].coGage;
+        Gage[j].rainfall = Gage[cg].rainfall *
+            Gage[j].scaleFactor / Gage[cg].scaleFactor;
         return;
     }
 
@@ -547,10 +550,13 @@ void gage_setReportRainfall(int j, DateTime reportDate)
 {
     double result;
 
-    // --- use value from co-gage if it exists
+    // --- use value from co-gage if it exists, adjusting for any
+    //     difference in per-gage scale factors
     if ( Gage[j].coGage >= 0)
     {
-        Gage[j].reportRainfall = Gage[Gage[j].coGage].reportRainfall;
+        int cg = Gage[j].coGage;
+        Gage[j].reportRainfall = Gage[cg].reportRainfall *
+            Gage[j].scaleFactor / Gage[cg].scaleFactor;
         return;
     }
 
