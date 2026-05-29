@@ -248,14 +248,21 @@ void  gage_validate(int j)
         {
             report_writeErrorMsg(ERR_RAIN_GAGE_TSERIES, Gage[j].ID);
         }
-        gageInterval = (int)(floor(Tseries[k].dxMin*SECperDAY + 0.5));
-        if ( gageInterval > 0 && Gage[j].rainInterval > gageInterval )
+        // --- only check intervals if time series has more than one data point
+        //     (dxMin remains BIG when series has only a single entry, and
+        //     casting BIG*SECperDAY to int overflows with architecture-dependent
+        //     results on x86-64 vs arm64)
+        if ( Tseries[k].dxMin < BIG )
         {
-            report_writeErrorMsg(ERR_RAIN_GAGE_INTERVAL, Gage[j].ID);
-        } 
-        if ( Gage[j].rainInterval < gageInterval )
-        {
-            report_writeWarningMsg(WARN09, Gage[j].ID);
+            gageInterval = (int)(floor(Tseries[k].dxMin*SECperDAY + 0.5));
+            if ( gageInterval > 0 && Gage[j].rainInterval > gageInterval )
+            {
+                report_writeErrorMsg(ERR_RAIN_GAGE_INTERVAL, Gage[j].ID);
+            }
+            if ( Gage[j].rainInterval < gageInterval )
+            {
+                report_writeWarningMsg(WARN09, Gage[j].ID);
+            }
         }
         if ( Gage[j].rainInterval < WetStep )
         {
