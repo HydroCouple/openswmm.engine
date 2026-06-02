@@ -63,7 +63,9 @@ static XSectParams make_triangular(double depth, double top_width) {
 
 TEST(XSectionCircular, FullAreaMatchesFormula) {
     auto xs = make_circular(2.0);  // D=2ft
-    EXPECT_NEAR(xs.a_full, PI / 4.0 * 4.0, 1e-10);  // pi/4 * D^2
+    // Tolerance accommodates the legacy-faithful PI constant (3.141592654) used
+    // in XSection.cpp for numerical parity with the legacy engine.
+    EXPECT_NEAR(xs.a_full, PI / 4.0 * 4.0, 1e-8);  // pi/4 * D^2
     EXPECT_NEAR(xs.r_full, 0.5, 1e-10);               // D/4
 }
 

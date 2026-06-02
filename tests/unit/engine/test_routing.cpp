@@ -295,8 +295,11 @@ TEST(SectionFactor, RectangularAtFull) {
     double p[4] = {2.0, 5.0, 0, 0};  // 2ft x 5ft
     xsect::setParams(xs, static_cast<int>(XSectShape::RECT_CLOSED), p, 1.0);
 
-    // A = 10 ft², R = w*y/(w+2y) = 5*2/(5+4) = 10/9
-    double R = 10.0 / 9.0;
+    // RECT_CLOSED: when full, the crown is wetted, so the perimeter includes
+    // all four sides: P = 2*(y + w). R = A / P = 10 / (2*(2+5)) = 10/14.
+    // (Matches legacy xsect_setParams; the old open-channel R = w*y/(w+2y) was
+    // a parity bug.)
+    double R = 10.0 / 14.0;
     double expected = xs.a_full * std::pow(R, 2.0/3.0);
     EXPECT_NEAR(xs.s_full, expected, 0.01 * expected);
 }
