@@ -456,6 +456,46 @@ cdef class ModelBuilder:
         cdef bytes b_val = value.encode('utf-8')
         _check(swmm_options_set(self._handle, b_key, b_val))
 
+    def get_file_path(self, int role, str owner="") -> tuple:
+        """Read an external-file slot's resolved and original paths.
+
+        @param role: Which slot to read; a L{FilePathRole} value.
+        @type role: int
+        @param owner: Owner key for vector slots (decimal index for
+            hot-start saves, gage id for rain-gage data, series id for
+            time-series data). Ignored for scalar slots.
+        @type owner: str
+        @return: C{(absolute, original)} — the resolved absolute path and
+            the original token as authored. Either may be empty.
+        @rtype: tuple[str, str]
+        @raise EngineError: On C API failure (e.g. unknown role/owner).
+        """
+        cdef bytes b_owner = owner.encode('utf-8')
+        cdef char abs_buf[512]
+        cdef char orig_buf[512]
+        _check(swmm_file_path_get(self._handle, role, b_owner,
+                                  abs_buf, 512, orig_buf, 512))
+        return (abs_buf.decode('utf-8'), orig_buf.decode('utf-8'))
+
+    def set_file_path(self, int role, str new_path, str owner="") -> None:
+        """Set the original token for an external-file slot.
+
+        Clears the cached absolute resolution. For vector slots the
+        ``owner`` must already exist in the model. Pass an empty
+        ``new_path`` to clear the slot.
+
+        @param role: Which slot to set; a L{FilePathRole} value.
+        @type role: int
+        @param new_path: New path token; empty string clears the slot.
+        @type new_path: str
+        @param owner: Owner key for vector slots; ignored for scalar slots.
+        @type owner: str
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b_owner = owner.encode('utf-8')
+        cdef bytes b_path = new_path.encode('utf-8')
+        _check(swmm_file_path_set(self._handle, role, b_owner, b_path))
+
     def get_option_ext(self, str key) -> str:
         """Return the value of an extended model option.
 

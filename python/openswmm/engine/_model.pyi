@@ -349,6 +349,22 @@ class ModelBuilder:
         """
         ...
 
+    def get_file_path(self, role: int, owner: str = ...) -> tuple[str, str]:
+        """Read an external-file slot's ``(absolute, original)`` paths.
+
+        @param role: A L{FilePathRole} value.
+        @param owner: Owner key for vector slots; ignored for scalar slots.
+        @rtype: tuple[str, str]
+        """
+        ...
+    def set_file_path(self, role: int, new_path: str, owner: str = ...) -> None:
+        """Set an external-file slot's path token (empty clears it).
+
+        @param role: A L{FilePathRole} value.
+        @param owner: Owner key for vector slots; must already exist.
+        """
+        ...
+
     def get_option_ext(self, key: str) -> str:
         """Return the value of an extension option (unknown to base SWMM).
 

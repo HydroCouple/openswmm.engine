@@ -669,3 +669,165 @@ class RoutingTotal(IntEnum):
     INIT_STORAGE = 9
     FINAL_STORAGE = 10
     FORCING_INFLOW = 11
+
+
+# =============================================================================
+# Dividers
+# =============================================================================
+
+
+class DividerType(IntEnum):
+    """Flow-diversion method for a C{DIVIDER} node.
+
+    Mirrors C{SWMM_DividerType} in C{openswmm_nodes.h}.
+
+    @cvar CUTOFF: Flow above a cutoff value is diverted.
+    @cvar OVERFLOW: Diverted flow equals the capacity exceedance of the
+        main link.
+    @cvar TABULAR: Diverted flow is looked up on a diversion curve.
+    @cvar WEIR: A weir equation governs the diversion.
+    """
+
+    CUTOFF = 0
+    OVERFLOW = 1
+    TABULAR = 2
+    WEIR = 3
+
+
+# =============================================================================
+# Runtime forcing
+# =============================================================================
+
+
+class ForcingType(IntEnum):
+    """Forcing channel selected when injecting a runtime override.
+
+    Mirrors C{SWMM_ForcingType} in C{openswmm_forcing.h}. Distinct from
+    L{ForcingTarget}, which only names the object *kind* passed to
+    L{Forcing.clear}.
+
+    @cvar NODE_LAT_INFLOW: Lateral inflow at a node.
+    @cvar NODE_HEAD_BOUNDARY: Head boundary condition at a node.
+    @cvar NODE_QUALITY: Pollutant concentration at a node.
+    @cvar LINK_FLOW: Imposed flow on a link.
+    @cvar LINK_SETTING: Control setting on a link.
+    @cvar SUBCATCH_RAINFALL: Rainfall on a subcatchment.
+    @cvar SUBCATCH_EVAP: Evaporation on a subcatchment.
+    @cvar GAGE_RAINFALL: Rainfall at a rain gage.
+    """
+
+    NODE_LAT_INFLOW = 0
+    NODE_HEAD_BOUNDARY = 1
+    NODE_QUALITY = 2
+    LINK_FLOW = 3
+    LINK_SETTING = 4
+    SUBCATCH_RAINFALL = 5
+    SUBCATCH_EVAP = 6
+    GAGE_RAINFALL = 7
+
+
+class ForcingPersist(IntEnum):
+    """Lifetime of a runtime forcing override.
+
+    Mirrors C{SWMM_ForcingPersist} in C{openswmm_forcing.h}.
+
+    @cvar RESET: Auto-clear the forcing after each routing step.
+    @cvar PERSIST: Keep the forcing until it is explicitly cleared.
+    """
+
+    RESET = 0
+    PERSIST = 1
+
+
+# =============================================================================
+# Object references (model editing)
+# =============================================================================
+
+
+class RefType(IntEnum):
+    """Kind of object that holds a reference, used by the editing/impact API.
+
+    Mirrors C{SWMM_RefType} in C{openswmm_edit.h}.
+
+    @cvar NODE: A node holds the reference.
+    @cvar LINK: A link holds the reference.
+    @cvar SUBCATCH: A subcatchment holds the reference.
+    @cvar GAGE: A rain gage holds the reference.
+    @cvar TABLE: A time series or curve holds the reference.
+    @cvar TRANSECT: A transect holds the reference.
+    @cvar INLET_USAGE: An inlet-usage entry holds the reference.
+    """
+
+    NODE = 0
+    LINK = 1
+    SUBCATCH = 2
+    GAGE = 3
+    TABLE = 4
+    TRANSECT = 5
+    INLET_USAGE = 6
+
+
+class TableType(IntEnum):
+    """Table type codes returned by C{swmm_table_get_type}.
+
+    Tables (time series and curves) are stored in a single unified array;
+    this code partitions that array. Mirrors C{openswmm::TableType}.
+
+    @cvar TIMESERIES: Time-varying values (rainfall, inflow, etc.).
+    @cvar CURVE_STORAGE: Storage node volume-depth curve.
+    @cvar CURVE_DIVERSION: Diversion rating curve.
+    @cvar CURVE_RATING: Outfall/weir rating curve.
+    @cvar CURVE_SHAPE: Cross-section shape curve.
+    @cvar CURVE_CONTROL: Control rule action curve.
+    @cvar CURVE_TIDAL: Tidal stage curve.
+    @cvar CURVE_PUMP1: Pump curve type 1 (ON/OFF depth).
+    @cvar CURVE_PUMP2: Pump curve type 2 (head vs flow).
+    @cvar CURVE_PUMP3: Pump curve type 3 (volume vs time).
+    @cvar CURVE_PUMP4: Pump curve type 4 (depth vs speed).
+    @cvar CURVE_PUMP5: Pump curve type 5 (head vs flow, variable speed).
+    """
+
+    TIMESERIES = 0
+    CURVE_STORAGE = 1
+    CURVE_DIVERSION = 2
+    CURVE_RATING = 3
+    CURVE_SHAPE = 4
+    CURVE_CONTROL = 5
+    CURVE_TIDAL = 6
+    CURVE_PUMP1 = 7
+    CURVE_PUMP2 = 8
+    CURVE_PUMP3 = 9
+    CURVE_PUMP4 = 10
+    CURVE_PUMP5 = 11
+
+
+class FilePathRole(IntEnum):
+    """External-file slot selector for C{swmm_file_path_get/set}.
+
+    Mirrors C{SWMM_FilePathRole}. Scalar slots ignore the ``owner``
+    argument; vector slots use ``owner`` to select the entry (a decimal
+    index for hot-start saves, the gage id for rain-gage data, the series
+    id for time-series data).
+
+    @cvar RAINFALL: Rainfall interface file (scalar).
+    @cvar RUNOFF: Runoff interface file (scalar).
+    @cvar RDII: RDII interface file (scalar).
+    @cvar INFLOWS: Routing inflows interface file (scalar).
+    @cvar OUTFLOWS: Routing outflows interface file (scalar).
+    @cvar HOTSTART_USE: Hot-start file to read (scalar).
+    @cvar CLIMATE_TEMP: Climate/temperature file (scalar).
+    @cvar HOTSTART_SAVE: Hot-start save slot (vector; owner = index).
+    @cvar RAINGAGE_DATA: Rain-gage data file (vector; owner = gage id).
+    @cvar TIMESERIES_DATA: Time-series data file (vector; owner = series id).
+    """
+
+    RAINFALL = 1
+    RUNOFF = 2
+    RDII = 3
+    INFLOWS = 4
+    OUTFLOWS = 5
+    HOTSTART_USE = 6
+    CLIMATE_TEMP = 7
+    HOTSTART_SAVE = 8
+    RAINGAGE_DATA = 9
+    TIMESERIES_DATA = 10

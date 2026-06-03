@@ -52,7 +52,7 @@ from typing import Iterator, Optional, Union
 
 from ._common cimport *
 from ._dates import datetime_to_oadate, oadate_to_datetime
-from ._enums import EngineState
+from ._enums import EngineState, FlowUnits
 
 # Canonical EngineError hierarchy lives in :mod:`_exceptions`. Re-exported for
 # both intra-module raises and backward-compatible imports.
@@ -172,12 +172,15 @@ cdef class Solver:
         self._step_begin_cb = None
         self._step_end_cb = None
         self._warning_cb = None
+        self._progress_cb = None
         self._options = None
         self._userflags = None
         self._events_view = None
         self._nodes = None
         self._links = None
         self._subcatchments = None
+        self._aquifers = None
+        self._snowpacks = None
         self._gages = None
         self._pollutants = None
         self._tables = None
@@ -520,6 +523,39 @@ cdef class Solver:
         _check(swmm_get_current_time(self._handle, &v))
         return oadate_to_datetime(v)
 
+    @property
+    def sim_start_time(self) -> datetime:
+        """Resolved simulation start as a :class:`datetime.datetime`.
+
+        The engine's resolved start of the routing window (from
+        ``swmm_get_start_time``), as distinct from the configured
+        :attr:`start_datetime` option.
+        """
+        cdef double v = 0.0
+        _check(swmm_get_start_time(self._handle, &v))
+        return oadate_to_datetime(v)
+
+    @property
+    def sim_end_time(self) -> datetime:
+        """Resolved simulation end as a :class:`datetime.datetime`.
+
+        The engine's resolved end of the routing window (from
+        ``swmm_get_end_time``).
+        """
+        cdef double v = 0.0
+        _check(swmm_get_end_time(self._handle, &v))
+        return oadate_to_datetime(v)
+
+    @property
+    def event_count(self) -> int:
+        """Number of ``[EVENTS]`` entries defined on the model.
+
+        @rtype: int
+        """
+        cdef int v = 0
+        _check(swmm_get_event_count(self._handle, &v))
+        return v
+
     # ------------------------------------------------------------------
     # CRS
     # ------------------------------------------------------------------
@@ -579,6 +615,42 @@ cdef class Solver:
         return self._options
 
     @property
+    def flow_units(self):
+        """``solver.flow_units`` — the model's flow-unit system.
+
+        Returns a :class:`~openswmm.engine.FlowUnits` enum member via the
+        engine's typed ``swmm_get_flow_units`` accessor. This is the
+        first-class way to discover the units a running model exchanges:
+        because the C API returns every quantity in the units declared in
+        the ``.inp`` file (project units), consumers should read this to
+        interpret returned magnitudes correctly.
+
+        @return: The active flow-unit system.
+        @rtype: L{openswmm.engine.FlowUnits}
+        @raise EngineError: On C API failure.
+        """
+        cdef int v = 0
+        _check(swmm_get_flow_units(self._handle, &v))
+        return FlowUnits(v)
+
+    @property
+    def unit_system(self):
+        """``solver.unit_system`` — ``'US'`` or ``'SI'``.
+
+        Returns the engine's typed ``swmm_get_unit_system`` result
+        (``0`` = US/imperial, ``1`` = SI/metric). ``CFS``/``GPM``/``MGD``
+        are US customary; ``CMS``/``LPS``/``MLD`` are SI. Length, area, and
+        volume getters return values in the corresponding project units.
+
+        @return: ``'US'`` for US-customary models, ``'SI'`` for metric.
+        @rtype: str
+        @raise EngineError: On C API failure.
+        """
+        cdef int v = 0
+        _check(swmm_get_unit_system(self._handle, &v))
+        return "SI" if v == 1 else "US"
+
+    @property
     def userflags(self):
         """``solver.userflags`` — a :class:`UserFlags` mapping.
 
@@ -627,6 +699,22 @@ cdef class Solver:
             from ._subcatchments import Subcatchments
             self._subcatchments = Subcatchments(self)
         return self._subcatchments
+
+    @property
+    def aquifers(self):
+        """``solver.aquifers`` — :class:`Aquifers` collection of ``[AQUIFERS]``."""
+        if self._aquifers is None:
+            from ._subcatchments import Aquifers
+            self._aquifers = Aquifers(self)
+        return self._aquifers
+
+    @property
+    def snowpacks(self):
+        """``solver.snowpacks`` — :class:`Snowpacks` collection of ``[SNOWPACKS]``."""
+        if self._snowpacks is None:
+            from ._subcatchments import Snowpacks
+            self._snowpacks = Snowpacks(self)
+        return self._snowpacks
 
     @property
     def gages(self):
@@ -838,6 +926,25 @@ cdef class Solver:
             _check(swmm_set_warning_callback(
                 self._handle, _warning_trampoline,
                 <void*>self._warning_cb))
+
+    def set_progress_callback(self, callback) -> None:
+        """Register a callback invoked as the simulation advances.
+
+        The callable receives a single ``float`` — the elapsed fraction of
+        the simulation in ``[0.0, 1.0]`` — suitable for driving a progress
+        bar. Pass ``None`` to unregister.
+
+        @param callback: A callable ``(elapsed_frac: float) -> None``, or
+            ``None`` to clear.
+        """
+        if callback is None:
+            self._progress_cb = None
+            _check(swmm_set_progress_callback(self._handle, NULL, NULL))
+        else:
+            self._progress_cb = callback
+            _check(swmm_set_progress_callback(
+                self._handle, _progress_trampoline,
+                <void*>self._progress_cb))
 
     # ------------------------------------------------------------------
     # Context manager

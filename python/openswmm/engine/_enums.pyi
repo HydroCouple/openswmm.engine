@@ -617,3 +617,80 @@ class RoutingTotal(IntEnum):
     SEEP_LOSS = 8
     INIT_STORAGE = 9
     FINAL_STORAGE = 10
+
+
+# =============================================================================
+# Dividers / forcing / references (added in the 2026 binding refresh)
+# =============================================================================
+
+class DividerType(IntEnum):
+    """Flow-diversion method for a DIVIDER node. Mirrors ``SWMM_DividerType``."""
+
+    CUTOFF = 0
+    OVERFLOW = 1
+    TABULAR = 2
+    WEIR = 3
+
+
+class ForcingType(IntEnum):
+    """Forcing channel for a runtime override. Mirrors ``SWMM_ForcingType``."""
+
+    NODE_LAT_INFLOW = 0
+    NODE_HEAD_BOUNDARY = 1
+    NODE_QUALITY = 2
+    LINK_FLOW = 3
+    LINK_SETTING = 4
+    SUBCATCH_RAINFALL = 5
+    SUBCATCH_EVAP = 6
+    GAGE_RAINFALL = 7
+
+
+class ForcingPersist(IntEnum):
+    """Lifetime of a runtime forcing override. Mirrors ``SWMM_ForcingPersist``."""
+
+    RESET = 0
+    PERSIST = 1
+
+
+class RefType(IntEnum):
+    """Object kind holding a reference (editing API). Mirrors ``SWMM_RefType``."""
+
+    NODE = 0
+    LINK = 1
+    SUBCATCH = 2
+    GAGE = 3
+    TABLE = 4
+    TRANSECT = 5
+    INLET_USAGE = 6
+
+
+class TableType(IntEnum):
+    """Table type code from ``swmm_table_get_type``. Mirrors ``openswmm::TableType``."""
+
+    TIMESERIES = 0
+    CURVE_STORAGE = 1
+    CURVE_DIVERSION = 2
+    CURVE_RATING = 3
+    CURVE_SHAPE = 4
+    CURVE_CONTROL = 5
+    CURVE_TIDAL = 6
+    CURVE_PUMP1 = 7
+    CURVE_PUMP2 = 8
+    CURVE_PUMP3 = 9
+    CURVE_PUMP4 = 10
+    CURVE_PUMP5 = 11
+
+
+class FilePathRole(IntEnum):
+    """External-file slot selector for ``swmm_file_path_get/set``. Mirrors ``SWMM_FilePathRole``."""
+
+    RAINFALL = 1
+    RUNOFF = 2
+    RDII = 3
+    INFLOWS = 4
+    OUTFLOWS = 5
+    HOTSTART_USE = 6
+    CLIMATE_TEMP = 7
+    HOTSTART_SAVE = 8
+    RAINGAGE_DATA = 9
+    TIMESERIES_DATA = 10

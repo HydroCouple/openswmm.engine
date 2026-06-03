@@ -119,6 +119,19 @@ class Surface2D:
         """
         ...
 
+    def get_vertex_xyz(self, idx: int) -> tuple[float, float, float]:
+        """Scalar ``(x, y, z)`` for one mesh vertex (project units).
+
+        @rtype: tuple[float, float, float]
+        """
+        ...
+    def get_vertex_head(self, idx: int) -> float:
+        """Scalar water-surface head at one mesh vertex (project units).
+
+        @rtype: float
+        """
+        ...
+
     def get_triangle_vertices(self, idx: int) -> tuple[int, int, int]:
         """Return the (v0, v1, v2) vertex indices for a triangle.
 
@@ -642,5 +655,76 @@ class Surface2D:
         @return: Cumulative boundary flux through the edge.
         @rtype: float
         @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def get_edge_bc_flow(self, tri_idx: int, edge: int) -> float:
+        """Return the prescribed flow per metre for a SPECIFIED_FLOW edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Prescribed flow per metre of edge (C{m^3/s/m}).
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def set_edge_bc_flow(self, tri_idx: int, edge: int, flow: float) -> None:
+        """Set the prescribed flow per metre for a SPECIFIED_FLOW edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @param flow: Prescribed flow per metre of edge (C{m^3/s/m}).
+        @type flow: float
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        ...
+
+    def set_edge_bc_tseries_name(
+        self, tri_idx: int, edge: int, name: str
+    ) -> None:
+        """Set the timeseries name driving a SPECIFIED_STAGE edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @param name: Timeseries name, or C{""} to clear.
+        @type name: str
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        ...
+
+    def set_edge_bc_flow_tseries_name(
+        self, tri_idx: int, edge: int, name: str
+    ) -> None:
+        """Set the timeseries name driving a SPECIFIED_FLOW edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @param name: Timeseries name, or C{""} to clear.
+        @type name: str
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        ...
+
+    def set_edge_bc_rating_curve_name(
+        self, tri_idx: int, edge: int, name: str
+    ) -> None:
+        """Set the rating-curve name driving a RATING_CURVE edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @param name: Rating-curve name, or C{""} to clear.
+        @type name: str
+        @raise RuntimeError: If the C API rejects the assignment.
         """
         ...

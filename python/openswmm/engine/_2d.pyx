@@ -138,6 +138,38 @@ cdef class Surface2D:
         """
         _check(swmm_2d_set_vertex_z(self._engine, idx, z))
 
+    def get_vertex_xyz(self, int idx):
+        """Return the C{(x, y, z)} coordinates of one mesh vertex.
+
+        Scalar counterpart to :meth:`get_vertex_coords` (which returns
+        whole-mesh arrays). Values are in project coordinate/vertical units.
+
+        @param idx: Vertex index (0-based).
+        @type idx: int
+        @return: C{(x, y, z)}.
+        @rtype: tuple[float, float, float]
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef double x = 0.0, y = 0.0, z = 0.0
+        _check(swmm_2d_vertex_get_xyz(self._engine, idx, &x, &y, &z))
+        return (x, y, z)
+
+    def get_vertex_head(self, int idx) -> float:
+        """Return the water-surface head at one mesh vertex.
+
+        Scalar counterpart to :meth:`get_heads`. Value is in project
+        vertical units.
+
+        @param idx: Vertex index (0-based).
+        @type idx: int
+        @return: Head at the vertex.
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef double head = 0.0
+        _check(swmm_2d_vertex_get_head(self._engine, idx, &head))
+        return head
+
     def get_triangle_vertices(self, int idx):
         """Return the (v0, v1, v2) vertex indices for a triangle.
 
@@ -774,3 +806,139 @@ cdef class Surface2D:
         cdef double cum_flux = 0.0
         _check(swmm_2d_get_edge_bc_cum_flux(self._engine, tri_idx, edge, &cum_flux))
         return cum_flux
+
+    def get_edge_bc_flow(self, int tri_idx, int edge) -> float:
+        """Return the prescribed flow per metre for a SPECIFIED_FLOW edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Prescribed flow per metre of edge (C{m^3/s/m}).
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef double flow = 0.0
+        _check(swmm_2d_get_edge_bc_flow(self._engine, tri_idx, edge, &flow))
+        return flow
+
+    def set_edge_bc_flow(self, int tri_idx, int edge, double flow):
+        """Set the prescribed flow per metre for a SPECIFIED_FLOW edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @param flow: Prescribed flow per metre of edge (C{m^3/s/m}).
+        @type flow: float
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        _check(swmm_2d_set_edge_bc_flow(self._engine, tri_idx, edge, flow))
+
+    def set_edge_bc_tseries_name(self, int tri_idx, int edge, str name):
+        """Set the timeseries name driving a SPECIFIED_STAGE edge.
+
+        The name is resolved against the model's timeseries registry on the
+        next forcing-step lookup. Pass an empty string to clear the slot
+        (reverting to the constant C{edge_bc_head}).
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @param name: Timeseries name, or C{""} to clear.
+        @type name: str
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        cdef bytes b = name.encode("utf-8")
+        _check(swmm_2d_set_edge_bc_tseries_name(self._engine, tri_idx, edge, b))
+
+    def set_edge_bc_flow_tseries_name(self, int tri_idx, int edge, str name):
+        """Set the timeseries name driving a SPECIFIED_FLOW edge.
+
+        Same resolution contract as L{set_edge_bc_tseries_name}. Pass an
+        empty string to clear the slot.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @param name: Timeseries name, or C{""} to clear.
+        @type name: str
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        cdef bytes b = name.encode("utf-8")
+        _check(swmm_2d_set_edge_bc_flow_tseries_name(self._engine, tri_idx, edge, b))
+
+    def set_edge_bc_rating_curve_name(self, int tri_idx, int edge, str name):
+        """Set the rating-curve name driving a RATING_CURVE edge.
+
+        The stage-to-flow lookup is resolved against the model's curve
+        registry on the next forcing-step lookup. Pass an empty string to
+        clear the slot.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @param name: Rating-curve name, or C{""} to clear.
+        @type name: str
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        cdef bytes b = name.encode("utf-8")
+        _check(swmm_2d_set_edge_bc_rating_curve_name(self._engine, tri_idx, edge, b))
+
+    # ------------------------------------------------------------------
+    # Edge conveyance factor (§11A of docs/2dModelStrategy.md)
+    # ------------------------------------------------------------------
+
+    def get_edge_conveyance(self, int tri, int edge) -> float:
+        """Return the per-edge conveyance factor in C{[0, 1]}.
+
+        @param tri: Triangle index in C{[0, triangle_count)}.
+        @type tri: int
+        @param edge: Local edge index in C{{0, 1, 2}}.
+        @type edge: int
+        @return: Conveyance factor (1.0 = unrestricted, 0.0 = wall).
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef double c = 1.0
+        _check(swmm_2d_get_edge_conveyance(self._engine, tri, edge, &c))
+        return c
+
+    def set_edge_conveyance(self, int tri, int edge, double conveyance):
+        """Set the per-edge conveyance factor in C{[0, 1]}.
+
+        For interior edges the value is mirrored to the partner slot on
+        the neighbouring triangle so mass conservation is preserved.
+
+        @param tri: Triangle index in C{[0, triangle_count)}.
+        @type tri: int
+        @param edge: Local edge index in C{{0, 1, 2}}.
+        @type edge: int
+        @param conveyance: New value in C{[0, 1]}.
+        @type conveyance: float
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        _check(swmm_2d_set_edge_conveyance(self._engine, tri, edge, conveyance))
+
+    def get_edge_conveyance_bulk(self):
+        """Return a NumPy array of all per-edge conveyance factors.
+
+        Length is C{triangle_count * 3}, indexed C{[tri*3 + edge]}.
+        """
+        import numpy as np
+        cdef int nt = 0
+        _check(swmm_2d_triangle_count(self._engine, &nt))
+        cdef double[::1] out = np.empty(nt * 3, dtype=np.float64)
+        cdef double* p = &out[0]
+        cdef int err
+        with nogil:
+            err = swmm_2d_get_edge_conveyance_bulk(self._engine, p)
+        _check(err)
+        return np.asarray(out)
+
+    def reset_edge_conveyance(self):
+        """Reset every edge's conveyance factor to 1.0 (unrestricted)."""
+        _check(swmm_2d_reset_edge_conveyance(self._engine))

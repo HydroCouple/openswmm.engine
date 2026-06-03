@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from os import PathLike
 from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, Optional, Union
 
-from ._enums import EngineState
+from ._enums import EngineState, FlowUnits
 
 if TYPE_CHECKING:
     # Imports for type-checking only — avoids cycles at runtime because the
@@ -252,7 +252,45 @@ class Solver:
     def report_start_datetime(self, value: datetime) -> None: ...
     @property
     def current_datetime(self) -> datetime: ...
+    @property
+    def sim_start_time(self) -> datetime:
+        """Resolved simulation start (``swmm_get_start_time``).
 
+        @rtype: datetime
+        """
+        ...
+    @property
+    def sim_end_time(self) -> datetime:
+        """Resolved simulation end (``swmm_get_end_time``).
+
+        @rtype: datetime
+        """
+        ...
+    @property
+    def event_count(self) -> int:
+        """Number of ``[EVENTS]`` entries on the model.
+
+        @rtype: int
+        """
+        ...
+
+    # ------------- Units -------------
+    @property
+    def flow_units(self) -> FlowUnits:
+        """The model's flow-unit system, resolved from ``FLOW_UNITS``.
+
+        @return: Active flow-unit system; read this to interpret the
+            project-unit magnitudes returned by all getters.
+        @rtype: L{FlowUnits}
+        """
+        ...
+    @property
+    def unit_system(self) -> str:
+        """``'US'`` (CFS/GPM/MGD) or ``'SI'`` (CMS/LPS/MLD).
+
+        @rtype: str
+        """
+        ...
     # ------------- Views -------------
     @property
     def options(self) -> SimulationOptions: ...
@@ -317,6 +355,14 @@ class Solver:
     def set_warning_callback(
         self, callback: Optional[Callable[[int, str], None]]
     ) -> None: ...
+    def set_progress_callback(
+        self, callback: Optional[Callable[[float], None]]
+    ) -> None:
+        """Register a progress callback receiving the elapsed fraction [0, 1].
+
+        @param callback: ``(elapsed_frac: float) -> None`` or ``None`` to clear.
+        """
+        ...
 
     # ------------- Context manager -------------
     def __enter__(self) -> "Solver": ...

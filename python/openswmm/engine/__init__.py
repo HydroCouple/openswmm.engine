@@ -189,7 +189,7 @@ from ._report import (
 # =============================================================================
 from ._nodes import Nodes
 from ._links import Links
-from ._subcatchments import Subcatchments
+from ._subcatchments import Subcatchments, Aquifers, Snowpacks
 from ._gages import Gages
 
 # =============================================================================
@@ -253,7 +253,11 @@ from ._enums import (
     # Output variables
     OutSubcatchVar, OutNodeVar, OutLinkVar, OutSystemVar,
     # Forcing & patterns
-    ForcingMode, ForcingTarget, PatternType,
+    ForcingMode, ForcingTarget, ForcingType, ForcingPersist, PatternType,
+    # Nodes / editing
+    DividerType, RefType,
+    # Tables / model files
+    TableType, FilePathRole,
     # Mass-balance totals
     RunoffTotal, RoutingTotal,
 )
@@ -279,6 +283,7 @@ __all__ = [
     "NodeFloodingEntry", "LinkFlowEntry", "PumpEntry", "SubcatchmentEntry",
     # --- Domain object access (hydraulics) ---
     "Nodes", "Links", "Subcatchments", "Gages",
+    "Aquifers", "Snowpacks",
     # --- Simulation state & I/O ---
     "HotStart", "MassBalance", "Statistics", "OutputReader",
     # --- Hydrology, water quality, and time-varying inputs ---
@@ -301,7 +306,9 @@ __all__ = [
     # --- Enumerations: output variables ---
     "OutSubcatchVar", "OutNodeVar", "OutLinkVar", "OutSystemVar",
     # --- Enumerations: forcing & patterns ---
-    "ForcingMode", "ForcingTarget", "PatternType",
+    "ForcingMode", "ForcingTarget", "ForcingType", "ForcingPersist", "PatternType",
+    "DividerType", "RefType",
+    "TableType", "FilePathRole",
     # --- Enumerations: mass-balance totals ---
     "RunoffTotal", "RoutingTotal",
 ]
