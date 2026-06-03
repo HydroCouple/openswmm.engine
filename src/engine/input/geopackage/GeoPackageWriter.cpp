@@ -5,6 +5,7 @@
  */
 
 #include "GeoPackageWriter.hpp"
+#include "ExternalContentWriter.hpp"
 #include "GeoPackageSchema.hpp"
 #include "GpkgUtils.hpp"
 #include "GpkgGeometry.hpp"
@@ -1172,6 +1173,12 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
     write_lid_usage(db, ctx, simulation_id);
     write_rdii(db, ctx, simulation_id);
     write_treatment(db, ctx, simulation_id);
+
+    // Slice IO-7 — fan out every external-file reference (timeseries
+    // FILE, raingage FILE, climate FILE, [FILES] routing/hotstart) into
+    // the Part D content tables created in IO-5. Runs inside the same
+    // transaction so a Part D parse failure rolls back the whole save.
+    write_external_content(db, ctx, simulation_id);
 
     txn.commit();
 }

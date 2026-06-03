@@ -131,7 +131,12 @@ from ._enums import (
     # Forcing & patterns
     ForcingMode as ForcingMode,
     ForcingTarget as ForcingTarget,
+    ForcingType as ForcingType,
+    ForcingPersist as ForcingPersist,
     PatternType as PatternType,
+    # Nodes / editing
+    DividerType as DividerType,
+    RefType as RefType,
     # Mass-balance totals
     RoutingTotal as RoutingTotal,
     RunoffTotal as RunoffTotal,

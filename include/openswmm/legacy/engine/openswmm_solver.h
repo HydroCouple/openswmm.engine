@@ -727,6 +727,23 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_close(void);
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getMassBalErr(float *runoffErr, float *flowErr, float *qualErr);
 
 /*!
+ * \brief Get the running (timestep-by-timestep) continuity errors while a
+ *        simulation is in progress.
+ *
+ * Unlike swmm_getMassBalErr (which only returns the finalised errors after
+ * swmm_end), this recomputes the runoff and flow-routing continuity errors from
+ * the live mass-balance accumulators and current system storage, so it may be
+ * called between swmm_step calls to surface progress-time continuity. Calling it
+ * mid-run has no effect on the final reported errors (massbal_report recomputes
+ * them at swmm_end). Returns zeros if called before swmm_start or after swmm_end.
+ *
+ * \param[out] runoffErr Running runoff continuity error (percent)
+ * \param[out] flowErr Running flow-routing continuity error (percent)
+ * \return Error code
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getRunningMassBalErr(float *runoffErr, float *flowErr);
+
+/*!
  * \brief Get the version of the SWMM engine.
  * \return Version number
  */
@@ -754,6 +771,28 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getErrorFromCode(int error_code, char *o
  * \return Number of warning messages issued
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getWarnings(void);
+
+/*!
+ * \brief Callback type invoked for each warning the engine emits.
+ * \param message Null-terminated warning text.
+ * \param userData Opaque pointer supplied to swmm_setWarningCallback.
+ */
+typedef void (*swmm_LegacyWarningCallback)(const char *message, void *userData);
+
+/*!
+ * \brief Registers a callback invoked for each warning the engine emits.
+ *
+ * Mirrors the refactored engine's warning callback so a host (e.g. the legacy
+ * worker process) can stream warnings live instead of only reading them from
+ * the report (.rpt) file. Register BEFORE swmm_open to also capture warnings
+ * issued during input parsing (e.g. unknown section/option keywords). The
+ * callback is process-global, which is safe because the legacy engine runs
+ * single-threaded within a process.
+ * \param[in] cb Callback function, or NULL to disable.
+ * \param[in] userData Opaque pointer passed through to the callback.
+ * \return 0 on success.
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setWarningCallback(swmm_LegacyWarningCallback cb, void *userData);
 
 /*!
  * \brief Retrieves the number of objects of a specific type.

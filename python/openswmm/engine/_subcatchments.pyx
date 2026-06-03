@@ -253,10 +253,10 @@ class CoverageView(MutableMapping):
 cdef class Subcatchment:
     """A single subcatchment."""
 
-    cdef object _solver
-    cdef int _index
-    cdef long long _gen
-    cdef str _captured_id
+    cdef readonly object _solver
+    cdef readonly int _index
+    cdef readonly long long _gen
+    cdef readonly str _captured_id
     cdef object _stats
     cdef object _infiltration
     cdef object _coverage
@@ -278,6 +278,27 @@ cdef class Subcatchment:
         _check_fresh(self)
         cdef const char* raw = swmm_subcatch_id(_h(self._solver), self._index)
         return raw.decode('utf-8') if raw != NULL else ""
+
+    @property
+    def tag(self) -> str:
+        """The subcatchment's free-form tag string (INP C{[TAGS]} section).
+
+        Empty string when the subcatchment has no tag. Assigning C{None} or
+        C{""} clears it. The tag is keyed by index and persists across
+        L{rename}.
+
+        @rtype: str
+        """
+        _check_fresh(self)
+        cdef char buf[256]
+        _check(swmm_subcatch_get_tag(_h(self._solver), self._index, buf, 256))
+        return buf.decode('utf-8')
+
+    @tag.setter
+    def tag(self, value) -> None:
+        _check_fresh(self)
+        cdef bytes b = (value or "").encode('utf-8')
+        _check(swmm_subcatch_set_tag(_h(self._solver), self._index, b))
 
     @property
     def index(self) -> int:
@@ -725,3 +746,128 @@ cdef class Subcatchments:
             return f"<Subcatchments n={len(self)}>"
         except Exception:
             return "<Subcatchments (engine closed)>"
+
+
+# =============================================================================
+# Aquifers and snowpacks (model-global named objects)
+# =============================================================================
+
+cdef class _NamedObjects:
+    """Shared base for the simple name-keyed C{Aquifers} / C{Snowpacks}
+    collections.
+
+    Each entry is just a string id; the C API exposes only
+    count/index/id/add for these objects, so the collection yields ids and
+    supports membership + add. Subclasses bind the four C functions.
+    """
+
+    cdef object _solver
+
+    def __init__(self, solver):
+        self._solver = solver
+
+    cdef int _count(self) except -1:
+        raise NotImplementedError
+
+    cdef int _index(self, bytes b) except? -2:
+        raise NotImplementedError
+
+    cdef const char* _id(self, int idx):
+        raise NotImplementedError
+
+    cdef int _add(self, bytes b) except -1:
+        raise NotImplementedError
+
+    def __len__(self) -> int:
+        return self._count()
+
+    def get_index(self, str obj_id) -> int:
+        """Resolve the zero-based index of an object from its string id.
+
+        @rtype: int
+        @raise KeyError: If no object has that id.
+        """
+        cdef bytes b = obj_id.encode('utf-8')
+        cdef int i = self._index(b)
+        if i < 0:
+            raise KeyError(obj_id)
+        return i
+
+    def get_id(self, int idx) -> str:
+        """Return the string id of the object at C{idx}.
+
+        @rtype: str
+        """
+        cdef const char* raw = self._id(idx)
+        return raw.decode('utf-8') if raw != NULL else ""
+
+    def __iter__(self):
+        cdef int n = self._count()
+        for i in range(n):
+            yield self.get_id(i)
+
+    def __contains__(self, key) -> bool:
+        if isinstance(key, str):
+            try:
+                self.get_index(key)
+                return True
+            except KeyError:
+                return False
+        return 0 <= int(key) < self._count()
+
+    def add(self, str obj_id) -> int:
+        """Append a new object and return its zero-based index.
+
+        @param obj_id: Unique identifier for the new object.
+        @rtype: int
+        """
+        cdef bytes b = obj_id.encode('utf-8')
+        self._add(b)
+        self._solver._bump_generation()
+        return self._count() - 1
+
+
+cdef class Aquifers(_NamedObjects):
+    """C{solver.aquifers} — name-keyed collection of C{[AQUIFERS]} entries."""
+
+    cdef int _count(self) except -1:
+        return swmm_aquifer_count(_h(self._solver))
+
+    cdef int _index(self, bytes b) except? -2:
+        return swmm_aquifer_index(_h(self._solver), b)
+
+    cdef const char* _id(self, int idx):
+        return swmm_aquifer_id(_h(self._solver), idx)
+
+    cdef int _add(self, bytes b) except -1:
+        _check(swmm_aquifer_add(_h(self._solver), b))
+        return 0
+
+    def __repr__(self) -> str:
+        try:
+            return f"<Aquifers n={len(self)}>"
+        except Exception:
+            return "<Aquifers (engine closed)>"
+
+
+cdef class Snowpacks(_NamedObjects):
+    """C{solver.snowpacks} — name-keyed collection of C{[SNOWPACKS]} entries."""
+
+    cdef int _count(self) except -1:
+        return swmm_snowpack_count(_h(self._solver))
+
+    cdef int _index(self, bytes b) except? -2:
+        return swmm_snowpack_index(_h(self._solver), b)
+
+    cdef const char* _id(self, int idx):
+        return swmm_snowpack_id(_h(self._solver), idx)
+
+    cdef int _add(self, bytes b) except -1:
+        _check(swmm_snowpack_add(_h(self._solver), b))
+        return 0
+
+    def __repr__(self) -> str:
+        try:
+            return f"<Snowpacks n={len(self)}>"
+        except Exception:
+            return "<Snowpacks (engine closed)>"

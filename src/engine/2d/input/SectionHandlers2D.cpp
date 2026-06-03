@@ -17,7 +17,9 @@
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
+#include <string_view>
 
 namespace openswmm::twoD {
 
@@ -362,12 +364,55 @@ std::string parse2DBoundaryConditionsLine(
 
 
 // ============================================================================
+// §11A — [2D_EDGE_CONVEYANCE] line parser
+// ============================================================================
+
+std::string parse2DEdgeConveyanceLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_rows)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() < 3) {
+        return "[2D_EDGE_CONVEYANCE] needs FROM_VERTEX TO_VERTEX CONVEYANCE";
+    }
+
+    SurfaceRouter2D::PendingEdgeConveyanceRow row;
+    bool ok = false;
+
+    row.v_from = tryParseInt(tokens[0], ok);
+    if (!ok || row.v_from < 0)
+        return "[2D_EDGE_CONVEYANCE] invalid FROM_VERTEX: " + tokens[0];
+
+    row.v_to = tryParseInt(tokens[1], ok);
+    if (!ok || row.v_to < 0)
+        return "[2D_EDGE_CONVEYANCE] invalid TO_VERTEX: " + tokens[1];
+
+    if (row.v_from == row.v_to)
+        return "[2D_EDGE_CONVEYANCE] FROM_VERTEX and TO_VERTEX must differ";
+
+    row.conveyance = tryParseDouble(tokens[2], ok);
+    if (!ok)
+        return "[2D_EDGE_CONVEYANCE] invalid CONVEYANCE: " + tokens[2];
+
+    // Q1 — strict [0, 1] clamp at parse time.
+    if (row.conveyance < 0.0 || row.conveyance > 1.0) {
+        return "[2D_EDGE_CONVEYANCE] CONVEYANCE must be in [0, 1] (got "
+               + tokens[2] + ")";
+    }
+
+    pending_rows.push_back(std::move(row));
+    return {};
+}
+
+
+// ============================================================================
 // register2DSections
 // ============================================================================
 
 void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
+                        std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                         input::SectionRegistry& registry)
 {
     registry.register_custom("2D_OPTIONS",
@@ -402,6 +447,14 @@ void register2DSections(MeshData& mesh,
             return parse2DBoundaryConditionsLine(tokens, pending_bc_rows);
         }));
 
+    // §11A — [2D_EDGE_CONVEYANCE] accumulates pending rows; drained
+    // during SurfaceRouter2D::initialize() after buildMeshTopology so
+    // the vertex-pair → (tri, edge_local) lookup table is available.
+    registry.register_custom("2D_EDGE_CONVEYANCE",
+        makeSectionHandler([&pending_ec_rows](const std::vector<std::string>& tokens) {
+            return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
+        }));
+
     // [2D_MESH_FILE] — capture only the first FILE token; mesh is loaded
     // after the main .inp is fully parsed (see SWMMEngine::open).
     registry.register_custom("2D_MESH_FILE",
@@ -426,6 +479,7 @@ void register2DSections(MeshData& mesh,
 std::string load2DMeshExternalFile(MeshData& mesh,
                                    SolverOptions2D& opts,
                                    std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
+                                   std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                                    const std::string& mesh_file,
                                    const std::string& inp_base_dir)
 {
@@ -465,12 +519,69 @@ std::string load2DMeshExternalFile(MeshData& mesh,
             return parse2DBoundaryConditionsLine(tokens, pending_bc_rows);
         }));
 
+    // §11A — external .2dm may carry its own [2D_EDGE_CONVEYANCE].
+    mini.register_custom("2D_EDGE_CONVEYANCE",
+        makeSectionHandler([&pending_ec_rows](const std::vector<std::string>& tokens) {
+            return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
+        }));
+
+    // The external .2dm may carry its own `;; UNITS:` header. Scan first
+    // so SurfaceRouter2D::initialize sees the right flag before it runs.
+    prescan2DUnitsHeader(p.string(), opts);
+
     openswmm::input::InputReader reader(mini);
     openswmm::SimulationContext  dummy;
     if (!reader.read(p.string(), dummy)) {
         return "2D_MESH_FILE: error reading '" + p.string() + "': " + dummy.error_message;
     }
     return {};
+}
+
+// ============================================================================
+// prescan2DUnitsHeader
+// ============================================================================
+
+void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts)
+{
+    std::ifstream in(inp_path);
+    if (!in) return;  // file missing — caller will surface the error
+
+    auto trim = [](std::string s) {
+        const auto issp = [](unsigned char c) { return std::isspace(c) != 0; };
+        while (!s.empty() && issp(static_cast<unsigned char>(s.back())))   s.pop_back();
+        std::size_t i = 0;
+        while (i < s.size() && issp(static_cast<unsigned char>(s[i]))) ++i;
+        return s.substr(i);
+    };
+
+    std::string line;
+    while (std::getline(in, line)) {
+        const std::string t = trim(line);
+        if (t.size() < 2 || t[0] != ';' || t[1] != ';') continue;
+        std::string rest = trim(t.substr(2));
+        // Match "UNITS:" prefix case-insensitively.
+        constexpr std::string_view kKey = "UNITS:";
+        if (rest.size() < kKey.size()) continue;
+        bool match = true;
+        for (std::size_t i = 0; i < kKey.size(); ++i) {
+            if (std::toupper(static_cast<unsigned char>(rest[i])) != kKey[i]) {
+                match = false; break;
+            }
+        }
+        if (!match) continue;
+        const std::string value = trim(rest.substr(kKey.size()));
+        // Recognised metric markers.  Anything else (including absent /
+        // unknown / explicit "ft") leaves the flag at its current value.
+        const bool si =
+               iequals(value, "SI (m)")
+            || iequals(value, "m")
+            || iequals(value, "metre")
+            || iequals(value, "metres")
+            || iequals(value, "meter")
+            || iequals(value, "meters");
+        if (si) opts.mesh_units_si = true;
+        // We keep scanning so a later UNITS: line in the same file wins.
+    }
 }
 
 } // namespace openswmm::twoD

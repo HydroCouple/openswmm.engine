@@ -226,6 +226,30 @@ cdef class OutfallView:
         _check(swmm_node_set_outfall_timeseries(
             _h(self._node._solver), self._node._index, ts_idx))
 
+    def get_tidal_curve(self) -> int:
+        """Return the tidal-curve index of a C{TIDAL} outfall.
+
+        @return: Index of the tidal curve assigned to this outfall.
+        @rtype: int
+        """
+        _check_fresh(self._node)
+        cdef int curve_idx = 0
+        _check(swmm_node_get_outfall_tidal(
+            _h(self._node._solver), self._node._index, &curve_idx))
+        return curve_idx
+
+    def get_timeseries(self) -> int:
+        """Return the stage-time-series index of a C{TIMESERIES} outfall.
+
+        @return: Index of the stage time series assigned to this outfall.
+        @rtype: int
+        """
+        _check_fresh(self._node)
+        cdef int ts_idx = 0
+        _check(swmm_node_get_outfall_timeseries(
+            _h(self._node._solver), self._node._index, &ts_idx))
+        return ts_idx
+
     @property
     def param(self) -> float:
         _check_fresh(self._node)
@@ -308,10 +332,10 @@ cdef class Node:
     the collection.
     """
 
-    cdef object _solver
-    cdef int _index
-    cdef long long _gen
-    cdef str _captured_id
+    cdef readonly object _solver
+    cdef readonly int _index
+    cdef readonly long long _gen
+    cdef readonly str _captured_id
     cdef object _stats
     cdef object _storage
     cdef object _outfall
@@ -335,6 +359,26 @@ cdef class Node:
         _check_fresh(self)
         cdef const char* raw = swmm_node_id(_h(self._solver), self._index)
         return raw.decode('utf-8') if raw != NULL else ""
+
+    @property
+    def tag(self) -> str:
+        """The node's free-form tag string (from the INP C{[TAGS]} section).
+
+        Empty string when the node has no tag. Assigning C{None} or C{""}
+        clears it. The tag is keyed by index and persists across L{rename}.
+
+        @rtype: str
+        """
+        _check_fresh(self)
+        cdef char buf[256]
+        _check(swmm_node_get_tag(_h(self._solver), self._index, buf, 256))
+        return buf.decode('utf-8')
+
+    @tag.setter
+    def tag(self, value) -> None:
+        _check_fresh(self)
+        cdef bytes b = (value or "").encode('utf-8')
+        _check(swmm_node_set_tag(_h(self._solver), self._index, b))
 
     @property
     def index(self) -> int:

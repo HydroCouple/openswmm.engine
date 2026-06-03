@@ -193,6 +193,18 @@ void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
                 F_e *= t * t * (3.0 - 2.0 * t);
             }
 
+            // §11A — per-edge conveyance factor in [0, 1] (Q4: LAST, after
+            // the wet/dry shutoff).  Default 1.0 (no-op).  Mass-conservation
+            // argument: for an interior edge shared by cells A and B, the
+            // two slots [A*3+e_A] and [B*3+e_B] compute the SAME |F_e| (up
+            // to sign) from the antisymmetric centroid Δh / Δx; multiplying
+            // both by the SAME factor (enforced by the partner-mirror in
+            // SurfaceRouter2D::initialize) preserves antisymmetry → no
+            // spurious source/sink.  c == 0 → F_e == 0, identical to the
+            // boundary early-return — an interior edge with conveyance 0
+            // is a wall in everything but its storage location.
+            F_e *= mesh.edge_conveyance[idx];
+
             state.edge_flux[idx] = F_e;
         }
     }
@@ -215,6 +227,88 @@ void assembleRHS(const MeshData& mesh, const SurfaceStateData& state,
 
         // RHS: dψ/dt = (1/A) Σ F_j + sources
         ydot[i] = flux_sum * inv_area + state.rainfall[i] + state.coupling_flux[i];
+    }
+}
+
+
+void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
+                            double dt) {
+    int nt = mesh.n_triangles();
+    if (dt <= 0.0) {
+        std::fill(state.cell_continuity_err.begin(),
+                  state.cell_continuity_err.end(), 0.0);
+        return;
+    }
+    double inv_dt = 1.0 / dt;
+
+    for (int i = 0; i < nt; ++i) {
+        double area = mesh.tri_area[i];
+
+        // Net inflow (m³/s): edge_flux is inflow-positive volumetric flux.
+        double flux_sum = 0.0;
+        for (int e = 0; e < 3; ++e) {
+            flux_sum += state.edge_flux[i * 3 + e];
+        }
+
+        // Source volume rate (m³/s): same source terms assembleRHS uses.
+        double source = (state.rainfall[i] + state.coupling_flux[i]) * area;
+
+        // Storage change rate (m³/s).
+        double storage_rate =
+            (state.depth[i] - state.old_depth[i]) * area * inv_dt;
+
+        state.cell_continuity_err[i] = storage_rate - (flux_sum + source);
+    }
+}
+
+
+void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
+                          const SolverOptions2D& opts) {
+    int nt = mesh.n_triangles();
+    constexpr double kQMax = 10.0;  // clamp |b_e| against wet/dry-front spikes
+
+    for (int i = 0; i < nt; ++i) {
+        double depth = state.depth[i];
+        if (depth < opts.dry_depth) {
+            state.face_vx[i] = 0.0;
+            state.face_vy[i] = 0.0;
+            continue;
+        }
+
+        // Normal equations for N·q ≈ b: NᵀN (2×2 SPD) and Nᵀb.
+        double a00 = 0.0, a01 = 0.0, a11 = 0.0;
+        double b0  = 0.0, b1  = 0.0;
+        for (int e = 0; e < 3; ++e) {
+            int idx = i * 3 + e;
+            double nx  = mesh.edge_nx[idx];
+            double ny  = mesh.edge_ny[idx];
+            double len = mesh.edge_length[idx];
+            if (len <= 1.0e-12) continue;
+            double b = state.edge_flux[idx] / len;  // m²/s normal speed
+            if (b >  kQMax) b =  kQMax;
+            if (b < -kQMax) b = -kQMax;
+            a00 += nx * nx;
+            a01 += nx * ny;
+            a11 += ny * ny;
+            b0  += nx * b;
+            b1  += ny * b;
+        }
+
+        double det = a00 * a11 - a01 * a01;
+        if (std::abs(det) < 1.0e-12) {
+            state.face_vx[i] = 0.0;
+            state.face_vy[i] = 0.0;
+            continue;
+        }
+        double inv_det = 1.0 / det;
+        // Specific-discharge vector (m²/s).
+        double qx = ( a11 * b0 - a01 * b1) * inv_det;
+        double qy = (-a01 * b0 + a00 * b1) * inv_det;
+
+        // Velocity (m/s) = specific discharge / depth.
+        double inv_depth = 1.0 / depth;
+        state.face_vx[i] = qx * inv_depth;
+        state.face_vy[i] = qy * inv_depth;
     }
 }
 

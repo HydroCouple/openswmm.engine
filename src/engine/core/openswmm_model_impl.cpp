@@ -304,7 +304,10 @@ SWMM_ENGINE_API int swmm_files_get(SWMM_Engine engine,
     // HOTSTART_SAVE_* operate on slot 0 of the vector as back-compat
     // sugar for clients that only surface a single hot-start save.
     else if (k == "HOTSTART_SAVE_PATH")
-        val = f.hotstart_saves.empty() ? std::string{} : f.hotstart_saves.front().path;
+        // Explicit .str() avoids the ternary-ambiguity that arises from
+        // FilePathPair's two-way string convertibility (Slice IO-2).
+        val = f.hotstart_saves.empty() ? std::string{}
+                                       : f.hotstart_saves.front().path.str();
     else if (k == "HOTSTART_SAVE_DATETIME")
         val = std::to_string(f.hotstart_saves.empty()
                               ? 0.0 : f.hotstart_saves.front().datetime);
@@ -359,6 +362,110 @@ SWMM_ENGINE_API int swmm_files_set(SWMM_Engine engine,
     }
     else return SWMM_ERR_BADPARAM;
 
+    return SWMM_OK;
+}
+
+// ============================================================================
+// External-file path slots — typed accessors (Slice IO-9)
+//
+// One uniform pair of (get, set) endpoints over every external-file slot
+// on the in-memory model, regardless of which struct holds it. Reaches:
+//   - FilesSpec slots (rainfall/runoff/rdii/inflows/outflows/hotstart_use)
+//   - Hot-start save vector entries (by decimal index)
+//   - Per-gage raingage file slots   (by gage id)
+//   - Per-series timeseries file slots (by series id)
+//   - Climate temp_file slot         (scalar)
+//
+// `get` returns both `.absolute` (resolved, ready for fopen) and
+// `.original` (token as authored, possibly relative). `set` updates
+// `.original`; FilePathPair::operator= clears `.absolute` so the next
+// PostParseResolver pass refills it from the new token.
+//
+// See include/openswmm/engine/openswmm_model.h for the public contract
+// and openswmm.gui/docs/IO_PORTABILITY_PLAN.md §3.3.
+// ============================================================================
+
+namespace {
+
+// Resolve a (role, owner) pair to a slot pointer. Returns nullptr when the
+// owner is missing in the model. `mutable_ctx` toggles read vs write — both
+// share the same dispatch table; the const cast is contained here.
+openswmm::FilePathPair* resolve_slot(SWMM_Engine             engine,
+                                      SWMM_FilePathRole       role,
+                                      const char*             owner) {
+    auto& ctx = to_engine(engine)->context();
+    switch (role) {
+        case SWMM_FILE_RAINFALL:      return &ctx.files.rainfall_path;
+        case SWMM_FILE_RUNOFF:        return &ctx.files.runoff_path;
+        case SWMM_FILE_RDII:          return &ctx.files.rdii_path;
+        case SWMM_FILE_INFLOWS:       return &ctx.files.inflows_path;
+        case SWMM_FILE_OUTFLOWS:      return &ctx.files.outflows_path;
+        case SWMM_FILE_HOTSTART_USE:  return &ctx.files.hotstart_use_path;
+        case SWMM_FILE_CLIMATE_TEMP:  return &ctx.options.temp_file;
+
+        case SWMM_FILE_HOTSTART_SAVE: {
+            if (!owner) return nullptr;
+            int idx = 0;
+            try { idx = std::stoi(owner); } catch (...) { return nullptr; }
+            if (idx < 0 ||
+                static_cast<std::size_t>(idx) >= ctx.files.hotstart_saves.size())
+                return nullptr;
+            return &ctx.files.hotstart_saves[
+                static_cast<std::size_t>(idx)].path;
+        }
+        case SWMM_FILE_RAINGAGE_DATA: {
+            if (!owner) return nullptr;
+            int idx = ctx.gage_names.find(owner);
+            if (idx < 0 ||
+                static_cast<std::size_t>(idx) >= ctx.gages.file_path.size())
+                return nullptr;
+            return &ctx.gages.file_path[static_cast<std::size_t>(idx)];
+        }
+        case SWMM_FILE_TIMESERIES_DATA: {
+            if (!owner) return nullptr;
+            int idx = ctx.table_names.find(owner);
+            if (idx < 0 || idx >= static_cast<int>(ctx.tables.tables.size()))
+                return nullptr;
+            return &ctx.tables.tables[static_cast<std::size_t>(idx)].file_path;
+        }
+    }
+    return nullptr;
+}
+
+} // anonymous
+
+SWMM_ENGINE_API int
+swmm_file_path_get(SWMM_Engine          engine,
+                   SWMM_FilePathRole    role,
+                   const char*          owner,
+                   char*                absolute_buf,
+                   int                  absolute_buflen,
+                   char*                original_buf,
+                   int                  original_buflen) {
+    CHECK_HANDLE(engine);
+    if (!absolute_buf || absolute_buflen <= 0 ||
+        !original_buf || original_buflen <= 0) {
+        return SWMM_ERR_BADPARAM;
+    }
+    openswmm::FilePathPair* slot = resolve_slot(engine, role, owner);
+    if (!slot) return SWMM_ERR_BADPARAM;
+    fill_buf(absolute_buf, absolute_buflen, slot->absolute);
+    fill_buf(original_buf, original_buflen, slot->original);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int
+swmm_file_path_set(SWMM_Engine          engine,
+                   SWMM_FilePathRole    role,
+                   const char*          owner,
+                   const char*          new_path) {
+    CHECK_HANDLE(engine);
+    if (!new_path) return SWMM_ERR_BADPARAM;
+    openswmm::FilePathPair* slot = resolve_slot(engine, role, owner);
+    if (!slot) return SWMM_ERR_BADPARAM;
+    // FilePathPair::operator=(std::string) clears `.absolute` so callers
+    // see a stale resolution gone after the assignment.
+    *slot = std::string(new_path);
     return SWMM_OK;
 }
 

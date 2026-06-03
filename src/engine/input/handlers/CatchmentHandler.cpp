@@ -64,6 +64,12 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.gages.ts_name,       std::string{});
     grow(ctx.gages.file_path,     std::string{});
     grow(ctx.gages.col_name,      std::string{});
+    grow(ctx.gages.station_id,    std::string{});
+    grow(ctx.gages.rain_units,    0);
+    grow(ctx.gages.file_first_date,    0.0);
+    grow(ctx.gages.file_last_date,     0.0);
+    grow(ctx.gages.file_periods_precip, 0L);
+    if (ctx.gages.rain_series.size() < n) ctx.gages.rain_series.resize(n);
     grow(ctx.gages.file_format,   RainFileFormat::UNKNOWN);
     grow(ctx.gages.interval_sec,  3600);
     grow(ctx.gages.snow_factor,   1.0);
@@ -263,13 +269,29 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
             }
             (void)colon; // suppress warning
 
-            // Optional trailing rainfall scaling factor.  The new-engine FILE
-            // grammar is more compact than legacy (no staID/units in the
-            // token stream), so the trailing token — if a positive
-            // double — is interpreted as the scale factor.
-            if (tok.size() > 6) {
-                double sf = to_double(tok[6], 1.0);
-                if (sf > 0.0) ctx.gages.scale_factor[idx] = sf;
+            // Standard SWMM FILE grammar (legacy gage.c gage_readParams):
+            //   Name Format Interval SCF FILE Fname Station Units [StartDate] [SCF]
+            // tok[5]=Fname, tok[6]=Station, tok[7]=Units (IN|MM),
+            // tok[8]=optional start date, tok[9]=optional rainfall scale factor.
+            // Station + Units are required for STAN_PRCP; the compact `path:col`
+            // (USER_CSV) form keeps its older behaviour (trailing scale factor).
+            if (ctx.gages.file_format[idx] == RainFileFormat::STAN_PRCP) {
+                if (tok.size() > 6) ctx.gages.station_id[idx] = tok[6];
+                if (tok.size() > 7) {
+                    const std::string u = Tokenizer::to_upper(tok[7]);
+                    ctx.gages.rain_units[idx] = (u == "MM") ? 1 : 0; // default IN
+                }
+                // The trailing scale factor is honoured only when present as a
+                // positive number (a start date token would not parse as one).
+                if (tok.size() > 9) {
+                    double sf = to_double(tok[9], 1.0);
+                    if (sf > 0.0) ctx.gages.scale_factor[idx] = sf;
+                }
+            } else {
+                if (tok.size() > 6) {
+                    double sf = to_double(tok[6], 1.0);
+                    if (sf > 0.0) ctx.gages.scale_factor[idx] = sf;
+                }
             }
         }
         if (!pl.comment.empty())

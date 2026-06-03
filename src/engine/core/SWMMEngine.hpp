@@ -535,6 +535,15 @@ private:
     void postOutputSnapshot(double dt_step) noexcept;
 
     /**
+     * @brief Deep-copy the active 2D surface state into a snapshot.
+     * @details No-op when the 2D module is inactive. Shared by the
+     *          full-results path and the 2D-only path in postOutputSnapshot,
+     *          so 2D HDF5 output can be driven independently of save_results_.
+     * @param snap  The snapshot to fill with surface_* fields.
+     */
+    void fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept;
+
+    /**
      * @brief Accumulate current node/link results into the averaging accumulators.
      * @details Called every routing step when rpt_averages is true.
      */

@@ -141,8 +141,10 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
             z_2d = mesh.tri_cz[ci];
         }
 
-        // 1D node head
-        double h_1d = nodes.head[ni];
+        // 1D node head. The 1D engine stores heads in feet for US flow units;
+        // convert to the 2D solver's SI internal length so dh below is in
+        // metres (opts.len_1d_to_2d == 1.0 for SI projects).
+        double h_1d = nodes.head[ni] * opts.len_1d_to_2d;
 
         // Available water on each side, used for the source-side wet/dry
         // ramp below.
@@ -179,7 +181,7 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
         } else {
             depth_2d_avail = state.depth[ci];
         }
-        double depth_1d_avail = nodes.depth[ni];
+        double depth_1d_avail = nodes.depth[ni] * opts.len_1d_to_2d;
 
         // Head difference (positive = 2D → 1D)
         double dh = h_2d - h_1d;
@@ -192,8 +194,8 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
         // The effective-area widening from inlet-grate to manhole-opening
         // is also anchored at z_top so both transitions share one threshold.
         // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C1, C2).
-        double z_top = nodes.invert_elev[ni] + nodes.full_depth[ni]
-                       + nodes.sur_depth[ni];
+        double z_top = (nodes.invert_elev[ni] + nodes.full_depth[ni]
+                       + nodes.sur_depth[ni]) * opts.len_1d_to_2d;
         double h_max = std::max(h_1d, h_2d);
         double A_eff = effectiveArea(h_max, z_top, nodes.full_depth[ni],
                                       cp.area, cp.area * 2.0);
@@ -231,14 +233,31 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
 
         // Throttle return flow (2D → 1D) if node is at capacity
         if (Q > 0.0) {
-            // Q > 0 means flow from 2D into 1D node (drainage)
-            double available = nodes.full_volume[ni] - nodes.volume[ni];
+            // Q > 0 means flow from 2D into 1D node (drainage). Node volumes
+            // are ft³ for US flow units; convert to m³ so the Q_max cap is in
+            // the 2D solver's SI flow units (matching the SI Q above).
+            double available = (nodes.full_volume[ni] - nodes.volume[ni])
+                               * opts.vol_1d_to_2d;
             if (available > 0.0 && dt > 0.0) {
                 double Q_max = available / dt;
                 Q = std::min(Q, Q_max);
             } else if (available <= 0.0) {
                 // Node full — only allow if 1D head < 2D head (surcharge drain-back)
                 if (h_1d >= h_2d) Q = 0.0;
+            }
+
+            // Cap drainage at the water actually available in the receiving 2D
+            // cell (ci = cp.cell_idx, where the sink is applied below). Without
+            // this, the constant per-step sink can pull the cell's H below its
+            // bed — the H-formulation floors depth at max(H−z,0), so less water
+            // leaves the 2D domain than the 1D node was credited (Q·dt), which
+            // shows up as a 2D continuity error. Uses the start-of-step depth,
+            // mirroring the 1D node-capacity clamp above. Same clamped Q feeds
+            // both sides of the exchange, so the boundary stays conservative.
+            if (dt > 0.0) {
+                double avail_2d = state.depth[ci] * mesh.tri_area[ci];  // m³
+                double Q_max_2d = avail_2d / dt;
+                Q = std::min(Q, Q_max_2d);
             }
         }
 
@@ -250,7 +269,11 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
         // next routing step, which both feeds lat_flow for the DW solver
         // and folds the sign-split volumes into routing_external (positive
         // side) and routing_flooding (negative side, |Q|).
-        nodes.coupling_inflow[ni] += Q;
+        //
+        // Q is in the 2D solver's SI flow units (m³/s); the 1D engine's
+        // lateral-inflow sum and continuity accumulators are in ft³/s for US
+        // flow units, so convert back here (opts.flow_2d_to_1d == 1.0 for SI).
+        nodes.coupling_inflow[ni] += Q * opts.flow_2d_to_1d;
 
         // Record coupling flux back to 2D cell (negative = drainage out of 2D)
         double tri_area = mesh.tri_area[ci];
@@ -264,7 +287,8 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
 void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
                               const MeshData& mesh,
                               const SurfaceStateData& state,
-                              SimulationContext& ctx) {
+                              SimulationContext& ctx,
+                              const SolverOptions2D& opts) {
     auto& nodes = ctx.nodes;
 
     // C4 refactor: this routine no longer writes nodes.head/depth directly.
@@ -307,7 +331,10 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
 
         double depth_2d = h_2d - bed_z;
         if (depth_2d > DRY_DEPTH_THRESHOLD) {
-            nodes.outfall_2d_head[ni] = h_2d;
+            // h_2d is SI (metres). The 1D consumer (Outfall::setAllOutfallDepths)
+            // compares against h_standard in feet for US flow units, so convert
+            // back here (opts.len_2d_to_1d == 1.0 for SI projects).
+            nodes.outfall_2d_head[ni] = h_2d * opts.len_2d_to_1d;
         } else {
             nodes.outfall_2d_head[ni] = -1.0e30;  // dry — no override
         }
@@ -319,6 +346,7 @@ void transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
                                 const MeshData& mesh,
                                 SurfaceStateData& state,
                                 const SimulationContext& ctx,
+                                const SolverOptions2D& opts,
                                 double /*dt*/) {
     auto& nodes = ctx.nodes;
 
@@ -328,8 +356,10 @@ void transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
         auto ni = static_cast<std::size_t>(cp.node_idx);
         int ci = cp.cell_idx;
 
-        // Outfall outflow from 1D solver (computed during routing)
-        double Q_outfall = nodes.outflow[ni];
+        // Outfall outflow from 1D solver (computed during routing). This is in
+        // ft³/s for US flow units; convert to the 2D solver's SI flow units
+        // before injecting as a cell source (opts.flow_1d_to_2d == 1.0 for SI).
+        double Q_outfall = nodes.outflow[ni] * opts.flow_1d_to_2d;
 
         if (Q_outfall <= 0.0) continue;
 

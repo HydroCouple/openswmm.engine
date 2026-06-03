@@ -32,6 +32,7 @@
 #ifndef OPENSWMM_ENGINE_TABLE_DATA_HPP
 #define OPENSWMM_ENGINE_TABLE_DATA_HPP
 
+#include "../core/FilePathPair.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -133,7 +134,8 @@ struct Table {
     // ---- File-backed time series support ----
     bool               is_file_based = false; ///< True if data is read from external file
     std::FILE*         file_handle = nullptr;  ///< Open file handle (owned)
-    std::string        file_path;              ///< Path to external data file
+    FilePathPair       file_path;              ///< Path to external data file
+                                               ///< (carries {absolute, original})
     TableBlock         first_boundary;         ///< First rows from file (for validation)
     TableBlock         last_boundary;          ///< Last rows from file (for validation)
     TableBlock         cache;                  ///< Sliding cache window for file lookups

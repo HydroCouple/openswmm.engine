@@ -14,6 +14,7 @@
 #include "../core/DateTime.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../data/TableData.hpp"
+#include <cctype>
 #include <cmath>
 #include <algorithm>
 #include <string>
@@ -65,10 +66,20 @@ void InflowSolver::init(SimulationContext& ctx) {
     // ---- Build pattern name → index map for fast lookup ----
     // PatternData stores names; we build a local map to resolve DWF pattern
     // names to indices.  The pattern index is the position in ctx.patterns.
+    //
+    // Lookups are case-INSENSITIVE to match legacy: SWMM's symbol table
+    // upper-cases every character (hash.c UCHAR macro), so a [DWF] row that
+    // references "Kurve4" resolves to a [PATTERNS] entry named "kurve4".
+    // A case-sensitive std::unordered_map silently missed these, leaving the
+    // inflow with no time pattern (a flat factor of 1.0).
+    auto upper = [](std::string s) {
+        for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        return s;
+    };
     std::unordered_map<std::string, int> pattern_map;
     int np = ctx.patterns.count();
     for (int i = 0; i < np; ++i) {
-        pattern_map[ctx.patterns.names[static_cast<std::size_t>(i)]] = i;
+        pattern_map[upper(ctx.patterns.names[static_cast<std::size_t>(i)])] = i;
     }
 
     // ---- Copy patterns into runtime structures ----
@@ -110,7 +121,7 @@ void InflowSolver::init(SimulationContext& ctx) {
         // Resolve baseline pattern name → pattern index
         const auto& pat_name = ctx.ext_inflows.pattern_name[ui];
         if (!pat_name.empty()) {
-            auto pit = pattern_map.find(pat_name);
+            auto pit = pattern_map.find(upper(pat_name));
             ext_inflows_.base_pat_idx[ui] = (pit != pattern_map.end()) ? pit->second : -1;
         } else {
             ext_inflows_.base_pat_idx[ui] = -1;
@@ -150,7 +161,7 @@ void InflowSolver::init(SimulationContext& ctx) {
 
         for (int p = 0; p < 4; ++p) {
             if (pat_fields[p]->empty()) continue;
-            auto pit = pattern_map.find(*pat_fields[p]);
+            auto pit = pattern_map.find(upper(*pat_fields[p]));
             if (pit == pattern_map.end()) continue;
             int pat_idx = pit->second;
             // Sort into correct position by pattern type

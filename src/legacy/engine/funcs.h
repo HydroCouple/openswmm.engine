@@ -319,6 +319,16 @@ void report_writeInputErrorMsg(int k, int sect, char *line, long lineCount);
 void report_writeWarningMsg(char *msg, char *id);
 
 /*!
+ * \brief Invokes the registered warning callback (if any) with a message.
+ * \param[in] msg Warning text; leading whitespace/newlines are skipped.
+ *
+ * Used by the warning-emit sites that write the report line directly (input
+ * parsing, options parsing) so their warnings also stream to a host, in
+ * addition to being invoked from report_writeWarningMsg.
+ */
+void report_invokeWarningCallback(const char *msg);
+
+/*!
  * \brief Writes the date where a time series' data is out of order
  * \param[in] code Error code
  * \param[in] tseries Pointer to a time series

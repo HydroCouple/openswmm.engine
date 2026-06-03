@@ -32,17 +32,26 @@
 
 namespace openswmm {
 
+// NOTE ON UNITS: the 1D node / link / subcatchment / gage / system fields below
+// are delivered in PROJECT DISPLAY units (e.g. m, m³, CMS for an SI project;
+// ft, ft³, CFS for US). The engine applies a single conversion boundary
+// (convertSnapshotToDisplay) when building the snapshot, so output plugins
+// write values directly without re-applying Ucf/Qcf. Dimensionless fields
+// (capacity, soil moisture, pollutant concentrations) are unconverted. The 2D
+// surface_* arrays on SimulationSnapshot are the exception: they are SI-native
+// solver outputs and are NOT touched by the boundary.
+
 /**
  * @brief Snapshot of node state at an output time step.
  * @ingroup engine_plugins
  */
 struct NodeSnapshot {
-    std::vector<double> depth;          ///< Water depth [project length units]
-    std::vector<double> head;           ///< Hydraulic head [project length units]
-    std::vector<double> volume;         ///< Stored volume [project volume units]
-    std::vector<double> lateral_inflow; ///< Lateral inflow [project flow units]
-    std::vector<double> total_inflow;   ///< Total inflow [project flow units]
-    std::vector<double> overflow;       ///< Overflow / surcharge [project flow units]
+    std::vector<double> depth;          ///< Water depth [display length units]
+    std::vector<double> head;           ///< Hydraulic head [display length units]
+    std::vector<double> volume;         ///< Stored volume [display volume units]
+    std::vector<double> lateral_inflow; ///< Lateral inflow [display flow units]
+    std::vector<double> total_inflow;   ///< Total inflow [display flow units]
+    std::vector<double> overflow;       ///< Overflow / surcharge [display flow units]
 };
 
 /**
@@ -50,10 +59,10 @@ struct NodeSnapshot {
  * @ingroup engine_plugins
  */
 struct LinkSnapshot {
-    std::vector<double> flow;       ///< Flow rate [internal flow units]
-    std::vector<double> depth;      ///< Water depth [internal length units]
-    std::vector<double> velocity;   ///< Mean velocity [internal length/time]
-    std::vector<double> volume;     ///< Link volume [internal volume units]
+    std::vector<double> flow;       ///< Flow rate [display flow units]
+    std::vector<double> depth;      ///< Water depth [display length units]
+    std::vector<double> velocity;   ///< Mean velocity [display length/time]
+    std::vector<double> volume;     ///< Link volume [display volume units]
     std::vector<double> capacity;   ///< Full-flow capacity fraction [0, 1]
 };
 
@@ -62,13 +71,13 @@ struct LinkSnapshot {
  * @ingroup engine_plugins
  */
 struct SubcatchSnapshot {
-    std::vector<double> rainfall;   ///< Rainfall rate [internal rate units]
-    std::vector<double> snow_depth; ///< Snow depth [internal length units]
-    std::vector<double> evap;       ///< Evaporation [internal rate units]
-    std::vector<double> infil;      ///< Infiltration [internal rate units]
-    std::vector<double> runoff;     ///< Surface runoff [internal flow units]
-    std::vector<double> gw_flow;    ///< Groundwater outflow [internal flow units]
-    std::vector<double> gw_elev;    ///< Groundwater elevation [internal length units]
+    std::vector<double> rainfall;   ///< Rainfall rate [display rate units]
+    std::vector<double> snow_depth; ///< Snow depth [display depth units]
+    std::vector<double> evap;       ///< Evaporation [display rate units]
+    std::vector<double> infil;      ///< Infiltration [display rate units]
+    std::vector<double> runoff;     ///< Surface runoff [display flow units]
+    std::vector<double> gw_flow;    ///< Groundwater outflow [display flow units]
+    std::vector<double> gw_elev;    ///< Groundwater elevation [display length units]
     std::vector<double> soil_moist; ///< Soil moisture [-]
 };
 
@@ -227,6 +236,9 @@ struct SimulationSnapshot {
     std::vector<double> surface_net_source;     ///< Net source/sink (m/s), per face
     std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
     std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m)
+    std::vector<double> surface_face_vx;        ///< Cell-centred velocity X (m/s), per face
+    std::vector<double> surface_face_vy;        ///< Cell-centred velocity Y (m/s), per face
+    std::vector<double> surface_continuity_err; ///< Per-cell continuity residual (m³/s), per face
 };
 
 } /* namespace openswmm */

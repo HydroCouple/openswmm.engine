@@ -628,8 +628,10 @@ protected:
         groups_.build(params_.data(), 2);
     }
 
-    void initSolver(SurchargeMethod method) {
+    void initSolver(SurchargeMethod method,
+                    NodeContinuity nc = NodeContinuity::EXPLICIT) {
         solver.surcharge_method = method;
+        solver.node_continuity = nc;
         solver.anderson_accel = true;
         solver.init(3, 2, groups_, ctx);
     }
@@ -659,8 +661,9 @@ TEST_F(AASkipFlagTest, FreeSurfaceNoSkip) {
 }
 
 TEST_F(AASkipFlagTest, ExtranSurchargedSkips) {
-    // EXTRAN surcharge: surcharged nodes should skip AA
-    initSolver(SurchargeMethod::EXTRAN);
+    // EXTRAN + EXPLICIT continuity: surcharged nodes skip AA (branch-discontinuous
+    // dQ/dH surcharge operator violates AA's smooth-G assumption).
+    initSolver(SurchargeMethod::EXTRAN, NodeContinuity::EXPLICIT);
 
     // Set depths above crown (surcharge) and maintain with lateral inflow
     double crown0 = ctx.nodes.full_depth[0];
@@ -684,8 +687,37 @@ TEST_F(AASkipFlagTest, ExtranSurchargedSkips) {
 
     const auto& flags = solver.aaSkipFlags();
     // J0 is surcharged → skip
-    EXPECT_EQ(flags[0], 1) << "Surcharged J0 must skip AA under EXTRAN";
+    EXPECT_EQ(flags[0], 1) << "Surcharged J0 must skip AA under EXTRAN + EXPLICIT";
     // J1 is not surcharged → no skip
+    EXPECT_EQ(flags[1], 0) << "Free-surface J1 should not skip AA";
+}
+
+TEST_F(AASkipFlagTest, ExtranSurchargedNotSkippedSemiImplicit) {
+    // EXTRAN + SEMI_IMPLICIT continuity: the unified Crank-Nicolson operator is
+    // C1-smooth through the surcharge transition, so surcharged junctions are
+    // AA-ELIGIBLE — the surcharge skip must NOT fire.
+    initSolver(SurchargeMethod::EXTRAN, NodeContinuity::SEMI_IMPLICIT);
+
+    double crown0 = ctx.nodes.full_depth[0];
+    ctx.nodes.depth[0] = crown0 + 1.0;
+    ctx.nodes.old_depth[0] = crown0 + 1.0;
+    ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + crown0 + 1.0;
+    ctx.nodes.lat_flow[0] = 100.0;
+    solver.nodeSurchargedFlag(0) = 1;
+
+    ctx.nodes.depth[1] = 0.5;
+    ctx.nodes.old_depth[1] = 0.5;
+    ctx.nodes.head[1] = ctx.nodes.invert_elev[1] + 0.5;
+
+    ctx.nodes.depth[2] = 0.5;
+    ctx.nodes.old_depth[2] = 0.5;
+    ctx.nodes.head[2] = ctx.nodes.invert_elev[2] + 0.5;
+
+    solver.execute(ctx, 10.0);
+
+    const auto& flags = solver.aaSkipFlags();
+    // J0 is surcharged but SEMI_IMPLICIT smooths the operator → NOT skipped
+    EXPECT_EQ(flags[0], 0) << "Surcharged J0 must NOT skip AA under SEMI_IMPLICIT";
     EXPECT_EQ(flags[1], 0) << "Free-surface J1 should not skip AA";
 }
 
@@ -763,6 +795,35 @@ TEST_F(AASkipFlagTest, SlotFarFromKinkNoSkip) {
     const auto& flags = solver.aaSkipFlags();
     EXPECT_EQ(flags[0], 0) << "Shallow SLOT flow should not skip AA at J0";
     EXPECT_EQ(flags[1], 0) << "Shallow SLOT flow should not skip AA at J1";
+}
+
+TEST_F(AASkipFlagTest, SlotKinkStillSkipsUnderSemiImplicit) {
+    // Guard: the SEMI_IMPLICIT gating relaxes ONLY the EXTRAN surcharge skip.
+    // The static-slot near-cutoff kink is a link-level geometry kink, so it must
+    // STILL skip the conduit's end nodes under SEMI_IMPLICIT, exactly as it does
+    // under EXPLICIT.
+    initSolver(SurchargeMethod::SLOT, NodeContinuity::SEMI_IMPLICIT);
+
+    double yFull = ctx.links.xsect_y_full[0];      // 2.0 ft
+    double d_near_kink = 0.99 * yFull;             // ratio 0.99 ∈ [0.98, 1.02]
+    ctx.nodes.depth[0] = d_near_kink;
+    ctx.nodes.old_depth[0] = d_near_kink;
+    ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + d_near_kink;
+
+    ctx.nodes.depth[1] = d_near_kink;
+    ctx.nodes.old_depth[1] = d_near_kink;
+    ctx.nodes.head[1] = ctx.nodes.invert_elev[1] + d_near_kink;
+
+    ctx.nodes.depth[2] = 0.5;
+    ctx.nodes.old_depth[2] = 0.5;
+    ctx.nodes.head[2] = ctx.nodes.invert_elev[2] + 0.5;
+
+    solver.execute(ctx, 10.0);
+
+    const auto& flags = solver.aaSkipFlags();
+    // C0 (J0→J1) midpoint near the slot kink → both end nodes still skipped
+    EXPECT_EQ(flags[0], 1) << "SLOT kink must still skip J0 under SEMI_IMPLICIT";
+    EXPECT_EQ(flags[1], 1) << "SLOT kink must still skip J1 under SEMI_IMPLICIT";
 }
 
 TEST_F(AASkipFlagTest, AADisabledNoFlags) {

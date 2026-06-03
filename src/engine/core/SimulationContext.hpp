@@ -62,6 +62,7 @@
 
 #include <cmath>
 #include <functional>
+#include "FilePathPair.hpp"
 #include "../data/GageData.hpp"
 #include "../data/LinkData.hpp"
 #include "../data/NameIndex.hpp"
@@ -145,30 +146,30 @@ enum class FileMode {
  * @ingroup engine_core
  */
 struct HotstartSaveEntry {
-    std::string path;
+    FilePathPair path;
     /// Optional `SAVE HOTSTART` datetime as a SWMM decimal day.
     /// `0.0` means "no datetime — write at end of run".
-    double      datetime = 0.0;
+    double       datetime = 0.0;
 };
 
 struct FilesSpec {
-    FileMode    rainfall_mode = FileMode::NONE;
-    std::string rainfall_path;
+    FileMode     rainfall_mode = FileMode::NONE;
+    FilePathPair rainfall_path;
 
-    FileMode    runoff_mode   = FileMode::NONE;
-    std::string runoff_path;
+    FileMode     runoff_mode   = FileMode::NONE;
+    FilePathPair runoff_path;
 
-    FileMode    rdii_mode     = FileMode::NONE;
-    std::string rdii_path;
+    FileMode     rdii_mode     = FileMode::NONE;
+    FilePathPair rdii_path;
 
     /// Legacy semantics: USE only.
-    std::string inflows_path;
+    FilePathPair inflows_path;
 
     /// Legacy semantics: SAVE only.
-    std::string outflows_path;
+    FilePathPair outflows_path;
 
     /// Legacy semantics: USE — single hot-start input file.
-    std::string hotstart_use_path;
+    FilePathPair hotstart_use_path;
 
     /// Legacy semantics: SAVE — one or more hot-start output files,
     /// each with an optional datetime (SWMM decimal day, 0 = end of
@@ -835,6 +836,36 @@ struct SimulationContext {
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
     } mass_balance;
+
+    /**
+     * @brief System mass-balance totals for the optional 2D surface domain.
+     *
+     * @details Accumulated each executed 2D step by SurfaceRouter2D. Unlike
+     *          the 1D MassBalance (ft³ for US flow units), all volumes here are
+     *          in the 2D solver's SI internal units (m³). This is a SEPARATE
+     *          balance from the 1D routing balance: the coupling terms are
+     *          inflows/outflows of the 2D domain, signed oppositely to the 1D
+     *          routing_external/routing_flooding terms.
+     */
+    struct MassBalance2D {
+        double init_storage          = 0.0;  ///< Initial surface storage (m³)
+        double final_storage         = 0.0;  ///< Latest surface storage (m³)
+        double rainfall_in           = 0.0;  ///< Cumulative rainfall volume (m³)
+        double coupling_1d_to_2d_in  = 0.0;  ///< Cumulative 1D→2D spill into 2D (m³)
+        double coupling_2d_to_1d_out = 0.0;  ///< Cumulative 2D→1D drainage out (m³)
+        double outfall_in            = 0.0;  ///< Cumulative 1D outfall discharge into 2D (m³)
+        double boundary_in           = 0.0;  ///< Cumulative boundary inflow (m³)
+        double boundary_out          = 0.0;  ///< Cumulative boundary outflow (m³)
+        bool   active                = false;///< True if the 2D module ran
+
+        /// 2D surface continuity error (fraction).
+        double error() const {
+            double total_in  = rainfall_in + coupling_1d_to_2d_in + outfall_in
+                               + boundary_in + init_storage;
+            double total_out = coupling_2d_to_1d_out + boundary_out + final_storage;
+            return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
+        }
+    } mass_balance_2d;
 
     // =========================================================================
     // Routing time-step statistics

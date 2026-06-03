@@ -5,6 +5,7 @@
  */
 
 #include "GeoPackageReader.hpp"
+#include "ExternalContentReader.hpp"
 #include "GpkgUtils.hpp"
 #include "GpkgGeometry.hpp"
 
@@ -1085,7 +1086,9 @@ static void read_treatment(sqlite3* db, SimulationContext& ctx,
 // Public API
 // ============================================================================
 
-int read_model(sqlite3* db, SimulationContext& ctx, const std::string& simulation_id) {
+int read_model(sqlite3* db, SimulationContext& ctx,
+                const std::string& simulation_id,
+                const std::string& scratch_dir) {
     try {
         read_options(db, ctx, simulation_id);
         read_nodes(db, ctx, simulation_id);
@@ -1104,6 +1107,11 @@ int read_model(sqlite3* db, SimulationContext& ctx, const std::string& simulatio
         read_lid_usage(db, ctx, simulation_id);
         read_rdii(db, ctx, simulation_id);
         read_treatment(db, ctx, simulation_id);
+
+        // Slice IO-8 — hydrate external-file slots from Part D tables
+        // and materialise scratch files. Skipped when no scratch_dir
+        // was provided (callers that only need model definition).
+        read_external_content(db, ctx, simulation_id, scratch_dir);
         return 0;
     } catch (const std::exception&) {
         return -1;
@@ -1114,7 +1122,9 @@ int read_from_file(const std::string& path, SimulationContext& ctx,
                    const std::string& simulation_id) {
     try {
         auto db = open_database(path, SQLITE_OPEN_READONLY);
-        return read_model(db.get(), ctx, simulation_id);
+        // Slice IO-8: scratch dir lives next to the .gpkg.
+        const std::string scratch = scratchDirFor(path);
+        return read_model(db.get(), ctx, simulation_id, scratch);
     } catch (const std::exception&) {
         return -1;
     }

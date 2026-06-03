@@ -232,6 +232,57 @@ SWMM_ENGINE_API int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine,
                                                  double* flux);
 
 /* =========================================================================
+ * 2D Edge Conveyance (§11A of docs/2dModelStrategy.md)
+ *
+ * Per-edge multiplicative factor in [0, 1] that attenuates the
+ * diffusion-wave flux across the edge (default 1.0 = unrestricted, 0.0 =
+ * wall). Storage is flat 2D `[tri * 3 + edge_local]`.  Interior edges
+ * are symmetric: setting the value on one slot mirrors to the partner
+ * slot on the neighbour triangle so mass conservation is preserved.
+ *
+ * Safe to call between routing steps. Calling during a routing step is
+ * undefined — the CVODE sub-stepper holds a const reference to the mesh.
+ * ========================================================================= */
+
+/** @brief Get the per-edge conveyance factor for one edge.
+ *  @param tri  Triangle index in `[0, triangle_count)`.
+ *  @param edge Local edge index in `{0, 1, 2}`.
+ *  @param conveyance Output value in `[0, 1]`.
+ *  @return SWMM_OK on success; SWMM_ERR_BADINDEX on out-of-range tri/edge.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_edge_conveyance(SWMM_Engine engine,
+                                                  int tri, int edge,
+                                                  double* conveyance);
+
+/** @brief Set the per-edge conveyance factor for one edge.
+ *
+ *  The value is rejected if outside `[0, 1]` (SWMM_ERR_BADPARAM).  When
+ *  the edge is interior (has a neighbour) the value is mirrored to the
+ *  partner slot on the neighbour triangle so antisymmetry is preserved.
+ *
+ *  @param tri  Triangle index in `[0, triangle_count)`.
+ *  @param edge Local edge index in `{0, 1, 2}`.
+ *  @param conveyance New value in `[0, 1]`.
+ *  @return SWMM_OK on success; SWMM_ERR_BADINDEX / SWMM_ERR_BADPARAM on
+ *          invalid arguments.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_edge_conveyance(SWMM_Engine engine,
+                                                  int tri, int edge,
+                                                  double conveyance);
+
+/** @brief Bulk get conveyance factor at every edge of every triangle.
+ *
+ *  Output array must be pre-allocated to `triangle_count * 3` doubles,
+ *  indexed `[tri*3 + edge_local]`.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_edge_conveyance_bulk(SWMM_Engine engine,
+                                                       double* conveyance);
+
+/** @brief Reset every edge's conveyance factor to 1.0 (unrestricted).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_reset_edge_conveyance(SWMM_Engine engine);
+
+/* =========================================================================
  * 2D State — Per-Vertex (reconstructed heads)
  * ========================================================================= */
 

@@ -76,6 +76,45 @@ void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
 void assembleRHS(const MeshData& mesh, const SurfaceStateData& state,
                   double* ydot);
 
+/**
+ * @brief Compute the per-cell continuity residual (local mass-balance check).
+ *
+ * Evaluates the discrete semi-discrete balance for each cell:
+ *   residual_i = (ψ_i − ψ_old_i)·A_i/dt
+ *                − ( Σ_e F_e  +  (rainfall_i + coupling_flux_i)·A_i )
+ * where F_e = edge_flux[i·3+e] is the inflow-positive volumetric edge flux
+ * (m³/s). A perfectly conservative step yields ~0 (first-order diagnostic,
+ * not the solver's internal error). Reads old_depth, depth, edge_flux,
+ * rainfall, coupling_flux; writes cell_continuity_err (m³/s).
+ *
+ * Call AFTER the solver advance, with old_depth holding the start-of-step
+ * depths (i.e. after save_state() but before the next save_state()).
+ *
+ * @param mesh  Mesh geometry (tri_area).
+ * @param state Surface state (writes cell_continuity_err).
+ * @param dt    Step over which old_depth→depth evolved (s).
+ */
+void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
+                            double dt);
+
+/**
+ * @brief Reconstruct cell-centred velocity (vx, vy) from edge fluxes (RT0).
+ *
+ * For each wet cell, solves the 3×2 least-squares system N·q ≈ b in closed
+ * form via the normal equations (NᵀN)·q = Nᵀb, where each row of N is the
+ * outward edge normal and b_e = edge_flux_e / edge_length_e is the
+ * depth-integrated normal speed (m²/s). The resulting specific-discharge
+ * vector is divided by cell depth to give velocity (m/s). Dry cells
+ * (depth < dry_depth) get zero velocity. Mirrors the GUI RT0 reconstruction
+ * (swmm2dresultslayer.cpp applyCurrentFlux_) without its scene-space Y-flip.
+ *
+ * @param mesh  Mesh geometry (edge normals, lengths).
+ * @param state Surface state (reads edge_flux, depth; writes face_vx/face_vy).
+ * @param opts  Solver options (dry_depth).
+ */
+void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
+                          const SolverOptions2D& opts);
+
 } // namespace openswmm::twoD
 
 #endif // OPENSWMM_ENGINE_2D_SURFACE_FLUX_CALCULATOR_HPP

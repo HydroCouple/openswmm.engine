@@ -94,11 +94,13 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
  * @param mesh  Mesh data.
  * @param state 2D surface state.
  * @param ctx   Simulation context.
+ * @param opts  2D solver options (for unit-system coupling factors).
  */
 void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
                               const MeshData& mesh,
                               const SurfaceStateData& state,
-                              SimulationContext& ctx);
+                              SimulationContext& ctx,
+                              const SolverOptions2D& opts);
 
 /**
  * @brief Transfer outfall discharges into 2D coupling cells.
@@ -110,12 +112,14 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
  * @param mesh  Mesh data.
  * @param state 2D surface state.
  * @param ctx   Simulation context.
+ * @param opts  2D solver options (for unit-system coupling factors).
  * @param dt    Routing timestep (s).
  */
 void transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
                                 const MeshData& mesh,
                                 SurfaceStateData& state,
                                 const SimulationContext& ctx,
+                                const SolverOptions2D& opts,
                                 double dt);
 
 } // namespace openswmm::twoD

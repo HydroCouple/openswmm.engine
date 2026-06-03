@@ -25,6 +25,8 @@
 #ifndef OPENSWMM_ENGINE_POST_PARSE_RESOLVER_HPP
 #define OPENSWMM_ENGINE_POST_PARSE_RESOLVER_HPP
 
+#include <string>
+
 namespace openswmm {
     struct SimulationContext;
 }
@@ -41,6 +43,56 @@ namespace openswmm::input {
  * @param ctx  Simulation context (mutated in place).
  */
 void resolve_cross_references(SimulationContext& ctx);
+
+/**
+ * @brief Slice IO-3: Resolve every external-file slot's `.original` token
+ *        against an anchor directory and populate `.absolute`.
+ *
+ * @details Walks `ctx.files` (rainfall/runoff/rdii/inflows/outflows/hotstart),
+ *          `ctx.gages.file_path[]`, `ctx.options.temp_file`, and every
+ *          timeseries `Table::file_path`. For each non-empty slot,
+ *          assigns `slot.absolute = io::resolveRelative(slot.original,
+ *          anchor_dir)`. Empty slots get an empty `.absolute`.
+ *
+ *          Called as part of `resolve_cross_references` after all
+ *          handlers have run. Exposed here so unit tests can exercise the
+ *          resolution pass without building a complete simulation
+ *          context.
+ *
+ *          The `original` token is left untouched — `InpWriter` continues
+ *          to consume it verbatim until Slice IO-4 wires the
+ *          rebase-on-write step.
+ *
+ * @param ctx          Simulation context whose external-file slots are
+ *                     resolved in place.
+ * @param anchor_dir   Directory the `.original` tokens were authored
+ *                     against; typically `io::parentDir(ctx.inp_file_path)`.
+ *                     Empty means "no anchor" — relative tokens are left
+ *                     lexically normalised against an empty base.
+ */
+void resolve_external_file_slots(SimulationContext& ctx,
+                                  const std::string& anchor_dir);
+
+/**
+ * @brief Recompute a single conduit's derived dynamic-wave flow properties.
+ *
+ * @details Recomputes the routing coefficients the dynamic-wave solver
+ *          consumes — @c rough_factor, @c beta, @c q_full, @c q_max,
+ *          @c volume (and the force-main roughness factor) — from the
+ *          conduit's current @c roughness, @c slope, and full-section
+ *          geometry. This is the per-conduit body shared by
+ *          @ref resolve_cross_references (parse time) and the runtime
+ *          geometry setters, so an edit to a conduit's roughness after
+ *          @c open() propagates into the simulation instead of leaving
+ *          stale parse-time coefficients in place.
+ *
+ *          Non-conduit links, and conduits with non-positive roughness or
+ *          full area, are left untouched.
+ *
+ * @param ctx  Simulation context (mutated in place).
+ * @param j    Link index.
+ */
+void recompute_conduit_flow_properties(SimulationContext& ctx, int j);
 
 } /* namespace openswmm::input */
 

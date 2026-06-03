@@ -14,6 +14,7 @@
 #define OPENSWMM_API_COMMON_HPP
 
 #include "SWMMEngine.hpp"
+#include "UnitConversion.hpp"
 #include "../../../include/openswmm/engine/openswmm_engine.h"
 
 #include <cstring>
@@ -21,6 +22,36 @@
 
 static inline openswmm::SWMMEngine* to_engine(SWMM_Engine e) noexcept {
     return static_cast<openswmm::SWMMEngine*>(e);
+}
+
+// ============================================================================
+// Unit conversion at the C API boundary
+// ============================================================================
+//
+// The engine stores all state in internal SWMM units (ft, cfs, ft³, ft/s, sec).
+// The public C API, like legacy swmm5.c, exposes values in the project's
+// configured *display* units (selected by [OPTIONS] FLOW_UNITS): getters return
+// display units, setters accept display units.
+//
+//   getter:  display  = internal * UCF(q)        -> to_display()
+//   setter:  internal = display  * UCF_inv(q)    -> to_internal()
+//
+// Setters multiply by the precomputed reciprocal (UCF_inv / Qcf_inv) rather than
+// dividing by UCF — no runtime division at any boundary site. `q` is a
+// openswmm::ucf::Quantity code (LENGTH, FLOW, VOLUME, LANDAREA, RAINFALL,
+// EVAPRATE, RAINDEPTH, ...). Templated on the context type so the include of the
+// full SimulationContext definition is deferred to the impl translation units.
+
+/// Internal SWMM units -> project/display units (getter side).
+template <class Ctx>
+static inline double to_display(const Ctx& ctx, int q, double v) noexcept {
+    return v * openswmm::ucf::UCF(q, ctx.options);
+}
+
+/// Project/display units -> internal SWMM units (setter side, reciprocal multiply).
+template <class Ctx>
+static inline double to_internal(const Ctx& ctx, int q, double v) noexcept {
+    return v * openswmm::ucf::UCF_inv(q, ctx.options);
 }
 
 #define CHECK_HANDLE(e)    do { if (!(e)) return SWMM_ERR_BADHANDLE; } while(0)

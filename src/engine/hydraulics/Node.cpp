@@ -171,16 +171,17 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
 // Per-element: getPondedArea
 // ============================================================================
 
-double getPondedArea(const NodeData& nodes, int idx, double depth) {
+double getPondedArea(const NodeData& nodes, int idx, double depth,
+                     TableData* tables, int unit_sys) {
     auto ui = static_cast<std::size_t>(idx);
 
     if (depth <= nodes.full_depth[ui] || nodes.ponded_area[ui] == 0.0) {
-        return getSurfArea(nodes, idx, depth);
+        return getSurfArea(nodes, idx, depth, tables, unit_sys);
     }
 
     // Flooded above rim — use the ponded area
     double a = nodes.ponded_area[ui];
-    if (a <= 0.0) a = getSurfArea(nodes, idx, nodes.full_depth[ui]);
+    if (a <= 0.0) a = getSurfArea(nodes, idx, nodes.full_depth[ui], tables, unit_sys);
     return a;
 }
 

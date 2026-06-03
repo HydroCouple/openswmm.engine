@@ -59,10 +59,10 @@ cdef inline void _check_fresh(gage) except *:
 cdef class Gage:
     """A single rain gage."""
 
-    cdef object _solver
-    cdef int _index
-    cdef long long _gen
-    cdef str _captured_id
+    cdef readonly object _solver
+    cdef readonly int _index
+    cdef readonly long long _gen
+    cdef readonly str _captured_id
 
     def __init__(self, solver, int index):
         self._solver = solver

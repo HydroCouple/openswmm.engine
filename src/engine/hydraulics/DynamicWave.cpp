@@ -361,10 +361,17 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     // Matches legacy dynwave.c:180-181:
     //   if (MinSurfArea == 0.0) MinSurfArea = DEFAULT_SURFAREA;
     //   else MinSurfArea /= UCF(LENGTH) * UCF(LENGTH);
-    // Unit conversion is already applied during input parsing.
-    min_surf_area_ = (ctx.options.min_surf_area > 0.0)
-        ? ctx.options.min_surf_area
-        : constants::MIN_SURFAREA;
+    // The user value is entered in project area units (ft² for US, m² for SI),
+    // so it must be divided by UCF(LENGTH)² to reach internal ft².  Without
+    // this an SI model's 1.167 m² floor was used as 1.167 ft² (~10.8× too
+    // small), driving large per-iteration depth swings and non-convergence.
+    {
+        const double ucf_len = ucf::Ucf[ucf::LENGTH][
+            ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
+        min_surf_area_ = (ctx.options.min_surf_area > 0.0)
+            ? ctx.options.min_surf_area / (ucf_len * ucf_len)
+            : constants::MIN_SURFAREA;
+    }
 
     auto un = static_cast<std::size_t>(n_nodes);
     auto ul = static_cast<std::size_t>(n_links);
@@ -668,8 +675,12 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
             non_conduit_fn(ctx, dt, steps);
         }
 
-        // Step 5: flag nodes where AA must be skipped (non-smooth operator)
-        computeAASkipFlags(ctx);
+        // Step 5: flag nodes where AA must be skipped (non-smooth operator).
+        // Only needed when Anderson acceleration is active — aa_skip_ is read
+        // exclusively inside the AA branch of updateNodeDepths. Skipping this
+        // O(nodes+links) pass every Picard iteration is a free win in the
+        // default (AA-off) configuration.
+        if (anderson_accel) computeAASkipFlags(ctx);
 
         // Step 6: update node depths, check convergence
         converged = updateNodeDepths(ctx, dt, steps);
@@ -716,17 +727,16 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
         xnode_.converged[ui] = 0;
         xnode_.sumdqdh[ui] = 0.0;
 
-        // Surface area at current depth. For STORAGE this is the storage
-        // curve area; for JUNCTION / DIVIDER / OUTFALL the helper returns
-        // MIN_SURFAREA. Legacy initNodeStates uses node_getSurfArea() here
-        // too (dynwave.c:303) when AllowPonding=NO — the only nominal
-        // difference is legacy returns 0 for non-storage, relying on the
-        // MAX(MinSurfArea) clamp in setNodeDepth; tried that once and it
-        // destabilised the Rich_BC_CSO DW iterations (continuity drifted
-        // from -2.5% to -14.4% — the phantom 50 ft² baseline is acting
-        // as an extra damper at low-surface-area junctions). Kept.
-        xnode_.new_surf_area[ui] = node::getSurfArea(nodes, i, nodes.depth[ui],
-            &ctx.tables, unit_sys);
+        // Initial nodal surface area, matching legacy initNodeStates
+        // (dynwave.c:296-303): when ALLOW_PONDING is on, a node flooded above
+        // its rim spreads over its ponded area, so the surface-area baseline
+        // must come from node_getPondedArea(); otherwise node_getSurfArea()
+        // (0 for non-storage, the curve area for STORAGE).  Always using
+        // getSurfArea() understated the area of ponded nodes, so flood water
+        // that legacy stores instead overflowed and broke routing continuity.
+        xnode_.new_surf_area[ui] = ctx.options.allow_ponding
+            ? node::getPondedArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys)
+            : node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys);
 
         // Reset node flows (matching legacy initNodeStates)
         nodes.inflow[ui] = 0.0;
@@ -812,6 +822,15 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         auto uci = static_cast<std::size_t>(ci);
         int j = tile_uj_[uci];
         auto uj = static_cast<std::size_t>(j);
+
+        // Legacy parity + perf: a bypassed conduit (both end nodes converged)
+        // is skipped entirely by legacy findLinkFlows, so its depths/widths/
+        // areas are never recomputed.  Its end-node depths are unchanged, so
+        // the depth1_/depth2_/depth_mid_/h1_/h2_/wcap_* values already in the
+        // arrays are exactly correct — recomputing them is pure waste.  This
+        // mirrors the bypass skip in solveMomentumBatch and classifyMomentum.
+        if (bypassed_[uj]) continue;
+
         auto un1 = static_cast<std::size_t>(tile_n1_[uci]);
         auto un2 = static_cast<std::size_t>(tile_n2_[uci]);
 
@@ -879,6 +898,12 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         // only quantities that vary across Picard iters in this branch.
         int j = tile_uj_[uci];
         auto uj = static_cast<std::size_t>(j);
+
+        // Legacy parity + perf: skip bypassed conduits (see STEP A skip above).
+        // surf_area1/2, flow_class, fasnh and any critical-depth overrides are
+        // unchanged for a bypassed link, so the cached values are correct.
+        if (bypassed_[uj]) continue;
+
         auto un1 = static_cast<std::size_t>(tile_n1_[uci]);
         auto un2 = static_cast<std::size_t>(tile_n2_[uci]);
 
@@ -1190,11 +1215,19 @@ void DWSolver::solveMomentumBatch(SimulationContext& ctx, double dt, int step) {
     // Pre-init conduit flows: copy current flow, zero dqdh
     // (non-conduit flows are handled by the non_conduit_fn callback).
     // Phase A: index by ci through the tile to keep the access pattern dense.
+    //
+    // A BYPASSED conduit (both end nodes already converged) skips the momentum
+    // solve below, so it must RETAIN its last-computed dqdh — exactly as legacy
+    // does (it never clears Link[i].dqdh; findLinkFlows still scatters the
+    // cached value via updateNodeFlows for every conduit, bypassed or not).
+    // Zeroing it here dropped each bypassed link's dQ/dH from the node's
+    // sumdqdh, collapsing the surcharge depth-update denominator to 0 and
+    // wrecking Picard convergence (90% non-converging vs legacy's ~36%).
     for (int ci = 0; ci < n_conduits_; ++ci) {
         auto uci = static_cast<std::size_t>(ci);
         auto uj = static_cast<std::size_t>(tile_uj_[uci]);
         new_flow_[uj] = links.flow[uj];
-        dqdh_[uj] = 0.0;
+        if (!bypassed_[uj]) dqdh_[uj] = 0.0;
     }
 
     // Classify each conduit into a momentum category.
@@ -1728,8 +1761,18 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
     const auto& links = ctx.links;
     std::fill(aa_skip_.begin(), aa_skip_.end(), uint8_t(0));
 
-    // EXTRAN: skip AA for surcharged nodes (per-node check, no conduit walk)
-    if (surcharge_method == SurchargeMethod::EXTRAN) {
+    // EXTRAN surcharged-node skip: required ONLY under the EXPLICIT two-branch
+    // continuity formulation, where setNodeDepth switches to the dQ/dH surcharge
+    // branch at the crown — a branch-discontinuous operator that violates AA's
+    // smooth-G assumption. Under SEMI_IMPLICIT the unified Crank-Nicolson update
+    // (dy = dV / (A - 0.5*dt*sumdqdh)) is C1-smooth through the free-surface ⟷
+    // surcharge transition, so plain surcharged junctions are AA-eligible. The
+    // genuinely-discrete cases (pumps, weir/orifice at crown, active DPS slot,
+    // static-slot kink) are non-smooth in the link-level sumdqdh inputs — not in
+    // the node-continuity branch — so the dedicated walks below still skip them
+    // in BOTH continuity modes.
+    if (surcharge_method == SurchargeMethod::EXTRAN &&
+        node_continuity == NodeContinuity::EXPLICIT) {
         for (int i = 0; i < n_nodes_; ++i) {
             auto ui = static_cast<std::size_t>(i);
             if (xnode_.is_surcharged[ui])

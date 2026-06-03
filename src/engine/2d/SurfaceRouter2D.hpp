@@ -162,6 +162,27 @@ public:
     std::vector<PendingBoundaryRow>& pendingBCRows() noexcept { return pending_bc_rows_; }
     const std::vector<PendingBoundaryRow>& pendingBCRows() const noexcept { return pending_bc_rows_; }
 
+    /**
+     * @brief Per-row buffer for `[2D_EDGE_CONVEYANCE]` parse output (§11A).
+     *
+     * Populated by the input parser during reading (vertices known but
+     * mesh topology not yet built), drained into `mesh_.edge_conveyance`
+     * during `initialize()` after `buildMeshTopology` has populated the
+     * neighbour table. Mirrored to both slots of an interior edge so
+     * antisymmetric FV flux integration stays mass-conservative.
+     */
+    struct PendingEdgeConveyanceRow {
+        int    v_from     = 0;   ///< FROM_VERTEX index
+        int    v_to       = 0;   ///< TO_VERTEX index (≠ v_from)
+        double conveyance = 1.0; ///< Validated to [0, 1] at parse time
+    };
+    std::vector<PendingEdgeConveyanceRow>& pendingEdgeConveyanceRows() noexcept {
+        return pending_edge_conveyance_rows_;
+    }
+    const std::vector<PendingEdgeConveyanceRow>& pendingEdgeConveyanceRows() const noexcept {
+        return pending_edge_conveyance_rows_;
+    }
+
     /// Get total 2D surface volume (sum of depth * area).
     double totalVolume() const;
 
@@ -186,11 +207,20 @@ private:
     /// V-E3 — parse-time scratch for [2D_BOUNDARY_CONDITIONS] rows.
     std::vector<PendingBoundaryRow> pending_bc_rows_;
 
+    /// §11A — parse-time scratch for [2D_EDGE_CONVEYANCE] rows.
+    /// Drained in initialize() into mesh_.edge_conveyance after
+    /// buildMeshTopology populates the neighbour table.
+    std::vector<PendingEdgeConveyanceRow> pending_edge_conveyance_rows_;
+
     std::vector<CouplingPoint> coupling_points_;
 
     bool   active_           = false;
     int    coupling_counter_ = 0;
     double sim_time_         = 0.0;
+
+    /// Previous cumulative boundary flux (Σ edge_bc_cum_flux, m³), for the
+    /// per-step delta in the global mass balance.
+    double prev_boundary_cum_ = 0.0;
 
 #ifdef OPENSWMM_HAS_2D
     CvodeSurfaceSolver cvode_solver_;
@@ -198,6 +228,11 @@ private:
 
     /// Update rainfall from system rain gages.
     void updateRainfall(SimulationContext& ctx);
+
+    /// Accumulate the global 2D mass-balance terms for one executed step
+    /// into ctx.mass_balance_2d (rainfall, coupling, outfall, boundary,
+    /// latest storage). All terms in the 2D solver's SI internal units (m³).
+    void accumulateMassBalance(SimulationContext& ctx, double dt);
 };
 
 } // namespace openswmm::twoD

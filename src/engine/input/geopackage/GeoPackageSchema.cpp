@@ -222,14 +222,19 @@ CREATE TABLE IF NOT EXISTS curves (
 );
 CREATE INDEX IF NOT EXISTS idx_curves_lookup ON curves(simulation_id, curve_id, ordinal);
 
--- Input timeseries
+-- Input timeseries (Slice IO-5: provenance columns track whether each
+-- row was authored inline in [TIMESERIES] or imported from a FILE
+-- reference; the GUI uses the column trio to label rows as such).
 CREATE TABLE IF NOT EXISTS input_timeseries (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,
     simulation_id   TEXT NOT NULL,
     series_id       TEXT NOT NULL,
     timestamp       TEXT NOT NULL,
     value           REAL NOT NULL,
-    ordinal         INTEGER NOT NULL
+    ordinal         INTEGER NOT NULL,
+    source          TEXT NOT NULL DEFAULT 'inline',  -- 'inline' | 'imported_from_file'
+    source_filename TEXT,
+    source_column   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_input_ts_lookup ON input_timeseries(simulation_id, series_id, ordinal);
 
@@ -517,6 +522,278 @@ CREATE INDEX IF NOT EXISTS idx_obs_values_lookup
 )SQL";
 
 // ============================================================================
+// Part D: External-File Content (Slice IO-5)
+//
+// Replaces opaque BLOB-style storage with structured editable rows for
+// every legacy SWMM external file type (hotstart, raingage data, climate
+// observations, routing-interface flows). Every row carries composite
+// foreign keys into the model objects already in the schema so:
+//   • Deleting a `simulation_id` cascades all related content.
+//   • Renaming or deleting a node/link/subcatchment/gage/pollutant
+//     propagates through every dependent row — no orphan rows survive
+//     the rename.
+//   • Inserting a row that references a non-existent parent is rejected
+//     when `PRAGMA foreign_keys=ON` (set by both `create_schema` and
+//     `GpkgUtils::open_database`).
+//
+// See openswmm.gui/docs/IO_PORTABILITY_PLAN.md §3.4 for the full
+// rationale (in particular §3.4.1 covers the three-way pollutant-state
+// split that lets each pollutant row carry its own owning-object FK).
+// ============================================================================
+
+static const char* PART_D_DDL = R"SQL(
+-- ----------------------------------------------------------------------------
+-- Hot-start state (replaces opaque .hsf snapshots).
+-- ----------------------------------------------------------------------------
+
+-- One row per slot. Carries the legacy HSF header metadata and acts as the
+-- parent every per-object state row FKs into.
+CREATE TABLE IF NOT EXISTS hotstart_slots (
+    simulation_id   TEXT NOT NULL,
+    slot_name       TEXT NOT NULL,                       -- 'use' or 'save_<index>'
+    direction       TEXT NOT NULL,                       -- 'USE' | 'SAVE'
+    save_datetime   REAL,                                -- nullable; 0 = end-of-run
+    format_version  INTEGER NOT NULL,
+    flow_units      TEXT,
+    num_pollutants  INTEGER NOT NULL,
+    captured_at     TEXT,                                -- ISO8601; NULL until populated
+    status          TEXT NOT NULL DEFAULT 'pending',     -- 'pending' | 'populated'
+    PRIMARY KEY (simulation_id, slot_name),
+    FOREIGN KEY (simulation_id)
+        REFERENCES simulations(simulation_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- Per-node routing state.
+CREATE TABLE IF NOT EXISTS hotstart_node_state (
+    simulation_id   TEXT NOT NULL,
+    slot_name       TEXT NOT NULL,
+    node_id         TEXT NOT NULL,
+    depth           REAL NOT NULL,
+    lateral_inflow  REAL,
+    overflow        REAL,
+    PRIMARY KEY (simulation_id, slot_name, node_id),
+    FOREIGN KEY (simulation_id, slot_name)
+        REFERENCES hotstart_slots(simulation_id, slot_name)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, node_id)
+        REFERENCES nodes(simulation_id, node_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_hotstart_node_state_lookup
+    ON hotstart_node_state(simulation_id, slot_name, node_id);
+
+-- Per-link routing state.
+CREATE TABLE IF NOT EXISTS hotstart_link_state (
+    simulation_id   TEXT NOT NULL,
+    slot_name       TEXT NOT NULL,
+    link_id         TEXT NOT NULL,
+    flow            REAL NOT NULL,
+    depth           REAL,
+    volume          REAL,
+    setting         REAL,
+    target_setting  REAL,
+    time_open       REAL,
+    time_closed     REAL,
+    PRIMARY KEY (simulation_id, slot_name, link_id),
+    FOREIGN KEY (simulation_id, slot_name)
+        REFERENCES hotstart_slots(simulation_id, slot_name)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, link_id)
+        REFERENCES links(simulation_id, link_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_hotstart_link_state_lookup
+    ON hotstart_link_state(simulation_id, slot_name, link_id);
+
+-- Per-subcatchment hydrology state — runoff + infiltration (6-double) +
+-- groundwater zone + snowpack water-equivalent / free-water / ATI per
+-- surface. Matches the legacy hotstart.c saveRunoff() layout.
+CREATE TABLE IF NOT EXISTS hotstart_subcatch_state (
+    simulation_id     TEXT NOT NULL,
+    slot_name         TEXT NOT NULL,
+    subcatch_id       TEXT NOT NULL,
+    runoff            REAL,
+    infil_model       INTEGER NOT NULL,
+    infil_state_0     REAL, infil_state_1 REAL, infil_state_2 REAL,
+    infil_state_3     REAL, infil_state_4 REAL, infil_state_5 REAL,
+    gw_theta_upper    REAL,
+    gw_lower_depth    REAL,
+    snow_we_plowable  REAL, snow_we_imperv REAL, snow_we_perv REAL,
+    snow_fw_plowable  REAL, snow_fw_imperv REAL, snow_fw_perv REAL,
+    snow_ati          REAL,
+    PRIMARY KEY (simulation_id, slot_name, subcatch_id),
+    FOREIGN KEY (simulation_id, slot_name)
+        REFERENCES hotstart_slots(simulation_id, slot_name)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, subcatch_id)
+        REFERENCES subcatchments(simulation_id, subcatch_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_hotstart_subcatch_state_lookup
+    ON hotstart_subcatch_state(simulation_id, slot_name, subcatch_id);
+
+-- Water-quality state split by object kind so each row can FK into its
+-- owning state table and the model's pollutants. A polymorphic single
+-- table cannot express that — SQLite has no discriminated-union FK.
+
+CREATE TABLE IF NOT EXISTS hotstart_node_pollutant_state (
+    simulation_id   TEXT NOT NULL,
+    slot_name       TEXT NOT NULL,
+    node_id         TEXT NOT NULL,
+    pollutant_id    TEXT NOT NULL,
+    concentration   REAL NOT NULL,
+    PRIMARY KEY (simulation_id, slot_name, node_id, pollutant_id),
+    FOREIGN KEY (simulation_id, slot_name, node_id)
+        REFERENCES hotstart_node_state(simulation_id, slot_name, node_id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, pollutant_id)
+        REFERENCES pollutants(simulation_id, pollutant_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS hotstart_link_pollutant_state (
+    simulation_id   TEXT NOT NULL,
+    slot_name       TEXT NOT NULL,
+    link_id         TEXT NOT NULL,
+    pollutant_id    TEXT NOT NULL,
+    concentration   REAL NOT NULL,
+    PRIMARY KEY (simulation_id, slot_name, link_id, pollutant_id),
+    FOREIGN KEY (simulation_id, slot_name, link_id)
+        REFERENCES hotstart_link_state(simulation_id, slot_name, link_id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, pollutant_id)
+        REFERENCES pollutants(simulation_id, pollutant_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- Subcatchment pollutant state additionally carries surface-buildup mass
+-- and ponded concentration to match the legacy water-quality fields
+-- written by hotstart.c saveRunoff().
+CREATE TABLE IF NOT EXISTS hotstart_subcatch_pollutant_state (
+    simulation_id        TEXT NOT NULL,
+    slot_name            TEXT NOT NULL,
+    subcatch_id          TEXT NOT NULL,
+    pollutant_id         TEXT NOT NULL,
+    surface_buildup      REAL,
+    ponded_concentration REAL,
+    PRIMARY KEY (simulation_id, slot_name, subcatch_id, pollutant_id),
+    FOREIGN KEY (simulation_id, slot_name, subcatch_id)
+        REFERENCES hotstart_subcatch_state(simulation_id, slot_name, subcatch_id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, pollutant_id)
+        REFERENCES pollutants(simulation_id, pollutant_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- ----------------------------------------------------------------------------
+-- Raingage rainfall records (replaces external rain-file content).
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS raingage_data (
+    simulation_id    TEXT NOT NULL,
+    gage_id          TEXT NOT NULL,
+    record_time      TEXT NOT NULL,
+    rainfall_value   REAL NOT NULL,
+    quality_flag     TEXT,
+    station_id       TEXT,
+    PRIMARY KEY (simulation_id, gage_id, record_time),
+    FOREIGN KEY (simulation_id, gage_id)
+        REFERENCES rain_gages(simulation_id, gage_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_raingage_data
+    ON raingage_data(simulation_id, gage_id, record_time);
+
+-- ----------------------------------------------------------------------------
+-- Climate observations (Tmin/Tmax/evap/wind/sky/humidity). Daily-grain
+-- matches SWMM's TEMPERATURE / EVAPORATION file formats.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS climate_data (
+    simulation_id   TEXT NOT NULL,
+    record_date     TEXT NOT NULL,
+    tmin            REAL,
+    tmax            REAL,
+    evaporation     REAL,
+    wind_speed      REAL,
+    sky_cover       REAL,
+    humidity        REAL,
+    quality_flag    TEXT,
+    PRIMARY KEY (simulation_id, record_date),
+    FOREIGN KEY (simulation_id)
+        REFERENCES simulations(simulation_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- ----------------------------------------------------------------------------
+-- Routing interface files. Three-way split so each table can FK into the
+-- right owning object kind (a polymorphic table cannot).
+-- ----------------------------------------------------------------------------
+
+-- INFLOWS / OUTFLOWS / RDII — per-node flow records.
+CREATE TABLE IF NOT EXISTS routing_interface_node (
+    simulation_id   TEXT NOT NULL,
+    role            TEXT NOT NULL,        -- 'INFLOWS' | 'OUTFLOWS' | 'RDII'
+    direction       TEXT NOT NULL,        -- 'USE' | 'SAVE'
+    node_id         TEXT NOT NULL,
+    record_time     TEXT NOT NULL,
+    flow_value      REAL NOT NULL,
+    PRIMARY KEY (simulation_id, role, direction, node_id, record_time),
+    FOREIGN KEY (simulation_id, node_id)
+        REFERENCES nodes(simulation_id, node_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- RUNOFF — per-subcatchment flow records.
+CREATE TABLE IF NOT EXISTS routing_interface_subcatch (
+    simulation_id   TEXT NOT NULL,
+    role            TEXT NOT NULL,        -- 'RUNOFF'
+    direction       TEXT NOT NULL,
+    subcatch_id     TEXT NOT NULL,
+    record_time     TEXT NOT NULL,
+    flow_value      REAL NOT NULL,
+    PRIMARY KEY (simulation_id, role, direction, subcatch_id, record_time),
+    FOREIGN KEY (simulation_id, subcatch_id)
+        REFERENCES subcatchments(simulation_id, subcatch_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- RAINFALL — per-gage rainfall records (separate from the model's own
+-- raingage_data above because routing interface files are a distinct
+-- legacy concept: pre-processed gage output captured for re-feeding).
+CREATE TABLE IF NOT EXISTS routing_interface_gage (
+    simulation_id   TEXT NOT NULL,
+    role            TEXT NOT NULL,        -- 'RAINFALL'
+    direction       TEXT NOT NULL,
+    gage_id         TEXT NOT NULL,
+    record_time     TEXT NOT NULL,
+    rainfall_value  REAL NOT NULL,
+    PRIMARY KEY (simulation_id, role, direction, gage_id, record_time),
+    FOREIGN KEY (simulation_id, gage_id)
+        REFERENCES rain_gages(simulation_id, gage_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- Pollutant concentrations attached to node-keyed routing rows (the only
+-- legacy routing format that carries water-quality columns).
+CREATE TABLE IF NOT EXISTS routing_interface_node_pollutants (
+    simulation_id   TEXT NOT NULL,
+    role            TEXT NOT NULL,
+    direction       TEXT NOT NULL,
+    node_id         TEXT NOT NULL,
+    record_time     TEXT NOT NULL,
+    pollutant_id    TEXT NOT NULL,
+    concentration   REAL NOT NULL,
+    PRIMARY KEY (simulation_id, role, direction, node_id, record_time, pollutant_id),
+    FOREIGN KEY (simulation_id, role, direction, node_id, record_time)
+        REFERENCES routing_interface_node(simulation_id, role, direction, node_id, record_time)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, pollutant_id)
+        REFERENCES pollutants(simulation_id, pollutant_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+)SQL";
+
+// ============================================================================
 // Implementation
 // ============================================================================
 
@@ -529,6 +806,7 @@ void create_schema(sqlite3* db) {
     exec(db, PART_A_DDL);
     exec(db, PART_B_DDL);
     exec(db, PART_C_DDL);
+    exec(db, PART_D_DDL);
 }
 
 void register_crs(sqlite3* db, int srs_id, const std::string& org,

@@ -395,10 +395,10 @@ cdef class Link:
     """A single link, addressed by index in the parent :class:`Links`
     collection. Same staleness model as :class:`Node`."""
 
-    cdef object _solver
-    cdef int _index
-    cdef long long _gen
-    cdef str _captured_id
+    cdef readonly object _solver
+    cdef readonly int _index
+    cdef readonly long long _gen
+    cdef readonly str _captured_id
     cdef object _stats
     cdef object _xsect
     cdef object _pump
@@ -426,6 +426,26 @@ cdef class Link:
         _check_fresh(self)
         cdef const char* raw = swmm_link_id(_h(self._solver), self._index)
         return raw.decode('utf-8') if raw != NULL else ""
+
+    @property
+    def tag(self) -> str:
+        """The link's free-form tag string (from the INP C{[TAGS]} section).
+
+        Empty string when the link has no tag. Assigning C{None} or C{""}
+        clears it. The tag is keyed by index and persists across L{rename}.
+
+        @rtype: str
+        """
+        _check_fresh(self)
+        cdef char buf[256]
+        _check(swmm_link_get_tag(_h(self._solver), self._index, buf, 256))
+        return buf.decode('utf-8')
+
+    @tag.setter
+    def tag(self, value) -> None:
+        _check_fresh(self)
+        cdef bytes b = (value or "").encode('utf-8')
+        _check(swmm_link_set_tag(_h(self._solver), self._index, b))
 
     @property
     def index(self) -> int:

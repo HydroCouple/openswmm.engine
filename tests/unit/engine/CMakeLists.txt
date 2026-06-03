@@ -80,6 +80,10 @@ add_gtest_unit(test_engine_tokenizer         test_tokenizer.cpp)
 add_gtest_unit(test_engine_timeseries_cursor test_timeseries_cursor.cpp)
 add_gtest_unit(test_engine_options_parser    test_options_parser.cpp)
 add_gtest_unit(test_engine_csv_timeseries    test_csv_timeseries.cpp)
+add_gtest_unit(test_engine_timeseries_file_roundtrip test_timeseries_file_roundtrip.cpp)
+add_gtest_unit(test_engine_pathresolver      test_pathresolver.cpp)
+add_gtest_unit(test_engine_postparse_resolver test_postparse_resolver.cpp)
+add_gtest_unit(test_engine_inp_writer_relative_paths test_inp_writer_relative_paths.cpp)
 add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
 add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.cpp)
 # Slice RC.5 — GeoPackage explicit-builtin registration + is_builtin flag.
@@ -88,6 +92,7 @@ add_gtest_unit(test_engine_pluginfactory_builtins test_pluginfactory_builtins.cp
 add_gtest_unit(test_engine_output_node_stats     test_output_node_stats.cpp)
 add_gtest_unit(test_engine_model_write_with_plugin test_model_write_with_plugin.cpp)
 add_gtest_unit(test_engine_files_section          test_files_section.cpp)
+add_gtest_unit(test_engine_capi_file_paths        test_capi_file_paths.cpp)
 add_gtest_unit(test_engine_events_section         test_events_section.cpp)
 add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
@@ -103,48 +108,6 @@ add_gtest_unit(test_engine_xsection          test_xsection.cpp)
 add_gtest_unit(test_engine_street_xsect      test_street_xsect.cpp)
 # STREET cross-section programmatic builder API (set/get xsect + get_params).
 add_gtest_unit(test_engine_street_xsect_api  test_street_xsect_api.cpp)
-
-
-# Golden cross-section parity harness — diffs the new xsect:: implementation
-# against the legacy xsect.c. The legacy dylib hides its internal xsect_*
-# symbols, so we compile xsect.c (+ findroot.c + stub globals) directly into the
-# test executable. The stub globals satisfy the linker for the IRREGULAR/CUSTOM/
-# STREET code paths the harness does not exercise.
-add_executable(test_engine_xsect_parity
-    test_xsect_parity.cpp
-    ${PROJECT_SOURCE_DIR}/src/legacy/engine/xsect.c
-    ${PROJECT_SOURCE_DIR}/src/legacy/engine/findroot.c
-    legacy_xsect_stubs.c
-)
-target_link_libraries(test_engine_xsect_parity
-    PRIVATE
-        GTest::gtest GTest::gtest_main GTest::gmock
-        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
-)
-target_include_directories(test_engine_xsect_parity
-    PRIVATE
-        ${PROJECT_SOURCE_DIR}/include
-        ${PROJECT_SOURCE_DIR}/src/engine
-        ${PROJECT_SOURCE_DIR}/src/legacy/engine
-        ${PROJECT_BINARY_DIR}/src/legacy/engine   # generated legacy_version.h
-)
-if(MSVC)
-    target_compile_options(test_engine_xsect_parity PRIVATE /EHsc)
-endif()
-set_target_properties(test_engine_xsect_parity PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED ON
-    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
-    INSTALL_RPATH "${LIB_ROOT}"
-)
-openswmm_stage_test_runtime_deps(test_engine_xsect_parity)
-add_test(
-    NAME    test_engine_xsect_parity
-    COMMAND $<TARGET_FILE:test_engine_xsect_parity>
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
-)
-set_tests_properties(test_engine_xsect_parity PROPERTIES LABELS "unit")
-
 
 add_gtest_unit(test_engine_infiltration     test_infiltration.cpp)
 add_gtest_unit(test_engine_runoff           test_runoff.cpp)
@@ -246,6 +209,46 @@ add_test(
 )
 set_tests_properties(test_engine_2d_surface PROPERTIES LABELS "unit")
 
+# Golden cross-section parity harness — diffs the new xsect:: implementation
+# against the legacy xsect.c. The legacy dylib hides its internal xsect_*
+# symbols, so we compile xsect.c (+ findroot.c + stub globals) directly into the
+# test executable. The stub globals satisfy the linker for the IRREGULAR/CUSTOM/
+# STREET code paths the harness does not exercise.
+add_executable(test_engine_xsect_parity
+    test_xsect_parity.cpp
+    ${PROJECT_SOURCE_DIR}/src/legacy/engine/xsect.c
+    ${PROJECT_SOURCE_DIR}/src/legacy/engine/findroot.c
+    legacy_xsect_stubs.c
+)
+target_link_libraries(test_engine_xsect_parity
+    PRIVATE
+        GTest::gtest GTest::gtest_main GTest::gmock
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+)
+target_include_directories(test_engine_xsect_parity
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+        ${PROJECT_SOURCE_DIR}/src/legacy/engine
+        ${PROJECT_BINARY_DIR}/src/legacy/engine   # generated legacy_version.h
+)
+if(MSVC)
+    target_compile_options(test_engine_xsect_parity PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_xsect_parity PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+openswmm_stage_test_runtime_deps(test_engine_xsect_parity)
+add_test(
+    NAME    test_engine_xsect_parity
+    COMMAND $<TARGET_FILE:test_engine_xsect_parity>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_xsect_parity PROPERTIES LABELS "unit")
+
 # GeoPackage tests (only if the library is built)
 if(OPENSWMM_WITH_GEOPACKAGE)
     add_executable(test_engine_geopackage test_geopackage.cpp)
@@ -274,4 +277,126 @@ if(OPENSWMM_WITH_GEOPACKAGE)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
     )
     set_tests_properties(test_engine_geopackage PROPERTIES LABELS "unit")
+
+    # Slice IO-6 — external-file format parsers/materialisers.
+    add_executable(test_engine_geopackage_formats
+        test_geopackage_formats.cpp)
+    target_link_libraries(test_engine_geopackage_formats
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+    )
+    target_include_directories(test_engine_geopackage_formats
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage_formats PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(test_engine_geopackage_formats)
+    add_test(
+        NAME    test_engine_geopackage_formats
+        COMMAND $<TARGET_FILE:test_engine_geopackage_formats>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage_formats PROPERTIES LABELS "unit")
+
+    # Slice IO-5 — structured external-file content schema + FK integrity.
+    add_executable(test_engine_geopackage_schema_external_content
+        test_geopackage_schema_external_content.cpp)
+    target_link_libraries(test_engine_geopackage_schema_external_content
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+    )
+    target_include_directories(test_engine_geopackage_schema_external_content
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage_schema_external_content
+        PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON
+            RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+            INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(
+        test_engine_geopackage_schema_external_content)
+    add_test(
+        NAME    test_engine_geopackage_schema_external_content
+        COMMAND $<TARGET_FILE:test_engine_geopackage_schema_external_content>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage_schema_external_content
+        PROPERTIES LABELS "unit")
+
+    # Slice IO-7 — external-content fan-out from SimulationContext slots
+    # into the Part D tables.
+    add_executable(test_engine_geopackage_external_content_writer
+        test_geopackage_external_content_writer.cpp)
+    target_link_libraries(test_engine_geopackage_external_content_writer
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+    )
+    target_include_directories(test_engine_geopackage_external_content_writer
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage_external_content_writer
+        PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON
+            RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+            INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(
+        test_engine_geopackage_external_content_writer)
+    add_test(
+        NAME    test_engine_geopackage_external_content_writer
+        COMMAND $<TARGET_FILE:test_engine_geopackage_external_content_writer>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage_external_content_writer
+        PROPERTIES LABELS "unit")
+
+    # Slice IO-8 — Part D content → ctx slot hydration + scratch materialise.
+    add_executable(test_engine_geopackage_external_content_reader
+        test_geopackage_external_content_reader.cpp)
+    target_link_libraries(test_engine_geopackage_external_content_reader
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+    )
+    target_include_directories(test_engine_geopackage_external_content_reader
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage_external_content_reader
+        PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON
+            RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+            INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(
+        test_engine_geopackage_external_content_reader)
+    add_test(
+        NAME    test_engine_geopackage_external_content_reader
+        COMMAND $<TARGET_FILE:test_engine_geopackage_external_content_reader>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage_external_content_reader
+        PROPERTIES LABELS "unit")
 endif()

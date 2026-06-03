@@ -300,6 +300,90 @@ int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine, double* fluxes) {
     return SWMM_OK;
 }
 
+// ============================================================================
+// §11A — Per-edge conveyance factor
+// ============================================================================
+
+namespace {
+// Look up the neighbour triangle and partner edge_local for an interior
+// edge.  Returns true and fills nbr_tri / nbr_edge on success; returns
+// false for boundary edges (no neighbour).
+bool partnerSlot(const openswmm::twoD::MeshData& mesh,
+                 int tri, int edge,
+                 int& nbr_tri, int& nbr_edge)
+{
+    const int nbr =
+        (edge == 0) ? mesh.tri_nbr0[tri] :
+        (edge == 1) ? mesh.tri_nbr1[tri] :
+                      mesh.tri_nbr2[tri];
+    if (nbr < 0) return false;
+
+    // Find which of nbr's local edges points back at `tri` — that's the
+    // partner slot.  At most one match by construction of the neighbour
+    // table.
+    if      (mesh.tri_nbr0[nbr] == tri) nbr_edge = 0;
+    else if (mesh.tri_nbr1[nbr] == tri) nbr_edge = 1;
+    else if (mesh.tri_nbr2[nbr] == tri) nbr_edge = 2;
+    else return false;  // neighbour table inconsistent — shouldn't happen
+    nbr_tri = nbr;
+    return true;
+}
+} // namespace
+
+int swmm_2d_get_edge_conveyance(SWMM_Engine engine, int tri, int edge,
+                                  double* conveyance)
+{
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri, router2d);
+    if (edge < 0 || edge > 2)   return SWMM_ERR_BADINDEX;
+    if (!conveyance)            return SWMM_ERR_BADPARAM;
+
+    *conveyance = router2d.mesh().edge_conveyance[tri * 3 + edge];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_edge_conveyance(SWMM_Engine engine, int tri, int edge,
+                                  double conveyance)
+{
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri, router2d);
+    if (edge < 0 || edge > 2)                          return SWMM_ERR_BADINDEX;
+    if (!(conveyance >= 0.0 && conveyance <= 1.0))     return SWMM_ERR_BADPARAM;
+
+    auto& mesh = router2d.mesh();
+    mesh.edge_conveyance[tri * 3 + edge] = conveyance;
+
+    // Q3 silent partner mirroring — interior edges only.
+    int nbr_tri = -1, nbr_edge = -1;
+    if (partnerSlot(mesh, tri, edge, nbr_tri, nbr_edge)) {
+        mesh.edge_conveyance[nbr_tri * 3 + nbr_edge] = conveyance;
+    }
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_conveyance_bulk(SWMM_Engine engine, double* conveyance)
+{
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!conveyance) return SWMM_ERR_BADPARAM;
+
+    auto& m = router2d.mesh();
+    std::memcpy(conveyance, m.edge_conveyance.data(),
+                m.edge_conveyance.size() * sizeof(double));
+    return SWMM_OK;
+}
+
+int swmm_2d_reset_edge_conveyance(SWMM_Engine engine)
+{
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    auto& m = router2d.mesh();
+    std::fill(m.edge_conveyance.begin(), m.edge_conveyance.end(), 1.0);
+    return SWMM_OK;
+}
+
 int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine, double* flux) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);

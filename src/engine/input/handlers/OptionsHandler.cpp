@@ -330,6 +330,10 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "SKIP_STEADY_STATE") {
             opt.skip_steady_state = Tokenizer::parse_boolean(val);
 
+        } else if (key == "WRITE_ABSOLUTE_PATHS") {
+            // Slice IO-4 portability opt-out — see SimulationOptions.hpp.
+            opt.write_absolute_paths = Tokenizer::parse_boolean(val);
+
         } else if (key == "COMPATIBILITY") {
             // no-op; recognized but unused in new engine
 

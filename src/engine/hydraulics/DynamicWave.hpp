@@ -374,6 +374,7 @@ private:
     std::vector<double> aa_r_prev_;     ///< Residual r_{k-1} = G(y_{k-1}) - y_{k-1}
     std::vector<uint8_t> aa_skip_;      ///< Per-node flag: skip AA this iteration
 
+
     // Per-conduit momentum category (rebuilt each Picard iteration).
     // solveMomentumBatch dispatches on category_[uj] inline — no auxiliary
     // per-category index list is needed.

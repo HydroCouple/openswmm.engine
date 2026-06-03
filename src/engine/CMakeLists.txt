@@ -173,6 +173,24 @@ else()
     endif()
 endif()
 
+# ---- Force-optimized override (for Debug parent builds) ----
+# When the engine is consumed as a subdirectory by a parent project that's
+# in Debug mode (e.g. a GUI under active development), CMAKE_BUILD_TYPE=Debug
+# normally collapses -O3 to -O0 and disables LTO. The engine is a stable
+# dependency in those scenarios — runtime perf, not engine debuggability,
+# is what matters — so this option lets a parent force the engine targets
+# to compile with the Darwin/Linux preset Release flags as PRIVATE target
+# options, overriding the parent's Debug flags for engine TUs only.
+option(OPENSWMM_ENGINE_FORCE_OPTIMIZED
+    "Always compile engine targets with optimized flags, even in Debug builds" OFF)
+if(OPENSWMM_ENGINE_FORCE_OPTIMIZED AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    target_compile_options(openswmm_engine PRIVATE
+        -O2 -fdata-sections -ffunction-sections
+        -fno-fast-math -ffp-contract=off -fno-math-errno)
+    message(STATUS "OpenSWMM Engine: OPENSWMM_ENGINE_FORCE_OPTIMIZED ON → "
+            "compiling engine with -O2 + section-gc regardless of CMAKE_BUILD_TYPE")
+endif()
+
 # ---- Link-time optimization (IPO/LTO) ----
 # Enables cross-translation-unit inlining and dead-code elimination. Critical
 # for performance when hot-path functions (fastmath::pow4_3, SIMD helpers,
@@ -181,7 +199,8 @@ endif()
 if(NOT DEFINED OPENSWMM_ENABLE_LTO)
     set(OPENSWMM_ENABLE_LTO ON CACHE BOOL "Enable interprocedural / link-time optimization for Release builds")
 endif()
-if(OPENSWMM_ENABLE_LTO AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(OPENSWMM_ENABLE_LTO AND
+   (OPENSWMM_ENGINE_FORCE_OPTIMIZED OR NOT CMAKE_BUILD_TYPE STREQUAL "Debug"))
     include(CheckIPOSupported)
     check_ipo_supported(RESULT OPENSWMM_IPO_SUPPORTED OUTPUT OPENSWMM_IPO_ERROR)
     if(OPENSWMM_IPO_SUPPORTED)

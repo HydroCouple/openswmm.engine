@@ -111,6 +111,23 @@ std::string parse2DBoundaryConditionsLine(
     std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_rows);
 
 /**
+ * @brief §11A — parse a single `[2D_EDGE_CONVEYANCE]` line.
+ *
+ * Format: `FROM_VERTEX TO_VERTEX CONVEYANCE`
+ *   FROM_VERTEX, TO_VERTEX : non-negative integer mesh-vertex indices.
+ *                           Must differ. The pair is undirected.
+ *   CONVEYANCE             : double in [0, 1] (strict, clamped at parse).
+ *
+ * Rows are accumulated into `pending` (a scratch buffer on
+ * `SurfaceRouter2D`) and resolved against the mesh topology in
+ * `SurfaceRouter2D::initialize()` after `buildMeshTopology` populates
+ * the neighbour table.
+ */
+std::string parse2DEdgeConveyanceLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_rows);
+
+/**
  * @brief Register all 2D input section handlers with the section registry.
  *
  * Call during input reader setup (conditional on OPENSWMM_HAS_2D).
@@ -123,6 +140,7 @@ std::string parse2DBoundaryConditionsLine(
 void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
+                        std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                         input::SectionRegistry& registry);
 
 /**
@@ -142,8 +160,26 @@ void register2DSections(MeshData& mesh,
 std::string load2DMeshExternalFile(MeshData& mesh,
                                    SolverOptions2D& opts,
                                    std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
+                                   std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                                    const std::string& mesh_file,
                                    const std::string& inp_base_dir);
+
+/**
+ * @brief Scan @p inp_path for a `;; UNITS: <value>` comment header and set
+ *        @p opts.mesh_units_si to true when the value names metres.
+ *
+ * Recognised SI markers (case-insensitive): `SI (m)`, `m`, `metre`,
+ * `metres`, `meter`, `meters`.  Any other value (or absent header) leaves
+ * the flag unchanged.
+ *
+ * Safe to call multiple times; e.g. once on the inline `.inp` and again
+ * on the resolved `.2dm` — the most recent observation wins, which is
+ * the intended precedence (external file overrides inline).
+ *
+ * Quietly does nothing if the file cannot be opened — the caller already
+ * reports the missing-file error via the normal read path.
+ */
+void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts);
 
 } // namespace openswmm::twoD
 

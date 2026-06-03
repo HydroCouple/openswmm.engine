@@ -1075,6 +1075,26 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getMassBalErr(float *runoffErr, float *f
 }
 
 /*!
+ * \copydoc swmm_getRunningMassBalErr
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getRunningMassBalErr(float *runoffErr, float *flowErr)
+{
+    *runoffErr = 0.0;
+    *flowErr = 0.0;
+
+    // --- only meaningful while a simulation is running (after swmm_start,
+    //     before swmm_end). The getters recompute the error from the live
+    //     accumulators and current storage; this does not affect the final
+    //     errors, which massbal_report recomputes at swmm_end.
+    if (IsOpenFlag && IsStartedFlag)
+    {
+        *runoffErr = (float)massbal_getRunoffError();
+        *flowErr = (float)massbal_getFlowError();
+    }
+    return 0;
+}
+
+/*!
  * \copydoc swmm_getVersion
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getVersion()
@@ -1088,6 +1108,16 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getVersion()
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getWarnings()
 {
     return Warnings;
+}
+
+/*!
+ * \copydoc swmm_setWarningCallback
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setWarningCallback(swmm_LegacyWarningCallback cb, void *userData)
+{
+    WarningCallback = cb;
+    WarningCallbackData = userData;
+    return 0;
 }
 
 /*!

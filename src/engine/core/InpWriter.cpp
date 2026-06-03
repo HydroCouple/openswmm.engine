@@ -26,12 +26,15 @@
  */
 
 #include "InpWriter.hpp"
+#include "PathResolver.hpp"
 #include "SimulationContext.hpp"
 #include "DateTime.hpp"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace openswmm {
 namespace inp_writer {
@@ -151,9 +154,70 @@ static bool hasLT(const SimulationContext& c, LinkType t) {
     for(int j=0;j<c.n_links();++j) if(c.links.type[static_cast<size_t>(j)]==t) return true; return false;
 }
 
-int writeInpFile(const SimulationContext& ctx, const std::string& path) {
+// Slice IO-4 helper — pick the path token to emit for an external-file slot.
+// Honors ctx.options.write_absolute_paths and falls back to absolute form
+// when relative is impossible (cross-volume, beyond depth cap, etc.).
+//
+// Inputs:
+//   slot          The FilePathPair carrying {absolute, original}.
+//   dst_dir       Destination .inp directory (anchor for rebase). Empty
+//                 when writeInpFile was called with a bare filename in the
+//                 current working directory.
+//   force_abs     True when WRITE_ABSOLUTE_PATHS is set; bypasses rebase.
+//   warnings_out  Optional sink for cross-volume / over-depth diagnostics.
+//
+// Returns the token (without surrounding quotes) to emit inside the .inp.
+// Empty return means "don't emit the row".
+static std::string emit_path_token(const FilePathPair& slot,
+                                    const std::string&  dst_dir,
+                                    bool                force_abs,
+                                    std::vector<std::string>* warnings_out) {
+    if (slot.absolute.empty() && slot.original.empty()) return {};
+
+    if (force_abs) {
+        // Power-user opt-out — emit absolute form verbatim. Prefer the
+        // resolver's resolution when available; otherwise the original
+        // token may itself already be absolute.
+        return !slot.absolute.empty() ? slot.absolute : slot.original;
+    }
+
+    if (dst_dir.empty()) {
+        // No anchor — keep the original token (writer was called without
+        // a directory context, e.g. bare "out.inp"). Fall back to absolute
+        // when the original is empty.
+        return slot.original.empty() ? slot.absolute : slot.original;
+    }
+
+    // If the resolver pass never ran (programmatic-model path) the slot
+    // carries only `.original`. If that token is itself absolute, rebase
+    // it; otherwise treat it as already relative to the source `.inp`
+    // and pass through unchanged — the writer has no anchor to rebase
+    // against.
+    const std::string& target = !slot.absolute.empty() ? slot.absolute
+                                                       : slot.original;
+    if (slot.absolute.empty() && !io::isAbsolutePath(slot.original)) {
+        return slot.original;
+    }
+
+    auto r = io::makeRelative(target, dst_dir);
+    if (warnings_out
+        && r.classification != io::PathClass::Relative
+        && !r.warning.empty()) {
+        warnings_out->push_back(r.warning);
+    }
+    return r.path;
+}
+
+int writeInpFile(const SimulationContext& ctx,
+                 const std::string&       path,
+                 std::vector<std::string>* warnings) {
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) return -1;
+
+    // Slice IO-4: pre-compute the rebase anchor + opt-out flag once so each
+    // section can pass them to emit_path_token() without re-deriving.
+    const std::string dst_dir = openswmm::io::parentDir(path);
+    const bool        force_abs_paths = ctx.options.write_absolute_paths;
 
     sec(f,"TITLE");
     std::fprintf(f,";;Project Title/Notes\n");
@@ -268,6 +332,8 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
         std::fprintf(f,"%-20s %s\n",  "ANDERSON_ACCEL", "YES");
     if (!o.crs.empty())
         std::fprintf(f,"%-20s %s\n",  "CRS",            o.crs.c_str());
+    if (o.write_absolute_paths)
+        std::fprintf(f,"%-20s %s\n",  "WRITE_ABSOLUTE_PATHS", "YES");
     for (const auto& kv : o.ext_options)
         std::fprintf(f,"%-20s %s\n",  kv.first.c_str(), kv.second.c_str());
     }
@@ -322,7 +388,9 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
             if (opts.temp_source == 1)
                 std::fprintf(f,"TIMESERIES   %s\n", opts.temp_ts_name.c_str());
             else if (opts.temp_source == 2) {
-                std::fprintf(f,"FILE         \"%s\"", opts.temp_file.c_str());
+                const std::string tok =
+                    emit_path_token(opts.temp_file, dst_dir, force_abs_paths, warnings);
+                std::fprintf(f,"FILE         \"%s\"", tok.c_str());
                 if (opts.temp_file_start > 0.0)
                     std::fprintf(f," %.6f", opts.temp_file_start);
                 std::fprintf(f,"\n");
@@ -480,7 +548,15 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     const char* fmt = ctx.gages.rain_type[u]==1 ? "VOLUME"
                     : ctx.gages.rain_type[u]==2 ? "CUMULATIVE" : "INTENSITY";
     if(ts>=0)std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     TIMESERIES %s\n",ctx.gage_names.name_of(j).c_str(),fmt,h,m,ctx.gages.snow_factor[u],tN(ctx,ts));
-    else if(!ctx.gages.file_path[u].empty())std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     FILE \"%s\" %s\n",ctx.gage_names.name_of(j).c_str(),fmt,h,m,ctx.gages.snow_factor[u],ctx.gages.file_path[u].c_str(),ctx.gages.col_name[u].c_str());
+    else if(!ctx.gages.file_path[u].empty()){
+        const std::string tok = emit_path_token(ctx.gages.file_path[u],
+                                                 dst_dir, force_abs_paths, warnings);
+        std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     FILE \"%s\" %s\n",
+                      ctx.gage_names.name_of(j).c_str(),fmt,h,m,
+                      ctx.gages.snow_factor[u],
+                      tok.c_str(),
+                      ctx.gages.col_name[u].c_str());
+    }
     }}
 
     // [SUBCATCHMENTS]
@@ -775,6 +851,16 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     // side slopes the derived fields can't reproduce).  xsect_geom1 == 0 means
     // the object was built by a path that didn't populate them; fall back to
     // the legacy derived-field emission.  See LinkData::xsect_geom1.
+    // STREET cross-sections store a named [STREETS] reference (Geom1 is the
+    // street name, not a dimension), so emit the retained name instead of the
+    // numeric geometry — matching the [XSECTIONS] parser's STREET handling.
+    if(ctx.links.xsect_shape[u]==XsectShape::STREET_XSECT){
+        std::fprintf(f,"%-16s %-16s %-12s %12.4f %12.4f %12.4f %8d\n",
+            ctx.link_names.name_of(j).c_str(),
+            xsName(static_cast<int>(ctx.links.xsect_shape[u])),
+            ctx.links.pump_curve_name[u].c_str(),0.0,0.0,0.0,ctx.links.barrels[u]);
+        continue;
+    }
     double g1,g2,g3,g4;
     if(ctx.links.xsect_geom1[u]!=0.0){
         g1=ctx.links.xsect_geom1[u]; g2=ctx.links.xsect_geom2[u];
@@ -1062,6 +1148,16 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
         std::fprintf(f,";%.*s\n",static_cast<int>(e-s),tb.comment.data()+s);
         if(e==tb.comment.size())break;s=e+2;}
     }
+    // File-backed series — preserve the FILE reference rather than dumping
+    // the in-memory cache of rows. The path token (possibly carrying a
+    // `:column` suffix) is stored verbatim by TablesHandler; Slice IO-4
+    // rebases the path portion relative to the destination directory.
+    if(!tb.file_path.empty()){
+        const std::string tok = emit_path_token(tb.file_path, dst_dir,
+                                                 force_abs_paths, warnings);
+        std::fprintf(f,"%-16s FILE         \"%s\"\n",tN(ctx,t),tok.c_str());
+        continue;
+    }
     // PostParseResolver offsets relative time series by start_date so the
     // engine can do absolute OADate lookups.  Detect this using the same
     // condition it uses (x[0] - start_date < 366) and strip the offset
@@ -1260,7 +1356,9 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
 
     // [FILES] — secondary file references (rainfall / runoff / RDII /
     // inflows / outflows / hot-start save & use).  Mode → keyword
-    // mapping mirrors the legacy parser.
+    // mapping mirrors the legacy parser. Slice IO-4: every path token
+    // is rebased relative to the destination directory (unless
+    // WRITE_ABSOLUTE_PATHS is set).
     if (ctx.files.has_any()) {
         sec(f, "FILES");
         std::fprintf(f, ";;%-12s %-10s %s\n", "Mode", "FileType", "Path");
@@ -1269,36 +1367,46 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
                    m == FileMode::USE  ? "USE"  : "";
         };
         auto write_pair = [&](FileMode mode, const char* kind,
-                               const std::string& path) {
-            if (mode == FileMode::NONE || path.empty()) return;
+                               const FilePathPair& slot) {
+            if (mode == FileMode::NONE || slot.empty()) return;
+            const std::string tok = emit_path_token(slot, dst_dir,
+                                                     force_abs_paths, warnings);
             std::fprintf(f, "%-13s %-10s \"%s\"\n",
-                          mode_word(mode), kind, path.c_str());
+                          mode_word(mode), kind, tok.c_str());
         };
         write_pair(ctx.files.rainfall_mode, "RAINFALL", ctx.files.rainfall_path);
         write_pair(ctx.files.runoff_mode,   "RUNOFF",   ctx.files.runoff_path);
         write_pair(ctx.files.rdii_mode,     "RDII",     ctx.files.rdii_path);
-        if (!ctx.files.inflows_path.empty())
-            std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE",  "INFLOWS",
-                          ctx.files.inflows_path.c_str());
-        if (!ctx.files.outflows_path.empty())
-            std::fprintf(f, "%-13s %-10s \"%s\"\n", "SAVE", "OUTFLOWS",
-                          ctx.files.outflows_path.c_str());
-        if (!ctx.files.hotstart_use_path.empty())
-            std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE",  "HOTSTART",
-                          ctx.files.hotstart_use_path.c_str());
+        if (!ctx.files.inflows_path.empty()) {
+            const std::string tok = emit_path_token(ctx.files.inflows_path,
+                                                     dst_dir, force_abs_paths, warnings);
+            std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE",  "INFLOWS", tok.c_str());
+        }
+        if (!ctx.files.outflows_path.empty()) {
+            const std::string tok = emit_path_token(ctx.files.outflows_path,
+                                                     dst_dir, force_abs_paths, warnings);
+            std::fprintf(f, "%-13s %-10s \"%s\"\n", "SAVE", "OUTFLOWS", tok.c_str());
+        }
+        if (!ctx.files.hotstart_use_path.empty()) {
+            const std::string tok = emit_path_token(ctx.files.hotstart_use_path,
+                                                     dst_dir, force_abs_paths, warnings);
+            std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE", "HOTSTART", tok.c_str());
+        }
         for (const auto &save : ctx.files.hotstart_saves) {
             if (save.path.empty()) continue;
+            const std::string tok = emit_path_token(save.path, dst_dir,
+                                                     force_abs_paths, warnings);
             if (save.datetime > 0.0) {
                 char date_buf[16], time_buf[16];
                 fmt_date(date_buf, save.datetime);
                 fmt_time(time_buf, save.datetime);
                 std::fprintf(f, "%-13s %-10s \"%s\" %s %s\n",
                               "SAVE", "HOTSTART",
-                              save.path.c_str(),
+                              tok.c_str(),
                               date_buf, time_buf);
             } else {
                 std::fprintf(f, "%-13s %-10s \"%s\"\n", "SAVE", "HOTSTART",
-                              save.path.c_str());
+                              tok.c_str());
             }
         }
     }

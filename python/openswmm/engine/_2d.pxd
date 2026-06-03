@@ -81,3 +81,19 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_get_edge_bc_slope(void* engine, int tri_idx, int edge, double* slope)
     int swmm_2d_set_edge_bc_slope(void* engine, int tri_idx, int edge, double slope)
     int swmm_2d_get_edge_bc_cum_flux(void* engine, int tri_idx, int edge, double* cum_flux)
+
+    # SPECIFIED_FLOW (V-E4) / RATING_CURVE (V-E5) edge BC: constant flow per
+    # metre of edge, plus timeseries/rating-curve name drivers. Empty name
+    # clears the slot. Signatures verified against openswmm_2d.h L460-492.
+    int swmm_2d_get_edge_bc_flow(void* engine, int tri_idx, int edge, double* flow)
+    int swmm_2d_set_edge_bc_flow(void* engine, int tri_idx, int edge, double flow)
+    int swmm_2d_set_edge_bc_tseries_name(void* engine, int tri_idx, int edge, const char* name)
+    int swmm_2d_set_edge_bc_flow_tseries_name(void* engine, int tri_idx, int edge, const char* name)
+    int swmm_2d_set_edge_bc_rating_curve_name(void* engine, int tri_idx, int edge, const char* name)
+
+    # Edge conveyance factor (§11A) — per-edge [0,1] multiplier on the
+    # diffusion-wave flux; default 1.0; setter mirrors to the partner slot.
+    int swmm_2d_get_edge_conveyance(void* engine, int tri, int edge, double* conveyance)
+    int swmm_2d_set_edge_conveyance(void* engine, int tri, int edge, double conveyance)
+    int swmm_2d_get_edge_conveyance_bulk(void* engine, double* conveyance) nogil
+    int swmm_2d_reset_edge_conveyance(void* engine)

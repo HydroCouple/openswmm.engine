@@ -9,12 +9,16 @@
 #include "SurfaceRouter2D.hpp"
 #include "mesh/MeshBuilder.hpp"
 #include "mesh/VertexReconstruction.hpp"
+#include "solver/SurfaceFluxCalculator.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
 
 #include <stdexcept>
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace openswmm::twoD {
 
@@ -23,6 +27,43 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     if (mesh_.n_vertices() < 3 || mesh_.n_triangles() < 1) {
         active_ = false;
         return;
+    }
+
+    // Resolve unit-system conversion factors. The 2D solver runs internally in
+    // SI, but the 1D engine computes in feet for US flow units. We convert at
+    // the coupling boundary (NodeCoupling) and the mesh (below) so the SI
+    // solver stays pure. SI projects yield factor 1.0 (no-op).
+    {
+        const int us = ucf::getUnitSystem(
+            static_cast<int>(ctx.options.flow_units));
+        const double ft_to_m = (us == 0) ? 0.3048 : 1.0;
+        options_.len_1d_to_2d  = ft_to_m;
+        options_.len_2d_to_1d  = 1.0 / ft_to_m;
+        options_.vol_1d_to_2d  = ft_to_m * ft_to_m * ft_to_m;
+        options_.flow_1d_to_2d = options_.vol_1d_to_2d;
+        options_.flow_2d_to_1d = 1.0 / options_.vol_1d_to_2d;
+    }
+
+    // Convert mesh geometry from project length units (feet for US) to the SI
+    // internal units the 2D solver expects. MUST run BEFORE buildMeshTopology
+    // so all derived geometry (areas, edge lengths, centroids, midpoint Z) is
+    // computed in SI. No-op for SI projects (factor 1.0). Coupling areas given
+    // in the .inp are project-length² and scale by the squared factor.
+    //
+    // Skipped entirely when the producer declared `;; UNITS: SI (m)` on the
+    // mesh file (options_.mesh_units_si == true): the values are already SI
+    // and applying the factor a second time would scale the mesh down by
+    // 0.3048 on US-FLOW_UNITS projects.  Coupling-side factors
+    // (len_1d_to_2d, vol_1d_to_2d, flow_*) remain driven by FLOW_UNITS
+    // because they describe the 1D side of the boundary, not the mesh.
+    if (!options_.mesh_units_si && options_.len_1d_to_2d != 1.0) {
+        const double f  = options_.len_1d_to_2d;
+        const double f2 = f * f;
+        for (auto& v : mesh_.vx) v *= f;
+        for (auto& v : mesh_.vy) v *= f;
+        for (auto& v : mesh_.vz) v *= f;
+        for (auto& a : mesh_.vert_coupling_area) a *= f2;
+        for (auto& a : mesh_.tri_coupling_area)  a *= f2;
     }
 
     // Build mesh topology (neighbours, edge geometry, areas)
@@ -115,6 +156,70 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         pending_bc_rows_.clear();
     }
 
+    // §11A — drain [2D_EDGE_CONVEYANCE] rows.
+    //
+    // Build a one-shot vertex-pair → list-of-(tri*3+edge_local) slot map by
+    // walking the mesh once.  Each parsed (FROM, TO) row hashes into the
+    // map (with vertices sorted so the key is direction-symmetric) and
+    // writes the conveyance factor into every matching slot — naturally
+    // mirroring across interior edges (Q3 silent partner mirror) and
+    // gracefully handling the single-slot case for boundary edges.
+    {
+        struct EdgeKey {
+            std::int64_t packed;  ///< (min_v << 32) | max_v
+            bool operator==(EdgeKey o) const noexcept { return packed == o.packed; }
+        };
+        struct EdgeKeyHash {
+            std::size_t operator()(EdgeKey k) const noexcept {
+                return std::hash<std::int64_t>{}(k.packed);
+            }
+        };
+        auto makeKey = [](int va, int vb) -> EdgeKey {
+            const std::int64_t lo = std::min(va, vb);
+            const std::int64_t hi = std::max(va, vb);
+            return EdgeKey{ (lo << 32) | (hi & 0xFFFFFFFFLL) };
+        };
+
+        std::unordered_map<EdgeKey, std::vector<int>, EdgeKeyHash> edge_key_to_slots;
+        edge_key_to_slots.reserve(static_cast<std::size_t>(mesh_.n_triangles()) * 3);
+
+        const int nt = mesh_.n_triangles();
+        for (int t = 0; t < nt; ++t) {
+            const int v[3] = { mesh_.tri_v0[t], mesh_.tri_v1[t], mesh_.tri_v2[t] };
+            for (int e = 0; e < 3; ++e) {
+                // Local edge e is opposite vertex e, connecting v[(e+1)%3] and v[(e+2)%3].
+                const int va = v[(e + 1) % 3];
+                const int vb = v[(e + 2) % 3];
+                edge_key_to_slots[makeKey(va, vb)].push_back(t * 3 + e);
+            }
+        }
+
+        for (const auto& r : pending_edge_conveyance_rows_) {
+            if (r.v_from < 0 || r.v_from >= mesh_.n_vertices() ||
+                r.v_to   < 0 || r.v_to   >= mesh_.n_vertices()) {
+                throw std::runtime_error(
+                    "[2D_EDGE_CONVEYANCE]: vertex index out of range ("
+                    + std::to_string(r.v_from) + ", " + std::to_string(r.v_to)
+                    + "); n_vertices = " + std::to_string(mesh_.n_vertices()));
+            }
+            auto it = edge_key_to_slots.find(makeKey(r.v_from, r.v_to));
+            if (it == edge_key_to_slots.end()) {
+                throw std::runtime_error(
+                    "[2D_EDGE_CONVEYANCE]: vertices ("
+                    + std::to_string(r.v_from) + ", " + std::to_string(r.v_to)
+                    + ") do not form a mesh edge");
+            }
+            // Q3 — silent partner mirroring: write the same factor into
+            // every slot the edge-key resolves to (1 slot for boundary
+            // edges, 2 for interior).  Duplicate parse-row last-write-wins
+            // falls out naturally because we just overwrite.
+            for (const int slot : it->second) {
+                mesh_.edge_conveyance[slot] = r.conveyance;
+            }
+        }
+        pending_edge_conveyance_rows_.clear();
+    }
+
     // Set initial heads from ground elevation
     for (int i = 0; i < mesh_.n_triangles(); ++i) {
         state_.head[i] = mesh_.tri_cz[i];
@@ -165,6 +270,13 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     active_ = true;
     coupling_counter_ = 0;
     sim_time_ = 0.0;
+
+    // Seed the global 2D mass balance. init_storage is the surface volume at
+    // the dry initial condition (0 unless a nonzero initial depth is set).
+    ctx.mass_balance_2d.active = true;
+    ctx.mass_balance_2d.init_storage = totalVolume();
+    ctx.mass_balance_2d.final_storage = ctx.mass_balance_2d.init_storage;
+    prev_boundary_cum_ = 0.0;
 }
 
 
@@ -183,7 +295,7 @@ void SurfaceRouter2D::step(SimulationContext& ctx, double dt, double t) {
 
 void SurfaceRouter2D::updateOutfallsPreRouting(SimulationContext& ctx) {
     if (!active_) return;
-    updateOutfallBoundaries(coupling_points_, mesh_, state_, ctx);
+    updateOutfallBoundaries(coupling_points_, mesh_, state_, ctx, options_);
 }
 
 
@@ -206,7 +318,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
     computeCouplingExchange(coupling_points_, mesh_, state_, ctx, options_, dt);
 
     // Transfer outfall discharges into 2D cells
-    transferOutfallDischarges(coupling_points_, mesh_, state_, ctx, dt);
+    transferOutfallDischarges(coupling_points_, mesh_, state_, ctx, options_, dt);
 
     // Update rainfall from system gages
     updateRainfall(ctx);
@@ -231,12 +343,30 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
     // Advance CVODE by dt
     double t_target = sim_time_ + dt;
     cvode_solver_.advance(sim_time_, t_target);
+
+    // Refresh edge fluxes at the final accepted (head, depth) so the saved
+    // fluxes, the per-cell continuity residual, and the reconstructed cell
+    // velocities are all consistent with the reported solution. The last
+    // in-solver flux evaluation can sit at a Newton/JvP perturbation point,
+    // not the accepted state.
+    computeEdgeFluxes(mesh_, state_, options_);
 #endif
 
     sim_time_ += dt;
 
+    // Per-cell continuity residual (local mass-balance diagnostic). old_depth
+    // holds the start-of-step depth saved by save_state() above; depth now
+    // holds the end-of-step value.
+    computeCellContinuity(mesh_, state_, dt);
+
+    // Cell-centred velocity reconstruction (RT0) from the refreshed fluxes.
+    computeFaceVelocity(mesh_, state_, options_);
+
     // Update statistics
     state_.update_statistics(mesh_.tri_area, dt);
+
+    // Accumulate the global 2D mass-balance terms for this step.
+    accumulateMassBalance(ctx, dt);
 
     // Clear RESET forcings
     state_.clear_reset_forcings();
@@ -312,7 +442,7 @@ void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
 
     // Convert to m/s
     double rain_m_per_s;
-    if (static_cast<int>(ctx.options.flow_units) < 3) {
+    if (ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)) == 0) {
         // US customary (CFS/GPM/MGD): in/hr → m/s
         rain_m_per_s = rain_rate * 0.0254 / 3600.0;
     } else {
@@ -323,6 +453,52 @@ void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
     for (int i = 0; i < nt; ++i) {
         state_.rainfall[i] = rain_m_per_s;
     }
+}
+
+
+void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
+    auto& mb = ctx.mass_balance_2d;
+    int nt = mesh_.n_triangles();
+
+    // Rainfall inflow (m³): rainfall is m/s after forcings are applied.
+    double rain_vol = 0.0;
+    for (int i = 0; i < nt; ++i) {
+        rain_vol += state_.rainfall[i] * mesh_.tri_area[i];
+    }
+    mb.rainfall_in += rain_vol * dt;
+
+    // Coupling and outfall exchange. nodes.coupling_inflow / nodes.outflow are
+    // in the 1D engine's flow units (ft³/s for US); convert back to SI (m³/s).
+    // coupling_inflow is a per-NODE total (computeCouplingExchange accumulates
+    // all coupling points for a node into it), so dedupe by node index to
+    // avoid double counting when several points map to one node.
+    std::unordered_set<int> seen;
+    for (const auto& cp : coupling_points_) {
+        if (!seen.insert(cp.node_idx).second) continue;
+        auto ni = static_cast<std::size_t>(cp.node_idx);
+        if (cp.is_outfall) {
+            // 1D outfall discharge injected into the 2D cell as a source.
+            double q = ctx.nodes.outflow[ni] * options_.flow_1d_to_2d;
+            if (q > 0.0) mb.outfall_in += q * dt;
+        } else {
+            // Positive = 2D→1D drainage (out of 2D); negative = 1D→2D spill.
+            double q = ctx.nodes.coupling_inflow[ni] * options_.flow_1d_to_2d;
+            if (q > 0.0) mb.coupling_2d_to_1d_out += q * dt;
+            else         mb.coupling_1d_to_2d_in  += -q * dt;
+        }
+    }
+
+    // Boundary exchange (outward-positive cumulative, m³). Reads 0 until the
+    // non-Wall BC flux integration lands, but the term is wired now.
+    double cur_bnd = 0.0;
+    for (double f : boundary_.edge_bc_cum_flux) cur_bnd += f;
+    double dbnd = cur_bnd - prev_boundary_cum_;
+    prev_boundary_cum_ = cur_bnd;
+    if (dbnd > 0.0) mb.boundary_out += dbnd;
+    else            mb.boundary_in  += -dbnd;
+
+    // Latest storage (m³) — overwrite so the value at simulation end is final.
+    mb.final_storage = totalVolume();
 }
 
 } // namespace openswmm::twoD

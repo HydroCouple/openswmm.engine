@@ -116,6 +116,39 @@ class Inflows:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_ext_inflow_count(h)
 
+    def get_external(self, int entry_idx):
+        """Read one external-inflow row by entry index.
+
+        @param entry_idx: Zero-based row index (0..L{external_count}-1).
+        @return: C{(node_index, constituent, ts_name, type, m_factor,
+            s_factor, baseline, pattern)}.
+        @rtype: tuple
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int node_idx = -1
+        cdef char c_buf[128]
+        cdef char ts_buf[128]
+        cdef char ty_buf[128]
+        cdef char pat_buf[128]
+        cdef double m_factor = 0.0, s_factor = 0.0, baseline = 0.0
+        _check(swmm_ext_inflow_get(
+            h, entry_idx, &node_idx, c_buf, 128, ts_buf, 128, ty_buf, 128,
+            &m_factor, &s_factor, &baseline, pat_buf, 128))
+        return (node_idx, c_buf.decode('utf-8'), ts_buf.decode('utf-8'),
+                ty_buf.decode('utf-8'), m_factor, s_factor, baseline,
+                pat_buf.decode('utf-8'))
+
+    def remove_external(self, int entry_idx) -> None:
+        """Remove the external-inflow row at C{entry_idx}.
+
+        Indices shift after removal — re-query by row rather than caching.
+
+        @param entry_idx: Zero-based row index.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_ext_inflow_remove(h, entry_idx))
+        self._solver._bump_generation()
+
     # =========================================================================
     # Dry-weather flow ([DWF])
     # =========================================================================
@@ -146,6 +179,39 @@ class Inflows:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_dwf_count(h)
 
+    def get_dwf(self, int entry_idx):
+        """Read one dry-weather-flow row by entry index.
+
+        @param entry_idx: Zero-based row index (0..L{dwf_count}-1).
+        @return: C{(node_index, constituent, avg_value, monthly, daily,
+            hourly, weekend)} where the four pattern entries are pattern-id
+            strings (empty when unset).
+        @rtype: tuple
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int node_idx = -1
+        cdef char c_buf[128]
+        cdef char p1[128]
+        cdef char p2[128]
+        cdef char p3[128]
+        cdef char p4[128]
+        cdef double avg_value = 0.0
+        _check(swmm_dwf_get(
+            h, entry_idx, &node_idx, c_buf, 128, &avg_value,
+            p1, 128, p2, 128, p3, 128, p4, 128))
+        return (node_idx, c_buf.decode('utf-8'), avg_value,
+                p1.decode('utf-8'), p2.decode('utf-8'),
+                p3.decode('utf-8'), p4.decode('utf-8'))
+
+    def remove_dwf(self, int entry_idx) -> None:
+        """Remove the dry-weather-flow row at C{entry_idx}.
+
+        @param entry_idx: Zero-based row index.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_dwf_remove(h, entry_idx))
+        self._solver._bump_generation()
+
     # =========================================================================
     # RDII inflows
     # =========================================================================
@@ -169,6 +235,15 @@ class Inflows:
     def rdii_count(self) -> int:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_rdii_count(h)
+
+    def remove_rdii(self, int entry_idx) -> None:
+        """Remove the RDII assignment row at C{entry_idx}.
+
+        @param entry_idx: Zero-based row index (0..L{rdii_count}-1).
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_rdii_remove(h, entry_idx))
+        self._solver._bump_generation()
 
     # =========================================================================
     # Unit hydrographs ([HYDROGRAPHS])
@@ -200,6 +275,90 @@ class Inflows:
     def hydrograph_count(self) -> int:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_hydrograph_count(h)
+
+    def set_hydrograph_rtk(self, str uh_name, int month, int response,
+                           double r, double t, double k) -> None:
+        """Upsert the C{(R, T, K)} triplet for one (group, month, response).
+
+        @param uh_name: Unit-hydrograph group name.
+        @param month: C{0..11} (JAN..DEC) or C{-1} for ALL.
+        @param response: C{0}=short, C{1}=medium, C{2}=long.
+        @param r: Rainfall fraction that becomes RDII.
+        @param t: Time to peak (hours).
+        @param k: Recession-to-peak time ratio (base time = C{t*(1+k)}).
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = uh_name.encode('utf-8')
+        _check(swmm_hydrograph_set_rtk(h, b, month, response, r, t, k))
+
+    def set_hydrograph_ia(self, str uh_name, int month, int response,
+                          double dmax, double drecov, double dinit) -> None:
+        """Upsert linear initial-abstraction params for one (group, month, response).
+
+        @param uh_name: Unit-hydrograph group name.
+        @param month: C{0..11} (JAN..DEC) or C{-1} for ALL.
+        @param response: C{0}=short, C{1}=medium, C{2}=long.
+        @param dmax: Maximum initial-abstraction depth.
+        @param drecov: Linear IA recovery rate.
+        @param dinit: Initial IA already used.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = uh_name.encode('utf-8')
+        _check(swmm_hydrograph_set_ia(h, b, month, response, dmax, drecov, dinit))
+
+    def remove_hydrograph_entry(self, str uh_name, int month, int response) -> None:
+        """Remove one (group, month, response) entry. Idempotent.
+
+        @param uh_name: Unit-hydrograph group name.
+        @param month: C{0..11} or C{-1}.
+        @param response: C{0}=short, C{1}=medium, C{2}=long.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = uh_name.encode('utf-8')
+        _check(swmm_hydrograph_remove_entry(h, b, month, response))
+        self._solver._bump_generation()
+
+    def remove_hydrograph_group(self, str uh_name) -> None:
+        """Remove an entire unit-hydrograph group.
+
+        @param uh_name: Unit-hydrograph group name.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = uh_name.encode('utf-8')
+        _check(swmm_hydrograph_remove_group(h, b))
+        self._solver._bump_generation()
+
+    def clear_hydrograph_group_months(self, str uh_name) -> None:
+        """Clear all monthly entries from a unit-hydrograph group.
+
+        @param uh_name: Unit-hydrograph group name.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = uh_name.encode('utf-8')
+        _check(swmm_hydrograph_clear_group_months(h, b))
+        self._solver._bump_generation()
+
+    def rename_hydrograph_group(self, int idx, str new_id) -> None:
+        """Rename the unit-hydrograph group at C{idx}.
+
+        @param idx: Zero-based group index (0..L{hydrograph_group_count}-1).
+        @param new_id: New group identifier.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_hydrograph_group_rename(h, idx, b))
+        self._solver._bump_generation()
+
+    def set_hydrograph_gage(self, str uh_name, str gage_name) -> None:
+        """Assign the rain gage that drives a unit-hydrograph group.
+
+        @param uh_name: Unit-hydrograph group name.
+        @param gage_name: Rain gage identifier.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b_uh = uh_name.encode('utf-8')
+        cdef bytes b_gage = gage_name.encode('utf-8')
+        _check(swmm_hydrograph_set_gage(h, b_uh, b_gage))
 
     def add_hydrograph_gage(self, str uh_name, str gage_name) -> None:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
@@ -261,6 +420,39 @@ class Inflows:
     def rdii_decay_count(self) -> int:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_rdii_decay_count(h)
+
+    def set_rdii_decay(self, str uh_name, int response,
+                       double k_dep, double k_0, double k_T,
+                       double T_ref, double theta_rec, double T_freeze) -> None:
+        """Upsert the IA-decay row for one (group, response).
+
+        Like L{add_rdii_decay} but overwrites an existing row instead of
+        erroring when one already exists.
+
+        @param uh_name: Unit-hydrograph group name.
+        @param response: C{0}=short, C{1}=medium, C{2}=long.
+        @param k_dep: Depletion rate.
+        @param k_0: Additive base recovery rate.
+        @param k_T: Thermal recovery coefficient.
+        @param T_ref: Reference temperature.
+        @param theta_rec: Recovery temperature sensitivity.
+        @param T_freeze: Frozen-ground suppression threshold.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = uh_name.encode('utf-8')
+        _check(swmm_rdii_decay_set(
+            h, b, response, k_dep, k_0, k_T, T_ref, theta_rec, T_freeze))
+
+    def remove_rdii_decay(self, str uh_name, int response) -> None:
+        """Remove the IA-decay row for one (group, response). Idempotent.
+
+        @param uh_name: Unit-hydrograph group name.
+        @param response: C{0}=short, C{1}=medium, C{2}=long.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = uh_name.encode('utf-8')
+        _check(swmm_rdii_decay_remove(h, b, response))
+        self._solver._bump_generation()
 
     # ---- Repr -----------------------------------------------------
 

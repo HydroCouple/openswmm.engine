@@ -239,15 +239,35 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             kw_solver_.setLinkOrder(sorted);
             break;
         }
-        case RouteModel::DYNWAVE:
-            dw_solver_.init(n_nodes, n_links, groups_, ctx);
-            dw_solver_.head_tol = ctx.options.head_tol;
+        case RouteModel::DYNWAVE: {
+            // Configure the solver from options BEFORE init(): init() allocates
+            // surcharge-method-specific state — e.g. the Dynamic Preissmann Slot
+            // (DPS) arrays are resized only when surcharge_method ==
+            // DYNAMIC_SLOT. Setting the method after init() left those arrays
+            // empty and segfaulted in applyDPSGeometry. EXTRAN (the default) is
+            // unaffected since it needs no extra allocation.
+            //
+            // HEAD_TOLERANCE is entered in project length units (ft for US,
+            // m for SI).  Legacy dynwave_init converts the user value to
+            // internal feet via `HeadTol /= UCF(LENGTH)` (dynwave.c:183); the
+            // compiled default (DEFAULT_HEAD_TOL, already in feet) is left as-is.
+            // Skipping this made an SI model's 0.0015 m tolerance act as
+            // 0.0015 ft (~3.3× too tight) → chronic non-convergence.
+            const double ucf_len = ucf::Ucf[ucf::LENGTH][
+                ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
+            dw_solver_.head_tol =
+                (ctx.options.head_tol == constants::DEFAULT_HEAD_TOL)
+                    ? constants::DEFAULT_HEAD_TOL
+                    : ctx.options.head_tol / ucf_len;
             dw_solver_.max_trials = ctx.options.max_trials;
             dw_solver_.surcharge_method =
                 static_cast<dynwave::SurchargeMethod>(ctx.options.surcharge_method);
             dw_solver_.node_continuity = ctx.options.node_continuity;
             dw_solver_.anderson_accel = ctx.options.anderson_accel;
+
+            dw_solver_.init(n_nodes, n_links, groups_, ctx);
             break;
+        }
         case RouteModel::STEADY: {
             // Build topological link order (same as KW — upstream → downstream)
             int n_sorted = toposort::sortLinks(ctx.links.node1.data(),

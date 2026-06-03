@@ -131,7 +131,16 @@ int SWMMEngine::open(const char* inp_path,
         twoD::register2DSections(surface_router_.mesh(),
                                  surface_router_.options(),
                                  surface_router_.pendingBCRows(),
+                                 surface_router_.pendingEdgeConveyanceRows(),
                                  dip->registry());
+    }
+
+    // Scan the inline .inp for `;; UNITS: SI (m)` so SurfaceRouter2D::initialize
+    // can skip its FLOW_UNITS-based mesh scaling when the producer declared
+    // the mesh is already SI. The external-mesh path runs its own prescan
+    // below and overrides this if both files carry the header.
+    if (inp_path && inp_path[0] != '\0') {
+        twoD::prescan2DUnitsHeader(inp_path, surface_router_.options());
     }
 #endif
 
@@ -149,7 +158,9 @@ int SWMMEngine::open(const char* inp_path,
                 base_dir = std::filesystem::path(inp_path).parent_path().string();
             std::string err = twoD::load2DMeshExternalFile(
                 surface_router_.mesh(), surface_router_.options(),
-                surface_router_.pendingBCRows(), mf, base_dir);
+                surface_router_.pendingBCRows(),
+                surface_router_.pendingEdgeConveyanceRows(),
+                mf, base_dir);
             if (!err.empty()) {
                 ctx_.error_code    = SWMM_ERR_PARSE;
                 ctx_.error_message = err;
@@ -1186,11 +1197,17 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
     //        runoff_vol(ft³)= runoff(cfs) * dt(sec)
     //
     const double RAIN_TO_FTSEC = 1.0 / ucf::UCF(ucf::RAINFALL, ctx_.options);
-    constexpr double ACRES_TO_FT2  = ucf::ACRES_TO_FT2;
+    // Subcatchment area is stored in project land-area units (acres for US,
+    // hectares for SI).  Convert to internal ft² via 1/UCF(LANDAREA) so SI
+    // models scale by 107639 (ha→ft²), not 43560 (ac→ft²).  The surface-runoff
+    // term below is a routed cfs flow that already used the correct ft² area,
+    // so without this the precip/infil volumes were 2.471× too small for SI,
+    // breaking the runoff continuity balance.
+    const double LANDAREA_TO_FT2 = 1.0 / ucf::UCF(ucf::LANDAREA, ctx_.options);
 
     for (int i = 0; i < ctx_.n_subcatches(); ++i) {
         auto ui = static_cast<std::size_t>(i);
-        double area_ft2 = ctx_.subcatches.area[ui] * ACRES_TO_FT2;
+        double area_ft2 = ctx_.subcatches.area[ui] * LANDAREA_TO_FT2;
 
         // Rainfall volume (ft³) — rainfall is already in ft/sec (internal units)
         double rain_ftsec = ctx_.subcatches.rainfall[ui];
@@ -2335,6 +2352,57 @@ void SWMMEngine::computeFinalQualityMassBalance() noexcept {
 // postOutputSnapshot() — post snapshot to IO thread if output is due
 // ============================================================================
 
+namespace {
+/// Convert the 1D portion of a snapshot from internal (ft/cfs/ft³) to project
+/// display units, in place. This is the single conversion boundary: all output
+/// plugins (.out, GeoPackage) then consume display-unit data directly instead
+/// of each re-applying Ucf/Qcf. The 2D surface_* fields are SI-native and are
+/// left untouched. Quality concentrations, capacity and soil-moisture are
+/// dimensionless and are also left untouched. For US projects every factor is
+/// 1.0 except rainfall/evap rates, so the byte-identical .out is preserved.
+void convertSnapshotToDisplay(SimulationSnapshot& s, const ucf::DisplayUnits& du) {
+    auto scale = [](std::vector<double>& v, double f) {
+        if (f == 1.0) return;
+        for (auto& x : v) x *= f;
+    };
+    // Subcatchments (legacy subcatch_getResults field order)
+    scale(s.subcatch.rainfall,   du.rainfall);
+    scale(s.subcatch.snow_depth, du.raindepth);
+    scale(s.subcatch.evap,       du.evaprate);
+    scale(s.subcatch.infil,      du.rainfall);
+    scale(s.subcatch.runoff,     du.flow);
+    scale(s.subcatch.gw_flow,    du.flow);
+    scale(s.subcatch.gw_elev,    du.length);
+    // Nodes (legacy node_getResults field order)
+    scale(s.nodes.depth,          du.length);
+    scale(s.nodes.head,           du.length);
+    scale(s.nodes.volume,         du.volume);
+    scale(s.nodes.lateral_inflow, du.flow);
+    scale(s.nodes.total_inflow,   du.flow);
+    scale(s.nodes.overflow,       du.flow);
+    // Links (legacy link_getResults field order)
+    scale(s.links.flow,     du.flow);
+    scale(s.links.depth,    du.length);
+    scale(s.links.velocity, du.length);
+    scale(s.links.volume,   du.volume);
+    // System scalars (legacy SysResults order)
+    s.sys_temperature = du.temperature(s.sys_temperature);
+    s.sys_rainfall   *= du.rainfall;
+    s.sys_snow_depth *= du.raindepth;
+    s.sys_infil      *= du.rainfall;
+    s.sys_runoff     *= du.flow;
+    s.sys_dw_inflow  *= du.flow;
+    s.sys_gw_inflow  *= du.flow;
+    s.sys_ii_inflow  *= du.flow;
+    s.sys_ext_inflow *= du.flow;
+    s.sys_flooding   *= du.flow;
+    s.sys_outflow    *= du.flow;
+    s.sys_storage    *= du.volume;
+    s.sys_evap       *= du.evaprate;
+    s.sys_pet        *= du.evaprate;
+}
+} // namespace
+
 /**
  * @brief Post a snapshot to the IO thread if output is due.
  *
@@ -2545,28 +2613,15 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 snap.sys_storage = tot_store;
             }
 
-#ifdef OPENSWMM_HAS_2D
-            // 2D surface routing state. Deep-copied like the 1D arrays so the
-            // IO thread can read without synchronization. Empty when 2D
-            // inactive; Default2DOutputPlugin::update() short-circuits on
-            // surface_tri_count == 0.
-            if (surface_router_.isActive()) {
-                const auto& st  = surface_router_.state();
-                snap.surface_tri_count    = surface_router_.mesh().n_triangles();
-                snap.surface_vert_count   = surface_router_.mesh().n_vertices();
-                snap.surface_depth         = st.depth;
-                snap.surface_head          = st.head;
-                snap.surface_grad_hx       = st.grad_hx;
-                snap.surface_grad_hy       = st.grad_hy;
-                snap.surface_grad_hx_lim   = st.grad_hx_lim;
-                snap.surface_grad_hy_lim   = st.grad_hy_lim;
-                snap.surface_rainfall      = st.rainfall;
-                snap.surface_coupling_flux = st.coupling_flux;
-                snap.surface_net_source    = st.net_source;
-                snap.surface_edge_flux     = st.edge_flux;
-                snap.surface_vert_head     = st.vert_head;
-            }
-#endif
+            // 2D surface routing state (deep-copied; empty when 2D inactive,
+            // and Default2DOutputPlugin::update() short-circuits on
+            // surface_tri_count == 0).
+            fillSurfaceSnapshot(snap);
+
+            // Single conversion boundary: convert the 1D snapshot to project
+            // display units once here so all output plugins consume display
+            // data directly (2D surface_* fields stay SI-native, untouched).
+            convertSnapshotToDisplay(snap, ucf::DisplayUnits::from(ctx_.options));
 
             // Attach name table pointers (valid for lifetime of ctx_)
             snap.node_ids     = &ctx_.node_names.names();
@@ -2577,8 +2632,48 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
 
             io_thread_.post(std::move(snap));
         }
+#ifdef OPENSWMM_HAS_2D
+        else if (surface_output_plugin_ != nullptr
+                 && surface_router_.isActive() && !plugins_.empty()) {
+            // 2D output is configured but the 1D binary .out is not being saved
+            // (no .out path → no 1D output writer registered). Post a snapshot
+            // carrying only the surface state so the 2D HDF5 still writes. The
+            // 1D writers are absent in this mode, so the empty 1D arrays are
+            // never consumed; DefaultReportPlugin::update() is a no-op.
+            SimulationSnapshot snap;
+            snap.sim_time = ctx_.current_date;
+            fillSurfaceSnapshot(snap);
+            io_thread_.post(std::move(snap));
+        }
+#endif
         hydraulics::TimestepController::reset_output_timer(ctx_);
     }
+}
+
+
+void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
+#ifdef OPENSWMM_HAS_2D
+    if (!surface_router_.isActive()) return;
+    const auto& st  = surface_router_.state();
+    snap.surface_tri_count     = surface_router_.mesh().n_triangles();
+    snap.surface_vert_count    = surface_router_.mesh().n_vertices();
+    snap.surface_depth          = st.depth;
+    snap.surface_head           = st.head;
+    snap.surface_grad_hx        = st.grad_hx;
+    snap.surface_grad_hy        = st.grad_hy;
+    snap.surface_grad_hx_lim    = st.grad_hx_lim;
+    snap.surface_grad_hy_lim    = st.grad_hy_lim;
+    snap.surface_rainfall       = st.rainfall;
+    snap.surface_coupling_flux  = st.coupling_flux;
+    snap.surface_net_source     = st.net_source;
+    snap.surface_edge_flux      = st.edge_flux;
+    snap.surface_vert_head      = st.vert_head;
+    snap.surface_face_vx        = st.face_vx;
+    snap.surface_face_vy        = st.face_vy;
+    snap.surface_continuity_err = st.cell_continuity_err;
+#else
+    (void)snap;
+#endif
 }
 
 // ============================================================================

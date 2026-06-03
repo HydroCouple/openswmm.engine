@@ -93,10 +93,17 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
         // Detect FILE reference
         const std::string tok1_upper = Tokenizer::to_upper(tok[1]);
         if (tok1_upper == "FILE") {
-            // External file — path (and optional :column) is tok[2]
-            // Store in table's id as "FILE:path[:column]" for later loading
+            // External file — tok[2] is the quoted path, optionally with a
+            // `:column` suffix inside the quotes (e.g. "rain.csv:East_Gage").
+            // Store the inner token verbatim in Table::file_path; the
+            // PostParseResolver splits the column suffix when loading, and
+            // InpWriter emits the whole thing unchanged for byte-fidelity
+            // round-trip.  tbl.id is left as the table name set above.
             if (tok.size() > 2) {
-                tbl.id = "FILE:" + tok[2];
+                std::string path = tok[2];
+                if (path.size() >= 2 && path.front() == '"' && path.back() == '"')
+                    path = path.substr(1, path.size() - 2);
+                tbl.file_path = std::move(path);
             }
             continue;
         }

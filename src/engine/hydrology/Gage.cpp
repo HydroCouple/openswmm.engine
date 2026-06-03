@@ -126,8 +126,18 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
 
         int ts_idx = ctx.gages.ts_index[uj];
         double raw_value = 0.0;
-        if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
-            auto& tbl = ctx.tables.tables[static_cast<std::size_t>(ts_idx)];
+        // Select the source series: a FILE_RAIN gage reads from its own resolved
+        // rain_series (built by load_external_rain_files); a TIMESERIES gage reads
+        // from the shared table pool.  Both reuse the identical step-function below.
+        Table* rtbl = nullptr;
+        if (ctx.gages.source[uj] == RainSource::FILE_RAIN) {
+            if (uj < ctx.gages.rain_series.size() && !ctx.gages.rain_series[uj].empty())
+                rtbl = &ctx.gages.rain_series[uj];
+        } else if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
+            rtbl = &ctx.tables.tables[static_cast<std::size_t>(ts_idx)];
+        }
+        if (rtbl) {
+            auto& tbl = *rtbl;
             int n = static_cast<int>(tbl.x.size());
 
             // Step-function lookup: find rightmost entry where x[idx] <= t

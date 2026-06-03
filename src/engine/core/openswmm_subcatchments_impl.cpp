@@ -93,7 +93,8 @@ SWMM_ENGINE_API int swmm_subcatch_set_width(SWMM_Engine engine, int idx, double 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    ctx.subcatches.width[static_cast<std::size_t>(idx)] = width;
+    // units: width stored INTERNAL ft -> convert display->internal
+    ctx.subcatches.width[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::LENGTH, width);
     return SWMM_OK;
 }
 
@@ -219,6 +220,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_area(SWMM_Engine engine, int idx, double* 
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    // units: area is stored in DISPLAY units (ac/ha), converted at-use in Runoff.cpp — return raw
     if (area) *area = ctx.subcatches.area[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
@@ -243,7 +245,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_width(SWMM_Engine engine, int idx, double*
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (w) *w = ctx.subcatches.width[static_cast<std::size_t>(idx)];
+    // units: width stored INTERNAL ft -> convert internal->display
+    if (w) *w = to_display(ctx, openswmm::ucf::LENGTH, ctx.subcatches.width[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -367,7 +370,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_stat_precip(SWMM_Engine engine, int idx, d
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (vol) *vol = ctx.subcatches.stat_precip_vol[static_cast<std::size_t>(idx)];
+    // units: stat precip volume stored INTERNAL ft³ -> convert internal->display
+    if (vol) *vol = to_display(ctx, openswmm::ucf::VOLUME, ctx.subcatches.stat_precip_vol[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -375,7 +379,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_stat_runoff_vol(SWMM_Engine engine, int id
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (vol) *vol = ctx.subcatches.stat_runoff_vol[static_cast<std::size_t>(idx)];
+    // units: stat runoff volume stored INTERNAL ft³ -> convert internal->display
+    if (vol) *vol = to_display(ctx, openswmm::ucf::VOLUME, ctx.subcatches.stat_runoff_vol[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -383,7 +388,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_stat_max_runoff(SWMM_Engine engine, int id
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (rate) *rate = ctx.subcatches.stat_max_runoff[static_cast<std::size_t>(idx)];
+    // units: stat max runoff stored INTERNAL cfs -> convert internal->display
+    if (rate) *rate = to_display(ctx, openswmm::ucf::FLOW, ctx.subcatches.stat_max_runoff[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -439,7 +445,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_runoff(SWMM_Engine engine, int idx, double
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (runoff) *runoff = ctx.subcatches.runoff[static_cast<std::size_t>(idx)];
+    // units: runoff stored INTERNAL cfs -> convert internal->display
+    if (runoff) *runoff = to_display(ctx, openswmm::ucf::FLOW, ctx.subcatches.runoff[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -447,7 +454,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_groundwater(SWMM_Engine engine, int idx, d
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (gw_flow) *gw_flow = ctx.subcatches.gw_flow[static_cast<std::size_t>(idx)];
+    // units: groundwater flow stored INTERNAL cfs -> convert internal->display
+    if (gw_flow) *gw_flow = to_display(ctx, openswmm::ucf::FLOW, ctx.subcatches.gw_flow[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -455,7 +463,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_rainfall(SWMM_Engine engine, int idx, doub
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (rainfall) *rainfall = ctx.subcatches.rainfall[static_cast<std::size_t>(idx)];
+    // units: state rainfall stored INTERNAL ft/s -> convert internal->display
+    if (rainfall) *rainfall = to_display(ctx, openswmm::ucf::RAINFALL, ctx.subcatches.rainfall[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -472,7 +481,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_evap(SWMM_Engine engine, int idx, double* 
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (evap) *evap = ctx.subcatches.evap_loss[static_cast<std::size_t>(idx)];
+    // units: evap loss stored INTERNAL ft/s -> convert internal->display
+    if (evap) *evap = to_display(ctx, openswmm::ucf::EVAPRATE, ctx.subcatches.evap_loss[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -480,7 +490,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_infil(SWMM_Engine engine, int idx, double*
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (infil) *infil = ctx.subcatches.infil_loss[static_cast<std::size_t>(idx)];
+    // units: infil loss stored INTERNAL ft/s -> convert internal->display
+    if (infil) *infil = to_display(ctx, openswmm::ucf::RAINFALL, ctx.subcatches.infil_loss[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -493,7 +504,8 @@ SWMM_ENGINE_API int swmm_subcatch_set_rainfall(SWMM_Engine engine, int idx, doub
     auto& ctx = to_engine(engine)->context();
     CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    ctx.subcatches.rainfall[static_cast<std::size_t>(idx)] = rainfall;
+    // units: state rainfall stored INTERNAL ft/s -> convert display->internal
+    ctx.subcatches.rainfall[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::RAINFALL, rainfall);
     return SWMM_OK;
 }
 
@@ -523,7 +535,9 @@ SWMM_ENGINE_API int swmm_subcatch_get_runoff_bulk(SWMM_Engine engine, double* bu
     const auto& ctx = to_engine(engine)->context();
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_subcatches());
-    std::copy(ctx.subcatches.runoff.begin(), ctx.subcatches.runoff.begin() + n, buf);
+    // units: runoff stored INTERNAL cfs -> convert internal->display per element
+    for (int i = 0; i < n; ++i)
+        buf[i] = to_display(ctx, openswmm::ucf::FLOW, ctx.subcatches.runoff[static_cast<std::size_t>(i)]);
     return SWMM_OK;
 }
 
@@ -558,8 +572,9 @@ SWMM_ENGINE_API int swmm_subcatch_get_rainfall_bulk(SWMM_Engine engine, double* 
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     const int n = std::min(count, ctx.n_subcatches());
-    std::copy(ctx.subcatches.rainfall.begin(),
-              ctx.subcatches.rainfall.begin() + n, buf);
+    // units: state rainfall stored INTERNAL ft/s -> convert internal->display per element
+    for (int i = 0; i < n; ++i)
+        buf[i] = to_display(ctx, openswmm::ucf::RAINFALL, ctx.subcatches.rainfall[static_cast<std::size_t>(i)]);
     return SWMM_OK;
 }
 
@@ -568,8 +583,9 @@ SWMM_ENGINE_API int swmm_subcatch_get_evap_bulk(SWMM_Engine engine, double* buf,
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     const int n = std::min(count, ctx.n_subcatches());
-    std::copy(ctx.subcatches.evap_loss.begin(),
-              ctx.subcatches.evap_loss.begin() + n, buf);
+    // units: evap loss stored INTERNAL ft/s -> convert internal->display per element
+    for (int i = 0; i < n; ++i)
+        buf[i] = to_display(ctx, openswmm::ucf::EVAPRATE, ctx.subcatches.evap_loss[static_cast<std::size_t>(i)]);
     return SWMM_OK;
 }
 
@@ -578,8 +594,9 @@ SWMM_ENGINE_API int swmm_subcatch_get_infil_bulk(SWMM_Engine engine, double* buf
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     const int n = std::min(count, ctx.n_subcatches());
-    std::copy(ctx.subcatches.infil_loss.begin(),
-              ctx.subcatches.infil_loss.begin() + n, buf);
+    // units: infil loss stored INTERNAL ft/s -> convert internal->display per element
+    for (int i = 0; i < n; ++i)
+        buf[i] = to_display(ctx, openswmm::ucf::RAINFALL, ctx.subcatches.infil_loss[static_cast<std::size_t>(i)]);
     return SWMM_OK;
 }
 

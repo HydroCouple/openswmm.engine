@@ -69,7 +69,8 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
  * @param depth  Water depth (ft).
  * @returns Effective surface area (ft2).
  */
-double getPondedArea(const NodeData& nodes, int idx, double depth);
+double getPondedArea(const NodeData& nodes, int idx, double depth,
+                     TableData* tables = nullptr, int unit_sys = 0);
 
 /**
  * @brief Compute max outflow limited by available volume.

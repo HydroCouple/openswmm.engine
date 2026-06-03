@@ -390,6 +390,12 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
                                            "coupling flux with SWMM node", "m s-1");
     ds_face_net_source_    = createFaceDS("Mesh2_face_net_source",
                                            "net volumetric source/sink", "m s-1");
+    ds_face_vx_            = createFaceDS("Mesh2_face_vx",
+                                          "cell-centred velocity X (RT0)", "m s-1");
+    ds_face_vy_            = createFaceDS("Mesh2_face_vy",
+                                          "cell-centred velocity Y (RT0)", "m s-1");
+    ds_face_continuity_err_ = createFaceDS("Mesh2_face_continuity_err",
+                                            "per-cell continuity residual", "m3 s-1");
 
     // Edge flux [nTime, nFace, 3]
     ds_edge_flux_ = createUnlimitedDataset("Mesh2_edge_flux", 3, zero3, edge_chunk);
@@ -436,6 +442,9 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     extendAndWrite2D(ds_face_rainfall_,      snap.surface_rainfall.data(),      n_faces_);
     extendAndWrite2D(ds_face_coupling_flux_, snap.surface_coupling_flux.data(), n_faces_);
     extendAndWrite2D(ds_face_net_source_,    snap.surface_net_source.data(),    n_faces_);
+    extendAndWrite2D(ds_face_vx_,            snap.surface_face_vx.data(),       n_faces_);
+    extendAndWrite2D(ds_face_vy_,            snap.surface_face_vy.data(),       n_faces_);
+    extendAndWrite2D(ds_face_continuity_err_, snap.surface_continuity_err.data(), n_faces_);
 
     // Write per-edge fields [nFace, 3]
     extendAndWrite3D(ds_edge_flux_, snap.surface_edge_flux.data(), n_faces_, 3);
@@ -466,6 +475,9 @@ int Default2DOutputPlugin::finalize(const SimulationContext& /*ctx*/) {
     closeDS(ds_face_rainfall_);
     closeDS(ds_face_coupling_flux_);
     closeDS(ds_face_net_source_);
+    closeDS(ds_face_vx_);
+    closeDS(ds_face_vy_);
+    closeDS(ds_face_continuity_err_);
     closeDS(ds_edge_flux_);
     closeDS(ds_node_head_);
 

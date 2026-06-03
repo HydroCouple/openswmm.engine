@@ -267,6 +267,97 @@ SWMM_ENGINE_API int
 swmm_files_set(SWMM_Engine engine, const char* key, const char* value);
 
 /* =========================================================================
+ * External-file path slots — typed, broader API (Slice IO-9)
+ * =========================================================================
+ *
+ * Reaches every external-file slot in the model — not just the [FILES]
+ * section — so the GUI's portability normalizer can walk a uniform list
+ * before save without per-role plumbing.
+ *
+ * Each slot carries both:
+ *   - the original token as it appeared in the source `.inp`
+ *     (relative-or-absolute, with whichever separators the author used);
+ *   - the resolved absolute path the engine uses for `fopen`.
+ *
+ * The slot getter exposes both strings to the caller; the slot setter
+ * updates the original token and clears the cached absolute resolution
+ * (PostParseResolver re-fills it the next time it runs).
+ *
+ * See openswmm.gui/docs/IO_PORTABILITY_PLAN.md §3.3 for the storage model
+ * and §3.7 for the GUI editor contract.
+ * ========================================================================= */
+
+/**
+ * @brief Identifies a single external-file slot on the model.
+ *
+ * @details Vector slots (per-gage data, per-timeseries data, per-hot-start
+ *          save entry) require an `owner` key to disambiguate; scalar
+ *          slots ignore the `owner` argument.
+ */
+typedef enum SWMM_FilePathRole {
+    /* Scalar slots — `owner` ignored. */
+    SWMM_FILE_RAINFALL          = 1,  /**< ctx.files.rainfall_path        */
+    SWMM_FILE_RUNOFF            = 2,  /**< ctx.files.runoff_path          */
+    SWMM_FILE_RDII              = 3,  /**< ctx.files.rdii_path            */
+    SWMM_FILE_INFLOWS           = 4,  /**< ctx.files.inflows_path         */
+    SWMM_FILE_OUTFLOWS          = 5,  /**< ctx.files.outflows_path        */
+    SWMM_FILE_HOTSTART_USE      = 6,  /**< ctx.files.hotstart_use_path    */
+    SWMM_FILE_CLIMATE_TEMP      = 7,  /**< ctx.options.temp_file          */
+
+    /* Vector slots — `owner` selects the entry. */
+    SWMM_FILE_HOTSTART_SAVE     = 8,  /**< ctx.files.hotstart_saves[i],
+                                       *  `owner` is decimal index "0".."N-1" */
+    SWMM_FILE_RAINGAGE_DATA     = 9,  /**< ctx.gages.file_path[i],
+                                       *  `owner` is the gage id     */
+    SWMM_FILE_TIMESERIES_DATA   = 10  /**< ctx.tables.tables[i].file_path,
+                                       *  `owner` is the series id   */
+} SWMM_FilePathRole;
+
+/**
+ * @brief Read both strings from an external-file slot.
+ *
+ * @param engine        Engine handle.
+ * @param role          Which slot to read.
+ * @param owner         Owner key for vector slots; NULL/"" for scalar slots.
+ * @param absolute_buf  [out] UTF-8 absolute path (NUL-terminated, truncated
+ *                      at `absolute_buflen - 1`). May be empty if the slot
+ *                      was set programmatically and never resolved.
+ * @param absolute_buflen  Size of `absolute_buf` in bytes.
+ * @param original_buf  [out] UTF-8 original token as authored. May be empty.
+ * @param original_buflen  Size of `original_buf` in bytes.
+ * @returns SWMM_OK on success;
+ *          SWMM_ERR_BADPARAM when `role` is unknown, when `owner` is
+ *          required but NULL/missing in the model, or when buffer
+ *          arguments are NULL.
+ */
+SWMM_ENGINE_API int
+swmm_file_path_get(SWMM_Engine          engine,
+                   SWMM_FilePathRole    role,
+                   const char*          owner,
+                   char*                absolute_buf,
+                   int                  absolute_buflen,
+                   char*                original_buf,
+                   int                  original_buflen);
+
+/**
+ * @brief Set the original token for an external-file slot; clears the
+ *        cached absolute resolution.
+ *
+ * @details For vector slots, an `owner` that is not yet present in the
+ *          model results in `SWMM_ERR_BADPARAM` — callers must add the
+ *          owning gage / timeseries / hot-start save row first.
+ *
+ *          Pass an empty `new_path` to clear the slot.
+ *
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM otherwise.
+ */
+SWMM_ENGINE_API int
+swmm_file_path_set(SWMM_Engine          engine,
+                   SWMM_FilePathRole    role,
+                   const char*          owner,
+                   const char*          new_path);
+
+/* =========================================================================
  * Title / notes access
  * ========================================================================= */
 

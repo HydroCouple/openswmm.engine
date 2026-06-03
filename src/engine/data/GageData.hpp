@@ -22,6 +22,8 @@
 #ifndef OPENSWMM_ENGINE_GAGE_DATA_HPP
 #define OPENSWMM_ENGINE_GAGE_DATA_HPP
 
+#include "../core/FilePathPair.hpp"
+#include "TableData.hpp"
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -95,9 +97,12 @@ struct GageData {
 
     /**
      * @brief External rain file path (when source == FILE_RAIN).
+     * @details Per-gage `{absolute, original}` carrier — see
+     *          `core/FilePathPair.hpp`. Implicit `std::string` interface
+     *          keeps existing readers/writers working unchanged.
      * @see Legacy: Gage[i].fname
      */
-    std::vector<std::string>    file_path;
+    std::vector<FilePathPair>   file_path;
 
     /**
      * @brief Timeseries name (for deferred resolution when TS parsed after gages).
@@ -110,6 +115,50 @@ struct GageData {
      *          Empty string means use the first/only data column.
      */
     std::vector<std::string>    col_name;
+
+    /**
+     * @brief Station ID for a standard SWMM rain file (when source == FILE_RAIN).
+     * @details The [RAINGAGES] FILE grammar is
+     *          `Name Format Interval SCF FILE Fname Station Units [Start] [SCF]`.
+     *          A single rain file may hold many stations; this ID selects the
+     *          rows whose first token matches.  Empty means "accept all rows".
+     * @see Legacy: Gage[i].staID
+     */
+    std::vector<std::string>    station_id;
+
+    /**
+     * @brief Rain depth units declared in the [RAINGAGES] FILE row: 0 = IN, 1 = MM.
+     * @details Used to convert the file's raw depths into the project's rain
+     *          units when the file units differ from the unit system.
+     * @see Legacy: Gage[i].rainUnits
+     */
+    std::vector<int>            rain_units;
+
+    // -----------------------------------------------------------------------
+    // Rainfall-file summary statistics (for the "Rainfall File Summary"
+    // report section).  Populated by load_external_rain_files() while it
+    // scans the external file; meaningful only when source == FILE_RAIN.
+    // -----------------------------------------------------------------------
+
+    /** @brief First record date found for this gage's station (OADate, 0 = none). */
+    std::vector<double>         file_first_date;
+
+    /** @brief Last record date found for this gage's station (OADate, 0 = none). */
+    std::vector<double>         file_last_date;
+
+    /** @brief Number of records with precipitation > 0 for this station. */
+    std::vector<long>           file_periods_precip;
+
+    /**
+     * @brief Resolved rainfall series for a FILE_RAIN gage (windowed to the run).
+     * @details Populated by load_external_rain_files() with the station's records
+     *          that fall inside the simulation window, already converted to the
+     *          project's rain depth units.  Reusing a Table gives the runtime the
+     *          same cursor/step-function lookup as an inline [TIMESERIES] gage,
+     *          without polluting ctx.tables (so INP round-trips still emit FILE).
+     *          Empty unless source == FILE_RAIN.
+     */
+    std::vector<Table>          rain_series;
 
     /**
      * @brief Rain file format.
@@ -230,6 +279,12 @@ struct GageData {
         ts_name.assign(un, std::string{});
         file_path.assign(un, std::string{});
         col_name.assign(un, std::string{});
+        station_id.assign(un, std::string{});
+        rain_units.assign(un, 0);
+        file_first_date.assign(un, 0.0);
+        file_last_date.assign(un, 0.0);
+        file_periods_precip.assign(un, 0L);
+        rain_series.assign(un, Table{});
         file_format.assign(un, RainFileFormat::UNKNOWN);
         interval_sec.assign(un, 3600);
         snow_factor.assign(un, 1.0);
@@ -263,6 +318,10 @@ struct GageData {
         ts_name.resize(un, std::string{});
         file_path.resize(un, std::string{});
         col_name.resize(un, std::string{});
+        station_id.resize(un, std::string{});
+        g(rain_units, 0);
+        g(file_first_date, 0.0); g(file_last_date, 0.0); g(file_periods_precip, 0L);
+        rain_series.resize(un, Table{});
         g(file_format, RainFileFormat::UNKNOWN); g(interval_sec, 3600); g(snow_factor, 1.0);
         g(scale_factor, 1.0);
         g(rainfall, 0.0); g(next_rainfall, 0.0);

@@ -47,6 +47,13 @@ struct SurfaceStateData {
     // Reconstructed head at vertices — [0, n_vertices)
     std::vector<double> vert_head;      ///< Head reconstructed at vertices
 
+    // Cell-centred velocity (RT0 reconstruction from edge fluxes) — per triangle
+    std::vector<double> face_vx;        ///< Cell velocity X component (m/s)
+    std::vector<double> face_vy;        ///< Cell velocity Y component (m/s)
+
+    // Per-cell continuity residual — per triangle (m³/s, ≈0 when conservative)
+    std::vector<double> cell_continuity_err;
+
     // Fluxes — flat 2D: [tri * 3 + edge]
     std::vector<double> edge_flux;      ///< Normal flux through each edge
 
@@ -95,6 +102,9 @@ struct SurfaceStateData {
         grad_hx_lim.assign(nt, 0.0);
         grad_hy_lim.assign(nt, 0.0);
         vert_head.assign(nv, 0.0);
+        face_vx.assign(nt, 0.0);
+        face_vy.assign(nt, 0.0);
+        cell_continuity_err.assign(nt, 0.0);
         edge_flux.assign(n3, 0.0);
         rainfall.assign(nt, 0.0);
         coupling_flux.assign(nt, 0.0);
