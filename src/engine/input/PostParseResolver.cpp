@@ -12,11 +12,14 @@
 #include "PostParseResolver.hpp"
 #include "../core/Constants.hpp"
 #include "../core/ErrorCodes.hpp"
+#include "../core/PathResolver.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../hydraulics/xsect_tables.hpp"
 #include "../hydraulics/XSectBatch.hpp"
+#include "../hydraulics/Link.hpp"
+#include "../hydraulics/Street.hpp"
 #include "../hydraulics/ForceMain.hpp"
 #include <algorithm>
 #include <cmath>
@@ -44,30 +47,82 @@ using openswmm::WARN_MAX_DEPTH_INCREASED;
 //   ...
 // Fields may be tab or space delimited.
 // -------------------------------------------------------------------------
+// -------------------------------------------------------------------------
+// Slice IO-3: resolve every external-file slot's `original` token against
+// the .inp directory, populating `.absolute` for downstream callers
+// (engine `fopen` paths, the GUI's relative-path display, future
+// `IoPortabilityNormalizer` pre-save pass).
+//
+// `original` is left untouched — InpWriter consumes it verbatim today;
+// Slice IO-4 will rebase it against the destination directory at write
+// time.
+//
+// Convention: for tokens that carry a non-path decorator (the
+// `path:column` form used by file-backed timeseries), the decorator is
+// preserved in `.absolute` too — `.absolute` is "the same token, made
+// absolute", not "the fopen-ready file path". Consumers that need to
+// open the file (e.g. `load_external_timeseries_files` below) strip the
+// decorator the same way they did before this slice.
+// -------------------------------------------------------------------------
+void resolve_external_file_slots(SimulationContext& ctx,
+                                  const std::string& anchor_dir) {
+    auto resolve = [&](FilePathPair& slot) {
+        if (slot.original.empty()) {
+            slot.absolute.clear();
+            return;
+        }
+        slot.absolute = openswmm::io::resolveRelative(slot.original, anchor_dir);
+    };
+
+    auto& f = ctx.files;
+    resolve(f.rainfall_path);
+    resolve(f.runoff_path);
+    resolve(f.rdii_path);
+    resolve(f.inflows_path);
+    resolve(f.outflows_path);
+    resolve(f.hotstart_use_path);
+    for (auto& save : f.hotstart_saves) resolve(save.path);
+
+    for (auto& gfp : ctx.gages.file_path) resolve(gfp);
+
+    resolve(ctx.options.temp_file);
+
+    for (auto& tbl : ctx.tables.tables) {
+        if (tbl.type != TableType::TIMESERIES) continue;
+        resolve(tbl.file_path);
+    }
+}
+
 static void load_external_timeseries_files(SimulationContext& ctx, const std::string& inp_dir) {
     for (std::size_t t = 0; t < ctx.tables.tables.size(); ++t) {
         auto& tbl = ctx.tables.tables[t];
         if (tbl.type != TableType::TIMESERIES) continue;
 
-        // Check for FILE: prefix in table id
-        if (tbl.id.size() < 6 || tbl.id.substr(0, 5) != "FILE:") continue;
+        // TablesHandler stores the FILE token (path, optionally with a
+        // `:column` suffix) verbatim in Table::file_path.original. An
+        // empty value means the series is inline, not file-backed.
+        if (tbl.file_path.empty()) continue;
 
-        std::string file_path = tbl.id.substr(5);
+        // Slice IO-3: resolve_external_file_slots() has already filled
+        // .absolute from .original against the .inp directory. Prefer
+        // the cached resolution; fall back to inline resolution for
+        // callers that built the model programmatically and never ran
+        // the resolver pass.
+        std::string file_path = !tbl.file_path.absolute.empty()
+                                  ? tbl.file_path.absolute
+                                  : tbl.file_path.str();
 
-        // Strip optional :column suffix (e.g. "FILE:path.dat:ColName")
+        // Strip optional :column suffix (e.g. "path.dat:ColName")
         auto colon_pos = file_path.rfind(':');
         // Only strip if it's not a drive letter (e.g. "C:\path")
         if (colon_pos != std::string::npos && colon_pos > 1) {
             file_path = file_path.substr(0, colon_pos);
         }
 
-        // Strip surrounding quotes if present
-        if (file_path.size() >= 2 && file_path.front() == '"' && file_path.back() == '"')
-            file_path = file_path.substr(1, file_path.size() - 2);
-
-        // Resolve relative paths against INP file directory
+        // Resolve relative paths against INP file directory (legacy
+        // fallback path — kept so a fresh programmatic Table still loads
+        // even without the resolver pass).
         if (!file_path.empty() && file_path[0] != '/' && file_path[0] != '\\') {
-            // Not an absolute path — prepend INP directory
             if (!inp_dir.empty())
                 file_path = inp_dir + "/" + file_path;
         }
@@ -75,8 +130,9 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
         // Open the file
         FILE* fp = std::fopen(file_path.c_str(), "r");
         if (!fp) {
-            // Try original path without modification
-            fp = std::fopen(tbl.id.substr(5).c_str(), "r");
+            // Try the verbatim token as a final fallback (covers absolute
+            // paths and same-cwd cases when inp_dir was empty).
+            fp = std::fopen(tbl.file_path.c_str(), "r");
             if (!fp) continue; // Skip silently — legacy also reports ERROR 361
         }
 
@@ -119,9 +175,272 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
         tbl.x.shrink_to_fit();
         tbl.y.shrink_to_fit();
 
-        // Clear the FILE: prefix from id now that data is loaded
-        // (table name was already registered under its proper name)
+        // file_path is intentionally retained so InpWriter can preserve the
+        // FILE-form reference on round-trip; the in-memory x/y rows are an
+        // execution cache, not the canonical representation.
     }
+}
+
+// -------------------------------------------------------------------------
+// Load external FILE-source rain-gage data from disk
+// -------------------------------------------------------------------------
+// Standard SWMM rain files (STAN_PRCP) hold one record per line:
+//   StationID  Year  Month  Day  Hour  Minute  Value
+// A single file may contain many stations; each gage selects its own rows by
+// station ID.  The whole file is scanned to gather the "Rainfall File Summary"
+// statistics (first/last date, periods-with-precip), but only records inside
+// the simulation window are retained for routing — kept in the gage's own
+// `rain_series` Table so the runtime reuses the same step-function lookup as
+// an inline [TIMESERIES] gage without polluting ctx.tables.
+// -------------------------------------------------------------------------
+static void load_external_rain_files(SimulationContext& ctx) {
+    const int n_gages = ctx.gages.count();
+    if (n_gages == 0) return;
+
+    // Project rain depth units: SI (mm) for CMS/LPS/MLD, US (in) otherwise.
+    const bool project_si = static_cast<int>(ctx.options.flow_units) >= 3;
+
+    // Retain a generous window around the run so the gage has data at and just
+    // before the start, and through the end, of the simulation.
+    const double start = ctx.options.start_date;
+    const double end   = (ctx.options.end_date > start)
+                           ? ctx.options.end_date : (start + 366.0);
+    const double win_lo = start - 1.0;
+    const double win_hi = end + 1.0;
+
+    for (int g = 0; g < n_gages; ++g) {
+        const auto ug = static_cast<std::size_t>(g);
+        if (ctx.gages.source[ug] != RainSource::FILE_RAIN) continue;
+        if (ctx.gages.file_format[ug] != RainFileFormat::STAN_PRCP) continue;
+
+        std::string path = !ctx.gages.file_path[ug].absolute.empty()
+                             ? ctx.gages.file_path[ug].absolute
+                             : ctx.gages.file_path[ug].str();
+        FILE* fp = std::fopen(path.c_str(), "r");
+        if (!fp) {
+            fp = std::fopen(ctx.gages.file_path[ug].c_str(), "r");
+            if (!fp) continue; // legacy reports ERROR 361; mirror the TS loader
+        }
+
+        // File depths → project rain units.  File is MM when rain_units==1.
+        const bool file_mm = ctx.gages.rain_units[ug] == 1;
+        const double units_factor = file_mm ? (project_si ? 1.0 : 1.0 / 25.4)
+                                            : (project_si ? 25.4 : 1.0);
+
+        const std::string& sta = ctx.gages.station_id[ug];
+
+        Table series;
+        series.type = TableType::TIMESERIES;
+        series.id   = ctx.gage_names.name_of(g);
+        series.x.reserve(8192);
+        series.y.reserve(8192);
+
+        double first_date = 0.0, last_date = 0.0;
+        long   periods_precip = 0;
+
+        char line[256];
+        char tok[64];
+        int  yr, mo, dy, hr, mn;
+        double val;
+        while (std::fgets(line, sizeof(line), fp)) {
+            if (line[0] == ';' || line[0] == '\n' || line[0] == '\r') continue;
+            if (std::sscanf(line, "%63s %d %d %d %d %d %lf",
+                            tok, &yr, &mo, &dy, &hr, &mn, &val) != 7) continue;
+            if (!sta.empty() && sta != tok) continue;
+
+            const double dt = datetime::encodeDate(yr, mo, dy)
+                            + datetime::encodeTime(hr, mn, 0);
+
+            // Whole-file statistics for the report summary.
+            if (first_date == 0.0 || dt < first_date) first_date = dt;
+            if (dt > last_date) last_date = dt;
+            if (val > 0.0) ++periods_precip;
+
+            // Retain only the records needed to route the simulation window.
+            if (dt < win_lo || dt > win_hi) continue;
+            series.x.push_back(dt);
+            series.y.push_back(val * units_factor);
+        }
+        std::fclose(fp);
+
+        // Records may be out of order across stations in a shared file; the
+        // step-function lookup assumes ascending time.
+        if (!std::is_sorted(series.x.begin(), series.x.end())) {
+            std::vector<std::size_t> order(series.x.size());
+            for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+            std::sort(order.begin(), order.end(),
+                      [&](std::size_t a, std::size_t b){ return series.x[a] < series.x[b]; });
+            std::vector<double> sx(series.x.size()), sy(series.y.size());
+            for (std::size_t i = 0; i < order.size(); ++i) {
+                sx[i] = series.x[order[i]];
+                sy[i] = series.y[order[i]];
+            }
+            series.x.swap(sx);
+            series.y.swap(sy);
+        }
+        series.x.shrink_to_fit();
+        series.y.shrink_to_fit();
+
+        ctx.gages.file_first_date[ug]     = first_date;
+        ctx.gages.file_last_date[ug]      = last_date;
+        ctx.gages.file_periods_precip[ug] = periods_precip;
+        ctx.gages.rain_series[ug]         = std::move(series);
+    }
+}
+
+void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
+    using constants::GRAVITY;
+    using constants::PHI;
+
+    auto uj = static_cast<std::size_t>(j);
+    if (ctx.links.type[uj] != LinkType::CONDUIT) return;
+
+    double n_val    = ctx.links.roughness[uj];
+    double slope    = std::fabs(ctx.links.slope[uj]);
+    double a_full   = ctx.links.xsect_a_full[uj];
+    double s_full   = ctx.links.xsect_s_full[uj];
+    double s_max    = ctx.links.xsect_s_max[uj];
+
+    if (n_val <= 0.0 || a_full <= 0.0) return;
+
+    // For DW force mains, substitute equivalent Manning's n (Gap #22)
+    // Matches legacy conduit_validate in link.c lines 1094-1096:
+    //   if (RouteModel == DW && xsect.type == FORCE_MAIN)
+    //       roughness = forcemain_getEquivN(j, k);
+    bool is_force_main = (ctx.links.xsect_shape[uj] == XsectShape::FORCE_MAIN);
+    bool is_dw = (ctx.options.routing_model == RoutingModel::DYNWAVE);
+    if (is_dw && is_force_main) {
+        auto fm = static_cast<forcemain::FrictionModel>(ctx.options.force_main_eqn);
+        double r_bot  = ctx.links.xsect_r_bot[uj];
+        double y_full = ctx.links.xsect_y_full[uj];
+        n_val = forcemain::getEquivN(fm, r_bot, y_full, slope, n_val);
+        if (n_val <= 0.0) n_val = ctx.links.roughness[uj];
+    }
+
+    // Roughness factor for DW friction slope: GRAVITY * (n/PHI)^2
+    ctx.links.rough_factor[uj] = GRAVITY * (n_val / PHI) * (n_val / PHI);
+
+    // Conveyance factor: beta = PHI * sqrt(|slope|) / n
+    double beta = PHI * std::sqrt(slope) / n_val;
+    ctx.links.beta[uj] = beta;
+
+    // Full-flow rate: q_full = sFull * beta
+    ctx.links.q_full[uj] = s_full * beta;
+
+    // Max flow at max section factor
+    ctx.links.q_max[uj] = s_max * beta;
+
+    // Conduit volume = A_full * modLength (or length if no lengthening)
+    double mod_len = ctx.links.mod_length[uj];
+    if (mod_len <= 0.0) mod_len = ctx.links.length[uj];
+    ctx.links.mod_length[uj] = mod_len;
+    ctx.links.volume[uj] = a_full * mod_len;
+
+    // For DW force mains, store roughness factor in xsect_s_bot (Gap #22)
+    // Matches legacy link.c lines 1127-1130:
+    //   Link[j].xsect.sBot = forcemain_getRoughFactor(j, lengthFactor)
+    // The lengthFactor = mod_length / length (1.0 if not lengthened).
+    if (is_dw && is_force_main) {
+        double length_factor = (ctx.links.length[uj] > 0.0)
+            ? mod_len / ctx.links.length[uj] : 1.0;
+        auto fm = static_cast<forcemain::FrictionModel>(ctx.options.force_main_eqn);
+        ctx.links.xsect_s_bot[uj] =
+            forcemain::getRoughFactor(fm, ctx.links.xsect_r_bot[uj], length_factor);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Centralised display → internal (feet/cfs/ft³) unit conversion.
+// ---------------------------------------------------------------------------
+// The engine computes internally in US/imperial units (GRAVITY = 32.2 ft/s²,
+// PHI = 1.486), exactly like legacy EPA-SWMM, which converts every input at
+// parse via `value / UCF(quantity)`.  The refactored parsers stored many
+// hydraulic-geometry fields RAW (metres / m² / m³·s⁻¹ for SI models); this pass
+// converts them once, here, using the precomputed reciprocal tables (multiply,
+// never divide).  US models have inv_len == 1.0 → early return (no-op), which is
+// why the existing US regression tests never exercised this path.
+//
+// Runs at the TOP of resolve_cross_references so every downstream derived value
+// (node head init, cross-section a_full/s_full, conduit slope/volume/conveyance,
+// outfall normal depth) sees feet.
+//
+// Fields already converted at init/at-use (subcatch area, depression storage,
+// infiltration, rainfall, DWF, storage/pump curve lookups) are intentionally
+// EXCLUDED — converting them here would double-convert and break the (correct)
+// runoff hydrology.  See docs/UNIT_CONVERSION_AUDIT.md.
+static void convert_inputs_to_internal(SimulationContext& ctx,
+                                       int n_nodes, int n_links, int n_subcatch) {
+    const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    const auto usz = static_cast<std::size_t>(us);
+    const double inv_len = ucf::Ucf_inv[ucf::LENGTH][usz];
+    if (inv_len == 1.0) return;  // US units: input already in internal units.
+
+    const double inv_area = inv_len * inv_len;
+    const double inv_flow = ucf::Qcf_inv[static_cast<std::size_t>(ctx.options.flow_units)];
+    const double inv_rain = ucf::Ucf_inv[ucf::RAINFALL][usz];
+
+    // --- Nodes: elevations/depths → ft, ponded area → ft², stage/cutoff ---
+    for (int i = 0; i < n_nodes; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        ctx.nodes.invert_elev[ui] *= inv_len;
+        ctx.nodes.full_depth[ui]  *= inv_len;
+        ctx.nodes.init_depth[ui]  *= inv_len;
+        ctx.nodes.sur_depth[ui]   *= inv_len;
+        ctx.nodes.ponded_area[ui] *= inv_area;
+        if (ctx.nodes.type[ui] == NodeType::OUTFALL &&
+            ctx.nodes.outfall_type[ui] == OutfallType::FIXED)
+            ctx.nodes.outfall_param[ui] *= inv_len;
+        if (ctx.nodes.type[ui] == NodeType::DIVIDER)
+            ctx.nodes.divider_cutoff[ui] *= inv_flow;
+        // Functional storage A(d) = a0 + a1·d^a2 (a2 dimensionless).  a0 is an
+        // area (inv_area); a1 must keep A in ft² when d is in ft, i.e. scale by
+        // inv_len^(2 - a2).  Tabulated storage (storage_curve >= 0) self-converts
+        // at lookup, so leave it.
+        if (ctx.nodes.type[ui] == NodeType::STORAGE &&
+            ctx.nodes.storage_curve[ui] < 0) {
+            ctx.nodes.storage_c[ui] *= inv_area;                                  // a0
+            ctx.nodes.storage_a[ui] *= std::pow(inv_len, 2.0 - ctx.nodes.storage_b[ui]); // a1
+        }
+    }
+
+    // --- Links: cross-section geometry, length, offsets, flow limits ---
+    for (int j = 0; j < n_links; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        const XsectShape shp = ctx.links.xsect_shape[uj];
+        // geom1 (full depth/diameter) — always a length, every shape.
+        ctx.links.xsect_y_full[uj] *= inv_len;
+        // geom2 (width) — a length for every shape EXCEPT FORCE_MAIN, whose
+        // geom2 is the Hazen-Williams C-factor / Darcy-Weisbach roughness
+        // height (saved to r_bot in the xsect loop). For shapes that derive
+        // w_max from y_full the input is overwritten, so converting is harmless.
+        if (shp != XsectShape::FORCE_MAIN)
+            ctx.links.xsect_w_max[uj] *= inv_len;
+        // geom3 (y_bot/r_bot) — a length only for these three shapes; for
+        // RECT_OPEN it is a sides flag and for TRAPEZOIDAL/TRIANGULAR/POWER a
+        // side slope/exponent (dimensionless) — leave those.
+        if (shp == XsectShape::RECT_TRIANG ||
+            shp == XsectShape::RECT_ROUND ||
+            shp == XsectShape::MODBASKETHANDLE)
+            ctx.links.xsect_y_bot[uj] *= inv_len;
+
+        if (ctx.links.type[uj] == LinkType::CONDUIT) {
+            if (ctx.links.length[uj] > 0.0) ctx.links.length[uj] *= inv_len;
+            ctx.links.q0[uj]        *= inv_flow;
+            ctx.links.q_limit[uj]   *= inv_flow;
+            ctx.links.seep_rate[uj] *= inv_rain;   // legacy /UCF(RAINFALL)
+        }
+        // Offsets / crest heights are length-dimension in both DEPTH and ELEV
+        // modes; the later ELEV→DEPTH subtraction stays consistent because the
+        // node inverts above are converted too.
+        ctx.links.offset1[uj]      *= inv_len;
+        ctx.links.offset2[uj]      *= inv_len;
+        ctx.links.crest_height[uj] *= inv_len;
+    }
+
+    // --- Subcatchments: width → ft.  Area/infiltration/depression storage are
+    //     converted at init/at-use and intentionally excluded here. ---
+    for (int s = 0; s < n_subcatch; ++s)
+        ctx.subcatches.width[static_cast<std::size_t>(s)] *= inv_len;
 }
 
 void resolve_cross_references(SimulationContext& ctx) {
@@ -150,6 +469,12 @@ void resolve_cross_references(SimulationContext& ctx) {
         ctx.links.resize_loads(n_polluts);
     }
 
+    // -------------------------------------------------------------------------
+    // Display → internal (feet) unit conversion — must run before any derived
+    // geometry/head/conveyance computation below.
+    // -------------------------------------------------------------------------
+    convert_inputs_to_internal(ctx, n_nodes, n_links, n_subcatch);
+
     // Spatial coordinate arrays
     const auto un = static_cast<std::size_t>(n_nodes);
     if (ctx.spatial.node_x.size() < un) ctx.spatial.node_x.resize(un, 0.0);
@@ -174,21 +499,26 @@ void resolve_cross_references(SimulationContext& ctx) {
 
 
     // -------------------------------------------------------------------------
+    // Slice IO-3: Resolve every external-file slot to an absolute path.
+    // Runs BEFORE load_external_timeseries_files so the loader can read
+    // each file's resolved path directly from `tbl.file_path.absolute`.
+    // -------------------------------------------------------------------------
+    const std::string inp_dir = openswmm::io::parentDir(ctx.inp_file_path);
+    resolve_external_file_slots(ctx, inp_dir);
+
+    // -------------------------------------------------------------------------
     // Load external FILE-referenced timeseries from disk
     // -------------------------------------------------------------------------
     // Timeseries with FILE references (e.g., rainfall .dat files) need to be
     // loaded into memory before any date offset or gage resolution.
-    {
-        std::string inp_dir;
-        if (!ctx.inp_file_path.empty()) {
-            auto pos = ctx.inp_file_path.find_last_of("/\\");
-            if (pos != std::string::npos)
-                inp_dir = ctx.inp_file_path.substr(0, pos);
-            else
-                inp_dir = ".";
-        }
-        load_external_timeseries_files(ctx, inp_dir);
-    }
+    load_external_timeseries_files(ctx, inp_dir);
+
+    // -------------------------------------------------------------------------
+    // Load external FILE-source rain-gage data (standard SWMM rain files).
+    // Must run after resolve_external_file_slots (for absolute paths) and after
+    // options parsing (needs the simulation window to bound retained records).
+    // -------------------------------------------------------------------------
+    load_external_rain_files(ctx);
 
     // -------------------------------------------------------------------------
     // Timeseries date offset resolution
@@ -345,6 +675,15 @@ void resolve_cross_references(SimulationContext& ctx) {
                 ctx.links.pump_shutoff[uj] /= ucf_len;
         }
     }
+
+    // NOTE: A centralised display→internal (feet) unit conversion for node and
+    // cross-section geometry was prototyped here but reverted — see the audit
+    // in docs/UNIT_CONVERSION_AUDIT.md.  Converting geometry in isolation made
+    // SI routing continuity *worse* (dry −13.9% → −577%) because the hydraulic
+    // core (volume / continuity accounting) carries compensating unit bugs that
+    // were tuned to the un-converted (metres) geometry.  The full fix must
+    // convert every field in the audit AND repair the exposed core accounting
+    // together, validated by a metric (SI) regression model.
 
     // -------------------------------------------------------------------------
     // Node init_depth → head initialisation
@@ -605,6 +944,53 @@ void resolve_cross_references(SimulationContext& ctx) {
         }
     }
 
+    // Resolve STREET cross-sections — build a transect from each referenced
+    // [STREETS] entry (gutter + road crown + backing) and attach it like an
+    // IRREGULAR/CUSTOM table. Slopes are %→fraction and lengths display→ft,
+    // matching legacy street_readParams.
+    {
+        const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+        const double inv_len = ucf::Ucf_inv[ucf::LENGTH][static_cast<std::size_t>(us)];
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.xsect_shape[uj] != XsectShape::STREET_XSECT) continue;
+            const auto& sname = ctx.links.pump_curve_name[uj];   // street name (temp field)
+            if (sname.empty()) continue;
+
+            int si = -1;
+            for (int s = 0; s < ctx.streets.count(); ++s) {
+                if (ctx.streets.names[static_cast<std::size_t>(s)] == sname) { si = s; break; }
+            }
+            if (si < 0) continue;
+            auto su = static_cast<std::size_t>(si);
+
+            street::StreetParams sp;
+            sp.width             = ctx.streets.t_crown[su]       * inv_len;
+            sp.curb_height       = ctx.streets.h_curb[su]        * inv_len;
+            sp.slope             = ctx.streets.sx[su]            / 100.0;   // % → fraction
+            sp.roughness         = ctx.streets.n_road[su];
+            sp.gutter_depression = ctx.streets.gutter_depres[su] * inv_len;
+            sp.gutter_width      = ctx.streets.gutter_width[su]  * inv_len;
+            sp.sides             = ctx.streets.sides[su];
+            sp.back_width        = ctx.streets.back_width[su]    * inv_len;
+            sp.back_slope        = ctx.streets.back_slope[su]    / 100.0;   // % → fraction
+            sp.back_roughness    = ctx.streets.back_n[su];
+
+            transect::TransectData td;
+            td.name = sname;
+            street::buildTransect(sp, td);
+
+            int idx_tbl = static_cast<int>(ctx.transect_tables.size());
+            ctx.transect_tables.push_back(std::move(td));
+            const auto& built = ctx.transect_tables[static_cast<std::size_t>(idx_tbl)];
+            ctx.links.xsect_curve[uj]  = idx_tbl;
+            ctx.links.xsect_y_full[uj] = built.y_full;
+            ctx.links.xsect_a_full[uj] = built.a_full;
+            ctx.links.xsect_r_full[uj] = built.r_full;
+            ctx.links.xsect_w_max[uj]  = built.w_max;
+        }
+    }
+
     // Use global constants
     using constants::PI;
     using constants::GRAVITY;
@@ -631,314 +1017,6 @@ void resolve_cross_references(SimulationContext& ctx) {
         double yw_max = 0.0;
 
         switch (shape) {
-        case XsectShape::CIRCULAR:
-            a_full = PI / 4.0 * y_full * y_full;
-            r_full = 0.25 * y_full;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = 1.08 * s_full;
-            w_max  = y_full;
-            yw_max = 0.5 * y_full;
-            break;
-
-        case XsectShape::FORCE_MAIN:
-            a_full = PI / 4.0 * y_full * y_full;
-            r_full = 0.25 * y_full;
-            s_full = a_full * std::pow(r_full, 0.63);  // H-W exponent
-            s_max  = 1.06949 * s_full;
-            yw_max = 0.5 * y_full;
-            // Geom2 (w_max) holds the HW C-factor or DW roughness height.
-            // Save it to xsect_r_bot (legacy xsect.rBot) before w_max is
-            // overwritten with diameter = pipe width for a full circle.
-            ctx.links.xsect_r_bot[uj] = w_max;
-            w_max  = y_full;
-            break;
-
-        case XsectShape::FILLED_CIRCULAR: {
-            // Filled depth stored in w_max during parsing (Geom2 = tok[3])
-            double y_bot_fill = ctx.links.xsect_w_max[uj];
-            if (y_bot_fill >= y_full) {
-                // Invalid: fill depth must be less than diameter
-                y_bot_fill = 0.0;
-            }
-
-            // Step 1: Full values for the ENTIRE unfilled circular pipe
-            w_max  = y_full;
-            a_full = PI / 4.0 * y_full * y_full;
-            r_full = 0.25 * y_full;
-
-            // Step 2: Compute filled bottom section properties
-            // circ_getAofY: area at depth y_bot in the unfilled circle
-            double y_bot_norm = (y_full > 0.0) ? y_bot_fill / y_full : 0.0;
-            double a_bot = a_full * xsect::lookup(y_bot_norm,
-                                           xsect_tables::A_Circ, xsect_tables::N_A_Circ);
-            // Width at fill interface
-            double s_bot_width = w_max * xsect::lookup(y_bot_norm,
-                                                xsect_tables::W_Circ, xsect_tables::N_W_Circ);
-            // Wetted perimeter of filled bottom = area / (rFull * R_Circ_lookup)
-            double r_circ_norm = xsect::lookup(y_bot_norm,
-                                        xsect_tables::R_Circ, xsect_tables::N_R_Circ);
-            double r_bot_wp = (r_full > 0.0 && r_circ_norm > 0.0)
-                            ? a_bot / (r_full * r_circ_norm) : 0.0;
-
-            // Step 3: Adjust full values for available flow space
-            // (matching legacy xsect.c lines 290-296)
-            a_full -= a_bot;
-            r_full = (PI * w_max - r_bot_wp + s_bot_width > 0.0)
-                   ? a_full / (PI * w_max - r_bot_wp + s_bot_width) : 0.0;
-            s_full = a_full * std::pow(r_full, 2.0 / 3.0);
-            s_max  = 1.08 * s_full;
-            y_full -= y_bot_fill;
-            yw_max = 0.5 * y_full;
-
-            // Store filled bottom properties
-            ctx.links.xsect_y_bot[uj] = y_bot_fill;
-            ctx.links.xsect_a_bot[uj] = a_bot;
-            ctx.links.xsect_s_bot[uj] = s_bot_width;
-            ctx.links.xsect_r_bot[uj] = r_bot_wp;
-            break;
-        }
-
-        case XsectShape::EGGSHAPED:
-            a_full = 0.5105 * y_full * y_full;
-            r_full = 0.1931 * y_full;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = 1.065 * s_full;
-            w_max  = 2.0/3.0 * y_full;
-            yw_max = 0.64 * y_full;
-            break;
-
-        case XsectShape::HORSESHOE:
-            a_full = 0.8293 * y_full * y_full;
-            r_full = 0.2538 * y_full;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = 1.077 * s_full;
-            w_max  = 1.0 * y_full;
-            yw_max = 0.5 * y_full;
-            break;
-
-        case XsectShape::GOTHIC:
-            a_full = 0.6554 * y_full * y_full;
-            r_full = 0.2269 * y_full;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = 1.065 * s_full;
-            w_max  = 0.84 * y_full;
-            yw_max = 0.45 * y_full;
-            break;
-
-        case XsectShape::CATENARY:
-            a_full = 0.70277 * y_full * y_full;
-            r_full = 0.23172 * y_full;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = 1.05 * s_full;
-            w_max  = 0.9 * y_full;
-            yw_max = 0.25 * y_full;
-            break;
-
-        case XsectShape::SEMIELLIPTICAL:
-            a_full = 0.785 * y_full * y_full;
-            r_full = 0.242 * y_full;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = 1.045 * s_full;
-            w_max  = 1.0 * y_full;
-            yw_max = 0.15 * y_full;
-            break;
-
-        case XsectShape::BASKETHANDLE:
-            a_full = 0.7862 * y_full * y_full;
-            r_full = 0.2464 * y_full;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = 1.06078 * s_full;
-            w_max  = 0.944 * y_full;
-            yw_max = 0.2 * y_full;
-            break;
-
-        case XsectShape::SEMICIRCULAR:
-            a_full = 1.2697 * y_full * y_full;
-            r_full = 0.2946 * y_full;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = 1.06637 * s_full;
-            w_max  = 1.64 * y_full;
-            yw_max = 0.15 * y_full;
-            break;
-
-        case XsectShape::RECT_CLOSED: {
-            a_full = y_full * w_max;
-            // Legacy: perimeter = 2*(yFull + wMax) — all 4 sides
-            double p = 2.0 * (y_full + w_max);
-            r_full = (p > 0.0) ? a_full / p : 0.0;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            // sMax at RECT_ALFMAX (0.97) of aFull
-            constexpr double RECT_ALFMAX = 0.97;
-            double a_max = RECT_ALFMAX * a_full;
-            // Near-full R includes extra wetted perimeter from closing top
-            double y_at_max = RECT_ALFMAX * y_full;
-            double p_max = 2.0 * (y_at_max + w_max);
-            double r_max = (p_max > 0.0) ? a_max / p_max : r_full;
-            s_max = a_max * std::pow(r_max, 2.0/3.0);
-            yw_max = y_full;
-            break;
-        }
-
-        case XsectShape::RECT_OPEN: {
-            double s_bot = ctx.links.xsect_s_bot[uj]; // # sides to ignore
-            a_full = y_full * w_max;
-            // Legacy: perimeter = (2 - sBot)*yFull + wMax
-            double p = (2.0 - s_bot) * y_full + w_max;
-            r_full = (p > 0.0) ? a_full / p : 0.0;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = s_full;  // open channel: sMax = sFull
-            yw_max = y_full;
-            break;
-        }
-
-        case XsectShape::TRAPEZOIDAL: {
-            // At parse time: w_max = bottom width, xsect_y_bot = Geom3 (side slope1),
-            //                xsect_r_bot = Geom4 (side slope2).
-            // Legacy uses average of the two side slopes.
-            double bot_w = w_max;
-            double z1 = ctx.links.xsect_y_bot[uj];  // left side slope (H:V)
-            double z2 = ctx.links.xsect_r_bot[uj];  // right side slope (H:V)
-            double z = (z1 + z2) / 2.0;             // average side slope
-            a_full = (bot_w + z * y_full) * y_full;
-            double top_w = bot_w + 2.0 * z * y_full;
-            double p = bot_w + 2.0 * y_full * std::sqrt(1.0 + z * z);
-            r_full = (p > 0.0) ? a_full / p : 0.0;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = s_full;
-            w_max  = top_w;
-            yw_max = y_full;
-
-            // Store batch-ready values for XSectGroups kernels:
-            //   y_bot = bottom width, s_bot = average side slope
-            ctx.links.xsect_y_bot[uj] = bot_w;
-            ctx.links.xsect_s_bot[uj] = z;
-            break;
-        }
-
-        case XsectShape::TRIANGULAR: {
-            double z = ctx.links.xsect_y_bot[uj]; // side slope
-            a_full = z * y_full * y_full;
-            double top_w = 2.0 * z * y_full;
-            double p = 2.0 * y_full * std::sqrt(1.0 + z * z);
-            r_full = (p > 0.0) ? a_full / p : 0.0;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = s_full;
-            w_max  = top_w;
-            yw_max = y_full;
-            break;
-        }
-
-        case XsectShape::PARABOLIC: {
-            // w_max is top width at full depth
-            a_full = 2.0/3.0 * w_max * y_full;
-            double p = w_max + 8.0/3.0 * y_full * y_full / w_max; // approx
-            r_full = (p > 0.0) ? a_full / p : 0.0;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = s_full;
-            yw_max = y_full;
-            break;
-        }
-
-        case XsectShape::MODBASKETHANDLE: {
-            // Modified basket handle — bottom is semicircle of radius rBot
-            double r_bot = ctx.links.xsect_r_bot[uj];
-            a_full = PI/2.0 * r_bot * r_bot + w_max * (y_full - r_bot);
-            double p = PI * r_bot + 2.0 * (y_full - r_bot) + w_max;
-            r_full = (p > 0.0) ? a_full / p : 0.0;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = 1.06078 * s_full;
-            yw_max = 0.2 * y_full;
-            break;
-        }
-
-        case XsectShape::RECT_TRIANG: {
-            double y_bot = ctx.links.xsect_y_bot[uj]; // triangle height
-            double s_bot_slope = w_max / y_bot / 2.0;
-            double r_bot_val = std::sqrt(1.0 + s_bot_slope * s_bot_slope);
-            ctx.links.xsect_a_bot[uj] = y_bot * w_max / 2.0;
-            ctx.links.xsect_s_bot[uj] = s_bot_slope;
-            ctx.links.xsect_r_bot[uj] = r_bot_val;
-
-            a_full = w_max * (y_full - y_bot / 2.0);
-            double p = 2.0 * y_bot * r_bot_val + 2.0 * (y_full - y_bot) + w_max;
-            r_full = (p > 0.0) ? a_full / p : 0.0;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            constexpr double RT_ALFMAX = 0.98;
-            double a_max = RT_ALFMAX * a_full;
-            s_max = a_max * std::pow(r_full, 2.0/3.0); // approx
-            yw_max = y_full;
-            break;
-        }
-
-        case XsectShape::HORIZ_ELLIPSE: {
-            // Geom1 = minor axis (height), Geom2 = major axis (width), Geom3 = size code
-            double geom2 = w_max;           // major axis or 0
-            double geom3 = ctx.links.xsect_y_bot[uj]; // size code (Geom3)
-            if (geom2 == 0.0) geom3 = y_full; // if no width, use Geom1 as code
-            if (geom3 > 0.0) {
-                // Standard ellipse pipe from lookup table
-                int idx = static_cast<int>(std::floor(geom3)) - 1;
-                if (idx >= 0 && idx < xsect_tables::NumCodesEllipse) {
-                    y_full = xsect_tables::MinorAxis_Ellipse[idx] / 12.0;
-                    w_max  = xsect_tables::MajorAxis_Ellipse[idx] / 12.0;
-                    a_full = xsect_tables::Afull_Ellipse[idx];
-                    r_full = xsect_tables::Rfull_Ellipse[idx];
-                }
-            } else {
-                // Non-standard: use empirical formulas
-                a_full = 1.2692 * y_full * y_full;
-                r_full = 0.3061 * y_full;
-            }
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = s_full;
-            yw_max = 0.48 * y_full;
-            break;
-        }
-
-        case XsectShape::VERT_ELLIPSE: {
-            double geom2 = w_max;
-            double geom3 = ctx.links.xsect_y_bot[uj];
-            if (geom2 == 0.0) geom3 = y_full;
-            if (geom3 > 0.0) {
-                int idx = static_cast<int>(std::floor(geom3)) - 1;
-                if (idx >= 0 && idx < xsect_tables::NumCodesEllipse) {
-                    y_full = xsect_tables::MajorAxis_Ellipse[idx] / 12.0;
-                    w_max  = xsect_tables::MinorAxis_Ellipse[idx] / 12.0;
-                    a_full = xsect_tables::Afull_Ellipse[idx];
-                    r_full = xsect_tables::Rfull_Ellipse[idx];
-                }
-            } else {
-                a_full = 1.2692 * w_max * w_max;
-                r_full = 0.3061 * w_max;
-            }
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = s_full;
-            yw_max = 0.48 * y_full;
-            break;
-        }
-
-        case XsectShape::ARCH: {
-            double geom2 = w_max;
-            double geom3 = ctx.links.xsect_y_bot[uj];
-            if (geom2 == 0.0) geom3 = y_full;
-            if (geom3 > 0.0) {
-                int idx = static_cast<int>(std::floor(geom3)) - 1;
-                if (idx >= 0 && idx < xsect_tables::NumCodesArch) {
-                    y_full = xsect_tables::Yfull_Arch[idx] / 12.0;
-                    w_max  = xsect_tables::Wmax_Arch[idx] / 12.0;
-                    a_full = xsect_tables::Afull_Arch[idx];
-                    r_full = xsect_tables::Rfull_Arch[idx];
-                }
-            } else {
-                a_full = 0.7879 * y_full * w_max;
-                r_full = 0.2991 * y_full;
-            }
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = s_full;
-            yw_max = 0.28 * y_full;
-            break;
-        }
-
         case XsectShape::CUSTOM: {
             // Properties already set from CUSTOM shape curve above
             a_full = ctx.links.xsect_a_full[uj];
@@ -950,8 +1028,9 @@ void resolve_cross_references(SimulationContext& ctx) {
             break;
         }
 
-        case XsectShape::IRREGULAR: {
-            // Properties already set from transect tables above
+        case XsectShape::IRREGULAR:
+        case XsectShape::STREET_XSECT: {
+            // Properties already set from transect / street tables above.
             int ci = ctx.links.xsect_curve[uj];
             if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
                 const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
@@ -963,7 +1042,7 @@ void resolve_cross_references(SimulationContext& ctx) {
                 s_max  = s_full;
                 yw_max = y_full;
             } else {
-                // Fallback if transect not resolved
+                // Fallback if transect/street not resolved
                 a_full = w_max * y_full;
                 double p_def = 2.0 * y_full + w_max;
                 r_full = (p_def > 0.0) ? a_full / p_def : 0.0;
@@ -975,13 +1054,38 @@ void resolve_cross_references(SimulationContext& ctx) {
         }
 
         default: {
-            // CUSTOM, POWER, RECT_ROUND etc.
-            a_full = w_max * y_full;
-            double p_def = 2.0 * y_full + w_max;
-            r_full = (p_def > 0.0) ? a_full / p_def : 0.0;
-            s_full = a_full * std::pow(r_full, 2.0/3.0);
-            s_max  = s_full;
-            yw_max = y_full;
+            // SINGLE SOURCE OF TRUTH: delegate every self-contained shape to the
+            // legacy-faithful xsect::setParams. Feed the RAW [XSECTIONS] Geom1–4
+            // (display units, never overwritten) plus the length ucf, exactly as
+            // legacy xsect_setParams expects — setParams divides only the
+            // length-valued params by ucf and leaves slopes / size-codes /
+            // C-factors raw. Reading raw geom (not the derived working fields)
+            // makes setup idempotent and identical across the INP and
+            // programmatic-builder paths. (LinkData::XsectShape is renumbered vs
+            // the legacy/batch XSectShape, so translate first.)
+            const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+            const double ucf_len = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(us)];
+            XSectParams xs;
+            double p[4] = { ctx.links.xsect_geom1[uj], ctx.links.xsect_geom2[uj],
+                            ctx.links.xsect_geom3[uj], ctx.links.xsect_geom4[uj] };
+            int rc = xsect::setParams(xs, link::translateShape(shape), p, ucf_len);
+            if (rc == 0 && xs.a_full > 0.0) {
+                y_full = xs.y_full; w_max = xs.w_max; yw_max = xs.yw_max;
+                a_full = xs.a_full; r_full = xs.r_full;
+                s_full = xs.s_full; s_max  = xs.s_max;
+                ctx.links.xsect_y_bot[uj] = xs.y_bot;
+                ctx.links.xsect_a_bot[uj] = xs.a_bot;
+                ctx.links.xsect_s_bot[uj] = xs.s_bot;
+                ctx.links.xsect_r_bot[uj] = xs.r_bot;
+            } else {
+                // Invalid geometry — preserve the previous generic fallback.
+                a_full = w_max * y_full;
+                double p_def = 2.0 * y_full + w_max;
+                r_full = (p_def > 0.0) ? a_full / p_def : 0.0;
+                s_full = a_full * std::pow(r_full, 2.0/3.0);
+                s_max  = s_full;
+                yw_max = y_full;
+            }
             break;
         }
         }
@@ -1068,61 +1172,7 @@ void resolve_cross_references(SimulationContext& ctx) {
     // Conduit flow properties (matches legacy conduit_validate in link.c)
     // -------------------------------------------------------------------------
     for (int j = 0; j < n_links; ++j) {
-        auto uj = static_cast<std::size_t>(j);
-        if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
-
-        double n_val    = ctx.links.roughness[uj];
-        double slope    = std::fabs(ctx.links.slope[uj]);
-        double a_full   = ctx.links.xsect_a_full[uj];
-        double s_full   = ctx.links.xsect_s_full[uj];
-        double s_max    = ctx.links.xsect_s_max[uj];
-
-        if (n_val <= 0.0 || a_full <= 0.0) continue;
-
-        // For DW force mains, substitute equivalent Manning's n (Gap #22)
-        // Matches legacy conduit_validate in link.c lines 1094-1096:
-        //   if (RouteModel == DW && xsect.type == FORCE_MAIN)
-        //       roughness = forcemain_getEquivN(j, k);
-        bool is_force_main = (ctx.links.xsect_shape[uj] == XsectShape::FORCE_MAIN);
-        bool is_dw = (ctx.options.routing_model == RoutingModel::DYNWAVE);
-        if (is_dw && is_force_main) {
-            auto fm = static_cast<forcemain::FrictionModel>(ctx.options.force_main_eqn);
-            double r_bot  = ctx.links.xsect_r_bot[uj];
-            double y_full = ctx.links.xsect_y_full[uj];
-            n_val = forcemain::getEquivN(fm, r_bot, y_full, slope, n_val);
-            if (n_val <= 0.0) n_val = ctx.links.roughness[uj];
-        }
-
-        // Roughness factor for DW friction slope: GRAVITY * (n/PHI)^2
-        ctx.links.rough_factor[uj] = GRAVITY * (n_val / PHI) * (n_val / PHI);
-
-        // Conveyance factor: beta = PHI * sqrt(|slope|) / n
-        double beta = PHI * std::sqrt(slope) / n_val;
-        ctx.links.beta[uj] = beta;
-
-        // Full-flow rate: q_full = sFull * beta
-        ctx.links.q_full[uj] = s_full * beta;
-
-        // Max flow at max section factor
-        ctx.links.q_max[uj] = s_max * beta;
-
-        // Conduit volume = A_full * modLength (or length if no lengthening)
-        double mod_len = ctx.links.mod_length[uj];
-        if (mod_len <= 0.0) mod_len = ctx.links.length[uj];
-        ctx.links.mod_length[uj] = mod_len;
-        ctx.links.volume[uj] = a_full * mod_len;
-
-        // For DW force mains, store roughness factor in xsect_s_bot (Gap #22)
-        // Matches legacy link.c lines 1127-1130:
-        //   Link[j].xsect.sBot = forcemain_getRoughFactor(j, lengthFactor)
-        // The lengthFactor = mod_length / length (1.0 if not lengthened).
-        if (is_dw && is_force_main) {
-            double length_factor = (ctx.links.length[uj] > 0.0)
-                ? mod_len / ctx.links.length[uj] : 1.0;
-            auto fm = static_cast<forcemain::FrictionModel>(ctx.options.force_main_eqn);
-            ctx.links.xsect_s_bot[uj] =
-                forcemain::getRoughFactor(fm, ctx.links.xsect_r_bot[uj], length_factor);
-        }
+        recompute_conduit_flow_properties(ctx, j);
     }
 
     // -------------------------------------------------------------------------
