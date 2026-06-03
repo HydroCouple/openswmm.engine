@@ -336,6 +336,15 @@ private:
     double old_runoff_time_ = 0.0;  ///< Previous runoff boundary (seconds from start)
     double new_runoff_time_ = 0.0;  ///< Next runoff boundary (seconds from start)
 
+    // Persistent runoff-state flags read by computeRunoffTimestep() on the NEXT
+    // runoff step (one-step lag), matching legacy globals HasRunoff/HasSnow in
+    // runoff.c. They must persist across substeps so the engine keeps wet_step
+    // through the hydrograph recession (rain stopped, ponded water still
+    // draining); otherwise dry_step coarsens the falling limb and the
+    // end-of-step-rate×dt bookkeeping under-counts runoff volume.
+    bool has_runoff_ = false;  ///< Prev step generated runoff (legacy HasRunoff)
+    bool has_snow_   = false;  ///< Prev step had snow cover   (legacy HasSnow)
+
     EngineCallbacks callbacks_;   ///< Registered callback bundle
     int save_results_ = 0;        ///< Whether to save binary results
 

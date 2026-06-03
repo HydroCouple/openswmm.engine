@@ -551,10 +551,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                       ctx_.nodes.lid_drain_qual_vol.end(), 0.0);
         }
 
-        // Runoff state flags (matching legacy globals)
+        // Current-step rainfall flag (legacy IsRaining): set BEFORE the timestep
+        // is chosen, from this step's gage state.  has_runoff_/has_snow_ are
+        // members carrying the PREVIOUS step's state (legacy HasRunoff/HasSnow).
         bool is_raining = false;
-        bool has_runoff = false;
-        bool has_snow = false;
 
         // A1. Update rain gages and detect rainfall
         gage::updateAllGages(ctx_, abs_time);
@@ -663,7 +663,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         }
 
         // Compute variable runoff timestep
-        double dt_runoff = computeRunoffTimestep(abs_time, is_raining, has_runoff, has_snow);
+        double dt_runoff = computeRunoffTimestep(abs_time, is_raining, has_runoff_, has_snow_);
         if (dt_runoff <= 0.0) dt_runoff = 1.0;
 
         // Update runoff clock
@@ -783,10 +783,17 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         runoff_.execute(ctx_, dt_runoff, ctx_.climate_state.evap_rate,
                         ctx_.climate_state.infil_factor, ctx_.climate_state.recovery_factor, mon);
 
-        // Update state flags for next timestep selection
+        // Update persistent state flags for the NEXT step's timestep selection
+        // (legacy runoff.c sets HasRunoff/HasSnow here, after computing runoff,
+        // and reads them in the next runoff_getTimeStep call — one-step lag).
+        // Keeping wet_step while has_runoff_ holds integrates the recession limb
+        // at the fine step legacy uses.
+        has_runoff_ = false;
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-            if (ctx_.subcatches.runoff[static_cast<std::size_t>(i)] > 0.0)
-                has_runoff = true;
+            if (ctx_.subcatches.runoff[static_cast<std::size_t>(i)] > 0.0) {
+                has_runoff_ = true;
+                break;
+            }
         }
 
         // A4b. Accumulate runoff mass balance totals
@@ -1086,10 +1093,26 @@ double SWMMEngine::computeRunoffTimestep(double abs_time, bool is_raining,
     // (matching legacy gage_getNextRainDate)
     for (int g = 0; g < ctx_.n_gages(); ++g) {
         auto ug = static_cast<std::size_t>(g);
+
+        // Select the gage's rain series the same way updateAllGages() does:
+        // a FILE_RAIN gage reads from its own resolved rain_series (built by
+        // load_external_rain_files and NOT present in the shared tables pool),
+        // while a TIMESERIES gage reads from tables[ts_index].  Using only
+        // ts_index here skipped every file gage (ts_index == -1), so the runoff
+        // step was never shortened to a file gage's rain-interval boundary —
+        // dry_step then overshot rain-burst onsets and dropped rainfall.
+        // Matches legacy gage_getNextRainDate(), which snaps for all gages.
+        Table* rtbl = nullptr;
         int ts_idx = ctx_.gages.ts_index[ug];
-        if (ts_idx < 0 || ts_idx >= static_cast<int>(ctx_.tables.tables.size()))
-            continue;
-        auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ts_idx)];
+        if (ctx_.gages.source[ug] == RainSource::FILE_RAIN) {
+            if (ug < ctx_.gages.rain_series.size() &&
+                !ctx_.gages.rain_series[ug].empty())
+                rtbl = &ctx_.gages.rain_series[ug];
+        } else if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx_.tables.tables.size())) {
+            rtbl = &ctx_.tables.tables[static_cast<std::size_t>(ts_idx)];
+        }
+        if (!rtbl) continue;
+        auto& tbl = *rtbl;
         int idx = tbl.cursor.index;
         int n = static_cast<int>(tbl.x.size());
         if (idx < 0 || idx >= n) continue;
