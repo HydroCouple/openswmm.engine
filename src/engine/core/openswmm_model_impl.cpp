@@ -14,6 +14,7 @@
 #include "InpWriter.hpp"
 #include "DateTime.hpp"
 #include "../input/InputParseUtils.hpp"
+#include "../input/PostParseResolver.hpp"
 #include "../../../include/openswmm/engine/openswmm_model.h"
 #include "../../../include/openswmm/engine/openswmm_hotstart.h"
 #include "../../../include/openswmm/plugin_sdk/IInputPlugin.hpp"
@@ -147,27 +148,22 @@ SWMM_ENGINE_API int swmm_finalize_model(SWMM_Engine engine) {
     int rc = swmm_validate_model(engine);
     if (rc != SWMM_OK) return rc;
 
-    // Compute conduit slopes from node inverts + offsets + length
-    for (int j = 0; j < ctx.n_links(); ++j) {
-        auto uj = static_cast<std::size_t>(j);
-        if (ctx.links.type[uj] != openswmm::LinkType::CONDUIT) continue;
+    // Resolve cross-references exactly as the file-based open() path does:
+    // final SoA sizing, quality-matrix allocation, display→internal unit
+    // conversion, and all derived geometry (conduit slope/conveyance, xsect
+    // a_full/s_full, head initialization, outfall normal depth).  Without this
+    // the programmatically-built model is missing the derived state the router
+    // and computational modules depend on.
+    openswmm::input::resolve_cross_references(ctx);
 
-        int n1 = ctx.links.node1[uj];
-        int n2 = ctx.links.node2[uj];
-        double z1 = ctx.nodes.invert_elev[static_cast<std::size_t>(n1)] + ctx.links.offset1[uj];
-        double z2 = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)] + ctx.links.offset2[uj];
-        double len = ctx.links.length[uj];
-        if (len > 0.0) {
-            ctx.links.slope[uj] = (z1 - z2) / len;
-        }
-    }
-
-    // Transition to INITIALIZED (equivalent to open + initialize for file-based)
-    ctx.state = openswmm::EngineState::INITIALIZED;
-    ctx.reset_state();
-    ctx.dt_output_remaining = ctx.options.report_step;
-    ctx.current_date = ctx.options.start_date;
-    ctx.current_time = 0.0;
+    // Run the same runtime initialization as swmm_engine_initialize(): initial
+    // node volumes / link flows plus computational-module and forcing-array
+    // allocation (init_modules).  initialize() requires the OPENED state, so
+    // present the finalized-build context as OPENED before delegating; it
+    // transitions the engine to INITIALIZED on success.
+    ctx.state = openswmm::EngineState::OPENED;
+    rc = eng->initialize();
+    if (rc != SWMM_OK) return rc;
 
     return SWMM_OK;
 }
@@ -794,11 +790,15 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         else if (vu == "ELEVATION" || vu == "ELEV_OFFSET" || vu == "1") opt.link_offsets = 1;
         else return SWMM_ERR_BADPARAM;
     }
+    // parse_time_seconds (not std::stod) so the HH:MM:SS clock form is honored
+    // — std::stod("0:00:05") stops at the first ':' and yields 0, silently
+    // zeroing the step.  Matches WET_STEP/DRY_STEP below and the OptionsHandler
+    // parser, both of which use parse_time_seconds.
     else if (k == "ROUTING_STEP") {
-        opt.routing_step = std::stod(v);
+        opt.routing_step = openswmm::input::parse_time_seconds(v);
     }
     else if (k == "REPORT_STEP") {
-        opt.report_step = std::stod(v);
+        opt.report_step = openswmm::input::parse_time_seconds(v);
     }
     // Date/time keys are stored combined in a single OADate double. Get/set
     // for *_DATE addresses the integer (date) portion only and *_TIME the
@@ -1018,8 +1018,12 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     // LAT_FLOW_TOL / SYS_FLOW_TOL: fraction in / fraction out via this API
     // (see read comment above). The percent⇄fraction conversion stays at
     // the [OPTIONS] parser / InpWriter boundary.
-    else if (k == "LAT_FLOW_TOL")      opt.lat_flow_tol        = std::stod(v);
-    else if (k == "SYS_FLOW_TOL")      opt.sys_flow_tol        = std::stod(v);
+    // Flow tolerances are percentages per the INP/[OPTIONS] contract; the
+    // OptionsHandler parser and the routing solver store them as fractions
+    // (value / 100), so convert here to match — a raw std::stod stored 500%
+    // for a "5" input and skewed dynamic-wave convergence.
+    else if (k == "LAT_FLOW_TOL")      opt.lat_flow_tol        = std::stod(v) / 100.0;
+    else if (k == "SYS_FLOW_TOL")      opt.sys_flow_tol        = std::stod(v) / 100.0;
     else if (k == "MIN_SURFAREA")      opt.min_surf_area       = std::stod(v);
     else if (k == "MIN_SLOPE")         opt.min_slope           = std::stod(v);
     else if (k == "THREADS")           opt.num_threads         = std::stoi(v);

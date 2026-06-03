@@ -475,8 +475,12 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     for(int j=0;j<ctx.n_gages();++j){auto u=static_cast<size_t>(j);
     write_obj_comment(f, ctx.gages.comments, u);
     int iv=ctx.gages.interval_sec[u];int h=iv/3600,m=(iv%3600)/60;int ts=ctx.gages.ts_index[u];
-    if(ts>=0)std::fprintf(f,"%-16s INTENSITY    %d:%02d     %.2f     TIMESERIES %s\n",ctx.gage_names.name_of(j).c_str(),h,m,ctx.gages.snow_factor[u],tN(ctx,ts));
-    else if(!ctx.gages.file_path[u].empty())std::fprintf(f,"%-16s INTENSITY    %d:%02d     %.2f     FILE \"%s\" %s\n",ctx.gage_names.name_of(j).c_str(),h,m,ctx.gages.snow_factor[u],ctx.gages.file_path[u].c_str(),ctx.gages.col_name[u].c_str());
+    // Emit the actual rain-data format (0=INTENSITY,1=VOLUME,2=CUMULATIVE) — a
+    // prior hardcoded "INTENSITY" silently rewrote VOLUME/CUMULATIVE gages.
+    const char* fmt = ctx.gages.rain_type[u]==1 ? "VOLUME"
+                    : ctx.gages.rain_type[u]==2 ? "CUMULATIVE" : "INTENSITY";
+    if(ts>=0)std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     TIMESERIES %s\n",ctx.gage_names.name_of(j).c_str(),fmt,h,m,ctx.gages.snow_factor[u],tN(ctx,ts));
+    else if(!ctx.gages.file_path[u].empty())std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     FILE \"%s\" %s\n",ctx.gage_names.name_of(j).c_str(),fmt,h,m,ctx.gages.snow_factor[u],ctx.gages.file_path[u].c_str(),ctx.gages.col_name[u].c_str());
     }}
 
     // [SUBCATCHMENTS]
@@ -497,7 +501,10 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     for(int j=0;j<ctx.n_subcatches();++j){auto u=static_cast<size_t>(j);
     int rt=ctx.subcatches.subarea_routing[u];
     if(rt<0||rt>2)rt=0;
-    std::fprintf(f,"%-16s %10.4f %10.4f %10.4f %10.4f %10.2f %-8s %10.2f\n",ctx.subcatch_names.name_of(j).c_str(),ctx.subcatches.n_imperv[u],ctx.subcatches.n_perv[u],ctx.subcatches.ds_imperv[u]*12.0,ctx.subcatches.ds_perv[u]*12.0,ctx.subcatches.frac_imperv_no_store[u]*100.0,kRouteToNames[rt],ctx.subcatches.pct_routed[u]*100.0);
+    // S-Imperv/S-Perv are stored in display depth units (Runoff converts them
+    // via UCF(RAINDEPTH) at use), so emit as-is — a prior *12.0 corrupted them
+    // (and broke file→write→reparse round-trips).
+    std::fprintf(f,"%-16s %10.4f %10.4f %10.4f %10.4f %10.2f %-8s %10.2f\n",ctx.subcatch_names.name_of(j).c_str(),ctx.subcatches.n_imperv[u],ctx.subcatches.n_perv[u],ctx.subcatches.ds_imperv[u],ctx.subcatches.ds_perv[u],ctx.subcatches.frac_imperv_no_store[u]*100.0,kRouteToNames[rt],ctx.subcatches.pct_routed[u]*100.0);
     }}
 
     // [INFILTRATION]
@@ -764,7 +771,18 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s\n","----------------","----------------","------------","------------","------------","------------","--------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
     if(ctx.links.type[u]==LinkType::PUMP)continue;
-    std::fprintf(f,"%-16s %-16s %12.4f %12.4f %12.4f %12.4f %8d\n",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),ctx.links.xsect_y_full[u],ctx.links.xsect_w_max[u],0.0,0.0,ctx.links.barrels[u]);
+    // Emit the retained raw Geom1–Geom4 (preserves trapezoid bottom width /
+    // side slopes the derived fields can't reproduce).  xsect_geom1 == 0 means
+    // the object was built by a path that didn't populate them; fall back to
+    // the legacy derived-field emission.  See LinkData::xsect_geom1.
+    double g1,g2,g3,g4;
+    if(ctx.links.xsect_geom1[u]!=0.0){
+        g1=ctx.links.xsect_geom1[u]; g2=ctx.links.xsect_geom2[u];
+        g3=ctx.links.xsect_geom3[u]; g4=ctx.links.xsect_geom4[u];
+    } else {
+        g1=ctx.links.xsect_y_full[u]; g2=ctx.links.xsect_w_max[u]; g3=0.0; g4=0.0;
+    }
+    std::fprintf(f,"%-16s %-16s %12.4f %12.4f %12.4f %12.4f %8d\n",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),g1,g2,g3,g4,ctx.links.barrels[u]);
     }}
 
     // [LOSSES]

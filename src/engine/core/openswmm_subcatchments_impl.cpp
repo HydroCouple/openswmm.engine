@@ -102,7 +102,11 @@ SWMM_ENGINE_API int swmm_subcatch_set_slope(SWMM_Engine engine, int idx, double 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    ctx.subcatches.slope[static_cast<std::size_t>(idx)] = slope;
+    // `slope` is a percentage per the API contract (e.g. 2.0 = 2%); the runoff
+    // module and the [SUBCATCHMENTS] parser both store it as a fraction
+    // (ctx.subcatches.slope = %Slope / 100), so convert here to match — and to
+    // stay consistent with swmm_subcatch_set_imperv_pct, which divides likewise.
+    ctx.subcatches.slope[static_cast<std::size_t>(idx)] = slope / 100.0;
     return SWMM_OK;
 }
 

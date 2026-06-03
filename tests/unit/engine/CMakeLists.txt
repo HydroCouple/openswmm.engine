@@ -181,6 +181,11 @@ add_gtest_unit(test_engine_tags           test_tags.cpp)
 # max-flow (added 2026-05-25 for Slice SB of the GUI plan).
 add_gtest_unit(test_engine_link_flow_roundtrip test_link_flow_roundtrip.cpp)
 
+# End-to-end model-builder parity: build site_drainage_model.inp via the
+# programmatic API, run it, write it back out, and confirm result parity
+# against a fresh run of the reference .inp.
+add_gtest_unit(test_engine_site_drainage_builder test_site_drainage_builder.cpp)
+
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # Non-CVODE portions can be built without SUNDIALS by compiling the needed
 # sources directly; the HDF5 output plugin test is gated on OPENSWMM_BUILD_2D
