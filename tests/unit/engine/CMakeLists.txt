@@ -99,6 +99,52 @@ add_gtest_unit(test_engine_user_flags        test_user_flags.cpp)
 add_gtest_unit(test_engine_section_registry  test_section_registry.cpp)
 add_gtest_unit(test_engine_crs               test_crs.cpp)
 add_gtest_unit(test_engine_xsection          test_xsection.cpp)
+# STREET cross-section end-to-end (parse → street transect → routing).
+add_gtest_unit(test_engine_street_xsect      test_street_xsect.cpp)
+# STREET cross-section programmatic builder API (set/get xsect + get_params).
+add_gtest_unit(test_engine_street_xsect_api  test_street_xsect_api.cpp)
+
+
+# Golden cross-section parity harness — diffs the new xsect:: implementation
+# against the legacy xsect.c. The legacy dylib hides its internal xsect_*
+# symbols, so we compile xsect.c (+ findroot.c + stub globals) directly into the
+# test executable. The stub globals satisfy the linker for the IRREGULAR/CUSTOM/
+# STREET code paths the harness does not exercise.
+add_executable(test_engine_xsect_parity
+    test_xsect_parity.cpp
+    ${PROJECT_SOURCE_DIR}/src/legacy/engine/xsect.c
+    ${PROJECT_SOURCE_DIR}/src/legacy/engine/findroot.c
+    legacy_xsect_stubs.c
+)
+target_link_libraries(test_engine_xsect_parity
+    PRIVATE
+        GTest::gtest GTest::gtest_main GTest::gmock
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+)
+target_include_directories(test_engine_xsect_parity
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+        ${PROJECT_SOURCE_DIR}/src/legacy/engine
+        ${PROJECT_BINARY_DIR}/src/legacy/engine   # generated legacy_version.h
+)
+if(MSVC)
+    target_compile_options(test_engine_xsect_parity PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_xsect_parity PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+openswmm_stage_test_runtime_deps(test_engine_xsect_parity)
+add_test(
+    NAME    test_engine_xsect_parity
+    COMMAND $<TARGET_FILE:test_engine_xsect_parity>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_xsect_parity PROPERTIES LABELS "unit")
+
 
 add_gtest_unit(test_engine_infiltration     test_infiltration.cpp)
 add_gtest_unit(test_engine_runoff           test_runoff.cpp)
