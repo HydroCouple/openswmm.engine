@@ -352,6 +352,29 @@ SWMM_ENGINE_API const char* swmm_street_id(SWMM_Engine engine, int idx) {
     return names[static_cast<std::size_t>(idx)].c_str();
 }
 
+SWMM_ENGINE_API int swmm_street_get_params(SWMM_Engine engine, int idx,
+                                             double* t_crown, double* h_curb, double* sx, double* n_road,
+                                             double* gutter_depres, double* gutter_width, int* sides,
+                                             double* back_width, double* back_slope, double* back_n) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.streets.count());
+    const auto ui = static_cast<std::size_t>(idx);
+
+    if (t_crown)       *t_crown       = ctx.streets.t_crown[ui];
+    if (h_curb)        *h_curb        = ctx.streets.h_curb[ui];
+    if (sx)            *sx            = ctx.streets.sx[ui];
+    if (n_road)        *n_road        = ctx.streets.n_road[ui];
+    if (gutter_depres) *gutter_depres = ctx.streets.gutter_depres[ui];
+    if (gutter_width)  *gutter_width  = ctx.streets.gutter_width[ui];
+    if (sides)         *sides         = ctx.streets.sides[ui];
+    if (back_width)    *back_width    = ctx.streets.back_width[ui];
+    if (back_slope)    *back_slope    = ctx.streets.back_slope[ui];
+    if (back_n)        *back_n        = ctx.streets.back_n[ui];
+
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Inlets
 // ============================================================================

@@ -168,6 +168,26 @@ struct LinkData {
     std::vector<double>     xsect_w_max;
 
     /**
+     * @brief Raw [XSECTIONS] geometry parameters as supplied (display units),
+     *        retained purely for lossless serialization.
+     * @details The computational fields above (@ref xsect_y_full, @ref
+     *          xsect_w_max, @ref xsect_a_full, @ref xsect_y_bot, @ref
+     *          xsect_r_bot) are overwritten with derived geometry during
+     *          initialization (e.g. for a trapezoid @ref xsect_w_max becomes
+     *          the TOP width, discarding the input bottom width and side
+     *          slopes), so they cannot reproduce the original Geom1–Geom4.
+     *          These mirror the four columns exactly so swmm_model_write and
+     *          swmm_link_get_xsect can round-trip them.  @c xsect_geom1 == 0
+     *          marks "not populated" (e.g. objects built by readers that do
+     *          not set these), in which case writers fall back to the derived
+     *          fields.  Set by swmm_link_set_xsect and the [XSECTIONS] parser.
+     */
+    std::vector<double>     xsect_geom1;
+    std::vector<double>     xsect_geom2;
+    std::vector<double>     xsect_geom3;
+    std::vector<double>     xsect_geom4;
+
+    /**
      * @brief Shape curve index (for IRREGULAR / CUSTOM shapes).
      * @details -1 for standard shapes.
      */
@@ -641,6 +661,10 @@ struct LinkData {
         xsect_y_full.assign(un, 0.0);
         xsect_a_full.assign(un, 0.0);
         xsect_w_max.assign(un, 0.0);
+        xsect_geom1.assign(un, 0.0);
+        xsect_geom2.assign(un, 0.0);
+        xsect_geom3.assign(un, 0.0);
+        xsect_geom4.assign(un, 0.0);
         xsect_curve.assign(un, -1);
         roughness.assign(un, 0.01);
         length.assign(un, 0.0);
@@ -740,6 +764,7 @@ struct LinkData {
         g(offset1, 0.0); g(offset2, 0.0); g(q0, 0.0); g(q_limit, 0.0);
         g(xsect_shape, XsectShape::CIRCULAR);
         g(xsect_y_full, 0.0); g(xsect_a_full, 0.0); g(xsect_w_max, 0.0);
+        g(xsect_geom1, 0.0); g(xsect_geom2, 0.0); g(xsect_geom3, 0.0); g(xsect_geom4, 0.0);
         g(xsect_curve, -1); g(roughness, 0.013); g(param1, 0.0);
         g(length, 0.0); g(mod_length, 0.0); g(slope, 0.0);
         g(barrels, 1); g(beta, 0.0); g(rough_factor, 0.0);
@@ -748,7 +773,8 @@ struct LinkData {
         g(xsect_y_bot, 0.0); g(xsect_a_bot, 0.0);
         g(xsect_s_bot, 0.0); g(xsect_r_bot, 0.0);
         g(xsect_yw_max, 0.0); g(xsect_batch_shape, 0);
-        g(setting, 1.0); g(target_setting, 1.0); g(direction, 1);
+        g(setting, 1.0); g(target_setting, 1.0); g(time_last_set, 0.0);
+        g(direction, 1);
         g(loss_inlet, 0.0); g(loss_outlet, 0.0); g(loss_avg, 0.0);
         g(has_flap_gate, uint8_t{0}); g(seep_rate, 0.0);
         g(evap_loss_rate, 0.0); g(seep_loss_rate, 0.0);

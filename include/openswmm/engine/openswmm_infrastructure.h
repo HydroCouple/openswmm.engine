@@ -332,6 +332,32 @@ SWMM_ENGINE_API int swmm_street_index(SWMM_Engine engine, const char* id);
  */
 SWMM_ENGINE_API const char* swmm_street_id(SWMM_Engine engine, int idx);
 
+/**
+ * @brief Read back the geometric parameters of a street cross-section.
+ *
+ * @details Inverse of @ref swmm_street_set_params. Any out-pointer may be NULL
+ *          if that field is not needed. Values are returned in the same units
+ *          they were supplied (display units).
+ *
+ * @param engine         Engine handle.
+ * @param idx            Zero-based street index.
+ * @param[out] t_crown        Crown thickness.
+ * @param[out] h_curb         Curb height.
+ * @param[out] sx             Cross slope of the roadway.
+ * @param[out] n_road         Manning's n for the road surface.
+ * @param[out] gutter_depres  Gutter depression depth.
+ * @param[out] gutter_width   Gutter width.
+ * @param[out] sides          Number of sides (1 or 2).
+ * @param[out] back_width     Backing (sidewalk) width.
+ * @param[out] back_slope     Backing slope.
+ * @param[out] back_n         Manning's n for the backing area.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_street_get_params(SWMM_Engine engine, int idx,
+                                             double* t_crown, double* h_curb, double* sx, double* n_road,
+                                             double* gutter_depres, double* gutter_width, int* sides,
+                                             double* back_width, double* back_slope, double* back_n);
+
 /* =========================================================================
  * Inlets
  * ========================================================================= */

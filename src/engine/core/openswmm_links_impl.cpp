@@ -12,6 +12,8 @@
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_links.h"
+#include "../input/PostParseResolver.hpp"
+#include "../hydraulics/Street.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -136,7 +138,8 @@ SWMM_ENGINE_API int swmm_link_set_length(SWMM_Engine engine, int idx, double len
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    ctx.links.length[static_cast<std::size_t>(idx)] = length;
+    // units: display LENGTH -> internal ft
+    ctx.links.length[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::LENGTH, length);
     return SWMM_OK;
 }
 
@@ -146,6 +149,10 @@ SWMM_ENGINE_API int swmm_link_set_roughness(SWMM_Engine engine, int idx, double 
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.roughness[static_cast<std::size_t>(idx)] = n;
+    // Refresh the conduit's derived dynamic-wave coefficients so the edited
+    // roughness actually changes the simulation (slope and section geometry
+    // are unaffected by a roughness edit, so this recompute is exact).
+    openswmm::input::recompute_conduit_flow_properties(ctx, idx);
     return SWMM_OK;
 }
 
@@ -154,7 +161,8 @@ SWMM_ENGINE_API int swmm_link_set_offset_up(SWMM_Engine engine, int idx, double 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    ctx.links.offset1[static_cast<std::size_t>(idx)] = offset;
+    // units: display LENGTH -> internal ft
+    ctx.links.offset1[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::LENGTH, offset);
     return SWMM_OK;
 }
 
@@ -163,7 +171,8 @@ SWMM_ENGINE_API int swmm_link_set_offset_dn(SWMM_Engine engine, int idx, double 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    ctx.links.offset2[static_cast<std::size_t>(idx)] = offset;
+    // units: display LENGTH -> internal ft
+    ctx.links.offset2[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::LENGTH, offset);
     return SWMM_OK;
 }
 
@@ -172,7 +181,8 @@ SWMM_ENGINE_API int swmm_link_set_initial_flow(SWMM_Engine engine, int idx, doub
     auto& ctx = to_engine(engine)->context();
     CHECK_INITIAL_COND(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    ctx.links.flow[static_cast<std::size_t>(idx)] = flow;
+    // units: display FLOW -> internal cfs
+    ctx.links.flow[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::FLOW, flow);
     return SWMM_OK;
 }
 
@@ -181,7 +191,8 @@ SWMM_ENGINE_API int swmm_link_set_max_flow(SWMM_Engine engine, int idx, double f
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    ctx.links.q_limit[static_cast<std::size_t>(idx)] = flow;
+    // units: display FLOW -> internal cfs
+    ctx.links.q_limit[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::FLOW, flow);
     return SWMM_OK;
 }
 
@@ -192,7 +203,8 @@ SWMM_ENGINE_API int swmm_link_get_initial_flow(SWMM_Engine engine, int idx, doub
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (flow) *flow = ctx.links.flow[static_cast<std::size_t>(idx)];
+    // units: internal cfs -> display FLOW
+    if (flow) *flow = to_display(ctx, openswmm::ucf::FLOW, ctx.links.flow[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -203,7 +215,8 @@ SWMM_ENGINE_API int swmm_link_get_max_flow(SWMM_Engine engine, int idx, double* 
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (flow) *flow = ctx.links.q_limit[static_cast<std::size_t>(idx)];
+    // units: internal cfs -> display FLOW
+    if (flow) *flow = to_display(ctx, openswmm::ucf::FLOW, ctx.links.q_limit[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -361,7 +374,8 @@ SWMM_ENGINE_API int swmm_link_set_pump_startup_depth(SWMM_Engine engine, int idx
     const auto uidx = static_cast<std::size_t>(idx);
     if (ctx.links.type[uidx] != openswmm::LinkType::PUMP)
         return SWMM_ERR_BADPARAM;
-    ctx.links.pump_startup[uidx] = depth;
+    // units: display LENGTH -> internal ft
+    ctx.links.pump_startup[uidx] = to_internal(ctx, openswmm::ucf::LENGTH, depth);
     return SWMM_OK;
 }
 
@@ -372,7 +386,8 @@ SWMM_ENGINE_API int swmm_link_get_pump_startup_depth(SWMM_Engine engine, int idx
     const auto uidx = static_cast<std::size_t>(idx);
     if (ctx.links.type[uidx] != openswmm::LinkType::PUMP)
         return SWMM_ERR_BADPARAM;
-    if (depth) *depth = ctx.links.pump_startup[uidx];
+    // units: internal ft -> display LENGTH
+    if (depth) *depth = to_display(ctx, openswmm::ucf::LENGTH, ctx.links.pump_startup[uidx]);
     return SWMM_OK;
 }
 
@@ -384,7 +399,8 @@ SWMM_ENGINE_API int swmm_link_set_pump_shutoff_depth(SWMM_Engine engine, int idx
     const auto uidx = static_cast<std::size_t>(idx);
     if (ctx.links.type[uidx] != openswmm::LinkType::PUMP)
         return SWMM_ERR_BADPARAM;
-    ctx.links.pump_shutoff[uidx] = depth;
+    // units: display LENGTH -> internal ft
+    ctx.links.pump_shutoff[uidx] = to_internal(ctx, openswmm::ucf::LENGTH, depth);
     return SWMM_OK;
 }
 
@@ -395,7 +411,8 @@ SWMM_ENGINE_API int swmm_link_get_pump_shutoff_depth(SWMM_Engine engine, int idx
     const auto uidx = static_cast<std::size_t>(idx);
     if (ctx.links.type[uidx] != openswmm::LinkType::PUMP)
         return SWMM_ERR_BADPARAM;
-    if (depth) *depth = ctx.links.pump_shutoff[uidx];
+    // units: internal ft -> display LENGTH
+    if (depth) *depth = to_display(ctx, openswmm::ucf::LENGTH, ctx.links.pump_shutoff[uidx]);
     return SWMM_OK;
 }
 
@@ -444,6 +461,76 @@ SWMM_ENGINE_API int swmm_link_set_xsect(SWMM_Engine engine, int idx,
 
     auto xs = static_cast<openswmm::XsectShape>(shape);
     ctx.links.xsect_shape[uidx] = xs;
+
+    // Retain the raw [XSECTIONS] Geom1–Geom4 (display units) for lossless
+    // serialization — the derived fields set below (y_full/w_max/a_full/...)
+    // cannot reproduce the input bottom width and side slopes for trapezoids
+    // and similar multi-parameter shapes.  See LinkData::xsect_geom1.
+    ctx.links.xsect_geom1[uidx] = geom1;
+    ctx.links.xsect_geom2[uidx] = geom2;
+    ctx.links.xsect_geom3[uidx] = geom3;
+    ctx.links.xsect_geom4[uidx] = geom4;
+
+    // STREET cross-sections reference a named [STREETS] entry by index in
+    // geom1 (mirroring IRREGULAR/transects). geom1 is an index, not a length,
+    // so resolve it here — before the length-unit conversions below. Record
+    // the street name for round-trip [XSECTIONS] export and build + attach the
+    // street transect table exactly like PostParseResolver::resolve so the
+    // link's geometry is valid for same-session hydraulics.
+    if (xs == openswmm::XsectShape::STREET_XSECT) {
+        const int si = static_cast<int>(std::llround(geom1));
+        if (si < 0 || si >= ctx.streets.count()) return SWMM_ERR_BADPARAM;
+        const auto su = static_cast<std::size_t>(si);
+        ctx.links.pump_curve_name[uidx] = ctx.streets.names[su];
+
+        const int us = openswmm::ucf::getUnitSystem(
+            static_cast<int>(ctx.options.flow_units));
+        const double inv_len =
+            openswmm::ucf::Ucf_inv[openswmm::ucf::LENGTH][static_cast<std::size_t>(us)];
+        openswmm::street::StreetParams sp;
+        sp.width             = ctx.streets.t_crown[su]       * inv_len;
+        sp.curb_height       = ctx.streets.h_curb[su]        * inv_len;
+        sp.slope             = ctx.streets.sx[su]            / 100.0;   // % → fraction
+        sp.roughness         = ctx.streets.n_road[su];
+        sp.gutter_depression = ctx.streets.gutter_depres[su] * inv_len;
+        sp.gutter_width      = ctx.streets.gutter_width[su]  * inv_len;
+        sp.sides             = ctx.streets.sides[su];
+        sp.back_width        = ctx.streets.back_width[su]    * inv_len;
+        sp.back_slope        = ctx.streets.back_slope[su]    / 100.0;   // % → fraction
+        sp.back_roughness    = ctx.streets.back_n[su];
+
+        openswmm::transect::TransectData td;
+        td.name = ctx.streets.names[su];
+        openswmm::street::buildTransect(sp, td);
+
+        const int idx_tbl = static_cast<int>(ctx.transect_tables.size());
+        ctx.transect_tables.push_back(std::move(td));
+        const auto& built = ctx.transect_tables[static_cast<std::size_t>(idx_tbl)];
+        ctx.links.xsect_curve[uidx]  = idx_tbl;
+        ctx.links.xsect_y_full[uidx] = built.y_full;
+        ctx.links.xsect_a_full[uidx] = built.a_full;
+        ctx.links.xsect_r_full[uidx] = built.r_full;
+        ctx.links.xsect_w_max[uidx]  = built.w_max;
+        return SWMM_OK;
+    }
+
+    // units: convert incoming DISPLAY geom values to INTERNAL (ft) following the
+    // same shape-dependent field roles as PostParseResolver::convert_inputs_to_internal.
+    //   geom1 (y_full / full depth or diameter): LENGTH for ALL shapes.
+    //   geom2 (w_max / width):                   LENGTH except FORCE_MAIN
+    //                                            (geom2 is a roughness coeff there — raw).
+    //   geom3 (y_bot):                           LENGTH only for RECT_TRIANG,
+    //                                            RECT_ROUND, MODBASKETHANDLE; for other
+    //                                            shapes it is a side-slope/exponent — raw.
+    //   geom4: dimensionless side-slope in every supported shape here — raw.
+    geom1 = to_internal(ctx, openswmm::ucf::LENGTH, geom1);
+    if (xs != openswmm::XsectShape::FORCE_MAIN)
+        geom2 = to_internal(ctx, openswmm::ucf::LENGTH, geom2);
+    if (xs == openswmm::XsectShape::RECT_TRIANG ||
+        xs == openswmm::XsectShape::RECT_ROUND ||
+        xs == openswmm::XsectShape::MODBASKETHANDLE)
+        geom3 = to_internal(ctx, openswmm::ucf::LENGTH, geom3);
+    // geom4 left raw (dimensionless side-slope for the shapes handled below).
 
     switch (xs) {
         case openswmm::XsectShape::CIRCULAR: {
@@ -496,10 +583,56 @@ SWMM_ENGINE_API int swmm_link_get_xsect(SWMM_Engine engine, int idx,
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     auto uidx = static_cast<std::size_t>(idx);
-    if (shape) *shape = static_cast<int>(ctx.links.xsect_shape[uidx]);
-    if (geom1) *geom1 = ctx.links.xsect_y_full[uidx];
-    if (geom2) *geom2 = ctx.links.xsect_w_max[uidx];
-    if (geom3) *geom3 = ctx.links.xsect_a_full[uidx];
+    const auto xs = ctx.links.xsect_shape[uidx];
+    if (shape) *shape = static_cast<int>(xs);
+
+    // STREET links report geom1 = street index (mirroring IRREGULAR/transect).
+    // The street identity is the name retained in pump_curve_name; xsect_curve
+    // points at the built geometry table, not the [STREETS] index, so resolve
+    // the name back to a street index here.
+    if (xs == openswmm::XsectShape::STREET_XSECT) {
+        int si = -1;
+        const auto& nm = ctx.links.pump_curve_name[uidx];
+        if (!nm.empty()) {
+            for (int s = 0; s < ctx.streets.count(); ++s) {
+                if (ctx.streets.names[static_cast<std::size_t>(s)] == nm) { si = s; break; }
+            }
+        }
+        if (geom1) *geom1 = static_cast<double>(si);
+        if (geom2) *geom2 = 0.0;
+        if (geom3) *geom3 = 0.0;
+        if (geom4) *geom4 = 0.0;
+        return SWMM_OK;
+    }
+
+    // Prefer the retained raw Geom1–Geom4 (set by swmm_link_set_xsect / the
+    // [XSECTIONS] parser) so the call mirrors what was supplied — these survive
+    // the derived-geometry overwrite that loses trapezoid bottom width / side
+    // slopes.  xsect_geom1 == 0 means "not populated" (object built by a path
+    // that doesn't set these); fall back to the legacy derived reconstruction.
+    if (ctx.links.xsect_geom1[uidx] != 0.0) {
+        if (geom1) *geom1 = ctx.links.xsect_geom1[uidx];
+        if (geom2) *geom2 = ctx.links.xsect_geom2[uidx];
+        if (geom3) *geom3 = ctx.links.xsect_geom3[uidx];
+        if (geom4) *geom4 = ctx.links.xsect_geom4[uidx];
+        return SWMM_OK;
+    }
+
+    // units: INTERNAL -> DISPLAY following the same shape-dependent field roles
+    // as PostParseResolver::convert_inputs_to_internal (mirrored, inverse direction).
+    // geom1 = y_full (full depth/diameter): LENGTH for ALL shapes.
+    if (geom1) *geom1 = to_display(ctx, openswmm::ucf::LENGTH, ctx.links.xsect_y_full[uidx]);
+    // geom2 = w_max (width): LENGTH except FORCE_MAIN (roughness coeff there — raw).
+    if (geom2) {
+        *geom2 = (xs == openswmm::XsectShape::FORCE_MAIN)
+            ? ctx.links.xsect_w_max[uidx]
+            : to_display(ctx, openswmm::ucf::LENGTH, ctx.links.xsect_w_max[uidx]);
+    }
+    // geom3 = a_full (full flow area): LENGTH-SQUARED → apply LENGTH factor twice.
+    if (geom3) {
+        const double f = openswmm::ucf::UCF(openswmm::ucf::LENGTH, ctx.options);
+        *geom3 = ctx.links.xsect_a_full[uidx] * f * f;
+    }
     if (geom4) *geom4 = 0.0;
     return SWMM_OK;
 }
@@ -520,7 +653,8 @@ SWMM_ENGINE_API int swmm_link_get_length(SWMM_Engine engine, int idx, double* le
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (length) *length = ctx.links.length[static_cast<std::size_t>(idx)];
+    // units: internal ft -> display LENGTH
+    if (length) *length = to_display(ctx, openswmm::ucf::LENGTH, ctx.links.length[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -540,7 +674,8 @@ SWMM_ENGINE_API int swmm_link_get_flow(SWMM_Engine engine, int idx, double* flow
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (flow) *flow = ctx.links.flow[static_cast<std::size_t>(idx)];
+    // units: internal cfs -> display FLOW
+    if (flow) *flow = to_display(ctx, openswmm::ucf::FLOW, ctx.links.flow[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -549,7 +684,8 @@ SWMM_ENGINE_API int swmm_link_set_flow(SWMM_Engine engine, int idx, double flow)
     auto& ctx = to_engine(engine)->context();
     CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    ctx.links.flow[static_cast<std::size_t>(idx)] = flow;
+    // units: display FLOW -> internal cfs
+    ctx.links.flow[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::FLOW, flow);
     return SWMM_OK;
 }
 
@@ -557,7 +693,8 @@ SWMM_ENGINE_API int swmm_link_get_depth(SWMM_Engine engine, int idx, double* dep
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (depth) *depth = ctx.links.depth[static_cast<std::size_t>(idx)];
+    // units: internal ft -> display LENGTH
+    if (depth) *depth = to_display(ctx, openswmm::ucf::LENGTH, ctx.links.depth[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -575,7 +712,9 @@ SWMM_ENGINE_API int swmm_link_get_velocity(SWMM_Engine engine, int idx, double* 
         double area = (y_full > 0.0 && a_full > 0.0 && d > 0.0)
                       ? a_full * (d / y_full)
                       : 0.0;
-        *velocity = (area > 1.0e-12) ? q / area : 0.0;
+        // units: internal ft/s -> display LENGTH (velocity carries LENGTH UCF)
+        const double v_internal = (area > 1.0e-12) ? q / area : 0.0;
+        *velocity = to_display(ctx, openswmm::ucf::LENGTH, v_internal);
     }
     return SWMM_OK;
 }
@@ -597,7 +736,8 @@ SWMM_ENGINE_API int swmm_link_get_volume(SWMM_Engine engine, int idx, double* vo
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (volume) *volume = ctx.links.volume[static_cast<std::size_t>(idx)];
+    // units: internal ft^3 -> display VOLUME
+    if (volume) *volume = to_display(ctx, openswmm::ucf::VOLUME, ctx.links.volume[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -682,7 +822,9 @@ SWMM_ENGINE_API int swmm_link_get_flows_bulk(SWMM_Engine engine, double* buf, in
     const auto& ctx = to_engine(engine)->context();
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_links());
-    std::copy(ctx.links.flow.begin(), ctx.links.flow.begin() + n, buf);
+    // units: internal cfs -> display FLOW (per element)
+    for (int i = 0; i < n; ++i)
+        buf[i] = to_display(ctx, openswmm::ucf::FLOW, ctx.links.flow[static_cast<std::size_t>(i)]);
     return SWMM_OK;
 }
 
@@ -691,7 +833,9 @@ SWMM_ENGINE_API int swmm_link_get_depths_bulk(SWMM_Engine engine, double* buf, i
     const auto& ctx = to_engine(engine)->context();
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_links());
-    std::copy(ctx.links.depth.begin(), ctx.links.depth.begin() + n, buf);
+    // units: internal ft -> display LENGTH (per element)
+    for (int i = 0; i < n; ++i)
+        buf[i] = to_display(ctx, openswmm::ucf::LENGTH, ctx.links.depth[static_cast<std::size_t>(i)]);
     return SWMM_OK;
 }
 
@@ -701,7 +845,10 @@ SWMM_ENGINE_API int swmm_link_set_flows_bulk(SWMM_Engine engine, const double* b
     CHECK_RUNNING(ctx);
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_links());
-    std::copy(buf, buf + n, ctx.links.flow.begin());
+    // units: display FLOW -> internal cfs (per element)
+    for (int i = 0; i < n; ++i)
+        ctx.links.flow[static_cast<std::size_t>(i)] =
+            to_internal(ctx, openswmm::ucf::FLOW, buf[i]);
     return SWMM_OK;
 }
 
@@ -747,7 +894,9 @@ SWMM_ENGINE_API int swmm_link_get_velocities_bulk(SWMM_Engine engine, double* bu
         const double a_full = ctx.links.xsect_a_full[ui];
         const double area = (y_full > 0.0 && a_full > 0.0 && d > 0.0)
                             ? a_full * (d / y_full) : 0.0;
-        buf[i] = (area > 1.0e-12) ? q / area : 0.0;
+        // units: internal ft/s -> display LENGTH (velocity carries LENGTH UCF)
+        const double v_internal = (area > 1.0e-12) ? q / area : 0.0;
+        buf[i] = to_display(ctx, openswmm::ucf::LENGTH, v_internal);
     }
     return SWMM_OK;
 }
@@ -771,7 +920,9 @@ SWMM_ENGINE_API int swmm_link_get_volumes_bulk(SWMM_Engine engine, double* buf, 
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     const int n = std::min(count, ctx.n_links());
-    std::copy(ctx.links.volume.begin(), ctx.links.volume.begin() + n, buf);
+    // units: internal ft^3 -> display VOLUME (per element)
+    for (int i = 0; i < n; ++i)
+        buf[i] = to_display(ctx, openswmm::ucf::VOLUME, ctx.links.volume[static_cast<std::size_t>(i)]);
     return SWMM_OK;
 }
 
@@ -880,7 +1031,8 @@ SWMM_ENGINE_API int swmm_link_set_crest_height(SWMM_Engine engine, int idx, doub
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    ctx.links.crest_height[static_cast<std::size_t>(idx)] = h;
+    // units: display LENGTH -> internal ft
+    ctx.links.crest_height[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::LENGTH, h);
     return SWMM_OK;
 }
 
@@ -888,7 +1040,8 @@ SWMM_ENGINE_API int swmm_link_get_crest_height(SWMM_Engine engine, int idx, doub
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (h) *h = ctx.links.crest_height[static_cast<std::size_t>(idx)];
+    // units: internal ft -> display LENGTH
+    if (h) *h = to_display(ctx, openswmm::ucf::LENGTH, ctx.links.crest_height[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -975,7 +1128,8 @@ SWMM_ENGINE_API int swmm_link_set_seep_rate(SWMM_Engine engine, int idx, double 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    ctx.links.seep_rate[static_cast<std::size_t>(idx)] = rate;
+    // units: display RAINFALL -> internal ft/sec
+    ctx.links.seep_rate[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::RAINFALL, rate);
     return SWMM_OK;
 }
 
@@ -983,7 +1137,8 @@ SWMM_ENGINE_API int swmm_link_get_seep_rate(SWMM_Engine engine, int idx, double*
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (rate) *rate = ctx.links.seep_rate[static_cast<std::size_t>(idx)];
+    // units: internal ft/sec -> display RAINFALL
+    if (rate) *rate = to_display(ctx, openswmm::ucf::RAINFALL, ctx.links.seep_rate[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -1033,7 +1188,8 @@ SWMM_ENGINE_API int swmm_link_get_offset_up(SWMM_Engine engine, int idx, double*
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (offset) *offset = ctx.links.offset1[static_cast<std::size_t>(idx)];
+    // units: internal ft -> display LENGTH
+    if (offset) *offset = to_display(ctx, openswmm::ucf::LENGTH, ctx.links.offset1[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -1041,7 +1197,8 @@ SWMM_ENGINE_API int swmm_link_get_offset_dn(SWMM_Engine engine, int idx, double*
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (offset) *offset = ctx.links.offset2[static_cast<std::size_t>(idx)];
+    // units: internal ft -> display LENGTH
+    if (offset) *offset = to_display(ctx, openswmm::ucf::LENGTH, ctx.links.offset2[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -1053,7 +1210,8 @@ SWMM_ENGINE_API int swmm_link_get_stat_max_flow(SWMM_Engine engine, int idx, dou
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (val) *val = ctx.links.stat_max_flow[static_cast<std::size_t>(idx)];
+    // units: internal cfs -> display FLOW
+    if (val) *val = to_display(ctx, openswmm::ucf::FLOW, ctx.links.stat_max_flow[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -1061,7 +1219,8 @@ SWMM_ENGINE_API int swmm_link_get_stat_max_velocity(SWMM_Engine engine, int idx,
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (val) *val = ctx.links.stat_max_veloc[static_cast<std::size_t>(idx)];
+    // units: internal ft/s -> display LENGTH (velocity carries LENGTH UCF)
+    if (val) *val = to_display(ctx, openswmm::ucf::LENGTH, ctx.links.stat_max_veloc[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -1077,7 +1236,8 @@ SWMM_ENGINE_API int swmm_link_get_stat_vol_flow(SWMM_Engine engine, int idx, dou
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (val) *val = ctx.links.stat_vol_flow[static_cast<std::size_t>(idx)];
+    // units: internal ft^3 -> display VOLUME
+    if (val) *val = to_display(ctx, openswmm::ucf::VOLUME, ctx.links.stat_vol_flow[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -1113,7 +1273,8 @@ SWMM_ENGINE_API int swmm_link_get_stat_pump_volume(SWMM_Engine engine, int idx, 
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (volume) *volume = ctx.links.stat_pump_volume[static_cast<std::size_t>(idx)];
+    // units: internal ft^3 -> display VOLUME
+    if (volume) *volume = to_display(ctx, openswmm::ucf::VOLUME, ctx.links.stat_pump_volume[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -1158,7 +1319,11 @@ SWMM_ENGINE_API int swmm_link_get_pump_stats_bulk(SWMM_Engine engine,
 
         if (cycles)  cycles[i]  = is_pump ? ctx.links.stat_pump_cycles[ui]  : -1;
         if (on_time) on_time[i] = is_pump ? ctx.links.stat_pump_on_time[ui] : 0.0;
-        if (volume)  volume[i]  = is_pump ? ctx.links.stat_pump_volume[ui]  : 0.0;
+        // units: volume component internal ft^3 -> display VOLUME; cycles
+        // (count) and on_time (seconds) stay raw.
+        if (volume)  volume[i]  = is_pump
+            ? to_display(ctx, openswmm::ucf::VOLUME, ctx.links.stat_pump_volume[ui])
+            : 0.0;
     }
     return SWMM_OK;
 }
@@ -1167,6 +1332,7 @@ SWMM_ENGINE_API int swmm_link_get_pump_stats_bulk(SWMM_Engine engine,
 // Hydraulic power
 // ============================================================================
 
+// TODO(units): hydraulic power composite-unit conversion
 SWMM_ENGINE_API int swmm_link_get_hyd_power(SWMM_Engine engine, int idx, double* power) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();

@@ -291,11 +291,14 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
         }
 
         // IRREGULAR shapes: tok[2] is transect name, not a dimension.
-        // CUSTOM shapes: tok[2] = y_full, tok[3] = shape curve name.
-        // Both need deferred resolution (TRANSECTS/CURVES may not be parsed yet).
-        if (ctx.links.xsect_shape[idx] == XsectShape::IRREGULAR) {
+        // STREET shapes:    tok[2] is street name, not a dimension.
+        // CUSTOM shapes:    tok[2] = y_full, tok[3] = shape curve name.
+        // All need deferred resolution (TRANSECTS/STREETS/CURVES may not be
+        // parsed yet).
+        if (ctx.links.xsect_shape[idx] == XsectShape::IRREGULAR ||
+            ctx.links.xsect_shape[idx] == XsectShape::STREET_XSECT) {
             if (tok.size() > 2) {
-                ctx.links.pump_curve_name[idx] = tok[2]; // Reuse field for transect name
+                ctx.links.pump_curve_name[idx] = tok[2]; // Reuse field for transect/street name
                 ctx.links.xsect_curve[idx] = -1;
             }
         } else if (ctx.links.xsect_shape[idx] == XsectShape::CUSTOM) {
@@ -319,6 +322,18 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
 
         // Geom4 = fourth shape parameter (rBot, etc.)
         if (tok.size() > 5) ctx.links.xsect_r_bot[idx]  = to_double(tok[5]);
+
+        // Retain raw Geom1–Geom4 (display units) for lossless serialization —
+        // the fields above are overwritten with derived geometry during init,
+        // discarding e.g. a trapezoid's bottom width / side slopes.  Mirrors
+        // swmm_link_set_xsect.  See LinkData::xsect_geom1.
+        if (ctx.links.xsect_shape[idx] != XsectShape::IRREGULAR &&
+            ctx.links.xsect_shape[idx] != XsectShape::STREET_XSECT) {
+            if (tok.size() > 2) ctx.links.xsect_geom1[idx] = to_double(tok[2]);
+            if (tok.size() > 3) ctx.links.xsect_geom2[idx] = to_double(tok[3]);
+            if (tok.size() > 4) ctx.links.xsect_geom3[idx] = to_double(tok[4]);
+            if (tok.size() > 5) ctx.links.xsect_geom4[idx] = to_double(tok[5]);
+        }
 
         // Barrels (number of identical conduits, default 1)
         if (tok.size() > 6) {
