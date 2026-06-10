@@ -1075,6 +1075,169 @@ TEST(RdiiDecayBehaviour, LinearPathUnchangedWhenNoDecayRows) {
 }
 
 // ----------------------------------------------------------------------------
+// Reference parity — pins updateIA_exp / getRecoveryRate to the reference
+// IAModel implementation (sparsehydro compute_excess_series). Golden values
+// generated from the reference math:
+//   wet:  consumed = avail * (1 - exp(-k_dep * P))
+//         excess   = max(0, P - consumed)
+//         avail   -= consumed            [take == lose, mass-consistent]
+//   dry:  k_rec = (T >= T_freeze) ? k0 + kT * exp(theta * (T - T_ref)) : 0
+//         avail = ia_max - (ia_max - avail) * exp(-k_rec * dt_hr)
+// @see docs/RDII_ExpDecay_Implementation.md §2.1.1
+// ----------------------------------------------------------------------------
+
+static UnitHydParams makeIaOnlyUH(double ia_max) {
+    UnitHydParams uh{};
+    for (int m = 0; m < 12; ++m) uh.iaMax[m][0] = ia_max;
+    return uh;
+}
+
+TEST(RdiiDecayReference, WetTraceMatchesGoldenValues) {
+    // ia_max = 10 mm, k_dep = 0.3 1/mm, three 5 mm pulses. The first pulse is
+    // in the over-drain regime (consumed = 7.77 > P = 5): excess clamps to 0
+    // while the storage drains by the full consumed depth.
+    SimulationContext ctx;  // temperature is not read in the wet branch
+    UnitHydParams uh = makeIaOnlyUH(10.0);
+    UHResponseData rd;      // ia_used = 0 → bucket full
+    ExpDecayParams dp;
+    dp.active = true; dp.k_dep = 0.3;
+
+    const double gold_excess[3] = {0.0, 3.266569082194341, 4.613219281703784};
+    const double gold_avail[3]  = {2.231301601484298, 0.497870683678639,
+                                   0.111089965382423};
+    for (int i = 0; i < 3; ++i) {
+        double ex = updateIA_exp(uh, rd, dp, 0, 0, 5.0, 300.0, ctx);
+        EXPECT_NEAR(ex, gold_excess[i], 1e-12) << "pulse " << i;
+        EXPECT_NEAR(10.0 - rd.ia_used, gold_avail[i], 1e-12) << "pulse " << i;
+    }
+}
+
+TEST(RdiiDecayReference, DryRecoveryMatchesGoldenValues) {
+    // From an empty bucket, three 24 h dry steps at T = 10 deg C with
+    // k0 = 0.05, kT = 0.02, theta = 0.1, T_ref = 20:
+    //   k_rec = 0.05 + 0.02 * exp(-1) = 0.057357588823429 1/hr
+    SimulationContext ctx;
+    ctx.options.temp_source = 1;
+    ctx.climate_state.temperature = 50.0;  // deg F → exactly 10 deg C
+    UnitHydParams uh = makeIaOnlyUH(10.0);
+    UHResponseData rd;
+    rd.ia_used = 10.0;                     // empty bucket
+    ExpDecayParams dp;
+    dp.active = true; dp.k_dep = 0.3;
+    dp.k_0 = 0.05; dp.k_T = 0.02; dp.theta_rec = 0.1;
+    dp.T_ref = 20.0; dp.T_freeze = 0.0;
+
+    const double gold_avail[3] = {7.475601134707937, 9.362741036891215,
+                                  9.839130419663098};
+    for (int i = 0; i < 3; ++i) {
+        double ex = updateIA_exp(uh, rd, dp, 0, 0, 0.0, 86400.0, ctx);
+        EXPECT_DOUBLE_EQ(ex, 0.0);
+        EXPECT_NEAR(10.0 - rd.ia_used, gold_avail[i], 1e-12) << "day " << i;
+    }
+}
+
+TEST(RdiiDecayReference, RecoveryRateFreezeBoundary) {
+    // Reference semantics: recovery suppressed strictly BELOW T_freeze —
+    // recovery still occurs at T == T_freeze.
+    ExpDecayParams dp;
+    dp.k_0 = 0.05; dp.k_T = 0.02; dp.theta_rec = 0.1;
+    dp.T_ref = 20.0; dp.T_freeze = 0.0;
+
+    EXPECT_NEAR(getRecoveryRate(dp, 0.0), 0.052706705664732, 1e-12);
+    EXPECT_DOUBLE_EQ(getRecoveryRate(dp, -1.0), 0.0);
+    EXPECT_NEAR(getRecoveryRate(dp, 10.0), 0.057357588823429, 1e-12);
+}
+
+TEST(RdiiDecayReference, ZeroKdepDisablesAbstraction) {
+    // Degenerate limit: k_dep = 0 → consumed = 0, excess = P, state frozen.
+    SimulationContext ctx;
+    UnitHydParams uh = makeIaOnlyUH(10.0);
+    UHResponseData rd;
+    ExpDecayParams dp;
+    dp.active = true; dp.k_dep = 0.0;
+
+    for (int i = 0; i < 3; ++i) {
+        double ex = updateIA_exp(uh, rd, dp, 0, 0, 5.0, 300.0, ctx);
+        EXPECT_DOUBLE_EQ(ex, 5.0);
+        EXPECT_DOUBLE_EQ(rd.ia_used, 0.0);
+    }
+}
+
+TEST(RdiiDecayReference, UnitSystemPairing) {
+    // Unit-consistent parameter pairs scale by 25.4: a metric run
+    // (mm, k_dep = 0.3 1/mm) and an imperial run (in, k_dep = 7.62 1/in)
+    // produce identical trajectories up to the 25.4 depth factor.
+    SimulationContext ctx;
+    UnitHydParams uh_mm = makeIaOnlyUH(10.0);
+    UnitHydParams uh_in = makeIaOnlyUH(10.0 / 25.4);
+    UHResponseData rd_mm, rd_in;
+    ExpDecayParams dp_mm, dp_in;
+    dp_mm.active = true; dp_mm.k_dep = 0.3;
+    dp_in.active = true; dp_in.k_dep = 0.3 * 25.4;
+
+    for (int i = 0; i < 2; ++i) {
+        double ex_mm = updateIA_exp(uh_mm, rd_mm, dp_mm, 0, 0, 5.0, 300.0, ctx);
+        double ex_in = updateIA_exp(uh_in, rd_in, dp_in, 0, 0, 5.0 / 25.4,
+                                    300.0, ctx);
+        EXPECT_NEAR(ex_in * 25.4, ex_mm, 1e-9) << "pulse " << i;
+        EXPECT_NEAR(rd_in.ia_used * 25.4, rd_mm.ia_used, 1e-9) << "pulse " << i;
+    }
+}
+
+TEST(RdiiDecayInit, WarnsWhenKdepZero) {
+    auto ctx = makeRdiiContext(1, 1);
+    ctx.gage_names.add("G1");
+    ctx.options.temp_source = 1;  // suppress the temperature-source warning
+
+    UnitHydEntry e{};
+    e.name = "UH"; e.month = -1; e.response = 0;
+    e.r = 0.05; e.t = 1.0; e.k = 2.0; e.dmax = 5.0;
+    ctx.unit_hyds.add(e);
+    ctx.unit_hyds.add_gage("UH", "G1");
+    ctx.rdii_assigns.add(0, "UH", 100.0);
+
+    RDIIDecayEntry d{};
+    d.uh_name = "UH"; d.response = 0;
+    d.k_dep = 0.0; d.k_0 = 0.01; d.k_T = 0.05; d.T_ref = 10.0;
+    ctx.rdii_decay.add(d);
+
+    RDIISolver solver;
+    solver.init(ctx);
+
+    bool found = false;
+    for (const auto& w : ctx.warnings)
+        if (w.find("k_dep") != std::string::npos) found = true;
+    EXPECT_TRUE(found);
+}
+
+TEST(RdiiDecayInit, WarnsWhenTFreezeAtOrAboveTRef) {
+    auto ctx = makeRdiiContext(1, 1);
+    ctx.gage_names.add("G1");
+    ctx.options.temp_source = 1;
+
+    UnitHydEntry e{};
+    e.name = "UH"; e.month = -1; e.response = 0;
+    e.r = 0.05; e.t = 1.0; e.k = 2.0; e.dmax = 5.0;
+    ctx.unit_hyds.add(e);
+    ctx.unit_hyds.add_gage("UH", "G1");
+    ctx.rdii_assigns.add(0, "UH", 100.0);
+
+    RDIIDecayEntry d{};
+    d.uh_name = "UH"; d.response = 0;
+    d.k_dep = 0.1; d.k_0 = 0.01; d.k_T = 0.05;
+    d.T_ref = 10.0; d.T_freeze = 15.0;  // T_freeze >= T_ref
+    ctx.rdii_decay.add(d);
+
+    RDIISolver solver;
+    solver.init(ctx);
+
+    bool found = false;
+    for (const auto& w : ctx.warnings)
+        if (w.find("T_freeze") != std::string::npos) found = true;
+    EXPECT_TRUE(found);
+}
+
+// ----------------------------------------------------------------------------
 // INP + GeoPackage round-trip semantics — we verify the data structure
 // itself round-trips through the writer's expected order. The actual
 // file-format I/O is covered by the existing format tests above.

@@ -174,12 +174,12 @@ struct UnitHydData {
 struct RDIIDecayEntry {
     std::string uh_name;    ///< Matches UnitHydEntry::name
     int    response  = -1;  ///< 0=SHORT, 1=MEDIUM, 2=LONG
-    double k_dep     = 0.0; ///< Depletion rate (1/mm) — temperature-independent
+    double k_dep     = 0.0; ///< Depletion rate (1/project rain-depth unit: 1/in or 1/mm) — temperature-independent
     double k_0       = 0.0; ///< Base recovery rate (1/hr)
     double k_T       = 0.0; ///< Thermal recovery rate at T_ref (1/hr)
     double T_ref     = 10.0;///< Reference temperature (deg C)
     double theta_rec = 0.0; ///< Temperature sensitivity (1/deg C)
-    double T_freeze  = 0.0; ///< Recovery suppressed when T <= T_freeze (deg C)
+    double T_freeze  = 0.0; ///< Recovery suppressed when T < T_freeze (deg C)
 };
 
 struct RDIIDecayData {

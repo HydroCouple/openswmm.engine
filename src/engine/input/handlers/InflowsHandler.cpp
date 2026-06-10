@@ -251,12 +251,14 @@ void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& 
 //   UHGroup  Response  k_dep  k_0  k_T  T_ref  theta_rec  T_freeze
 //
 // Where Response is "SHORT"/"MEDIUM"/"LONG". Coefficients with units:
-//   k_dep     1/mm   — depletion rate (temperature-independent)
+//   k_dep     1/(project rain-depth unit) — depletion rate, 1/in for US-unit
+//             projects and 1/mm for SI (e.g. 7.62 1/in == 0.3 1/mm); applied
+//             to the same units as rainfall depth and Dmax
 //   k_0       1/hr   — base recovery rate
 //   k_T       1/hr   — thermal recovery rate at T_ref
 //   T_ref     deg C  — reference temperature
 //   theta_rec 1/degC — temperature sensitivity
-//   T_freeze  deg C  — recovery suppressed at or below this temperature
+//   T_freeze  deg C  — recovery suppressed below this temperature
 //
 // One row per (UH group, response). A group with no row uses the legacy
 // linear IA model; a group with one row falls back to linear on the two

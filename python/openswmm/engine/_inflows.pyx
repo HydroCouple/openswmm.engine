@@ -431,12 +431,13 @@ class Inflows:
 
         @param uh_name: Unit-hydrograph group name.
         @param response: C{0}=short, C{1}=medium, C{2}=long.
-        @param k_dep: Depletion rate.
-        @param k_0: Additive base recovery rate.
-        @param k_T: Thermal recovery coefficient.
-        @param T_ref: Reference temperature.
-        @param theta_rec: Recovery temperature sensitivity.
-        @param T_freeze: Frozen-ground suppression threshold.
+        @param k_dep: Depletion rate (1/project rain-depth unit: 1/in for
+            US-unit projects, 1/mm for SI).
+        @param k_0: Additive base recovery rate (1/hr).
+        @param k_T: Thermal recovery coefficient (1/hr).
+        @param T_ref: Reference temperature (deg C).
+        @param theta_rec: Recovery temperature sensitivity (1/deg C).
+        @param T_freeze: Recovery suppressed below this temperature (deg C).
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = uh_name.encode('utf-8')

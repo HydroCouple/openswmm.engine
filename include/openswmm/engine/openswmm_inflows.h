@@ -487,7 +487,7 @@ SWMM_ENGINE_API int swmm_rdii_decay_remove(SWMM_Engine engine, const char* uh_na
  * @param k_T        Thermal recovery rate at T_ref (1/hr) — ET-driven drying.
  * @param T_ref      Reference temperature (deg C) for the thermal term.
  * @param theta_rec  Temperature sensitivity (1/deg C) of the thermal term.
- * @param T_freeze   Recovery is suppressed when air temperature <= T_freeze (deg C).
+ * @param T_freeze   Recovery is suppressed when air temperature < T_freeze (deg C).
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_rdii_decay_add(SWMM_Engine engine, const char* uh_name,
