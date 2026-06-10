@@ -169,18 +169,36 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 break;
 
             case OutfallType::FIXED: {
-                double stage = nodes.outfall_param[uj] / ucf_len;
-                // Legacy: let yCrit = MIN(yCrit, yNorm)
+                // outfall_param is ALREADY in internal feet (converted once in
+                // PostParseResolver, matching legacy node.c fixedStage). The
+                // TIDAL/TIMESERIES branches below divide by ucf_len because
+                // those read raw display-unit table values; FIXED must not —
+                // a second division inflated the stage by 1/ucf_len in metric
+                // models (e.g. user3: 223.7 m → 733.9 m), driving huge spurious
+                // outfall backflow that flooded the upstream storage nodes.
+                double stage = nodes.outfall_param[uj];
+                // Legacy outfall_setOutletDepth (node.c:1429-1454):
+                //   yCrit = MIN(yCrit, yNorm)
+                //   if (yCrit+z+inv < stage)  yNew = stage - inv
+                //   else if (z > 0) { if (stage < inv+z) yNew = MAX(0, stage-inv)
+                //                     else               yNew = z + yCrit }
+                //   else                      yNew = yCrit
                 yCrit = std::min(yCrit, yNorm);
-                // If critical depth elev < stage, use stage
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
                     depth = stage - nodes.invert_elev[uj];
-                // Else if conduit above outfall invert, use critical depth
                 else if (z > 0.0)
-                    depth = z + yCrit;
-                // Else use max of critical depth and stage
+                    depth = (stage < nodes.invert_elev[uj] + z)
+                                ? std::max(0.0, stage - nodes.invert_elev[uj])
+                                : z + yCrit;
                 else
-                    depth = std::max(0.0, stage - nodes.invert_elev[uj]);
+                    // free-overfall (no offset, stage below critical-depth
+                    // elev): node sits at the conduit's critical depth, NOT 0.
+                    // Using max(0, stage-inv) here left a free-discharging
+                    // FIXED outfall below its invert at depth 0, so the
+                    // connecting conduit's downstream depth/area was too small
+                    // and it under-conveyed (user3 EGG conduit CCOROUT1 ~6%),
+                    // backing water up and surcharging the upstream node.
+                    depth = yCrit;
                 break;
             }
 
@@ -197,9 +215,11 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
                     depth = stage - nodes.invert_elev[uj];
                 else if (z > 0.0)
-                    depth = z + yCrit;
+                    depth = (stage < nodes.invert_elev[uj] + z)
+                                ? std::max(0.0, stage - nodes.invert_elev[uj])
+                                : z + yCrit;
                 else
-                    depth = std::max(0.0, stage - nodes.invert_elev[uj]);
+                    depth = yCrit;  // free overfall sits at critical depth (legacy node.c:1453)
                 break;
             }
 
@@ -213,9 +233,11 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
                     depth = stage - nodes.invert_elev[uj];
                 else if (z > 0.0)
-                    depth = z + yCrit;
+                    depth = (stage < nodes.invert_elev[uj] + z)
+                                ? std::max(0.0, stage - nodes.invert_elev[uj])
+                                : z + yCrit;
                 else
-                    depth = std::max(0.0, stage - nodes.invert_elev[uj]);
+                    depth = yCrit;  // free overfall sits at critical depth (legacy node.c:1453)
                 break;
             }
         }

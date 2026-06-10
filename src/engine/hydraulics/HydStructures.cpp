@@ -379,6 +379,29 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
     using constants::GRAVITY;
     constexpr double FUDGE_ORI = 0.0001;
 
+    // Scatter an orifice's surface area to its end nodes, replicating legacy
+    // findNonConduitSurfArea (dynwave.c:498-510): HALF of Orifice.surfArea is
+    // added to each end node, then the contribution to node1 is zeroed when the
+    // link is UP_CRITICAL (or node1 is STORAGE) and the contribution to node2 is
+    // zeroed when DN_CRITICAL (or node2 is STORAGE). Must run on EVERY exit path
+    // (including dry/flap) — legacy adds the FUDGE*length baseline even when the
+    // orifice carries no flow. Omitting that baseline, and omitting the
+    // critical-class zeroing, understated/overstated node surface area at low
+    // depth and seeded a per-iteration node-head divergence (extran3 1570/1630).
+    auto scatterOrificeSurfArea = [&](std::size_t uk_, std::size_t uj_,
+                                      std::size_t un1_, std::size_t un2_) {
+        if (node_new_surf_area == nullptr) return;
+        double sa1 = orifices_.surf_area[uk_] * 0.5;
+        double sa2 = sa1;
+        auto fc = links.flow_class[uj_];
+        if (fc == FlowClass::UP_CRITICAL || nodes.type[un1_] == NodeType::STORAGE)
+            sa1 = 0.0;
+        if (fc == FlowClass::DN_CRITICAL || nodes.type[un2_] == NodeType::STORAGE)
+            sa2 = 0.0;
+        node_new_surf_area[un1_] += sa1;
+        node_new_surf_area[un2_] += sa2;
+    };
+
     for (int k = 0; k < orifices_.count; ++k) {
         auto uk = static_cast<size_t>(k);
         int j = orifices_.link_idx[uk];
@@ -473,9 +496,11 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
             links.flow[uj] = 0.0;
             links.depth[uj] = 0.0;
             links.dqdh[uj] = 0.0;
-            // Legacy orifice_getInflow: on dry-exit, surfArea = FUDGE·length
+            links.flow_class[uj] = FlowClass::DRY;   // legacy link.c:1898
+            // Legacy orifice_getInflow:1899: on dry-exit, surfArea = FUDGE·length
             // so the node depth solver still sees a non-zero equivalent area.
             orifices_.surf_area[uk] = FUDGE_ORI * orifices_.length_eff[uk];
+            scatterOrificeSurfArea(uk, uj, un1, un2);  // DRY → both ends, no zeroing
             continue;
         }
 
@@ -484,7 +509,9 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
             links.flow[uj] = 0.0;
             links.depth[uj] = 0.0;
             links.dqdh[uj] = 0.0;
+            links.flow_class[uj] = FlowClass::DRY;
             orifices_.surf_area[uk] = FUDGE_ORI * orifices_.length_eff[uk];
+            scatterOrificeSurfArea(uk, uj, un1, un2);
             continue;
         }
 
@@ -561,17 +588,10 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
         links.flow[uj] = q * dir;
         links.dqdh[uj] = dqdh;
 
-        // Scatter orifice surface area to end nodes (half each). Matches
-        // legacy findNonConduitSurfArea: unconditionally skip STORAGE
-        // ends — the storage curve owns the surface-area computation
-        // there, and MIN_SURFAREA clamps degenerate curves downstream.
-        if (node_new_surf_area != nullptr) {
-            double sa_half = orifices_.surf_area[uk] * 0.5;
-            if (nodes.type[un1] != NodeType::STORAGE)
-                node_new_surf_area[un1] += sa_half;
-            if (nodes.type[un2] != NodeType::STORAGE)
-                node_new_surf_area[un2] += sa_half;
-        }
+        // Scatter orifice surface area to end nodes via legacy
+        // findNonConduitSurfArea (half each, then zero the UP_CRITICAL end's
+        // node1 / DN_CRITICAL end's node2 and any STORAGE end).
+        scatterOrificeSurfArea(uk, uj, un1, un2);
     }
 }
 
@@ -594,6 +614,7 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx,
         int n2 = links.node2[uj];
         if (n1 < 0 || n2 < 0) {
             links.flow[uj] = 0.0;
+            links.depth[uj] = 0.0;
             weirs_.surf_area[uk] = 0.0;
             continue;
         }
@@ -608,6 +629,7 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx,
         // zero flow. Our has_flap_gate flag matches the legacy sense.
         if (links.has_flap_gate[uj] && dir < 0.0) {
             links.flow[uj] = 0.0;
+            links.depth[uj] = 0.0;
             links.dqdh[uj] = 0.0;
             weirs_.surf_area[uk] = 0.0;
             continue;
@@ -631,6 +653,7 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx,
         double head = hgl1 - hcrest;
         if (head <= FUDGE_W || hcrest >= hcrown) {
             links.flow[uj] = 0.0;
+            links.depth[uj] = 0.0;   // legacy weir_getInflow: DRY → newDepth=0
             links.dqdh[uj] = 0.0;
             weirs_.surf_area[uk] = 0.0;
             continue;
@@ -705,6 +728,11 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx,
             h_orif = std::max(h_orif, 0.0);
             q = c_surcharge * std::sqrt(h_orif);
 
+            // Reported weir depth on the surcharge (orifice-equivalent) path:
+            // legacy weir_getInflow link.c:2294-2296 sets newDepth = hcrown-hcrest
+            // (the weir opening height), not the head above the crest.
+            links.depth[uj] = hcrown - hcrest;
+
             // Surcharged weir dqdh uses the ORIFICE head, not the full head
             // above the crest (legacy weir_getOrificeFlow, link.c:2435 sets
             // Link[j].dqdh = q / (2·head) with head == the orifice head).
@@ -777,6 +805,12 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx,
                     if (inner > 0.0) q *= std::pow(inner, 0.385);
                 }
             }
+
+            // Reported weir depth on the free-flow path: legacy
+            // weir_getInflow link.c:2318 sets newDepth = MIN(h1-hcrest, yFull),
+            // i.e. the head above the crest capped at the weir opening height.
+            // (head == hgl1 - hcrest here, unmodified on this branch.)
+            links.depth[uj] = std::min(head, y_full);
         }
 
         if (q < 0.0) q = 0.0;

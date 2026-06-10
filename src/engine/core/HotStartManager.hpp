@@ -266,6 +266,33 @@ public:
                      std::function<void(const std::string&)> warn_cb = {});
 
     // -----------------------------------------------------------------------
+    // Legacy EPA SWMM5 hotstart (.hsf) — read + apply routing state
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Read a legacy EPA SWMM5 `.hsf` (USE HOTSTART) file and apply its
+     *        routing state to the context, BY OBJECT INDEX (the legacy format
+     *        stores node/link state in object order, no IDs).
+     *
+     * @details Mirrors legacy hotstart.c readRouting(): sets each node's depth +
+     *          lateral inflow and each link's flow + depth + setting, all stored
+     *          as float in internal units (ft, cfs). Supports file stamps
+     *          `SWMM5-HOTSTART1..4`. Currently routing-only: returns a non-zero
+     *          error if the file contains subcatchments (the runoff section is
+     *          not yet parsed). Derived state (head, volumes, old-step values)
+     *          is recomputed by the caller from the applied depths/flows.
+     *
+     * @param path    Absolute path to the legacy `.hsf` file.
+     * @param ctx     Target context (node/link counts must match the file).
+     * @param warn_cb Optional warning callback.
+     * @returns 0 on success; non-zero error code otherwise (description in
+     *          last_io_error()).
+     */
+    static int apply_legacy_routing(const std::string& path,
+                                    SimulationContext& ctx,
+                                    std::function<void(const std::string&)> warn_cb = {});
+
+    // -----------------------------------------------------------------------
     // Flush (write-back modifications)
     // -----------------------------------------------------------------------
 
