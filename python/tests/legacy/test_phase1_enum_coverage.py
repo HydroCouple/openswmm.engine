@@ -86,23 +86,25 @@ class TestSubcatchmentEnumCoverage(unittest.TestCase):
         self.assertEqual(solver.SWMMSubcatchmentProperties.POLLUTANT_RUNOFF_CONCENTRATION.value, 245)
         self.assertEqual(solver.SWMMSubcatchmentProperties.POLLUTANT_PONDED_CONCENTRATION.value, 246)
         self.assertEqual(solver.SWMMSubcatchmentProperties.POLLUTANT_TOTAL_LOAD.value, 247)
+        self.assertEqual(solver.SWMMSubcatchmentProperties.API_PET.value, 248)
 
     def test_total_enum_member_count(self):
-        """All 48 subcatchment properties should be present."""
-        self.assertEqual(len(solver.SWMMSubcatchmentProperties), 48)
+        """All 49 subcatchment properties should be present."""
+        self.assertEqual(len(solver.SWMMSubcatchmentProperties), 49)
 
 
 class TestSystemEnumCoverage(unittest.TestCase):
-    """Verify all 41 system enum members are present."""
+    """Verify all 42 system enum members are present."""
 
     def test_system_enum_count(self):
-        self.assertEqual(len(solver.SWMMSystemProperties), 41)
+        self.assertEqual(len(solver.SWMMSystemProperties), 42)
 
     def test_tolerance_properties(self):
-        """HEAD_TOL, SYS_FLOW_TOL, LAT_FLOW_TOL are present."""
+        """HEAD_TOL, SYS_FLOW_TOL, LAT_FLOW_TOL, EVAP_RATE are present."""
         self.assertEqual(solver.SWMMSystemProperties.HEAD_TOL.value, 38)
         self.assertEqual(solver.SWMMSystemProperties.SYS_FLOW_TOL.value, 39)
         self.assertEqual(solver.SWMMSystemProperties.LAT_FLOW_TOL.value, 40)
+        self.assertEqual(solver.SWMMSystemProperties.EVAP_RATE.value, 41)
 
 
 class TestNodeEnumCoverage(unittest.TestCase):
@@ -120,10 +122,18 @@ class TestLinkEnumCoverage(unittest.TestCase):
 
 
 class TestRainGageEnumCoverage(unittest.TestCase):
-    """Verify all 3 rain gage enum members are present."""
+    """Verify all 4 rain gage enum members are present.
+
+    The a2 API adds GAGE_SCALEFACTOR (rainfall scaling factor) after
+    GAGE_SNOWFALL, bringing the swmm_GageProperty enum to 4 members.
+    """
 
     def test_raingage_enum_count(self):
-        self.assertEqual(len(solver.SWMMRainGageProperties), 3)
+        self.assertEqual(len(solver.SWMMRainGageProperties), 4)
+        self.assertEqual(solver.SWMMRainGageProperties.GAGE_TOTAL_PRECIPITATION.value, 100)
+        self.assertEqual(solver.SWMMRainGageProperties.GAGE_RAINFALL.value, 101)
+        self.assertEqual(solver.SWMMRainGageProperties.GAGE_SNOWFALL.value, 102)
+        self.assertEqual(solver.SWMMRainGageProperties.GAGE_SCALEFACTOR.value, 103)
 
 
 class TestGetMassBalanceErrorFix(unittest.TestCase):

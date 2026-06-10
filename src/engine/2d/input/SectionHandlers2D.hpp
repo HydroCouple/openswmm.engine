@@ -128,6 +128,30 @@ std::string parse2DEdgeConveyanceLine(
     std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_rows);
 
 /**
+ * @brief True when @p key (case-insensitive) is a [2D_OPTIONS] parameter
+ *        accepted by parse2DOptionsLine.
+ *
+ * Used by the swmm_options_get_ext / swmm_options_set_ext C API to route
+ * these keys to the live SolverOptions2D (via SimulationContext::twod_io)
+ * instead of the generic ext_options map — that routing is what makes
+ * GUI/API edits of 2D options reach the solver and persist through the
+ * InpWriter [2D_OPTIONS] emission and the GeoPackage 2D_* option keys.
+ */
+bool is2DOptionKey(const std::string& key);
+
+/**
+ * @brief Format the current value of a [2D_OPTIONS] parameter as the
+ *        string token parse2DOptionsLine accepts (round-trip safe).
+ *
+ * @param opts Solver options to read.
+ * @param key  Parameter name (case-insensitive).
+ * @return The value token, or an empty string for unknown keys
+ *         (and for an unset OUTPUT_FILE, whose value token is optional).
+ */
+std::string format2DOptionValue(const SolverOptions2D& opts,
+                                const std::string& key);
+
+/**
  * @brief Register all 2D input section handlers with the section registry.
  *
  * Call during input reader setup (conditional on OPENSWMM_HAS_2D).

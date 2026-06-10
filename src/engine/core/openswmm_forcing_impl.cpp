@@ -13,6 +13,7 @@
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_forcing.h"
 #include "../data/ForcingData.hpp"
+#include "UnitConversion.hpp"
 
 extern "C" {
 
@@ -153,10 +154,25 @@ SWMM_ENGINE_API int swmm_forcing_subcatch_evap(
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     if (!valid_mode(mode) || !valid_persist(persist)) return SWMM_ERR_BADPARAM;
 
+    // value is a PET rate in user units (in/day US, mm/day SI) → ft/sec internal
+    int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    double rate = value / openswmm::ucf::Ucf[openswmm::ucf::EVAPRATE][unit_sys];
+
     auto ui = static_cast<std::size_t>(idx);
     ctx.forcing.subcatch_evap_mode[ui]    = static_cast<openswmm::ForcingMode>(mode);
-    ctx.forcing.subcatch_evap_value[ui]   = value;
+    ctx.forcing.subcatch_evap_value[ui]   = rate;
     ctx.forcing.subcatch_evap_persist[ui] = static_cast<openswmm::ForcingPersist>(persist);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_get_evap_rate(SWMM_Engine engine, double* value)
+{
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    // internal ft/sec → user units (in/day US, mm/day SI)
+    int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    if (value) *value = ctx.climate_state.evap_rate
+                      * openswmm::ucf::Ucf[openswmm::ucf::EVAPRATE][unit_sys];
     return SWMM_OK;
 }
 

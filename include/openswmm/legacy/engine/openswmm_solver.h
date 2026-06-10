@@ -220,6 +220,12 @@ typedef enum
     swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION,
     /*! \brief Total pollutant load */
     swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD,
+    /*! \brief API prescribed potential evapotranspiration rate (in/day or mm/day).
+     *         Settable while the simulation is running; overrides the
+     *         climate-derived evaporation rate for the subcatchment's surface,
+     *         LID, and groundwater evaporation. Set a negative value to clear
+     *         and revert to climate-derived evaporation. */
+    swmm_SUBCATCH_API_PET,
 } swmm_SubcatchProperty;
 
 /*!
@@ -414,6 +420,9 @@ typedef enum
     swmm_SYSFLOWTOL = 39,
     /*! \brief Lateral flow tolerance */
     swmm_LATFLOWTOL = 40,
+    /*! \brief Current climate-derived evaporation rate (in/day or mm/day),
+     *         including any monthly adjustments (read-only) */
+    swmm_EVAPRATE = 41,
 } swmm_SystemProperty;
 
 /*!

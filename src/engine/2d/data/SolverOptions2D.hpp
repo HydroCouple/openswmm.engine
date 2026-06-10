@@ -122,6 +122,21 @@ struct SolverOptions2D {
      *  vol_1d_to_2d, flow_*) are still set from FLOW_UNITS because they
      *  describe the 1D side of the boundary, not the mesh. */
     bool mesh_units_si = false;
+
+    /*! Runtime-only: true after SurfaceRouter2D::initialize() applied the
+     *  FLOW_UNITS ft→m in-place mesh scaling (vx/vy/vz, coupling areas).
+     *  Lets serialization (InpWriter, GeoPackage) un-scale back to the
+     *  authored units, and makes a repeated initialize() idempotent
+     *  against double-scaling. Never parsed from input, never persisted. */
+    bool mesh_scaled_to_si = false;
+
+    /*! Runtime-only: true after SurfaceRouter2D::initialize() drained the
+     *  pending [2D_BOUNDARY_CONDITIONS] / [2D_EDGE_CONVEYANCE] rows into
+     *  BoundaryData / MeshData::edge_conveyance. Serialization collectors
+     *  (Serialize2D.hpp) switch to the drained arrays once this is set —
+     *  they are the live state that post-initialize API mutations edit;
+     *  the retained pending rows would be stale. Never parsed/persisted. */
+    bool pending_rows_drained = false;
 };
 
 } // namespace openswmm::twoD

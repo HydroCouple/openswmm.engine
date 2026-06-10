@@ -125,11 +125,15 @@ cdef extern from "openswmm_model.h":
     cdef int swmm_options_set(SWMM_Engine e, const char* key, const char* value)
     cdef int swmm_options_get_ext(SWMM_Engine e, const char* key, char* buf, int buflen)
     cdef int swmm_options_set_ext(SWMM_Engine e, const char* key, const char* value)
-    # External-file slots (role is SWMM_FilePathRole; passed as int).
-    cdef int swmm_file_path_get(SWMM_Engine e, int role, const char* owner,
+    # External-file slots. `role` is the C enum SWMM_FilePathRole; the C++
+    # header rejects an implicit int->enum conversion, so declare the enum
+    # type here and cast at the call sites (see _model.pyx).
+    ctypedef enum SWMM_FilePathRole:
+        pass
+    cdef int swmm_file_path_get(SWMM_Engine e, SWMM_FilePathRole role, const char* owner,
                                 char* absolute_buf, int absolute_buflen,
                                 char* original_buf, int original_buflen)
-    cdef int swmm_file_path_set(SWMM_Engine e, int role, const char* owner,
+    cdef int swmm_file_path_set(SWMM_Engine e, SWMM_FilePathRole role, const char* owner,
                                 const char* new_path)
     cdef int swmm_get_crs(SWMM_Engine e, char* buf, int buflen)
     # Typed time-control accessors (OADate doubles)
@@ -936,6 +940,7 @@ cdef extern from "openswmm_forcing.h":
     # Subcatchment forcing
     cdef int swmm_forcing_subcatch_rainfall(SWMM_Engine e, int idx, double value, int mode, int persist)
     cdef int swmm_forcing_subcatch_evap(SWMM_Engine e, int idx, double value, int mode, int persist)
+    cdef int swmm_climate_get_evap_rate(SWMM_Engine e, double* value)
     # Gage forcing
     cdef int swmm_forcing_gage_rainfall(SWMM_Engine e, int idx, double value, int mode, int persist)
     # Clear

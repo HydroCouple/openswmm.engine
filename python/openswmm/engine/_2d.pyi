@@ -15,6 +15,8 @@ surface routing module (requires ``OPENSWMM_BUILD_2D=ON`` and SUNDIALS).
 import numpy as np
 import numpy.typing as npt
 
+from ._enums import SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType
+
 
 class Surface2D:
     """Read/write interface to the optional 2D surface routing module.
@@ -419,11 +421,53 @@ class Surface2D:
         ...
 
     def get_stat_max_depths(self) -> npt.NDArray[np.float64]:
-        """Return cumulative maximum-depth statistics for all triangles.
+        """Return cumulative maximum-depth envelope for all triangles.
 
-        @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m.
         @rtype: np.ndarray
         @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def get_stat_max_velocities(self) -> npt.NDArray[np.float64]:
+        """Return cumulative maximum velocity-magnitude envelope per triangle.
+
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m/s.
+        @rtype: np.ndarray
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def get_stat_max_continuity_err(self) -> npt.NDArray[np.float64]:
+        """Return cumulative maximum M{|continuity residual|} envelope per triangle.
+
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in
+            C{m^3/s}.
+        @rtype: np.ndarray
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    @property
+    def continuity_error(self) -> float:
+        """Global 2D surface continuity error.
+
+        @return: M{(total_in - total_out) / total_in}, the domain mass-balance
+            error as a fraction.
+        @rtype: float
+        @raise RuntimeError: If the 2D module did not run.
+        """
+        ...
+
+    def get_mass_balance(self) -> dict[str, float]:
+        """Return the global 2D mass-balance terms.
+
+        @return: Mapping with keys C{init_storage}, C{final_storage},
+            C{rainfall_in}, C{coupling_1d_to_2d_in}, C{coupling_2d_to_1d_out},
+            C{outfall_in}, C{boundary_in}, C{boundary_out} (all C{m^3}) and
+            C{continuity_error} (fraction).
+        @rtype: dict[str, float]
+        @raise RuntimeError: If the 2D module did not run.
         """
         ...
 
@@ -432,50 +476,67 @@ class Surface2D:
     # ====================================================================
 
     def force_rainfall(
-        self, idx: int, value: float, mode: int = 1, persist: int = 0
+        self,
+        idx: int,
+        value: float,
+        *,
+        mode: SurfaceForcingMode = ...,
+        persist: ForcingPersist = ...,
     ) -> None:
         """Force rainfall on a specific triangle.
 
         @param idx: Triangle index.
         @type idx: int
-        @param value: Rainfall rate.
+        @param value: Rainfall rate (m/s).
         @type value: float
-        @param mode: Forcing mode (C{1} = ADD, C{0} = REPLACE).
-        @type mode: int
-        @param persist: C{1} to hold until cleared; C{0} for single-step.
-        @type persist: int
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
         @raise RuntimeError: If the C API rejects the forcing.
         """
         ...
 
     def force_rainfall_uniform(
-        self, value: float, mode: int = 1, persist: int = 0
+        self,
+        value: float,
+        *,
+        mode: SurfaceForcingMode = ...,
+        persist: ForcingPersist = ...,
     ) -> None:
         """Force uniform rainfall on all triangles.
 
-        @param value: Rainfall rate.
+        @param value: Rainfall rate (m/s).
         @type value: float
-        @param mode: Forcing mode (C{1} = ADD, C{0} = REPLACE).
-        @type mode: int
-        @param persist: C{1} to hold until cleared; C{0} for single-step.
-        @type persist: int
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
         @raise RuntimeError: If the C API rejects the forcing.
         """
         ...
 
     def force_coupling_flux(
-        self, idx: int, value: float, mode: int = 1, persist: int = 0
+        self,
+        idx: int,
+        value: float,
+        *,
+        mode: SurfaceForcingMode = ...,
+        persist: ForcingPersist = ...,
     ) -> None:
         """Force a coupling flux on a specific triangle.
 
         @param idx: Triangle index.
         @type idx: int
-        @param value: Coupling flux value.
+        @param value: Coupling flux value (m/s, positive = into 2D).
         @type value: float
-        @param mode: Forcing mode (C{1} = ADD, C{0} = REPLACE).
-        @type mode: int
-        @param persist: C{1} to hold until cleared; C{0} for single-step.
-        @type persist: int
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
         @raise RuntimeError: If the C API rejects the forcing.
         """
         ...
@@ -565,28 +626,30 @@ class Surface2D:
         """
         ...
 
-    def get_edge_bc_type(self, tri_idx: int, edge: int) -> int:
+    def get_edge_bc_type(self, tri_idx: int, edge: int) -> SurfaceBoundaryType:
         """Return the boundary condition type for a triangle edge.
 
         @param tri_idx: Triangle index.
         @type tri_idx: int
         @param edge: Edge index in C{0}-C{2}.
         @type edge: int
-        @return: Boundary condition type code.
-        @rtype: int
+        @return: Boundary condition type.
+        @rtype: L{SurfaceBoundaryType}
         @raise RuntimeError: If the C API call fails.
         """
         ...
 
-    def set_edge_bc_type(self, tri_idx: int, edge: int, bc_type: int) -> None:
+    def set_edge_bc_type(
+        self, tri_idx: int, edge: int, bc_type: SurfaceBoundaryType
+    ) -> None:
         """Set the boundary condition type for a triangle edge.
 
         @param tri_idx: Triangle index.
         @type tri_idx: int
         @param edge: Edge index in C{0}-C{2}.
         @type edge: int
-        @param bc_type: Boundary condition type code.
-        @type bc_type: int
+        @param bc_type: Boundary condition type.
+        @type bc_type: L{SurfaceBoundaryType}
         @raise RuntimeError: If the C API rejects the assignment.
         """
         ...

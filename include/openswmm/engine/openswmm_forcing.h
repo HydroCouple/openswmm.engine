@@ -194,11 +194,18 @@ SWMM_ENGINE_API int swmm_forcing_subcatch_rainfall(
     SWMM_Engine engine, int idx, double value, int mode, int persist);
 
 /**
- * @brief Force an evaporation rate on a subcatchment.
+ * @brief Prescribe a potential evapotranspiration (PET) rate on a subcatchment.
+ *
+ * The prescribed rate replaces (OVERRIDE) or augments (ADD) the
+ * climate-derived evaporation rate for the subcatchment's surface,
+ * LID, and groundwater upper-zone evaporation. An OVERRIDE rate is
+ * applied as-is, bypassing the DRY_ONLY option and monthly adjustments.
+ * Actual evaporation remains capped by available water, so losses are
+ * tracked through the normal runoff continuity totals.
  *
  * @param engine   Engine handle.
  * @param idx      Subcatchment index.
- * @param value    Evaporation rate (ft/sec internal units).
+ * @param value    PET rate in user units (in/day for US, mm/day for SI).
  * @param mode     SWMM_FORCING_OVERRIDE or SWMM_FORCING_ADD.
  * @param persist  SWMM_FORCING_RESET or SWMM_FORCING_PERSIST.
  * @returns SWMM_OK or error code.
@@ -206,6 +213,22 @@ SWMM_ENGINE_API int swmm_forcing_subcatch_rainfall(
  */
 SWMM_ENGINE_API int swmm_forcing_subcatch_evap(
     SWMM_Engine engine, int idx, double value, int mode, int persist);
+
+/**
+ * @brief Get the current climate-derived evaporation rate.
+ *
+ * Returns the broadcast evaporation rate the engine would apply in the
+ * absence of any PET forcing, including monthly adjustments (read-only).
+ * Intended for caller-side composition: read this rate, apply your own
+ * adjustment logic, and prescribe the result via
+ * @ref swmm_forcing_subcatch_evap.
+ *
+ * @param engine     Engine handle.
+ * @param[out] value Receives the rate in user units (in/day US, mm/day SI).
+ * @returns SWMM_OK or error code.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_climate_get_evap_rate(SWMM_Engine engine, double* value);
 
 /* =========================================================================
  * Gage forcing

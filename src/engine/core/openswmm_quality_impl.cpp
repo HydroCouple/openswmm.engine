@@ -45,7 +45,11 @@ SWMM_ENGINE_API int swmm_landuse_add(SWMM_Engine engine, const char* id) {
     if (!id) return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING)
+    // Landuses may be added during programmatic construction (BUILDING) or on a
+    // model opened from an .inp (OPENED) — mirroring swmm_lid_add. Buildup /
+    // washoff configuration itself imposes no lifecycle gate.
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
 
     // Check for duplicate

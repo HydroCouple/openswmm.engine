@@ -274,9 +274,14 @@ TEST(GpkgSchemaIO5, DeleteSimulationCascadesAllPartD) {
     // a simulation does NOT cascade through to raingage_data via that
     // path. This is consistent with the rest of Part A — the new Part D
     // tables do not introduce stricter cascade semantics than the model
-    // tables they reference. Test the model-object cascade path instead.
-    exec(db.get(),
-        "INSERT INTO rain_gages (simulation_id, gage_id) VALUES ('sim1','G1')");
+    // tables they reference. The G1 gage row (and the raingage_data row
+    // inserted above) therefore deliberately SURVIVE the simulation delete:
+    EXPECT_EQ(count("SELECT COUNT(*) FROM rain_gages "
+                     "WHERE simulation_id='sim1' AND gage_id='G1'"), 1);
+    EXPECT_EQ(count("SELECT COUNT(*) FROM raingage_data "
+                     "WHERE simulation_id='sim1' AND gage_id='G1'"), 1);
+
+    // Test the model-object cascade path instead, using the surviving gage.
     exec(db.get(),
         "INSERT INTO raingage_data (simulation_id, gage_id, record_time, "
         " rainfall_value) VALUES ('sim1','G1','2026-02-01T00:00:00Z', 0.7)");

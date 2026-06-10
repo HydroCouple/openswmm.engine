@@ -1641,8 +1641,8 @@ void lid_getRunoff(int j, double tStep)
     subcatch = &Subcatch[j];
 
     //... determine if evaporation can occur
-    EvapRate = Evap.rate;
-    if ( Evap.dryOnly && subcatch->rainfall > 0.0 ) EvapRate = 0.0;
+    //    (uses any externally prescribed PET rate; DRY_ONLY handled within)
+    EvapRate = subcatch_getEvapRate(j);
 
     //... find subcatchment's infiltration rate into native soil
     findNativeInfil(j, tStep);

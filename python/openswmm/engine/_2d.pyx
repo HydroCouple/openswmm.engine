@@ -19,6 +19,7 @@ import numpy as np
 from libc.stdint cimport uintptr_t
 
 from ._2d cimport *
+from ._enums import SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType
 
 
 cdef inline void _check(int rc) except *:
@@ -555,9 +556,9 @@ cdef class Surface2D:
         return val
 
     def get_stat_max_depths(self):
-        """Return cumulative maximum-depth statistics for all triangles.
+        """Return cumulative maximum-depth envelope for all triangles.
 
-        @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m.
         @rtype: np.ndarray
         @raise RuntimeError: If the C API call fails.
         """
@@ -566,54 +567,140 @@ cdef class Surface2D:
         _check(swmm_2d_get_stat_max_depths(self._engine, &arr[0]))
         return arr
 
+    def get_stat_max_velocities(self):
+        """Return cumulative maximum velocity-magnitude envelope for all triangles.
+
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m/s.
+        @rtype: np.ndarray
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef int n = self.n_triangles
+        cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
+        _check(swmm_2d_get_stat_max_velocities(self._engine, &arr[0]))
+        return arr
+
+    def get_stat_max_continuity_err(self):
+        """Return cumulative maximum M{|continuity residual|} envelope per triangle.
+
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in
+            C{m^3/s}.
+        @rtype: np.ndarray
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef int n = self.n_triangles
+        cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
+        _check(swmm_2d_get_stat_max_continuity_err(self._engine, &arr[0]))
+        return arr
+
+    @property
+    def continuity_error(self) -> float:
+        """Global 2D surface continuity error.
+
+        @return: M{(total_in - total_out) / total_in}, the domain mass-balance
+            error as a fraction.
+        @rtype: float
+        @raise RuntimeError: If the 2D module did not run.
+        """
+        cdef double val
+        _check(swmm_2d_get_continuity_error(self._engine, &val))
+        return val
+
+    def get_mass_balance(self):
+        """Return the global 2D mass-balance terms.
+
+        @return: Mapping with keys C{init_storage}, C{final_storage},
+            C{rainfall_in}, C{coupling_1d_to_2d_in}, C{coupling_2d_to_1d_out},
+            C{outfall_in}, C{boundary_in}, C{boundary_out} (all C{m^3}) and
+            C{continuity_error} (fraction).
+        @rtype: dict[str, float]
+        @raise RuntimeError: If the 2D module did not run.
+        """
+        cdef double init_storage = 0.0
+        cdef double final_storage = 0.0
+        cdef double rainfall_in = 0.0
+        cdef double coupling_in = 0.0
+        cdef double coupling_out = 0.0
+        cdef double outfall_in = 0.0
+        cdef double boundary_in = 0.0
+        cdef double boundary_out = 0.0
+        cdef double err = 0.0
+        _check(swmm_2d_get_mass_balance(self._engine,
+                                        &init_storage, &final_storage,
+                                        &rainfall_in, &coupling_in,
+                                        &coupling_out, &outfall_in,
+                                        &boundary_in, &boundary_out))
+        _check(swmm_2d_get_continuity_error(self._engine, &err))
+        return {
+            "init_storage": init_storage,
+            "final_storage": final_storage,
+            "rainfall_in": rainfall_in,
+            "coupling_1d_to_2d_in": coupling_in,
+            "coupling_2d_to_1d_out": coupling_out,
+            "outfall_in": outfall_in,
+            "boundary_in": boundary_in,
+            "boundary_out": boundary_out,
+            "continuity_error": err,
+        }
+
     # ====================================================================
     # Boundary conditions - forcing
     # ====================================================================
 
-    def force_rainfall(self, int idx, double value, int mode=1, int persist=0):
+    def force_rainfall(self, int idx, double value, *,
+                       mode=SurfaceForcingMode.OVERRIDE,
+                       persist=ForcingPersist.RESET):
         """Force rainfall on a specific triangle.
 
         @param idx: Triangle index.
         @type idx: int
-        @param value: Rainfall rate.
+        @param value: Rainfall rate (m/s).
         @type value: float
-        @param mode: Forcing mode (C{1} = ADD, C{0} = REPLACE).
-        @type mode: int
-        @param persist: C{1} to hold until cleared; C{0} for single-step.
-        @type persist: int
+        @param mode: How the value is applied. C{OVERRIDE} replaces the
+            computed rainfall; C{ADD} adds to it.
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} holds the forcing until cleared; C{RESET}
+            applies it for a single step.
+        @type persist: L{ForcingPersist}
         @raise RuntimeError: If the C API rejects the forcing.
         """
-        _check(swmm_2d_force_rainfall(self._engine, idx, value, mode, persist))
+        _check(swmm_2d_force_rainfall(self._engine, idx, value,
+                                      int(mode), int(persist)))
 
-    def force_rainfall_uniform(self, double value, int mode=1, int persist=0):
+    def force_rainfall_uniform(self, double value, *,
+                               mode=SurfaceForcingMode.OVERRIDE,
+                               persist=ForcingPersist.RESET):
         """Force uniform rainfall on all triangles.
 
-        @param value: Rainfall rate.
+        @param value: Rainfall rate (m/s).
         @type value: float
-        @param mode: Forcing mode (C{1} = ADD, C{0} = REPLACE).
-        @type mode: int
-        @param persist: C{1} to hold until cleared; C{0} for single-step.
-        @type persist: int
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
         @raise RuntimeError: If the C API rejects the forcing.
         """
-        _check(swmm_2d_force_rainfall_uniform(self._engine, value, mode, persist))
+        _check(swmm_2d_force_rainfall_uniform(self._engine, value,
+                                              int(mode), int(persist)))
 
-    def force_coupling_flux(self, int idx, double value, int mode=1,
-                             int persist=0):
+    def force_coupling_flux(self, int idx, double value, *,
+                            mode=SurfaceForcingMode.OVERRIDE,
+                            persist=ForcingPersist.RESET):
         """Force a coupling flux on a specific triangle.
 
         @param idx: Triangle index.
         @type idx: int
-        @param value: Coupling flux value.
+        @param value: Coupling flux value (m/s, positive = into 2D).
         @type value: float
-        @param mode: Forcing mode (C{1} = ADD, C{0} = REPLACE).
-        @type mode: int
-        @param persist: C{1} to hold until cleared; C{0} for single-step.
-        @type persist: int
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
         @raise RuntimeError: If the C API rejects the forcing.
         """
-        _check(swmm_2d_force_coupling_flux(self._engine, idx, value, mode,
-                                            persist))
+        _check(swmm_2d_force_coupling_flux(self._engine, idx, value,
+                                           int(mode), int(persist)))
 
     def force_clear_all(self):
         """Clear all 2D forcings.
@@ -708,33 +795,34 @@ cdef class Surface2D:
         _check(swmm_2d_boundary_edge_count(self._engine, &count))
         return count
 
-    def get_edge_bc_type(self, int tri_idx, int edge) -> int:
+    def get_edge_bc_type(self, int tri_idx, int edge):
         """Return the boundary condition type for a triangle edge.
 
         @param tri_idx: Triangle index.
         @type tri_idx: int
         @param edge: Edge index in C{0}-C{2}.
         @type edge: int
-        @return: Boundary condition type code.
-        @rtype: int
+        @return: Boundary condition type.
+        @rtype: L{SurfaceBoundaryType}
         @raise RuntimeError: If the C API call fails.
         """
         cdef int bc_type = 0
         _check(swmm_2d_get_edge_bc_type(self._engine, tri_idx, edge, &bc_type))
-        return bc_type
+        return SurfaceBoundaryType(bc_type)
 
-    def set_edge_bc_type(self, int tri_idx, int edge, int bc_type):
+    def set_edge_bc_type(self, int tri_idx, int edge, bc_type):
         """Set the boundary condition type for a triangle edge.
 
         @param tri_idx: Triangle index.
         @type tri_idx: int
         @param edge: Edge index in C{0}-C{2}.
         @type edge: int
-        @param bc_type: Boundary condition type code.
-        @type bc_type: int
+        @param bc_type: Boundary condition type.
+        @type bc_type: L{SurfaceBoundaryType}
         @raise RuntimeError: If the C API rejects the assignment.
         """
-        _check(swmm_2d_set_edge_bc_type(self._engine, tri_idx, edge, bc_type))
+        _check(swmm_2d_set_edge_bc_type(self._engine, tri_idx, edge,
+                                        int(bc_type)))
 
     def get_edge_bc_head(self, int tri_idx, int edge) -> float:
         """Return the boundary head for a triangle edge.

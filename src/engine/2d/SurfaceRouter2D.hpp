@@ -26,6 +26,7 @@
 #include "data/SurfaceStateData.hpp"
 #include "data/SolverOptions2D.hpp"
 #include "data/BoundaryData.hpp"
+#include "data/PendingRows2D.hpp"
 #include "coupling/NodeCoupling.hpp"
 
 #ifdef OPENSWMM_HAS_2D
@@ -148,17 +149,12 @@ public:
      *
      * V-E3. Populated by the input parser during reading (before the
      * mesh is finalized), drained into `boundary_` during `initialize()`
-     * after `boundary_.resize()` allocates the per-edge slots. Cleared
-     * after drain.
+     * after `boundary_.resize()` allocates the per-edge slots. Retained
+     * after the drain so serialization (InpWriter / GeoPackage) can
+     * re-emit the authored rows (group label, TS-vs-constant choice).
+     * Hoisted to data/PendingRows2D.hpp; alias kept for call sites.
      */
-    struct PendingBoundaryRow {
-        int         tri      = 0;
-        int         edge     = 0;     ///< 0..2
-        int         bc_type  = 0;     ///< openswmm::twoD::BoundaryType cast
-        double      param1   = 0.0;   ///< slope (NormalFlow) / head (Stage) / flow (Flow)
-        std::string name;             ///< TS name or curve name (TS_/Rating variants)
-        std::string group;            ///< named group ("" = none)
-    };
+    using PendingBoundaryRow = twoD::PendingBoundaryRow;
     std::vector<PendingBoundaryRow>& pendingBCRows() noexcept { return pending_bc_rows_; }
     const std::vector<PendingBoundaryRow>& pendingBCRows() const noexcept { return pending_bc_rows_; }
 
@@ -170,12 +166,9 @@ public:
      * during `initialize()` after `buildMeshTopology` has populated the
      * neighbour table. Mirrored to both slots of an interior edge so
      * antisymmetric FV flux integration stays mass-conservative.
+     * Retained after the drain for faithful re-serialization.
      */
-    struct PendingEdgeConveyanceRow {
-        int    v_from     = 0;   ///< FROM_VERTEX index
-        int    v_to       = 0;   ///< TO_VERTEX index (≠ v_from)
-        double conveyance = 1.0; ///< Validated to [0, 1] at parse time
-    };
+    using PendingEdgeConveyanceRow = twoD::PendingEdgeConveyanceRow;
     std::vector<PendingEdgeConveyanceRow>& pendingEdgeConveyanceRows() noexcept {
         return pending_edge_conveyance_rows_;
     }

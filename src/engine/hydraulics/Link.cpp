@@ -145,7 +145,9 @@ double getHydPower(double flow, double head_upstream, double head_downstream) {
 // Per-element: buildXSectParams
 // ============================================================================
 
-XSectParams buildXSectParams(const LinkData& links, std::size_t uj) {
+XSectParams buildXSectParams(
+    const LinkData& links, std::size_t uj,
+    const std::vector<transect::TransectData>* transects) {
     XSectParams xs{};
     xs.type   = links.xsect_batch_shape[uj];
     xs.y_full = links.xsect_y_full[uj];
@@ -158,6 +160,27 @@ XSectParams buildXSectParams(const LinkData& links, std::size_t uj) {
     xs.a_bot  = links.xsect_a_bot[uj];
     xs.s_bot  = links.xsect_s_bot[uj];
     xs.r_bot  = links.xsect_r_bot[uj];
+
+    // Attach the per-link transect tables for tabulated shapes. xsect_curve is
+    // the unified index into ctx.transect_tables for IRREGULAR (transect),
+    // CUSTOM (shape curve), and STREET_XSECT (street transect) — set by
+    // PostParseResolver — mirroring XSectGroups::attachTransectTables for the
+    // batch path. Self-contained shapes leave the table pointers null.
+    const auto shape = static_cast<XSectShape>(xs.type);
+    if (transects &&
+        (shape == XSectShape::IRREGULAR ||
+         shape == XSectShape::CUSTOM ||
+         shape == XSectShape::STREET_XSECT)) {
+        const int ti = links.xsect_curve[uj];
+        if (ti >= 0 && static_cast<std::size_t>(ti) < transects->size()) {
+            const auto& td = (*transects)[static_cast<std::size_t>(ti)];
+            xs.transect          = ti;
+            xs.area_tbl          = td.area_tbl;
+            xs.hrad_tbl          = td.hrad_tbl;
+            xs.width_tbl         = td.width_tbl;
+            xs.transect_tbl_size = transect::N_TRANSECT_TBL;
+        }
+    }
     return xs;
 }
 

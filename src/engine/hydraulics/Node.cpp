@@ -56,8 +56,13 @@ double getVolume(const NodeData& nodes, int idx, double depth,
     double fd = nodes.full_depth[ui];
     if (fd <= 0.0) return 0.0;
 
-    // fullVolume for a junction = MIN_SURFAREA * fullDepth (legacy convention)
-    double full_vol = constants::MIN_SURFAREA * fd;
+    // fullVolume for a junction = MIN_SURFAREA * fullDepth (legacy convention),
+    // UNLESS an override has been stored (e.g. a Type-1 pump wet well, set in
+    // SWMMEngine::initialize from the pump curve's max volume — matches legacy
+    // pump_validate). full_volume is 0 before init, so fall back then.
+    double full_vol = nodes.full_volume[ui] > 0.0
+                          ? nodes.full_volume[ui]
+                          : constants::MIN_SURFAREA * fd;
     return full_vol * (depth / fd);
 }
 

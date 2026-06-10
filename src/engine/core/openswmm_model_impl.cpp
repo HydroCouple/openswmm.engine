@@ -13,12 +13,20 @@
 #include "openswmm_api_common.hpp"
 #include "InpWriter.hpp"
 #include "DateTime.hpp"
+#include "charconv_compat.hpp"
+#include "../input/Tokenizer.hpp"
 #include "../input/InputParseUtils.hpp"
 #include "../input/PostParseResolver.hpp"
 #include "../../../include/openswmm/engine/openswmm_model.h"
 #include "../../../include/openswmm/engine/openswmm_hotstart.h"
 #include "../../../include/openswmm/plugin_sdk/IInputPlugin.hpp"
 #include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
+
+#ifdef OPENSWMM_HAS_2D
+// [2D_OPTIONS] key routing for swmm_options_get_ext / swmm_options_set_ext
+// (is2DOptionKey / format2DOptionValue / parse2DOptionsLine).
+#include "../2d/input/SectionHandlers2D.hpp"
+#endif
 
 #include <cstdio>
 #include <sstream>
@@ -1147,7 +1155,22 @@ SWMM_ENGINE_API int swmm_options_get_ext(SWMM_Engine engine,
     CHECK_HANDLE(engine);
     if (!key || !buf || buflen <= 0) return SWMM_ERR_BADPARAM;
 
-    const auto& ext = to_engine(engine)->context().options.ext_options;
+    auto& ctx = to_engine(engine)->context();
+
+#ifdef OPENSWMM_HAS_2D
+    // [2D_OPTIONS] keys read the live SolverOptions2D (the solver's source
+    // of truth, wired through ctx.twod_io) instead of the generic
+    // ext_options map — see swmm_options_set_ext for the write side.
+    if (ctx.twod_io.options && openswmm::twoD::is2DOptionKey(key)) {
+        const std::string v =
+            openswmm::twoD::format2DOptionValue(*ctx.twod_io.options, key);
+        std::strncpy(buf, v.c_str(), static_cast<std::size_t>(buflen - 1));
+        buf[buflen - 1] = '\0';
+        return SWMM_OK;
+    }
+#endif
+
+    const auto& ext = ctx.options.ext_options;
     auto it = ext.find(key);
     if (it == ext.end()) return SWMM_ERR_BADPARAM;
 
@@ -1160,7 +1183,31 @@ SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine,
                                           const char* key, const char* value) {
     CHECK_HANDLE(engine);
     if (!key || !value) return SWMM_ERR_BADPARAM;
-    to_engine(engine)->context().options.ext_options[key] = value;
+
+    auto& ctx = to_engine(engine)->context();
+
+#ifdef OPENSWMM_HAS_2D
+    // Route [2D_OPTIONS] keys into the live SolverOptions2D so GUI/API
+    // edits actually reach the 2D solver and persist (InpWriter emits them
+    // in [2D_OPTIONS]; the GeoPackage writer as 2D_* option keys).
+    // Previously these landed in ext_options, where the solver never
+    // looked — also erase any such stale copy so old [OPTIONS] pollution
+    // self-heals on the next save.
+    if (ctx.twod_io.options && openswmm::twoD::is2DOptionKey(key)) {
+        // Parse into a copy and commit only on success: parse2DOptionsLine
+        // assigns the field before validating, so feeding it the live
+        // options would clobber the current value on a rejected set.
+        openswmm::twoD::SolverOptions2D tmp = *ctx.twod_io.options;
+        const std::string err =
+            openswmm::twoD::parse2DOptionsLine({key, value}, tmp);
+        if (!err.empty()) return SWMM_ERR_BADPARAM;
+        *ctx.twod_io.options = std::move(tmp);
+        ctx.options.ext_options.erase(key);
+        return SWMM_OK;
+    }
+#endif
+
+    ctx.options.ext_options[key] = value;
     return SWMM_OK;
 }
 
@@ -1225,11 +1272,12 @@ SWMM_ENGINE_API int swmm_userflag_get_bool(SWMM_Engine engine,
                                              const char* name, int* value) {
     CHECK_HANDLE(engine);
     if (!name || !value) return SWMM_ERR_BADPARAM;
+    const std::string n = upper_key(name);
     const auto& flags = to_engine(engine)->context().user_flags;
-    if (!flags.is_defined(name)) return SWMM_ERR_BADPARAM;
-    const auto& def = flags.get_def(name);
+    if (!flags.is_defined(n)) return SWMM_ERR_BADPARAM;
+    const auto& def = flags.get_def(n);
     if (def.type != openswmm::UserFlagType::BOOLEAN) return SWMM_ERR_BADPARAM;
-    auto opt = flags.try_get_value("MODEL", "", name);
+    auto opt = flags.try_get_value("MODEL", "", n);
     if (!opt.has_value()) { *value = 0; return SWMM_OK; }
     *value = std::get<bool>(opt.value()) ? 1 : 0;
     return SWMM_OK;
@@ -1239,11 +1287,12 @@ SWMM_ENGINE_API int swmm_userflag_get_int(SWMM_Engine engine,
                                             const char* name, int* value) {
     CHECK_HANDLE(engine);
     if (!name || !value) return SWMM_ERR_BADPARAM;
+    const std::string n = upper_key(name);
     const auto& flags = to_engine(engine)->context().user_flags;
-    if (!flags.is_defined(name)) return SWMM_ERR_BADPARAM;
-    const auto& def = flags.get_def(name);
+    if (!flags.is_defined(n)) return SWMM_ERR_BADPARAM;
+    const auto& def = flags.get_def(n);
     if (def.type != openswmm::UserFlagType::INTEGER) return SWMM_ERR_BADPARAM;
-    auto opt = flags.try_get_value("MODEL", "", name);
+    auto opt = flags.try_get_value("MODEL", "", n);
     if (!opt.has_value()) { *value = 0; return SWMM_OK; }
     *value = std::get<int>(opt.value());
     return SWMM_OK;
@@ -1253,11 +1302,12 @@ SWMM_ENGINE_API int swmm_userflag_get_real(SWMM_Engine engine,
                                              const char* name, double* value) {
     CHECK_HANDLE(engine);
     if (!name || !value) return SWMM_ERR_BADPARAM;
+    const std::string n = upper_key(name);
     const auto& flags = to_engine(engine)->context().user_flags;
-    if (!flags.is_defined(name)) return SWMM_ERR_BADPARAM;
-    const auto& def = flags.get_def(name);
+    if (!flags.is_defined(n)) return SWMM_ERR_BADPARAM;
+    const auto& def = flags.get_def(n);
     if (def.type != openswmm::UserFlagType::REAL) return SWMM_ERR_BADPARAM;
-    auto opt = flags.try_get_value("MODEL", "", name);
+    auto opt = flags.try_get_value("MODEL", "", n);
     if (!opt.has_value()) { *value = 0.0; return SWMM_OK; }
     *value = std::get<double>(opt.value());
     return SWMM_OK;
@@ -1267,8 +1317,12 @@ SWMM_ENGINE_API int swmm_userflag_set_bool(SWMM_Engine engine,
                                              const char* name, int value) {
     CHECK_HANDLE(engine);
     if (!name) return SWMM_ERR_BADPARAM;
+    const std::string n = upper_key(name);
     auto& flags = to_engine(engine)->context().user_flags;
-    flags.set("MODEL", "", name, value != 0);
+    // Register the schema so the value is readable: the getters gate on
+    // is_defined(name) and the def's type. define() overwrites idempotently.
+    flags.define({n, openswmm::UserFlagType::BOOLEAN, ""});
+    flags.set("MODEL", "", n, value != 0);
     return SWMM_OK;
 }
 
@@ -1276,8 +1330,10 @@ SWMM_ENGINE_API int swmm_userflag_set_int(SWMM_Engine engine,
                                             const char* name, int value) {
     CHECK_HANDLE(engine);
     if (!name) return SWMM_ERR_BADPARAM;
+    const std::string n = upper_key(name);
     auto& flags = to_engine(engine)->context().user_flags;
-    flags.set("MODEL", "", name, value);
+    flags.define({n, openswmm::UserFlagType::INTEGER, ""});
+    flags.set("MODEL", "", n, value);
     return SWMM_OK;
 }
 
@@ -1285,8 +1341,150 @@ SWMM_ENGINE_API int swmm_userflag_set_real(SWMM_Engine engine,
                                              const char* name, double value) {
     CHECK_HANDLE(engine);
     if (!name) return SWMM_ERR_BADPARAM;
+    const std::string n = upper_key(name);
     auto& flags = to_engine(engine)->context().user_flags;
-    flags.set("MODEL", "", name, value);
+    flags.define({n, openswmm::UserFlagType::REAL, ""});
+    flags.set("MODEL", "", n, value);
+    return SWMM_OK;
+}
+
+// ----------------------------------------------------------------------------
+// User flag schema definitions + per-object values (GUI surface).
+// Object types and flag names are stored uppercase (mirrors the INP handlers);
+// object names are case-preserved.
+// ----------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_userflag_def_count(SWMM_Engine engine, int* count) {
+    CHECK_HANDLE(engine);
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = static_cast<int>(
+        to_engine(engine)->context().user_flags.def_count());
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_userflag_def_get(SWMM_Engine engine, int index,
+                                          char* name_buf, int name_buflen,
+                                          int* type,
+                                          char* desc_buf, int desc_buflen) {
+    CHECK_HANDLE(engine);
+    const auto& defs = to_engine(engine)->context().user_flags.all_defs();
+    if (index < 0 || index >= static_cast<int>(defs.size()))
+        return SWMM_ERR_BADINDEX;
+    const auto& d = defs[static_cast<std::size_t>(index)];
+    if (name_buf) fill_buf(name_buf, name_buflen, d.name);
+    if (type)     *type = static_cast<int>(d.type);
+    if (desc_buf) fill_buf(desc_buf, desc_buflen, d.description);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_userflag_define(SWMM_Engine engine, const char* name,
+                                         int type, const char* description) {
+    CHECK_HANDLE(engine);
+    if (!name || name[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (type < 0 || type > 3) return SWMM_ERR_BADPARAM;
+    auto& flags = to_engine(engine)->context().user_flags;
+    flags.define({upper_key(name),
+                  static_cast<openswmm::UserFlagType>(type),
+                  description ? std::string(description) : std::string()});
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_userflag_undefine(SWMM_Engine engine, const char* name) {
+    CHECK_HANDLE(engine);
+    if (!name) return SWMM_ERR_BADPARAM;
+    auto& flags = to_engine(engine)->context().user_flags;
+    return flags.undefine(upper_key(name)) ? SWMM_OK : SWMM_ERR_BADPARAM;
+}
+
+SWMM_ENGINE_API int swmm_userflag_value_get(SWMM_Engine engine,
+                                            const char* obj_type,
+                                            const char* obj_name,
+                                            const char* flag_name,
+                                            char* buf, int buflen, int* found) {
+    CHECK_HANDLE(engine);
+    if (!obj_type || !obj_name || !flag_name || !buf || buflen <= 0 || !found)
+        return SWMM_ERR_BADPARAM;
+    const auto& flags = to_engine(engine)->context().user_flags;
+    const auto opt = flags.try_get_value(upper_key(obj_type), obj_name,
+                                         upper_key(flag_name));
+    if (!opt.has_value()) {
+        *found = 0;
+        buf[0] = '\0';
+        return SWMM_OK;
+    }
+    *found = 1;
+    // String form is symmetric with the INP encoding (InpWriter): YES/NO,
+    // %d, %g, string verbatim (no quoting at the API boundary).
+    std::string s;
+    const auto& v = opt.value();
+    if (std::holds_alternative<bool>(v)) {
+        s = std::get<bool>(v) ? "YES" : "NO";
+    } else if (std::holds_alternative<int>(v)) {
+        s = std::to_string(std::get<int>(v));
+    } else if (std::holds_alternative<double>(v)) {
+        char tmp[32];
+        std::snprintf(tmp, sizeof(tmp), "%g", std::get<double>(v));
+        s = tmp;
+    } else {
+        s = std::get<std::string>(v);
+    }
+    fill_buf(buf, buflen, s);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_userflag_value_set(SWMM_Engine engine,
+                                            const char* obj_type,
+                                            const char* obj_name,
+                                            const char* flag_name,
+                                            const char* value) {
+    CHECK_HANDLE(engine);
+    if (!obj_type || !obj_name || !flag_name || !value)
+        return SWMM_ERR_BADPARAM;
+    auto& flags = to_engine(engine)->context().user_flags;
+    const std::string fname = upper_key(flag_name);
+    if (!flags.is_defined(fname)) return SWMM_ERR_BADPARAM;
+
+    const auto type = flags.get_def(fname).type;
+    const std::string raw(value);
+    openswmm::UserFlagValue v;
+    switch (type) {
+        case openswmm::UserFlagType::BOOLEAN:
+            v = openswmm::input::Tokenizer::parse_boolean(raw);
+            break;
+        case openswmm::UserFlagType::INTEGER: {
+            int iv = 0;
+            const auto res =
+                std::from_chars(raw.data(), raw.data() + raw.size(), iv);
+            if (res.ec != std::errc{} || res.ptr != raw.data() + raw.size())
+                return SWMM_ERR_BADPARAM;
+            v = iv;
+            break;
+        }
+        case openswmm::UserFlagType::REAL: {
+            double dv = 0.0;
+            const auto res = openswmm::from_chars_double(
+                raw.data(), raw.data() + raw.size(), dv);
+            if (res.ec != std::errc{}) return SWMM_ERR_BADPARAM;
+            v = dv;
+            break;
+        }
+        case openswmm::UserFlagType::STRING:
+        default:
+            v = raw;
+            break;
+    }
+    flags.set(upper_key(obj_type), obj_name, fname, std::move(v));
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_userflag_value_clear(SWMM_Engine engine,
+                                              const char* obj_type,
+                                              const char* obj_name,
+                                              const char* flag_name) {
+    CHECK_HANDLE(engine);
+    if (!obj_type || !obj_name || !flag_name) return SWMM_ERR_BADPARAM;
+    auto& flags = to_engine(engine)->context().user_flags;
+    flags.unset(upper_key(obj_type), obj_name, upper_key(flag_name));
     return SWMM_OK;
 }
 

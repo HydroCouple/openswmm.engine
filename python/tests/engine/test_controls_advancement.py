@@ -11,6 +11,7 @@ Migrated to the v1 Pythonic bindings.
 import pytest
 
 from openswmm.engine import ModelBuilder
+from openswmm.engine._exceptions import BadParamError
 
 
 @pytest.fixture
@@ -64,12 +65,20 @@ class TestControlRuleNameExtraction:
         ],
     )
     def test_malformed_rule_returns_empty_id(self, controls, malformed_text):
-        """In v1 the engine returns an empty-string id for malformed rules
-        (was ``None`` in v0). Callers fall back to a sentinel display name
-        when ``rule.id`` is falsy."""
+        """In the a2 API the engine cannot extract a name from a malformed
+        rule, so ``swmm_control_get_id`` returns ``SWMM_ERR_BADPARAM`` and
+        indexing the rule raises :class:`BadParamError` (was an empty-string
+        id in v1, ``None`` in v0). The rule text is still stored — the append
+        succeeds and the count increments — but the ``id`` field is
+        unavailable. Callers must catch this to fall back to a sentinel
+        display name."""
         controls.append(malformed_text)
         idx = len(controls) - 1
-        assert not controls[idx].id
+        # The malformed rule is stored (count incremented) ...
+        assert idx == 0
+        # ... but its name cannot be parsed, so ``.id`` access raises.
+        with pytest.raises(BadParamError):
+            _ = controls[idx].id
 
     def test_bad_index_raises(self, controls):
         controls.append(

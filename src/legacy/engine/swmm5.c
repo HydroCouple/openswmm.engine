@@ -1438,6 +1438,11 @@ int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, 
             }
             else
                 return ERR_API_PROPERTY_VALUE;
+        case swmm_SUBCATCH_API_PET:
+            // negative value clears the prescription (reverts to climate evap)
+            if (value < 0.0) Subcatch[index].apiEvapRate = MISSING;
+            else             Subcatch[index].apiEvapRate = value / UCF(EVAPRATE);
+            return 0;
         case swmm_SUBCATCH_EXTERNAL_POLLUTANT_BUILDUP:
         {
             if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
@@ -1501,6 +1506,11 @@ int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, 
             }
             else
                 return ERR_API_PROPERTY_VALUE;
+        case swmm_SUBCATCH_API_PET:
+            // negative value clears the prescription (reverts to climate evap)
+            if (value < 0.0) Subcatch[index].apiEvapRate = MISSING;
+            else             Subcatch[index].apiEvapRate = value / UCF(EVAPRATE);
+            return 0;
         case swmm_SUBCATCH_RPTFLAG:
             if (value >= 0.0)
             {
@@ -1893,6 +1903,10 @@ static double getSubcatchValue(int property, int index, int subIndex, int pollut
         return subcatch->apiRainfall * UCF(RAINFALL);
     case swmm_SUBCATCH_API_SNOWFALL:
         return subcatch->apiSnowfall * UCF(RAINFALL);
+    case swmm_SUBCATCH_API_PET:
+        // returns -1 when no PET prescription is active
+        if (subcatch->apiEvapRate == MISSING) return -1.0;
+        return subcatch->apiEvapRate * UCF(EVAPRATE);
     case swmm_SUBCATCH_POLLUTANT_BUILDUP:
         if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
@@ -2183,6 +2197,8 @@ double getSystemValue(int property)
         return SysFlowTol;
     case swmm_LATFLOWTOL:
         return LatFlowTol;
+    case swmm_EVAPRATE:
+        return Evap.rate * UCF(EVAPRATE);
     default:
         return ERR_API_PROPERTY_TYPE;
     }

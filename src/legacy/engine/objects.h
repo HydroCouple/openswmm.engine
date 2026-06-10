@@ -411,6 +411,7 @@ typedef struct
    double        rainfall;        // current rainfall (ft/sec)
    double        apiRainfall;     // api provided rainfall (ft/sec)
    double        apiSnowfall;     // api provided snowfall (ft/sec)
+   double        apiEvapRate;     // api prescribed PET rate (ft/sec); MISSING when not set
    double        evapLoss;        // current evap losses (ft/sec)
    double        infilLoss;       // current infil losses (ft/sec) 
    double        runon;           // runon from other subcatchments (cfs)

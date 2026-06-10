@@ -119,6 +119,7 @@ cdef extern from "openswmm_solver.h":
         swmm_SUBCATCH_POLLUTANT_RUNOFF_CONCENTRATION # Pollutant ponded concentration
         swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION # Pollutant runoff concentration
         swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD # Pollutant total load
+        swmm_SUBCATCH_API_PET # API prescribed potential evapotranspiration rate
 
     # SWMM Node properties
     ctypedef enum swmm_NodeProperty:
@@ -213,6 +214,7 @@ cdef extern from "openswmm_solver.h":
         swmm_HEADTOL             # The head tolerance.
         swmm_SYSFLOWTOL          # The system flow tolerance.
         swmm_LATFLOWTOL          # The lateral flow tolerance.
+        swmm_EVAPRATE            # The current climate-derived evaporation rate (read-only).
 
     # SWMM flow units enumeration
     ctypedef enum swmm_FlowUnitsProperty:

@@ -42,6 +42,7 @@ class Forcing:
         self, sub: _Key, value: float, *,
         mode: ForcingMode = ..., persist: bool = ...,
     ) -> None: ...
+    def climate_evap_rate(self) -> float: ...
 
     def gage_rainfall(
         self, gage: _Key, value: float, *,

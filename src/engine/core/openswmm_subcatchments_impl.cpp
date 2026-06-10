@@ -254,7 +254,10 @@ SWMM_ENGINE_API int swmm_subcatch_get_slope(SWMM_Engine engine, int idx, double*
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (s) *s = ctx.subcatches.slope[static_cast<std::size_t>(idx)];
+    // Internally slope is stored as a fraction (%Slope / 100). swmm_subcatch_set_slope
+    // divides the incoming percentage by 100, so the getter must multiply back by 100
+    // to round-trip — matching the symmetric swmm_subcatch_get/set_imperv_pct pair.
+    if (s) *s = ctx.subcatches.slope[static_cast<std::size_t>(idx)] * 100.0;
     return SWMM_OK;
 }
 

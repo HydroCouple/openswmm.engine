@@ -88,6 +88,11 @@ struct ClimateState {
     // Monthly evaporation table (for MONTHLY method)
     double monthly_evap[12] = {};
 
+    // EVAPRATE unit-conversion factor (in/day US or mm/day SI → ft/sec) for the
+    // project's unit system. Set at init; MONTHLY uses it so SI models convert
+    // mm/day correctly (defaults to the US factor for back-compatibility).
+    double evaprate_ucf = 1036800.0;
+
     // Monthly adjustment factors
     double adjust_evap[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
     double adjust_temp[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};

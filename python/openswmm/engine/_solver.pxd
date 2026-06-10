@@ -41,4 +41,5 @@ cdef class Solver:
     cdef object _statistics
     cdef object _mass_balance
     cdef object _editor
+    cdef object _hotstart
     cdef long long _generation

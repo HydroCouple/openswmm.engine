@@ -194,6 +194,7 @@ cdef class Solver:
         self._statistics = None
         self._mass_balance = None
         self._editor = None
+        self._hotstart = None
         self._generation = 0
         # Stash the plugin_lib for ``open()`` to consume. We don't pass it to
         # __init__ purely for symmetry with the v0 surface (which took it via
@@ -519,9 +520,12 @@ cdef class Solver:
         Equivalent to ``start_datetime + elapsed``. After the simulation
         ends this returns the end-of-simulation moment.
         """
-        cdef double v = 0.0
-        _check(swmm_get_current_time(self._handle, &v))
-        return oadate_to_datetime(v)
+        # swmm_get_current_time returns elapsed *seconds* from the start
+        # (context().current_time), not an absolute OADate, so feeding it to
+        # oadate_to_datetime yields the 1899 epoch. Build the absolute moment
+        # from the (already-correct) start_datetime + elapsed timedelta, which
+        # is exactly the documented contract.
+        return self.start_datetime + self.elapsed
 
     @property
     def sim_start_time(self) -> datetime:

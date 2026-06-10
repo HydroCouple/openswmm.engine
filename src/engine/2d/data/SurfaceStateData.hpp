@@ -18,6 +18,7 @@
 
 #include <vector>
 #include <cstring>
+#include <cmath>
 #include <algorithm>
 
 namespace openswmm::twoD {
@@ -83,8 +84,10 @@ struct SurfaceStateData {
     // Cumulative statistics
     // -----------------------------------------------------------------------
 
-    std::vector<double> stat_max_depth;     ///< Maximum depth seen at each cell
-    std::vector<double> stat_cum_volume;    ///< Cumulative volume through cell
+    std::vector<double> stat_max_depth;     ///< Maximum depth ψ_o seen at each cell (m)
+    std::vector<double> stat_max_velocity;  ///< Max cell speed |v| = √(vx²+vy²) (m/s)
+    std::vector<double> stat_max_cont_err;  ///< Max |cell_continuity_err| (m³/s)
+    std::vector<double> stat_cum_volume;    ///< Cumulative volume through cell (m³)
 
     // -----------------------------------------------------------------------
     // Lifecycle
@@ -119,6 +122,8 @@ struct SurfaceStateData {
 
         old_depth.assign(nt, 0.0);
         stat_max_depth.assign(nt, 0.0);
+        stat_max_velocity.assign(nt, 0.0);
+        stat_max_cont_err.assign(nt, 0.0);
         stat_cum_volume.assign(nt, 0.0);
     }
 
@@ -146,12 +151,28 @@ struct SurfaceStateData {
         }
     }
 
-    /// Update cumulative statistics
+    /// Update cumulative statistics / rendering envelopes.
+    ///
+    /// Aggregates once per model (routing) step at the accepted end-of-step
+    /// state. MUST be called after computeFaceVelocity and computeCellContinuity
+    /// so face_vx/vy and cell_continuity_err hold the accepted values. All
+    /// envelopes fuse into the single per-cell loop already walked for
+    /// stat_cum_volume — no extra passes, no sub-step sampling.
     void update_statistics(const std::vector<double>& tri_area,
                            double dt) noexcept {
         for (std::size_t i = 0; i < depth.size(); ++i) {
             if (depth[i] > stat_max_depth[i])
                 stat_max_depth[i] = depth[i];
+
+            const double speed = std::sqrt(face_vx[i] * face_vx[i]
+                                         + face_vy[i] * face_vy[i]);
+            if (speed > stat_max_velocity[i])
+                stat_max_velocity[i] = speed;
+
+            const double aerr = std::abs(cell_continuity_err[i]);
+            if (aerr > stat_max_cont_err[i])
+                stat_max_cont_err[i] = aerr;
+
             stat_cum_volume[i] += depth[i] * tri_area[i] * dt;
         }
     }

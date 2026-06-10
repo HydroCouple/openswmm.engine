@@ -83,7 +83,7 @@ struct ForcingData {
     std::vector<ForcingPersist> subcatch_rainfall_persist;
 
     std::vector<ForcingMode>    subcatch_evap_mode;
-    std::vector<double>         subcatch_evap_value;     ///< ft/sec (internal units)
+    std::vector<double>         subcatch_evap_value;     ///< prescribed PET rate, ft/sec (internal units; converted from in/day or mm/day at the C API boundary)
     std::vector<ForcingPersist> subcatch_evap_persist;
 
     // ------ Gage forcing (sized to n_gages) ---------------------------------
@@ -194,6 +194,27 @@ struct ForcingData {
         clear_resets(subcatch_rainfall_mode,     subcatch_rainfall_persist);
         clear_resets(subcatch_evap_mode,         subcatch_evap_persist);
         clear_resets(gage_rainfall_mode,         gage_rainfall_persist);
+    }
+
+    /**
+     * @brief Resolve the effective evaporation rate for a subcatchment.
+     *
+     * Applies any prescribed PET forcing to the broadcast climate rate.
+     * An OVERRIDE prescription is used as-is (it replaces the climate
+     * rate, including any DRY_ONLY suppression already folded into
+     * @p broadcast_rate by the caller); ADD augments it.
+     *
+     * @param ui              Subcatchment index.
+     * @param broadcast_rate  Climate-derived evap rate (ft/sec), after any
+     *                        caller-side DRY_ONLY handling.
+     * @return Effective potential evaporation rate (ft/sec).
+     */
+    double effective_evap_rate(std::size_t ui, double broadcast_rate) const noexcept {
+        switch (subcatch_evap_mode[ui]) {
+            case ForcingMode::OVERRIDE: return subcatch_evap_value[ui];
+            case ForcingMode::ADD:      return broadcast_rate + subcatch_evap_value[ui];
+            default:                    return broadcast_rate;
+        }
     }
 };
 

@@ -217,6 +217,70 @@ class LegacySubcatchment:
                 mass_balance_category="runoff.snow",
             )
 
+    def set_api_pet(
+        self,
+        value: float,
+        log: Optional["ExternalForcingLog"] = None,
+    ) -> None:
+        """Prescribe a potential evapotranspiration rate for this subcatchment.
+
+        Overrides the climate-derived evaporation rate for the
+        subcatchment's surface, LID, and groundwater upper-zone
+        evaporation. The prescribed rate is applied as-is (it bypasses
+        the DRY_ONLY option and monthly adjustments). Actual evaporation
+        is capped to available water, so losses appear in the runoff
+        totals under ``evaporation``. Persists until cleared with
+        L{clear_api_pet}.
+
+        @param value: PET rate in user units (in/day or mm/day).
+        @type value: float
+        @param log: Optional external forcing log for audit.
+        @type log: ExternalForcingLog or None
+        @return: None
+        @rtype: None
+        """
+        self._set(SP.API_PET, value)
+        if log is not None:
+            log.record(
+                sim_time=self._solver.current_datetime,
+                object_type="subcatchment",
+                object_id=self._name,
+                property_name="api_pet",
+                value=value,
+                mass_balance_category="runoff.evaporation",
+            )
+
+    def get_api_pet(self) -> float:
+        """Return the currently prescribed PET rate for this subcatchment.
+
+        @return: Prescribed PET rate in user units (in/day or mm/day),
+            or a negative value when no prescription is active.
+        @rtype: float
+        """
+        return self._get(SP.API_PET)
+
+    def clear_api_pet(
+        self,
+        log: Optional["ExternalForcingLog"] = None,
+    ) -> None:
+        """Clear any prescribed PET rate, reverting to climate-derived evaporation.
+
+        @param log: Optional external forcing log for audit.
+        @type log: ExternalForcingLog or None
+        @return: None
+        @rtype: None
+        """
+        self._set(SP.API_PET, -1.0)
+        if log is not None:
+            log.record(
+                sim_time=self._solver.current_datetime,
+                object_type="subcatchment",
+                object_id=self._name,
+                property_name="api_pet",
+                value=-1.0,
+                mass_balance_category="runoff.evaporation",
+            )
+
     def set_external_pollutant_buildup(
         self,
         value: float,

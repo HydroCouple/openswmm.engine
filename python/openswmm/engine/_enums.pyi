@@ -652,6 +652,24 @@ class ForcingPersist(IntEnum):
     PERSIST = 1
 
 
+class SurfaceForcingMode(IntEnum):
+    """2D surface forcing mode. Mirrors ``SWMM_ForcingMode`` (OVERRIDE=1, ADD=2)."""
+
+    NONE = 0
+    OVERRIDE = 1
+    ADD = 2
+
+
+class SurfaceBoundaryType(IntEnum):
+    """2D mesh edge boundary-condition type. Mirrors ``openswmm::twoD::BoundaryType``."""
+
+    WALL = 0
+    NORMAL_FLOW = 1
+    SPECIFIED_STAGE = 2
+    SPECIFIED_FLOW = 3
+    RATING_CURVE = 4
+
+
 class RefType(IntEnum):
     """Object kind holding a reference (editing API). Mirrors ``SWMM_RefType``."""
 

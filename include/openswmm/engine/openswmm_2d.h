@@ -329,6 +329,35 @@ SWMM_ENGINE_API int swmm_2d_get_cvode_last_step(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_2d_get_stat_max_depths(SWMM_Engine engine,
                                                   double* max_depths);
 
+/** @brief Get per-triangle max velocity-magnitude statistics (cumulative, m/s).
+ *  @param max_velocities Output array (pre-allocated to triangle_count).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_stat_max_velocities(SWMM_Engine engine,
+                                                     double* max_velocities);
+
+/** @brief Get per-triangle max |continuity residual| statistics (cumulative, m3/s).
+ *  @param max_errs Output array (pre-allocated to triangle_count).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_stat_max_continuity_err(SWMM_Engine engine,
+                                                        double* max_errs);
+
+/** @brief Get the global 2D surface continuity error (fraction).
+ *  @param err Output: (total_in - total_out) / total_in.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_continuity_error(SWMM_Engine engine, double* err);
+
+/** @brief Get the global 2D mass-balance terms (all m3). Any pointer may be NULL.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_mass_balance(SWMM_Engine engine,
+                                             double* init_storage,
+                                             double* final_storage,
+                                             double* rainfall_in,
+                                             double* coupling_1d_to_2d_in,
+                                             double* coupling_2d_to_1d_out,
+                                             double* outfall_in,
+                                             double* boundary_in,
+                                             double* boundary_out);
+
 /* =========================================================================
  * 2D Forcing — Override rainfall or coupling for external control
  * ========================================================================= */

@@ -3232,16 +3232,13 @@ void SWMMEngine::applyForcings(double dt) noexcept {
         }
     }
 
-    // ---- Subcatchment evaporation forcing ----
-    // (applied here; runoff solver will use subcatches.evap_rate if set)
-    for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (f.subcatch_evap_mode[ui] == ForcingMode::OVERRIDE) {
-            ctx_.subcatches.evap_loss[ui] = f.subcatch_evap_value[ui];
-        } else if (f.subcatch_evap_mode[ui] == ForcingMode::ADD) {
-            ctx_.subcatches.evap_loss[ui] += f.subcatch_evap_value[ui];
-        }
-    }
+    // ---- Subcatchment PET forcing ----
+    // No action needed here: subcatch_evap_{mode,value} hold a prescribed
+    // PET *rate* (ft/sec) that is consumed directly by the runoff, LID, and
+    // groundwater solvers via forcing::effective_evap_rate(), so capping to
+    // available water and mass-balance accounting happen along the normal
+    // computation paths. (Previously this block overwrote evap_loss, which
+    // the runoff solver then recomputed — the forcing had no effect.)
 
     // ---- Link setting forcing (pump/orifice/weir control override) ----
     for (int j = 0; j < ctx_.n_links(); ++j) {

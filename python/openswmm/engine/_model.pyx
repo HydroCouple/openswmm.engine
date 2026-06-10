@@ -473,7 +473,7 @@ cdef class ModelBuilder:
         cdef bytes b_owner = owner.encode('utf-8')
         cdef char abs_buf[512]
         cdef char orig_buf[512]
-        _check(swmm_file_path_get(self._handle, role, b_owner,
+        _check(swmm_file_path_get(self._handle, <SWMM_FilePathRole>role, b_owner,
                                   abs_buf, 512, orig_buf, 512))
         return (abs_buf.decode('utf-8'), orig_buf.decode('utf-8'))
 
@@ -494,7 +494,7 @@ cdef class ModelBuilder:
         """
         cdef bytes b_owner = owner.encode('utf-8')
         cdef bytes b_path = new_path.encode('utf-8')
-        _check(swmm_file_path_set(self._handle, role, b_owner, b_path))
+        _check(swmm_file_path_set(self._handle, <SWMM_FilePathRole>role, b_owner, b_path))
 
     def get_option_ext(self, str key) -> str:
         """Return the value of an extended model option.

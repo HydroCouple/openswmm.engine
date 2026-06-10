@@ -774,6 +774,13 @@ double getAofY(const XSectParams& xs, double y) {
         case XSectShape::TRIANGULAR:   return triang_getAofY(xs, y);
         case XSectShape::PARABOLIC:    return parab_getAofY(xs, y);
         case XSectShape::POWERFUNC:    return powerfunc_getAofY(xs, y);
+        case XSectShape::IRREGULAR:
+        case XSectShape::CUSTOM:
+        case XSectShape::STREET_XSECT:
+            // Tabulated transect (legacy xsect_getAofY IRREGULAR case).
+            if (xs.area_tbl)
+                return xs.a_full * lookup(y_norm, xs.area_tbl, xs.transect_tbl_size);
+            return 0.0;
         default: return 0.0;
     }
 }
@@ -824,6 +831,13 @@ double getWofY(const XSectParams& xs, double y) {
         case XSectShape::TRIANGULAR:   return triang_getWofY(xs, y);
         case XSectShape::PARABOLIC:    return parab_getWofY(xs, y);
         case XSectShape::POWERFUNC:    return powerfunc_getWofY(xs, y);
+        case XSectShape::IRREGULAR:
+        case XSectShape::CUSTOM:
+        case XSectShape::STREET_XSECT:
+            // Tabulated transect (legacy xsect_getWofY IRREGULAR case).
+            if (xs.width_tbl)
+                return xs.w_max * lookup(y_norm, xs.width_tbl, xs.transect_tbl_size);
+            return 0.0;
         default: return 0.0;
     }
 }
@@ -861,6 +875,15 @@ double getRofY(const XSectParams& xs, double y) {
         case XSectShape::TRIANGULAR:   return triang_getRofY(xs, y);
         case XSectShape::PARABOLIC:    return parab_getRofY(xs, y);
         case XSectShape::POWERFUNC:    return powerfunc_getRofY(xs, y);
+        case XSectShape::IRREGULAR:
+        case XSectShape::CUSTOM:
+        case XSectShape::STREET_XSECT:
+            // Tabulated transect (legacy xsect_getRofY IRREGULAR case). Must be
+            // explicit: the generic default below would call getRofA→getRofY
+            // and recurse forever for these shapes.
+            if (xs.hrad_tbl)
+                return xs.r_full * lookup(y_norm, xs.hrad_tbl, xs.transect_tbl_size);
+            return 0.0;
         default:  // RECT_CLOSED, RECT_OPEN, MOD_BASKET, tabulated S-only shapes
             return getRofA(xs, getAofY(xs, y));
     }
@@ -907,6 +930,13 @@ double getYofA(const XSectParams& xs, double a) {
         case XSectShape::TRIANGULAR:   return triang_getYofA(xs, a);
         case XSectShape::PARABOLIC:    return parab_getYofA(xs, a);
         case XSectShape::POWERFUNC:    return powerfunc_getYofA(xs, a);
+        case XSectShape::IRREGULAR:
+        case XSectShape::CUSTOM:
+        case XSectShape::STREET_XSECT:
+            // Invert the normalized area table (legacy xsect_getYofA IRREGULAR).
+            if (xs.area_tbl)
+                return xs.y_full * invLookup(alpha, xs.area_tbl, xs.transect_tbl_size);
+            return 0.0;
         default: return 0.0;
     }
 }

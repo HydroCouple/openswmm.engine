@@ -101,6 +101,9 @@ add_gtest_unit(test_engine_timestep_ctrl     test_timestep_controller.cpp)
 add_gtest_unit(test_engine_simd_math         test_simd_math.cpp)
 add_gtest_unit(test_engine_mathexpr          test_mathexpr.cpp)
 add_gtest_unit(test_engine_user_flags        test_user_flags.cpp)
+# User-flags C API surface for the GUI (Phase 0 of
+# openswmm.gui/docs/USER_FLAGS_UI_PLAN_2026-06-03.md).
+add_gtest_unit(test_engine_user_flags_capi   test_user_flags_capi.cpp)
 add_gtest_unit(test_engine_section_registry  test_section_registry.cpp)
 add_gtest_unit(test_engine_crs               test_crs.cpp)
 add_gtest_unit(test_engine_xsection          test_xsection.cpp)
@@ -209,6 +212,13 @@ add_test(
 )
 set_tests_properties(test_engine_2d_surface PROPERTIES LABELS "unit")
 
+# InpWriter [2D_*] emission — end-to-end through the public C API (open a
+# 2D .inp → swmm_model_write → reopen → compare via swmm_2d_* accessors,
+# plus the GeoPackage write→reopen end-to-end). Needs the full 2D module.
+if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_inp_writer_2d test_inp_writer_2d.cpp)
+endif()
+
 # Golden cross-section parity harness — diffs the new xsect:: implementation
 # against the legacy xsect.c. The legacy dylib hides its internal xsect_*
 # symbols, so we compile xsect.c (+ findroot.c + stub globals) directly into the
@@ -277,6 +287,36 @@ if(OPENSWMM_WITH_GEOPACKAGE)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
     )
     set_tests_properties(test_engine_geopackage PROPERTIES LABELS "unit")
+
+    # Part E — 2D mesh persistence round-trip (data-level: the fixture wires
+    # ctx.twod_io at locally-owned 2D structs, so this runs in both 2D and
+    # non-2D builds).
+    add_executable(test_engine_geopackage_mesh2d test_geopackage_mesh2d.cpp)
+    target_link_libraries(test_engine_geopackage_mesh2d
+        PRIVATE
+            GTest::gtest GTest::gtest_main GTest::gmock
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+            openswmm_legacy_engine
+    )
+    target_include_directories(test_engine_geopackage_mesh2d
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage_mesh2d PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(test_engine_geopackage_mesh2d)
+    add_test(
+        NAME    test_engine_geopackage_mesh2d
+        COMMAND $<TARGET_FILE:test_engine_geopackage_mesh2d>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage_mesh2d PROPERTIES LABELS "unit")
 
     # Slice IO-6 — external-file format parsers/materialisers.
     add_executable(test_engine_geopackage_formats

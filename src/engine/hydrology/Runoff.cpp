@@ -257,11 +257,14 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // Wire climate module evaporation: use the global evap rate computed
     // by climate::updateDailyClimate(). Matches legacy:
     //   evapRate = (dryOnly && rainfall > 0) ? 0 : Evap.rate
+    // Any prescribed PET forcing then resolves per subcatchment: an OVERRIDE
+    // rate is used as-is (bypasses DRY_ONLY); ADD augments the climate rate.
     for (int i = 0; i < n; ++i) {
         auto ui = static_cast<std::size_t>(i);
         bool is_dry_only = ctx.options.evap_dry_only;
         double rain = precip_[ui] * ucf::UCF(ucf::RAINFALL, ctx.options);
-        evap_rate_[ui] = (is_dry_only && rain > 0.0) ? 0.0 : evap_rate_in;
+        double broadcast = (is_dry_only && rain > 0.0) ? 0.0 : evap_rate_in;
+        evap_rate_[ui] = ctx.forcing.effective_evap_rate(ui, broadcast);
     }
 
     // ----- Step 3: Per-subcatchment subarea processing -----

@@ -5,6 +5,33 @@ All notable changes to the OpenSWMM Engine are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Subcatchment PET prescription
+
+See `docs/SUBCATCHMENT_PET_PRESCRIPTION_PLAN.md`.
+
+### Added
+
+- **Legacy engine:** new `swmm_SUBCATCH_API_PET` subcatchment property —
+  prescribe a potential evapotranspiration rate (in/day or mm/day) per
+  subcatchment at runtime. The prescribed rate replaces the climate-derived
+  `Evap.rate` for surface, LID, and groundwater upper-zone evaporation
+  (bypassing `DRY_ONLY` and monthly adjustments); a negative value clears
+  it. New read-only `swmm_EVAPRATE` system property returns the current
+  climate-derived rate. Python: `LegacySubcatchment.set_api_pet` /
+  `get_api_pet` / `clear_api_pet`, `LegacySystem.get_evap_rate`.
+- **Refactored engine:** new `swmm_climate_get_evap_rate()` C API getter
+  and `Forcing.climate_evap_rate()` Python method for caller-side
+  adjustment composition.
+
+### Fixed
+
+- **Refactored engine:** `swmm_forcing_subcatch_evap()` previously had no
+  effect — it overwrote `evap_loss` before the runoff solver recomputed it.
+  It now prescribes a PET *rate* (user units: in/day US, mm/day SI —
+  previously documented as ft/sec) consumed by the runoff, LID, and
+  groundwater solvers, so capping to available water and mass-balance
+  accounting happen along the normal computation paths.
+
 ## [Unreleased] — Pythonic Python bindings (v1)
 
 ### Changed — **breaking** (Python bindings only; C API unchanged)

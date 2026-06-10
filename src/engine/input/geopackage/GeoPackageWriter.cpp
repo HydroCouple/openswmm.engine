@@ -20,6 +20,14 @@
 #include "data/PollutantData.hpp"
 #include "data/InflowData.hpp"
 
+// 2D model definition (plain define-free data structs; reached at runtime
+// through ctx.twod_io — null in non-2D engine builds).
+#include "2d/data/MeshData.hpp"
+#include "2d/data/SolverOptions2D.hpp"
+#include "2d/data/BoundaryData.hpp"
+#include "2d/data/PendingRows2D.hpp"
+#include "2d/data/Serialize2D.hpp"
+
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -1130,6 +1138,337 @@ static void write_treatment(sqlite3* db, const SimulationContext& ctx,
 }
 
 // ============================================================================
+// Part E — 2D surface-routing mesh + solver options
+//
+// Persists the 2D MODEL DEFINITION only. 2D simulation results always go to
+// the CF/UGRID HDF5 file referenced by the 2D_OUTPUT_FILE option key — they
+// are deliberately never written to GeoPackage tables (performance).
+//
+// Sources are reached through ctx.twod_io (non-owning pointers wired by
+// SWMMEngine); all of it is null in engine builds without 2D support, so
+// every entry point runtime-guards and degrades to a no-op.
+// ============================================================================
+
+namespace {
+
+// Lossless double → text for the options key-value table (std::to_string
+// fixes 6 decimals and would destroy 1e-12-scale tolerances).
+std::string fmt_g17(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.17g", v);
+    return buf;
+}
+
+// sqlite3_step that surfaces failures (FK violations, CHECK violations,
+// disk errors) as exceptions so the surrounding Transaction rolls the
+// whole model write back.
+void step_or_throw(sqlite3* db, sqlite3_stmt* stmt, const char* what) {
+    int rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        throw GpkgError(std::string(what) + ": " + sqlite3_errmsg(db), rc);
+    }
+}
+
+// [2D_BOUNDARY_CONDITIONS] grammar token for a pending row. The TS_*
+// spellings are emitted when the parameter is a timeseries name so the
+// type round-trips without inspecting param1/ref_name.
+const char* bc_type_token(const twoD::PendingBoundaryRow& r) {
+    switch (static_cast<twoD::BoundaryType>(r.bc_type)) {
+        case twoD::BoundaryType::WALL:            return "WALL";
+        case twoD::BoundaryType::NORMAL_FLOW:     return "NORMAL_FLOW";
+        case twoD::BoundaryType::SPECIFIED_STAGE:
+            return r.name.empty() ? "SPECIFIED_STAGE" : "TS_STAGE";
+        case twoD::BoundaryType::SPECIFIED_FLOW:
+            return r.name.empty() ? "SPECIFIED_FLOW" : "TS_FLOW";
+        case twoD::BoundaryType::RATING_CURVE:    return "RATING_CURVE";
+    }
+    return "WALL";
+}
+
+const char* linear_solver_token(twoD::LinearSolverType t) {
+    switch (t) {
+        case twoD::LinearSolverType::GMRES:    return "GMRES";
+        case twoD::LinearSolverType::BICGSTAB: return "BICGSTAB";
+        case twoD::LinearSolverType::TFQMR:    return "TFQMR";
+    }
+    return "GMRES";
+}
+
+const char* preconditioner_token(twoD::PreconditionerType t) {
+    switch (t) {
+        case twoD::PreconditionerType::NONE:   return "NONE";
+        case twoD::PreconditionerType::JACOBI: return "JACOBI";
+        case twoD::PreconditionerType::ILU:    return "ILU";
+    }
+    return "NONE";
+}
+
+// True when a 2D mesh worth persisting is present (mirrors the
+// SurfaceRouter2D::initialize() activity threshold).
+bool has_mesh_2d(const SimulationContext& ctx) {
+    const auto* mesh = ctx.twod_io.mesh;
+    return mesh && mesh->n_vertices() >= 3 && mesh->n_triangles() >= 1;
+}
+
+} // anonymous namespace
+
+// SolverOptions2D → options key-value rows. Keys are "2D_" + the exact
+// [2D_OPTIONS] token; values use the same string tokens the inp parser
+// accepts (parse2DOptionsLine), so the vocabularies cannot drift apart
+// silently. 2D_MESH_UNITS_SI and 2D_MESH_FILE_SOURCE are gpkg-only keys.
+static void write_options_2d(sqlite3* db, const SimulationContext& ctx,
+                             const std::string& sim_id) {
+    if (!ctx.twod_io.options || !has_mesh_2d(ctx)) return;
+    const auto& o = *ctx.twod_io.options;
+
+    auto stmt = prepare(db,
+        "INSERT INTO options (simulation_id, key, value) VALUES (?, ?, ?)");
+    auto insert = [&](const char* key, const std::string& val) {
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+        bind_text(stmt.get(), 1, sim_id);
+        bind_text(stmt.get(), 2, key);
+        bind_text(stmt.get(), 3, val);
+        step_or_throw(db, stmt.get(), "options(2D) insert failed");
+    };
+
+    insert("2D_MAX_TIMESTEP",      fmt_g17(o.max_timestep));
+    insert("2D_MIN_TIMESTEP",      fmt_g17(o.min_timestep));
+    insert("2D_REL_TOLERANCE",     fmt_g17(o.rel_tolerance));
+    insert("2D_ABS_TOLERANCE",     fmt_g17(o.abs_tolerance));
+    insert("2D_DRY_DEPTH",         fmt_g17(o.dry_depth));
+    insert("2D_LIMITER_EPSILON",   fmt_g17(o.limiter_epsilon));
+    insert("2D_COUPLING_CD",       fmt_g17(o.coupling_cd));
+    insert("2D_MAX_KRYLOV_DIM",    std::to_string(o.max_krylov_dim));
+    insert("2D_COUPLING_INTERVAL", std::to_string(o.coupling_interval));
+    insert("2D_MAX_CVODE_STEPS",   std::to_string(o.max_cvode_steps));
+    insert("2D_LINEAR_SOLVER",     linear_solver_token(o.linear_solver));
+    insert("2D_PRECONDITIONER",    preconditioner_token(o.preconditioner));
+    insert("2D_REPORT_2D",         o.report_2d ? "YES" : "NO");
+    // HDF5 results path — 2D outputs always go to HDF5, never gpkg tables.
+    // Restored to SolverOptions2D::output_file on read so SWMMEngine::open
+    // re-creates the Default2DOutputPlugin.
+    if (!o.output_file.empty())
+        insert("2D_OUTPUT_FILE", o.output_file);
+    // Authored units flag (replaces the `;; UNITS: SI (m)` text header).
+    insert("2D_MESH_UNITS_SI", o.mesh_units_si ? "YES" : "NO");
+    // Provenance only. NEVER restored into SolverOptions2D::mesh_file — the
+    // mesh lives in the gpkg tables, and restoring the path would make
+    // SWMMEngine::open attempt a second external-file load.
+    if (!o.mesh_file.empty())
+        insert("2D_MESH_FILE_SOURCE", o.mesh_file);
+}
+
+// Mesh geometry, topology, BCs, conveyance, and 1D-2D coupling.
+// Coordinates are un-scaled back to the AUTHORED project units when
+// initialize() already converted the mesh to SI (mesh_scaled_to_si), so the
+// feature layers stay aligned with nodes/links and the round-trip is exact
+// for pre-initialize saves.
+static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
+                          const std::string& sim_id, int srs_id) {
+    if (!has_mesh_2d(ctx)) return;
+    const auto& mesh = *ctx.twod_io.mesh;
+    const auto* opts = ctx.twod_io.options;
+
+    const double f = (opts && opts->mesh_scaled_to_si && opts->len_2d_to_1d > 0.0)
+                         ? opts->len_2d_to_1d : 1.0;
+    const double f2 = f * f;
+
+    const int nv = mesh.n_vertices();
+    const int nt = mesh.n_triangles();
+
+    // Layer bbox from actual (authored-unit) vertex extents.
+    double min_x = mesh.vx[0] * f, max_x = min_x;
+    double min_y = mesh.vy[0] * f, max_y = min_y;
+    for (int i = 1; i < nv; ++i) {
+        const double x = mesh.vx[i] * f, y = mesh.vy[i] * f;
+        min_x = std::min(min_x, x); max_x = std::max(max_x, x);
+        min_y = std::min(min_y, y); max_y = std::max(max_y, y);
+    }
+    register_feature_table(db, "mesh_2d_vertices", "POINT", srs_id,
+        "2D Mesh Vertices", "2D surface-routing mesh vertices",
+        min_x, min_y, max_x, max_y);
+    register_feature_table(db, "mesh_2d_triangles", "POLYGON", srs_id,
+        "2D Mesh Triangles", "2D surface-routing mesh cells",
+        min_x, min_y, max_x, max_y);
+
+    // ---- vertices --------------------------------------------------------
+    {
+        auto stmt = prepare(db,
+            "INSERT INTO mesh_2d_vertices "
+            "(simulation_id, vertex_idx, geom, x, y, z, tag) "
+            "VALUES (?,?,?,?,?,?,?)");
+        for (int i = 0; i < nv; ++i) {
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            const double x = mesh.vx[i] * f;
+            const double y = mesh.vy[i] * f;
+            bind_text(stmt.get(), 1, sim_id);
+            bind_int(stmt.get(), 2, i);
+            auto geom = encode_point(x, y, srs_id);
+            bind_blob(stmt.get(), 3, geom.data(), static_cast<int>(geom.size()));
+            bind_double(stmt.get(), 4, x);
+            bind_double(stmt.get(), 5, y);
+            bind_double(stmt.get(), 6, mesh.vz[i] * f);
+            if (!mesh.vtag[i].empty()) bind_text(stmt.get(), 7, mesh.vtag[i]);
+            else                       bind_null(stmt.get(), 7);
+            step_or_throw(db, stmt.get(), "mesh_2d_vertices insert failed");
+        }
+    }
+
+    // Coupled-node name for a triangle/vertex: prefer the authored name,
+    // fall back to the resolved index (API-built models).
+    auto node_name_for = [&ctx](const std::string& name, int idx) -> std::string {
+        if (!name.empty()) return name;
+        if (idx >= 0 && idx < ctx.node_names.size())
+            return ctx.node_names.name_of(idx);
+        return {};
+    };
+
+    // ---- triangles -------------------------------------------------------
+    {
+        auto stmt = prepare(db,
+            "INSERT INTO mesh_2d_triangles "
+            "(simulation_id, tri_idx, geom, v0, v1, v2, mannings_n, tag, "
+            "bed_elev, coupled_node) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)");
+        std::vector<double> xs(3), ys(3);
+        for (int t = 0; t < nt; ++t) {
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            const int v[3] = { mesh.tri_v0[t], mesh.tri_v1[t], mesh.tri_v2[t] };
+            bind_text(stmt.get(), 1, sim_id);
+            bind_int(stmt.get(), 2, t);
+            if (v[0] >= 0 && v[0] < nv && v[1] >= 0 && v[1] < nv &&
+                v[2] >= 0 && v[2] < nv) {
+                for (int k = 0; k < 3; ++k) {
+                    xs[static_cast<size_t>(k)] = mesh.vx[v[k]] * f;
+                    ys[static_cast<size_t>(k)] = mesh.vy[v[k]] * f;
+                }
+                auto geom = encode_polygon(xs, ys, srs_id);
+                bind_blob(stmt.get(), 3, geom.data(), static_cast<int>(geom.size()));
+                bind_double(stmt.get(), 9,
+                    (mesh.vz[v[0]] + mesh.vz[v[1]] + mesh.vz[v[2]]) / 3.0 * f);
+            } else {
+                bind_null(stmt.get(), 3);
+                bind_null(stmt.get(), 9);
+            }
+            bind_int(stmt.get(), 4, v[0]);
+            bind_int(stmt.get(), 5, v[1]);
+            bind_int(stmt.get(), 6, v[2]);
+            bind_double(stmt.get(), 7, mesh.mannings_n[t]);
+            if (!mesh.tri_tag[t].empty()) bind_text(stmt.get(), 8, mesh.tri_tag[t]);
+            else                          bind_null(stmt.get(), 8);
+            const std::string cn = node_name_for(mesh.tri_coupled_node_name[t],
+                                                 mesh.tri_coupled_node[t]);
+            if (!cn.empty()) bind_text(stmt.get(), 10, cn);
+            else             bind_null(stmt.get(), 10);
+            step_or_throw(db, stmt.get(), "mesh_2d_triangles insert failed");
+        }
+    }
+
+    // ---- coupling maps ----------------------------------------------------
+    {
+        auto stmt = prepare(db,
+            "INSERT INTO mesh_2d_vertex_coupling "
+            "(simulation_id, vertex_idx, node_id, coupling_cd, coupling_area) "
+            "VALUES (?,?,?,?,?)");
+        for (int i = 0; i < nv; ++i) {
+            const std::string cn = node_name_for(mesh.vert_coupled_node_name[i],
+                                                 mesh.vert_coupled_node[i]);
+            if (cn.empty()) continue;
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_int(stmt.get(), 2, i);
+            bind_text(stmt.get(), 3, cn);
+            bind_double(stmt.get(), 4, mesh.vert_coupling_cd[i]);
+            bind_double(stmt.get(), 5, mesh.vert_coupling_area[i] * f2);
+            step_or_throw(db, stmt.get(), "mesh_2d_vertex_coupling insert failed");
+        }
+    }
+    {
+        auto stmt = prepare(db,
+            "INSERT INTO mesh_2d_triangle_coupling "
+            "(simulation_id, tri_idx, node_id, coupling_cd, coupling_area) "
+            "VALUES (?,?,?,?,?)");
+        for (int t = 0; t < nt; ++t) {
+            const std::string cn = node_name_for(mesh.tri_coupled_node_name[t],
+                                                 mesh.tri_coupled_node[t]);
+            if (cn.empty()) continue;
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_int(stmt.get(), 2, t);
+            bind_text(stmt.get(), 3, cn);
+            bind_double(stmt.get(), 4, mesh.tri_coupling_cd[t]);
+            bind_double(stmt.get(), 5, mesh.tri_coupling_area[t] * f2);
+            step_or_throw(db, stmt.get(), "mesh_2d_triangle_coupling insert failed");
+        }
+    }
+
+    // ---- boundary conditions ----------------------------------------------
+    // Authored pending rows preferred; BoundaryData reconstruction fallback
+    // (loses the group label). INSERT OR REPLACE: duplicate authored rows for
+    // the same (tri, edge) are last-write-wins, matching the drain semantics.
+    {
+        const auto rows = twoD::collectBCRows(
+            ctx.twod_io.pending_bc, ctx.twod_io.boundary,
+            opts && opts->pending_rows_drained);
+        if (!rows.empty()) {
+            auto stmt = prepare(db,
+                "INSERT OR REPLACE INTO mesh_2d_boundary_conditions "
+                "(simulation_id, tri_idx, edge, bc_type, param1, ref_name, bc_group) "
+                "VALUES (?,?,?,?,?,?,?)");
+            for (const auto& r : rows) {
+                // Defensive: rows the initialize() drain would silently skip
+                // must not abort the save via an FK violation.
+                if (r.tri < 0 || r.tri >= nt || r.edge < 0 || r.edge > 2) continue;
+                sqlite3_reset(stmt.get());
+                sqlite3_clear_bindings(stmt.get());
+                bind_text(stmt.get(), 1, sim_id);
+                bind_int(stmt.get(), 2, r.tri);
+                bind_int(stmt.get(), 3, r.edge);
+                bind_text(stmt.get(), 4, bc_type_token(r));
+                if (r.name.empty()) bind_double(stmt.get(), 5, r.param1);
+                else                bind_null(stmt.get(), 5);
+                if (!r.name.empty()) bind_text(stmt.get(), 6, r.name);
+                else                 bind_null(stmt.get(), 6);
+                if (!r.group.empty()) bind_text(stmt.get(), 7, r.group);
+                else                  bind_null(stmt.get(), 7);
+                step_or_throw(db, stmt.get(),
+                              "mesh_2d_boundary_conditions insert failed");
+            }
+        }
+    }
+
+    // ---- edge conveyance ----------------------------------------------------
+    {
+        const auto rows = twoD::collectConveyanceRows(
+            ctx.twod_io.pending_ec, &mesh,
+            opts && opts->pending_rows_drained);
+        if (!rows.empty()) {
+            auto stmt = prepare(db,
+                "INSERT OR REPLACE INTO mesh_2d_edge_conveyance "
+                "(simulation_id, v_from, v_to, conveyance) VALUES (?,?,?,?)");
+            for (const auto& r : rows) {
+                if (r.v_from < 0 || r.v_from >= nv ||
+                    r.v_to   < 0 || r.v_to   >= nv || r.v_from == r.v_to)
+                    continue;
+                sqlite3_reset(stmt.get());
+                sqlite3_clear_bindings(stmt.get());
+                bind_text(stmt.get(), 1, sim_id);
+                bind_int(stmt.get(), 2, std::min(r.v_from, r.v_to));
+                bind_int(stmt.get(), 3, std::max(r.v_from, r.v_to));
+                bind_double(stmt.get(), 4, r.conveyance);
+                step_or_throw(db, stmt.get(),
+                              "mesh_2d_edge_conveyance insert failed");
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
@@ -1173,6 +1512,14 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
     write_lid_usage(db, ctx, simulation_id);
     write_rdii(db, ctx, simulation_id);
     write_treatment(db, ctx, simulation_id);
+
+    // Part E — 2D mesh model definition + solver options. No-ops when the
+    // engine has no 2D module (ctx.twod_io pointers null) or no mesh is
+    // loaded. Runs after write_nodes so the coupling-table FKs to
+    // nodes(simulation_id, node_id) can resolve. 2D RESULTS are not written
+    // here — they always stream to the HDF5 file named by 2D_OUTPUT_FILE.
+    write_options_2d(db, ctx, simulation_id);
+    write_mesh_2d(db, ctx, simulation_id, srs_id);
 
     // Slice IO-7 — fan out every external-file reference (timeseries
     // FILE, raingage FILE, climate FILE, [FILES] routing/hotstart) into

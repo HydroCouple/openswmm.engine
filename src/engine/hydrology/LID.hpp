@@ -77,6 +77,7 @@ struct LIDGroupSoA {
     std::vector<int>    drain_node;    ///< Resolved drain-to node index (-1=none)
     std::vector<int>    drain_subcatch;///< Resolved drain-to subcatch index (-1=none)
     std::vector<double> inflow;        ///< Per-unit inflow rate (ft/sec) — set before execute()
+    std::vector<double> evap_rate_unit;///< Per-unit effective PET rate (ft/sec) — filled by execute()
 
     // Surface layer
     std::vector<double> surf_store;    ///< Surface storage depth (ft)
@@ -190,43 +191,45 @@ public:
      * @param ctx       Simulation context.
      * @param dt        Timestep (seconds).
      * @param rainfall  Rainfall rate (ft/sec).
-     * @param evap_rate Evaporation rate (ft/sec).
+     * @param evap_rate Evaporation rate (ft/sec). Per-unit effective rates
+     *                  are resolved internally from any prescribed PET
+     *                  forcing on each unit's parent subcatchment.
      */
     void execute(SimulationContext& ctx, double dt,
                  double rainfall, double evap_rate);
 
     /// Batch bio-cell flux rates — VECTORISABLE
     static void batchBioCellFlux(LIDGroupSoA& g, double rainfall,
-                                  double evap_rate, double dt);
+                                  const double* evap_rate, double dt);
 
     /// Batch rain barrel flux rates — VECTORISABLE (simplest)
     static void batchBarrelFlux(LIDGroupSoA& g, double rainfall, double dt);
 
     /// Batch vegetative swale flux rates — VECTORISABLE
     static void batchSwaleFlux(LIDGroupSoA& g, double rainfall,
-                                double evap_rate, double dt);
+                                const double* evap_rate, double dt);
 
     /// Batch green roof flux rates — VECTORISABLE
     static void batchGreenRoofFlux(LIDGroupSoA& g, double rainfall,
-                                    double evap_rate, double dt);
+                                    const double* evap_rate, double dt);
 
     /// Batch infiltration trench flux rates — VECTORISABLE
     /// Surface drains directly to storage (no soil layer), matching legacy trenchFluxRates().
     static void batchInfilTrenchFlux(LIDGroupSoA& g, double rainfall,
-                                      double evap_rate, double dt);
+                                      const double* evap_rate, double dt);
 
     /// Batch permeable pavement flux rates — VECTORISABLE
     static void batchPavementFlux(LIDGroupSoA& g, double rainfall,
-                                   double evap_rate, double dt);
+                                   const double* evap_rate, double dt);
 
     /// Batch roof disconnection flux rates — VECTORISABLE
     static void batchRoofDisconFlux(LIDGroupSoA& g, double rainfall,
-                                     double evap_rate, double dt);
+                                     const double* evap_rate, double dt);
 
     /// Batch Modified Puls solver for swale (omega=0.5, iterative).
     /// Computes flux rates and iterates until convergence.
     static void batchSwaleModPuls(LIDGroupSoA& g, double rainfall,
-                                   double evap_rate, double dt);
+                                   const double* evap_rate, double dt);
 
 private:
     std::vector<LIDGroupSoA> groups_;

@@ -1,6 +1,8 @@
 """Tests for :class:`openswmm.engine.Solver` lifecycle management."""
 
 import os
+from datetime import datetime, timedelta
+
 import pytest
 
 from openswmm.engine import Solver, EngineError, EngineState
@@ -45,8 +47,7 @@ class TestSolverManualLifecycle:
 
         stepped = False
         for _ in s.steps():
-            pass
-             = True
+            stepped = True
         assert stepped, "Simulation should advance at least one timestep"
 
         s.end()
@@ -76,16 +77,15 @@ class TestSolverContextManager:
         with Solver(inp, rpt, out) as s:
             count = 0
             for _ in s.steps():
-            pass
-             += 1
+                count += 1
             assert count > 0
 
     def test_context_manager_cleanup(self, solver_files):
         inp, rpt, out = solver_files
         with Solver(inp, rpt, out) as s:
             for _ in s.steps():
-            pass
-            
+                pass
+
         # After exiting, handle should be NULL (destroyed)
         assert s.handle == 0
 
@@ -98,7 +98,8 @@ class TestSolverProperties:
 
     def test_elapsed_after_step(self, running_solver):
         running_solver.step()
-        assert running_solver.elapsed > 0.0
+        # v1: elapsed is a datetime.timedelta, not a float.
+        assert running_solver.elapsed > timedelta(0)
 
     def test_elapsed_zero_before_step(self, solver_files):
         inp, rpt, out = solver_files
@@ -106,7 +107,7 @@ class TestSolverProperties:
         s.open()
         s.initialize()
         s.start()
-        assert s.elapsed == 0.0
+        assert s.elapsed == timedelta(0)
         s.end()
         s.close()
         s.destroy()
@@ -123,22 +124,24 @@ class TestSolverTiming:
     """Simulation time query methods."""
 
     def test_start_time(self, running_solver):
-        t = running_solver.get_start_time()
-        assert isinstance(t, float)
-        assert t > 0  # should be a valid Julian day
+        # v1: simulation start is exposed as a datetime property, not a
+        # float Julian day returned from get_start_time().
+        t = running_solver.sim_start_time
+        assert isinstance(t, datetime)
 
     def test_end_time_after_start(self, running_solver):
-        assert running_solver.get_end_time() > running_solver.get_start_time()
+        assert running_solver.sim_end_time > running_solver.sim_start_time
 
     def test_current_time_advances(self, running_solver):
-        t0 = running_solver.get_current_time()
+        t0 = running_solver.current_datetime
         running_solver.step()
-        t1 = running_solver.get_current_time()
+        t1 = running_solver.current_datetime
         assert t1 > t0
 
     def test_routing_step_positive(self, running_solver):
-        dt = running_solver.get_routing_step()
-        assert dt > 0
+        # v1: routing_step is a timedelta property.
+        dt = running_solver.routing_step
+        assert dt > timedelta(0)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +152,7 @@ class TestSolverModelWrite:
 
     def test_model_write(self, opened_solver, tmp_path):
         out_path = str(tmp_path / "written.inp")
-        opened_solver.model_write(out_path)
+        opened_solver.write(out_path)
         assert os.path.exists(out_path)
         assert os.path.getsize(out_path) > 0
 
@@ -161,14 +164,14 @@ class TestSolverStride:
     """Test stride() multi-step advancement."""
 
     def test_stride_advances(self, running_solver):
-        # stride() now returns an int rc (0 = success); elapsed is exposed via
-        # the .elapsed property as a side effect.
-        assert running_solver.stride(5) == 0
-        assert running_solver.elapsed > 0.0
+        # v1: stride() returns the elapsed advancement as a timedelta; the
+        # .elapsed property reflects the same advancement as a side effect.
+        assert running_solver.stride(5) > timedelta(0)
+        assert running_solver.elapsed > timedelta(0)
 
     def test_stride_single(self, running_solver):
-        assert running_solver.stride(1) == 0
-        assert running_solver.elapsed > 0.0
+        assert running_solver.stride(1) > timedelta(0)
+        assert running_solver.elapsed > timedelta(0)
 
 
 # ---------------------------------------------------------------------------
@@ -236,10 +239,12 @@ class TestModuleLevelRun:
 class TestSolverErrors:
     """Error paths and invalid usage."""
 
-    def test_open_nonexistent_returns_rc(self, tmp_path):
-        # open() now returns a non-zero error code rather than raising.
+    def test_open_nonexistent_raises(self, tmp_path):
+        # v1: open() returns None and raises EngineError on failure (e.g. a
+        # missing input file) rather than returning a non-zero rc.
         s = Solver(NON_EXISTENT_INP, str(tmp_path / "x.rpt"), str(tmp_path / "x.out"))
-        assert s.open() != 0
+        with pytest.raises(EngineError):
+            s.open()
 
     def test_double_destroy_safe(self, solver_files):
         inp, rpt, out = solver_files

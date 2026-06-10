@@ -1139,6 +1139,34 @@ TEST(SurfaceState, UpdateStatisticsTracksMax) {
     EXPECT_NEAR(state.stat_max_depth[1], 0.8, 1e-12);  // Updated to 0.8
 }
 
+TEST(SurfaceState, UpdateStatisticsTracksVelocityAndContinuityEnvelopes) {
+    SurfaceStateData state;
+    state.resize(2, 1);
+    std::vector<double> areas = {10.0, 20.0};
+
+    // Step 1: cell 0 moves fast (3-4-5 triangle → |v| = 5), cell 1 slow.
+    state.face_vx[0] = 3.0; state.face_vy[0] = 4.0;   // |v| = 5
+    state.face_vx[1] = 0.6; state.face_vy[1] = 0.8;   // |v| = 1
+    state.cell_continuity_err[0] = -2.0;              // |err| = 2
+    state.cell_continuity_err[1] =  0.5;
+    state.update_statistics(areas, 1.0);
+    EXPECT_NEAR(state.stat_max_velocity[0], 5.0, 1e-12);
+    EXPECT_NEAR(state.stat_max_velocity[1], 1.0, 1e-12);
+    EXPECT_NEAR(state.stat_max_cont_err[0], 2.0, 1e-12);
+    EXPECT_NEAR(state.stat_max_cont_err[1], 0.5, 1e-12);
+
+    // Step 2: cell 0 slows, cell 1 speeds up; envelopes are monotone.
+    state.face_vx[0] = 1.0; state.face_vy[0] = 0.0;   // |v| = 1 (< 5)
+    state.face_vx[1] = 0.0; state.face_vy[1] = 2.0;   // |v| = 2 (> 1)
+    state.cell_continuity_err[0] =  0.1;              // |err| = 0.1 (< 2)
+    state.cell_continuity_err[1] = -3.0;              // |err| = 3 (> 0.5)
+    state.update_statistics(areas, 1.0);
+    EXPECT_NEAR(state.stat_max_velocity[0], 5.0, 1e-12);  // retained
+    EXPECT_NEAR(state.stat_max_velocity[1], 2.0, 1e-12);  // raised
+    EXPECT_NEAR(state.stat_max_cont_err[0], 2.0, 1e-12);  // retained
+    EXPECT_NEAR(state.stat_max_cont_err[1], 3.0, 1e-12);  // raised
+}
+
 TEST(SurfaceState, ClearResetForcings) {
     SurfaceStateData state;
     state.resize(2, 1);
@@ -1630,6 +1658,10 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     snap.surface_continuity_err = {0.0,  0.0};
     snap.surface_edge_flux     = {0.0, 0.0, 0.0,  0.0, 0.0, 0.0}; // [tri*3+e]
     snap.surface_vert_head     = {0.0, 0.0, 0.0,  0.0};
+    // Cumulative rendering envelopes (per face)
+    snap.surface_stat_max_depth    = {0.05, 0.10};
+    snap.surface_stat_max_velocity = {0.20, 0.40};
+    snap.surface_stat_max_cont_err = {1.0e-6, 2.0e-6};
 
     // Output path in a temp location; remove any stale file first.
     const fs::path h5_path = fs::temp_directory_path() /
@@ -1646,6 +1678,12 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     openswmm::SimulationContext ctx{};
     ASSERT_EQ(plugin.validate(ctx), 0);
     ASSERT_EQ(plugin.prepare(ctx),  0);
+
+    // Activate the global 2D mass balance so finalize() writes /mass_balance_2d.
+    ctx.mass_balance_2d.active        = true;
+    ctx.mass_balance_2d.init_storage  = 0.0;
+    ctx.mass_balance_2d.rainfall_in   = 10.0;
+    ctx.mass_balance_2d.final_storage = 10.0;  // closed, conservative → error ~0
 
     plugin.prepareMeshAndDatasets(mesh);
 
@@ -1674,6 +1712,10 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     EXPECT_TRUE(exists("Mesh2_face_vx"));
     EXPECT_TRUE(exists("Mesh2_face_vy"));
     EXPECT_TRUE(exists("Mesh2_face_continuity_err"));
+    EXPECT_TRUE(exists("Mesh2_face_max_depth"));
+    EXPECT_TRUE(exists("Mesh2_face_max_velocity"));
+    EXPECT_TRUE(exists("Mesh2_face_max_continuity_err"));
+    EXPECT_TRUE(exists("mass_balance_2d"));
     EXPECT_TRUE(exists("time"));
 
     // /time should have one entry after our single update()
@@ -1699,6 +1741,38 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
         EXPECT_EQ(dims[1], static_cast<hsize_t>(n_tri));
         H5Sclose(space);
         H5Dclose(ds);
+    }
+
+    // Envelope dataset is fixed [n_tri] (no time dimension) and holds the
+    // values from the last update().
+    {
+        hid_t ds = H5Dopen2(file_id, "Mesh2_face_max_velocity", H5P_DEFAULT);
+        ASSERT_GE(ds, 0);
+        hid_t space = H5Dget_space(ds);
+        EXPECT_EQ(H5Sget_simple_extent_ndims(space), 1);
+        hsize_t dims[1] = {0};
+        H5Sget_simple_extent_dims(space, dims, nullptr);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(n_tri));
+        std::vector<double> vals(n_tri, 0.0);
+        H5Dread(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, vals.data());
+        EXPECT_NEAR(vals[0], 0.20, 1e-12);
+        EXPECT_NEAR(vals[1], 0.40, 1e-12);
+        H5Sclose(space);
+        H5Dclose(ds);
+    }
+
+    // /mass_balance_2d group carries the scalar terms and a continuity_error attr.
+    {
+        hid_t grp = H5Gopen2(file_id, "mass_balance_2d", H5P_DEFAULT);
+        ASSERT_GE(grp, 0);
+        EXPECT_TRUE(H5Lexists(grp, "rainfall_in", H5P_DEFAULT) > 0);
+        EXPECT_TRUE(H5Aexists(grp, "continuity_error") > 0);
+        hid_t attr = H5Aopen(grp, "continuity_error", H5P_DEFAULT);
+        double err = 1.0;
+        H5Aread(attr, H5T_NATIVE_DOUBLE, &err);
+        EXPECT_NEAR(err, 0.0, 1e-9);  // init+rainfall(10) − final(10) = 0
+        H5Aclose(attr);
+        H5Gclose(grp);
     }
 
     H5Fclose(file_id);

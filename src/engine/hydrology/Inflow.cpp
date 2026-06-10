@@ -104,11 +104,19 @@ void InflowSolver::init(SimulationContext& ctx) {
         ext_inflows_.baseline[ui]     = ctx.ext_inflows.baseline[ui];
         ext_inflows_.scale_factor[ui] = ctx.ext_inflows.s_factor[ui];
 
-        // Unit conversion factor (m_factor).
-        // For FLOW inflows, legacy uses cf = 1.0/UCF(FLOW) to convert from
-        // user flow units to internal units (cfs).  The parser already stores
-        // this in m_factor, so we use it directly.
-        ext_inflows_.conv_factor[ui]  = ctx.ext_inflows.m_factor[ui];
+        // Unit conversion factor. For a FLOW inflow the timeseries/baseline are
+        // in the user's display flow units; convert to internal cfs by dividing
+        // by Qcf[flow_units] (matching the DWF path above and legacy
+        // inflow_readExtInflow: x /= UCF(FLOW)). m_factor is the user-supplied
+        // [INFLOWS] conversion-factor column (1.0 unless given). Without this,
+        // metric (CMS/LPS/MLD) direct inflows were applied ~35x too small.
+        double cf = ctx.ext_inflows.m_factor[ui];
+        const auto& cons = ctx.ext_inflows.constituent[ui];
+        if (cons == "FLOW" || cons == "flow" || cons == "Flow") {
+            int fu = static_cast<int>(ctx.options.flow_units);
+            if (fu >= 0 && fu < 6) cf /= ucf::Qcf[fu];
+        }
+        ext_inflows_.conv_factor[ui]  = cf;
 
         // Resolve timeseries name → table index
         const auto& ts_name = ctx.ext_inflows.ts_name[ui];

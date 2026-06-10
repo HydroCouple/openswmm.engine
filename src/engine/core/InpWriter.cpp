@@ -16,7 +16,10 @@
  *   CONTROLS, REPORT, POLLUTANTS, LANDUSES, BUILDUP, WASHOFF, TREATMENT,
  *   INFLOWS, DWF, RDII, PATTERNS, TIMESERIES, CURVES,
  *   MAP, COORDINATES, VERTICES, Polygons, SYMBOLS,
- *   USER_FLAGS, USER_FLAG_VALUES, PLUGINS
+ *   USER_FLAGS, USER_FLAG_VALUES, PLUGINS,
+ *   2D_OPTIONS, 2D_MESH_FILE (external mode) or 2D_VERTICES, 2D_TRIANGLES,
+ *   2D_VERTEX_NODE_MAP, 2D_TRIANGLE_NODE_MAP, 2D_BOUNDARY_CONDITIONS,
+ *   2D_EDGE_CONVEYANCE (inline mode)
  *
  * @ingroup engine_core
  *
@@ -29,9 +32,19 @@
 #include "PathResolver.hpp"
 #include "SimulationContext.hpp"
 #include "DateTime.hpp"
+
+// 2D model definition (plain define-free data structs; reached at runtime
+// through ctx.twod_io — null in non-2D engine builds).
+#include "../2d/data/MeshData.hpp"
+#include "../2d/data/SolverOptions2D.hpp"
+#include "../2d/data/BoundaryData.hpp"
+#include "../2d/data/PendingRows2D.hpp"
+#include "../2d/data/Serialize2D.hpp"
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -206,6 +219,263 @@ static std::string emit_path_token(const FilePathPair& slot,
         warnings_out->push_back(r.warning);
     }
     return r.path;
+}
+
+// ============================================================================
+// [2D_*] sections — 2D surface-routing model definition.
+//
+// Sources are reached through ctx.twod_io (non-owning pointers wired by
+// SWMMEngine); all null in engine builds without 2D support, so this is a
+// guarded no-op there and for pure-1D models (no defaults pollution).
+//
+// External-mesh policy: when SolverOptions2D::mesh_file is set, the main
+// .inp gets [2D_OPTIONS] plus the [2D_MESH_FILE] reference (never inline
+// geometry), and the CURRENT in-memory mesh state is written to the .2dm
+// sidecar resolved against the destination directory — external mode means
+// "the mesh lives in a sidecar", so saving the model saves both files.
+// This persists API mutations made after the external load (vertex Z,
+// conveyance, BC edits) and keeps the reference valid when saving to a
+// different directory. With no mesh_file, all sections are inlined.
+//
+// Units: a `;; UNITS: SI (m)` header is emitted under [2D_VERTICES] when
+// the in-memory mesh is in SI metres — either authored that way
+// (mesh_units_si) or converted in place by SurfaceRouter2D::initialize()
+// (mesh_scaled_to_si). prescan2DUnitsHeader picks it up on reload and
+// skips the FLOW_UNITS rescale, so post-run saves of US-unit projects
+// round-trip without double-scaling. Coupling AREA values share the same
+// units convention as the mesh and are emitted as stored.
+// ============================================================================
+
+// [2D_BOUNDARY_CONDITIONS] grammar token for a pending row (TS_* spellings
+// chosen when the parameter is a timeseries name, so type round-trips).
+static const char* bc2d_type_token(const twoD::PendingBoundaryRow& r) {
+    switch (r.bc_type) {
+        case 1:  return "NORMAL_FLOW";
+        case 2:  return r.name.empty() ? "SPECIFIED_STAGE" : "TS_STAGE";
+        case 3:  return r.name.empty() ? "SPECIFIED_FLOW"  : "TS_FLOW";
+        case 4:  return "RATING_CURVE";
+        default: return "WALL";
+    }
+}
+
+static void emit2DMeshSections(FILE* f, const SimulationContext& ctx);
+
+static void write2DSections(FILE* f, const SimulationContext& ctx,
+                            const std::string& dst_dir,
+                            bool force_abs_paths,
+                            std::vector<std::string>* warnings) {
+    const auto& tio = ctx.twod_io;
+    if (!tio.mesh || !tio.options) return;
+    const auto& mesh = *tio.mesh;
+    const auto& o    = *tio.options;
+
+    const bool has_mesh = mesh.n_vertices() > 0 && mesh.n_triangles() > 0;
+    const bool external = !o.mesh_file.empty();
+    if (!has_mesh && !external) return;
+
+    // ---- [2D_OPTIONS] -----------------------------------------------------
+    // Exact key set accepted by parse2DOptionsLine — nothing else (unknown
+    // keys are parse errors on reload).
+    static const char* sLinSolver[] = {"GMRES", "BICGSTAB", "TFQMR"};
+    static const char* sPrecond[]   = {"NONE", "JACOBI", "ILU"};
+    sec(f, "2D_OPTIONS");
+    std::fprintf(f, ";;%-20s %s\n", "Parameter", "Value");
+    std::fprintf(f, "%-22s %.12g\n", "MAX_TIMESTEP",      o.max_timestep);
+    std::fprintf(f, "%-22s %.12g\n", "MIN_TIMESTEP",      o.min_timestep);
+    std::fprintf(f, "%-22s %.12g\n", "REL_TOLERANCE",     o.rel_tolerance);
+    std::fprintf(f, "%-22s %.12g\n", "ABS_TOLERANCE",     o.abs_tolerance);
+    std::fprintf(f, "%-22s %.12g\n", "DRY_DEPTH",         o.dry_depth);
+    std::fprintf(f, "%-22s %.12g\n", "LIMITER_EPSILON",   o.limiter_epsilon);
+    std::fprintf(f, "%-22s %.12g\n", "COUPLING_CD",       o.coupling_cd);
+    std::fprintf(f, "%-22s %d\n",    "MAX_KRYLOV_DIM",    o.max_krylov_dim);
+    std::fprintf(f, "%-22s %d\n",    "COUPLING_INTERVAL", o.coupling_interval);
+    std::fprintf(f, "%-22s %d\n",    "MAX_CVODE_STEPS",   o.max_cvode_steps);
+    std::fprintf(f, "%-22s %s\n",    "LINEAR_SOLVER",
+                 sLinSolver[static_cast<int>(o.linear_solver) >= 0 &&
+                            static_cast<int>(o.linear_solver) <= 2
+                                ? static_cast<int>(o.linear_solver) : 0]);
+    std::fprintf(f, "%-22s %s\n",    "PRECONDITIONER",
+                 sPrecond[static_cast<int>(o.preconditioner) >= 0 &&
+                          static_cast<int>(o.preconditioner) <= 2
+                              ? static_cast<int>(o.preconditioner) : 0]);
+    std::fprintf(f, "%-22s %s\n",    "REPORT_2D", o.report_2d ? "YES" : "NO");
+    if (!o.output_file.empty())
+        std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", o.output_file.c_str());
+
+    // ---- [2D_MESH_FILE] — keep the reference, refresh the sidecar ----------
+    if (external) {
+        std::string tok = o.mesh_file;
+        if (!force_abs_paths && !dst_dir.empty() && io::isAbsolutePath(tok)) {
+            auto r = io::makeRelative(tok, dst_dir);
+            if (warnings && r.classification != io::PathClass::Relative
+                && !r.warning.empty())
+                warnings->push_back(r.warning);
+            tok = r.path;
+        }
+        sec(f, "2D_MESH_FILE");
+        std::fprintf(f, "FILE %s\n", tok.c_str());
+
+        // External mode means "the mesh lives in a sidecar": write the
+        // CURRENT in-memory state to the .2dm the emitted reference resolves
+        // to, so post-load API mutations persist and a save to a different
+        // directory carries its mesh along. Skipped when no mesh is loaded
+        // (e.g. the external file failed to load) so a good sidecar is
+        // never clobbered with emptiness.
+        if (has_mesh) {
+            namespace fs = std::filesystem;
+            fs::path sp(tok);
+            if (sp.is_relative() && !dst_dir.empty()) sp = fs::path(dst_dir) / sp;
+            std::error_code ec;
+            if (sp.has_parent_path()) fs::create_directories(sp.parent_path(), ec);
+            if (FILE* sf = std::fopen(sp.string().c_str(), "w")) {
+                std::fprintf(sf, ";; OpenSWMM 2D mesh — written by the engine "
+                                 "alongside the .inp save.\n");
+                emit2DMeshSections(sf, ctx);
+                std::fclose(sf);
+            } else if (warnings) {
+                warnings->push_back(
+                    "[2D_MESH_FILE]: could not write mesh sidecar '"
+                    + sp.string() + "' — mesh state was NOT saved");
+            }
+        }
+        return;
+    }
+
+    emit2DMeshSections(f, ctx);
+}
+
+// Emit [2D_VERTICES] / [2D_TRIANGLES] / node maps / [2D_BOUNDARY_CONDITIONS]
+// / [2D_EDGE_CONVEYANCE] from the in-memory mesh state. Target is either the
+// main .inp (inline mode) or the external .2dm sidecar — both are parsed by
+// the same section grammar (SectionHandlers2D / load2DMeshExternalFile).
+static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
+    const auto& tio  = ctx.twod_io;
+    const auto& mesh = *tio.mesh;
+    const auto& o    = *tio.options;
+
+    // ---- [2D_VERTICES] ------------------------------------------------------
+    const bool si = o.mesh_units_si || o.mesh_scaled_to_si;
+    const int nv = mesh.n_vertices();
+    const int nt = mesh.n_triangles();
+
+    sec(f, "2D_VERTICES");
+    if (si) std::fprintf(f, ";; UNITS: SI (m)\n");
+    std::fprintf(f, ";;%-16s %-18s %-14s %s\n", "X", "Y", "Z", "TAG");
+    for (int i = 0; i < nv; ++i) {
+        std::fprintf(f, "%-18.10g %-18.10g %-14.10g", mesh.vx[i], mesh.vy[i],
+                     mesh.vz[i]);
+        if (!mesh.vtag[i].empty()) std::fprintf(f, " %s", mesh.vtag[i].c_str());
+        std::fprintf(f, "\n");
+    }
+
+    // ---- [2D_TRIANGLES] -------------------------------------------------------
+    sec(f, "2D_TRIANGLES");
+    std::fprintf(f, ";;%-6s %-8s %-8s %-12s %s\n", "V1", "V2", "V3",
+                 "MANNINGS_N", "TAG");
+    for (int t = 0; t < nt; ++t) {
+        std::fprintf(f, "%-8d %-8d %-8d %-12.6g", mesh.tri_v0[t],
+                     mesh.tri_v1[t], mesh.tri_v2[t], mesh.mannings_n[t]);
+        if (!mesh.tri_tag[t].empty())
+            std::fprintf(f, " %s", mesh.tri_tag[t].c_str());
+        std::fprintf(f, "\n");
+    }
+
+    // Coupled-node name: prefer the authored name, fall back to the
+    // resolved index (API-built models; rename-safe).
+    auto node_name_for = [&ctx](const std::string& name, int idx) -> std::string {
+        if (!name.empty()) return name;
+        if (idx >= 0 && idx < ctx.node_names.size())
+            return ctx.node_names.name_of(idx);
+        return {};
+    };
+
+    // ---- [2D_VERTEX_NODE_MAP] -------------------------------------------------
+    {
+        bool any = false;
+        for (int i = 0; i < nv && !any; ++i)
+            any = !node_name_for(mesh.vert_coupled_node_name[i],
+                                 mesh.vert_coupled_node[i]).empty();
+        if (any) {
+            sec(f, "2D_VERTEX_NODE_MAP");
+            std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "VERTEX", "NODE", "CD",
+                         "AREA");
+            for (int i = 0; i < nv; ++i) {
+                const std::string cn = node_name_for(
+                    mesh.vert_coupled_node_name[i], mesh.vert_coupled_node[i]);
+                if (cn.empty()) continue;
+                std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", i, cn.c_str(),
+                             mesh.vert_coupling_cd[i],
+                             mesh.vert_coupling_area[i]);
+            }
+        }
+    }
+
+    // ---- [2D_TRIANGLE_NODE_MAP] -------------------------------------------------
+    {
+        bool any = false;
+        for (int t = 0; t < nt && !any; ++t)
+            any = !node_name_for(mesh.tri_coupled_node_name[t],
+                                 mesh.tri_coupled_node[t]).empty();
+        if (any) {
+            sec(f, "2D_TRIANGLE_NODE_MAP");
+            std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "TRIANGLE", "NODE", "CD",
+                         "AREA");
+            for (int t = 0; t < nt; ++t) {
+                const std::string cn = node_name_for(
+                    mesh.tri_coupled_node_name[t], mesh.tri_coupled_node[t]);
+                if (cn.empty()) continue;
+                std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", t, cn.c_str(),
+                             mesh.tri_coupling_cd[t],
+                             mesh.tri_coupling_area[t]);
+            }
+        }
+    }
+
+    // ---- [2D_BOUNDARY_CONDITIONS] -------------------------------------------------
+    // Authored pending rows preferred (retained after the initialize()
+    // drain); BoundaryData reconstruction fallback loses the GROUP label.
+    {
+        const auto rows = twoD::collectBCRows(tio.pending_bc, tio.boundary,
+                                              o.pending_rows_drained);
+        if (!rows.empty()) {
+            sec(f, "2D_BOUNDARY_CONDITIONS");
+            std::fprintf(f, ";;%-4s %-4s %-16s %-14s %-8s %s\n", "TRI", "EDGE",
+                         "TYPE", "PARAM_1", "PARAM_2", "GROUP");
+            for (const auto& r : rows) {
+                char p1[32];
+                if (!r.name.empty()) {
+                    std::snprintf(p1, sizeof(p1), "%s", r.name.c_str());
+                } else if (r.bc_type == 0) { // WALL — no parameter
+                    std::snprintf(p1, sizeof(p1), "*");
+                } else {
+                    std::snprintf(p1, sizeof(p1), "%.12g", r.param1);
+                }
+                if (!r.group.empty()) {
+                    std::fprintf(f, "%-6d %-4d %-16s %-14s %-8s %s\n", r.tri,
+                                 r.edge, bc2d_type_token(r), p1, "*",
+                                 r.group.c_str());
+                } else {
+                    std::fprintf(f, "%-6d %-4d %-16s %s\n", r.tri, r.edge,
+                                 bc2d_type_token(r), p1);
+                }
+            }
+        }
+    }
+
+    // ---- [2D_EDGE_CONVEYANCE] -------------------------------------------------
+    {
+        const auto rows = twoD::collectConveyanceRows(tio.pending_ec, tio.mesh,
+                                                      o.pending_rows_drained);
+        if (!rows.empty()) {
+            sec(f, "2D_EDGE_CONVEYANCE");
+            std::fprintf(f, ";;%-10s %-12s %s\n", "FROM_VERTEX", "TO_VERTEX",
+                         "CONVEYANCE");
+            for (const auto& r : rows) {
+                std::fprintf(f, "%-12d %-12d %.12g\n", r.v_from, r.v_to,
+                             r.conveyance);
+            }
+        }
+    }
 }
 
 int writeInpFile(const SimulationContext& ctx,
@@ -1416,6 +1686,10 @@ int writeInpFile(const SimulationContext& ctx,
     for(const auto&ps:ctx.plugin_specs){std::fprintf(f,"%s",ps.path.c_str());
     for(const auto&a:ps.init_args)std::fprintf(f," %s",a.c_str());std::fprintf(f,"\n");
     }}
+
+    // [2D_*] — 2D surface-routing model definition (no-op for 1D models
+    // and for engine builds without the 2D module).
+    write2DSections(f, ctx, dst_dir, force_abs_paths, warnings);
 
     std::fclose(f);
     return 0;

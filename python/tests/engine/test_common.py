@@ -198,16 +198,16 @@ class TestIndexResolution:
     def test_node_int_and_str_agree(self, nodes):
         zero_id = nodes.get_id(0)
         assert zero_id, "Test model has no nodes"
-        assert nodes.get_depth(0) == nodes.get_depth(zero_id)
+        assert nodes[0].depth == nodes[zero_id].depth
 
     def test_link_int_and_str_agree(self, links):
         zero_id = links.get_id(0)
         assert zero_id, "Test model has no links"
-        assert links.get_flow(0) == links.get_flow(zero_id)
+        assert links[0].flow == links[zero_id].flow
 
     def test_unknown_id_raises_keyerror(self, nodes):
         with pytest.raises(KeyError):
-            nodes.get_depth("NO_SUCH_NODE_xyz")
+            nodes["NO_SUCH_NODE_xyz"]
 
     def test_negative_index_handled(self, nodes):
         # Current behaviour: a negative int reaches the C layer and either
@@ -228,6 +228,6 @@ class TestErrorCodeMapping:
         # When P2 lands and _resolve is unified, this test will use the helper
         # directly; for now we just confirm that calling with an obviously
         # out-of-range int raises *something* IndexError-compatible.
-        n = nodes.count()
+        n = len(nodes)
         with pytest.raises((IndexError, EngineError)):
-            nodes.get_depth(n + 9999)
+            nodes[n + 9999]

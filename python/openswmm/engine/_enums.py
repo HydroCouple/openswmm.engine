@@ -729,7 +729,8 @@ class ForcingType(IntEnum):
 class ForcingPersist(IntEnum):
     """Lifetime of a runtime forcing override.
 
-    Mirrors C{SWMM_ForcingPersist} in C{openswmm_forcing.h}.
+    Mirrors C{SWMM_ForcingPersist} in C{openswmm_forcing.h}. Shared by the 1D
+    and 2D forcing APIs.
 
     @cvar RESET: Auto-clear the forcing after each routing step.
     @cvar PERSIST: Keep the forcing until it is explicitly cleared.
@@ -737,6 +738,47 @@ class ForcingPersist(IntEnum):
 
     RESET = 0
     PERSIST = 1
+
+
+# =============================================================================
+# 2D surface routing
+# =============================================================================
+
+class SurfaceForcingMode(IntEnum):
+    """How a 2D surface forcing value is applied to a mesh cell.
+
+    Mirrors C{SWMM_ForcingMode} in C{openswmm_forcing.h} and the engine's
+    C{openswmm::ForcingMode}. Note the values differ from the 1D
+    L{ForcingMode}: the 2D forcing API consumes the canonical
+    C{SWMM_FORCING_*} codes directly (C{OVERRIDE=1}, C{ADD=2}).
+
+    @cvar NONE: No forcing — use the model-computed value.
+    @cvar OVERRIDE: Replace the computed value with the user value.
+    @cvar ADD: Add the user value to the computed value.
+    """
+
+    NONE = 0
+    OVERRIDE = 1
+    ADD = 2
+
+
+class SurfaceBoundaryType(IntEnum):
+    """2D mesh edge boundary-condition type.
+
+    Mirrors C{openswmm::twoD::BoundaryType} (C{BoundaryData.hpp}).
+
+    @cvar WALL: Zero-flux wall (default).
+    @cvar NORMAL_FLOW: Manning outflow using the bed slope.
+    @cvar SPECIFIED_STAGE: Prescribed water-surface elevation (const or TS).
+    @cvar SPECIFIED_FLOW: Prescribed per-metre discharge (const or TS).
+    @cvar RATING_CURVE: Stage-to-flow lookup curve.
+    """
+
+    WALL = 0
+    NORMAL_FLOW = 1
+    SPECIFIED_STAGE = 2
+    SPECIFIED_FLOW = 3
+    RATING_CURVE = 4
 
 
 # =============================================================================

@@ -794,6 +794,169 @@ CREATE TABLE IF NOT EXISTS routing_interface_node_pollutants (
 )SQL";
 
 // ============================================================================
+// Part E — 2D surface-routing mesh (model definition only; 2D simulation
+// RESULTS are always written to the CF/UGRID HDF5 output file referenced by
+// the `2D_OUTPUT_FILE` option key, never to GeoPackage tables).
+//
+// Canonical storage is the relational index form: vertex coordinates plus
+// triangle connectivity (v0/v1/v2 ordinals into mesh_2d_vertices). Derived
+// topology — neighbour adjacency, areas/centroids, edge geometry, vertex
+// stencils — is intentionally NOT stored; SurfaceRouter2D::initialize()
+// rebuilds it from the primary data exactly as it does for the .inp path.
+//
+// The `geom` columns are DERIVED presentation copies registered as
+// GeoPackage feature layers so GIS tools (QGIS) can render the mesh
+// alongside nodes/links. They are IGNORED on read; editing them in a GIS
+// does not change the model. Same for mesh_2d_triangles.bed_elev and
+// .coupled_node (styling-only convenience attributes).
+//
+// Coordinates are stored in the AUTHORED project/map units — the same
+// coordinate space as the nodes/links feature layers — so the layers stay
+// aligned in projected CRSs with non-metric linear units. The authored
+// units flag round-trips via the `2D_MESH_UNITS_SI` option key.
+//
+// No FK to simulations(simulation_id): write_model() does not insert a
+// simulations row (only the output plugin does), matching every other
+// Part A model table.
+// ============================================================================
+
+static const char* MESH_2D_DDL = R"SQL(
+-- ----------------------------------------------------------------------------
+-- 2D mesh vertices (POINT feature layer; x/y/z are canonical, geom derived).
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mesh_2d_vertices (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    vertex_idx      INTEGER NOT NULL,
+    geom            BLOB,
+    x               REAL NOT NULL,
+    y               REAL NOT NULL,
+    z               REAL NOT NULL,
+    tag             TEXT,
+    UNIQUE(simulation_id, vertex_idx)
+);
+
+-- ----------------------------------------------------------------------------
+-- 2D mesh triangles (POLYGON feature layer; v0/v1/v2 are canonical, geom /
+-- bed_elev / coupled_node derived for GIS styling only).
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mesh_2d_triangles (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    tri_idx         INTEGER NOT NULL,
+    geom            BLOB,
+    v0              INTEGER NOT NULL,
+    v1              INTEGER NOT NULL,
+    v2              INTEGER NOT NULL,
+    mannings_n      REAL NOT NULL DEFAULT 0.035,
+    tag             TEXT,
+    bed_elev        REAL,
+    coupled_node    TEXT,
+    UNIQUE(simulation_id, tri_idx),
+    FOREIGN KEY (simulation_id, v0)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, v1)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, v2)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_mesh2d_tri_v0 ON mesh_2d_triangles(simulation_id, v0);
+CREATE INDEX IF NOT EXISTS idx_mesh2d_tri_v1 ON mesh_2d_triangles(simulation_id, v1);
+CREATE INDEX IF NOT EXISTS idx_mesh2d_tri_v2 ON mesh_2d_triangles(simulation_id, v2);
+
+-- ----------------------------------------------------------------------------
+-- Per-edge boundary conditions; canonical (tri_idx, edge) form matching
+-- [2D_BOUNDARY_CONDITIONS]. Rows exist only for non-default edges (absent
+-- row == WALL). bc_type uses the .inp grammar tokens (WALL | NORMAL_FLOW |
+-- SPECIFIED_STAGE | TS_STAGE | SPECIFIED_FLOW | TS_FLOW | RATING_CURVE).
+-- param1 = slope / head / unit-flow; ref_name = timeseries or rating-curve
+-- name (mutually exclusive with param1 by type); bc_group = optional GROUP
+-- label ("group" is an SQL keyword).
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mesh_2d_boundary_conditions (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    tri_idx         INTEGER NOT NULL,
+    edge            INTEGER NOT NULL CHECK (edge BETWEEN 0 AND 2),
+    bc_type         TEXT NOT NULL,
+    param1          REAL,
+    ref_name        TEXT,
+    bc_group        TEXT,
+    UNIQUE(simulation_id, tri_idx, edge),
+    FOREIGN KEY (simulation_id, tri_idx)
+        REFERENCES mesh_2d_triangles(simulation_id, tri_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- ----------------------------------------------------------------------------
+-- Edge conveyance; canonical undirected vertex-pair form matching
+-- [2D_EDGE_CONVEYANCE] (resolution-independent; interior-edge mirroring is
+-- re-derived in SurfaceRouter2D::initialize). Rows exist only for
+-- conveyance != 1.0. Stored normalized with v_from < v_to.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mesh_2d_edge_conveyance (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    v_from          INTEGER NOT NULL,
+    v_to            INTEGER NOT NULL,
+    conveyance      REAL NOT NULL CHECK (conveyance >= 0.0 AND conveyance <= 1.0),
+    CHECK (v_from <> v_to),
+    UNIQUE(simulation_id, v_from, v_to),
+    FOREIGN KEY (simulation_id, v_from)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, v_to)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- ----------------------------------------------------------------------------
+-- 1D-2D coupling maps ([2D_VERTEX_NODE_MAP] / [2D_TRIANGLE_NODE_MAP]).
+-- Sparse: one row per coupled vertex/triangle. coupling_area is in authored
+-- project-length-squared units (scaled together with the mesh coordinates).
+-- The hard FK to nodes keeps coupling consistent under node rename/delete.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mesh_2d_vertex_coupling (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    vertex_idx      INTEGER NOT NULL,
+    node_id         TEXT NOT NULL,
+    coupling_cd     REAL NOT NULL DEFAULT 0.65,
+    coupling_area   REAL NOT NULL DEFAULT 1.0,
+    UNIQUE(simulation_id, vertex_idx),
+    FOREIGN KEY (simulation_id, vertex_idx)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, node_id)
+        REFERENCES nodes(simulation_id, node_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_mesh2d_vc_node
+    ON mesh_2d_vertex_coupling(simulation_id, node_id);
+
+CREATE TABLE IF NOT EXISTS mesh_2d_triangle_coupling (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    tri_idx         INTEGER NOT NULL,
+    node_id         TEXT NOT NULL,
+    coupling_cd     REAL NOT NULL DEFAULT 0.65,
+    coupling_area   REAL NOT NULL DEFAULT 1.0,
+    UNIQUE(simulation_id, tri_idx),
+    FOREIGN KEY (simulation_id, tri_idx)
+        REFERENCES mesh_2d_triangles(simulation_id, tri_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, node_id)
+        REFERENCES nodes(simulation_id, node_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_mesh2d_tc_node
+    ON mesh_2d_triangle_coupling(simulation_id, node_id);
+)SQL";
+
+// ============================================================================
 // Implementation
 // ============================================================================
 
@@ -807,6 +970,7 @@ void create_schema(sqlite3* db) {
     exec(db, PART_B_DDL);
     exec(db, PART_C_DDL);
     exec(db, PART_D_DDL);
+    exec(db, MESH_2D_DDL);
 }
 
 void register_crs(sqlite3* db, int srs_id, const std::string& org,

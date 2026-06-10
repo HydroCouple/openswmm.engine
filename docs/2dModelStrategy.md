@@ -473,14 +473,25 @@ struct SurfaceStateData {
     // Previous step state (for restart / Picard reset)
     std::vector<double> old_depth;
 
-    // Cumulative statistics — per cell
-    std::vector<double> stat_max_depth;
-    std::vector<double> stat_cum_volume;
+    // Cumulative statistics / rendering envelopes — per cell.
+    // These are monotone (max) or accumulating (volume) over the run; a single
+    // snapshot of them at any time is the envelope up to that time, so the GUI
+    // can draw a max-depth / max-velocity flood map without scanning the time
+    // series. See §14A.
+    std::vector<double> stat_max_depth;     // max overland depth ψ_o (m)
+    std::vector<double> stat_max_velocity;  // max cell speed |v| = √(vx²+vy²) (m/s)
+    std::vector<double> stat_max_cont_err;  // max |cell_continuity_err| (m³/s)
+    std::vector<double> stat_cum_volume;    // ∫ depth·area dt (m³)
 
     void resize(int n_triangles, int n_vertices);  // assigns all arrays
     void save_state()  noexcept;                   // depth → old_depth
     void reset_state() noexcept;                   // old_depth → depth
     void clear_reset_forcings() noexcept;          // honour persist=0 flags
+
+    // Fuses all envelope updates into the single per-cell loop already walked
+    // for stat_cum_volume — no extra passes. MUST be called AFTER
+    // computeFaceVelocity and computeCellContinuity so face_vx/vy and
+    // cell_continuity_err hold the accepted end-of-step values (see §8.5).
     void update_statistics(const std::vector<double>& tri_area,
                            double dt) noexcept;
 };
@@ -2194,6 +2205,295 @@ Per SWMM routing step:
 ```
 
 This creates a **feedback loop**: 2D surface levels influence outfall boundary conditions → outfall boundaries affect pipe flows → pipe flows discharge into 2D → 2D levels change → next step boundary conditions update.
+
+---
+
+## 14A. Continuity Diagnostics and Max-Value Rendering Envelopes
+
+This section is the authoritative description of how the 2D module tracks
+**local** and **global** continuity error and how it tracks and persists the
+**maximum depth** and **maximum velocity** envelopes used to render flood maps.
+It consolidates behaviour that is partly already wired (local residual, global
+mass balance, max depth) and specifies the remaining pieces (max-velocity
+envelope, HDF5 persistence of envelopes, HDF5 persistence of the global
+balance) so the whole feature is described in one place.
+
+### 14A.1 What already exists vs. what this section adds
+
+| Quantity | Tracked today | Persisted for rendering today | This section adds |
+|----------|---------------|-------------------------------|-------------------|
+| **Local continuity** (per cell) | ✅ `state_.cell_continuity_err[]` via `computeCellContinuity` (§8.5) | ✅ per-step `/Mesh2_face_continuity_err` | Cumulative `stat_max_cont_err[]` envelope + `/Mesh2_face_max_continuity_err` |
+| **Global continuity** (domain) | ✅ `ctx.mass_balance_2d` + `MassBalance2D::error()` | ❌ report only (`DefaultReportPlugin`) | `/mass_balance_2d` HDF5 group + scalar `continuity_error` |
+| **Max depth** (per cell) | ✅ `state_.stat_max_depth[]` via `update_statistics` | ❌ not in HDF5 | `/Mesh2_face_max_depth` envelope dataset |
+| **Max velocity** (per cell) | ❌ not tracked | ❌ | `state_.stat_max_velocity[]` + `/Mesh2_face_max_velocity` |
+
+The design principle is **no new full passes over the mesh and no new time
+dimension**: every envelope folds into the per-cell loop already walked by
+`update_statistics`, and every envelope is stored as a single `[nFace]`
+(time-invariant) HDF5 dataset that is overwritten in place rather than appended.
+
+### 14A.2 Local continuity residual (per cell)
+
+Unchanged from §8.5 — documented here for completeness. After CVODE accepts the
+step, `computeEdgeFluxes` refreshes the edge fluxes at the accepted
+`(head, depth)`, then `computeCellContinuity(mesh_, state_, dt)` writes the
+discrete residual
+
+```
+cell_continuity_err[i] =
+    A_i · (depth[i] − old_depth[i]) / dt           // storage change
+    + Σ_edges edge_flux[i, e] · edge_length[i, e]   // net efflux (m³/s)
+    − net_source[i] · A_i                           // rainfall + coupling source
+```
+
+into `state_.cell_continuity_err[i]` (m³/s; ≈ 0 for a conservative scheme).
+This is already streamed to the HDF5 time series as `/Mesh2_face_continuity_err`
+(see §14A.5), so the GUI can animate the instantaneous local imbalance and
+locate cells where the limiter or the wet/dry treatment is leaking volume.
+
+### 14A.3 Global continuity (domain mass balance)
+
+Unchanged in mechanism from §9.6 — the per-step accumulation already lives in
+`SurfaceRouter2D::accumulateMassBalance` and writes into the
+`ctx.mass_balance_2d` struct (`SimulationContext.hpp`):
+
+```cpp
+struct MassBalance2D {
+    double init_storage, final_storage;        // m³
+    double rainfall_in;                         // m³
+    double coupling_1d_to_2d_in, coupling_2d_to_1d_out;
+    double outfall_in;
+    double boundary_in, boundary_out;
+    bool   active;
+    double error() const {                      // fraction in [-1, 1]
+        double in  = rainfall_in + coupling_1d_to_2d_in + outfall_in
+                     + boundary_in + init_storage;
+        double out = coupling_2d_to_1d_out + boundary_out + final_storage;
+        return (in > 0.0) ? (in - out) / in : 0.0;
+    }
+};
+```
+
+**The only gap is persistence.** Today these terms reach the user only through
+`DefaultReportPlugin` (the text `.rpt`). For rendering and post-processing they
+must also land in the HDF5 file. Because the terms are scalars known in full at
+the end of the run, they are written **once**, in
+`Default2DOutputPlugin::finalize(const SimulationContext& ctx)` — which already
+receives `ctx` — into a small `/mass_balance_2d` group:
+
+```
+/mass_balance_2d            (group)
+  ├─ init_storage           scalar double (m³)
+  ├─ final_storage          scalar double (m³)
+  ├─ rainfall_in            scalar double (m³)
+  ├─ coupling_1d_to_2d_in   scalar double (m³)
+  ├─ coupling_2d_to_1d_out  scalar double (m³)
+  ├─ outfall_in             scalar double (m³)
+  ├─ boundary_in            scalar double (m³)
+  ├─ boundary_out           scalar double (m³)
+  └─ @continuity_error      attribute double (fraction, = ctx.mass_balance_2d.error())
+```
+
+This is O(1) work at finalize, no per-step cost, and keeps the binary file
+self-describing for the same balance the report prints.
+
+### 14A.4 Max depth and max velocity envelopes (per cell)
+
+Two new cumulative arrays join the existing `stat_max_depth` /
+`stat_cum_volume` in `SurfaceStateData` (§2.2): `stat_max_velocity` and
+`stat_max_cont_err`. All envelope updates fuse into the **single** per-cell loop
+that `update_statistics` already runs, so the only added cost is two `max`
+comparisons and one `sqrt` per cell per coupling step:
+
+```cpp
+void SurfaceStateData::update_statistics(const std::vector<double>& tri_area,
+                                         double dt) noexcept {
+    for (std::size_t i = 0; i < depth.size(); ++i) {
+        if (depth[i] > stat_max_depth[i]) stat_max_depth[i] = depth[i];
+
+        // face_vx/face_vy were refreshed by computeFaceVelocity earlier in
+        // step() (§8.5), so the speed magnitude below is the accepted value.
+        const double speed = std::sqrt(face_vx[i]*face_vx[i]
+                                     + face_vy[i]*face_vy[i]);
+        if (speed > stat_max_velocity[i]) stat_max_velocity[i] = speed;
+
+        const double aerr = std::abs(cell_continuity_err[i]);
+        if (aerr > stat_max_cont_err[i]) stat_max_cont_err[i] = aerr;
+
+        stat_cum_volume[i] += depth[i] * tri_area[i] * dt;
+    }
+}
+```
+
+**Ordering guarantee (critical).** In `SurfaceRouter2D::step` the call sequence
+is already `computeEdgeFluxes → computeCellContinuity → computeFaceVelocity →
+update_statistics → accumulateMassBalance` (§8.5). `update_statistics` therefore
+sees the accepted, post-step `face_vx/vy` and `cell_continuity_err`; **no
+reordering is required**, and the envelopes never sample a Newton/JvP
+perturbation state. `resize()` must `assign(nt, 0.0)` the two new arrays
+alongside the existing ones.
+
+**Sampling resolution — fixed at the model (routing) timestep.** Envelopes are
+aggregated once per **SWMM model/routing step** (`dt = dt_swmm`), at the
+accepted end-of-step state. They are **never** sampled at CVODE internal
+sub-steps: the envelope update lives only in `update_statistics`, called once
+per `SurfaceRouter2D::step` (§8.5), and nothing in the CVODE right-hand-side
+callback touches the `stat_*` arrays. This is a deliberate, final design
+choice — it keeps the envelope cost at one fused per-cell pass per model step
+and avoids any per-RHS-evaluation overhead.
+
+### 14A.5 Efficient HDF5 persistence of the envelopes
+
+The per-step time series (`/Mesh2_face_depth`, `/Mesh2_face_vx`, … ,
+`/Mesh2_face_continuity_err`) is unchanged. Envelopes are added as **fixed
+`[nFace]` datasets** — no unlimited time dimension, no chunk extension:
+
+```
+/Mesh2_face_max_depth           [nFace]  double, units "m"
+/Mesh2_face_max_velocity        [nFace]  double, units "m s-1"
+/Mesh2_face_max_continuity_err  [nFace]  double, units "m3 s-1"
+```
+
+Each carries the standard UGRID face attributes (`mesh="Mesh2"`,
+`location="face"`, `long_name`, `units`) so a UGRID-aware viewer (QGIS Crayfish,
+ParaView) renders them as static result layers.
+
+Two write strategies were considered:
+
+1. **Write once at `finalize`.** Cleanest, but `Default2DOutputPlugin::finalize`
+   only receives `SimulationContext`, not the `SurfaceStateData` arrays, so it
+   would need a new engine→plugin handoff.
+2. **Overwrite in place each output step** *(chosen)*. Carry the three envelope
+   arrays in `SimulationSnapshot` (filled by `fillSurfaceSnapshot`, like the
+   other `surface_*` fields) and, in `Default2DOutputPlugin::update`, `H5Dwrite`
+   the full `[nFace]` slab over the fixed dataset. Because the envelopes are
+   monotone, the **last** write is the final envelope; an aborted run still
+   leaves a valid, up-to-date envelope on disk.
+
+Strategy 2 is chosen: it reuses the existing snapshot/IO-thread path (no new
+cross-thread handoff, no main-thread/IO-thread race), and its cost is
+`3 × nFace` doubles overwritten per output step — negligible next to the ~12
+time-series face arrays already appended each step, and far cheaper than the
+3-D `[nTime, nFace, 3]` edge-flux dataset already being written.
+
+Datasets are created in `prepareMeshAndDatasets` (fixed, non-unlimited) and
+closed in `finalize` alongside the existing `ds_face_*` handles. New members on
+`Default2DOutputPlugin`: `ds_face_max_depth_`, `ds_face_max_velocity_`,
+`ds_face_max_continuity_err_`.
+
+### 14A.6 Snapshot plumbing
+
+`SimulationSnapshot` (consumed on the IO thread) gains three arrays, populated
+in `SWMMEngine::fillSurfaceSnapshot` next to the existing assignments:
+
+```cpp
+snap.surface_stat_max_depth      = st.stat_max_depth;
+snap.surface_stat_max_velocity   = st.stat_max_velocity;
+snap.surface_stat_max_cont_err   = st.stat_max_cont_err;
+```
+
+These are SI-native and **must not** pass through `convertSnapshotToDisplay`
+(the 1D-only display conversion in `SWMMEngine.cpp`), matching how the other
+`surface_*` fields are treated.
+
+### 14A.7 C API surface (`openswmm_2d.h`)
+
+Bulk getters mirror the existing `swmm_2d_get_stat_max_depths` so an external
+driver can read the live envelope without the HDF5 file:
+
+```c
+/** @brief Per-triangle max velocity magnitude envelope (m/s). Cumulative. */
+SWMM_ENGINE_API int swmm_2d_get_stat_max_velocities(SWMM_Engine engine,
+                                                     double* max_velocities);
+
+/** @brief Per-triangle max |continuity residual| envelope (m³/s). Cumulative. */
+SWMM_ENGINE_API int swmm_2d_get_stat_max_continuity_err(SWMM_Engine engine,
+                                                        double* max_errs);
+
+/** @brief Global 2D surface continuity error (fraction = mass_balance_2d.error()). */
+SWMM_ENGINE_API int swmm_2d_get_continuity_error(SWMM_Engine engine, double* err);
+
+/** @brief Global 2D mass-balance terms (all m³). Any out-pointer may be NULL. */
+SWMM_ENGINE_API int swmm_2d_get_mass_balance(SWMM_Engine engine,
+                                             double* init_storage,
+                                             double* final_storage,
+                                             double* rainfall_in,
+                                             double* coupling_1d_to_2d_in,
+                                             double* coupling_2d_to_1d_out,
+                                             double* outfall_in,
+                                             double* boundary_in,
+                                             double* boundary_out);
+```
+
+### 14A.8 Python binding (`_2d.pxd` / `_2d.pyx` / `_2d.pyi`)
+
+`.pyi` stub additions (epytext docstrings, NumPy-typed returns, matching the
+existing `get_stat_max_depths` / `max_depth` style):
+
+```python
+def get_stat_max_velocities(self) -> npt.NDArray[np.float64]:
+    """
+    Per-triangle cumulative maximum velocity magnitude envelope.
+
+    @return: Max cell speed |v| seen at each triangle over the run (m/s).
+    @rtype: numpy.ndarray[float64], shape (n_triangles,)
+    """
+
+def get_stat_max_continuity_err(self) -> npt.NDArray[np.float64]:
+    """
+    Per-triangle cumulative maximum |continuity residual| envelope.
+
+    @return: Worst-case local mass-balance residual at each triangle (m³/s).
+    @rtype: numpy.ndarray[float64], shape (n_triangles,)
+    """
+
+@property
+def continuity_error(self) -> float:
+    """
+    Global 2D surface continuity error.
+
+    @return: (total_in − total_out) / total_in, the domain mass-balance error.
+    @rtype: float
+    """
+
+def get_mass_balance(self) -> dict[str, float]:
+    """
+    Global 2D mass-balance terms.
+
+    @return: Mapping with keys C{init_storage}, C{final_storage},
+        C{rainfall_in}, C{coupling_1d_to_2d_in}, C{coupling_2d_to_1d_out},
+        C{outfall_in}, C{boundary_in}, C{boundary_out} (all m³) and
+        C{continuity_error} (fraction).
+    @rtype: dict[str, float]
+    """
+```
+
+### 14A.9 Tests (real `openswmm.engine.Solver`, no mocks)
+
+Per project convention, every item below runs against the real handle-based
+Solver on a small triangulated mesh — no engine mocks.
+
+| Test | Validates |
+|------|-----------|
+| `test_2d_max_depth_envelope` | After a rising-then-falling hydrograph, `get_stat_max_depths()[i] ≥` every instantaneous `get_depths()[i]` seen during the run, and the envelope is non-decreasing in time. |
+| `test_2d_max_velocity_envelope` | Tilted-plane run: `get_stat_max_velocities()` is ≥ the magnitude of every per-step `√(vx²+vy²)`; dry cells stay 0. |
+| `test_2d_local_continuity_envelope` | `stat_max_cont_err` equals the running max of `|cell_continuity_err|`; on a closed conservative still-water case it stays below the per-cell tolerance. |
+| `test_2d_global_continuity_closed` | Rainfall-only, walled domain: `continuity_error` < 1e-4 (init + rainfall − final_storage balances). |
+| `test_2d_global_continuity_coupled` | Coupled spill/drain case: `coupling_1d_to_2d_in − coupling_2d_to_1d_out` matches the 1D side's `coupling_inflow` integral; `continuity_error` within tolerance. |
+| `test_2d_hdf5_envelope_datasets` | After a run with `OUTPUT_FILE`, the HDF5 has `/Mesh2_face_max_depth`, `/Mesh2_face_max_velocity`, `/Mesh2_face_max_continuity_err` of shape `[nFace]` whose values equal the C-API envelopes; `/mass_balance_2d` group exists with `@continuity_error`. |
+
+### 14A.10 Affected files (forecast)
+
+| File | Change |
+|------|--------|
+| `src/engine/2d/data/SurfaceStateData.hpp` | Add `stat_max_velocity`, `stat_max_cont_err`; init in `resize`; fold into `update_statistics`. |
+| `src/engine/2d/output/Default2DOutputPlugin.hpp` | 3 new `ds_face_max_*_` members. |
+| `src/engine/2d/output/Default2DOutputPlugin.cpp` | Create fixed `[nFace]` datasets in `prepareMeshAndDatasets`; overwrite in `update`; write `/mass_balance_2d` group in `finalize`; close handles. |
+| `src/engine/core/SimulationContext.hpp` (snapshot) | 3 new `surface_stat_*` arrays on `SimulationSnapshot`. |
+| `src/engine/core/SWMMEngine.cpp` | Fill the 3 arrays in `fillSurfaceSnapshot` (SI-native; skip display conversion). |
+| `src/engine/2d/api/Api2D.{hpp,cpp}` + `openswmm_2d.h` | New getters (§14A.7). |
+| `python/openswmm/engine/_2d.{pxd,pyx,pyi}` | Wrap the new getters (§14A.8). |
+| `tests/...` | Tests in §14A.9. |
 
 ---
 

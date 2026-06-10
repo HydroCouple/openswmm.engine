@@ -205,7 +205,7 @@ from ._output_reader import OutputReader
 # =============================================================================
 from ._pollutants import Pollutants
 from ._quality import Quality
-from ._tables import Tables
+from ._tables import Tables, Patterns
 from ._inflows import Inflows
 from ._controls import Controls
 from ._forcing import Forcing
@@ -254,6 +254,8 @@ from ._enums import (
     OutSubcatchVar, OutNodeVar, OutLinkVar, OutSystemVar,
     # Forcing & patterns
     ForcingMode, ForcingTarget, ForcingType, ForcingPersist, PatternType,
+    # 2D surface routing
+    SurfaceForcingMode, SurfaceBoundaryType,
     # Nodes / editing
     DividerType, RefType,
     # Tables / model files
@@ -287,7 +289,7 @@ __all__ = [
     # --- Simulation state & I/O ---
     "HotStart", "MassBalance", "Statistics", "OutputReader",
     # --- Hydrology, water quality, and time-varying inputs ---
-    "Pollutants", "Quality", "Tables", "Inflows", "Controls", "Forcing",
+    "Pollutants", "Quality", "Tables", "Patterns", "Inflows", "Controls", "Forcing",
     # --- Spatial / infrastructure / 2D ---
     "Infrastructure", "Spatial",
     "Surface2D", "HAS_2D",
@@ -307,6 +309,8 @@ __all__ = [
     "OutSubcatchVar", "OutNodeVar", "OutLinkVar", "OutSystemVar",
     # --- Enumerations: forcing & patterns ---
     "ForcingMode", "ForcingTarget", "ForcingType", "ForcingPersist", "PatternType",
+    # --- Enumerations: 2D surface routing ---
+    "SurfaceForcingMode", "SurfaceBoundaryType",
     "DividerType", "RefType",
     "TableType", "FilePathRole",
     # --- Enumerations: mass-balance totals ---

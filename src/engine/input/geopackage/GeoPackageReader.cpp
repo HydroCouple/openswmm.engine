@@ -19,6 +19,13 @@
 #include "data/InflowData.hpp"
 #include "data/HydrologyData.hpp"
 
+// 2D model definition (plain define-free data structs; reached at runtime
+// through ctx.twod_io — null in non-2D engine builds).
+#include "2d/data/MeshData.hpp"
+#include "2d/data/SolverOptions2D.hpp"
+#include "2d/data/BoundaryData.hpp"
+#include "2d/data/PendingRows2D.hpp"
+
 #include "core/DateTime.hpp"
 
 #include <algorithm>
@@ -142,6 +149,47 @@ static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
 // Read sections
 // ============================================================================
 
+// Apply one "2D_*" option key from the options table to SolverOptions2D.
+// Keys/values mirror write_options_2d in GeoPackageWriter.cpp and use the
+// same value tokens as the [2D_OPTIONS] inp parser (parse2DOptionsLine) —
+// implemented locally because that parser TU only exists in 2D builds.
+// Silently ignored when the engine has no 2D module (ctx.twod_io.options
+// is null) or for unknown future keys.
+static void apply_option_2d(SimulationContext& ctx, const std::string& key,
+                            const std::string& val) {
+    auto* o = ctx.twod_io.options;
+    if (!o) return;
+
+    if      (key == "2D_MAX_TIMESTEP")      o->max_timestep      = std::stod(val);
+    else if (key == "2D_MIN_TIMESTEP")      o->min_timestep      = std::stod(val);
+    else if (key == "2D_REL_TOLERANCE")     o->rel_tolerance     = std::stod(val);
+    else if (key == "2D_ABS_TOLERANCE")     o->abs_tolerance     = std::stod(val);
+    else if (key == "2D_DRY_DEPTH")         o->dry_depth         = std::stod(val);
+    else if (key == "2D_LIMITER_EPSILON")   o->limiter_epsilon   = std::stod(val);
+    else if (key == "2D_COUPLING_CD")       o->coupling_cd       = std::stod(val);
+    else if (key == "2D_MAX_KRYLOV_DIM")    o->max_krylov_dim    = std::stoi(val);
+    else if (key == "2D_COUPLING_INTERVAL") o->coupling_interval = std::stoi(val);
+    else if (key == "2D_MAX_CVODE_STEPS")   o->max_cvode_steps   = std::stoi(val);
+    else if (key == "2D_LINEAR_SOLVER") {
+        if      (val == "GMRES")    o->linear_solver = twoD::LinearSolverType::GMRES;
+        else if (val == "BICGSTAB") o->linear_solver = twoD::LinearSolverType::BICGSTAB;
+        else if (val == "TFQMR")    o->linear_solver = twoD::LinearSolverType::TFQMR;
+    }
+    else if (key == "2D_PRECONDITIONER") {
+        if      (val == "NONE")   o->preconditioner = twoD::PreconditionerType::NONE;
+        else if (val == "JACOBI") o->preconditioner = twoD::PreconditionerType::JACOBI;
+        else if (val == "ILU")    o->preconditioner = twoD::PreconditionerType::ILU;
+    }
+    else if (key == "2D_REPORT_2D")     o->report_2d = (val == "YES");
+    // HDF5 results path — restoring it lets SWMMEngine::open re-create the
+    // Default2DOutputPlugin (2D results always stream to HDF5, never gpkg).
+    else if (key == "2D_OUTPUT_FILE")   o->output_file = val;
+    else if (key == "2D_MESH_UNITS_SI") o->mesh_units_si = (val == "YES");
+    // 2D_MESH_FILE_SOURCE is provenance only — intentionally NOT restored
+    // into SolverOptions2D::mesh_file, otherwise SWMMEngine::open would
+    // attempt a second external-file mesh load on top of the gpkg mesh.
+}
+
 static void read_options(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     auto stmt = prepare(db,
         "SELECT key, value FROM options WHERE simulation_id = ?");
@@ -233,6 +281,7 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
         else if (key == "MAP_Y1") ctx.spatial.map_y1 = std::stod(val);
         else if (key == "MAP_X2") ctx.spatial.map_x2 = std::stod(val);
         else if (key == "MAP_Y2") ctx.spatial.map_y2 = std::stod(val);
+        else if (key.rfind("2D_", 0) == 0) apply_option_2d(ctx, key, val);
     }
 }
 
@@ -1083,6 +1132,183 @@ static void read_treatment(sqlite3* db, SimulationContext& ctx,
 }
 
 // ============================================================================
+// Part E — 2D surface-routing mesh (model definition; 2D results live in
+// the HDF5 file referenced by the 2D_OUTPUT_FILE option key, never here).
+//
+// Populates the engine's 2D storage through ctx.twod_io exactly as the
+// [2D_*] inp section handlers would: primary data only (vertices, triangle
+// connectivity, coupling NAMES, pending BC/conveyance rows). Derived
+// topology, coupling name→index resolution, BC/conveyance drains, and unit
+// scaling all happen later in SurfaceRouter2D::initialize(), so a gpkg-read
+// model is bit-identical to the same model read from .inp.
+// ============================================================================
+
+static int bc_type_from_token(const std::string& tok) {
+    if (tok == "WALL")            return 0; // BoundaryType::WALL
+    if (tok == "NORMAL_FLOW")     return 1; // BoundaryType::NORMAL_FLOW
+    if (tok == "SPECIFIED_STAGE") return 2; // BoundaryType::SPECIFIED_STAGE
+    if (tok == "TS_STAGE")        return 2;
+    if (tok == "SPECIFIED_FLOW")  return 3; // BoundaryType::SPECIFIED_FLOW
+    if (tok == "TS_FLOW")         return 3;
+    if (tok == "RATING_CURVE")    return 4; // BoundaryType::RATING_CURVE
+    return -1;
+}
+
+static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
+                         const std::string& sim_id) {
+    if (!table_exists(db, "mesh_2d_vertices") ||
+        !table_exists(db, "mesh_2d_triangles"))
+        return; // pre-2D GeoPackage — nothing to do
+
+    // Engine built without the 2D module: surface a warning if this file
+    // actually carries a mesh for the requested simulation, then skip.
+    if (!ctx.twod_io.mesh) {
+        auto cnt = prepare(db,
+            "SELECT COUNT(*) FROM mesh_2d_vertices WHERE simulation_id = ?");
+        bind_text(cnt.get(), 1, sim_id);
+        if (sqlite3_step(cnt.get()) == SQLITE_ROW &&
+            column_int(cnt.get(), 0) > 0) {
+            ctx.warnings.push_back(
+                "WARNING: GeoPackage contains a 2D mesh but this engine "
+                "build has no 2D surface-routing module — mesh skipped.");
+        }
+        return;
+    }
+
+    auto& mesh = *ctx.twod_io.mesh;
+
+    // ---- vertices ----------------------------------------------------------
+    {
+        auto cnt = prepare(db,
+            "SELECT COUNT(*), COALESCE(MAX(vertex_idx), -1) "
+            "FROM mesh_2d_vertices WHERE simulation_id = ?");
+        bind_text(cnt.get(), 1, sim_id);
+        if (sqlite3_step(cnt.get()) != SQLITE_ROW) return;
+        const int n = column_int(cnt.get(), 0);
+        if (n == 0) return;
+        // Defensive against hand-edited files: vertex ordinals must form
+        // the contiguous range [0, n) because triangle connectivity and
+        // conveyance rows index into it positionally.
+        if (column_int(cnt.get(), 1) != n - 1)
+            throw GpkgError("mesh_2d_vertices: vertex_idx values are not "
+                            "contiguous [0, n)");
+        mesh.resize_vertices(n);
+
+        auto stmt = prepare(db,
+            "SELECT vertex_idx, x, y, z, tag FROM mesh_2d_vertices "
+            "WHERE simulation_id = ? ORDER BY vertex_idx");
+        bind_text(stmt.get(), 1, sim_id);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int i = column_int(stmt.get(), 0);
+            if (i < 0 || i >= n) continue;
+            mesh.vx[i]   = column_double(stmt.get(), 1);
+            mesh.vy[i]   = column_double(stmt.get(), 2);
+            mesh.vz[i]   = column_double(stmt.get(), 3);
+            mesh.vtag[i] = column_text(stmt.get(), 4);
+        }
+    }
+
+    // ---- triangles ---------------------------------------------------------
+    // geom / bed_elev / coupled_node are derived presentation columns and
+    // intentionally ignored; v0/v1/v2 + vertex x/y are canonical.
+    {
+        auto cnt = prepare(db,
+            "SELECT COUNT(*), COALESCE(MAX(tri_idx), -1) "
+            "FROM mesh_2d_triangles WHERE simulation_id = ?");
+        bind_text(cnt.get(), 1, sim_id);
+        if (sqlite3_step(cnt.get()) != SQLITE_ROW) return;
+        const int n = column_int(cnt.get(), 0);
+        if (n == 0) return;
+        if (column_int(cnt.get(), 1) != n - 1)
+            throw GpkgError("mesh_2d_triangles: tri_idx values are not "
+                            "contiguous [0, n)");
+        mesh.resize_triangles(n);
+
+        auto stmt = prepare(db,
+            "SELECT tri_idx, v0, v1, v2, mannings_n, tag FROM mesh_2d_triangles "
+            "WHERE simulation_id = ? ORDER BY tri_idx");
+        bind_text(stmt.get(), 1, sim_id);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int t = column_int(stmt.get(), 0);
+            if (t < 0 || t >= n) continue;
+            mesh.tri_v0[t]      = column_int(stmt.get(), 1);
+            mesh.tri_v1[t]      = column_int(stmt.get(), 2);
+            mesh.tri_v2[t]      = column_int(stmt.get(), 3);
+            mesh.mannings_n[t]  = column_double(stmt.get(), 4);
+            mesh.tri_tag[t]     = column_text(stmt.get(), 5);
+        }
+    }
+
+    // ---- coupling maps -------------------------------------------------------
+    // Restored as NAMES (indices stay -1): SurfaceRouter2D::initialize()
+    // resolves them against ctx.node_names with the same unknown-node fatal
+    // behavior as the inp path.
+    if (table_exists(db, "mesh_2d_vertex_coupling")) {
+        auto stmt = prepare(db,
+            "SELECT vertex_idx, node_id, coupling_cd, coupling_area "
+            "FROM mesh_2d_vertex_coupling WHERE simulation_id = ?");
+        bind_text(stmt.get(), 1, sim_id);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int i = column_int(stmt.get(), 0);
+            if (i < 0 || i >= mesh.n_vertices()) continue;
+            mesh.vert_coupled_node_name[i] = column_text(stmt.get(), 1);
+            mesh.vert_coupling_cd[i]       = column_double(stmt.get(), 2);
+            mesh.vert_coupling_area[i]     = column_double(stmt.get(), 3);
+        }
+    }
+    if (table_exists(db, "mesh_2d_triangle_coupling")) {
+        auto stmt = prepare(db,
+            "SELECT tri_idx, node_id, coupling_cd, coupling_area "
+            "FROM mesh_2d_triangle_coupling WHERE simulation_id = ?");
+        bind_text(stmt.get(), 1, sim_id);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int t = column_int(stmt.get(), 0);
+            if (t < 0 || t >= mesh.n_triangles()) continue;
+            mesh.tri_coupled_node_name[t] = column_text(stmt.get(), 1);
+            mesh.tri_coupling_cd[t]       = column_double(stmt.get(), 2);
+            mesh.tri_coupling_area[t]     = column_double(stmt.get(), 3);
+        }
+    }
+
+    // ---- boundary conditions → pending rows ----------------------------------
+    if (ctx.twod_io.pending_bc && table_exists(db, "mesh_2d_boundary_conditions")) {
+        auto stmt = prepare(db,
+            "SELECT tri_idx, edge, bc_type, param1, ref_name, bc_group "
+            "FROM mesh_2d_boundary_conditions WHERE simulation_id = ? "
+            "ORDER BY tri_idx, edge");
+        bind_text(stmt.get(), 1, sim_id);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int type = bc_type_from_token(column_text(stmt.get(), 2));
+            if (type < 0) continue; // unknown future token — skip
+            twoD::PendingBoundaryRow row;
+            row.tri     = column_int(stmt.get(), 0);
+            row.edge    = column_int(stmt.get(), 1);
+            row.bc_type = type;
+            if (!column_is_null(stmt.get(), 3))
+                row.param1 = column_double(stmt.get(), 3);
+            row.name  = column_text(stmt.get(), 4);
+            row.group = column_text(stmt.get(), 5);
+            ctx.twod_io.pending_bc->push_back(std::move(row));
+        }
+    }
+
+    // ---- edge conveyance → pending rows --------------------------------------
+    if (ctx.twod_io.pending_ec && table_exists(db, "mesh_2d_edge_conveyance")) {
+        auto stmt = prepare(db,
+            "SELECT v_from, v_to, conveyance FROM mesh_2d_edge_conveyance "
+            "WHERE simulation_id = ? ORDER BY v_from, v_to");
+        bind_text(stmt.get(), 1, sim_id);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            twoD::PendingEdgeConveyanceRow row;
+            row.v_from     = column_int(stmt.get(), 0);
+            row.v_to       = column_int(stmt.get(), 1);
+            row.conveyance = column_double(stmt.get(), 2);
+            ctx.twod_io.pending_ec->push_back(std::move(row));
+        }
+    }
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
@@ -1107,6 +1333,11 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         read_lid_usage(db, ctx, simulation_id);
         read_rdii(db, ctx, simulation_id);
         read_treatment(db, ctx, simulation_id);
+
+        // Part E — 2D mesh model definition. Options keys (2D_*) were
+        // already applied by read_options above, so mesh_units_si is set
+        // before SurfaceRouter2D::initialize() ever looks at it.
+        read_mesh_2d(db, ctx, simulation_id);
 
         // Slice IO-8 — hydrate external-file slots from Part D tables
         // and materialise scratch files. Skipped when no scratch_dir

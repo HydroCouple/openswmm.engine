@@ -51,15 +51,15 @@ class TestHydrographParameters:
             dmax=8.0, drecov=0.10, dinit=2.0,
         )
         e = inflows.get_hydrograph(0)
-        assert e["uh_name"] == "SanSewer"
-        assert e["month"] == -1
-        assert e["response"] == 0
-        assert e["r"] == pytest.approx(0.055)
-        assert e["t"] == pytest.approx(1.0)
-        assert e["k"] == pytest.approx(2.0)
-        assert e["dmax"] == pytest.approx(8.0)
-        assert e["drecov"] == pytest.approx(0.10)
-        assert e["dinit"] == pytest.approx(2.0)
+        assert e.uh_name == "SanSewer"
+        assert e.month == -1
+        assert e.response == 0
+        assert e.r == pytest.approx(0.055)
+        assert e.t == pytest.approx(1.0)
+        assert e.k == pytest.approx(2.0)
+        assert e.dmax == pytest.approx(8.0)
+        assert e.drecov == pytest.approx(0.10)
+        assert e.dinit == pytest.approx(2.0)
 
     def test_three_responses(self, inflows):
         for response, t in [(0, 1.0), (1, 3.5), (2, 14.0)]:
@@ -81,16 +81,16 @@ class TestHydrographParameters:
 
     @pytest.mark.parametrize("bad_response", [-1, 3, 99])
     def test_rejects_bad_response(self, inflows, bad_response):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ValueError):
             inflows.add_hydrograph("UH", -1, bad_response, 0.05, 1.0, 2.0)
 
     @pytest.mark.parametrize("bad_month", [-2, 12, 100])
     def test_rejects_bad_month(self, inflows, bad_month):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ValueError):
             inflows.add_hydrograph("UH", bad_month, 0, 0.05, 1.0, 2.0)
 
     def test_get_bad_index_raises(self, inflows):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(IndexError):
             inflows.get_hydrograph(0)
 
 
@@ -114,7 +114,7 @@ class TestHydrographGageAssignments:
         assert (uh, gage) == ("Combined", "RG2")
 
     def test_get_bad_index_raises(self, inflows):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(IndexError):
             inflows.get_hydrograph_gage(0)
 
 
@@ -142,7 +142,7 @@ class TestRdiiAssignmentGetter:
         assert inflows.get_rdii(2)[2] == pytest.approx(300.0)
 
     def test_get_bad_index_raises(self, inflows):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(IndexError):
             inflows.get_rdii(0)
 
 
@@ -157,22 +157,24 @@ class TestRdiiDecay:
 
     def test_add_one_returns_one(self, inflows):
         inflows.add_rdii_decay("SanSewer", 0,
-                               k_dep=0.15, k_0=0.010, k_T=0.070)
+                               k_dep=0.15, k_0=0.010, k_T=0.070,
+                               T_ref=10.0, theta_rec=0.0, T_freeze=0.0)
         assert inflows.rdii_decay_count == 1
 
-    def test_round_trip_with_defaults(self, inflows):
-        """Defaults: T_ref=10, theta_rec=0, T_freeze=0."""
+    def test_round_trip_baseline_values(self, inflows):
+        """A baseline row: T_ref=10, theta_rec=0, T_freeze=0."""
         inflows.add_rdii_decay("SanSewer", 0,
-                               k_dep=0.15, k_0=0.010, k_T=0.070)
+                               k_dep=0.15, k_0=0.010, k_T=0.070,
+                               T_ref=10.0, theta_rec=0.0, T_freeze=0.0)
         e = inflows.get_rdii_decay(0)
-        assert e["uh_name"] == "SanSewer"
-        assert e["response"] == 0
-        assert e["k_dep"] == pytest.approx(0.15)
-        assert e["k_0"]   == pytest.approx(0.010)
-        assert e["k_T"]   == pytest.approx(0.070)
-        assert e["T_ref"] == pytest.approx(10.0)
-        assert e["theta_rec"] == pytest.approx(0.0)
-        assert e["T_freeze"]  == pytest.approx(0.0)
+        assert e.uh_name == "SanSewer"
+        assert e.response == 0
+        assert e.k_dep == pytest.approx(0.15)
+        assert e.k_0   == pytest.approx(0.010)
+        assert e.k_T   == pytest.approx(0.070)
+        assert e.T_ref == pytest.approx(10.0)
+        assert e.theta_rec == pytest.approx(0.0)
+        assert e.T_freeze  == pytest.approx(0.0)
 
     def test_round_trip_full_parameters(self, inflows):
         inflows.add_rdii_decay(
@@ -181,16 +183,14 @@ class TestRdiiDecay:
             T_ref=12.5, theta_rec=0.055, T_freeze=-1.0,
         )
         e = inflows.get_rdii_decay(0)
-        assert e == {
-            "uh_name":   "SanSewer",
-            "response":  1,
-            "k_dep":     pytest.approx(0.10),
-            "k_0":       pytest.approx(0.008),
-            "k_T":       pytest.approx(0.037),
-            "T_ref":     pytest.approx(12.5),
-            "theta_rec": pytest.approx(0.055),
-            "T_freeze":  pytest.approx(-1.0),
-        }
+        assert e.uh_name == "SanSewer"
+        assert e.response == 1
+        assert e.k_dep == pytest.approx(0.10)
+        assert e.k_0 == pytest.approx(0.008)
+        assert e.k_T == pytest.approx(0.037)
+        assert e.T_ref == pytest.approx(12.5)
+        assert e.theta_rec == pytest.approx(0.055)
+        assert e.T_freeze == pytest.approx(-1.0)
 
     def test_three_responses(self, inflows):
         params = [
@@ -199,29 +199,32 @@ class TestRdiiDecay:
             (2, 0.05, 0.005, 0.013),
         ]
         for response, k_dep, k_0, k_T in params:
-            inflows.add_rdii_decay("UH", response, k_dep, k_0, k_T)
+            inflows.add_rdii_decay("UH", response, k_dep, k_0, k_T,
+                                   T_ref=10.0, theta_rec=0.0, T_freeze=0.0)
         assert inflows.rdii_decay_count == 3
         for i, (resp, k_dep, k_0, k_T) in enumerate(params):
             e = inflows.get_rdii_decay(i)
-            assert e["response"] == resp
-            assert e["k_dep"] == pytest.approx(k_dep)
-            assert e["k_T"]   == pytest.approx(k_T)
+            assert e.response == resp
+            assert e.k_dep == pytest.approx(k_dep)
+            assert e.k_T   == pytest.approx(k_T)
 
     @pytest.mark.parametrize("bad_response", [-1, 3, 99])
     def test_rejects_bad_response(self, inflows, bad_response):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ValueError):
             inflows.add_rdii_decay("UH", bad_response,
-                                   k_dep=0.1, k_0=0.01, k_T=0.01)
+                                   k_dep=0.1, k_0=0.01, k_T=0.01,
+                                   T_ref=10.0, theta_rec=0.0, T_freeze=0.0)
 
     @pytest.mark.parametrize("field", ["k_dep", "k_0", "k_T"])
     def test_rejects_negative_rate(self, inflows, field):
-        kwargs = dict(k_dep=0.1, k_0=0.01, k_T=0.01)
+        kwargs = dict(k_dep=0.1, k_0=0.01, k_T=0.01,
+                      T_ref=10.0, theta_rec=0.0, T_freeze=0.0)
         kwargs[field] = -1.0
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ValueError):
             inflows.add_rdii_decay("UH", 0, **kwargs)
 
     def test_get_bad_index_raises(self, inflows):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(IndexError):
             inflows.get_rdii_decay(0)
 
 
@@ -243,13 +246,13 @@ class TestEndToEndRdiiSetup:
         # RDII_DECAY — physics-based recovery
         inflows.add_rdii_decay("SanSewer", 0,
                                 k_dep=0.15, k_0=0.010, k_T=0.070,
-                                T_ref=10.0, theta_rec=0.055)
+                                T_ref=10.0, theta_rec=0.055, T_freeze=0.0)
         inflows.add_rdii_decay("SanSewer", 1,
                                 k_dep=0.10, k_0=0.008, k_T=0.037,
-                                T_ref=10.0, theta_rec=0.055)
+                                T_ref=10.0, theta_rec=0.055, T_freeze=0.0)
         inflows.add_rdii_decay("SanSewer", 2,
                                 k_dep=0.05, k_0=0.005, k_T=0.013,
-                                T_ref=10.0, theta_rec=0.040)
+                                T_ref=10.0, theta_rec=0.040, T_freeze=0.0)
         # RDII — node assignment
         inflows.add_rdii(0, "SanSewer", 1000.0)
 
@@ -260,9 +263,9 @@ class TestEndToEndRdiiSetup:
 
         # Spot-check that the long response row survived
         long_decay = inflows.get_rdii_decay(2)
-        assert long_decay["response"] == 2
-        assert long_decay["k_dep"] == pytest.approx(0.05)
-        assert long_decay["theta_rec"] == pytest.approx(0.040)
+        assert long_decay.response == 2
+        assert long_decay.k_dep == pytest.approx(0.05)
+        assert long_decay.theta_rec == pytest.approx(0.040)
 
     def test_no_decay_rows_means_linear_path(self, inflows):
         """A model with HYDROGRAPHS but no RDII_DECAY uses linear IA."""
@@ -320,5 +323,5 @@ class TestHydrographGroupEnumeration:
 
     def test_bad_index_raises(self, inflows):
         inflows.add_hydrograph("UH", -1, 0, 0.1, 1.0, 2.0)
-        with pytest.raises(RuntimeError):
+        with pytest.raises(IndexError):
             inflows.get_hydrograph_group_id(1)

@@ -133,10 +133,49 @@ class Forcing:
 
     def subcatchment_evap(self, sub, double value, *,
                           mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        """Prescribe a potential evapotranspiration (PET) rate on a subcatchment.
+
+        The prescribed rate replaces (REPLACE) or augments (ADD) the
+        climate-derived evaporation rate for the subcatchment's surface,
+        LID, and groundwater upper-zone evaporation. A REPLACE rate is
+        applied as-is, bypassing the DRY_ONLY option and monthly
+        adjustments. Actual evaporation remains capped by available
+        water, so losses are tracked through the normal runoff
+        continuity totals.
+
+        @param sub: Subcatchment id or index.
+        @type sub: int or str
+        @param value: PET rate in user units (in/day for US, mm/day for SI).
+        @type value: float
+        @param mode: L{ForcingMode.REPLACE} or L{ForcingMode.ADD}.
+        @type mode: ForcingMode
+        @param persist: C{False} (one-shot for the next step) or C{True}
+            (persists every step until cleared).
+        @type persist: bool
+        @return: None
+        @rtype: None
+        """
         cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_forcing_subcatch_evap(
             h, i, value, int(mode), 1 if persist else 0))
+
+    def climate_evap_rate(self) -> float:
+        """Return the current climate-derived evaporation rate.
+
+        The broadcast rate the engine would apply in the absence of any
+        PET forcing, including monthly adjustments (read-only). Intended
+        for caller-side composition: read this rate, apply your own
+        adjustment logic, and prescribe the result via
+        L{subcatchment_evap}.
+
+        @return: Evaporation rate in user units (in/day US, mm/day SI).
+        @rtype: float
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double v = 0.0
+        _check(swmm_climate_get_evap_rate(h, &v))
+        return v
 
     # ---- Gage forcing ---------------------------------------------
 

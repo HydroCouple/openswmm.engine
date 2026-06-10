@@ -226,9 +226,20 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
         else if (fmt == "CUMULATIVE") ctx.gages.rain_type[idx] = 2;
         else                          ctx.gages.rain_type[idx] = 0; // INTENSITY
 
-        // Interval: HH:MM or seconds
+        // Recording interval. SWMM specifies the rain-gage interval in
+        // DECIMAL HOURS or "H:MM[:SS]" format — NOT seconds. A bare decimal
+        // such as "0.08333" means 0.08333 hours (= 300 s); the generic
+        // parse_time_seconds() would mis-read it as 0.08333 s and truncate to
+        // 0, which empties the rain window and yields ZERO precipitation on
+        // every timeseries/file rain gage. Match legacy datetime_strToTime
+        // (decimal hours → fraction of day → seconds).
+        const std::string& itok = tok[2];
+        double interval_secs =
+            (itok.find(':') != std::string::npos)
+                ? parse_time_seconds(itok)        // H:MM[:SS] clock duration
+                : to_double(itok, 0.0) * 3600.0;  // decimal hours
         ctx.gages.interval_sec[idx] =
-            static_cast<int>(parse_time_seconds(tok[2]));
+            static_cast<int>(interval_secs + 0.5);
 
         // Snow correction factor
         ctx.gages.snow_factor[idx] = to_double(tok[3], 1.0);

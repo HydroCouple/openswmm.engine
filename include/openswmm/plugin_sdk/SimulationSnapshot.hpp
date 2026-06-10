@@ -239,6 +239,13 @@ struct SimulationSnapshot {
     std::vector<double> surface_face_vx;        ///< Cell-centred velocity X (m/s), per face
     std::vector<double> surface_face_vy;        ///< Cell-centred velocity Y (m/s), per face
     std::vector<double> surface_continuity_err; ///< Per-cell continuity residual (m³/s), per face
+
+    // Cumulative rendering envelopes (SI-native, monotone over the run), per face.
+    // A snapshot of these at any time is the envelope up to that time; the 2D
+    // output plugin overwrites the fixed [nFace] envelope datasets in place.
+    std::vector<double> surface_stat_max_depth;    ///< Max overland depth ψ_o (m), per face
+    std::vector<double> surface_stat_max_velocity; ///< Max cell speed |v| (m/s), per face
+    std::vector<double> surface_stat_max_cont_err; ///< Max |continuity residual| (m³/s), per face
 };
 
 } /* namespace openswmm */

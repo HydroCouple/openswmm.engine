@@ -1528,6 +1528,14 @@ void subcatch_setOldState(int subcatchIndex);
 double subcatch_getFracPerv(int subcatchIndex);
 
 /*!
+* \brief Returns the potential evaporation rate for a subcatchment.
+* \param[in] subcatchIndex Subcatchment index
+* \return Returns the externally prescribed PET rate (apiEvapRate) when set,
+* otherwise the climate-derived Evap.rate subject to the DRY_ONLY option (ft/sec)
+*/
+double subcatch_getEvapRate(int subcatchIndex);
+
+/*!
 * \brief Finds total volume of water stored on a subcatchment's surface
 * and its LIDs at the current time.
 * \param[in] subcatchIndex Subcatchment index

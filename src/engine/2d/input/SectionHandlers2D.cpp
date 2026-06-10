@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -141,6 +142,60 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         return "Unknown 2D_OPTIONS parameter: " + key;
     }
 
+    return {};
+}
+
+
+bool is2DOptionKey(const std::string& key) {
+    static const char* kKeys[] = {
+        "MAX_TIMESTEP", "MIN_TIMESTEP", "REL_TOLERANCE", "ABS_TOLERANCE",
+        "DRY_DEPTH", "MAX_KRYLOV_DIM", "COUPLING_INTERVAL", "COUPLING_CD",
+        "LIMITER_EPSILON", "MAX_CVODE_STEPS", "LINEAR_SOLVER",
+        "PRECONDITIONER", "REPORT_2D", "OUTPUT_FILE",
+    };
+    for (const char* k : kKeys) {
+        if (iequals(key, k)) return true;
+    }
+    return false;
+}
+
+
+std::string format2DOptionValue(const SolverOptions2D& opts,
+                                const std::string& key) {
+    auto fmt_g = [](double v) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.12g", v);
+        return std::string(buf);
+    };
+
+    if (iequals(key, "MAX_TIMESTEP"))      return fmt_g(opts.max_timestep);
+    if (iequals(key, "MIN_TIMESTEP"))      return fmt_g(opts.min_timestep);
+    if (iequals(key, "REL_TOLERANCE"))     return fmt_g(opts.rel_tolerance);
+    if (iequals(key, "ABS_TOLERANCE"))     return fmt_g(opts.abs_tolerance);
+    if (iequals(key, "DRY_DEPTH"))         return fmt_g(opts.dry_depth);
+    if (iequals(key, "LIMITER_EPSILON"))   return fmt_g(opts.limiter_epsilon);
+    if (iequals(key, "COUPLING_CD"))       return fmt_g(opts.coupling_cd);
+    if (iequals(key, "MAX_KRYLOV_DIM"))    return std::to_string(opts.max_krylov_dim);
+    if (iequals(key, "COUPLING_INTERVAL")) return std::to_string(opts.coupling_interval);
+    if (iequals(key, "MAX_CVODE_STEPS"))   return std::to_string(opts.max_cvode_steps);
+    if (iequals(key, "REPORT_2D"))         return opts.report_2d ? "YES" : "NO";
+    if (iequals(key, "OUTPUT_FILE"))       return opts.output_file;
+    if (iequals(key, "LINEAR_SOLVER")) {
+        switch (opts.linear_solver) {
+            case LinearSolverType::GMRES:    return "GMRES";
+            case LinearSolverType::BICGSTAB: return "BICGSTAB";
+            case LinearSolverType::TFQMR:    return "TFQMR";
+        }
+        return "GMRES";
+    }
+    if (iequals(key, "PRECONDITIONER")) {
+        switch (opts.preconditioner) {
+            case PreconditionerType::NONE:   return "NONE";
+            case PreconditionerType::JACOBI: return "JACOBI";
+            case PreconditionerType::ILU:    return "ILU";
+        }
+        return "NONE";
+    }
     return {};
 }
 

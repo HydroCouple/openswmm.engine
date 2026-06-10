@@ -552,6 +552,9 @@ SWMM_ENGINE_API int swmm_options_set_report_start(SWMM_Engine engine, double val
 
 /* =========================================================================
  * User flags
+ *
+ * Flag names are case-insensitive: they are stored uppercase, matching the
+ * [USER_FLAGS] INP handler.
  * ========================================================================= */
 
 /**
@@ -589,6 +592,131 @@ SWMM_ENGINE_API int swmm_userflag_set_int (SWMM_Engine engine, const char* name,
 
 /** @brief Set a REAL user flag at runtime. */
 SWMM_ENGINE_API int swmm_userflag_set_real(SWMM_Engine engine, const char* name, double value);
+
+/* -------------------------------------------------------------------------
+ * User flag schema definitions ([USER_FLAGS]) and per-object values
+ * ([USER_FLAG_VALUES]).
+ *
+ * Flag types (matching openswmm::UserFlagType):
+ *   0 = BOOLEAN, 1 = INTEGER, 2 = REAL, 3 = STRING.
+ *
+ * Per-object values use string form symmetric with the INP encoding:
+ * BOOLEAN as YES/NO, INTEGER as %d, REAL as %g, STRING verbatim (no quotes).
+ * Object types and flag names are case-insensitive (stored uppercase);
+ * object names are case-preserved.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @brief Number of user-flag schema definitions.
+ * @param engine  Engine handle.
+ * @param count   [out] Definition count.
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null count.
+ */
+SWMM_ENGINE_API int swmm_userflag_def_count(SWMM_Engine engine, int* count);
+
+/**
+ * @brief Retrieve a user-flag schema definition by index (insertion order).
+ * @param engine       Engine handle.
+ * @param index        Zero-based definition index.
+ * @param name_buf     [out] Flag name (NUL-terminated, truncated to fit). May be NULL.
+ * @param name_buflen  Size of name_buf in bytes.
+ * @param type         [out] Flag type (0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING). May be NULL.
+ * @param desc_buf     [out] Description (empty string if none). May be NULL.
+ * @param desc_buflen  Size of desc_buf in bytes.
+ * @returns SWMM_OK; SWMM_ERR_BADINDEX if index out of range.
+ */
+SWMM_ENGINE_API int swmm_userflag_def_get(
+    SWMM_Engine engine,
+    int         index,
+    char*       name_buf,
+    int         name_buflen,
+    int*        type,
+    char*       desc_buf,
+    int         desc_buflen
+);
+
+/**
+ * @brief Define (or redefine) a user flag.
+ * @param engine       Engine handle.
+ * @param name         Flag name (stored uppercase).
+ * @param type         Flag type (0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING).
+ * @param description  Optional description (may be NULL or empty).
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null/empty name or invalid type.
+ * @details Redefining an existing name overwrites its definition; previously
+ *          assigned per-object values are kept as-is.
+ */
+SWMM_ENGINE_API int swmm_userflag_define(
+    SWMM_Engine engine,
+    const char* name,
+    int         type,
+    const char* description
+);
+
+/**
+ * @brief Remove a user-flag definition and all per-object values assigned to it.
+ * @param engine  Engine handle.
+ * @param name    Flag name (case-insensitive).
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM if the flag is not defined.
+ */
+SWMM_ENGINE_API int swmm_userflag_undefine(SWMM_Engine engine, const char* name);
+
+/**
+ * @brief Read the flag value assigned to a specific object, as a string.
+ * @param engine     Engine handle.
+ * @param obj_type   Object type token (e.g. "NODE", "LINK", "SUBCATCHMENT").
+ * @param obj_name   Object identifier (case-preserved).
+ * @param flag_name  Flag name (case-insensitive).
+ * @param buf        [out] Value string (empty when not assigned).
+ * @param buflen     Size of buf in bytes.
+ * @param found      [out] 1 if a value is assigned, 0 otherwise.
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null arguments.
+ */
+SWMM_ENGINE_API int swmm_userflag_value_get(
+    SWMM_Engine engine,
+    const char* obj_type,
+    const char* obj_name,
+    const char* flag_name,
+    char*       buf,
+    int         buflen,
+    int*        found
+);
+
+/**
+ * @brief Assign a flag value to a specific object from a string.
+ * @param engine     Engine handle.
+ * @param obj_type   Object type token (e.g. "NODE", "LINK", "SUBCATCHMENT").
+ * @param obj_name   Object identifier (case-preserved).
+ * @param flag_name  Flag name; must already be defined (its declared type
+ *                   drives parsing).
+ * @param value      Value string: BOOLEAN accepts YES/NO/TRUE/FALSE/1/0;
+ *                   INTEGER a decimal integer; REAL a decimal number;
+ *                   STRING is stored verbatim.
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null arguments, undefined flag,
+ *          or a value that does not parse as the declared type.
+ */
+SWMM_ENGINE_API int swmm_userflag_value_set(
+    SWMM_Engine engine,
+    const char* obj_type,
+    const char* obj_name,
+    const char* flag_name,
+    const char* value
+);
+
+/**
+ * @brief Remove the flag value assigned to a specific object (mark unset).
+ * @param engine     Engine handle.
+ * @param obj_type   Object type token.
+ * @param obj_name   Object identifier (case-preserved).
+ * @param flag_name  Flag name (case-insensitive).
+ * @returns SWMM_OK (idempotent: clearing an unassigned value succeeds);
+ *          SWMM_ERR_BADPARAM on null arguments.
+ */
+SWMM_ENGINE_API int swmm_userflag_value_clear(
+    SWMM_Engine engine,
+    const char* obj_type,
+    const char* obj_name,
+    const char* flag_name
+);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -210,6 +210,7 @@ class SWMMSubcatchmentProperties(Enum):
     @cvar CURB_LENGTH: Curb length.
     @cvar API_RAINFALL: API rainfall override.
     @cvar API_SNOWFALL: API snowfall override.
+    @cvar API_PET: API prescribed potential evapotranspiration rate override.
     @cvar POLLUTANT_BUILDUP: Pollutant buildup.
     @cvar EXTERNAL_POLLUTANT_BUILDUP: External pollutant buildup.
     @cvar POLLUTANT_RUNOFF_CONCENTRATION: Pollutant runoff concentration.
@@ -264,7 +265,8 @@ class SWMMSubcatchmentProperties(Enum):
     POLLUTANT_RUNOFF_CONCENTRATION = swmm_SubcatchProperty.swmm_SUBCATCH_POLLUTANT_RUNOFF_CONCENTRATION
     POLLUTANT_PONDED_CONCENTRATION = swmm_SubcatchProperty.swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION
     POLLUTANT_TOTAL_LOAD = swmm_SubcatchProperty.swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD
-    
+    API_PET = swmm_SubcatchProperty.swmm_SUBCATCH_API_PET
+
 class SWMMNodeProperties(Enum):
     """Enumeration of SWMM node properties.
 
@@ -422,6 +424,7 @@ class SWMMSystemProperties(Enum):
     @cvar HEAD_TOL: Head tolerance.
     @cvar SYS_FLOW_TOL: System flow tolerance.
     @cvar LAT_FLOW_TOL: Lateral flow tolerance.
+    @cvar EVAP_RATE: Current climate-derived evaporation rate (read-only).
     """
     START_DATE = swmm_SystemProperty.swmm_STARTDATE
     CURRENT_DATE = swmm_SystemProperty.swmm_CURRENTDATE
@@ -464,6 +467,7 @@ class SWMMSystemProperties(Enum):
     HEAD_TOL = swmm_SystemProperty.swmm_HEADTOL
     SYS_FLOW_TOL = swmm_SystemProperty.swmm_SYSFLOWTOL
     LAT_FLOW_TOL = swmm_SystemProperty.swmm_LATFLOWTOL
+    EVAP_RATE = swmm_SystemProperty.swmm_EVAPRATE
 
 # =============================================================================
 # Units / errors enumerations

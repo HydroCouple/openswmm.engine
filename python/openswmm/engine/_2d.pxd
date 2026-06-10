@@ -54,6 +54,18 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_get_cvode_steps(void* engine, long* steps)
     int swmm_2d_get_cvode_last_step(void* engine, double* h_last)
     int swmm_2d_get_stat_max_depths(void* engine, double* max_depths)
+    int swmm_2d_get_stat_max_velocities(void* engine, double* max_velocities)
+    int swmm_2d_get_stat_max_continuity_err(void* engine, double* max_errs)
+    int swmm_2d_get_continuity_error(void* engine, double* err)
+    int swmm_2d_get_mass_balance(void* engine,
+                                 double* init_storage,
+                                 double* final_storage,
+                                 double* rainfall_in,
+                                 double* coupling_1d_to_2d_in,
+                                 double* coupling_2d_to_1d_out,
+                                 double* outfall_in,
+                                 double* boundary_in,
+                                 double* boundary_out)
 
     # Forcing
     int swmm_2d_force_rainfall(void* engine, int idx,

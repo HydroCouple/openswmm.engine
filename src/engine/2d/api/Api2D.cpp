@@ -494,6 +494,60 @@ int swmm_2d_get_stat_max_depths(SWMM_Engine engine, double* max_depths) {
     return SWMM_OK;
 }
 
+int swmm_2d_get_stat_max_velocities(SWMM_Engine engine, double* max_velocities) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!max_velocities) return SWMM_ERR_BADPARAM;
+
+    auto& s = router2d.state();
+    std::memcpy(max_velocities, s.stat_max_velocity.data(),
+                s.stat_max_velocity.size() * sizeof(double));
+    return SWMM_OK;
+}
+
+int swmm_2d_get_stat_max_continuity_err(SWMM_Engine engine, double* max_errs) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!max_errs) return SWMM_ERR_BADPARAM;
+
+    auto& s = router2d.state();
+    std::memcpy(max_errs, s.stat_max_cont_err.data(),
+                s.stat_max_cont_err.size() * sizeof(double));
+    return SWMM_OK;
+}
+
+int swmm_2d_get_continuity_error(SWMM_Engine engine, double* err) {
+    GET_ENGINE(engine);
+    if (!err) return SWMM_ERR_BADPARAM;
+    const auto& mb = eng->context().mass_balance_2d;
+    if (!mb.active) return SWMM_ERR_BADPARAM;
+    *err = mb.error();
+    return SWMM_OK;
+}
+
+int swmm_2d_get_mass_balance(SWMM_Engine engine,
+                             double* init_storage,
+                             double* final_storage,
+                             double* rainfall_in,
+                             double* coupling_1d_to_2d_in,
+                             double* coupling_2d_to_1d_out,
+                             double* outfall_in,
+                             double* boundary_in,
+                             double* boundary_out) {
+    GET_ENGINE(engine);
+    const auto& mb = eng->context().mass_balance_2d;
+    if (!mb.active) return SWMM_ERR_BADPARAM;
+    if (init_storage)          *init_storage          = mb.init_storage;
+    if (final_storage)         *final_storage         = mb.final_storage;
+    if (rainfall_in)           *rainfall_in           = mb.rainfall_in;
+    if (coupling_1d_to_2d_in)  *coupling_1d_to_2d_in  = mb.coupling_1d_to_2d_in;
+    if (coupling_2d_to_1d_out) *coupling_2d_to_1d_out = mb.coupling_2d_to_1d_out;
+    if (outfall_in)            *outfall_in            = mb.outfall_in;
+    if (boundary_in)           *boundary_in           = mb.boundary_in;
+    if (boundary_out)          *boundary_out          = mb.boundary_out;
+    return SWMM_OK;
+}
+
 // ============================================================================
 // 2D Forcing
 // ============================================================================

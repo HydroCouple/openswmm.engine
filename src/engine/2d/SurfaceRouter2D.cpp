@@ -56,7 +56,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // 0.3048 on US-FLOW_UNITS projects.  Coupling-side factors
     // (len_1d_to_2d, vol_1d_to_2d, flow_*) remain driven by FLOW_UNITS
     // because they describe the 1D side of the boundary, not the mesh.
-    if (!options_.mesh_units_si && options_.len_1d_to_2d != 1.0) {
+    if (!options_.mesh_units_si && !options_.mesh_scaled_to_si &&
+        options_.len_1d_to_2d != 1.0) {
         const double f  = options_.len_1d_to_2d;
         const double f2 = f * f;
         for (auto& v : mesh_.vx) v *= f;
@@ -64,6 +65,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         for (auto& v : mesh_.vz) v *= f;
         for (auto& a : mesh_.vert_coupling_area) a *= f2;
         for (auto& a : mesh_.tri_coupling_area)  a *= f2;
+        options_.mesh_scaled_to_si = true;
     }
 
     // Build mesh topology (neighbours, edge geometry, areas)
@@ -153,7 +155,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                 break;
             }
         }
-        pending_bc_rows_.clear();
+        // NOT cleared: retained so InpWriter / GeoPackage can serialize the
+        // authored rows (group label, TS-vs-constant choice, authored
+        // NORMAL_FLOW slope=0 sentinel are unrecoverable from boundary_).
+        // Re-draining on a second initialize() is idempotent because
+        // boundary_.resize() re-defaults every slot first.
     }
 
     // §11A — drain [2D_EDGE_CONVEYANCE] rows.
@@ -217,7 +223,14 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                 mesh_.edge_conveyance[slot] = r.conveyance;
             }
         }
-        pending_edge_conveyance_rows_.clear();
+        // NOT cleared: retained for faithful re-serialization (see the
+        // pending-BC note above). The drain overwrites slots, so a second
+        // initialize() reproduces the same edge_conveyance values.
+
+        // From here on the drained arrays are the live state (API mutators
+        // edit them, not the pending rows) — tell the serialization
+        // collectors to read the arrays instead of the now-stale rows.
+        options_.pending_rows_drained = true;
     }
 
     // Set initial heads from ground elevation

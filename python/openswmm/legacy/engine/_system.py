@@ -80,6 +80,21 @@ class LegacySystem:
         """Lateral flow convergence tolerance."""
         return self._get(SWMMSystemProperties.LAT_FLOW_TOL)
 
+    # --- climate ---
+    def get_evap_rate(self) -> float:
+        """Return the current climate-derived evaporation rate.
+
+        The rate the engine would apply in the absence of any PET
+        prescription, including monthly adjustments (read-only). Intended
+        for caller-side composition with
+        L{LegacySubcatchment.set_api_pet}: read this rate, apply your own
+        adjustment logic, and prescribe the result.
+
+        @return: Evaporation rate in user units (in/day or mm/day).
+        @rtype: float
+        """
+        return self._get(SWMMSystemProperties.EVAP_RATE)
+
     # --- continuity errors ---
     @property
     def runoff_error(self) -> float:
