@@ -214,4 +214,36 @@ TEST_F(TransectInpParserTest, BankStationsReadFromCorrectColumns) {
     EXPECT_DOUBLE_EQ(xRb, 7.5);
 }
 
+// ---------------------------------------------------------------------------
+// Zero channel Manning's n must be rejected with Error 227.
+// Setting nc_channel=0 in the NC line should cause swmm_engine_open to fail
+// and the error message must reference ERROR 227.
+// ---------------------------------------------------------------------------
+
+TEST_F(TransectInpParserTest, ZeroChannelManningIsError227) {
+    const std::string block =
+        "NC 0.04 0.04 0.0\n"
+        "X1 TZN              3       1.0 9.0 0 0 0 0 0\n"
+        "GR 100 0  90 5  100 10\n";
+    EXPECT_FALSE(loadWithTransects(block));
+
+    // The error message must mention ERROR 227.
+    const char* msg = swmm_get_last_error_msg(eng);
+    ASSERT_NE(msg, nullptr);
+    EXPECT_NE(std::string(msg).find("227"), std::string::npos)
+        << "Expected Error 227 for zero channel Manning's n, got: " << msg;
+}
+
+// ---------------------------------------------------------------------------
+// Negative channel Manning's n must also be rejected (existing behaviour).
+// ---------------------------------------------------------------------------
+
+TEST_F(TransectInpParserTest, NegativeChannelManningIsError) {
+    const std::string block =
+        "NC 0.04 0.04 -0.01\n"
+        "X1 TNM              3       1.0 9.0 0 0 0 0 0\n"
+        "GR 100 0  90 5  100 10\n";
+    EXPECT_FALSE(loadWithTransects(block));
+}
+
 } // namespace

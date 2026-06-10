@@ -285,6 +285,7 @@ class SWMMNodeProperties(Enum):
     @cvar INITIAL_DEPTH: Initial depth.
     @cvar POLLUTANT_CONCENTRATION: Pollutant concentration.
     @cvar POLLUTANT_LATERAL_MASS_FLUX: Pollutant lateral mass flux.
+    @cvar OUTFLOW: Total outflow through downstream links.
     """
     TYPE = swmm_NodeProperty.swmm_NODE_TYPE
     INVERT_ELEVATION = swmm_NodeProperty.swmm_NODE_ELEV
@@ -301,6 +302,7 @@ class SWMMNodeProperties(Enum):
     INITIAL_DEPTH = swmm_NodeProperty.swmm_NODE_INITIAL_DEPTH
     POLLUTANT_CONCENTRATION = swmm_NodeProperty.swmm_NODE_POLLUTANT_CONCENTRATION # Pollutant concentration
     POLLUTANT_LATERAL_MASS_FLUX = swmm_NodeProperty.swmm_NODE_POLLUTANT_LATMASS_FLUX # Pollutant inflow concentration
+    OUTFLOW = swmm_NodeProperty.swmm_NODE_OUTFLOW
 
 class SWMMLinkProperties(Enum):
     """Enumeration of SWMM link properties.
