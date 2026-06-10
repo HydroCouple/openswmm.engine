@@ -261,6 +261,21 @@ struct StateAccessors {
 };
 
 // ============================================================================
+// 2D model-IO bridge (forward declarations)
+// ============================================================================
+
+// Plain 2D data structs (all header-only and define-free; see
+// src/engine/2d/data/). Forward-declared so SimulationContext can carry
+// non-owning pointers without pulling the 2D module into every TU.
+namespace twoD {
+struct MeshData;
+struct SolverOptions2D;
+struct BoundaryData;
+struct PendingBoundaryRow;
+struct PendingEdgeConveyanceRow;
+} // namespace twoD
+
+// ============================================================================
 // SimulationContext
 // ============================================================================
 
@@ -478,6 +493,11 @@ struct SimulationContext {
     TransectStore    transects;
     /// Built transect geometry tables (indexed same as transects).
     std::vector<transect::TransectData> transect_tables;
+    /// Bumped whenever a link's cross-section/flow properties are recomputed
+    /// mid-run (C-API setters via recompute_conduit_flow_properties), so
+    /// consumers holding per-link XSectParams caches know to rebuild
+    /// (e.g. SWMMEngine's reporting-path cache).
+    std::uint64_t xsect_generation = 0;
     StreetStore      streets;
     InletStore       inlets;
     InletUsageStore  inlet_usages;
@@ -613,6 +633,34 @@ struct SimulationContext {
      *          without depending on solver types.
      */
     StateAccessors state_accessors;
+
+    /**
+     * @brief Non-owning pointers to the engine's 2D surface-routing model
+     *        storage (mesh, solver options, boundary conditions, parse-time
+     *        pending rows).
+     *
+     * @details Wired by SWMMEngine (wire2DModelIO) so serialization consumers
+     *          — the built-in InpWriter and input plugins such as the
+     *          GeoPackage reader/writer — can read AND populate the 2D model
+     *          without depending on SurfaceRouter2D or the engine. All
+     *          pointers are null when the engine was built without 2D
+     *          support, or for detached/test-built contexts; consumers must
+     *          runtime-guard on the pointers.
+     *
+     *          This member is intentionally UNCONDITIONAL (no
+     *          OPENSWMM_HAS_2D guard): translation units outside the engine
+     *          target (e.g. the geopackage static lib) compile this header
+     *          without that define, and a conditional member would give the
+     *          struct two layouts in one binary. It is also intentionally
+     *          preserved by reset() — it describes wiring, not model data.
+     */
+    struct TwoDModelIO {
+        twoD::MeshData*                              mesh       = nullptr;
+        twoD::SolverOptions2D*                       options    = nullptr;
+        twoD::BoundaryData*                          boundary   = nullptr;
+        std::vector<twoD::PendingBoundaryRow>*       pending_bc = nullptr;
+        std::vector<twoD::PendingEdgeConveyanceRow>* pending_ec = nullptr;
+    } twod_io;
 
     // =========================================================================
     // Error / warning tracking
@@ -1124,7 +1172,15 @@ struct SimulationContext {
     void save_state() noexcept {
         nodes.save_state();
         links.save_state();
-        subcatches.save_state();
+        // NOTE: subcatches.save_state() is intentionally NOT called here.
+        // Subcatchment old-state (old_runoff/old_runon/conc_old) is the
+        // runoff-step snapshot used to linearly interpolate lateral inflow
+        // between runoff evaluations (legacy subcatch_setOldState, called
+        // ONLY inside runoff_execute — i.e. per WET/DRY step, not per routing
+        // step). Saving it here, every routing step, clobbered old_runoff with
+        // the current value so old==new and the lateral inflow jumped to the
+        // full new runoff instantly instead of ramping. It is now saved in the
+        // runoff-advance loop in SWMMEngine::stepRunoff().
     }
 
     /**

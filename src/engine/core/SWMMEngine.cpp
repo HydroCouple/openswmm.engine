@@ -16,6 +16,7 @@
 #include "UnitConversion.hpp"
 #include "../hydraulics/Link.hpp"
 #include "../hydraulics/XSectBatch.hpp"
+#include "../hydraulics/Outfall.hpp"
 #include "../hydraulics/Node.hpp"
 #include "../hydraulics/ForceMain.hpp"
 #include <cmath>
@@ -25,6 +26,7 @@
 #include "../input/PostParseResolver.hpp"
 #include "../plugins/DefaultInputPlugin.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
+#include "HotStartManager.hpp"
 #include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
 #include "../plugins/DefaultOutputPlugin.hpp"
 #include "../plugins/DefaultReportPlugin.hpp"
@@ -68,7 +70,20 @@ SWMMEngine::SWMMEngine()
     : io_thread_(plugins_)   // IOThread needs a PluginFactory& at construction
 {
     ctx_.state = EngineState::CREATED;
+#ifdef OPENSWMM_HAS_2D
+    wire2DModelIO();
+#endif
 }
+
+#ifdef OPENSWMM_HAS_2D
+void SWMMEngine::wire2DModelIO() noexcept {
+    ctx_.twod_io.mesh       = &surface_router_.mesh();
+    ctx_.twod_io.options    = &surface_router_.options();
+    ctx_.twod_io.boundary   = &surface_router_.boundary();
+    ctx_.twod_io.pending_bc = &surface_router_.pendingBCRows();
+    ctx_.twod_io.pending_ec = &surface_router_.pendingEdgeConveyanceRows();
+}
+#endif
 
 SWMMEngine::~SWMMEngine() {
     if (ctx_.state == EngineState::RUNNING ||
@@ -317,7 +332,55 @@ int SWMMEngine::initialize() noexcept {
         }
     }
 
+    // Type-1 (volume-controlled) pumps: the inlet junction acts as a wet well
+    // whose full volume is the pump curve's maximum volume. Legacy pump_validate
+    // (link.c) overrides the inlet node's fullVolume with the curve's xMax; the
+    // refactored engine otherwise leaves it at MIN_SURFAREA*fullDepth, which
+    // undersizes the volume->flow lookup and makes the pump run on a lower curve
+    // segment (e.g. extran6 pump 90011 ran at 10 cfs instead of 20). Run AFTER
+    // the full_volume loop above so the max() override survives.
+    {
+        const int us = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
+        const double ucf_vol = ucf::Ucf[ucf::VOLUME][us];
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx_.links.type[uj] != LinkType::PUMP) continue;
+            int ci = ctx_.links.pump_curve[uj];
+            if (ci < 0 || ci >= static_cast<int>(ctx_.tables.tables.size())) continue;
+            const auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ci)];
+            if (tbl.type != TableType::CURVE_PUMP1) continue;
+            int n1 = ctx_.links.node1[uj];
+            if (n1 < 0) continue;
+            auto un1 = static_cast<std::size_t>(n1);
+            if (ctx_.nodes.type[un1] == NodeType::STORAGE) continue;
+            // xMax = largest volume on the pump curve (legacy Pump.xMax). The
+            // file-backed x_max field is unset for inline [CURVES], so read the
+            // in-memory x points directly.
+            double xmax = tbl.x_max;
+            if (xmax <= 0.0 && !tbl.x.empty())
+                xmax = *std::max_element(tbl.x.begin(), tbl.x.end());
+            double xmax_internal = xmax / ucf_vol;
+            ctx_.nodes.full_volume[un1] =
+                std::max(ctx_.nodes.full_volume[un1], xmax_internal);
+        }
+    }
+
     // Apply q0 to link flow and compute initial conduit depth (Gap #43)
+    // Cache the translated batch cross-section code for every conduit BEFORE
+    // the initial-state loops below. buildXSectParams()/getAofY() dispatch on
+    // links.xsect_batch_shape, which is otherwise not populated until
+    // routing_init() inside init_modules() — i.e. AFTER these loops. Without
+    // this, getAofY() returned 0 (DUMMY shape) here, so the q0 (fix-#6) and
+    // backwater (fix-#10) initial-volume calculations silently produced zero
+    // storage (e.g. extran2's fixed-outfall backwater, extran8a's q0 conduits),
+    // re-creating that water during step 1 as a false continuity error.
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
+        ctx_.links.xsect_batch_shape[uj] =
+            link::translateShape(ctx_.links.xsect_shape[uj]);
+    }
+
     // Matches legacy link_initState / conduit_initState in link.c:
     //   Link[j].oldFlow = Link[j].newFlow = q0
     //   conduit: newDepth = oldDepth = link_getYnorm(j, q0/barrels)
@@ -327,12 +390,163 @@ int SWMMEngine::initialize() noexcept {
         ctx_.links.flow[uj]     = q0;
         ctx_.links.old_flow[uj] = q0;
         if (ctx_.links.type[uj] == LinkType::CONDUIT && q0 != 0.0) {
-            XSectParams xs = link::buildXSectParams(ctx_.links, uj);
+            XSectParams xs = link::buildXSectParams(ctx_.links, uj, &ctx_.transect_tables);
             int barrels = ctx_.links.barrels[uj];
             double q_per_barrel = std::fabs(q0) / std::max(barrels, 1);
             double y = link::getDepthFromFlow(xs, ctx_.links.beta[uj], q_per_barrel);
             ctx_.links.depth[uj]     = y;
             ctx_.links.old_depth[uj] = y;
+            // Initial conduit storage volume = area(y) * length * barrels,
+            // matching legacy flowrout.c (Link.newVolume = Conduit.a1 * length
+            // * barrels). Without this the routing mass-balance "Initial Stored
+            // Volume" omitted conduits that start with flow (e.g. extran8a
+            // q0=20), producing a large false continuity error (-22%).
+            double vol = xsect::getAofY(xs, y) * ctx_.links.length[uj] * barrels;
+            ctx_.links.volume[uj]     = vol;
+            ctx_.links.old_volume[uj] = vol;
+        }
+    }
+
+    // initNodeDepths (legacy flowrout.c): seed each non-storage / non-outfall
+    // junction's initial depth from the AVERAGE of its connecting links' flow
+    // depths (y = link.depth + offset1), so a node on a q0 conduit inherits that
+    // conduit's normal depth. Without this the junction starts dry (at invert)
+    // while the conduit starts with q0 flow, so there is zero head gradient and
+    // the q0 flow COLLAPSES in the first routing step — extran8a's chain
+    // 10081/10082 dropped 20→0 cfs and the inflow backed up and flooded
+    // (continuity +23.8%). User-supplied initial depths and storage / outfall
+    // boundary depths are preserved (set below). Must run AFTER the q0 loop
+    // (which sets link depths) and BEFORE the q0=0 backwater fill (which reads
+    // node depths).
+    {
+        const int us = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
+        const int nn = ctx_.n_nodes();
+        std::vector<double> acc(static_cast<std::size_t>(nn), 0.0);
+        std::vector<int>    cnt(static_cast<std::size_t>(nn), 0);
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            double ld = ctx_.links.depth[uj];
+            double y  = (ld > constants::FUDGE) ? ld + ctx_.links.offset1[uj] : 0.0;
+            int n1 = ctx_.links.node1[uj];
+            int n2 = ctx_.links.node2[uj];
+            if (n1 >= 0) { acc[static_cast<std::size_t>(n1)] += y; ++cnt[static_cast<std::size_t>(n1)]; }
+            if (n2 >= 0) { acc[static_cast<std::size_t>(n2)] += y; ++cnt[static_cast<std::size_t>(n2)]; }
+        }
+        for (int i = 0; i < nn; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (ctx_.nodes.type[ui] == NodeType::OUTFALL) continue;
+            if (ctx_.nodes.type[ui] == NodeType::STORAGE) continue;
+            if (ctx_.nodes.init_depth[ui] > 0.0) continue;   // user-supplied depth
+            if (cnt[ui] <= 0) continue;
+            double y = acc[ui] / static_cast<double>(cnt[ui]);
+            if (y <= 0.0) continue;
+            ctx_.nodes.depth[ui]     = y;
+            ctx_.nodes.old_depth[ui] = y;
+            ctx_.nodes.head[ui]      = ctx_.nodes.invert_elev[ui] + y;
+            double vol = node::getVolume(ctx_.nodes, i, y, &ctx_.tables, us);
+            ctx_.nodes.volume[ui]     = vol;
+            ctx_.nodes.old_volume[ui] = vol;
+        }
+    }
+
+    // Set outfall-node boundary depths (legacy link_setOutfallDepth), then
+    // backfill each remaining conduit's initial depth to the average of its
+    // end-node depths (legacy initLinkDepths in flowrout.c). Conduits sitting
+    // below a fixed/tidal outfall stage thereby start with their standing
+    // backwater counted as INITIAL stored volume, instead of that water being
+    // created during the first routing step and showing up as a continuity
+    // error (e.g. extran2's fixed 94.4 ft outfall backs ~1.57 ac-ft into the
+    // downstream trapezoidal channels).
+    // Set FIXED-outfall node depths from their stage (= stage − invert), so the
+    // downstream conduit backwater can be computed below. Done inline rather
+    // than via outfall::setAllOutfallDepths because that routine's
+    // outfall→conduit cache is not populated until init_modules (and it gives
+    // FREE/NORMAL outfalls zero depth at zero initial flow anyway).
+    for (int oi = 0; oi < ctx_.n_nodes(); ++oi) {
+        auto uo = static_cast<std::size_t>(oi);
+        if (ctx_.nodes.type[uo] != NodeType::OUTFALL) continue;
+        if (ctx_.nodes.outfall_type[uo] == OutfallType::FIXED) {
+            double stage = ctx_.nodes.outfall_param[uo];  // internal ft
+            ctx_.nodes.depth[uo] =
+                std::max(0.0, stage - ctx_.nodes.invert_elev[uo]);
+        }
+    }
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
+        if (ctx_.links.q0[uj] != 0.0) continue;  // q0 conduits already at normal depth
+        double yfull = ctx_.links.xsect_y_full[uj];
+        int n1 = ctx_.links.node1[uj];
+        int n2 = ctx_.links.node2[uj];
+        if (n1 < 0 || n2 < 0) continue;
+        double y1 = std::clamp(ctx_.nodes.depth[static_cast<std::size_t>(n1)]
+                               - ctx_.links.offset1[uj], 0.0, yfull);
+        double y2 = std::clamp(ctx_.nodes.depth[static_cast<std::size_t>(n2)]
+                               - ctx_.links.offset2[uj], 0.0, yfull);
+        double y = std::max(0.5 * (y1 + y2), constants::FUDGE);
+        ctx_.links.depth[uj]     = y;
+        ctx_.links.old_depth[uj] = y;
+        XSectParams xs = link::buildXSectParams(ctx_.links, uj,
+                                                &ctx_.transect_tables);
+        int barrels = std::max(ctx_.links.barrels[uj], 1);
+        double vol = xsect::getAofY(xs, y) * ctx_.links.length[uj] * barrels;
+        ctx_.links.volume[uj]     = vol;
+        ctx_.links.old_volume[uj] = vol;
+    }
+
+    // ── USE HOTSTART: load saved routing state from a hot-start file ──
+    // Legacy SWMM applies the hotstart in routing_open(), OVERRIDING the q0 /
+    // initLinkDepths initial state with the saved node depths and link flows.
+    // The refactored CLI previously never consumed ctx.files.hotstart_use_path
+    // at all, so a continuation run (extran8b USEing the file extran8a SAVEd)
+    // started cold from q0 (Initial Stored Volume 0.993) instead of the
+    // hot-started state legacy loads (1.396). Apply it here — AFTER the q0 /
+    // backwater init loops (which it overrides) and BEFORE init_modules() so the
+    // DW solver seeds area_mid_ from the hot-started link depths, and before the
+    // old_net_inflow seeding below (which reads the hot-started link flows).
+    bool hotstart_loaded = false;
+    if (!ctx_.files.hotstart_use_path.empty()) {
+        const std::string& hs_path =
+            !ctx_.files.hotstart_use_path.absolute.empty()
+                ? ctx_.files.hotstart_use_path.absolute
+                : ctx_.files.hotstart_use_path.original;
+        // Read the legacy EPA SWMM5 `.hsf` routing state (the format SAVE writes
+        // and the de-facto interchange format). Native OPENSWMM_HS_V1 files are
+        // applied via the C-API swmm_hotstart_apply path instead.
+        const int rc = HotStartManager::apply_legacy_routing(hs_path, ctx_);
+        if (rc != 0) {
+            set_error(CFFI_ERR_HOTSTART,
+                      ("USE HOTSTART: " + HotStartManager::last_io_error()).c_str());
+            return CFFI_ERR_HOTSTART;
+        }
+        hotstart_loaded = true;
+        // Recompute derived state from the applied depths/flows so continuity,
+        // the area_mid_ seeding in init_modules(), and the old_net_inflow seeding
+        // below all start from the hot-started state (legacy initNodes / initLinks).
+        const int us_hs = ucf::getUnitSystem(
+            static_cast<int>(ctx_.options.flow_units));
+        for (int i = 0; i < ctx_.n_nodes(); ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            double y = ctx_.nodes.depth[ui];
+            ctx_.nodes.old_depth[ui] = y;
+            ctx_.nodes.head[ui]      = ctx_.nodes.invert_elev[ui] + y;
+            double vol = node::getVolume(ctx_.nodes, i, y, &ctx_.tables, us_hs);
+            ctx_.nodes.volume[ui]     = vol;
+            ctx_.nodes.old_volume[ui] = vol;
+        }
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            ctx_.links.old_flow[uj] = ctx_.links.flow[uj];
+            if (ctx_.links.type[uj] == LinkType::CONDUIT) {
+                double y = ctx_.links.depth[uj];
+                ctx_.links.old_depth[uj] = y;
+                XSectParams xs = link::buildXSectParams(ctx_.links, uj,
+                                                        &ctx_.transect_tables);
+                int barrels = std::max(ctx_.links.barrels[uj], 1);
+                double vol = xsect::getAofY(xs, y) * ctx_.links.length[uj] * barrels;
+                ctx_.links.volume[uj]     = vol;
+                ctx_.links.old_volume[uj] = vol;
+            }
         }
     }
 
@@ -343,6 +557,57 @@ int SWMMEngine::initialize() noexcept {
 
     // Initialize all computational modules (batch SoA setup)
     init_modules();
+
+    // Seed node inflow/outflow from the initial link flows so the FIRST
+    // routing step's trapezoidal node-continuity term reads the correct
+    // old_net_inflow. The per-step save_state() (called before the first
+    // stepRouting) records old_net_inflow = inflow - outflow; legacy gets the
+    // matching value because initNodes (flowrout.c:461-473) distributes each
+    // link's initial flow to its end nodes and node_setOldHydState then stores
+    // oldNetInflow = inflow - outflow. Without this a node draining a conduit
+    // that starts with flow (q0 != 0, e.g. extran8a node 30081 with 20 cfs out
+    // via conduit 10081) began step 0 with old_net_inflow = 0 instead of -20,
+    // biasing dV = 0.5*(old_net_inflow + dQ)*dt and the first-step depth by
+    // ~0.01 ft, seeding a slowly-decaying ~0.09 cfs startup transient. The DW
+    // per-step initNodeStates zeroes inflow before re-accumulating, so this
+    // seed is consumed only by the step-0 save_state and never double-counted.
+    // Faithful port of legacy initNodes (flowrout.c:440-473): each node's
+    // initial inflow is SEEDED with its lateral flow (line 443
+    // `Node[i].inflow = Node[i].newLatFlow`) before the link flows are
+    // distributed. For a cold start nodes.lat_flow is still 0 here (lateral
+    // inflows are not assembled until stepping), so this term vanishes and the
+    // result is identical to the link-only seeding. For a USE HOTSTART run,
+    // apply_legacy_routing loaded the saved newLatFlow into nodes.lat_flow
+    // (e.g. extran8b node 30081 = +20 cfs, balancing its q0=20 drain conduit
+    // 10081), exactly as legacy readRouting sets Node[].newLatFlow before
+    // initNodes folds it in. Omitting it left node 30081 at
+    // old_net_inflow = (link in 0.022 − link out 19.99) = −19.97 instead of the
+    // legacy (+20 + 0.022 − 19.99) = +0.029 — a 20-cfs step-0 seed error that
+    // this fold removes so the trapezoidal dV = 0.5*(old_net_inflow + dQ)*dt
+    // bit-matches legacy at step 0. (It does NOT close extran8b's remaining
+    // ~0.5 cfs headline flowΔ: a fine-resolution diff shows the first
+    // divergence is ~1.7e-4 on the 0.025-cfs flow in conduit 10006 at t=200s —
+    // i.e. at the float32 floor of the SAVEd hot-start state — which then
+    // amplifies through the stiff rising storm-wave, the same network seed-
+    // amplification class as user2/user5/user3, not a local arithmetic bug.)
+    (void)hotstart_loaded;
+    for (int i = 0; i < ctx_.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        ctx_.nodes.inflow[ui] += ctx_.nodes.lat_flow[ui];
+    }
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        double q = ctx_.links.flow[uj];
+        int n1 = ctx_.links.node1[uj];
+        int n2 = ctx_.links.node2[uj];
+        if (q >= 0.0) {
+            if (n1 >= 0) ctx_.nodes.outflow[static_cast<std::size_t>(n1)] += q;
+            if (n2 >= 0) ctx_.nodes.inflow[static_cast<std::size_t>(n2)]  += q;
+        } else {
+            if (n1 >= 0) ctx_.nodes.inflow[static_cast<std::size_t>(n1)]  -= q;
+            if (n2 >= 0) ctx_.nodes.outflow[static_cast<std::size_t>(n2)] -= q;
+        }
+    }
 
     ctx_.state = EngineState::INITIALIZED;
     return SWMM_OK;
@@ -540,13 +805,16 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     const double total_sec_clamp = (ctx_.options.end_date - ctx_.options.start_date) * 86400.0;
     double next_routing_time = std::min(routing_time + dt_routing, total_sec_clamp);
     while (new_runoff_time_ < next_routing_time) {
-        // Save old runoff, runon, and GW state for interpolation
-        // (matching legacy subcatch_setOldState + gw oldFlow/newFlow)
+        // Save old runoff/runon/conc + GW state for interpolation at the RUNOFF
+        // step cadence (matching legacy subcatch_setOldState, which legacy calls
+        // inside runoff_execute — NOT per routing step). subcatches.save_state()
+        // snapshots old_runoff/old_runon_inflow/conc_old; old_gw_flow is saved
+        // separately (not covered by save_state). This is the ONLY place the
+        // subcatch old-state is taken (see SimulationContext::save_state()).
+        ctx_.subcatches.save_state();
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
             auto ui = static_cast<std::size_t>(i);
-            ctx_.subcatches.old_runoff[ui]       = ctx_.subcatches.runoff[ui];
-            ctx_.subcatches.old_runon_inflow[ui]  = ctx_.subcatches.runon_inflow[ui];
-            ctx_.subcatches.old_gw_flow[ui]      = ctx_.subcatches.gw_flow[ui];
+            ctx_.subcatches.old_gw_flow[ui] = ctx_.subcatches.gw_flow[ui];
         }
 
         // Advance runoff clock
@@ -1750,10 +2018,13 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
 
         // Save previous iteration flows for under-relaxation
         // Only save non-conduit flows (much smaller than iterating all links)
-        thread_local std::vector<double> q_prev;
+        thread_local std::vector<double> q_prev, dqdh_prev;
         q_prev.resize(nc_idx.size());
+        dqdh_prev.resize(nc_idx.size());
         for (std::size_t k = 0; k < nc_idx.size(); ++k) {
-            q_prev[k] = links.flow[static_cast<std::size_t>(nc_idx[k])];
+            auto uj = static_cast<std::size_t>(nc_idx[k]);
+            q_prev[k]    = links.flow[uj];
+            dqdh_prev[k] = links.dqdh[uj];
         }
 
         // Compute all non-conduit link flows (sets links.flow for non-conduits).
@@ -1765,6 +2036,21 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         //     findNonConduitSurfArea) so weir/orifice-fed junctions don't
         //     get an undersized denominator in setNodeDepth.
         hydstruct_.computeAllFlows(ctx, dt, dw.nodeNewSurfAreaDataMut());
+
+        // PARITY: hold the flow/dqdh of any bypassed non-conduit (both end nodes
+        // converged) at the previous iteration's value — legacy findLinkFlows
+        // skips findNonConduitFlow for bypassed links. computeAllFlows above
+        // recomputed every structure unconditionally; restore the held values so
+        // a settled weir/orifice/pump matches legacy bit-for-bit. (Restoring
+        // flow makes the under-relaxation below a no-op for these links.)
+        for (std::size_t k = 0; k < nc_idx.size(); ++k) {
+            int j = nc_idx[k];
+            if (dw.isBypassed(j)) {
+                auto uj = static_cast<std::size_t>(j);
+                links.flow[uj] = q_prev[k];
+                links.dqdh[uj] = dqdh_prev[k];
+            }
+        }
 
         // Apply under-relaxation and scatter to nodes
         for (std::size_t k = 0; k < nc_idx.size(); ++k) {
@@ -1882,6 +2168,17 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
  *
  * @param dt_routing  Routing timestep (seconds).
  */
+void SWMMEngine::ensureXspCache() noexcept {
+    const auto n = static_cast<std::size_t>(ctx_.n_links());
+    if (xsp_cache_.size() == n && xsp_cache_gen_ == ctx_.xsect_generation)
+        return;
+    xsp_cache_.resize(n);
+    for (std::size_t uj = 0; uj < n; ++uj)
+        xsp_cache_[uj] = link::buildXSectParams(ctx_.links, uj,
+                                                &ctx_.transect_tables);
+    xsp_cache_gen_ = ctx_.xsect_generation;
+}
+
 void SWMMEngine::updateStatistics(double dt_routing) noexcept {
     const int np = ctx_.n_pollutants();
 
@@ -1962,6 +2259,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             }
         }
     }
+    ensureXspCache();
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         double q = std::fabs(ctx_.links.flow[uj]);
@@ -1978,8 +2276,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         // guards on depth <= 0.01, and divides flow by barrels.
         double vel = 0.0;
         if (ctx_.links.type[uj] == LinkType::CONDUIT) {
-            XSectParams xs = link::buildXSectParams(ctx_.links, uj);
-            vel = link::getVelocity(xs, q, ctx_.links.depth[uj],
+            vel = link::getVelocity(xsp_cache_[uj], q, ctx_.links.depth[uj],
                                      ctx_.links.barrels[uj]);
         }
         if (vel > ctx_.links.stat_max_veloc[uj])
@@ -2450,6 +2747,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 const int nL = ctx_.n_links();
                 snap.links.velocity.resize(static_cast<std::size_t>(nL));
                 snap.links.capacity.resize(static_cast<std::size_t>(nL));
+                ensureXspCache();
                 for (int j = 0; j < nL; ++j) {
                     auto uj = static_cast<std::size_t>(j);
                     double q = ctx_.links.flow[uj];
@@ -2459,7 +2757,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
 
                     auto lt = ctx_.links.type[uj];
                     if (lt == LinkType::CONDUIT) {
-                        XSectParams xs = link::buildXSectParams(ctx_.links, uj);
+                        const XSectParams& xs = xsp_cache_[uj];
                         veloc = link::getVelocity(xs, q, d, ctx_.links.barrels[uj]);
                         cap   = link::getCapacity(xs, d);
                     } else {
@@ -2671,6 +2969,10 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     snap.surface_face_vx        = st.face_vx;
     snap.surface_face_vy        = st.face_vy;
     snap.surface_continuity_err = st.cell_continuity_err;
+    // Cumulative rendering envelopes (SI-native; not display-converted).
+    snap.surface_stat_max_depth    = st.stat_max_depth;
+    snap.surface_stat_max_velocity = st.stat_max_velocity;
+    snap.surface_stat_max_cont_err = st.stat_max_cont_err;
 #else
     (void)snap;
 #endif
@@ -2693,6 +2995,7 @@ void SWMMEngine::accumulateAvgResults() noexcept {
     }
 
     // Link accumulators: flow, depth, velocity, volume, capacity
+    ensureXspCache();
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         double q = ctx_.links.flow[uj];
@@ -2704,7 +3007,7 @@ void SWMMEngine::accumulateAvgResults() noexcept {
 
         auto lt = ctx_.links.type[uj];
         if (lt == LinkType::CONDUIT) {
-            XSectParams xs = link::buildXSectParams(ctx_.links, uj);
+            const XSectParams& xs = xsp_cache_[uj];
             avg_.link_velocity[uj] += link::getVelocity(xs, q, d, ctx_.links.barrels[uj]);
             avg_.link_capacity[uj] += link::getCapacity(xs, d);
         } else {
@@ -3480,12 +3783,18 @@ void SWMMEngine::initHydrology() noexcept {
         int evap_type = ctx_.options.evap_type;
         if (evap_type == 0) {
             // CONSTANT
+            // EVAPRATE units follow the project's unit system: in/day (US) or
+            // mm/day (SI). The conversion factor must therefore be selected by
+            // the model's flow-unit system, not hardcoded to the US index — an
+            // SI (CMS) model with `CONSTANT 3.0` means 3 mm/day, and using the
+            // US factor (1036800 vs 26334720) over-evaporates by ~25×.
             ctx_.climate_state.evap_method = climate::EvapMethod::CONSTANT;
             ctx_.climate_state.evap_rate = ctx_.options.evap_values[0]
-                               / ucf::Ucf[ucf::EVAPRATE][0];
+                               / ucf::UCF(ucf::EVAPRATE, ctx_.options);
         } else if (evap_type == 1) {
             // MONTHLY
             ctx_.climate_state.evap_method = climate::EvapMethod::MONTHLY;
+            ctx_.climate_state.evaprate_ucf = ucf::UCF(ucf::EVAPRATE, ctx_.options);
             for (int i = 0; i < 12; ++i)
                 ctx_.climate_state.monthly_evap[i] = ctx_.options.evap_values[i];
         } else if (evap_type == 2) {
@@ -3913,6 +4222,35 @@ void SWMMEngine::initGeometry() noexcept {
         // Track node degree (connectivity count)
         ctx_.nodes.degree[un1]++;
         ctx_.nodes.degree[un2]++;
+    }
+
+    // 12b. PARITY: negate the degree of nodes with NO inflow links so that
+    // `degree < 0` marks an "upstream terminal" node — matching legacy
+    // flowrout.c::validateGeneralLayout. The EXTRAN surcharge depth update
+    // (setNodeDepth) multiplies dy by corr = 0.6 for these nodes
+    // (`if (Node[i].degree < 0) corr = 0.6`); without it a surcharging headwater
+    // junction (e.g. extran1 node 80408, fed only by a 45-cfs external inflow
+    // through a single OUTFLOW conduit) raised its head 1/0.6 = 1.67x too fast.
+    // An "inflow link" is one whose DOWNSTREAM node — node2, or node1 when node1
+    // is an OUTFALL — is this node. Done here, after BOTH degree passes, so the
+    // sign is not clobbered by a subsequent ++.
+    {
+        const int nn = ctx_.n_nodes();
+        std::vector<int> inflow_links(static_cast<std::size_t>(nn), 0);
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            int n1 = ctx_.links.node1[uj];
+            int n2 = ctx_.links.node2[uj];
+            int dn = n2;
+            if (n1 >= 0 && n1 < nn &&
+                ctx_.nodes.type[static_cast<std::size_t>(n1)] == NodeType::OUTFALL)
+                dn = n1;
+            if (dn >= 0 && dn < nn) inflow_links[static_cast<std::size_t>(dn)]++;
+        }
+        for (int i = 0; i < nn; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (inflow_links[ui] == 0) ctx_.nodes.degree[ui] = -ctx_.nodes.degree[ui];
+        }
     }
 
     // 13. Initialize node full volumes

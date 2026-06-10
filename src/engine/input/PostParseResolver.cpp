@@ -295,11 +295,30 @@ void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
     auto uj = static_cast<std::size_t>(j);
     if (ctx.links.type[uj] != LinkType::CONDUIT) return;
 
+    // Signal XSectParams-cache holders (e.g. SWMMEngine's reporting cache)
+    // that this link's cross-section-derived fields are changing.
+    ++ctx.xsect_generation;
+
     double n_val    = ctx.links.roughness[uj];
     double slope    = std::fabs(ctx.links.slope[uj]);
     double a_full   = ctx.links.xsect_a_full[uj];
     double s_full   = ctx.links.xsect_s_full[uj];
     double s_max    = ctx.links.xsect_s_max[uj];
+
+    // IRREGULAR (transect) conduits take their Manning's n from the transect's
+    // MAIN-CHANNEL roughness, NOT the [CONDUITS] value — legacy link.c:1024
+    //   Conduit[k].roughness = Transect[xsect.transect].roughness;
+    // (Transect.roughness is the un-Lfactor-adjusted main-channel n.) Using the
+    // [CONDUITS] n here made the dynamic-wave friction/conveyance wrong by the
+    // ratio n_conduit/n_transect — e.g. user5's LIB transects (conduit n=0.014
+    // vs transect n=0.04) conveyed ~2.9× too much flow.
+    if (ctx.links.xsect_shape[uj] == XsectShape::IRREGULAR) {
+        int ti = ctx.links.xsect_curve[uj];
+        if (ti >= 0 && static_cast<std::size_t>(ti) < ctx.transects.n_channel.size()) {
+            double nch = ctx.transects.n_channel[static_cast<std::size_t>(ti)];
+            if (nch > 0.0) n_val = nch;
+        }
+    }
 
     if (n_val <= 0.0 || a_full <= 0.0) return;
 
@@ -774,6 +793,10 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (n2 >= 0 && n2 < n_nodes)
             ctx.nodes.degree[static_cast<std::size_t>(n2)]++;
     }
+    // NOTE: the degree SIGN (negated for upstream-terminal nodes, used by the
+    // EXTRAN surcharge corr=0.6 factor) is applied once at the END of node
+    // initialisation in SWMMEngine (after the second, conduit-only degree pass),
+    // matching legacy flowrout.c::validateGeneralLayout.
 
     // -------------------------------------------------------------------------
     // Evaporation timeseries resolution
@@ -849,6 +872,7 @@ void resolve_cross_references(SimulationContext& ctx) {
             td.n_left    = ctx.transects.n_left[ut];
             td.n_right   = ctx.transects.n_right[ut];
             td.n_channel = ctx.transects.n_channel[ut];
+            td.length_factor = ctx.transects.length_factor[ut];
             td.stations  = ctx.transects.stations[ut];
             td.elevations = ctx.transects.elevations[ut];
             td.x_left_bank  = ctx.transects.x_left_bank[ut];

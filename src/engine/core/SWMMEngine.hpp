@@ -325,6 +325,14 @@ private:
     /// OUTPUT_FILE is configured; used in start() to call prepareMeshAndDatasets
     /// once the mesh is built.
     twoD::Default2DOutputPlugin* surface_output_plugin_ = nullptr;
+
+    /// Point ctx_.twod_io at surface_router_'s mesh/options/boundary and
+    /// pending parse rows so serialization consumers (InpWriter, GeoPackage
+    /// reader/writer) can access the 2D model through the context alone.
+    /// Called once from the constructor; SWMMEngine is non-copyable and
+    /// non-movable, so the pointers stay valid for the engine's lifetime,
+    /// and SimulationContext::reset() intentionally preserves them.
+    void wire2DModelIO() noexcept;
 #endif
 
     std::string rpt_path_;  ///< Report file path
@@ -406,6 +414,22 @@ private:
     };
 
     AvgAccumulator avg_;  ///< Averaging accumulator (only used when rpt_averages == true)
+
+    // -----------------------------------------------------------------------
+    // Reporting-path XSectParams cache
+    // -----------------------------------------------------------------------
+    // updateStatistics / postOutputSnapshot / accumulateAvgResults each
+    // rebuilt the full XSectParams gather per conduit per routing step just
+    // to call link::getVelocity. The params are static during a run except
+    // through the C-API editing path, which bumps ctx.xsect_generation via
+    // recompute_conduit_flow_properties — ensureXspCache() compares the
+    // generation and rebuilds only then. Values are verbatim copies of the
+    // same SoA fields, so consumers receive bit-identical inputs.
+    std::vector<XSectParams> xsp_cache_;
+    std::uint64_t xsp_cache_gen_ = ~0ULL;   ///< generation the cache was built at
+
+    /** @brief Rebuild xsp_cache_ if links/xsect state changed (cheap check). */
+    void ensureXspCache() noexcept;
 
     // -----------------------------------------------------------------------
     // Initialization sub-functions (called by init_modules)

@@ -71,6 +71,11 @@ void ShapeGroup::resize(int n) {
 
 void XSectGroups::build(const XSectParams* params, int n_links) {
     groups_.clear();
+    // Invalidate the bypass-mask packed mirrors; they are lazily re-sized on
+    // the next setBypassMask() call against the new group layout.
+    packed_groups_.clear();
+    packed_count_.clear();
+    mask_active_ = false;
 
     // Count links per shape (skip DUMMY=0: non-conduit links that need no geometry)
     constexpr int MAX_SHAPES = 26;
@@ -118,6 +123,11 @@ void XSectGroups::build(const XSectParams* params, int n_links) {
 }
 
 void XSectGroups::attachTransectTables(const SimulationContext& ctx) {
+    // The packed mirrors must include the per-link table pointers; force a
+    // lazy re-init so they pick up the arrays attached below.
+    packed_groups_.clear();
+    packed_count_.clear();
+    mask_active_ = false;
     for (auto& g : groups_) {
         if ((g.shape != XSectShape::IRREGULAR && g.shape != XSectShape::CUSTOM &&
              g.shape != XSectShape::STREET_XSECT) || g.count == 0) continue;
@@ -957,8 +967,10 @@ void XSectGroups::computeAreaHydRadTriple(
     double* a1, double* a2, double* am,
     double* hrad1, double* hrad_mid, int /*n_links*/) const
 {
-    for (const auto& g : groups_) {
-        if (g.count == 0) continue;
+    for (std::size_t gi = 0; gi < groups_.size(); ++gi) {
+        const ShapeGroup* gp = maskedGroup(gi);
+        if (!gp || gp->count == 0) continue;
+        const auto& g = *gp;
 
         double* ld = g.buf_d.data();
         double* la = g.buf_r.data();
@@ -989,12 +1001,83 @@ void XSectGroups::computeAreaHydRadTriple(
 // computeLinkGeometry.
 // ============================================================================
 
+void XSectGroups::setBypassMask(const std::uint8_t* bypassed_by_link) const {
+    mask_active_ = (bypassed_by_link != nullptr);
+    if (!mask_active_) return;
+
+    // Lazy (re)build of the packed mirrors. The group layout is static after
+    // build()/attachTransectTables() (both clear the mirrors), so sizing them
+    // once per layout is enough; per-call work below only repacks contents.
+    if (packed_groups_.size() != groups_.size()) {
+        packed_groups_.clear();
+        packed_groups_.resize(groups_.size());
+        packed_count_.assign(groups_.size(), kMaskFullGroup);
+        for (std::size_t gi = 0; gi < groups_.size(); ++gi) {
+            const auto& g = groups_[gi];
+            auto& p = packed_groups_[gi];
+            p.shape = g.shape;
+            p.resize(g.count);
+            if (!g.area_tables.empty()) {
+                auto uc = static_cast<std::size_t>(g.count);
+                p.area_tables.resize(uc, nullptr);
+                p.hrad_tables.resize(uc, nullptr);
+                p.width_tables.resize(uc, nullptr);
+                p.transect_tbl_size = g.transect_tbl_size;
+            }
+        }
+    }
+
+    for (std::size_t gi = 0; gi < groups_.size(); ++gi) {
+        const auto& g = groups_[gi];
+        auto& p = packed_groups_[gi];
+        if (g.count == 0) { packed_count_[gi] = kMaskFullGroup; continue; }
+
+        // Cheap pre-count so the common all-active case (early Picard
+        // iterations, unconverged regions) pays one byte-scan and no copies.
+        int nb = 0;
+        for (int k = 0; k < g.count; ++k)
+            nb += bypassed_by_link[g.link_idx[static_cast<std::size_t>(k)]] ? 1 : 0;
+        if (nb == 0)       { packed_count_[gi] = kMaskFullGroup; continue; }
+        if (nb == g.count) { packed_count_[gi] = 0;              continue; }
+
+        const bool has_tbl = !g.area_tables.empty();
+        int n = 0;
+        for (int k = 0; k < g.count; ++k) {
+            auto uk = static_cast<std::size_t>(k);
+            const int li = g.link_idx[uk];
+            if (bypassed_by_link[li]) continue;
+            auto un = static_cast<std::size_t>(n);
+            p.link_idx[un]   = li;
+            p.y_full[un]     = g.y_full[uk];
+            p.inv_y_full[un] = g.inv_y_full[uk];
+            p.a_full[un]     = g.a_full[uk];
+            p.r_full[un]     = g.r_full[uk];
+            p.s_full[un]     = g.s_full[uk];
+            p.w_max[un]      = g.w_max[uk];
+            p.y_bot[un]      = g.y_bot[uk];
+            p.a_bot[un]      = g.a_bot[uk];
+            p.s_bot[un]      = g.s_bot[uk];
+            p.r_bot[un]      = g.r_bot[uk];
+            if (has_tbl) {
+                p.area_tables[un]  = g.area_tables[uk];
+                p.hrad_tables[un]  = g.hrad_tables[uk];
+                p.width_tables[un] = g.width_tables[uk];
+            }
+            ++n;
+        }
+        p.count = n;  // the kernels and gather/scatter read the view's count
+        packed_count_[gi] = n;
+    }
+}
+
 void XSectGroups::computeWidthsTriple(
     const double* d1, const double* d2, const double* dm,
     double* w1, double* w2, double* wm, int /*n_links*/) const
 {
-    for (const auto& g : groups_) {
-        if (g.count == 0) continue;
+    for (std::size_t gi = 0; gi < groups_.size(); ++gi) {
+        const ShapeGroup* gp = maskedGroup(gi);
+        if (!gp || gp->count == 0) continue;
+        const auto& g = *gp;
 
         double* ld = g.buf_d.data();
         double* lw = g.buf_r.data();

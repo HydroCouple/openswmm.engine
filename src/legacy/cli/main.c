@@ -7,11 +7,19 @@
 * to be run with swmm5.dll.
 * \version 5.3
 */
+#include <math.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
 #include "openswmm_solver.h"
 #include "legacy_version.h"
+
+/* Seconds elapsed between two timespec marks (monotonic clock). */
+static double secs_between(const struct timespec *a, const struct timespec *b)
+{
+    return (double)(b->tv_sec - a->tv_sec)
+         + (double)(b->tv_nsec - a->tv_nsec) * 1e-9;
+}
 
 /*!
 * \brief Main function for the command line version of EPA SWMM 5.3
@@ -84,8 +92,66 @@ int  main(int argc, char *argv[])
             LEGACY_SWMM_VERSION_MAJOR, LEGACY_SWMM_VERSION_MINOR,
             LEGACY_SWMM_VERSION_FULL);
 
-        // --- run SWMM
-        swmm_run(inputFile, reportFile, binaryFile);
+        // --- run SWMM via the documented open/start/step/end/report/close
+        //     sequence (the exact body of swmm_run, swmm5.c:437-495) so each
+        //     phase can be timed.  swmm_run only invokes swmm_report() for a
+        //     scratch output file, i.e. when no binary-output path was given;
+        //     the condition is mirrored here as binaryFile[0] == '\0'.
+        {
+            double elapsedTime = 0.0;
+            long stepCount = 0;
+            int err;
+            struct timespec tpBegin, tpOpen1, tpStart0, tpStart1,
+                            tpLoop1, tpEnd1, tpRpt1, tpDone;
+            double tEnd = 0.0, tReport = 0.0;
+
+            clock_gettime(CLOCK_MONOTONIC, &tpBegin);
+            err = swmm_open(inputFile, reportFile, binaryFile);
+            clock_gettime(CLOCK_MONOTONIC, &tpOpen1);
+            tpStart0 = tpStart1 = tpLoop1 = tpEnd1 = tpRpt1 = tpOpen1;
+
+            if (!err)
+            {
+                clock_gettime(CLOCK_MONOTONIC, &tpStart0);
+                err = swmm_start(1);  /* TRUE: save results, as swmm_run does */
+                clock_gettime(CLOCK_MONOTONIC, &tpStart1);
+                tpLoop1 = tpStart1;
+
+                if (!err)
+                {
+                    do
+                    {
+                        err = swmm_step(&elapsedTime);
+                        stepCount++;
+                    } while (elapsedTime > 0.0 && !err);
+                    clock_gettime(CLOCK_MONOTONIC, &tpLoop1);
+                    printf("\n... %ld steps completed.\n", stepCount);
+                }
+
+                swmm_end();
+                clock_gettime(CLOCK_MONOTONIC, &tpEnd1);
+                tEnd = secs_between(&tpLoop1, &tpEnd1);
+                tpRpt1 = tpEnd1;
+
+                if (!err && binaryFile[0] == '\0')
+                {
+                    swmm_report();
+                    clock_gettime(CLOCK_MONOTONIC, &tpRpt1);
+                    tReport = secs_between(&tpEnd1, &tpRpt1);
+                }
+            }
+
+            swmm_close();
+            clock_gettime(CLOCK_MONOTONIC, &tpDone);
+
+            printf("PHASE_TIMING open=%.4f init=0.0000 start=%.4f "
+                   "step_loop=%.4f steps=%ld end=%.4f report=%.4f total=%.4f\n",
+                   secs_between(&tpBegin, &tpOpen1),
+                   secs_between(&tpStart0, &tpStart1),
+                   secs_between(&tpStart1, &tpLoop1),
+                   stepCount, tEnd, tReport,
+                   secs_between(&tpBegin, &tpDone));
+        }
 
         // Display closing status on console
         runTime = difftime(time(0), start);
