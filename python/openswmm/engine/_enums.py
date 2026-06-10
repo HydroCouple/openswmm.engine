@@ -873,3 +873,20 @@ class FilePathRole(IntEnum):
     HOTSTART_SAVE = 8
     RAINGAGE_DATA = 9
     TIMESERIES_DATA = 10
+
+
+class UserFlagType(IntEnum):
+    """User-flag schema value type for C{swmm_userflag_define}.
+
+    Mirrors C{openswmm::UserFlagType}.
+
+    @cvar BOOLEAN: Boolean flag (INP encoding C{YES}/C{NO}).
+    @cvar INTEGER: Integer flag.
+    @cvar REAL: Real-valued flag.
+    @cvar STRING: Free-text flag (stored verbatim).
+    """
+
+    BOOLEAN = 0
+    INTEGER = 1
+    REAL = 2
+    STRING = 3

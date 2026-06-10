@@ -150,6 +150,24 @@ cdef extern from "openswmm_model.h":
     cdef int swmm_userflag_set_bool(SWMM_Engine e, const char* name, int value)
     cdef int swmm_userflag_set_int(SWMM_Engine e, const char* name, int value)
     cdef int swmm_userflag_set_real(SWMM_Engine e, const char* name, double value)
+    # User-flag schema definitions ([USER_FLAGS]) + per-object values
+    # ([USER_FLAG_VALUES]). Types: 0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING.
+    cdef int swmm_userflag_def_count(SWMM_Engine e, int* count)
+    cdef int swmm_userflag_def_get(SWMM_Engine e, int index,
+                                   char* name_buf, int name_buflen,
+                                   int* type,
+                                   char* desc_buf, int desc_buflen)
+    cdef int swmm_userflag_define(SWMM_Engine e, const char* name, int type,
+                                  const char* description)
+    cdef int swmm_userflag_undefine(SWMM_Engine e, const char* name)
+    cdef int swmm_userflag_value_get(SWMM_Engine e, const char* obj_type,
+                                     const char* obj_name, const char* flag_name,
+                                     char* buf, int buflen, int* found)
+    cdef int swmm_userflag_value_set(SWMM_Engine e, const char* obj_type,
+                                     const char* obj_name, const char* flag_name,
+                                     const char* value)
+    cdef int swmm_userflag_value_clear(SWMM_Engine e, const char* obj_type,
+                                       const char* obj_name, const char* flag_name)
 
 cdef extern from "openswmm_nodes.h":
     # Identity

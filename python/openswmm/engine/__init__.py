@@ -259,7 +259,7 @@ from ._enums import (
     # Nodes / editing
     DividerType, RefType,
     # Tables / model files
-    TableType, FilePathRole,
+    TableType, FilePathRole, UserFlagType,
     # Mass-balance totals
     RunoffTotal, RoutingTotal,
 )
@@ -312,7 +312,7 @@ __all__ = [
     # --- Enumerations: 2D surface routing ---
     "SurfaceForcingMode", "SurfaceBoundaryType",
     "DividerType", "RefType",
-    "TableType", "FilePathRole",
+    "TableType", "FilePathRole", "UserFlagType",
     # --- Enumerations: mass-balance totals ---
     "RunoffTotal", "RoutingTotal",
 ]

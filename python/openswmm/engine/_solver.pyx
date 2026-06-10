@@ -195,6 +195,7 @@ cdef class Solver:
         self._mass_balance = None
         self._editor = None
         self._hotstart = None
+        self._surface2d = None
         self._generation = 0
         # Stash the plugin_lib for ``open()`` to consume. We don't pass it to
         # __init__ purely for symmetry with the v0 surface (which took it via
@@ -823,6 +824,25 @@ cdef class Solver:
             self._hotstart = SaveSchedule(self)
         return self._hotstart
 
+    @property
+    def surface2d(self):
+        """``solver.surface2d`` — the :class:`Surface2D` overland-flow view.
+
+        Mesh queries, per-triangle state, statistics, forcing, edge
+        boundary conditions, and edge conveyance for the 2D diffusion-wave
+        surface. Check :meth:`Surface2D.is_active` before use — a model
+        with no ``[2D_*]`` sections has an inactive surface.
+
+        @return: The cached L{Surface2D} view for this solver's engine.
+        @rtype: Surface2D
+        @raise ImportError: When the extension was built without 2D
+            support.
+        """
+        if self._surface2d is None:
+            from ._2d import Surface2D
+            self._surface2d = Surface2D(self.handle)
+        return self._surface2d
+
     # ------------------------------------------------------------------
     # Runoff interface file
     # ------------------------------------------------------------------
@@ -993,6 +1013,10 @@ cdef class Solver:
 # accessible by attribute or index.
 from collections import namedtuple
 Event = namedtuple("Event", ["start", "end"])
+
+# A user-flag schema definition record: ``(name, type, description)``
+# where ``type`` is 0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING.
+UserFlagDef = namedtuple("UserFlagDef", ["name", "type", "description"])
 
 
 class SimulationOptions(MutableMapping):
@@ -1179,8 +1203,13 @@ class UserFlags(MutableMapping):
     Python value of the right native type. Writing chooses the matching
     C setter based on ``type(value)``.
 
-    ``del solver.userflags[name]`` is not supported (the C API has no
-    delete operation).
+    ``del solver.userflags[name]`` removes the flag's schema definition and
+    every per-object value assigned to it (``swmm_userflag_undefine``).
+
+    Beyond the mapping interface, the view exposes the ``[USER_FLAGS]``
+    schema (:meth:`define`, :meth:`undefine`, :meth:`definitions`) and the
+    ``[USER_FLAG_VALUES]`` per-object values (:meth:`get_value`,
+    :meth:`set_value`, :meth:`clear_value`).
     """
 
     def __init__(self, solver):
@@ -1193,8 +1222,11 @@ class UserFlags(MutableMapping):
         cdef bytes b = (<str>key).encode('utf-8')
         cdef int iv = 0
         cdef double dv = 0.0
-        # Try bool first, then int, then real. If all three return
-        # SWMM_ERR_BADPARAM the key isn't a user flag at all.
+        cdef char sbuf[512]
+        cdef int found = 0
+        # Try bool first, then int, then real, then string (the scalar
+        # store is the MODEL-scoped per-object value). If all four fail
+        # the key isn't a user flag at all.
         cdef int rc = swmm_userflag_get_bool(h, b, &iv)
         if rc == 0:
             return bool(iv)
@@ -1204,6 +1236,9 @@ class UserFlags(MutableMapping):
         rc = swmm_userflag_get_real(h, b, &dv)
         if rc == 0:
             return float(dv)
+        rc = swmm_userflag_value_get(h, b"MODEL", b"", b, sbuf, 512, &found)
+        if rc == 0 and found:
+            return sbuf.decode('utf-8')
         raise KeyError(key)
 
     def __setitem__(self, key, value):
@@ -1211,28 +1246,41 @@ class UserFlags(MutableMapping):
             raise TypeError(f"user flag name must be str, got {type(key).__name__}")
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = (<str>key).encode('utf-8')
+        cdef bytes b_val
         if isinstance(value, bool):
             _check(swmm_userflag_set_bool(h, b, 1 if value else 0))
         elif isinstance(value, int):
             _check(swmm_userflag_set_int(h, b, <int>value))
         elif isinstance(value, float):
             _check(swmm_userflag_set_real(h, b, <double>value))
+        elif isinstance(value, str):
+            # Mirror the typed setters: auto-define as STRING, then store
+            # the MODEL-scoped value.
+            _check(swmm_userflag_define(h, b, 3, b""))
+            b_val = (<str>value).encode('utf-8')
+            _check(swmm_userflag_value_set(h, b"MODEL", b"", b, b_val))
         else:
             raise TypeError(
-                "user flag value must be bool, int, or float; got "
+                "user flag value must be bool, int, float, or str; got "
                 + type(value).__name__
             )
 
     def __delitem__(self, key):
-        raise TypeError("user flags cannot be deleted")
+        if not isinstance(key, str):
+            raise TypeError(f"user flag name must be str, got {type(key).__name__}")
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = (<str>key).encode('utf-8')
+        if swmm_userflag_undefine(h, b) != 0:
+            raise KeyError(key)
 
     def __iter__(self):
-        # The C API doesn't expose enumeration; clients must know the
-        # flag names. Empty iterator is the honest answer.
-        return iter(())
+        return iter([d.name for d in self.definitions()])
 
     def __len__(self) -> int:
-        return 0
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int v = 0
+        _check(swmm_userflag_def_count(h, &v))
+        return v
 
     def __contains__(self, key) -> bool:
         try:
@@ -1242,6 +1290,145 @@ class UserFlags(MutableMapping):
             return False
         except TypeError:
             return False
+
+    # -- [USER_FLAGS] schema definitions -----------------------------------
+
+    def define(self, str name, int type, str description="") -> None:
+        """Define (or redefine) a user flag (C{[USER_FLAGS]} schema).
+
+        Redefining an existing name overwrites its definition; previously
+        assigned per-object values are kept as-is.
+
+        @param name: Flag name (stored uppercase).
+        @type name: str
+        @param type: Flag type: 0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING
+            (see L{UserFlagType}).
+        @type type: int
+        @param description: Optional description.
+        @type description: str
+        @return: None
+        @rtype: None
+        @raise EngineError: On empty name or invalid type.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b_name = name.encode('utf-8')
+        cdef bytes b_desc = description.encode('utf-8')
+        _check(swmm_userflag_define(h, b_name, type, b_desc))
+
+    def undefine(self, str name) -> None:
+        """Remove a flag definition and all its per-object values.
+
+        @param name: Flag name (case-insensitive).
+        @type name: str
+        @return: None
+        @rtype: None
+        @raise EngineError: If the flag is not defined.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = name.encode('utf-8')
+        _check(swmm_userflag_undefine(h, b))
+
+    def definitions(self) -> list:
+        """Return every user-flag schema definition, in insertion order.
+
+        @return: List of L{UserFlagDef} named tuples
+            C{(name, type, description)}.
+        @rtype: list[UserFlagDef]
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = 0
+        cdef int t = 0
+        cdef char name_buf[128]
+        cdef char desc_buf[512]
+        _check(swmm_userflag_def_count(h, &n))
+        out = []
+        for i in range(n):
+            _check(swmm_userflag_def_get(h, i, name_buf, 128, &t,
+                                         desc_buf, 512))
+            out.append(UserFlagDef(name_buf.decode('utf-8'), t,
+                                   desc_buf.decode('utf-8')))
+        return out
+
+    # -- [USER_FLAG_VALUES] per-object values -------------------------------
+
+    def get_value(self, str obj_type, str obj_name, str flag_name):
+        """Return the flag value assigned to a specific object, as a string.
+
+        String form is symmetric with the INP encoding: BOOLEAN as
+        C{YES}/C{NO}, INTEGER as a decimal, REAL as C{%g}, STRING verbatim.
+
+        @param obj_type: Object type token (e.g. C{"NODE"}, C{"LINK"},
+            C{"SUBCATCHMENT"}); case-insensitive.
+        @type obj_type: str
+        @param obj_name: Object identifier (case-preserved).
+        @type obj_name: str
+        @param flag_name: Flag name (case-insensitive).
+        @type flag_name: str
+        @return: The value string, or C{None} when no value is assigned.
+        @rtype: str or None
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b_type = obj_type.encode('utf-8')
+        cdef bytes b_name = obj_name.encode('utf-8')
+        cdef bytes b_flag = flag_name.encode('utf-8')
+        cdef char buf[512]
+        cdef int found = 0
+        _check(swmm_userflag_value_get(h, b_type, b_name, b_flag,
+                                       buf, 512, &found))
+        if not found:
+            return None
+        return buf.decode('utf-8')
+
+    def set_value(self, str obj_type, str obj_name, str flag_name,
+                  str value) -> None:
+        """Assign a flag value to a specific object from a string.
+
+        The flag must already be defined (its declared type drives parsing).
+        BOOLEAN accepts C{YES}/C{NO}/C{TRUE}/C{FALSE}/C{1}/C{0}; INTEGER a
+        decimal integer; REAL a decimal number; STRING is stored verbatim.
+
+        @param obj_type: Object type token; case-insensitive.
+        @type obj_type: str
+        @param obj_name: Object identifier (case-preserved).
+        @type obj_name: str
+        @param flag_name: Flag name (case-insensitive); must be defined.
+        @type flag_name: str
+        @param value: Value string parsed per the flag's declared type.
+        @type value: str
+        @return: None
+        @rtype: None
+        @raise EngineError: On undefined flag or a value that does not
+            parse as the declared type.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b_type = obj_type.encode('utf-8')
+        cdef bytes b_name = obj_name.encode('utf-8')
+        cdef bytes b_flag = flag_name.encode('utf-8')
+        cdef bytes b_val = value.encode('utf-8')
+        _check(swmm_userflag_value_set(h, b_type, b_name, b_flag, b_val))
+
+    def clear_value(self, str obj_type, str obj_name, str flag_name) -> None:
+        """Remove the flag value assigned to a specific object (mark unset).
+
+        Clearing an unassigned value succeeds (idempotent).
+
+        @param obj_type: Object type token; case-insensitive.
+        @type obj_type: str
+        @param obj_name: Object identifier (case-preserved).
+        @type obj_name: str
+        @param flag_name: Flag name (case-insensitive).
+        @type flag_name: str
+        @return: None
+        @rtype: None
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b_type = obj_type.encode('utf-8')
+        cdef bytes b_name = obj_name.encode('utf-8')
+        cdef bytes b_flag = flag_name.encode('utf-8')
+        _check(swmm_userflag_value_clear(h, b_type, b_name, b_flag))
 
 
 class EventsView(MutableSequence):

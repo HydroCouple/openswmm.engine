@@ -677,6 +677,143 @@ cdef class ModelBuilder:
         cdef bytes b = name.encode('utf-8')
         _check(swmm_userflag_set_real(self._handle, b, value))
 
+    def define_userflag(self, str name, int type, str description=""):
+        """Define (or redefine) a user-flag schema entry (C{[USER_FLAGS]}).
+
+        Redefining an existing name overwrites its definition; previously
+        assigned per-object values are kept as-is.
+
+        @param name: Flag name (stored uppercase).
+        @type name: str
+        @param type: Flag type: 0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING
+            (see L{UserFlagType}).
+        @type type: int
+        @param description: Optional description.
+        @type description: str
+        @return: None
+        @rtype: None
+        @raise EngineError: On C API failure (empty name or invalid type).
+        """
+        cdef bytes b_name = name.encode('utf-8')
+        cdef bytes b_desc = description.encode('utf-8')
+        _check(swmm_userflag_define(self._handle, b_name, type, b_desc))
+
+    def undefine_userflag(self, str name):
+        """Remove a user-flag definition and all its per-object values.
+
+        @param name: Flag name (case-insensitive).
+        @type name: str
+        @return: None
+        @rtype: None
+        @raise EngineError: If the flag is not defined.
+        """
+        cdef bytes b = name.encode('utf-8')
+        _check(swmm_userflag_undefine(self._handle, b))
+
+    def userflag_def_count(self) -> int:
+        """Return the number of user-flag schema definitions.
+
+        @return: Definition count.
+        @rtype: int
+        @raise EngineError: On C API failure.
+        """
+        cdef int v = 0
+        _check(swmm_userflag_def_count(self._handle, &v))
+        return v
+
+    def get_userflag_def(self, int index) -> tuple:
+        """Return a user-flag schema definition by index (insertion order).
+
+        @param index: Zero-based definition index.
+        @type index: int
+        @return: C{(name, type, description)} where C{type} is 0=BOOLEAN,
+            1=INTEGER, 2=REAL, 3=STRING.
+        @rtype: tuple[str, int, str]
+        @raise EngineError: If C{index} is out of range.
+        """
+        cdef char name_buf[128]
+        cdef char desc_buf[512]
+        cdef int t = 0
+        _check(swmm_userflag_def_get(self._handle, index, name_buf, 128,
+                                     &t, desc_buf, 512))
+        return (name_buf.decode('utf-8'), t, desc_buf.decode('utf-8'))
+
+    def get_userflag_value(self, str obj_type, str obj_name, str flag_name):
+        """Return the flag value assigned to a specific object, as a string.
+
+        String form is symmetric with the INP encoding: BOOLEAN as
+        C{YES}/C{NO}, INTEGER as a decimal, REAL as C{%g}, STRING verbatim.
+
+        @param obj_type: Object type token (e.g. C{"NODE"}, C{"LINK"},
+            C{"SUBCATCHMENT"}); case-insensitive.
+        @type obj_type: str
+        @param obj_name: Object identifier (case-preserved).
+        @type obj_name: str
+        @param flag_name: Flag name (case-insensitive).
+        @type flag_name: str
+        @return: The value string, or C{None} when no value is assigned.
+        @rtype: str or None
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b_type = obj_type.encode('utf-8')
+        cdef bytes b_name = obj_name.encode('utf-8')
+        cdef bytes b_flag = flag_name.encode('utf-8')
+        cdef char buf[512]
+        cdef int found = 0
+        _check(swmm_userflag_value_get(self._handle, b_type, b_name, b_flag,
+                                       buf, 512, &found))
+        if not found:
+            return None
+        return buf.decode('utf-8')
+
+    def set_userflag_value(self, str obj_type, str obj_name, str flag_name,
+                           str value):
+        """Assign a flag value to a specific object from a string.
+
+        The flag must already be defined (its declared type drives parsing).
+        BOOLEAN accepts C{YES}/C{NO}/C{TRUE}/C{FALSE}/C{1}/C{0}; INTEGER a
+        decimal integer; REAL a decimal number; STRING is stored verbatim.
+
+        @param obj_type: Object type token; case-insensitive.
+        @type obj_type: str
+        @param obj_name: Object identifier (case-preserved).
+        @type obj_name: str
+        @param flag_name: Flag name (case-insensitive); must be defined.
+        @type flag_name: str
+        @param value: Value string parsed per the flag's declared type.
+        @type value: str
+        @return: None
+        @rtype: None
+        @raise EngineError: On undefined flag or a value that does not parse
+            as the declared type.
+        """
+        cdef bytes b_type = obj_type.encode('utf-8')
+        cdef bytes b_name = obj_name.encode('utf-8')
+        cdef bytes b_flag = flag_name.encode('utf-8')
+        cdef bytes b_val = value.encode('utf-8')
+        _check(swmm_userflag_value_set(self._handle, b_type, b_name, b_flag,
+                                       b_val))
+
+    def clear_userflag_value(self, str obj_type, str obj_name, str flag_name):
+        """Remove the flag value assigned to a specific object (mark unset).
+
+        Clearing an unassigned value succeeds (idempotent).
+
+        @param obj_type: Object type token; case-insensitive.
+        @type obj_type: str
+        @param obj_name: Object identifier (case-preserved).
+        @type obj_name: str
+        @param flag_name: Flag name (case-insensitive).
+        @type flag_name: str
+        @return: None
+        @rtype: None
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b_type = obj_type.encode('utf-8')
+        cdef bytes b_name = obj_name.encode('utf-8')
+        cdef bytes b_flag = flag_name.encode('utf-8')
+        _check(swmm_userflag_value_clear(self._handle, b_type, b_name, b_flag))
+
     # =========================================================================
     # Plugins
     # =========================================================================

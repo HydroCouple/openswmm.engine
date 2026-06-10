@@ -7,12 +7,28 @@
 * to be run with swmm5.dll.
 * \version 5.3
 */
+#if !defined(_WIN32)
+/* Expose clock_gettime/CLOCK_MONOTONIC under strict -std=c17 (glibc). */
+#define _POSIX_C_SOURCE 199309L
+#endif
+
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
 #include "openswmm_solver.h"
 #include "legacy_version.h"
+
+#if defined(_WIN32)
+/* MSVC has no clock_gettime; the C11 TIME_UTC clock is sufficient for
+   the coarse phase timings reported below. */
+#define CLOCK_MONOTONIC 0
+static int clock_gettime(int clk, struct timespec *tp)
+{
+    (void)clk;
+    return timespec_get(tp, TIME_UTC) == TIME_UTC ? 0 : -1;
+}
+#endif
 
 /* Seconds elapsed between two timespec marks (monotonic clock). */
 static double secs_between(const struct timespec *a, const struct timespec *b)
