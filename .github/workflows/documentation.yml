@@ -2,11 +2,13 @@ name: Documentation
 
 on:
   push:
-    branches: [main, develop]
+#    branches: [main, develop]
+    branches: [main]
     tags: ["v*.*.*"]
     paths: ['docs/**', 'python/docs/**', 'python/openswmm/**', 'include/**', '**/*.md']
   pull_request:
-    branches: [main, develop]
+#    branches: [main, develop]
+    branches: [main]
     paths: ['docs/**', 'python/docs/**', 'python/openswmm/**', 'include/**', '**/*.md']
   workflow_dispatch:
 

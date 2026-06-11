@@ -29,6 +29,8 @@ Compared to the pre-v1 surface:
 * :attr:`Solver.nodes`, :attr:`Solver.links`, ... are lazy collection
   accessors. In P1 they return the existing collection classes; full
   wrapper-object treatment lands in P2-P8.
+* :attr:`Solver.surface2d` is the lazy :class:`Surface2D` view over the
+  2D overland-flow mesh (check :attr:`Surface2D.is_active` before use).
 
 .. code-block:: python
 

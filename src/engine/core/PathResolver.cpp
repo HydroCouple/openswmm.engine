@@ -191,22 +191,26 @@ std::string resolveRelative(const std::string& stored_token,
                             const std::string& anchor_dir) {
     if (stored_token.empty()) return {};
 
-    // Already absolute → just normalise to platform-preferred form.
+    // Already absolute → normalise to a portable forward-slash form. We emit
+    // generic_string() rather than make_preferred() so resolved paths look the
+    // same on every platform (forward slashes); .inp paths are conventionally
+    // forward-slash and Windows accepts them in filesystem ops. On POSIX this
+    // is identical to the prior output.
     if (isAbsolutePath(stored_token)) {
         fs::path p(toForwardSlashes(stored_token));
-        return p.make_preferred().string();
+        return p.generic_string();
     }
 
     // No anchor → return as-is (caller owns the relative-token semantics).
     if (anchor_dir.empty()) {
         fs::path p(toForwardSlashes(stored_token));
-        return p.lexically_normal().make_preferred().string();
+        return p.lexically_normal().generic_string();
     }
 
     // Join anchor + token, lexically normalise (collapses "..").
     fs::path joined = fs::path(toForwardSlashes(anchor_dir))
                     / fs::path(toForwardSlashes(stored_token));
-    return joined.lexically_normal().make_preferred().string();
+    return joined.lexically_normal().generic_string();
 }
 
 // ============================================================================
@@ -257,7 +261,7 @@ RelativeResult makeRelative(const std::string& target_absolute,
     // Only when both roots are empty (POSIX vs POSIX) do we treat them as the
     // same volume and fall through to the relative computation below.
     if (!eq_ci(tgt_root, anc_root)) {
-        r.path = fs::path(tgt_fs).make_preferred().string();
+        r.path = fs::path(tgt_fs).generic_string();
         r.classification = PathClass::AbsoluteCrossVolume;
         r.warning = "target on a different volume ('" + tgt_root
                   + "' vs '" + anc_root + "') — cannot express relatively";
@@ -283,7 +287,7 @@ RelativeResult makeRelative(const std::string& target_absolute,
     fs::path prox = tgt.lexically_proximate(anc);
 
     if (prox.empty() || prox.is_absolute()) {
-        r.path = fs::path(tgt_fs).make_preferred().string();
+        r.path = fs::path(tgt_fs).generic_string();
         r.classification = PathClass::AbsoluteSameVolume;
         r.warning = "lexical relative form unavailable";
         return r;
@@ -296,7 +300,7 @@ RelativeResult makeRelative(const std::string& target_absolute,
 
     const int up = countUpLevels(out);
     if (up > max_up_levels) {
-        r.path = fs::path(tgt_fs).make_preferred().string();
+        r.path = fs::path(tgt_fs).generic_string();
         r.classification = PathClass::AbsoluteSameVolume;
         r.warning = "relative form exceeds " + std::to_string(max_up_levels)
                   + " '..' levels (would be " + std::to_string(up) + ")";

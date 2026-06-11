@@ -69,14 +69,21 @@ std::string readFile(const fs::path& p) {
 // destination directory is chosen per-test to exercise the rebase math.
 SimulationContext makeResolvedContext() {
     SimulationContext ctx;
-    ctx.inp_file_path = "/proj/sub/model.inp";
+    // On Windows a rootless POSIX-absolute anchor like "/proj/sub" lives on a
+    // different "volume" than the drive-lettered output directory, so the
+    // rebase degrades to absolute and the relative-form assertions fail.
+    // Anchor the synthetic paths to the destination's root (e.g. "C:") so the
+    // contract holds on every platform. On POSIX root_name() is empty, leaving
+    // the paths unchanged.
+    const std::string root = fs::current_path().root_name().string();
+    ctx.inp_file_path = root + "/proj/sub/model.inp";
     ctx.files.rainfall_mode = FileMode::USE;
     ctx.files.rainfall_path = std::string("rain.dat");
     ctx.files.runoff_mode   = FileMode::SAVE;
     ctx.files.runoff_path   = std::string("./out/runoff.bin");
     ctx.files.rdii_mode     = FileMode::USE;
     ctx.files.rdii_path     = std::string("../shared/rdii.dat");
-    ctx.files.inflows_path  = std::string("/abs/inflows.dat");
+    ctx.files.inflows_path  = std::string(root + "/abs/inflows.dat");
     ctx.files.outflows_path = std::string("outflows.dat");
     ctx.files.hotstart_use_path = std::string("../in/restart.hsf");
 
@@ -86,7 +93,7 @@ SimulationContext makeResolvedContext() {
 
     // Run the resolver to populate `.absolute` so the writer rebases off
     // those values (matches the open→save round trip).
-    resolve_external_file_slots(ctx, "/proj/sub");
+    resolve_external_file_slots(ctx, root + "/proj/sub");
     return ctx;
 }
 

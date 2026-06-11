@@ -34,12 +34,22 @@ _SPINUP_STEPS = 30
 _PET = 2.4  # in/day
 
 
+# The site model uses WET_STEP 1 min over a 15 s ROUTING_STEP, so the runoff
+# clock (which is where subcatchment evap is evaluated) fires only on every
+# 4th routing step. The single-step assertions below need a prescription to
+# be observable on the very next step, so the test model aligns WET_STEP to
+# the routing step.
+_WET_STEP_ALIGN = ("WET_STEP             00:01:00",
+                   "WET_STEP             00:00:15")
+
+
 @pytest.fixture
 def pet_solver(request):
     """A running Solver whose rpt/out files land in a reviewable folder."""
     os.makedirs(_OUT_DIR, exist_ok=True)
     base = os.path.join(_OUT_DIR, f"pet_{request.node.name}")
-    s = Solver(_INP, base + ".rpt", base + ".out")
+    inp = _derived_model("pet_base.inp", [_WET_STEP_ALIGN])
+    s = Solver(inp, base + ".rpt", base + ".out")
     s.open()
     s.initialize()
     s.start()
@@ -127,7 +137,7 @@ class TestCappingAndMassBalance:
         while s.step():
             pass
         s.end()
-        err = s.mass_balance.runoff_continuity_error()
+        err = s.mass_balance.runoff_continuity_error
         assert abs(err) < 0.5
 
     def test_evap_appears_in_runoff_totals(self, pet_solver):
@@ -184,6 +194,7 @@ class TestDryOnlyBypass:
         inp = _derived_model("pet_dry_only.inp", [
             ("CONSTANT         0.0", "CONSTANT         5.0"),
             ("DRY_ONLY         NO", "DRY_ONLY         YES"),
+            _WET_STEP_ALIGN,
         ])
         base = os.path.join(_OUT_DIR, "pet_dry_only")
         s = Solver(inp, base + ".rpt", base + ".out")
@@ -207,6 +218,7 @@ class TestSIUnits:
         """Case 9: on an SI model the API accepts and reports mm/day."""
         inp = _derived_model("pet_si_units.inp", [
             ("FLOW_UNITS           CFS", "FLOW_UNITS           CMS"),
+            _WET_STEP_ALIGN,
         ])
         base = os.path.join(_OUT_DIR, "pet_si_units")
         pet_mm_day = 5.0

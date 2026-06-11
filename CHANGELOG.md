@@ -5,6 +5,37 @@ All notable changes to the OpenSWMM Engine are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — User-flag schema bindings + 2D/MCP gap closure
+
+See `docs/API_GAP_CLOSURE_PLAN_2026-06-10.md`.
+
+### Added
+
+- **Python bindings:** the user-flag schema C API (`swmm_userflag_define`
+  / `undefine` / `def_count` / `def_get` / `value_get` / `value_set` /
+  `value_clear`) is now bound — the last unbound block of the 702-function
+  engine surface. `ModelBuilder` gains `define_userflag`,
+  `undefine_userflag`, `userflag_def_count`, `get_userflag_def`, and
+  `get/set/clear_userflag_value`; the `solver.userflags` view gains
+  `define()`, `undefine()`, `definitions()` (returning `UserFlagDef`
+  records), `get_value()` / `set_value()` / `clear_value()`, real
+  `len()` / iteration over definitions, and STRING-flag support in the
+  mapping interface. New `UserFlagType` enum (BOOLEAN / INTEGER / REAL /
+  STRING). Tests: `python/tests/engine/test_userflags_schema.py`.
+- **Python bindings:** new lazy `Solver.surface2d` property returning the
+  cached `Surface2D` view, so 2D access no longer requires constructing
+  `Surface2D(solver.handle)` by hand.
+
+### Changed
+
+- **Python bindings:** `del solver.userflags[name]` now removes the
+  flag's schema definition and per-object values via
+  `swmm_userflag_undefine` (previously raised `TypeError`); assigning a
+  `str` value auto-defines a STRING flag, mirroring the scalar setters.
+- `python/tests/test_api_coverage.py`: removed 54 stale `KNOWN_UNBOUND`
+  allowlist entries for symbols that had since been bound; the allowlist
+  is now empty and the coverage test enforces the full surface.
+
 ## [Unreleased] — Subcatchment PET prescription
 
 See `docs/SUBCATCHMENT_PET_PRESCRIPTION_PLAN.md`.

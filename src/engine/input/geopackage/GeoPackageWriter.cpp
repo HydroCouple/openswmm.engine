@@ -1165,7 +1165,18 @@ std::string fmt_g17(double v) {
 void step_or_throw(sqlite3* db, sqlite3_stmt* stmt, const char* what) {
     int rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        throw GpkgError(std::string(what) + ": " + sqlite3_errmsg(db), rc);
+        // Snapshot the message, then reset the aborted statement BEFORE we
+        // unwind. A statement left un-reset after a step error (e.g. an FK
+        // SQLITE_CONSTRAINT) keeps its implicit statement-journal lock, which
+        // makes the enclosing Transaction guard's ROLLBACK fail with
+        // SQLITE_BUSY ("statements in progress"). On platforms with mandatory
+        // file locking (Windows) that leaves the transaction open — the same
+        // connection then reads its own uncommitted rows and the .gpkg file
+        // stays locked for the next writer. Resetting here releases the lock
+        // deterministically rather than relying on finalize-during-unwind.
+        std::string msg = std::string(what) + ": " + sqlite3_errmsg(db);
+        sqlite3_reset(stmt);
+        throw GpkgError(std::move(msg), rc);
     }
 }
 

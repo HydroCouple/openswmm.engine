@@ -56,13 +56,13 @@ class Streets:
         sides: int = ...,
         back_width: float = ..., back_slope: float = ..., back_n: float = ...,
     ) -> None: ...
-    def get_params(self, idx: int) -> dict:
+    def get_params(self, idx: int) -> dict[str, float]:
         """Read back a street cross-section's geometric parameters.
 
         @return: Keys ``t_crown``, ``h_curb``, ``sx``, ``n_road``,
             ``gutter_depres``, ``gutter_width``, ``sides``, ``back_width``,
             ``back_slope``, ``back_n`` (the inverse of L{set_params}).
-        @rtype: dict
+        @rtype: dict[str, float]
         """
         ...
 

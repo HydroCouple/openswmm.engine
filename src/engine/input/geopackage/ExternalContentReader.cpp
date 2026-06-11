@@ -560,7 +560,13 @@ std::string scratchDirFor(const std::string& gpkg_path) {
     fs::path p(gpkg_path);
     std::string stem = p.stem().string();
     if (stem.empty()) stem = "gpkg";
-    return (p.parent_path() / (stem + ".scratch")).string();
+    const std::string leaf = stem + ".scratch";
+    // Emit a portable forward-slash path. fs::path::operator/ joins with the
+    // native separator ('\\' on Windows), which would yield mixed separators
+    // like "/tmp\\foo.scratch"; build the sibling path with '/' instead.
+    const fs::path parent = p.parent_path();
+    if (parent.empty()) return leaf;
+    return parent.generic_string() + "/" + leaf;
 }
 
 void read_external_content(sqlite3*               db,

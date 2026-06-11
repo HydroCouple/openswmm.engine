@@ -134,6 +134,9 @@ from ._enums import (
     ForcingType as ForcingType,
     ForcingPersist as ForcingPersist,
     PatternType as PatternType,
+    # 2D surface routing
+    SurfaceForcingMode as SurfaceForcingMode,
+    SurfaceBoundaryType as SurfaceBoundaryType,
     # Nodes / editing
     DividerType as DividerType,
     RefType as RefType,

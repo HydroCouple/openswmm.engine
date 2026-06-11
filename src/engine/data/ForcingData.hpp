@@ -210,6 +210,10 @@ struct ForcingData {
      * @return Effective potential evaporation rate (ft/sec).
      */
     double effective_evap_rate(std::size_t ui, double broadcast_rate) const noexcept {
+        // Total over unallocated forcing: callers (Runoff, Groundwater, LID)
+        // run against hand-built / partially-initialized contexts in tests
+        // and via the builder API before the forcing arrays are sized.
+        if (ui >= subcatch_evap_mode.size()) return broadcast_rate;
         switch (subcatch_evap_mode[ui]) {
             case ForcingMode::OVERRIDE: return subcatch_evap_value[ui];
             case ForcingMode::ADD:      return broadcast_rate + subcatch_evap_value[ui];

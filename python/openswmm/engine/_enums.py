@@ -569,13 +569,15 @@ class ForcingMode(IntEnum):
     """Forcing application mode.
 
     Determines how a forced value is combined with the model-computed value.
+    Mirrors C{SWMM_ForcingMode} in C{openswmm_forcing.h} (OVERRIDE=1, ADD=2;
+    0 is the engine-internal "no forcing" state and is not exposed).
 
     @cvar REPLACE: Replace the computed value entirely.
     @cvar ADD: Add the forced value to the computed value.
     """
 
-    REPLACE = 0
-    ADD = 1
+    REPLACE = 1
+    ADD = 2
 
 
 class ForcingTarget(IntEnum):

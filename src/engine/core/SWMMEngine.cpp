@@ -194,6 +194,16 @@ int SWMMEngine::open(const char* inp_path,
     // Resolve cross-references (forward refs, final array sizing, head init)
     input::resolve_cross_references(ctx_);
 
+    // Post-parse validation errors accumulated during resolution (e.g.
+    // ERR_TRANSECT_MANNING 227 for a zero channel Manning's n) are fatal:
+    // surface the first one and fail the open. Without this check the
+    // errors were silently swallowed and the model opened "successfully"
+    // with broken derived state.
+    if (!ctx_.errors.empty()) {
+        set_error(SWMM_ERR_PARSE, ctx_.errors.front().c_str());
+        return SWMM_ERR_PARSE;
+    }
+
     // Phase 4: load plugins listed in [PLUGINS]
     if (!ctx_.plugin_specs.empty()) {
         plugins_.load_plugins(ctx_.plugin_specs, [this](const std::string& msg) {

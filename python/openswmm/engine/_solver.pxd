@@ -42,4 +42,5 @@ cdef class Solver:
     cdef object _mass_balance
     cdef object _editor
     cdef object _hotstart
+    cdef object _surface2d
     cdef long long _generation
