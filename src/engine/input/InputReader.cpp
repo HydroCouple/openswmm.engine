@@ -37,7 +37,7 @@ InputReader::InputReader(SectionRegistry& registry)
 bool InputReader::read(const std::string& path, SimulationContext& ctx) {
     std::ifstream ifs(path);
     if (!ifs.is_open()) {
-        ctx.error_code    = 1;  // SWMM_ERR_FILE_NOT_FOUND
+        ctx.error_code    = 2;  // public SWMM_ERR_INPFILE (was 1 = NOMEM)
         ctx.error_message = "InputReader: cannot open file '" + path + "'";
         ctx.state         = EngineState::ERROR_STATE;
         return false;

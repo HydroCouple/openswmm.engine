@@ -343,7 +343,11 @@ input::SectionHandler makeSectionHandler(LineParser line_parser) {
             if (tokens.empty()) continue;
             std::string err = lp(tokens);
             if (!err.empty()) {
-                ctx.error_code    = 1;
+                // 5 = public SWMM_ERR_PARSE. Must be non-zero so InputReader
+                // (which gates success on ctx.error_code == 0) treats the
+                // section as failed; previously this was 1 (SWMM_ERR_NOMEM),
+                // so every 2D section parse error surfaced as "Out of memory".
+                ctx.error_code    = 5;
                 ctx.error_message = "[2D] " + err + " — line: " + raw;
                 return;
             }

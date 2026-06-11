@@ -52,13 +52,19 @@ static inline int omp_get_max_threads() { return 1; }
 static inline void omp_set_num_threads(int) {}
 #endif
 
-// Error codes (matches openswmm_engine.h SWMM_ErrorCode)
+// Error codes — these are returned across the C ABI and decoded by
+// swmm_error_message(), so their VALUES must match the public
+// SWMM_ErrorCode enum in openswmm_engine.h exactly.  They previously did
+// not: WRONG_STATE was 3 (public RPTFILE) and PARSE was 4 (public OUTFILE),
+// so a parse error surfaced to callers as "Cannot open output file" and a
+// lifecycle error as "Cannot open report file".  Values corrected below to
+// the public enum; the local names are kept to avoid churn at call sites.
 static constexpr int SWMM_OK                 = 0;
-static constexpr int SWMM_ERR_MEMORY         = 1;
-static constexpr int SWMM_ERR_FILE_NOT_FOUND = 2;
-static constexpr int SWMM_ERR_WRONG_STATE    = 3;
-static constexpr int SWMM_ERR_PARSE          = 4;
-static constexpr int SWMM_ERR_PLUGIN         = 10;
+static constexpr int SWMM_ERR_MEMORY         = 1;   // public SWMM_ERR_NOMEM
+static constexpr int SWMM_ERR_FILE_NOT_FOUND = 2;   // public SWMM_ERR_INPFILE
+static constexpr int SWMM_ERR_WRONG_STATE    = 6;   // public SWMM_ERR_LIFECYCLE
+static constexpr int SWMM_ERR_PARSE          = 5;   // public SWMM_ERR_PARSE
+static constexpr int SWMM_ERR_PLUGIN         = 10;  // public SWMM_ERR_PLUGIN
 
 namespace openswmm {
 
