@@ -506,15 +506,30 @@ class SWMMPollutantProperties(Enum):
     running (dynamic quality forcing), in the pollutant's concentration
     units (e.g. mg/L).
 
+    The decay constant, co-pollutant link, and snow-only flag are read live
+    each step, so a mid-run edit takes effect on the next step. The initial
+    network concentration only seeds state at start and is rejected while
+    running. The decay constant is in 1/day (INP units).
+
     @cvar RAIN_CONCENTRATION: Rain (wet deposition) concentration.
     @cvar GW_CONCENTRATION: Groundwater inflow concentration.
     @cvar RDII_CONCENTRATION: RDII inflow concentration.
     @cvar DWF_CONCENTRATION: Dry weather sanitary flow concentration.
+    @cvar KDECAY: First-order decay constant (1/day).
+    @cvar CO_POLLUTANT: Co-pollutant index (-1 = none).
+    @cvar CO_FRACTION: Co-pollutant fraction (0-1).
+    @cvar SNOW_ONLY: Buildup-only-under-snow flag (0/1).
+    @cvar INIT_CONCENTRATION: Initial network concentration (pre-start only).
     """
     RAIN_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_RAIN_CONCEN
     GW_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_GW_CONCEN
     RDII_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_RDII_CONCEN
     DWF_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_DWF_CONCEN
+    KDECAY = swmm_PollutProperty.swmm_POLLUT_KDECAY
+    CO_POLLUTANT = swmm_PollutProperty.swmm_POLLUT_CO_POLLUTANT
+    CO_FRACTION = swmm_PollutProperty.swmm_POLLUT_CO_FRACTION
+    SNOW_ONLY = swmm_PollutProperty.swmm_POLLUT_SNOW_ONLY
+    INIT_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_INIT_CONCEN
 
 class SWMMPatternProperties(Enum):
     """Enumeration of SWMM time-pattern properties.
@@ -1580,10 +1595,14 @@ cdef class Solver:
         cdef int error_code = 0
 
         if self._solver_state == SolverState.ENDED or \
-           self._solver_state == SolverState.CREATED:
+           self._solver_state == SolverState.CREATED or \
+           self._solver_state == SolverState.OPEN:
+            # OPEN = swmm_open() was called but swmm_start() never was, so
+            # there is no active run to end. Calling swmm_end() here would tear
+            # down routing/runoff state that was never allocated and crash the
+            # EPA core; treat it as a no-op.
             return 0
-        if self._solver_state != SolverState.OPEN and \
-           self._solver_state != SolverState.STARTED and \
+        if self._solver_state != SolverState.STARTED and \
            self._solver_state != SolverState.FINISHED:
             return -1
 
@@ -1626,10 +1645,13 @@ cdef class Solver:
         """
         cdef int error_code = 0
 
-        if self._solver_state == SolverState.CREATED:
+        if self._solver_state == SolverState.CREATED or \
+           self._solver_state == SolverState.CLOSED:
             return 0
-        if self._solver_state != SolverState.REPORTED:
-            return -1
+        # swmm_close() is valid from any state after swmm_open(); the legacy
+        # EPA core is a global singleton, so a project left un-closed (e.g. an
+        # OPEN-but-never-started session) corrupts the next swmm_open() and
+        # segfaults. Always release rather than requiring REPORTED.
 
         self.__execute_callbacks(CallbackType.BEFORE_CLOSE)
         error_code = swmm_close()
@@ -1647,6 +1669,10 @@ cdef class Solver:
         """
         cdef int error_code = 0
 
+        if self._solver_state is None:
+            # Can occur during interpreter teardown (__dealloc__) after the
+            # cdef attribute has been cleared; nothing to finalize.
+            return
         if self._solver_state == SolverState.OPEN or \
            self._solver_state == SolverState.STARTED or \
            self._solver_state == SolverState.FINISHED:

@@ -116,3 +116,38 @@ concern; no `setSubcatchValue` infiltration cases are added.
 **Tests** (`test_param_runtime.py::TestInfiltrationParams`): a pre-start Horton
 edit takes effect and round-trips through the run; a mid-run setter call raises
 `LifecycleError`. No new bindings.
+
+---
+
+## Wave B4 — P5 pollutant kinetics → **SOUND (kdecay/co/snow); init_conc pre-start-guarded**
+
+**Refactored.** The kinetics setters are unguarded and write `ctx.pollutants.*`
+directly. Consumption:
+* `k_decay` is read live each step in quality routing
+  (`QualityRouting.cpp:346,420`, `ctx.pollutants.k_decay[p]`).
+* `co_pollut`/`co_frac` feed the per-step co-pollutant washoff
+  (`Landuse::applyCoPollutant`); `snow_only` gates buildup.
+* `init_conc` has **no per-step consumer** — it only seeds the conveyance
+  network at `start()` (parsed in `QualityHandler`, written by `InpWriter`,
+  never read in the step loop). A mid-run edit would silently no-op, so it is
+  now guarded with `CHECK_GEOMETRY` (raises `LifecycleError` while running).
+
+So kdecay/co-pollutant/snow-only are **sound mid-run** (live, no cache, no fix);
+init_conc is **pre-start-only** (newly guarded).
+
+**Legacy.** Mirror confirmed: `Pollut[p].kDecay` (`qualrout.c:430,603`),
+`coPollut`/`coFraction` (`surfqual.c:469,473`), and `snowOnly`
+(`surfqual.c:121`) are all read live; `initConcen` seeds state at start.
+Extended `swmm_PollutProperty` with `KDECAY`/`CO_POLLUTANT`/`CO_FRACTION`/
+`SNOW_ONLY`/`INIT_CONCEN`; `set/getPollutValue` handle them with per-case
+bounds (the old blanket `value < 0` reject would have refused a `-1`
+co-pollutant index). **Units:** the API takes `kDecay` in 1/day (INP units);
+legacy stores 1/sec, so the setter divides by `SECperDAY` and the getter
+multiplies — matching `landuse_readBuildup`/`inputrpt.c`. `INIT_CONCEN` returns
+`ERR_API_IS_RUNNING` while the simulation is running, matching the refactored
+guard.
+
+**Bindings:** refactored `Pollutant.kdecay`/`init_conc`/`snow_only`/
+`co_pollutant` already existed; legacy `SWMMPollutantProperties` extended 4→9
+(+ `.pyi`, enum coverage). Tests: `TestKineticsRuntime` (engine),
+`TestLegacyKinetics` (legacy).

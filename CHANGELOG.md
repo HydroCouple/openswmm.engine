@@ -41,6 +41,14 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
   per-subcatchment infiltration state is built once at `start()`. P1 is
   therefore a pre-start edit in both engines (no legacy parity setter). Tests
   in `test_param_runtime.py::TestInfiltrationParams`.
+- **Phase 4 wave B4 — pollutant kinetics (P5).** `kdecay` / co-pollutant /
+  snow-only are read live each step (sound mid-run, no cache); legacy parity
+  added via `swmm_PollutProperty` `KDECAY`/`CO_POLLUTANT`/`CO_FRACTION`/
+  `SNOW_ONLY` (kdecay accepted in 1/day, stored as the legacy 1/sec). The
+  initial network concentration (`INIT_CONCEN`) has no per-step consumer, so
+  both engines now reject it mid-run (refactored `CHECK_GEOMETRY`
+  → `LifecycleError`; legacy `ERR_API_IS_RUNNING`). `SWMMPollutantProperties`
+  4→9 (+ `.pyi`, enum coverage). Tests in `test_param_runtime.py`.
 
 - **§3 legacy water-quality source setters — functional tests.** The legacy
   `setPollutValue` source concentrations (rain/wet-deposition `pptConcen`,

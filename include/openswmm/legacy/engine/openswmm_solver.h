@@ -373,6 +373,16 @@ typedef enum
     swmm_POLLUT_RDII_CONCEN,
     /*! \brief Dry weather sanitary flow concentration */
     swmm_POLLUT_DWF_CONCEN,
+    /*! \brief First-order decay constant (1/day); read live each step */
+    swmm_POLLUT_KDECAY,
+    /*! \brief Co-pollutant index (-1 = none) */
+    swmm_POLLUT_CO_POLLUTANT,
+    /*! \brief Co-pollutant fraction (0-1) */
+    swmm_POLLUT_CO_FRACTION,
+    /*! \brief Buildup-only-under-snow flag (0/1) */
+    swmm_POLLUT_SNOW_ONLY,
+    /*! \brief Initial conveyance-network concentration (pre-start only) */
+    swmm_POLLUT_INIT_CONCEN,
 } swmm_PollutProperty;
 
 /*!

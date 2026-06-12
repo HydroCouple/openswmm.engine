@@ -123,7 +123,11 @@ class TestSystemEnumCoverage(unittest.TestCase):
             solver.SWMMPollutantProperties.RAIN_CONCENTRATION.value, 500)
         self.assertEqual(
             solver.SWMMPollutantProperties.DWF_CONCENTRATION.value, 503)
-        self.assertEqual(len(solver.SWMMPollutantProperties), 4)
+        self.assertEqual(
+            solver.SWMMPollutantProperties.KDECAY.value, 504)
+        self.assertEqual(
+            solver.SWMMPollutantProperties.INIT_CONCENTRATION.value, 508)
+        self.assertEqual(len(solver.SWMMPollutantProperties), 9)
 
     def test_pattern_enum(self):
         """Time-pattern properties (600 block)."""

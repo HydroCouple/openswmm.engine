@@ -176,3 +176,38 @@ class TestLegacyBuildupWashoff:
                 s.set_value(_LU, _LuProp.WASHOFF_SWEEP_EFFIC, 0, 2.0, sub_index=0)
         finally:
             s.end(); s.finalize()
+
+
+# --------------------------------------------------------------------------- #
+# P5 — pollutant kinetics (legacy parity)
+# --------------------------------------------------------------------------- #
+_POBJ = solver.SWMMObjects.POLLUTANT
+_PProp = solver.SWMMPollutantProperties
+
+
+class TestLegacyKinetics:
+    def test_kinetics_round_trip(self):
+        """P5: kdecay (1/day), co-fraction, snow-only set/get mid-run."""
+        s = _open(_SITE_DRAINAGE, "p5_legacy_rt")
+        try:
+            for _ in range(5):
+                s.step()
+            s.set_value(_POBJ, _PProp.KDECAY, 0, 2.0)
+            assert s.get_value(_POBJ, _PProp.KDECAY, 0) == pytest.approx(2.0)
+            s.set_value(_POBJ, _PProp.CO_FRACTION, 0, 0.3)
+            assert s.get_value(_POBJ, _PProp.CO_FRACTION, 0) == pytest.approx(0.3)
+            s.set_value(_POBJ, _PProp.SNOW_ONLY, 0, 1)
+            assert s.get_value(_POBJ, _PProp.SNOW_ONLY, 0) == pytest.approx(1)
+        finally:
+            s.end(); s.finalize()
+
+    def test_init_conc_rejected_running(self):
+        """P5: init concentration is rejected mid-run (pre-start-only)."""
+        s = _open(_SITE_DRAINAGE, "p5_legacy_initconc")
+        try:
+            for _ in range(5):
+                s.step()
+            with pytest.raises(Exception):
+                s.set_value(_POBJ, _PProp.INIT_CONCENTRATION, 0, 5.0)
+        finally:
+            s.end(); s.finalize()

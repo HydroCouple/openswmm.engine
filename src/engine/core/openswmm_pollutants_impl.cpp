@@ -96,6 +96,10 @@ SWMM_ENGINE_API int swmm_pollutant_set_gw_conc(SWMM_Engine engine, int idx, doub
 SWMM_ENGINE_API int swmm_pollutant_set_init_conc(SWMM_Engine engine, int idx, double conc) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    // Initial conveyance-network concentration only seeds state at start(); it
+    // has no per-step consumer, so a mid-run edit would silently no-op. Guard
+    // it to the editable (pre-start) states to make the contract honest.
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
     ctx.pollutants.init_conc[static_cast<std::size_t>(idx)] = conc;
     return SWMM_OK;

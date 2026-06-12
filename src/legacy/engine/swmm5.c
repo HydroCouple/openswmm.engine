@@ -1455,6 +1455,17 @@ double getPollutValue(int property, int index)
         return Pollut[index].rdiiConcen;
     case swmm_POLLUT_DWF_CONCEN:
         return Pollut[index].dwfConcen;
+    case swmm_POLLUT_KDECAY:
+        // stored internally in 1/sec; report in 1/day (INP units)
+        return Pollut[index].kDecay * SECperDAY;
+    case swmm_POLLUT_CO_POLLUTANT:
+        return (double)Pollut[index].coPollut;
+    case swmm_POLLUT_CO_FRACTION:
+        return Pollut[index].coFraction;
+    case swmm_POLLUT_SNOW_ONLY:
+        return (double)Pollut[index].snowOnly;
+    case swmm_POLLUT_INIT_CONCEN:
+        return Pollut[index].initConcen;
     default:
         return ERR_API_PROPERTY_TYPE;
     }
@@ -1462,31 +1473,59 @@ double getPollutValue(int property, int index)
 
 /*!
  * \copydoc setPollutValue
- * \details The source concentrations are settable both before the
- * simulation starts and while it is running (dynamic quality forcing).
- * Concentrations feed existing inflow source terms already counted in
- * the quality mass balance.
+ * \details The source concentrations and decay kinetics are settable both
+ * before the simulation starts and while it is running (dynamic quality
+ * forcing): source concentrations feed existing inflow terms, and the decay
+ * constant / co-pollutant / snow-only flag are read live each step. The
+ * initial conveyance-network concentration only seeds state at start, so it
+ * is rejected while running. Mass balance is unchanged.
  */
 int setPollutValue(int property, int index, double value)
 {
     if (index < 0 || index >= Nobjects[POLLUT])
         return ERR_API_OBJECT_INDEX;
-    if (value < 0.0)
-        return ERR_API_PROPERTY_VALUE;
 
     switch (property)
     {
     case swmm_POLLUT_RAIN_CONCEN:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
         Pollut[index].pptConcen = value;
         return 0;
     case swmm_POLLUT_GW_CONCEN:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
         Pollut[index].gwConcen = value;
         return 0;
     case swmm_POLLUT_RDII_CONCEN:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
         Pollut[index].rdiiConcen = value;
         return 0;
     case swmm_POLLUT_DWF_CONCEN:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
         Pollut[index].dwfConcen = value;
+        return 0;
+    case swmm_POLLUT_KDECAY:
+        // accept 1/day (INP units); store internally as 1/sec
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Pollut[index].kDecay = value / SECperDAY;
+        return 0;
+    case swmm_POLLUT_CO_POLLUTANT:
+        if (value < -1.0 || (int)value >= Nobjects[POLLUT])
+            return ERR_API_PROPERTY_VALUE;
+        Pollut[index].coPollut = (int)value;
+        return 0;
+    case swmm_POLLUT_CO_FRACTION:
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Pollut[index].coFraction = value;
+        return 0;
+    case swmm_POLLUT_SNOW_ONLY:
+        Pollut[index].snowOnly = (value != 0.0) ? TRUE : FALSE;
+        return 0;
+    case swmm_POLLUT_INIT_CONCEN:
+        // pre-start only: initConcen seeds state at start, no runtime effect
+        if (IsStartedFlag)
+            return ERR_API_IS_RUNNING;
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Pollut[index].initConcen = value;
         return 0;
     default:
         return ERR_API_PROPERTY_TYPE;

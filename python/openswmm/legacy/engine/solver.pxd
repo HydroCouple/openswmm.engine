@@ -231,10 +231,15 @@ cdef extern from "openswmm_solver.h":
 
     # SWMM Pollutant properties
     ctypedef enum swmm_PollutProperty:
-        swmm_POLLUT_RAIN_CONCEN  # Rain (wet deposition) concentration
-        swmm_POLLUT_GW_CONCEN    # Groundwater inflow concentration
-        swmm_POLLUT_RDII_CONCEN  # RDII inflow concentration
-        swmm_POLLUT_DWF_CONCEN   # Dry weather sanitary flow concentration
+        swmm_POLLUT_RAIN_CONCEN    # Rain (wet deposition) concentration
+        swmm_POLLUT_GW_CONCEN      # Groundwater inflow concentration
+        swmm_POLLUT_RDII_CONCEN    # RDII inflow concentration
+        swmm_POLLUT_DWF_CONCEN     # Dry weather sanitary flow concentration
+        swmm_POLLUT_KDECAY         # First-order decay constant (1/day)
+        swmm_POLLUT_CO_POLLUTANT   # Co-pollutant index (-1 = none)
+        swmm_POLLUT_CO_FRACTION    # Co-pollutant fraction (0-1)
+        swmm_POLLUT_SNOW_ONLY      # Buildup-only-under-snow flag (0/1)
+        swmm_POLLUT_INIT_CONCEN    # Initial network concentration (pre-start)
 
     # SWMM time-pattern properties
     ctypedef enum swmm_PatternProperty:

@@ -223,3 +223,47 @@ class TestInfiltrationParams:
                 s.subcatchments[0].infiltration.set_horton(3.0, 0.5, 4.0, 7.0)
         finally:
             s.end(); s.close(); s.destroy()
+
+
+# --------------------------------------------------------------------------- #
+# P5 — pollutant kinetics
+#
+# Audit: kdecay / co-pollutant / snow-only are read live each step (sound
+# mid-run, no cache). init_conc only seeds state at start() and has no per-step
+# consumer, so it is now guarded to pre-start (raises LifecycleError mid-run).
+# --------------------------------------------------------------------------- #
+class TestKineticsRuntime:
+    def test_kdecay_round_trip(self):
+        """P5: decay constant set mid-run round-trips (read live each step)."""
+        s = _open(_LANDUSE_INP, "p5_kdecay_rt")
+        try:
+            for _ in range(5):
+                s.step()
+            p = s.pollutants[0]
+            p.kdecay = 0.35
+            assert p.kdecay == pytest.approx(0.35)
+        finally:
+            s.end(); s.close(); s.destroy()
+
+    def test_snow_only_round_trip(self):
+        """P5: snow-only flag set mid-run round-trips."""
+        s = _open(_LANDUSE_INP, "p5_snow_rt")
+        try:
+            for _ in range(5):
+                s.step()
+            p = s.pollutants[0]
+            p.snow_only = True
+            assert bool(p.snow_only) is True
+        finally:
+            s.end(); s.close(); s.destroy()
+
+    def test_init_conc_guarded_while_running(self):
+        """P5: init_conc is rejected mid-run (pre-start-only)."""
+        s = _open(_LANDUSE_INP, "p5_initconc_guard")
+        try:
+            for _ in range(5):
+                s.step()
+            with pytest.raises(LifecycleError):
+                s.pollutants[0].init_conc = 5.0
+        finally:
+            s.end(); s.close(); s.destroy()
