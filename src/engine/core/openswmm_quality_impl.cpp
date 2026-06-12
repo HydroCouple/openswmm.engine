@@ -238,7 +238,17 @@ SWMM_ENGINE_API int swmm_treatment_set(SWMM_Engine engine, int node_idx, int pol
     auto k = static_cast<std::size_t>(node_idx) *
              static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
+    // The step loop evaluates the compiled cache, so recompile the edited cell
+    // (mid-run edits take effect next step). A parse failure restores the
+    // previous expression and rejects the call rather than leaving the cell
+    // silently inert.
+    const std::string prev = ctx.treatment.expressions[k];
     ctx.treatment.expressions[k] = expression;
+    if (to_engine(engine)->refreshTreatment(node_idx, pollut_idx) != 0) {
+        ctx.treatment.expressions[k] = prev;
+        to_engine(engine)->refreshTreatment(node_idx, pollut_idx);
+        return SWMM_ERR_BADPARAM;
+    }
     return SWMM_OK;
 }
 
@@ -277,6 +287,9 @@ SWMM_ENGINE_API int swmm_treatment_clear(SWMM_Engine engine, int node_idx, int p
 
     if (k < ctx.treatment.expressions.size()) {
         ctx.treatment.expressions[k].clear();
+        // Clear the compiled cell + per-node flag so the removal applies
+        // on the next step.
+        to_engine(engine)->refreshTreatment(node_idx, pollut_idx);
     }
     return SWMM_OK;
 }

@@ -1438,6 +1438,73 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValueExpanded(int objType, int proper
 }
 
 /*!
+ * \copydoc swmm_setTreatment
+ * \details Re-uses the [TREATMENT] input parser (treatmnt_readExpression),
+ * so the expression has the input-file form "R = ..." or "C = ...". Any
+ * existing equation for the (node, pollutant) pair is freed before the new
+ * one is installed, so the function is safe to call repeatedly while the
+ * simulation is running; the new expression is evaluated from the next
+ * routing step on. A failed parse leaves no treatment in place for the pair.
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setTreatment(int nodeIndex, int pollutantIndex, const char *expression)
+{
+    char exprCopy[MAXLINE + 1];
+    char *tok[3];
+
+    if (!IsOpenFlag)
+        return ERR_API_NOT_OPEN;
+    if (nodeIndex < 0 || nodeIndex >= Nobjects[NODE])
+        return ERR_API_OBJECT_INDEX;
+    if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
+        return ERR_API_OBJECT_INDEX;
+    if (expression == NULL || expression[0] == '\0')
+        return ERR_API_PROPERTY_VALUE;
+
+    // --- free any existing equation so a runtime replace doesn't leak
+    if (Node[nodeIndex].treatment != NULL &&
+        Node[nodeIndex].treatment[pollutantIndex].equation != NULL)
+    {
+        mathexpr_delete(Node[nodeIndex].treatment[pollutantIndex].equation);
+        Node[nodeIndex].treatment[pollutantIndex].equation = NULL;
+    }
+
+    // --- re-use the [TREATMENT] line parser: tok = {node, pollut, "R = ..."}
+    //     (it concatenates tok[2..n] itself, so the whole expression can be
+    //      passed as a single token)
+    sstrncpy(exprCopy, expression, MAXLINE);
+    tok[0] = Node[nodeIndex].ID;
+    tok[1] = Pollut[pollutantIndex].ID;
+    tok[2] = exprCopy;
+    if (treatmnt_readExpression(tok, 3) != 0)
+        return ERR_API_PROPERTY_VALUE;
+    return 0;
+}
+
+/*!
+ * \copydoc swmm_clearTreatment
+ * \details Removes the treatment expression for the (node, pollutant) pair;
+ * treatmnt_treat() applies zero removal for pairs with no equation. Callable
+ * before the simulation starts or while it is running.
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_clearTreatment(int nodeIndex, int pollutantIndex)
+{
+    if (!IsOpenFlag)
+        return ERR_API_NOT_OPEN;
+    if (nodeIndex < 0 || nodeIndex >= Nobjects[NODE])
+        return ERR_API_OBJECT_INDEX;
+    if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
+        return ERR_API_OBJECT_INDEX;
+
+    if (Node[nodeIndex].treatment != NULL &&
+        Node[nodeIndex].treatment[pollutantIndex].equation != NULL)
+    {
+        mathexpr_delete(Node[nodeIndex].treatment[pollutantIndex].equation);
+        Node[nodeIndex].treatment[pollutantIndex].equation = NULL;
+    }
+    return 0;
+}
+
+/*!
  * \copydoc getPollutValue
  */
 double getPollutValue(int property, int index)

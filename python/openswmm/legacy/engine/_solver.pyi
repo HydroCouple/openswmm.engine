@@ -1015,7 +1015,38 @@ class Solver:
         :type sub_index: int
         """
         ...
-    
+
+    def set_treatment(self, node_index: Union[int, str], pollutant_index: int, expression: str) -> None:
+        """
+        Set (or replace) the treatment expression for a node/pollutant pair.
+
+        Callable before the simulation starts or while it is running; a
+        mid-run edit is evaluated from the next routing step on. A failed
+        parse raises and leaves no treatment in place for the pair.
+
+        :param node_index: Node index or name (e.g., 0, 'J1')
+        :type node_index: int or str
+        :param pollutant_index: Pollutant index (e.g., 0)
+        :type pollutant_index: int
+        :param expression: Treatment expression in input-file form, e.g. "R = 0.5" or "C = BOD * 0.2"
+        :type expression: str
+        """
+        ...
+
+    def clear_treatment(self, node_index: Union[int, str], pollutant_index: int) -> None:
+        """
+        Remove the treatment expression for a node/pollutant pair.
+
+        Callable before the simulation starts or while it is running; zero
+        removal applies from the next routing step on.
+
+        :param node_index: Node index or name (e.g., 0, 'J1')
+        :type node_index: int or str
+        :param pollutant_index: Pollutant index (e.g., 0)
+        :type pollutant_index: int
+        """
+        ...
+
     def get_value(self, object_type: SWMMObjects, property_type: Union[SWMMRainGageProperties, SWMMSubcatchmentProperties, SWMMNodeProperties, SWMMLinkProperties, SWMMSystemProperties], index: Union[int, str], sub_index: int = ...) -> float:
         """
         Get a SWMM system property value.

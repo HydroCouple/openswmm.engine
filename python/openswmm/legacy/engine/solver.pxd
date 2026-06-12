@@ -419,6 +419,17 @@ cdef extern from "openswmm_solver.h":
     # param: value: property value
     cdef int swmm_setValueExpanded(int objType, int property, int index, int subindex, int pollutantIndex, double value)
 
+    # Sets (or replaces) the treatment expression for a node/pollutant pair
+    # param: nodeIndex: node index
+    # param: pollutantIndex: pollutant index
+    # param: expression: treatment expression in input-file form, e.g. "R = 0.5"
+    cdef int swmm_setTreatment(int nodeIndex, int pollutantIndex, const char *expression)
+
+    # Removes the treatment expression for a node/pollutant pair
+    # param: nodeIndex: node index
+    # param: pollutantIndex: pollutant index
+    cdef int swmm_clearTreatment(int nodeIndex, int pollutantIndex)
+
     # Retrieves the value of a property for an object of a given type and index
     # param: property: property type
     # param: index: object index

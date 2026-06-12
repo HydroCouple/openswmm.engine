@@ -320,3 +320,75 @@ class TestInflowBaselineRuntime:
             assert row[5] == pytest.approx(3.0)     # s_factor
         finally:
             s.end(); s.close(); s.destroy()
+
+
+# --------------------------------------------------------------------------- #
+# P3 — treatment expressions
+#
+# Audit: the step loop evaluates a compiled-expression cache built at start()
+# (ctx.treatment.compiled / has_treatment); swmm_treatment_set/_clear now
+# recompile the edited (node, pollutant) cell, so a mid-run edit applies on
+# the next step. A failed parse is rejected (BadParamError) and the previous
+# expression is restored. The start-up cyclic co-treatment check (Gap #85) is
+# not re-run for runtime edits.
+# --------------------------------------------------------------------------- #
+from openswmm.engine import BadParamError
+
+
+class TestTreatmentRuntime:
+    def test_treatment_set_mid_run_reduces_quality(self):
+        """P3: a mid-run "R = 0.95" treatment cuts node quality; clear recovers."""
+        s = _open(_LANDUSE_INP, "p3_treat_effect")
+        try:
+            lus = list(s.quality.landuses)
+            lu, pol = lus[0].id, s.pollutants[0].id
+            for _ in range(15):
+                s.step()
+            # Drive a strong washoff load so node quality is high.
+            s.quality.set_washoff(lu, pol, func=_EMC, coeff=5000.0, expon=0.0)
+            for _ in range(5):
+                s.step()
+            ni = max(range(len(s.nodes)), key=lambda i: s.nodes[i].quality(pol))
+            before = s.nodes[ni].quality(pol)
+            assert before > 10.0, "expected a washoff-loaded node"
+            s.quality.set_treatment(ni, pol, "R = 0.95")
+            for _ in range(3):
+                s.step()
+            treated = s.nodes[ni].quality(pol)
+            assert treated < before * 0.5, (before, treated)
+            # Clearing the expression lets quality recover.
+            s.quality.clear_treatment(ni, pol)
+            for _ in range(3):
+                s.step()
+            recovered = s.nodes[ni].quality(pol)
+            assert recovered > treated, (treated, recovered)
+        finally:
+            s.end(); s.close(); s.destroy()
+
+    def test_treatment_round_trip(self):
+        """P3: get_treatment reflects a mid-run set and an empty string after clear."""
+        s = _open(_LANDUSE_INP, "p3_treat_rt")
+        try:
+            pol = s.pollutants[0].id
+            for _ in range(5):
+                s.step()
+            s.quality.set_treatment(0, pol, "R = 0.5")
+            assert s.quality.get_treatment(0, pol).strip() == "R = 0.5"
+            s.quality.clear_treatment(0, pol)
+            assert s.quality.get_treatment(0, pol).strip() == ""
+        finally:
+            s.end(); s.close(); s.destroy()
+
+    def test_bad_expression_rejected_keeps_previous(self):
+        """P3: an unparseable expression raises and the previous one survives."""
+        s = _open(_LANDUSE_INP, "p3_treat_bad")
+        try:
+            pol = s.pollutants[0].id
+            for _ in range(5):
+                s.step()
+            s.quality.set_treatment(0, pol, "R = 0.5")
+            with pytest.raises(BadParamError):
+                s.quality.set_treatment(0, pol, "not a treatment expr")
+            assert s.quality.get_treatment(0, pol).strip() == "R = 0.5"
+        finally:
+            s.end(); s.close(); s.destroy()

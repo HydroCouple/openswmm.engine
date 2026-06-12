@@ -68,6 +68,8 @@ from .solver cimport (
     swmm_getValueExpanded,
     swmm_setValue,
     swmm_setValueExpanded,
+    swmm_setTreatment,
+    swmm_clearTreatment,
     swmm_getSavedValue,
     swmm_writeLine,
     swmm_decodeDate,
@@ -1324,13 +1326,64 @@ cdef class Solver:
             element_index = index
 
         cdef int error_code = swmm_setValueExpanded(
-            objType=<int>object_type.value, 
+            objType=<int>object_type.value,
             property=<int>property_type.value,
             index=element_index,
             subindex=sub_index,
             pollutantIndex=<int>pollutant_index,
             value=value
         )
+
+        self.__validate_error(error_code)
+
+    def set_treatment(self, node_index: Union[int, str], pollutant_index: int, expression: str) -> None:
+        """Set (or replace) the treatment expression for a node/pollutant pair.
+
+        Callable before the simulation starts or while it is running; a
+        mid-run edit is evaluated from the next routing step on. A failed
+        parse raises and leaves no treatment in place for the pair.
+
+        @param node_index: Node index or name (e.g., C{0} or C{"J1"}).
+        @type node_index: int or str
+        @param pollutant_index: Pollutant index (e.g., C{0}).
+        @type pollutant_index: int
+        @param expression: Treatment expression in input-file form, e.g.
+            C{"R = 0.5"} or C{"C = BOD * 0.2"}.
+        @type expression: str
+        """
+        cdef int element_index = -1
+
+        if isinstance(node_index, str):
+            element_index = self.get_object_index(SWMMObjects.NODE, node_index)
+            self.__validate_error(element_index)
+        else:
+            element_index = node_index
+
+        cdef bytes expression_bytes = expression.encode('utf-8')
+        cdef int error_code = swmm_setTreatment(element_index, <int>pollutant_index, expression_bytes)
+
+        self.__validate_error(error_code)
+
+    def clear_treatment(self, node_index: Union[int, str], pollutant_index: int) -> None:
+        """Remove the treatment expression for a node/pollutant pair.
+
+        Callable before the simulation starts or while it is running; zero
+        removal applies from the next routing step on.
+
+        @param node_index: Node index or name (e.g., C{0} or C{"J1"}).
+        @type node_index: int or str
+        @param pollutant_index: Pollutant index (e.g., C{0}).
+        @type pollutant_index: int
+        """
+        cdef int element_index = -1
+
+        if isinstance(node_index, str):
+            element_index = self.get_object_index(SWMMObjects.NODE, node_index)
+            self.__validate_error(element_index)
+        else:
+            element_index = node_index
+
+        cdef int error_code = swmm_clearTreatment(element_index, <int>pollutant_index)
 
         self.__validate_error(error_code)
 

@@ -1601,6 +1601,60 @@ void SWMMEngine::refreshLanduseParams() noexcept {
 }
 
 // ============================================================================
+// refreshTreatment() — recompile one treatment expression cell
+// ============================================================================
+
+/**
+ * @brief Recompile one (node, pollutant) treatment expression from the live
+ *        context and refresh the per-node has-treatment flag.
+ *
+ * @details The step loop (QualitySolver::applyTreatment) evaluates the
+ * compiled cache (`ctx.treatment.compiled` / `has_treatment`), which
+ * initQuality() builds once at start. The C API setters
+ * (swmm_treatment_set/_clear) mutate the expression string only, so they call
+ * this to keep the cache coherent — a mid-run treatment edit takes effect on
+ * the next step. An empty expression clears the cell. Mirrors the
+ * initQuality() compile (plain parse + pollutant_idx tag); the start-up cyclic
+ * co-treatment check (Gap #85) is not re-run for runtime edits.
+ *
+ * @return 0 on success, or the nonzero treatment::parse error code (the cell
+ *         is left cleared so a bad edit cannot leave a stale expression live).
+ */
+int SWMMEngine::refreshTreatment(int node_idx, int pollut_idx) noexcept {
+    int np = ctx_.n_pollutants();
+    int nn = ctx_.n_nodes();
+    if (np <= 0 || nn <= 0) return 0;
+    if (node_idx < 0 || node_idx >= nn || pollut_idx < 0 || pollut_idx >= np)
+        return 0;
+    if (ctx_.treatment.n_nodes != nn || ctx_.treatment.n_pollutants != np)
+        ctx_.treatment.resize(nn, np);
+
+    auto idx = static_cast<std::size_t>(node_idx * np + pollut_idx);
+    const auto& expr_str = ctx_.treatment.expressions[idx];
+    int rc = 0;
+    if (expr_str.empty()) {
+        ctx_.treatment.compiled[idx] = treatment::TreatExpr{};
+    } else {
+        treatment::TreatExpr te;
+        rc = treatment::parse(expr_str, te);
+        if (rc == 0) {
+            te.pollutant_idx = pollut_idx;
+            ctx_.treatment.compiled[idx] = std::move(te);
+        } else {
+            ctx_.treatment.compiled[idx] = treatment::TreatExpr{};
+        }
+    }
+
+    bool any = false;
+    for (int p = 0; p < np && !any; ++p) {
+        auto k = static_cast<std::size_t>(node_idx * np + p);
+        any = !ctx_.treatment.compiled[k].tokens.empty();
+    }
+    ctx_.treatment.has_treatment[static_cast<std::size_t>(node_idx)] = any;
+    return rc;
+}
+
+// ============================================================================
 // stepSurfaceQuality() — surface quality buildup + washoff for one substep
 // ============================================================================
 

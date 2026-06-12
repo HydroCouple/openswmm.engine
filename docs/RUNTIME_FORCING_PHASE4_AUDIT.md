@@ -180,3 +180,41 @@ yet exposed is editing the persistent `[INFLOWS]`/`[DWF]` baseline/scale
 definitions by a node-keyed setter. That is a larger, separate task (new
 `setNodeValue` cases + linked-list traversal for the FLOW constituent) and is
 deferred with this note rather than rushed on a core routing path.
+
+---
+
+## Wave B6 — P3 treatment expressions → **SOUND (with a cache-refresh fix); legacy parity functions added**
+
+**Refactored (same cache class as P6/P2/P7).** The step loop
+(`QualitySolver::applyTreatment`) evaluates the **compiled** expression cache
+(`ctx.treatment.compiled` + per-node `has_treatment` flags), which
+`initQuality()` builds once at start. `swmm_treatment_set`/`_clear` wrote only
+the expression *string*, so a mid-run edit was silently inert. Added
+`SWMMEngine::refreshTreatment(node, pollutant)` — recompiles just the edited
+cell (Shunting-yard parse, microseconds; no thread-safety concern since API
+calls sit between steps) and recomputes the node's `has_treatment` flag. Both
+setters call it: **a treatment edit/replace/clear takes effect on the next
+step**. A failed parse is rejected (`SWMM_ERR_BADPARAM` → `BadParamError`) and
+the previous expression is restored, so a bad edit can't silently disable
+treatment. The start-up cyclic co-treatment check (Gap #85) is not re-run for
+runtime edits — introducing an R_POLLUT cycle mid-run is the caller's
+responsibility (evaluation degrades to the legacy-compatible per-step order,
+it does not hang).
+
+**Legacy parity.** Treatment is an *expression*, not a double, so it cannot
+ride `setNodeValue`; added dedicated exported functions instead:
+`swmm_setTreatment(node, pollutant, "R = ..."/"C = ...")` and
+`swmm_clearTreatment(node, pollutant)` (`swmm5.c`). The setter re-uses the
+`[TREATMENT]` input parser (`treatmnt_readExpression`) for exact input-file
+semantics, freeing any prior `MathExpr` first so runtime replaces don't leak;
+clear frees the equation (`treatmnt_treat` applies zero removal for NULL
+equations). Callable pre-start and running; evaluated from the next routing
+step.
+
+**Bindings:** refactored `quality.set/get/clear_treatment` already existed;
+legacy gains `Solver.set_treatment`/`clear_treatment` (pxd + pyx + `.pyi`).
+No new enums (dedicated functions), so enum coverage is unchanged. Tests:
+`TestTreatmentRuntime` (engine: mid-run "R = 0.95" cuts the loaded node's
+quality >2×, clear recovers, round-trip, bad-expression rejection preserves
+the previous expression) and `TestLegacyTreatment` (legacy: same effect test
+on a DWF-quality fixture, name resolution, garbage/bad-index rejection).

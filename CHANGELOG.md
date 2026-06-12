@@ -59,6 +59,18 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
   legacy per-node linked-list inflow model has no flat-index API; runtime
   inflow control remains available via `swmm_NODE_LATFLOW`) — see the audit
   doc. Tests: `TestInflowBaselineRuntime`.
+- **Phase 4 wave B6 — treatment expressions (P3).** SOUND mid-run with a
+  cache-refresh fix (same class as P6/P2/P7): the step loop evaluates the
+  compiled-expression cache built at start, so `swmm_treatment_set`/`_clear`
+  now recompile the edited (node, pollutant) cell via
+  `SWMMEngine::refreshTreatment` — an edit/replace/clear takes effect on the
+  next step, and a failed parse is rejected (`BadParamError`) with the
+  previous expression restored. Legacy parity via dedicated functions (an
+  expression cannot ride `setNodeValue`): `swmm_setTreatment` /
+  `swmm_clearTreatment` re-use the `[TREATMENT]` input parser, freeing any
+  prior `MathExpr` so runtime replaces don't leak; Python
+  `Solver.set_treatment`/`clear_treatment` (+ `.pyi`). Tests:
+  `TestTreatmentRuntime` (engine), `TestLegacyTreatment` (legacy).
 
 - **§3 legacy water-quality source setters — functional tests.** The legacy
   `setPollutValue` source concentrations (rain/wet-deposition `pptConcen`,

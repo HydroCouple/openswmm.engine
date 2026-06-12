@@ -1006,6 +1006,23 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValue(int property, int index, double
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValueExpanded(int objType, int property, int index, int subIndex, int pollutantIndex, double value);
 
 /*!
+ * \brief Set (or replace) the treatment expression for a node/pollutant pair.
+ * \param[in] nodeIndex Node index
+ * \param[in] pollutantIndex Pollutant index
+ * \param[in] expression Treatment expression in input-file form, e.g. "R = 0.5" or "C = BOD * 0.2"
+ * \return Error code
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setTreatment(int nodeIndex, int pollutantIndex, const char *expression);
+
+/*!
+ * \brief Remove the treatment expression for a node/pollutant pair.
+ * \param[in] nodeIndex Node index
+ * \param[in] pollutantIndex Pollutant index
+ * \return Error code
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_clearTreatment(int nodeIndex, int pollutantIndex);
+
+/*!
  * \brief Get saved value of
  * \param[in] property Property type
  * \param[in] index Object index

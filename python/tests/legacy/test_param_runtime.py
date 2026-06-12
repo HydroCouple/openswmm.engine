@@ -35,11 +35,14 @@ _PatProp = solver.SWMMPatternProperties
 _LuProp = solver.SWMMLandUseProperties
 
 
-def _derive_dwf_model():
+def _derive_dwf_model(quality=False):
     """Runnable one-day copy of legacy_small (DWF + patterns, no rain needed).
 
     Replaces the missing external rain FILE with a single zero inline row and
-    drops the orphan external stage FILE timeseries so the run starts.
+    drops the orphan external stage FILE timeseries so the run starts. With
+    ``quality=True`` it also enables quality routing and appends a TSS
+    pollutant carried by the DWF (Cdwf=500), so nodes hold a steady
+    concentration that treatment edits can act on.
     """
     os.makedirs(_OUT_DIR, exist_ok=True)
     with open(_LEGACY_SMALL) as f:
@@ -51,7 +54,17 @@ def _derive_dwf_model():
                  txt, count=1, flags=re.MULTILINE)
     txt = re.sub(r'^END_DATE\s+\S+', 'END_DATE             10/08/2012',
                  txt, count=1, flags=re.MULTILINE)
-    path = os.path.join(_OUT_DIR, "param_dwf.inp")
+    name = "param_dwf.inp"
+    if quality:
+        txt = re.sub(r'^IGNORE_QUALITY\s+\S+', 'IGNORE_QUALITY       NO',
+                     txt, count=1, flags=re.MULTILINE)
+        txt += (
+            "\n[POLLUTANTS]\n"
+            ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac Cdwf Cinit\n"
+            "TSS MG/L 0.0 0.0 0.0 0.0 NO * 0.0 500.0 0.0\n"
+        )
+        name = "param_dwf_quality.inp"
+    path = os.path.join(_OUT_DIR, name)
     with open(path, "w") as f:
         f.write(txt)
     return path
@@ -209,5 +222,60 @@ class TestLegacyKinetics:
                 s.step()
             with pytest.raises(Exception):
                 s.set_value(_POBJ, _PProp.INIT_CONCENTRATION, 0, 5.0)
+        finally:
+            s.end(); s.finalize()
+
+
+# --------------------------------------------------------------------------- #
+# P3 — treatment expressions (legacy parity)
+#
+# swmm_setTreatment re-uses the [TREATMENT] input parser, freeing any prior
+# equation first, so a mid-run set/replace/clear is leak-free and evaluated
+# from the next routing step on (treatmnt_treat applies zero removal for
+# cleared pairs).
+# --------------------------------------------------------------------------- #
+class TestLegacyTreatment:
+    def test_treatment_set_mid_run_reduces_quality(self):
+        """P3: a mid-run "R = 0.95" treatment cuts node quality; clear recovers."""
+        s = _open(_derive_dwf_model(quality=True), "p3_legacy_treat")
+        try:
+            nodes = LegacyNodes(s)
+            # Step until a node carries the DWF-borne TSS (Cdwf=500).
+            ni, before = -1, 0.0
+            for _ in range(120):
+                s.step()
+                ni = max(range(len(nodes)),
+                         key=lambda i: nodes[i].get_pollutant_concentration(0))
+                before = nodes[ni].get_pollutant_concentration(0)
+                if before > 10.0:
+                    break
+            assert before > 10.0, "expected a DWF-loaded node"
+            s.set_treatment(ni, 0, "R = 0.95")
+            for _ in range(2):
+                s.step()
+            treated = nodes[ni].get_pollutant_concentration(0)
+            assert treated < before * 0.5, (before, treated)
+            # Clearing the expression lets quality recover.
+            s.clear_treatment(ni, 0)
+            for _ in range(4):
+                s.step()
+            recovered = nodes[ni].get_pollutant_concentration(0)
+            assert recovered > treated, (treated, recovered)
+        finally:
+            s.end(); s.finalize()
+
+    def test_treatment_accepts_name_and_rejects_garbage(self):
+        """P3: node-name resolution works; an unparseable expression raises."""
+        s = _open(_SITE_DRAINAGE, "p3_legacy_treat_err")
+        try:
+            for _ in range(3):
+                s.step()
+            name = s.get_object_name(solver.SWMMObjects.NODE, 0)
+            s.set_treatment(name, 0, "R = 0.5")   # by name, parses fine
+            with pytest.raises(Exception):
+                s.set_treatment(0, 0, "not a treatment expr")
+            with pytest.raises(Exception):
+                s.set_treatment(len(LegacyNodes(s)), 0, "R = 0.5")  # bad index
+            s.clear_treatment(name, 0)
         finally:
             s.end(); s.finalize()

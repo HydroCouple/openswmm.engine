@@ -217,6 +217,13 @@ public:
     /// Leaves the accumulated buildup pool untouched.
     void refreshLanduseParams() noexcept;
 
+    /// Recompile one (node, pollutant) treatment expression from the live
+    /// context and refresh the per-node has-treatment flag (for C API runtime
+    /// edits via swmm_treatment_set/_clear — the step loop evaluates the
+    /// compiled cache, not the expression string). Returns 0 on success or a
+    /// nonzero parse-error code; a failed parse leaves the cell cleared.
+    int refreshTreatment(int node_idx, int pollut_idx) noexcept;
+
     /**
      * @brief Area-weighted snow depth (SWE, ft) on a subcatchment.
      *
