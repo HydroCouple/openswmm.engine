@@ -79,11 +79,19 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
         // Skip truly empty lines
         if (trimmed_raw.empty()) continue;
 
-        // Detect section header: starts with '['
+        // Detect section header. A real header is a clean "[NAME]" token on its
+        // own line (an optional trailing comment is allowed). A line that merely
+        // begins with '[' but carries other text after the ']' — e.g. a wrapped
+        // [TITLE] line that happens to start with a bracketed word — is NOT a
+        // header; it falls through and is kept as section data.
         if (trimmed_raw.front() == '[') {
-            flush_section();
-            current_tag = parse_section_header(trimmed_raw);
-            continue;
+            std::string_view header = Tokenizer::trim(Tokenizer::strip_comment(trimmed_raw));
+            if (!header.empty() && header.back() == ']') {
+                flush_section();
+                current_tag = parse_section_header(header);
+                continue;
+            }
+            // Not a clean header — fall through to data-line handling below.
         }
 
         // Comment line (starts with ';') — keep verbatim inside a section so
@@ -94,8 +102,14 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
             continue;
         }
 
-        // Data line — strip inline trailing comment, then trim
-        std::string_view stripped = Tokenizer::strip_comment(trimmed_raw);
+        // Data line. [TITLE] is free-form prose, so preserve it verbatim —
+        // legacy SWMM stores the whole title line (input.c readTitle), and a
+        // ';' in a sentence is description, not a comment. Stripping it here
+        // truncated titles mid-sentence in the .rpt echo. Every other section
+        // strips the inline trailing comment.
+        std::string_view stripped = (current_tag == "TITLE")
+                                        ? trimmed_raw
+                                        : Tokenizer::strip_comment(trimmed_raw);
         std::string_view trimmed  = Tokenizer::trim(stripped);
         if (!trimmed.empty() && !current_tag.empty())
             section_lines.emplace_back(std::string(trimmed));

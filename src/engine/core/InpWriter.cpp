@@ -1234,12 +1234,12 @@ int writeInpFile(const SimulationContext& ctx,
 
     // [POLLUTANTS]
     if(ctx.n_pollutants()>0){sec(f,"POLLUTANTS");
-    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s\n","Name","Units","Crain","Cgw","Crdii","Kdecay","SnowOnly","CoPollut","CoFrac");
-    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s\n","----------------","--------","----------","----------","----------","----------","----------","----------------","----------");
+    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s %-10s %-10s\n","Name","Units","Crain","Cgw","Crdii","Kdecay","SnowOnly","CoPollut","CoFrac","Cdwf","Cinit");
+    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s %-10s %-10s\n","----------------","--------","----------","----------","----------","----------","----------","----------------","----------","----------","----------");
     for(int p=0;p<ctx.n_pollutants();++p){auto u=static_cast<size_t>(p);
     write_obj_comment(f, ctx.pollutants.comments, u);
     const char*un="MG/L";if(ctx.pollutants.units[u]==MassUnits::UG_PER_L)un="UG/L";if(ctx.pollutants.units[u]==MassUnits::COUNTS_PER_L)un="#/L";
-    std::fprintf(f,"%-16s %-8s %10.4f %10.4f %10.4f %10.4f %-10s %-16s %10.4f\n",pN(ctx,p),un,ctx.pollutants.c_rain[u],ctx.pollutants.c_gw[u],ctx.pollutants.c_rdii[u],ctx.pollutants.k_decay[u],ctx.pollutants.snow_only[u]?"YES":"NO",ctx.pollutants.co_pollut[u]>=0?pN(ctx,ctx.pollutants.co_pollut[u]):"*",ctx.pollutants.co_frac[u]);
+    std::fprintf(f,"%-16s %-8s %10.4f %10.4f %10.4f %10.4f %-10s %-16s %10.4f %10.4f %10.4f\n",pN(ctx,p),un,ctx.pollutants.c_rain[u],ctx.pollutants.c_gw[u],ctx.pollutants.c_rdii[u],ctx.pollutants.k_decay[u],ctx.pollutants.snow_only[u]?"YES":"NO",ctx.pollutants.co_pollut[u]>=0?pN(ctx,ctx.pollutants.co_pollut[u]):"*",ctx.pollutants.co_frac[u],ctx.pollutants.c_dwf[u],ctx.pollutants.init_conc[u]);
     }}
 
     // [LANDUSES]

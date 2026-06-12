@@ -76,6 +76,10 @@ struct ForcingData {
     std::vector<double>         link_setting_value;     ///< 0.0–1.0 for pump/orifice/weir
     std::vector<ForcingPersist> link_setting_persist;
 
+    std::vector<ForcingMode>    link_quality_mode;      ///< flattened link × pollutant
+    std::vector<double>         link_quality_value;     ///< OVERRIDE: concentration; ADD: mass rate (mass/sec)
+    std::vector<ForcingPersist> link_quality_persist;
+
     // ------ Subcatchment forcing (sized to n_subcatches) --------------------
 
     std::vector<ForcingMode>    subcatch_rainfall_mode;
@@ -86,11 +90,29 @@ struct ForcingData {
     std::vector<double>         subcatch_evap_value;     ///< prescribed PET rate, ft/sec (internal units; converted from in/day or mm/day at the C API boundary)
     std::vector<ForcingPersist> subcatch_evap_persist;
 
+    std::vector<ForcingMode>    subcatch_snowfall_mode;
+    std::vector<double>         subcatch_snowfall_value; ///< ft/sec (internal; converted from in/hr or mm/hr at the C API boundary)
+    std::vector<ForcingPersist> subcatch_snowfall_persist;
+
     // ------ Gage forcing (sized to n_gages) ---------------------------------
 
     std::vector<ForcingMode>    gage_rainfall_mode;
     std::vector<double>         gage_rainfall_value;     ///< user units (in/hr or mm/hr)
     std::vector<ForcingPersist> gage_rainfall_persist;
+
+    // ------ Climate forcing (scalar — system-wide) ---------------------------
+
+    ForcingMode    climate_temperature_mode    = ForcingMode::NONE;
+    double         climate_temperature_value   = 0.0;  ///< deg F (internal; converted from deg C at the C API boundary for SI)
+    ForcingPersist climate_temperature_persist = ForcingPersist::RESET;
+
+    ForcingMode    climate_wind_mode    = ForcingMode::NONE;
+    double         climate_wind_value   = 0.0;         ///< mph (internal; converted from km/hr at the C API boundary for SI)
+    ForcingPersist climate_wind_persist = ForcingPersist::RESET;
+
+    ForcingMode    climate_evap_mode    = ForcingMode::NONE;
+    double         climate_evap_value   = 0.0;         ///< ft/sec (internal; converted from in/day or mm/day at the C API boundary)
+    ForcingPersist climate_evap_persist = ForcingPersist::RESET;
 
     // ------ Counts (for iteration) ------------------------------------------
 
@@ -142,6 +164,12 @@ struct ForcingData {
         link_setting_value.assign(ul, 0.0);
         link_setting_persist.assign(ul, ForcingPersist::RESET);
 
+        auto ulp = static_cast<std::size_t>(n_links) *
+                   static_cast<std::size_t>(n_pollutants);
+        link_quality_mode.assign(ulp, ForcingMode::NONE);
+        link_quality_value.assign(ulp, 0.0);
+        link_quality_persist.assign(ulp, ForcingPersist::RESET);
+
         subcatch_rainfall_mode.assign(us, ForcingMode::NONE);
         subcatch_rainfall_value.assign(us, 0.0);
         subcatch_rainfall_persist.assign(us, ForcingPersist::RESET);
@@ -149,6 +177,10 @@ struct ForcingData {
         subcatch_evap_mode.assign(us, ForcingMode::NONE);
         subcatch_evap_value.assign(us, 0.0);
         subcatch_evap_persist.assign(us, ForcingPersist::RESET);
+
+        subcatch_snowfall_mode.assign(us, ForcingMode::NONE);
+        subcatch_snowfall_value.assign(us, 0.0);
+        subcatch_snowfall_persist.assign(us, ForcingPersist::RESET);
 
         gage_rainfall_mode.assign(ug, ForcingMode::NONE);
         gage_rainfall_value.assign(ug, 0.0);
@@ -167,9 +199,14 @@ struct ForcingData {
         set_none(node_quality_mode);
         set_none(link_flow_mode);
         set_none(link_setting_mode);
+        set_none(link_quality_mode);
         set_none(subcatch_rainfall_mode);
         set_none(subcatch_evap_mode);
+        set_none(subcatch_snowfall_mode);
         set_none(gage_rainfall_mode);
+        climate_temperature_mode = ForcingMode::NONE;
+        climate_wind_mode        = ForcingMode::NONE;
+        climate_evap_mode        = ForcingMode::NONE;
     }
 
     /**
@@ -191,9 +228,98 @@ struct ForcingData {
         clear_resets(node_quality_mode,          node_quality_persist);
         clear_resets(link_flow_mode,             link_flow_persist);
         clear_resets(link_setting_mode,          link_setting_persist);
+        clear_resets(link_quality_mode,          link_quality_persist);
         clear_resets(subcatch_rainfall_mode,     subcatch_rainfall_persist);
         clear_resets(subcatch_evap_mode,         subcatch_evap_persist);
+        clear_resets(subcatch_snowfall_mode,     subcatch_snowfall_persist);
         clear_resets(gage_rainfall_mode,         gage_rainfall_persist);
+        if (climate_temperature_persist == ForcingPersist::RESET)
+            climate_temperature_mode = ForcingMode::NONE;
+        if (climate_wind_persist == ForcingPersist::RESET)
+            climate_wind_mode = ForcingMode::NONE;
+        if (climate_evap_persist == ForcingPersist::RESET)
+            climate_evap_mode = ForcingMode::NONE;
+    }
+
+    /**
+     * @brief Resolve the effective air temperature (deg F internal).
+     *
+     * @param broadcast  Climate-derived temperature (deg F).
+     * @return Prescribed (OVERRIDE), augmented (ADD), or broadcast value.
+     */
+    double effective_temperature(double broadcast) const noexcept {
+        switch (climate_temperature_mode) {
+            case ForcingMode::OVERRIDE: return climate_temperature_value;
+            case ForcingMode::ADD:      return broadcast + climate_temperature_value;
+            default:                    return broadcast;
+        }
+    }
+
+    /**
+     * @brief Resolve the effective wind speed (mph internal).
+     *
+     * @param broadcast  Climate-derived wind speed (mph).
+     * @return Prescribed (OVERRIDE), augmented (ADD), or broadcast value.
+     */
+    double effective_wind(double broadcast) const noexcept {
+        switch (climate_wind_mode) {
+            case ForcingMode::OVERRIDE: return climate_wind_value;
+            case ForcingMode::ADD:      return broadcast + climate_wind_value;
+            default:                    return broadcast;
+        }
+    }
+
+    /**
+     * @brief Resolve the effective rainfall for a subcatchment.
+     *
+     * Applies any subcatchment rainfall forcing to the gage-derived rate.
+     * Units are the caller's (user units, in/hr or mm/hr — matching the
+     * C API contract of swmm_forcing_subcatch_rainfall).
+     *
+     * @param ui             Subcatchment index.
+     * @param gage_rainfall  Gage-derived rainfall in user units.
+     * @return Effective rainfall in user units.
+     */
+    double effective_rainfall(std::size_t ui, double gage_rainfall) const noexcept {
+        if (ui >= subcatch_rainfall_mode.size()) return gage_rainfall;
+        switch (subcatch_rainfall_mode[ui]) {
+            case ForcingMode::OVERRIDE: return subcatch_rainfall_value[ui];
+            case ForcingMode::ADD:      return gage_rainfall + subcatch_rainfall_value[ui];
+            default:                    return gage_rainfall;
+        }
+    }
+
+    /**
+     * @brief Resolve the effective system-wide evaporation rate (ft/sec).
+     *
+     * @param broadcast  Climate-derived evap rate (ft/sec), post-adjustment.
+     * @return Prescribed (OVERRIDE), augmented (ADD), or broadcast value.
+     */
+    double effective_climate_evap(double broadcast) const noexcept {
+        switch (climate_evap_mode) {
+            case ForcingMode::OVERRIDE: return climate_evap_value;
+            case ForcingMode::ADD:      return broadcast + climate_evap_value;
+            default:                    return broadcast;
+        }
+    }
+
+    /**
+     * @brief Resolve the effective snowfall for a subcatchment (ft/sec).
+     *
+     * Applies any subcatchment snowfall forcing to the gage-derived
+     * (temperature-split) snowfall rate.
+     *
+     * @param ui             Subcatchment index.
+     * @param gage_snowfall  Gage-derived snowfall (ft/sec).
+     * @return Effective snowfall (ft/sec).
+     */
+    double effective_snowfall(std::size_t ui, double gage_snowfall) const noexcept {
+        if (ui >= subcatch_snowfall_mode.size()) return gage_snowfall;
+        switch (subcatch_snowfall_mode[ui]) {
+            case ForcingMode::OVERRIDE: return subcatch_snowfall_value[ui];
+            case ForcingMode::ADD:      return gage_snowfall + subcatch_snowfall_value[ui];
+            default:                    return gage_snowfall;
+        }
     }
 
     /**

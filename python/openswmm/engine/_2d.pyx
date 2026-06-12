@@ -610,8 +610,8 @@ cdef class Surface2D:
 
         @return: Mapping with keys C{init_storage}, C{final_storage},
             C{rainfall_in}, C{coupling_1d_to_2d_in}, C{coupling_2d_to_1d_out},
-            C{outfall_in}, C{boundary_in}, C{boundary_out} (all C{m^3}) and
-            C{continuity_error} (fraction).
+            C{outfall_in}, C{boundary_in}, C{boundary_out}, C{evap_out}
+            (all C{m^3}) and C{continuity_error} (fraction).
         @rtype: dict[str, float]
         @raise RuntimeError: If the 2D module did not run.
         """
@@ -623,12 +623,14 @@ cdef class Surface2D:
         cdef double outfall_in = 0.0
         cdef double boundary_in = 0.0
         cdef double boundary_out = 0.0
+        cdef double evap_out = 0.0
         cdef double err = 0.0
         _check(swmm_2d_get_mass_balance(self._engine,
                                         &init_storage, &final_storage,
                                         &rainfall_in, &coupling_in,
                                         &coupling_out, &outfall_in,
-                                        &boundary_in, &boundary_out))
+                                        &boundary_in, &boundary_out,
+                                        &evap_out))
         _check(swmm_2d_get_continuity_error(self._engine, &err))
         return {
             "init_storage": init_storage,
@@ -639,6 +641,7 @@ cdef class Surface2D:
             "outfall_in": outfall_in,
             "boundary_in": boundary_in,
             "boundary_out": boundary_out,
+            "evap_out": evap_out,
             "continuity_error": err,
         }
 
@@ -682,6 +685,47 @@ cdef class Surface2D:
         """
         _check(swmm_2d_force_rainfall_uniform(self._engine, value,
                                               int(mode), int(persist)))
+
+    def force_evap(self, int idx, double value, *,
+                   mode=SurfaceForcingMode.OVERRIDE,
+                   persist=ForcingPersist.RESET):
+        """Force evaporation on a specific triangle.
+
+        The rate is a demand: wet cells lose depth at this rate, shutting
+        off smoothly as a cell dries (depths never go negative). The default
+        rate is 0 unless forced. Negative values are treated as zero.
+
+        @param idx: Triangle index.
+        @type idx: int
+        @param value: Evaporation rate (m/s; same SI convention as rainfall).
+        @type value: float
+        @param mode: How the value is applied. C{OVERRIDE} replaces the
+            computed rate; C{ADD} adds to it.
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} holds the forcing until cleared; C{RESET}
+            applies it for a single step.
+        @type persist: L{ForcingPersist}
+        @raise RuntimeError: If the C API rejects the forcing.
+        """
+        _check(swmm_2d_force_evap(self._engine, idx, value,
+                                  int(mode), int(persist)))
+
+    def force_evap_uniform(self, double value, *,
+                           mode=SurfaceForcingMode.OVERRIDE,
+                           persist=ForcingPersist.RESET):
+        """Force uniform evaporation on all triangles.
+
+        @param value: Evaporation rate (m/s; same SI convention as rainfall).
+        @type value: float
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
+        @raise RuntimeError: If the C API rejects the forcing.
+        """
+        _check(swmm_2d_force_evap_uniform(self._engine, value,
+                                          int(mode), int(persist)))
 
     def force_coupling_flux(self, int idx, double value, *,
                             mode=SurfaceForcingMode.OVERRIDE,

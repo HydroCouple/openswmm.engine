@@ -54,6 +54,7 @@ SWMM_ENGINE_API int swmm_get_quality_continuity_error(SWMM_Engine engine,
     if (p < mb.qual_runoff_load.size())    total_in += mb.qual_runoff_load[p];
     if (p < mb.qual_routing_wet.size())    total_in += mb.qual_routing_wet[p];
     if (p < mb.qual_routing_ii_in.size())  total_in += mb.qual_routing_ii_in[p];
+    if (p < mb.qual_routing_dw_in.size())  total_in += mb.qual_routing_dw_in[p];
 
     double total_out = 0.0;
     if (p < mb.qual_routing_outflow.size()) total_out += mb.qual_routing_outflow[p];

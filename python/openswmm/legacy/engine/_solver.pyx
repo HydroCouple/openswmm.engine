@@ -39,6 +39,7 @@ from .solver cimport (
     swmm_NodeProperty,
     swmm_LinkProperty,
     swmm_SystemProperty,
+    swmm_PollutProperty,
     swmm_FlowUnitsProperty,
     swmm_API_Errors,
     progress_callback,
@@ -211,6 +212,12 @@ class SWMMSubcatchmentProperties(Enum):
     @cvar API_RAINFALL: API rainfall override.
     @cvar API_SNOWFALL: API snowfall override.
     @cvar API_PET: API prescribed potential evapotranspiration rate override.
+    @cvar GW_MOISTURE: Groundwater upper zone moisture content (state injection).
+    @cvar GW_LOWER_DEPTH: Groundwater saturated zone depth (state injection).
+    @cvar SNOW_SWE: Snow pack SWE on a snow subarea (sub_index 0-2).
+    @cvar SNOW_FW: Snow pack free water on a snow subarea (sub_index 0-2).
+    @cvar SNOW_ATI: Snow pack antecedent temperature index (sub_index 0-2).
+    @cvar SNOW_COLDC: Snow pack cold content (sub_index 0-2).
     @cvar POLLUTANT_BUILDUP: Pollutant buildup.
     @cvar EXTERNAL_POLLUTANT_BUILDUP: External pollutant buildup.
     @cvar POLLUTANT_RUNOFF_CONCENTRATION: Pollutant runoff concentration.
@@ -266,6 +273,12 @@ class SWMMSubcatchmentProperties(Enum):
     POLLUTANT_PONDED_CONCENTRATION = swmm_SubcatchProperty.swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION
     POLLUTANT_TOTAL_LOAD = swmm_SubcatchProperty.swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD
     API_PET = swmm_SubcatchProperty.swmm_SUBCATCH_API_PET
+    GW_MOISTURE = swmm_SubcatchProperty.swmm_SUBCATCH_GW_MOISTURE
+    GW_LOWER_DEPTH = swmm_SubcatchProperty.swmm_SUBCATCH_GW_LOWER_DEPTH
+    SNOW_SWE = swmm_SubcatchProperty.swmm_SUBCATCH_SNOW_SWE
+    SNOW_FW = swmm_SubcatchProperty.swmm_SUBCATCH_SNOW_FW
+    SNOW_ATI = swmm_SubcatchProperty.swmm_SUBCATCH_SNOW_ATI
+    SNOW_COLDC = swmm_SubcatchProperty.swmm_SUBCATCH_SNOW_COLDC
 
 class SWMMNodeProperties(Enum):
     """Enumeration of SWMM node properties.
@@ -427,6 +440,12 @@ class SWMMSystemProperties(Enum):
     @cvar SYS_FLOW_TOL: System flow tolerance.
     @cvar LAT_FLOW_TOL: Lateral flow tolerance.
     @cvar EVAP_RATE: Current climate-derived evaporation rate (read-only).
+    @cvar TEMPERATURE: Current air temperature (read-only).
+    @cvar API_TEMPERATURE: API prescribed air temperature override.
+    @cvar WIND_SPEED: Current wind speed (read-only).
+    @cvar API_WIND_SPEED: API prescribed wind speed override.
+    @cvar API_EVAP: API prescribed system-wide evaporation rate override.
+    @cvar EVAP_DRY_ONLY: Evaporation DRY_ONLY option (runtime-settable).
     """
     START_DATE = swmm_SystemProperty.swmm_STARTDATE
     CURRENT_DATE = swmm_SystemProperty.swmm_CURRENTDATE
@@ -470,6 +489,30 @@ class SWMMSystemProperties(Enum):
     SYS_FLOW_TOL = swmm_SystemProperty.swmm_SYSFLOWTOL
     LAT_FLOW_TOL = swmm_SystemProperty.swmm_LATFLOWTOL
     EVAP_RATE = swmm_SystemProperty.swmm_EVAPRATE
+    TEMPERATURE = swmm_SystemProperty.swmm_TEMPERATURE
+    API_TEMPERATURE = swmm_SystemProperty.swmm_API_TEMPERATURE
+    WIND_SPEED = swmm_SystemProperty.swmm_WINDSPEED
+    API_WIND_SPEED = swmm_SystemProperty.swmm_API_WINDSPEED
+    API_EVAP = swmm_SystemProperty.swmm_API_EVAP
+    EVAP_DRY_ONLY = swmm_SystemProperty.swmm_EVAP_DRY_ONLY
+
+
+class SWMMPollutantProperties(Enum):
+    """Enumeration of SWMM pollutant properties.
+
+    The source concentrations are settable while the simulation is
+    running (dynamic quality forcing), in the pollutant's concentration
+    units (e.g. mg/L).
+
+    @cvar RAIN_CONCENTRATION: Rain (wet deposition) concentration.
+    @cvar GW_CONCENTRATION: Groundwater inflow concentration.
+    @cvar RDII_CONCENTRATION: RDII inflow concentration.
+    @cvar DWF_CONCENTRATION: Dry weather sanitary flow concentration.
+    """
+    RAIN_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_RAIN_CONCEN
+    GW_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_GW_CONCEN
+    RDII_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_RDII_CONCEN
+    DWF_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_DWF_CONCEN
 
 # =============================================================================
 # Units / errors enumerations
@@ -1258,14 +1301,30 @@ cdef class Solver:
             element_index = index
 
         cdef double value = swmm_getValueExpanded(
-            objType=<int>object_type.value, 
-            property=<int>property_type.value, 
-            index=element_index, 
+            objType=<int>object_type.value,
+            property=<int>property_type.value,
+            index=element_index,
             subIndex=sub_index,
             pollutantIndex=pollutant_index
         )
 
-        self.__validate_error(<int>value)
+        # swmm_getValueExpanded() returns the property value directly. Errors
+        # are signalled two ways: regular solver errors set a positive system
+        # ERROR_CODE, while API-state/lookup errors are returned as the large
+        # negative swmm_API_Errors sentinels (<= -999900). A small negative
+        # return is a VALID value (e.g. a sub-freezing air temperature, or the
+        # -999 API-unset sentinel) and must not be treated as an error — the
+        # old `__validate_error(<int>value)` raised on any value < 0.
+        cdef int internal_error_code = <int>swmm_getValue(
+            property=SWMMObjects.SYSTEM.value,
+            index=SWMMSystemProperties.ERROR_CODE.value
+        )
+        if internal_error_code > 0:
+            raise SWMMSolverException(
+                f'SWMM failed with message: {internal_error_code}, {self.__get_error()}')
+        if value <= -999900.0:
+            raise SWMMSolverException(
+                f'SWMM failed with message: {<int>value}, {get_error_message(<int>value)}')
 
         return value
     

@@ -347,6 +347,7 @@ SWMM_ENGINE_API int swmm_2d_get_stat_max_continuity_err(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_2d_get_continuity_error(SWMM_Engine engine, double* err);
 
 /** @brief Get the global 2D mass-balance terms (all m3). Any pointer may be NULL.
+ *  @param evap_out Cumulative evaporation loss from the 2D surface (m3).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_mass_balance(SWMM_Engine engine,
                                              double* init_storage,
@@ -356,7 +357,8 @@ SWMM_ENGINE_API int swmm_2d_get_mass_balance(SWMM_Engine engine,
                                              double* coupling_2d_to_1d_out,
                                              double* outfall_in,
                                              double* boundary_in,
-                                             double* boundary_out);
+                                             double* boundary_out,
+                                             double* evap_out);
 
 /* =========================================================================
  * 2D Forcing — Override rainfall or coupling for external control
@@ -377,6 +379,27 @@ SWMM_ENGINE_API int swmm_2d_force_rainfall(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_2d_force_rainfall_uniform(SWMM_Engine engine,
                                                      double value, int mode,
                                                      int persist);
+
+/** @brief Force evaporation on a specific triangle.
+ *
+ *  The rate is a demand: wet cells lose depth at this rate, shut off
+ *  smoothly as a cell dries (depths never go negative). Default rate is 0
+ *  until forced. Negative values are treated as zero (no condensation).
+ *
+ *  @param idx Triangle index.
+ *  @param value Evaporation rate (m/s — same SI convention as rainfall).
+ *  @param mode SWMM_FORCING_OVERRIDE or SWMM_FORCING_ADD.
+ *  @param persist SWMM_FORCING_RESET or SWMM_FORCING_PERSIST.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_force_evap(SWMM_Engine engine, int idx,
+                                         double value, int mode,
+                                         int persist);
+
+/** @brief Force evaporation on all triangles (uniform).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_force_evap_uniform(SWMM_Engine engine,
+                                                 double value, int mode,
+                                                 int persist);
 
 /** @brief Force coupling flux on a specific triangle (override computed exchange).
  *  @param value Flux rate (m/s, + = into 2D).

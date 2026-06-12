@@ -161,6 +161,22 @@ SWMM_ENGINE_API int swmm_pollutant_get_rdii_conc(SWMM_Engine engine, int idx, do
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_pollutant_set_dwf_conc(SWMM_Engine engine, int idx, double conc) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
+    ctx.pollutants.c_dwf[static_cast<std::size_t>(idx)] = conc;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_pollutant_get_dwf_conc(SWMM_Engine engine, int idx, double* conc) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
+    if (conc) *conc = ctx.pollutants.c_dwf[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_pollutant_set_mwt(SWMM_Engine engine, int idx, double mwt) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();

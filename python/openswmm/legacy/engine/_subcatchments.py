@@ -309,6 +309,100 @@ class LegacySubcatchment:
                 mass_balance_category="quality.buildup",
             )
 
+    # --- state injection: groundwater (data assimilation) ---
+    @property
+    def gw_moisture(self) -> float:
+        """Groundwater upper-zone moisture content (state injection).
+
+        Reading returns the current upper-zone moisture; setting injects it
+        mid-run. The subcatchment must have groundwater. Mass balance reflects
+        the resulting storage discontinuity (hotstart-equivalent semantics).
+        """
+        return self._get(SP.GW_MOISTURE)
+
+    @gw_moisture.setter
+    def gw_moisture(self, value: float) -> None:
+        self._set(SP.GW_MOISTURE, value)
+
+    @property
+    def gw_lower_depth(self) -> float:
+        """Groundwater saturated-zone depth above the aquifer bottom
+        (project length units; state injection)."""
+        return self._get(SP.GW_LOWER_DEPTH)
+
+    @gw_lower_depth.setter
+    def gw_lower_depth(self, value: float) -> None:
+        self._set(SP.GW_LOWER_DEPTH, value)
+
+    # --- state injection: snow pack (data assimilation) ---
+    def set_snow_state(
+        self,
+        surface: int,
+        swe: Optional[float] = None,
+        fw: Optional[float] = None,
+        ati: Optional[float] = None,
+        coldc: Optional[float] = None,
+    ) -> None:
+        """Inject the snow-pack state on one snow surface (state assimilation).
+
+        @param surface: Snow subarea (0 plowable, 1 impervious, 2 pervious),
+            passed through as the property ``sub_index``.
+        @type surface: int
+        @param swe: Snow water equivalent in project depth units; omit to leave
+            unchanged.
+        @type swe: float or None
+        @param fw: Free water in project depth units; omit to leave unchanged.
+        @type fw: float or None
+        @param ati: Antecedent temperature index (deg F US, deg C SI); omit to
+            leave unchanged.
+        @type ati: float or None
+        @param coldc: Cold content in project depth units; omit to leave
+            unchanged.
+        @type coldc: float or None
+        """
+        if swe is not None:
+            self._set(SP.SNOW_SWE, swe, sub_index=surface)
+        if fw is not None:
+            self._set(SP.SNOW_FW, fw, sub_index=surface)
+        if ati is not None:
+            self._set(SP.SNOW_ATI, ati, sub_index=surface)
+        if coldc is not None:
+            self._set(SP.SNOW_COLDC, coldc, sub_index=surface)
+
+    def get_snow_state(self, surface: int) -> Dict[str, float]:
+        """Read the snow-pack state on one snow surface.
+
+        @param surface: Snow subarea (0 plowable, 1 impervious, 2 pervious).
+        @type surface: int
+        @return: ``{"swe", "fw", "ati", "coldc"}`` in project units.
+        @rtype: dict
+        """
+        return {
+            "swe": self._get(SP.SNOW_SWE, sub_index=surface),
+            "fw": self._get(SP.SNOW_FW, sub_index=surface),
+            "ati": self._get(SP.SNOW_ATI, sub_index=surface),
+            "coldc": self._get(SP.SNOW_COLDC, sub_index=surface),
+        }
+
+    # --- quality injection ---
+    def set_ponded_concentration(
+        self,
+        pollutant_index: int,
+        value: float,
+    ) -> None:
+        """Place pollutant mass on this subcatchment's ponded water.
+
+        Requires ponded depth > 0 (set during the storm). The injected mass
+        washes off into the quality mass balance.
+
+        @param pollutant_index: 0-based pollutant index (property sub_index).
+        @type pollutant_index: int
+        @param value: Ponded concentration in the pollutant's units.
+        @type value: float
+        """
+        self._set(SP.POLLUTANT_PONDED_CONCENTRATION, value,
+                  sub_index=pollutant_index)
+
     # --- statistics (after end()) ---
     @property
     def statistics(self) -> Dict[str, Any]:

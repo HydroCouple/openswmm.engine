@@ -587,12 +587,14 @@ class ForcingTarget(IntEnum):
     @cvar LINK: Link forcing.
     @cvar SUBCATCH: Subcatchment forcing.
     @cvar GAGE: Rain gage forcing.
+    @cvar CLIMATE: System-wide climate forcing (temperature, wind).
     """
 
     NODE = 0
     LINK = 1
     SUBCATCH = 2
     GAGE = 3
+    CLIMATE = 4
 
 
 # =============================================================================
@@ -716,6 +718,11 @@ class ForcingType(IntEnum):
     @cvar SUBCATCH_RAINFALL: Rainfall on a subcatchment.
     @cvar SUBCATCH_EVAP: Evaporation on a subcatchment.
     @cvar GAGE_RAINFALL: Rainfall at a rain gage.
+    @cvar CLIMATE_TEMPERATURE: System-wide air temperature.
+    @cvar CLIMATE_WIND: System-wide wind speed.
+    @cvar SUBCATCH_SNOWFALL: Snowfall on a subcatchment.
+    @cvar CLIMATE_EVAP: System-wide evaporation rate.
+    @cvar LINK_QUALITY: Pollutant quality on a link.
     """
 
     NODE_LAT_INFLOW = 0
@@ -726,6 +733,11 @@ class ForcingType(IntEnum):
     SUBCATCH_RAINFALL = 5
     SUBCATCH_EVAP = 6
     GAGE_RAINFALL = 7
+    CLIMATE_TEMPERATURE = 8
+    CLIMATE_WIND = 9
+    SUBCATCH_SNOWFALL = 10
+    CLIMATE_EVAP = 11
+    LINK_QUALITY = 12
 
 
 class ForcingPersist(IntEnum):

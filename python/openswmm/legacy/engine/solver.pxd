@@ -120,6 +120,12 @@ cdef extern from "openswmm_solver.h":
         swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION # Pollutant runoff concentration
         swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD # Pollutant total load
         swmm_SUBCATCH_API_PET # API prescribed potential evapotranspiration rate
+        swmm_SUBCATCH_GW_MOISTURE # Groundwater upper zone moisture content
+        swmm_SUBCATCH_GW_LOWER_DEPTH # Groundwater saturated zone depth
+        swmm_SUBCATCH_SNOW_SWE # Snow pack SWE on a snow subarea
+        swmm_SUBCATCH_SNOW_FW # Snow pack free water on a snow subarea
+        swmm_SUBCATCH_SNOW_ATI # Snow pack antecedent temperature index
+        swmm_SUBCATCH_SNOW_COLDC # Snow pack cold content
 
     # SWMM Node properties
     ctypedef enum swmm_NodeProperty:
@@ -216,6 +222,19 @@ cdef extern from "openswmm_solver.h":
         swmm_SYSFLOWTOL          # The system flow tolerance.
         swmm_LATFLOWTOL          # The lateral flow tolerance.
         swmm_EVAPRATE            # The current climate-derived evaporation rate (read-only).
+        swmm_TEMPERATURE         # The current air temperature (read-only).
+        swmm_API_TEMPERATURE     # API prescribed air temperature.
+        swmm_WINDSPEED           # The current wind speed (read-only).
+        swmm_API_WINDSPEED       # API prescribed wind speed.
+        swmm_API_EVAP            # API prescribed system-wide evaporation rate.
+        swmm_EVAP_DRY_ONLY       # Evaporation DRY_ONLY option.
+
+    # SWMM Pollutant properties
+    ctypedef enum swmm_PollutProperty:
+        swmm_POLLUT_RAIN_CONCEN  # Rain (wet deposition) concentration
+        swmm_POLLUT_GW_CONCEN    # Groundwater inflow concentration
+        swmm_POLLUT_RDII_CONCEN  # RDII inflow concentration
+        swmm_POLLUT_DWF_CONCEN   # Dry weather sanitary flow concentration
 
     # SWMM flow units enumeration
     ctypedef enum swmm_FlowUnitsProperty:

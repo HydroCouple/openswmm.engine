@@ -868,8 +868,8 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         if (ctx_.climate_state.temp_ts_index >= 0) {
             // Temperature from timeseries
             auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ctx_.climate_state.temp_ts_index)];
-            ctx_.climate_state.temperature = table_lookup_cursor(tbl, abs_time);
-            ctx_.climate_state.temperature += ctx_.climate_state.adjust_temp[mon];
+            ctx_.climate_state.temperature_src = table_lookup_cursor(tbl, abs_time);
+            ctx_.climate_state.temperature_src += ctx_.climate_state.adjust_temp[mon];
         } else if (ctx_.options.temp_source == 2 && climate_file_.isOpen()) {
             // Temperature from climate file (Gap #9: sub-daily sinusoidal interp)
             climate::DailyClimateRecord rec;
@@ -897,10 +897,20 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     // Sub-daily sinusoidal interpolation (Gap #9).
                     // hour = fractional part of OADate × 24.
                     double hour = (abs_time - std::floor(abs_time)) * 24.0;
-                    ctx_.climate_state.temperature = climate::getSubdailyTemp(ctx_.climate_state, hour);
+                    ctx_.climate_state.temperature_src = climate::getSubdailyTemp(ctx_.climate_state, hour);
                 }
             }
         }
+
+        // A2a'. Climate temperature forcing — applied before
+        // updateDailyClimate so Hargreaves/gamma/ea use the forced value.
+        // An OVERRIDE prescription replaces the data-source value (and
+        // bypasses monthly adjustments by design); ADD augments it. The
+        // source/default base (temperature_src) is resolved fresh each step so
+        // a one-shot or cleared forcing reverts to the source rather than
+        // sticking at the last forced value.
+        ctx_.climate_state.temperature =
+            ctx_.forcing.effective_temperature(ctx_.climate_state.temperature_src);
 
         climate::updateDailyClimate(ctx_.climate_state, doy, mon);
 
@@ -924,16 +934,28 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             }
         }
 
+        // A2b'. System-wide evaporation forcing — applied after all evap
+        // sources and monthly adjustments so the prescription is final.
+        // Per-subcatchment PET forcing still takes precedence downstream
+        // (effective_evap_rate in the runoff/LID/GW solvers).
+        ctx_.climate_state.evap_rate =
+            ctx_.forcing.effective_climate_evap(ctx_.climate_state.evap_rate);
+
         // A2c. Wind speed lookup
         if (ctx_.options.wind_type == 0) {
-            ctx_.climate_state.wind_speed = ctx_.options.wind_speed[mon];
+            ctx_.climate_state.wind_speed_src = ctx_.options.wind_speed[mon];
         } else if (ctx_.options.wind_type == 1 && climate_file_.isOpen()) {
             // Wind from climate file
             climate::DailyClimateRecord rec;
             if (climate_file_.getRecord(abs_time, rec) && !std::isnan(rec.wind)) {
-                ctx_.climate_state.wind_speed = rec.wind;
+                ctx_.climate_state.wind_speed_src = rec.wind;
             }
         }
+        // A2c'. Climate wind forcing (OVERRIDE replaces, ADD augments). The
+        // source/default base (wind_speed_src) is resolved fresh each step so
+        // a one-shot or cleared forcing reverts to the source.
+        ctx_.climate_state.wind_speed =
+            ctx_.forcing.effective_wind(ctx_.climate_state.wind_speed_src);
 
         // A2d. Monthly adjustment factors
         ctx_.climate_state.infil_factor = ctx_.adjust_hydcon[mon];
@@ -980,33 +1002,44 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             rdii_.computeAll(ctx_, rdii_month, dt_runoff);
         }
 
-        // A3. Snowmelt — separate precipitation into rain vs. snow components,
-        //     then execute snow solver and wire per-subcatch net precip (Gap #18/#20).
+        // A3. Snowmelt — per-subcatchment precipitation split into rain vs.
+        //     snow, accumulation + plowing, then melt and per-subcatch net
+        //     precip wiring (Gap #18/#20). Matches legacy runoff.c:
+        //     snow_plowSnow() each runoff step, then subcatch_getRunoff →
+        //     getNetPrecip → snow_getSnowMelt with that subcatchment's own
+        //     rainfall/snowfall.
         {
-            // Determine broadcast rain/snow based on temperature vs. dividing temp.
-            // Compute area-weighted average precip across snow-active subcatches.
-            double avg_precip = 0.0;
-            double total_area = 0.0;
+            // Per-subcatchment rain/snow assembly (ft/sec). The gage value
+            // is split by air temperature vs. the dividing temperature;
+            // rainfall and snowfall forcing channels then resolve on their
+            // respective components.
+            auto un_sc = static_cast<std::size_t>(ctx_.n_subcatches());
+            snow_rain_.assign(un_sc, 0.0);
+            snow_snow_.assign(un_sc, 0.0);
+            double snow_divt = ctx_.options.snow_divt;   // deg F threshold
+            bool is_snowing = ctx_.climate_state.temperature <= snow_divt;
             for (int i = 0; i < ctx_.n_subcatches(); ++i) {
                 auto ui = static_cast<std::size_t>(i);
                 if (ctx_.subcatches.snowpack[ui] < 0) continue;
                 int gi = ctx_.subcatches.gage[ui];
-                double rain_inhr = (gi >= 0 && gi < ctx_.n_gages())
+                double gage_inhr = (gi >= 0 && gi < ctx_.n_gages())
                     ? ctx_.gages.rainfall[static_cast<std::size_t>(gi)] : 0.0;
-                double precip_ftsec = rain_inhr / ucf::Ucf[ucf::RAINFALL][0];
-                double area = ctx_.subcatches.area[ui];
-                avg_precip += precip_ftsec * area;
-                total_area += area;
+                double rain_inhr = is_snowing ? 0.0 : gage_inhr;
+                double snow_inhr = is_snowing ? gage_inhr : 0.0;
+                // Forcing channels (user units for rainfall — matching the
+                // runoff solver's resolution; snowfall channel stores ft/sec)
+                rain_inhr = ctx_.forcing.effective_rainfall(ui, rain_inhr);
+                snow_rain_[ui] = rain_inhr / ucf::Ucf[ucf::RAINFALL][0];
+                snow_snow_[ui] = ctx_.forcing.effective_snowfall(
+                    ui, snow_inhr / ucf::Ucf[ucf::RAINFALL][0]);
             }
-            if (total_area > 0.0) avg_precip /= total_area;
 
-            // Split into rainfall vs. snowfall based on air temperature.
-            double snow_divt = ctx_.options.snow_divt;   // deg F threshold
-            double rain_bc   = (ctx_.climate_state.temperature > snow_divt) ? avg_precip : 0.0;
-            double snow_bc   = (ctx_.climate_state.temperature <= snow_divt) ? avg_precip : 0.0;
+            // Accumulation + plowing BEFORE melt (legacy runoff.c:254).
+            snow_.plowSnow(ctx_, dt_runoff, snow_snow_.data());
 
             snow_.execute(ctx_, dt_runoff, ctx_.climate_state.temperature,
-                          ctx_.climate_state.wind_speed, rain_bc, snow_bc,
+                          ctx_.climate_state.wind_speed, snow_rain_.data(),
+                          snow_snow_.data(),
                           ctx_.climate_state.gamma, ctx_.climate_state.ea);
 
             // A3a (Gap #20): Build per-subcatch snow-modified net precip.
@@ -1017,10 +1050,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 auto ui = static_cast<std::size_t>(i);
                 if (ctx_.subcatches.snowpack[ui] < 0) continue;
 
-                int gi = ctx_.subcatches.gage[ui];
-                double rain_inhr = (gi >= 0 && gi < ctx_.n_gages())
-                    ? ctx_.gages.rainfall[static_cast<std::size_t>(gi)] : 0.0;
-                double rainfall_ft = rain_inhr / ucf::Ucf[ucf::RAINFALL][0];
+                double rainfall_ft = snow_rain_[ui];
 
                 auto plow_idx   = static_cast<std::size_t>(i * snow::N_SUBAREAS + snow::SNOW_PLOWABLE);
                 auto imperv_idx = static_cast<std::size_t>(i * snow::N_SUBAREAS + snow::SNOW_IMPERV);
@@ -3195,6 +3225,27 @@ int SWMMEngine::close() noexcept {
 }
 
 // ============================================================================
+// subcatchSnowDepth — area-weighted snow pack SWE on a subcatchment (ft)
+// ============================================================================
+
+double SWMMEngine::subcatchSnowDepth(int idx) const noexcept {
+    auto us = static_cast<std::size_t>(idx);
+    if (ctx_.subcatches.snowpack[us] < 0) return 0.0;
+    const auto& soa = snow_.state();
+    double fi = ctx_.subcatches.frac_imperv[us];
+    double sn = (us < soa.snn.size()) ? soa.snn[us] : 0.0;
+    double fArea[3] = { sn * fi, (1.0 - sn) * fi, 1.0 - fi };
+    int base = idx * snow::N_SUBAREAS;
+    double sd = 0.0;
+    for (int k = 0; k < snow::N_SUBAREAS; ++k) {
+        auto uk = static_cast<std::size_t>(base + k);
+        if (uk < soa.wsnow.size())
+            sd += soa.wsnow[uk] * fArea[k];
+    }
+    return sd;
+}
+
+// ============================================================================
 // applyForcings — inject user-specified runtime forcing values
 // ============================================================================
 
@@ -3238,15 +3289,12 @@ void SWMMEngine::applyForcings(double dt) noexcept {
         }
     }
 
-    // ---- Subcatchment rainfall forcing (bypasses gage lookup) ----
-    for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (f.subcatch_rainfall_mode[ui] == ForcingMode::OVERRIDE) {
-            ctx_.subcatches.rainfall[ui] = f.subcatch_rainfall_value[ui];
-        } else if (f.subcatch_rainfall_mode[ui] == ForcingMode::ADD) {
-            ctx_.subcatches.rainfall[ui] += f.subcatch_rainfall_value[ui];
-        }
-    }
+    // ---- Subcatchment rainfall forcing ----
+    // No action needed here: subcatch_rainfall_{mode,value} are consumed by
+    // the runoff solver's rainfall assembly via forcing::effective_rainfall()
+    // so the override survives the per-step gage re-read. (Previously this
+    // block pre-wrote subcatches.rainfall, which the runoff solver then
+    // overwrote from the gage — the forcing had no effect.)
 
     // ---- Subcatchment PET forcing ----
     // No action needed here: subcatch_evap_{mode,value} hold a prescribed
@@ -3294,6 +3342,22 @@ void SWMMEngine::applyForcings(double dt) noexcept {
                     ctx_.mass_balance.routing_forcing_qual_inflow[
                         static_cast<std::size_t>(p)] +=
                         f.node_quality_value[flat] * dt;
+                }
+            }
+        }
+
+        // ---- Link quality forcing (same semantics as the node channel) ----
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            for (int p = 0; p < np; ++p) {
+                auto flat = static_cast<std::size_t>(j) * static_cast<std::size_t>(np)
+                          + static_cast<std::size_t>(p);
+                if (f.link_quality_mode[flat] == ForcingMode::OVERRIDE) {
+                    ctx_.links.conc[flat] = f.link_quality_value[flat];
+                } else if (f.link_quality_mode[flat] == ForcingMode::ADD) {
+                    ctx_.links.conc[flat] += f.link_quality_value[flat];
+                    ctx_.mass_balance.routing_forcing_qual_inflow[
+                        static_cast<std::size_t>(p)] +=
+                        f.link_quality_value[flat] * dt;
                 }
             }
         }
@@ -3768,6 +3832,32 @@ void SWMMEngine::initHydrology() noexcept {
                 soa.si[idx]     = soa.wsnow[idx]; // depth at 100% cover = initial depth
                 if (k == snow::SNOW_PLOWABLE)
                     soa.snn[ui] = p[6];
+            }
+
+            // Fractional area of each snow surface (legacy snow_initSnowpack,
+            // snow.c:178-182). Without this the SoA fArea stays zero, so
+            // plowSnow() and the melt area-weighting treat every surface as
+            // having no area — packs could never accumulate (Gap: M3 repair).
+            //   plowable = snn * fracImperv
+            //   imperv   = (1 - snn) * fracImperv
+            //   pervious = 1 - fracImperv
+            {
+                double fimp = ctx_.subcatches.frac_imperv[ui];
+                double snn  = soa.snn[ui];
+                auto base = static_cast<std::size_t>(i * snow::N_SUBAREAS);
+                soa.fArea[base + snow::SNOW_PLOWABLE] = snn * fimp;
+                soa.fArea[base + snow::SNOW_IMPERV]   = (1.0 - snn) * fimp;
+                soa.fArea[base + snow::SNOW_PERV]     = 1.0 - fimp;
+                // Match legacy: zero initial state where the surface has no
+                // area (snow.c:184-197).
+                for (int k = 0; k < snow::N_SUBAREAS; ++k) {
+                    auto idx = base + static_cast<std::size_t>(k);
+                    if (soa.fArea[idx] <= 0.0) {
+                        soa.wsnow[idx] = 0.0;
+                        soa.fw[idx]    = 0.0;
+                        soa.si[idx]    = 0.0;
+                    }
+                }
             }
 
             // Transfer plowing/removal parameters

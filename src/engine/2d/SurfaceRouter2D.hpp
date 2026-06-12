@@ -224,7 +224,8 @@ private:
 
     /// Accumulate the global 2D mass-balance terms for one executed step
     /// into ctx.mass_balance_2d (rainfall, coupling, outfall, boundary,
-    /// latest storage). All terms in the 2D solver's SI internal units (m³).
+    /// latest storage) and the evaporation loss into state_.evap_loss_total.
+    /// All terms in the 2D solver's SI internal units (m³).
     void accumulateMassBalance(SimulationContext& ctx, double dt);
 };
 

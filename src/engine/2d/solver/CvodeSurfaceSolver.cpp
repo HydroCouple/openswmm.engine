@@ -63,7 +63,7 @@ int CvodeSurfaceSolver::rhs_fn(double /*t*/, N_Vector y, N_Vector ydot,
     computeEdgeFluxes(mesh, state, opts);
 
     // 6. Assemble RHS
-    assembleRHS(mesh, state, ydot_data);
+    assembleRHS(mesh, state, opts, ydot_data);
 
     return 0;  // Success
 }

@@ -92,7 +92,12 @@ typedef enum SWMM_ForcingType {
     SWMM_FORCE_LINK_SETTING       = 4,
     SWMM_FORCE_SUBCATCH_RAINFALL  = 5,
     SWMM_FORCE_SUBCATCH_EVAP      = 6,
-    SWMM_FORCE_GAGE_RAINFALL      = 7
+    SWMM_FORCE_GAGE_RAINFALL      = 7,
+    SWMM_FORCE_CLIMATE_TEMPERATURE = 8,  /**< System-wide; idx ignored. */
+    SWMM_FORCE_CLIMATE_WIND        = 9,  /**< System-wide; idx ignored. */
+    SWMM_FORCE_SUBCATCH_SNOWFALL   = 10,
+    SWMM_FORCE_CLIMATE_EVAP        = 11, /**< System-wide; idx ignored. */
+    SWMM_FORCE_LINK_QUALITY        = 12
 } SWMM_ForcingType;
 
 /* =========================================================================
@@ -175,6 +180,26 @@ SWMM_ENGINE_API int swmm_forcing_link_flow(
 SWMM_ENGINE_API int swmm_forcing_link_setting(
     SWMM_Engine engine, int idx, double value, int mode, int persist);
 
+/**
+ * @brief Force pollutant quality on a link.
+ *
+ * Same semantics as @ref swmm_forcing_node_quality: OVERRIDE sets the
+ * link concentration directly (not mass-balanced); ADD injects a mass
+ * rate (mass/sec) tracked in the quality mass-balance forcing bucket.
+ *
+ * @param engine        Engine handle.
+ * @param link_idx      Link index.
+ * @param pollutant_idx Pollutant index.
+ * @param value         Concentration (OVERRIDE) or mass rate (ADD).
+ * @param mode          SWMM_FORCING_OVERRIDE or SWMM_FORCING_ADD.
+ * @param persist       SWMM_FORCING_RESET or SWMM_FORCING_PERSIST.
+ * @returns SWMM_OK or error code.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_forcing_link_quality(
+    SWMM_Engine engine, int link_idx, int pollutant_idx,
+    double value, int mode, int persist);
+
 /* =========================================================================
  * Subcatchment forcing
  * ========================================================================= */
@@ -215,6 +240,26 @@ SWMM_ENGINE_API int swmm_forcing_subcatch_evap(
     SWMM_Engine engine, int idx, double value, int mode, int persist);
 
 /**
+ * @brief Prescribe snowfall on a subcatchment.
+ *
+ * The prescribed rate replaces (OVERRIDE) or augments (ADD) the
+ * gage-derived, temperature-split snowfall used for snow pack
+ * accumulation, plowing, and melt computation. Only meaningful for
+ * subcatchments with an assigned snow pack.
+ *
+ * @param engine   Engine handle.
+ * @param idx      Subcatchment index.
+ * @param value    Snowfall rate in user units (in/hr for US, mm/hr for SI),
+ *                 as snow water equivalent. Must be >= 0 for OVERRIDE.
+ * @param mode     SWMM_FORCING_OVERRIDE or SWMM_FORCING_ADD.
+ * @param persist  SWMM_FORCING_RESET or SWMM_FORCING_PERSIST.
+ * @returns SWMM_OK or error code.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_forcing_subcatch_snowfall(
+    SWMM_Engine engine, int idx, double value, int mode, int persist);
+
+/**
  * @brief Get the current climate-derived evaporation rate.
  *
  * Returns the broadcast evaporation rate the engine would apply in the
@@ -229,6 +274,107 @@ SWMM_ENGINE_API int swmm_forcing_subcatch_evap(
  * @ingroup engine_forcing
  */
 SWMM_ENGINE_API int swmm_climate_get_evap_rate(SWMM_Engine engine, double* value);
+
+/* =========================================================================
+ * Climate forcing (system-wide)
+ * ========================================================================= */
+
+/**
+ * @brief Prescribe the air temperature used for snowmelt and
+ *        temperature-derived evaporation.
+ *
+ * Applied before derived climate quantities (saturation vapor pressure,
+ * psychrometric constant, Hargreaves moving average) are computed, so all
+ * temperature consumers stay consistent. An OVERRIDE prescription replaces
+ * the climate data-source value and bypasses monthly adjustments; ADD
+ * augments it.
+ *
+ * @param engine   Engine handle.
+ * @param value    Air temperature in user units (deg F US, deg C SI).
+ * @param mode     SWMM_FORCING_OVERRIDE or SWMM_FORCING_ADD.
+ * @param persist  SWMM_FORCING_RESET or SWMM_FORCING_PERSIST.
+ * @returns SWMM_OK or error code.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_forcing_climate_temperature(
+    SWMM_Engine engine, double value, int mode, int persist);
+
+/**
+ * @brief Get the current air temperature (read-only).
+ *
+ * @param engine     Engine handle.
+ * @param[out] value Receives the temperature in user units (deg F US, deg C SI).
+ * @returns SWMM_OK or error code.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_climate_get_temperature(SWMM_Engine engine, double* value);
+
+/**
+ * @brief Prescribe the wind speed used in rain-on-snow melt.
+ *
+ * An OVERRIDE prescription replaces the monthly/climate-file value; ADD
+ * augments it.
+ *
+ * @param engine   Engine handle.
+ * @param value    Wind speed in user units (mph US, km/hr SI). Must be >= 0
+ *                 for OVERRIDE.
+ * @param mode     SWMM_FORCING_OVERRIDE or SWMM_FORCING_ADD.
+ * @param persist  SWMM_FORCING_RESET or SWMM_FORCING_PERSIST.
+ * @returns SWMM_OK or error code.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_forcing_climate_wind(
+    SWMM_Engine engine, double value, int mode, int persist);
+
+/**
+ * @brief Get the current wind speed (read-only).
+ *
+ * @param engine     Engine handle.
+ * @param[out] value Receives the wind speed in user units (mph US, km/hr SI).
+ * @returns SWMM_OK or error code.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_climate_get_wind_speed(SWMM_Engine engine, double* value);
+
+/**
+ * @brief Prescribe the system-wide evaporation rate.
+ *
+ * Replaces (OVERRIDE) or augments (ADD) the climate-derived evaporation
+ * rate after all sources and monthly adjustments, so it reaches every
+ * consumer. Per-subcatchment PET forcing
+ * (@ref swmm_forcing_subcatch_evap) still takes precedence on its
+ * subcatchment.
+ *
+ * @param engine   Engine handle.
+ * @param value    Evaporation rate in user units (in/day US, mm/day SI);
+ *                 must be >= 0 for OVERRIDE.
+ * @param mode     SWMM_FORCING_OVERRIDE or SWMM_FORCING_ADD.
+ * @param persist  SWMM_FORCING_RESET or SWMM_FORCING_PERSIST.
+ * @returns SWMM_OK or error code.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_forcing_climate_evap(
+    SWMM_Engine engine, double value, int mode, int persist);
+
+/**
+ * @brief Set the evaporation DRY_ONLY option at runtime.
+ *
+ * @param engine  Engine handle.
+ * @param flag    Nonzero suppresses evaporation during rainfall.
+ * @returns SWMM_OK or error code.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_climate_set_dry_only(SWMM_Engine engine, int flag);
+
+/**
+ * @brief Get the evaporation DRY_ONLY option.
+ *
+ * @param engine     Engine handle.
+ * @param[out] flag  Receives 0/1.
+ * @returns SWMM_OK or error code.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_climate_get_dry_only(SWMM_Engine engine, int* flag);
 
 /* =========================================================================
  * Gage forcing

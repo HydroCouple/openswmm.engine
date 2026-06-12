@@ -28,6 +28,9 @@ class LegacySystem:
     def _get(self, prop: SWMMSystemProperties) -> float:
         return self._solver.get_value(SWMMObjects.SYSTEM, prop, 0)
 
+    def _set(self, prop: SWMMSystemProperties, value: float) -> None:
+        self._solver.set_value(SWMMObjects.SYSTEM, prop, 0, value)
+
     # --- simulation settings (read-only after start) ---
     @property
     def flow_units(self) -> SWMMFlowUnits:
@@ -94,6 +97,136 @@ class LegacySystem:
         @rtype: float
         """
         return self._get(SWMMSystemProperties.EVAP_RATE)
+
+    def get_temperature(self) -> float:
+        """Return the current air temperature.
+
+        @return: Air temperature in user units (deg F or deg C).
+        @rtype: float
+        """
+        return self._get(SWMMSystemProperties.TEMPERATURE)
+
+    def set_api_temperature(self, value: float) -> None:
+        """Prescribe the air temperature used for snowmelt and
+        temperature-derived evaporation.
+
+        Overrides the climate data-source value (bypassing monthly
+        adjustments) and keeps derived quantities (saturation vapor
+        pressure) consistent. Persists until cleared with
+        L{clear_api_temperature}.
+
+        @param value: Air temperature in user units (deg F or deg C).
+        @type value: float
+        @return: None
+        @rtype: None
+        """
+        self._set(SWMMSystemProperties.API_TEMPERATURE, value)
+
+    def get_api_temperature(self) -> float:
+        """Return the prescribed air temperature.
+
+        @return: Prescribed temperature in user units, or -999 when no
+            prescription is active.
+        @rtype: float
+        """
+        return self._get(SWMMSystemProperties.API_TEMPERATURE)
+
+    def clear_api_temperature(self) -> None:
+        """Clear any prescribed air temperature, reverting to climate data.
+
+        @return: None
+        @rtype: None
+        """
+        self._set(SWMMSystemProperties.API_TEMPERATURE, -1000.0)
+
+    def get_wind_speed(self) -> float:
+        """Return the current wind speed.
+
+        @return: Wind speed in user units (mph or km/hr).
+        @rtype: float
+        """
+        return self._get(SWMMSystemProperties.WIND_SPEED)
+
+    def set_api_wind_speed(self, value: float) -> None:
+        """Prescribe the wind speed used in rain-on-snow melt.
+
+        Overrides the monthly/climate-file value. Persists until cleared
+        with L{clear_api_wind_speed}.
+
+        @param value: Wind speed in user units (mph or km/hr), >= 0.
+        @type value: float
+        @return: None
+        @rtype: None
+        """
+        self._set(SWMMSystemProperties.API_WIND_SPEED, value)
+
+    def get_api_wind_speed(self) -> float:
+        """Return the prescribed wind speed.
+
+        @return: Prescribed wind speed in user units, or a negative value
+            when no prescription is active.
+        @rtype: float
+        """
+        return self._get(SWMMSystemProperties.API_WIND_SPEED)
+
+    def clear_api_wind_speed(self) -> None:
+        """Clear any prescribed wind speed, reverting to climate data.
+
+        @return: None
+        @rtype: None
+        """
+        self._set(SWMMSystemProperties.API_WIND_SPEED, -1.0)
+
+    def set_api_evap_rate(self, value: float) -> None:
+        """Prescribe the system-wide evaporation rate.
+
+        Replaces the climate-derived rate (after monthly adjustments) for
+        every consumer — subcatchments, LID units, groundwater, conduits
+        and storage nodes. Per-subcatchment
+        L{LegacySubcatchment.set_api_pet} still takes precedence. Persists
+        until cleared with L{clear_api_evap_rate}.
+
+        @param value: Evaporation rate in user units (in/day or mm/day), >= 0.
+        @type value: float
+        @return: None
+        @rtype: None
+        """
+        self._set(SWMMSystemProperties.API_EVAP, value)
+
+    def get_api_evap_rate(self) -> float:
+        """Return the prescribed system-wide evaporation rate.
+
+        @return: Prescribed rate in user units, or a negative value when
+            no prescription is active.
+        @rtype: float
+        """
+        return self._get(SWMMSystemProperties.API_EVAP)
+
+    def clear_api_evap_rate(self) -> None:
+        """Clear any prescribed evaporation rate, reverting to climate data.
+
+        @return: None
+        @rtype: None
+        """
+        self._set(SWMMSystemProperties.API_EVAP, -1.0)
+
+    def set_evap_dry_only(self, flag: bool) -> None:
+        """Set the evaporation DRY_ONLY option at runtime.
+
+        @param flag: C{True} suppresses evaporation during rainfall.
+        @type flag: bool
+        @return: None
+        @rtype: None
+        """
+        self._set(SWMMSystemProperties.EVAP_DRY_ONLY, 1.0 if flag else 0.0)
+
+    def get_evap_dry_only(self) -> bool:
+        """Return the evaporation DRY_ONLY option.
+
+        @return: C{True} if evaporation is suppressed during rainfall.
+        @rtype: bool
+        """
+        return bool(self._get(SWMMSystemProperties.EVAP_DRY_ONLY))
 
     # --- continuity errors ---
     @property

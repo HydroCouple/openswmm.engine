@@ -133,6 +133,14 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
         // Optional CurbLen (column 7)
         if (tok.size() > 7)
             ctx.subcatches.curb_length[idx] = to_double(tok[7]);
+
+        // Optional SnowPack (column 8) — store the name for deferred
+        // resolution (SNOWPACKS is usually parsed after SUBCATCHMENTS) and
+        // attempt an immediate resolve in case it was parsed first.
+        if (tok.size() > 8 && !tok[8].empty()) {
+            ctx.subcatches.snowpack_name[idx] = tok[8];
+            ctx.subcatches.snowpack[idx] = ctx.snowpack_names.find(tok[8]);
+        }
         if (!pl.comment.empty())
             ctx.subcatches.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }

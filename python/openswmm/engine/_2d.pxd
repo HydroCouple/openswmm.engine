@@ -65,13 +65,18 @@ cdef extern from "openswmm_2d.h":
                                  double* coupling_2d_to_1d_out,
                                  double* outfall_in,
                                  double* boundary_in,
-                                 double* boundary_out)
+                                 double* boundary_out,
+                                 double* evap_out)
 
     # Forcing
     int swmm_2d_force_rainfall(void* engine, int idx,
                                 double value, int mode, int persist)
     int swmm_2d_force_rainfall_uniform(void* engine,
                                         double value, int mode, int persist)
+    int swmm_2d_force_evap(void* engine, int idx,
+                            double value, int mode, int persist)
+    int swmm_2d_force_evap_uniform(void* engine,
+                                    double value, int mode, int persist)
     int swmm_2d_force_coupling_flux(void* engine, int idx,
                                      double value, int mode, int persist)
     int swmm_2d_force_clear_all(void* engine)

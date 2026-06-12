@@ -958,7 +958,29 @@ cdef extern from "openswmm_forcing.h":
     # Subcatchment forcing
     cdef int swmm_forcing_subcatch_rainfall(SWMM_Engine e, int idx, double value, int mode, int persist)
     cdef int swmm_forcing_subcatch_evap(SWMM_Engine e, int idx, double value, int mode, int persist)
+    cdef int swmm_forcing_subcatch_snowfall(SWMM_Engine e, int idx, double value, int mode, int persist)
     cdef int swmm_climate_get_evap_rate(SWMM_Engine e, double* value)
+    # Climate forcing (system-wide)
+    cdef int swmm_forcing_climate_temperature(SWMM_Engine e, double value, int mode, int persist)
+    cdef int swmm_climate_get_temperature(SWMM_Engine e, double* value)
+    cdef int swmm_forcing_climate_wind(SWMM_Engine e, double value, int mode, int persist)
+    cdef int swmm_climate_get_wind_speed(SWMM_Engine e, double* value)
+    cdef int swmm_forcing_climate_evap(SWMM_Engine e, double value, int mode, int persist)
+    cdef int swmm_climate_set_dry_only(SWMM_Engine e, int flag)
+    cdef int swmm_climate_get_dry_only(SWMM_Engine e, int* flag)
+    # Link quality forcing
+    cdef int swmm_forcing_link_quality(SWMM_Engine e, int link_idx, int pollutant_idx,
+                                       double value, int mode, int persist)
+    # State injection (data assimilation)
+    cdef int swmm_subcatch_set_gw_state(SWMM_Engine e, int idx, double theta, double lower_depth)
+    cdef int swmm_subcatch_get_gw_state(SWMM_Engine e, int idx, double* theta, double* lower_depth)
+    cdef int swmm_subcatch_set_snow_state(SWMM_Engine e, int idx, int surface,
+                                          double swe, double fw, double ati, double coldc)
+    cdef int swmm_subcatch_get_snow_state(SWMM_Engine e, int idx, int surface,
+                                          double* swe, double* fw, double* ati, double* coldc)
+    # Pollutant DWF concentration
+    cdef int swmm_pollutant_set_dwf_conc(SWMM_Engine e, int idx, double conc)
+    cdef int swmm_pollutant_get_dwf_conc(SWMM_Engine e, int idx, double* conc)
     # Gage forcing
     cdef int swmm_forcing_gage_rainfall(SWMM_Engine e, int idx, double value, int mode, int persist)
     # Clear

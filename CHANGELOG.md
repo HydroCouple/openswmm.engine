@@ -36,6 +36,170 @@ See `docs/API_GAP_CLOSURE_PLAN_2026-06-10.md`.
   allowlist entries for symbols that had since been bound; the allowlist
   is now empty and the coverage test enforces the full surface.
 
+## [Unreleased] — Runtime forcing verification pass (handoff build/test/fix)
+
+Builds, runs and verifies the runtime-forcing batch per
+`docs/RUNTIME_FORCING_TESTING_HANDOFF.md`. Full Python suite green
+(833 passed) and the C++ unit suite green (78/78, 2D enabled). Thin bindings
+(§2) and functional tests (§3: M4, M5, S1, S2, T1, Q4, Q5 + GW quality) added.
+
+### Fixed
+
+- **`[POLLUTANTS]` concentrations silently zeroed:** `PostParseResolver`
+  unconditionally re-ran `resize_pollutants()` (which zero-fills) *after*
+  `handle_pollutants` had parsed the values, so every INP rain/GW/RDII/DWF/
+  init concentration loaded as 0 (the DWF/GW/rain quality features did
+  nothing for INP-driven models). Guarded the resize like the adjacent
+  node/link resizes (`if count != n`).
+- **Refactored snow never accumulated:** the `[SUBCATCHMENTS]` snow-pack
+  column was never read (no deferred name resolution) and the snow solver's
+  per-subarea `fArea` was never initialised, so `plowSnow`/melt treated
+  every surface as zero-area. Added `snowpack_name` deferred resolution and
+  `fArea` init (legacy `snow_initSnowpack`).
+- **Climate temperature/wind forcing stuck after clear:** a one-shot or
+  cleared prescription never reverted because the forcing overwrote the same
+  `ClimateState` field it read as the broadcast base. Added
+  `temperature_src`/`wind_speed_src` source bases resolved fresh each step.
+- **`ForcingData::effective_rainfall`/`_snowfall` out-of-bounds:** lacked the
+  size guard `effective_evap_rate` has, segfaulting direct-solver unit tests
+  with unsized forcing arrays.
+- **Legacy `get_value` misread valid negatives:** `swmm_getValueExpanded`'s
+  return was validated by sign, so a sub-freezing air temperature or the
+  −999 API-unset sentinel raised a spurious error. Now keys off the system
+  ERROR_CODE and the API-error sentinel range.
+- **Groundwater inflow quality (audit A5):** GW inflow pollutant mass
+  (`q_gw × c_gw`) was never applied. Added `QualitySolver::addGwLoads()` and
+  a `qual_routing_gw_in` bucket; the report's Groundwater Inflow quality row
+  (previously hardcoded 0) and the quality continuity total now include it
+  (and DWF).
+- **2D mass-balance evaporation (§4.1):** moved the cumulative evap loss from
+  the 2D state mirror into `MassBalance2D::evap_out`, folded into `error()`,
+  and surfaced in the report's 2D continuity block.
+- **`[POLLUTANTS]` writer round-trip:** `InpWriter` now writes the `Cdwf`
+  and `Cinit` columns (§4.4).
+- **numpy 1.x build:** `PatchNumpyPxd.cmake` only rewrites the Cython pxd on
+  numpy ≥ 2.0 (it would break the numpy 1.x build it was meant to support).
+- Deleted dead `SnowSolver::batchATIUpdate`/`batchAccumulate` (§4.3); added
+  scalar `execute`/`plowSnow` convenience overloads (per-subcatchment array
+  signatures broke `test_snow.cpp`).
+
+## [Unreleased] — Runtime forcing API phases 1–3 complete (gap plan rows 5–12)
+
+See `docs/RUNTIME_FORCING_API_GAP_PLAN.md` and
+`docs/RUNTIME_FORCING_TESTING_HANDOFF.md` (functional verification pending).
+
+### Added
+
+- **Global evaporation prescription (M4):** legacy `swmm_API_EVAP` system
+  property (replaces the post-adjustment `Evap.rate` for all consumers
+  incl. conduits/storage; per-subcatchment PET still wins); refactored
+  `swmm_forcing_climate_evap()` channel. Python:
+  `LegacySystem.set/get/clear_api_evap_rate`, `Forcing.climate_evap`.
+- **DRY_ONLY runtime toggle (M5):** legacy `swmm_EVAP_DRY_ONLY`;
+  refactored `swmm_climate_set/get_dry_only()`. Python:
+  `LegacySystem.set/get_evap_dry_only`, `Forcing.climate_dry_only`.
+- **Legacy pollutant source setters (Q1–Q3, Q5):** new `swmm_POLLUTANT`
+  dispatch with `swmm_POLLUT_RAIN/GW/RDII/DWF_CONCEN` (500 block),
+  runtime-settable; `SWMMPollutantProperties` Python enum.
+- **Refactored link quality forcing channel (Q4):**
+  `swmm_forcing_link_quality()` (REPLACE = concentration, ADD = mass rate,
+  mass-balanced); `Forcing.link_quality`; `ForcingType.LINK_QUALITY`.
+- **Legacy ponded-quality injection (Q6):**
+  `swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION` now settable while running.
+- **Groundwater state injection (S1):** legacy `swmm_SUBCATCH_GW_MOISTURE`
+  / `_GW_LOWER_DEPTH` (set/get via `gwater_get/setState`); refactored
+  `swmm_subcatch_set/get_gw_state()` with porosity/thickness clamping.
+- **Snowpack state injection (S2):** legacy `swmm_SUBCATCH_SNOW_SWE/_FW/
+  _ATI/_COLDC` (per snow subarea via sub_index); refactored
+  `swmm_subcatch_set/get_snow_state()`.
+- **2D mesh evaporation (T1):** depth-limited evaporation sink inside the
+  CVODE RHS; `swmm_2d_force_evap()` / `swmm_2d_force_evap_uniform()`
+  (m/s, OVERRIDE/ADD, RESET/PERSIST); `swmm_2d_get_mass_balance()` gained
+  an `evap_out` total; Python `Surface2D.force_evap/_uniform`.
+
+### Fixed
+
+- **Refactored DWF quality (audit A1):** the `[POLLUTANTS]` `Cdwf` column
+  was parsed and discarded and dry weather quality inflow did not exist.
+  Added `PollutantData.c_dwf`, `QualitySolver::addDwfLoads()` (mirroring
+  RDII loads), a `qual_routing_dw_in` mass-balance bucket included in the
+  continuity error, the report's Dry Weather Inflow row (previously
+  hardcoded 0), and `swmm_pollutant_set/get_dwf_conc()`.
+
+### Audits
+
+- A3: refactored ponded-quality and buildup setters are runtime-callable
+  (no running guards) — functional verification handed off.
+- A4: the 2D solver has **no infiltration sink** (T2 remains out of scope).
+- Phase 4 parameter-surface audits are execution-gated — protocol in
+  `docs/RUNTIME_FORCING_TESTING_HANDOFF.md` §6.
+
+## [Unreleased] — Snowfall forcing + snow-path repair (gap plan row 4)
+
+See `docs/RUNTIME_FORCING_API_GAP_PLAN.md` (item M3).
+
+### Added
+
+- **Per-subcatchment snowfall forcing (M3):** refactored
+  `swmm_forcing_subcatch_snowfall()` (in/hr US, mm/hr SI as SWE;
+  OVERRIDE/ADD, RESET/PERSIST) with `Forcing.subcatchment_snowfall()` and
+  `ForcingType.SUBCATCH_SNOWFALL`; resolves on the temperature-split gage
+  snowfall before accumulation, plowing, and melt. Legacy already had
+  `swmm_SUBCATCH_API_SNOWFALL`.
+- New checked-in snow fixture `python/tests/data/solver/site_drainage_snow.inp`
+  (snow pack on S1, constant 25 °F temperature series).
+
+### Fixed
+
+- **Refactored snow path:** snowfall never accumulated — `plowSnow()` was
+  never called from the step pipeline, so packs could melt but never grow.
+  Accumulation + plowing now runs each runoff step before melt (matching
+  legacy `runoff.c` order), and the snow solver takes per-subcatchment
+  rain/snow inputs (previously a single area-weighted broadcast), with
+  per-subcatchment rain-on-snow vs. degree-day melt selection (matching
+  legacy `snow_getSnowMelt`/`meltSnowpack`).
+- **Legacy `apiSnowfall` continuity hole:** prescribed snowfall influenced
+  melt computations but never accumulated in the pack (only gage snow did,
+  via `snow_plowSnow`), while still counting as rainfall inflow in the
+  runoff mass balance. `snow_plowSnow()` now includes `apiSnowfall`.
+- **Refactored `swmm_subcatch_get_snow_depth()`** was a stub returning 0;
+  it now returns the area-weighted pack SWE in user depth units via the
+  new `SWMMEngine::subcatchSnowDepth()`.
+
+## [Unreleased] — Runtime climate forcing (gap plan rows 1–3)
+
+See `docs/RUNTIME_FORCING_API_GAP_PLAN.md` (items A2, A5, M1, M2).
+
+### Added
+
+- **Air temperature forcing (M1):** legacy `swmm_API_TEMPERATURE` system
+  property (set while running; `<= -999` clears) with read-only
+  `swmm_TEMPERATURE`; refactored `swmm_forcing_climate_temperature()`
+  channel (OVERRIDE/ADD, RESET/PERSIST) with `swmm_climate_get_temperature()`.
+  Applied before derived climate quantities (saturation vapor pressure,
+  psychrometric constant, Hargreaves moving average) so snowmelt and
+  temperature-evap consumers stay consistent. User units (°F US, °C SI).
+- **Wind speed forcing (M2):** legacy `swmm_API_WINDSPEED` (negative
+  clears) with read-only `swmm_WINDSPEED`; refactored
+  `swmm_forcing_climate_wind()` with `swmm_climate_get_wind_speed()`.
+  User units (mph US, km/hr SI).
+- Python: `LegacySystem.set/get/clear_api_temperature` and
+  `…_api_wind_speed`; refactored `Forcing.climate_temperature/_wind`
+  setters, `get_climate_temperature/_wind_speed` getters, and
+  `ForcingTarget.CLIMATE` for `Forcing.clear`.
+
+### Fixed
+
+- **Subcatchment rainfall forcing (A2):** `swmm_forcing_subcatch_rainfall()`
+  previously had no effect — `applyForcings()` pre-wrote
+  `subcatches.rainfall`, which the runoff solver then overwrote from the
+  gage. The forcing now resolves inside the runoff solver's rainfall
+  assembly (same pattern as the PET forcing fix).
+- **`Forcing.clear()` channel mapping (A5):** the Python binding passed
+  `ForcingTarget` object-kind codes where C `SWMM_ForcingType` channel
+  codes were expected, so clearing a SUBCATCH actually cleared node
+  quality. It now clears every channel belonging to the requested object.
+
 ## [Unreleased] — Subcatchment PET prescription
 
 See `docs/SUBCATCHMENT_PET_PRESCRIPTION_PLAN.md`.

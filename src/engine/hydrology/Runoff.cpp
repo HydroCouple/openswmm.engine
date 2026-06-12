@@ -243,12 +243,16 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 
     // ----- Step 1: Rainfall → net precip (ft/sec) -----
     // Matches legacy getNetPrecip(): all subareas get same precipitation rate.
+    // Any subcatchment rainfall forcing resolves here (OVERRIDE replaces the
+    // gage value, ADD augments it) so it cannot be clobbered by the gage
+    // re-read — same pattern as the PET forcing below.
     for (int i = 0; i < n; ++i) {
         auto ui = static_cast<std::size_t>(i);
         int gi = ctx.subcatches.gage[ui];
         double rain_inhr = 0.0;
         if (gi >= 0 && gi < ctx.n_gages())
             rain_inhr = ctx.gages.rainfall[static_cast<std::size_t>(gi)];
+        rain_inhr = ctx.forcing.effective_rainfall(ui, rain_inhr);
         precip_[ui] = rain_inhr / ucf::UCF(ucf::RAINFALL, ctx.options);
         ctx.subcatches.rainfall[ui] = precip_[ui];  // ft/sec (internal units)
     }

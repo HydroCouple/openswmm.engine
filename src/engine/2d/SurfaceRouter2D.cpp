@@ -336,6 +336,11 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
     // Update rainfall from system gages
     updateRainfall(ctx);
 
+    // Evaporation demand: default 0 until the 1D ClimateState.evap_rate
+    // broadcast is wired in (owned by the climate-coupling work stream).
+    // Runtime forcing (below) is the only source today.
+    std::fill(state_.evap_rate.begin(), state_.evap_rate.end(), 0.0);
+
     // Apply 2D forcings
     for (std::size_t i = 0; i < state_.depth.size(); ++i) {
         // Rainfall forcing
@@ -343,6 +348,12 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
             state_.rainfall[i] = state_.rainfall_force_val[i];
         } else if (state_.rainfall_forced[i] == 2) {
             state_.rainfall[i] += state_.rainfall_force_val[i];
+        }
+        // Evaporation forcing
+        if (state_.evap_forced[i] == 1) {
+            state_.evap_rate[i] = state_.evap_force_val[i];
+        } else if (state_.evap_forced[i] == 2) {
+            state_.evap_rate[i] += state_.evap_force_val[i];
         }
         // Coupling forcing
         if (state_.coupling_forced[i] == 1) {
@@ -370,7 +381,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
     // Per-cell continuity residual (local mass-balance diagnostic). old_depth
     // holds the start-of-step depth saved by save_state() above; depth now
     // holds the end-of-step value.
-    computeCellContinuity(mesh_, state_, dt);
+    computeCellContinuity(mesh_, state_, options_, dt);
 
     // Cell-centred velocity reconstruction (RT0) from the refreshed fluxes.
     computeFaceVelocity(mesh_, state_, options_);
@@ -479,6 +490,20 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
         rain_vol += state_.rainfall[i] * mesh_.tri_area[i];
     }
     mb.rainfall_in += rain_vol * dt;
+
+    // Evaporation loss (m³): the depth-limited sink assembleRHS integrates,
+    // evaluated at the accepted end-of-step depths (exact when cells stay
+    // wetter than dry_depth; first-order through dry-out, matching the
+    // rainfall term's treatment). Accumulated into the 2D mass-balance struct
+    // so the continuity error and reported totals close natively; the 2D
+    // state mirror (evap_loss_total) is retained for back-compatibility.
+    double evap_vol = 0.0;
+    for (int i = 0; i < nt; ++i) {
+        evap_vol += evapSink(state_.evap_rate[i], state_.depth[i],
+                             options_.dry_depth) * mesh_.tri_area[i];
+    }
+    mb.evap_out += evap_vol * dt;
+    state_.evap_loss_total += evap_vol * dt;
 
     // Coupling and outfall exchange. nodes.coupling_inflow / nodes.outflow are
     // in the 1D engine's flow units (ft³/s for US); convert back to SI (m³/s).

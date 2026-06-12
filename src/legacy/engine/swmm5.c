@@ -337,6 +337,23 @@ static int setGageValue(int property, int index, int subIndex, double value);
 static int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, double value);
 
 /*!
+ * \brief Get pollutant value given its property type and index.
+ * \param[in] property Property type
+ * \param[in] index Pollutant index
+ * \return Property value or error code
+ */
+static double getPollutValue(int property, int index);
+
+/*!
+ * \brief Set pollutant value given its property type, index, and value.
+ * \param[in] property Property type
+ * \param[in] index Pollutant index
+ * \param[in] value Property value
+ * \return Error code
+ */
+static int setPollutValue(int property, int index, double value);
+
+/*!
  * \brief Set node value given its property type, index, subindex, and value.
  * \param[in] property Property type
  * \param[in] index Object index
@@ -1280,6 +1297,8 @@ double EXPORT_OPENSWMMCORE_SOLVER_API swmm_getValueExpanded(int objType, int pro
         return getNodeValue(property, index, subIndex, pollutantIndex);
     case swmm_LINK:
         return getLinkValue(property, index, subIndex, pollutantIndex);
+    case swmm_POLLUTANT:
+        return getPollutValue(property, index);
     default:
         return ERR_API_OBJECT_TYPE;
     }
@@ -1365,8 +1384,66 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValueExpanded(int objType, int proper
         return setNodeValue(property, index, subIndex, pollutantIndex, value);
     case swmm_LINK:
         return setLinkValue(property, index, subIndex, pollutantIndex, value);
+    case swmm_POLLUTANT:
+        return setPollutValue(property, index, value);
     default:
         return ERR_API_OBJECT_TYPE;
+    }
+}
+
+/*!
+ * \copydoc getPollutValue
+ */
+double getPollutValue(int property, int index)
+{
+    if (index < 0 || index >= Nobjects[POLLUT])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_POLLUT_RAIN_CONCEN:
+        return Pollut[index].pptConcen;
+    case swmm_POLLUT_GW_CONCEN:
+        return Pollut[index].gwConcen;
+    case swmm_POLLUT_RDII_CONCEN:
+        return Pollut[index].rdiiConcen;
+    case swmm_POLLUT_DWF_CONCEN:
+        return Pollut[index].dwfConcen;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc setPollutValue
+ * \details The source concentrations are settable both before the
+ * simulation starts and while it is running (dynamic quality forcing).
+ * Concentrations feed existing inflow source terms already counted in
+ * the quality mass balance.
+ */
+int setPollutValue(int property, int index, double value)
+{
+    if (index < 0 || index >= Nobjects[POLLUT])
+        return ERR_API_OBJECT_INDEX;
+    if (value < 0.0)
+        return ERR_API_PROPERTY_VALUE;
+
+    switch (property)
+    {
+    case swmm_POLLUT_RAIN_CONCEN:
+        Pollut[index].pptConcen = value;
+        return 0;
+    case swmm_POLLUT_GW_CONCEN:
+        Pollut[index].gwConcen = value;
+        return 0;
+    case swmm_POLLUT_RDII_CONCEN:
+        Pollut[index].rdiiConcen = value;
+        return 0;
+    case swmm_POLLUT_DWF_CONCEN:
+        Pollut[index].dwfConcen = value;
+        return 0;
+    default:
+        return ERR_API_PROPERTY_TYPE;
     }
 }
 
@@ -1443,6 +1520,82 @@ int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, 
             if (value < 0.0) Subcatch[index].apiEvapRate = MISSING;
             else             Subcatch[index].apiEvapRate = value / UCF(EVAPRATE);
             return 0;
+        case swmm_SUBCATCH_GW_MOISTURE:
+        {
+            // sets the groundwater upper zone moisture content
+            double x[4];
+            if (Subcatch[index].groundwater == NULL)
+                return ERR_API_OBJECT_INDEX;
+            if (value < 0.0)
+                return ERR_API_PROPERTY_VALUE;
+            gwater_getState(index, x);
+            x[0] = value;
+            x[3] = MISSING;   // keep maxInfilVol unchanged
+            gwater_setState(index, x);
+            return 0;
+        }
+        case swmm_SUBCATCH_GW_LOWER_DEPTH:
+        {
+            // sets the saturated (lower) zone depth above the aquifer bottom
+            double x[4];
+            if (Subcatch[index].groundwater == NULL)
+                return ERR_API_OBJECT_INDEX;
+            if (value < 0.0)
+                return ERR_API_PROPERTY_VALUE;
+            gwater_getState(index, x);
+            x[1] = Subcatch[index].groundwater->bottomElev + value / UCF(LENGTH);
+            x[3] = MISSING;   // keep maxInfilVol unchanged
+            gwater_setState(index, x);
+            return 0;
+        }
+        case swmm_SUBCATCH_SNOW_SWE:
+        case swmm_SUBCATCH_SNOW_FW:
+        case swmm_SUBCATCH_SNOW_ATI:
+        case swmm_SUBCATCH_SNOW_COLDC:
+        {
+            // sets snow pack state on one snow subarea (subIndex 0-2)
+            TSnowpack* snowpack = Subcatch[index].snowpack;
+            if (snowpack == NULL)
+                return ERR_API_OBJECT_INDEX;
+            // snow subareas: 0 = plowable, 1 = impervious, 2 = pervious
+            if (subIndex < 0 || subIndex > 2)
+                return ERR_API_OBJECT_INDEX;
+            switch (property)
+            {
+            case swmm_SUBCATCH_SNOW_SWE:
+                if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+                snowpack->wsnow[subIndex] = value / UCF(RAINDEPTH);
+                break;
+            case swmm_SUBCATCH_SNOW_FW:
+                if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+                snowpack->fw[subIndex] = value / UCF(RAINDEPTH);
+                break;
+            case swmm_SUBCATCH_SNOW_ATI:
+                if (UnitSystem == SI) value = (9. / 5.) * value + 32.0;
+                snowpack->ati[subIndex] = value;
+                break;
+            case swmm_SUBCATCH_SNOW_COLDC:
+                if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+                snowpack->coldc[subIndex] = value / UCF(RAINDEPTH);
+                break;
+            }
+            return 0;
+        }
+        case swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION:
+        {
+            // sets ponded surface water quality from a concentration
+            // (inverse of the getter); requires ponded water to hold mass
+            double pondedVol;
+            if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
+                return ERR_API_OBJECT_INDEX;
+            if (value < 0.0)
+                return ERR_API_PROPERTY_VALUE;
+            pondedVol = subcatch_getDepth(index) *
+                        MAX(0.0, Subcatch[index].area - Subcatch[index].lidArea) *
+                        UCF(LANDAREA);
+            Subcatch[index].pondedQual[pollutantIndex] = value * pondedVol;
+            return 0;
+        }
         case swmm_SUBCATCH_EXTERNAL_POLLUTANT_BUILDUP:
         {
             if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
@@ -1907,6 +2060,44 @@ static double getSubcatchValue(int property, int index, int subIndex, int pollut
         // returns -1 when no PET prescription is active
         if (subcatch->apiEvapRate == MISSING) return -1.0;
         return subcatch->apiEvapRate * UCF(EVAPRATE);
+    case swmm_SUBCATCH_GW_MOISTURE:
+    {
+        double x[4];
+        if (subcatch->groundwater == NULL) return ERR_API_OBJECT_INDEX;
+        gwater_getState(index, x);
+        return x[0];
+    }
+    case swmm_SUBCATCH_GW_LOWER_DEPTH:
+    {
+        double x[4];
+        if (subcatch->groundwater == NULL) return ERR_API_OBJECT_INDEX;
+        gwater_getState(index, x);
+        return (x[1] - subcatch->groundwater->bottomElev) * UCF(LENGTH);
+    }
+    case swmm_SUBCATCH_SNOW_SWE:
+    case swmm_SUBCATCH_SNOW_FW:
+    case swmm_SUBCATCH_SNOW_ATI:
+    case swmm_SUBCATCH_SNOW_COLDC:
+    {
+        TSnowpack* snowpack = subcatch->snowpack;
+        if (snowpack == NULL) return ERR_API_OBJECT_INDEX;
+        // snow subareas: 0 = plowable, 1 = impervious, 2 = pervious
+        if (subIndex < 0 || subIndex > 2)
+            return ERR_API_OBJECT_INDEX;
+        switch (property)
+        {
+        case swmm_SUBCATCH_SNOW_SWE:
+            return snowpack->wsnow[subIndex] * UCF(RAINDEPTH);
+        case swmm_SUBCATCH_SNOW_FW:
+            return snowpack->fw[subIndex] * UCF(RAINDEPTH);
+        case swmm_SUBCATCH_SNOW_ATI:
+            if (UnitSystem == SI)
+                return (snowpack->ati[subIndex] - 32.0) * 5.0 / 9.0;
+            return snowpack->ati[subIndex];
+        default:
+            return snowpack->coldc[subIndex] * UCF(RAINDEPTH);
+        }
+    }
     case swmm_SUBCATCH_POLLUTANT_BUILDUP:
         if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
@@ -2201,6 +2392,27 @@ double getSystemValue(int property)
         return LatFlowTol;
     case swmm_EVAPRATE:
         return Evap.rate * UCF(EVAPRATE);
+    case swmm_TEMPERATURE:
+        // deg F internal -> deg C for SI projects
+        if (UnitSystem == SI) return (Temp.ta - 32.0) * 5.0 / 9.0;
+        return Temp.ta;
+    case swmm_API_TEMPERATURE:
+        // returns -999 when no temperature prescription is active
+        if (Temp.apiTemp == MISSING) return -999.0;
+        if (UnitSystem == SI) return (Temp.apiTemp - 32.0) * 5.0 / 9.0;
+        return Temp.apiTemp;
+    case swmm_WINDSPEED:
+        return Wind.ws * UCF(WINDSPEED);
+    case swmm_API_WINDSPEED:
+        // returns -1 when no wind prescription is active
+        if (Wind.apiWs == MISSING) return -1.0;
+        return Wind.apiWs * UCF(WINDSPEED);
+    case swmm_API_EVAP:
+        // returns -1 when no evaporation prescription is active
+        if (Evap.apiRate == MISSING) return -1.0;
+        return Evap.apiRate * UCF(EVAPRATE);
+    case swmm_EVAP_DRY_ONLY:
+        return (Evap.dryOnly ? 1.0 : 0.0);
     default:
         return ERR_API_PROPERTY_TYPE;
     }
@@ -2425,6 +2637,36 @@ static int setRoutingStep(double value)
 static int setSystemValue(int property, double value)
 {
     int y, m, d, h, mm, s;
+
+    // --- properties that may be set while the simulation is running
+    switch (property)
+    {
+    case swmm_API_TEMPERATURE:
+        // value <= -999 clears the prescription (reverts to climate temp.)
+        if (value <= -999.0) Temp.apiTemp = MISSING;
+        else
+        {
+            // convert deg C to deg F if need be
+            if (UnitSystem == SI) value = (9. / 5.) * value + 32.0;
+            Temp.apiTemp = value;
+        }
+        return 0;
+    case swmm_API_WINDSPEED:
+        // negative value clears the prescription (reverts to climate wind)
+        if (value < 0.0) Wind.apiWs = MISSING;
+        else Wind.apiWs = value / UCF(WINDSPEED);
+        return 0;
+    case swmm_API_EVAP:
+        // negative value clears the prescription (reverts to climate evap)
+        if (value < 0.0) Evap.apiRate = MISSING;
+        else Evap.apiRate = value / UCF(EVAPRATE);
+        return 0;
+    case swmm_EVAP_DRY_ONLY:
+        Evap.dryOnly = (value > 0.0);
+        return 0;
+    default:
+        break;
+    }
 
     if (IsStartedFlag)
         return ERR_API_NOT_ENDED;

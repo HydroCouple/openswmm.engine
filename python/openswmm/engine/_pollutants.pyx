@@ -174,6 +174,24 @@ cdef class Pollutant:
         _check_fresh(self)
         _check(swmm_pollutant_set_rdii_conc(_h(self._solver), self._index, value))
 
+    @property
+    def dwf_conc(self) -> float:
+        """Dry-weather-flow concentration of this pollutant (pollutant units).
+
+        Mirrors L{rdii_conc}: the concentration applied to dry-weather
+        sanitary inflows. Settable while the simulation is running so
+        diurnal/seasonal sanitary quality can be prescribed mid-run.
+        """
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_pollutant_get_dwf_conc(_h(self._solver), self._index, &v))
+        return v
+
+    @dwf_conc.setter
+    def dwf_conc(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_pollutant_set_dwf_conc(_h(self._solver), self._index, value))
+
     # ---- Snow-only flag --------------------------------------------
 
     @property

@@ -549,6 +549,84 @@ cdef class Subcatchment:
         _check(swmm_subcatch_set_ponded_quality(
             _h(self._solver), self._index, p, mass))
 
+    # ---- State injection (data assimilation) -----------------------
+
+    def set_gw_state(self, double theta=-1.0, double lower_depth=-1.0) -> None:
+        """Inject the groundwater state on this subcatchment (RUNNING only).
+
+        State injection for data assimilation / external coupling. The
+        subcatchment must have groundwater. Mass-balance reports reflect the
+        resulting storage discontinuity, mirroring hotstart loading.
+
+        @param theta: Upper-zone moisture content (0..porosity); pass a
+            negative value to leave it unchanged.
+        @type theta: float
+        @param lower_depth: Saturated-zone depth above the aquifer bottom in
+            project length units (ft US, m SI); negative leaves it unchanged.
+        @type lower_depth: float
+        """
+        _check_fresh(self)
+        _check(swmm_subcatch_set_gw_state(
+            _h(self._solver), self._index, theta, lower_depth))
+
+    def get_gw_state(self) -> tuple:
+        """Read the groundwater state on this subcatchment.
+
+        @return: ``(theta, lower_depth)`` — upper-zone moisture content and
+            saturated-zone depth (project length units).
+        @rtype: tuple of float
+        """
+        _check_fresh(self)
+        cdef double theta = 0.0
+        cdef double lower_depth = 0.0
+        _check(swmm_subcatch_get_gw_state(
+            _h(self._solver), self._index, &theta, &lower_depth))
+        return (theta, lower_depth)
+
+    def set_snow_state(self, int surface, double swe=-1.0, double fw=-1.0,
+                       double ati=-1000.0, double coldc=-1.0) -> None:
+        """Inject the snow-pack state on one snow surface (RUNNING only).
+
+        State injection for data assimilation (e.g. observed SWE). The
+        subcatchment must have a snow pack.
+
+        @param surface: Snow subarea: 0 plowable, 1 impervious, 2 pervious.
+        @type surface: int
+        @param swe: Snow water equivalent in project depth units (in US,
+            mm SI); negative leaves it unchanged.
+        @type swe: float
+        @param fw: Free water in project depth units; negative leaves it
+            unchanged.
+        @type fw: float
+        @param ati: Antecedent temperature index (deg F US, deg C SI). Pass
+            ``<= -999`` to leave it unchanged (negative temperatures valid).
+        @type ati: float
+        @param coldc: Cold content in project depth units of melt equivalent;
+            negative leaves it unchanged.
+        @type coldc: float
+        """
+        _check_fresh(self)
+        _check(swmm_subcatch_set_snow_state(
+            _h(self._solver), self._index, surface, swe, fw, ati, coldc))
+
+    def get_snow_state(self, int surface) -> tuple:
+        """Read the snow-pack state on one snow surface.
+
+        @param surface: Snow subarea: 0 plowable, 1 impervious, 2 pervious.
+        @type surface: int
+        @return: ``(swe, fw, ati, coldc)`` in project units (SWE/free
+            water/cold content as depths, ATI as temperature).
+        @rtype: tuple of float
+        """
+        _check_fresh(self)
+        cdef double swe = 0.0
+        cdef double fw = 0.0
+        cdef double ati = 0.0
+        cdef double coldc = 0.0
+        _check(swmm_subcatch_get_snow_state(
+            _h(self._solver), self._index, surface, &swe, &fw, &ati, &coldc))
+        return (swe, fw, ati, coldc)
+
     # ---- Sub-views -------------------------------------------------
 
     @property

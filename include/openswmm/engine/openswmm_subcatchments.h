@@ -456,6 +456,76 @@ SWMM_ENGINE_API int swmm_subcatch_get_snow_depth(SWMM_Engine engine, int idx, do
  */
 SWMM_ENGINE_API int swmm_subcatch_get_evap(SWMM_Engine engine, int idx, double* evap);
 
+/* =========================================================================
+ * State injection (data assimilation)
+ * ========================================================================= */
+
+/**
+ * @brief Set the groundwater state on a subcatchment.
+ *
+ * State injection for data assimilation / external coupling. Pass a
+ * negative value to leave that component unchanged. Note that mass
+ * balance reports will reflect the storage discontinuity, mirroring
+ * hotstart loading.
+ *
+ * @param engine       Engine handle.
+ * @param idx          Subcatchment index (must have groundwater).
+ * @param theta        Upper zone moisture content (0..porosity), or < 0 to keep.
+ * @param lower_depth  Saturated zone depth above aquifer bottom in user
+ *                     length units (ft US, m SI), or < 0 to keep.
+ * @returns SWMM_OK or error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_gw_state(SWMM_Engine engine, int idx,
+                                               double theta, double lower_depth);
+
+/**
+ * @brief Get the groundwater state on a subcatchment.
+ *
+ * @param engine            Engine handle.
+ * @param idx               Subcatchment index (must have groundwater).
+ * @param[out] theta        Receives the upper zone moisture content.
+ * @param[out] lower_depth  Receives the saturated zone depth (user length units).
+ * @returns SWMM_OK or error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_gw_state(SWMM_Engine engine, int idx,
+                                               double* theta, double* lower_depth);
+
+/**
+ * @brief Set the snow pack state on one snow subarea of a subcatchment.
+ *
+ * State injection for data assimilation (e.g. observed SWE). Pass a
+ * negative value to leave that component unchanged.
+ *
+ * @param engine   Engine handle.
+ * @param idx      Subcatchment index (must have a snow pack).
+ * @param surface  Snow subarea: 0 plowable, 1 impervious, 2 pervious.
+ * @param swe      Snow water equivalent in user depth units (in US, mm SI), or < 0 to keep.
+ * @param fw       Free water in user depth units, or < 0 to keep.
+ * @param ati      Antecedent temperature index (deg F US, deg C SI); pass
+ *                 <= -999 to keep (negative temperatures are valid).
+ * @param coldc    Cold content in user depth units of melt equivalent, or < 0 to keep.
+ * @returns SWMM_OK or error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_snow_state(SWMM_Engine engine, int idx,
+                                                 int surface, double swe, double fw,
+                                                 double ati, double coldc);
+
+/**
+ * @brief Get the snow pack state on one snow subarea of a subcatchment.
+ *
+ * @param engine      Engine handle.
+ * @param idx         Subcatchment index (must have a snow pack).
+ * @param surface     Snow subarea: 0 plowable, 1 impervious, 2 pervious.
+ * @param[out] swe    Receives SWE (user depth units); may be NULL.
+ * @param[out] fw     Receives free water (user depth units); may be NULL.
+ * @param[out] ati    Receives ATI (user temperature units); may be NULL.
+ * @param[out] coldc  Receives cold content (user depth units); may be NULL.
+ * @returns SWMM_OK or error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_snow_state(SWMM_Engine engine, int idx,
+                                                 int surface, double* swe, double* fw,
+                                                 double* ati, double* coldc);
+
 /**
  * @brief Get the current infiltration rate at a subcatchment.
  * @param engine      Engine handle.

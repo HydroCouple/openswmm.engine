@@ -176,6 +176,148 @@ SWMM_ENGINE_API int swmm_climate_get_evap_rate(SWMM_Engine engine, double* value
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_forcing_subcatch_snowfall(
+    SWMM_Engine engine, int idx, double value, int mode, int persist)
+{
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    if (!valid_mode(mode) || !valid_persist(persist)) return SWMM_ERR_BADPARAM;
+    if (mode == SWMM_FORCING_OVERRIDE && value < 0.0) return SWMM_ERR_BADPARAM;
+
+    // value is a snowfall rate in user units (in/hr US, mm/hr SI) → ft/sec
+    int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    double rate = value / openswmm::ucf::Ucf[openswmm::ucf::RAINFALL][unit_sys];
+
+    auto ui = static_cast<std::size_t>(idx);
+    ctx.forcing.subcatch_snowfall_mode[ui]    = static_cast<openswmm::ForcingMode>(mode);
+    ctx.forcing.subcatch_snowfall_value[ui]   = rate;
+    ctx.forcing.subcatch_snowfall_persist[ui] = static_cast<openswmm::ForcingPersist>(persist);
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Climate forcing (system-wide)
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_forcing_climate_temperature(
+    SWMM_Engine engine, double value, int mode, int persist)
+{
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
+    if (!valid_mode(mode) || !valid_persist(persist)) return SWMM_ERR_BADPARAM;
+
+    // deg C → deg F for SI projects (affine — not a Ucf factor).
+    // ADD mode passes a delta: 1 degC delta = 1.8 degF delta (no offset).
+    int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    double temp_f = value;
+    if (unit_sys == 1) {
+        temp_f = (mode == SWMM_FORCING_ADD) ? value * 9.0 / 5.0
+                                            : value * 9.0 / 5.0 + 32.0;
+    }
+
+    ctx.forcing.climate_temperature_mode    = static_cast<openswmm::ForcingMode>(mode);
+    ctx.forcing.climate_temperature_value   = temp_f;
+    ctx.forcing.climate_temperature_persist = static_cast<openswmm::ForcingPersist>(persist);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_get_temperature(SWMM_Engine engine, double* value)
+{
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    double t = ctx.climate_state.temperature;  // deg F internal
+    if (value) *value = (unit_sys == 1) ? (t - 32.0) * 5.0 / 9.0 : t;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_forcing_climate_wind(
+    SWMM_Engine engine, double value, int mode, int persist)
+{
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
+    if (!valid_mode(mode) || !valid_persist(persist)) return SWMM_ERR_BADPARAM;
+    if (mode == SWMM_FORCING_OVERRIDE && value < 0.0) return SWMM_ERR_BADPARAM;
+
+    // user units (mph US, km/hr SI) → mph internal
+    int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    double ws = value / openswmm::ucf::Ucf[openswmm::ucf::WINDSPEED][unit_sys];
+
+    ctx.forcing.climate_wind_mode    = static_cast<openswmm::ForcingMode>(mode);
+    ctx.forcing.climate_wind_value   = ws;
+    ctx.forcing.climate_wind_persist = static_cast<openswmm::ForcingPersist>(persist);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_get_wind_speed(SWMM_Engine engine, double* value)
+{
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    if (value) *value = ctx.climate_state.wind_speed
+                      * openswmm::ucf::Ucf[openswmm::ucf::WINDSPEED][unit_sys];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_forcing_climate_evap(
+    SWMM_Engine engine, double value, int mode, int persist)
+{
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
+    if (!valid_mode(mode) || !valid_persist(persist)) return SWMM_ERR_BADPARAM;
+    if (mode == SWMM_FORCING_OVERRIDE && value < 0.0) return SWMM_ERR_BADPARAM;
+
+    // user units (in/day US, mm/day SI) → ft/sec internal
+    int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    double rate = value / openswmm::ucf::Ucf[openswmm::ucf::EVAPRATE][unit_sys];
+
+    ctx.forcing.climate_evap_mode    = static_cast<openswmm::ForcingMode>(mode);
+    ctx.forcing.climate_evap_value   = rate;
+    ctx.forcing.climate_evap_persist = static_cast<openswmm::ForcingPersist>(persist);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_set_dry_only(SWMM_Engine engine, int flag)
+{
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    ctx.options.evap_dry_only = (flag != 0);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_get_dry_only(SWMM_Engine engine, int* flag)
+{
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    if (flag) *flag = ctx.options.evap_dry_only ? 1 : 0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_forcing_link_quality(
+    SWMM_Engine engine, int link_idx, int pollutant_idx,
+    double value, int mode, int persist)
+{
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
+    CHECK_INDEX(link_idx >= 0 && link_idx < ctx.n_links());
+    int np = ctx.n_pollutants();
+    CHECK_INDEX(pollutant_idx >= 0 && pollutant_idx < np);
+    if (!valid_mode(mode) || !valid_persist(persist)) return SWMM_ERR_BADPARAM;
+
+    auto flat = static_cast<std::size_t>(link_idx) * static_cast<std::size_t>(np)
+              + static_cast<std::size_t>(pollutant_idx);
+    ctx.forcing.link_quality_mode[flat]    = static_cast<openswmm::ForcingMode>(mode);
+    ctx.forcing.link_quality_value[flat]   = value;
+    ctx.forcing.link_quality_persist[flat] = static_cast<openswmm::ForcingPersist>(persist);
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Gage forcing
 // ============================================================================
@@ -244,6 +386,30 @@ SWMM_ENGINE_API int swmm_forcing_clear(SWMM_Engine engine, int type, int idx) {
             CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
             ctx.forcing.gage_rainfall_mode[static_cast<std::size_t>(idx)] = openswmm::ForcingMode::NONE;
             break;
+        case SWMM_FORCE_SUBCATCH_SNOWFALL:
+            CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+            ctx.forcing.subcatch_snowfall_mode[static_cast<std::size_t>(idx)] = openswmm::ForcingMode::NONE;
+            break;
+        case SWMM_FORCE_CLIMATE_TEMPERATURE:
+            ctx.forcing.climate_temperature_mode = openswmm::ForcingMode::NONE;
+            break;
+        case SWMM_FORCE_CLIMATE_WIND:
+            ctx.forcing.climate_wind_mode = openswmm::ForcingMode::NONE;
+            break;
+        case SWMM_FORCE_CLIMATE_EVAP:
+            ctx.forcing.climate_evap_mode = openswmm::ForcingMode::NONE;
+            break;
+        case SWMM_FORCE_LINK_QUALITY: {
+            // Clear ALL pollutant forcings for this link
+            CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+            int npl = ctx.n_pollutants();
+            for (int p = 0; p < npl; ++p) {
+                auto flat = static_cast<std::size_t>(idx) * static_cast<std::size_t>(npl)
+                          + static_cast<std::size_t>(p);
+                ctx.forcing.link_quality_mode[flat] = openswmm::ForcingMode::NONE;
+            }
+            break;
+        }
         default:
             return SWMM_ERR_BADPARAM;
     }

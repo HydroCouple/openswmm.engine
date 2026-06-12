@@ -464,8 +464,8 @@ class Surface2D:
 
         @return: Mapping with keys C{init_storage}, C{final_storage},
             C{rainfall_in}, C{coupling_1d_to_2d_in}, C{coupling_2d_to_1d_out},
-            C{outfall_in}, C{boundary_in}, C{boundary_out} (all C{m^3}) and
-            C{continuity_error} (fraction).
+            C{outfall_in}, C{boundary_in}, C{boundary_out}, C{evap_out}
+            (all C{m^3}) and C{continuity_error} (fraction).
         @rtype: dict[str, float]
         @raise RuntimeError: If the 2D module did not run.
         """
@@ -508,6 +508,53 @@ class Surface2D:
         """Force uniform rainfall on all triangles.
 
         @param value: Rainfall rate (m/s).
+        @type value: float
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
+        @raise RuntimeError: If the C API rejects the forcing.
+        """
+        ...
+
+    def force_evap(
+        self,
+        idx: int,
+        value: float,
+        *,
+        mode: SurfaceForcingMode = ...,
+        persist: ForcingPersist = ...,
+    ) -> None:
+        """Force evaporation on a specific triangle.
+
+        The rate is a demand: wet cells lose depth at this rate, shutting
+        off smoothly as a cell dries (depths never go negative). The default
+        rate is 0 unless forced. Negative values are treated as zero.
+
+        @param idx: Triangle index.
+        @type idx: int
+        @param value: Evaporation rate (m/s; same SI convention as rainfall).
+        @type value: float
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
+        @raise RuntimeError: If the C API rejects the forcing.
+        """
+        ...
+
+    def force_evap_uniform(
+        self,
+        value: float,
+        *,
+        mode: SurfaceForcingMode = ...,
+        persist: ForcingPersist = ...,
+    ) -> None:
+        """Force uniform evaporation on all triangles.
+
+        @param value: Evaporation rate (m/s; same SI convention as rainfall).
         @type value: float
         @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
         @type mode: L{SurfaceForcingMode}

@@ -473,10 +473,115 @@ SWMM_ENGINE_API int swmm_subcatch_get_rainfall(SWMM_Engine engine, int idx, doub
 
 SWMM_ENGINE_API int swmm_subcatch_get_snow_depth(SWMM_Engine engine, int idx, double* depth) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    const auto* eng = to_engine(engine);
+    const auto& ctx = eng->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    // Snow state is managed by SnowSolver, not SubcatchData — return 0.0 for now
-    if (depth) *depth = 0.0;
+    // Area-weighted snow pack SWE from the snow solver state,
+    // internal ft → user depth units (in US, mm SI)
+    if (depth) *depth = to_display(ctx, openswmm::ucf::RAINDEPTH,
+                                   eng->subcatchSnowDepth(idx));
+    return SWMM_OK;
+}
+
+// ============================================================================
+// State injection (data assimilation)
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_subcatch_set_gw_state(SWMM_Engine engine, int idx,
+                                               double theta, double lower_depth) {
+    CHECK_HANDLE(engine);
+    auto* eng = to_engine(engine);
+    auto& ctx = eng->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    auto& soa = eng->gwSolver().state();
+    auto ui = static_cast<std::size_t>(idx);
+    if (ui >= soa.theta.size() || soa.total_depth[ui] <= 0.0)
+        return SWMM_ERR_BADPARAM;   // no groundwater on this subcatchment
+
+    if (theta >= 0.0) {
+        // clamp to physical range [wilting point fraction, porosity]
+        double porosity = soa.porosity[ui];
+        soa.theta[ui] = (theta > porosity) ? porosity : theta;
+    }
+    if (lower_depth >= 0.0) {
+        double ld = to_internal(ctx, openswmm::ucf::LENGTH, lower_depth);
+        double max_d = soa.total_depth[ui];
+        soa.lower_depth[ui] = (ld > max_d) ? max_d : ld;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_gw_state(SWMM_Engine engine, int idx,
+                                               double* theta, double* lower_depth) {
+    CHECK_HANDLE(engine);
+    const auto* eng = to_engine(engine);
+    const auto& ctx = eng->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    const auto& soa = eng->gwSolver().state();
+    auto ui = static_cast<std::size_t>(idx);
+    if (ui >= soa.theta.size() || soa.total_depth[ui] <= 0.0)
+        return SWMM_ERR_BADPARAM;
+
+    if (theta)       *theta = soa.theta[ui];
+    if (lower_depth) *lower_depth = to_display(ctx, openswmm::ucf::LENGTH,
+                                               soa.lower_depth[ui]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_set_snow_state(SWMM_Engine engine, int idx,
+                                                 int surface, double swe, double fw,
+                                                 double ati, double coldc) {
+    CHECK_HANDLE(engine);
+    auto* eng = to_engine(engine);
+    auto& ctx = eng->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    auto ui = static_cast<std::size_t>(idx);
+    if (ctx.subcatches.snowpack[ui] < 0) return SWMM_ERR_BADPARAM;
+    CHECK_INDEX(surface >= 0 && surface < openswmm::snow::N_SUBAREAS);
+
+    auto& soa = eng->snowSolver().state();
+    auto pk = static_cast<std::size_t>(idx * openswmm::snow::N_SUBAREAS + surface);
+    if (pk >= soa.wsnow.size()) return SWMM_ERR_BADPARAM;
+
+    int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    if (swe >= 0.0)
+        soa.wsnow[pk] = to_internal(ctx, openswmm::ucf::RAINDEPTH, swe);
+    if (fw >= 0.0)
+        soa.fw[pk] = to_internal(ctx, openswmm::ucf::RAINDEPTH, fw);
+    if (ati > -999.0) {
+        double t = ati;
+        if (unit_sys == 1) t = t * 9.0 / 5.0 + 32.0;
+        soa.ati[pk] = t;
+    }
+    if (coldc >= 0.0)
+        soa.coldc[pk] = to_internal(ctx, openswmm::ucf::RAINDEPTH, coldc);
+
+    // free water cannot exceed the pack
+    if (soa.fw[pk] > soa.wsnow[pk]) soa.fw[pk] = soa.wsnow[pk];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_snow_state(SWMM_Engine engine, int idx,
+                                                 int surface, double* swe, double* fw,
+                                                 double* ati, double* coldc) {
+    CHECK_HANDLE(engine);
+    const auto* eng = to_engine(engine);
+    const auto& ctx = eng->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    auto ui = static_cast<std::size_t>(idx);
+    if (ctx.subcatches.snowpack[ui] < 0) return SWMM_ERR_BADPARAM;
+    CHECK_INDEX(surface >= 0 && surface < openswmm::snow::N_SUBAREAS);
+
+    const auto& soa = eng->snowSolver().state();
+    auto pk = static_cast<std::size_t>(idx * openswmm::snow::N_SUBAREAS + surface);
+    if (pk >= soa.wsnow.size()) return SWMM_ERR_BADPARAM;
+
+    int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    if (swe)   *swe   = to_display(ctx, openswmm::ucf::RAINDEPTH, soa.wsnow[pk]);
+    if (fw)    *fw    = to_display(ctx, openswmm::ucf::RAINDEPTH, soa.fw[pk]);
+    if (ati)   *ati   = (unit_sys == 1) ? (soa.ati[pk] - 32.0) * 5.0 / 9.0
+                                        : soa.ati[pk];
+    if (coldc) *coldc = to_display(ctx, openswmm::ucf::RAINDEPTH, soa.coldc[pk]);
     return SWMM_OK;
 }
 

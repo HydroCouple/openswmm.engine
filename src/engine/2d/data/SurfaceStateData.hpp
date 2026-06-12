@@ -60,6 +60,7 @@ struct SurfaceStateData {
 
     // Source/sink terms — per triangle
     std::vector<double> rainfall;       ///< Rainfall intensity (m/s)
+    std::vector<double> evap_rate;      ///< Evaporation demand rate (m/s, >= 0)
     std::vector<double> coupling_flux;  ///< Exchange with SWMM node (m/s, + = into 2D)
     std::vector<double> net_source;     ///< Net source/sink per cell (m/s)
 
@@ -70,6 +71,9 @@ struct SurfaceStateData {
     std::vector<int8_t> rainfall_forced;      ///< 0=computed, 1=override, 2=add
     std::vector<int8_t> rainfall_persist;     ///< 0=reset, 1=persist
     std::vector<double> rainfall_force_val;   ///< Forced rainfall value
+    std::vector<int8_t> evap_forced;          ///< 0=computed, 1=override, 2=add
+    std::vector<int8_t> evap_persist;         ///< 0=reset, 1=persist
+    std::vector<double> evap_force_val;       ///< Forced evaporation value
     std::vector<int8_t> coupling_forced;      ///< 0=computed, 1=override, 2=add
     std::vector<int8_t> coupling_persist;     ///< 0=reset, 1=persist
     std::vector<double> coupling_force_val;   ///< Forced coupling value
@@ -88,6 +92,11 @@ struct SurfaceStateData {
     std::vector<double> stat_max_velocity;  ///< Max cell speed |v| = √(vx²+vy²) (m/s)
     std::vector<double> stat_max_cont_err;  ///< Max |cell_continuity_err| (m³/s)
     std::vector<double> stat_cum_volume;    ///< Cumulative volume through cell (m³)
+
+    /// Cumulative evaporation loss over the whole simulation (m³). Kept here
+    /// (not in core's MassBalance2D, owned by another work stream) and folded
+    /// into the API-level totals by Api2D.cpp.
+    double evap_loss_total = 0.0;
 
     // -----------------------------------------------------------------------
     // Lifecycle
@@ -110,12 +119,16 @@ struct SurfaceStateData {
         cell_continuity_err.assign(nt, 0.0);
         edge_flux.assign(n3, 0.0);
         rainfall.assign(nt, 0.0);
+        evap_rate.assign(nt, 0.0);
         coupling_flux.assign(nt, 0.0);
         net_source.assign(nt, 0.0);
 
         rainfall_forced.assign(nt, 0);
         rainfall_persist.assign(nt, 0);
         rainfall_force_val.assign(nt, 0.0);
+        evap_forced.assign(nt, 0);
+        evap_persist.assign(nt, 0);
+        evap_force_val.assign(nt, 0.0);
         coupling_forced.assign(nt, 0);
         coupling_persist.assign(nt, 0);
         coupling_force_val.assign(nt, 0.0);
@@ -125,6 +138,7 @@ struct SurfaceStateData {
         stat_max_velocity.assign(nt, 0.0);
         stat_max_cont_err.assign(nt, 0.0);
         stat_cum_volume.assign(nt, 0.0);
+        evap_loss_total = 0.0;
     }
 
     void save_state() noexcept {
@@ -143,6 +157,10 @@ struct SurfaceStateData {
             if (rainfall_persist[i] == 0) {
                 rainfall_forced[i] = 0;
                 rainfall_force_val[i] = 0.0;
+            }
+            if (evap_persist[i] == 0) {
+                evap_forced[i] = 0;
+                evap_force_val[i] = 0.0;
             }
             if (coupling_persist[i] == 0) {
                 coupling_forced[i] = 0;

@@ -170,6 +170,26 @@ SWMM_ENGINE_API int swmm_pollutant_set_rdii_conc(SWMM_Engine engine, int idx, do
 SWMM_ENGINE_API int swmm_pollutant_get_rdii_conc(SWMM_Engine engine, int idx, double* conc);
 
 /**
+ * @brief Set the default dry weather sanitary flow concentration.
+ * @details Runtime-settable: the value feeds the dry weather quality
+ *          inflow term each routing step.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based pollutant index.
+ * @param conc    DWF concentration in pollutant units.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_pollutant_set_dwf_conc(SWMM_Engine engine, int idx, double conc);
+
+/**
+ * @brief Get the default dry weather sanitary flow concentration.
+ * @param engine     Engine handle.
+ * @param idx        Zero-based pollutant index.
+ * @param[out] conc  Receives the DWF concentration.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_pollutant_get_dwf_conc(SWMM_Engine engine, int idx, double* conc);
+
+/**
  * @brief Set the molecular weight of a pollutant.
  * @param engine  Engine handle.
  * @param idx     Zero-based pollutant index.

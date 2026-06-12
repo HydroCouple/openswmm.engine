@@ -20,6 +20,7 @@ from ._solver import (
     SWMMNodeProperties,
     SWMMLinkProperties,
     SWMMSystemProperties,
+    SWMMPollutantProperties,
     SWMMFlowUnits,
     SWMMAPIErrors,
     run_solver,

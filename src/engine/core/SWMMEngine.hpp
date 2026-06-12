@@ -200,6 +200,26 @@ public:
     SimulationContext&       context()       noexcept { return ctx_; }
     const SimulationContext& context() const noexcept { return ctx_; }
 
+    /// Groundwater solver access (for C API state injection).
+    groundwater::GWSolver&       gwSolver()       noexcept { return groundwater_; }
+    const groundwater::GWSolver& gwSolver() const noexcept { return groundwater_; }
+
+    /// Snow solver access (for C API state injection).
+    snow::SnowSolver&       snowSolver()       noexcept { return snow_; }
+    const snow::SnowSolver& snowSolver() const noexcept { return snow_; }
+
+    /**
+     * @brief Area-weighted snow depth (SWE, ft) on a subcatchment.
+     *
+     * Combines the snow pack's plowable/impervious/pervious subarea SWE
+     * weighted by subarea fractions (matching the report snapshot
+     * computation). Returns 0 for subcatchments without a snow pack.
+     *
+     * @param idx Subcatchment index (caller-validated).
+     * @return Snow water equivalent depth (ft).
+     */
+    double subcatchSnowDepth(int idx) const noexcept;
+
     /**
      * @brief Open the runoff interface file in SAVE mode (Phase 1b).
      *
@@ -301,6 +321,8 @@ private:
     std::vector<int>             culvert_links_;///< Pre-built culvert link indices (avoid per-timestep alloc)
     std::vector<double>          gw_frac_perv_; ///< Per-subcatch pervious fraction for GW evap
     std::vector<double>          gw_perv_evap_; ///< Per-subcatch pervious evap rate (ft/sec)
+    std::vector<double>          snow_rain_;    ///< Per-subcatch rainfall into snow step (ft/sec)
+    std::vector<double>          snow_snow_;    ///< Per-subcatch snowfall into snow step (ft/sec)
     hydstruct::StructureSolver  hydstruct_;    ///< Pumps, orifices, weirs, outlets
     iface::InterfaceManager      iface_;        ///< Routing interface file I/O
 

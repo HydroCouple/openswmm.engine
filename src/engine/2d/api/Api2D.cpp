@@ -521,6 +521,9 @@ int swmm_2d_get_continuity_error(SWMM_Engine engine, double* err) {
     if (!err) return SWMM_ERR_BADPARAM;
     const auto& mb = eng->context().mass_balance_2d;
     if (!mb.active) return SWMM_ERR_BADPARAM;
+    // Evaporation is now accumulated into mb.evap_out and folded into
+    // MassBalance2D::error(), so the struct's own computation closes when
+    // evaporation is active.
     *err = mb.error();
     return SWMM_OK;
 }
@@ -533,7 +536,8 @@ int swmm_2d_get_mass_balance(SWMM_Engine engine,
                              double* coupling_2d_to_1d_out,
                              double* outfall_in,
                              double* boundary_in,
-                             double* boundary_out) {
+                             double* boundary_out,
+                             double* evap_out) {
     GET_ENGINE(engine);
     const auto& mb = eng->context().mass_balance_2d;
     if (!mb.active) return SWMM_ERR_BADPARAM;
@@ -545,6 +549,7 @@ int swmm_2d_get_mass_balance(SWMM_Engine engine,
     if (outfall_in)            *outfall_in            = mb.outfall_in;
     if (boundary_in)           *boundary_in           = mb.boundary_in;
     if (boundary_out)          *boundary_out          = mb.boundary_out;
+    if (evap_out)              *evap_out             = mb.evap_out;
     return SWMM_OK;
 }
 
@@ -580,6 +585,34 @@ int swmm_2d_force_rainfall_uniform(SWMM_Engine engine,
     return SWMM_OK;
 }
 
+int swmm_2d_force_evap(SWMM_Engine engine, int idx,
+                         double value, int mode, int persist) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(idx, router2d);
+
+    auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
+    s.evap_forced[idx]    = static_cast<int8_t>(mode);
+    s.evap_force_val[idx] = value;
+    s.evap_persist[idx]   = static_cast<int8_t>(persist);
+    return SWMM_OK;
+}
+
+int swmm_2d_force_evap_uniform(SWMM_Engine engine,
+                                 double value, int mode, int persist) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+
+    auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
+    int nt = router2d.mesh().n_triangles();
+    for (int i = 0; i < nt; ++i) {
+        s.evap_forced[i]    = static_cast<int8_t>(mode);
+        s.evap_force_val[i] = value;
+        s.evap_persist[i]   = static_cast<int8_t>(persist);
+    }
+    return SWMM_OK;
+}
+
 int swmm_2d_force_coupling_flux(SWMM_Engine engine, int idx,
                                   double value, int mode, int persist) {
     GET_ENGINE(engine);
@@ -603,6 +636,9 @@ int swmm_2d_force_clear_all(SWMM_Engine engine) {
         s.rainfall_forced[i] = 0;
         s.rainfall_force_val[i] = 0.0;
         s.rainfall_persist[i] = 0;
+        s.evap_forced[i] = 0;
+        s.evap_force_val[i] = 0.0;
+        s.evap_persist[i] = 0;
         s.coupling_forced[i] = 0;
         s.coupling_force_val[i] = 0.0;
         s.coupling_persist[i] = 0;

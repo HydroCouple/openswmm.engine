@@ -34,13 +34,21 @@ _SPINUP_STEPS = 30
 _PET = 2.4  # in/day
 
 
-# The site model uses WET_STEP 1 min over a 15 s ROUTING_STEP, so the runoff
-# clock (which is where subcatchment evap is evaluated) fires only on every
-# 4th routing step. The single-step assertions below need a prescription to
-# be observable on the very next step, so the test model aligns WET_STEP to
-# the routing step.
-_WET_STEP_ALIGN = ("WET_STEP             00:01:00",
-                   "WET_STEP             00:00:15")
+# The site model evaluates subcatchment evaporation on the RUNOFF clock, which
+# is independent of the routing clock. Two things must hold for a prescription
+# to be observable on the very next step():
+#   1. WET_STEP must equal ROUTING_STEP so a runoff step fits inside each
+#      routing step (otherwise runoff fires only every 4th step).
+#   2. VARIABLE_STEP must be disabled so the routing step is the fixed
+#      ROUTING_STEP and stays in 1:1 lockstep with the runoff clock. With the
+#      default CFL-limited variable step, routing steps are shorter and
+#      irregular, so runoff fires only on some steps and a forcing change is
+#      observed one or more steps late.
+# These are baked into every derived model below via _derived_model().
+_DETERMINISTIC_RUNOFF = (
+    ("WET_STEP             00:01:00", "WET_STEP             00:00:15"),
+    ("VARIABLE_STEP        0.75", "VARIABLE_STEP        0.0"),
+)
 
 
 @pytest.fixture
@@ -48,7 +56,7 @@ def pet_solver(request):
     """A running Solver whose rpt/out files land in a reviewable folder."""
     os.makedirs(_OUT_DIR, exist_ok=True)
     base = os.path.join(_OUT_DIR, f"pet_{request.node.name}")
-    inp = _derived_model("pet_base.inp", [_WET_STEP_ALIGN])
+    inp = _derived_model("pet_base.inp")
     s = Solver(inp, base + ".rpt", base + ".out")
     s.open()
     s.initialize()
@@ -173,12 +181,16 @@ class TestClimateRateGetter:
         assert s.subcatchments["S1"].evap == pytest.approx(composed, rel=1e-3)
 
 
-def _derived_model(name, replacements):
-    """Write a modified copy of the site model to the reviewable output dir."""
+def _derived_model(name, replacements=()):
+    """Write a modified copy of the site model to the reviewable output dir.
+
+    Always applies _DETERMINISTIC_RUNOFF so the runoff clock fires exactly once
+    per routing step, then the caller's extra replacements.
+    """
     os.makedirs(_OUT_DIR, exist_ok=True)
     with open(_INP) as f:
         text = f.read()
-    for old, new in replacements:
+    for old, new in (*_DETERMINISTIC_RUNOFF, *replacements):
         assert old in text, f"expected {old!r} in template model"
         text = text.replace(old, new)
     path = os.path.join(_OUT_DIR, name)
@@ -194,7 +206,6 @@ class TestDryOnlyBypass:
         inp = _derived_model("pet_dry_only.inp", [
             ("CONSTANT         0.0", "CONSTANT         5.0"),
             ("DRY_ONLY         NO", "DRY_ONLY         YES"),
-            _WET_STEP_ALIGN,
         ])
         base = os.path.join(_OUT_DIR, "pet_dry_only")
         s = Solver(inp, base + ".rpt", base + ".out")
@@ -218,7 +229,6 @@ class TestSIUnits:
         """Case 9: on an SI model the API accepts and reports mm/day."""
         inp = _derived_model("pet_si_units.inp", [
             ("FLOW_UNITS           CFS", "FLOW_UNITS           CMS"),
-            _WET_STEP_ALIGN,
         ])
         base = os.path.join(_OUT_DIR, "pet_si_units")
         pet_mm_day = 5.0

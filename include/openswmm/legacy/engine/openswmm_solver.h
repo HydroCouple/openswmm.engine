@@ -226,6 +226,27 @@ typedef enum
      *         LID, and groundwater evaporation. Set a negative value to clear
      *         and revert to climate-derived evaporation. */
     swmm_SUBCATCH_API_PET,
+    /*! \brief Groundwater upper zone moisture content (volume fraction,
+     *         0..porosity). Settable while the simulation is running
+     *         (state injection / data assimilation). */
+    swmm_SUBCATCH_GW_MOISTURE,
+    /*! \brief Groundwater saturated (lower) zone depth above the aquifer
+     *         bottom (ft or m). Settable while the simulation is running. */
+    swmm_SUBCATCH_GW_LOWER_DEPTH,
+    /*! \brief Snow pack snow water equivalent on a snow subarea
+     *         (in or mm; sub_index = 0 plowable, 1 impervious, 2 pervious).
+     *         Settable while the simulation is running. */
+    swmm_SUBCATCH_SNOW_SWE,
+    /*! \brief Snow pack free water on a snow subarea (in or mm;
+     *         sub_index as for swmm_SUBCATCH_SNOW_SWE). Settable while
+     *         the simulation is running. */
+    swmm_SUBCATCH_SNOW_FW,
+    /*! \brief Snow pack antecedent temperature index on a snow subarea
+     *         (deg F or deg C). Settable while the simulation is running. */
+    swmm_SUBCATCH_SNOW_ATI,
+    /*! \brief Snow pack cold content on a snow subarea (in or mm of melt
+     *         equivalent). Settable while the simulation is running. */
+    swmm_SUBCATCH_SNOW_COLDC,
 } swmm_SubcatchProperty;
 
 /*!
@@ -335,6 +356,26 @@ typedef enum
 } swmm_LinkProperty;
 
 /*!
+ * \enum swmm_PollutProperty
+ * \brief Enumeration of pollutant properties used in SWMM5.
+ * \details The source concentrations are settable while the simulation is
+ * running, enabling dynamic wet-deposition, groundwater, RDII, and dry
+ * weather quality forcing. Values are in the pollutant's concentration
+ * units (e.g. mg/L) as defined in the input file.
+ */
+typedef enum
+{
+    /*! \brief Rain (wet deposition) concentration */
+    swmm_POLLUT_RAIN_CONCEN = 500,
+    /*! \brief Groundwater inflow concentration */
+    swmm_POLLUT_GW_CONCEN,
+    /*! \brief RDII inflow concentration */
+    swmm_POLLUT_RDII_CONCEN,
+    /*! \brief Dry weather sanitary flow concentration */
+    swmm_POLLUT_DWF_CONCEN,
+} swmm_PollutProperty;
+
+/*!
  * \enum swmm_SystemProperty
  * \brief Enumeration of system properties used in SWMM5
  */
@@ -425,6 +466,33 @@ typedef enum
     /*! \brief Current climate-derived evaporation rate (in/day or mm/day),
      *         including any monthly adjustments (read-only) */
     swmm_EVAPRATE = 41,
+    /*! \brief Current air temperature (deg F or deg C; read-only) */
+    swmm_TEMPERATURE = 42,
+    /*! \brief API prescribed air temperature (deg F or deg C). Settable
+     *         while the simulation is running; overrides the climate
+     *         data-source value (and bypasses monthly adjustments) for
+     *         snowmelt and evaporation. Set a value <= -999 to clear and
+     *         revert to climate-derived temperature. Getter returns -999
+     *         when no prescription is active. */
+    swmm_API_TEMPERATURE = 43,
+    /*! \brief Current wind speed (mph or km/hr; read-only) */
+    swmm_WINDSPEED = 44,
+    /*! \brief API prescribed wind speed (mph or km/hr). Settable while the
+     *         simulation is running; overrides the monthly/file value used
+     *         in snowmelt. Set a negative value to clear. Getter returns
+     *         -1 when no prescription is active. */
+    swmm_API_WINDSPEED = 45,
+    /*! \brief API prescribed system-wide evaporation rate (in/day or
+     *         mm/day). Settable while the simulation is running; replaces
+     *         the climate-derived Evap.rate (after monthly adjustments)
+     *         for every consumer — subcatchments, LID units, groundwater,
+     *         conduits and storage nodes. Per-subcatchment
+     *         swmm_SUBCATCH_API_PET still takes precedence. Set a negative
+     *         value to clear. Getter returns -1 when not prescribed. */
+    swmm_API_EVAP = 46,
+    /*! \brief Evaporation DRY_ONLY option (0/1). Settable while the
+     *         simulation is running. */
+    swmm_EVAP_DRY_ONLY = 47,
 } swmm_SystemProperty;
 
 /*!

@@ -212,7 +212,7 @@ void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
 
 
 void assembleRHS(const MeshData& mesh, const SurfaceStateData& state,
-                  double* ydot) {
+                  const SolverOptions2D& opts, double* ydot) {
     int nt = mesh.n_triangles();
 
     for (int i = 0; i < nt; ++i) {
@@ -225,14 +225,17 @@ void assembleRHS(const MeshData& mesh, const SurfaceStateData& state,
             flux_sum += state.edge_flux[i * 3 + e];
         }
 
-        // RHS: dψ/dt = (1/A) Σ F_j + sources
-        ydot[i] = flux_sum * inv_area + state.rainfall[i] + state.coupling_flux[i];
+        // RHS: dψ/dt = (1/A) Σ F_j + sources − evaporation sink. The sink is
+        // depth-limited (Hermite ramp below dry_depth, see evapSink) so it
+        // can never drive a depth negative.
+        ydot[i] = flux_sum * inv_area + state.rainfall[i] + state.coupling_flux[i]
+                  - evapSink(state.evap_rate[i], state.depth[i], opts.dry_depth);
     }
 }
 
 
 void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
-                            double dt) {
+                            const SolverOptions2D& opts, double dt) {
     int nt = mesh.n_triangles();
     if (dt <= 0.0) {
         std::fill(state.cell_continuity_err.begin(),
@@ -250,8 +253,12 @@ void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
             flux_sum += state.edge_flux[i * 3 + e];
         }
 
-        // Source volume rate (m³/s): same source terms assembleRHS uses.
-        double source = (state.rainfall[i] + state.coupling_flux[i]) * area;
+        // Source volume rate (m³/s): same source terms assembleRHS uses. The
+        // evaporation sink is evaluated at the accepted end-of-step depth
+        // (first-order, consistent with the diagnostic character above).
+        double source = (state.rainfall[i] + state.coupling_flux[i]
+                         - evapSink(state.evap_rate[i], state.depth[i],
+                                    opts.dry_depth)) * area;
 
         // Storage change rate (m³/s).
         double storage_rate =

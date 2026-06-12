@@ -482,7 +482,13 @@ void resolve_cross_references(SimulationContext& ctx) {
 
     // Allocate quality matrices now that all counts are final
     if (n_polluts > 0) {
-        ctx.pollutants.resize_pollutants(n_polluts);
+        // Only (re)allocate the pollutant definition arrays if the count
+        // actually changed — resize_pollutants() zero-fills, so calling it
+        // unconditionally here would wipe the concentrations (Crain/Cgw/
+        // Crdii/Cdwf/Cinit/Kdecay/units) already parsed by handle_pollutants.
+        // Mirrors the guarded node/link/subcatch resizes above.
+        if (ctx.pollutants.n_pollutants() != n_polluts)
+            ctx.pollutants.resize_pollutants(n_polluts);
         ctx.nodes.resize_quality(n_polluts);
         ctx.links.resize_quality(n_polluts);
         ctx.subcatches.resize_quality(n_polluts);
@@ -632,6 +638,21 @@ void resolve_cross_references(SimulationContext& ctx) {
                 ctx.subcatches.outlet_node[us] = -1;
             }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Subcatchment snow pack resolution
+    // -------------------------------------------------------------------------
+    // SUBCATCHMENTS is normally parsed before SNOWPACKS, so the snowpack index
+    // could not be resolved at parse time. Resolve it here from the stored
+    // name; without this the pack is never linked and never accumulates.
+    for (int s = 0; s < n_subcatch; ++s) {
+        auto us = static_cast<std::size_t>(s);
+        if (us >= ctx.subcatches.snowpack_name.size()) continue;
+        const auto& name = ctx.subcatches.snowpack_name[us];
+        if (name.empty()) continue;
+        if (ctx.subcatches.snowpack[us] >= 0) continue;  // already resolved
+        ctx.subcatches.snowpack[us] = ctx.snowpack_names.find(name);
     }
 
     // -------------------------------------------------------------------------

@@ -87,17 +87,19 @@ class TestSubcatchmentEnumCoverage(unittest.TestCase):
         self.assertEqual(solver.SWMMSubcatchmentProperties.POLLUTANT_PONDED_CONCENTRATION.value, 246)
         self.assertEqual(solver.SWMMSubcatchmentProperties.POLLUTANT_TOTAL_LOAD.value, 247)
         self.assertEqual(solver.SWMMSubcatchmentProperties.API_PET.value, 248)
+        self.assertEqual(solver.SWMMSubcatchmentProperties.GW_MOISTURE.value, 249)
+        self.assertEqual(solver.SWMMSubcatchmentProperties.SNOW_COLDC.value, 254)
 
     def test_total_enum_member_count(self):
-        """All 49 subcatchment properties should be present."""
-        self.assertEqual(len(solver.SWMMSubcatchmentProperties), 49)
+        """All 55 subcatchment properties should be present."""
+        self.assertEqual(len(solver.SWMMSubcatchmentProperties), 55)
 
 
 class TestSystemEnumCoverage(unittest.TestCase):
-    """Verify all 42 system enum members are present."""
+    """Verify all 48 system enum members are present."""
 
     def test_system_enum_count(self):
-        self.assertEqual(len(solver.SWMMSystemProperties), 42)
+        self.assertEqual(len(solver.SWMMSystemProperties), 48)
 
     def test_tolerance_properties(self):
         """HEAD_TOL, SYS_FLOW_TOL, LAT_FLOW_TOL, EVAP_RATE are present."""
@@ -106,12 +108,29 @@ class TestSystemEnumCoverage(unittest.TestCase):
         self.assertEqual(solver.SWMMSystemProperties.LAT_FLOW_TOL.value, 40)
         self.assertEqual(solver.SWMMSystemProperties.EVAP_RATE.value, 41)
 
+    def test_climate_api_properties(self):
+        """TEMPERATURE/WIND current + API prescription properties."""
+        self.assertEqual(solver.SWMMSystemProperties.TEMPERATURE.value, 42)
+        self.assertEqual(solver.SWMMSystemProperties.API_TEMPERATURE.value, 43)
+        self.assertEqual(solver.SWMMSystemProperties.WIND_SPEED.value, 44)
+        self.assertEqual(solver.SWMMSystemProperties.API_WIND_SPEED.value, 45)
+        self.assertEqual(solver.SWMMSystemProperties.API_EVAP.value, 46)
+        self.assertEqual(solver.SWMMSystemProperties.EVAP_DRY_ONLY.value, 47)
+
+    def test_pollutant_enum(self):
+        """Pollutant source concentration properties (500 block)."""
+        self.assertEqual(
+            solver.SWMMPollutantProperties.RAIN_CONCENTRATION.value, 500)
+        self.assertEqual(
+            solver.SWMMPollutantProperties.DWF_CONCENTRATION.value, 503)
+        self.assertEqual(len(solver.SWMMPollutantProperties), 4)
+
 
 class TestNodeEnumCoverage(unittest.TestCase):
-    """Verify all 15 node enum members are present."""
+    """Verify all 16 node enum members are present (TYPE..OUTFLOW, 300-315)."""
 
     def test_node_enum_count(self):
-        self.assertEqual(len(solver.SWMMNodeProperties), 15)
+        self.assertEqual(len(solver.SWMMNodeProperties), 16)
 
 
 class TestLinkEnumCoverage(unittest.TestCase):

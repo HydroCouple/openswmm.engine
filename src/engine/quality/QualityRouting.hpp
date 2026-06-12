@@ -80,6 +80,12 @@ private:
     /// Add RDII pollutant loads to node quality inflows.
     void addRdiiLoads(SimulationContext& ctx, double dt);
 
+    /// Add default dry weather pollutant loads (c_dwf) to node inflows.
+    void addDwfLoads(SimulationContext& ctx, double dt);
+
+    /// Add groundwater inflow pollutant loads (c_gw) to node inflows.
+    void addGwLoads(SimulationContext& ctx, double dt);
+
     /// Batch accumulate link mass flows to downstream nodes.
     void accumulateLinkLoads(SimulationContext& ctx, double dt);
 

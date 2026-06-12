@@ -172,6 +172,7 @@ typedef struct
    double        ea;              // saturation vapor pressure (in Hg)
    double        gamma;           // psychrometric constant
    double        tanAnglat;       // tangent of latitude angle
+   double        apiTemp;         // api prescribed air temperature (deg F); MISSING when not set
 }  TTemp;
 
 //-----------------
@@ -183,6 +184,7 @@ typedef struct
    double       aws[12];          // monthly avg. wind speed (mph)
    //-----------------------------
    double        ws;              // wind speed (mph)
+   double        apiWs;           // api prescribed wind speed (mph); MISSING when not set
 }  TWind;
 
 //------------
@@ -212,7 +214,8 @@ typedef struct
     int          dryOnly;         // true if evaporation only in dry periods
     //----------------------------
     double       rate;            // current evaporation rate (ft/sec)
-    double       recoveryFactor;  // current soil recovery factor 
+    double       recoveryFactor;  // current soil recovery factor
+    double       apiRate;         // api prescribed evaporation rate (ft/sec); MISSING when not set
 }   TEvap;
 
 //-------------------

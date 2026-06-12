@@ -838,6 +838,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row2("Boundary Inflow ..........", mb2.boundary_in);
         row2("2D -> 1D Drain Outflow ...", mb2.coupling_2d_to_1d_out);
         row2("Boundary Outflow .........", mb2.boundary_out);
+        row2("Evaporation Loss .........", mb2.evap_out);
         row2("Final Stored Volume ......", mb2.final_storage);
 
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
@@ -884,6 +885,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
             double wet     = (up < mb.qual_routing_wet.size())      ? mb.qual_routing_wet[up]      : 0.0;
             double rdii    = (up < mb.qual_routing_ii_in.size())     ? mb.qual_routing_ii_in[up]    : 0.0;
+            double dwf     = (up < mb.qual_routing_dw_in.size())     ? mb.qual_routing_dw_in[up]    : 0.0;
+            double gw      = (up < mb.qual_routing_gw_in.size())     ? mb.qual_routing_gw_in[up]    : 0.0;
             double outflow = (up < mb.qual_routing_outflow.size())   ? mb.qual_routing_outflow[up]  : 0.0;
             double flood   = (up < mb.qual_routing_flood.size())     ? mb.qual_routing_flood[up]    : 0.0;
             double seep    = (up < mb.qual_routing_seep.size())      ? mb.qual_routing_seep[up]     : 0.0;
@@ -891,9 +894,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double init    = (up < mb.qual_routing_init.size())      ? mb.qual_routing_init[up]     : 0.0;
             double final_  = (up < mb.qual_routing_final.size())     ? mb.qual_routing_final[up]    : 0.0;
 
-            qrow("Dry Weather Inflow .......", 0.0);
+            qrow("Dry Weather Inflow .......", dwf);
             qrow("Wet Weather Inflow .......", wet);
-            qrow("Groundwater Inflow .......", 0.0);
+            qrow("Groundwater Inflow .......", gw);
             qrow("RDII Inflow ..............", rdii);
             qrow("External Inflow ..........", 0.0);
             qrow("External Outflow .........", outflow);
@@ -903,7 +906,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             qrow("Initial Stored Mass ......", init);
             qrow("Final Stored Mass ........", final_);
 
-            double total_in  = wet + rdii + init;
+            double total_in  = wet + rdii + dwf + gw + init;
             double total_out = outflow + flood + reacted + seep + final_;
             double err_pct = (total_in > 0.0) ? (total_in - total_out) / total_in * 100.0 : 0.0;
             std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);

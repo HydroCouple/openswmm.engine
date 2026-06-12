@@ -777,6 +777,8 @@ struct SimulationContext {
         std::vector<double> qual_routing_final;  ///< Final stored quality mass
         std::vector<double> qual_routing_reacted;///< Quality mass lost to decay
         std::vector<double> qual_routing_ii_in;  ///< RDII quality mass inflow
+        std::vector<double> qual_routing_dw_in;  ///< Dry weather quality mass inflow
+        std::vector<double> qual_routing_gw_in;  ///< Groundwater quality mass inflow
         std::vector<double> qual_routing_seep;   ///< Quality mass lost to seepage
         std::vector<double> qual_routing_evap;   ///< Quality mass lost to evaporation
 
@@ -797,6 +799,8 @@ struct SimulationContext {
             qual_routing_final.assign(np, 0.0);
             qual_routing_reacted.assign(np, 0.0);
             qual_routing_ii_in.assign(np, 0.0);
+            qual_routing_dw_in.assign(np, 0.0);
+            qual_routing_gw_in.assign(np, 0.0);
             qual_routing_seep.assign(np, 0.0);
             qual_routing_evap.assign(np, 0.0);
             routing_forcing_qual_inflow.assign(np, 0.0);
@@ -819,6 +823,8 @@ struct SimulationContext {
             auto qrfi = std::move(qual_routing_final);
             auto qrr = std::move(qual_routing_reacted);
             auto qrii = std::move(qual_routing_ii_in);
+            auto qrdw = std::move(qual_routing_dw_in);
+            auto qrgw = std::move(qual_routing_gw_in);
             auto qrseep = std::move(qual_routing_seep);
             auto qrevap = std::move(qual_routing_evap);
             auto qrfqi = std::move(routing_forcing_qual_inflow);
@@ -838,6 +844,8 @@ struct SimulationContext {
             qual_routing_final = std::move(qrfi);
             qual_routing_reacted = std::move(qrr);
             qual_routing_ii_in = std::move(qrii);
+            qual_routing_dw_in = std::move(qrdw);
+            qual_routing_gw_in = std::move(qrgw);
             qual_routing_seep = std::move(qrseep);
             qual_routing_evap = std::move(qrevap);
             routing_forcing_qual_inflow = std::move(qrfqi);
@@ -851,6 +859,8 @@ struct SimulationContext {
                             &qual_routing_flood, &qual_routing_init,
                             &qual_routing_final, &qual_routing_reacted,
                             &qual_routing_ii_in,
+                            &qual_routing_dw_in,
+                            &qual_routing_gw_in,
                             &qual_routing_seep,
                             &qual_routing_evap,
                             &routing_forcing_qual_inflow}) {
@@ -904,13 +914,15 @@ struct SimulationContext {
         double outfall_in            = 0.0;  ///< Cumulative 1D outfall discharge into 2D (m³)
         double boundary_in           = 0.0;  ///< Cumulative boundary inflow (m³)
         double boundary_out          = 0.0;  ///< Cumulative boundary outflow (m³)
+        double evap_out              = 0.0;  ///< Cumulative evaporation loss (m³)
         bool   active                = false;///< True if the 2D module ran
 
         /// 2D surface continuity error (fraction).
         double error() const {
             double total_in  = rainfall_in + coupling_1d_to_2d_in + outfall_in
                                + boundary_in + init_storage;
-            double total_out = coupling_2d_to_1d_out + boundary_out + final_storage;
+            double total_out = coupling_2d_to_1d_out + boundary_out
+                               + evap_out + final_storage;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
     } mass_balance_2d;

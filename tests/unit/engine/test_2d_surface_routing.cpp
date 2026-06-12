@@ -801,7 +801,7 @@ TEST(EdgeFlux, ClosedSystemVolumeBudget) {
     computeEdgeFluxes(mesh, state, opts);
 
     std::vector<double> ydot(mesh.n_triangles());
-    assembleRHS(mesh, state, ydot.data());
+    assembleRHS(mesh, state, opts, ydot.data());
 
     double net_dvol_dt = 0.0;
     for (int i = 0; i < mesh.n_triangles(); ++i) {
@@ -828,8 +828,9 @@ TEST(RHSAssembly, RainfallOnlyProducesPositiveRate) {
     std::fill(state.coupling_flux.begin(), state.coupling_flux.end(), 0.0);
     std::fill(state.rainfall.begin(), state.rainfall.end(), 0.001);
 
+    SolverOptions2D opts;
     std::vector<double> ydot(mesh.n_triangles());
-    assembleRHS(mesh, state, ydot.data());
+    assembleRHS(mesh, state, opts, ydot.data());
 
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         EXPECT_NEAR(ydot[i], 0.001, 1e-12)
@@ -848,8 +849,9 @@ TEST(RHSAssembly, CouplingFluxAppearsInRHS) {
     state.coupling_flux[0] = -0.005;  // Drainage sink
     state.coupling_flux[1] =  0.003;  // Surcharge source
 
+    SolverOptions2D opts;
     std::vector<double> ydot(mesh.n_triangles());
-    assembleRHS(mesh, state, ydot.data());
+    assembleRHS(mesh, state, opts, ydot.data());
 
     EXPECT_NEAR(ydot[0], -0.005, 1e-12);
     EXPECT_NEAR(ydot[1],  0.003, 1e-12);
@@ -872,15 +874,16 @@ TEST(CellContinuity, ResidualZeroForConsistentStep) {
     state.coupling_flux[0] = -0.003; state.coupling_flux[1] = 0.002;
 
     // A forward-Euler-consistent depth update must give zero residual.
+    SolverOptions2D opts;
     std::vector<double> ydot(mesh.n_triangles());
-    assembleRHS(mesh, state, ydot.data());
+    assembleRHS(mesh, state, opts, ydot.data());
 
     const double dt = 7.0;
     state.save_state();  // old_depth = depth (0)
     for (int i = 0; i < mesh.n_triangles(); ++i)
         state.depth[i] = state.old_depth[i] + ydot[i] * dt;
 
-    computeCellContinuity(mesh, state, dt);
+    computeCellContinuity(mesh, state, opts, dt);
 
     for (int i = 0; i < mesh.n_triangles(); ++i)
         EXPECT_NEAR(state.cell_continuity_err[i], 0.0, 1e-12)
@@ -894,9 +897,10 @@ TEST(CellContinuity, DetectsImbalance) {
     state.resize(mesh.n_triangles(), mesh.n_vertices());
 
     // No fluxes/sources but storage grows → residual = dV/dt (nonzero).
+    SolverOptions2D opts;
     state.save_state();             // old_depth = 0
     state.depth[0] = 0.10;          // grew with no inflow
-    computeCellContinuity(mesh, state, 5.0);
+    computeCellContinuity(mesh, state, opts, 5.0);
 
     double expected = 0.10 * mesh.tri_area[0] / 5.0;
     EXPECT_NEAR(state.cell_continuity_err[0], expected, 1e-12);
