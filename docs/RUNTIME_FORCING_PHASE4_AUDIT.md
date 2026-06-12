@@ -85,3 +85,34 @@ recompute `TBuildup.maxDays` via `recomputeBuildupMaxDays`, mirroring
 
 **Bindings:** refactored (`quality.set_buildup`/`set_washoff`) already existed;
 legacy `SWMMLandUseProperties` extended to 12 members (+ `.pyi`, enum coverage).
+
+---
+
+## Wave B3 — P1 infiltration parameters → **PRE-START-ONLY (already guarded)**
+
+**Correction to the handoff premise.** The gap matrix (§12.1 P1) states the
+refactored infiltration setters have "no running guard." They do: every
+`swmm_subcatch_set_infil_horton` / `_green_ampt` / `_curve_number` begins with
+`CHECK_GEOMETRY(ctx)`, which permits only the editable states
+(`BUILDING`/`OPENED`) and returns `SWMM_ERR_LIFECYCLE` while running. Verified
+empirically — calling a setter mid-run raises `LifecycleError`.
+
+**Why pre-start-only is the right contract.** Each subcatchment's infiltration
+*state* (Horton decay clock `tp`/`Fe`, Green-Ampt `F`/`Fu`/`Lu`/`T`, Curve-Number
+`S`/`Se`) is initialized once at `start()` from the parameters and then evolves;
+the params live *inside* the per-subcatchment state struct
+(`RunoffSolver::horton_states_`/`grnampt_states_`/`curvenum_states_`), not in a
+separately-read table. Mutating parameters mid-event has no single correct
+meaning (reset the decay clock, or continue it on a shifted curve?), and the
+engine authors guarded it accordingly. This is the §2.1 **"unsound mid-run →
+guard + pre-start-only contract"** outcome — and the guard already exists, so no
+engine change is made.
+
+**No legacy parity setter.** Per the plan (§12.2.2), legacy parity is added only
+for groups whose audit concluded mid-run mutation is *sound*. P1 is not, so the
+legacy engine likewise keeps infiltration parameters as a pre-start (input)
+concern; no `setSubcatchValue` infiltration cases are added.
+
+**Tests** (`test_param_runtime.py::TestInfiltrationParams`): a pre-start Horton
+edit takes effect and round-trips through the run; a mid-run setter call raises
+`LifecycleError`. No new bindings.

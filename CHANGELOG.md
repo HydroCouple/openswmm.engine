@@ -33,6 +33,14 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
   via `subIndex`); `set/getLanduseValue` gained `subIndex`; buildup edits
   recompute `maxDays` per `landuse_readBuildup`. Tests in
   `test_param_runtime.py` (engine + legacy).
+- **Phase 4 wave B3 — infiltration parameters (P1): documented pre-start-only.**
+  The audit found the refactored infiltration setters
+  (`swmm_subcatch_set_infil_horton`/`_green_ampt`/`_curve_number`) are guarded
+  to the editable states by `CHECK_GEOMETRY` and raise `LifecycleError` while
+  running (correcting the gap-plan's "no running guard" note); the
+  per-subcatchment infiltration state is built once at `start()`. P1 is
+  therefore a pre-start edit in both engines (no legacy parity setter). Tests
+  in `test_param_runtime.py::TestInfiltrationParams`.
 
 - **§3 legacy water-quality source setters — functional tests.** The legacy
   `setPollutValue` source concentrations (rain/wet-deposition `pptConcen`,

@@ -178,3 +178,48 @@ class TestBuildupWashoffRuntime:
             assert after > before + 1.0, (before, after)
         finally:
             s.end(); s.close(); s.destroy()
+
+
+# --------------------------------------------------------------------------- #
+# P1 — infiltration parameters
+#
+# Audit outcome: the refactored infiltration setters are guarded to the
+# editable (pre-start) states by CHECK_GEOMETRY — they return SWMM_ERR_LIFECYCLE
+# while running. The per-subcatchment infiltration state (Horton decay clock,
+# Green-Ampt Fu/Lu) is set up once at start() from these parameters; mid-run
+# mutation is therefore NOT supported. This pins the documented contract:
+# infiltration parameters are a pre-start edit. (Contrast P6/P2, which the
+# engine does allow mid-run and were made cache-coherent.)
+# --------------------------------------------------------------------------- #
+from openswmm.engine import LifecycleError
+
+
+class TestInfiltrationParams:
+    def test_horton_pre_start_round_trip(self):
+        """P1: Horton parameters set before start() take effect and round-trip."""
+        os.makedirs(_OUT_DIR, exist_ok=True)
+        base = os.path.join(_OUT_DIR, "p1_horton_prestart")
+        s = Solver(_LANDUSE_INP, base + ".rpt", base + ".out")
+        s.open()
+        try:
+            sub = s.subcatchments[0]
+            sub.infiltration.set_horton(4.5, 0.6, 3.0, 6.0)
+            assert sub.infiltration.horton == pytest.approx((4.5, 0.6, 3.0, 6.0))
+            # The pre-start edit survives into the run.
+            s.initialize(); s.start()
+            for _ in range(3):
+                s.step()
+            assert sub.infiltration.horton == pytest.approx((4.5, 0.6, 3.0, 6.0))
+        finally:
+            s.end(); s.close(); s.destroy()
+
+    def test_infil_setter_guarded_while_running(self):
+        """P1: infiltration setters are rejected mid-run (pre-start-only)."""
+        s = _open(_LANDUSE_INP, "p1_guard")
+        try:
+            for _ in range(5):
+                s.step()
+            with pytest.raises(LifecycleError):
+                s.subcatchments[0].infiltration.set_horton(3.0, 0.5, 4.0, 7.0)
+        finally:
+            s.end(); s.close(); s.destroy()
