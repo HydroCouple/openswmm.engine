@@ -376,6 +376,41 @@ typedef enum
 } swmm_PollutProperty;
 
 /*!
+ * \enum swmm_PatternProperty
+ * \brief Enumeration of time-pattern properties used in SWMM5.
+ * \details Pattern multiplier factors are settable both before the
+ * simulation starts and while it is running. They are looked up afresh on
+ * every step (DWF/GW/inflow scaling), so a mid-run edit takes effect on the
+ * next step. The factor index is passed as the \c subIndex argument of
+ * \c swmm_setValueExpanded / \c swmm_getValueExpanded (0-based position
+ * within the pattern: 0-11 monthly, 0-6 daily, 0-23 hourly/weekend).
+ */
+typedef enum
+{
+    /*! \brief One multiplier factor (subIndex = factor position) */
+    swmm_PATTERN_FACTOR = 600,
+    /*! \brief Number of factors in the pattern (read-only) */
+    swmm_PATTERN_COUNT,
+    /*! \brief Pattern type code (read-only): 0 monthly, 1 daily, 2 hourly, 3 weekend */
+    swmm_PATTERN_TYPE,
+} swmm_PatternProperty;
+
+/*!
+ * \enum swmm_LanduseProperty
+ * \brief Enumeration of land-use properties used in SWMM5.
+ * \details Street-sweeping parameters are settable both before the
+ * simulation starts and while it is running; they are read per step when
+ * sweeping is evaluated, so a mid-run edit takes effect on the next step.
+ */
+typedef enum
+{
+    /*! \brief Street-sweeping interval (days) */
+    swmm_LANDUSE_SWEEP_INTERVAL = 700,
+    /*! \brief Fraction of buildup available for sweeping (0-1) */
+    swmm_LANDUSE_SWEEP_REMOVAL,
+} swmm_LanduseProperty;
+
+/*!
  * \enum swmm_SystemProperty
  * \brief Enumeration of system properties used in SWMM5
  */

@@ -7,10 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — Runtime forcing Phase 4 + §3 legacy quality sources
 
-See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md` and
+See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
+`docs/RUNTIME_FORCING_PHASE4_AUDIT.md` (per-group outcomes), and
 `docs/RUNTIME_FORCING_API_GAP_PLAN.md` §7/§12.
 
 ### Added
+
+- **Phase 4 wave B1 — runtime time-pattern factors (P6) & street sweeping
+  (P4).** Audited the mid-run mutation semantics of both groups and added the
+  legacy parity setters so both engines share the contract:
+  - Legacy `swmm_TIME_PATTERN` object type + `swmm_PatternProperty`
+    (`FACTOR` with the factor index in `subIndex`, read-only `COUNT`/`TYPE`)
+    and `swmm_LANDUSE` + `swmm_LanduseProperty`
+    (`SWEEP_INTERVAL`/`SWEEP_REMOVAL`) via new `set/getPatternValue` /
+    `set/getLanduseValue` in `swmm5.c`; settable pre-start and while running
+    (both are per-step lookups). Python `SWMMPatternProperties` /
+    `SWMMLandUseProperties` enums (+ `.pyi`), enum coverage, and parity tests
+    `python/tests/legacy/test_param_runtime.py`.
+  - Refactored audit tests `python/tests/engine/test_param_runtime.py`.
 
 - **§3 legacy water-quality source setters — functional tests.** The legacy
   `setPollutValue` source concentrations (rain/wet-deposition `pptConcen`,
@@ -27,6 +41,13 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md` and
 
 ### Fixed
 
+- **Refactored DWF/external-inflow patterns ignored mid-run edits.**
+  `InflowSolver::init` copies pattern factors into a per-step lookup cache, so
+  `swmm_pattern_set_factors` (which mutates `ctx.patterns`) had no effect on
+  DWF/external inflow mid-run (groundwater-evap patterns read the live context
+  and were unaffected). Added `InflowSolver::refreshPatterns` +
+  `SWMMEngine::inflowSolver()`; the setter now refreshes the cache so an edit
+  takes effect on the next step.
 - **Legacy subcatchment pollutant bindings** passed the pollutant index in
   the `sub_index` slot, but the C `getSubcatchValue`/`setSubcatchValue`
   pollutant cases read it from `pollutantIndex`. `LegacySubcatchment`

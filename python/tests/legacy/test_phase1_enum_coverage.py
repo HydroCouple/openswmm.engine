@@ -125,6 +125,21 @@ class TestSystemEnumCoverage(unittest.TestCase):
             solver.SWMMPollutantProperties.DWF_CONCENTRATION.value, 503)
         self.assertEqual(len(solver.SWMMPollutantProperties), 4)
 
+    def test_pattern_enum(self):
+        """Time-pattern properties (600 block)."""
+        self.assertEqual(solver.SWMMPatternProperties.FACTOR.value, 600)
+        self.assertEqual(solver.SWMMPatternProperties.COUNT.value, 601)
+        self.assertEqual(solver.SWMMPatternProperties.TYPE.value, 602)
+        self.assertEqual(len(solver.SWMMPatternProperties), 3)
+
+    def test_landuse_enum(self):
+        """Land-use sweeping properties (700 block)."""
+        self.assertEqual(
+            solver.SWMMLandUseProperties.SWEEP_INTERVAL.value, 700)
+        self.assertEqual(
+            solver.SWMMLandUseProperties.SWEEP_REMOVAL.value, 701)
+        self.assertEqual(len(solver.SWMMLandUseProperties), 2)
+
 
 class TestNodeEnumCoverage(unittest.TestCase):
     """Verify all 16 node enum members are present (TYPE..OUTFLOW, 300-315)."""

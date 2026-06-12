@@ -354,6 +354,42 @@ static double getPollutValue(int property, int index);
 static int setPollutValue(int property, int index, double value);
 
 /*!
+ * \brief Get a time-pattern property (factor / count / type).
+ * \param[in] property Property type (swmm_PatternProperty)
+ * \param[in] index Pattern index
+ * \param[in] subIndex Factor position for swmm_PATTERN_FACTOR
+ * \return Property value or API error sentinel
+ */
+static double getPatternValue(int property, int index, int subIndex);
+
+/*!
+ * \brief Set a time-pattern multiplier factor (running or pre-start).
+ * \param[in] property Property type (swmm_PatternProperty)
+ * \param[in] index Pattern index
+ * \param[in] subIndex Factor position (0-based)
+ * \param[in] value Factor value
+ * \return Error code
+ */
+static int setPatternValue(int property, int index, int subIndex, double value);
+
+/*!
+ * \brief Get a land-use sweeping property.
+ * \param[in] property Property type (swmm_LanduseProperty)
+ * \param[in] index Land-use index
+ * \return Property value or API error sentinel
+ */
+static double getLanduseValue(int property, int index);
+
+/*!
+ * \brief Set a land-use sweeping property (running or pre-start).
+ * \param[in] property Property type (swmm_LanduseProperty)
+ * \param[in] index Land-use index
+ * \param[in] value Property value
+ * \return Error code
+ */
+static int setLanduseValue(int property, int index, double value);
+
+/*!
  * \brief Set node value given its property type, index, subindex, and value.
  * \param[in] property Property type
  * \param[in] index Object index
@@ -1299,6 +1335,10 @@ double EXPORT_OPENSWMMCORE_SOLVER_API swmm_getValueExpanded(int objType, int pro
         return getLinkValue(property, index, subIndex, pollutantIndex);
     case swmm_POLLUTANT:
         return getPollutValue(property, index);
+    case swmm_TIME_PATTERN:
+        return getPatternValue(property, index, subIndex);
+    case swmm_LANDUSE:
+        return getLanduseValue(property, index);
     default:
         return ERR_API_OBJECT_TYPE;
     }
@@ -1386,6 +1426,10 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValueExpanded(int objType, int proper
         return setLinkValue(property, index, subIndex, pollutantIndex, value);
     case swmm_POLLUTANT:
         return setPollutValue(property, index, value);
+    case swmm_TIME_PATTERN:
+        return setPatternValue(property, index, subIndex, value);
+    case swmm_LANDUSE:
+        return setLanduseValue(property, index, value);
     default:
         return ERR_API_OBJECT_TYPE;
     }
@@ -1441,6 +1485,101 @@ int setPollutValue(int property, int index, double value)
         return 0;
     case swmm_POLLUT_DWF_CONCEN:
         Pollut[index].dwfConcen = value;
+        return 0;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc getPatternValue
+ */
+double getPatternValue(int property, int index, int subIndex)
+{
+    if (index < 0 || index >= Nobjects[TIMEPATTERN])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_PATTERN_FACTOR:
+        if (subIndex < 0 || subIndex >= Pattern[index].count)
+            return ERR_API_PROPERTY_VALUE;
+        return Pattern[index].factor[subIndex];
+    case swmm_PATTERN_COUNT:
+        return (double)Pattern[index].count;
+    case swmm_PATTERN_TYPE:
+        return (double)Pattern[index].type;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc setPatternValue
+ * \details Pattern factors are looked up afresh on every step (DWF/GW/inflow
+ * scaling), so a mid-run edit takes effect on the next step. Factors must be
+ * non-negative. Count and type are read-only.
+ */
+int setPatternValue(int property, int index, int subIndex, double value)
+{
+    if (index < 0 || index >= Nobjects[TIMEPATTERN])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_PATTERN_FACTOR:
+        if (subIndex < 0 || subIndex >= Pattern[index].count)
+            return ERR_API_PROPERTY_VALUE;
+        if (value < 0.0)
+            return ERR_API_PROPERTY_VALUE;
+        Pattern[index].factor[subIndex] = value;
+        return 0;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc getLanduseValue
+ */
+double getLanduseValue(int property, int index)
+{
+    if (index < 0 || index >= Nobjects[LANDUSE])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_LANDUSE_SWEEP_INTERVAL:
+        return Landuse[index].sweepInterval;
+    case swmm_LANDUSE_SWEEP_REMOVAL:
+        return Landuse[index].sweepRemoval;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc setLanduseValue
+ * \details Street-sweeping parameters are read per step when sweeping is
+ * evaluated, so a mid-run edit takes effect on the next step. The removal
+ * fraction is bounded to [0, 1]; the interval must be non-negative.
+ */
+int setLanduseValue(int property, int index, double value)
+{
+    if (index < 0 || index >= Nobjects[LANDUSE])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_LANDUSE_SWEEP_INTERVAL:
+        if (value < 0.0)
+            return ERR_API_PROPERTY_VALUE;
+        Landuse[index].sweepInterval = value;
+        return 0;
+    case swmm_LANDUSE_SWEEP_REMOVAL:
+        if (value < 0.0 || value > 1.0)
+            return ERR_API_PROPERTY_VALUE;
+        Landuse[index].sweepRemoval = value;
         return 0;
     default:
         return ERR_API_PROPERTY_TYPE;

@@ -227,6 +227,38 @@ class SWMMPollutantProperties(Enum):
     DWF_CONCENTRATION = ...
 
 
+class SWMMPatternProperties(Enum):
+    """
+    Enumeration of SWMM time-pattern properties (runtime-settable
+    multiplier factors). For ``FACTOR`` pass the 0-based factor position
+    as the ``sub_index`` argument of ``set_value``/``get_value``.
+
+    :ivar FACTOR: One multiplier factor (sub_index = factor position)
+    :type FACTOR: int
+    :ivar COUNT: Number of factors in the pattern (read-only)
+    :type COUNT: int
+    :ivar TYPE: Pattern type code (read-only): 0 monthly/1 daily/2 hourly/3 weekend
+    :type TYPE: int
+    """
+    FACTOR = ...
+    COUNT = ...
+    TYPE = ...
+
+
+class SWMMLandUseProperties(Enum):
+    """
+    Enumeration of SWMM land-use properties (runtime-settable street
+    sweeping parameters).
+
+    :ivar SWEEP_INTERVAL: Street-sweeping interval (days)
+    :type SWEEP_INTERVAL: int
+    :ivar SWEEP_REMOVAL: Fraction of buildup available for sweeping (0-1)
+    :type SWEEP_REMOVAL: int
+    """
+    SWEEP_INTERVAL = ...
+    SWEEP_REMOVAL = ...
+
+
 class SWMMNodeProperties(Enum):
     """
     Enumeration of SWMM node properties.

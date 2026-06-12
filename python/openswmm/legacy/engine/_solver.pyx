@@ -40,6 +40,8 @@ from .solver cimport (
     swmm_LinkProperty,
     swmm_SystemProperty,
     swmm_PollutProperty,
+    swmm_PatternProperty,
+    swmm_LanduseProperty,
     swmm_FlowUnitsProperty,
     swmm_API_Errors,
     progress_callback,
@@ -513,6 +515,37 @@ class SWMMPollutantProperties(Enum):
     GW_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_GW_CONCEN
     RDII_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_RDII_CONCEN
     DWF_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_DWF_CONCEN
+
+class SWMMPatternProperties(Enum):
+    """Enumeration of SWMM time-pattern properties.
+
+    Pattern multiplier factors are settable both before the simulation
+    starts and while it is running; they are looked up afresh each step
+    (DWF/GW/inflow scaling), so a mid-run edit takes effect on the next
+    step. For C{FACTOR}, pass the 0-based factor position as the
+    C{sub_index} argument of C{set_value}/C{get_value}.
+
+    @cvar FACTOR: One multiplier factor (sub_index = factor position).
+    @cvar COUNT: Number of factors in the pattern (read-only).
+    @cvar TYPE: Pattern type code (read-only): 0 monthly, 1 daily,
+        2 hourly, 3 weekend.
+    """
+    FACTOR = swmm_PatternProperty.swmm_PATTERN_FACTOR
+    COUNT = swmm_PatternProperty.swmm_PATTERN_COUNT
+    TYPE = swmm_PatternProperty.swmm_PATTERN_TYPE
+
+class SWMMLandUseProperties(Enum):
+    """Enumeration of SWMM land-use properties.
+
+    Street-sweeping parameters are settable both before the simulation
+    starts and while it is running; they are read per step when sweeping is
+    evaluated, so a mid-run edit takes effect on the next step.
+
+    @cvar SWEEP_INTERVAL: Street-sweeping interval (days).
+    @cvar SWEEP_REMOVAL: Fraction of buildup available for sweeping (0-1).
+    """
+    SWEEP_INTERVAL = swmm_LanduseProperty.swmm_LANDUSE_SWEEP_INTERVAL
+    SWEEP_REMOVAL = swmm_LanduseProperty.swmm_LANDUSE_SWEEP_REMOVAL
 
 # =============================================================================
 # Units / errors enumerations

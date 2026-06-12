@@ -85,6 +85,20 @@ public:
     void init(SimulationContext& ctx);
 
     /**
+     * @brief Re-copy time-pattern factors from the context into the solver's
+     *        per-step lookup cache.
+     *
+     * @details ::init copies @c ctx.patterns into a private cache for fast
+     * per-step DWF/external-inflow scaling. A runtime pattern edit
+     * (@c swmm_pattern_set_factors) mutates @c ctx.patterns only, so the C API
+     * calls this to refresh the cache and let mid-run pattern changes take
+     * effect on the next step. Pattern count is assumed unchanged.
+     *
+     * @param ctx Simulation context holding the authoritative pattern data.
+     */
+    void refreshPatterns(const SimulationContext& ctx);
+
+    /**
      * @brief Compute all external + DWF inflows and add to node lateral flow.
      *
      * @details Batch operations:

@@ -185,6 +185,10 @@ SWMM_ENGINE_API int swmm_pattern_set_factors(SWMM_Engine engine, int idx, const 
     CHECK_INDEX(idx >= 0 && idx < ctx.patterns.count());
     if (!factors || count <= 0) return SWMM_ERR_BADPARAM;
     ctx.patterns.factors[static_cast<std::size_t>(idx)].assign(factors, factors + count);
+    // Propagate the edit to the inflow solver's per-step pattern cache so a
+    // mid-run change takes effect on the next step (DWF/external inflow read
+    // a cached copy; groundwater-evap patterns already read ctx.patterns live).
+    to_engine(engine)->inflowSolver().refreshPatterns(ctx);
     return SWMM_OK;
 }
 

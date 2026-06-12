@@ -21,6 +21,8 @@ from ._solver import (
     SWMMLinkProperties,
     SWMMSystemProperties,
     SWMMPollutantProperties,
+    SWMMPatternProperties,
+    SWMMLandUseProperties,
     SWMMFlowUnits,
     SWMMAPIErrors,
     run_solver,

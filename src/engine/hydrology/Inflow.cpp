@@ -61,6 +61,21 @@ double InflowSolver::getPatternFactor(int pat_idx, int month, int day, int hour)
     }
 }
 
+void InflowSolver::refreshPatterns(const SimulationContext& ctx) {
+    int np = ctx.patterns.count();
+    patterns_.resize(static_cast<std::size_t>(np));
+    for (int i = 0; i < np; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        patterns_[ui].type = ctx.patterns.types[ui];
+        const auto& facs = ctx.patterns.factors[ui];
+        // Initialize all 24 slots to 1.0 (default multiplier)
+        for (int k = 0; k < 24; ++k) patterns_[ui].factors[k] = 1.0;
+        for (std::size_t k = 0; k < facs.size() && k < 24; ++k) {
+            patterns_[ui].factors[k] = facs[k];
+        }
+    }
+}
+
 void InflowSolver::init(SimulationContext& ctx) {
 
     // ---- Build pattern name → index map for fast lookup ----
@@ -83,17 +98,7 @@ void InflowSolver::init(SimulationContext& ctx) {
     }
 
     // ---- Copy patterns into runtime structures ----
-    patterns_.resize(static_cast<std::size_t>(np));
-    for (int i = 0; i < np; ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        patterns_[ui].type = ctx.patterns.types[ui];
-        const auto& facs = ctx.patterns.factors[ui];
-        // Initialize all 24 slots to 1.0 (default multiplier)
-        for (int k = 0; k < 24; ++k) patterns_[ui].factors[k] = 1.0;
-        for (std::size_t k = 0; k < facs.size() && k < 24; ++k) {
-            patterns_[ui].factors[k] = facs[k];
-        }
-    }
+    refreshPatterns(ctx);
 
     // ---- Populate external inflows with name resolution ----
     int ne = ctx.ext_inflows.count();

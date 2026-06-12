@@ -208,6 +208,10 @@ public:
     snow::SnowSolver&       snowSolver()       noexcept { return snow_; }
     const snow::SnowSolver& snowSolver() const noexcept { return snow_; }
 
+    /// Inflow solver access (for C API runtime pattern-cache refresh).
+    inflow::InflowSolver&       inflowSolver()       noexcept { return inflow_; }
+    const inflow::InflowSolver& inflowSolver() const noexcept { return inflow_; }
+
     /**
      * @brief Area-weighted snow depth (SWE, ft) on a subcatchment.
      *

@@ -236,6 +236,17 @@ cdef extern from "openswmm_solver.h":
         swmm_POLLUT_RDII_CONCEN  # RDII inflow concentration
         swmm_POLLUT_DWF_CONCEN   # Dry weather sanitary flow concentration
 
+    # SWMM time-pattern properties
+    ctypedef enum swmm_PatternProperty:
+        swmm_PATTERN_FACTOR  # One multiplier factor (subIndex = factor position)
+        swmm_PATTERN_COUNT   # Number of factors (read-only)
+        swmm_PATTERN_TYPE    # Pattern type code (read-only)
+
+    # SWMM land-use properties
+    ctypedef enum swmm_LanduseProperty:
+        swmm_LANDUSE_SWEEP_INTERVAL  # Street-sweeping interval (days)
+        swmm_LANDUSE_SWEEP_REMOVAL   # Fraction of buildup available for sweeping
+
     # SWMM flow units enumeration
     ctypedef enum swmm_FlowUnitsProperty:
         swmm_CFS  # Cubic feet per second
