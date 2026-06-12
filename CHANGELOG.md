@@ -5,6 +5,35 @@ All notable changes to the OpenSWMM Engine are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Runtime forcing Phase 4 + §3 legacy quality sources
+
+See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md` and
+`docs/RUNTIME_FORCING_API_GAP_PLAN.md` §7/§12.
+
+### Added
+
+- **§3 legacy water-quality source setters — functional tests.** The legacy
+  `setPollutValue` source concentrations (rain/wet-deposition `pptConcen`,
+  groundwater `gwConcen`, RDII `rdiiConcen`, dry-weather `dwfConcen`) and the
+  ponded-surface quality injection are now covered by real-solver tests:
+  `python/tests/legacy/test_quality_sources.py` (Q1 rain → washoff, Q2 GW,
+  Q3 RDII, Q5 DWF, Q6 ponded round-trip + washoff). Each source feeds an
+  existing inflow term already counted in the quality mass balance. Fixtures
+  derive a self-contained inline-storm copy of `legacy_small.inp` (quality
+  routing enabled, orphan external stage timeseries dropped, two-day horizon)
+  with one TSS pollutant whose source columns are set one at a time so each
+  node signal is attributable to a single source; artifacts land in
+  `python/tests/legacy/output/`.
+
+### Fixed
+
+- **Legacy subcatchment pollutant bindings** passed the pollutant index in
+  the `sub_index` slot, but the C `getSubcatchValue`/`setSubcatchValue`
+  pollutant cases read it from `pollutantIndex`. `LegacySubcatchment`
+  `get_pollutant_buildup`, `set_external_pollutant_buildup`, and
+  `set_ponded_concentration` now pass `pollutant_index=` and work at runtime
+  (previously raised an object-index API error).
+
 ## [Unreleased] — User-flag schema bindings + 2D/MCP gap closure
 
 See `docs/API_GAP_CLOSURE_PLAN_2026-06-10.md`.

@@ -154,7 +154,7 @@ class LegacySubcatchment:
     # --- pollutants ---
     def get_pollutant_buildup(self, pollutant_index: int = 0) -> float:
         """Current pollutant buildup on subcatchment."""
-        return self._get(SP.POLLUTANT_BUILDUP, sub_index=pollutant_index)
+        return self._get(SP.POLLUTANT_BUILDUP, pollutant_index=pollutant_index)
 
     def get_pollutant_runoff_concentration(self, pollutant_index: int = 0) -> float:
         """Current pollutant concentration in runoff."""
@@ -298,7 +298,7 @@ class LegacySubcatchment:
         :param log: Optional :class:`ExternalForcingLog` for audit.
         """
         self._set(SP.EXTERNAL_POLLUTANT_BUILDUP, value,
-                  sub_index=pollutant_index)
+                  pollutant_index=pollutant_index)
         if log is not None:
             log.record(
                 sim_time=self._solver.current_datetime,
@@ -401,7 +401,7 @@ class LegacySubcatchment:
         @type value: float
         """
         self._set(SP.POLLUTANT_PONDED_CONCENTRATION, value,
-                  sub_index=pollutant_index)
+                  pollutant_index=pollutant_index)
 
     # --- statistics (after end()) ---
     @property
