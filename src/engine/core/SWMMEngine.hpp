@@ -212,6 +212,11 @@ public:
     inflow::InflowSolver&       inflowSolver()       noexcept { return inflow_; }
     const inflow::InflowSolver& inflowSolver() const noexcept { return inflow_; }
 
+    /// Re-derive the land-use buildup/washoff parameter cache from the live
+    /// context (for C API runtime edits via swmm_buildup_set/_washoff_set).
+    /// Leaves the accumulated buildup pool untouched.
+    void refreshLanduseParams() noexcept;
+
     /**
      * @brief Area-weighted snow depth (SWE, ft) on a subcatchment.
      *

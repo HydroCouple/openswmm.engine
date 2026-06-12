@@ -541,11 +541,36 @@ class SWMMLandUseProperties(Enum):
     starts and while it is running; they are read per step when sweeping is
     evaluated, so a mid-run edit takes effect on the next step.
 
+    Buildup/washoff function parameters are per land use and pollutant; pass
+    the 0-based pollutant index as the C{sub_index} argument. Editing a
+    function changes only how buildup evolves going forward — the accumulated
+    pool is preserved.
+
     @cvar SWEEP_INTERVAL: Street-sweeping interval (days).
     @cvar SWEEP_REMOVAL: Fraction of buildup available for sweeping (0-1).
+    @cvar BUILDUP_FUNC: Buildup function type code (sub_index = pollutant).
+    @cvar BUILDUP_COEFF1: Buildup coefficient c0 / max buildup.
+    @cvar BUILDUP_COEFF2: Buildup coefficient c1 / rate.
+    @cvar BUILDUP_COEFF3: Buildup coefficient c2 / exponent.
+    @cvar BUILDUP_NORMALIZER: Buildup normalizer: 0 area, 1 curb length.
+    @cvar WASHOFF_FUNC: Washoff function type code.
+    @cvar WASHOFF_COEFF: Washoff coefficient.
+    @cvar WASHOFF_EXPON: Washoff exponent.
+    @cvar WASHOFF_SWEEP_EFFIC: Washoff street-sweeping efficiency (0-1).
+    @cvar WASHOFF_BMP_EFFIC: Washoff BMP efficiency (0-1).
     """
     SWEEP_INTERVAL = swmm_LanduseProperty.swmm_LANDUSE_SWEEP_INTERVAL
     SWEEP_REMOVAL = swmm_LanduseProperty.swmm_LANDUSE_SWEEP_REMOVAL
+    BUILDUP_FUNC = swmm_LanduseProperty.swmm_LANDUSE_BUILDUP_FUNC
+    BUILDUP_COEFF1 = swmm_LanduseProperty.swmm_LANDUSE_BUILDUP_COEFF1
+    BUILDUP_COEFF2 = swmm_LanduseProperty.swmm_LANDUSE_BUILDUP_COEFF2
+    BUILDUP_COEFF3 = swmm_LanduseProperty.swmm_LANDUSE_BUILDUP_COEFF3
+    BUILDUP_NORMALIZER = swmm_LanduseProperty.swmm_LANDUSE_BUILDUP_NORMALIZER
+    WASHOFF_FUNC = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_FUNC
+    WASHOFF_COEFF = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_COEFF
+    WASHOFF_EXPON = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_EXPON
+    WASHOFF_SWEEP_EFFIC = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_SWEEP_EFFIC
+    WASHOFF_BMP_EFFIC = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_BMP_EFFIC
 
 # =============================================================================
 # Units / errors enumerations

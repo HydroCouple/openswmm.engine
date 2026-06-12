@@ -134,3 +134,45 @@ class TestLegacySweep:
                 s.set_value(_LU, _LuProp.SWEEP_REMOVAL, 0, 1.5)
         finally:
             s.end(); s.finalize()
+
+
+# --------------------------------------------------------------------------- #
+# P2 — buildup / washoff coefficients (legacy parity)
+# --------------------------------------------------------------------------- #
+class TestLegacyBuildupWashoff:
+    def test_buildup_coeffs_round_trip(self):
+        """P2: set/get land-use buildup coefficients per pollutant (subIndex)."""
+        s = _open(_SITE_DRAINAGE, "p2_legacy_buildup")
+        try:
+            assert s.get_object_count(_LU) > 0
+            for _ in range(5):
+                s.step()
+            s.set_value(_LU, _LuProp.BUILDUP_COEFF1, 0, 77.0, sub_index=0)
+            s.set_value(_LU, _LuProp.BUILDUP_COEFF2, 0, 0.4, sub_index=0)
+            assert s.get_value(_LU, _LuProp.BUILDUP_COEFF1, 0, sub_index=0) == pytest.approx(77.0)
+            assert s.get_value(_LU, _LuProp.BUILDUP_COEFF2, 0, sub_index=0) == pytest.approx(0.4)
+        finally:
+            s.end(); s.finalize()
+
+    def test_washoff_coeffs_round_trip(self):
+        """P2: set/get land-use washoff coefficients per pollutant (subIndex)."""
+        s = _open(_SITE_DRAINAGE, "p2_legacy_washoff")
+        try:
+            for _ in range(5):
+                s.step()
+            # EMC washoff (funcType 3): concentration = coeff
+            s.set_value(_LU, _LuProp.WASHOFF_FUNC, 0, 3, sub_index=0)
+            s.set_value(_LU, _LuProp.WASHOFF_COEFF, 0, 250.0, sub_index=0)
+            assert s.get_value(_LU, _LuProp.WASHOFF_FUNC, 0, sub_index=0) == pytest.approx(3)
+            assert s.get_value(_LU, _LuProp.WASHOFF_COEFF, 0, sub_index=0) == pytest.approx(250.0)
+        finally:
+            s.end(); s.finalize()
+
+    def test_washoff_effic_bounds_rejected(self):
+        """P2: an out-of-range sweep efficiency is rejected."""
+        s = _open(_SITE_DRAINAGE, "p2_legacy_bounds")
+        try:
+            with pytest.raises(Exception):
+                s.set_value(_LU, _LuProp.WASHOFF_SWEEP_EFFIC, 0, 2.0, sub_index=0)
+        finally:
+            s.end(); s.finalize()

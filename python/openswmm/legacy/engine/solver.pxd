@@ -244,8 +244,18 @@ cdef extern from "openswmm_solver.h":
 
     # SWMM land-use properties
     ctypedef enum swmm_LanduseProperty:
-        swmm_LANDUSE_SWEEP_INTERVAL  # Street-sweeping interval (days)
-        swmm_LANDUSE_SWEEP_REMOVAL   # Fraction of buildup available for sweeping
+        swmm_LANDUSE_SWEEP_INTERVAL      # Street-sweeping interval (days)
+        swmm_LANDUSE_SWEEP_REMOVAL       # Fraction of buildup available for sweeping
+        swmm_LANDUSE_BUILDUP_FUNC        # Buildup function type (subIndex = pollutant)
+        swmm_LANDUSE_BUILDUP_COEFF1      # Buildup c0 / max buildup
+        swmm_LANDUSE_BUILDUP_COEFF2      # Buildup c1 / rate
+        swmm_LANDUSE_BUILDUP_COEFF3      # Buildup c2 / exponent
+        swmm_LANDUSE_BUILDUP_NORMALIZER  # Buildup normalizer (0 area, 1 curb)
+        swmm_LANDUSE_WASHOFF_FUNC        # Washoff function type
+        swmm_LANDUSE_WASHOFF_COEFF       # Washoff coefficient
+        swmm_LANDUSE_WASHOFF_EXPON       # Washoff exponent
+        swmm_LANDUSE_WASHOFF_SWEEP_EFFIC # Washoff sweeping efficiency (0-1)
+        swmm_LANDUSE_WASHOFF_BMP_EFFIC   # Washoff BMP efficiency (0-1)
 
     # SWMM flow units enumeration
     ctypedef enum swmm_FlowUnitsProperty:

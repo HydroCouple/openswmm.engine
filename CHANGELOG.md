@@ -25,6 +25,14 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
     `SWMMLandUseProperties` enums (+ `.pyi`), enum coverage, and parity tests
     `python/tests/legacy/test_param_runtime.py`.
   - Refactored audit tests `python/tests/engine/test_param_runtime.py`.
+- **Phase 4 wave B2 — runtime buildup/washoff function coefficients (P2).**
+  Both groups SOUND mid-run; the accumulated buildup pool is preserved (an
+  edit only changes how buildup evolves going forward). Legacy parity:
+  `swmm_LanduseProperty` extended with `BUILDUP_FUNC`/`COEFF1..3`/`NORMALIZER`
+  and `WASHOFF_FUNC`/`COEFF`/`EXPON`/`SWEEP_EFFIC`/`BMP_EFFIC` (pollutant index
+  via `subIndex`); `set/getLanduseValue` gained `subIndex`; buildup edits
+  recompute `maxDays` per `landuse_readBuildup`. Tests in
+  `test_param_runtime.py` (engine + legacy).
 
 - **§3 legacy water-quality source setters — functional tests.** The legacy
   `setPollutValue` source concentrations (rain/wet-deposition `pptConcen`,

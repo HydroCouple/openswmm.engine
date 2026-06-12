@@ -373,21 +373,23 @@ static double getPatternValue(int property, int index, int subIndex);
 static int setPatternValue(int property, int index, int subIndex, double value);
 
 /*!
- * \brief Get a land-use sweeping property.
+ * \brief Get a land-use property (sweeping, or per-pollutant buildup/washoff).
  * \param[in] property Property type (swmm_LanduseProperty)
  * \param[in] index Land-use index
+ * \param[in] subIndex Pollutant index for buildup/washoff properties
  * \return Property value or API error sentinel
  */
-static double getLanduseValue(int property, int index);
+static double getLanduseValue(int property, int index, int subIndex);
 
 /*!
- * \brief Set a land-use sweeping property (running or pre-start).
+ * \brief Set a land-use property (sweeping, or per-pollutant buildup/washoff).
  * \param[in] property Property type (swmm_LanduseProperty)
  * \param[in] index Land-use index
+ * \param[in] subIndex Pollutant index for buildup/washoff properties
  * \param[in] value Property value
  * \return Error code
  */
-static int setLanduseValue(int property, int index, double value);
+static int setLanduseValue(int property, int index, int subIndex, double value);
 
 /*!
  * \brief Set node value given its property type, index, subindex, and value.
@@ -1338,7 +1340,7 @@ double EXPORT_OPENSWMMCORE_SOLVER_API swmm_getValueExpanded(int objType, int pro
     case swmm_TIME_PATTERN:
         return getPatternValue(property, index, subIndex);
     case swmm_LANDUSE:
-        return getLanduseValue(property, index);
+        return getLanduseValue(property, index, subIndex);
     default:
         return ERR_API_OBJECT_TYPE;
     }
@@ -1429,7 +1431,7 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValueExpanded(int objType, int proper
     case swmm_TIME_PATTERN:
         return setPatternValue(property, index, subIndex, value);
     case swmm_LANDUSE:
-        return setLanduseValue(property, index, value);
+        return setLanduseValue(property, index, subIndex, value);
     default:
         return ERR_API_OBJECT_TYPE;
     }
@@ -1540,9 +1542,37 @@ int setPatternValue(int property, int index, int subIndex, double value)
 }
 
 /*!
+ * \brief Recompute a buildup function's time-to-max (maxDays), mirroring
+ * landuse_readBuildup() so runtime coefficient edits stay self-consistent.
+ */
+static void recomputeBuildupMaxDays(int lu, int p)
+{
+    double* c = Landuse[lu].buildupFunc[p].coeff;
+    double tmax = 0.0;
+    switch (Landuse[lu].buildupFunc[p].funcType)
+    {
+    case POWER_BUILDUP:
+        if (c[1] * c[2] == 0.0) tmax = 0.0;
+        else if (c[0] > 0.0 && log10(c[0]) / c[2] > 3.5) tmax = 3650.0;
+        else if (c[1] != 0.0) tmax = pow(c[0] / c[1], 1.0 / c[2]);
+        break;
+    case EXPON_BUILDUP:
+        if (c[1] == 0.0) tmax = 0.0;
+        else tmax = -log(0.001) / c[1];
+        break;
+    case SATUR_BUILDUP:
+        tmax = 1000.0 * c[2];
+        break;
+    default:
+        tmax = 0.0;
+    }
+    Landuse[lu].buildupFunc[p].maxDays = tmax;
+}
+
+/*!
  * \copydoc getLanduseValue
  */
-double getLanduseValue(int property, int index)
+double getLanduseValue(int property, int index, int subIndex)
 {
     if (index < 0 || index >= Nobjects[LANDUSE])
         return ERR_API_OBJECT_INDEX;
@@ -1554,17 +1584,50 @@ double getLanduseValue(int property, int index)
     case swmm_LANDUSE_SWEEP_REMOVAL:
         return Landuse[index].sweepRemoval;
     default:
+        break;
+    }
+
+    // Per-pollutant buildup/washoff properties (subIndex = pollutant index)
+    if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_LANDUSE_BUILDUP_FUNC:
+        return (double)Landuse[index].buildupFunc[subIndex].funcType;
+    case swmm_LANDUSE_BUILDUP_COEFF1:
+        return Landuse[index].buildupFunc[subIndex].coeff[0];
+    case swmm_LANDUSE_BUILDUP_COEFF2:
+        return Landuse[index].buildupFunc[subIndex].coeff[1];
+    case swmm_LANDUSE_BUILDUP_COEFF3:
+        return Landuse[index].buildupFunc[subIndex].coeff[2];
+    case swmm_LANDUSE_BUILDUP_NORMALIZER:
+        return (double)Landuse[index].buildupFunc[subIndex].normalizer;
+    case swmm_LANDUSE_WASHOFF_FUNC:
+        return (double)Landuse[index].washoffFunc[subIndex].funcType;
+    case swmm_LANDUSE_WASHOFF_COEFF:
+        return Landuse[index].washoffFunc[subIndex].coeff;
+    case swmm_LANDUSE_WASHOFF_EXPON:
+        return Landuse[index].washoffFunc[subIndex].expon;
+    case swmm_LANDUSE_WASHOFF_SWEEP_EFFIC:
+        return Landuse[index].washoffFunc[subIndex].sweepEffic;
+    case swmm_LANDUSE_WASHOFF_BMP_EFFIC:
+        return Landuse[index].washoffFunc[subIndex].bmpEffic;
+    default:
         return ERR_API_PROPERTY_TYPE;
     }
 }
 
 /*!
  * \copydoc setLanduseValue
- * \details Street-sweeping parameters are read per step when sweeping is
- * evaluated, so a mid-run edit takes effect on the next step. The removal
- * fraction is bounded to [0, 1]; the interval must be non-negative.
+ * \details Sweeping and buildup/washoff function parameters are read per step
+ * (sweeping evaluation, surfqual buildup/washoff), so a mid-run edit takes
+ * effect on the next step. The accumulated buildup pool is left untouched;
+ * editing the function only changes how buildup evolves going forward. Removal
+ * fractions are bounded to [0, 1]; intervals and buildup/washoff coefficients
+ * must be non-negative; buildup edits recompute maxDays.
  */
-int setLanduseValue(int property, int index, double value)
+int setLanduseValue(int property, int index, int subIndex, double value)
 {
     if (index < 0 || index >= Nobjects[LANDUSE])
         return ERR_API_OBJECT_INDEX;
@@ -1580,6 +1643,56 @@ int setLanduseValue(int property, int index, double value)
         if (value < 0.0 || value > 1.0)
             return ERR_API_PROPERTY_VALUE;
         Landuse[index].sweepRemoval = value;
+        return 0;
+    default:
+        break;
+    }
+
+    // Per-pollutant buildup/washoff properties (subIndex = pollutant index)
+    if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_LANDUSE_BUILDUP_FUNC:
+        Landuse[index].buildupFunc[subIndex].funcType = (int)value;
+        recomputeBuildupMaxDays(index, subIndex);
+        return 0;
+    case swmm_LANDUSE_BUILDUP_COEFF1:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Landuse[index].buildupFunc[subIndex].coeff[0] = value;
+        recomputeBuildupMaxDays(index, subIndex);
+        return 0;
+    case swmm_LANDUSE_BUILDUP_COEFF2:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Landuse[index].buildupFunc[subIndex].coeff[1] = value;
+        recomputeBuildupMaxDays(index, subIndex);
+        return 0;
+    case swmm_LANDUSE_BUILDUP_COEFF3:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Landuse[index].buildupFunc[subIndex].coeff[2] = value;
+        recomputeBuildupMaxDays(index, subIndex);
+        return 0;
+    case swmm_LANDUSE_BUILDUP_NORMALIZER:
+        Landuse[index].buildupFunc[subIndex].normalizer = (int)value;
+        return 0;
+    case swmm_LANDUSE_WASHOFF_FUNC:
+        Landuse[index].washoffFunc[subIndex].funcType = (int)value;
+        return 0;
+    case swmm_LANDUSE_WASHOFF_COEFF:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Landuse[index].washoffFunc[subIndex].coeff = value;
+        return 0;
+    case swmm_LANDUSE_WASHOFF_EXPON:
+        Landuse[index].washoffFunc[subIndex].expon = value;
+        return 0;
+    case swmm_LANDUSE_WASHOFF_SWEEP_EFFIC:
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Landuse[index].washoffFunc[subIndex].sweepEffic = value;
+        return 0;
+    case swmm_LANDUSE_WASHOFF_BMP_EFFIC:
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Landuse[index].washoffFunc[subIndex].bmpEffic = value;
         return 0;
     default:
         return ERR_API_PROPERTY_TYPE;

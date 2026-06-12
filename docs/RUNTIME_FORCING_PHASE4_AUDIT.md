@@ -53,3 +53,35 @@ in `swmm5.c` (interval ≥ 0; removal in [0, 1]; settable pre-start and running)
 `Landuse.sweep_interval/_removal`) already existed. Legacy gains
 `SWMMPatternProperties` / `SWMMLandUseProperties` enums (+ `.pyi`); enum
 coverage in `test_phase1_enum_coverage.py` (pattern 3 / landuse 2).
+
+---
+
+## Wave B2 — P2 buildup / washoff function coefficients → **SOUND (with a cache-refresh fix)**
+
+**The accumulated buildup pool is preserved.** `swmm_buildup_set` /
+`swmm_washoff_set` only change the *function* (type + coefficients); the
+accumulated mass (`surface_quality_.buildup`, legacy
+`Subcatch[].landFactor[].buildup[]`) is never reset or rescaled by the edit —
+the new function only governs how buildup evolves from the next step. (Note: the
+buildup integrator maps current mass → equivalent days → new mass each step, so
+lowering the max-buildup coefficient below the current mass clamps it on the
+next step, by construction.)
+
+**Refactored fix (same class as P6).** The per-step path
+(`SWMMEngine::stepSurfaceQuality`) reads `landuse_solver_.buildup_params` /
+`washoff_params`, a cache derived from `ctx.buildup`/`ctx.washoff` at start, so
+`swmm_buildup_set`/`swmm_washoff_set` (which write `ctx`) were ignored mid-run.
+Extracted the start-up transfer into `SWMMEngine::refreshLanduseParams()`
+(recomputing `max_days`); both setters now call it → edit takes effect next
+step. Pool untouched.
+
+**Legacy parity.** Buildup/washoff functions are read live each step
+(`surfqual.c`), so they are runtime-settable. Extended `swmm_LanduseProperty`
+with `BUILDUP_FUNC`/`COEFF1..3`/`NORMALIZER` and
+`WASHOFF_FUNC`/`COEFF`/`EXPON`/`SWEEP_EFFIC`/`BMP_EFFIC` (pollutant index via
+`subIndex`); `set/getLanduseValue` gained the `subIndex` arg. Buildup edits
+recompute `TBuildup.maxDays` via `recomputeBuildupMaxDays`, mirroring
+`landuse_readBuildup`. Efficiencies bounded to [0, 1]; coefficients ≥ 0.
+
+**Bindings:** refactored (`quality.set_buildup`/`set_washoff`) already existed;
+legacy `SWMMLandUseProperties` extended to 12 members (+ `.pyi`, enum coverage).

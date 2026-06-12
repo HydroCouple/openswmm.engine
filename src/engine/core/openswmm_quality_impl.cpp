@@ -136,6 +136,9 @@ SWMM_ENGINE_API int swmm_buildup_set(SWMM_Engine engine, int lu_idx, int pollut_
     ctx.buildup.coeff2[k]     = c2;
     ctx.buildup.coeff3[k]     = c3;
     ctx.buildup.normalizer[k] = normalizer;
+    // Refresh the per-step buildup/washoff parameter cache so a mid-run edit
+    // takes effect on the next step (the accumulated pool is preserved).
+    to_engine(engine)->refreshLanduseParams();
     return SWMM_OK;
 }
 
@@ -187,6 +190,8 @@ SWMM_ENGINE_API int swmm_washoff_set(SWMM_Engine engine, int lu_idx, int pollut_
     ctx.washoff.expon[k]       = expon;
     ctx.washoff.sweep_effic[k] = sweep_effic;
     ctx.washoff.bmp_effic[k]   = bmp_effic;
+    // Refresh the per-step parameter cache so a mid-run edit takes effect.
+    to_engine(engine)->refreshLanduseParams();
     return SWMM_OK;
 }
 

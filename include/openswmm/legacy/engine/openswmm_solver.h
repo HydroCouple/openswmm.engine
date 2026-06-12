@@ -408,6 +408,26 @@ typedef enum
     swmm_LANDUSE_SWEEP_INTERVAL = 700,
     /*! \brief Fraction of buildup available for sweeping (0-1) */
     swmm_LANDUSE_SWEEP_REMOVAL,
+    /*! \brief Buildup function type code (subIndex = pollutant index) */
+    swmm_LANDUSE_BUILDUP_FUNC,
+    /*! \brief Buildup coefficient c0 / max buildup (subIndex = pollutant) */
+    swmm_LANDUSE_BUILDUP_COEFF1,
+    /*! \brief Buildup coefficient c1 / rate (subIndex = pollutant) */
+    swmm_LANDUSE_BUILDUP_COEFF2,
+    /*! \brief Buildup coefficient c2 / exponent (subIndex = pollutant) */
+    swmm_LANDUSE_BUILDUP_COEFF3,
+    /*! \brief Buildup normalizer code: 0 area, 1 curb length (subIndex = pollutant) */
+    swmm_LANDUSE_BUILDUP_NORMALIZER,
+    /*! \brief Washoff function type code (subIndex = pollutant) */
+    swmm_LANDUSE_WASHOFF_FUNC,
+    /*! \brief Washoff coefficient (subIndex = pollutant) */
+    swmm_LANDUSE_WASHOFF_COEFF,
+    /*! \brief Washoff exponent (subIndex = pollutant) */
+    swmm_LANDUSE_WASHOFF_EXPON,
+    /*! \brief Washoff street-sweeping removal efficiency 0-1 (subIndex = pollutant) */
+    swmm_LANDUSE_WASHOFF_SWEEP_EFFIC,
+    /*! \brief Washoff BMP removal efficiency 0-1 (subIndex = pollutant) */
+    swmm_LANDUSE_WASHOFF_BMP_EFFIC,
 } swmm_LanduseProperty;
 
 /*!

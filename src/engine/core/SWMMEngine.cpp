@@ -1551,6 +1551,56 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
 }
 
 // ============================================================================
+// refreshLanduseParams() — re-derive the buildup/washoff parameter cache
+// ============================================================================
+
+/**
+ * @brief Re-derive the land-use buildup/washoff parameter cache from the live
+ *        context (BuildupData/WashoffData).
+ *
+ * @details Used both during start-up transfer and by the C API runtime setters
+ * (swmm_buildup_set / swmm_washoff_set), which mutate ctx.buildup/ctx.washoff;
+ * the per-step path reads landuse_solver_.buildup_params/washoff_params, so a
+ * mid-run edit needs this refresh to take effect on the next step. The
+ * accumulated buildup pool (surface_quality_.buildup) is left untouched.
+ */
+void SWMMEngine::refreshLanduseParams() noexcept {
+    int np  = ctx_.n_pollutants();
+    int nlu = ctx_.n_landuses();
+    if (np <= 0 || nlu <= 0) return;
+    if (static_cast<int>(landuse_solver_.buildup_params.size()) != nlu * np)
+        return;
+    for (int lu = 0; lu < nlu; ++lu) {
+        for (int p = 0; p < np; ++p) {
+            auto k = static_cast<std::size_t>(lu * np + p);
+            auto& bp = landuse_solver_.buildup_params[k];
+            bp.type = static_cast<landuse::BuildupType>(ctx_.buildup.func_type[k]);
+            bp.coeff[0] = ctx_.buildup.coeff1[k];  // max buildup
+            bp.coeff[1] = ctx_.buildup.coeff2[k];  // rate constant
+            bp.coeff[2] = ctx_.buildup.coeff3[k];  // exponent/half-sat
+            bp.normalizer = ctx_.buildup.normalizer[k];
+            bp.max_days = 0.0;
+            // Compute max_days: time to reach 99.9% of max buildup
+            if (bp.type == landuse::BuildupType::EXPON && bp.coeff[1] > 0.0)
+                bp.max_days = -std::log(0.001) / bp.coeff[1];
+            else if (bp.type == landuse::BuildupType::POWER && bp.coeff[1] > 0.0
+                     && bp.coeff[2] > 0.0 && bp.coeff[0] > 0.0)
+                bp.max_days = std::pow(bp.coeff[0] / bp.coeff[1], 1.0 / bp.coeff[2]);
+            else if (bp.type == landuse::BuildupType::SATUR && bp.coeff[2] > 0.0
+                     && bp.coeff[0] > 0.0)
+                bp.max_days = 999.0 * bp.coeff[2];  // asymptotic
+
+            auto& wp = landuse_solver_.washoff_params[k];
+            wp.type = static_cast<landuse::WashoffType>(ctx_.washoff.func_type[k]);
+            wp.coeff = ctx_.washoff.coeff[k];
+            wp.expon = ctx_.washoff.expon[k];
+            wp.sweep_effic = ctx_.washoff.sweep_effic[k];
+            wp.bmp_effic = ctx_.washoff.bmp_effic[k];
+        }
+    }
+}
+
+// ============================================================================
 // stepSurfaceQuality() — surface quality buildup + washoff for one substep
 // ============================================================================
 
@@ -4208,33 +4258,7 @@ void SWMMEngine::initQuality() noexcept {
         ctx_.subcatches.resize_total_load(ctx_.n_subcatches(), np);
 
         // Transfer parsed BuildupData/WashoffData into LanduseSolver params
-        for (int lu = 0; lu < ctx_.n_landuses(); ++lu) {
-            for (int p = 0; p < np; ++p) {
-                auto k = static_cast<std::size_t>(lu * np + p);
-                auto& bp = landuse_solver_.buildup_params[k];
-                bp.type = static_cast<landuse::BuildupType>(ctx_.buildup.func_type[k]);
-                bp.coeff[0] = ctx_.buildup.coeff1[k];  // max buildup
-                bp.coeff[1] = ctx_.buildup.coeff2[k];  // rate constant
-                bp.coeff[2] = ctx_.buildup.coeff3[k];  // exponent/half-sat
-                bp.normalizer = ctx_.buildup.normalizer[k];
-                // Compute max_days: time to reach 99.9% of max buildup
-                if (bp.type == landuse::BuildupType::EXPON && bp.coeff[1] > 0.0)
-                    bp.max_days = -std::log(0.001) / bp.coeff[1];
-                else if (bp.type == landuse::BuildupType::POWER && bp.coeff[1] > 0.0
-                         && bp.coeff[2] > 0.0 && bp.coeff[0] > 0.0)
-                    bp.max_days = std::pow(bp.coeff[0] / bp.coeff[1], 1.0 / bp.coeff[2]);
-                else if (bp.type == landuse::BuildupType::SATUR && bp.coeff[2] > 0.0
-                         && bp.coeff[0] > 0.0)
-                    bp.max_days = 999.0 * bp.coeff[2];  // asymptotic
-
-                auto& wp = landuse_solver_.washoff_params[k];
-                wp.type = static_cast<landuse::WashoffType>(ctx_.washoff.func_type[k]);
-                wp.coeff = ctx_.washoff.coeff[k];
-                wp.expon = ctx_.washoff.expon[k];
-                wp.sweep_effic = ctx_.washoff.sweep_effic[k];
-                wp.bmp_effic = ctx_.washoff.bmp_effic[k];
-            }
-        }
+        refreshLanduseParams();
 
         // Initialize quality mass balance vectors
         ctx_.mass_balance.resize_quality(np);

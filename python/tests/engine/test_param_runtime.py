@@ -114,3 +114,67 @@ class TestSweepRuntime:
                     assert math.isfinite(s.nodes[i].depth)
         finally:
             s.end(); s.close(); s.destroy()
+
+
+# --------------------------------------------------------------------------- #
+# P2 — buildup / washoff function coefficients
+# --------------------------------------------------------------------------- #
+_EMC = 3  # WashoffFunc.EMC — concentration = coeff regardless of buildup
+
+
+class TestBuildupWashoffRuntime:
+    def _first_landuse_pollutant(self, s):
+        lus = list(s.quality.landuses)
+        assert lus, "fixture must define land uses"
+        return lus[0].id, s.pollutants[0].id
+
+    def test_washoff_round_trip(self):
+        """P2: set_washoff is reflected by get_washoff mid-run."""
+        s = _open(_LANDUSE_INP, "p2_washoff_rt")
+        try:
+            lu, pol = self._first_landuse_pollutant(s)
+            for _ in range(5):
+                s.step()
+            s.quality.set_washoff(lu, pol, func=_EMC, coeff=123.0, expon=0.0)
+            info = s.quality.get_washoff(lu, pol)
+            assert info["coeff"] == pytest.approx(123.0)
+            assert int(info["func"]) == _EMC
+        finally:
+            s.end(); s.close(); s.destroy()
+
+    def test_buildup_round_trip(self):
+        """P2: set_buildup is reflected by get_buildup mid-run."""
+        s = _open(_LANDUSE_INP, "p2_buildup_rt")
+        try:
+            lu, pol = self._first_landuse_pollutant(s)
+            for _ in range(5):
+                s.step()
+            info0 = s.quality.get_buildup(lu, pol)
+            s.quality.set_buildup(lu, pol, func=int(info0["func"]),
+                                  c1=88.0, c2=info0["c2"], c3=info0["c3"],
+                                  normalizer=info0["normalizer"])
+            assert s.quality.get_buildup(lu, pol)["c1"] == pytest.approx(88.0)
+        finally:
+            s.end(); s.close(); s.destroy()
+
+    def test_washoff_edit_changes_load_next_step(self):
+        """P2: an EMC washoff edit takes effect on the next step (cache refresh).
+
+        The per-step path reads a cached LanduseSolver param; swmm_washoff_set
+        now refreshes it. With a high EMC coefficient, washoff concentration
+        jumps, so downstream node quality rises above the pre-edit baseline.
+        """
+        s = _open(_LANDUSE_INP, "p2_washoff_effect")
+        try:
+            lu, pol = self._first_landuse_pollutant(s)
+            # Step into the storm so runoff (and washoff) is active.
+            for _ in range(15):
+                s.step()
+            before = max(s.nodes[i].quality(pol) for i in range(len(s.nodes)))
+            s.quality.set_washoff(lu, pol, func=_EMC, coeff=5000.0, expon=0.0)
+            for _ in range(5):
+                s.step()
+            after = max(s.nodes[i].quality(pol) for i in range(len(s.nodes)))
+            assert after > before + 1.0, (before, after)
+        finally:
+            s.end(); s.close(); s.destroy()

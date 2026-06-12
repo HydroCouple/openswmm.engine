@@ -133,12 +133,16 @@ class TestSystemEnumCoverage(unittest.TestCase):
         self.assertEqual(len(solver.SWMMPatternProperties), 3)
 
     def test_landuse_enum(self):
-        """Land-use sweeping properties (700 block)."""
+        """Land-use sweeping + buildup/washoff properties (700 block)."""
         self.assertEqual(
             solver.SWMMLandUseProperties.SWEEP_INTERVAL.value, 700)
         self.assertEqual(
             solver.SWMMLandUseProperties.SWEEP_REMOVAL.value, 701)
-        self.assertEqual(len(solver.SWMMLandUseProperties), 2)
+        self.assertEqual(
+            solver.SWMMLandUseProperties.BUILDUP_FUNC.value, 702)
+        self.assertEqual(
+            solver.SWMMLandUseProperties.WASHOFF_BMP_EFFIC.value, 711)
+        self.assertEqual(len(solver.SWMMLandUseProperties), 12)
 
 
 class TestNodeEnumCoverage(unittest.TestCase):
