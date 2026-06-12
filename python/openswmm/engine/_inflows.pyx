@@ -149,6 +149,27 @@ class Inflows:
         _check(swmm_ext_inflow_remove(h, entry_idx))
         self._solver._bump_generation()
 
+    def set_external_scale(self, int entry_idx, double scale) -> None:
+        """Set an external-inflow row's timeseries scale factor at runtime.
+
+        Takes effect on the next step (the inflow solver's per-step cache is
+        refreshed) — a lighter mid-run edit than remove + re-add.
+
+        @param entry_idx: Zero-based row index.
+        @param scale: New timeseries scale factor.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_ext_inflow_set_scale(h, entry_idx, scale))
+
+    def set_external_baseline(self, int entry_idx, double baseline) -> None:
+        """Set an external-inflow row's constant baseline at runtime.
+
+        @param entry_idx: Zero-based row index.
+        @param baseline: New baseline value (inflow display units).
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_ext_inflow_set_baseline(h, entry_idx, baseline))
+
     # =========================================================================
     # Dry-weather flow ([DWF])
     # =========================================================================
@@ -211,6 +232,18 @@ class Inflows:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_dwf_remove(h, entry_idx))
         self._solver._bump_generation()
+
+    def set_dwf_baseline(self, int entry_idx, double avg_value) -> None:
+        """Set a DWF row's average (baseline) value at runtime.
+
+        Takes effect on the next step (the inflow solver's per-step cache is
+        refreshed).
+
+        @param entry_idx: Zero-based row index.
+        @param avg_value: New average value (flow units for FLOW).
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_dwf_set_baseline(h, entry_idx, avg_value))
 
     # =========================================================================
     # RDII inflows

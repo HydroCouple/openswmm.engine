@@ -151,3 +151,32 @@ guard.
 `co_pollutant` already existed; legacy `SWMMPollutantProperties` extended 4→9
 (+ `.pyi`, enum coverage). Tests: `TestKineticsRuntime` (engine),
 `TestLegacyKinetics` (legacy).
+
+---
+
+## Wave B5 — P7/P8 external-inflow & DWF baselines/scale → **SOUND (with a cache-refresh fix); refactored direct setters added**
+
+**Refactored (same cache class as P6).** `InflowSolver::init` caches the
+ext/DWF definitions (`ext_inflows_`/`dwf_inflows_`) at start; the per-step
+`computeAll` reads the cache, so editing `ctx.ext_inflows`/`ctx.dwf_inflows`
+(via `swmm_ext_inflow_add`/`swmm_dwf_add`) was stale mid-run. Added direct
+setters `swmm_ext_inflow_set_scale`/`_set_baseline` and `swmm_dwf_set_baseline`
+(the gap-plan's suggested "direct `set_scale`"), and a
+`refresh_inflows_if_running` helper that rebuilds the cache via
+`InflowSolver::init(ctx)` (idempotent — touches no node state). The add/remove
+paths now refresh too, so the documented "remove + re-add" edit also takes
+effect mid-run. Bindings: `Inflows.set_external_scale/_baseline`,
+`set_dwf_baseline` (+ `.pyi`, `_common.pxd`). Tests:
+`TestInflowBaselineRuntime` (DWF baseline edit changes node inflow next step;
+ext baseline/scale round-trip).
+
+**Legacy parity — partially deferred (data-model gap, flagged).** The legacy
+inflow model is per-node linked lists (`Node[j].extInflow` of `TExtInflow` by
+constituent; `Node[j].dwfInflow` of `TDwfInflow`) with **no flat entry index**
+to mirror the refactored `entry_idx` API. Runtime inflow *control* already
+exists in legacy via `swmm_NODE_LATFLOW` (`apiExtInflow`, the Phase-1 lateral
+inflow override), so mid-run inflow adjustment is achievable today; what is not
+yet exposed is editing the persistent `[INFLOWS]`/`[DWF]` baseline/scale
+definitions by a node-keyed setter. That is a larger, separate task (new
+`setNodeValue` cases + linked-list traversal for the FLOW constituent) and is
+deferred with this note rather than rushed on a core routing path.

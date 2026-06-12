@@ -267,3 +267,56 @@ class TestKineticsRuntime:
                 s.pollutants[0].init_conc = 5.0
         finally:
             s.end(); s.close(); s.destroy()
+
+
+# --------------------------------------------------------------------------- #
+# P7/P8 — external-inflow / DWF baselines & scale
+#
+# Audit: the inflow solver caches ext/DWF definitions at start() (same class as
+# P6). The new direct setters (swmm_ext_inflow_set_scale/_baseline,
+# swmm_dwf_set_baseline) and the add/remove paths now refresh that cache, so a
+# mid-run edit takes effect on the next step.
+# --------------------------------------------------------------------------- #
+_DWF_INP = os.path.join(
+    _REPO_ROOT, "tests", "unit", "engine", "data", "refactored_small.inp")
+
+
+class TestInflowBaselineRuntime:
+    def test_dwf_baseline_edit_changes_inflow(self):
+        """P7/P8: raising a DWF baseline mid-run increases the node's inflow."""
+        os.makedirs(_OUT_DIR, exist_ok=True)
+        base = os.path.join(_OUT_DIR, "p78_dwf")
+        s = Solver(_DWF_INP, base + ".rpt", base + ".out")
+        s.open(); s.initialize(); s.start()
+        try:
+            assert s.inflows.dwf_count > 0
+            node_idx, constituent, avg = s.inflows.get_dwf(0)[:3]
+            for _ in range(10):
+                s.step()
+            before = s.nodes[node_idx].lateral_inflow
+            s.inflows.set_dwf_baseline(0, avg * 20.0 + 1.0)
+            s.step()
+            after = s.nodes[node_idx].lateral_inflow
+            assert after > before + 1e-9, (before, after)
+        finally:
+            s.end(); s.close(); s.destroy()
+
+    def test_ext_inflow_baseline_round_trip(self):
+        """P7: a constant ext-inflow baseline set mid-run round-trips."""
+        os.makedirs(_OUT_DIR, exist_ok=True)
+        base = os.path.join(_OUT_DIR, "p78_ext")
+        s = Solver(_DWF_INP, base + ".rpt", base + ".out")
+        s.open()
+        try:
+            s.inflows.add_external(0, "FLOW", baseline=5.0)
+            idx = s.inflows.external_count - 1
+            s.initialize(); s.start()
+            for _ in range(5):
+                s.step()
+            s.inflows.set_external_baseline(idx, 42.0)
+            s.inflows.set_external_scale(idx, 3.0)
+            row = s.inflows.get_external(idx)
+            assert row[6] == pytest.approx(42.0)   # baseline
+            assert row[5] == pytest.approx(3.0)     # s_factor
+        finally:
+            s.end(); s.close(); s.destroy()

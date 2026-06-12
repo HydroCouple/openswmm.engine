@@ -664,8 +664,11 @@ cdef extern from "openswmm_inflows.h":
     # Read / remove side (added in the 2026 binding refresh) — entry-index keyed
     cdef int swmm_ext_inflow_get(SWMM_Engine e, int entry_idx, int* node_idx, char* constituent_buf, int constituent_buflen, char* ts_buf, int ts_buflen, char* type_buf, int type_buflen, double* m_factor, double* s_factor, double* baseline, char* pattern_buf, int pattern_buflen)
     cdef int swmm_ext_inflow_remove(SWMM_Engine e, int entry_idx)
+    cdef int swmm_ext_inflow_set_scale(SWMM_Engine e, int entry_idx, double scale)
+    cdef int swmm_ext_inflow_set_baseline(SWMM_Engine e, int entry_idx, double baseline)
     cdef int swmm_dwf_get(SWMM_Engine e, int entry_idx, int* node_idx, char* constituent_buf, int constituent_buflen, double* avg_value, char* pat1_buf, int pat1_buflen, char* pat2_buf, int pat2_buflen, char* pat3_buf, int pat3_buflen, char* pat4_buf, int pat4_buflen)
     cdef int swmm_dwf_remove(SWMM_Engine e, int entry_idx)
+    cdef int swmm_dwf_set_baseline(SWMM_Engine e, int entry_idx, double avg_value)
     cdef int swmm_rdii_remove(SWMM_Engine e, int entry_idx)
     # Unit-hydrograph editing — (uh_name, month, response) keyed
     cdef int swmm_hydrograph_set_rtk(SWMM_Engine e, const char* uh_name, int month, int response, double r, double t, double k)

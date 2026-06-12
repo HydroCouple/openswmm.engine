@@ -49,6 +49,16 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
   both engines now reject it mid-run (refactored `CHECK_GEOMETRY`
   → `LifecycleError`; legacy `ERR_API_IS_RUNNING`). `SWMMPollutantProperties`
   4→9 (+ `.pyi`, enum coverage). Tests in `test_param_runtime.py`.
+- **Phase 4 wave B5 — external-inflow / DWF baselines & scale (P7/P8).** The
+  inflow solver caches ext/DWF definitions at start (same cache class as P6).
+  New direct setters `swmm_ext_inflow_set_scale` / `_set_baseline` and
+  `swmm_dwf_set_baseline` (plus the add/remove paths) now refresh that cache so
+  a mid-run edit takes effect on the next step; bindings
+  `Inflows.set_external_scale` / `_baseline` / `set_dwf_baseline`. Legacy
+  parity for node-keyed `[INFLOWS]`/`[DWF]` baseline editing is deferred (the
+  legacy per-node linked-list inflow model has no flat-index API; runtime
+  inflow control remains available via `swmm_NODE_LATFLOW`) — see the audit
+  doc. Tests: `TestInflowBaselineRuntime`.
 
 - **§3 legacy water-quality source setters — functional tests.** The legacy
   `setPollutValue` source concentrations (rain/wet-deposition `pptConcen`,
