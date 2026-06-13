@@ -97,6 +97,13 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
   `AquiferParam`; legacy `swmm_AquiferProperty` (800 block) via the existing
   `swmm_AQUIFER` object case, binding `SWMMAquiferProperties`. Enum coverage
   +12 (aquifer). Tests: `TestAquiferParamsRuntime`, `TestLegacyAquiferParams`.
+- **Phase 4 wave B9 — adjustment arrays (P9): no setter, decision recorded.**
+  The audit closes the gap matrix without new code: the monthly climate
+  adjustment arrays are covered at runtime by the more direct Phase-1 forcing
+  setters, and the per-subcatchment N-PERV/DSTORE/INFIL adjustment patterns are
+  retunable mid-run via the P6 pattern-factor setter. See the audit doc for the
+  rationale. This completes the Phase 4 parameter-surface audit — every
+  §12.1 group now has a recorded disposition.
 
 - **§3 legacy water-quality source setters — functional tests.** The legacy
   `setPollutValue` source concentrations (rain/wet-deposition `pptConcen`,

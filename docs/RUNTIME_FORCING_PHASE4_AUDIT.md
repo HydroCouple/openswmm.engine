@@ -318,3 +318,55 @@ legacy): a flux-coefficient edit round-trips mid-run and the run stays finite;
 every structural parameter raises mid-run; pre-start structural edits
 round-trip and out-of-range values (porosity > 1, negative conductivity, evap
 fraction > 1) are rejected.
+
+---
+
+## Wave B9 — P9 adjustment arrays → **NO SETTER ADDED (decision recorded; no concrete consumer)**
+
+Per the plan (§12.2 / §12.3) and the handoff (§2.2), P9 is "lowest priority,
+only if a concrete consumer emerges." The audit confirms no runtime setter is
+warranted, because the two kinds of `[ADJUSTMENTS]` data are each already
+runtime-reachable by a *more direct* existing API:
+
+1. **Monthly climate-adjustment arrays** (`ctx.adjust_temp/evap/rain/hydcon[12]`,
+   legacy `Adjust.temp/evap/rain/hydcon[]`). These are calendar-month
+   calibration multipliers applied to the climate inputs. Runtime manipulation
+   of the *effective* temperature / evaporation / rainfall is already provided
+   — and more directly — by the **Phase-1 forcing setters** (climate temp/wind,
+   global & dry-only evap, subcatch rain/snow prescription), which act on the
+   live value the model actually uses. A 12-element month-indexed factor array
+   is a pre-start calibration construct; editing factor[month] mid-run to steer
+   the current step is strictly worse than the forcing override that already
+   exists. No consumer needs the array setter.
+
+2. **Per-subcatchment N-PERV / DSTORE / INFIL adjustment patterns**
+   (`subcatch_n_perv_pattern` / `_d_store_pattern` / `_infil_pattern`, indices
+   into the time-pattern tables). The adjustment *magnitude over time* is the
+   referenced pattern's factors — and those are **already runtime-editable**
+   via the P6 setter (`swmm_pattern_set_factors`, wave B1, made cache-coherent).
+   So a caller can already retune these adjustments mid-run by editing the
+   pattern they point at; a separate per-subcatchment adjustment setter would
+   duplicate that surface.
+
+**Outcome:** no new code, binding, enum, or test for P9. The capability the
+group represents is covered by Phase-1 forcing (climate) and P6 pattern
+factors (subcatchment adjustment patterns). This is the deliberate "skip"
+disposition, recorded here so the gap matrix is closed rather than left
+ambiguous. If a future caller genuinely needs to edit the bare monthly
+`adjust_*` arrays at runtime, the setter is a trivial add against
+`ctx.adjust_*` + a `ClimateState` refresh — but it is not built speculatively.
+
+---
+
+## Phase 4 status
+
+All parameter-surface groups in the §12.1 gap matrix now have a recorded
+disposition: **P1** pre-start-only (already guarded), **P2** sound +
+cache-fix + legacy parity, **P3** sound + cache-fix + legacy parity, **P4**
+sound, **P5** sound (init_conc guarded), **P6** sound + cache-fix + legacy
+parity, **P7/P8** sound + cache-fix (legacy node-keyed baseline deferred,
+flagged), **P10** new setter both engines (flux sound / structural pre-start),
+**P11** real setters (drain sound / layers pre-start) + legacy drain parity,
+**P9** skip (covered by Phase-1 forcing + P6). Flagged follow-ups: legacy
+node-keyed inflow baseline editing (P7/P8), and refactored LID layer-parameter
+unit conversion (P11).
