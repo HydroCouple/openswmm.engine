@@ -115,6 +115,7 @@ int omp_get_max_threads(void) { return 1; }
 #include "funcs.h"   // declaration of all global functions
 #include "error.h"   // error message codes
 #include "text.h"    // listing of all text strings
+#include "lid.h"     // LID runtime parameter API
 
 #include "openswmm_solver.h" // declaration of SWMM's API functions
 
@@ -1477,6 +1478,24 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setTreatment(int nodeIndex, int pollutan
     tok[2] = exprCopy;
     if (treatmnt_readExpression(tok, 3) != 0)
         return ERR_API_PROPERTY_VALUE;
+    return 0;
+}
+
+/*!
+ * \copydoc swmm_setLidDrain
+ * \details The underdrain parameters are read live each routing step
+ * (lidproc.c), so the edit takes effect on the next step. Values use
+ * input-file units, matching the [LID_CONTROLS] DRAIN line
+ * (coeff in/hr or mm/hr; offset in or mm).
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setLidDrain(int lidIndex, double coeff, double expon, double offset)
+{
+    int rc;
+    if (!IsOpenFlag)
+        return ERR_API_NOT_OPEN;
+    rc = lid_setDrainParams(lidIndex, coeff, expon, offset);
+    if (rc == 1) return ERR_API_OBJECT_INDEX;
+    if (rc == 2) return ERR_API_PROPERTY_VALUE;
     return 0;
 }
 

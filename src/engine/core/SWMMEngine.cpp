@@ -1655,6 +1655,39 @@ int SWMMEngine::refreshTreatment(int node_idx, int pollut_idx) noexcept {
 }
 
 // ============================================================================
+// refreshLIDDrainParams() — re-copy drain coefficients into the LID solver
+// ============================================================================
+
+/**
+ * @brief Re-copy the drain-layer coefficients from the live context into the
+ *        LID solver's per-unit parameter columns.
+ *
+ * @details The step loop reads the per-unit copies that LIDSolver::init()
+ * makes from ctx.lid_controls.drain at start, so a swmm_lid_set_drain edit
+ * would otherwise be silently inert mid-run. Mirrors the init() drain-layer
+ * transfer for every unit (a handful of values; no per-unit state is touched,
+ * so this is safe while the simulation is running).
+ */
+void SWMMEngine::refreshLIDDrainParams() noexcept {
+    const auto& drain = ctx_.lid_controls.drain;
+    for (int t = 0; t < lid_.numGroups(); ++t) {
+        auto& g = lid_.group(t);
+        for (int i = 0; i < g.count; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            int li = g.control_idx[ui];
+            if (li < 0 || static_cast<std::size_t>(li) >= drain.size()) continue;
+            const auto& p = drain[static_cast<std::size_t>(li)];
+            g.drain_coeff[ui]  = p[0];
+            g.drain_expon[ui]  = p[1];
+            g.drain_offset[ui] = p[2];
+            g.drain_delay[ui]  = p[3];
+            g.drain_hopen[ui]  = p[4];
+            g.drain_hclose[ui] = p[5];
+        }
+    }
+}
+
+// ============================================================================
 // stepSurfaceQuality() — surface quality buildup + washoff for one substep
 // ============================================================================
 

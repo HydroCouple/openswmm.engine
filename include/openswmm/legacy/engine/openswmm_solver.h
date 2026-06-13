@@ -1023,6 +1023,16 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setTreatment(int nodeIndex, int pollutan
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_clearTreatment(int nodeIndex, int pollutantIndex);
 
 /*!
+ * \brief Set the underdrain flow parameters of a LID process at runtime.
+ * \param[in] lidIndex LID process index
+ * \param[in] coeff Underdrain flow coefficient (in/hr or mm/hr)
+ * \param[in] expon Underdrain head exponent
+ * \param[in] offset Offset height of underdrain (in or mm)
+ * \return Error code
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setLidDrain(int lidIndex, double coeff, double expon, double offset);
+
+/*!
  * \brief Get saved value of
  * \param[in] property Property type
  * \param[in] index Object index

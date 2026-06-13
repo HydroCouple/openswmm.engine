@@ -71,6 +71,19 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
   prior `MathExpr` so runtime replaces don't leak; Python
   `Solver.set_treatment`/`clear_treatment` (+ `.pyi`). Tests:
   `TestTreatmentRuntime` (engine), `TestLegacyTreatment` (legacy).
+- **Phase 4 wave B7 — LID layer parameters (P11).** The four refactored LID
+  setters were silent no-op stubs; they now write `ctx.lid_controls.*` for
+  real. Split contract: surface/soil/storage are **pre-start-only** (they seed
+  per-unit LID state at start; `LifecycleError` mid-run, physical bounds
+  enforced) while the **drain** coefficients are runtime-editable
+  (`SWMMEngine::refreshLIDDrainParams` re-copies the per-unit drain columns
+  the step loop reads — the cistern/rain-barrel RTC knob). Legacy parity for
+  the sound group: `lid_setDrainParams` (`lid.c`, input-file units matching
+  `readDrainData`) + exported `swmm_setLidDrain` + `Solver.set_lid_drain`
+  binding. Tests: `TestLidParamsRuntime` (paired deterministic runs diverge
+  only after the mid-run drain edit), `TestLegacyLidDrain`. Flagged
+  follow-up: the refactored LID module lacks unit conversion of layer params
+  (consumes raw input values; legacy converts via UCF) — see the audit doc.
 
 - **§3 legacy water-quality source setters — functional tests.** The legacy
   `setPollutValue` source concentrations (rain/wet-deposition `pptConcen`,

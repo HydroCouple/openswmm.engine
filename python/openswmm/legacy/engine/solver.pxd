@@ -430,6 +430,13 @@ cdef extern from "openswmm_solver.h":
     # param: pollutantIndex: pollutant index
     cdef int swmm_clearTreatment(int nodeIndex, int pollutantIndex)
 
+    # Sets the underdrain flow parameters of a LID process at runtime
+    # param: lidIndex: LID process index
+    # param: coeff: underdrain flow coefficient (in/hr or mm/hr)
+    # param: expon: underdrain head exponent
+    # param: offset: offset height of underdrain (in or mm)
+    cdef int swmm_setLidDrain(int lidIndex, double coeff, double expon, double offset)
+
     # Retrieves the value of a property for an object of a given type and index
     # param: property: property type
     # param: index: object index

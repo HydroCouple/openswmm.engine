@@ -474,31 +474,84 @@ SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type) {
     return SWMM_OK;
 }
 
+// The surface/soil/storage layer parameters seed per-unit LID state at
+// start() (soil moisture from wilting point/porosity, storage depth from the
+// initial saturation), so mid-run mutation has no single correct meaning —
+// they are pre-start-only (SWMM_ERR_LIFECYCLE while running). The drain
+// parameters are pure flux coefficients evaluated each step against current
+// head, so swmm_lid_set_drain is callable mid-run and refreshes the LID
+// solver's per-unit parameter cache.
+
 SWMM_ENGINE_API int swmm_lid_set_surface(SWMM_Engine engine, int idx, double storage, double roughness, double slope) {
     CHECK_HANDLE(engine);
-    (void)idx; (void)storage; (void)roughness; (void)slope;
-    // TODO: implement when LID SoA store is expanded
+    auto& ctx = to_engine(engine)->context();
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED)
+        return SWMM_ERR_LIFECYCLE;
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (storage < 0.0 || roughness < 0.0 || slope < 0.0)
+        return SWMM_ERR_BADPARAM;
+    // SURFACE layer: [0]=StorHt, [1]=VegVolFrac, [2]=Roughness, [3]=SurfSlope
+    auto& p = ctx.lid_controls.surface[static_cast<std::size_t>(idx)];
+    p[0] = storage;
+    p[2] = roughness;
+    p[3] = slope;
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_lid_set_soil(SWMM_Engine engine, int idx, double thick, double porosity, double fc, double wp, double ksat, double kslope) {
     CHECK_HANDLE(engine);
-    (void)idx; (void)thick; (void)porosity; (void)fc; (void)wp; (void)ksat; (void)kslope;
-    // TODO: implement when LID SoA store is expanded
+    auto& ctx = to_engine(engine)->context();
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED)
+        return SWMM_ERR_LIFECYCLE;
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (thick < 0.0 || porosity <= 0.0 || porosity > 1.0
+        || fc < 0.0 || fc >= porosity || wp < 0.0 || wp >= fc
+        || ksat < 0.0)
+        return SWMM_ERR_BADPARAM;
+    // SOIL layer: [0]=Thick, [1]=Poros, [2]=FC, [3]=WP, [4]=Ksat, [5]=Kslope
+    auto& p = ctx.lid_controls.soil[static_cast<std::size_t>(idx)];
+    p[0] = thick;
+    p[1] = porosity;
+    p[2] = fc;
+    p[3] = wp;
+    p[4] = ksat;
+    p[5] = kslope;
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_lid_set_storage(SWMM_Engine engine, int idx, double thick, double void_frac, double ksat) {
     CHECK_HANDLE(engine);
-    (void)idx; (void)thick; (void)void_frac; (void)ksat;
-    // TODO: implement when LID SoA store is expanded
+    auto& ctx = to_engine(engine)->context();
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED)
+        return SWMM_ERR_LIFECYCLE;
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (thick < 0.0 || void_frac <= 0.0 || void_frac > 1.0 || ksat < 0.0)
+        return SWMM_ERR_BADPARAM;
+    // STORAGE layer: [0]=Thick, [1]=VoidRatio, [2]=Ksat
+    auto& p = ctx.lid_controls.storage[static_cast<std::size_t>(idx)];
+    p[0] = thick;
+    p[1] = void_frac;
+    p[2] = ksat;
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff, double expon, double offset) {
     CHECK_HANDLE(engine);
-    (void)idx; (void)coeff; (void)expon; (void)offset;
-    // TODO: implement when LID SoA store is expanded
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (coeff < 0.0 || expon < 0.0 || offset < 0.0)
+        return SWMM_ERR_BADPARAM;
+    // DRAIN layer: [0]=Coeff, [1]=Expon, [2]=Offset
+    auto& p = ctx.lid_controls.drain[static_cast<std::size_t>(idx)];
+    p[0] = coeff;
+    p[1] = expon;
+    p[2] = offset;
+    // The step loop reads the LID solver's per-unit copies; refresh them so a
+    // mid-run edit takes effect on the next step (no-op before start()).
+    to_engine(engine)->refreshLIDDrainParams();
     return SWMM_OK;
 }
 

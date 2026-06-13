@@ -1047,6 +1047,25 @@ class Solver:
         """
         ...
 
+    def set_lid_drain(self, lid_index: Union[int, str], coeff: float, expon: float, offset: float) -> None:
+        """
+        Set the underdrain flow parameters of a LID process at runtime.
+
+        The drain parameters are read live each routing step, so a mid-run
+        edit takes effect on the next step. Values use input-file units,
+        matching the [LID_CONTROLS] DRAIN line.
+
+        :param lid_index: LID process index or name (e.g., 0, 'RB1')
+        :type lid_index: int or str
+        :param coeff: Underdrain flow coefficient (in/hr or mm/hr)
+        :type coeff: float
+        :param expon: Underdrain head exponent
+        :type expon: float
+        :param offset: Offset height of the underdrain (in or mm)
+        :type offset: float
+        """
+        ...
+
     def get_value(self, object_type: SWMMObjects, property_type: Union[SWMMRainGageProperties, SWMMSubcatchmentProperties, SWMMNodeProperties, SWMMLinkProperties, SWMMSystemProperties], index: Union[int, str], sub_index: int = ...) -> float:
         """
         Get a SWMM system property value.

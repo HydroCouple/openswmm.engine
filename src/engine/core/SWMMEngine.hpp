@@ -224,6 +224,12 @@ public:
     /// nonzero parse-error code; a failed parse leaves the cell cleared.
     int refreshTreatment(int node_idx, int pollut_idx) noexcept;
 
+    /// Re-copy the drain-layer coefficients from the live context into the
+    /// LID solver's per-unit parameter columns (for C API runtime edits via
+    /// swmm_lid_set_drain). Touches no per-unit state, so it is safe mid-run;
+    /// a no-op before the solver is initialized.
+    void refreshLIDDrainParams() noexcept;
+
     /**
      * @brief Area-weighted snow depth (SWE, ft) on a subcatchment.
      *

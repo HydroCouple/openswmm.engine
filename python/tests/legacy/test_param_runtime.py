@@ -279,3 +279,68 @@ class TestLegacyTreatment:
             s.clear_treatment(name, 0)
         finally:
             s.end(); s.finalize()
+
+
+# --------------------------------------------------------------------------- #
+# P11 — LID underdrain parameters (legacy parity)
+#
+# The drain coefficients are read live each routing step (lidproc.c), so
+# swmm_setLidDrain is sound mid-run; surface/soil/storage layers stay an
+# input-file concern (they seed unit state at start), matching the refactored
+# pre-start-only guard.
+# --------------------------------------------------------------------------- #
+def _derive_lid_rb_model():
+    """site_drainage + 10 rain barrels on S1 with a closed drain (coeff=0).
+
+    The 2-yr storm ends by ~2 h; by 3 h the barrels hold water and J1 lateral
+    inflow has receded to ~0.004 cfs, so a mid-run drain-coefficient edit is
+    cleanly attributable.
+    """
+    os.makedirs(_OUT_DIR, exist_ok=True)
+    with open(_SITE_DRAINAGE) as f:
+        txt = f.read()
+    txt += (
+        "\n[LID_CONTROLS]\n"
+        ";;Name           Type/Layer Parameters\n"
+        "RB1              RB\n"
+        "RB1              STORAGE    36    0.75  0     0\n"
+        "RB1              DRAIN      0     0.5   0     0     0     0\n"
+        "\n[LID_USAGE]\n"
+        ";;Subcatchment   LID Process      Number  Area     Width    InitSat  FromImp  ToPerv\n"
+        "S1               RB1              10      100      0        0        50       0\n"
+    )
+    path = os.path.join(_OUT_DIR, "p11_lid_rb.inp")
+    with open(path, "w") as f:
+        f.write(txt)
+    return path
+
+
+class TestLegacyLidDrain:
+    def test_drain_edit_drains_barrels_mid_run(self):
+        """P11: opening the underdrain mid-run produces outlet inflow next step."""
+        s = _open(_derive_lid_rb_model(), "p11_legacy_drain")
+        try:
+            nodes = LegacyNodes(s)
+            j1 = s.get_object_index(solver.SWMMObjects.NODE, "J1")
+            while s.current_datetime.hour < 3:   # storm over, barrels full
+                s.step()
+            before = nodes[j1].lateral_inflow
+            s.set_lid_drain("RB1", 10.0, 0.5, 0.0)
+            for _ in range(4):
+                s.step()
+            after = nodes[j1].lateral_inflow
+            assert after > max(before, 1e-3) * 10, (before, after)
+        finally:
+            s.end(); s.finalize()
+
+    def test_drain_setter_bounds(self):
+        """P11: bad index and negative coefficients are rejected."""
+        s = _open(_derive_lid_rb_model(), "p11_legacy_drain_err")
+        try:
+            s.step()
+            with pytest.raises(Exception):
+                s.set_lid_drain(99, 1.0, 0.5, 0.0)
+            with pytest.raises(Exception):
+                s.set_lid_drain("RB1", -1.0, 0.5, 0.0)
+        finally:
+            s.end(); s.finalize()

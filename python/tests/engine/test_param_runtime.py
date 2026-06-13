@@ -392,3 +392,124 @@ class TestTreatmentRuntime:
             assert s.quality.get_treatment(0, pol).strip() == "R = 0.5"
         finally:
             s.end(); s.close(); s.destroy()
+
+
+# --------------------------------------------------------------------------- #
+# P11 — LID layer parameters
+#
+# Audit: the setters were silent no-op stubs; they now write
+# ctx.lid_controls.*. Surface/soil/storage seed per-unit LID state at start()
+# (soil moisture from wilting point/porosity, storage depth from the initial
+# saturation), so they are pre-start-only (LifecycleError while running). The
+# drain parameters are pure flux coefficients evaluated each step against
+# current head, so set_drain is callable mid-run; the step loop reads the LID
+# solver's per-unit copies, which SWMMEngine::refreshLIDDrainParams re-derives
+# on each edit.
+# --------------------------------------------------------------------------- #
+import re
+
+
+def _derive_lid_rb_model():
+    """site_drainage + 10 rain barrels on S1 (drain closed: coeff=0).
+
+    Deterministic per repo conventions (WET_STEP = ROUTING_STEP = 15 s,
+    VARIABLE_STEP 0) so step counts map to simulated time and paired runs are
+    bit-comparable. The 2-yr storm ends by ~2 h; at 3 h (step 720) the barrels
+    hold water and J1 lateral inflow has receded to ~0.006 cfs.
+    """
+    os.makedirs(_OUT_DIR, exist_ok=True)
+    with open(_LANDUSE_INP) as f:
+        txt = f.read()
+    txt = re.sub(r'^WET_STEP\s+\S+', 'WET_STEP             0:00:15',
+                 txt, count=1, flags=re.MULTILINE)
+    txt = re.sub(r'^VARIABLE_STEP\s+\S+', 'VARIABLE_STEP        0.0',
+                 txt, count=1, flags=re.MULTILINE)
+    txt += (
+        "\n[LID_CONTROLS]\n"
+        ";;Name           Type/Layer Parameters\n"
+        "RB1              RB\n"
+        "RB1              STORAGE    36    0.75  0     0\n"
+        "RB1              DRAIN      0     0.5   0     0     0     0\n"
+        "\n[LID_USAGE]\n"
+        ";;Subcatchment   LID Process      Number  Area     Width    InitSat  FromImp  ToPerv\n"
+        "S1               RB1              10      100      0        0        50       0\n"
+    )
+    path = os.path.join(_OUT_DIR, "p11_lid_rb.inp")
+    with open(path, "w") as f:
+        f.write(txt)
+    return path
+
+
+class TestLidParamsRuntime:
+    _EDIT_STEP = 720   # 3 h — storm over, barrels full, runoff receded
+    _END_STEP = 760
+
+    def _run(self, name, edit_at=None):
+        s = _open(_derive_lid_rb_model(), name)
+        series = []
+        try:
+            for i in range(self._END_STEP):
+                if edit_at is not None and i == edit_at:
+                    s.infrastructure.lids.set_drain(
+                        0, coeff=10.0, expon=0.5, offset=0.0)
+                s.step()
+                series.append(s.nodes["J1"].lateral_inflow)
+        finally:
+            s.end(); s.close(); s.destroy()
+        return series
+
+    def test_drain_edit_takes_effect_next_step(self):
+        """P11: a mid-run drain-coeff edit drains the barrels from the next step.
+
+        Paired deterministic runs: identical until the edit step, divergent
+        after — proving the edit (and only the edit) took effect.
+        """
+        base = self._run("p11_drain_base")
+        edit = self._run("p11_drain_edit", edit_at=self._EDIT_STEP)
+        assert base[:self._EDIT_STEP] == pytest.approx(edit[:self._EDIT_STEP], abs=1e-12)
+        pre = edit[self._EDIT_STEP - 1]
+        post = max(edit[self._EDIT_STEP:])
+        assert post > max(pre, 1e-3) * 10, (pre, post)
+        assert max(base[self._EDIT_STEP:]) < post / 10
+
+    def test_layer_setters_guarded_while_running(self):
+        """P11: surface/soil/storage are pre-start-only; drain is not guarded."""
+        s = _open(_derive_lid_rb_model(), "p11_guard")
+        try:
+            for _ in range(5):
+                s.step()
+            lids = s.infrastructure.lids
+            with pytest.raises(LifecycleError):
+                lids.set_surface(0, storage=1.0, roughness=0.1, slope=0.01)
+            with pytest.raises(LifecycleError):
+                lids.set_soil(0, thick=12.0, porosity=0.5, fc=0.2, wp=0.1,
+                              ksat=0.5, kslope=10.0)
+            with pytest.raises(LifecycleError):
+                lids.set_storage(0, thick=36.0, void_frac=0.75, ksat=0.5)
+            lids.set_drain(0, coeff=1.0, expon=0.5, offset=0.0)  # allowed
+        finally:
+            s.end(); s.close(); s.destroy()
+
+    def test_pre_start_layer_edits_accepted(self):
+        """P11: pre-start layer edits are accepted; bad values rejected."""
+        os.makedirs(_OUT_DIR, exist_ok=True)
+        base = os.path.join(_OUT_DIR, "p11_prestart")
+        s = Solver(_derive_lid_rb_model(), base + ".rpt", base + ".out")
+        s.open()
+        try:
+            lids = s.infrastructure.lids
+            lids.set_storage(0, thick=24.0, void_frac=0.5, ksat=0.0)
+            lids.set_drain(0, coeff=2.0, expon=0.5, offset=1.0)
+            with pytest.raises(BadParamError):
+                lids.set_soil(0, thick=12.0, porosity=1.5, fc=0.2, wp=0.1,
+                              ksat=0.5, kslope=10.0)   # porosity > 1
+            with pytest.raises(BadParamError):
+                lids.set_drain(0, coeff=-1.0, expon=0.5, offset=0.0)
+            s.initialize(); s.start()
+            import math
+            for _ in range(20):
+                s.step()
+            assert all(math.isfinite(s.nodes[i].depth)
+                       for i in range(len(s.nodes)))
+        finally:
+            s.end(); s.close(); s.destroy()

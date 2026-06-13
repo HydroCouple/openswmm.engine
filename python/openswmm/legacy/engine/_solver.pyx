@@ -70,6 +70,7 @@ from .solver cimport (
     swmm_setValueExpanded,
     swmm_setTreatment,
     swmm_clearTreatment,
+    swmm_setLidDrain,
     swmm_getSavedValue,
     swmm_writeLine,
     swmm_decodeDate,
@@ -1384,6 +1385,34 @@ cdef class Solver:
             element_index = node_index
 
         cdef int error_code = swmm_clearTreatment(element_index, <int>pollutant_index)
+
+        self.__validate_error(error_code)
+
+    def set_lid_drain(self, lid_index: Union[int, str], coeff: float, expon: float, offset: float) -> None:
+        """Set the underdrain flow parameters of a LID process at runtime.
+
+        The drain parameters are read live each routing step, so a mid-run
+        edit takes effect on the next step. Values use input-file units,
+        matching the C{[LID_CONTROLS]} DRAIN line.
+
+        @param lid_index: LID process index or name (e.g., C{0} or C{"RB1"}).
+        @type lid_index: int or str
+        @param coeff: Underdrain flow coefficient (in/hr or mm/hr).
+        @type coeff: float
+        @param expon: Underdrain head exponent.
+        @type expon: float
+        @param offset: Offset height of the underdrain (in or mm).
+        @type offset: float
+        """
+        cdef int element_index = -1
+
+        if isinstance(lid_index, str):
+            element_index = self.get_object_index(SWMMObjects.LID, lid_index)
+            self.__validate_error(element_index)
+        else:
+            element_index = lid_index
+
+        cdef int error_code = swmm_setLidDrain(element_index, coeff, expon, offset)
 
         self.__validate_error(error_code)
 

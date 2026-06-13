@@ -218,3 +218,57 @@ No new enums (dedicated functions), so enum coverage is unchanged. Tests:
 quality >2×, clear recovers, round-trip, bad-expression rejection preserves
 the previous expression) and `TestLegacyTreatment` (legacy: same effect test
 on a DWF-quality fixture, name resolution, garbage/bad-index rejection).
+
+---
+
+## Wave B7 — P11 LID layer parameters → **SPLIT: drain SOUND mid-run; surface/soil/storage PRE-START-ONLY (stubs made real)**
+
+**The premise was worse than a cache:** all four refactored setters
+(`swmm_lid_set_surface/_soil/_storage/_drain`) were **silent no-op stubs** —
+they returned `SWMM_OK` without writing anything ("TODO: implement when LID
+SoA store is expanded"), the worst kind of middle ground. The Python bindings
+(`infrastructure.lids.set_*`) already called them, so callers were being lied
+to. All four now actually write `ctx.lid_controls.*` (the same arrays the
+`[LID_CONTROLS]` parser fills, raw input-file units).
+
+**Per-layer outcome.** `LIDSolver::init()` (start) builds per-unit SoA copies
+of the layer params **and seeds per-unit state from them** (soil moisture from
+`wp + initSat·(porosity − wp)`, storage depth from `initSat·thick`), and the
+water-balance initial volumes. So:
+* **Surface / soil / storage → pre-start-only.** Mid-run mutation has no
+  single correct meaning (state seeded from the params; θ > porosity etc.);
+  guarded with the BUILDING/OPENED state check (`LifecycleError` while
+  running), the same class as P1 infiltration. Basic physical bounds enforced
+  (porosity/void ∈ (0,1], fc < porosity, wp < fc, non-negatives).
+* **Drain (coeff/expon/offset) → sound mid-run.** Pure flux coefficients
+  evaluated each step against current head — the classic RTC/calibration knob
+  (cistern/rain-barrel drain control). The step loop reads the LID solver's
+  per-unit copies, so `swmm_lid_set_drain` calls the new
+  `SWMMEngine::refreshLIDDrainParams()` (re-copies the drain columns for every
+  unit; touches no state; no-op before start).
+
+**Legacy parity (drain only, per protocol).** Legacy `TLidProc.drain.*` is
+read live each step (`lidproc.c`), so the parity setter is live with no cache:
+`lid_setDrainParams` in `lid.c` (mirrors `readDrainData` units — coeff in
+in/hr / mm/hr raw, offset ÷ `UCF(RAINDEPTH)`) wrapped by the exported
+`swmm_setLidDrain`; binding `Solver.set_lid_drain` (accepts index or name via
+`swmm_LID`). Surface/soil/storage stay an input-file concern in legacy,
+matching the refactored guard.
+
+**Tests.** Fixture: site_drainage + 10 rain barrels on S1 with a closed drain
+(coeff 0), so the barrels fill in the storm and hold; by 3 h outlet J1 has
+receded to ~0.005 cfs. Refactored (`TestLidParamsRuntime`): paired
+deterministic runs (WET_STEP = ROUTING_STEP, VARIABLE_STEP 0) are
+bit-identical until the mid-run drain edit and divergent after (J1 jumps to
+~21 cfs); layer guards raise `LifecycleError` mid-run; pre-start edits
+accepted with bad values rejected. Legacy (`TestLegacyLidDrain`): the same
+mid-run edit raises J1 from ~0.004 to ~1.0 cfs next steps; bad index/negative
+coeff rejected.
+
+**Flagged follow-up (pre-existing, not addressed here):** the refactored LID
+module consumes `ctx.lid_controls` values raw with no US⇄SI/in⇄ft conversion
+anywhere in `LID.cpp` (legacy converts at parse/use, e.g. `coeff/UCF(RAINFALL)`,
+`offset/UCF(RAINDEPTH)`), and the post-edit drain magnitudes differ between
+engines (~21 cfs vs ~1 cfs for the same fixture). The mid-run *contract* (edit
+applies next step) is verified for both engines independently of that gap, but
+LID unit alignment with legacy deserves its own audit.
