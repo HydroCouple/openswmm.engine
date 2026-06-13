@@ -262,6 +262,21 @@ cdef extern from "openswmm_solver.h":
         swmm_LANDUSE_WASHOFF_SWEEP_EFFIC # Washoff sweeping efficiency (0-1)
         swmm_LANDUSE_WASHOFF_BMP_EFFIC   # Washoff BMP efficiency (0-1)
 
+    # SWMM aquifer properties (input-file units)
+    ctypedef enum swmm_AquiferProperty:
+        swmm_AQUIFER_POROSITY = 800      # Porosity (fraction, pre-start-only)
+        swmm_AQUIFER_WILTING_POINT       # Wilting point (fraction, pre-start-only)
+        swmm_AQUIFER_FIELD_CAPACITY      # Field capacity (fraction, pre-start-only)
+        swmm_AQUIFER_CONDUCTIVITY        # Saturated conductivity (in/hr or mm/hr)
+        swmm_AQUIFER_CONDUCT_SLOPE       # Conductivity slope
+        swmm_AQUIFER_TENSION_SLOPE       # Tension slope (ft or m)
+        swmm_AQUIFER_UPPER_EVAP_FRAC     # Upper-zone evap fraction (0-1)
+        swmm_AQUIFER_LOWER_EVAP_DEPTH    # Lower-zone evap depth (ft or m)
+        swmm_AQUIFER_LOWER_LOSS_COEFF    # Lower-zone loss coeff (in/hr or mm/hr)
+        swmm_AQUIFER_BOTTOM_ELEV         # Bottom elevation (ft or m, pre-start-only)
+        swmm_AQUIFER_WATER_TABLE_ELEV    # Water table elev (ft or m, pre-start-only)
+        swmm_AQUIFER_UPPER_MOISTURE      # Upper moisture (fraction, pre-start-only)
+
     # SWMM flow units enumeration
     ctypedef enum swmm_FlowUnitsProperty:
         swmm_CFS  # Cubic feet per second

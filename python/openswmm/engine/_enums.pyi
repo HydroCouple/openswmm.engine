@@ -410,6 +410,37 @@ class LidType(IntEnum):
     VEGETATIVE_SWALE = 7
 
 
+class AquiferParam(IntEnum):
+    """Aquifer parameter codes for Aquifers.get_param / set_param.
+
+    @cvar POROSITY: Porosity (volumetric fraction).
+    @cvar WILTING_POINT: Wilting point (volumetric fraction).
+    @cvar FIELD_CAPACITY: Field capacity (volumetric fraction).
+    @cvar CONDUCTIVITY: Saturated hydraulic conductivity.
+    @cvar CONDUCT_SLOPE: Conductivity slope.
+    @cvar TENSION_SLOPE: Tension slope.
+    @cvar UPPER_EVAP_FRAC: Upper-zone evaporation fraction.
+    @cvar LOWER_EVAP_DEPTH: Lower-zone evaporation depth.
+    @cvar LOWER_LOSS_COEFF: Lower-zone seepage-loss coefficient.
+    @cvar BOTTOM_ELEV: Aquifer bottom elevation.
+    @cvar WATER_TABLE_ELEV: Initial water table elevation.
+    @cvar UPPER_MOISTURE: Initial upper-zone moisture.
+    """
+
+    POROSITY = 0
+    WILTING_POINT = 1
+    FIELD_CAPACITY = 2
+    CONDUCTIVITY = 3
+    CONDUCT_SLOPE = 4
+    TENSION_SLOPE = 5
+    UPPER_EVAP_FRAC = 6
+    LOWER_EVAP_DEPTH = 7
+    LOWER_LOSS_COEFF = 8
+    BOTTOM_ELEV = 9
+    WATER_TABLE_ELEV = 10
+    UPPER_MOISTURE = 11
+
+
 # =============================================================================
 # Output variables
 # =============================================================================

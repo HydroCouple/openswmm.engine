@@ -230,6 +230,13 @@ public:
     /// a no-op before the solver is initialized.
     void refreshLIDDrainParams() noexcept;
 
+    /// Re-derive the groundwater solver's per-subcatchment flux-coefficient
+    /// columns (conductivity, slopes, evap/loss coefficients) from the live
+    /// context aquifers (for C API runtime edits via swmm_aquifer_set_param).
+    /// Leaves the structural columns (porosity/field capacity/wilting point/
+    /// total depth) and the GW state (theta, lower_depth) untouched.
+    void refreshAquiferParams() noexcept;
+
     /**
      * @brief Area-weighted snow depth (SWE, ft) on a subcatchment.
      *

@@ -272,3 +272,49 @@ anywhere in `LID.cpp` (legacy converts at parse/use, e.g. `coeff/UCF(RAINFALL)`,
 engines (~21 cfs vs ~1 cfs for the same fixture). The mid-run *contract* (edit
 applies next step) is verified for both engines independently of that gap, but
 LID unit alignment with legacy deserves its own audit.
+
+---
+
+## Wave B8 — P10 aquifer parameters → **NEW SETTER both engines: flux coefficients SOUND mid-run; structural/initial PRE-START-ONLY**
+
+**The premise was right: no aquifer setter existed in either engine** (the
+gap-plan §12.1 P10 note). Added one to each, parameterized by a 12-member
+parameter enum (the `[AQUIFERS]` columns).
+
+**Per-parameter split.** The groundwater solver makes per-subcatchment copies
+of the aquifer parameters at start (`SWMMEngine.cpp` GW-init transfer; legacy
+re-reads `Aquifer[]` each step in `gwater.c`). Two classes:
+* **Flux coefficients → sound mid-run.** Conductivity, conductivity slope,
+  tension slope, upper-evap fraction, lower-evap depth, lower-loss coefficient
+  enter only the per-step Darcy/evap flux terms. Refactored: the setter
+  re-derives the GW solver's flux columns via the new
+  `SWMMEngine::refreshAquiferParams()` (same unit conversions as the start
+  transfer; leaves the structural columns and GW state alone). Legacy: read
+  live, no cache.
+* **Structural / initial conditions → pre-start-only.** Porosity, wilting
+  point, field capacity, bottom elevation, water-table elevation, upper
+  moisture *bound or seed* GW state (`theta`, `lower_depth`, `total_depth`
+  derived once at start). Mutating them mid-run has no single correct meaning,
+  so both engines reject it while running (refactored `SWMM_ERR_LIFECYCLE` →
+  `LifecycleError`; legacy `ERR_API_IS_RUNNING`), matching the P1/P11-surface
+  precedent.
+
+**Refactored API.** `swmm_aquifer_get_param` / `swmm_aquifer_set_param`
+(`openswmm_subcatchments.h`, `SWMM_AquiferParam` enum), input-file units; the
+setter applies per-class bounds (fractions ∈ [0,1], non-negatives, elevations
+free) and the lifecycle guard, then refreshes the GW flux columns when
+running. Binding: `Aquifers.get_param` / `set_param` + `AquiferParam` enum
+(exported, `.pyi`).
+
+**Legacy parity.** New `swmm_AquiferProperty` enum (800 block) routed through
+`swmm_get/setValueExpanded`'s existing `swmm_AQUIFER` object case;
+`get/setAquiferValue` in `swmm5.c` invert the storage conversions of
+`gwater_readAquiferParams` (conductivity/loss ×`UCF(RAINFALL)`, tension/depth/
+elev ×`UCF(LENGTH)`). Binding: `SWMMAquiferProperties` enum used with the
+existing `Solver.set_value`/`get_value`. Enum coverage updated (aquifer 12).
+
+**Tests** (`TestAquiferParamsRuntime` engine, `TestLegacyAquiferParams`
+legacy): a flux-coefficient edit round-trips mid-run and the run stays finite;
+every structural parameter raises mid-run; pre-start structural edits
+round-trip and out-of-range values (porosity > 1, negative conductivity, evap
+fraction > 1) are rejected.

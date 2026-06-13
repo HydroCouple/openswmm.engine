@@ -702,6 +702,59 @@ SWMM_ENGINE_API const char* swmm_aquifer_id(SWMM_Engine engine, int idx);
  */
 SWMM_ENGINE_API int swmm_aquifer_add(SWMM_Engine engine, const char* id);
 
+/**
+ * @brief Aquifer parameter codes for swmm_aquifer_get_param / _set_param.
+ *
+ * @details Values use input-file units (the same columns as the [AQUIFERS]
+ *          line). The flux-coefficient parameters (CONDUCTIVITY,
+ *          CONDUCT_SLOPE, TENSION_SLOPE, UPPER_EVAP_FRAC, LOWER_EVAP_DEPTH,
+ *          LOWER_LOSS_COEFF) are settable both before the simulation starts
+ *          and while it is running; the structural / initial-condition
+ *          parameters (POROSITY, WILTING_POINT, FIELD_CAPACITY, BOTTOM_ELEV,
+ *          WATER_TABLE_ELEV, UPPER_MOISTURE) bound or seed the groundwater
+ *          state and are pre-start-only.
+ */
+typedef enum SWMM_AquiferParam {
+    SWMM_AQUIFER_POROSITY = 0,
+    SWMM_AQUIFER_WILTING_POINT = 1,
+    SWMM_AQUIFER_FIELD_CAPACITY = 2,
+    SWMM_AQUIFER_CONDUCTIVITY = 3,
+    SWMM_AQUIFER_CONDUCT_SLOPE = 4,
+    SWMM_AQUIFER_TENSION_SLOPE = 5,
+    SWMM_AQUIFER_UPPER_EVAP_FRAC = 6,
+    SWMM_AQUIFER_LOWER_EVAP_DEPTH = 7,
+    SWMM_AQUIFER_LOWER_LOSS_COEFF = 8,
+    SWMM_AQUIFER_BOTTOM_ELEV = 9,
+    SWMM_AQUIFER_WATER_TABLE_ELEV = 10,
+    SWMM_AQUIFER_UPPER_MOISTURE = 11
+} SWMM_AquiferParam;
+
+/**
+ * @brief Get an aquifer parameter (input-file units).
+ * @param engine  Engine handle.
+ * @param idx     Zero-based aquifer index.
+ * @param param   A SWMM_AquiferParam code.
+ * @param value   Receives the parameter value.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_aquifer_get_param(SWMM_Engine engine, int idx, int param, double* value);
+
+/**
+ * @brief Set an aquifer parameter (input-file units).
+ *
+ * @details Flux-coefficient parameters take effect on the next step when set
+ *          mid-run (the groundwater solver's per-subcatchment copies are
+ *          refreshed); structural / initial-condition parameters return
+ *          SWMM_ERR_LIFECYCLE while the simulation is running.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based aquifer index.
+ * @param param   A SWMM_AquiferParam code.
+ * @param value   New parameter value.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_aquifer_set_param(SWMM_Engine engine, int idx, int param, double value);
+
 /* =========================================================================
  * Snowpack definitions ([SNOWPACKS] section) — Slice BM.0 / BP.6.6.5
  * ========================================================================= */

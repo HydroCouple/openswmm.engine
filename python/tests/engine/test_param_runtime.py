@@ -513,3 +513,83 @@ class TestLidParamsRuntime:
                        for i in range(len(s.nodes)))
         finally:
             s.end(); s.close(); s.destroy()
+
+
+# --------------------------------------------------------------------------- #
+# P10 — aquifer parameters
+#
+# Audit: there was no aquifer parameter setter in either engine. Added
+# swmm_aquifer_get_param / _set_param. The groundwater solver makes
+# per-subcatchment copies of the aquifer parameters at start(); the
+# flux-coefficient parameters (conductivity, slopes, evap/loss) are re-derived
+# by SWMMEngine::refreshAquiferParams on each edit so a mid-run change applies
+# next step, while the structural / initial-condition parameters (porosity,
+# wilting point, field capacity, elevations, upper moisture) bound or seed GW
+# state and are pre-start-only (LifecycleError while running).
+# --------------------------------------------------------------------------- #
+from openswmm.engine import AquiferParam
+
+_GW_INP = os.path.join(
+    _REPO_ROOT, "tests", "unit", "engine", "data", "refactored_small.inp")
+
+
+class TestAquiferParamsRuntime:
+    def test_flux_param_round_trip_mid_run(self):
+        """P10: a flux-coefficient edit round-trips mid-run (settable while running)."""
+        os.makedirs(_OUT_DIR, exist_ok=True)
+        base = os.path.join(_OUT_DIR, "p10_flux_rt")
+        s = Solver(_GW_INP, base + ".rpt", base + ".out")
+        s.open(); s.initialize(); s.start()
+        try:
+            assert len(s.aquifers) > 0
+            for _ in range(5):
+                s.step()
+            k = s.aquifers.get_param(0, AquiferParam.CONDUCTIVITY)
+            s.aquifers.set_param(0, AquiferParam.CONDUCTIVITY, k * 2.0 + 1.0)
+            assert s.aquifers.get_param(0, AquiferParam.CONDUCTIVITY) == \
+                pytest.approx(k * 2.0 + 1.0)
+            s.aquifers.set_param(0, AquiferParam.UPPER_EVAP_FRAC, 0.42)
+            assert s.aquifers.get_param(0, AquiferParam.UPPER_EVAP_FRAC) == \
+                pytest.approx(0.42)
+            # Run stays sane.
+            import math
+            for _ in range(20):
+                if not s.step():
+                    break
+                assert all(math.isfinite(s.nodes[i].depth)
+                           for i in range(len(s.nodes)))
+        finally:
+            s.end(); s.close(); s.destroy()
+
+    def test_structural_params_guarded_while_running(self):
+        """P10: structural params are pre-start-only (LifecycleError mid-run)."""
+        os.makedirs(_OUT_DIR, exist_ok=True)
+        base = os.path.join(_OUT_DIR, "p10_guard")
+        s = Solver(_GW_INP, base + ".rpt", base + ".out")
+        s.open(); s.initialize(); s.start()
+        try:
+            for _ in range(5):
+                s.step()
+            for p in (AquiferParam.POROSITY, AquiferParam.WILTING_POINT,
+                      AquiferParam.FIELD_CAPACITY, AquiferParam.BOTTOM_ELEV,
+                      AquiferParam.WATER_TABLE_ELEV, AquiferParam.UPPER_MOISTURE):
+                with pytest.raises(LifecycleError):
+                    s.aquifers.set_param(0, p, 0.3)
+        finally:
+            s.end(); s.close(); s.destroy()
+
+    def test_pre_start_edits_and_bounds(self):
+        """P10: pre-start structural edit round-trips; bad values rejected."""
+        os.makedirs(_OUT_DIR, exist_ok=True)
+        base = os.path.join(_OUT_DIR, "p10_prestart")
+        s = Solver(_GW_INP, base + ".rpt", base + ".out")
+        s.open()
+        try:
+            s.aquifers.set_param(0, AquiferParam.POROSITY, 0.45)
+            assert s.aquifers.get_param(0, AquiferParam.POROSITY) == pytest.approx(0.45)
+            with pytest.raises(BadParamError):
+                s.aquifers.set_param(0, AquiferParam.POROSITY, 1.5)   # fraction > 1
+            with pytest.raises(BadParamError):
+                s.aquifers.set_param(0, AquiferParam.CONDUCTIVITY, -1.0)
+        finally:
+            s.close(); s.destroy()   # never started — no end()

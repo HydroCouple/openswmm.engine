@@ -344,3 +344,59 @@ class TestLegacyLidDrain:
                 s.set_lid_drain("RB1", -1.0, 0.5, 0.0)
         finally:
             s.end(); s.finalize()
+
+
+# --------------------------------------------------------------------------- #
+# P10 — aquifer parameters (legacy parity)
+#
+# Aquifer[] is re-read each step (gwater.c), so the flux-coefficient
+# properties are settable while running with no cache; the structural /
+# initial-condition properties bound or seed groundwater state and return
+# ERR_API_IS_RUNNING mid-run, matching the refactored guard.
+# --------------------------------------------------------------------------- #
+_AQ = solver.SWMMObjects.AQUIFER
+_AqProp = solver.SWMMAquiferProperties
+
+
+class TestLegacyAquiferParams:
+    def test_flux_param_round_trip_mid_run(self):
+        """P10: a flux-coefficient edit round-trips mid-run (input-file units)."""
+        s = _open(_derive_dwf_model(), "p10_legacy_flux")
+        try:
+            assert s.get_object_count(_AQ) > 0
+            for _ in range(5):
+                s.step()
+            k = s.get_value(_AQ, _AqProp.CONDUCTIVITY, 0)
+            s.set_value(_AQ, _AqProp.CONDUCTIVITY, 0, k * 2.0 + 1.0)
+            assert s.get_value(_AQ, _AqProp.CONDUCTIVITY, 0) == \
+                pytest.approx(k * 2.0 + 1.0)
+            s.set_value(_AQ, _AqProp.UPPER_EVAP_FRAC, 0, 0.42)
+            assert s.get_value(_AQ, _AqProp.UPPER_EVAP_FRAC, 0) == \
+                pytest.approx(0.42)
+        finally:
+            s.end(); s.finalize()
+
+    def test_structural_param_rejected_running(self):
+        """P10: structural params are rejected mid-run (pre-start-only)."""
+        s = _open(_derive_dwf_model(), "p10_legacy_guard")
+        try:
+            for _ in range(5):
+                s.step()
+            with pytest.raises(Exception):
+                s.set_value(_AQ, _AqProp.POROSITY, 0, 0.4)
+            with pytest.raises(Exception):
+                s.set_value(_AQ, _AqProp.WATER_TABLE_ELEV, 0, 10.0)
+        finally:
+            s.end(); s.finalize()
+
+    def test_flux_param_bounds_rejected(self):
+        """P10: out-of-range flux values are rejected."""
+        s = _open(_derive_dwf_model(), "p10_legacy_bounds")
+        try:
+            s.step()
+            with pytest.raises(Exception):
+                s.set_value(_AQ, _AqProp.CONDUCTIVITY, 0, -1.0)
+            with pytest.raises(Exception):
+                s.set_value(_AQ, _AqProp.UPPER_EVAP_FRAC, 0, 2.0)
+        finally:
+            s.end(); s.finalize()

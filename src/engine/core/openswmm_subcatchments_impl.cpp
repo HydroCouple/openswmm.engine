@@ -857,6 +857,95 @@ SWMM_ENGINE_API int swmm_aquifer_add(SWMM_Engine engine, const char* id) {
     return SWMM_OK;
 }
 
+namespace {
+// Map a SWMM_AquiferParam code to the backing store vector (input-file units).
+std::vector<double>* aquifer_param_vec(openswmm::SimulationContext& ctx, int param) {
+    auto& aq = ctx.aquifers;
+    switch (param) {
+        case SWMM_AQUIFER_POROSITY:         return &aq.porosity;
+        case SWMM_AQUIFER_WILTING_POINT:    return &aq.wilting_point;
+        case SWMM_AQUIFER_FIELD_CAPACITY:   return &aq.field_capacity;
+        case SWMM_AQUIFER_CONDUCTIVITY:     return &aq.conductivity;
+        case SWMM_AQUIFER_CONDUCT_SLOPE:    return &aq.conduct_slope;
+        case SWMM_AQUIFER_TENSION_SLOPE:    return &aq.tension_slope;
+        case SWMM_AQUIFER_UPPER_EVAP_FRAC:  return &aq.upper_evap;
+        case SWMM_AQUIFER_LOWER_EVAP_DEPTH: return &aq.lower_evap;
+        case SWMM_AQUIFER_LOWER_LOSS_COEFF: return &aq.lower_loss;
+        case SWMM_AQUIFER_BOTTOM_ELEV:      return &aq.bottom_elev;
+        case SWMM_AQUIFER_WATER_TABLE_ELEV: return &aq.water_table_elev;
+        case SWMM_AQUIFER_UPPER_MOISTURE:   return &aq.upper_moist;
+        default: return nullptr;
+    }
+}
+
+// Structural / initial-condition parameters bound or seed groundwater state,
+// so they may only change before start(); the flux coefficients are read
+// (via the solver's refreshed copies) each step and are sound mid-run.
+bool aquifer_param_prestart_only(int param) {
+    switch (param) {
+        case SWMM_AQUIFER_POROSITY:
+        case SWMM_AQUIFER_WILTING_POINT:
+        case SWMM_AQUIFER_FIELD_CAPACITY:
+        case SWMM_AQUIFER_BOTTOM_ELEV:
+        case SWMM_AQUIFER_WATER_TABLE_ELEV:
+        case SWMM_AQUIFER_UPPER_MOISTURE:
+            return true;
+        default:
+            return false;
+    }
+}
+} // namespace
+
+SWMM_ENGINE_API int swmm_aquifer_get_param(SWMM_Engine engine, int idx, int param, double* value) {
+    CHECK_HANDLE(engine);
+    if (!value) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.aquifers.count());
+    const auto* vec = aquifer_param_vec(ctx, param);
+    if (!vec) return SWMM_ERR_BADPARAM;
+    *value = (*vec)[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_aquifer_set_param(SWMM_Engine engine, int idx, int param, double value) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.aquifers.count());
+    auto* vec = aquifer_param_vec(ctx, param);
+    if (!vec) return SWMM_ERR_BADPARAM;
+
+    const bool editable = (ctx.state == openswmm::EngineState::BUILDING ||
+                           ctx.state == openswmm::EngineState::OPENED);
+    if (aquifer_param_prestart_only(param) && !editable)
+        return SWMM_ERR_LIFECYCLE;
+
+    // Light physical bounds (full cross-field validation runs at start —
+    // Gap #81): fractions in [0, 1], everything but elevations non-negative.
+    switch (param) {
+        case SWMM_AQUIFER_POROSITY:
+        case SWMM_AQUIFER_WILTING_POINT:
+        case SWMM_AQUIFER_FIELD_CAPACITY:
+        case SWMM_AQUIFER_UPPER_EVAP_FRAC:
+        case SWMM_AQUIFER_UPPER_MOISTURE:
+            if (value < 0.0 || value > 1.0) return SWMM_ERR_BADPARAM;
+            break;
+        case SWMM_AQUIFER_BOTTOM_ELEV:
+        case SWMM_AQUIFER_WATER_TABLE_ELEV:
+            break;  // elevations may be negative
+        default:
+            if (value < 0.0) return SWMM_ERR_BADPARAM;
+            break;
+    }
+
+    (*vec)[static_cast<std::size_t>(idx)] = value;
+
+    // The GW solver reads per-subcatchment copies made at start; re-derive
+    // the flux-coefficient columns so a mid-run edit applies next step.
+    if (!editable)
+        to_engine(engine)->refreshAquiferParams();
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Snowpacks ([SNOWPACKS] section) — Slice BM.0 list + add; setters land with BP
 // ============================================================================

@@ -84,6 +84,19 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
   only after the mid-run drain edit), `TestLegacyLidDrain`. Flagged
   follow-up: the refactored LID module lacks unit conversion of layer params
   (consumes raw input values; legacy converts via UCF) — see the audit doc.
+- **Phase 4 wave B8 — aquifer parameters (P10).** New setter in both engines
+  (none existed before). Flux coefficients (conductivity, conductivity slope,
+  tension slope, upper-evap fraction, lower-evap depth, lower-loss coefficient)
+  are runtime-editable — refactored `SWMMEngine::refreshAquiferParams` re-derives
+  the groundwater solver's per-subcatchment flux columns on each edit; legacy
+  reads `Aquifer[]` live. Structural / initial-condition parameters (porosity,
+  wilting point, field capacity, bottom/water-table elevation, upper moisture)
+  seed GW state and are pre-start-only (`LifecycleError` / `ERR_API_IS_RUNNING`
+  while running). Refactored `swmm_aquifer_get_param`/`_set_param` +
+  `SWMM_AquiferParam` enum, binding `Aquifers.get_param`/`set_param` +
+  `AquiferParam`; legacy `swmm_AquiferProperty` (800 block) via the existing
+  `swmm_AQUIFER` object case, binding `SWMMAquiferProperties`. Enum coverage
+  +12 (aquifer). Tests: `TestAquiferParamsRuntime`, `TestLegacyAquiferParams`.
 
 - **§3 legacy water-quality source setters — functional tests.** The legacy
   `setPollutValue` source concentrations (rain/wet-deposition `pptConcen`,

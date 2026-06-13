@@ -441,6 +441,45 @@ typedef enum
 } swmm_LanduseProperty;
 
 /*!
+ * \enum swmm_AquiferProperty
+ * \brief Enumeration of aquifer properties used in SWMM5.
+ * \details Values use input-file units (the [AQUIFERS] line columns). The
+ * flux-coefficient properties (conductivity, slopes, evap/loss coefficients)
+ * are read live each step, so they are settable both before the simulation
+ * starts and while it is running; the structural / initial-condition
+ * properties (porosity, wilting point, field capacity, bottom elevation,
+ * water table elevation, upper moisture) bound or seed the groundwater state
+ * and return \c ERR_API_IS_RUNNING while the simulation is running.
+ */
+typedef enum
+{
+    /*! \brief Porosity (volumetric fraction, pre-start-only) */
+    swmm_AQUIFER_POROSITY = 800,
+    /*! \brief Wilting point (volumetric fraction, pre-start-only) */
+    swmm_AQUIFER_WILTING_POINT,
+    /*! \brief Field capacity (volumetric fraction, pre-start-only) */
+    swmm_AQUIFER_FIELD_CAPACITY,
+    /*! \brief Saturated hydraulic conductivity (in/hr or mm/hr) */
+    swmm_AQUIFER_CONDUCTIVITY,
+    /*! \brief Conductivity slope (unitless) */
+    swmm_AQUIFER_CONDUCT_SLOPE,
+    /*! \brief Tension slope (ft or m) */
+    swmm_AQUIFER_TENSION_SLOPE,
+    /*! \brief Upper-zone evaporation fraction (0-1) */
+    swmm_AQUIFER_UPPER_EVAP_FRAC,
+    /*! \brief Lower-zone evaporation depth (ft or m) */
+    swmm_AQUIFER_LOWER_EVAP_DEPTH,
+    /*! \brief Lower-zone seepage-loss coefficient (in/hr or mm/hr) */
+    swmm_AQUIFER_LOWER_LOSS_COEFF,
+    /*! \brief Aquifer bottom elevation (ft or m, pre-start-only) */
+    swmm_AQUIFER_BOTTOM_ELEV,
+    /*! \brief Initial water table elevation (ft or m, pre-start-only) */
+    swmm_AQUIFER_WATER_TABLE_ELEV,
+    /*! \brief Initial upper-zone moisture (volumetric fraction, pre-start-only) */
+    swmm_AQUIFER_UPPER_MOISTURE,
+} swmm_AquiferProperty;
+
+/*!
  * \enum swmm_SystemProperty
  * \brief Enumeration of system properties used in SWMM5
  */

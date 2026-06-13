@@ -23,6 +23,7 @@ from ._solver import (
     SWMMPollutantProperties,
     SWMMPatternProperties,
     SWMMLandUseProperties,
+    SWMMAquiferProperties,
     SWMMFlowUnits,
     SWMMAPIErrors,
     run_solver,

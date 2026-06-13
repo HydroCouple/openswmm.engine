@@ -119,6 +119,7 @@ from ._enums import (
     GageRainType as GageRainType,
     InfilModel as InfilModel,
     # Water quality / LID
+    AquiferParam as AquiferParam,
     BuildupFunc as BuildupFunc,
     ConcentrationUnits as ConcentrationUnits,
     LidType as LidType,

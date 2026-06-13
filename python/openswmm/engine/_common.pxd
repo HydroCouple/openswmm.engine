@@ -402,6 +402,8 @@ cdef extern from "openswmm_subcatchments.h":
     cdef int         swmm_aquifer_index(SWMM_Engine e, const char* id)
     cdef const char* swmm_aquifer_id(SWMM_Engine e, int idx)
     cdef int         swmm_aquifer_add(SWMM_Engine e, const char* id)
+    cdef int         swmm_aquifer_get_param(SWMM_Engine e, int idx, int param, double* value)
+    cdef int         swmm_aquifer_set_param(SWMM_Engine e, int idx, int param, double value)
     cdef int         swmm_snowpack_count(SWMM_Engine e)
     cdef int         swmm_snowpack_index(SWMM_Engine e, const char* id)
     cdef const char* swmm_snowpack_id(SWMM_Engine e, int idx)

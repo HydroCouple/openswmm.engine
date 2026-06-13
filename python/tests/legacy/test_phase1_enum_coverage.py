@@ -148,6 +148,16 @@ class TestSystemEnumCoverage(unittest.TestCase):
             solver.SWMMLandUseProperties.WASHOFF_BMP_EFFIC.value, 711)
         self.assertEqual(len(solver.SWMMLandUseProperties), 12)
 
+    def test_aquifer_enum(self):
+        """Aquifer properties (800 block; P10 parity)."""
+        self.assertEqual(
+            solver.SWMMAquiferProperties.POROSITY.value, 800)
+        self.assertEqual(
+            solver.SWMMAquiferProperties.CONDUCTIVITY.value, 803)
+        self.assertEqual(
+            solver.SWMMAquiferProperties.UPPER_MOISTURE.value, 811)
+        self.assertEqual(len(solver.SWMMAquiferProperties), 12)
+
 
 class TestNodeEnumCoverage(unittest.TestCase):
     """Verify all 16 node enum members are present (TYPE..OUTFLOW, 300-315)."""

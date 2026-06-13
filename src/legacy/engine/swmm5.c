@@ -393,6 +393,25 @@ static double getLanduseValue(int property, int index, int subIndex);
 static int setLanduseValue(int property, int index, int subIndex, double value);
 
 /*!
+ * \brief Get an aquifer property (input-file units).
+ * \param[in] property Property type (swmm_AquiferProperty)
+ * \param[in] index Aquifer index
+ * \return Property value or API error sentinel
+ */
+static double getAquiferValue(int property, int index);
+
+/*!
+ * \brief Set an aquifer property (input-file units). Flux coefficients are
+ * settable while running; structural / initial-condition properties are
+ * pre-start-only.
+ * \param[in] property Property type (swmm_AquiferProperty)
+ * \param[in] index Aquifer index
+ * \param[in] value Property value
+ * \return Error code
+ */
+static int setAquiferValue(int property, int index, double value);
+
+/*!
  * \brief Set node value given its property type, index, subindex, and value.
  * \param[in] property Property type
  * \param[in] index Object index
@@ -1342,6 +1361,8 @@ double EXPORT_OPENSWMMCORE_SOLVER_API swmm_getValueExpanded(int objType, int pro
         return getPatternValue(property, index, subIndex);
     case swmm_LANDUSE:
         return getLanduseValue(property, index, subIndex);
+    case swmm_AQUIFER:
+        return getAquiferValue(property, index);
     default:
         return ERR_API_OBJECT_TYPE;
     }
@@ -1433,6 +1454,8 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValueExpanded(int objType, int proper
         return setPatternValue(property, index, subIndex, value);
     case swmm_LANDUSE:
         return setLanduseValue(property, index, subIndex, value);
+    case swmm_AQUIFER:
+        return setAquiferValue(property, index, value);
     default:
         return ERR_API_OBJECT_TYPE;
     }
@@ -1818,6 +1841,122 @@ int setLanduseValue(int property, int index, int subIndex, double value)
     case swmm_LANDUSE_WASHOFF_BMP_EFFIC:
         if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
         Landuse[index].washoffFunc[subIndex].bmpEffic = value;
+        return 0;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc getAquiferValue
+ * \details Values are reported in input-file units, inverting the storage
+ * conversions of gwater_readAquiferParams.
+ */
+double getAquiferValue(int property, int index)
+{
+    if (index < 0 || index >= Nobjects[AQUIFER])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_AQUIFER_POROSITY:
+        return Aquifer[index].porosity;
+    case swmm_AQUIFER_WILTING_POINT:
+        return Aquifer[index].wiltingPoint;
+    case swmm_AQUIFER_FIELD_CAPACITY:
+        return Aquifer[index].fieldCapacity;
+    case swmm_AQUIFER_CONDUCTIVITY:
+        return Aquifer[index].conductivity * UCF(RAINFALL);
+    case swmm_AQUIFER_CONDUCT_SLOPE:
+        return Aquifer[index].conductSlope;
+    case swmm_AQUIFER_TENSION_SLOPE:
+        return Aquifer[index].tensionSlope * UCF(LENGTH);
+    case swmm_AQUIFER_UPPER_EVAP_FRAC:
+        return Aquifer[index].upperEvapFrac;
+    case swmm_AQUIFER_LOWER_EVAP_DEPTH:
+        return Aquifer[index].lowerEvapDepth * UCF(LENGTH);
+    case swmm_AQUIFER_LOWER_LOSS_COEFF:
+        return Aquifer[index].lowerLossCoeff * UCF(RAINFALL);
+    case swmm_AQUIFER_BOTTOM_ELEV:
+        return Aquifer[index].bottomElev * UCF(LENGTH);
+    case swmm_AQUIFER_WATER_TABLE_ELEV:
+        return Aquifer[index].waterTableElev * UCF(LENGTH);
+    case swmm_AQUIFER_UPPER_MOISTURE:
+        return Aquifer[index].upperMoisture;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc setAquiferValue
+ * \details The per-step groundwater computation re-reads Aquifer[] each step
+ * (gwater.c), so the flux-coefficient edits take effect on the next step with
+ * no cache to refresh. Structural / initial-condition properties bound or
+ * seed the groundwater state and are rejected while the simulation is
+ * running. Storage conversions match gwater_readAquiferParams.
+ */
+int setAquiferValue(int property, int index, double value)
+{
+    if (index < 0 || index >= Nobjects[AQUIFER])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    // --- structural / initial conditions: pre-start-only
+    case swmm_AQUIFER_POROSITY:
+        if (IsStartedFlag) return ERR_API_IS_RUNNING;
+        if (value <= 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].porosity = value;
+        return 0;
+    case swmm_AQUIFER_WILTING_POINT:
+        if (IsStartedFlag) return ERR_API_IS_RUNNING;
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].wiltingPoint = value;
+        return 0;
+    case swmm_AQUIFER_FIELD_CAPACITY:
+        if (IsStartedFlag) return ERR_API_IS_RUNNING;
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].fieldCapacity = value;
+        return 0;
+    case swmm_AQUIFER_BOTTOM_ELEV:
+        if (IsStartedFlag) return ERR_API_IS_RUNNING;
+        Aquifer[index].bottomElev = value / UCF(LENGTH);
+        return 0;
+    case swmm_AQUIFER_WATER_TABLE_ELEV:
+        if (IsStartedFlag) return ERR_API_IS_RUNNING;
+        Aquifer[index].waterTableElev = value / UCF(LENGTH);
+        return 0;
+    case swmm_AQUIFER_UPPER_MOISTURE:
+        if (IsStartedFlag) return ERR_API_IS_RUNNING;
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].upperMoisture = value;
+        return 0;
+
+    // --- flux coefficients: read live each step, settable while running
+    case swmm_AQUIFER_CONDUCTIVITY:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].conductivity = value / UCF(RAINFALL);
+        return 0;
+    case swmm_AQUIFER_CONDUCT_SLOPE:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].conductSlope = value;
+        return 0;
+    case swmm_AQUIFER_TENSION_SLOPE:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].tensionSlope = value / UCF(LENGTH);
+        return 0;
+    case swmm_AQUIFER_UPPER_EVAP_FRAC:
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].upperEvapFrac = value;
+        return 0;
+    case swmm_AQUIFER_LOWER_EVAP_DEPTH:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].lowerEvapDepth = value / UCF(LENGTH);
+        return 0;
+    case swmm_AQUIFER_LOWER_LOSS_COEFF:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].lowerLossCoeff = value / UCF(RAINFALL);
         return 0;
     default:
         return ERR_API_PROPERTY_TYPE;

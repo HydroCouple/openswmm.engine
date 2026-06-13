@@ -39,8 +39,8 @@ cimport numpy as np
 from collections.abc import MutableMapping
 
 from ._common cimport *
-from ._enums import InfilModel
-from ._exceptions import StaleObjectError
+from ._enums import InfilModel, AquiferParam
+from ._exceptions import ElementNotFoundError, StaleObjectError
 
 
 # =============================================================================
@@ -704,7 +704,7 @@ cdef class Subcatchments:
         cdef bytes b = sub_id.encode('utf-8')
         cdef int i = swmm_subcatch_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(sub_id)
+            raise ElementNotFoundError(sub_id)
         return i
 
     def get_id(self, int idx) -> str:
@@ -868,7 +868,7 @@ cdef class _NamedObjects:
         cdef bytes b = obj_id.encode('utf-8')
         cdef int i = self._index(b)
         if i < 0:
-            raise KeyError(obj_id)
+            raise ElementNotFoundError(obj_id)
         return i
 
     def get_id(self, int idx) -> str:
@@ -920,6 +920,33 @@ cdef class Aquifers(_NamedObjects):
     cdef int _add(self, bytes b) except -1:
         _check(swmm_aquifer_add(_h(self._solver), b))
         return 0
+
+    def get_param(self, aquifer, param) -> float:
+        """Get an aquifer parameter (input-file units).
+
+        @param aquifer: Aquifer index or string id.
+        @param param: An L{AquiferParam} code.
+        @rtype: float
+        """
+        cdef int idx = aquifer if isinstance(aquifer, int) else self.get_index(aquifer)
+        cdef double value = 0.0
+        _check(swmm_aquifer_get_param(_h(self._solver), idx, int(param), &value))
+        return value
+
+    def set_param(self, aquifer, param, double value) -> None:
+        """Set an aquifer parameter (input-file units).
+
+        Flux-coefficient parameters (conductivity, slopes, evap/loss
+        coefficients) take effect on the next step when set mid-run; the
+        structural / initial-condition parameters are pre-start-only and raise
+        L{LifecycleError} while the simulation is running.
+
+        @param aquifer: Aquifer index or string id.
+        @param param: An L{AquiferParam} code.
+        @param value: New value in input-file units.
+        """
+        cdef int idx = aquifer if isinstance(aquifer, int) else self.get_index(aquifer)
+        _check(swmm_aquifer_set_param(_h(self._solver), idx, int(param), value))
 
     def __repr__(self) -> str:
         try:

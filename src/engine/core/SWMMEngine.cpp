@@ -1688,6 +1688,46 @@ void SWMMEngine::refreshLIDDrainParams() noexcept {
 }
 
 // ============================================================================
+// refreshAquiferParams() — re-derive GW flux-coefficient columns
+// ============================================================================
+
+/**
+ * @brief Re-derive the groundwater solver's per-subcatchment flux-coefficient
+ *        columns from the live context aquifers.
+ *
+ * @details The GW solver reads per-subcatchment copies of the aquifer
+ * parameters made once at start (see the init transfer in initHydrology);
+ * swmm_aquifer_set_param writes the context store, so mid-run edits of the
+ * runtime-editable parameters call this to keep the copies coherent. Mirrors
+ * the start-up transfer (same unit conversions) for the flux coefficients
+ * only — the structural columns (porosity, field capacity, wilting point,
+ * total depth) are pre-start-only and the GW state (theta, lower_depth) is
+ * never touched.
+ */
+void SWMMEngine::refreshAquiferParams() noexcept {
+    auto& gw = groundwater_.state();
+    if (gw.k_sat.empty()) return;  // GW solver not initialized yet
+    int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
+    for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        int aq_idx = ctx_.subcatches.gw_aquifer[ui];
+        if (aq_idx < 0) continue;
+        auto uaq = static_cast<std::size_t>(aq_idx);
+
+        gw.k_sat[ui]            = ctx_.aquifers.conductivity[uaq]
+                                  / ucf::Ucf[ucf::RAINFALL][unit_sys];
+        gw.k_slope[ui]          = ctx_.aquifers.conduct_slope[uaq];
+        gw.tension_slope[ui]    = ctx_.aquifers.tension_slope[uaq]
+                                  / ucf::Ucf[ucf::LENGTH][unit_sys];
+        gw.upper_evap_frac[ui]  = ctx_.aquifers.upper_evap[uaq];
+        gw.lower_evap_depth[ui] = ctx_.aquifers.lower_evap[uaq]
+                                  / ucf::Ucf[ucf::LENGTH][unit_sys];
+        gw.lower_loss_coeff[ui] = ctx_.aquifers.lower_loss[uaq]
+                                  / ucf::Ucf[ucf::RAINFALL][unit_sys];
+    }
+}
+
+// ============================================================================
 // stepSurfaceQuality() — surface quality buildup + washoff for one substep
 // ============================================================================
 
@@ -3703,8 +3743,18 @@ void SWMMEngine::initHydraulics() noexcept {
             if (ctx_.nodes.type[ui] == NodeType::OUTFALL)
                 ++n_outlets;
         }
-        // Gap #83b: drainage system must have at least one outlet
-        if (n_outlets == 0 && rm != RouteModel::STEADY) {
+        // Gap #83b: drainage system must have at least one outlet.
+        // A model with a 2D surface mesh is exempt: water can leave the
+        // system through the 2D domain (boundary conditions / vertex-node
+        // coupling), so a 1D outfall is not required. The mesh is parsed at
+        // open, so triangle/vertex counts are valid here even though
+        // surface_router_.initialize() (which sets isActive()) runs below.
+        bool has_2d_domain = false;
+#ifdef OPENSWMM_HAS_2D
+        has_2d_domain = surface_router_.mesh().n_triangles() >= 1
+                        && surface_router_.mesh().n_vertices() >= 3;
+#endif
+        if (n_outlets == 0 && rm != RouteModel::STEADY && !has_2d_domain) {
             ctx_.errors.push_back(format_error(ERR_NO_OUTLETS, ""));
             set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
         }

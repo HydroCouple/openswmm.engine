@@ -42,6 +42,7 @@ from .solver cimport (
     swmm_PollutProperty,
     swmm_PatternProperty,
     swmm_LanduseProperty,
+    swmm_AquiferProperty,
     swmm_FlowUnitsProperty,
     swmm_API_Errors,
     progress_callback,
@@ -589,6 +590,43 @@ class SWMMLandUseProperties(Enum):
     WASHOFF_EXPON = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_EXPON
     WASHOFF_SWEEP_EFFIC = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_SWEEP_EFFIC
     WASHOFF_BMP_EFFIC = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_BMP_EFFIC
+
+class SWMMAquiferProperties(Enum):
+    """Enumeration of SWMM aquifer properties.
+
+    Values use input-file units (the C{[AQUIFERS]} line columns). The
+    flux-coefficient properties (conductivity, slopes, evap/loss coefficients)
+    are read live each step, so they are settable both before the simulation
+    starts and while it is running; the structural / initial-condition
+    properties (porosity, wilting point, field capacity, bottom elevation,
+    water table elevation, upper moisture) bound or seed the groundwater state
+    and are rejected while the simulation is running.
+
+    @cvar POROSITY: Porosity (volumetric fraction, pre-start-only).
+    @cvar WILTING_POINT: Wilting point (volumetric fraction, pre-start-only).
+    @cvar FIELD_CAPACITY: Field capacity (volumetric fraction, pre-start-only).
+    @cvar CONDUCTIVITY: Saturated hydraulic conductivity (in/hr or mm/hr).
+    @cvar CONDUCT_SLOPE: Conductivity slope.
+    @cvar TENSION_SLOPE: Tension slope (ft or m).
+    @cvar UPPER_EVAP_FRAC: Upper-zone evaporation fraction (0-1).
+    @cvar LOWER_EVAP_DEPTH: Lower-zone evaporation depth (ft or m).
+    @cvar LOWER_LOSS_COEFF: Lower-zone seepage-loss coefficient (in/hr or mm/hr).
+    @cvar BOTTOM_ELEV: Aquifer bottom elevation (ft or m, pre-start-only).
+    @cvar WATER_TABLE_ELEV: Initial water table elevation (ft or m, pre-start-only).
+    @cvar UPPER_MOISTURE: Initial upper-zone moisture (volumetric fraction, pre-start-only).
+    """
+    POROSITY = swmm_AquiferProperty.swmm_AQUIFER_POROSITY
+    WILTING_POINT = swmm_AquiferProperty.swmm_AQUIFER_WILTING_POINT
+    FIELD_CAPACITY = swmm_AquiferProperty.swmm_AQUIFER_FIELD_CAPACITY
+    CONDUCTIVITY = swmm_AquiferProperty.swmm_AQUIFER_CONDUCTIVITY
+    CONDUCT_SLOPE = swmm_AquiferProperty.swmm_AQUIFER_CONDUCT_SLOPE
+    TENSION_SLOPE = swmm_AquiferProperty.swmm_AQUIFER_TENSION_SLOPE
+    UPPER_EVAP_FRAC = swmm_AquiferProperty.swmm_AQUIFER_UPPER_EVAP_FRAC
+    LOWER_EVAP_DEPTH = swmm_AquiferProperty.swmm_AQUIFER_LOWER_EVAP_DEPTH
+    LOWER_LOSS_COEFF = swmm_AquiferProperty.swmm_AQUIFER_LOWER_LOSS_COEFF
+    BOTTOM_ELEV = swmm_AquiferProperty.swmm_AQUIFER_BOTTOM_ELEV
+    WATER_TABLE_ELEV = swmm_AquiferProperty.swmm_AQUIFER_WATER_TABLE_ELEV
+    UPPER_MOISTURE = swmm_AquiferProperty.swmm_AQUIFER_UPPER_MOISTURE
 
 # =============================================================================
 # Units / errors enumerations

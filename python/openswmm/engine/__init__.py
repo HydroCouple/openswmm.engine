@@ -250,6 +250,8 @@ from ._enums import (
     InfilModel, GageDataSource, GageRainType,
     # Water quality / LID
     ConcentrationUnits, BuildupFunc, WashoffFunc, LidType,
+    # Hydrology parameters
+    AquiferParam,
     # Output variables
     OutSubcatchVar, OutNodeVar, OutLinkVar, OutSystemVar,
     # Forcing & patterns
@@ -305,6 +307,8 @@ __all__ = [
     "InfilModel", "GageDataSource", "GageRainType",
     # --- Enumerations: water quality / LID ---
     "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType",
+    # --- Enumerations: hydrology parameters ---
+    "AquiferParam",
     # --- Enumerations: output variables ---
     "OutSubcatchVar", "OutNodeVar", "OutLinkVar", "OutSystemVar",
     # --- Enumerations: forcing & patterns ---

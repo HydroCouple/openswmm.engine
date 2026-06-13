@@ -457,6 +457,46 @@ class LidType(IntEnum):
     VEGETATIVE_SWALE = 7
 
 
+class AquiferParam(IntEnum):
+    """Aquifer parameter codes for C{Aquifers.get_param} / C{set_param}.
+
+    Values use input-file units (the C{[AQUIFERS]} line columns). The
+    flux-coefficient parameters (C{CONDUCTIVITY}, C{CONDUCT_SLOPE},
+    C{TENSION_SLOPE}, C{UPPER_EVAP_FRAC}, C{LOWER_EVAP_DEPTH},
+    C{LOWER_LOSS_COEFF}) are settable both before the simulation starts and
+    while it is running. The structural / initial-condition parameters
+    (C{POROSITY}, C{WILTING_POINT}, C{FIELD_CAPACITY}, C{BOTTOM_ELEV},
+    C{WATER_TABLE_ELEV}, C{UPPER_MOISTURE}) bound or seed the groundwater
+    state and are pre-start-only.
+
+    @cvar POROSITY: Porosity (volumetric fraction).
+    @cvar WILTING_POINT: Wilting point (volumetric fraction).
+    @cvar FIELD_CAPACITY: Field capacity (volumetric fraction).
+    @cvar CONDUCTIVITY: Saturated hydraulic conductivity.
+    @cvar CONDUCT_SLOPE: Conductivity slope.
+    @cvar TENSION_SLOPE: Tension slope.
+    @cvar UPPER_EVAP_FRAC: Upper-zone evaporation fraction.
+    @cvar LOWER_EVAP_DEPTH: Lower-zone evaporation depth.
+    @cvar LOWER_LOSS_COEFF: Lower-zone seepage-loss coefficient.
+    @cvar BOTTOM_ELEV: Aquifer bottom elevation.
+    @cvar WATER_TABLE_ELEV: Initial water table elevation.
+    @cvar UPPER_MOISTURE: Initial upper-zone moisture.
+    """
+
+    POROSITY = 0
+    WILTING_POINT = 1
+    FIELD_CAPACITY = 2
+    CONDUCTIVITY = 3
+    CONDUCT_SLOPE = 4
+    TENSION_SLOPE = 5
+    UPPER_EVAP_FRAC = 6
+    LOWER_EVAP_DEPTH = 7
+    LOWER_LOSS_COEFF = 8
+    BOTTOM_ELEV = 9
+    WATER_TABLE_ELEV = 10
+    UPPER_MOISTURE = 11
+
+
 # =============================================================================
 # Output variables
 # =============================================================================
