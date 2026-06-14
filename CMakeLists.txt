@@ -87,6 +87,7 @@ option(OPENSWMM_INSTALL           "Install openswmm libraries" ON)
 option(OPENSWMM_BUILD_PYTHON      "Build Python bindings" OFF)
 option(OPENSWMM_WITH_GEOPACKAGE   "Build GeoPackage I/O library (requires sqlite3)" ON)
 option(OPENSWMM_BUILD_2D          "Build optional 2D surface routing module (requires SUNDIALS)" ON)
+option(OPENSWMM_BUILD_GPU_PLUGIN  "Build the optional GPU/Kokkos surface-solver plugin (standalone, dlopen()ed at runtime — never linked into the core). OFF by default so the base build stays Kokkos-free and portable. Enable with the `gpu`/`gpu-cuda`/`gpu-hip`/`gpu-sycl` vcpkg feature and select the backend via OPENSWMM_GPU_BACKEND. When the omp plugin is installed, runtime `auto` selects it (OpenMP becomes the default acceleration where present)." OFF)
 
 # OPENSWMM_BUILD_TESTS is a convenience flag that enables both unit and regression
 if(OPENSWMM_BUILD_TESTS)

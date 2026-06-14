@@ -367,6 +367,11 @@ if(OPENSWMM_BUILD_2D)
     # CVODE wrapper requires SUNDIALS
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/CvodeSurfaceSolver.cpp)
 
+    # Runtime backend selector (dlopen of the optional GPU plugin; serial CPU
+    # fallback). Lives in the core — it owns the CPU↔plugin decision — but
+    # pulls in no Kokkos/GPU dependency itself.
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceSolverFactory.cpp)
+
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
 
     # Find SUNDIALS (CVODE) via vcpkg or system install
@@ -410,6 +415,13 @@ if(OPENSWMM_BUILD_2D)
     endif()
 
     message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (SUNDIALS/CVODE + HDF5)")
+
+    # Optional GPU surface-solver plugin (standalone shared lib, dlopen()ed
+    # at runtime — NOT linked into openswmm_engine). Phase 0 stub for now.
+    # See docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md.
+    if(OPENSWMM_BUILD_GPU_PLUGIN)
+        add_subdirectory(2d/gpu)
+    endif()
 else()
     message(STATUS "OpenSWMM Engine: 2D surface routing disabled (set -DOPENSWMM_BUILD_2D=ON to enable)")
 endif()

@@ -30,6 +30,7 @@
 #include "../data/MeshData.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../data/SolverOptions2D.hpp"
+#include "ISurfaceSolver.hpp"
 
 #ifdef OPENSWMM_HAS_2D
 
@@ -66,10 +67,10 @@ struct CvodeSolverContext {
 /**
  * @brief CVODE wrapper for the 2D surface routing ODE system.
  */
-class CvodeSurfaceSolver {
+class CvodeSurfaceSolver : public ISurfaceSolver {
 public:
     CvodeSurfaceSolver() = default;
-    ~CvodeSurfaceSolver();
+    ~CvodeSurfaceSolver() override;
 
     // Non-copyable
     CvodeSurfaceSolver(const CvodeSurfaceSolver&) = delete;
@@ -90,7 +91,7 @@ public:
      * @param opts  Solver options.
      */
     void initialize(MeshData& mesh, SurfaceStateData& state,
-                    SolverOptions2D& opts);
+                    SolverOptions2D& opts) override;
 
     /**
      * @brief Advance the solution from t_current to t_target.
@@ -103,7 +104,7 @@ public:
      * @param t_target  Target time to advance to (s).
      * @return Actual time reached (should equal t_target on success).
      */
-    double advance(double t_current, double t_target);
+    double advance(double t_current, double t_target) override;
 
     /**
      * @brief Reinitialize CVODE with current state vector.
@@ -112,21 +113,21 @@ public:
      *
      * @param t0 New initial time.
      */
-    void reinitialize(double t0);
+    void reinitialize(double t0) override;
 
     /**
      * @brief Release all SUNDIALS resources.
      */
-    void finalize();
+    void finalize() override;
 
     /// Get number of internal steps taken in last advance() call.
-    long last_num_steps() const noexcept { return last_nsteps_; }
+    long last_num_steps() const noexcept override { return last_nsteps_; }
 
     /// Get last internal step size used by CVODE.
-    double last_step_size() const noexcept { return last_h_; }
+    double last_step_size() const noexcept override { return last_h_; }
 
     /// Check if solver is initialized.
-    bool is_initialized() const noexcept { return cvode_mem_ != nullptr; }
+    bool is_initialized() const noexcept override { return cvode_mem_ != nullptr; }
 
 private:
     void*           cvode_mem_ = nullptr;  ///< CVODE memory block

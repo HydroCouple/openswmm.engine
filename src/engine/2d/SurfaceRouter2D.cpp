@@ -10,6 +10,9 @@
 #include "mesh/MeshBuilder.hpp"
 #include "mesh/VertexReconstruction.hpp"
 #include "solver/SurfaceFluxCalculator.hpp"
+#ifdef OPENSWMM_HAS_2D
+#include "solver/SurfaceSolverFactory.hpp"
+#endif
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 
@@ -30,19 +33,26 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     }
 
     // Resolve unit-system conversion factors. The 2D solver runs internally in
-    // SI, but the 1D engine computes in feet for US flow units. We convert at
-    // the coupling boundary (NodeCoupling) and the mesh (below) so the SI
-    // solver stays pure. SI projects yield factor 1.0 (no-op).
-    {
-        const int us = ucf::getUnitSystem(
-            static_cast<int>(ctx.options.flow_units));
-        const double ft_to_m = (us == 0) ? 0.3048 : 1.0;
-        options_.len_1d_to_2d  = ft_to_m;
-        options_.len_2d_to_1d  = 1.0 / ft_to_m;
-        options_.vol_1d_to_2d  = ft_to_m * ft_to_m * ft_to_m;
-        options_.flow_1d_to_2d = options_.vol_1d_to_2d;
-        options_.flow_2d_to_1d = 1.0 / options_.vol_1d_to_2d;
-    }
+    // SI, but the 1D engine ALWAYS computes internally in feet (g=32.2,
+    // PHI=1.486) — even for SI/metric FLOW_UNITS, whose metric inputs the 1D
+    // reader converts to feet on load and only converts back at the display
+    // boundary. So the 1D⇄2D coupling ALWAYS converts feet⇄metres, regardless
+    // of FLOW_UNITS. (These factors were previously tied to FLOW_UNITS and
+    // collapsed to 1.0 for SI projects, leaving every coupled head/depth off
+    // by 3.28× and every exchanged flow/volume off by 35× — corrupting the
+    // coupled mass balance. They describe the 1D side, which is always feet.)
+    constexpr double ft_to_m = 0.3048;
+    options_.len_1d_to_2d  = ft_to_m;
+    options_.len_2d_to_1d  = 1.0 / ft_to_m;
+    options_.vol_1d_to_2d  = ft_to_m * ft_to_m * ft_to_m;
+    options_.flow_1d_to_2d = options_.vol_1d_to_2d;
+    options_.flow_2d_to_1d = 1.0 / options_.vol_1d_to_2d;
+
+    // The MESH, by contrast, is authored in the project's display length units
+    // (feet for US, metres for SI), so its scaling to the SI solver IS driven
+    // by FLOW_UNITS: US → ft→m (0.3048); SI → already metres (no-op).
+    const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    const double mesh_to_si = (us == 0) ? ft_to_m : 1.0;
 
     // Convert mesh geometry from project length units (feet for US) to the SI
     // internal units the 2D solver expects. MUST run BEFORE buildMeshTopology
@@ -53,12 +63,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Skipped entirely when the producer declared `;; UNITS: SI (m)` on the
     // mesh file (options_.mesh_units_si == true): the values are already SI
     // and applying the factor a second time would scale the mesh down by
-    // 0.3048 on US-FLOW_UNITS projects.  Coupling-side factors
-    // (len_1d_to_2d, vol_1d_to_2d, flow_*) remain driven by FLOW_UNITS
-    // because they describe the 1D side of the boundary, not the mesh.
+    // 0.3048 on US-FLOW_UNITS projects.  Driven by mesh_to_si (FLOW_UNITS),
+    // NOT the coupling factors above, which describe the always-feet 1D side.
     if (!options_.mesh_units_si && !options_.mesh_scaled_to_si &&
-        options_.len_1d_to_2d != 1.0) {
-        const double f  = options_.len_1d_to_2d;
+        mesh_to_si != 1.0) {
+        const double f  = mesh_to_si;
         const double f2 = f * f;
         for (auto& v : mesh_.vx) v *= f;
         for (auto& v : mesh_.vy) v *= f;
@@ -276,8 +285,14 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     }
 
 #ifdef OPENSWMM_HAS_2D
-    // Initialize CVODE solver
-    cvode_solver_.initialize(mesh_, state_, options_);
+    // Construct the time integrator. The backend (serial CPU vs. a runtime-
+    // loaded GPU plugin) is resolved by makeSurfaceSolver from the
+    // OPENSWMM_2D_BACKEND policy; absent/unusable plugins fall back to the
+    // serial CPU solver. See docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md §4.2.
+    if (!solver_) {
+        solver_ = makeSurfaceSolver(options_);
+    }
+    solver_->initialize(mesh_, state_, options_);
 #endif
 
     active_ = true;
@@ -366,7 +381,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
 #ifdef OPENSWMM_HAS_2D
     // Advance CVODE by dt
     double t_target = sim_time_ + dt;
-    cvode_solver_.advance(sim_time_, t_target);
+    solver_->advance(sim_time_, t_target);
 
     // Refresh edge fluxes at the final accepted (head, depth) so the saved
     // fluxes, the per-cell continuity residual, and the reconstructed cell
@@ -399,7 +414,9 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
 
 void SurfaceRouter2D::finalize() {
 #ifdef OPENSWMM_HAS_2D
-    cvode_solver_.finalize();
+    if (solver_) {
+        solver_->finalize();
+    }
 #endif
     active_ = false;
 }

@@ -29,8 +29,10 @@
 #include "data/PendingRows2D.hpp"
 #include "coupling/NodeCoupling.hpp"
 
+#include <memory>
+
 #ifdef OPENSWMM_HAS_2D
-#include "solver/CvodeSurfaceSolver.hpp"
+#include "solver/ISurfaceSolver.hpp"
 #endif
 
 namespace openswmm {
@@ -184,8 +186,12 @@ public:
 
 #ifdef OPENSWMM_HAS_2D
     /// Access CVODE solver statistics.
-    long lastCvodeSteps() const { return cvode_solver_.last_num_steps(); }
-    double lastCvodeStepSize() const { return cvode_solver_.last_step_size(); }
+    long lastCvodeSteps() const {
+        return solver_ ? solver_->last_num_steps() : 0;
+    }
+    double lastCvodeStepSize() const {
+        return solver_ ? solver_->last_step_size() : 0.0;
+    }
 #else
     long lastCvodeSteps() const { return 0; }
     double lastCvodeStepSize() const { return 0.0; }
@@ -216,7 +222,11 @@ private:
     double prev_boundary_cum_ = 0.0;
 
 #ifdef OPENSWMM_HAS_2D
-    CvodeSurfaceSolver cvode_solver_;
+    /// Time integrator, chosen at runtime. Default is the serial CPU
+    /// CvodeSurfaceSolver (constructed in initialize()); a future GPU plugin
+    /// backend slots in here without touching SurfaceRouter2D. See
+    /// docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md §2.1.
+    std::unique_ptr<ISurfaceSolver> solver_;
 #endif
 
     /// Update rainfall from system rain gages.
