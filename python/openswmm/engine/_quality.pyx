@@ -25,6 +25,7 @@ object keys.
 
 # cython: language_level=3
 
+from ._exceptions import ElementNotFoundError
 from collections.abc import Iterator
 from typing import Dict, NamedTuple, Optional, Union
 
@@ -134,7 +135,7 @@ class Landuses:
         cdef bytes b = landuse_id.encode('utf-8')
         cdef int i = swmm_landuse_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(landuse_id)
+            raise ElementNotFoundError(landuse_id)
         return i
 
     def get_id(self, int idx) -> str:

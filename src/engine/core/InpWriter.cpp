@@ -32,6 +32,8 @@
 #include "PathResolver.hpp"
 #include "SimulationContext.hpp"
 #include "DateTime.hpp"
+#include "UnitConversion.hpp"
+#include "../input/PostParseResolver.hpp"
 
 // 2D model definition (plain define-free data structs; reached at runtime
 // through ctx.twod_io — null in non-2D engine builds).
@@ -478,9 +480,27 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     }
 }
 
-int writeInpFile(const SimulationContext& ctx,
+int writeInpFile(const SimulationContext& ctx_internal,
                  const std::string&       path,
                  std::vector<std::string>* warnings) {
+    // The engine stores 1D input fields in internal units (feet/cfs); the .inp
+    // must carry display units matching FLOW_UNITS. For SI models, convert a
+    // local copy back to display units so the live engine state is never
+    // mutated. Skipped for US models (factor 1.0) so the common case pays
+    // nothing. Without this, each save dumps internal feet and the next open
+    // re-applies the m→ft factor, compounding ×3.28084 per cycle.
+    const int us_check = ucf::getUnitSystem(
+        static_cast<int>(ctx_internal.options.flow_units));
+    const bool needs_display_conv =
+        ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(us_check)] != 1.0;
+
+    SimulationContext ctx_display;
+    if (needs_display_conv) {
+        ctx_display = ctx_internal;
+        input::convert_internal_to_display(ctx_display);
+    }
+    const SimulationContext& ctx = needs_display_conv ? ctx_display : ctx_internal;
+
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) return -1;
 

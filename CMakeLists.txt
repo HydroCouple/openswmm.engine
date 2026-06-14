@@ -87,7 +87,7 @@ option(OPENSWMM_INSTALL           "Install openswmm libraries" ON)
 option(OPENSWMM_BUILD_PYTHON      "Build Python bindings" OFF)
 option(OPENSWMM_WITH_GEOPACKAGE   "Build GeoPackage I/O library (requires sqlite3)" ON)
 option(OPENSWMM_BUILD_2D          "Build optional 2D surface routing module (requires SUNDIALS)" ON)
-option(OPENSWMM_BUILD_GPU_PLUGIN  "Build the optional GPU/Kokkos surface-solver plugin (standalone, dlopen()ed at runtime — never linked into the core). OFF by default so the base build stays Kokkos-free and portable. Enable with the `gpu`/`gpu-cuda`/`gpu-hip`/`gpu-sycl` vcpkg feature and select the backend via OPENSWMM_GPU_BACKEND. When the omp plugin is installed, runtime `auto` selects it (OpenMP becomes the default acceleration where present)." OFF)
+option(OPENSWMM_BUILD_GPU_PLUGIN  "Build the GPU/Kokkos surface-solver plugin (standalone, dlopen()ed at runtime — never linked into the core). ON by default: a from-source build gets the Kokkos-OpenMP plugin and runtime `auto` uses it (the `gpu` vcpkg feature is in default-features, supplying Kokkos + sundials[kokkos]). The portable base build/wheel turns this OFF explicitly and excludes the `gpu` feature (VCPKG_MANIFEST_NO_DEFAULT_FEATURES) to stay Kokkos-free; pip users get OpenMP via the separate `openswmm-gpu-omp` companion wheel. Backend selected via OPENSWMM_GPU_BACKEND (default omp)." ON)
 
 # OPENSWMM_BUILD_TESTS is a convenience flag that enables both unit and regression
 if(OPENSWMM_BUILD_TESTS)
@@ -411,9 +411,15 @@ if(OPENSWMM_BUILD_PYTHON)
     endif()
 endif()
 
-# Simplified CPack
+# Simplified CPack.
+# Generators: Windows ships a .zip; Unix ships BOTH .tar.gz (idiomatic) and .zip
+# so the deployment workflow's `*.tar.gz` + `*.zip` upload globs both resolve.
 set(CPACK_PACKAGE_NAME "openswmm-engine")
-set(CPACK_GENERATOR "ZIP")
+if(WIN32)
+    set(CPACK_GENERATOR "ZIP")
+else()
+    set(CPACK_GENERATOR "TGZ;ZIP")
+endif()
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_FILE_NAME "openswmm-engine-${OPENSWMM_FULL_VERSION}")
 set(CPACK_PACKAGE_VENDOR "https://hydrocouple.org")

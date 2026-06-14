@@ -464,6 +464,82 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
         ctx.subcatches.width[static_cast<std::size_t>(s)] *= inv_len;
 }
 
+// ---------------------------------------------------------------------------
+// Internal (feet/cfs/ft³) → display unit conversion — exact inverse of
+// convert_inputs_to_internal above.
+// ---------------------------------------------------------------------------
+// The .inp writer must emit values in the project's display units, but the
+// engine stores them internally in feet/cfs after parse. Without this, every
+// save dumps internal feet and the next open re-applies the m→ft factor, so
+// repeated save/open cycles multiply length-dimensioned fields by 3.28084 each
+// time (the "exploding model" bug). Mirrors convert_inputs_to_internal
+// FIELD-FOR-FIELD with the forward UCF in place of its reciprocal — keep the
+// two in lock-step. US models have len == 1.0 → early return (no-op).
+void convert_internal_to_display(SimulationContext& ctx) {
+    const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    const auto usz = static_cast<std::size_t>(us);
+    const double len = ucf::Ucf[ucf::LENGTH][usz];
+    if (len == 1.0) return;  // US units: internal already equals display.
+
+    const double area = len * len;
+    const double flow = ucf::Qcf[static_cast<std::size_t>(ctx.options.flow_units)];
+    const double rain = ucf::Ucf[ucf::RAINFALL][usz];
+
+    const int n_nodes    = ctx.n_nodes();
+    const int n_links    = ctx.n_links();
+    const int n_subcatch = ctx.subcatch_names.size();
+
+    // --- Nodes ---
+    for (int i = 0; i < n_nodes; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        ctx.nodes.invert_elev[ui] *= len;
+        ctx.nodes.full_depth[ui]  *= len;
+        ctx.nodes.init_depth[ui]  *= len;
+        ctx.nodes.sur_depth[ui]   *= len;
+        ctx.nodes.ponded_area[ui] *= area;
+        if (ctx.nodes.type[ui] == NodeType::OUTFALL &&
+            ctx.nodes.outfall_type[ui] == OutfallType::FIXED)
+            ctx.nodes.outfall_param[ui] *= len;
+        if (ctx.nodes.type[ui] == NodeType::DIVIDER)
+            ctx.nodes.divider_cutoff[ui] *= flow;
+        // Functional storage A(d) = a0 + a1·d^a2: a0 (storage_c) is an area;
+        // a1 (storage_a) scales by len^(2 - a2) so A stays ft²-consistent.
+        // a2 (storage_b) is dimensionless and unchanged in both directions.
+        if (ctx.nodes.type[ui] == NodeType::STORAGE &&
+            ctx.nodes.storage_curve[ui] < 0) {
+            ctx.nodes.storage_c[ui] *= area;
+            ctx.nodes.storage_a[ui] *= std::pow(len, 2.0 - ctx.nodes.storage_b[ui]);
+        }
+    }
+
+    // --- Links ---
+    for (int j = 0; j < n_links; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        const XsectShape shp = ctx.links.xsect_shape[uj];
+        ctx.links.xsect_y_full[uj] *= len;
+        if (shp != XsectShape::FORCE_MAIN)
+            ctx.links.xsect_w_max[uj] *= len;
+        if (shp == XsectShape::RECT_TRIANG ||
+            shp == XsectShape::RECT_ROUND ||
+            shp == XsectShape::MODBASKETHANDLE)
+            ctx.links.xsect_y_bot[uj] *= len;
+
+        if (ctx.links.type[uj] == LinkType::CONDUIT) {
+            if (ctx.links.length[uj] > 0.0) ctx.links.length[uj] *= len;
+            ctx.links.q0[uj]        *= flow;
+            ctx.links.q_limit[uj]   *= flow;
+            ctx.links.seep_rate[uj] *= rain;
+        }
+        ctx.links.offset1[uj]      *= len;
+        ctx.links.offset2[uj]      *= len;
+        ctx.links.crest_height[uj] *= len;
+    }
+
+    // --- Subcatchments ---
+    for (int s = 0; s < n_subcatch; ++s)
+        ctx.subcatches.width[static_cast<std::size_t>(s)] *= len;
+}
+
 void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Final counts → allocate SoA arrays to exact size

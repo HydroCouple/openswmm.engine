@@ -29,6 +29,7 @@ flat (``add_*`` / ``*_count``) rather than dressing it as a collection.
 
 # cython: language_level=3
 
+from ._exceptions import ElementNotFoundError
 from ._common cimport *
 
 
@@ -83,7 +84,7 @@ class Transects:
         cdef bytes b = transect_id.encode('utf-8')
         cdef int i = swmm_transect_index(h, b)
         if i < 0:
-            raise KeyError(transect_id)
+            raise ElementNotFoundError(transect_id)
         return i
 
     def get_id(self, int idx) -> str:
@@ -320,7 +321,7 @@ class Streets:
         cdef bytes b = street_id.encode('utf-8')
         cdef int i = swmm_street_index(h, b)
         if i < 0:
-            raise KeyError(street_id)
+            raise ElementNotFoundError(street_id)
         return i
 
     def get_id(self, int idx) -> str:
@@ -386,7 +387,7 @@ class Inlets:
         cdef bytes b = inlet_id.encode('utf-8')
         cdef int i = swmm_inlet_index(h, b)
         if i < 0:
-            raise KeyError(inlet_id)
+            raise ElementNotFoundError(inlet_id)
         return i
 
     def get_id(self, int idx) -> str:
@@ -454,7 +455,7 @@ class LIDs:
         cdef bytes b = lid_id.encode('utf-8')
         cdef int i = swmm_lid_index(h, b)
         if i < 0:
-            raise KeyError(lid_id)
+            raise ElementNotFoundError(lid_id)
         return i
 
     def get_id(self, int idx) -> str:

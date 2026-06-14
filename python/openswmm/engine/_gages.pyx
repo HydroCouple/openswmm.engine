@@ -29,7 +29,7 @@ cimport numpy as np
 
 from ._common cimport *
 from ._enums import GageDataSource, GageRainType
-from ._exceptions import StaleObjectError
+from ._exceptions import ElementNotFoundError, StaleObjectError
 
 
 # =============================================================================
@@ -231,7 +231,7 @@ cdef class Gages:
         cdef bytes b = gage_id.encode('utf-8')
         cdef int i = swmm_gage_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(gage_id)
+            raise ElementNotFoundError(gage_id)
         return i
 
     def get_id(self, int idx) -> str:

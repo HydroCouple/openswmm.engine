@@ -187,3 +187,49 @@ else()
         "OPENSWMM_GPU_BACKEND='${OPENSWMM_GPU_BACKEND}' not recognised "
         "(expected 'stub', 'omp', 'cuda', 'hip', or 'sycl')")
 endif()
+
+# ---------------------------------------------------------------------------
+# Co-locate the built plugin with the engine and install it next to the engine
+# library, so the runtime factory (SurfaceSolverFactory::search_dirs — engine
+# dir, then <engine dir>/gpu) discovers it and `auto` selects it by default.
+# ---------------------------------------------------------------------------
+set(_OPENSWMM_GPU_TARGET "openswmm_gpu_${OPENSWMM_GPU_BACKEND}")
+
+# Build tree: copy the plugin next to the engine's *built* library, which is the
+# directory the CLI and test executables actually load the engine from (their
+# build RPATH points at the engine target's dir, not the bin/ staging copy). The
+# factory resolves its search root via dladdr on the loaded engine, so the plugin
+# must sit beside it for `auto` to discover it with no env var.
+#
+# Guarded on the engine target existing: when this CMakeLists is built standalone
+# (the Python companion wheel and the Phase-1 p1b_omp_plugin wrapper both do
+# add_subdirectory() on it without the engine), there is no openswmm_engine to
+# co-locate beside, so the copy is simply skipped.
+if(TARGET openswmm_engine)
+    add_custom_command(TARGET ${_OPENSWMM_GPU_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:${_OPENSWMM_GPU_TARGET}>"
+            "$<TARGET_FILE_DIR:openswmm_engine>/$<TARGET_FILE_NAME:${_OPENSWMM_GPU_TARGET}>"
+        VERBATIM)
+endif()
+# Note: Debug builds of this plugin link cleanly because the kokkos overlay port
+# forces Kokkos_ENABLE_DEBUG=OFF, keeping the debug Kokkos lib ABI-compatible
+# with the (release) installed Kokkos headers vcpkg ships. See
+# vcpkg-overlays/kokkos/portfile.cmake.
+
+if(OPENSWMM_INSTALL)
+    # Installed layout: place the plugin where the engine library lands (lib/ on
+    # Unix, bin/ on Windows) so the factory's engine-dir search finds it. The
+    # Python companion wheel overrides this to its own import-package dir.
+    if(WIN32)
+        set(_OPENSWMM_GPU_INSTALL_DEST_DEFAULT "${CMAKE_INSTALL_BINDIR}")
+    else()
+        set(_OPENSWMM_GPU_INSTALL_DEST_DEFAULT "${CMAKE_INSTALL_LIBDIR}")
+    endif()
+    set(OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION
+        "${_OPENSWMM_GPU_INSTALL_DEST_DEFAULT}" CACHE STRING
+        "Install destination (relative to prefix) for the GPU plugin shared library")
+    install(TARGETS ${_OPENSWMM_GPU_TARGET}
+        LIBRARY DESTINATION "${OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION}"
+        RUNTIME DESTINATION "${OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION}")
+endif()

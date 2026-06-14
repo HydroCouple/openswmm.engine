@@ -70,11 +70,33 @@ cdef class ModelBuilder:
     """
 
     cdef SWMM_Engine _handle
+    # ``_generation`` mirrors :attr:`Solver._generation`: container-level
+    # editors (``builder.tables.add_curve``, ``builder.transects.add``, …)
+    # call ``self._solver._bump_generation()`` regardless of whether the
+    # owning object is a :class:`Solver` or a :class:`ModelBuilder`, so the
+    # builder must expose the same staleness-counter surface.
+    cdef long long _generation
 
     def __init__(self):
         self._handle = swmm_engine_new()
         if self._handle == NULL:
             raise MemoryError("Failed to create engine in BUILDING state")
+        self._generation = 0
+
+    @property
+    def generation(self) -> int:
+        """Monotonic counter bumped on every structural mutation.
+
+        Mirrors :attr:`Solver.generation` so wrapper objects minted from a
+        :class:`ModelBuilder` can detect staleness the same way.
+        """
+        return int(self._generation)
+
+    def _bump_generation(self) -> None:
+        """Increment the staleness counter. Called by collection-level
+        editors so wrappers minted before a mutation can detect they are
+        out of date. Internal: do not call directly."""
+        self._generation += 1
 
     # =========================================================================
     # Nodes

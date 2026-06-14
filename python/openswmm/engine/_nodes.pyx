@@ -51,7 +51,7 @@ cimport numpy as np
 
 from ._common cimport *
 from ._enums import NodeType, OutfallType
-from ._exceptions import StaleObjectError
+from ._exceptions import ElementNotFoundError, StaleObjectError
 
 
 # =============================================================================
@@ -690,7 +690,7 @@ cdef class Nodes:
         cdef bytes b = node_id.encode('utf-8')
         cdef int i = swmm_node_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(node_id)
+            raise ElementNotFoundError(node_id)
         return i
 
     def get_id(self, int idx) -> str:

@@ -432,7 +432,10 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     // Edge flux [nTime, nFace, 3]
     ds_edge_flux_ = createUnlimitedDataset("Mesh2_edge_flux", 3, zero3, edge_chunk);
     writeStringAttr(ds_edge_flux_, "long_name", "normal flux through cell edges");
-    writeStringAttr(ds_edge_flux_, "units", "m2 s-1");
+    // Volumetric edge flux F_e = -q·n_e·L_e (see SurfaceFluxCalculator
+    // computeEdgeFluxes, which derives the m3/s dimensioning). Matches the
+    // m3 s-1 units of the continuity-residual datasets that sum these fluxes.
+    writeStringAttr(ds_edge_flux_, "units", "m3 s-1");
     writeStringAttr(ds_edge_flux_, "mesh", "Mesh2");
     writeStringAttr(ds_edge_flux_, "location", "edge");
 
@@ -532,6 +535,7 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
             writeScalar(grp, "coupling_1d_to_2d_in",  mb.coupling_1d_to_2d_in);
             writeScalar(grp, "coupling_2d_to_1d_out", mb.coupling_2d_to_1d_out);
             writeScalar(grp, "outfall_in",            mb.outfall_in);
+            writeScalar(grp, "outfall_out",           mb.outfall_out);
             writeScalar(grp, "boundary_in",           mb.boundary_in);
             writeScalar(grp, "boundary_out",          mb.boundary_out);
             writeDoubleAttr(grp, "continuity_error",  mb.error());

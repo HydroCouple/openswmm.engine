@@ -40,7 +40,7 @@ cimport numpy as np
 
 from ._common cimport *
 from ._enums import LinkType, OrificeType, OutletRatingType, WeirType, XSectShape
-from ._exceptions import StaleObjectError
+from ._exceptions import ElementNotFoundError, StaleObjectError
 
 
 # =============================================================================
@@ -870,7 +870,7 @@ cdef class Links:
         cdef bytes b = link_id.encode('utf-8')
         cdef int i = swmm_link_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(link_id)
+            raise ElementNotFoundError(link_id)
         return i
 
     def get_id(self, int idx) -> str:

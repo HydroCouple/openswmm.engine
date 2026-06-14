@@ -34,6 +34,74 @@ inline double effectiveArea(double h_max, double z_ground, double full_depth,
     return A_inlet + frac * (A_manhole - A_inlet);
 }
 
+/// Distribute a signed volumetric exchange Q (m³/s) onto the 2D cell(s) of a
+/// coupling point as a coupling_flux rate (m/s). Sign matches coupling_flux:
+/// positive = source INTO the 2D cell, negative = sink OUT of it.
+///
+/// Triangle-coupled points (vertex_idx < 0) inject into the single cell. Vertex-
+/// coupled points spread Q across the vertex stencil weighted by the UPWIND HGL
+/// slope from the vertex to each neighbour cell centroid:
+///   source (Q>0): downhill cells, w_k = max(0,  (vert_head − head_k)/d_k)
+///   sink   (Q<0): uphill   cells, w_k = max(0, −(vert_head − head_k)/d_k)
+/// Weights are normalised (Σ = 1) so the injected volume is exactly Q·dt
+/// (conservative; totalExchangeFlow() unchanged). On a flat surface (Σw ≈ 0) —
+/// or when no cell lies in the upwind direction — fall back to the geometric
+/// partition-of-unity weights the head reconstruction uses (vert_stencil_wt).
+inline void scatterCouplingFlux(const MeshData& mesh, SurfaceStateData& state,
+                                const CouplingPoint& cp, double Q) noexcept {
+    // Triangle coupling: single cell, head and flux already co-located.
+    if (cp.vertex_idx < 0) {
+        int ci = cp.cell_idx;
+        double area = mesh.tri_area[ci];
+        if (area > 1.0e-30) state.coupling_flux[ci] += Q / area;
+        return;
+    }
+
+    int v = cp.vertex_idx;
+    int start = mesh.vert_stencil_ptr[v];
+    int end   = mesh.vert_stencil_ptr[v + 1];
+    double hv = state.vert_head[v];
+    double vx = mesh.vx[v];
+    double vy = mesh.vy[v];
+    double sign = (Q >= 0.0) ? 1.0 : -1.0;  // source → downhill, sink → uphill
+
+    // Pass 1: sum the upwind-slope weights over the stencil.
+    double wsum = 0.0;
+    for (int k = start; k < end; ++k) {
+        int kc = mesh.vert_stencil_idx[k];
+        double dx = mesh.tri_cx[kc] - vx;
+        double dy = mesh.tri_cy[kc] - vy;
+        double d = std::sqrt(dx * dx + dy * dy);
+        if (d < 1.0e-9) continue;
+        double slope = sign * (hv - state.head[kc]) / d;
+        if (slope > 0.0) wsum += slope;
+    }
+
+    // Pass 2: scatter Q. Upwind weighting when a usable gradient exists,
+    // otherwise the geometric partition-of-unity fallback (flat surface).
+    if (wsum > 1.0e-30) {
+        for (int k = start; k < end; ++k) {
+            int kc = mesh.vert_stencil_idx[k];
+            double dx = mesh.tri_cx[kc] - vx;
+            double dy = mesh.tri_cy[kc] - vy;
+            double d = std::sqrt(dx * dx + dy * dy);
+            if (d < 1.0e-9) continue;
+            double slope = sign * (hv - state.head[kc]) / d;
+            if (slope <= 0.0) continue;
+            double area = mesh.tri_area[kc];
+            if (area > 1.0e-30)
+                state.coupling_flux[kc] += (Q * (slope / wsum)) / area;
+        }
+    } else {
+        for (int k = start; k < end; ++k) {
+            int kc = mesh.vert_stencil_idx[k];
+            double area = mesh.tri_area[kc];
+            if (area > 1.0e-30)
+                state.coupling_flux[kc] += (Q * mesh.vert_stencil_wt[k]) / area;
+        }
+    }
+}
+
 } // anonymous namespace
 
 
@@ -141,9 +209,9 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
             z_2d = mesh.tri_cz[ci];
         }
 
-        // 1D node head. The 1D engine stores heads in feet for US flow units;
-        // convert to the 2D solver's SI internal length so dh below is in
-        // metres (opts.len_1d_to_2d == 1.0 for SI projects).
+        // 1D node head. The 1D engine always stores heads in feet (US internal
+        // units, every project); convert to the 2D solver's SI internal length
+        // so dh below is in metres (opts.len_1d_to_2d == 0.3048 always).
         double h_1d = nodes.head[ni] * opts.len_1d_to_2d;
 
         // Available water on each side, used for the source-side wet/dry
@@ -234,8 +302,8 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
         // Throttle return flow (2D → 1D) if node is at capacity
         if (Q > 0.0) {
             // Q > 0 means flow from 2D into 1D node (drainage). Node volumes
-            // are ft³ for US flow units; convert to m³ so the Q_max cap is in
-            // the 2D solver's SI flow units (matching the SI Q above).
+            // are always ft³ (1D US internal units); convert to m³ so the Q_max
+            // cap is in the 2D solver's SI flow units (matching the SI Q above).
             double available = (nodes.full_volume[ni] - nodes.volume[ni])
                                * opts.vol_1d_to_2d;
             if (available > 0.0 && dt > 0.0) {
@@ -255,7 +323,23 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
             // mirroring the 1D node-capacity clamp above. Same clamped Q feeds
             // both sides of the exchange, so the boundary stays conservative.
             if (dt > 0.0) {
-                double avail_2d = state.depth[ci] * mesh.tri_area[ci];  // m³
+                // Sum the wet volume across the cells the sink actually draws
+                // from — the whole stencil for vertex coupling, one cell for
+                // triangle coupling — matching the distributed sink applied by
+                // scatterCouplingFlux below so the cap stays conservative.
+                double avail_2d;
+                if (cp.vertex_idx >= 0) {
+                    int vv = cp.vertex_idx;
+                    int s = mesh.vert_stencil_ptr[vv];
+                    int e = mesh.vert_stencil_ptr[vv + 1];
+                    avail_2d = 0.0;
+                    for (int k = s; k < e; ++k) {
+                        int kc = mesh.vert_stencil_idx[k];
+                        avail_2d += state.depth[kc] * mesh.tri_area[kc];  // m³
+                    }
+                } else {
+                    avail_2d = state.depth[ci] * mesh.tri_area[ci];  // m³
+                }
                 double Q_max_2d = avail_2d / dt;
                 Q = std::min(Q, Q_max_2d);
             }
@@ -271,15 +355,14 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
         // side) and routing_flooding (negative side, |Q|).
         //
         // Q is in the 2D solver's SI flow units (m³/s); the 1D engine's
-        // lateral-inflow sum and continuity accumulators are in ft³/s for US
-        // flow units, so convert back here (opts.flow_2d_to_1d == 1.0 for SI).
+        // lateral-inflow sum and continuity accumulators are always in ft³/s
+        // (1D US internal units), so convert back here (flow_2d_to_1d ≈ 35.31).
         nodes.coupling_inflow[ni] += Q * opts.flow_2d_to_1d;
 
-        // Record coupling flux back to 2D cell (negative = drainage out of 2D)
-        double tri_area = mesh.tri_area[ci];
-        if (tri_area > 1.0e-30) {
-            state.coupling_flux[ci] += -Q / tri_area;  // m/s sink
-        }
+        // Record coupling flux back to the 2D cell(s). For vertex coupling the
+        // sink/source is distributed across the stencil weighted by the upwind
+        // HGL slope (see scatterCouplingFlux); negative Q = drainage out of 2D.
+        scatterCouplingFlux(mesh, state, cp, -Q);
     }
 }
 
@@ -332,8 +415,8 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
         double depth_2d = h_2d - bed_z;
         if (depth_2d > DRY_DEPTH_THRESHOLD) {
             // h_2d is SI (metres). The 1D consumer (Outfall::setAllOutfallDepths)
-            // compares against h_standard in feet for US flow units, so convert
-            // back here (opts.len_2d_to_1d == 1.0 for SI projects).
+            // always compares against h_standard in feet (1D US internal units),
+            // so convert back here (opts.len_2d_to_1d ≈ 3.281 always).
             nodes.outfall_2d_head[ni] = h_2d * opts.len_2d_to_1d;
         } else {
             nodes.outfall_2d_head[ni] = -1.0e30;  // dry — no override
@@ -354,20 +437,23 @@ void transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
         if (!cp.is_outfall) continue;
 
         auto ni = static_cast<std::size_t>(cp.node_idx);
-        int ci = cp.cell_idx;
 
-        // Outfall outflow from 1D solver (computed during routing). This is in
-        // ft³/s for US flow units; convert to the 2D solver's SI flow units
-        // before injecting as a cell source (opts.flow_1d_to_2d == 1.0 for SI).
-        double Q_outfall = nodes.outflow[ni] * opts.flow_1d_to_2d;
+        // Net signed 1D→2D exchange at the outfall, in 1D US-internal flow units
+        // (ft³/s). nodes.inflow = pipe discharge OUT of the 1D network (onto the
+        // 2D surface); nodes.outflow = backflow INTO the network (surface water
+        // drawn back through the submerged outfall, driven by the 2D tailwater
+        // that updateOutfallBoundaries / setAllOutfallDepths already prescribed
+        // as the outfall head BC). So the 2D→1D direction is handled naturally
+        // by the head boundary; here we apply the RESULTING 1D flow back to the
+        // 2D domain. Convert to the 2D solver's SI flow units (≈ 0.0283).
+        double Q_net = (nodes.inflow[ni] - nodes.outflow[ni]) * opts.flow_1d_to_2d;
 
-        if (Q_outfall <= 0.0) continue;
-
-        // Inject pipe outflow as source into 2D cell
-        double tri_area = mesh.tri_area[ci];
-        if (tri_area > 1.0e-30) {
-            state.coupling_flux[ci] += Q_outfall / tri_area;  // m/s source
-        }
+        // Positive → pipe discharging onto the surface → 2D source.
+        // Negative → surface water drawn back into the pipe → 2D sink.
+        // Distributed across the stencil (vertex) or single cell (triangle),
+        // mirroring the junction path so head-from-many and flux-into-many stay
+        // consistent.
+        scatterCouplingFlux(mesh, state, cp, Q_net);
     }
 }
 

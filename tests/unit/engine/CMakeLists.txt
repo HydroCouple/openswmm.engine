@@ -69,7 +69,14 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
         COMMAND $<TARGET_FILE:${TEST_NAME}>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
     )
-    set_tests_properties(${TEST_NAME} PROPERTIES LABELS "unit")
+    # Pin the serial CPU 2D solver so unit assertions are deterministic and
+    # bit-exact. With the GPU plugin now built+installed by default, runtime
+    # `auto` would otherwise pick the Kokkos-OpenMP backend (results agree only
+    # to ~1e-13, not bit-identical). The dedicated `test_engine_2d_omp_default`
+    # test below exercises the omp default path explicitly.
+    set_tests_properties(${TEST_NAME} PROPERTIES
+        LABELS "unit"
+        ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
 endfunction()
 
 # ---- Unit test targets ----
@@ -210,13 +217,42 @@ add_test(
     COMMAND $<TARGET_FILE:test_engine_2d_surface>
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
 )
-set_tests_properties(test_engine_2d_surface PROPERTIES LABELS "unit")
+set_tests_properties(test_engine_2d_surface PROPERTIES
+    LABELS "unit"
+    ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
+
+# Exercise the default acceleration path end-to-end: with the GPU plugin built
+# and co-located with the engine, runtime `auto`/omp must discover and load it.
+# Runs the 2D example through the CLI and asserts the omp backend was selected.
+# (Numeric omp-vs-cpu parity is ~1e-13, covered by the Kokkos parity test and
+# the serial reference in test_engine_2d_surface.)
+if(OPENSWMM_BUILD_2D AND OPENSWMM_BUILD_GPU_PLUGIN)
+    file(COPY ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
+         DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(
+        NAME    test_engine_2d_omp_default
+        COMMAND $<TARGET_FILE:openswmm> 2d_complete_example.inp 2d_omp_default.rpt
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(test_engine_2d_omp_default PROPERTIES
+        LABELS "unit"
+        ENVIRONMENT "OPENSWMM_2D_BACKEND=omp"
+        PASS_REGULAR_EXPRESSION "using GPU backend: omp")
+endif()
 
 # InpWriter [2D_*] emission — end-to-end through the public C API (open a
 # 2D .inp → swmm_model_write → reopen → compare via swmm_2d_* accessors,
 # plus the GeoPackage write→reopen end-to-end). Needs the full 2D module.
 if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_inp_writer_2d test_inp_writer_2d.cpp)
+    # 1D↔2D coupling unit-system equivalence — runs the same physical coupled
+    # model in CMS and CFS and asserts matching 2D depths/continuity. Guards the
+    # always-feet⇄metres coupling factors (the 1D side is always feet-internal).
+    add_gtest_unit(test_engine_2d_coupling_units test_2d_coupling_units.cpp)
+    # Two-way 1D↔2D OUTFALL coupling regression — a coupled outfall's pipe
+    # discharge must reach the 2D mesh (it read nodes.outflow≈0 before the fix)
+    # and both the 2D and 1D continuity ledgers must close.
+    add_gtest_unit(test_engine_2d_outfall_coupling test_2d_outfall_coupling.cpp)
 endif()
 
 # Golden cross-section parity harness — diffs the new xsect:: implementation

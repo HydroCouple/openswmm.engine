@@ -2671,17 +2671,37 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         const NodeType nt = ctx_.nodes.type[uj];
 
         if (nt == NodeType::OUTFALL) {
-            // Outfall: system outflow = inflow
-            double q_outfall = ctx_.nodes.inflow[uj];
-            ctx_.mass_balance.routing_outflow += q_outfall * dt_routing;
-            ctx_.mass_balance.step_outflow    += q_outfall;
+            // Legacy node_getSystemOutflow (node.c:428-447) + removeOutflows
+            // (routing.c:921-931): an outfall's system flow is its pipe inflow
+            // when discharging. When the outfall instead sends water BACK into
+            // the network (outflow > 0, inflow == 0 — e.g. a 2D tailwater or a
+            // FIXED/TIDAL/TIMESERIES stage above the upstream HGL), the system
+            // flow is NEGATIVE and legacy books it as an EXTERNAL system INFLOW
+            // of magnitude outflow (massbal_addInflowFlow(EXTERNAL_INFLOW, -q)).
+            // Mirroring that closes routing continuity for any backflowing
+            // outfall (a pre-existing gap for tidal/fixed outfalls, and required
+            // for the 2D-coupled withdrawal path in transferOutfallDischarges).
+            double q_in  = ctx_.nodes.inflow[uj];
+            double q_out = ctx_.nodes.outflow[uj];
+            if (q_out > 0.0 && q_in <= 0.0) {
+                // Backflow into the network — system external inflow. step_*
+                // is added here (after the step_ext_inflow consumption at the
+                // top of this function) for the per-step snapshot only,
+                // mirroring the coupling-spill booking below.
+                ctx_.mass_balance.routing_external += q_out * dt_routing;
+                ctx_.mass_balance.step_ext_inflow  += q_out;
+            } else {
+                // Normal discharge — system outflow = inflow.
+                ctx_.mass_balance.routing_outflow += q_in * dt_routing;
+                ctx_.mass_balance.step_outflow    += q_in;
 
-            // Gap #28: accumulate outfall discharge as routed volume for next
-            // runoff step (matching legacy Outfall[i].vRouted accumulation).
-            int sc = ctx_.nodes.outfall_route_to[uj];
-            if (sc >= 0 && sc < ctx_.n_subcatches() && q_outfall > 0.0) {
-                auto usc = static_cast<std::size_t>(sc);
-                ctx_.subcatches.outfall_runon_vol[usc] += q_outfall * dt_routing;
+                // Gap #28: accumulate outfall discharge as routed volume for next
+                // runoff step (matching legacy Outfall[i].vRouted accumulation).
+                int sc = ctx_.nodes.outfall_route_to[uj];
+                if (sc >= 0 && sc < ctx_.n_subcatches() && q_in > 0.0) {
+                    auto usc = static_cast<std::size_t>(sc);
+                    ctx_.subcatches.outfall_runon_vol[usc] += q_in * dt_routing;
+                }
             }
         }
         else if (!is_dw && ctx_.nodes.degree[uj] == 0 && nt != NodeType::STORAGE) {

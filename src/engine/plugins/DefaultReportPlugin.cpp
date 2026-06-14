@@ -837,6 +837,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row2("Outfall Inflow ...........", mb2.outfall_in);
         row2("Boundary Inflow ..........", mb2.boundary_in);
         row2("2D -> 1D Drain Outflow ...", mb2.coupling_2d_to_1d_out);
+        row2("Outfall Withdrawal .......", mb2.outfall_out);
         row2("Boundary Outflow .........", mb2.boundary_out);
         row2("Evaporation Loss .........", mb2.evap_out);
         row2("Final Stored Volume ......", mb2.final_storage);

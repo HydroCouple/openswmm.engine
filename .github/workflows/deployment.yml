@@ -12,6 +12,15 @@ env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   OMP_NUM_THREADS: 1
+  # Single source of truth for the vcpkg ref (used by every checkout + the
+  # in-container clone in pyproject's linux before-all via environment-pass).
+  VCPKG_REF: "2025.02.14"
+  # macOS minimum target. Set globally so the engine build job AND vcpkg's
+  # dependency builds (SUNDIALS/HDF5/sqlite3) compile at this floor; ignored on
+  # Linux/Windows. The Python wheels set the same value via cibuildwheel
+  # (pyproject [tool.cibuildwheel.macos].environment). Must be ≤ every bundled
+  # dylib's minimum or delocate/CPack will ship libs that won't load on 11.x.
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────
@@ -19,7 +28,9 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   build:
     name: "Build (${{ matrix.alias }})"
-    permissions: write-all
+    permissions:
+      contents: read
+      actions: write   # x-gha vcpkg binary cache + actions/cache
     strategy:
       fail-fast: false
       matrix:
@@ -61,12 +72,16 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: microsoft/vcpkg
-          ref: 2025.02.14
+          ref: ${{ env.VCPKG_REF }}
           path: vcpkg
 
-      - name: Install OpenMP (macOS)
+      - name: Build libomp for the macOS target (11.0)
         if: runner.os == 'macOS'
-        run: brew install libomp
+        # Build libomp from source at MACOSX_DEPLOYMENT_TARGET (11.0, from env)
+        # instead of `brew install libomp` (whose bottle is min-target 15.0), so
+        # the engine zip's bundled libomp loads on macOS 11+. ninja + cmake are
+        # preinstalled on the macOS runners.
+        run: bash scripts/build_macos_libomp.sh
 
       - name: Install Ninja (Linux)
         if: runner.os == 'Linux'
@@ -140,7 +155,12 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   wheels:
     name: "Wheels (${{ matrix.os }})"
-    needs: build
+    # Independent of the engine `build` job: wheels rebuild the engine from
+    # source via scikit-build-core, so a single-platform engine-zip failure must
+    # not block all wheels. (Previously `needs: build` coupled them.)
+    permissions:
+      contents: read
+      actions: write
     strategy:
       fail-fast: false
       matrix:
@@ -171,7 +191,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: microsoft/vcpkg
-          ref: 2025.02.14
+          ref: ${{ env.VCPKG_REF }}
           path: vcpkg
 
       - name: Bootstrap vcpkg (macOS)
@@ -193,6 +213,9 @@ jobs:
           # the container by pyproject.toml's before-all hook).
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+          # Forwarded into the manylinux/musllinux container by pyproject's
+          # environment-pass so the in-container vcpkg clone uses the same ref.
+          VCPKG_REF: ${{ env.VCPKG_REF }}
           # Force the macOS deployment target via cibuildwheel's env channel.
           # Setting it ONLY in pyproject.toml [tool.cibuildwheel.macos].environment
           # was not propagating to the x86_64 build's wheel-tag computation
@@ -205,6 +228,76 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: python-wheels-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+
+  # ──────────────────────────────────────────────────────────────────────
+  #  GPU/OpenMP companion wheels — `openswmm-gpu-omp`.
+  #
+  #  Separate distribution that ships ONLY the Kokkos-OpenMP plugin
+  #  (libopenswmm_gpu_omp). Built from packages/gpu-omp/ — its CMakeLists reuses
+  #  the engine's real plugin CMake (src/engine/2d/gpu, omp backend) and pulls
+  #  only the vcpkg `gpu` feature (Kokkos + sundials[kokkos]). No GPU driver is
+  #  needed (OpenMP), so the same OS/arch matrix as the base wheels applies.
+  #  wheel.py-api=py3 ⇒ one py3-none wheel per platform. Independent of `wheels`.
+  # ──────────────────────────────────────────────────────────────────────
+  gpu-omp-wheels:
+    name: "GPU-omp wheels (${{ matrix.os }})"
+    permissions:
+      contents: read
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04          # Linux x86_64
+          - ubuntu-24.04-arm      # Linux aarch64 (native, no QEMU)
+          - windows-2025          # Windows x86_64
+          - macos-15              # macOS arm64
+          - macos-15-intel        # macOS x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v8
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout vcpkg (host-side, macOS/Windows)
+        if: runner.os != 'Linux'
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_REF }}
+          path: vcpkg
+
+      - name: Bootstrap vcpkg (macOS)
+        if: runner.os == 'macOS'
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Build companion wheels
+        uses: pypa/cibuildwheel@v3.1.4
+        with:
+          package-dir: ./packages/gpu-omp
+          output-dir:  ./wheelhouse
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+          VCPKG_REF: ${{ env.VCPKG_REF }}
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0 VCPKG_ROOT=${{ github.workspace }}/vcpkg
+
+      - name: Upload companion wheels
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: python-gpu-omp-wheels-${{ matrix.os }}
           path: ./wheelhouse/*.whl
 
   # ──────────────────────────────────────────────────────────────────────
@@ -222,6 +315,9 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Check version sync (CMake / vcpkg / pyproject)
+        run: python scripts/check_version_sync.py
+
       - name: Install build frontend
         run: |
           python -m pip install --upgrade pip
@@ -238,12 +334,70 @@ jobs:
           path: python/dist/*.tar.gz
 
   # ──────────────────────────────────────────────────────────────────────
+  #  C++ unit-test gate for releases.
+  #
+  #  The test workflows (unit_testing*.yml, regression_testing.yml) only run on
+  #  push/PR to main/develop — NOT on tag pushes — so without this a tag could
+  #  release binaries that fail the suite. This job runs the Linux C++ unit
+  #  tests and is a `needs:` of `release`. (The Python binding tests already run
+  #  per-wheel via cibuildwheel's test-command, so the gap was the C++ side.)
+  #  vcpkg deps come from the x-gha binary cache, so reruns are fast.
+  # ──────────────────────────────────────────────────────────────────────
+  test:
+    name: "C++ unit tests (release gate)"
+    permissions:
+      contents: read
+      actions: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Checkout vcpkg
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_REF }}
+          path: vcpkg
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Bootstrap vcpkg
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          ./bootstrap-vcpkg.sh
+          chmod +x vcpkg
+
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v8
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Configure (Debug, unit tests)
+        run: >
+          cmake
+          --preset=Linux-debug
+          -B build-test
+          -DVCPKG_MANIFEST_FEATURES="tests;geopackage"
+          -DOPENSWMM_BUILD_UNIT_TESTS=ON
+          -DOPENSWMM_WITH_GEOPACKAGE=ON
+
+      - name: Build
+        run: cmake --build build-test --config Debug
+
+      - name: Unit tests
+        run: ctest --test-dir build-test -C Debug -L unit --output-on-failure
+
+  # ──────────────────────────────────────────────────────────────────────
   #  Create GitHub Release
   # ──────────────────────────────────────────────────────────────────────
   release:
     name: Create GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, wheels, sdist]
+    needs: [build, test, wheels, gpu-omp-wheels, sdist]
     runs-on: ubuntu-latest
     permissions:
       contents: write

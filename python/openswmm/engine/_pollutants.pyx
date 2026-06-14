@@ -26,7 +26,7 @@ mirror the shape of :doc:`nodes` / :doc:`links`.
 
 from ._common cimport *
 from ._enums import ConcentrationUnits
-from ._exceptions import StaleObjectError
+from ._exceptions import ElementNotFoundError, StaleObjectError
 
 
 cdef inline SWMM_Engine _h(solver):
@@ -290,7 +290,7 @@ cdef class Pollutants:
         cdef bytes b = pollut_id.encode('utf-8')
         cdef int i = swmm_pollutant_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(pollut_id)
+            raise ElementNotFoundError(pollut_id)
         return i
 
     def get_id(self, int idx) -> str:

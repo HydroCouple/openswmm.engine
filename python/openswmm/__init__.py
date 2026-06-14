@@ -53,6 +53,48 @@ if platform.system() == "Windows" and hasattr(os, "add_dll_directory"):
         if os.path.isdir(_dll_subdir):
             os.add_dll_directory(_dll_subdir)
 
+
+# ---------------------------------------------------------------------------
+# Optional GPU/OpenMP acceleration companion
+#
+# The base `openswmm` wheel is CPU-only and portable (Kokkos-free). OpenMP
+# acceleration of the 2D surface solver is shipped separately as the
+# `openswmm-gpu-omp` companion distribution, which installs a sibling import
+# package (`openswmm_gpu_omp`) containing the `libopenswmm_gpu_omp` plugin.
+#
+# The C++ engine discovers the plugin at runtime via the OPENSWMM_GPU_PLUGIN_PATH
+# search path (SurfaceSolverFactory::search_dirs). When the companion is
+# installed, surface its directory to the engine by PREPENDING it to that env
+# var — without clobbering a value the user set deliberately. With no companion
+# installed this is a silent no-op and 2D runs on the serial CPU solver.
+#
+# This must happen before any 2D model is initialised; import time (here) is
+# comfortably early enough, since the factory reads the env var lazily when it
+# builds a solver.
+# ---------------------------------------------------------------------------
+def _register_gpu_companion() -> None:
+    try:
+        import openswmm_gpu_omp  # type: ignore[import-not-found]
+    except ImportError:
+        return  # companion not installed → CPU-only, nothing to do
+    plugin_dir = os.path.dirname(os.path.abspath(openswmm_gpu_omp.__file__))
+    if not os.path.isdir(plugin_dir):
+        return
+    sep = os.pathsep  # ';' on Windows, ':' elsewhere — matches search_dirs()
+    existing = os.environ.get("OPENSWMM_GPU_PLUGIN_PATH", "")
+    parts = existing.split(sep) if existing else []
+    if plugin_dir not in parts:
+        os.environ["OPENSWMM_GPU_PLUGIN_PATH"] = (
+            plugin_dir + (sep + existing if existing else "")
+        )
+    # On Windows the plugin DLL's vendored dependencies (e.g. libomp) sit beside
+    # it; register the dir so LoadLibrary can resolve them.
+    if platform.system() == "Windows" and hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(plugin_dir)
+
+
+_register_gpu_companion()
+
 # ---------------------------------------------------------------------------
 # Version
 # ---------------------------------------------------------------------------

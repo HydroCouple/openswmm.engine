@@ -122,11 +122,10 @@
         {
             "name": "Darwin",
             "inherits": "default",
-            "description": "macOS Release (Ninja, clang). FP policy: -fno-fast-math -ffp-contract=off (no FMA fusion). -fexcess-precision is omitted: clang ignores it on x86_64/arm64. -fno-math-errno matches Apple clang default.",
+            "description": "macOS Release (Ninja, clang). FP policy: -fno-fast-math -ffp-contract=off (no FMA fusion). -fexcess-precision is omitted: clang ignores it on x86_64/arm64. -fno-math-errno matches Apple clang default. Arch is NOT pinned here: it defaults to the host arch, and CI passes -DCMAKE_OSX_ARCHITECTURES per matrix leg. Pinning universal2 in the preset previously conflicted with the per-arch CI override (vcpkg built universal deps while CMake built single-arch). Pass -DCMAKE_OSX_ARCHITECTURES=\"arm64;x86_64\" and a matching VCPKG_OSX_ARCHITECTURES for a local universal2 build.",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/darwin",
             "environment": {
-                "VCPKG_OSX_ARCHITECTURES": "arm64;x86_64",
                 "CC": "clang",
                 "CXX": "clang++"
             },
@@ -141,8 +140,7 @@
                 "CMAKE_SHARED_LINKER_FLAGS": "-flto -twolevel_namespace",
                 "CMAKE_MODULE_LINKER_FLAGS": "-flto",
                 "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG",
-                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG",
-                "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64"
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG"
             },
             "condition": {
                 "type": "equals",

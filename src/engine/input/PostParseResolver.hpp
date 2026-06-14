@@ -45,6 +45,28 @@ namespace openswmm::input {
 void resolve_cross_references(SimulationContext& ctx);
 
 /**
+ * @brief Convert the input fields the reader scaled to internal units back to
+ *        display units (matching @c ctx.options.flow_units).
+ *
+ * @details Exact inverse of the file-local @c convert_inputs_to_internal that
+ *          @ref resolve_cross_references applies at parse time: it multiplies
+ *          the same node/link/subcatchment length-, area-, flow-, and
+ *          rainfall-dimensioned fields by the forward UCF instead of its
+ *          reciprocal. The .inp writer needs display units, but the engine
+ *          stores everything internally in feet/cfs, so a save must undo the
+ *          parse-time conversion or each save→reopen cycle compounds the
+ *          factor (the m→ft "exploding model" bug). US-unit models are a
+ *          no-op (factor 1.0).
+ *
+ *          MUST stay field-for-field in sync with @c convert_inputs_to_internal
+ *          in PostParseResolver.cpp — editing one without the other reintroduces
+ *          the asymmetry.
+ *
+ * @param ctx  Simulation context (mutated in place).
+ */
+void convert_internal_to_display(SimulationContext& ctx);
+
+/**
  * @brief Slice IO-3: Resolve every external-file slot's `.original` token
  *        against an anchor directory and populate `.absolute`.
  *

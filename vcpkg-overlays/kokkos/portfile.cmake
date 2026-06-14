@@ -90,10 +90,20 @@ else()
     list(APPEND BACKEND_OPTIONS -DKokkos_ENABLE_OPENMP=ON)
 endif()
 
+# Keep Kokkos' internal debug instrumentation OFF in BOTH the debug and release
+# sub-builds. vcpkg installs a single (release) header set, but under a Debug
+# CMAKE_BUILD_TYPE Kokkos turns KOKKOS_ENABLE_DEBUG on, which changes the
+# SharedAllocationRecord ABI — so the debug lib loses the out-of-line ctor the
+# (release) installed headers reference, and a Debug consumer fails to link
+# (undefined SharedAllocationRecord(...,std::string)). Forcing it OFF makes the
+# debug lib match the installed headers so Debug builds of the plugin link.
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
     OPTIONS
         ${BACKEND_OPTIONS}
+        -DKokkos_ENABLE_DEBUG=OFF
+        -DKokkos_ENABLE_DEBUG_BOUNDS_CHECK=OFF
+        -DKokkos_ENABLE_DEBUG_DUALVIEW_MODIFY_CHECK=OFF
         -DKokkos_ENABLE_TESTS=OFF
         -DKokkos_ENABLE_EXAMPLES=OFF
         -DKokkos_ENABLE_BENCHMARKS=OFF

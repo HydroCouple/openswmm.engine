@@ -102,25 +102,29 @@ struct SolverOptions2D {
     // SurfaceRouter2D::initialize() from the project FLOW_UNITS.
     //
     // The 2D solver runs internally in SI (metres, m², m³, m³/s, g=9.80665).
-    // The 1D SWMM engine computes internally in FEET for US flow units
-    // (CFS/GPM/MGD; g=32.2, PHI=1.486) and only converts to display units at
-    // output. These factors convert 1D quantities to/from the 2D SI internal
-    // units at the coupling boundary (NodeCoupling) and the mesh load. All
-    // default to 1.0, so an SI project (CMS/LPS/MLD) is a no-op.
+    // The 1D SWMM engine ALWAYS computes internally in FEET (g=32.2, PHI=1.486)
+    // — for EVERY project, US or SI: its reader converts metric inputs to feet
+    // on load and only converts back at the display/output boundary. So these
+    // coupling factors are ALWAYS the feet⇄metres conversion, independent of
+    // FLOW_UNITS. SurfaceRouter2D::initialize() overwrites the 1.0 defaults
+    // with the real ft⇄m factors; the defaults only stand when 2D is inactive
+    // (no coupling occurs). The MESH scaling factor is separate and IS driven
+    // by FLOW_UNITS (the mesh is authored in project units) — see initialize().
     // -----------------------------------------------------------------------
-    double len_1d_to_2d  = 1.0;  ///< 1D length → 2D length (ft→m = 0.3048 for US)
-    double len_2d_to_1d  = 1.0;  ///< 2D length → 1D length (m→ft)
-    double vol_1d_to_2d  = 1.0;  ///< 1D volume → 2D volume (ft³→m³ for US)
-    double flow_1d_to_2d = 1.0;  ///< 1D flow → 2D flow (ft³/s→m³/s for US)
-    double flow_2d_to_1d = 1.0;  ///< 2D flow → 1D flow (m³/s→ft³/s)
+    double len_1d_to_2d  = 1.0;  ///< 1D length → 2D length (ft→m, 0.3048)
+    double len_2d_to_1d  = 1.0;  ///< 2D length → 1D length (m→ft, 3.2808)
+    double vol_1d_to_2d  = 1.0;  ///< 1D volume → 2D volume (ft³→m³, 0.02832)
+    double flow_1d_to_2d = 1.0;  ///< 1D flow → 2D flow (ft³/s→m³/s, 0.02832)
+    double flow_2d_to_1d = 1.0;  ///< 2D flow → 1D flow (m³/s→ft³/s, 35.315)
 
     /*! When true, the inline `.inp` or referenced `.2dm` declared
      *  `;; UNITS: SI (m)` (or an equivalent metric keyword). The mesh on
      *  disk is already in SI metres, so SurfaceRouter2D::initialize
      *  SKIPS the FLOW_UNITS-based mesh scaling (vx/vy/vz and the
      *  coupling areas).  The 1D⇄2D coupling factors (len_1d_to_2d,
-     *  vol_1d_to_2d, flow_*) are still set from FLOW_UNITS because they
-     *  describe the 1D side of the boundary, not the mesh. */
+     *  vol_1d_to_2d, flow_*) are unaffected — they are always the
+     *  feet⇄metres conversion (the 1D side is always feet), not the mesh
+     *  scaling. */
     bool mesh_units_si = false;
 
     /*! Runtime-only: true after SurfaceRouter2D::initialize() applied the

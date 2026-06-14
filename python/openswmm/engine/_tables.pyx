@@ -24,6 +24,7 @@ patterns — and the C side stores time series and curves in a single
 
 # cython: language_level=3
 
+from ._exceptions import ElementNotFoundError
 from typing import Tuple
 
 import numpy as np
@@ -104,6 +105,16 @@ cdef class _PointTable:
             buf[i, 0] = x
             buf[i, 1] = y
         return buf
+
+    @property
+    def points(self):
+        """Raw ``float64`` ``(n_points, 2)`` array of ``(x, y)`` points.
+
+        Generic view exposed on every table handed back by
+        :meth:`Tables.__getitem__`.  The typed :class:`TimeSeries` /
+        :class:`Curve` subclasses override this with domain dtypes.
+        """
+        return self._raw_points()
 
     def __repr__(self) -> str:
         try:
@@ -194,7 +205,7 @@ cdef class Tables:
         cdef bytes b = table_id.encode('utf-8')
         cdef int i = swmm_table_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(table_id)
+            raise ElementNotFoundError(table_id)
         return i
 
     def get_id(self, int idx) -> str:
@@ -377,7 +388,7 @@ cdef class Patterns:
         cdef bytes b = pattern_id.encode('utf-8')
         cdef int i = swmm_pattern_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(pattern_id)
+            raise ElementNotFoundError(pattern_id)
         return i
 
     def __getitem__(self, key):

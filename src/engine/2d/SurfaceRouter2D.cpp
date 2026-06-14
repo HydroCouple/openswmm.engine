@@ -532,9 +532,14 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
         if (!seen.insert(cp.node_idx).second) continue;
         auto ni = static_cast<std::size_t>(cp.node_idx);
         if (cp.is_outfall) {
-            // 1D outfall discharge injected into the 2D cell as a source.
-            double q = ctx.nodes.outflow[ni] * options_.flow_1d_to_2d;
-            if (q > 0.0) mb.outfall_in += q * dt;
+            // Net signed 1D→2D exchange at the outfall — the same quantity
+            // transferOutfallDischarges injects into coupling_flux. Positive
+            // (inflow) = pipe discharge into 2D (source); negative (outflow) =
+            // surface water drawn back into the pipe (withdrawal).
+            double q = (ctx.nodes.inflow[ni] - ctx.nodes.outflow[ni])
+                       * options_.flow_1d_to_2d;
+            if (q > 0.0) mb.outfall_in  += q * dt;
+            else         mb.outfall_out += -q * dt;
         } else {
             // Positive = 2D→1D drainage (out of 2D); negative = 1D→2D spill.
             double q = ctx.nodes.coupling_inflow[ni] * options_.flow_1d_to_2d;

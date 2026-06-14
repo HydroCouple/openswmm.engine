@@ -912,6 +912,7 @@ struct SimulationContext {
         double coupling_1d_to_2d_in  = 0.0;  ///< Cumulative 1D→2D spill into 2D (m³)
         double coupling_2d_to_1d_out = 0.0;  ///< Cumulative 2D→1D drainage out (m³)
         double outfall_in            = 0.0;  ///< Cumulative 1D outfall discharge into 2D (m³)
+        double outfall_out           = 0.0;  ///< Cumulative 2D→pipe withdrawal at submerged outfalls (m³)
         double boundary_in           = 0.0;  ///< Cumulative boundary inflow (m³)
         double boundary_out          = 0.0;  ///< Cumulative boundary outflow (m³)
         double evap_out              = 0.0;  ///< Cumulative evaporation loss (m³)
@@ -921,7 +922,7 @@ struct SimulationContext {
         double error() const {
             double total_in  = rainfall_in + coupling_1d_to_2d_in + outfall_in
                                + boundary_in + init_storage;
-            double total_out = coupling_2d_to_1d_out + boundary_out
+            double total_out = coupling_2d_to_1d_out + outfall_out + boundary_out
                                + evap_out + final_storage;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
