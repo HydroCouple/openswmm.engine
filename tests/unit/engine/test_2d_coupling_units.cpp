@@ -14,12 +14,20 @@
  *          corrupting the coupled mass balance.
  *
  *          This test builds ONE physical model — a 1D junction fed by a steady
- *          inflow, surcharging and spilling into a small 2D mesh through a
- *          coupling point — and expresses it twice: once in CMS (metric) and
- *          once in CFS (the exact unit conversion of the same physics). Because
- *          the 2D solver works in metres for both, the per-cell 2D depths and
- *          the 2D continuity error must MATCH between the two runs. They only
- *          diverge if the coupling boundary mishandles units.
+ *          inflow, draining through a conduit to a coupled outfall that
+ *          discharges onto a small flat 2D patch — and expresses it twice: once
+ *          in CMS (metric) and once in CFS (the exact unit conversion of the
+ *          same physics). Because the 2D solver works in metres for both, the
+ *          per-cell 2D depths and the 2D continuity error must MATCH between the
+ *          two runs. They only diverge if the coupling boundary mishandles units
+ *          (e.g. flow_1d_to_2d collapsing to 1.0 for the CMS run).
+ *
+ *          (The coupled node is an OUTFALL rather than a surcharging junction:
+ *          the C1 surcharge gate only opens above z_top = invert + full_depth +
+ *          sur_depth, but a junction floods/caps exactly at z_top, so 1D→2D
+ *          junction spill cannot fire — see DynamicWave setNodeDepth. The
+ *          outfall discharge path exercises the same feet⇄metres coupling
+ *          factors. Junction-orifice coupling is covered by test_engine_2d_surface.)
  *
  *          Needs the full 2D module (OPENSWMM_BUILD_2D) — runs the real
  *          coupled engine through the public C API.
@@ -56,6 +64,13 @@ std::string build_model(bool si) {
     const double Q = si ? 1.0 : CMS_TO_CFS;
     const char* units = si ? "CMS" : "CFS";
 
+    // J1 (fed by a steady inflow) drains through C1 to outfall O1, which is
+    // coupled to a flat 20×20 m 2D patch (wall boundaries). The pipe discharge
+    // is injected onto the patch through the coupling point; the patch is large
+    // and the inflow modest so the fill rate stays gentle and the implicit 2D
+    // solver is stable. The injected 2D source = nodes.inflow[O1] (always ft³/s
+    // internally) × flow_1d_to_2d, which is identical in the CMS and CFS runs
+    // iff that factor is the always-applied feet⇄metres conversion.
     char buf[8192];
     std::snprintf(buf, sizeof(buf),
         "[OPTIONS]\n"
@@ -98,7 +113,7 @@ std::string build_model(bool si) {
         "\n"
         "[2D_VERTICES]\n"
         ";;X         Y         Z\n"
-        "%.6f  %.6f  %.6f\n"     // v0 (coupled, low point)
+        "%.6f  %.6f  %.6f\n"     // v0 (coupled)
         "%.6f  %.6f  %.6f\n"     // v1
         "%.6f  %.6f  %.6f\n"     // v2
         "%.6f  %.6f  %.6f\n"     // v3
@@ -110,18 +125,18 @@ std::string build_model(bool si) {
         "\n"
         "[2D_VERTEX_NODE_MAP]\n"
         ";;Vertex  Node  Cd   Area\n"
-        "0         J1    0.7  %.6f\n",
+        "0         O1    0.7  %.6f\n",
         units,
-        0.0 * L, 0.5 * L,              // J1 invert, maxdepth (low rim → surcharges)
-        -1.0 * L,                       // O1 invert
-        50.0 * L,                       // conduit length
-        0.30 * L,                       // conduit diameter
-        0.5 * Q,                        // inflow baseline (steady)
-        0.0 * L, 0.0 * L, 0.0 * L,      // v0
-        5.0 * L, 0.0 * L, 1.0 * L,      // v1
-        5.0 * L, 5.0 * L, 1.0 * L,      // v2
-        0.0 * L, 5.0 * L, 1.0 * L,      // v3
-        2.5 * L * L);                   // coupling area (m²→ft²)
+        1.0 * L, 5.0 * L,                  // J1 invert, maxdepth
+        0.0 * L,                            // O1 invert
+        50.0 * L,                           // conduit length
+        0.50 * L,                           // conduit diameter
+        0.05 * Q,                           // inflow baseline (steady)
+        0.0  * L,  0.0 * L, 0.0 * L,        // v0 (coupled)
+        20.0 * L,  0.0 * L, 0.0 * L,        // v1   flat patch at z=0, 20×20 m
+        20.0 * L, 20.0 * L, 0.0 * L,        // v2
+        0.0  * L, 20.0 * L, 0.0 * L,        // v3
+        2.5 * L * L);                       // coupling area (m²→ft²)
     return std::string(buf);
 }
 

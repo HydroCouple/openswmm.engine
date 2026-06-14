@@ -64,6 +64,7 @@ cdef extern from "openswmm_2d.h":
                                  double* coupling_1d_to_2d_in,
                                  double* coupling_2d_to_1d_out,
                                  double* outfall_in,
+                                 double* outfall_out,
                                  double* boundary_in,
                                  double* boundary_out,
                                  double* evap_out)

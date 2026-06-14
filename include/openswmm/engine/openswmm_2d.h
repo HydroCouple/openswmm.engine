@@ -347,6 +347,7 @@ SWMM_ENGINE_API int swmm_2d_get_stat_max_continuity_err(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_2d_get_continuity_error(SWMM_Engine engine, double* err);
 
 /** @brief Get the global 2D mass-balance terms (all m3). Any pointer may be NULL.
+ *  @param outfall_out Cumulative 2D→pipe withdrawal at submerged outfalls (m3).
  *  @param evap_out Cumulative evaporation loss from the 2D surface (m3).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_mass_balance(SWMM_Engine engine,
@@ -356,6 +357,7 @@ SWMM_ENGINE_API int swmm_2d_get_mass_balance(SWMM_Engine engine,
                                              double* coupling_1d_to_2d_in,
                                              double* coupling_2d_to_1d_out,
                                              double* outfall_in,
+                                             double* outfall_out,
                                              double* boundary_in,
                                              double* boundary_out,
                                              double* evap_out);

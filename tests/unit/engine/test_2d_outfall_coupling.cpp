@@ -115,7 +115,7 @@ struct RunResult {
     double cont_2d = 0.0;        // 2D surface continuity error (fraction)
     double cont_routing = 0.0;   // 1D routing continuity error (fraction)
     double outfall_in = 0.0;     // 2D ledger: 1D→2D outfall discharge (m³)
-    double outfall_out = 0.0;    // (read indirectly; see note)
+    double outfall_out = 0.0;    // 2D ledger: 2D→pipe withdrawal (m³, ~0 here)
 };
 
 RunResult run_outfall_model(const fs::path& dir) {
@@ -157,10 +157,11 @@ RunResult run_outfall_model(const fs::path& dir) {
 
     // 2D ledger terms (outfall_in proves the discharge actually reached 2D).
     double init_s = 0, final_s = 0, rain = 0, c12 = 0, c21 = 0, ofin = 0,
-           bin = 0, bout = 0, evap = 0;
+           ofout = 0, bin = 0, bout = 0, evap = 0;
     swmm_2d_get_mass_balance(eng, &init_s, &final_s, &rain, &c12, &c21, &ofin,
-                             &bin, &bout, &evap);
+                             &ofout, &bin, &bout, &evap);
     r.outfall_in = ofin;
+    r.outfall_out = ofout;
 
     swmm_engine_report(eng);
     swmm_engine_close(eng);
@@ -198,6 +199,10 @@ TEST_F(OutfallCoupling2DTest, OutfallDischargeReaches2DAndContinuityCloses) {
     EXPECT_GT(r.outfall_in, 0.0)
         << "2D mass balance recorded no outfall inflow";
 
+    // Pure discharge run: no surface→pipe withdrawal expected.
+    EXPECT_NEAR(r.outfall_out, 0.0, 1e-6 * std::max(r.outfall_in, 1.0))
+        << "unexpected outfall withdrawal: " << r.outfall_out;
+
     // (3) Both continuity ledgers close. The new outfall_in/outfall_out terms +
     //     the legacy-faithful 1D backflow booking keep each side conservative.
     EXPECT_LT(std::abs(r.cont_2d), 0.05)
@@ -211,6 +216,7 @@ TEST_F(OutfallCoupling2DTest, OutfallDischargeReaches2DAndContinuityCloses) {
         << "n_triangles," << r.n_tri << "\n"
         << "peak_2d_depth_m," << r.peak_depth << "\n"
         << "outfall_in_m3," << r.outfall_in << "\n"
+        << "outfall_out_m3," << r.outfall_out << "\n"
         << "continuity_2d_frac," << r.cont_2d << "\n"
         << "continuity_routing_frac," << r.cont_routing << "\n";
 }

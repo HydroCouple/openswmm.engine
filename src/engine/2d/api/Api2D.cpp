@@ -535,6 +535,7 @@ int swmm_2d_get_mass_balance(SWMM_Engine engine,
                              double* coupling_1d_to_2d_in,
                              double* coupling_2d_to_1d_out,
                              double* outfall_in,
+                             double* outfall_out,
                              double* boundary_in,
                              double* boundary_out,
                              double* evap_out) {
@@ -547,6 +548,7 @@ int swmm_2d_get_mass_balance(SWMM_Engine engine,
     if (coupling_1d_to_2d_in)  *coupling_1d_to_2d_in  = mb.coupling_1d_to_2d_in;
     if (coupling_2d_to_1d_out) *coupling_2d_to_1d_out = mb.coupling_2d_to_1d_out;
     if (outfall_in)            *outfall_in            = mb.outfall_in;
+    if (outfall_out)           *outfall_out           = mb.outfall_out;
     if (boundary_in)           *boundary_in           = mb.boundary_in;
     if (boundary_out)          *boundary_out          = mb.boundary_out;
     if (evap_out)              *evap_out             = mb.evap_out;

@@ -610,8 +610,8 @@ cdef class Surface2D:
 
         @return: Mapping with keys C{init_storage}, C{final_storage},
             C{rainfall_in}, C{coupling_1d_to_2d_in}, C{coupling_2d_to_1d_out},
-            C{outfall_in}, C{boundary_in}, C{boundary_out}, C{evap_out}
-            (all C{m^3}) and C{continuity_error} (fraction).
+            C{outfall_in}, C{outfall_out}, C{boundary_in}, C{boundary_out},
+            C{evap_out} (all C{m^3}) and C{continuity_error} (fraction).
         @rtype: dict[str, float]
         @raise RuntimeError: If the 2D module did not run.
         """
@@ -621,6 +621,7 @@ cdef class Surface2D:
         cdef double coupling_in = 0.0
         cdef double coupling_out = 0.0
         cdef double outfall_in = 0.0
+        cdef double outfall_out = 0.0
         cdef double boundary_in = 0.0
         cdef double boundary_out = 0.0
         cdef double evap_out = 0.0
@@ -629,8 +630,8 @@ cdef class Surface2D:
                                         &init_storage, &final_storage,
                                         &rainfall_in, &coupling_in,
                                         &coupling_out, &outfall_in,
-                                        &boundary_in, &boundary_out,
-                                        &evap_out))
+                                        &outfall_out, &boundary_in,
+                                        &boundary_out, &evap_out))
         _check(swmm_2d_get_continuity_error(self._engine, &err))
         return {
             "init_storage": init_storage,
@@ -639,6 +640,7 @@ cdef class Surface2D:
             "coupling_1d_to_2d_in": coupling_in,
             "coupling_2d_to_1d_out": coupling_out,
             "outfall_in": outfall_in,
+            "outfall_out": outfall_out,
             "boundary_in": boundary_in,
             "boundary_out": boundary_out,
             "evap_out": evap_out,
