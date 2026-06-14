@@ -4,7 +4,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -169,18 +169,36 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 break;
 
             case OutfallType::FIXED: {
-                double stage = nodes.outfall_param[uj] / ucf_len;
-                // Legacy: let yCrit = MIN(yCrit, yNorm)
+                // outfall_param is ALREADY in internal feet (converted once in
+                // PostParseResolver, matching legacy node.c fixedStage). The
+                // TIDAL/TIMESERIES branches below divide by ucf_len because
+                // those read raw display-unit table values; FIXED must not —
+                // a second division inflated the stage by 1/ucf_len in metric
+                // models (e.g. user3: 223.7 m → 733.9 m), driving huge spurious
+                // outfall backflow that flooded the upstream storage nodes.
+                double stage = nodes.outfall_param[uj];
+                // Legacy outfall_setOutletDepth (node.c:1429-1454):
+                //   yCrit = MIN(yCrit, yNorm)
+                //   if (yCrit+z+inv < stage)  yNew = stage - inv
+                //   else if (z > 0) { if (stage < inv+z) yNew = MAX(0, stage-inv)
+                //                     else               yNew = z + yCrit }
+                //   else                      yNew = yCrit
                 yCrit = std::min(yCrit, yNorm);
-                // If critical depth elev < stage, use stage
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
                     depth = stage - nodes.invert_elev[uj];
-                // Else if conduit above outfall invert, use critical depth
                 else if (z > 0.0)
-                    depth = z + yCrit;
-                // Else use max of critical depth and stage
+                    depth = (stage < nodes.invert_elev[uj] + z)
+                                ? std::max(0.0, stage - nodes.invert_elev[uj])
+                                : z + yCrit;
                 else
-                    depth = std::max(0.0, stage - nodes.invert_elev[uj]);
+                    // free-overfall (no offset, stage below critical-depth
+                    // elev): node sits at the conduit's critical depth, NOT 0.
+                    // Using max(0, stage-inv) here left a free-discharging
+                    // FIXED outfall below its invert at depth 0, so the
+                    // connecting conduit's downstream depth/area was too small
+                    // and it under-conveyed (user3 EGG conduit CCOROUT1 ~6%),
+                    // backing water up and surcharging the upstream node.
+                    depth = yCrit;
                 break;
             }
 
@@ -197,9 +215,11 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
                     depth = stage - nodes.invert_elev[uj];
                 else if (z > 0.0)
-                    depth = z + yCrit;
+                    depth = (stage < nodes.invert_elev[uj] + z)
+                                ? std::max(0.0, stage - nodes.invert_elev[uj])
+                                : z + yCrit;
                 else
-                    depth = std::max(0.0, stage - nodes.invert_elev[uj]);
+                    depth = yCrit;  // free overfall sits at critical depth (legacy node.c:1453)
                 break;
             }
 
@@ -213,11 +233,77 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
                     depth = stage - nodes.invert_elev[uj];
                 else if (z > 0.0)
-                    depth = z + yCrit;
+                    depth = (stage < nodes.invert_elev[uj] + z)
+                                ? std::max(0.0, stage - nodes.invert_elev[uj])
+                                : z + yCrit;
                 else
-                    depth = std::max(0.0, stage - nodes.invert_elev[uj]);
+                    depth = yCrit;  // free overfall sits at critical depth (legacy node.c:1453)
                 break;
             }
+        }
+
+        // Standard outfall stage in absolute elevation, used by the
+        // overrides below to express the priority ordering as a sequence
+        // of max() / replace operations.
+        double z_inv      = nodes.invert_elev[uj];
+        double h_standard = z_inv + depth;
+
+        // ----------------------------------------------------------------
+        // C4 + C5: 2D-coupling override (tailwater from the 2D surface).
+        //
+        // If a 2D module is attached and this outfall is in the coupling
+        // map, SurfaceRouter2D::updateOutfallBoundaries has cached the
+        // current 2D surface head at the coupling cell into
+        // nodes.outfall_2d_head[uj]. Non-coupled outfalls keep the
+        // sentinel (-1e30), so the predicate below is false for them and
+        // the legacy path is preserved bit-for-bit.
+        //
+        // Spec R2: "if HGL on the 2D surface is above the outfall
+        // invert, it becomes the downstream boundary condition." The
+        // explicit h_2d > z_inv guard (C5) matches the spec text and
+        // is robust against any future outfall type whose h_standard
+        // might fall below z_inv.
+        //
+        // Flap-gate logic (matches the original updateOutfallBoundaries
+        // intent): when h_2d would *raise* the stage above h_standard,
+        // a closed flap gate prevents the 2D side from pushing water
+        // back into the pipe network, so we skip the override and leave
+        // h_standard intact.
+        //
+        // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C4, C5).
+        double h_2d = nodes.outfall_2d_head[uj];
+        if (h_2d > z_inv) {
+            bool flap_closed = (nodes.outfall_has_flap_gate[uj] != 0)
+                               && (h_2d > h_standard);
+            if (!flap_closed) {
+                double depth_2d = h_2d - z_inv;
+                if (depth_2d > depth) {
+                    depth      = depth_2d;
+                    h_standard = z_inv + depth;
+                }
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // C6: prescribed-HGL overlay (highest priority, last word).
+        //
+        // The forcing API may set nodes.outfall_param-equivalent stage
+        // via forcing.node_head_boundary_value with ForcingMode::OVERRIDE.
+        // Apply it here as a direct replacement of the depth, so that
+        // (a) the legacy outfall_type is never mutated — "unfix" is just
+        //     setting the mode back to NONE — and
+        // (b) prescribed stage beats both the legacy logic AND the 2D
+        //     override unambiguously, which is the user-facing contract.
+        //
+        // The applyForcings block in SWMMEngine.cpp no longer writes to
+        // nodes.outfall_type / nodes.outfall_param; it only stages the
+        // value into forcing.node_head_boundary_value, and this overlay
+        // is the sole consumer.
+        //
+        // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C6).
+        if (ctx.forcing.node_head_boundary_mode[uj] == ForcingMode::OVERRIDE) {
+            double prescribed_stage = ctx.forcing.node_head_boundary_value[uj];
+            depth = std::max(prescribed_stage - z_inv, 0.0);
         }
 
         nodes.depth[uj] = depth;

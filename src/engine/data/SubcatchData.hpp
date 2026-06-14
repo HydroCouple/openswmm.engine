@@ -11,7 +11,7 @@
  * @ingroup engine_data
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -64,6 +64,15 @@ struct SubcatchData {
      *          outlet_node / outlet_subcatch when sections appear out of order.
      */
     std::vector<std::string> outlet_name;
+
+    /**
+     * @brief Snow pack name string for deferred resolution.
+     * @details Stored during parsing (SUBCATCHMENTS column 8) so
+     *          PostParseResolver can resolve `snowpack` once SNOWPACKS has
+     *          been parsed, regardless of section order. Parse-time config —
+     *          not part of the simulation state snapshot.
+     */
+    std::vector<std::string> snowpack_name;
 
     /**
      * @brief Rain gage index for this subcatchment.
@@ -289,6 +298,25 @@ struct SubcatchData {
     int                 conc_n_pollutants = 0;
 
     // -----------------------------------------------------------------------
+    // Per-object INP comment
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Object comment from the INP file (';'-prefixed lines immediately
+     *        above this subcatchment's data row), joined by literal "\\n".
+     *        Empty string means no comment.
+     */
+    std::vector<std::string> comments;
+
+    /**
+     * @brief Per-object tag from the INP `[TAGS]` section.
+     *
+     * @details Free-form string label. Index-keyed so `swmm_subcatch_rename`
+     *          keeps the tag attached.
+     */
+    std::vector<std::string> tags;
+
+    // -----------------------------------------------------------------------
     // Report flag — per-object output filter
     // -----------------------------------------------------------------------
 
@@ -485,6 +513,7 @@ struct SubcatchData {
         outlet_node.assign(un, -1);
         outlet_subcatch.assign(un, -1);
         outlet_name.resize(un);
+        snowpack_name.resize(un);
         gage.assign(un, -1);
         area.assign(un, 0.0);
         width.assign(un, 0.0);
@@ -520,6 +549,9 @@ struct SubcatchData {
         gw_sw_head.assign(un, 0.0);
         gw_node_avail_flow.assign(un, 0.0);
         gw_max_infil_vol.assign(un, std::numeric_limits<double>::max());
+
+        comments.assign(un, std::string{});
+        tags.assign(un, std::string{});
 
         rpt_flag.assign(un, 0);
 
@@ -568,7 +600,7 @@ struct SubcatchData {
         const auto un = static_cast<std::size_t>(n);
         auto g = [&](auto& vec, auto def) { vec.resize(un, def); };
         g(outlet_node, -1); g(outlet_subcatch, -1);
-        outlet_name.resize(un); g(gage, -1);
+        outlet_name.resize(un); snowpack_name.resize(un); g(gage, -1);
         g(area, 0.0); g(width, 0.0); g(slope, 0.0); g(curb_length, 0.0);
         g(frac_imperv, 0.0); g(frac_imperv_no_store, 0.0);
         g(n_imperv, 0.013); g(n_perv, 0.1);
@@ -585,6 +617,9 @@ struct SubcatchData {
         g(gw_sw_head, 0.0); g(gw_node_avail_flow, 0.0);
         g(gw_max_infil_vol, std::numeric_limits<double>::max());
         g(outfall_runon_vol, 0.0);
+        comments.resize(un, std::string{});
+        tags.resize(un, std::string{});
+
         g(rpt_flag, static_cast<char>(0));
         g(stat_precip_vol, 0.0); g(stat_evap_vol, 0.0);
         g(stat_infil_vol, 0.0); g(stat_imperv_vol, 0.0);
@@ -607,6 +642,78 @@ struct SubcatchData {
         g(lid_drain_runon_cfs, 0.0);
         // Note: conc, conc_old, ponded_qual, washoff_load handled by resize_quality()
         // Note: coverage, total_load handled separately
+    }
+
+    /**
+     * @brief Erase the subcatchment at index `idx` from every parallel array.
+     *
+     * @details Removes element `idx` from every SoA vector. Flat-2D arrays
+     *          (conc/ponded_qual/washoff_load, coverage/sweep, total_load) have
+     *          their full stride for `idx` removed. Spatial arrays are erased
+     *          separately by ObjectDeleter.
+     */
+    void erase_at(int idx) {
+        const auto ui = static_cast<std::size_t>(idx);
+        auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
+
+        e(outlet_node); e(outlet_subcatch); e(outlet_name); e(gage);
+        e(area); e(width); e(slope); e(curb_length);
+        e(frac_imperv); e(frac_imperv_no_store); e(n_imperv); e(n_perv);
+        e(ds_imperv); e(ds_perv); e(subarea_routing); e(pct_routed);
+
+        e(infil_model); e(infil_p1); e(infil_p2); e(infil_p3); e(infil_p4); e(infil_p5);
+
+        e(runoff); e(rainfall); e(evap_loss); e(infil_loss); e(ponded_depth);
+        e(gw_flow); e(old_runoff); e(old_gw_flow);
+        e(runon_inflow); e(old_runon_inflow); e(outfall_runon_vol);
+        e(gw_sw_head); e(gw_node_avail_flow); e(gw_max_infil_vol);
+        e(comments); e(tags); e(rpt_flag);
+
+        e(stat_precip_vol); e(stat_evap_vol); e(stat_infil_vol);
+        e(stat_imperv_vol); e(stat_perv_vol); e(stat_runoff_vol); e(stat_max_runoff);
+        e(stat_gw_infil_vol); e(stat_gw_upper_evap_vol); e(stat_gw_lower_evap_vol);
+        e(stat_gw_deep_perc_vol); e(stat_gw_flow_vol); e(stat_gw_max_flow);
+        e(stat_gw_sum_theta); e(stat_gw_sum_depth); e(stat_gw_final_theta);
+        e(stat_gw_final_depth); e(stat_gw_steps);
+
+        e(gw_aquifer); e(gw_node); e(gw_surf_elev);
+        e(gw_a1); e(gw_b1); e(gw_a2); e(gw_b2); e(gw_a3); e(gw_tw); e(gw_hstar);
+        e(snowpack); e(snow_net_imperv); e(snow_net_perv);
+        e(total_lid_area_ft2); e(lid_return_to_perv_cfs); e(lid_drain_runon_cfs);
+
+        // Flat 2D quality arrays: [sc * np + p]
+        if (conc_n_pollutants > 0) {
+            const auto np = static_cast<std::size_t>(conc_n_pollutants);
+            const auto base = ui * np;
+            auto erase2d = [&](auto& v) {
+                if (base + np <= v.size())
+                    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
+                            v.begin() + static_cast<std::ptrdiff_t>(base + np));
+            };
+            erase2d(conc); erase2d(conc_old); erase2d(ponded_qual); erase2d(washoff_load);
+        }
+
+        // Flat 2D total load: [sc * np + p]
+        if (total_load_n_pollutants > 0) {
+            const auto np = static_cast<std::size_t>(total_load_n_pollutants);
+            const auto base = ui * np;
+            if (base + np <= total_load.size())
+                total_load.erase(
+                    total_load.begin() + static_cast<std::ptrdiff_t>(base),
+                    total_load.begin() + static_cast<std::ptrdiff_t>(base + np));
+        }
+
+        // Flat 2D coverage/sweep matrices: [sc * n_lu + lu]
+        if (coverage_n_landuses > 0) {
+            const auto nlu = static_cast<std::size_t>(coverage_n_landuses);
+            const auto base = ui * nlu;
+            auto erase2d = [&](auto& v) {
+                if (base + nlu <= v.size())
+                    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
+                            v.begin() + static_cast<std::ptrdiff_t>(base + nlu));
+            };
+            erase2d(coverage); erase2d(sweep_last_swept);
+        }
     }
 
     /**
@@ -674,6 +781,9 @@ struct SubcatchData {
         gw_sw_head.shrink_to_fit();
         gw_node_avail_flow.shrink_to_fit();
         gw_max_infil_vol.shrink_to_fit();
+
+        comments.shrink_to_fit();
+        tags.shrink_to_fit();
 
         rpt_flag.shrink_to_fit();
 

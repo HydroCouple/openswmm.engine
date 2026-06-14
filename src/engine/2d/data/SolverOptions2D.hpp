@@ -6,7 +6,7 @@
  * @ingroup engine_2d
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -18,16 +18,53 @@
 
 namespace openswmm::twoD {
 
+/**
+ * @brief Krylov linear solver selector for the BDF + Newton + Krylov stack.
+ *
+ * Phase 1 wires GMRES only; BICGSTAB and TFQMR are kept as enum values to
+ * preserve the input-file parsing surface and to mark slots reserved for
+ * possible Phase 2 work, but selecting them today triggers a clear
+ * runtime error in CvodeSurfaceSolver::initialize().
+ *
+ * GMRES is the canonical choice for the elliptic-flavoured diffusive-wave
+ * Jacobian and pairs cleanly with multigrid preconditioners (the Phase 2
+ * BoomerAMG path); the other two Krylov methods would only earn their keep
+ * for problem classes we do not currently solve.
+ */
 enum class LinearSolverType : int8_t {
-    GMRES    = 0,
-    BICGSTAB = 1,
-    TFQMR    = 2
+    GMRES    = 0,   ///< Phase 1: WIRED (SUNLinSol_SPGMR).
+    BICGSTAB = 1,   ///< Reserved; rejected at initialize() in Phase 1.
+    TFQMR    = 2    ///< Reserved; rejected at initialize() in Phase 1.
 };
 
+/**
+ * @brief Preconditioner selector for the Krylov inner solver.
+ *
+ * Phase 1 wires NONE (no preconditioning) and JACOBI (per-cell diagonal
+ * approximation rebuilt each Jacobian refresh). ILU and AMG are reserved
+ * for the Phase 2 hypre/BoomerAMG integration; selecting them today
+ * triggers a clear runtime error in CvodeSurfaceSolver::initialize().
+ *
+ * Tier rationale (see also the Phase 1/2 discussion in
+ * docs/2D_KNOWN_STIFFNESS_ISSUE.md):
+ *
+ *   - NONE   : baseline; useful for measuring how much the Jacobi heuristic
+ *              actually buys at a given mesh size.
+ *   - JACOBI : O(n) setup, O(n) apply, embarrassingly parallel. Effective
+ *              while the Newton matrix M = I − γJ is diagonally dominant;
+ *              expected to scale acceptably to ~10k–50k cells.
+ *   - ILU    : O(nnz) setup + apply via KLU. Better convergence per
+ *              Krylov iteration than JACOBI but still asymptotically
+ *              non-scalable on this elliptic operator. *Not implemented*.
+ *   - AMG    : O(n) setup amortised, near-constant Krylov iterations
+ *              regardless of mesh size. The only scalable option past
+ *              ~100k cells. Requires hypre/BoomerAMG. *Not yet wired.*
+ */
 enum class PreconditionerType : int8_t {
-    NONE   = 0,
-    JACOBI = 1,
-    ILU    = 2    // future
+    NONE   = 0,     ///< Phase 1: WIRED (no preconditioning).
+    JACOBI = 1,     ///< Phase 1: WIRED (diagonal heuristic).
+    ILU    = 2      ///< Reserved; rejected at initialize() in Phase 1.
+    // AMG  = 3     ///< Reserved for Phase 2 (hypre BoomerAMG).
 };
 
 /**
@@ -54,6 +91,56 @@ struct SolverOptions2D {
 
     /// Path from [2D_MESH_FILE] FILE token. Empty = mesh is inline in main .inp.
     std::string mesh_file;
+
+    /// HDF5 output file path from [2D_OPTIONS] OUTPUT_FILE token. Empty =
+    /// no 2D output is written. Resolved relative to the parent .inp directory
+    /// by the section handler.
+    std::string output_file;
+
+    // -----------------------------------------------------------------------
+    // Unit-system coupling factors — NOT parsed from input. Computed once in
+    // SurfaceRouter2D::initialize() from the project FLOW_UNITS.
+    //
+    // The 2D solver runs internally in SI (metres, m², m³, m³/s, g=9.80665).
+    // The 1D SWMM engine ALWAYS computes internally in FEET (g=32.2, PHI=1.486)
+    // — for EVERY project, US or SI: its reader converts metric inputs to feet
+    // on load and only converts back at the display/output boundary. So these
+    // coupling factors are ALWAYS the feet⇄metres conversion, independent of
+    // FLOW_UNITS. SurfaceRouter2D::initialize() overwrites the 1.0 defaults
+    // with the real ft⇄m factors; the defaults only stand when 2D is inactive
+    // (no coupling occurs). The MESH scaling factor is separate and IS driven
+    // by FLOW_UNITS (the mesh is authored in project units) — see initialize().
+    // -----------------------------------------------------------------------
+    double len_1d_to_2d  = 1.0;  ///< 1D length → 2D length (ft→m, 0.3048)
+    double len_2d_to_1d  = 1.0;  ///< 2D length → 1D length (m→ft, 3.2808)
+    double vol_1d_to_2d  = 1.0;  ///< 1D volume → 2D volume (ft³→m³, 0.02832)
+    double flow_1d_to_2d = 1.0;  ///< 1D flow → 2D flow (ft³/s→m³/s, 0.02832)
+    double flow_2d_to_1d = 1.0;  ///< 2D flow → 1D flow (m³/s→ft³/s, 35.315)
+
+    /*! When true, the inline `.inp` or referenced `.2dm` declared
+     *  `;; UNITS: SI (m)` (or an equivalent metric keyword). The mesh on
+     *  disk is already in SI metres, so SurfaceRouter2D::initialize
+     *  SKIPS the FLOW_UNITS-based mesh scaling (vx/vy/vz and the
+     *  coupling areas).  The 1D⇄2D coupling factors (len_1d_to_2d,
+     *  vol_1d_to_2d, flow_*) are unaffected — they are always the
+     *  feet⇄metres conversion (the 1D side is always feet), not the mesh
+     *  scaling. */
+    bool mesh_units_si = false;
+
+    /*! Runtime-only: true after SurfaceRouter2D::initialize() applied the
+     *  FLOW_UNITS ft→m in-place mesh scaling (vx/vy/vz, coupling areas).
+     *  Lets serialization (InpWriter, GeoPackage) un-scale back to the
+     *  authored units, and makes a repeated initialize() idempotent
+     *  against double-scaling. Never parsed from input, never persisted. */
+    bool mesh_scaled_to_si = false;
+
+    /*! Runtime-only: true after SurfaceRouter2D::initialize() drained the
+     *  pending [2D_BOUNDARY_CONDITIONS] / [2D_EDGE_CONVEYANCE] rows into
+     *  BoundaryData / MeshData::edge_conveyance. Serialization collectors
+     *  (Serialize2D.hpp) switch to the drained arrays once this is set —
+     *  they are the live state that post-initialize API mutations edit;
+     *  the retained pending rows would be stale. Never parsed/persisted. */
+    bool pending_rows_drained = false;
 };
 
 } // namespace openswmm::twoD

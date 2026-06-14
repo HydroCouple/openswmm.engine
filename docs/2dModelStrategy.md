@@ -6,7 +6,8 @@ This document details the implementation strategy for an optional 2D surface rou
 
 **Scope — Phase 1 (this document):**
 - 2D diffusion-wave surface routing on a triangular mesh
-- Coupling to SWMM nodes/junctions via orifice equation and forcing API
+- Coupling to SWMM nodes/junctions via orifice equation with
+  surcharge gate and dedicated `coupling_inflow[]` channel (see §6)
 - Rainfall from system rain gages
 - Time integration via SUNDIALS CVODE (BDF) with GMRES linear solver
 
@@ -24,17 +25,30 @@ The 2D model is specified via optional sections in the `.inp` file. All section 
 
 ### 1.1 Section Names
 
-| Section | Purpose |
-|---------|---------|
-| `[2D_MESH_FILE]` | *(optional)* Reference an external file containing 2D mesh and configuration sections |
-| `[2D_OPTIONS]` | Solver options, tolerances, time-stepping parameters |
-| `[2D_VERTICES]` | Mesh vertex coordinates |
-| `[2D_TRIANGLES]` | Triangle connectivity and surface roughness |
-| `[2D_VERTEX_NODE_MAP]` | Vertex-to-SWMM-node coupling |
-| `[2D_TRIANGLE_NODE_MAP]` | Triangle-centroid-to-SWMM-node coupling |
-| `[2D_BOUNDARY_CONDITIONS]` | *(future)* Boundary types on mesh edges |
-| `[2D_INITIAL_CONDITIONS]` | *(future)* Per-cell initial water depth |
-| `[2D_INFILTRATION]` | *(future)* Per-cell or per-zone infiltration params |
+| Section | Status | Purpose |
+|---------|--------|---------|
+| `[2D_MESH_FILE]` | implemented | Reference an external file containing 2D mesh and configuration sections |
+| `[2D_OPTIONS]` | implemented | Solver options, tolerances, time-stepping parameters, HDF5 output path |
+| `[2D_VERTICES]` | implemented | Mesh vertex coordinates |
+| `[2D_TRIANGLES]` | implemented | Triangle connectivity and surface roughness |
+| `[2D_VERTEX_NODE_MAP]` | implemented | Vertex-to-SWMM-node coupling (with optional `Cd` / area) |
+| `[2D_TRIANGLE_NODE_MAP]` | implemented | Triangle-centroid-to-SWMM-node coupling (with optional `Cd` / area) |
+| `[2D_BOUNDARY_CONDITIONS]` | implemented (storage + parser) | Per-edge boundary type and parameter |
+| `[2D_EDGE_CONVEYANCE]` | implemented | Per-edge `[0, 1]` multiplier on the diffusion-wave flux (§11A) |
+| `[2D_INITIAL_CONDITIONS]` | *(future)* | Per-cell initial water depth |
+| `[2D_INFILTRATION]` | *(future)* | Per-cell or per-zone infiltration params |
+
+Registration of all implemented sections happens through
+`openswmm::twoD::register2DSections` (`src/engine/2d/input/SectionHandlers2D.cpp`),
+called from `SWMMEngine::open` under `#ifdef OPENSWMM_HAS_2D`.
+
+> **Optional header comments.** Any line starting with `;;` is treated as
+> a comment by the standard tokenizer. Two such comments are recognised
+> by the engine's pre-scan (see §2A Unit Conversion Strategy):
+> `;; UNITS: <unit>` and `;; SOURCE_CRS: <tag>`. They are not
+> required, but producers (GUI, hand-edited files) should emit them so
+> the file is self-describing and the engine can correctly handle
+> SI-on-disk meshes.
 
 ### 1.2 `[2D_MESH_FILE]`
 
@@ -106,26 +120,49 @@ REPORT_2D       YES
 
 ### 1.3 `[2D_OPTIONS]`
 
+Parsed by `openswmm::twoD::parse2DOptionsLine`. One `KEY VALUE` pair per
+line. Unknown keys are an error (the parser refuses silently dropped
+options to avoid mis-typed keys being ignored).
+
 ```
 ;; Solver and timestepping options for the 2D surface routing module
 ;;
-;; Parameter              Value
-;; ---------------------- ------
-MAX_TIMESTEP              10.0       ;; Maximum CVODE internal step (seconds)
-MIN_TIMESTEP              0.001      ;; Minimum CVODE internal step (seconds)
+;; Parameter              Value      ;; Notes
+;; ---------------------- ---------- ;; --------------------------------
+MAX_TIMESTEP              10.0       ;; Max CVODE internal step (s)
+MIN_TIMESTEP              0.001      ;; Min CVODE internal step (s)
 REL_TOLERANCE             1.0e-4     ;; CVODE relative tolerance
-ABS_TOLERANCE             1.0e-6     ;; CVODE absolute tolerance (metres of depth)
-LINEAR_SOLVER             GMRES      ;; GMRES | BICGSTAB | TFQMR
-PRECONDITIONER            NONE       ;; NONE | JACOBI | ILU (future)
-MAX_KRYLOV_DIM            30         ;; Maximum Krylov subspace dimension
-DRY_DEPTH                 0.001      ;; Depth below which cell is considered dry (m)
-COUPLING_INTERVAL         0          ;; 0 = every SWMM routing step (default)
-REPORT_2D                 YES        ;; Write 2D results to output
+ABS_TOLERANCE             1.0e-6     ;; CVODE absolute tolerance (m of depth)
+DRY_DEPTH                 0.001      ;; Wet/dry threshold (m of depth)
+LIMITER_EPSILON           1.0e-6     ;; Jawahar-Kamath slope-limiter ε
+COUPLING_CD               0.65       ;; Default discharge coefficient (orifice)
+LINEAR_SOLVER             GMRES      ;; GMRES (wired) | BICGSTAB / TFQMR (reserved)
+PRECONDITIONER            NONE       ;; NONE | JACOBI (wired) | ILU (reserved)
+MAX_KRYLOV_DIM            30         ;; Max Krylov subspace dim (GMRES restart)
+MAX_CVODE_STEPS           500        ;; Max CVODE internal steps per advance call
+COUPLING_INTERVAL         0          ;; 0 = couple every SWMM routing step
+REPORT_2D                 YES        ;; YES/NO — toggles internal 2D reporting
+OUTPUT_FILE               run.h5     ;; Optional HDF5 output path; relative paths
+                                     ;; resolve against the .inp directory
 ```
+
+**Defaults** (see `SolverOptions2D.hpp`): `MAX_TIMESTEP=10.0`,
+`MIN_TIMESTEP=0.001`, `REL_TOLERANCE=1e-4`, `ABS_TOLERANCE=1e-6`,
+`DRY_DEPTH=0.001`, `LIMITER_EPSILON=1e-6`, `COUPLING_CD=0.65`,
+`LINEAR_SOLVER=GMRES`, `PRECONDITIONER=NONE`, `MAX_KRYLOV_DIM=30`,
+`MAX_CVODE_STEPS=500`, `COUPLING_INTERVAL=0`, `REPORT_2D=YES`,
+`OUTPUT_FILE` empty (no 2D output).
+
+**Phase-1 reservation:** `BICGSTAB` / `TFQMR` for `LINEAR_SOLVER` and
+`ILU` for `PRECONDITIONER` are accepted by the parser but rejected at
+`CvodeSurfaceSolver::initialize` with a clear runtime error. The slots
+are reserved for the planned hypre/BoomerAMG integration; see
+`docs/2D_KNOWN_STIFFNESS_ISSUE.md` for the rationale.
 
 ### 1.4 `[2D_VERTICES]`
 
-Each row defines a mesh vertex. Vertices are indexed in order of appearance (0-based).
+Parsed by `parse2DVertexLine`. Each row defines a mesh vertex. Vertices
+are indexed in order of appearance (0-based). Format:
 
 ```
 ;; X          Y          Z          TAG (optional)
@@ -134,13 +171,22 @@ Each row defines a mesh vertex. Vertices are indexed in order of appearance (0-b
 101.0        200.0      10.1
 ```
 
-- **X, Y** — Horizontal coordinates (same CRS as SWMM coordinates)
-- **Z** — Ground surface elevation (project length units)
-- **TAG** — Optional string tag for grouping/reference
+- **X, Y** — Horizontal coordinates. **Unit policy (see §2A):** the
+  default contract is "project length units" — feet when SWMM
+  `FLOW_UNITS` is US, metres otherwise. The engine multiplies XY/Z by
+  0.3048 at load time for US projects (`SurfaceRouter2D::initialize`).
+  A producer that has already written SI metres can declare
+  `;; UNITS: SI (m)` near the top of the file, and the engine will
+  skip the load-time scaling.
+- **Z** — Ground surface elevation, in the same unit policy as XY.
+- **TAG** — Optional string tag. Referenced by `[2D_VERTEX_NODE_MAP]`
+  and `[2D_TRIANGLE_NODE_MAP]` as an alternative to the 0-based index.
 
 ### 1.5 `[2D_TRIANGLES]`
 
-Each row defines a triangle by referencing three vertex indices (0-based) and a Manning's roughness coefficient.
+Parsed by `parse2DTriangleLine`. Each row defines a triangle by
+referencing three vertex indices (0-based) and a Manning's roughness
+coefficient.
 
 ```
 ;; V1   V2   V3   MANNINGS_N   TAG (optional)
@@ -148,29 +194,155 @@ Each row defines a triangle by referencing three vertex indices (0-based) and a 
 3    4    5    0.025          road_surface
 ```
 
-- **V1, V2, V3** — Vertex indices (0-based)
-- **MANNINGS_N** — Manning's roughness coefficient (s/m^{1/3})
-- **TAG** — Optional string tag
+- **V1, V2, V3** — Vertex indices (0-based) into `[2D_VERTICES]`.
+- **MANNINGS_N** — Manning's roughness coefficient (s/m^{1/3}).
+  Default if unset: 0.035. **No unit conversion is applied** — the
+  coefficient is dimensionally consistent under both SI and US
+  Manning's equations because the engine's internal solver runs in SI
+  and the constant 1.486 conversion lives entirely in the 1D side.
+- **TAG** — Optional string tag.
 
 ### 1.6 `[2D_VERTEX_NODE_MAP]`
 
-Maps mesh vertices to SWMM coupling nodes. Flow exchange occurs at these points via an orifice equation.
+Parsed by `parse2DVertexNodeMapLine`. Maps mesh vertices to SWMM
+coupling nodes — exchange flow uses an orifice equation at each
+mapped point.
 
 ```
-;; VERTEX_INDEX_OR_TAG    SWMM_NODE_NAME
+;; VERTEX_INDEX_OR_TAG    SWMM_NODE_NAME    [CD]    [AREA]
 5                         J1
-inlet_region              J2
+inlet_region              J2                0.70    1.5
 ```
+
+- **VERTEX_INDEX_OR_TAG** — 0-based integer OR a tag string defined in
+  `[2D_VERTICES]`. Tag form is more robust to mesh edits that
+  renumber vertices.
+- **SWMM_NODE_NAME** — Name of an existing SWMM `[JUNCTIONS]`,
+  `[OUTFALLS]`, or `[STORAGE]` node. Resolved to a node index at
+  `SurfaceRouter2D::initialize` time; an unknown name is a fatal
+  error.
+- **CD** *(optional)* — Discharge coefficient. Default 0.65.
+- **AREA** *(optional)* — Effective exchange area (m² in SI projects,
+  ft² in US projects — same unit policy as the mesh XY, scaled by
+  0.3048² at load time when the mesh declares non-SI units).
+  Default 1.0.
 
 ### 1.7 `[2D_TRIANGLE_NODE_MAP]`
 
-Maps triangle centroids to SWMM coupling nodes. Flow exchange is distributed over the triangle area.
+Parsed by `parse2DTriangleNodeMapLine`. Maps triangle centroids to
+SWMM coupling nodes. Same parameter set and unit policy as
+`[2D_VERTEX_NODE_MAP]`.
 
 ```
-;; TRIANGLE_INDEX_OR_TAG  SWMM_NODE_NAME
+;; TRIANGLE_INDEX_OR_TAG  SWMM_NODE_NAME    [CD]    [AREA]
 0                         J3
-road_surface              J4
+road_surface              J4                0.60    4.0
 ```
+
+### 1.8 `[2D_BOUNDARY_CONDITIONS]`
+
+Parsed by `parse2DBoundaryConditionsLine`. Per-edge boundary type and
+parameter, indexed by `(TRI, EDGE)` where `EDGE ∈ {0,1,2}` is the
+local edge index opposite the corresponding vertex. Rows are
+accumulated into a pending-rows buffer during parsing
+(`SurfaceRouter2D::PendingBoundaryRow`) and drained into the per-edge
+`BoundaryData` SoA inside `SurfaceRouter2D::initialize` once the mesh
+has been sized.
+
+```
+;; TRI   EDGE   TYPE              PARAM_1          PARAM_2   GROUP
+;; ---   ----   ---------------   --------------   -------   --------
+   12    0      NORMAL_FLOW       0.0020           *         *
+   12    1      SPECIFIED_STAGE   95.4             *         *
+   45    2      TS_STAGE          DownstreamTS     *         Outlet
+   77    0      SPECIFIED_FLOW    0.150            *         *
+   77    1      TS_FLOW           Hydrograph_A     *         Inlet
+   90    2      RATING_CURVE      Outfall_Q_H      *         Outlet
+```
+
+**TYPE** is one of:
+
+| Token | `BoundaryType` enum | PARAM_1 meaning |
+|-------|---------------------|-----------------|
+| `WALL` | `WALL` (default) | unused — zero-flux |
+| `NORMAL_FLOW` | `NORMAL_FLOW` | bed slope (≥ 0, dimensionless) |
+| `SPECIFIED_STAGE` | `SPECIFIED_STAGE` | constant total head (m, SI) |
+| `TS_STAGE` | `SPECIFIED_STAGE` | timeseries name (head varies in time) |
+| `SPECIFIED_FLOW` | `SPECIFIED_FLOW` | discharge per metre of edge (m³/s/m, outward positive) |
+| `TS_FLOW` | `SPECIFIED_FLOW` | timeseries name (per-metre flow varies in time) |
+| `RATING_CURVE` | `RATING_CURVE` | curve registry name (stage → flow) |
+
+**PARAM_2** is currently reserved (always `*`). **GROUP** is an
+optional named group (`*` = none) used by GUI workflows for bulk edits;
+the engine stores it but does not act on it today.
+
+> **Current solver behaviour.** Per the comment on
+> `BoundaryType` in `BoundaryData.hpp`: storage, parsing, and the C
+> API for all five types are implemented. **The FV-SWE flux integration
+> for non-Wall BCs is deferred to a follow-up slice (V-E-FLUX)** — the
+> flux calculator in `SurfaceFluxCalculator.cpp` (line 131) currently
+> treats every boundary edge as Wall regardless of declared type. This
+> is intentional: it lets GUI / I/O round-trip work proceed in parallel
+> with the FV-SWE BC integration.
+
+### 1.9 `[2D_EDGE_CONVEYANCE]`
+
+Parsed by `parse2DEdgeConveyanceLine`. Per-edge multiplicative factor
+in `[0, 1]` that attenuates the diffusion-wave flux across the named
+edge. Default 1.0 (unrestricted) for every edge not listed. Motivating
+use cases: culverted embankments, partially-permeable hedgerows,
+perforated fences, vegetation strips, "leaky" internal weirs.
+
+The row format mirrors SWMM `[CONDUITS]` `From-Node` / `To-Node`
+convention but identifies a **mesh edge** by its endpoint vertex
+indices. The pair is unordered — swapping `FROM_VERTEX` and
+`TO_VERTEX` does not change the value (Q3 silent partner-slot
+mirroring; see §11A).
+
+```
+;; Per-edge conveyance multiplier in [0, 1]. Default 1.0 (unrestricted).
+;; FROM/TO is the (unordered) pair of mesh vertex indices at the edge's
+;; endpoints. Authoring an obstruction as a polyline is the GUI's job:
+;; walk the polyline, emit one row per shared interior edge.
+[2D_EDGE_CONVEYANCE]
+
+;; FROM_VERTEX   TO_VERTEX   CONVEYANCE
+;; -----------   ---------   ----------
+   17            18          0.40        ;; hedgerow segment
+   18            19          0.40
+   42            87          0.30        ;; culverted embankment
+   55            61          0.00        ;; fully blocked → equivalent to Wall
+```
+
+Parser rules (5d):
+
+- Exactly three tokens per row: `FROM_VERTEX TO_VERTEX CONVEYANCE`.
+- `FROM_VERTEX` and `TO_VERTEX` are non-negative integers in
+  `[0, n_vertices)`, **must differ**. Equal endpoints raise a
+  parse-time error; out-of-range endpoints raise an init-time error.
+- `CONVEYANCE` parses as a `double`; values outside `[0, 1]` are
+  rejected at parse time (Q1 strict clamp).
+- Rows accumulate into `SurfaceRouter2D::pendingEdgeConveyanceRows()`
+  during parsing. `SurfaceRouter2D::initialize` drains them after
+  `buildMeshTopology`, builds a one-shot vertex-pair → slot lookup
+  in one O(n_triangles) pass, and writes the factor into every slot
+  the edge resolves to (interior = 2 slots, boundary = 1).
+- Duplicate rows naming the same edge: last-write-wins.
+- A vertex pair that does not form a real mesh edge raises a fatal
+  init-time error.
+
+The factor is applied in `SurfaceFluxCalculator::computeEdgeFluxes`
+immediately before `state.edge_flux[idx] = F_e`, **after** the
+wet/dry Hermite shutoff. Today it has no effect on boundary edges
+(the calculator early-returns at `nbr < 0`); once the V-E-FLUX slice
+lands the factor will also multiply BC-derived boundary fluxes.
+
+C API: `swmm_2d_get_edge_conveyance` / `swmm_2d_set_edge_conveyance`
+/ `swmm_2d_get_edge_conveyance_bulk` / `swmm_2d_reset_edge_conveyance`.
+`set` clamps to `[0, 1]` and silently mirrors to the partner slot
+for interior edges. Safe between routing steps; calling DURING a
+routing step is undefined (the CVODE sub-stepper holds a const
+reference to the mesh).
 
 ---
 
@@ -180,141 +352,148 @@ All 2D data structures follow the existing OpenSWMM SoA pattern: parallel `std::
 
 ### 2.1 File: `src/engine/2d/data/MeshData.hpp`
 
+The actual struct (abbreviated; comments preserved):
+
 ```cpp
 namespace openswmm::twoD {
 
 struct MeshData {
 
-    // -----------------------------------------------------------------------
     // Vertex arrays — indexed by vertex index [0, n_vertices)
-    // -----------------------------------------------------------------------
+    std::vector<double>      vx, vy, vz;             // coords + ground elevation
+    std::vector<std::string> vtag;                   // optional tag
 
-    std::vector<double> vx;             // Vertex X coordinate
-    std::vector<double> vy;             // Vertex Y coordinate
-    std::vector<double> vz;             // Vertex Z (ground elevation)
-    std::vector<std::string> vtag;      // Optional vertex tag
-
-    // -----------------------------------------------------------------------
-    // Triangle static properties — indexed by triangle index [0, n_triangles)
-    // -----------------------------------------------------------------------
-
-    // Connectivity (3 vertex indices per triangle)
-    std::vector<int> tri_v0;            // Vertex 0 index
-    std::vector<int> tri_v1;            // Vertex 1 index
-    std::vector<int> tri_v2;            // Vertex 2 index
-
+    // Triangle connectivity (3 vertex indices per triangle)
+    std::vector<int> tri_v0, tri_v1, tri_v2;
     // Neighbour connectivity (3 adjacent triangle indices, -1 = boundary)
-    std::vector<int> tri_nbr0;          // Neighbour across edge opposite v0
-    std::vector<int> tri_nbr1;          // Neighbour across edge opposite v1
-    std::vector<int> tri_nbr2;          // Neighbour across edge opposite v2
+    std::vector<int> tri_nbr0, tri_nbr1, tri_nbr2;
 
-    // Precomputed geometry
-    std::vector<double> tri_area;       // Planimetric area (m²)
-    std::vector<double> tri_cx;         // Centroid X
-    std::vector<double> tri_cy;         // Centroid Y
-    std::vector<double> tri_cz;         // Centroid Z (avg of vertex elevations)
+    // Precomputed cell geometry
+    std::vector<double> tri_area;     // Planimetric area (m²)
+    std::vector<double> tri_cx, tri_cy, tri_cz;  // Centroid xyz
 
-    // Edge geometry — flat 2D: [tri * 3 + edge]
-    std::vector<double> edge_length;    // Length of each edge
-    std::vector<double> edge_nx;        // Outward normal X component
-    std::vector<double> edge_ny;        // Outward normal Y component
-    std::vector<double> edge_mx;        // Edge midpoint X
-    std::vector<double> edge_my;        // Edge midpoint Y
-    std::vector<double> edge_mz;        // Edge midpoint Z (interpolated)
+    // Edge geometry — flat 2D, [tri * 3 + edge_local]
+    std::vector<double> edge_length;
+    std::vector<double> edge_nx, edge_ny;     // outward unit normal
+    std::vector<double> edge_mx, edge_my, edge_mz;  // edge midpoint xyz
+
+    // §11A — per-edge conveyance factor in [0,1] (default 1.0).
+    // Mirrored across interior edges for mass conservation.
+    std::vector<double> edge_conveyance;
 
     // Surface properties
-    std::vector<double> mannings_n;     // Manning's roughness coefficient
-    std::vector<std::string> tri_tag;   // Optional triangle tag
+    std::vector<double>      mannings_n;
+    std::vector<std::string> tri_tag;
 
-    // -----------------------------------------------------------------------
-    // Vertex reconstruction stencil (pseudo-Laplacian weights)
-    // -----------------------------------------------------------------------
-    // Stored as CSR (compressed sparse row) for variable stencil sizes
-    std::vector<int>    vert_stencil_ptr;   // [n_vertices + 1] row pointers
-    std::vector<int>    vert_stencil_idx;   // Column indices (triangle indices)
-    std::vector<double> vert_stencil_wt;    // Pseudo-Laplacian weights
+    // Vertex reconstruction stencil — CSR (pseudo-Laplacian weights)
+    std::vector<int>    vert_stencil_ptr;
+    std::vector<int>    vert_stencil_idx;
+    std::vector<double> vert_stencil_wt;
 
-    // -----------------------------------------------------------------------
-    // Coupling maps
-    // -----------------------------------------------------------------------
+    // Coupling maps (resolved indices, -1 = none)
+    std::vector<int>    vert_coupled_node;
+    std::vector<int>    tri_coupled_node;
 
-    // Vertex-to-SWMM-node coupling
-    std::vector<int> vert_coupled_node;     // SWMM node index (-1 = none)
+    // Coupling parameters per coupling point
+    std::vector<double> vert_coupling_cd;     // Discharge coefficient (default 0.65)
+    std::vector<double> vert_coupling_area;   // Effective exchange area
+    std::vector<double> tri_coupling_cd;
+    std::vector<double> tri_coupling_area;
 
-    // Triangle-to-SWMM-node coupling
-    std::vector<int> tri_coupled_node;      // SWMM node index (-1 = none)
-
-    // Deferred resolution names (populated during parsing)
+    // Deferred-resolution names (cleared by SurfaceRouter2D::initialize)
     std::vector<std::string> vert_coupled_node_name;
     std::vector<std::string> tri_coupled_node_name;
-
-    // -----------------------------------------------------------------------
-    // Capacity
-    // -----------------------------------------------------------------------
 
     int n_vertices()  const noexcept { return static_cast<int>(vx.size()); }
     int n_triangles() const noexcept { return static_cast<int>(tri_v0.size()); }
 
-    void resize_vertices(int nv);
-    void resize_triangles(int nt);
-    void build_topology();          // Compute neighbours, edges, areas
-    void build_vertex_stencils();   // Build pseudo-Laplacian weights
+    void resize_vertices(int nv);   // also resizes vert_coupled_node[_name],
+                                    // vert_coupling_cd / area
+    void resize_triangles(int nt);  // also resizes edge_*, mannings_n,
+                                    // tri_coupled_node[_name], tri_coupling_cd / area
 };
 
 } // namespace openswmm::twoD
 ```
 
+> **Implementation note.** Topology and stencil construction are NOT
+> member functions of `MeshData`. They live in free functions
+> `openswmm::twoD::buildMeshTopology(MeshData&)` (in `mesh/MeshBuilder.cpp`)
+> and `openswmm::twoD::buildVertexStencils(MeshData&)` (in
+> `mesh/VertexReconstruction.cpp`), called from
+> `SurfaceRouter2D::initialize` in the order: optional ft→m mesh scaling
+> → `buildMeshTopology` → `validateMesh` → `buildVertexStencils`.
+
 ### 2.2 File: `src/engine/2d/data/SurfaceStateData.hpp`
+
+All values below are in the **2D solver's SI internal units** (m, m/s,
+m²/s, etc.). Any conversion from the SWMM 1D side (which runs in
+project units) happens at the boundary; see §2A Unit Conversion
+Strategy.
 
 ```cpp
 namespace openswmm::twoD {
 
 struct SurfaceStateData {
 
-    // -----------------------------------------------------------------------
     // State variables — per triangle [0, n_triangles)
-    // -----------------------------------------------------------------------
-
     std::vector<double> depth;          // Overland flow depth ψ_o (m)
     std::vector<double> head;           // Total head h_o = z_s + ψ_o (m)
 
     // Gradient fields (per triangle)
-    std::vector<double> grad_hx;        // ∂h/∂x (unlimited gradient)
-    std::vector<double> grad_hy;        // ∂h/∂y (unlimited gradient)
-    std::vector<double> grad_hx_lim;    // Limited gradient X
-    std::vector<double> grad_hy_lim;    // Limited gradient Y
+    std::vector<double> grad_hx,     grad_hy;       // unlimited
+    std::vector<double> grad_hx_lim, grad_hy_lim;   // Jawahar-Kamath limited
 
-    // Reconstructed head at vertices — flat 2D [vertex_idx]
-    std::vector<double> vert_head;      // Head reconstructed at vertices
+    // Reconstructed head at vertices — [0, n_vertices)
+    std::vector<double> vert_head;
 
-    // Fluxes — flat 2D: [tri * 3 + edge]
-    std::vector<double> edge_flux;      // Normal flux through each edge
+    // Cell-centred velocity (RT0 reconstruction from edge fluxes)
+    std::vector<double> face_vx, face_vy;           // (m/s)
 
-    // Source/sink terms
-    std::vector<double> rainfall;       // Rainfall intensity (m/s)
-    std::vector<double> coupling_flux;  // Exchange with SWMM node (m/s, + = into 2D)
-    std::vector<double> net_source;     // Net source/sink per cell (m/s)
+    // Per-cell continuity residual (m³/s; ≈0 when conservative)
+    std::vector<double> cell_continuity_err;
+
+    // Edge fluxes — flat 2D: [tri * 3 + edge]
+    std::vector<double> edge_flux;
+
+    // Source / sink terms — per triangle (m/s of depth)
+    std::vector<double> rainfall;       // from rain gages
+    std::vector<double> coupling_flux;  // exchange with SWMM nodes (+ = into 2D)
+    std::vector<double> net_source;     // accumulated source / sink
 
     // -----------------------------------------------------------------------
-    // Previous step state
+    // Forcing-override channels (C API — external control)
+    // mode: 0=computed, 1=override, 2=add; persist: 0=reset, 1=persist
     // -----------------------------------------------------------------------
+    std::vector<int8_t> rainfall_forced, rainfall_persist;
+    std::vector<double> rainfall_force_val;
+    std::vector<int8_t> coupling_forced, coupling_persist;
+    std::vector<double> coupling_force_val;
 
+    // Previous step state (for restart / Picard reset)
     std::vector<double> old_depth;
 
-    // -----------------------------------------------------------------------
-    // Cumulative statistics
-    // -----------------------------------------------------------------------
+    // Cumulative statistics / rendering envelopes — per cell.
+    // These are monotone (max) or accumulating (volume) over the run; a single
+    // snapshot of them at any time is the envelope up to that time, so the GUI
+    // can draw a max-depth / max-velocity flood map without scanning the time
+    // series. See §14A.
+    std::vector<double> stat_max_depth;     // max overland depth ψ_o (m)
+    std::vector<double> stat_max_velocity;  // max cell speed |v| = √(vx²+vy²) (m/s)
+    std::vector<double> stat_max_cont_err;  // max |cell_continuity_err| (m³/s)
+    std::vector<double> stat_cum_volume;    // ∫ depth·area dt (m³)
 
-    std::vector<double> stat_max_depth;
-    std::vector<double> stat_cum_volume;    // Cumulative volume through cell
+    void resize(int n_triangles, int n_vertices);  // assigns all arrays
+    void save_state()  noexcept;                   // depth → old_depth
+    void reset_state() noexcept;                   // old_depth → depth
+    void clear_reset_forcings() noexcept;          // honour persist=0 flags
 
-    // -----------------------------------------------------------------------
-    // Lifecycle
-    // -----------------------------------------------------------------------
-
-    void resize(int n_triangles);
-    void save_state() noexcept;
-    void reset_state() noexcept;
+    // Fuses all envelope updates into the single per-cell loop already walked
+    // for stat_cum_volume — no extra passes. MUST be called AFTER
+    // computeFaceVelocity and computeCellContinuity so face_vx/vy and
+    // cell_continuity_err hold the accepted end-of-step values (see §8.5).
+    void update_statistics(const std::vector<double>& tri_area,
+                           double dt) noexcept;
 };
 
 } // namespace openswmm::twoD
@@ -326,33 +505,263 @@ struct SurfaceStateData {
 namespace openswmm::twoD {
 
 enum class LinearSolverType : int8_t {
-    GMRES    = 0,
-    BICGSTAB = 1,
-    TFQMR    = 2
+    GMRES    = 0,   // Phase 1 — WIRED
+    BICGSTAB = 1,   // Reserved; initialize() rejects
+    TFQMR    = 2    // Reserved; initialize() rejects
 };
 
 enum class PreconditionerType : int8_t {
-    NONE   = 0,
-    JACOBI = 1,
-    ILU    = 2    // future
+    NONE   = 0,     // Phase 1 — WIRED
+    JACOBI = 1,     // Phase 1 — WIRED (diagonal heuristic)
+    ILU    = 2      // Reserved; initialize() rejects
 };
 
 struct SolverOptions2D {
-    double max_timestep      = 10.0;
-    double min_timestep      = 0.001;
+    // CVODE / linear-solver knobs (parsed from [2D_OPTIONS]; see §1.3)
+    double max_timestep      = 10.0;    // Max CVODE internal step (s)
+    double min_timestep      = 0.001;   // Min CVODE internal step (s)
     double rel_tolerance     = 1.0e-4;
     double abs_tolerance     = 1.0e-6;
-    double dry_depth         = 0.001;
+    double dry_depth         = 0.001;   // Wet/dry threshold (m)
+    double limiter_epsilon   = 1.0e-6;  // Slope-limiter ε
+    double coupling_cd       = 0.65;    // Default discharge coefficient
     int    max_krylov_dim    = 30;
-    int    coupling_interval = 0;       // 0 = every SWMM step
+    int    coupling_interval = 0;       // 0 = couple every SWMM step
+    int    max_cvode_steps   = 500;
     bool   report_2d         = true;
 
     LinearSolverType   linear_solver   = LinearSolverType::GMRES;
     PreconditionerType preconditioner  = PreconditionerType::NONE;
+
+    // File paths from input
+    std::string mesh_file;     // [2D_MESH_FILE] FILE token (may be relative)
+    std::string output_file;   // [2D_OPTIONS] OUTPUT_FILE (HDF5; may be relative)
+
+    // -----------------------------------------------------------------------
+    // Unit-system bridge — NOT parsed from input; computed in
+    // SurfaceRouter2D::initialize() from the project FLOW_UNITS.
+    // The 2D solver runs internally in SI; these convert at the coupling
+    // boundary (see NodeCoupling.cpp). SI projects (CMS/LPS/MLD) yield 1.0.
+    // -----------------------------------------------------------------------
+    double len_1d_to_2d  = 1.0;  // ft → m (= 0.3048 for US)
+    double len_2d_to_1d  = 1.0;  // m  → ft
+    double vol_1d_to_2d  = 1.0;  // ft³ → m³
+    double flow_1d_to_2d = 1.0;  // ft³/s → m³/s
+    double flow_2d_to_1d = 1.0;  // m³/s → ft³/s
+
+    // -----------------------------------------------------------------------
+    // ;; UNITS: header flag — set by prescan2DUnitsHeader, NOT parsed from
+    // [2D_OPTIONS]. When true the mesh on disk is already SI (m), so
+    // SurfaceRouter2D::initialize SKIPS the ft→m mesh scaling.  The
+    // coupling-side factors above stay FLOW_UNITS-driven because they
+    // describe the 1D side of the boundary, not the mesh.
+    // -----------------------------------------------------------------------
+    bool mesh_units_si = false;
 };
 
 } // namespace openswmm::twoD
 ```
+
+### 2.4 File: `src/engine/2d/data/BoundaryData.hpp`
+
+Per-edge boundary-condition SoA, flat-indexed `[tri * 3 + edge_local]`
+to match `edge_flux`, `edge_length`, etc. Sized to `n_triangles * 3`
+inside `SurfaceRouter2D::initialize` and initialised to `WALL` defaults;
+parsed rows from `[2D_BOUNDARY_CONDITIONS]` are then drained from the
+`PendingBoundaryRow` scratch buffer into the appropriate slot.
+
+```cpp
+namespace openswmm::twoD {
+
+enum class BoundaryType : int8_t {
+    WALL            = 0,   // Zero-flux wall (default)
+    NORMAL_FLOW     = 1,   // Manning outflow using bed slope
+    SPECIFIED_STAGE = 2,   // Prescribed water surface elevation (constant or TS)
+    SPECIFIED_FLOW  = 3,   // Per-metre discharge (constant or TS)
+    RATING_CURVE    = 4    // Stage → flow lookup
+};
+
+struct BoundaryData {
+
+    std::vector<int8_t> edge_bc_type;       // BoundaryType cast
+
+    // NORMAL_FLOW
+    std::vector<double> edge_bed_slope;     // dimensionless, ≥ 0
+
+    // SPECIFIED_STAGE
+    std::vector<double> edge_bc_head;       // total head (m)
+    std::vector<int>    edge_bc_tseries;    // -1 const, -2 unresolved name, ≥0 table idx
+    std::vector<std::string> edge_bc_tseries_name;
+
+    // SPECIFIED_FLOW
+    std::vector<double> edge_bc_flow;       // per-metre discharge (m³/s/m, outward+)
+    std::vector<int>    edge_bc_flow_tseries;
+    std::vector<std::string> edge_bc_flow_tseries_name;
+
+    // RATING_CURVE
+    std::vector<int>    edge_bc_rating_curve;       // -1, -2, or curve index
+    std::vector<std::string> edge_bc_rating_curve_name;
+
+    // Cumulative boundary flux (m³, outflow positive) — mass-balance
+    std::vector<double> edge_bc_cum_flux;
+
+    void resize(int n_edges);
+    int  size() const noexcept;
+};
+
+} // namespace openswmm::twoD
+```
+
+> **Current solver behaviour.** Storage + parsing + C API are wired for
+> all five `BoundaryType` values, but
+> `SurfaceFluxCalculator::computeEdgeFluxes` treats every boundary edge
+> as `WALL` regardless of declared type. The FV-SWE non-Wall flux
+> integration is deferred to slice V-E-FLUX. `edge_bc_cum_flux` is
+> updated only when that slice lands; today it stays at 0 for non-Wall
+> edges.
+
+---
+
+## 2A. Unit Conversion Strategy
+
+This section is referenced from §1.4 / §1.6 / §2.3 / §6 / §8. It is the
+single authoritative description of how units flow between the SWMM 1D
+engine, the 2D mesh on disk, and the 2D solver's internal SI world.
+
+### 2A.1 The two clocks
+
+| Side | Internal unit system | Where it lives |
+|------|----------------------|----------------|
+| 1D SWMM engine | **Project units** — feet / ft³ / ft³·s⁻¹ for US `FLOW_UNITS` (CFS, GPM, MGD); metres / m³ / m³·s⁻¹ for SI `FLOW_UNITS` (CMS, LPS, MLD). Manning's *g* = 32.2 ft·s⁻², *φ* = 1.486 for US. | `ctx.nodes.*`, `ctx.links.*`, `ctx.options.flow_units`. |
+| 2D solver | **SI** — metres / m² / m³ / m³·s⁻¹, *g* = 9.80665 m·s⁻². | `mesh_`, `state_`, `NodeCoupling.cpp` after multiplication. |
+
+The 1D engine is unit-aware throughout — it converts to display units
+only at output. The 2D solver is intentionally unit-naive: every double
+inside `MeshData`, `SurfaceStateData`, and the Kumar et al. (2009) FV
+math is in SI. The bridge between the two systems lives in two narrow
+places: (a) the mesh-load scaling in `SurfaceRouter2D::initialize`,
+and (b) the per-quantity multiplications in `NodeCoupling.cpp`.
+
+### 2A.2 The five bridge factors
+
+Defined in `SolverOptions2D`, computed once at the top of
+`SurfaceRouter2D::initialize` from `ctx.options.flow_units`:
+
+```cpp
+const int    us      = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+const double ft_to_m = (us == 0) ? 0.3048 : 1.0;   // us==0 → US
+options_.len_1d_to_2d  = ft_to_m;
+options_.len_2d_to_1d  = 1.0 / ft_to_m;
+options_.vol_1d_to_2d  = ft_to_m * ft_to_m * ft_to_m;
+options_.flow_1d_to_2d = options_.vol_1d_to_2d;
+options_.flow_2d_to_1d = 1.0 / options_.vol_1d_to_2d;
+```
+
+For SI projects every factor is 1.0 — no work happens at the boundary.
+
+### 2A.3 Mesh load: optional one-shot ft→m scaling
+
+Immediately after the factors are computed:
+
+```cpp
+if (!options_.mesh_units_si && options_.len_1d_to_2d != 1.0) {
+    const double f  = options_.len_1d_to_2d;
+    const double f2 = f * f;
+    for (auto& v : mesh_.vx) v *= f;
+    for (auto& v : mesh_.vy) v *= f;
+    for (auto& v : mesh_.vz) v *= f;
+    for (auto& a : mesh_.vert_coupling_area) a *= f2;
+    for (auto& a : mesh_.tri_coupling_area)  a *= f2;
+}
+```
+
+The default assumption is that `[2D_VERTICES]` / `[2D_TRIANGLES]` and
+the optional `[CD] [AREA]` columns on `[2D_*_NODE_MAP]` are in project
+length units (feet for US, metres for SI). The scaling brings them into
+SI before `buildMeshTopology` runs, so every derived quantity
+(`tri_area`, `edge_length`, centroids, midpoint Z) is computed in SI.
+
+When `options_.mesh_units_si == true` the loop is skipped entirely —
+the mesh is already SI and applying the factor a second time would
+scale a US project's mesh down by 0.3048 (a 10× error in area).
+
+### 2A.4 Header pre-scan — opting into SI
+
+`mesh_units_si` is **not** parsed from `[2D_OPTIONS]`. It is set by
+`openswmm::twoD::prescan2DUnitsHeader(path, opts)` in
+`src/engine/2d/input/SectionHandlers2D.cpp`. The helper opens the file,
+walks `;;`-prefixed comment lines, and looks for:
+
+```
+;; UNITS: <value>
+;; SOURCE_CRS: <tag>     ;; informational only; engine ignores
+```
+
+If `<value>` matches one of `SI (m)`, `m`, `metre`, `metres`, `meter`,
+`meters` (case-insensitive), the flag is set to `true`. Any other value
+— including an explicit `ft`, `foot`, `feet`, or absent header —
+leaves the flag at its prior value.
+
+Call sites:
+
+| Caller | File | When |
+|--------|------|------|
+| `SWMMEngine::open` | `src/engine/core/SWMMEngine.cpp` (~L142) | Inline `.inp`, right after `register2DSections`. |
+| `load2DMeshExternalFile` | `src/engine/2d/input/SectionHandlers2D.cpp` (~L472) | External `.2dm`, after path resolution, before parsing. |
+
+The external file scan runs *after* the inline scan, so an external
+`.2dm` declaration overrides whatever the main `.inp` claimed. This
+matches how `[2D_OPTIONS]` works (external file wins on key
+collisions).
+
+### 2A.5 1D ⇄ 2D coupling boundary (per-quantity)
+
+Every conversion in `NodeCoupling.cpp` traces back to one of the five
+factors above. The full list, in the order it appears in
+`computeCouplingExchange` / `updateOutfallBoundaries` /
+`transferOutfallDischarges`:
+
+| Quantity | Direction | Source | Multiplication | Result unit |
+|----------|-----------|--------|----------------|-------------|
+| 1D node head (`nodes.head[ni]`) | 1D → 2D | SWMM | `× len_1d_to_2d` | m |
+| 1D node depth (`nodes.depth[ni]`) | 1D → 2D | SWMM | `× len_1d_to_2d` | m |
+| 1D rim/cap elevation (`invert_elev + full_depth + sur_depth`) | 1D → 2D | SWMM | `× len_1d_to_2d` | m |
+| 1D node available volume (`full_volume − volume`) | 1D → 2D | SWMM | `× vol_1d_to_2d` | m³ |
+| Head difference `dh = h_2d − h_1d` | computed | — | both already in m | m |
+| Orifice `Q = Cd·A·sign(dh)·√(2g·│dh│)`, *g*=9.80665 | computed | — | inputs in SI | m³·s⁻¹ |
+| 2D → 1D coupling flow (`coupling_inflow[ni]`) | 2D → 1D | NodeCoupling | `× flow_2d_to_1d` | ft³·s⁻¹ (US) or m³·s⁻¹ (SI) |
+| 2D outfall head feedback (`outfall_2d_head[ni]`) | 2D → 1D | NodeCoupling | `× len_2d_to_1d` | ft (US) or m (SI) |
+| 1D outfall discharge (`nodes.outflow[ni]`) | 1D → 2D | NodeCoupling | `× flow_1d_to_2d` | m³·s⁻¹ |
+
+The 2D side never sees feet. The 1D side never sees an unconverted SI
+value entering a continuity accumulator.
+
+### 2A.6 Manning's *n*
+
+Manning's *n* is the only mesh-side quantity that is **not** multiplied
+at load time. The Manning equation has a built-in *φ* = 1.486
+unit-conversion constant in US engines that absorbs the foot/metre
+mismatch; in the SI 2D solver the constant is 1.0 and the same numeric
+*n* value gives the same physical roughness. Conventional values (e.g.
+*n* = 0.035 for natural channels) are unit-agnostic.
+
+### 2A.7 What this leaves unprotected
+
+The bridge assumes the mesh's XY linear unit and the SWMM
+`FLOW_UNITS`-implied length unit *agree* in the legacy
+(header-absent) case. Two failure modes the engine does **not** guard
+against today:
+
+1. SWMM `FLOW_UNITS = CFS` with a mesh stored in metres (no header).
+   → Engine multiplies metres by 0.3048 → mesh becomes 30.48% of true
+   size.
+2. SWMM `FLOW_UNITS = CMS` with a mesh stored in feet (no header).
+   → Engine leaves values untouched → solver treats feet as metres.
+
+Both are fixable by adding `;; UNITS:` to the producer side. A future
+project-open warning that cross-checks the project CRS linear unit
+against `FLOW_UNITS` is tracked in
+`docs/MESH_CRS_UNIT_CONVERSION_PLAN.md` follow-up F2.
 
 ---
 
@@ -590,78 +999,225 @@ For each vertex `b`, build the pseudo-Laplacian reconstruction stencil (Eq. [19]
 
 ## 6. Coupling to SWMM
 
+This section reflects the as-built implementation in
+`openswmm.engine/src/engine/2d/coupling/NodeCoupling.cpp`. See also
+§2A on unit conversion and `docs/1D_2D_COUPLING_GATE_REVIEW.md`
+for the design rationale behind the surcharge gate (C1/C2) and the
+ponded-area suppression (C3a).
+
 ### 6.1 Coupling Philosophy
 
-- The 2D module communicates with SWMM **exclusively via the forcing API** (`ForcingData`).
-- This keeps the 1D and 2D solvers cleanly separated.
-- The 2D module injects lateral inflow into SWMM nodes; SWMM node heads determine backflow.
+- The 2D module communicates with SWMM **via a dedicated
+  `nodes.coupling_inflow[]` channel** (not the generic forcing API).
+  The earlier design that routed 2D coupling through
+  `forcing.node_lat_inflow_value` with `OVERRIDE+PERSIST` was reverted
+  per review §11: it conflated 2D coupling with user-API forcing and
+  silently dropped the negative (1D→2D) half from routing continuity.
+- `coupling_inflow[ni]` is signed: positive = 2D → 1D (drain into
+  pipe); negative = 1D → 2D (surcharge spill). The value is drained
+  inside `assembleLateralInflows` at the start of the next routing
+  step, where the sign is split into `routing_external` (positive
+  side) and `routing_flooding` (negative side, |Q|) for mass balance.
+- The forcing API remains free for user-controlled inflows and is
+  unaffected by 2D coupling.
 
-### 6.2 Coupling at Nodes — Orifice Equation
+### 6.2 Coupling at Nodes — Orifice Equation with Gates
 
-For each coupled vertex/triangle with SWMM node index `j`:
+The per-coupling-point exchange is built up in six pieces inside
+`computeCouplingExchange`. Numbered identifiers (C1, C2, C3a) match
+`docs/1D_2D_COUPLING_GATE_REVIEW.md`.
+
+**1. Heads, in SI.** All 1D quantities are multiplied by the unit
+bridge factors of §2A:
 
 ```
-Q_exchange = C_d · A_orifice · sign(Δh) · sqrt(2g · |Δh|)
+h_1d           = nodes.head[ni]            * opts.len_1d_to_2d   // m
+depth_1d_avail = nodes.depth[ni]           * opts.len_1d_to_2d   // m
+z_top          = (invert_elev + full_depth + sur_depth)
+                                            * opts.len_1d_to_2d   // m
 ```
 
-Where:
-- `Δh = h_2d - h_swmm` (head difference)
-- `h_2d` = 2D surface head at the coupling point
-- `h_swmm = nodes.head[j]` = SWMM node head
-- `C_d` = discharge coefficient (default 0.65, configurable)
-- `A_orifice` = effective exchange area (configurable per coupling point)
-- `g` = gravitational acceleration
+`h_2d` and `z_2d` come from `state.vert_head[v]` / `mesh.vz[v]`
+(vertex coupling) or `state.head[ci]` / `mesh.tri_cz[ci]` (triangle
+centroid coupling) — both already SI.
 
-**Flow direction:**
-- `Δh > 0`: Flow from 2D surface → SWMM node (drainage into pipe network)
-- `Δh < 0`: Flow from SWMM node → 2D surface (surcharge/flooding)
+**2. Available depth (max over the vertex stencil).** For
+vertex-coupled points the 2D-side available depth is the **maximum**
+depth across every cell in the vertex's reconstruction stencil. Two
+failure modes this resolves:
 
-### 6.3 Coupling at Outfalls — Backflow Prevention
+- (a) Spurious positive `vert_head − vert_z` on a fully dry mesh when
+  the vertex sits at a local low spot. The pseudo-Laplacian
+  reconstruction averages neighbour cell heads (all equal to their
+  centroid z), so the reconstructed head exceeds the vertex z by the
+  bed-relief amount alone.
+- (b) Spurious zero `state.depth[first_tri_containing_v]` on a wet
+  bowl when the vertex sits below every touching cell's centroid: the
+  FV grid has no cell at the bowl bottom, so each touching cell's
+  depth = max(0, head − centroid_z) stays at 0 even when surrounding
+  cells hold water.
 
-When a coupling node is an OUTFALL (`nodes.type[j] == NodeType::OUTFALL`):
+Taking the max over the stencil ramps to 1 as soon as any neighbour
+holds water; truly dry → every stencil cell has depth 0 → ramp 0.
 
-1. **FREE outfall:** Allow unrestricted drainage. Set `h_swmm` = outfall invert elevation.
-2. **FIXED outfall:** Use fixed stage as `h_swmm`. If `h_2d < h_fixed`, no flow (flap gate behaviour).
-3. **TIDAL / TIMESERIES outfall:** Use time-varying stage as `h_swmm`. Enforce backflow prevention if `outfall_has_flap_gate[j]` is true.
-4. **NORMAL outfall:** Use normal depth computation for `h_swmm`.
+**3. Orifice + smooth wet/dry ramp.**
 
-**Flap gate logic:**
 ```
-if outfall_has_flap_gate[j] and h_swmm > h_2d:
-    Q_exchange = 0   // No backflow allowed
+dh    = h_2d - h_1d
+Q_raw = Cd * A_eff * sign(dh) * sqrt(2 * g * |dh|)        // g = 9.80665
+Q     = Q_raw * wetRamp(source-side available depth)
 ```
 
-### 6.4 Forcing API Integration
+The wet/dry ramp is a Hermite C¹ ramp,
+`t² · (3 − 2t)` with `t = clamp(d / opts.dry_depth, 0, 1)`. The
+ramp is applied to the source side (2D side when `Q > 0`, 1D side
+when `Q < 0`). A hard wet/dry cutoff at `opts.dry_depth` would
+introduce a step-discontinuity in `ydot` that breaks CVODE's BDF
+corrector.
 
-Each coupling step:
+**4. Surcharge gate (C1/C2) — capped vs. uncapped nodes.**
 
-```cpp
-// Inject 2D→SWMM flow as lateral inflow
-for (auto& cp : coupling_points) {
-    double Q = compute_orifice_exchange(cp, mesh, state, ctx);
+- **C1 (effective-area widening).** Below `z_top` the exchange uses
+  `A_inlet` (the user-supplied `[CD] [AREA]`). Above `z_top` the area
+  widens to `A_manhole = 2 · A_inlet` over a 5 cm transition — the
+  manhole bolt has yielded and water reaches the surface.
+- **C2 (surcharge gate ramp).** The orifice flow is additionally
+  multiplied by a direction-symmetric Hermite ramp on
+  `surcharge_excess = max(h_1d, h_2d) − z_top`. For an uncapped node
+  (`sur_depth = 0`) `z_top` reduces to the rim elevation, so the gate
+  opens the instant water reaches the rim and the ramp is a no-op
+  thereafter. For a capped node (`sur_depth > 0`) the gate stays
+  shut until either side rises above the cap.
 
-    // Positive Q = flow into SWMM node
-    ctx.forcing.node_lat_inflow_mode[cp.node_idx]  = ForcingMode::ADD;
-    ctx.forcing.node_lat_inflow_value[cp.node_idx] += Q;
-    ctx.forcing.node_lat_inflow_persist[cp.node_idx] = ForcingPersist::RESET;
+```
+A_eff   = effectiveArea(h_max, z_top, full_depth, A_inlet, A_inlet * 2)
+capRamp = hermite( (h_max - z_top) / 0.05 )
+Q       = Q * capRamp
+```
 
-    // Record coupling flux back to 2D cell (negative = drainage out of 2D)
-    state.coupling_flux[cp.cell_idx] = -Q / mesh.tri_area[cp.cell_idx];
+**5. Volume throttle when the 1D node is full (Q > 0 only).** Drain
+flow into a node already at full volume is capped at
+`(full_volume − volume) / dt`. If the node has zero remaining capacity,
+Q is allowed only when it still represents surcharge drain-back
+(`h_1d ≥ h_2d` → set Q = 0; otherwise pass it through so a
+pressurised pipe can spill out).
+
+```
+available = (nodes.full_volume[ni] - nodes.volume[ni]) * opts.vol_1d_to_2d;
+if (Q > 0 && available > 0 && dt > 0) {
+    Q = std::min(Q, available / dt);
+} else if (Q > 0 && available <= 0 && h_1d >= h_2d) {
+    Q = 0.0;   // node full; no drain-in allowed
 }
 ```
 
-### 6.5 Coupling Sequence per Timestep
+**6. Inject — both sides of the bridge.**
+
+```cpp
+// 1D side — drained into routing_external / routing_flooding next step.
+// SI Q (m³/s) → 1D units (ft³/s for US).
+nodes.coupling_inflow[ni] += Q * opts.flow_2d_to_1d;
+
+// 2D side — sink for the cell beneath this coupling point.
+state.coupling_flux[ci]  += -Q / mesh.tri_area[ci];   // m/s
+```
+
+`coupling_flux` accumulates over multiple coupling points sharing the
+same cell. The CVODE RHS picks it up as the per-cell source/sink.
+
+### 6.3 Coupling at Outfalls — Dynamic Tailwater + Flap Gates
+
+Outfalls take two distinct paths through `NodeCoupling.cpp`:
+
+**Pre-routing (`updateOutfallBoundaries`).** Cache the 2D head at the
+outfall coupling cell into `nodes.outfall_2d_head[ni]` so
+`Outfall::setAllOutfallDepths` can apply
+`max(h_standard, h_2d)` on every Picard iteration. The cached value
+is in 1D units (`× opts.len_2d_to_1d`) because the consumer compares
+against `h_standard` in feet for US projects.
+
+```cpp
+double depth_2d = h_2d - bed_z;
+if (depth_2d > 1.0e-4) {                 // wet — 0.1 mm threshold
+    nodes.outfall_2d_head[ni] = h_2d * opts.len_2d_to_1d;
+} else {
+    nodes.outfall_2d_head[ni] = -1.0e30; // sentinel — no override
+}
+```
+
+The dry-mesh sentinel is essential: a naïve check `h_2d > z_inv`
+inside `setAllOutfallDepths` is true whenever `bed_z > z_inv`, which
+is the common physical case (outfall pipe enters underground beneath
+the surface mesh). Without the sentinel, every dry outfall would
+fire the override and the 2D bed elevation would be backflowing into
+1D.
+
+**Post-routing (`transferOutfallDischarges`).** The 1D outflow
+computed during routing is injected as a source on the outfall's
+coupling cell:
+
+```cpp
+double Q_outfall = nodes.outflow[ni] * opts.flow_1d_to_2d;  // ft³/s → m³/s
+if (Q_outfall > 0.0) {
+    state.coupling_flux[ci] += Q_outfall / mesh.tri_area[ci];  // m/s source
+}
+```
+
+Flap-gate logic lives inside `setAllOutfallDepths` itself (not in
+`NodeCoupling.cpp`) so it can see the just-computed `h_standard` for
+the iteration. `updateOutfallBoundaries` caches the raw `h_2d`; the
+gate decision happens at consumption time.
+
+### 6.4 Coupling Point Construction
+
+`buildCouplingPoints(mesh, ctx)` is run once at the end of
+`SurfaceRouter2D::initialize`. For each resolved
+`vert_coupled_node[v] ≥ 0` it creates a `CouplingPoint` with the
+vertex index, a representative containing-triangle index (first hit
+wins), the per-vertex Cd / area from `[2D_VERTEX_NODE_MAP]`, and the
+outfall flags from `ctx.nodes.type` / `outfall_has_flap_gate`. The
+triangle-centroid path is identical but uses `tri_coupled_node[t]`
+and `tri_coupling_*`.
+
+### 6.5 Coupling Sequence per Routing Step
+
+This is the actual sequence orchestrated by `SurfaceRouter2D` and
+`SWMMEngine`. Compare with the older revisions of this section — they
+listed a forcing-API path that no longer exists.
 
 ```
-1. SWMM saves state (nodes.save_state())
-2. SWMM applies forcings (including 2D coupling from previous step)
-3. SWMM advances hydraulic routing by dt_swmm
-4. Read updated SWMM node heads
-5. Compute 2D↔SWMM exchange flows (orifice equation)
-6. Inject exchange flows via forcing API (for next SWMM step)
-7. Advance 2D solver by dt_swmm using CVODE
-8. Update 2D rainfall from system rain gages
+Pre-routing  (SurfaceRouter2D::updateOutfallsPreRouting):
+  1. For each outfall coupling point, cache state.head[cell] into
+     ctx.nodes.outfall_2d_head[ni].  Outfall::setAllOutfallDepths
+     then applies max(h_standard, h_2d) inside the 1D Picard loop.
+
+1D routing  (SWMM core, unchanged):
+  2. assembleLateralInflows drains nodes.coupling_inflow[] from the
+     previous step into routing_external / routing_flooding.
+  3. DW solver advances by dt.
+  4. nodes.head / depth / volume / outflow updated.
+
+Post-routing  (SurfaceRouter2D::advancePostRouting):
+  5. computeCouplingExchange — per coupling point, build orifice Q
+     with wet/dry ramp + surcharge gate + volume throttle, deposit
+     signed Q into ctx.nodes.coupling_inflow[ni] (× flow_2d_to_1d)
+     and into state.coupling_flux[ci] (m/s sink, negated).
+  6. transferOutfallDischarges — push outfall outflow back into the
+     mesh as a positive coupling_flux source.
+  7. updateRainfall — read ctx.gages.rainfall, convert to m/s, apply
+     any C-API rainfall overrides.
+  8. cvode_solver_.advance(t, t+dt, state, mesh) — BDF + GMRES /
+     JACOBI inner solve, picks up coupling_flux + rainfall as
+     per-cell source terms.
+  9. update_statistics + accumulateMassBalance.
 ```
+
+Operator-splitting note: the 1D routing step in (2)–(4) uses the
+*previous* step's `coupling_inflow`, while the 2D advance in (8) uses
+the *current* step's `coupling_flux`. This is a first-order operator
+split. Mass conservation is maintained because the signed Q is
+recorded on both sides at the same instant (step 5), and the 1D side
+only picks it up after a full `dt` has elapsed.
 
 ---
 
@@ -698,69 +1254,151 @@ Implementation will use the gage coordinates from `ctx.spatial.gage_x/y` and rai
 
 ---
 
-## 8. Integration into SimulationContext
+## 8. Integration into the Engine
 
-### 8.1 Context Extension
+This section reflects how the 2D module is actually wired into
+`SWMMEngine`. It does **not** match earlier revisions that placed
+`MeshData` / `SurfaceStateData` directly on `SimulationContext`.
 
-Add an optional 2D data member to `SimulationContext`:
+### 8.1 Ownership
+
+2D state lives on a dedicated `openswmm::twoD::SurfaceRouter2D`
+member of `SWMMEngine`, not on `SimulationContext`. The router owns:
 
 ```cpp
-// In SimulationContext.hpp
+class SurfaceRouter2D {
+    MeshData         mesh_;
+    SurfaceStateData state_;
+    SolverOptions2D  options_;
+    BoundaryData     boundary_;
+    std::vector<PendingBoundaryRow> pending_bc_rows_;   // parse-time scratch
+    std::vector<CouplingPoint>      coupling_points_;
+    bool active_ = false;
 #ifdef OPENSWMM_HAS_2D
-#include "../2d/data/MeshData.hpp"
-#include "../2d/data/SurfaceStateData.hpp"
-#include "../2d/data/SolverOptions2D.hpp"
-
-// Under the "Object data stores" section:
-twoD::MeshData          mesh_2d;
-twoD::SurfaceStateData  surface_2d;
-twoD::SolverOptions2D   options_2d;
-bool                    has_2d = false;  // True if [2D_VERTICES] was parsed
+    CvodeSurfaceSolver cvode_solver_;
 #endif
+    // ...
+};
 ```
+
+The mesh / state / options are exposed via `mesh()`, `state()`,
+`options()`, `boundary()`, `pendingBCRows()` accessors so input
+parsers and the C API can populate them by reference.
+
+`SimulationContext` carries no 2D-specific fields — it stays
+unit-naïve and unaware of the 2D module. The 2D module reads from
+`ctx.nodes`, `ctx.gages`, `ctx.options.flow_units`, and
+`ctx.node_names`; it writes back into `ctx.nodes.coupling_inflow[]`
+and `ctx.nodes.outfall_2d_head[]` (both pre-existing fields used by
+SWMM's routing and outfall code).
 
 ### 8.2 Section Registration
 
-In the input reader setup (where built-in sections are registered):
+`openswmm::twoD::register2DSections` (in
+`src/engine/2d/input/SectionHandlers2D.cpp`) wires all seven `[2D_*]`
+sections into the `DefaultInputPlugin` registry. The wrappers use a
+`makeSectionHandler` lambda factory that tokenises each body line and
+delegates to the per-line `parse2D…Line` functions, surfacing errors
+through `ctx.error_message`.
 
 ```cpp
 #ifdef OPENSWMM_HAS_2D
-registry.register_custom("2D_OPTIONS",            twoD::handle_2d_options);
-registry.register_custom("2D_VERTICES",            twoD::handle_2d_vertices);
-registry.register_custom("2D_TRIANGLES",           twoD::handle_2d_triangles);
-registry.register_custom("2D_VERTEX_NODE_MAP",     twoD::handle_2d_vertex_node_map);
-registry.register_custom("2D_TRIANGLE_NODE_MAP",   twoD::handle_2d_triangle_node_map);
+if (auto* dip = dynamic_cast<DefaultInputPlugin*>(input_plugin)) {
+    twoD::register2DSections(surface_router_.mesh(),
+                             surface_router_.options(),
+                             surface_router_.pendingBCRows(),
+                             dip->registry());
+}
 #endif
 ```
 
-### 8.3 Engine Lifecycle Hooks
+The registered set: `2D_OPTIONS`, `2D_VERTICES`, `2D_TRIANGLES`,
+`2D_VERTEX_NODE_MAP`, `2D_TRIANGLE_NODE_MAP`,
+`2D_BOUNDARY_CONDITIONS`, `2D_MESH_FILE`. `2D_MESH_FILE` only
+captures the `FILE <path>` token into `options.mesh_file`; the
+external file is loaded later (see §8.3 step 4).
+
+### 8.3 Engine Lifecycle — `SWMMEngine::open`
+
+Real call sequence under `#ifdef OPENSWMM_HAS_2D` (paraphrased from
+`src/engine/core/SWMMEngine.cpp` ~L120–L210):
 
 ```
-open():
-    Parse input (including 2D sections if present)
-    If 2D sections found:
-        ctx.has_2d = true
-        Build mesh topology (MeshBuilder)
-        Build vertex stencils (VertexReconstruction)
-        Resolve coupling node names → indices (PostParseResolver)
+1. register2DSections(mesh_, options_, pending_bc_rows_, dip->registry())
+2. prescan2DUnitsHeader(inp_path, options_)                  // sets mesh_units_si
+3. input_plugin->read(inp_path, ctx_)                        // parses all sections
+4. if (options_.mesh_file non-empty):
+      load2DMeshExternalFile(mesh_, options_, pending_bc_rows_,
+                              mesh_file, base_dir)
+         └─ prescan2DUnitsHeader(resolved_path, options_)    // external overrides inline
+         └─ second InputReader pass on the resolved .2dm
+5. resolve_cross_references(ctx_)
+6. if (options_.output_file non-empty):
+      add_output_plugin(new Default2DOutputPlugin(resolved_path))
+```
 
-initialize():
-    If ctx.has_2d:
-        Initialize CVODE solver
-        Set initial depths (from [2D_INITIAL_CONDITIONS] or zero)
-        Compute initial heads
+### 8.4 Engine Lifecycle — `SurfaceRouter2D::initialize`
 
-step():
-    SWMM routing step (existing)
-    If ctx.has_2d:
-        Update coupling exchange flows
-        Advance 2D surface solver
-        Apply coupling forcings for next step
+Called from `SWMMEngine::initialize` after the 1D side is initialised
+(`src/engine/2d/SurfaceRouter2D.cpp`):
 
-end():
-    If ctx.has_2d:
-        Finalize CVODE
-        Report 2D statistics
+```
+1. Guard:  if (n_vertices() < 3 || n_triangles() < 1) → active_ = false; return.
+2. Compute unit bridge:
+       ft_to_m       = (US FLOW_UNITS) ? 0.3048 : 1.0
+       len_1d_to_2d  = ft_to_m
+       len_2d_to_1d  = 1.0 / ft_to_m
+       vol_1d_to_2d  = ft_to_m^3
+       flow_1d_to_2d = ft_to_m^3
+       flow_2d_to_1d = 1.0 / ft_to_m^3
+3. Optional mesh ft→m scaling — only if (!mesh_units_si && len_1d_to_2d != 1):
+       vx, vy, vz       *= ft_to_m
+       vert_coupling_area, tri_coupling_area *= ft_to_m^2
+4. buildMeshTopology(mesh_)                  // neighbours, edges, areas
+5. validateMesh(mesh_)                        // throws on degenerate input
+6. buildVertexStencils(mesh_)                 // pseudo-Laplacian weights
+7. Resolve deferred coupling node names:
+       vert_coupled_node[v] = ctx.node_names.find(vert_coupled_node_name[v])
+       tri_coupled_node[t]  = ctx.node_names.find(tri_coupled_node_name[t])
+   Unknown name throws.
+8. state_.resize(n_triangles, n_vertices)
+9. boundary_.resize(n_triangles * 3)          // all WALL defaults
+10. Drain pending_bc_rows_ into boundary_:
+        for each row → set edge_bc_type and the type-specific param
+        (slope for NORMAL_FLOW, head for SPECIFIED_STAGE, etc.)
+        Out-of-range rows silently skipped.
+10a. §11A — drain pending_edge_conveyance_rows_ into
+        mesh_.edge_conveyance.  Builds a one-shot vertex-pair → slot
+        map (O(n_triangles)), then writes each parsed factor into
+        every slot the (FROM, TO) pair resolves to (interior = 2
+        slots, boundary = 1).  Out-of-range vertices or non-existent
+        edges throw a runtime_error.
+11. Set initial heads: state_.head[i] = mesh_.tri_cz[i]   (dry bed)
+12. coupling_points_ = buildCouplingPoints(mesh_, ctx)
+13. For each coupled node: warn on sur_depth > 0 / ponded_area > 0
+    and force ponded_area = 0 (C3a).
+14. cvode_solver_.initialize(mesh_, state_, options_)
+15. active_ = true
+16. Seed 2D mass-balance init_storage from the initial cell volumes.
+```
+
+### 8.5 Engine Lifecycle — per step / finalize
+
+```
+step(ctx, dt, t):
+   1. updateOutfallsPreRouting(ctx)
+      └─ (SWMM core runs assembleLateralInflows + DW routing here)
+   2. advancePostRouting(ctx, dt, t)
+      └─ computeCouplingExchange
+      └─ transferOutfallDischarges
+      └─ updateRainfall
+      └─ cvode_solver_.advance(t, t+dt, state_, mesh_)
+      └─ state_.update_statistics + accumulateMassBalance
+      └─ state_.clear_reset_forcings()
+
+finalize():
+   1. cvode_solver_.finalize()
+   2. active_ = false
 ```
 
 ---
@@ -802,7 +1440,8 @@ for each SWMM routing step dt_swmm:
     6. Update 2D rainfall from current gage state
     7. Set coupling_flux[] in 2D state (held constant over CVODE sub-steps)
     8. CVODE advances 2D from t to t + dt_swmm (internal sub-stepping)
-    9. Inject exchange Q into forcing API for next SWMM step
+    9. Inject exchange Q into nodes.coupling_inflow[ni] (× flow_2d_to_1d)
+       for next SWMM step's assembleLateralInflows drain
     10. If output_due: snapshot includes both 1D and 2D state
 ```
 
@@ -821,7 +1460,8 @@ for each SWMM routing step dt_swmm:
         b. Read SWMM node heads
         c. Compute coupling exchange
         d. CVODE advances 2D from t to t + dt_2d
-        e. Inject exchange into forcing API
+        e. Inject exchange Q into nodes.coupling_inflow[ni]
+           (× flow_2d_to_1d)
         f. coupling_counter = 0
 ```
 
@@ -893,11 +1533,22 @@ To ensure global mass conservation across the 1D↔2D boundary:
 Volume removed from 2D = Volume added to 1D (and vice versa)
 ```
 
-The same `Q_exchange` value (in m³/s) is:
-- Subtracted from the 2D cell as `coupling_flux[i] = -Q / A_i` (m/s sink)
-- Added to the SWMM node as `node_lat_inflow_value[j] += Q` (m³/s source)
+The same `Q_exchange` value (in m³/s on the 2D side) is:
+- Subtracted from the 2D cell as `state.coupling_flux[i] += -Q / A_i`
+  (m/s sink) — see §6.2 step 6.
+- Added to the SWMM node as
+  `nodes.coupling_inflow[j] += Q * opts.flow_2d_to_1d` (m³/s in SI
+  projects, ft³/s in US projects). On the next routing step,
+  `assembleLateralInflows` drains the signed value into
+  `routing_external` (positive part) and `routing_flooding`
+  (negative part, |Q|), preserving global continuity.
 
-Both use the same `dt_swmm` interval. The CVODE solver integrates the coupling flux as a constant source/sink over its internal sub-steps, which preserves the total volume exchange. The forcing API's `RESET` persistence ensures the coupling flow is cleared and recomputed each SWMM step.
+Both use the same `dt_swmm` interval. The CVODE solver integrates the
+coupling flux as a constant source/sink over its internal sub-steps,
+which preserves the total volume exchange. `coupling_inflow[ni]` is
+reset to zero by `computeCouplingExchange` itself at the start of each
+coupling cycle for every coupled junction, so there is no double-count
+between cycles.
 
 ### 9.7 Handling Mismatched Timescales
 
@@ -1011,6 +1662,304 @@ Per-cell snowpack tracking following SWMM's existing snow model but applied to 2
 The formulation already supports full-tensor anisotropy (Eq. [28]–[30]). To enable:
 - Add `aniso_k1`, `aniso_k2`, `aniso_angle` arrays to `MeshData`
 - Modify flux calculation to use Eq. [30] instead of scalar conductance
+
+---
+
+## 11A. Edge Conveyance Factor — Implemented
+
+Status: **IMPLEMENTED 2026-05-30.** Q1-Q6 resolved as follows (see
+§11A.3 / §11A.10 for full discussion). This section is kept as the
+authoritative reference for the feature; §1.9 documents the input
+syntax, §2.1 documents the data field, and the C API surface is in
+`include/openswmm/engine/openswmm_2d.h` as documented in §11A.7.
+
+| Q | Decision |
+|---|----------|
+| Q1 (range)        | Strict `[0, 1]` clamp at parse + C-API time. Out-of-range raises an error. |
+| Q2 (boundary edges) | Factor applies to non-Wall boundary edges once the V-E-FLUX slice lands. Today it has no effect on boundary edges (early-return in the flux loop). |
+| Q3 (symmetry)     | Silent partner-slot mirroring inside `SurfaceRouter2D::initialize`. |
+| Q4 (order)        | Conveyance multiplies LAST in `computeEdgeFluxes`, after the wet/dry Hermite shutoff. |
+| Q5 (input format) | **5d** — SWMM-style `FROM_VERTEX TO_VERTEX CONVEYANCE` rows in `[2D_EDGE_CONVEYANCE]`. Order of From / To does not affect the value. |
+| Q6 (C API)        | Mutable at runtime: `swmm_2d_get / set / reset_edge_conveyance`. |
+
+This section lays out the design for a per-edge scalar in [0, 1] that
+attenuates the diffusion-wave flux across that edge. The motivating
+use case is "leaky" linear features in the floodplain: culverted
+embankments, partially-permeable hedgerows, perforated fences,
+buildings with garage openings, vegetation strips, internal weir
+structures — any obstruction that reduces but does not eliminate
+overland conveyance.
+
+### 11A.1 Naming choice
+
+"Leaky" is descriptive but unanchored to 2D-hydraulics convention.
+Established names from the porosity-SWE literature (Sanders 2008;
+Bruwier et al. 2017; Soares-Frazão; Guinot) and from groundwater /
+civil-engineering practice:
+
+| Candidate | Notes |
+|-----------|-------|
+| **`edge_conveyance` factor** *(recommended)* | "Conveyance" is the standard civil-engineering term for the capacity of a section to carry flow (Manning's `K = (1/n)·A·R^(2/3)`). A multiplicative `[0,1]` factor reads naturally as "this edge carries `c × 100%` of its physics-derived conveyance". Default `1.0` is intuitively "unrestricted". |
+| `edge_porosity` / `edge_transmissivity` ψ | Academic / IPSW (Integral-Porosity Shallow-Water) convention. `ψ = 1` is unobstructed; `ψ = 0` is wall. Most precedent in the literature, but the symbol ψ collides with the depth symbol already used in this doc. |
+| `edge_permeability` | Groundwater analog; suggests dimensional permeability `k` (m²) which it is not. Misleading. |
+| `edge_blockage` (= `1 − conveyance`) | Inverts the polarity. Natural for "this edge is X% blocked", but defaults flip to 0.0 instead of 1.0 and the multiplication site becomes `flux *= (1 − blockage)`. Less surgical. |
+| `edge_attenuation` | Polarity-correct but ambiguous about whether it's the loss fraction or the surviving fraction. |
+
+**Recommendation:** adopt `edge_conveyance` as the field name,
+`[2D_EDGE_CONVEYANCE]` as the section, `CONVEYANCE` as the per-row
+token. Cross-reference the porosity-SWE term `ψ` in code comments for
+academic readers.
+
+### 11A.2 What it is and is not
+
+| It IS | It IS NOT |
+|-------|-----------|
+| A static per-edge mesh property (set at parse time, immutable during a run unless the C API mutates it). | A boundary condition. The existing `[2D_BOUNDARY_CONDITIONS]` system handles domain-edge inflow/outflow types; the conveyance factor multiplies the *computed* interior flux. |
+| Symmetric across the edge: if interior edge `(A,k)` is shared with `(B,k')`, both slots in the flat `[tri*3+edge]` array MUST carry the same factor — otherwise antisymmetry breaks and the FV scheme stops being conservative. | Direction-dependent. A 0.4 factor attenuates inflow and outflow identically. (Direction-asymmetric obstructions — e.g., flap-gated culverts — would require a separate signed-flux mechanism not in scope for this plan.) |
+| Dimensionless, scaling the entire physical flux: `F_e_eff = c · F_e_physics`. | A discharge coefficient `C_d` on an orifice equation. The orifice equation is what `[2D_VERTEX_NODE_MAP]` uses for SWMM coupling (§6.2); this factor is for *overland* edge fluxes between cells. |
+| Default 1.0 for every edge (no behavioural change unless the user opts in). | Required input. Sections, fields, and C API all stay backward-compatible. |
+
+### 11A.3 Decision questions for review
+
+These need answers before code starts (per CLAUDE.md §1).
+
+- **Q1. Range.** You said `[0, 1]`. Confirm `> 1` is also forbidden — i.e., the factor cannot *amplify* conveyance. (Amplification ≥ 1 would imply preferential channels carrying more than the Manning equation predicts, which would be unphysical without a separate calibration story. Recommend hard-clamping to [0, 1] with a parse-time error.)
+- **Q2. Boundary edges.** Today boundary edges are handled by the BC system and the flux-calculator early-returns `0.0` at `nbr < 0` before any conveyance multiplication would run. Should the conveyance factor also apply to *non-Wall* boundary edges once the V-E-FLUX slice lands (so a partially-blocked outflow weir-edge has both a `SPECIFIED_FLOW` BC and a 0.3 conveyance)? Recommend YES for orthogonality, but the question deserves an explicit decision because it widens the cross-feature interaction surface.
+- **Q3. Symmetry enforcement.** When the user declares `TRI=A EDGE=k CONVEYANCE=0.4`, should the parser (a) silently mirror the value to the partner slot on neighbour `B`, (b) require the user to declare both slots and error if they disagree, or (c) accept either and let `SurfaceRouter2D::initialize` fill in the partner from a "first-touch wins" rule? Recommend (a) — silent mirroring keeps the input concise and removes a footgun. Mention (b) as a pedantic-validation toggle if needed later.
+- **Q4. Interaction with the wet/dry Hermite shutoff.** Today the shutoff multiplies `F_e` *before* the value is stored. The conveyance factor would multiply *after* the shutoff (or before — both give the same result mathematically, but the code order matters for clarity). Recommend applying conveyance as the last step before `state.edge_flux[idx] = F_e`. This keeps a `c = 0` edge bit-identical to a wall and the multiplication is visibly "the last thing that happens to F_e".
+- **Q5. Input-format granularity.** A `TRI EDGE CONVEYANCE` row and a
+  `V_A V_B CONVEYANCE` row both have the shape `int int double`, so a
+  bare two-form dispatch is ambiguous (the early draft of this plan
+  got this wrong — see the discussion below). Three coherent options:
+  - **5a (recommend) — TRI/EDGE only.** Engine accepts only
+    `TRI EDGE CONVEYANCE`. Authoring an obstruction by polyline is
+    the GUI's job: it knows the mesh, walks the polyline, looks up
+    each shared interior edge, and emits the corresponding TRI/EDGE
+    rows. Engine parser stays trivial; no ambiguity possible.
+  - **5b — both forms with mandatory leading keyword.** Every row
+    starts with `TRI` or `V`: `TRI 42 1 0.40` or `V 17 18 0.30`.
+    Unambiguous, slightly more verbose, scales cleanly if a future
+    form (e.g., `EDGE_ID 123 0.40` for a global edge ID) is added.
+  - **5c — separate sections.** `[2D_EDGE_CONVEYANCE]` for the
+    triangle/edge form, `[2D_EDGE_CONVEYANCE_VERTEX]` for the
+    vertex-pair form. Each section's parser is unambiguous on its
+    own. Two section names for one feature is awkward but workable.
+
+  > **Why "both, dispatched by parse result" does not work.** Almost
+  > every form-A row has `EDGE ∈ {0, 1, 2}`, which is also a valid
+  > vertex index in any non-trivial mesh, so a row like `42 1 0.40`
+  > could be either form. A row like `17 18 0.30` is unambiguously
+  > form B only because `EDGE = 18` is out of range for form A — but
+  > that signal only fires for the small minority of form-B rows
+  > whose second vertex happens to be > 2. Most rows collide.
+- **Q6. C API.** Mutable through the C API like `coupling_inflow[]`, or read-only like static mesh geometry? Recommend mutable — supports time-varying obstructions (e.g., a flap-gate opening over the course of a storm) at near-zero implementation cost, since the value is just a multiplier looked up every flux evaluation.
+
+If any of Q1–Q6 lands differently, the §11A.4–11A.8 sections below
+need to be revised before any code is written.
+
+### 11A.4 Proposed data model
+
+Single new field on `MeshData`, mirroring the existing edge SoA layout:
+
+```cpp
+struct MeshData {
+    // ... existing fields ...
+
+    // Per-edge conveyance factor in [0, 1] (default 1.0 = unrestricted).
+    // Flat 2D: [tri * 3 + edge_local]. Symmetric across interior edges —
+    // resize_triangles initialises to 1.0 and SurfaceRouter2D::initialize
+    // mirrors any user-declared partial conveyance to the matching slot
+    // on the neighbour triangle so interior flux antisymmetry is
+    // preserved (see §11A.6 mass-conservation argument).
+    //
+    // Cross-reference: corresponds to ψ in the Integral-Porosity SWE
+    // literature (Sanders 2008; Bruwier et al. 2017).
+    std::vector<double> edge_conveyance;
+};
+```
+
+`resize_triangles(nt)` adds `edge_conveyance.assign(nt * 3, 1.0);`
+right next to the existing `edge_length.resize(...)` line.
+
+No new struct, no new lifecycle method. The factor is mesh geometry,
+so it belongs on `MeshData` rather than `BoundaryData` (which is for
+edge boundary conditions) or `SurfaceStateData` (which is for time-
+varying state).
+
+### 11A.5 Proposed input format
+
+New optional section `[2D_EDGE_CONVEYANCE]`. Parsed by a new
+`parse2DEdgeConveyanceLine` function in
+`src/engine/2d/input/SectionHandlers2D.cpp`, registered the same way
+as the other `[2D_*]` sections in `register2DSections` and
+`load2DMeshExternalFile`. Per Q5 → 5d, the row format mirrors SWMM
+`[CONDUITS]` `From-Node` / `To-Node` convention.
+
+```
+;; Per-edge conveyance multiplier in [0, 1]. Default 1.0 (unrestricted)
+;; for every interior edge that is NOT listed here.  Multiplies the
+;; diffusion-wave flux across the edge.
+;;
+;; FROM_VERTEX / TO_VERTEX is the (unordered) pair of mesh vertex
+;; indices at the edge's endpoints — the conveyance is direction-
+;; symmetric, so swapping FROM and TO does not change the value.
+;;
+;; Authoring obstructions as a polyline (a hedgerow that crosses many
+;; edges) is the GUI's job: walk the polyline, emit one row per shared
+;; mesh edge.
+[2D_EDGE_CONVEYANCE]
+
+;; FROM_VERTEX   TO_VERTEX   CONVEYANCE
+;; -----------   ---------   ----------
+   17            18          0.40        ;; hedgerow segment
+   18            19          0.40
+   42            87          0.30        ;; culverted embankment
+   55            61          0.00        ;; fully blocked → equivalent to a Wall
+```
+
+Parser rules (5d):
+
+- Exactly three tokens per row: `FROM_VERTEX TO_VERTEX CONVEYANCE`.
+- `FROM_VERTEX` and `TO_VERTEX` must be non-negative integers in
+  `[0, n_vertices)` and must differ. Out-of-range or equal vertices
+  raise a clear error at parse time (range) or at
+  `SurfaceRouter2D::initialize` time (vertex-pair does not form a
+  real mesh edge).
+- `CONVEYANCE` must parse as a `double` in `[0.0, 1.0]` (Q1, strict
+  clamp at parse time); out-of-range raises a clear error.
+- Vertex-pair resolution (Q3 silent mirror) happens in
+  `SurfaceRouter2D::initialize`: an edge-key hash map built in one
+  O(n_triangles) pass over the mesh maps `(min(v_from, v_to),
+  max(v_from, v_to))` → list of `(tri, edge_local)` slot indices.
+  An interior edge resolves to two slots (one in each adjacent
+  triangle); a boundary edge resolves to one. The factor is written
+  to every matching slot.
+- Duplicate rows naming the same edge: last-write-wins, with a
+  one-shot warning per duplicate.
+- A vertex-pair that does not form a mesh edge raises a fatal
+  init-time error (the obstruction reference is wrong; fail loudly
+  rather than silently dropping).
+
+**Alternative parsers (not implemented, retained for reference).**
+
+- **5a (TRI / EDGE explicit).** `TRI EDGE CONVEYANCE` per row. Author
+  must know triangle indices.
+- **5b (leading keyword).** First token is `TRI` or `V`; rest of the
+  row is `<int> <int> <double>` interpreted accordingly.
+- **5c (separate sections).** Sibling
+  `[2D_EDGE_CONVEYANCE]` (TRI/EDGE) and
+  `[2D_EDGE_CONVEYANCE_VERTEX]` (V_A/V_B) sections.
+
+### 11A.6 Proposed math integration
+
+Single insertion in `SurfaceFluxCalculator::computeEdgeFluxes` —
+multiply once, immediately before the flux is stored:
+
+```cpp
+// Cubic Hermite wet/dry shutoff on the source-side depth (unchanged) …
+if (depth_up < opts.dry_depth) {
+    double t = depth_up / opts.dry_depth;
+    F_e *= t * t * (3.0 - 2.0 * t);
+}
+
+// NEW — per-edge conveyance factor.  No-op when c == 1.0.
+//
+// Mass-conservation argument:
+//   - For an interior edge shared by cells A and B, this loop writes
+//     edge_flux[A*3 + e_A] and edge_flux[B*3 + e_B] independently.
+//     The two slots compute the SAME F_e (up to sign) because the FV
+//     scheme uses centroid-to-centroid Δh / Δx, which is antisymmetric
+//     in (A ↔ B).  Multiplying BOTH slots by the SAME edge_conveyance
+//     preserves antisymmetry → no spurious mass source.
+//   - SurfaceRouter2D::initialize is responsible for the "same factor
+//     in both slots" invariant (§11A.4 mirroring).  computeEdgeFluxes
+//     trusts it and does not re-look up the partner.
+//   - c == 0 → F_e == 0, identical to the boundary early-return.  An
+//     interior edge with conveyance 0 is a wall in everything but its
+//     storage location (still in the interior edge list, still has a
+//     neighbour, but carries no flux).
+F_e *= mesh.edge_conveyance[idx];
+
+state.edge_flux[idx] = F_e;
+```
+
+That is the entire mathematical change. The downstream consumers
+(`assembleRHS`, `face_vx / face_vy` reconstruction,
+`cell_continuity_err`, `edge_bc_cum_flux`) see the attenuated flux
+and integrate it correctly without further modification.
+
+CVODE Jacobian: the diffusion-wave Jacobian is currently approximated
+by GMRES Jacobian-vector products with no explicit assembly. A
+per-edge constant multiplier does not change the sparsity pattern,
+just the coefficient, so the existing Krylov + JACOBI preconditioner
+keeps working. The conditioning is *better* on heavily-blocked
+meshes (smaller off-diagonal entries → more diagonally dominant).
+
+### 11A.7 Proposed C API surface
+
+Three new functions in `include/openswmm/engine/openswmm_2d.h`,
+matching the style of the existing `swmm_2d_set_coupling_*` family:
+
+```c
+/* Read the per-edge conveyance factor for one edge.
+ * tri ∈ [0, n_triangles), edge ∈ {0,1,2}.
+ * Returns 1.0 for out-of-range arguments and emits a warning.
+ */
+double swmm_2d_get_edge_conveyance(SWMM_Engine eng, int tri, int edge);
+
+/* Set the per-edge conveyance factor for one edge.
+ * Value is clamped to [0, 1]; out-of-range arguments are no-ops with
+ * a warning.  When the edge is interior (has a neighbour) the value
+ * is mirrored to the partner slot so antisymmetry is preserved.
+ * Safe to call between routing steps; calling DURING a routing step
+ * is undefined (the CVODE sub-stepper holds a const reference).
+ */
+int swmm_2d_set_edge_conveyance(SWMM_Engine eng, int tri, int edge, double c);
+
+/* Bulk reset: every edge → 1.0.  O(n_triangles). */
+int swmm_2d_reset_edge_conveyance(SWMM_Engine eng);
+```
+
+Cython / Python bindings follow the existing pattern in
+`python/openswmm/engine/_2d.pxd / _2d.pyx`.
+
+### 11A.8 Validation plan
+
+| Step | Verification |
+|------|--------------|
+| 1. `edge_conveyance` defaults to 1.0 after `resize_triangles` | Unit test on `MeshData` directly. |
+| 2. Parser round-trips form A and form B | Unit test on `parse2DEdgeConveyanceLine` with both syntaxes; assert the same internal state. |
+| 3. Out-of-range value → parse error | Test with `CONVEYANCE = -0.1` and `CONVEYANCE = 1.5`; assert non-empty error. |
+| 4. Mirroring across interior edges | After `SurfaceRouter2D::initialize`, walk every interior edge and assert `edge_conveyance[A*3+e_A] == edge_conveyance[B*3+e_B]`. |
+| 5. `c = 0` ≡ Wall | Generate a test case where one interior edge is fully blocked; compare against the same case with that edge moved to the boundary (`tri_nbr = -1`). Depth and flux fields must agree to solver tolerance. |
+| 6. Partial attenuation | Steady-state diffusion problem with an analytical solution; verify the flux through a `c = 0.5` edge is exactly half the unattenuated reference. |
+| 7. Mass balance | A 12-hour rainfall run with a mixed-conveyance domain (some edges at 1.0, some at 0.3, some at 0.0); assert `accumulateMassBalance` continues to balance within the existing tolerance (no spurious source / sink from antisymmetry breaking). |
+| 8. C API round-trip | `set` → `get` returns the clamped value; `set` on an interior edge mirrors to the partner. |
+
+### 11A.9 Affected files (forecast)
+
+If Q1–Q6 land per recommendation:
+
+- `src/engine/2d/data/MeshData.hpp` — add `edge_conveyance` vector, init in `resize_triangles`.
+- `src/engine/2d/input/SectionHandlers2D.hpp / .cpp` — add `parse2DEdgeConveyanceLine`; register in `register2DSections` and `load2DMeshExternalFile`.
+- `src/engine/2d/SurfaceRouter2D.cpp` — mirror form-A / form-B declarations to partner slots inside `initialize()`, immediately after `buildMeshTopology` (the neighbour table is then available).
+- `src/engine/2d/solver/SurfaceFluxCalculator.cpp` — one-line multiplication before `state.edge_flux[idx] = F_e`.
+- `include/openswmm/engine/openswmm_2d.h` + impl — three new C API entry points.
+- `python/openswmm/engine/_2d.pxd / _2d.pyx` — Cython / Python bindings.
+- `tests/` — unit + verification + mass-balance tests per §11A.8.
+- `docs/2dModelStrategy.md` §1 — once approved, promote this plan into §1.9 `[2D_EDGE_CONVEYANCE]` and a §2.5 `MeshData` field; flip the status banner above to "implemented".
+- `docs/2d_external_mesh_file.md` — extend the affected-sections list with `[2D_EDGE_CONVEYANCE]`.
+
+Estimated diff size: ~150 lines of engine source, ~80 lines of tests,
+~60 lines of docs. No new dependencies.
+
+### 11A.10 Decision log
+
+Q1-Q6 resolved 2026-05-30 — see status banner at the top of §11A.
+Q5 changed from the original 5a recommendation to 5d after the
+ambiguity in the bare two-form dispatch was identified and the
+SWMM-style `FROM_VERTEX` / `TO_VERTEX` convention was proposed as a
+cleaner alternative.
 
 ---
 
@@ -1256,6 +2205,295 @@ Per SWMM routing step:
 ```
 
 This creates a **feedback loop**: 2D surface levels influence outfall boundary conditions → outfall boundaries affect pipe flows → pipe flows discharge into 2D → 2D levels change → next step boundary conditions update.
+
+---
+
+## 14A. Continuity Diagnostics and Max-Value Rendering Envelopes
+
+This section is the authoritative description of how the 2D module tracks
+**local** and **global** continuity error and how it tracks and persists the
+**maximum depth** and **maximum velocity** envelopes used to render flood maps.
+It consolidates behaviour that is partly already wired (local residual, global
+mass balance, max depth) and specifies the remaining pieces (max-velocity
+envelope, HDF5 persistence of envelopes, HDF5 persistence of the global
+balance) so the whole feature is described in one place.
+
+### 14A.1 What already exists vs. what this section adds
+
+| Quantity | Tracked today | Persisted for rendering today | This section adds |
+|----------|---------------|-------------------------------|-------------------|
+| **Local continuity** (per cell) | ✅ `state_.cell_continuity_err[]` via `computeCellContinuity` (§8.5) | ✅ per-step `/Mesh2_face_continuity_err` | Cumulative `stat_max_cont_err[]` envelope + `/Mesh2_face_max_continuity_err` |
+| **Global continuity** (domain) | ✅ `ctx.mass_balance_2d` + `MassBalance2D::error()` | ❌ report only (`DefaultReportPlugin`) | `/mass_balance_2d` HDF5 group + scalar `continuity_error` |
+| **Max depth** (per cell) | ✅ `state_.stat_max_depth[]` via `update_statistics` | ❌ not in HDF5 | `/Mesh2_face_max_depth` envelope dataset |
+| **Max velocity** (per cell) | ❌ not tracked | ❌ | `state_.stat_max_velocity[]` + `/Mesh2_face_max_velocity` |
+
+The design principle is **no new full passes over the mesh and no new time
+dimension**: every envelope folds into the per-cell loop already walked by
+`update_statistics`, and every envelope is stored as a single `[nFace]`
+(time-invariant) HDF5 dataset that is overwritten in place rather than appended.
+
+### 14A.2 Local continuity residual (per cell)
+
+Unchanged from §8.5 — documented here for completeness. After CVODE accepts the
+step, `computeEdgeFluxes` refreshes the edge fluxes at the accepted
+`(head, depth)`, then `computeCellContinuity(mesh_, state_, dt)` writes the
+discrete residual
+
+```
+cell_continuity_err[i] =
+    A_i · (depth[i] − old_depth[i]) / dt           // storage change
+    + Σ_edges edge_flux[i, e] · edge_length[i, e]   // net efflux (m³/s)
+    − net_source[i] · A_i                           // rainfall + coupling source
+```
+
+into `state_.cell_continuity_err[i]` (m³/s; ≈ 0 for a conservative scheme).
+This is already streamed to the HDF5 time series as `/Mesh2_face_continuity_err`
+(see §14A.5), so the GUI can animate the instantaneous local imbalance and
+locate cells where the limiter or the wet/dry treatment is leaking volume.
+
+### 14A.3 Global continuity (domain mass balance)
+
+Unchanged in mechanism from §9.6 — the per-step accumulation already lives in
+`SurfaceRouter2D::accumulateMassBalance` and writes into the
+`ctx.mass_balance_2d` struct (`SimulationContext.hpp`):
+
+```cpp
+struct MassBalance2D {
+    double init_storage, final_storage;        // m³
+    double rainfall_in;                         // m³
+    double coupling_1d_to_2d_in, coupling_2d_to_1d_out;
+    double outfall_in;
+    double boundary_in, boundary_out;
+    bool   active;
+    double error() const {                      // fraction in [-1, 1]
+        double in  = rainfall_in + coupling_1d_to_2d_in + outfall_in
+                     + boundary_in + init_storage;
+        double out = coupling_2d_to_1d_out + boundary_out + final_storage;
+        return (in > 0.0) ? (in - out) / in : 0.0;
+    }
+};
+```
+
+**The only gap is persistence.** Today these terms reach the user only through
+`DefaultReportPlugin` (the text `.rpt`). For rendering and post-processing they
+must also land in the HDF5 file. Because the terms are scalars known in full at
+the end of the run, they are written **once**, in
+`Default2DOutputPlugin::finalize(const SimulationContext& ctx)` — which already
+receives `ctx` — into a small `/mass_balance_2d` group:
+
+```
+/mass_balance_2d            (group)
+  ├─ init_storage           scalar double (m³)
+  ├─ final_storage          scalar double (m³)
+  ├─ rainfall_in            scalar double (m³)
+  ├─ coupling_1d_to_2d_in   scalar double (m³)
+  ├─ coupling_2d_to_1d_out  scalar double (m³)
+  ├─ outfall_in             scalar double (m³)
+  ├─ boundary_in            scalar double (m³)
+  ├─ boundary_out           scalar double (m³)
+  └─ @continuity_error      attribute double (fraction, = ctx.mass_balance_2d.error())
+```
+
+This is O(1) work at finalize, no per-step cost, and keeps the binary file
+self-describing for the same balance the report prints.
+
+### 14A.4 Max depth and max velocity envelopes (per cell)
+
+Two new cumulative arrays join the existing `stat_max_depth` /
+`stat_cum_volume` in `SurfaceStateData` (§2.2): `stat_max_velocity` and
+`stat_max_cont_err`. All envelope updates fuse into the **single** per-cell loop
+that `update_statistics` already runs, so the only added cost is two `max`
+comparisons and one `sqrt` per cell per coupling step:
+
+```cpp
+void SurfaceStateData::update_statistics(const std::vector<double>& tri_area,
+                                         double dt) noexcept {
+    for (std::size_t i = 0; i < depth.size(); ++i) {
+        if (depth[i] > stat_max_depth[i]) stat_max_depth[i] = depth[i];
+
+        // face_vx/face_vy were refreshed by computeFaceVelocity earlier in
+        // step() (§8.5), so the speed magnitude below is the accepted value.
+        const double speed = std::sqrt(face_vx[i]*face_vx[i]
+                                     + face_vy[i]*face_vy[i]);
+        if (speed > stat_max_velocity[i]) stat_max_velocity[i] = speed;
+
+        const double aerr = std::abs(cell_continuity_err[i]);
+        if (aerr > stat_max_cont_err[i]) stat_max_cont_err[i] = aerr;
+
+        stat_cum_volume[i] += depth[i] * tri_area[i] * dt;
+    }
+}
+```
+
+**Ordering guarantee (critical).** In `SurfaceRouter2D::step` the call sequence
+is already `computeEdgeFluxes → computeCellContinuity → computeFaceVelocity →
+update_statistics → accumulateMassBalance` (§8.5). `update_statistics` therefore
+sees the accepted, post-step `face_vx/vy` and `cell_continuity_err`; **no
+reordering is required**, and the envelopes never sample a Newton/JvP
+perturbation state. `resize()` must `assign(nt, 0.0)` the two new arrays
+alongside the existing ones.
+
+**Sampling resolution — fixed at the model (routing) timestep.** Envelopes are
+aggregated once per **SWMM model/routing step** (`dt = dt_swmm`), at the
+accepted end-of-step state. They are **never** sampled at CVODE internal
+sub-steps: the envelope update lives only in `update_statistics`, called once
+per `SurfaceRouter2D::step` (§8.5), and nothing in the CVODE right-hand-side
+callback touches the `stat_*` arrays. This is a deliberate, final design
+choice — it keeps the envelope cost at one fused per-cell pass per model step
+and avoids any per-RHS-evaluation overhead.
+
+### 14A.5 Efficient HDF5 persistence of the envelopes
+
+The per-step time series (`/Mesh2_face_depth`, `/Mesh2_face_vx`, … ,
+`/Mesh2_face_continuity_err`) is unchanged. Envelopes are added as **fixed
+`[nFace]` datasets** — no unlimited time dimension, no chunk extension:
+
+```
+/Mesh2_face_max_depth           [nFace]  double, units "m"
+/Mesh2_face_max_velocity        [nFace]  double, units "m s-1"
+/Mesh2_face_max_continuity_err  [nFace]  double, units "m3 s-1"
+```
+
+Each carries the standard UGRID face attributes (`mesh="Mesh2"`,
+`location="face"`, `long_name`, `units`) so a UGRID-aware viewer (QGIS Crayfish,
+ParaView) renders them as static result layers.
+
+Two write strategies were considered:
+
+1. **Write once at `finalize`.** Cleanest, but `Default2DOutputPlugin::finalize`
+   only receives `SimulationContext`, not the `SurfaceStateData` arrays, so it
+   would need a new engine→plugin handoff.
+2. **Overwrite in place each output step** *(chosen)*. Carry the three envelope
+   arrays in `SimulationSnapshot` (filled by `fillSurfaceSnapshot`, like the
+   other `surface_*` fields) and, in `Default2DOutputPlugin::update`, `H5Dwrite`
+   the full `[nFace]` slab over the fixed dataset. Because the envelopes are
+   monotone, the **last** write is the final envelope; an aborted run still
+   leaves a valid, up-to-date envelope on disk.
+
+Strategy 2 is chosen: it reuses the existing snapshot/IO-thread path (no new
+cross-thread handoff, no main-thread/IO-thread race), and its cost is
+`3 × nFace` doubles overwritten per output step — negligible next to the ~12
+time-series face arrays already appended each step, and far cheaper than the
+3-D `[nTime, nFace, 3]` edge-flux dataset already being written.
+
+Datasets are created in `prepareMeshAndDatasets` (fixed, non-unlimited) and
+closed in `finalize` alongside the existing `ds_face_*` handles. New members on
+`Default2DOutputPlugin`: `ds_face_max_depth_`, `ds_face_max_velocity_`,
+`ds_face_max_continuity_err_`.
+
+### 14A.6 Snapshot plumbing
+
+`SimulationSnapshot` (consumed on the IO thread) gains three arrays, populated
+in `SWMMEngine::fillSurfaceSnapshot` next to the existing assignments:
+
+```cpp
+snap.surface_stat_max_depth      = st.stat_max_depth;
+snap.surface_stat_max_velocity   = st.stat_max_velocity;
+snap.surface_stat_max_cont_err   = st.stat_max_cont_err;
+```
+
+These are SI-native and **must not** pass through `convertSnapshotToDisplay`
+(the 1D-only display conversion in `SWMMEngine.cpp`), matching how the other
+`surface_*` fields are treated.
+
+### 14A.7 C API surface (`openswmm_2d.h`)
+
+Bulk getters mirror the existing `swmm_2d_get_stat_max_depths` so an external
+driver can read the live envelope without the HDF5 file:
+
+```c
+/** @brief Per-triangle max velocity magnitude envelope (m/s). Cumulative. */
+SWMM_ENGINE_API int swmm_2d_get_stat_max_velocities(SWMM_Engine engine,
+                                                     double* max_velocities);
+
+/** @brief Per-triangle max |continuity residual| envelope (m³/s). Cumulative. */
+SWMM_ENGINE_API int swmm_2d_get_stat_max_continuity_err(SWMM_Engine engine,
+                                                        double* max_errs);
+
+/** @brief Global 2D surface continuity error (fraction = mass_balance_2d.error()). */
+SWMM_ENGINE_API int swmm_2d_get_continuity_error(SWMM_Engine engine, double* err);
+
+/** @brief Global 2D mass-balance terms (all m³). Any out-pointer may be NULL. */
+SWMM_ENGINE_API int swmm_2d_get_mass_balance(SWMM_Engine engine,
+                                             double* init_storage,
+                                             double* final_storage,
+                                             double* rainfall_in,
+                                             double* coupling_1d_to_2d_in,
+                                             double* coupling_2d_to_1d_out,
+                                             double* outfall_in,
+                                             double* boundary_in,
+                                             double* boundary_out);
+```
+
+### 14A.8 Python binding (`_2d.pxd` / `_2d.pyx` / `_2d.pyi`)
+
+`.pyi` stub additions (epytext docstrings, NumPy-typed returns, matching the
+existing `get_stat_max_depths` / `max_depth` style):
+
+```python
+def get_stat_max_velocities(self) -> npt.NDArray[np.float64]:
+    """
+    Per-triangle cumulative maximum velocity magnitude envelope.
+
+    @return: Max cell speed |v| seen at each triangle over the run (m/s).
+    @rtype: numpy.ndarray[float64], shape (n_triangles,)
+    """
+
+def get_stat_max_continuity_err(self) -> npt.NDArray[np.float64]:
+    """
+    Per-triangle cumulative maximum |continuity residual| envelope.
+
+    @return: Worst-case local mass-balance residual at each triangle (m³/s).
+    @rtype: numpy.ndarray[float64], shape (n_triangles,)
+    """
+
+@property
+def continuity_error(self) -> float:
+    """
+    Global 2D surface continuity error.
+
+    @return: (total_in − total_out) / total_in, the domain mass-balance error.
+    @rtype: float
+    """
+
+def get_mass_balance(self) -> dict[str, float]:
+    """
+    Global 2D mass-balance terms.
+
+    @return: Mapping with keys C{init_storage}, C{final_storage},
+        C{rainfall_in}, C{coupling_1d_to_2d_in}, C{coupling_2d_to_1d_out},
+        C{outfall_in}, C{boundary_in}, C{boundary_out} (all m³) and
+        C{continuity_error} (fraction).
+    @rtype: dict[str, float]
+    """
+```
+
+### 14A.9 Tests (real `openswmm.engine.Solver`, no mocks)
+
+Per project convention, every item below runs against the real handle-based
+Solver on a small triangulated mesh — no engine mocks.
+
+| Test | Validates |
+|------|-----------|
+| `test_2d_max_depth_envelope` | After a rising-then-falling hydrograph, `get_stat_max_depths()[i] ≥` every instantaneous `get_depths()[i]` seen during the run, and the envelope is non-decreasing in time. |
+| `test_2d_max_velocity_envelope` | Tilted-plane run: `get_stat_max_velocities()` is ≥ the magnitude of every per-step `√(vx²+vy²)`; dry cells stay 0. |
+| `test_2d_local_continuity_envelope` | `stat_max_cont_err` equals the running max of `|cell_continuity_err|`; on a closed conservative still-water case it stays below the per-cell tolerance. |
+| `test_2d_global_continuity_closed` | Rainfall-only, walled domain: `continuity_error` < 1e-4 (init + rainfall − final_storage balances). |
+| `test_2d_global_continuity_coupled` | Coupled spill/drain case: `coupling_1d_to_2d_in − coupling_2d_to_1d_out` matches the 1D side's `coupling_inflow` integral; `continuity_error` within tolerance. |
+| `test_2d_hdf5_envelope_datasets` | After a run with `OUTPUT_FILE`, the HDF5 has `/Mesh2_face_max_depth`, `/Mesh2_face_max_velocity`, `/Mesh2_face_max_continuity_err` of shape `[nFace]` whose values equal the C-API envelopes; `/mass_balance_2d` group exists with `@continuity_error`. |
+
+### 14A.10 Affected files (forecast)
+
+| File | Change |
+|------|--------|
+| `src/engine/2d/data/SurfaceStateData.hpp` | Add `stat_max_velocity`, `stat_max_cont_err`; init in `resize`; fold into `update_statistics`. |
+| `src/engine/2d/output/Default2DOutputPlugin.hpp` | 3 new `ds_face_max_*_` members. |
+| `src/engine/2d/output/Default2DOutputPlugin.cpp` | Create fixed `[nFace]` datasets in `prepareMeshAndDatasets`; overwrite in `update`; write `/mass_balance_2d` group in `finalize`; close handles. |
+| `src/engine/core/SimulationContext.hpp` (snapshot) | 3 new `surface_stat_*` arrays on `SimulationSnapshot`. |
+| `src/engine/core/SWMMEngine.cpp` | Fill the 3 arrays in `fillSurfaceSnapshot` (SI-native; skip display conversion). |
+| `src/engine/2d/api/Api2D.{hpp,cpp}` + `openswmm_2d.h` | New getters (§14A.7). |
+| `python/openswmm/engine/_2d.{pxd,pyx,pyi}` | Wrap the new getters (§14A.8). |
+| `tests/...` | Tests in §14A.9. |
 
 ---
 

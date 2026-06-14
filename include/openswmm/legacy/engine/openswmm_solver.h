@@ -113,6 +113,8 @@ typedef enum
     swmm_GAGE_RAINFALL,
     /*! \brief Snowfall */
     swmm_GAGE_SNOWFALL,
+    /*! \brief Rainfall scaling factor (dimensionless, > 0). */
+    swmm_GAGE_SCALEFACTOR,
 } swmm_GageProperty;
 
 /*!
@@ -218,6 +220,33 @@ typedef enum
     swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION,
     /*! \brief Total pollutant load */
     swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD,
+    /*! \brief API prescribed potential evapotranspiration rate (in/day or mm/day).
+     *         Settable while the simulation is running; overrides the
+     *         climate-derived evaporation rate for the subcatchment's surface,
+     *         LID, and groundwater evaporation. Set a negative value to clear
+     *         and revert to climate-derived evaporation. */
+    swmm_SUBCATCH_API_PET,
+    /*! \brief Groundwater upper zone moisture content (volume fraction,
+     *         0..porosity). Settable while the simulation is running
+     *         (state injection / data assimilation). */
+    swmm_SUBCATCH_GW_MOISTURE,
+    /*! \brief Groundwater saturated (lower) zone depth above the aquifer
+     *         bottom (ft or m). Settable while the simulation is running. */
+    swmm_SUBCATCH_GW_LOWER_DEPTH,
+    /*! \brief Snow pack snow water equivalent on a snow subarea
+     *         (in or mm; sub_index = 0 plowable, 1 impervious, 2 pervious).
+     *         Settable while the simulation is running. */
+    swmm_SUBCATCH_SNOW_SWE,
+    /*! \brief Snow pack free water on a snow subarea (in or mm;
+     *         sub_index as for swmm_SUBCATCH_SNOW_SWE). Settable while
+     *         the simulation is running. */
+    swmm_SUBCATCH_SNOW_FW,
+    /*! \brief Snow pack antecedent temperature index on a snow subarea
+     *         (deg F or deg C). Settable while the simulation is running. */
+    swmm_SUBCATCH_SNOW_ATI,
+    /*! \brief Snow pack cold content on a snow subarea (in or mm of melt
+     *         equivalent). Settable while the simulation is running. */
+    swmm_SUBCATCH_SNOW_COLDC,
 } swmm_SubcatchProperty;
 
 /*!
@@ -256,6 +285,8 @@ typedef enum
     swmm_NODE_POLLUTANT_CONCENTRATION,
     /*! \brief Pollutant lateral mass flux inflow */
     swmm_NODE_POLLUTANT_LATMASS_FLUX,
+    /*! \brief Total outflow */
+    swmm_NODE_OUTFLOW,
 } swmm_NodeProperty;
 
 /*!
@@ -323,6 +354,130 @@ typedef enum
     /*! \brief Pollutant lateral mass flux */
     swmm_LINK_POLLUTANT_LATMASS_FLUX = 428,
 } swmm_LinkProperty;
+
+/*!
+ * \enum swmm_PollutProperty
+ * \brief Enumeration of pollutant properties used in SWMM5.
+ * \details The source concentrations are settable while the simulation is
+ * running, enabling dynamic wet-deposition, groundwater, RDII, and dry
+ * weather quality forcing. Values are in the pollutant's concentration
+ * units (e.g. mg/L) as defined in the input file.
+ */
+typedef enum
+{
+    /*! \brief Rain (wet deposition) concentration */
+    swmm_POLLUT_RAIN_CONCEN = 500,
+    /*! \brief Groundwater inflow concentration */
+    swmm_POLLUT_GW_CONCEN,
+    /*! \brief RDII inflow concentration */
+    swmm_POLLUT_RDII_CONCEN,
+    /*! \brief Dry weather sanitary flow concentration */
+    swmm_POLLUT_DWF_CONCEN,
+    /*! \brief First-order decay constant (1/day); read live each step */
+    swmm_POLLUT_KDECAY,
+    /*! \brief Co-pollutant index (-1 = none) */
+    swmm_POLLUT_CO_POLLUTANT,
+    /*! \brief Co-pollutant fraction (0-1) */
+    swmm_POLLUT_CO_FRACTION,
+    /*! \brief Buildup-only-under-snow flag (0/1) */
+    swmm_POLLUT_SNOW_ONLY,
+    /*! \brief Initial conveyance-network concentration (pre-start only) */
+    swmm_POLLUT_INIT_CONCEN,
+} swmm_PollutProperty;
+
+/*!
+ * \enum swmm_PatternProperty
+ * \brief Enumeration of time-pattern properties used in SWMM5.
+ * \details Pattern multiplier factors are settable both before the
+ * simulation starts and while it is running. They are looked up afresh on
+ * every step (DWF/GW/inflow scaling), so a mid-run edit takes effect on the
+ * next step. The factor index is passed as the \c subIndex argument of
+ * \c swmm_setValueExpanded / \c swmm_getValueExpanded (0-based position
+ * within the pattern: 0-11 monthly, 0-6 daily, 0-23 hourly/weekend).
+ */
+typedef enum
+{
+    /*! \brief One multiplier factor (subIndex = factor position) */
+    swmm_PATTERN_FACTOR = 600,
+    /*! \brief Number of factors in the pattern (read-only) */
+    swmm_PATTERN_COUNT,
+    /*! \brief Pattern type code (read-only): 0 monthly, 1 daily, 2 hourly, 3 weekend */
+    swmm_PATTERN_TYPE,
+} swmm_PatternProperty;
+
+/*!
+ * \enum swmm_LanduseProperty
+ * \brief Enumeration of land-use properties used in SWMM5.
+ * \details Street-sweeping parameters are settable both before the
+ * simulation starts and while it is running; they are read per step when
+ * sweeping is evaluated, so a mid-run edit takes effect on the next step.
+ */
+typedef enum
+{
+    /*! \brief Street-sweeping interval (days) */
+    swmm_LANDUSE_SWEEP_INTERVAL = 700,
+    /*! \brief Fraction of buildup available for sweeping (0-1) */
+    swmm_LANDUSE_SWEEP_REMOVAL,
+    /*! \brief Buildup function type code (subIndex = pollutant index) */
+    swmm_LANDUSE_BUILDUP_FUNC,
+    /*! \brief Buildup coefficient c0 / max buildup (subIndex = pollutant) */
+    swmm_LANDUSE_BUILDUP_COEFF1,
+    /*! \brief Buildup coefficient c1 / rate (subIndex = pollutant) */
+    swmm_LANDUSE_BUILDUP_COEFF2,
+    /*! \brief Buildup coefficient c2 / exponent (subIndex = pollutant) */
+    swmm_LANDUSE_BUILDUP_COEFF3,
+    /*! \brief Buildup normalizer code: 0 area, 1 curb length (subIndex = pollutant) */
+    swmm_LANDUSE_BUILDUP_NORMALIZER,
+    /*! \brief Washoff function type code (subIndex = pollutant) */
+    swmm_LANDUSE_WASHOFF_FUNC,
+    /*! \brief Washoff coefficient (subIndex = pollutant) */
+    swmm_LANDUSE_WASHOFF_COEFF,
+    /*! \brief Washoff exponent (subIndex = pollutant) */
+    swmm_LANDUSE_WASHOFF_EXPON,
+    /*! \brief Washoff street-sweeping removal efficiency 0-1 (subIndex = pollutant) */
+    swmm_LANDUSE_WASHOFF_SWEEP_EFFIC,
+    /*! \brief Washoff BMP removal efficiency 0-1 (subIndex = pollutant) */
+    swmm_LANDUSE_WASHOFF_BMP_EFFIC,
+} swmm_LanduseProperty;
+
+/*!
+ * \enum swmm_AquiferProperty
+ * \brief Enumeration of aquifer properties used in SWMM5.
+ * \details Values use input-file units (the [AQUIFERS] line columns). The
+ * flux-coefficient properties (conductivity, slopes, evap/loss coefficients)
+ * are read live each step, so they are settable both before the simulation
+ * starts and while it is running; the structural / initial-condition
+ * properties (porosity, wilting point, field capacity, bottom elevation,
+ * water table elevation, upper moisture) bound or seed the groundwater state
+ * and return \c ERR_API_IS_RUNNING while the simulation is running.
+ */
+typedef enum
+{
+    /*! \brief Porosity (volumetric fraction, pre-start-only) */
+    swmm_AQUIFER_POROSITY = 800,
+    /*! \brief Wilting point (volumetric fraction, pre-start-only) */
+    swmm_AQUIFER_WILTING_POINT,
+    /*! \brief Field capacity (volumetric fraction, pre-start-only) */
+    swmm_AQUIFER_FIELD_CAPACITY,
+    /*! \brief Saturated hydraulic conductivity (in/hr or mm/hr) */
+    swmm_AQUIFER_CONDUCTIVITY,
+    /*! \brief Conductivity slope (unitless) */
+    swmm_AQUIFER_CONDUCT_SLOPE,
+    /*! \brief Tension slope (ft or m) */
+    swmm_AQUIFER_TENSION_SLOPE,
+    /*! \brief Upper-zone evaporation fraction (0-1) */
+    swmm_AQUIFER_UPPER_EVAP_FRAC,
+    /*! \brief Lower-zone evaporation depth (ft or m) */
+    swmm_AQUIFER_LOWER_EVAP_DEPTH,
+    /*! \brief Lower-zone seepage-loss coefficient (in/hr or mm/hr) */
+    swmm_AQUIFER_LOWER_LOSS_COEFF,
+    /*! \brief Aquifer bottom elevation (ft or m, pre-start-only) */
+    swmm_AQUIFER_BOTTOM_ELEV,
+    /*! \brief Initial water table elevation (ft or m, pre-start-only) */
+    swmm_AQUIFER_WATER_TABLE_ELEV,
+    /*! \brief Initial upper-zone moisture (volumetric fraction, pre-start-only) */
+    swmm_AQUIFER_UPPER_MOISTURE,
+} swmm_AquiferProperty;
 
 /*!
  * \enum swmm_SystemProperty
@@ -412,6 +567,36 @@ typedef enum
     swmm_SYSFLOWTOL = 39,
     /*! \brief Lateral flow tolerance */
     swmm_LATFLOWTOL = 40,
+    /*! \brief Current climate-derived evaporation rate (in/day or mm/day),
+     *         including any monthly adjustments (read-only) */
+    swmm_EVAPRATE = 41,
+    /*! \brief Current air temperature (deg F or deg C; read-only) */
+    swmm_TEMPERATURE = 42,
+    /*! \brief API prescribed air temperature (deg F or deg C). Settable
+     *         while the simulation is running; overrides the climate
+     *         data-source value (and bypasses monthly adjustments) for
+     *         snowmelt and evaporation. Set a value <= -999 to clear and
+     *         revert to climate-derived temperature. Getter returns -999
+     *         when no prescription is active. */
+    swmm_API_TEMPERATURE = 43,
+    /*! \brief Current wind speed (mph or km/hr; read-only) */
+    swmm_WINDSPEED = 44,
+    /*! \brief API prescribed wind speed (mph or km/hr). Settable while the
+     *         simulation is running; overrides the monthly/file value used
+     *         in snowmelt. Set a negative value to clear. Getter returns
+     *         -1 when no prescription is active. */
+    swmm_API_WINDSPEED = 45,
+    /*! \brief API prescribed system-wide evaporation rate (in/day or
+     *         mm/day). Settable while the simulation is running; replaces
+     *         the climate-derived Evap.rate (after monthly adjustments)
+     *         for every consumer — subcatchments, LID units, groundwater,
+     *         conduits and storage nodes. Per-subcatchment
+     *         swmm_SUBCATCH_API_PET still takes precedence. Set a negative
+     *         value to clear. Getter returns -1 when not prescribed. */
+    swmm_API_EVAP = 46,
+    /*! \brief Evaporation DRY_ONLY option (0/1). Settable while the
+     *         simulation is running. */
+    swmm_EVAP_DRY_ONLY = 47,
 } swmm_SystemProperty;
 
 /*!
@@ -725,6 +910,23 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_close(void);
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getMassBalErr(float *runoffErr, float *flowErr, float *qualErr);
 
 /*!
+ * \brief Get the running (timestep-by-timestep) continuity errors while a
+ *        simulation is in progress.
+ *
+ * Unlike swmm_getMassBalErr (which only returns the finalised errors after
+ * swmm_end), this recomputes the runoff and flow-routing continuity errors from
+ * the live mass-balance accumulators and current system storage, so it may be
+ * called between swmm_step calls to surface progress-time continuity. Calling it
+ * mid-run has no effect on the final reported errors (massbal_report recomputes
+ * them at swmm_end). Returns zeros if called before swmm_start or after swmm_end.
+ *
+ * \param[out] runoffErr Running runoff continuity error (percent)
+ * \param[out] flowErr Running flow-routing continuity error (percent)
+ * \return Error code
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getRunningMassBalErr(float *runoffErr, float *flowErr);
+
+/*!
  * \brief Get the version of the SWMM engine.
  * \return Version number
  */
@@ -752,6 +954,28 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getErrorFromCode(int error_code, char *o
  * \return Number of warning messages issued
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getWarnings(void);
+
+/*!
+ * \brief Callback type invoked for each warning the engine emits.
+ * \param message Null-terminated warning text.
+ * \param userData Opaque pointer supplied to swmm_setWarningCallback.
+ */
+typedef void (*swmm_LegacyWarningCallback)(const char *message, void *userData);
+
+/*!
+ * \brief Registers a callback invoked for each warning the engine emits.
+ *
+ * Mirrors the refactored engine's warning callback so a host (e.g. the legacy
+ * worker process) can stream warnings live instead of only reading them from
+ * the report (.rpt) file. Register BEFORE swmm_open to also capture warnings
+ * issued during input parsing (e.g. unknown section/option keywords). The
+ * callback is process-global, which is safe because the legacy engine runs
+ * single-threaded within a process.
+ * \param[in] cb Callback function, or NULL to disable.
+ * \param[in] userData Opaque pointer passed through to the callback.
+ * \return 0 on success.
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setWarningCallback(swmm_LegacyWarningCallback cb, void *userData);
 
 /*!
  * \brief Retrieves the number of objects of a specific type.
@@ -819,6 +1043,33 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValue(int property, int index, double
  * \return Error code
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValueExpanded(int objType, int property, int index, int subIndex, int pollutantIndex, double value);
+
+/*!
+ * \brief Set (or replace) the treatment expression for a node/pollutant pair.
+ * \param[in] nodeIndex Node index
+ * \param[in] pollutantIndex Pollutant index
+ * \param[in] expression Treatment expression in input-file form, e.g. "R = 0.5" or "C = BOD * 0.2"
+ * \return Error code
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setTreatment(int nodeIndex, int pollutantIndex, const char *expression);
+
+/*!
+ * \brief Remove the treatment expression for a node/pollutant pair.
+ * \param[in] nodeIndex Node index
+ * \param[in] pollutantIndex Pollutant index
+ * \return Error code
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_clearTreatment(int nodeIndex, int pollutantIndex);
+
+/*!
+ * \brief Set the underdrain flow parameters of a LID process at runtime.
+ * \param[in] lidIndex LID process index
+ * \param[in] coeff Underdrain flow coefficient (in/hr or mm/hr)
+ * \param[in] expon Underdrain head exponent
+ * \param[in] offset Offset height of underdrain (in or mm)
+ * \return Error code
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setLidDrain(int lidIndex, double coeff, double expon, double offset);
 
 /*!
  * \brief Get saved value of

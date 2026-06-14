@@ -5,7 +5,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -129,39 +129,60 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
     }
 
     // Compute modified conduit lengths for CFL stability
-    // (matching legacy conduit_getLengthFactor in link.c)
+    // (matching legacy link.c conduit_getLengthFactor / conduit_validate:
+    //  lengthening is only applied when LENGTHENING_STEP > 0 in OPTIONS)
     {
         using constants::PHI;
         using constants::GRAVITY;
         double route_step = ctx.options.routing_step;
         double lengthening_step = ctx.options.lengthening_step;
-        double tStep = (lengthening_step > 0.0)
-                        ? std::min(route_step, lengthening_step)
-                        : route_step;
 
-        for (int j = 0; j < n_links; ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            if (ctx.links.type[uj] != LinkType::CONDUIT) {
-                ctx.links.mod_length[uj] = ctx.links.length[uj];
-                continue;
+        if (lengthening_step <= 0.0) {
+            // Legacy: skip Courant lengthening when LENGTHENING_STEP not set
+            for (int j = 0; j < n_links; ++j) {
+                ctx.links.mod_length[static_cast<std::size_t>(j)] =
+                    ctx.links.length[static_cast<std::size_t>(j)];
             }
+        } else {
+            double tStep = std::min(route_step, lengthening_step);
 
-            double L = ctx.links.length[uj];
-            if (L <= 0.0) { ctx.links.mod_length[uj] = L; continue; }
+            for (int j = 0; j < n_links; ++j) {
+                auto uj = static_cast<std::size_t>(j);
+                if (ctx.links.type[uj] != LinkType::CONDUIT) {
+                    ctx.links.mod_length[uj] = ctx.links.length[uj];
+                    continue;
+                }
 
-            double yFull = ctx.links.xsect_y_full[uj];
-            double aFull = ctx.links.xsect_a_full[uj];
-            double sFull = ctx.links.xsect_s_full[uj];
-            double n_rough = ctx.links.roughness[uj];
-            double slope_abs = std::fabs(ctx.links.slope[uj]);
+                double L = ctx.links.length[uj];
+                if (L <= 0.0) { ctx.links.mod_length[uj] = L; continue; }
 
-            if (aFull > 0.0 && n_rough > 0.0 && slope_abs > 0.0) {
-                double vFull = PHI / n_rough * sFull * std::sqrt(slope_abs) / aFull;
-                double ratio = (std::sqrt(GRAVITY * yFull) + vFull) * tStep / L;
-                double factor = (ratio > 1.0) ? ratio : 1.0;
-                ctx.links.mod_length[uj] = factor * L;
-            } else {
-                ctx.links.mod_length[uj] = L;
+                double yFull = ctx.links.xsect_y_full[uj];
+                double aFull = ctx.links.xsect_a_full[uj];
+                double sFull = ctx.links.xsect_s_full[uj];
+                double n_rough = ctx.links.roughness[uj];
+                double slope_abs = std::fabs(ctx.links.slope[uj]);
+
+                // For open channels, use hydraulic depth (aFull / top-width)
+                // rather than geometric full depth for the wave-speed term.
+                // Matches legacy link.c:1241-1243:
+                //   if (xsect_isOpen(type)) yFull = aFull / getWofY(yFull)
+                bool is_open = (ctx.links.xsect_shape[uj] == XsectShape::TRAPEZOIDAL ||
+                                ctx.links.xsect_shape[uj] == XsectShape::RECT_OPEN   ||
+                                ctx.links.xsect_shape[uj] == XsectShape::TRIANGULAR  ||
+                                ctx.links.xsect_shape[uj] == XsectShape::PARABOLIC);
+                if (is_open) {
+                    double wFull = ctx.links.xsect_w_max[uj];
+                    if (wFull > 0.0) yFull = aFull / wFull;
+                }
+
+                if (aFull > 0.0 && n_rough > 0.0 && slope_abs > 0.0) {
+                    double vFull = PHI / n_rough * sFull * std::sqrt(slope_abs) / aFull;
+                    double ratio = (std::sqrt(GRAVITY * yFull) + vFull) * tStep / L;
+                    double factor = (ratio > 1.0) ? ratio : 1.0;
+                    ctx.links.mod_length[uj] = factor * L;
+                } else {
+                    ctx.links.mod_length[uj] = L;
+                }
             }
         }
     }
@@ -218,15 +239,35 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             kw_solver_.setLinkOrder(sorted);
             break;
         }
-        case RouteModel::DYNWAVE:
-            dw_solver_.init(n_nodes, n_links, groups_, ctx);
-            dw_solver_.head_tol = ctx.options.head_tol;
+        case RouteModel::DYNWAVE: {
+            // Configure the solver from options BEFORE init(): init() allocates
+            // surcharge-method-specific state — e.g. the Dynamic Preissmann Slot
+            // (DPS) arrays are resized only when surcharge_method ==
+            // DYNAMIC_SLOT. Setting the method after init() left those arrays
+            // empty and segfaulted in applyDPSGeometry. EXTRAN (the default) is
+            // unaffected since it needs no extra allocation.
+            //
+            // HEAD_TOLERANCE is entered in project length units (ft for US,
+            // m for SI).  Legacy dynwave_init converts the user value to
+            // internal feet via `HeadTol /= UCF(LENGTH)` (dynwave.c:183); the
+            // compiled default (DEFAULT_HEAD_TOL, already in feet) is left as-is.
+            // Skipping this made an SI model's 0.0015 m tolerance act as
+            // 0.0015 ft (~3.3× too tight) → chronic non-convergence.
+            const double ucf_len = ucf::Ucf[ucf::LENGTH][
+                ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
+            dw_solver_.head_tol =
+                (ctx.options.head_tol == constants::DEFAULT_HEAD_TOL)
+                    ? constants::DEFAULT_HEAD_TOL
+                    : ctx.options.head_tol / ucf_len;
             dw_solver_.max_trials = ctx.options.max_trials;
             dw_solver_.surcharge_method =
                 static_cast<dynwave::SurchargeMethod>(ctx.options.surcharge_method);
             dw_solver_.node_continuity = ctx.options.node_continuity;
             dw_solver_.anderson_accel = ctx.options.anderson_accel;
+
+            dw_solver_.init(n_nodes, n_links, groups_, ctx);
             break;
+        }
         case RouteModel::STEADY: {
             // Build topological link order (same as KW — upstream → downstream)
             int n_sorted = toposort::sortLinks(ctx.links.node1.data(),

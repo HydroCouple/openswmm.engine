@@ -15,7 +15,7 @@
  * @ingroup  engine_api
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -79,6 +79,26 @@ SWMM_ENGINE_API int swmm_2d_vertex_get_xyz(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_2d_vertex_get_xyz_bulk(SWMM_Engine engine,
                                                   double* x, double* y, double* z);
 
+/** @brief Set vertex Z (ground elevation).
+ *
+ *  Updates `vz[idx]` and recomputes the dependent geometry for every triangle
+ *  incident to this vertex: `tri_cz` (centroid Z = mean of vertex Zs) and
+ *  `edge_mz` (per-edge midpoint Z) so the solver's bed-elevation references
+ *  stay consistent on the next step. XY-derived fields (`tri_area`, `tri_cx`,
+ *  `tri_cy`, `edge_length`, `edge_nx`, `edge_ny`, `edge_mx`, `edge_my`) are
+ *  unaffected.
+ *
+ *  When called while the engine is RUNNING, the solver state (`head`,
+ *  `depth`) is intentionally **not** rewritten — `head` remains the value
+ *  CVODE is integrating; the implied `depth = head - bed` therefore changes
+ *  by the same amount as bed. This is the expected physical semantics
+ *  ("raising the bed under water reduces water depth there").
+ *
+ *  @param idx Vertex index (0-based).
+ *  @param z   New ground elevation (project vertical units).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_vertex_z(SWMM_Engine engine, int idx, double z);
+
 /** @brief Get triangle connectivity (3 vertex indices).
  *  @param idx Triangle index (0-based).
  *  @param v0,v1,v2 Output vertex indices.
@@ -109,6 +129,22 @@ SWMM_ENGINE_API int swmm_2d_triangle_get_mannings(SWMM_Engine engine, int idx,
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_triangle_get_neighbours(SWMM_Engine engine, int idx,
                                                       int* n0, int* n1, int* n2);
+
+/** @brief Bulk get edge geometry — time-invariant edge length and outward
+ *         unit normal components, indexed `[tri*3 + localEdge]`.
+ *
+ *  Output arrays must be pre-allocated to `triangle_count * 3` doubles each.
+ *  Local edge `e` is the edge opposite vertex `e` (matching the neighbour
+ *  convention of `swmm_2d_triangle_get_neighbours`). Outward normals point
+ *  away from the triangle interior. Provided so client-side velocity
+ *  reconstruction from `swmm_2d_get_edge_flux_bulk` can run without
+ *  re-deriving geometry from the vertex coordinates.
+ *
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_edge_get_geometry_bulk(SWMM_Engine engine,
+                                                     double* length,
+                                                     double* nx,
+                                                     double* ny);
 
 /* =========================================================================
  * Coupling Map — Query
@@ -181,6 +217,71 @@ SWMM_ENGINE_API int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads);
 SWMM_ENGINE_API int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine,
                                                        double* fluxes);
 
+/** @brief Bulk get normal edge flux at every edge of every triangle.
+ *
+ *  Output array must be pre-allocated to `triangle_count * 3` doubles,
+ *  indexed `[tri*3 + localEdge]`. Sign convention: **positive flux flows
+ *  outward through the edge's outward normal**. Units `m^2 s^-1` (depth-
+ *  integrated normal speed). Combine with `swmm_2d_edge_get_geometry_bulk`
+ *  to reconstruct cell-centred velocity (RT0): for each triangle, solve
+ *  `(NᵀN) v = Nᵀ q` where rows of `N` are the outward unit normals and
+ *  `q[e] = flux[e] / length[e]`.
+ *
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine,
+                                                 double* flux);
+
+/* =========================================================================
+ * 2D Edge Conveyance (§11A of docs/2dModelStrategy.md)
+ *
+ * Per-edge multiplicative factor in [0, 1] that attenuates the
+ * diffusion-wave flux across the edge (default 1.0 = unrestricted, 0.0 =
+ * wall). Storage is flat 2D `[tri * 3 + edge_local]`.  Interior edges
+ * are symmetric: setting the value on one slot mirrors to the partner
+ * slot on the neighbour triangle so mass conservation is preserved.
+ *
+ * Safe to call between routing steps. Calling during a routing step is
+ * undefined — the CVODE sub-stepper holds a const reference to the mesh.
+ * ========================================================================= */
+
+/** @brief Get the per-edge conveyance factor for one edge.
+ *  @param tri  Triangle index in `[0, triangle_count)`.
+ *  @param edge Local edge index in `{0, 1, 2}`.
+ *  @param conveyance Output value in `[0, 1]`.
+ *  @return SWMM_OK on success; SWMM_ERR_BADINDEX on out-of-range tri/edge.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_edge_conveyance(SWMM_Engine engine,
+                                                  int tri, int edge,
+                                                  double* conveyance);
+
+/** @brief Set the per-edge conveyance factor for one edge.
+ *
+ *  The value is rejected if outside `[0, 1]` (SWMM_ERR_BADPARAM).  When
+ *  the edge is interior (has a neighbour) the value is mirrored to the
+ *  partner slot on the neighbour triangle so antisymmetry is preserved.
+ *
+ *  @param tri  Triangle index in `[0, triangle_count)`.
+ *  @param edge Local edge index in `{0, 1, 2}`.
+ *  @param conveyance New value in `[0, 1]`.
+ *  @return SWMM_OK on success; SWMM_ERR_BADINDEX / SWMM_ERR_BADPARAM on
+ *          invalid arguments.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_edge_conveyance(SWMM_Engine engine,
+                                                  int tri, int edge,
+                                                  double conveyance);
+
+/** @brief Bulk get conveyance factor at every edge of every triangle.
+ *
+ *  Output array must be pre-allocated to `triangle_count * 3` doubles,
+ *  indexed `[tri*3 + edge_local]`.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_edge_conveyance_bulk(SWMM_Engine engine,
+                                                       double* conveyance);
+
+/** @brief Reset every edge's conveyance factor to 1.0 (unrestricted).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_reset_edge_conveyance(SWMM_Engine engine);
+
 /* =========================================================================
  * 2D State — Per-Vertex (reconstructed heads)
  * ========================================================================= */
@@ -228,6 +329,39 @@ SWMM_ENGINE_API int swmm_2d_get_cvode_last_step(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_2d_get_stat_max_depths(SWMM_Engine engine,
                                                   double* max_depths);
 
+/** @brief Get per-triangle max velocity-magnitude statistics (cumulative, m/s).
+ *  @param max_velocities Output array (pre-allocated to triangle_count).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_stat_max_velocities(SWMM_Engine engine,
+                                                     double* max_velocities);
+
+/** @brief Get per-triangle max |continuity residual| statistics (cumulative, m3/s).
+ *  @param max_errs Output array (pre-allocated to triangle_count).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_stat_max_continuity_err(SWMM_Engine engine,
+                                                        double* max_errs);
+
+/** @brief Get the global 2D surface continuity error (fraction).
+ *  @param err Output: (total_in - total_out) / total_in.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_continuity_error(SWMM_Engine engine, double* err);
+
+/** @brief Get the global 2D mass-balance terms (all m3). Any pointer may be NULL.
+ *  @param outfall_out Cumulative 2D→pipe withdrawal at submerged outfalls (m3).
+ *  @param evap_out Cumulative evaporation loss from the 2D surface (m3).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_mass_balance(SWMM_Engine engine,
+                                             double* init_storage,
+                                             double* final_storage,
+                                             double* rainfall_in,
+                                             double* coupling_1d_to_2d_in,
+                                             double* coupling_2d_to_1d_out,
+                                             double* outfall_in,
+                                             double* outfall_out,
+                                             double* boundary_in,
+                                             double* boundary_out,
+                                             double* evap_out);
+
 /* =========================================================================
  * 2D Forcing — Override rainfall or coupling for external control
  * ========================================================================= */
@@ -247,6 +381,27 @@ SWMM_ENGINE_API int swmm_2d_force_rainfall(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_2d_force_rainfall_uniform(SWMM_Engine engine,
                                                      double value, int mode,
                                                      int persist);
+
+/** @brief Force evaporation on a specific triangle.
+ *
+ *  The rate is a demand: wet cells lose depth at this rate, shut off
+ *  smoothly as a cell dries (depths never go negative). Default rate is 0
+ *  until forced. Negative values are treated as zero (no condensation).
+ *
+ *  @param idx Triangle index.
+ *  @param value Evaporation rate (m/s — same SI convention as rainfall).
+ *  @param mode SWMM_FORCING_OVERRIDE or SWMM_FORCING_ADD.
+ *  @param persist SWMM_FORCING_RESET or SWMM_FORCING_PERSIST.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_force_evap(SWMM_Engine engine, int idx,
+                                         double value, int mode,
+                                         int persist);
+
+/** @brief Force evaporation on all triangles (uniform).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_force_evap_uniform(SWMM_Engine engine,
+                                                 double value, int mode,
+                                                 int persist);
 
 /** @brief Force coupling flux on a specific triangle (override computed exchange).
  *  @param value Flux rate (m/s, + = into 2D).
@@ -291,10 +446,20 @@ SWMM_ENGINE_API int swmm_2d_set_abs_tolerance(SWMM_Engine engine, double atol);
  * 2D Boundary Conditions
  * ========================================================================= */
 
-/** Boundary condition type constants. */
+/** Boundary condition type constants.
+ *
+ *  WALL / NORMAL_FLOW / SPECIFIED_STAGE were the original three; the
+ *  SPECIFIED_FLOW (3) and RATING_CURVE (4) values were added per GUI plan
+ *  §V V-E4 / V-E5. Storage + this C API only at this revision — the
+ *  FV-SWE flux integration for non-Wall BCs is deferred to a separate
+ *  slice (V-E-FLUX). The solver still treats every boundary edge as
+ *  Wall regardless of type today (see SurfaceFluxCalculator.cpp:131).
+ */
 #define SWMM_2D_BC_WALL            0
 #define SWMM_2D_BC_NORMAL_FLOW     1
 #define SWMM_2D_BC_SPECIFIED_STAGE 2
+#define SWMM_2D_BC_SPECIFIED_FLOW  3   /**< V-E4. */
+#define SWMM_2D_BC_RATING_CURVE    4   /**< V-E5. */
 
 /** @brief Get the number of boundary edges (edges with no neighbour).
  *  @ingroup engine_2d */
@@ -338,6 +503,47 @@ SWMM_ENGINE_API int swmm_2d_get_edge_bc_slope(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_2d_set_edge_bc_slope(SWMM_Engine engine,
                                                 int tri_idx, int edge,
                                                 double slope);
+
+/** @brief Set the timeseries NAME to drive a SPECIFIED_STAGE edge.
+ *
+ *  V-E2. Stores the name verbatim; the engine resolves it into a table
+ *  index from `SimulationContext::tables` on the next forcing-step
+ *  lookup (until then `edge_bc_tseries[idx]` is -2). Empty name clears
+ *  the slot (back to constant `edge_bc_head`).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine,
+                                                       int tri_idx,
+                                                       int edge,
+                                                       const char* name);
+
+/** @brief Get prescribed flow per metre of edge (m³/s/m) for a
+ *         SPECIFIED_FLOW edge. V-E4.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_edge_bc_flow(SWMM_Engine engine,
+                                               int tri_idx, int edge,
+                                               double* flow);
+
+/** @brief Set prescribed flow per metre of edge (m³/s/m). V-E4. */
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_flow(SWMM_Engine engine,
+                                               int tri_idx, int edge,
+                                               double flow);
+
+/** @brief Set the timeseries NAME to drive a SPECIFIED_FLOW edge.
+ *  V-E4 — same resolution contract as `swmm_2d_set_edge_bc_tseries_name`. */
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_flow_tseries_name(SWMM_Engine engine,
+                                                            int tri_idx,
+                                                            int edge,
+                                                            const char* name);
+
+/** @brief Set the curve NAME to drive a RATING_CURVE edge.
+ *
+ *  V-E5. Stage → flow lookup is resolved against the existing
+ *  `swmm_curve_*` registry on the next forcing-step lookup. Empty name
+ *  clears the slot. */
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_rating_curve_name(SWMM_Engine engine,
+                                                            int tri_idx,
+                                                            int edge,
+                                                            const char* name);
 
 /** @brief Get cumulative boundary flux at an edge (m³, + = outflow).
  *  @ingroup engine_2d */

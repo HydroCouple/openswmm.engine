@@ -4,7 +4,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -44,7 +44,7 @@ double convertRainfall(double raw_value, GageState& state) {
             break;
     }
 
-    return r * state.units_factor * state.adjust_factor;
+    return r * state.units_factor * state.scale_factor * state.adjust_factor;
 }
 
 void separatePrecip(GageState& state, double intensity,
@@ -97,10 +97,16 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
 
         // Gap #53: co-gage sharing — copy rainfall from the primary gage that
         // shares this gage's timeseries.  Matches legacy gage_setState() coGage path.
+        // The primary's rainfall already has its own scale_factor baked in, so
+        // we strip it and multiply by this gage's scale_factor (legacy gage.c:355).
         int co = (uj < ctx.gages.co_gage_index.size())
                  ? ctx.gages.co_gage_index[uj] : -1;
         if (co >= 0 && co < j) {
-            ctx.gages.rainfall[uj] = ctx.gages.rainfall[static_cast<std::size_t>(co)];
+            const auto uco = static_cast<std::size_t>(co);
+            double primary_sf = ctx.gages.scale_factor[uco];
+            double this_sf    = ctx.gages.scale_factor[uj];
+            double ratio = (primary_sf > 0.0) ? (this_sf / primary_sf) : 1.0;
+            ctx.gages.rainfall[uj] = ctx.gages.rainfall[uco] * ratio;
             continue;
         }
 
@@ -120,8 +126,18 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
 
         int ts_idx = ctx.gages.ts_index[uj];
         double raw_value = 0.0;
-        if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
-            auto& tbl = ctx.tables.tables[static_cast<std::size_t>(ts_idx)];
+        // Select the source series: a FILE_RAIN gage reads from its own resolved
+        // rain_series (built by load_external_rain_files); a TIMESERIES gage reads
+        // from the shared table pool.  Both reuse the identical step-function below.
+        Table* rtbl = nullptr;
+        if (ctx.gages.source[uj] == RainSource::FILE_RAIN) {
+            if (uj < ctx.gages.rain_series.size() && !ctx.gages.rain_series[uj].empty())
+                rtbl = &ctx.gages.rain_series[uj];
+        } else if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
+            rtbl = &ctx.tables.tables[static_cast<std::size_t>(ts_idx)];
+        }
+        if (rtbl) {
+            auto& tbl = *rtbl;
             int n = static_cast<int>(tbl.x.size());
 
             // Step-function lookup: find rightmost entry where x[idx] <= t
@@ -172,6 +188,10 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
             raw_value = depth / (interval / 3600.0);  // depth → in/hr
         }
         // INTENSITY (type 0): already in/hr — no conversion needed
+
+        // Apply per-gage rainfall scaling factor (legacy gage.c:704 convertRainfall).
+        // Default scale_factor is 1.0 so unmarked gages are unaffected.
+        raw_value *= ctx.gages.scale_factor[uj];
 
         // Convert from in/hr to ft/sec for internal use
         // Legacy: rainfall stored as in/hr for reporting, converted to ft/sec for runoff
@@ -243,6 +263,11 @@ double getReportRainfall(const SimulationContext& ctx, int gage_idx,
     if (rain_type == 1 && interval > 0.0) {
         result = result / (interval / 3600.0);
     }
+
+    // Per-gage rainfall scaling factor (legacy gage_setReportRainfall co-gage
+    // branch reduces to this: each gage applies its own scale_factor to the
+    // shared timeseries value).
+    result *= ctx.gages.scale_factor[ug];
 
     return result;
 }

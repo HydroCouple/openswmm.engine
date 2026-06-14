@@ -792,7 +792,32 @@ int readDrainData(int j, char* toks[], int ntoks)
     LidProcs[j].drain.qCurve = i;
     return 0;
 }
- 
+
+//=============================================================================
+
+int lid_setDrainParams(int lidIndex, double coeff, double expon, double offset)
+//
+//  Purpose: updates the underdrain flow parameters of a LID process at
+//           runtime (API support). The drain parameters are read live each
+//           step (lidproc.c), so an edit takes effect on the next step.
+//  Input:   lidIndex = LID process index
+//           coeff    = underdrain flow coeff. (in/hr or mm/hr)
+//           expon    = underdrain head exponent
+//           offset   = offset height of underdrain (in or mm)
+//  Output:  returns 0 if successful, 1 for a bad index, 2 for a bad value
+//           (units match readDrainData; the API wrapper maps the codes).
+//
+{
+    if ( LidProcs == NULL || lidIndex < 0 || lidIndex >= LidCount )
+        return 1;
+    if ( coeff < 0.0 || expon < 0.0 || offset < 0.0 )
+        return 2;
+    LidProcs[lidIndex].drain.coeff  = coeff;
+    LidProcs[lidIndex].drain.expon  = expon;
+    LidProcs[lidIndex].drain.offset = offset / UCF(RAINDEPTH);
+    return 0;
+}
+
 //=============================================================================
 
 int readDrainMatData(int j, char* toks[], int ntoks)
@@ -1641,8 +1666,8 @@ void lid_getRunoff(int j, double tStep)
     subcatch = &Subcatch[j];
 
     //... determine if evaporation can occur
-    EvapRate = Evap.rate;
-    if ( Evap.dryOnly && subcatch->rainfall > 0.0 ) EvapRate = 0.0;
+    //    (uses any externally prescribed PET rate; DRY_ONLY handled within)
+    EvapRate = subcatch_getEvapRate(j);
 
     //... find subcatchment's infiltration rate into native soil
     findNativeInfil(j, tStep);

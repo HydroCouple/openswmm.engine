@@ -13,7 +13,7 @@
  * @ingroup engine_2d
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -42,6 +42,23 @@ void buildMeshTopology(MeshData& mesh);
  * @return Empty string if valid, or a description of the first error found.
  */
 std::string validateMesh(const MeshData& mesh);
+
+/**
+ * @brief Recompute Z-derived per-triangle / per-edge geometry for triangles
+ *        incident to a vertex whose Z just changed.
+ *
+ * Updates `tri_cz` (centroid Z = mean of vertex Zs) and `edge_mz` (per-edge
+ * midpoint Z) for every triangle that references vertex `vidx`. XY-derived
+ * fields (`tri_area`, `tri_cx`, `tri_cy`, `edge_length`, `edge_nx`,
+ * `edge_ny`, `edge_mx`, `edge_my`) are not affected.
+ *
+ * Used by `swmm_2d_set_vertex_z` and exposed here so tests can verify the
+ * recompute logic without spinning up a full engine.
+ *
+ * @param mesh The mesh; `mesh.vz[vidx]` is assumed to already hold the new Z.
+ * @param vidx Index of the vertex whose Z just changed.
+ */
+void recomputeVertexZDependents(MeshData& mesh, int vidx);
 
 } // namespace openswmm::twoD
 

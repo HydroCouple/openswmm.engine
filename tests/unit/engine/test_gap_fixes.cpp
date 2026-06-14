@@ -2850,7 +2850,8 @@ TEST(InfilTrench24, SurfaceDrainsDirectlyToStorage) {
     g.surf_depth[0] = 0.0;
     g.stor_depth[0] = 0.0;
 
-    lid::LIDSolver::batchInfilTrenchFlux(g, rain, 0.0, dt);
+    const double no_evap[1] = {0.0};
+    lid::LIDSolver::batchInfilTrenchFlux(g, rain, no_evap, dt);
 
     // Storage should have received water
     EXPECT_GT(g.stor_depth[0], 0.0) << "Storage should fill from surface drainage";
@@ -2877,7 +2878,8 @@ TEST(InfilTrench24, FullStorageProducesSurfaceRunoff) {
     g.surf_depth[0] = 0.5;  // some water already on surface
 
     g.inflow[0] = rain;
-    lid::LIDSolver::batchInfilTrenchFlux(g, rain, 0.0, dt);
+    const double no_evap[1] = {0.0};
+    lid::LIDSolver::batchInfilTrenchFlux(g, rain, no_evap, dt);
 
     // Storage is full → surface cannot infiltrate → surface outflow
     EXPECT_GT(g.surface_runoff[0], 0.0) << "Full storage should produce surface runoff";
@@ -2896,7 +2898,8 @@ TEST(InfilTrench24, ExfiltrationAndDrainOutputs) {
     g.surf_depth[0] = 0.0;
     g.inflow[0]     = 0.0;
 
-    lid::LIDSolver::batchInfilTrenchFlux(g, 0.0, 0.0, dt);
+    const double no_evap[1] = {0.0};
+    lid::LIDSolver::batchInfilTrenchFlux(g, 0.0, no_evap, dt);
 
     EXPECT_GT(g.infil_loss[0],  0.0) << "Exfiltration should be > 0 when storage is full";
     EXPECT_GT(g.drain_flow[0],  0.0) << "Drain flow should be > 0";

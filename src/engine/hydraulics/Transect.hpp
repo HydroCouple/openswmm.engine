@@ -11,7 +11,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -32,6 +32,7 @@ struct TransectData {
     double n_left   = 0.0;   ///< Left overbank Manning's n
     double n_right  = 0.0;   ///< Right overbank Manning's n
     double n_channel = 0.0;  ///< Main channel Manning's n
+    double length_factor = 1.0;  ///< Main-channel / flood-plain length ratio (Lfactor)
 
     // Station-elevation pairs
     std::vector<double> stations;    ///< x positions (ft)

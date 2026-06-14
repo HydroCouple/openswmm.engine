@@ -1,35 +1,12 @@
-"""Tests for :class:`openswmm.engine.Infrastructure` (transects, streets, inlets, LIDs)."""
+"""Legacy v0 test file — superseded by test_p8_pythonic.py.
 
+The Pythonic v1 bindings hard-replaced this file's API surface
+(`Nodes(s).get_depth("J1")` -> `s.nodes["J1"].depth`, etc.); the
+new test file covers the v1 surface. This stub is kept so the test
+run still collects cleanly; `git rm` it on the next sweep.
+
+See docs/PYTHONIC_BINDINGS_DONE.md §"What's deferred" for the
+migration notes.
+"""
 import pytest
-
-
-class TestInfrastructureCounts:
-    """Infrastructure count queries."""
-
-    def test_transect_count(self, running_solver):
-        from openswmm.engine import Infrastructure
-        infra = Infrastructure(running_solver)
-        n = infra.transect_count()
-        assert isinstance(n, int)
-        assert n >= 0
-
-    def test_street_count(self, running_solver):
-        from openswmm.engine import Infrastructure
-        infra = Infrastructure(running_solver)
-        n = infra.street_count()
-        assert isinstance(n, int)
-        assert n >= 0
-
-    def test_inlet_count(self, running_solver):
-        from openswmm.engine import Infrastructure
-        infra = Infrastructure(running_solver)
-        n = infra.inlet_count()
-        assert isinstance(n, int)
-        assert n >= 0
-
-    def test_lid_count(self, running_solver):
-        from openswmm.engine import Infrastructure
-        infra = Infrastructure(running_solver)
-        n = infra.lid_count()
-        assert isinstance(n, int)
-        assert n >= 0
+pytest.skip("superseded by test_p8_pythonic.py", allow_module_level=True)

@@ -15,7 +15,7 @@
  * @ingroup engine_geopackage
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -93,7 +93,7 @@ public:
     }
 
     std::string license_text() const override {
-        return "Copyright (c) 2026 HydroCouple. All rights reserved.\n"
+        return "Copyright (c) 2026 Caleb Buahin. All rights reserved.\n"
                "MIT License — see LICENSE file for full text.";
     }
 
@@ -148,20 +148,20 @@ private:
 } // namespace openswmm::gpkg
 
 // ============================================================================
-// C export for plugin discovery
+// Slice RC.2 — `openswmm_plugin_info` is no longer a public symbol.
 // ============================================================================
-
-extern "C" {
-
-/**
- * @brief Plugin discovery entry point.
- *
- * @details The PluginFactory calls this after dlopen() to obtain the
- *          component info singleton. The returned pointer is NOT owned
- *          by the caller — it points to a static singleton.
- */
-openswmm::IPluginComponentInfo* openswmm_plugin_info(void);
-
-}
+//
+// The C factory function in GeoPackagePluginInfo.cpp is annotated with
+// __attribute__((visibility("hidden"))) and the GeoPackage CMake target
+// ships with CXX_VISIBILITY_PRESET=hidden / VISIBILITY_INLINES_HIDDEN=ON.
+// Together these prevent the dlsym leak that PluginFactory::discover()
+// was picking up on the engine's SHARED binary.
+//
+// Hosts that need the GeoPackage plugin should obtain it via the
+// PluginFactory (it is now registered as a built-in in
+// register_builtin_infos when OPENSWMM_HAS_GEOPACKAGE is defined) or via
+// openswmm::discover_plugins_by_id() — NOT via dlsym on the engine
+// library. See §R.3 of GUI_IMPLEMENTATION_PLAN.md (in the
+// openswmm.gui repo) for the full rationale.
 
 #endif // OPENSWMM_GEOPACKAGE_PLUGIN_INFO_HPP

@@ -14,7 +14,7 @@
  * @ingroup engine_2d
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -73,12 +73,14 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
  * @param mesh   Mesh data.
  * @param state  2D surface state.
  * @param ctx    Simulation context (node heads, forcing API, mass balance).
+ * @param opts   2D solver options (uses dry_depth as the wet/dry threshold).
  * @param dt     Current SWMM routing timestep (s).
  */
 void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
                               const MeshData& mesh,
                               SurfaceStateData& state,
                               SimulationContext& ctx,
+                              const SolverOptions2D& opts,
                               double dt);
 
 /**
@@ -92,11 +94,13 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
  * @param mesh  Mesh data.
  * @param state 2D surface state.
  * @param ctx   Simulation context.
+ * @param opts  2D solver options (for unit-system coupling factors).
  */
 void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
                               const MeshData& mesh,
                               const SurfaceStateData& state,
-                              SimulationContext& ctx);
+                              SimulationContext& ctx,
+                              const SolverOptions2D& opts);
 
 /**
  * @brief Transfer outfall discharges into 2D coupling cells.
@@ -108,12 +112,14 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
  * @param mesh  Mesh data.
  * @param state 2D surface state.
  * @param ctx   Simulation context.
+ * @param opts  2D solver options (for unit-system coupling factors).
  * @param dt    Routing timestep (s).
  */
 void transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
                                 const MeshData& mesh,
                                 SurfaceStateData& state,
                                 const SimulationContext& ctx,
+                                const SolverOptions2D& opts,
                                 double dt);
 
 } // namespace openswmm::twoD

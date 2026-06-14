@@ -17,7 +17,10 @@ Usage::
 """
 
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class ExternalForcingLog:
@@ -29,8 +32,8 @@ class ExternalForcingLog:
 
     __slots__ = ("_records",)
 
-    def __init__(self):
-        self._records: List[dict] = []
+    def __init__(self) -> None:
+        self._records: List[Dict[str, Any]] = []
 
     # -----------------------------------------------------------------
     #  Recording
@@ -70,7 +73,7 @@ class ExternalForcingLog:
     # -----------------------------------------------------------------
 
     @property
-    def records(self) -> List[dict]:
+    def records(self) -> List[Dict[str, Any]]:
         """Return the raw list of recorded forcing entries."""
         return list(self._records)
 
@@ -81,7 +84,7 @@ class ExternalForcingLog:
         """Remove all recorded entries."""
         self._records.clear()
 
-    def to_dataframe(self):
+    def to_dataframe(self) -> "pd.DataFrame":
         """Convert to a ``pandas.DataFrame``.
 
         Columns: ``time``, ``object_type``, ``object_id``, ``property``,
@@ -89,6 +92,6 @@ class ExternalForcingLog:
 
         :raises ImportError: If pandas is not installed.
         """
-        import pandas as pd  # type: ignore[import-untyped]
+        import pandas as pd
 
         return pd.DataFrame(self._records)

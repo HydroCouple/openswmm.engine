@@ -17,13 +17,14 @@
  * @ingroup  new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #ifndef OPENSWMM_ENGINE_SIMULATION_OPTIONS_HPP
 #define OPENSWMM_ENGINE_SIMULATION_OPTIONS_HPP
 
+#include "FilePathPair.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -271,6 +272,17 @@ struct SimulationOptions {
      *  @see Legacy: SkipSteadyState */
     bool skip_steady_state = false;
 
+    /** @brief Slice IO-4 opt-out: emit external-file paths verbatim absolute.
+     *  @details Default (false) makes InpWriter rebase every external-file
+     *           reference relative to the destination `.inp` directory for
+     *           portability. Set true to disable rebasing — paths are
+     *           emitted in their resolved absolute form. Used by power
+     *           users locked to legacy tools that don't accept relative
+     *           paths in `.inp`. See IO_PORTABILITY_PLAN.md §1A & §5.4.
+     *  @see Legacy: no equivalent — relative paths always work in EPA SWMM.
+     */
+    bool write_absolute_paths = false;
+
     // -----------------------------------------------------------------------
     // System settings
     // -----------------------------------------------------------------------
@@ -300,6 +312,15 @@ struct SimulationOptions {
     bool ignore_quality = false;
 
     // -----------------------------------------------------------------------
+    /**
+     * @brief Control rule evaluation interval (seconds).
+     *
+     * @details Parsed from RULE_STEP in [OPTIONS].  0.0 means evaluate control
+     *          rules every routing step (legacy default behaviour).
+     * @see Legacy: globals.h RuleStep
+     */
+    double rule_step = 0.0;
+
     // Threading
     // -----------------------------------------------------------------------
 
@@ -396,8 +417,8 @@ struct SimulationOptions {
     /** @brief Timeseries name for temperature data. */
     std::string temp_ts_name;
 
-    /** @brief File path for temperature data. */
-    std::string temp_file;
+    /** @brief File path for temperature data. Carries {absolute, original}. */
+    FilePathPair temp_file;
 
     /** @brief Temperature file start date (OADate). */
     double temp_file_start = 0.0;

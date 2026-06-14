@@ -18,13 +18,14 @@
  * @ingroup engine_input
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #include "LinksHandler.hpp"
 
 #include "../Tokenizer.hpp"
+#include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/LinkData.hpp"
 #include "../../data/InfraData.hpp"
@@ -46,8 +47,8 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
 // ============================================================================
 
 void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 7) continue;  // Name Node1 Node2 Length Roughness In Out required
 
         const std::string& name = tok[0];
@@ -67,6 +68,8 @@ void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lin
         ctx.links.offset2[idx]   = to_double(tok[6]);
         if (tok.size() > 7) ctx.links.q0[idx]      = to_double(tok[7]);
         if (tok.size() > 8) ctx.links.q_limit[idx] = to_double(tok[8]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -75,8 +78,8 @@ void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lin
 // ============================================================================
 
 void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -106,6 +109,8 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
             ctx.links.pump_startup[idx] = to_double(tok[5]);
         if (tok.size() > 6)
             ctx.links.pump_shutoff[idx] = to_double(tok[6]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -114,8 +119,8 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
 // ============================================================================
 
 void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -140,6 +145,8 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
         if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::to_upper(tok[6]) == "YES";
         // tok[7]: open/close time (seconds)
         if (tok.size() > 7) ctx.links.orate[idx]         = to_double(tok[7]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -148,8 +155,8 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
 // ============================================================================
 
 void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -177,6 +184,8 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
         if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::to_upper(tok[6]) == "YES";
         // tok[7]: end contractions
         if (tok.size() > 7) ctx.links.param2[idx]       = to_double(tok[7]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -185,8 +194,8 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
 // ============================================================================
 
 void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -225,6 +234,8 @@ void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& line
         }
         if (tok.size() > 6 && !is_tabular)
             ctx.links.param2[idx] = to_double(tok[6]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -280,11 +291,14 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
         }
 
         // IRREGULAR shapes: tok[2] is transect name, not a dimension.
-        // CUSTOM shapes: tok[2] = y_full, tok[3] = shape curve name.
-        // Both need deferred resolution (TRANSECTS/CURVES may not be parsed yet).
-        if (ctx.links.xsect_shape[idx] == XsectShape::IRREGULAR) {
+        // STREET shapes:    tok[2] is street name, not a dimension.
+        // CUSTOM shapes:    tok[2] = y_full, tok[3] = shape curve name.
+        // All need deferred resolution (TRANSECTS/STREETS/CURVES may not be
+        // parsed yet).
+        if (ctx.links.xsect_shape[idx] == XsectShape::IRREGULAR ||
+            ctx.links.xsect_shape[idx] == XsectShape::STREET_XSECT) {
             if (tok.size() > 2) {
-                ctx.links.pump_curve_name[idx] = tok[2]; // Reuse field for transect name
+                ctx.links.pump_curve_name[idx] = tok[2]; // Reuse field for transect/street name
                 ctx.links.xsect_curve[idx] = -1;
             }
         } else if (ctx.links.xsect_shape[idx] == XsectShape::CUSTOM) {
@@ -308,6 +322,18 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
 
         // Geom4 = fourth shape parameter (rBot, etc.)
         if (tok.size() > 5) ctx.links.xsect_r_bot[idx]  = to_double(tok[5]);
+
+        // Retain raw Geom1–Geom4 (display units) for lossless serialization —
+        // the fields above are overwritten with derived geometry during init,
+        // discarding e.g. a trapezoid's bottom width / side slopes.  Mirrors
+        // swmm_link_set_xsect.  See LinkData::xsect_geom1.
+        if (ctx.links.xsect_shape[idx] != XsectShape::IRREGULAR &&
+            ctx.links.xsect_shape[idx] != XsectShape::STREET_XSECT) {
+            if (tok.size() > 2) ctx.links.xsect_geom1[idx] = to_double(tok[2]);
+            if (tok.size() > 3) ctx.links.xsect_geom2[idx] = to_double(tok[3]);
+            if (tok.size() > 4) ctx.links.xsect_geom3[idx] = to_double(tok[4]);
+            if (tok.size() > 5) ctx.links.xsect_geom4[idx] = to_double(tok[5]);
+        }
 
         // Barrels (number of identical conduits, default 1)
         if (tok.size() > 6) {
@@ -372,12 +398,31 @@ void handle_transects(SimulationContext& ctx, const std::vector<std::string>& li
             if (tok.size() > 3) nc_channel = to_double(tok[3]);
         }
         else if (keyword == "X1") {
-            // X1  name  nSta  xLeftBank  xRightBank  0  0  0  xFactor  yFactor
+            // Per EPA SWMM 5 (transect.c::setParams) the X1 layout is:
+            //   X1  Name  Nsta  Xleft  Xright  0  0  Lfactor  Xfactor  Yfactor
+            // Tokens:  1     2     3      4    5  6    7         8         9
+            // (Only two placeholder zeros sit between Xright and Lfactor —
+            // NOT three; the SWMM 5 user-manual line "0 0 0 Lfactor Wfactor
+            // Eoff" misled an earlier read of this code.)
+            //
+            // SWMM also treats Lfactor==0 / Xfactor==0 as "use 1.0" — both
+            // are multiplicative modifiers, and EPA SWMM-generated files
+            // routinely emit zero placeholders here. Without the same
+            // default-to-one fallback the chart collapses every station to
+            // x*0 = 0 (the "vertical line" cross-section bug).
             if (tok.size() < 3) continue;
 
             const std::string& name = tok[1];
 
             ctx.transects.names.push_back(name);
+            // All parallel arrays in TransectStore must be kept in lock-step
+            // with `names` — count() reports names.size() and downstream
+            // accessors (swmm_transect_get_comments / _encroachment /
+            // _modifiers) index every array by the same `ui`. Missing a
+            // push_back here lets a subsequent get_*() read past end of an
+            // empty vector and crash. INP doesn't supply comments /
+            // encroachment, so default them at parse time.
+            ctx.transects.comments.emplace_back();
             ctx.transects.n_left.push_back(nc_left);
             ctx.transects.n_right.push_back(nc_right);
             ctx.transects.n_channel.push_back(nc_channel);
@@ -385,10 +430,18 @@ void handle_transects(SimulationContext& ctx, const std::vector<std::string>& li
                 (tok.size() > 3) ? to_double(tok[3]) : 0.0);
             ctx.transects.x_right_bank.push_back(
                 (tok.size() > 4) ? to_double(tok[4]) : 0.0);
-            ctx.transects.x_factor.push_back(
-                (tok.size() > 8) ? to_double(tok[8]) : 1.0);
-            ctx.transects.y_factor.push_back(
-                (tok.size() > 9) ? to_double(tok[9]) : 1.0);
+            ctx.transects.x_left_encroachment.push_back(0.0);
+            ctx.transects.x_right_encroachment.push_back(0.0);
+
+            double lFactor = (tok.size() > 7) ? to_double(tok[7]) : 1.0;
+            double xFactor = (tok.size() > 8) ? to_double(tok[8]) : 1.0;
+            double yFactor = (tok.size() > 9) ? to_double(tok[9]) : 0.0;
+            if (lFactor == 0.0) lFactor = 1.0;
+            if (xFactor == 0.0) xFactor = 1.0;
+            ctx.transects.length_factor.push_back(lFactor);
+            ctx.transects.x_factor.push_back(xFactor);
+            ctx.transects.y_factor.push_back(yFactor);
+
             ctx.transects.stations.emplace_back();
             ctx.transects.elevations.emplace_back();
         }

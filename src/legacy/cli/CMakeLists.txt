@@ -20,21 +20,33 @@ target_include_directories(openswmm_legacy
 )
 
 if(APPLE)
-    set(LIB_ROOT "@loader_path;@rpath;@loader_path/../lib;@rpath/../lib")
+    set(LIB_ROOT "@loader_path;@loader_path/../lib")
 elseif(UNIX)
     set(LIB_ROOT "$ORIGIN;$ORIGIN/../lib")
 endif()
 
-set_target_properties(openswmm_legacy
-    PROPERTIES
-        OUTPUT_NAME "openswmm-legacy"
-        INSTALL_RPATH "${LIB_ROOT}"
-)
+set_target_properties(openswmm_legacy PROPERTIES OUTPUT_NAME "openswmm-legacy")
+if(NOT WIN32)
+    set_target_properties(openswmm_legacy PROPERTIES INSTALL_RPATH "${LIB_ROOT}")
+endif()
 
-install(TARGETS openswmm_legacy DESTINATION bin)
+install(TARGETS openswmm_legacy
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+openswmm_bundle_runtime_deps(openswmm_legacy ${CMAKE_INSTALL_BINDIR})
 
 add_custom_command(TARGET openswmm_legacy POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
         $<TARGET_FILE:openswmm_legacy>
         ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:openswmm_legacy>
 )
+
+if(WIN32)
+    add_custom_command(TARGET openswmm_legacy POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:openswmm_legacy>
+            $<TARGET_RUNTIME_DLLS:openswmm_legacy_engine>
+            $<TARGET_FILE_DIR:openswmm_legacy>
+        COMMAND_EXPAND_LISTS
+    )
+endif()

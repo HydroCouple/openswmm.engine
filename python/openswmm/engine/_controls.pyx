@@ -1,91 +1,186 @@
 """
-Control Rule Access
-===================
+Control rules (Pythonic v1 surface)
+===================================
 
 :author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
+:copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
-The :class:`Controls` class provides access to control rules and runtime
-link overrides during a simulation.
+The :class:`Controls` view, reached via ``solver.controls``, behaves as
+a :class:`MutableSequence` of :class:`ControlRule` records over the
+``[CONTROLS]`` block, plus the runtime ``set_link_setting`` /
+``set_link_status`` direct-action methods.
 
 .. code-block:: python
 
-    from openswmm.engine import Solver, Controls
+    with Solver("model.inp") as s:
+        # Append a new control rule.
+        s.controls.append(\"\"\"
+            RULE r1
+              IF NODE J1 DEPTH > 1.0
+              THEN ORIFICE OR1 SETTING = 0.5
+        \"\"\")
 
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        ctrl = Controls(s)
-        ctrl.add_rule("RULE MyRule\\nIF NODE J1 DEPTH > 5\\nTHEN PUMP P1 STATUS = ON")
-        print(f"Rule count: {ctrl.count()}")
+        for r in s.controls:
+            print(r.id, r.text)
+
+        # Direct runtime actions.
+        s.controls.set_link_setting("OR1", 0.25)
+        s.controls.set_link_status("OR1", closed=False)
 """
 
 # cython: language_level=3
 
+from collections.abc import MutableSequence
+from typing import NamedTuple
+
 from ._common cimport *
 
 
-class Controls:
-    """Access control rules and override link settings at runtime.
+cdef inline SWMM_Engine _h(solver):
+    return <SWMM_Engine><size_t>solver.handle
 
-    :param solver: An active :class:`~openswmm.engine.Solver` instance.
-        The solver must remain alive for the lifetime of this object.
-    """
+
+cdef inline int _resolve_link(solver, key) except -1:
+    return _resolve_index(
+        _h(solver), key, swmm_link_index, swmm_link_count, "Link")
+
+
+class ControlRule(NamedTuple):
+    """One row from the ``[CONTROLS]`` block."""
+    id: str
+    text: str
+
+
+class Controls(MutableSequence):
+    """``solver.controls`` — :class:`MutableSequence` of
+    :class:`ControlRule` entries plus runtime link-override helpers."""
 
     def __init__(self, solver):
         self._solver = solver
 
-    # ------------------------------------------------------------------
-    # Rules
-    # ------------------------------------------------------------------
+    # ---- MutableSequence protocol over the [CONTROLS] block --------
 
-    def add_rule(self, str rule_text):
-        """Add a control rule to the model.
-
-        :param rule_text: Full rule text (including RULE, IF, THEN clauses).
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bytes b = rule_text.encode('utf-8')
-        _check(swmm_control_add_rule(h, b))
-
-    def count(self) -> int:
-        """Return the number of control rules in the model."""
+    def __len__(self) -> int:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         return swmm_control_count(h)
 
-    def get_rule(self, int idx) -> str:
-        """Return the text of a control rule by index.
-
-        :param idx: Rule index.
-        :returns: Rule text string.
-        """
+    def __getitem__(self, idx):
+        if isinstance(idx, slice):
+            return [self[i] for i in range(*idx.indices(len(self)))]
+        if not isinstance(idx, int):
+            raise TypeError(
+                f"Controls index must be int or slice, got {type(idx).__name__}")
+        n = len(self)
+        if idx < 0:
+            idx += n
+        if not 0 <= idx < n:
+            raise IndexError(idx)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef char buf[4096]
-        _check(swmm_control_get_rule(h, idx, buf, 4096))
-        return buf.decode('utf-8')
+        cdef char id_buf[64]
+        cdef char text_buf[4096]
+        _check(swmm_control_get_id(h, idx, id_buf, 64))
+        _check(swmm_control_get_rule(h, idx, text_buf, 4096))
+        return ControlRule(id=id_buf.decode('utf-8'),
+                           text=text_buf.decode('utf-8'))
 
-    def clear_rules(self):
-        """Remove all control rules from the model."""
+    def __setitem__(self, idx, value):
+        # The C API has no per-rule replace; emulate by rebuilding.
+        n = len(self)
+        if not isinstance(idx, int):
+            raise TypeError("Controls index must be int")
+        if idx < 0:
+            idx += n
+        if not 0 <= idx < n:
+            raise IndexError(idx)
+        existing = [self[i] for i in range(n)]
+        existing[idx] = self._unpack(value)
+        self.clear()
+        for r in existing:
+            self.append(r)
+
+    def __delitem__(self, idx):
+        if not isinstance(idx, int):
+            raise TypeError("Controls index must be int")
+        n = len(self)
+        if idx < 0:
+            idx += n
+        if not 0 <= idx < n:
+            raise IndexError(idx)
+        existing = [self[i] for i in range(n)]
+        del existing[idx]
+        self.clear()
+        for r in existing:
+            self.append(r)
+
+    def insert(self, idx, value):
+        n = len(self)
+        if idx < 0:
+            idx += n
+        idx = max(0, min(idx, n))
+        existing = [self[i] for i in range(n)]
+        existing.insert(idx, self._unpack(value))
+        self.clear()
+        for r in existing:
+            self.append(r)
+
+    def append(self, value) -> None:
+        text = self._unpack(value)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = text.encode('utf-8')
+        _check(swmm_control_add_rule(h, b))
+
+    def clear(self) -> None:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_control_clear_rules(h))
 
-    # ------------------------------------------------------------------
-    # Runtime link overrides
-    # ------------------------------------------------------------------
+    @staticmethod
+    def _unpack(value) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, ControlRule):
+            return value.text
+        if isinstance(value, dict):
+            return value["text"]
+        raise TypeError(
+            "Controls entry must be a rule text string, a ControlRule, "
+            "or a dict with a 'text' key")
 
-    def set_link_setting(self, int link_idx, double setting):
-        """Override a link's control setting at runtime.
+    # ---- Runtime direct actions -----------------------------------
 
-        :param link_idx: Link index.
-        :param setting: New setting value (0.0--1.0).
+    def set_link_setting(self, link, double setting) -> None:
+        """Set the control setting for a link by id or index."""
+        cdef int idx = _resolve_link(self._solver, link)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_control_set_link_setting(h, idx, setting))
+
+    def set_link_status(self, link, *, bint closed) -> None:
+        """Set the open/closed status of a link."""
+        cdef int idx = _resolve_link(self._solver, link)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_control_set_link_status(h, idx, 1 if closed else 0))
+
+    # ---- Rule validation ------------------------------------------
+
+    def validate_message(self, str rule_text):
+        """Validate a control rule without adding it, returning diagnostics.
+
+        @param rule_text: A full C{[CONTROLS]} rule to check.
+        @return: C{(ok, message)} where C{ok} is C{True} when the rule parses
+            and C{message} is empty, or C{False} with the engine's
+            human-readable error description.
+        @rtype: tuple[bool, str]
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_control_set_link_setting(h, link_idx, setting))
+        cdef bytes b = rule_text.encode('utf-8')
+        cdef char err_buf[1024]
+        err_buf[0] = 0
+        cdef int line_out = 0
+        cdef int rc = swmm_control_validate_rule(h, b, err_buf, 1024, &line_out)
+        return (rc == 0, err_buf.decode('utf-8'))
 
-    def set_link_status(self, int link_idx, int status):
-        """Override a link's open/closed status at runtime.
-
-        :param link_idx: Link index.
-        :param status: Status code (0 = closed, 1 = open).
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_control_set_link_status(h, link_idx, status))
+    def __repr__(self) -> str:
+        try:
+            return f"<Controls n={len(self)}>"
+        except Exception:
+            return "<Controls (engine closed)>"

@@ -33,7 +33,7 @@
  * @ingroup engine_input
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -179,14 +179,32 @@ void handle_tags(SimulationContext& ctx, const std::vector<std::string>& lines) 
         const std::string& name = tok[1];
         const std::string& tag  = tok[2];
 
+        // Resolve name → index against the SoA stores. Tags are stored
+        // per-NodeData/LinkData/SubcatchData index, not name-keyed, so
+        // they survive a subsequent swmm_*_rename.
         if (obj_type == "NODE") {
-            ctx.node_tags[name] = tag;
+            const int idx = ctx.node_names.find(name);
+            if (idx >= 0) {
+                const auto u = static_cast<std::size_t>(idx);
+                if (u >= ctx.nodes.tags.size()) ctx.nodes.tags.resize(u + 1);
+                ctx.nodes.tags[u] = tag;
+            }
         }
         else if (obj_type == "LINK") {
-            ctx.link_tags[name] = tag;
+            const int idx = ctx.link_names.find(name);
+            if (idx >= 0) {
+                const auto u = static_cast<std::size_t>(idx);
+                if (u >= ctx.links.tags.size()) ctx.links.tags.resize(u + 1);
+                ctx.links.tags[u] = tag;
+            }
         }
         else if (obj_type == "SUBCATCH") {
-            ctx.subcatch_tags[name] = tag;
+            const int idx = ctx.subcatch_names.find(name);
+            if (idx >= 0) {
+                const auto u = static_cast<std::size_t>(idx);
+                if (u >= ctx.subcatches.tags.size()) ctx.subcatches.tags.resize(u + 1);
+                ctx.subcatches.tags[u] = tag;
+            }
         }
     }
 }

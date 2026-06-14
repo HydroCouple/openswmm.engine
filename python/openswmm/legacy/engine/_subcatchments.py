@@ -5,7 +5,7 @@ Provides :class:`LegacySubcatchments` (collection) and
 LID access via sub_index, and mass-balance documentation.
 """
 
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING, Union
 
 from ._solver import (
     SWMMObjects,
@@ -22,15 +22,15 @@ class LegacySubcatchment:
 
     __slots__ = ("_solver", "_index", "_name")
 
-    def __init__(self, solver: "Solver", index: int, name: str = ""):
+    def __init__(self, solver: "Solver", index: int, name: str = "") -> None:
         self._solver = solver
         self._index = index
         self._name = name or str(index)
 
-    def _get(self, prop, **kw) -> float:
+    def _get(self, prop: SP, **kw: Any) -> float:
         return self._solver.get_value(SWMMObjects.SUBCATCHMENT, prop, self._index, **kw)
 
-    def _set(self, prop, value: float, **kw) -> None:
+    def _set(self, prop: SP, value: float, **kw: Any) -> None:
         self._solver.set_value(SWMMObjects.SUBCATCHMENT, prop, self._index, value, **kw)
 
     # --- identity ---
@@ -154,7 +154,7 @@ class LegacySubcatchment:
     # --- pollutants ---
     def get_pollutant_buildup(self, pollutant_index: int = 0) -> float:
         """Current pollutant buildup on subcatchment."""
-        return self._get(SP.POLLUTANT_BUILDUP, sub_index=pollutant_index)
+        return self._get(SP.POLLUTANT_BUILDUP, pollutant_index=pollutant_index)
 
     def get_pollutant_runoff_concentration(self, pollutant_index: int = 0) -> float:
         """Current pollutant concentration in runoff."""
@@ -217,6 +217,70 @@ class LegacySubcatchment:
                 mass_balance_category="runoff.snow",
             )
 
+    def set_api_pet(
+        self,
+        value: float,
+        log: Optional["ExternalForcingLog"] = None,
+    ) -> None:
+        """Prescribe a potential evapotranspiration rate for this subcatchment.
+
+        Overrides the climate-derived evaporation rate for the
+        subcatchment's surface, LID, and groundwater upper-zone
+        evaporation. The prescribed rate is applied as-is (it bypasses
+        the DRY_ONLY option and monthly adjustments). Actual evaporation
+        is capped to available water, so losses appear in the runoff
+        totals under ``evaporation``. Persists until cleared with
+        L{clear_api_pet}.
+
+        @param value: PET rate in user units (in/day or mm/day).
+        @type value: float
+        @param log: Optional external forcing log for audit.
+        @type log: ExternalForcingLog or None
+        @return: None
+        @rtype: None
+        """
+        self._set(SP.API_PET, value)
+        if log is not None:
+            log.record(
+                sim_time=self._solver.current_datetime,
+                object_type="subcatchment",
+                object_id=self._name,
+                property_name="api_pet",
+                value=value,
+                mass_balance_category="runoff.evaporation",
+            )
+
+    def get_api_pet(self) -> float:
+        """Return the currently prescribed PET rate for this subcatchment.
+
+        @return: Prescribed PET rate in user units (in/day or mm/day),
+            or a negative value when no prescription is active.
+        @rtype: float
+        """
+        return self._get(SP.API_PET)
+
+    def clear_api_pet(
+        self,
+        log: Optional["ExternalForcingLog"] = None,
+    ) -> None:
+        """Clear any prescribed PET rate, reverting to climate-derived evaporation.
+
+        @param log: Optional external forcing log for audit.
+        @type log: ExternalForcingLog or None
+        @return: None
+        @rtype: None
+        """
+        self._set(SP.API_PET, -1.0)
+        if log is not None:
+            log.record(
+                sim_time=self._solver.current_datetime,
+                object_type="subcatchment",
+                object_id=self._name,
+                property_name="api_pet",
+                value=-1.0,
+                mass_balance_category="runoff.evaporation",
+            )
+
     def set_external_pollutant_buildup(
         self,
         value: float,
@@ -234,7 +298,7 @@ class LegacySubcatchment:
         :param log: Optional :class:`ExternalForcingLog` for audit.
         """
         self._set(SP.EXTERNAL_POLLUTANT_BUILDUP, value,
-                  sub_index=pollutant_index)
+                  pollutant_index=pollutant_index)
         if log is not None:
             log.record(
                 sim_time=self._solver.current_datetime,
@@ -245,9 +309,103 @@ class LegacySubcatchment:
                 mass_balance_category="quality.buildup",
             )
 
+    # --- state injection: groundwater (data assimilation) ---
+    @property
+    def gw_moisture(self) -> float:
+        """Groundwater upper-zone moisture content (state injection).
+
+        Reading returns the current upper-zone moisture; setting injects it
+        mid-run. The subcatchment must have groundwater. Mass balance reflects
+        the resulting storage discontinuity (hotstart-equivalent semantics).
+        """
+        return self._get(SP.GW_MOISTURE)
+
+    @gw_moisture.setter
+    def gw_moisture(self, value: float) -> None:
+        self._set(SP.GW_MOISTURE, value)
+
+    @property
+    def gw_lower_depth(self) -> float:
+        """Groundwater saturated-zone depth above the aquifer bottom
+        (project length units; state injection)."""
+        return self._get(SP.GW_LOWER_DEPTH)
+
+    @gw_lower_depth.setter
+    def gw_lower_depth(self, value: float) -> None:
+        self._set(SP.GW_LOWER_DEPTH, value)
+
+    # --- state injection: snow pack (data assimilation) ---
+    def set_snow_state(
+        self,
+        surface: int,
+        swe: Optional[float] = None,
+        fw: Optional[float] = None,
+        ati: Optional[float] = None,
+        coldc: Optional[float] = None,
+    ) -> None:
+        """Inject the snow-pack state on one snow surface (state assimilation).
+
+        @param surface: Snow subarea (0 plowable, 1 impervious, 2 pervious),
+            passed through as the property ``sub_index``.
+        @type surface: int
+        @param swe: Snow water equivalent in project depth units; omit to leave
+            unchanged.
+        @type swe: float or None
+        @param fw: Free water in project depth units; omit to leave unchanged.
+        @type fw: float or None
+        @param ati: Antecedent temperature index (deg F US, deg C SI); omit to
+            leave unchanged.
+        @type ati: float or None
+        @param coldc: Cold content in project depth units; omit to leave
+            unchanged.
+        @type coldc: float or None
+        """
+        if swe is not None:
+            self._set(SP.SNOW_SWE, swe, sub_index=surface)
+        if fw is not None:
+            self._set(SP.SNOW_FW, fw, sub_index=surface)
+        if ati is not None:
+            self._set(SP.SNOW_ATI, ati, sub_index=surface)
+        if coldc is not None:
+            self._set(SP.SNOW_COLDC, coldc, sub_index=surface)
+
+    def get_snow_state(self, surface: int) -> Dict[str, float]:
+        """Read the snow-pack state on one snow surface.
+
+        @param surface: Snow subarea (0 plowable, 1 impervious, 2 pervious).
+        @type surface: int
+        @return: ``{"swe", "fw", "ati", "coldc"}`` in project units.
+        @rtype: dict
+        """
+        return {
+            "swe": self._get(SP.SNOW_SWE, sub_index=surface),
+            "fw": self._get(SP.SNOW_FW, sub_index=surface),
+            "ati": self._get(SP.SNOW_ATI, sub_index=surface),
+            "coldc": self._get(SP.SNOW_COLDC, sub_index=surface),
+        }
+
+    # --- quality injection ---
+    def set_ponded_concentration(
+        self,
+        pollutant_index: int,
+        value: float,
+    ) -> None:
+        """Place pollutant mass on this subcatchment's ponded water.
+
+        Requires ponded depth > 0 (set during the storm). The injected mass
+        washes off into the quality mass balance.
+
+        @param pollutant_index: 0-based pollutant index (property sub_index).
+        @type pollutant_index: int
+        @param value: Ponded concentration in the pollutant's units.
+        @type value: float
+        """
+        self._set(SP.POLLUTANT_PONDED_CONCENTRATION, value,
+                  pollutant_index=pollutant_index)
+
     # --- statistics (after end()) ---
     @property
-    def statistics(self) -> dict:
+    def statistics(self) -> Dict[str, Any]:
         """Cumulative subcatchment statistics (call after ``solver.end()``)."""
         return self._solver.get_subcatchment_statistics(self._index)
 
@@ -260,13 +418,15 @@ class LegacySubcatchments:
 
     __slots__ = ("_solver", "_items")
 
-    def __init__(self, solver: "Solver"):
+    def __init__(self, solver: "Solver") -> None:
         self._solver = solver
         count = solver.get_object_count(SWMMObjects.SUBCATCHMENT)
         names = solver.get_object_names(SWMMObjects.SUBCATCHMENT)
-        self._items = [LegacySubcatchment(solver, i, names[i]) for i in range(count)]
+        self._items: List[LegacySubcatchment] = [
+            LegacySubcatchment(solver, i, names[i]) for i in range(count)
+        ]
 
-    def __getitem__(self, key) -> LegacySubcatchment:
+    def __getitem__(self, key: Union[int, str]) -> LegacySubcatchment:
         if isinstance(key, str):
             idx = self._solver.get_object_index(SWMMObjects.SUBCATCHMENT, key)
             return self._items[idx]
@@ -275,7 +435,7 @@ class LegacySubcatchments:
     def __len__(self) -> int:
         return len(self._items)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[LegacySubcatchment]:
         return iter(self._items)
 
     def __repr__(self) -> str:

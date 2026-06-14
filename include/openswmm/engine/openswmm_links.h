@@ -9,7 +9,7 @@
  * @see openswmm_engine.h
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -64,7 +64,8 @@ typedef enum SWMM_XSectShape {
     SWMM_XSECT_GOTHIC          = 16, /**< Gothic.                               geom1=height. */
     SWMM_XSECT_CATENARY        = 17, /**< Catenary.                             geom1=height. */
     SWMM_XSECT_SEMIELLIPTICAL  = 18, /**< Semi-elliptical.                      geom1=height. */
-    SWMM_XSECT_IRREGULAR       = 19  /**< Irregular (from transect data).       geom1=transect index. */
+    SWMM_XSECT_IRREGULAR       = 19, /**< Irregular (from transect data).       geom1=transect index. */
+    SWMM_XSECT_STREET          = 24  /**< Street cross-section (from [STREETS]). geom1=street index. */
 } SWMM_XSectShape;
 
 /* =========================================================================
@@ -225,6 +226,230 @@ SWMM_ENGINE_API int swmm_link_set_initial_flow(SWMM_Engine engine, int idx, doub
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_link_set_max_flow(SWMM_Engine engine, int idx, double flow);
+
+/**
+ * @brief Get the initial flow in a link at simulation start.
+ *
+ * @details Symmetric getter for @ref swmm_link_set_initial_flow. Reads the
+ *          same SoA slot the setter writes; safe to call in any
+ *          post-construction engine state.
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based link index.
+ * @param[out] flow  Receives the initial flow in project flow units.
+ * @returns SWMM_OK on success, or an error code.
+ * @since 6.0.0 (engine gap BN-LINK-01a, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_get_initial_flow(SWMM_Engine engine, int idx, double* flow);
+
+/**
+ * @brief Get the maximum allowable flow in a link.
+ *
+ * @details Symmetric getter for @ref swmm_link_set_max_flow. Returns 0.0
+ *          when no limit is configured (mirrors the setter's contract).
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based link index.
+ * @param[out] flow  Receives the maximum flow in project flow units.
+ * @returns SWMM_OK on success, or an error code.
+ * @since 6.0.0 (engine gap BN-LINK-01b, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_get_max_flow(SWMM_Engine engine, int idx, double* flow);
+
+/**
+ * @brief Orifice flow-attack classification.
+ *
+ * @details Used with @ref swmm_link_set_orifice_type and
+ *          @ref swmm_link_get_orifice_type. Order matches the legacy
+ *          SWMM-GUI combo (`SWMM-GUI/Epaswmm5/objprops.txt:862`).
+ * @since 6.0.0 (engine gap BN-LINK-02, added 2026-05-25)
+ */
+typedef enum SWMM_OrificeType {
+    SWMM_ORIFICE_SIDE   = 0, /**< Orifice opens on the side of the upstream node. */
+    SWMM_ORIFICE_BOTTOM = 1, /**< Orifice opens through the bottom of the upstream node. */
+} SWMM_OrificeType;
+
+/**
+ * @brief Set the orifice flow-attack classification (SIDE / BOTTOM).
+ *
+ * @details Only valid on links of type @ref SWMM_LINK_ORIFICE; returns
+ *          @c SWMM_ERR_BADPARAM otherwise.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based link index.
+ * @param type    Orifice type (see @ref SWMM_OrificeType).
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-orifice link or @p type is out of range.
+ * @since 6.0.0 (engine gap BN-LINK-02, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_orifice_type(SWMM_Engine engine, int idx, int type);
+
+/**
+ * @brief Get the orifice flow-attack classification.
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based link index.
+ * @param[out] type  Receives the orifice type (see @ref SWMM_OrificeType).
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-orifice link.
+ * @since 6.0.0 (engine gap BN-LINK-02, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_get_orifice_type(SWMM_Engine engine, int idx, int* type);
+
+/**
+ * @brief Weir-flow classification.
+ *
+ * @details Used with @ref swmm_link_set_weir_type and
+ *          @ref swmm_link_get_weir_type. Numeric order matches the
+ *          legacy WeirType enum in `legacy/engine/enums.h:925` and the
+ *          legacy SWMM-GUI combo (`SWMM-GUI/Epaswmm5/objprops.txt:160`).
+ *
+ *          The companion "Shape" attribute in the legacy GUI is derived
+ *          from the weir type (see `objprops.txt:162` for the mapping)
+ *          and need not be stored separately; clients that want the
+ *          shape should consult @ref swmm_link_get_xsect.
+ *
+ * @since 6.0.0 (engine gap BN-LINK-03, added 2026-05-25)
+ */
+typedef enum SWMM_WeirType {
+    SWMM_WEIR_TRANSVERSE  = 0, /**< Sharp-crested transverse weir.       */
+    SWMM_WEIR_SIDEFLOW    = 1, /**< Side-flow weir (USBR formula).        */
+    SWMM_WEIR_VNOTCH      = 2, /**< Triangular / V-notch weir.            */
+    SWMM_WEIR_TRAPEZOIDAL = 3, /**< Trapezoidal weir.                     */
+    SWMM_WEIR_ROADWAY     = 4, /**< FHWA HDS-5 roadway weir.              */
+} SWMM_WeirType;
+
+/**
+ * @brief Set the weir flow classification.
+ *
+ * @details Only valid on links of type @ref SWMM_LINK_WEIR; returns
+ *          @c SWMM_ERR_BADPARAM otherwise.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based link index.
+ * @param type    Weir type (see @ref SWMM_WeirType).
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-weir link or @p type is out of range.
+ * @since 6.0.0 (engine gap BN-LINK-03, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_weir_type(SWMM_Engine engine, int idx, int type);
+
+/**
+ * @brief Get the weir flow classification.
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based link index.
+ * @param[out] type  Receives the weir type (see @ref SWMM_WeirType).
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-weir link.
+ * @since 6.0.0 (engine gap BN-LINK-03, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_get_weir_type(SWMM_Engine engine, int idx, int* type);
+
+/**
+ * @brief Outlet rating-curve classification.
+ *
+ * @details Used with @ref swmm_link_set_outlet_rating_type and
+ *          @ref swmm_link_get_outlet_rating_type. Numeric encoding
+ *          matches the legacy `LinksHandler::handle_outlets`
+ *          convention (`src/engine/input/handlers/LinksHandler.cpp:214-221`)
+ *          and the legacy SWMM-GUI combo order at
+ *          `SWMM-GUI/Epaswmm5/objprops.txt:913`.
+ *
+ *          FUNCTIONAL types use the @c cd (coefficient) and the
+ *          outlet exponent (see @ref swmm_link_set_outlet_expon)
+ *          to define the rating curve; TABULAR types use the
+ *          curve assigned via @ref swmm_link_set_pump_curve (the
+ *          engine shares the curve-index slot between pumps and
+ *          tabular outlets).
+ *
+ * @since 6.0.0 (engine gap BN-LINK-04, added 2026-05-25)
+ */
+typedef enum SWMM_OutletRatingType {
+    SWMM_OUTLET_FUNCTIONAL_HEAD  = 0, /**< Q = Cd · H^expon (head above invert). */
+    SWMM_OUTLET_FUNCTIONAL_DEPTH = 1, /**< Q = Cd · y^expon (depth at upstream node). */
+    SWMM_OUTLET_TABULAR_HEAD     = 2, /**< Q from rating curve indexed by head. */
+    SWMM_OUTLET_TABULAR_DEPTH    = 3, /**< Q from rating curve indexed by depth. */
+} SWMM_OutletRatingType;
+
+/**
+ * @brief Set the outlet rating-curve classification.
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-outlet link or @p type is out of range.
+ * @since 6.0.0 (engine gap BN-LINK-04, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_outlet_rating_type(SWMM_Engine engine, int idx, int type);
+
+/**
+ * @brief Get the outlet rating-curve classification.
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-outlet link.
+ * @since 6.0.0 (engine gap BN-LINK-04, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_get_outlet_rating_type(SWMM_Engine engine, int idx, int* type);
+
+/**
+ * @brief Set the outlet functional-form exponent.
+ *
+ * @details Only meaningful for FUNCTIONAL_* rating types — the engine
+ *          ignores the stored value when the type is TABULAR_*. The
+ *          coefficient term (Cd) is accessed via
+ *          @ref swmm_link_set_discharge_coeff / @ref swmm_link_get_discharge_coeff.
+ *
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-outlet link.
+ * @since 6.0.0 (engine gap BN-LINK-04, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_outlet_expon(SWMM_Engine engine, int idx, double expon);
+
+/**
+ * @brief Get the outlet functional-form exponent.
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-outlet link.
+ * @since 6.0.0 (engine gap BN-LINK-04, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_get_outlet_expon(SWMM_Engine engine, int idx, double* expon);
+
+/**
+ * @brief Set the pump startup depth (depth at upstream node when the
+ *        pump turns on, project length units).
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-pump link.
+ * @since 6.0.0 (engine gap BN-LINK-05, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_pump_startup_depth(SWMM_Engine engine, int idx, double depth);
+
+/** @brief Get the pump startup depth. @since 6.0.0 (BN-LINK-05) */
+SWMM_ENGINE_API int swmm_link_get_pump_startup_depth(SWMM_Engine engine, int idx, double* depth);
+
+/**
+ * @brief Set the pump shutoff depth (depth at upstream node when the
+ *        pump turns off, project length units).
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-pump link.
+ * @since 6.0.0 (engine gap BN-LINK-05, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_pump_shutoff_depth(SWMM_Engine engine, int idx, double depth);
+
+/** @brief Get the pump shutoff depth. @since 6.0.0 (BN-LINK-05) */
+SWMM_ENGINE_API int swmm_link_get_pump_shutoff_depth(SWMM_Engine engine, int idx, double* depth);
+
+/**
+ * @brief Set the orifice open/close rate (fraction per second).
+ *
+ * @details 0 means instantaneous open/close. The legacy SWMM-GUI surfaces
+ *          this field as "Time to Open/Close" measured in hours; clients
+ *          that want the hours-based UX should compute
+ *          @c rate = 1.0 / (3600 * hours) before calling this setter.
+ *
+ * @returns @c SWMM_OK on success, @c SWMM_ERR_BADPARAM if @p idx names a
+ *          non-orifice link.
+ * @since 6.0.0 (engine gap BN-LINK-06, added 2026-05-25)
+ */
+SWMM_ENGINE_API int swmm_link_set_orifice_open_close_rate(SWMM_Engine engine, int idx, double rate);
+
+/** @brief Get the orifice open/close rate (fraction per second). @since 6.0.0 (BN-LINK-06) */
+SWMM_ENGINE_API int swmm_link_get_orifice_open_close_rate(SWMM_Engine engine, int idx, double* rate);
 
 /* =========================================================================
  * Cross-section (BUILDING or OPENED)
@@ -737,6 +962,97 @@ SWMM_ENGINE_API int swmm_link_get_quality_bulk(SWMM_Engine engine, int pollutant
                                                  double* buf, int count);
 
 /* =========================================================================
+ * Phase 3 bulk getters — added in OpenSWMM 6.0.0 to eliminate the N
+ * round-trip cost of per-link scalar accessors in whole-network consumers
+ * (notably the MCP server's get_link_info(all) path and post-run reports).
+ *
+ * Note: velocities, capacities, and hydraulic powers are *derived* values
+ * (depth/flow ratios; flow * head loss). Their bulk variants do a per-link
+ * loop in C — there is no SoA column to memcpy from — but they still
+ * eliminate the C ABI crossing overhead and any Python-level looping cost.
+ * ========================================================================= */
+
+/**
+ * @brief Get cross-sectional velocities for all links in a single call.
+ * @details Bulk variant of @ref swmm_link_get_velocity. The C side
+ *          recomputes @c q / area per link (area approximated from
+ *          @c d / y_full * a_full), so this is a per-link loop rather
+ *          than a memcpy — but still O(n_links) and free of per-call ABI
+ *          overhead.
+ * @param engine    Engine handle.
+ * @param[out] buf  Caller-allocated buffer of at least @p count doubles.
+ * @param count     Number of elements (should equal swmm_link_count()).
+ * @returns @c SWMM_OK on success, or an error code.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_velocities_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get capacity ratios (q/q_full) for all links in a single call.
+ * @details Bulk variant of @ref swmm_link_get_capacity. Per-link loop
+ *          (capacity is derived from flow / full-flow).
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_capacities_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get stored volumes for all links in a single call.
+ * @details Bulk variant of @ref swmm_link_get_volume. Simple SoA memcpy.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_volumes_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get active control settings (0..1) for all links in a single call.
+ * @details Bulk variant of @ref swmm_link_get_control_setting.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_control_settings_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get target control settings for all links in a single call.
+ * @details Bulk variant of @ref swmm_link_get_target_setting.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_target_settings_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get hydraulic power dissipated in every link in a single call.
+ * @details Bulk variant of @ref swmm_link_get_hyd_power. Per-link loop:
+ *          @c P = gamma * |Q| * |h_up - h_dn| (ft-lb/s); non-conduit
+ *          links produce the same expression with whatever flow they
+ *          report. Use cycles[i] from @ref swmm_link_get_pump_stats_bulk
+ *          to filter to pumps if needed.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_hyd_powers_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get link IDs for all links in a single call (stride-packed UTF-8).
+ *
+ * @details Stride-packed format matching @ref swmm_node_get_ids_bulk: each
+ *          ID is written into the slot @c buf[i*stride .. i*stride+stride-1]
+ *          and NUL-terminated within its slot (truncated to @c stride-1
+ *          bytes if longer). The function zero-fills the requested region
+ *          on entry so trailing bytes are always NUL.
+ *
+ * @param engine    Engine handle.
+ * @param[out] buf  Caller-allocated buffer of @c stride*count bytes.
+ * @param stride    Per-ID slot size in bytes (must be > 1).
+ * @param count     Number of IDs to read.
+ * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
+ *          invalid; @c SWMM_ERR_BADPARAM if @p buf is NULL,
+ *          @p stride < 2, or @p count <= 0.
+ *
+ * @see swmm_link_id, swmm_node_get_ids_bulk
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_ids_bulk(SWMM_Engine engine,
+                                            char* buf,
+                                            int stride,
+                                            int count);
+
+/* =========================================================================
  * Pump utilization statistics
  * ========================================================================= */
 
@@ -749,12 +1065,91 @@ SWMM_ENGINE_API int swmm_link_get_stat_pump_on_time(SWMM_Engine engine, int idx,
 /** @brief Get pump total volume pumped (ft3). */
 SWMM_ENGINE_API int swmm_link_get_stat_pump_volume(SWMM_Engine engine, int idx, double* volume);
 
+/**
+ * @brief Get pump utilization statistics for **all** links in a single call.
+ *
+ * @details Single-pass bulk accessor that avoids @c N round-trips through the
+ *          C ABI when caller needs pump stats across the network (e.g. when
+ *          building a network-wide pump summary report). For links whose type
+ *          is not @c LinkType::PUMP, the corresponding @p cycles entry is set
+ *          to @c -1 and the @p on_time / @p volume entries to @c 0.0 — this
+ *          allows the caller to distinguish "non-pump" from "pump with zero
+ *          cycles".
+ *
+ *          Any of @p cycles, @p on_time, @p volume may be @c NULL if the
+ *          caller does not need that output; the function still iterates the
+ *          full link array (the cost is identical) but skips the store.
+ *
+ * @param engine        Engine handle (must be in INITIALIZED state or later
+ *                      so the statistics vectors are sized).
+ * @param[out] cycles   Caller-allocated @c int buffer of at least @p count
+ *                      entries, or @c NULL. Non-pump links get @c -1.
+ * @param[out] on_time  Caller-allocated @c double buffer of at least @p count
+ *                      entries (seconds), or @c NULL.
+ * @param[out] volume   Caller-allocated @c double buffer of at least @p count
+ *                      entries (ft3), or @c NULL.
+ * @param count         Length of the caller-allocated buffers. If smaller
+ *                      than the link count, only the first @c min(count,
+ *                      n_links) entries are written.
+ *
+ * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
+ *          invalid; @c SWMM_ERR_BADPARAM if @p count is non-positive or all
+ *          three output pointers are NULL.
+ *
+ * @par Example
+ * @code{.c}
+ *   int n = swmm_link_count(eng);
+ *   int* cycles = malloc(n * sizeof(int));
+ *   double* on_time = malloc(n * sizeof(double));
+ *   double* volume = malloc(n * sizeof(double));
+ *   swmm_link_get_pump_stats_bulk(eng, cycles, on_time, volume, n);
+ *   for (int i = 0; i < n; ++i) {
+ *       if (cycles[i] < 0) continue;            // not a pump
+ *       printf("link %d: %d cycles, %.1f s, %.2f ft3\n",
+ *              i, cycles[i], on_time[i], volume[i]);
+ *   }
+ * @endcode
+ *
+ * @note Equivalent to calling @ref swmm_link_get_stat_pump_cycles,
+ *       @ref swmm_link_get_stat_pump_on_time, and
+ *       @ref swmm_link_get_stat_pump_volume for every link, but with one C
+ *       ABI crossing instead of @c 3N.
+ *
+ * @see swmm_link_get_stat_pump_cycles
+ * @see swmm_link_get_stat_pump_on_time
+ * @see swmm_link_get_stat_pump_volume
+ *
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_pump_stats_bulk(SWMM_Engine engine,
+                                                   int* cycles,
+                                                   double* on_time,
+                                                   double* volume,
+                                                   int count);
+
 /* =========================================================================
  * Hydraulic power
  * ========================================================================= */
 
 /** @brief Get hydraulic power dissipated in a link (ft-lb/s). P = gamma * |Q| * |hL|. */
 SWMM_ENGINE_API int swmm_link_get_hyd_power(SWMM_Engine engine, int idx, double* power);
+
+/** @brief Rename the link at `idx` to `newId`.
+ *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
+ *  idx is out of range. */
+SWMM_ENGINE_API int swmm_link_rename(SWMM_Engine engine, int idx, const char* newId);
+
+/* =========================================================================
+ * Tag — free-form string label from the INP `[TAGS]` section
+ * ========================================================================= */
+
+/** @brief Read the link's tag into `buf` (NUL-terminated, truncated if too small). */
+SWMM_ENGINE_API int swmm_link_get_tag(SWMM_Engine engine, int idx,
+                                       char* buf, int buflen);
+
+/** @brief Set or clear the link's tag. Null/empty clears. Persists across rename. */
+SWMM_ENGINE_API int swmm_link_set_tag(SWMM_Engine engine, int idx,
+                                       const char* tag);
 
 #ifdef __cplusplus
 } /* extern "C" */

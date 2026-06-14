@@ -8,7 +8,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -48,6 +48,8 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
 
     addWetWeatherLoads(ctx, dt);   // Subcatchment washoff → nodes
     addRdiiLoads(ctx, dt);         // RDII pollutant loads → nodes
+    addDwfLoads(ctx, dt);          // Dry weather pollutant loads → nodes
+    addGwLoads(ctx, dt);           // Groundwater inflow pollutant loads → nodes
     accumulateLinkLoads(ctx, dt);
     mixAtNodes(ctx, dt);
     applyTreatment(ctx, dt);       // Treatment before decay (matching legacy order)
@@ -160,6 +162,82 @@ void QualitySolver::addRdiiLoads(SimulationContext& ctx, double dt) {
 }
 
 // ============================================================================
+// Add default dry weather pollutant loads to node quality inflows
+// Matches legacy addDwfInflows() default-concentration portion
+// (routing.c:560-571: w = q * Pollut[p].dwfConcen)
+// ============================================================================
+
+void QualitySolver::addDwfLoads(SimulationContext& ctx, double dt) {
+    int np = n_pollutants_;
+    if (np <= 0) return;
+    auto& nodes = ctx.nodes;
+
+    for (int i = 0; i < ctx.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        double q = nodes.dwf_inflow[ui];
+        if (q <= 0.0) continue;
+
+        OPENSWMM_IVDEP
+        for (int p = 0; p < np; ++p) {
+            double c_dwf = ctx.pollutants.c_dwf[static_cast<std::size_t>(p)];
+            if (c_dwf <= 0.0) continue;
+            auto nd_idx = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+            if (nd_idx < nodes.qual_mass_in.size()) {
+                nodes.qual_mass_in[nd_idx] += q * c_dwf;
+            }
+        }
+
+        // Mass balance: track dry weather quality inflow
+        for (int p = 0; p < np; ++p) {
+            double c_dwf = ctx.pollutants.c_dwf[static_cast<std::size_t>(p)];
+            if (c_dwf <= 0.0) continue;
+            auto pi = static_cast<std::size_t>(p);
+            if (pi < ctx.mass_balance.qual_routing_dw_in.size()) {
+                ctx.mass_balance.qual_routing_dw_in[pi] += q * c_dwf * dt;
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Add groundwater inflow pollutant loads to node quality inflows
+// Matches legacy addGroundwaterInflows() pollutant portion
+// (routing.c:678-686: w = q * Pollut[p].gwConcen)
+// ============================================================================
+
+void QualitySolver::addGwLoads(SimulationContext& ctx, double dt) {
+    int np = n_pollutants_;
+    if (np <= 0) return;
+    auto& nodes = ctx.nodes;
+
+    for (int i = 0; i < ctx.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        double q = nodes.gw_inflow[ui];
+        if (q <= 0.0) continue;  // pollutant load only for positive inflow
+
+        OPENSWMM_IVDEP
+        for (int p = 0; p < np; ++p) {
+            double c_gw = ctx.pollutants.c_gw[static_cast<std::size_t>(p)];
+            if (c_gw <= 0.0) continue;
+            auto nd_idx = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+            if (nd_idx < nodes.qual_mass_in.size()) {
+                nodes.qual_mass_in[nd_idx] += q * c_gw;
+            }
+        }
+
+        // Mass balance: track groundwater quality inflow
+        for (int p = 0; p < np; ++p) {
+            double c_gw = ctx.pollutants.c_gw[static_cast<std::size_t>(p)];
+            if (c_gw <= 0.0) continue;
+            auto pi = static_cast<std::size_t>(p);
+            if (pi < ctx.mass_balance.qual_routing_gw_in.size()) {
+                ctx.mass_balance.qual_routing_gw_in[pi] += q * c_gw * dt;
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Accumulate link mass flows to downstream nodes — VECTORISABLE
 // ============================================================================
 
@@ -207,8 +285,9 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
     // Batch over all nodes — inner loop over pollutants is vectorisable
     // Outer node loop is parallelisable: each node reads only its own
     // pre-computed mass_in and vol_in (scatter phase is complete).
+    // Legacy parity: src/legacy/engine/qualrout.c runs this loop serially.
 #if defined(SWMM_USE_OPENMP)
-#pragma omp parallel for schedule(static)
+// #pragma omp parallel for schedule(static)
 #endif
     for (int i = 0; i < ctx.n_nodes(); ++i) {
         auto ui = static_cast<size_t>(i);
@@ -294,8 +373,9 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
     const bool is_steady = (ctx.options.routing_model == RoutingModel::STEADY);
 
     // Batch over all links — parallelisable (each link writes to its own slot)
+    // Legacy parity: src/legacy/engine/qualrout.c runs this loop serially.
 #if defined(SWMM_USE_OPENMP)
-#pragma omp parallel for schedule(static)
+// #pragma omp parallel for schedule(static)
 #endif
     for (int j = 0; j < ctx.n_links(); ++j) {
         auto uj = static_cast<size_t>(j);

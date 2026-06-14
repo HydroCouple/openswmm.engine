@@ -9,7 +9,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -69,7 +69,8 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
  * @param depth  Water depth (ft).
  * @returns Effective surface area (ft2).
  */
-double getPondedArea(const NodeData& nodes, int idx, double depth);
+double getPondedArea(const NodeData& nodes, int idx, double depth,
+                     TableData* tables = nullptr, int unit_sys = 0);
 
 /**
  * @brief Compute max outflow limited by available volume.

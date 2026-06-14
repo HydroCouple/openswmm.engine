@@ -5,7 +5,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -56,8 +56,13 @@ double getVolume(const NodeData& nodes, int idx, double depth,
     double fd = nodes.full_depth[ui];
     if (fd <= 0.0) return 0.0;
 
-    // fullVolume for a junction = MIN_SURFAREA * fullDepth (legacy convention)
-    double full_vol = constants::MIN_SURFAREA * fd;
+    // fullVolume for a junction = MIN_SURFAREA * fullDepth (legacy convention),
+    // UNLESS an override has been stored (e.g. a Type-1 pump wet well, set in
+    // SWMMEngine::initialize from the pump curve's max volume — matches legacy
+    // pump_validate). full_volume is 0 before init, so fall back then.
+    double full_vol = nodes.full_volume[ui] > 0.0
+                          ? nodes.full_volume[ui]
+                          : constants::MIN_SURFAREA * fd;
     return full_vol * (depth / fd);
 }
 
@@ -171,16 +176,17 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
 // Per-element: getPondedArea
 // ============================================================================
 
-double getPondedArea(const NodeData& nodes, int idx, double depth) {
+double getPondedArea(const NodeData& nodes, int idx, double depth,
+                     TableData* tables, int unit_sys) {
     auto ui = static_cast<std::size_t>(idx);
 
     if (depth <= nodes.full_depth[ui] || nodes.ponded_area[ui] == 0.0) {
-        return getSurfArea(nodes, idx, depth);
+        return getSurfArea(nodes, idx, depth, tables, unit_sys);
     }
 
     // Flooded above rim — use the ponded area
     double a = nodes.ponded_area[ui];
-    if (a <= 0.0) a = getSurfArea(nodes, idx, nodes.full_depth[ui]);
+    if (a <= 0.0) a = getSurfArea(nodes, idx, nodes.full_depth[ui], tables, unit_sys);
     return a;
 }
 

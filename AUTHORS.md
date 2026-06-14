@@ -4,7 +4,7 @@ OpenSWMM is built on the EPA SWMM 5.x foundation and extended by the contributor
 
 ## Project Lead
 
-- **Caleb Buahin** <caleb.buahin@gmail.com> -- Project lead, architect, and primary developer of the OpenSWMM 6.x engine rewrite (data-oriented SoA architecture, plugin system, GeoPackage I/O, C/C++ API, dynamic wave solver alignment, Python bindings).
+- **Caleb Buahin** @cbuahin -- Project lead, architect, and primary developer of the OpenSWMM 6.x engine rewrite (data-oriented SoA architecture, plugin system, GeoPackage I/O, C/C++ API, dynamic wave solver alignment, Python bindings).
 
 ## Contributors
 

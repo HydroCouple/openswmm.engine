@@ -1,161 +1,400 @@
 """
-Engine Lifecycle
-================
+Engine Lifecycle (Pythonic v1 surface)
+======================================
 
 :author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
+:copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
 Type stubs for :mod:`openswmm.engine._solver`.
-
-The :class:`Solver` class manages the full SWMM engine lifecycle:
-create -> open -> initialize -> start -> step -> end -> report -> close -> destroy.
 """
 
-from types import TracebackType
-from typing import Optional, Type
+from collections.abc import MutableMapping, MutableSequence
+from datetime import datetime, timedelta
+from os import PathLike
+from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, Optional, Union
+
+from ._enums import EngineState, FlowUnits
+
+if TYPE_CHECKING:
+    # Imports for type-checking only — avoids cycles at runtime because the
+    # collection modules import Solver themselves.
+    from ._2d import Surface2D
+    from ._controls import Controls
+    from ._edit import ModelEditor
+    from ._forcing import Forcing
+    from ._gages import Gages
+    from ._hotstart import SaveSchedule
+    from ._infrastructure import Infrastructure
+    from ._inflows import Inflows
+    from ._links import Links
+    from ._massbalance import MassBalance
+    from ._nodes import Nodes
+    from ._pollutants import Pollutants
+    from ._quality import Quality
+    from ._spatial import Spatial
+    from ._statistics import Statistics
+    from ._subcatchments import Subcatchments
+    from ._tables import Patterns, Tables
+
+# Re-exported exception hierarchy. Canonical definitions in :mod:`_exceptions`.
+from ._exceptions import (
+    BadHandleError as BadHandleError,
+    BadIndexError as BadIndexError,
+    BadParamError as BadParamError,
+    CRSError as CRSError,
+    DependencyError as DependencyError,
+    EngineError as EngineError,
+    FileError as FileError,
+    HotStartError as HotStartError,
+    LifecycleError as LifecycleError,
+    NumericalError as NumericalError,
+    ParseError as ParseError,
+    PluginError as PluginError,
+)
+
+_PathLike = Union[str, PathLike[str]]
 
 
-class EngineError(Exception):
-    """Raised when a C API call returns a non-zero error code.
+# ---------------------------------------------------------------------------
+# Event record
+# ---------------------------------------------------------------------------
 
-    Attributes:
-        code: The SWMM error code.
-        message: Human-readable error description.
+
+class Event(NamedTuple):
+    start: datetime
+    end: datetime
+
+
+# ---------------------------------------------------------------------------
+# View classes (returned by Solver.options / .userflags / .events)
+# ---------------------------------------------------------------------------
+
+
+class SimulationOptions(MutableMapping[str, str]):
+    """View over the ``[OPTIONS]`` block. See :class:`Solver.options`."""
+
+    ext: "_OptionsExtView"
+
+    def __init__(self, solver: "Solver") -> None: ...
+
+    # MutableMapping protocol
+    def __getitem__(self, key: str) -> str: ...
+    def __setitem__(self, key: str, value: Any) -> None: ...
+    def __delitem__(self, key: str) -> None: ...
+    def __iter__(self) -> Iterator[str]: ...
+    def __len__(self) -> int: ...
+    def __contains__(self, key: object) -> bool: ...
+
+    # Typed shortcuts
+    @property
+    def start_datetime(self) -> datetime: ...
+    @start_datetime.setter
+    def start_datetime(self, value: datetime) -> None: ...
+    @property
+    def end_datetime(self) -> datetime: ...
+    @end_datetime.setter
+    def end_datetime(self, value: datetime) -> None: ...
+    @property
+    def report_start_datetime(self) -> datetime: ...
+    @report_start_datetime.setter
+    def report_start_datetime(self, value: datetime) -> None: ...
+    @property
+    def routing_step(self) -> timedelta: ...
+    @property
+    def crs(self) -> str: ...
+
+
+class _OptionsExtView(MutableMapping[str, str]):
+    """Sub-mapping for the ``[OPTIONS_EXT]`` block."""
+
+    def __init__(self, solver: "Solver") -> None: ...
+    def __getitem__(self, key: str) -> str: ...
+    def __setitem__(self, key: str, value: Any) -> None: ...
+    def __delitem__(self, key: str) -> None: ...
+    def __iter__(self) -> Iterator[str]: ...
+    def __len__(self) -> int: ...
+
+
+class UserFlagDef(NamedTuple):
+    """A ``[USER_FLAGS]`` schema definition: ``(name, type, description)``.
+
+    ``type`` is 0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING
+    (see :class:`UserFlagType`).
     """
 
-    def __init__(self, code: int, message: str = "") -> None: ...
+    name: str
+    type: int
+    description: str
+
+
+class UserFlags(MutableMapping[str, Union[bool, int, float, str]]):
+    """Typed user-flag mapping. See :class:`Solver.userflags`."""
+
+    def __init__(self, solver: "Solver") -> None: ...
+    def __getitem__(self, key: str) -> Union[bool, int, float, str]: ...
+    def __setitem__(self, key: str, value: Union[bool, int, float, str]) -> None: ...
+    def __delitem__(self, key: str) -> None: ...
+    def __iter__(self) -> Iterator[str]: ...
+    def __len__(self) -> int: ...
+    def __contains__(self, key: object) -> bool: ...
+
+    # [USER_FLAGS] schema definitions
+    def define(self, name: str, type: int, description: str = "") -> None: ...
+    def undefine(self, name: str) -> None: ...
+    def definitions(self) -> list[UserFlagDef]: ...
+
+    # [USER_FLAG_VALUES] per-object values
+    def get_value(self, obj_type: str, obj_name: str, flag_name: str) -> Optional[str]: ...
+    def set_value(self, obj_type: str, obj_name: str, flag_name: str, value: str) -> None: ...
+    def clear_value(self, obj_type: str, obj_name: str, flag_name: str) -> None: ...
+
+
+class EventsView(MutableSequence[Event]):
+    """``[EVENTS]`` block as a ``MutableSequence``. See :class:`Solver.events`."""
+
+    def __init__(self, solver: "Solver") -> None: ...
+    def __len__(self) -> int: ...
+    def __getitem__(self, idx: Any) -> Any: ...
+    def __setitem__(self, idx: Any, value: Any) -> None: ...
+    def __delitem__(self, idx: Any) -> None: ...
+    def insert(self, idx: int, value: Any) -> None: ...
+    def append(self, value: Any) -> None: ...
+    def clear(self) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# Module-level free functions
+# ---------------------------------------------------------------------------
+
+
+def run(
+    inp: _PathLike,
+    rpt: Optional[_PathLike] = None,
+    out: Optional[_PathLike] = None,
+    *,
+    plugin_lib: Optional[_PathLike] = None,
+) -> None:
+    """Run a SWMM simulation start-to-finish. Raises :class:`EngineError` on
+    failure."""
+    ...
+
+
+def run_with_callback(
+    inp: _PathLike,
+    rpt: Optional[_PathLike] = None,
+    out: Optional[_PathLike] = None,
+    callback: Optional[Callable[[float], None]] = None,
+    *,
+    plugin_lib: Optional[_PathLike] = None,
+) -> None:
+    """Run a SWMM simulation with an optional progress callback. Raises
+    :class:`EngineError` on failure."""
+    ...
+
+
+# ---------------------------------------------------------------------------
+# Solver
+# ---------------------------------------------------------------------------
 
 
 class Solver:
     """SWMM engine lifecycle manager.
 
-    Manages the complete SWMM simulation lifecycle from file parsing through
-    timestep execution to report generation. Supports both manual lifecycle
-    control and the context manager protocol.
+    Accepts ``str`` or :class:`pathlib.Path` for every file argument.
 
-    Args:
-        inp: Path to the SWMM input file (``.inp``).
-        rpt: Path for the report file (``.rpt``). Empty string to skip.
-        out: Path for the binary output file (``.out``). Empty string to skip.
+    .. code-block:: python
 
-    Note:
-        The engine handle is created lazily on the first call to :meth:`open`.
-        Multiple independent :class:`Solver` instances may coexist.
-
-    Example::
+        from datetime import timedelta
+        from openswmm.engine import Solver
 
         with Solver("model.inp", "model.rpt", "model.out") as s:
-            while s.step():
-                print(f"Elapsed: {s.elapsed:.4f} days")
+            for elapsed in s.steps():
+                if elapsed >= timedelta(hours=24):
+                    break
     """
 
-    def __init__(self, inp: str = "", rpt: str = "", out: str = "") -> None: ...
+    def __init__(
+        self,
+        inp: _PathLike = "",
+        rpt: Optional[_PathLike] = None,
+        out: Optional[_PathLike] = None,
+        *,
+        plugin_lib: Optional[_PathLike] = None,
+    ) -> None: ...
 
-    def create(self) -> None:
-        """Create the engine instance.
+    # ------------- Lifecycle (raise on failure) -------------
+    def create(self) -> None: ...
+    def open(self, plugin_lib: Optional[_PathLike] = None) -> None: ...
+    def initialize(self) -> None: ...
+    def start(self, save_results: bool = True) -> None: ...
+    def step(self) -> timedelta: ...
+    def stride(self, n_steps: int) -> timedelta: ...
+    def end(self) -> None: ...
+    def report(self) -> None: ...
+    def close(self) -> None: ...
+    def destroy(self) -> None: ...
+    def run(self) -> None: ...
 
-        Raises:
-            MemoryError: If allocation fails.
-        """
-        ...
+    # ------------- Iteration helpers -------------
+    def steps(self) -> Iterator[timedelta]: ...
+    def until(self, target: Union[datetime, timedelta]) -> timedelta: ...
 
-    def open(self) -> None:
-        """Open and parse the input file; load plugins.
-
-        Transitions the engine to ``OPENED`` state.
-
-        Raises:
-            EngineError: If the input file cannot be parsed.
-        """
-        ...
-
-    def initialize(self) -> None:
-        """Initialize the simulation (allocate arrays, set initial conditions).
-
-        Transitions the engine to ``INITIALIZED`` state.
-        """
-        ...
-
-    def start(self, save_results: bool = True) -> None:
-        """Start the simulation.
-
-        Args:
-            save_results: If ``True``, write binary output to the ``.out`` file.
-        """
-        ...
-
-    def step(self) -> bool:
-        """Advance the simulation by one explicit timestep.
-
-        Returns:
-            ``True`` if the simulation should continue;
-            ``False`` when the simulation is complete.
-        """
-        ...
-
-    def end(self) -> None:
-        """End the simulation; join IO thread; finalize plugins."""
-        ...
-
-    def report(self) -> None:
-        """Write the summary report."""
-        ...
-
-    def close(self) -> None:
-        """Close all files and free simulation state."""
-        ...
-
-    def destroy(self) -> None:
-        """Destroy the engine handle and free all memory."""
-        ...
+    # ------------- Typed properties -------------
+    @property
+    def elapsed(self) -> timedelta: ...
+    @property
+    def state(self) -> EngineState: ...
+    @property
+    def handle(self) -> int: ...
+    @property
+    def generation(self) -> int: ...
+    @property
+    def routing_step(self) -> timedelta: ...
+    @property
+    def crs(self) -> str: ...
+    @property
+    def is_between_events(self) -> bool: ...
 
     @property
-    def elapsed(self) -> float:
-        """Elapsed simulation time in decimal days after the last :meth:`step`."""
-        ...
+    def steady_state_skip(self) -> bool: ...
+    @steady_state_skip.setter
+    def steady_state_skip(self, value: bool) -> None: ...
 
     @property
-    def state(self) -> int:
-        """Current engine lifecycle state code.
+    def start_datetime(self) -> datetime: ...
+    @start_datetime.setter
+    def start_datetime(self, value: datetime) -> None: ...
+    @property
+    def end_datetime(self) -> datetime: ...
+    @end_datetime.setter
+    def end_datetime(self, value: datetime) -> None: ...
+    @property
+    def report_start_datetime(self) -> datetime: ...
+    @report_start_datetime.setter
+    def report_start_datetime(self, value: datetime) -> None: ...
+    @property
+    def current_datetime(self) -> datetime: ...
+    @property
+    def sim_start_time(self) -> datetime:
+        """Resolved simulation start (``swmm_get_start_time``).
 
-        See :class:`~openswmm.engine.EngineState` for code meanings.
+        @rtype: datetime
+        """
+        ...
+    @property
+    def sim_end_time(self) -> datetime:
+        """Resolved simulation end (``swmm_get_end_time``).
+
+        @rtype: datetime
+        """
+        ...
+    @property
+    def event_count(self) -> int:
+        """Number of ``[EVENTS]`` entries on the model.
+
+        @rtype: int
         """
         ...
 
+    # ------------- Units -------------
     @property
-    def handle(self) -> int:
-        """Raw C engine handle as an integer (for advanced interop)."""
+    def flow_units(self) -> FlowUnits:
+        """The model's flow-unit system, resolved from ``FLOW_UNITS``.
+
+        @return: Active flow-unit system; read this to interpret the
+            project-unit magnitudes returned by all getters.
+        @rtype: L{FlowUnits}
+        """
         ...
+    @property
+    def unit_system(self) -> str:
+        """``'US'`` (CFS/GPM/MGD) or ``'SI'`` (CMS/LPS/MLD).
 
-    def get_start_time(self) -> float:
-        """Return the simulation start time (decimal days)."""
+        @rtype: str
+        """
         ...
+    # ------------- Views -------------
+    @property
+    def options(self) -> SimulationOptions: ...
+    @property
+    def userflags(self) -> UserFlags: ...
+    @property
+    def events(self) -> EventsView: ...
 
-    def get_end_time(self) -> float:
-        """Return the simulation end time (decimal days)."""
-        ...
+    # ------------- Collection accessors (typed) -------------
+    @property
+    def nodes(self) -> "Nodes": ...
+    @property
+    def links(self) -> "Links": ...
+    @property
+    def subcatchments(self) -> "Subcatchments": ...
+    @property
+    def gages(self) -> "Gages": ...
+    @property
+    def pollutants(self) -> "Pollutants": ...
+    @property
+    def tables(self) -> "Tables": ...
+    @property
+    def patterns(self) -> "Patterns": ...
+    @property
+    def inflows(self) -> "Inflows": ...
+    @property
+    def controls(self) -> "Controls": ...
+    @property
+    def forcing(self) -> "Forcing": ...
+    @property
+    def infrastructure(self) -> "Infrastructure": ...
+    @property
+    def spatial(self) -> "Spatial": ...
+    @property
+    def quality(self) -> "Quality": ...
+    @property
+    def statistics(self) -> "Statistics": ...
+    @property
+    def mass_balance(self) -> "MassBalance": ...
+    @property
+    def editor(self) -> "ModelEditor": ...
+    @property
+    def save_schedule(self) -> "SaveSchedule": ...
+    @property
+    def surface2d(self) -> "Surface2D": ...
 
-    def get_current_time(self) -> float:
-        """Return the current simulation time (decimal days)."""
-        ...
+    # ------------- Model write -------------
+    def write(self, path: _PathLike) -> None: ...
 
-    def get_routing_step(self) -> float:
-        """Return the routing timestep (seconds)."""
-        ...
+    # ------------- Runoff interface file -------------
+    def open_runoff_interface_write(self, path: _PathLike) -> None: ...
+    def open_runoff_interface_read(self, path: _PathLike) -> None: ...
+    def save_runoff_step(self, dt: Union[timedelta, float]) -> None: ...
+    def read_runoff_step(self) -> bool: ...
+    def close_runoff_interface(self) -> None: ...
 
-    def model_write(self, path: str) -> None:
-        """Write the current model to a SWMM ``.inp`` file.
+    # ------------- Callbacks -------------
+    def set_step_begin_callback(
+        self, callback: Optional[Callable[[float, float], None]]
+    ) -> None: ...
+    def set_step_end_callback(
+        self, callback: Optional[Callable[[float, float], None]]
+    ) -> None: ...
+    def set_warning_callback(
+        self, callback: Optional[Callable[[int, str], None]]
+    ) -> None: ...
+    def set_progress_callback(
+        self, callback: Optional[Callable[[float], None]]
+    ) -> None:
+        """Register a progress callback receiving the elapsed fraction [0, 1].
 
-        Args:
-            path: Output file path.
+        @param callback: ``(elapsed_frac: float) -> None`` or ``None`` to clear.
         """
         ...
 
+    # ------------- Context manager -------------
     def __enter__(self) -> "Solver": ...
     def __exit__(
         self,
-        exc_type: Optional[Type[BaseException]],
+        exc_type: Optional[type],
         exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
+        exc_tb: Optional[object],
     ) -> bool: ...
+    def __repr__(self) -> str: ...

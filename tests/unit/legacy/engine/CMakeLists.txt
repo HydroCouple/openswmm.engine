@@ -49,6 +49,8 @@ function(add_solver_test TEST_NAME SOURCE_FILE)
             RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
             INSTALL_RPATH "${LIB_ROOT}"
     )
+
+    openswmm_stage_test_runtime_deps(${TEST_NAME})
 endfunction()
 
 add_solver_test(test_solver_api          test_solver_api.cpp)
@@ -56,3 +58,4 @@ add_solver_test(test_solver_errors       test_solver_errors.cpp)
 add_solver_test(test_solver_hotstart     test_solver_hotstart.cpp)
 add_solver_test(test_solver_shapes       test_solver_shapes.cpp)
 add_solver_test(test_solver_expanded_api test_solver_expanded_api.cpp)
+add_solver_test(test_gage_scalefactor     test_gage_scalefactor.cpp)

@@ -17,7 +17,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -117,12 +117,24 @@ public:
      * @param dt   Timestep (seconds).
      * @param temp Air temperature (deg F, scalar — broadcast).
      * @param wind Wind speed (mph, scalar — broadcast).
-     * @param rainfall Current rainfall rate (ft/sec, scalar — broadcast).
-     */
-    /**
+     * @param rainfall Per-subcatchment rainfall rate (ft/sec, sized
+     *                 n_subcatch — matching legacy subcatch_getRunoff →
+     *                 snow_getSnowMelt which receives each subcatchment's
+     *                 own precipitation).
+     * @param snowfall Per-subcatchment snowfall rate (ft/sec, sized
+     *                 n_subcatch).
      * @param gamma Psychrometric constant from climate (deg F^-1).
      * @param ea    Saturation vapor pressure from climate (in Hg).
      */
+    void execute(SimulationContext& ctx, double dt,
+                 double temp, double wind, const double* rainfall,
+                 const double* snowfall,
+                 double gamma = 0.0, double ea = 0.0);
+
+    /// Scalar convenience overload: broadcast a single rainfall (and
+    /// optional snowfall) rate to every subcatchment. Equivalent to filling
+    /// per-subcatchment arrays with the same value and calling the array
+    /// form above.
     void execute(SimulationContext& ctx, double dt,
                  double temp, double wind, double rainfall,
                  double snowfall = 0.0,
@@ -136,34 +148,29 @@ public:
     void setMeltCoeffs(int day_of_year);
 
     /**
-     * @brief Snow plowing — redistribute excess snow between subareas.
+     * @brief Snow accumulation + plowing — adds new snowfall to each pack
+     *        and redistributes excess snow between subareas.
      * @param ctx  Simulation context (for subcatchment areas).
      * @param dt   Timestep (seconds).
-     * @param snowfall  Snowfall rate (ft/sec).
-     * @note Legacy reference: snow.c — snow_plowSnow()
+     * @param snowfall  Per-subcatchment snowfall rate (ft/sec, sized n_subcatch).
+     * @note Legacy reference: snow.c — snow_plowSnow(), called from
+     *       runoff_execute() each runoff step before melt computation.
      */
+    void plowSnow(SimulationContext& ctx, double dt, const double* snowfall);
+
+    /// Scalar convenience overload: broadcast a single snowfall rate to every
+    /// subcatchment before accumulation + plowing.
     void plowSnow(SimulationContext& ctx, double dt, double snowfall);
 
     SnowSoA& state() { return soa_; }
+    const SnowSoA& state() const { return soa_; }
 
 private:
     SnowSoA soa_;
 
-    /// Batch ATI update: ati[i] += tipm * (temp - ati[i])
-    static void batchATIUpdate(double* ati, double temp, double tipm,
-                               double dt, int count);
-
-    /// Batch degree-day melt: melt[i] = dhm[i] * max(0, temp - tbase[i])
-    static void batchDegreeDayMelt(const double* dhm, const double* tbase,
-                                    double temp, double* melt, int count);
-
-    /// Batch rain-on-snow melt
-    static void batchRainOnSnowMelt(double temp, double wind, double gamma,
-                                     double ea, double rainfall,
-                                     double* melt, int count);
-
-    /// Batch snow accumulation: wsnow[i] += snowfall * dt
-    static void batchAccumulate(double* wsnow, double snowfall, double dt, int count);
+    /// Rain-on-snow melt rate for one rainfall value (legacy getRainmelt)
+    static double rainMeltRate(double temp, double wind, double gamma,
+                               double ea, double rainfall);
 };
 
 } // namespace snow

@@ -1,96 +1,59 @@
 """
-Rain Gage Access
-================
+Rain gage access (Pythonic v1 surface)
+======================================
 
 :author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
+:copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
 Type stubs for :mod:`openswmm.engine._gages`.
-
-The :class:`Gages` class provides access to rain gage rainfall during a
-simulation.
 """
 
-from typing import Union
+from collections.abc import Iterator
+from datetime import timedelta
+from typing import Any, Union
 
+import numpy as np
+from numpy.typing import NDArray
+
+from ._enums import GageDataSource, GageRainType
 from ._solver import Solver
 
 
+_Key = Union[int, str]
+
+
+class Gage:
+    id: str
+    index: int
+    solver: Solver
+    rain_type: GageRainType
+    data_source: GageDataSource
+    scale_factor: float
+    rainfall: float
+
+    def __init__(self, solver: Solver, index: int) -> None: ...
+    def set_rain_interval(self, seconds: Union[float, timedelta]) -> None: ...
+    def set_timeseries(self, ts_id: str) -> None: ...
+    def set_file(self, path: str, station_id: str) -> None: ...
+
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+
 class Gages:
-    """Access and override rain gage rainfall during a simulation.
-
-    All per-element methods accept either an integer index or a string gage
-    ID.  When a string is passed it is resolved via :meth:`get_index`.
-
-    Args:
-        solver: An active :class:`Solver` instance. The solver must remain
-                alive for the lifetime of this object.
-
-    Example::
-
-        from openswmm.engine import Solver, Gages
-
-        with Solver("model.inp", "model.rpt", "model.out") as s:
-            gages = Gages(s)
-            rain = gages.get_rainfall(0)           # by index
-            rain = gages.get_rainfall("RainGage")  # by name
-    """
-
     def __init__(self, solver: Solver) -> None: ...
 
-    def _resolve(self, idx: Union[int, str]) -> int:
-        """Resolve *idx* to an integer index.
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[Gage]: ...
+    def __getitem__(self, key: _Key) -> Gage: ...
+    def __contains__(self, key: object) -> bool: ...
 
-        Args:
-            idx: Integer index or string gage ID.
+    def get_index(self, gage_id: str) -> int: ...
+    def get_id(self, idx: int) -> str: ...
+    def add(self, gage_id: str) -> Gage: ...
+    def rename(self, key: _Key, new_id: str) -> None: ...
 
-        Returns:
-            Integer index.
-
-        Raises:
-            KeyError: If a string ID is not found.
-        """
-        ...
-
-    def count(self) -> int:
-        """Return the number of rain gages.
-
-        Returns:
-            Gage count.
-        """
-        ...
-
-    def get_index(self, gage_id: str) -> int:
-        """Return the index of a rain gage by ID.
-
-        Args:
-            gage_id: Gage identifier.
-
-        Returns:
-            Index, or -1 if not found.
-        """
-        ...
-
-    def get_rainfall(self, idx: Union[int, str]) -> float:
-        """Return the current rainfall rate at a gage.
-
-        Args:
-            idx: Gage index (int) or gage ID (str).
-
-        Returns:
-            Rainfall rate (project rainfall units).
-        """
-        ...
-
-    def set_rainfall(self, idx: Union[int, str], rainfall: float) -> None:
-        """Override rainfall at a gage for the current timestep.
-
-        Affects all subcatchments that use this gage. Applied for one
-        timestep only -- call again each step to sustain.
-
-        Args:
-            idx: Gage index (int) or gage ID (str).
-            rainfall: Rainfall rate (project rainfall units).
-        """
-        ...
+    rainfalls: NDArray[Any]
+    ids: NDArray[Any]

@@ -90,6 +90,38 @@ void Default2DOutputPlugin::extendAndWrite3D(hid_t ds, const double* data,
     H5Sclose(filespace);
 }
 
+void Default2DOutputPlugin::writeDoubleAttr(hid_t loc, const char* name,
+                                             double value) {
+    hid_t aspace = H5Screate(H5S_SCALAR);
+    hid_t attr   = H5Acreate2(loc, name, H5T_NATIVE_DOUBLE, aspace,
+                               H5P_DEFAULT, H5P_DEFAULT);
+    H5Awrite(attr, H5T_NATIVE_DOUBLE, &value);
+    H5Aclose(attr);
+    H5Sclose(aspace);
+}
+
+hid_t Default2DOutputPlugin::createFaceEnvelopeDataset(const char* name,
+                                                        const char* long_name,
+                                                        const char* units) {
+    // Fixed [nFace] dataset — no time dimension, no chunking. Overwritten in
+    // place each update(); since envelopes are monotone the last write is final.
+    hid_t space = H5Screate_simple(1, &n_faces_, nullptr);
+    hid_t ds = H5Dcreate2(file_id_, name, H5T_NATIVE_DOUBLE, space,
+                           H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    writeStringAttr(ds, "long_name", long_name);
+    writeStringAttr(ds, "units", units);
+    writeStringAttr(ds, "mesh", "Mesh2");
+    writeStringAttr(ds, "location", "face");
+    writeStringAttr(ds, "cell_methods", "time: maximum");
+    H5Sclose(space);
+    return ds;
+}
+
+void Default2DOutputPlugin::writeFaceEnvelope(hid_t ds, const double* data) {
+    if (ds == H5I_INVALID_HID) return;
+    H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
+}
+
 // ============================================================================
 // Lifecycle
 // ============================================================================
@@ -292,6 +324,47 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
 
         H5Sclose(space);
     }
+
+    // --- Edge geometry [nFace, 3] — time-invariant, indexed (tri, localEdge) ---
+    // Paired with the time-varying /Mesh2_edge_flux dataset so post-run readers
+    // can reconstruct cell-centred velocity via RT0 without re-deriving edge
+    // length / outward normals from the vertex coordinates.
+    {
+        hsize_t dims[2] = { n_faces, 3 };
+        hid_t space = H5Screate_simple(2, dims, nullptr);
+
+        hid_t ds_len = H5Dcreate2(file_id, "Mesh2_edge_length", H5T_NATIVE_DOUBLE,
+                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Dwrite(ds_len, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                 mesh.edge_length.data());
+        writeStringAttrFn(ds_len, "long_name", "edge length");
+        writeStringAttrFn(ds_len, "units", "m");
+        writeStringAttrFn(ds_len, "mesh", "Mesh2");
+        writeStringAttrFn(ds_len, "location", "edge");
+        H5Dclose(ds_len);
+
+        hid_t ds_nx = H5Dcreate2(file_id, "Mesh2_edge_nx", H5T_NATIVE_DOUBLE,
+                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Dwrite(ds_nx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                 mesh.edge_nx.data());
+        writeStringAttrFn(ds_nx, "long_name", "edge outward unit normal x component");
+        writeStringAttrFn(ds_nx, "units", "1");
+        writeStringAttrFn(ds_nx, "mesh", "Mesh2");
+        writeStringAttrFn(ds_nx, "location", "edge");
+        H5Dclose(ds_nx);
+
+        hid_t ds_ny = H5Dcreate2(file_id, "Mesh2_edge_ny", H5T_NATIVE_DOUBLE,
+                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Dwrite(ds_ny, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                 mesh.edge_ny.data());
+        writeStringAttrFn(ds_ny, "long_name", "edge outward unit normal y component");
+        writeStringAttrFn(ds_ny, "units", "1");
+        writeStringAttrFn(ds_ny, "mesh", "Mesh2");
+        writeStringAttrFn(ds_ny, "location", "edge");
+        H5Dclose(ds_ny);
+
+        H5Sclose(space);
+    }
 }
 
 void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
@@ -349,11 +422,20 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
                                            "coupling flux with SWMM node", "m s-1");
     ds_face_net_source_    = createFaceDS("Mesh2_face_net_source",
                                            "net volumetric source/sink", "m s-1");
+    ds_face_vx_            = createFaceDS("Mesh2_face_vx",
+                                          "cell-centred velocity X (RT0)", "m s-1");
+    ds_face_vy_            = createFaceDS("Mesh2_face_vy",
+                                          "cell-centred velocity Y (RT0)", "m s-1");
+    ds_face_continuity_err_ = createFaceDS("Mesh2_face_continuity_err",
+                                            "per-cell continuity residual", "m3 s-1");
 
     // Edge flux [nTime, nFace, 3]
     ds_edge_flux_ = createUnlimitedDataset("Mesh2_edge_flux", 3, zero3, edge_chunk);
     writeStringAttr(ds_edge_flux_, "long_name", "normal flux through cell edges");
-    writeStringAttr(ds_edge_flux_, "units", "m2 s-1");
+    // Volumetric edge flux F_e = -q·n_e·L_e (see SurfaceFluxCalculator
+    // computeEdgeFluxes, which derives the m3/s dimensioning). Matches the
+    // m3 s-1 units of the continuity-residual datasets that sum these fluxes.
+    writeStringAttr(ds_edge_flux_, "units", "m3 s-1");
     writeStringAttr(ds_edge_flux_, "mesh", "Mesh2");
     writeStringAttr(ds_edge_flux_, "location", "edge");
 
@@ -363,6 +445,15 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     writeStringAttr(ds_node_head_, "units", "m");
     writeStringAttr(ds_node_head_, "mesh", "Mesh2");
     writeStringAttr(ds_node_head_, "location", "node");
+
+    // --- Cumulative rendering envelopes (fixed [nFace], overwritten in place) ---
+    ds_face_max_depth_ = createFaceEnvelopeDataset(
+        "Mesh2_face_max_depth", "maximum overland flow depth", "m");
+    ds_face_max_velocity_ = createFaceEnvelopeDataset(
+        "Mesh2_face_max_velocity", "maximum cell velocity magnitude", "m s-1");
+    ds_face_max_continuity_err_ = createFaceEnvelopeDataset(
+        "Mesh2_face_max_continuity_err",
+        "maximum absolute per-cell continuity residual", "m3 s-1");
 }
 
 // ============================================================================
@@ -395,12 +486,24 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     extendAndWrite2D(ds_face_rainfall_,      snap.surface_rainfall.data(),      n_faces_);
     extendAndWrite2D(ds_face_coupling_flux_, snap.surface_coupling_flux.data(), n_faces_);
     extendAndWrite2D(ds_face_net_source_,    snap.surface_net_source.data(),    n_faces_);
+    extendAndWrite2D(ds_face_vx_,            snap.surface_face_vx.data(),       n_faces_);
+    extendAndWrite2D(ds_face_vy_,            snap.surface_face_vy.data(),       n_faces_);
+    extendAndWrite2D(ds_face_continuity_err_, snap.surface_continuity_err.data(), n_faces_);
 
     // Write per-edge fields [nFace, 3]
     extendAndWrite3D(ds_edge_flux_, snap.surface_edge_flux.data(), n_faces_, 3);
 
     // Write per-node fields
     extendAndWrite2D(ds_node_head_, snap.surface_vert_head.data(), n_nodes_);
+
+    // Overwrite cumulative envelopes in place (monotone; last write is final).
+    if (snap.surface_stat_max_depth.size() == n_faces_)
+        writeFaceEnvelope(ds_face_max_depth_, snap.surface_stat_max_depth.data());
+    if (snap.surface_stat_max_velocity.size() == n_faces_)
+        writeFaceEnvelope(ds_face_max_velocity_, snap.surface_stat_max_velocity.data());
+    if (snap.surface_stat_max_cont_err.size() == n_faces_)
+        writeFaceEnvelope(ds_face_max_continuity_err_,
+                          snap.surface_stat_max_cont_err.data());
 
     ++n_steps_;
     return 0;
@@ -410,7 +513,36 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
 // finalize()
 // ============================================================================
 
-int Default2DOutputPlugin::finalize(const SimulationContext& /*ctx*/) {
+int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
+    // Write the global 2D mass balance once, now that all terms are final.
+    if (file_id_ != H5I_INVALID_HID && ctx.mass_balance_2d.active) {
+        const auto& mb = ctx.mass_balance_2d;
+        hid_t grp = H5Gcreate2(file_id_, "/mass_balance_2d",
+                                H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        if (grp >= 0) {
+            auto writeScalar = [this](hid_t loc, const char* name, double v) {
+                hid_t space = H5Screate(H5S_SCALAR);
+                hid_t ds = H5Dcreate2(loc, name, H5T_NATIVE_DOUBLE, space,
+                                       H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+                H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &v);
+                writeStringAttr(ds, "units", "m3");
+                H5Dclose(ds);
+                H5Sclose(space);
+            };
+            writeScalar(grp, "init_storage",          mb.init_storage);
+            writeScalar(grp, "final_storage",         mb.final_storage);
+            writeScalar(grp, "rainfall_in",           mb.rainfall_in);
+            writeScalar(grp, "coupling_1d_to_2d_in",  mb.coupling_1d_to_2d_in);
+            writeScalar(grp, "coupling_2d_to_1d_out", mb.coupling_2d_to_1d_out);
+            writeScalar(grp, "outfall_in",            mb.outfall_in);
+            writeScalar(grp, "outfall_out",           mb.outfall_out);
+            writeScalar(grp, "boundary_in",           mb.boundary_in);
+            writeScalar(grp, "boundary_out",          mb.boundary_out);
+            writeDoubleAttr(grp, "continuity_error",  mb.error());
+            H5Gclose(grp);
+        }
+    }
+
     // Close all datasets
     auto closeDS = [](hid_t& ds) {
         if (ds != H5I_INVALID_HID) { H5Dclose(ds); ds = H5I_INVALID_HID; }
@@ -425,8 +557,14 @@ int Default2DOutputPlugin::finalize(const SimulationContext& /*ctx*/) {
     closeDS(ds_face_rainfall_);
     closeDS(ds_face_coupling_flux_);
     closeDS(ds_face_net_source_);
+    closeDS(ds_face_vx_);
+    closeDS(ds_face_vy_);
+    closeDS(ds_face_continuity_err_);
     closeDS(ds_edge_flux_);
     closeDS(ds_node_head_);
+    closeDS(ds_face_max_depth_);
+    closeDS(ds_face_max_velocity_);
+    closeDS(ds_face_max_continuity_err_);
 
     if (file_id_ != H5I_INVALID_HID) {
         H5Fclose(file_id_);

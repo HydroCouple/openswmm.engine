@@ -4,7 +4,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <sstream>
 #include <cctype>
+#include <cstdio>
 #include <unordered_map>
 
 namespace openswmm {
@@ -37,9 +38,10 @@ void ControlEngine::init(const std::vector<Rule>& rules) {
         for (auto& a : rules_[static_cast<size_t>(r)].else_actions) a.rule_idx = r;
     }
     buildPremiseSoA();
-    // link_time_last_set_ is sized lazily in applyPendingActions
-    // when we first know the link count from ctx.
+    // timeLastSet storage moved to ctx.links.time_last_set, owned by
+    // SWMMEngine::stepRouting (P1-C09).
     link_time_last_set_.clear();
+    next_rule_eval_time_ = -1.0;
 }
 
 // ============================================================================
@@ -48,6 +50,18 @@ void ControlEngine::init(const std::vector<Rule>& rules) {
 
 void ControlEngine::buildPremiseSoA() {
     premise_groups_.clear();
+
+    // Per-rule premise offsets into the flat result cache.
+    // rule_premise_offset_[r] = first slot in premise_results_ that
+    // belongs to rule r; the last entry is the total premise count.
+    rule_premise_offset_.assign(rules_.size() + 1, 0);
+    for (size_t r = 0; r < rules_.size(); ++r) {
+        rule_premise_offset_[r + 1] =
+            rule_premise_offset_[r] +
+            static_cast<int>(rules_[r].premises.size());
+    }
+    total_premises_ = rule_premise_offset_.back();
+    premise_results_.assign(static_cast<size_t>(total_premises_), 0);
 
     // Count premises per variable type
     std::unordered_map<int, int> type_counts;
@@ -70,6 +84,7 @@ void ControlEngine::buildPremiseSoA() {
         g.rule_idx.reserve(static_cast<size_t>(kv.second));
         g.premise_idx.reserve(static_cast<size_t>(kv.second));
         g.obj_idx.reserve(static_cast<size_t>(kv.second));
+        g.flat_idx.reserve(static_cast<size_t>(kv.second));
         g.op.reserve(static_cast<size_t>(kv.second));
         g.rhs_value.reserve(static_cast<size_t>(kv.second));
         g.rhs_is_variable.reserve(static_cast<size_t>(kv.second));
@@ -90,6 +105,7 @@ void ControlEngine::buildPremiseSoA() {
             g.rule_idx.push_back(r);
             g.premise_idx.push_back(p);
             g.obj_idx.push_back(prem.lhs_idx);
+            g.flat_idx.push_back(rule_premise_offset_[static_cast<size_t>(r)] + p);
             g.op.push_back(static_cast<int>(prem.op));
             g.rhs_value.push_back(prem.rhs_value);
             g.rhs_is_variable.push_back(prem.rhs_is_variable);
@@ -118,41 +134,43 @@ void ControlEngine::batchEvaluateGroup(PremiseSoA& g,
                                         double current_time, double half_step) {
     if (g.count == 0) return;
 
-    // Phase 1: Batch gather LHS values — single pass over one SoA array
+    // Phase 1a: Batch gather LHS values — single pass over one SoA array
     // This is the key vectorisation win: all gathers hit the same array type
     for (int i = 0; i < g.count; ++i) {
         auto ui = static_cast<size_t>(i);
         g.lhs_values[ui] = getVariableValue(ctx, g.var_type, g.obj_idx[ui], current_time);
     }
 
-    // Phase 2: Batch compare — SIMD-friendly: contiguous lhs[] vs threshold[]
+    // Phase 1b: Batch compare — SIMD-friendly: contiguous lhs[] vs threshold[]
+    //          Result lands in both g.results[] (kept for legacy callers) and
+    //          the flat premise_results_ cache, indexed via g.flat_idx[].
+    //          Variable-RHS premises are skipped here (zero placeholder) and
+    //          handled by evaluatePremise() in Phase 1b of evaluate().
     bool is_time = (g.var_type == ConditionVar::SIM_TIME ||
                     g.var_type == ConditionVar::CLOCK_TIME ||
                     g.var_type == ConditionVar::LINK_TIMEOPEN ||
                     g.var_type == ConditionVar::LINK_TIMECLOSED);
 
     for (int i = 0; i < g.count; ++i) {
-        auto ui = static_cast<size_t>(i);
+        auto ui   = static_cast<size_t>(i);
         double lhs = g.lhs_values[ui];
         double rhs = g.rhs_value[ui];
-        auto op = static_cast<CompareOp>(g.op[ui]);
+        auto op    = static_cast<CompareOp>(g.op[ui]);
+        uint8_t r;
 
         if (lhs == MISSING) {
-            g.results[ui] = false;
+            r = 0;
         } else if (g.rhs_is_variable[ui]) {
-            // Variable RHS — can't batch, evaluate individually
-            // (rare case; most premises have constant RHS)
-            g.results[ui] = false;  // placeholder — full eval in per-rule pass
+            // Variable RHS — handled separately by the per-rule scalar pass.
+            r = 0;
         } else if (is_time) {
-            g.results[ui] = compareTimes(lhs, op, rhs, half_step);
+            r = compareTimes(lhs, op, rhs, half_step) ? 1 : 0;
         } else {
-            // Pure arithmetic comparison — vectorisable
-            g.results[ui] = compareValues(lhs, op, rhs);
+            r = compareValues(lhs, op, rhs) ? 1 : 0;
         }
+        g.results[ui] = (r != 0);
+        premise_results_[static_cast<size_t>(g.flat_idx[ui])] = r;
     }
-
-    // Phase 3: Scatter results to per-rule tracking
-    // (The actual AND/OR combination happens in the per-rule pass in evaluate())
 }
 
 // ============================================================================
@@ -160,90 +178,90 @@ void ControlEngine::batchEvaluateGroup(PremiseSoA& g,
 // ============================================================================
 
 int ControlEngine::evaluate(SimulationContext& ctx, double current_time, double dt) {
-    double half_step = dt / 2.0;
+    // ---- RULE_STEP gating (P1-C10) ----
+    // Legacy routing.c:286-290 only invokes controls_evaluate when the
+    // routing clock reaches the next configured rule-evaluation time.
+    // rule_step == 0 means "every routing step" (legacy default).
+    if (ctx.options.rule_step > 0.0) {
+        if (next_rule_eval_time_ < 0.0)
+            next_rule_eval_time_ = ctx.current_date;
+        if (ctx.current_date + 0.5 * dt / constants::SEC_PER_DAY
+            < next_rule_eval_time_) {
+            last_action_count_ = 0;
+            return 0;
+        }
+        next_rule_eval_time_ =
+            ctx.current_date + ctx.options.rule_step / constants::SEC_PER_DAY;
+    }
+
+    // dt is passed in seconds (matches the rest of stepRouting).  Convert
+    // to days so compareTimes() tolerances are in the same unit as the
+    // LHS for SIM_TIME / CLOCK_TIME / LINK_TIMEOPEN / LINK_TIMECLOSED.
+    // (P0-C03 — legacy routing.c:289 passes routingStep/SECperDAY.)
+    const double dt_days   = dt / constants::SEC_PER_DAY;
+    const double half_step = dt_days / 2.0;
     pending_actions_.clear();
 
-    // ---- Phase 1: Batch evaluate all premise groups by variable type ----
-    // Each group gathers all LHS values of one type, then batch-compares.
-    // This is the SIMD-friendly hot path (AD-14).
+    // ---- Phase 1a: batch gather + compare each premise group ----
+    //              Group-major; SIMD-friendly; writes results into both
+    //              g.results[] and the flat premise_results_ cache.
     for (auto& g : premise_groups_) {
         batchEvaluateGroup(g, ctx, current_time, half_step);
     }
 
-    // ---- Phase 2: Combine per-rule results using AND/OR logic ----
-    // Build a lookup from (rule_idx, premise_idx) → batch result
-    // For premises with variable RHS or expressions, fall back to per-premise eval.
-    std::fill(rule_results_.begin(), rule_results_.end(), true);
-
-    // Scatter batch results into per-rule tracking
-    for (const auto& g : premise_groups_) {
-        for (int i = 0; i < g.count; ++i) {
-            auto ui = static_cast<size_t>(i);
-            int r = g.rule_idx[ui];
-            int p_idx = g.premise_idx[ui];
-            auto ur = static_cast<size_t>(r);
-            auto up = static_cast<size_t>(p_idx);
-
-            if (g.rhs_is_variable[ui]) {
-                // Variable RHS — can't use batch result; evaluate per-premise
-                bool pval = evaluatePremise(ctx, rules_[ur].premises[up],
-                                             current_time, half_step);
-                // Apply AND/OR logic
-                if (p_idx == 0) {
-                    rule_results_[ur] = pval;
-                } else if (rules_[ur].premises[up].logic == LogicOp::AND) {
-                    if (!rule_results_[ur]) continue;  // short-circuit
-                    rule_results_[ur] = rule_results_[ur] && pval;
-                } else {
-                    if (!rule_results_[ur]) rule_results_[ur] = pval;
-                }
-            } else {
-                // Use batch result
-                bool pval = g.results[ui];
-                if (p_idx == 0) {
-                    rule_results_[ur] = pval;
-                } else if (rules_[ur].premises[up].logic == LogicOp::AND) {
-                    if (!rule_results_[ur]) continue;
-                    rule_results_[ur] = rule_results_[ur] && pval;
-                } else {
-                    if (!rule_results_[ur]) rule_results_[ur] = pval;
-                }
-            }
+    // ---- Phase 1b: scalar pass for variable-RHS and expression premises ----
+    //              These can't be batched. We walk each rule, re-evaluate
+    //              just those premises with the scalar path, and stash the
+    //              result in the flat cache so Phase 2 doesn't care.
+    for (size_t r = 0; r < rules_.size(); ++r) {
+        const auto& rule = rules_[r];
+        const int base = rule_premise_offset_[r];
+        for (size_t p = 0; p < rule.premises.size(); ++p) {
+            const auto& prem = rule.premises[p];
+            if (!prem.is_expression && !prem.rhs_is_variable) continue;
+            const bool ok = evaluatePremise(ctx, prem, current_time, half_step);
+            premise_results_[static_cast<size_t>(base) + p] = ok ? 1 : 0;
         }
     }
 
-    // Handle expression-based premises (not in any batch group)
-    for (int r = 0; r < static_cast<int>(rules_.size()); ++r) {
-        auto ur = static_cast<size_t>(r);
-        const auto& rule = rules_[ur];
+    // ---- Phase 2: per-rule AND/OR reduction in declaration order ----
+    //              Fixes P0-C04 (SoA reordering broke short-circuit
+    //              semantics) and P0-C05 (expression premises were
+    //              combined out-of-order).
+    rule_results_.assign(rules_.size(), false);
+    for (size_t r = 0; r < rules_.size(); ++r) {
+        const auto& rule = rules_[r];
+        const int base = rule_premise_offset_[r];
+        bool result = false;
         for (size_t p = 0; p < rule.premises.size(); ++p) {
-            const auto& prem = rule.premises[p];
-            if (!prem.is_expression) continue;
-            bool pval = evaluatePremise(ctx, prem, current_time, half_step);
+            const uint8_t pval =
+                premise_results_[static_cast<size_t>(base) + p];
+            const auto logic = rule.premises[p].logic;
             if (p == 0) {
-                rule_results_[ur] = pval;
-            } else if (prem.logic == LogicOp::AND) {
-                if (!rule_results_[ur]) continue;
-                rule_results_[ur] = rule_results_[ur] && pval;
-            } else {
-                if (!rule_results_[ur]) rule_results_[ur] = pval;
+                result = (pval != 0);
+            } else if (logic == LogicOp::AND) {
+                if (!result) continue;          // short-circuit
+                result = (pval != 0);
+            } else { // OR
+                if (!result) result = (pval != 0);
             }
         }
+        rule_results_[r] = result;
     }
 
     // ---- Phase 3: Collect actions from fired rules ----
-    for (int r = 0; r < static_cast<int>(rules_.size()); ++r) {
-        auto ur = static_cast<size_t>(r);
+    for (size_t ur = 0; ur < rules_.size(); ++ur) {
+        const int r = static_cast<int>(ur);
         const auto& actions = rule_results_[ur]
             ? rules_[ur].then_actions : rules_[ur].else_actions;
         for (auto a : actions) {
             // PID / CURVE / TIMESERIES actions read the LAST premise's LHS/RHS
-            // from control_value_ / set_point_. Phase 1's batch path fills
-            // rule_results_ but does NOT set these members — only the scalar
-            // evaluatePremise() path does. Re-evaluate the rule's last premise
-            // here for modulated actions so the PID sees the live control
-            // variable (matching legacy controls.c, where ControlValue/SetPoint
-            // are updated as a side effect of every premise evaluation).
+            // from control_value_ / set_point_. The batch path does NOT set
+            // these members — only the scalar evaluatePremise() path does.
+            // Re-evaluate the rule's last premise here for modulated actions
+            // so the PID sees the live control variable (matching legacy
+            // controls.c where ControlValue/SetPoint are set as a side
+            // effect of every premise evaluation).
             if (a.type == ActionType::PID ||
                 a.type == ActionType::CURVE ||
                 a.type == ActionType::TIMESERIES) {
@@ -253,7 +271,13 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_time, double 
                 }
             }
             updateActionValue(a, ctx, current_time, dt);
-            pending_actions_.push_back({a.link_idx, a.value, rules_[ur].priority, r});
+            PendingAction pa;
+            pa.link_idx = a.link_idx;
+            pa.value    = a.value;
+            pa.priority = rules_[ur].priority;
+            pa.rule_idx = r;
+            pa.type     = a.type;
+            pending_actions_.push_back(pa);
         }
     }
 
@@ -266,10 +290,7 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_time, double 
 // ============================================================================
 
 int ControlEngine::applyPendingActions(SimulationContext& ctx, double current_time) {
-    // Lazy-init link_time_last_set_ to match link count
-    if (static_cast<int>(link_time_last_set_.size()) != ctx.n_links()) {
-        link_time_last_set_.assign(static_cast<size_t>(ctx.n_links()), ctx.current_date);
-    }
+    (void)current_time;
 
     std::unordered_map<int, PendingAction> best;
     for (const auto& pa : pending_actions_) {
@@ -285,12 +306,15 @@ int ControlEngine::applyPendingActions(SimulationContext& ctx, double current_ti
         auto ul = static_cast<size_t>(kv.first);
         if (ctx.links.target_setting[ul] != kv.second.value) {
             ctx.links.target_setting[ul] = kv.second.value;
-            // Record the time when this link's setting changed
-            // (for TIMEOPEN/TIMECLOSED premise evaluation).
-            // Legacy stores this as absolute date (decimal days).
-            link_time_last_set_[ul] = ctx.current_date;
-            // Log for the Control Actions report (Gap #67)
-            if (ctx.options.rpt_controls) {
+            // timeLastSet is owned by the routing layer (SWMMEngine::
+            // stepRouting) and updated only on open<->closed transitions,
+            // matching legacy routing.c:295-299 (P1-C09).
+            //
+            // Log for the Control Actions report. Legacy controls.c:1770
+            // excludes modulated (CURVE / TIMESERIES / PID) actions from
+            // the report — match that here (P1-C08).
+            if (ctx.options.rpt_controls &&
+                kv.second.type == ActionType::NUMERIC) {
                 int ri = kv.second.rule_idx;
                 std::string rname = (ri >= 0 && ri < static_cast<int>(rules_.size()))
                     ? rules_[static_cast<std::size_t>(ri)].name : "Rule?";
@@ -482,19 +506,21 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
         case ConditionVar::LINK_TIMEOPEN:
             // Returns MISSING if link is closed (setting <= 0).
             // Otherwise returns elapsed time (in days) since setting last changed.
-            // Matches legacy: CurrentDate + CurrentTime - Link[j].timeLastSet
+            // Matches legacy: CurrentDate + CurrentTime - Link[j].timeLastSet.
+            // Storage owned by ctx.links.time_last_set (updated by the
+            // routing layer on open<->closed transitions; P1-C09).
             if (idx < 0 || idx >= ctx.n_links()) return MISSING;
             if (ctx.links.setting[ui] <= 0.0) return MISSING;
-            if (ui < link_time_last_set_.size())
-                return ctx.current_date - link_time_last_set_[ui];
+            if (ui < ctx.links.time_last_set.size())
+                return ctx.current_date - ctx.links.time_last_set[ui];
             return 0.0;
         case ConditionVar::LINK_TIMECLOSED:
             // Returns MISSING if link is open (setting > 0).
             // Otherwise returns elapsed time (in days) since setting last changed.
             if (idx < 0 || idx >= ctx.n_links()) return MISSING;
             if (ctx.links.setting[ui] > 0.0) return MISSING;
-            if (ui < link_time_last_set_.size())
-                return ctx.current_date - link_time_last_set_[ui];
+            if (ui < ctx.links.time_last_set.size())
+                return ctx.current_date - ctx.links.time_last_set[ui];
             return 0.0;
 
         case ConditionVar::GAGE_RAIN:
@@ -509,15 +535,27 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
             return total;
         }
 
-        case ConditionVar::SIM_TIME:      return current_time;
+        case ConditionVar::SIM_TIME:
+            // ctx.current_time is stored in SECONDS (see TimestepController.cpp:88).
+            // Legacy uses ElapsedTime in days; convert here so SIM_TIME LHS
+            // matches the RHS parsed by parseTimeToken (decimal days).
+            // (Extension to P0-C01 — same root cause: unit mismatch.)
+            return current_time / constants::SEC_PER_DAY;
         case ConditionVar::SIM_DATE:      return ctx.current_date;
-        case ConditionVar::CLOCK_TIME: {
-            int ch, cm, cs;
-            datetime::decodeTime(ctx.current_date, ch, cm, cs);
-            return static_cast<double>(ch) + cm / 60.0 + cs / 3600.0;
+        case ConditionVar::CLOCK_TIME:
+            // Legacy controls.c:1851-1852 returns CurrentTime = fractional
+            // part of the day (decimal days, 0..1).  RHS is parsed in days
+            // too via datetime_strToTime, so both sides agree.  (P0-C02)
+            return ctx.current_date - std::floor(ctx.current_date);
+        case ConditionVar::SIM_DAY: {
+            // Matches legacy datetime.c:469-478:
+            //   ((floor(date) + DateDelta) % 7) + 1
+            // The DateDelta shift is essential — without it the result is
+            // wrong by 6 days. (P0-C06)
+            int t = static_cast<int>(std::floor(ctx.current_date))
+                  + openswmm::datetime::DateDelta;
+            return static_cast<double>((t % 7) + 1);
         }
-        case ConditionVar::SIM_DAY:
-            return static_cast<double>((static_cast<int>(std::floor(ctx.current_date)) % 7) + 1);
         case ConditionVar::SIM_MONTH:
             return static_cast<double>(datetime::monthOfYear(ctx.current_date));
         case ConditionVar::SIM_DAYOFYEAR:
@@ -754,6 +792,106 @@ static bool parseStatusValue(const std::string& tok, double& val) {
     return false;
 }
 
+// ============================================================================
+// Legacy-parity RHS parsers (P0-C01).
+//
+// Mirror src/legacy/engine/controls.c:1354-1410 (getPremiseValue):
+//   r_TIME / r_CLOCKTIME / r_TIMEOPEN / r_TIMECLOSED -> datetime_strToTime
+//   r_DATE                                            -> datetime_strToDate
+//   r_DAYOFYEAR                                       -> "M/D" or 1..365
+//   r_DAY                                             -> 1..7
+//   r_MONTH                                           -> 1..12
+// ============================================================================
+
+/// Parse a time token (decimal hours or HH[:MM[:SS]]) to decimal days.
+/// Mirrors legacy datetime_strToTime() in datetime.c.
+static bool parseTimeToken(const std::string& s, double& out_days) {
+    // Try decimal hours first
+    try {
+        size_t pos = 0;
+        double hours = std::stod(s, &pos);
+        if (pos == s.size()) {  // pure decimal -> hours
+            out_days = hours / 24.0;
+            return true;
+        }
+    } catch (...) { /* fall through */ }
+    // Parse HH:MM:SS (MM and SS optional, matching legacy sscanf behaviour)
+    int hr = 0, mn = 0, sc = 0;
+    int n = std::sscanf(s.c_str(), "%d:%d:%d", &hr, &mn, &sc);
+    if (n >= 1 && hr >= 0 && mn >= 0 && sc >= 0) {
+        out_days = openswmm::datetime::encodeTime(hr, mn, sc);
+        return true;
+    }
+    return false;
+}
+
+/// Parse a date token (M/D/Y, M-D-Y, etc.) to a DateTime.
+/// Mirrors legacy datetime_strToDate(); accepts any non-digit as separator.
+static bool parseDateToken(const std::string& s, double& out_date) {
+    int m = 0, d = 0, y = 0;
+    char sep1 = 0, sep2 = 0;
+    if (std::sscanf(s.c_str(), "%d%c%d%c%d", &m, &sep1, &d, &sep2, &y) == 5) {
+        // encodeDate returns -DateDelta on invalid date; surface that as failure
+        out_date = openswmm::datetime::encodeDate(y, m, d);
+        return out_date != -openswmm::datetime::DateDelta;
+    }
+    return false;
+}
+
+/// Parse a day-of-year token: "M/D" -> day-of-year, or integer 1..365.
+/// Mirrors legacy controls.c:1394-1402.
+static bool parseDayOfYearToken(const std::string& s, double& out_doy) {
+    int m = 0, d = 0;
+    char sep = 0;
+    if (std::sscanf(s.c_str(), "%d%c%d", &m, &sep, &d) == 3) {
+        // Use 1947 as the reference year (matches legacy controls.c).
+        double date = openswmm::datetime::encodeDate(1947, m, d);
+        if (date != -openswmm::datetime::DateDelta) {
+            out_doy = static_cast<double>(openswmm::datetime::dayOfYear(date));
+            return true;
+        }
+        return false;
+    }
+    double v = 0.0;
+    if (!tryParseDouble(s, v)) return false;
+    if (v < 1.0 || v > 365.0) return false;
+    out_doy = v;
+    return true;
+}
+
+/// Dispatch RHS parsing on the LHS attribute, mirroring legacy
+/// getPremiseValue() in controls.c:1354-1410.
+static bool parsePremiseRHS(const std::string& tok, ConditionVar lhs_var,
+                            double& val) {
+    switch (lhs_var) {
+        case ConditionVar::LINK_STATUS:
+            return parseStatusValue(tok, val);
+
+        case ConditionVar::SIM_TIME:
+        case ConditionVar::CLOCK_TIME:
+        case ConditionVar::LINK_TIMEOPEN:
+        case ConditionVar::LINK_TIMECLOSED:
+            return parseTimeToken(tok, val);
+
+        case ConditionVar::SIM_DATE:
+            return parseDateToken(tok, val);
+
+        case ConditionVar::SIM_DAYOFYEAR:
+            return parseDayOfYearToken(tok, val);
+
+        case ConditionVar::SIM_DAY:
+            if (!tryParseDouble(tok, val)) return false;
+            return val >= 1.0 && val <= 7.0;
+
+        case ConditionVar::SIM_MONTH:
+            if (!tryParseDouble(tok, val)) return false;
+            return val >= 1.0 && val <= 12.0;
+
+        default:
+            return tryParseDouble(tok, val);
+    }
+}
+
 } // anonymous namespace
 
 int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx) {
@@ -789,11 +927,60 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
         state = ParseState::IDLE;
     };
 
+    // Helper: resolve a token to a named variable (case-sensitive match
+    // against names registered via VARIABLE / addNamedVariable).
+    auto resolveNamedVariable = [&](const std::string& tok,
+                                    ConditionVar& out_var,
+                                    int& out_idx) -> bool {
+        for (const auto& nv : named_vars_) {
+            if (nv.name == tok) {
+                out_var = nv.var;
+                out_idx = nv.idx;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Helper: resolve a token to a named EXPRESSION; returns its index in
+    // expressions_ (>= 0) or -1 if no match.
+    auto resolveExpression = [&](const std::string& tok) -> int {
+        auto it = expr_index_.find(tok);
+        return (it == expr_index_.end()) ? -1 : it->second;
+    };
+
     for (const auto& line : lines) {
         auto toks = tokenize(line);
         if (toks.empty()) continue;
 
         std::string keyword = to_upper(toks[0]);
+
+        // ---- VARIABLE keyword (P1-C07) ----
+        // Format: VARIABLE <name> = <object> <id> <attribute>
+        // Mirrors legacy controls.c:864 (controls_addVariable).
+        if (keyword == "VARIABLE") {
+            if (toks.size() < 6 || toks[2] != "=") return -1;
+            int k = 3;
+            ConditionVar var; int obj_idx = -1; int extra = 0;
+            if (!parsePremiseVariable(toks, k, ctx, var, obj_idx, extra))
+                return -1;
+            addNamedVariable(toks[1], var, obj_idx);
+            continue;
+        }
+
+        // ---- EXPRESSION keyword (P1-C07) ----
+        // Format: EXPRESSION <name> = <formula tokens...>
+        // Mirrors legacy controls.c:891 (controls_addExpression).
+        if (keyword == "EXPRESSION") {
+            if (toks.size() < 4 || toks[2] != "=") return -1;
+            std::string formula;
+            for (size_t i = 3; i < toks.size(); ++i) {
+                if (i > 3) formula += ' ';
+                formula += toks[i];
+            }
+            if (addExpression(toks[1], formula) < 0) return -1;
+            continue;
+        }
 
         // ---- RULE keyword ----
         if (keyword == "RULE") {
@@ -838,15 +1025,33 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
 
                 int k = 1;  // start after IF/AND/OR keyword
 
-                // Parse LHS variable
-                ConditionVar lhs_cv;
+                // Parse LHS variable — try named expression first, then
+                // named variable, then object|id|attribute. (P1-C07)
+                ConditionVar lhs_cv = ConditionVar::NODE_DEPTH;
                 int lhs_idx = -1;
                 int lhs_param = 0;
-                if (!parsePremiseVariable(toks, k, ctx, lhs_cv, lhs_idx, lhs_param))
+                if (k < static_cast<int>(toks.size())) {
+                    int ei = resolveExpression(toks[static_cast<size_t>(k)]);
+                    if (ei >= 0) {
+                        prem.is_expression = true;
+                        prem.expr_idx = ei;
+                        k += 1;
+                    } else if (resolveNamedVariable(toks[static_cast<size_t>(k)],
+                                                    lhs_cv, lhs_idx)) {
+                        prem.lhs_var = lhs_cv;
+                        prem.lhs_idx = lhs_idx;
+                        k += 1;
+                    } else if (!parsePremiseVariable(toks, k, ctx,
+                                                     lhs_cv, lhs_idx, lhs_param)) {
+                        return -1;
+                    } else {
+                        prem.lhs_var = lhs_cv;
+                        prem.lhs_idx = lhs_idx;
+                        prem.lhs_param = lhs_param;
+                    }
+                } else {
                     return -1;
-                prem.lhs_var = lhs_cv;
-                prem.lhs_idx = lhs_idx;
-                prem.lhs_param = lhs_param;
+                }
 
                 // Parse relational operator
                 if (k >= static_cast<int>(toks.size())) return -1;
@@ -858,27 +1063,36 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 // Parse RHS: either a variable or a constant value
                 if (k >= static_cast<int>(toks.size())) return -1;
 
-                // Try to parse as a variable first
+                // Try to parse as a variable first — named var, then
+                // object|id|attribute.  (Expressions are LHS-only in legacy.)
                 int saved_k = k;
-                ConditionVar rhs_cv;
+                ConditionVar rhs_cv = ConditionVar::NODE_DEPTH;
                 int rhs_idx = -1;
                 int rhs_param = 0;
-                if (parsePremiseVariable(toks, k, ctx, rhs_cv, rhs_idx, rhs_param)) {
+                if (resolveNamedVariable(toks[static_cast<size_t>(k)],
+                                          rhs_cv, rhs_idx)) {
+                    prem.rhs_is_variable = true;
+                    prem.rhs_var = rhs_cv;
+                    prem.rhs_idx = rhs_idx;
+                    k += 1;
+                } else if (parsePremiseVariable(toks, k, ctx,
+                                                 rhs_cv, rhs_idx, rhs_param)) {
                     prem.rhs_is_variable = true;
                     prem.rhs_var = rhs_cv;
                     prem.rhs_idx = rhs_idx;
                 } else {
-                    // Parse as constant value
+                    // Parse as constant value with unit-aware dispatch
+                    // (P0-C01).  parsePremiseRHS mirrors legacy
+                    // controls.c:1354-1410 (getPremiseValue): decimal-hours
+                    // and HH:MM:SS for SIM_TIME / CLOCK_TIME / LINK_TIMEOPEN
+                    // / LINK_TIMECLOSED, date strings for SIM_DATE, M/D or
+                    // integer 1..365 for SIM_DAYOFYEAR, range-checked
+                    // integers for SIM_DAY / SIM_MONTH, OFF/ON/CLOSED/OPEN
+                    // for LINK_STATUS, raw double otherwise.
                     k = saved_k;
                     std::string val_tok = toks[static_cast<size_t>(k)];
                     double val = 0.0;
-
-                    // Handle STATUS values (OFF/ON/CLOSED/OPEN)
-                    if (lhs_cv == ConditionVar::LINK_STATUS) {
-                        if (!parseStatusValue(val_tok, val)) return -1;
-                    } else {
-                        if (!tryParseDouble(val_tok, val)) return -1;
-                    }
+                    if (!parsePremiseRHS(val_tok, lhs_cv, val)) return -1;
                     prem.rhs_value = val;
                     k++;
                 }

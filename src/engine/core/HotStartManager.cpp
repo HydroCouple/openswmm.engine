@@ -21,7 +21,7 @@
  * @ingroup engine_hotstart
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -610,6 +610,117 @@ int HotStartManager::apply(HotStartFile& hs,
     }
 
     return missing;
+}
+
+// ============================================================================
+// HotStartManager::apply_legacy_routing()
+// ============================================================================
+//
+// Reads a legacy EPA SWMM5 `.hsf` file (the format written by the reference
+// engine for SAVE/USE HOTSTART) and applies its node/link routing state BY
+// OBJECT INDEX. Mirrors legacy hotstart.c initializeFromHotstartFile() +
+// readRouting(); see also hotstart_is_valid() for the stamp/version logic.
+
+int HotStartManager::apply_legacy_routing(
+        const std::string& path,
+        SimulationContext& ctx,
+        std::function<void(const std::string&)> warn_cb) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        tl_last_io_error = "Cannot open hotstart file '" + path + "'";
+        return 1;
+    }
+
+    // --- detect version from the file stamp (hotstart_is_valid) ---
+    // Versions 2-4 use a 15-char stamp "SWMM5-HOTSTART<n>"; version 1 uses the
+    // 14-char "SWMM5-HOTSTART".
+    char stamp[16] = {};
+    file.read(stamp, 15);
+    if (!file) {
+        tl_last_io_error = "Hotstart file '" + path + "' too small for header";
+        return 1;
+    }
+    int version = 0;
+    if      (std::memcmp(stamp, "SWMM5-HOTSTART4", 15) == 0) version = 4;
+    else if (std::memcmp(stamp, "SWMM5-HOTSTART3", 15) == 0) version = 3;
+    else if (std::memcmp(stamp, "SWMM5-HOTSTART2", 15) == 0) version = 2;
+    else {
+        file.clear();
+        file.seekg(0, std::ios::beg);
+        char s14[15] = {};
+        file.read(s14, 14);
+        if (file && std::memcmp(s14, "SWMM5-HOTSTART", 14) == 0) version = 1;
+        else {
+            tl_last_io_error =
+                "'" + path + "' is not a legacy EPA SWMM5 hotstart file";
+            return 2;
+        }
+    }
+
+    // --- header object counts (legacy initializeFromHotstartFile) ---
+    int32_t nSub = 0, nLand = 0, nNodes = 0, nLinks = 0, nPollut = 0, flowUnits = 0;
+    if (version >= 2) { if (!read_pod(file, nSub))  return 1; } else nSub = ctx.n_subcatches();
+    if (version >= 3) { if (!read_pod(file, nLand)) return 1; }
+    if (!read_pod(file, nNodes))    return 1;
+    if (!read_pod(file, nLinks))    return 1;
+    if (!read_pod(file, nPollut))   return 1;
+    if (!read_pod(file, flowUnits)) return 1;
+
+    if (nNodes != ctx.n_nodes() || nLinks != ctx.n_links()) {
+        tl_last_io_error = "Hotstart node/link count mismatch (file " +
+            std::to_string(nNodes) + "/" + std::to_string(nLinks) + " vs model " +
+            std::to_string(ctx.n_nodes()) + "/" + std::to_string(ctx.n_links()) + ")";
+        return 3;
+    }
+    if (nSub != 0) {
+        // The runoff section (legacy readRunoff) is not yet parsed, so the
+        // file offset for the routing records can't be located. Routing-only
+        // hotstarts (extran*) work; subcatchment hotstarts are a follow-up.
+        tl_last_io_error =
+            "Hotstart with subcatchments is not yet supported (routing-only)";
+        return 4;
+    }
+
+    auto& nodes = ctx.nodes;
+    auto& links = ctx.links;
+
+    // --- node states (legacy readRouting): depth, lateral inflow, [storage hrt],
+    //     pollutant quality. All float, internal units. ---
+    for (int i = 0; i < nNodes; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        float depth = 0.0f, lat = 0.0f;
+        if (!read_pod(file, depth)) return 1;
+        if (!read_pod(file, lat))   return 1;
+        nodes.depth[ui]    = static_cast<double>(depth);
+        nodes.lat_flow[ui] = static_cast<double>(lat);
+        if (version >= 4 && nodes.type[ui] == NodeType::STORAGE) {
+            float hrt = 0.0f;
+            if (!read_pod(file, hrt)) return 1;  // storage residence time (unused here)
+        }
+        for (int j = 0; j < nPollut; ++j) { float q = 0.0f; if (!read_pod(file, q)) return 1; }
+        if (version <= 2)
+            for (int j = 0; j < nPollut; ++j) { float q = 0.0f; if (!read_pod(file, q)) return 1; }
+    }
+
+    // --- link states (legacy readRouting): flow, depth, setting, quality. ---
+    for (int i = 0; i < nLinks; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        float flow = 0.0f, depth = 0.0f, setting = 0.0f;
+        if (!read_pod(file, flow))    return 1;
+        if (!read_pod(file, depth))   return 1;
+        if (!read_pod(file, setting)) return 1;
+        links.flow[ui]           = static_cast<double>(flow);
+        links.depth[ui]          = static_cast<double>(depth);
+        links.setting[ui]        = static_cast<double>(setting);
+        links.target_setting[ui] = static_cast<double>(setting);
+        for (int j = 0; j < nPollut; ++j) { float q = 0.0f; if (!read_pod(file, q)) return 1; }
+    }
+
+    (void)flowUnits;
+    (void)nLand;
+    (void)warn_cb;
+    tl_last_io_error.clear();
+    return 0;
 }
 
 // ============================================================================

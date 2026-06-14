@@ -6,12 +6,21 @@
  * @ingroup engine_plugins
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #include "PluginFactory.hpp"
 #include "BuiltinPluginInfos.hpp"
+
+// Slice RC.1 — GeoPackage is registered as an explicit built-in so it
+// appears in the discovery API alongside the four Default plugins,
+// instead of being picked up accidentally through the discover() scan's
+// dlsym(openswmm_plugin_info) on the engine's own binary. See §R.3 in
+// docs/GUI_IMPLEMENTATION_PLAN.md for the rationale.
+#ifdef OPENSWMM_HAS_GEOPACKAGE
+#  include "../input/geopackage/GeoPackagePluginInfo.hpp"
+#endif
 
 #include "../core/SimulationContext.hpp"
 #include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
@@ -313,6 +322,12 @@ std::vector<PluginFactory::ComponentEntry> PluginFactory::discovered_components(
         e.has_report   = lib.info->has_report();
         e.has_state_io = lib.info->has_state_io();
         e.info         = lib.info;
+        // Slice RC.3 — built-ins are registered with a synthetic
+        // `<built-in>` path and a null dlopen handle. Either marker
+        // would do; matching on path keeps the check stable across
+        // the future case where built-ins might be promoted to
+        // load-on-demand shared libs.
+        e.is_builtin   = (lib.path == "<built-in>");
         result.push_back(e);
     }
     return result;
@@ -585,6 +600,16 @@ void PluginFactory::register_builtin_infos() {
     register_one(&BuiltinDefaultOutputPluginInfo::instance());
     register_one(&BuiltinDefaultReportPluginInfo::instance());
     register_one(&BuiltinDefaultStateIOPluginInfo::instance());
+
+    // Slice RC.1 (APPROVED 2026-05-25, see §R.3) — GeoPackage is a first-
+    // class statically-linked plugin. Registering it explicitly here, plus
+    // the symbol-visibility hardening on the openswmm_geopackage target
+    // (Slice RC.2), removes the accidental dlsym-leak via the engine
+    // binary that produced phantom rows in the Simulation Options
+    // Plugins tab.
+#ifdef OPENSWMM_HAS_GEOPACKAGE
+    register_one(&openswmm::gpkg::GeoPackagePluginInfo::instance());
+#endif
 }
 
 // ============================================================================

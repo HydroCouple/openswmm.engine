@@ -6,7 +6,7 @@
  * @ingroup engine_core
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -16,6 +16,7 @@
 #include "UnitConversion.hpp"
 #include "../hydraulics/Link.hpp"
 #include "../hydraulics/XSectBatch.hpp"
+#include "../hydraulics/Outfall.hpp"
 #include "../hydraulics/Node.hpp"
 #include "../hydraulics/ForceMain.hpp"
 #include <cmath>
@@ -25,12 +26,14 @@
 #include "../input/PostParseResolver.hpp"
 #include "../plugins/DefaultInputPlugin.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
+#include "HotStartManager.hpp"
 #include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
 #include "../plugins/DefaultOutputPlugin.hpp"
 #include "../plugins/DefaultReportPlugin.hpp"
 
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/input/SectionHandlers2D.hpp"
+#include "../2d/output/Default2DOutputPlugin.hpp"
 #include <filesystem>
 #endif
 
@@ -49,13 +52,19 @@ static inline int omp_get_max_threads() { return 1; }
 static inline void omp_set_num_threads(int) {}
 #endif
 
-// Error codes (matches openswmm_engine.h SWMM_ErrorCode)
+// Error codes — these are returned across the C ABI and decoded by
+// swmm_error_message(), so their VALUES must match the public
+// SWMM_ErrorCode enum in openswmm_engine.h exactly.  They previously did
+// not: WRONG_STATE was 3 (public RPTFILE) and PARSE was 4 (public OUTFILE),
+// so a parse error surfaced to callers as "Cannot open output file" and a
+// lifecycle error as "Cannot open report file".  Values corrected below to
+// the public enum; the local names are kept to avoid churn at call sites.
 static constexpr int SWMM_OK                 = 0;
-static constexpr int SWMM_ERR_MEMORY         = 1;
-static constexpr int SWMM_ERR_FILE_NOT_FOUND = 2;
-static constexpr int SWMM_ERR_WRONG_STATE    = 3;
-static constexpr int SWMM_ERR_PARSE          = 4;
-static constexpr int SWMM_ERR_PLUGIN         = 10;
+static constexpr int SWMM_ERR_MEMORY         = 1;   // public SWMM_ERR_NOMEM
+static constexpr int SWMM_ERR_FILE_NOT_FOUND = 2;   // public SWMM_ERR_INPFILE
+static constexpr int SWMM_ERR_WRONG_STATE    = 6;   // public SWMM_ERR_LIFECYCLE
+static constexpr int SWMM_ERR_PARSE          = 5;   // public SWMM_ERR_PARSE
+static constexpr int SWMM_ERR_PLUGIN         = 10;  // public SWMM_ERR_PLUGIN
 
 namespace openswmm {
 
@@ -67,7 +76,20 @@ SWMMEngine::SWMMEngine()
     : io_thread_(plugins_)   // IOThread needs a PluginFactory& at construction
 {
     ctx_.state = EngineState::CREATED;
+#ifdef OPENSWMM_HAS_2D
+    wire2DModelIO();
+#endif
 }
+
+#ifdef OPENSWMM_HAS_2D
+void SWMMEngine::wire2DModelIO() noexcept {
+    ctx_.twod_io.mesh       = &surface_router_.mesh();
+    ctx_.twod_io.options    = &surface_router_.options();
+    ctx_.twod_io.boundary   = &surface_router_.boundary();
+    ctx_.twod_io.pending_bc = &surface_router_.pendingBCRows();
+    ctx_.twod_io.pending_ec = &surface_router_.pendingEdgeConveyanceRows();
+}
+#endif
 
 SWMMEngine::~SWMMEngine() {
     if (ctx_.state == EngineState::RUNNING ||
@@ -129,7 +151,17 @@ int SWMMEngine::open(const char* inp_path,
     if (auto* dip = dynamic_cast<DefaultInputPlugin*>(input_plugin)) {
         twoD::register2DSections(surface_router_.mesh(),
                                  surface_router_.options(),
+                                 surface_router_.pendingBCRows(),
+                                 surface_router_.pendingEdgeConveyanceRows(),
                                  dip->registry());
+    }
+
+    // Scan the inline .inp for `;; UNITS: SI (m)` so SurfaceRouter2D::initialize
+    // can skip its FLOW_UNITS-based mesh scaling when the producer declared
+    // the mesh is already SI. The external-mesh path runs its own prescan
+    // below and overrides this if both files carry the header.
+    if (inp_path && inp_path[0] != '\0') {
+        twoD::prescan2DUnitsHeader(inp_path, surface_router_.options());
     }
 #endif
 
@@ -146,7 +178,10 @@ int SWMMEngine::open(const char* inp_path,
             if (inp_path && inp_path[0] != '\0')
                 base_dir = std::filesystem::path(inp_path).parent_path().string();
             std::string err = twoD::load2DMeshExternalFile(
-                surface_router_.mesh(), surface_router_.options(), mf, base_dir);
+                surface_router_.mesh(), surface_router_.options(),
+                surface_router_.pendingBCRows(),
+                surface_router_.pendingEdgeConveyanceRows(),
+                mf, base_dir);
             if (!err.empty()) {
                 ctx_.error_code    = SWMM_ERR_PARSE;
                 ctx_.error_message = err;
@@ -164,6 +199,16 @@ int SWMMEngine::open(const char* inp_path,
 
     // Resolve cross-references (forward refs, final array sizing, head init)
     input::resolve_cross_references(ctx_);
+
+    // Post-parse validation errors accumulated during resolution (e.g.
+    // ERR_TRANSECT_MANNING 227 for a zero channel Manning's n) are fatal:
+    // surface the first one and fail the open. Without this check the
+    // errors were silently swallowed and the model opened "successfully"
+    // with broken derived state.
+    if (!ctx_.errors.empty()) {
+        set_error(SWMM_ERR_PARSE, ctx_.errors.front().c_str());
+        return SWMM_ERR_PARSE;
+    }
 
     // Phase 4: load plugins listed in [PLUGINS]
     if (!ctx_.plugin_specs.empty()) {
@@ -187,6 +232,27 @@ int SWMMEngine::open(const char* inp_path,
         rp->validate(ctx_);
         plugins_.add_report_plugin(rp);
     }
+
+#ifdef OPENSWMM_HAS_2D
+    // Inject built-in 2D HDF5 output plugin when [2D_OPTIONS] OUTPUT_FILE is set.
+    // Mesh prep is deferred to start() because the mesh topology is not built
+    // until SurfaceRouter2D::initialize() runs (called from SWMMEngine::initialize).
+    {
+        const std::string& of = surface_router_.options().output_file;
+        if (!of.empty()) {
+            std::string resolved = of;
+            std::filesystem::path p(of);
+            if (p.is_relative() && inp_path && inp_path[0] != '\0') {
+                resolved = (std::filesystem::path(inp_path).parent_path() / p).string();
+            }
+            auto* op = new twoD::Default2DOutputPlugin(resolved);
+            op->initialize({}, nullptr);
+            op->validate(ctx_);
+            plugins_.add_output_plugin(op);
+            surface_output_plugin_ = op;
+        }
+    }
+#endif
 
     // Wire solver-neutral state accessors so state-IO plugins can read/write
     // infiltration and groundwater state through SimulationContext alone.
@@ -282,7 +348,55 @@ int SWMMEngine::initialize() noexcept {
         }
     }
 
+    // Type-1 (volume-controlled) pumps: the inlet junction acts as a wet well
+    // whose full volume is the pump curve's maximum volume. Legacy pump_validate
+    // (link.c) overrides the inlet node's fullVolume with the curve's xMax; the
+    // refactored engine otherwise leaves it at MIN_SURFAREA*fullDepth, which
+    // undersizes the volume->flow lookup and makes the pump run on a lower curve
+    // segment (e.g. extran6 pump 90011 ran at 10 cfs instead of 20). Run AFTER
+    // the full_volume loop above so the max() override survives.
+    {
+        const int us = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
+        const double ucf_vol = ucf::Ucf[ucf::VOLUME][us];
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx_.links.type[uj] != LinkType::PUMP) continue;
+            int ci = ctx_.links.pump_curve[uj];
+            if (ci < 0 || ci >= static_cast<int>(ctx_.tables.tables.size())) continue;
+            const auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ci)];
+            if (tbl.type != TableType::CURVE_PUMP1) continue;
+            int n1 = ctx_.links.node1[uj];
+            if (n1 < 0) continue;
+            auto un1 = static_cast<std::size_t>(n1);
+            if (ctx_.nodes.type[un1] == NodeType::STORAGE) continue;
+            // xMax = largest volume on the pump curve (legacy Pump.xMax). The
+            // file-backed x_max field is unset for inline [CURVES], so read the
+            // in-memory x points directly.
+            double xmax = tbl.x_max;
+            if (xmax <= 0.0 && !tbl.x.empty())
+                xmax = *std::max_element(tbl.x.begin(), tbl.x.end());
+            double xmax_internal = xmax / ucf_vol;
+            ctx_.nodes.full_volume[un1] =
+                std::max(ctx_.nodes.full_volume[un1], xmax_internal);
+        }
+    }
+
     // Apply q0 to link flow and compute initial conduit depth (Gap #43)
+    // Cache the translated batch cross-section code for every conduit BEFORE
+    // the initial-state loops below. buildXSectParams()/getAofY() dispatch on
+    // links.xsect_batch_shape, which is otherwise not populated until
+    // routing_init() inside init_modules() — i.e. AFTER these loops. Without
+    // this, getAofY() returned 0 (DUMMY shape) here, so the q0 (fix-#6) and
+    // backwater (fix-#10) initial-volume calculations silently produced zero
+    // storage (e.g. extran2's fixed-outfall backwater, extran8a's q0 conduits),
+    // re-creating that water during step 1 as a false continuity error.
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
+        ctx_.links.xsect_batch_shape[uj] =
+            link::translateShape(ctx_.links.xsect_shape[uj]);
+    }
+
     // Matches legacy link_initState / conduit_initState in link.c:
     //   Link[j].oldFlow = Link[j].newFlow = q0
     //   conduit: newDepth = oldDepth = link_getYnorm(j, q0/barrels)
@@ -292,12 +406,163 @@ int SWMMEngine::initialize() noexcept {
         ctx_.links.flow[uj]     = q0;
         ctx_.links.old_flow[uj] = q0;
         if (ctx_.links.type[uj] == LinkType::CONDUIT && q0 != 0.0) {
-            XSectParams xs = link::buildXSectParams(ctx_.links, uj);
+            XSectParams xs = link::buildXSectParams(ctx_.links, uj, &ctx_.transect_tables);
             int barrels = ctx_.links.barrels[uj];
             double q_per_barrel = std::fabs(q0) / std::max(barrels, 1);
             double y = link::getDepthFromFlow(xs, ctx_.links.beta[uj], q_per_barrel);
             ctx_.links.depth[uj]     = y;
             ctx_.links.old_depth[uj] = y;
+            // Initial conduit storage volume = area(y) * length * barrels,
+            // matching legacy flowrout.c (Link.newVolume = Conduit.a1 * length
+            // * barrels). Without this the routing mass-balance "Initial Stored
+            // Volume" omitted conduits that start with flow (e.g. extran8a
+            // q0=20), producing a large false continuity error (-22%).
+            double vol = xsect::getAofY(xs, y) * ctx_.links.length[uj] * barrels;
+            ctx_.links.volume[uj]     = vol;
+            ctx_.links.old_volume[uj] = vol;
+        }
+    }
+
+    // initNodeDepths (legacy flowrout.c): seed each non-storage / non-outfall
+    // junction's initial depth from the AVERAGE of its connecting links' flow
+    // depths (y = link.depth + offset1), so a node on a q0 conduit inherits that
+    // conduit's normal depth. Without this the junction starts dry (at invert)
+    // while the conduit starts with q0 flow, so there is zero head gradient and
+    // the q0 flow COLLAPSES in the first routing step — extran8a's chain
+    // 10081/10082 dropped 20→0 cfs and the inflow backed up and flooded
+    // (continuity +23.8%). User-supplied initial depths and storage / outfall
+    // boundary depths are preserved (set below). Must run AFTER the q0 loop
+    // (which sets link depths) and BEFORE the q0=0 backwater fill (which reads
+    // node depths).
+    {
+        const int us = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
+        const int nn = ctx_.n_nodes();
+        std::vector<double> acc(static_cast<std::size_t>(nn), 0.0);
+        std::vector<int>    cnt(static_cast<std::size_t>(nn), 0);
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            double ld = ctx_.links.depth[uj];
+            double y  = (ld > constants::FUDGE) ? ld + ctx_.links.offset1[uj] : 0.0;
+            int n1 = ctx_.links.node1[uj];
+            int n2 = ctx_.links.node2[uj];
+            if (n1 >= 0) { acc[static_cast<std::size_t>(n1)] += y; ++cnt[static_cast<std::size_t>(n1)]; }
+            if (n2 >= 0) { acc[static_cast<std::size_t>(n2)] += y; ++cnt[static_cast<std::size_t>(n2)]; }
+        }
+        for (int i = 0; i < nn; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (ctx_.nodes.type[ui] == NodeType::OUTFALL) continue;
+            if (ctx_.nodes.type[ui] == NodeType::STORAGE) continue;
+            if (ctx_.nodes.init_depth[ui] > 0.0) continue;   // user-supplied depth
+            if (cnt[ui] <= 0) continue;
+            double y = acc[ui] / static_cast<double>(cnt[ui]);
+            if (y <= 0.0) continue;
+            ctx_.nodes.depth[ui]     = y;
+            ctx_.nodes.old_depth[ui] = y;
+            ctx_.nodes.head[ui]      = ctx_.nodes.invert_elev[ui] + y;
+            double vol = node::getVolume(ctx_.nodes, i, y, &ctx_.tables, us);
+            ctx_.nodes.volume[ui]     = vol;
+            ctx_.nodes.old_volume[ui] = vol;
+        }
+    }
+
+    // Set outfall-node boundary depths (legacy link_setOutfallDepth), then
+    // backfill each remaining conduit's initial depth to the average of its
+    // end-node depths (legacy initLinkDepths in flowrout.c). Conduits sitting
+    // below a fixed/tidal outfall stage thereby start with their standing
+    // backwater counted as INITIAL stored volume, instead of that water being
+    // created during the first routing step and showing up as a continuity
+    // error (e.g. extran2's fixed 94.4 ft outfall backs ~1.57 ac-ft into the
+    // downstream trapezoidal channels).
+    // Set FIXED-outfall node depths from their stage (= stage − invert), so the
+    // downstream conduit backwater can be computed below. Done inline rather
+    // than via outfall::setAllOutfallDepths because that routine's
+    // outfall→conduit cache is not populated until init_modules (and it gives
+    // FREE/NORMAL outfalls zero depth at zero initial flow anyway).
+    for (int oi = 0; oi < ctx_.n_nodes(); ++oi) {
+        auto uo = static_cast<std::size_t>(oi);
+        if (ctx_.nodes.type[uo] != NodeType::OUTFALL) continue;
+        if (ctx_.nodes.outfall_type[uo] == OutfallType::FIXED) {
+            double stage = ctx_.nodes.outfall_param[uo];  // internal ft
+            ctx_.nodes.depth[uo] =
+                std::max(0.0, stage - ctx_.nodes.invert_elev[uo]);
+        }
+    }
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
+        if (ctx_.links.q0[uj] != 0.0) continue;  // q0 conduits already at normal depth
+        double yfull = ctx_.links.xsect_y_full[uj];
+        int n1 = ctx_.links.node1[uj];
+        int n2 = ctx_.links.node2[uj];
+        if (n1 < 0 || n2 < 0) continue;
+        double y1 = std::clamp(ctx_.nodes.depth[static_cast<std::size_t>(n1)]
+                               - ctx_.links.offset1[uj], 0.0, yfull);
+        double y2 = std::clamp(ctx_.nodes.depth[static_cast<std::size_t>(n2)]
+                               - ctx_.links.offset2[uj], 0.0, yfull);
+        double y = std::max(0.5 * (y1 + y2), constants::FUDGE);
+        ctx_.links.depth[uj]     = y;
+        ctx_.links.old_depth[uj] = y;
+        XSectParams xs = link::buildXSectParams(ctx_.links, uj,
+                                                &ctx_.transect_tables);
+        int barrels = std::max(ctx_.links.barrels[uj], 1);
+        double vol = xsect::getAofY(xs, y) * ctx_.links.length[uj] * barrels;
+        ctx_.links.volume[uj]     = vol;
+        ctx_.links.old_volume[uj] = vol;
+    }
+
+    // ── USE HOTSTART: load saved routing state from a hot-start file ──
+    // Legacy SWMM applies the hotstart in routing_open(), OVERRIDING the q0 /
+    // initLinkDepths initial state with the saved node depths and link flows.
+    // The refactored CLI previously never consumed ctx.files.hotstart_use_path
+    // at all, so a continuation run (extran8b USEing the file extran8a SAVEd)
+    // started cold from q0 (Initial Stored Volume 0.993) instead of the
+    // hot-started state legacy loads (1.396). Apply it here — AFTER the q0 /
+    // backwater init loops (which it overrides) and BEFORE init_modules() so the
+    // DW solver seeds area_mid_ from the hot-started link depths, and before the
+    // old_net_inflow seeding below (which reads the hot-started link flows).
+    bool hotstart_loaded = false;
+    if (!ctx_.files.hotstart_use_path.empty()) {
+        const std::string& hs_path =
+            !ctx_.files.hotstart_use_path.absolute.empty()
+                ? ctx_.files.hotstart_use_path.absolute
+                : ctx_.files.hotstart_use_path.original;
+        // Read the legacy EPA SWMM5 `.hsf` routing state (the format SAVE writes
+        // and the de-facto interchange format). Native OPENSWMM_HS_V1 files are
+        // applied via the C-API swmm_hotstart_apply path instead.
+        const int rc = HotStartManager::apply_legacy_routing(hs_path, ctx_);
+        if (rc != 0) {
+            set_error(CFFI_ERR_HOTSTART,
+                      ("USE HOTSTART: " + HotStartManager::last_io_error()).c_str());
+            return CFFI_ERR_HOTSTART;
+        }
+        hotstart_loaded = true;
+        // Recompute derived state from the applied depths/flows so continuity,
+        // the area_mid_ seeding in init_modules(), and the old_net_inflow seeding
+        // below all start from the hot-started state (legacy initNodes / initLinks).
+        const int us_hs = ucf::getUnitSystem(
+            static_cast<int>(ctx_.options.flow_units));
+        for (int i = 0; i < ctx_.n_nodes(); ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            double y = ctx_.nodes.depth[ui];
+            ctx_.nodes.old_depth[ui] = y;
+            ctx_.nodes.head[ui]      = ctx_.nodes.invert_elev[ui] + y;
+            double vol = node::getVolume(ctx_.nodes, i, y, &ctx_.tables, us_hs);
+            ctx_.nodes.volume[ui]     = vol;
+            ctx_.nodes.old_volume[ui] = vol;
+        }
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            ctx_.links.old_flow[uj] = ctx_.links.flow[uj];
+            if (ctx_.links.type[uj] == LinkType::CONDUIT) {
+                double y = ctx_.links.depth[uj];
+                ctx_.links.old_depth[uj] = y;
+                XSectParams xs = link::buildXSectParams(ctx_.links, uj,
+                                                        &ctx_.transect_tables);
+                int barrels = std::max(ctx_.links.barrels[uj], 1);
+                double vol = xsect::getAofY(xs, y) * ctx_.links.length[uj] * barrels;
+                ctx_.links.volume[uj]     = vol;
+                ctx_.links.old_volume[uj] = vol;
+            }
         }
     }
 
@@ -308,6 +573,57 @@ int SWMMEngine::initialize() noexcept {
 
     // Initialize all computational modules (batch SoA setup)
     init_modules();
+
+    // Seed node inflow/outflow from the initial link flows so the FIRST
+    // routing step's trapezoidal node-continuity term reads the correct
+    // old_net_inflow. The per-step save_state() (called before the first
+    // stepRouting) records old_net_inflow = inflow - outflow; legacy gets the
+    // matching value because initNodes (flowrout.c:461-473) distributes each
+    // link's initial flow to its end nodes and node_setOldHydState then stores
+    // oldNetInflow = inflow - outflow. Without this a node draining a conduit
+    // that starts with flow (q0 != 0, e.g. extran8a node 30081 with 20 cfs out
+    // via conduit 10081) began step 0 with old_net_inflow = 0 instead of -20,
+    // biasing dV = 0.5*(old_net_inflow + dQ)*dt and the first-step depth by
+    // ~0.01 ft, seeding a slowly-decaying ~0.09 cfs startup transient. The DW
+    // per-step initNodeStates zeroes inflow before re-accumulating, so this
+    // seed is consumed only by the step-0 save_state and never double-counted.
+    // Faithful port of legacy initNodes (flowrout.c:440-473): each node's
+    // initial inflow is SEEDED with its lateral flow (line 443
+    // `Node[i].inflow = Node[i].newLatFlow`) before the link flows are
+    // distributed. For a cold start nodes.lat_flow is still 0 here (lateral
+    // inflows are not assembled until stepping), so this term vanishes and the
+    // result is identical to the link-only seeding. For a USE HOTSTART run,
+    // apply_legacy_routing loaded the saved newLatFlow into nodes.lat_flow
+    // (e.g. extran8b node 30081 = +20 cfs, balancing its q0=20 drain conduit
+    // 10081), exactly as legacy readRouting sets Node[].newLatFlow before
+    // initNodes folds it in. Omitting it left node 30081 at
+    // old_net_inflow = (link in 0.022 − link out 19.99) = −19.97 instead of the
+    // legacy (+20 + 0.022 − 19.99) = +0.029 — a 20-cfs step-0 seed error that
+    // this fold removes so the trapezoidal dV = 0.5*(old_net_inflow + dQ)*dt
+    // bit-matches legacy at step 0. (It does NOT close extran8b's remaining
+    // ~0.5 cfs headline flowΔ: a fine-resolution diff shows the first
+    // divergence is ~1.7e-4 on the 0.025-cfs flow in conduit 10006 at t=200s —
+    // i.e. at the float32 floor of the SAVEd hot-start state — which then
+    // amplifies through the stiff rising storm-wave, the same network seed-
+    // amplification class as user2/user5/user3, not a local arithmetic bug.)
+    (void)hotstart_loaded;
+    for (int i = 0; i < ctx_.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        ctx_.nodes.inflow[ui] += ctx_.nodes.lat_flow[ui];
+    }
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        double q = ctx_.links.flow[uj];
+        int n1 = ctx_.links.node1[uj];
+        int n2 = ctx_.links.node2[uj];
+        if (q >= 0.0) {
+            if (n1 >= 0) ctx_.nodes.outflow[static_cast<std::size_t>(n1)] += q;
+            if (n2 >= 0) ctx_.nodes.inflow[static_cast<std::size_t>(n2)]  += q;
+        } else {
+            if (n1 >= 0) ctx_.nodes.inflow[static_cast<std::size_t>(n1)]  -= q;
+            if (n2 >= 0) ctx_.nodes.outflow[static_cast<std::size_t>(n2)] -= q;
+        }
+    }
 
     ctx_.state = EngineState::INITIALIZED;
     return SWMM_OK;
@@ -334,6 +650,16 @@ int SWMMEngine::start(int save_results) noexcept {
             return SWMM_ERR_PLUGIN;
         }
     }
+
+#ifdef OPENSWMM_HAS_2D
+    // After plugin->prepare() created the HDF5 file (root attrs only), write
+    // the static mesh topology and create the time-varying datasets. This is
+    // a separate step because the IOutputPlugin contract has no mesh access
+    // through SimulationContext — SurfaceRouter2D owns the mesh privately.
+    if (surface_output_plugin_ && surface_router_.isActive()) {
+        surface_output_plugin_->prepareMeshAndDatasets(surface_router_.mesh());
+    }
+#endif
 
     // Phase 5: start the IO writer thread
     io_thread_.start();
@@ -485,15 +811,26 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     // infil/evap/runoff reflect the interval STARTING at the report
     // boundary. Legacy achieves this accidentally via variable timestep
     // Legacy uses strict < (runoff.c line 164: while(NewRunoffTime < nextRoutingTime))
-    double next_routing_time = routing_time + dt_routing;
+    //
+    // Clamp next_routing_time to the simulation end, matching legacy
+    // swmm5.c::execRouting() line 900-905. Without this clamp, floating-point
+    // drift in `routing_time + dt_routing` can leave next_routing_time slightly
+    // above total_sec while new_runoff_time_ has already been clamped to
+    // total_sec inside this loop body — causing the while-loop to fire
+    // indefinitely with dt_runoff = 0.
+    const double total_sec_clamp = (ctx_.options.end_date - ctx_.options.start_date) * 86400.0;
+    double next_routing_time = std::min(routing_time + dt_routing, total_sec_clamp);
     while (new_runoff_time_ < next_routing_time) {
-        // Save old runoff, runon, and GW state for interpolation
-        // (matching legacy subcatch_setOldState + gw oldFlow/newFlow)
+        // Save old runoff/runon/conc + GW state for interpolation at the RUNOFF
+        // step cadence (matching legacy subcatch_setOldState, which legacy calls
+        // inside runoff_execute — NOT per routing step). subcatches.save_state()
+        // snapshots old_runoff/old_runon_inflow/conc_old; old_gw_flow is saved
+        // separately (not covered by save_state). This is the ONLY place the
+        // subcatch old-state is taken (see SimulationContext::save_state()).
+        ctx_.subcatches.save_state();
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
             auto ui = static_cast<std::size_t>(i);
-            ctx_.subcatches.old_runoff[ui]       = ctx_.subcatches.runoff[ui];
-            ctx_.subcatches.old_runon_inflow[ui]  = ctx_.subcatches.runon_inflow[ui];
-            ctx_.subcatches.old_gw_flow[ui]      = ctx_.subcatches.gw_flow[ui];
+            ctx_.subcatches.old_gw_flow[ui] = ctx_.subcatches.gw_flow[ui];
         }
 
         // Advance runoff clock
@@ -509,10 +846,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                       ctx_.nodes.lid_drain_qual_vol.end(), 0.0);
         }
 
-        // Runoff state flags (matching legacy globals)
+        // Current-step rainfall flag (legacy IsRaining): set BEFORE the timestep
+        // is chosen, from this step's gage state.  has_runoff_/has_snow_ are
+        // members carrying the PREVIOUS step's state (legacy HasRunoff/HasSnow).
         bool is_raining = false;
-        bool has_runoff = false;
-        bool has_snow = false;
 
         // A1. Update rain gages and detect rainfall
         gage::updateAllGages(ctx_, abs_time);
@@ -528,86 +865,108 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
 
         // A2a. Temperature source (before updateDailyClimate so
         //       Hargreaves/gamma/ea use the current temperature)
-        if (climate_.temp_ts_index >= 0) {
+        if (ctx_.climate_state.temp_ts_index >= 0) {
             // Temperature from timeseries
-            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(climate_.temp_ts_index)];
-            climate_.temperature = table_lookup_cursor(tbl, abs_time);
-            climate_.temperature += climate_.adjust_temp[mon];
+            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ctx_.climate_state.temp_ts_index)];
+            ctx_.climate_state.temperature_src = table_lookup_cursor(tbl, abs_time);
+            ctx_.climate_state.temperature_src += ctx_.climate_state.adjust_temp[mon];
         } else if (ctx_.options.temp_source == 2 && climate_file_.isOpen()) {
             // Temperature from climate file (Gap #9: sub-daily sinusoidal interp)
             climate::DailyClimateRecord rec;
             if (climate_file_.getRecord(abs_time, rec)) {
                 if (!std::isnan(rec.tmin) && !std::isnan(rec.tmax)) {
-                    double tmin = rec.tmin + climate_.adjust_temp[mon];
-                    double tmax = rec.tmax + climate_.adjust_temp[mon];
-                    climate_.temp_range = tmax - tmin;
+                    double tmin = rec.tmin + ctx_.climate_state.adjust_temp[mon];
+                    double tmax = rec.tmax + ctx_.climate_state.adjust_temp[mon];
+                    ctx_.climate_state.temp_range = tmax - tmin;
 
-                    if (doy != climate_.last_temp_doy) {
+                    if (doy != ctx_.climate_state.last_temp_doy) {
                         // New day: update sunrise/sunset params and roll over prev max.
-                        climate_.prev_tmax     = climate_.has_minmax
-                                                 ? climate_.tmax_daily : tmax;
-                        climate_.tmin_daily    = tmin;
-                        climate_.tmax_daily    = tmax;
-                        climate_.has_minmax    = true;
-                        climate_.last_temp_doy = doy;
-                        climate::updateTempTimes(climate_, doy);
+                        ctx_.climate_state.prev_tmax     = ctx_.climate_state.has_minmax
+                                                 ? ctx_.climate_state.tmax_daily : tmax;
+                        ctx_.climate_state.tmin_daily    = tmin;
+                        ctx_.climate_state.tmax_daily    = tmax;
+                        ctx_.climate_state.has_minmax    = true;
+                        ctx_.climate_state.last_temp_doy = doy;
+                        climate::updateTempTimes(ctx_.climate_state, doy);
                     } else {
                         // Same day: refresh min/max (unchanged; tmax may update).
-                        climate_.tmin_daily = tmin;
-                        climate_.tmax_daily = tmax;
+                        ctx_.climate_state.tmin_daily = tmin;
+                        ctx_.climate_state.tmax_daily = tmax;
                     }
 
                     // Sub-daily sinusoidal interpolation (Gap #9).
                     // hour = fractional part of OADate × 24.
                     double hour = (abs_time - std::floor(abs_time)) * 24.0;
-                    climate_.temperature = climate::getSubdailyTemp(climate_, hour);
+                    ctx_.climate_state.temperature_src = climate::getSubdailyTemp(ctx_.climate_state, hour);
                 }
             }
         }
 
-        climate::updateDailyClimate(climate_, doy, mon);
+        // A2a'. Climate temperature forcing — applied before
+        // updateDailyClimate so Hargreaves/gamma/ea use the forced value.
+        // An OVERRIDE prescription replaces the data-source value (and
+        // bypasses monthly adjustments by design); ADD augments it. The
+        // source/default base (temperature_src) is resolved fresh each step so
+        // a one-shot or cleared forcing reverts to the source rather than
+        // sticking at the last forced value.
+        ctx_.climate_state.temperature =
+            ctx_.forcing.effective_temperature(ctx_.climate_state.temperature_src);
+
+        climate::updateDailyClimate(ctx_.climate_state, doy, mon);
 
         // A2b. Evaporation from timeseries or climate file
-        if (climate_.evap_method == climate::EvapMethod::TIMESERIES &&
-            climate_.evap_ts_index >= 0) {
-            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(climate_.evap_ts_index)];
+        if (ctx_.climate_state.evap_method == climate::EvapMethod::TIMESERIES &&
+            ctx_.climate_state.evap_ts_index >= 0) {
+            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ctx_.climate_state.evap_ts_index)];
             double evap_user = table_lookup_cursor(tbl, abs_time);
-            climate_.evap_rate = evap_user / ucf::Ucf[ucf::EVAPRATE][unit_sys];
-            climate_.evap_rate *= climate_.adjust_evap[mon];
+            ctx_.climate_state.evap_rate = evap_user / ucf::Ucf[ucf::EVAPRATE][unit_sys];
+            ctx_.climate_state.evap_rate *= ctx_.climate_state.adjust_evap[mon];
         }
-        else if (climate_.evap_method == climate::EvapMethod::PAN &&
+        else if (ctx_.climate_state.evap_method == climate::EvapMethod::PAN &&
                  climate_file_.isOpen()) {
             // Pan evaporation from climate file × monthly pan coefficient
             climate::DailyClimateRecord rec;
             if (climate_file_.getRecord(abs_time, rec) && !std::isnan(rec.evap)) {
                 // rec.evap is in user units (in/day US, mm/day SI)
-                climate_.evap_rate = rec.evap / ucf::Ucf[ucf::EVAPRATE][unit_sys];
-                climate_.evap_rate *= ctx_.options.pan_coeff[mon];
-                climate_.evap_rate *= climate_.adjust_evap[mon];
+                ctx_.climate_state.evap_rate = rec.evap / ucf::Ucf[ucf::EVAPRATE][unit_sys];
+                ctx_.climate_state.evap_rate *= ctx_.options.pan_coeff[mon];
+                ctx_.climate_state.evap_rate *= ctx_.climate_state.adjust_evap[mon];
             }
         }
 
+        // A2b'. System-wide evaporation forcing — applied after all evap
+        // sources and monthly adjustments so the prescription is final.
+        // Per-subcatchment PET forcing still takes precedence downstream
+        // (effective_evap_rate in the runoff/LID/GW solvers).
+        ctx_.climate_state.evap_rate =
+            ctx_.forcing.effective_climate_evap(ctx_.climate_state.evap_rate);
+
         // A2c. Wind speed lookup
         if (ctx_.options.wind_type == 0) {
-            climate_.wind_speed = ctx_.options.wind_speed[mon];
+            ctx_.climate_state.wind_speed_src = ctx_.options.wind_speed[mon];
         } else if (ctx_.options.wind_type == 1 && climate_file_.isOpen()) {
             // Wind from climate file
             climate::DailyClimateRecord rec;
             if (climate_file_.getRecord(abs_time, rec) && !std::isnan(rec.wind)) {
-                climate_.wind_speed = rec.wind;
+                ctx_.climate_state.wind_speed_src = rec.wind;
             }
         }
+        // A2c'. Climate wind forcing (OVERRIDE replaces, ADD augments). The
+        // source/default base (wind_speed_src) is resolved fresh each step so
+        // a one-shot or cleared forcing reverts to the source.
+        ctx_.climate_state.wind_speed =
+            ctx_.forcing.effective_wind(ctx_.climate_state.wind_speed_src);
 
         // A2d. Monthly adjustment factors
-        climate_.infil_factor = ctx_.adjust_hydcon[mon];
+        ctx_.climate_state.infil_factor = ctx_.adjust_hydcon[mon];
 
         // A2e. Recovery pattern lookup (monthly pattern for soil recovery)
-        if (climate_.recovery_pat_index >= 0) {
-            auto ui = static_cast<std::size_t>(climate_.recovery_pat_index);
+        if (ctx_.climate_state.recovery_pat_index >= 0) {
+            auto ui = static_cast<std::size_t>(ctx_.climate_state.recovery_pat_index);
             if (ui < ctx_.patterns.factors.size()) {
                 const auto& facs = ctx_.patterns.factors[ui];
                 auto umon = static_cast<std::size_t>(mon);
-                climate_.recovery_factor = (umon < facs.size()) ? facs[umon] : 1.0;
+                ctx_.climate_state.recovery_factor = (umon < facs.size()) ? facs[umon] : 1.0;
             }
         }
 
@@ -621,7 +980,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         }
 
         // Compute variable runoff timestep
-        double dt_runoff = computeRunoffTimestep(abs_time, is_raining, has_runoff, has_snow);
+        double dt_runoff = computeRunoffTimestep(abs_time, is_raining, has_runoff_, has_snow_);
         if (dt_runoff <= 0.0) dt_runoff = 1.0;
 
         // Update runoff clock
@@ -643,34 +1002,45 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             rdii_.computeAll(ctx_, rdii_month, dt_runoff);
         }
 
-        // A3. Snowmelt — separate precipitation into rain vs. snow components,
-        //     then execute snow solver and wire per-subcatch net precip (Gap #18/#20).
+        // A3. Snowmelt — per-subcatchment precipitation split into rain vs.
+        //     snow, accumulation + plowing, then melt and per-subcatch net
+        //     precip wiring (Gap #18/#20). Matches legacy runoff.c:
+        //     snow_plowSnow() each runoff step, then subcatch_getRunoff →
+        //     getNetPrecip → snow_getSnowMelt with that subcatchment's own
+        //     rainfall/snowfall.
         {
-            // Determine broadcast rain/snow based on temperature vs. dividing temp.
-            // Compute area-weighted average precip across snow-active subcatches.
-            double avg_precip = 0.0;
-            double total_area = 0.0;
+            // Per-subcatchment rain/snow assembly (ft/sec). The gage value
+            // is split by air temperature vs. the dividing temperature;
+            // rainfall and snowfall forcing channels then resolve on their
+            // respective components.
+            auto un_sc = static_cast<std::size_t>(ctx_.n_subcatches());
+            snow_rain_.assign(un_sc, 0.0);
+            snow_snow_.assign(un_sc, 0.0);
+            double snow_divt = ctx_.options.snow_divt;   // deg F threshold
+            bool is_snowing = ctx_.climate_state.temperature <= snow_divt;
             for (int i = 0; i < ctx_.n_subcatches(); ++i) {
                 auto ui = static_cast<std::size_t>(i);
                 if (ctx_.subcatches.snowpack[ui] < 0) continue;
                 int gi = ctx_.subcatches.gage[ui];
-                double rain_inhr = (gi >= 0 && gi < ctx_.n_gages())
+                double gage_inhr = (gi >= 0 && gi < ctx_.n_gages())
                     ? ctx_.gages.rainfall[static_cast<std::size_t>(gi)] : 0.0;
-                double precip_ftsec = rain_inhr / ucf::Ucf[ucf::RAINFALL][0];
-                double area = ctx_.subcatches.area[ui];
-                avg_precip += precip_ftsec * area;
-                total_area += area;
+                double rain_inhr = is_snowing ? 0.0 : gage_inhr;
+                double snow_inhr = is_snowing ? gage_inhr : 0.0;
+                // Forcing channels (user units for rainfall — matching the
+                // runoff solver's resolution; snowfall channel stores ft/sec)
+                rain_inhr = ctx_.forcing.effective_rainfall(ui, rain_inhr);
+                snow_rain_[ui] = rain_inhr / ucf::Ucf[ucf::RAINFALL][0];
+                snow_snow_[ui] = ctx_.forcing.effective_snowfall(
+                    ui, snow_inhr / ucf::Ucf[ucf::RAINFALL][0]);
             }
-            if (total_area > 0.0) avg_precip /= total_area;
 
-            // Split into rainfall vs. snowfall based on air temperature.
-            double snow_divt = ctx_.options.snow_divt;   // deg F threshold
-            double rain_bc   = (climate_.temperature > snow_divt) ? avg_precip : 0.0;
-            double snow_bc   = (climate_.temperature <= snow_divt) ? avg_precip : 0.0;
+            // Accumulation + plowing BEFORE melt (legacy runoff.c:254).
+            snow_.plowSnow(ctx_, dt_runoff, snow_snow_.data());
 
-            snow_.execute(ctx_, dt_runoff, climate_.temperature,
-                          climate_.wind_speed, rain_bc, snow_bc,
-                          climate_.gamma, climate_.ea);
+            snow_.execute(ctx_, dt_runoff, ctx_.climate_state.temperature,
+                          ctx_.climate_state.wind_speed, snow_rain_.data(),
+                          snow_snow_.data(),
+                          ctx_.climate_state.gamma, ctx_.climate_state.ea);
 
             // A3a (Gap #20): Build per-subcatch snow-modified net precip.
             // netPrecip[i] = imelt[i] + rainfall*(1-asc[i])  (matching legacy)
@@ -680,10 +1050,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 auto ui = static_cast<std::size_t>(i);
                 if (ctx_.subcatches.snowpack[ui] < 0) continue;
 
-                int gi = ctx_.subcatches.gage[ui];
-                double rain_inhr = (gi >= 0 && gi < ctx_.n_gages())
-                    ? ctx_.gages.rainfall[static_cast<std::size_t>(gi)] : 0.0;
-                double rainfall_ft = rain_inhr / ucf::Ucf[ucf::RAINFALL][0];
+                double rainfall_ft = snow_rain_[ui];
 
                 auto plow_idx   = static_cast<std::size_t>(i * snow::N_SUBAREAS + snow::SNOW_PLOWABLE);
                 auto imperv_idx = static_cast<std::size_t>(i * snow::N_SUBAREAS + snow::SNOW_IMPERV);
@@ -729,7 +1096,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     }
                 }
                 // INFIL pattern: scales infil_factor for this subcatchment
-                // (applied globally via climate_.infil_factor already;
+                // (applied globally via ctx_.climate_state.infil_factor already;
                 //  per-subcatchment INFIL pattern would require per-subcatch
                 //  infil_factor which is a deeper refactor — noted for future)
             }
@@ -738,17 +1105,30 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // A4. Runoff (computes subcatches.runoff[i] = newRunoff rate)
         //     Runoff solver is self-contained; output is subcatches.runoff[i].
         //     Routing picks it up via Phase 2 interpolation → nodes.runoff_inflow[].
-        runoff_.execute(ctx_, dt_runoff, climate_.evap_rate,
-                        climate_.infil_factor, climate_.recovery_factor, mon);
+        runoff_.execute(ctx_, dt_runoff, ctx_.climate_state.evap_rate,
+                        ctx_.climate_state.infil_factor, ctx_.climate_state.recovery_factor, mon);
 
-        // Update state flags for next timestep selection
+        // Update persistent state flags for the NEXT step's timestep selection
+        // (legacy runoff.c sets HasRunoff/HasSnow here, after computing runoff,
+        // and reads them in the next runoff_getTimeStep call — one-step lag).
+        // Keeping wet_step while has_runoff_ holds integrates the recession limb
+        // at the fine step legacy uses.
+        has_runoff_ = false;
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-            if (ctx_.subcatches.runoff[static_cast<std::size_t>(i)] > 0.0)
-                has_runoff = true;
+            if (ctx_.subcatches.runoff[static_cast<std::size_t>(i)] > 0.0) {
+                has_runoff_ = true;
+                break;
+            }
         }
 
         // A4b. Accumulate runoff mass balance totals
         accumulateRunoffMassBalance(dt_runoff);
+
+        // A4b'. Phase 1b auto-save hook — when the runoff interface file
+        // is open in SAVE mode, emit one record per substep. saveResults
+        // is a cheap no-op when the file is not in SAVE mode, so the
+        // unconditional call here costs nothing for ordinary runs.
+        saveRunoffIfaceStep(dt_runoff);
 
         // A4c. Surface quality: buildup + washoff
         stepSurfaceQuality(dt_runoff);
@@ -792,7 +1172,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             }
         }
 
-        lid_.execute(ctx_, dt_runoff, 0.0, climate_.evap_rate);
+        lid_.execute(ctx_, dt_runoff, 0.0, ctx_.climate_state.evap_rate);
 
         // A6b. Route LID outputs back to subcatchment runoff totals
         for (int t = 0; t < lid_.numGroups(); ++t) {
@@ -1038,10 +1418,26 @@ double SWMMEngine::computeRunoffTimestep(double abs_time, bool is_raining,
     // (matching legacy gage_getNextRainDate)
     for (int g = 0; g < ctx_.n_gages(); ++g) {
         auto ug = static_cast<std::size_t>(g);
+
+        // Select the gage's rain series the same way updateAllGages() does:
+        // a FILE_RAIN gage reads from its own resolved rain_series (built by
+        // load_external_rain_files and NOT present in the shared tables pool),
+        // while a TIMESERIES gage reads from tables[ts_index].  Using only
+        // ts_index here skipped every file gage (ts_index == -1), so the runoff
+        // step was never shortened to a file gage's rain-interval boundary —
+        // dry_step then overshot rain-burst onsets and dropped rainfall.
+        // Matches legacy gage_getNextRainDate(), which snaps for all gages.
+        Table* rtbl = nullptr;
         int ts_idx = ctx_.gages.ts_index[ug];
-        if (ts_idx < 0 || ts_idx >= static_cast<int>(ctx_.tables.tables.size()))
-            continue;
-        auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ts_idx)];
+        if (ctx_.gages.source[ug] == RainSource::FILE_RAIN) {
+            if (ug < ctx_.gages.rain_series.size() &&
+                !ctx_.gages.rain_series[ug].empty())
+                rtbl = &ctx_.gages.rain_series[ug];
+        } else if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx_.tables.tables.size())) {
+            rtbl = &ctx_.tables.tables[static_cast<std::size_t>(ts_idx)];
+        }
+        if (!rtbl) continue;
+        auto& tbl = *rtbl;
         int idx = tbl.cursor.index;
         int n = static_cast<int>(tbl.x.size());
         if (idx < 0 || idx >= n) continue;
@@ -1115,11 +1511,17 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
     //        runoff_vol(ft³)= runoff(cfs) * dt(sec)
     //
     const double RAIN_TO_FTSEC = 1.0 / ucf::UCF(ucf::RAINFALL, ctx_.options);
-    constexpr double ACRES_TO_FT2  = ucf::ACRES_TO_FT2;
+    // Subcatchment area is stored in project land-area units (acres for US,
+    // hectares for SI).  Convert to internal ft² via 1/UCF(LANDAREA) so SI
+    // models scale by 107639 (ha→ft²), not 43560 (ac→ft²).  The surface-runoff
+    // term below is a routed cfs flow that already used the correct ft² area,
+    // so without this the precip/infil volumes were 2.471× too small for SI,
+    // breaking the runoff continuity balance.
+    const double LANDAREA_TO_FT2 = 1.0 / ucf::UCF(ucf::LANDAREA, ctx_.options);
 
     for (int i = 0; i < ctx_.n_subcatches(); ++i) {
         auto ui = static_cast<std::size_t>(i);
-        double area_ft2 = ctx_.subcatches.area[ui] * ACRES_TO_FT2;
+        double area_ft2 = ctx_.subcatches.area[ui] * LANDAREA_TO_FT2;
 
         // Rainfall volume (ft³) — rainfall is already in ft/sec (internal units)
         double rain_ftsec = ctx_.subcatches.rainfall[ui];
@@ -1145,6 +1547,183 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
             rain_ftsec * area_ft2 * dt_runoff;
         ctx_.subcatches.stat_runoff_vol[ui] +=
             ctx_.subcatches.runoff[ui] * dt_runoff;
+    }
+}
+
+// ============================================================================
+// refreshLanduseParams() — re-derive the buildup/washoff parameter cache
+// ============================================================================
+
+/**
+ * @brief Re-derive the land-use buildup/washoff parameter cache from the live
+ *        context (BuildupData/WashoffData).
+ *
+ * @details Used both during start-up transfer and by the C API runtime setters
+ * (swmm_buildup_set / swmm_washoff_set), which mutate ctx.buildup/ctx.washoff;
+ * the per-step path reads landuse_solver_.buildup_params/washoff_params, so a
+ * mid-run edit needs this refresh to take effect on the next step. The
+ * accumulated buildup pool (surface_quality_.buildup) is left untouched.
+ */
+void SWMMEngine::refreshLanduseParams() noexcept {
+    int np  = ctx_.n_pollutants();
+    int nlu = ctx_.n_landuses();
+    if (np <= 0 || nlu <= 0) return;
+    if (static_cast<int>(landuse_solver_.buildup_params.size()) != nlu * np)
+        return;
+    for (int lu = 0; lu < nlu; ++lu) {
+        for (int p = 0; p < np; ++p) {
+            auto k = static_cast<std::size_t>(lu * np + p);
+            auto& bp = landuse_solver_.buildup_params[k];
+            bp.type = static_cast<landuse::BuildupType>(ctx_.buildup.func_type[k]);
+            bp.coeff[0] = ctx_.buildup.coeff1[k];  // max buildup
+            bp.coeff[1] = ctx_.buildup.coeff2[k];  // rate constant
+            bp.coeff[2] = ctx_.buildup.coeff3[k];  // exponent/half-sat
+            bp.normalizer = ctx_.buildup.normalizer[k];
+            bp.max_days = 0.0;
+            // Compute max_days: time to reach 99.9% of max buildup
+            if (bp.type == landuse::BuildupType::EXPON && bp.coeff[1] > 0.0)
+                bp.max_days = -std::log(0.001) / bp.coeff[1];
+            else if (bp.type == landuse::BuildupType::POWER && bp.coeff[1] > 0.0
+                     && bp.coeff[2] > 0.0 && bp.coeff[0] > 0.0)
+                bp.max_days = std::pow(bp.coeff[0] / bp.coeff[1], 1.0 / bp.coeff[2]);
+            else if (bp.type == landuse::BuildupType::SATUR && bp.coeff[2] > 0.0
+                     && bp.coeff[0] > 0.0)
+                bp.max_days = 999.0 * bp.coeff[2];  // asymptotic
+
+            auto& wp = landuse_solver_.washoff_params[k];
+            wp.type = static_cast<landuse::WashoffType>(ctx_.washoff.func_type[k]);
+            wp.coeff = ctx_.washoff.coeff[k];
+            wp.expon = ctx_.washoff.expon[k];
+            wp.sweep_effic = ctx_.washoff.sweep_effic[k];
+            wp.bmp_effic = ctx_.washoff.bmp_effic[k];
+        }
+    }
+}
+
+// ============================================================================
+// refreshTreatment() — recompile one treatment expression cell
+// ============================================================================
+
+/**
+ * @brief Recompile one (node, pollutant) treatment expression from the live
+ *        context and refresh the per-node has-treatment flag.
+ *
+ * @details The step loop (QualitySolver::applyTreatment) evaluates the
+ * compiled cache (`ctx.treatment.compiled` / `has_treatment`), which
+ * initQuality() builds once at start. The C API setters
+ * (swmm_treatment_set/_clear) mutate the expression string only, so they call
+ * this to keep the cache coherent — a mid-run treatment edit takes effect on
+ * the next step. An empty expression clears the cell. Mirrors the
+ * initQuality() compile (plain parse + pollutant_idx tag); the start-up cyclic
+ * co-treatment check (Gap #85) is not re-run for runtime edits.
+ *
+ * @return 0 on success, or the nonzero treatment::parse error code (the cell
+ *         is left cleared so a bad edit cannot leave a stale expression live).
+ */
+int SWMMEngine::refreshTreatment(int node_idx, int pollut_idx) noexcept {
+    int np = ctx_.n_pollutants();
+    int nn = ctx_.n_nodes();
+    if (np <= 0 || nn <= 0) return 0;
+    if (node_idx < 0 || node_idx >= nn || pollut_idx < 0 || pollut_idx >= np)
+        return 0;
+    if (ctx_.treatment.n_nodes != nn || ctx_.treatment.n_pollutants != np)
+        ctx_.treatment.resize(nn, np);
+
+    auto idx = static_cast<std::size_t>(node_idx * np + pollut_idx);
+    const auto& expr_str = ctx_.treatment.expressions[idx];
+    int rc = 0;
+    if (expr_str.empty()) {
+        ctx_.treatment.compiled[idx] = treatment::TreatExpr{};
+    } else {
+        treatment::TreatExpr te;
+        rc = treatment::parse(expr_str, te);
+        if (rc == 0) {
+            te.pollutant_idx = pollut_idx;
+            ctx_.treatment.compiled[idx] = std::move(te);
+        } else {
+            ctx_.treatment.compiled[idx] = treatment::TreatExpr{};
+        }
+    }
+
+    bool any = false;
+    for (int p = 0; p < np && !any; ++p) {
+        auto k = static_cast<std::size_t>(node_idx * np + p);
+        any = !ctx_.treatment.compiled[k].tokens.empty();
+    }
+    ctx_.treatment.has_treatment[static_cast<std::size_t>(node_idx)] = any;
+    return rc;
+}
+
+// ============================================================================
+// refreshLIDDrainParams() — re-copy drain coefficients into the LID solver
+// ============================================================================
+
+/**
+ * @brief Re-copy the drain-layer coefficients from the live context into the
+ *        LID solver's per-unit parameter columns.
+ *
+ * @details The step loop reads the per-unit copies that LIDSolver::init()
+ * makes from ctx.lid_controls.drain at start, so a swmm_lid_set_drain edit
+ * would otherwise be silently inert mid-run. Mirrors the init() drain-layer
+ * transfer for every unit (a handful of values; no per-unit state is touched,
+ * so this is safe while the simulation is running).
+ */
+void SWMMEngine::refreshLIDDrainParams() noexcept {
+    const auto& drain = ctx_.lid_controls.drain;
+    for (int t = 0; t < lid_.numGroups(); ++t) {
+        auto& g = lid_.group(t);
+        for (int i = 0; i < g.count; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            int li = g.control_idx[ui];
+            if (li < 0 || static_cast<std::size_t>(li) >= drain.size()) continue;
+            const auto& p = drain[static_cast<std::size_t>(li)];
+            g.drain_coeff[ui]  = p[0];
+            g.drain_expon[ui]  = p[1];
+            g.drain_offset[ui] = p[2];
+            g.drain_delay[ui]  = p[3];
+            g.drain_hopen[ui]  = p[4];
+            g.drain_hclose[ui] = p[5];
+        }
+    }
+}
+
+// ============================================================================
+// refreshAquiferParams() — re-derive GW flux-coefficient columns
+// ============================================================================
+
+/**
+ * @brief Re-derive the groundwater solver's per-subcatchment flux-coefficient
+ *        columns from the live context aquifers.
+ *
+ * @details The GW solver reads per-subcatchment copies of the aquifer
+ * parameters made once at start (see the init transfer in initHydrology);
+ * swmm_aquifer_set_param writes the context store, so mid-run edits of the
+ * runtime-editable parameters call this to keep the copies coherent. Mirrors
+ * the start-up transfer (same unit conversions) for the flux coefficients
+ * only — the structural columns (porosity, field capacity, wilting point,
+ * total depth) are pre-start-only and the GW state (theta, lower_depth) is
+ * never touched.
+ */
+void SWMMEngine::refreshAquiferParams() noexcept {
+    auto& gw = groundwater_.state();
+    if (gw.k_sat.empty()) return;  // GW solver not initialized yet
+    int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
+    for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        int aq_idx = ctx_.subcatches.gw_aquifer[ui];
+        if (aq_idx < 0) continue;
+        auto uaq = static_cast<std::size_t>(aq_idx);
+
+        gw.k_sat[ui]            = ctx_.aquifers.conductivity[uaq]
+                                  / ucf::Ucf[ucf::RAINFALL][unit_sys];
+        gw.k_slope[ui]          = ctx_.aquifers.conduct_slope[uaq];
+        gw.tension_slope[ui]    = ctx_.aquifers.tension_slope[uaq]
+                                  / ucf::Ucf[ucf::LENGTH][unit_sys];
+        gw.upper_evap_frac[ui]  = ctx_.aquifers.upper_evap[uaq];
+        gw.lower_evap_depth[ui] = ctx_.aquifers.lower_evap[uaq]
+                                  / ucf::Ucf[ucf::LENGTH][unit_sys];
+        gw.lower_loss_coeff[ui] = ctx_.aquifers.lower_loss[uaq]
+                                  / ucf::Ucf[ucf::RAINFALL][unit_sys];
     }
 }
 
@@ -1482,7 +2061,7 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
 
     // Pass actual infiltration rate to groundwater (upper zone percolation input).
     // sw_head is read from the pre-assembled subcatches.gw_sw_head[].
-    groundwater_.execute(ctx_, dt_runoff, climate_.evap_rate,
+    groundwater_.execute(ctx_, dt_runoff, ctx_.climate_state.evap_rate,
                          ctx_.subcatches.infil_loss.data(),
                          ctx_.subcatches.gw_sw_head.data(),
                          gw_frac_perv_.data(), gw_perv_evap_.data());
@@ -1580,6 +2159,13 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         double target = ctx_.links.target_setting[uj];
         double current = ctx_.links.setting[uj];
         if (target != current) {
+            // Update the open<->closed transition timestamp ONLY when one
+            // side of the change crosses zero, matching legacy
+            // routing.c:295-299. LINK_TIMEOPEN / LINK_TIMECLOSED rule
+            // premises read this via ctx.links.time_last_set. (P1-C09)
+            if (target * current == 0.0)
+                ctx_.links.time_last_set[uj] = ctx_.current_date;
+
             // Gradual transition (P8-G18): use orifice open/close rate
             // Legacy: link_setSetting() applies orate for time-based ramp
             // orate is stored in hours (from inp file); convert to seconds
@@ -1655,10 +2241,13 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
 
         // Save previous iteration flows for under-relaxation
         // Only save non-conduit flows (much smaller than iterating all links)
-        thread_local std::vector<double> q_prev;
+        thread_local std::vector<double> q_prev, dqdh_prev;
         q_prev.resize(nc_idx.size());
+        dqdh_prev.resize(nc_idx.size());
         for (std::size_t k = 0; k < nc_idx.size(); ++k) {
-            q_prev[k] = links.flow[static_cast<std::size_t>(nc_idx[k])];
+            auto uj = static_cast<std::size_t>(nc_idx[k]);
+            q_prev[k]    = links.flow[uj];
+            dqdh_prev[k] = links.dqdh[uj];
         }
 
         // Compute all non-conduit link flows (sets links.flow for non-conduits).
@@ -1670,6 +2259,21 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         //     findNonConduitSurfArea) so weir/orifice-fed junctions don't
         //     get an undersized denominator in setNodeDepth.
         hydstruct_.computeAllFlows(ctx, dt, dw.nodeNewSurfAreaDataMut());
+
+        // PARITY: hold the flow/dqdh of any bypassed non-conduit (both end nodes
+        // converged) at the previous iteration's value — legacy findLinkFlows
+        // skips findNonConduitFlow for bypassed links. computeAllFlows above
+        // recomputed every structure unconditionally; restore the held values so
+        // a settled weir/orifice/pump matches legacy bit-for-bit. (Restoring
+        // flow makes the under-relaxation below a no-op for these links.)
+        for (std::size_t k = 0; k < nc_idx.size(); ++k) {
+            int j = nc_idx[k];
+            if (dw.isBypassed(j)) {
+                auto uj = static_cast<std::size_t>(j);
+                links.flow[uj] = q_prev[k];
+                links.dqdh[uj] = dqdh_prev[k];
+            }
+        }
 
         // Apply under-relaxation and scatter to nodes
         for (std::size_t k = 0; k < nc_idx.size(); ++k) {
@@ -1736,7 +2340,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //         Router::initNodeFlows() for joint evap+exfil capping.
     exfil_.computeAll(ctx_, dt_routing);
 
-    int iters = router_.step(ctx_, dt_routing, climate_.evap_rate, non_conduit_fn);
+    int iters = router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
     ctx_.routing_stats.update_iterations(iters, iters < ctx_.options.max_trials);
 
 #ifdef OPENSWMM_HAS_2D
@@ -1787,6 +2391,17 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
  *
  * @param dt_routing  Routing timestep (seconds).
  */
+void SWMMEngine::ensureXspCache() noexcept {
+    const auto n = static_cast<std::size_t>(ctx_.n_links());
+    if (xsp_cache_.size() == n && xsp_cache_gen_ == ctx_.xsect_generation)
+        return;
+    xsp_cache_.resize(n);
+    for (std::size_t uj = 0; uj < n; ++uj)
+        xsp_cache_[uj] = link::buildXSectParams(ctx_.links, uj,
+                                                &ctx_.transect_tables);
+    xsp_cache_gen_ = ctx_.xsect_generation;
+}
+
 void SWMMEngine::updateStatistics(double dt_routing) noexcept {
     const int np = ctx_.n_pollutants();
 
@@ -1867,6 +2482,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             }
         }
     }
+    ensureXspCache();
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         double q = std::fabs(ctx_.links.flow[uj]);
@@ -1883,8 +2499,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         // guards on depth <= 0.01, and divides flow by barrels.
         double vel = 0.0;
         if (ctx_.links.type[uj] == LinkType::CONDUIT) {
-            XSectParams xs = link::buildXSectParams(ctx_.links, uj);
-            vel = link::getVelocity(xs, q, ctx_.links.depth[uj],
+            vel = link::getVelocity(xsp_cache_[uj], q, ctx_.links.depth[uj],
                                      ctx_.links.barrels[uj]);
         }
         if (vel > ctx_.links.stat_max_veloc[uj])
@@ -2056,17 +2671,37 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         const NodeType nt = ctx_.nodes.type[uj];
 
         if (nt == NodeType::OUTFALL) {
-            // Outfall: system outflow = inflow
-            double q_outfall = ctx_.nodes.inflow[uj];
-            ctx_.mass_balance.routing_outflow += q_outfall * dt_routing;
-            ctx_.mass_balance.step_outflow    += q_outfall;
+            // Legacy node_getSystemOutflow (node.c:428-447) + removeOutflows
+            // (routing.c:921-931): an outfall's system flow is its pipe inflow
+            // when discharging. When the outfall instead sends water BACK into
+            // the network (outflow > 0, inflow == 0 — e.g. a 2D tailwater or a
+            // FIXED/TIDAL/TIMESERIES stage above the upstream HGL), the system
+            // flow is NEGATIVE and legacy books it as an EXTERNAL system INFLOW
+            // of magnitude outflow (massbal_addInflowFlow(EXTERNAL_INFLOW, -q)).
+            // Mirroring that closes routing continuity for any backflowing
+            // outfall (a pre-existing gap for tidal/fixed outfalls, and required
+            // for the 2D-coupled withdrawal path in transferOutfallDischarges).
+            double q_in  = ctx_.nodes.inflow[uj];
+            double q_out = ctx_.nodes.outflow[uj];
+            if (q_out > 0.0 && q_in <= 0.0) {
+                // Backflow into the network — system external inflow. step_*
+                // is added here (after the step_ext_inflow consumption at the
+                // top of this function) for the per-step snapshot only,
+                // mirroring the coupling-spill booking below.
+                ctx_.mass_balance.routing_external += q_out * dt_routing;
+                ctx_.mass_balance.step_ext_inflow  += q_out;
+            } else {
+                // Normal discharge — system outflow = inflow.
+                ctx_.mass_balance.routing_outflow += q_in * dt_routing;
+                ctx_.mass_balance.step_outflow    += q_in;
 
-            // Gap #28: accumulate outfall discharge as routed volume for next
-            // runoff step (matching legacy Outfall[i].vRouted accumulation).
-            int sc = ctx_.nodes.outfall_route_to[uj];
-            if (sc >= 0 && sc < ctx_.n_subcatches() && q_outfall > 0.0) {
-                auto usc = static_cast<std::size_t>(sc);
-                ctx_.subcatches.outfall_runon_vol[usc] += q_outfall * dt_routing;
+                // Gap #28: accumulate outfall discharge as routed volume for next
+                // runoff step (matching legacy Outfall[i].vRouted accumulation).
+                int sc = ctx_.nodes.outfall_route_to[uj];
+                if (sc >= 0 && sc < ctx_.n_subcatches() && q_in > 0.0) {
+                    auto usc = static_cast<std::size_t>(sc);
+                    ctx_.subcatches.outfall_runon_vol[usc] += q_in * dt_routing;
+                }
             }
         }
         else if (!is_dw && ctx_.nodes.degree[uj] == 0 && nt != NodeType::STORAGE) {
@@ -2105,18 +2740,30 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     {
         double runoff_q = 0.0;
         double user_q_total = 0.0;
+        double coupling_out_q = 0.0;   // 1D → 2D, absolute Σ over coupled nodes
         for (int j = 0; j < ctx_.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx_.nodes.runoff_inflow[uj] > 0.0)
                 runoff_q += ctx_.nodes.runoff_inflow[uj];
             if (ctx_.nodes.user_lat_flow[uj] > 0.0)
                 user_q_total += ctx_.nodes.user_lat_flow[uj];
+            if (ctx_.nodes.coupling_inflow[uj] < 0.0)
+                coupling_out_q += -ctx_.nodes.coupling_inflow[uj];
         }
         if (runoff_q > 0.0) {
             ctx_.mass_balance.routing_wet_weather += runoff_q * dt_routing;
         }
         if (user_q_total > 0.0) {
             ctx_.mass_balance.routing_forcing_inflow += user_q_total * dt_routing;
+        }
+        // 1D → 2D coupling spill folds into routing_flooding (and the
+        // per-step accumulator) so it appears under the existing "Flooding
+        // Loss" row in the continuity report. The positive (2D → 1D) side
+        // was already added to step_ext_inflow → routing_external by
+        // assembleLateralInflows. See review §11.
+        if (coupling_out_q > 0.0) {
+            ctx_.mass_balance.routing_flooding += coupling_out_q * dt_routing;
+            ctx_.mass_balance.step_flooding    += coupling_out_q;
         }
     }
 
@@ -2190,21 +2837,11 @@ void SWMMEngine::computeFinalStorage() noexcept {
     ctx_.mass_balance.routing_final_storage = 0.0;
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        double v = ctx_.nodes.volume[uj];
-        if (std::isnan(v)) {
-            std::fprintf(stderr, "[NAN] node %d (%s) volume=nan\n",
-                j, ctx_.node_names.name_of(j).c_str());
-        }
-        ctx_.mass_balance.routing_final_storage += v;
+        ctx_.mass_balance.routing_final_storage += ctx_.nodes.volume[uj];
     }
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        double v = ctx_.links.volume[uj];
-        if (std::isnan(v)) {
-            std::fprintf(stderr, "[NAN] link %d (%s) volume=nan\n",
-                j, ctx_.link_names.name_of(j).c_str());
-        }
-        ctx_.mass_balance.routing_final_storage += v;
+        ctx_.mass_balance.routing_final_storage += ctx_.links.volume[uj];
     }
 }
 
@@ -2255,6 +2892,57 @@ void SWMMEngine::computeFinalQualityMassBalance() noexcept {
 // postOutputSnapshot() — post snapshot to IO thread if output is due
 // ============================================================================
 
+namespace {
+/// Convert the 1D portion of a snapshot from internal (ft/cfs/ft³) to project
+/// display units, in place. This is the single conversion boundary: all output
+/// plugins (.out, GeoPackage) then consume display-unit data directly instead
+/// of each re-applying Ucf/Qcf. The 2D surface_* fields are SI-native and are
+/// left untouched. Quality concentrations, capacity and soil-moisture are
+/// dimensionless and are also left untouched. For US projects every factor is
+/// 1.0 except rainfall/evap rates, so the byte-identical .out is preserved.
+void convertSnapshotToDisplay(SimulationSnapshot& s, const ucf::DisplayUnits& du) {
+    auto scale = [](std::vector<double>& v, double f) {
+        if (f == 1.0) return;
+        for (auto& x : v) x *= f;
+    };
+    // Subcatchments (legacy subcatch_getResults field order)
+    scale(s.subcatch.rainfall,   du.rainfall);
+    scale(s.subcatch.snow_depth, du.raindepth);
+    scale(s.subcatch.evap,       du.evaprate);
+    scale(s.subcatch.infil,      du.rainfall);
+    scale(s.subcatch.runoff,     du.flow);
+    scale(s.subcatch.gw_flow,    du.flow);
+    scale(s.subcatch.gw_elev,    du.length);
+    // Nodes (legacy node_getResults field order)
+    scale(s.nodes.depth,          du.length);
+    scale(s.nodes.head,           du.length);
+    scale(s.nodes.volume,         du.volume);
+    scale(s.nodes.lateral_inflow, du.flow);
+    scale(s.nodes.total_inflow,   du.flow);
+    scale(s.nodes.overflow,       du.flow);
+    // Links (legacy link_getResults field order)
+    scale(s.links.flow,     du.flow);
+    scale(s.links.depth,    du.length);
+    scale(s.links.velocity, du.length);
+    scale(s.links.volume,   du.volume);
+    // System scalars (legacy SysResults order)
+    s.sys_temperature = du.temperature(s.sys_temperature);
+    s.sys_rainfall   *= du.rainfall;
+    s.sys_snow_depth *= du.raindepth;
+    s.sys_infil      *= du.rainfall;
+    s.sys_runoff     *= du.flow;
+    s.sys_dw_inflow  *= du.flow;
+    s.sys_gw_inflow  *= du.flow;
+    s.sys_ii_inflow  *= du.flow;
+    s.sys_ext_inflow *= du.flow;
+    s.sys_flooding   *= du.flow;
+    s.sys_outflow    *= du.flow;
+    s.sys_storage    *= du.volume;
+    s.sys_evap       *= du.evaprate;
+    s.sys_pet        *= du.evaprate;
+}
+} // namespace
+
 /**
  * @brief Post a snapshot to the IO thread if output is due.
  *
@@ -2302,6 +2990,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 const int nL = ctx_.n_links();
                 snap.links.velocity.resize(static_cast<std::size_t>(nL));
                 snap.links.capacity.resize(static_cast<std::size_t>(nL));
+                ensureXspCache();
                 for (int j = 0; j < nL; ++j) {
                     auto uj = static_cast<std::size_t>(j);
                     double q = ctx_.links.flow[uj];
@@ -2311,7 +3000,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
 
                     auto lt = ctx_.links.type[uj];
                     if (lt == LinkType::CONDUIT) {
-                        XSectParams xs = link::buildXSectParams(ctx_.links, uj);
+                        const XSectParams& xs = xsp_cache_[uj];
                         veloc = link::getVelocity(xs, q, d, ctx_.links.barrels[uj]);
                         cap   = link::getCapacity(xs, d);
                     } else {
@@ -2387,7 +3076,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             }
 
             // System-level results
-            snap.sys_temperature = climate_.temperature;
+            snap.sys_temperature = ctx_.climate_state.temperature;
 
             // Area-weighted average rainfall across subcatchments
             // (matching legacy output_saveSubcatchResults accumulation)
@@ -2420,7 +3109,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 }
                 snap.sys_snow_depth = (total_area > 0.0) ? total_snow / total_area : 0.0;
             }
-            snap.sys_pet = climate_.evap_rate;
+            snap.sys_pet = ctx_.climate_state.evap_rate;
 
             // Area-weighted averages of evap and infil; total runoff
             // Legacy adds GW evaporation (gw->evapLoss) to system evap
@@ -2465,6 +3154,16 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 snap.sys_storage = tot_store;
             }
 
+            // 2D surface routing state (deep-copied; empty when 2D inactive,
+            // and Default2DOutputPlugin::update() short-circuits on
+            // surface_tri_count == 0).
+            fillSurfaceSnapshot(snap);
+
+            // Single conversion boundary: convert the 1D snapshot to project
+            // display units once here so all output plugins consume display
+            // data directly (2D surface_* fields stay SI-native, untouched).
+            convertSnapshotToDisplay(snap, ucf::DisplayUnits::from(ctx_.options));
+
             // Attach name table pointers (valid for lifetime of ctx_)
             snap.node_ids     = &ctx_.node_names.names();
             snap.link_ids     = &ctx_.link_names.names();
@@ -2474,8 +3173,52 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
 
             io_thread_.post(std::move(snap));
         }
+#ifdef OPENSWMM_HAS_2D
+        else if (surface_output_plugin_ != nullptr
+                 && surface_router_.isActive() && !plugins_.empty()) {
+            // 2D output is configured but the 1D binary .out is not being saved
+            // (no .out path → no 1D output writer registered). Post a snapshot
+            // carrying only the surface state so the 2D HDF5 still writes. The
+            // 1D writers are absent in this mode, so the empty 1D arrays are
+            // never consumed; DefaultReportPlugin::update() is a no-op.
+            SimulationSnapshot snap;
+            snap.sim_time = ctx_.current_date;
+            fillSurfaceSnapshot(snap);
+            io_thread_.post(std::move(snap));
+        }
+#endif
         hydraulics::TimestepController::reset_output_timer(ctx_);
     }
+}
+
+
+void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
+#ifdef OPENSWMM_HAS_2D
+    if (!surface_router_.isActive()) return;
+    const auto& st  = surface_router_.state();
+    snap.surface_tri_count     = surface_router_.mesh().n_triangles();
+    snap.surface_vert_count    = surface_router_.mesh().n_vertices();
+    snap.surface_depth          = st.depth;
+    snap.surface_head           = st.head;
+    snap.surface_grad_hx        = st.grad_hx;
+    snap.surface_grad_hy        = st.grad_hy;
+    snap.surface_grad_hx_lim    = st.grad_hx_lim;
+    snap.surface_grad_hy_lim    = st.grad_hy_lim;
+    snap.surface_rainfall       = st.rainfall;
+    snap.surface_coupling_flux  = st.coupling_flux;
+    snap.surface_net_source     = st.net_source;
+    snap.surface_edge_flux      = st.edge_flux;
+    snap.surface_vert_head      = st.vert_head;
+    snap.surface_face_vx        = st.face_vx;
+    snap.surface_face_vy        = st.face_vy;
+    snap.surface_continuity_err = st.cell_continuity_err;
+    // Cumulative rendering envelopes (SI-native; not display-converted).
+    snap.surface_stat_max_depth    = st.stat_max_depth;
+    snap.surface_stat_max_velocity = st.stat_max_velocity;
+    snap.surface_stat_max_cont_err = st.stat_max_cont_err;
+#else
+    (void)snap;
+#endif
 }
 
 // ============================================================================
@@ -2495,6 +3238,7 @@ void SWMMEngine::accumulateAvgResults() noexcept {
     }
 
     // Link accumulators: flow, depth, velocity, volume, capacity
+    ensureXspCache();
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         double q = ctx_.links.flow[uj];
@@ -2506,7 +3250,7 @@ void SWMMEngine::accumulateAvgResults() noexcept {
 
         auto lt = ctx_.links.type[uj];
         if (lt == LinkType::CONDUIT) {
-            XSectParams xs = link::buildXSectParams(ctx_.links, uj);
+            const XSectParams& xs = xsp_cache_[uj];
             avg_.link_velocity[uj] += link::getVelocity(xs, q, d, ctx_.links.barrels[uj]);
             avg_.link_capacity[uj] += link::getCapacity(xs, d);
         } else {
@@ -2665,11 +3409,37 @@ int SWMMEngine::close() noexcept {
     // Close routing interface files
     iface_.closeFiles();
 
+    // Phase 1b: close the runoff interface file (no-op if never opened).
+    // Done before plugins_.unload_all so that any plugin holding the
+    // runoff file open via swmm_runoff_iface_* sees a clean shutdown.
+    closeRunoffIface();
+
     // Unload all dynamically loaded plugin libraries
     plugins_.unload_all();
 
     ctx_.state = EngineState::CLOSED;
     return SWMM_OK;
+}
+
+// ============================================================================
+// subcatchSnowDepth — area-weighted snow pack SWE on a subcatchment (ft)
+// ============================================================================
+
+double SWMMEngine::subcatchSnowDepth(int idx) const noexcept {
+    auto us = static_cast<std::size_t>(idx);
+    if (ctx_.subcatches.snowpack[us] < 0) return 0.0;
+    const auto& soa = snow_.state();
+    double fi = ctx_.subcatches.frac_imperv[us];
+    double sn = (us < soa.snn.size()) ? soa.snn[us] : 0.0;
+    double fArea[3] = { sn * fi, (1.0 - sn) * fi, 1.0 - fi };
+    int base = idx * snow::N_SUBAREAS;
+    double sd = 0.0;
+    for (int k = 0; k < snow::N_SUBAREAS; ++k) {
+        auto uk = static_cast<std::size_t>(base + k);
+        if (uk < soa.wsnow.size())
+            sd += soa.wsnow[uk] * fArea[k];
+    }
+    return sd;
 }
 
 // ============================================================================
@@ -2693,13 +3463,18 @@ void SWMMEngine::applyForcings(double dt) noexcept {
     }
 
     // ---- Node head boundary forcing (outfalls only) ----
-    for (int i = 0; i < ctx_.n_nodes(); ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (f.node_head_boundary_mode[ui] == ForcingMode::NONE) continue;
-        if (ctx_.nodes.type[ui] != NodeType::OUTFALL) continue;
-        ctx_.nodes.outfall_param[ui] = f.node_head_boundary_value[ui];
-        ctx_.nodes.outfall_type[ui]  = OutfallType::FIXED;
-    }
+    //
+    // C6: the prescribed-HGL value stays in forcing.node_head_boundary_value
+    // and is consumed by Outfall::setAllOutfallDepths as an overlay on top of
+    // the legacy outfall logic and the C4 2D-coupling override. Do NOT
+    // mutate outfall_type or outfall_param here — the original outfall_type
+    // must survive a prescribed step so that "unfix" (mode = NONE) returns
+    // the outfall to its original FREE / NORMAL / FIXED / TIDAL / TIMESERIES
+    // behaviour without any state restoration. See
+    // docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C6).
+    //
+    // This block is intentionally a no-op now; staging into the forcing
+    // buffer is handled by swmm_forcing_node_head_boundary() in the API.
 
     // ---- Gage rainfall forcing (before runoff substeps read gages) ----
     for (int g = 0; g < ctx_.n_gages(); ++g) {
@@ -2711,26 +3486,20 @@ void SWMMEngine::applyForcings(double dt) noexcept {
         }
     }
 
-    // ---- Subcatchment rainfall forcing (bypasses gage lookup) ----
-    for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (f.subcatch_rainfall_mode[ui] == ForcingMode::OVERRIDE) {
-            ctx_.subcatches.rainfall[ui] = f.subcatch_rainfall_value[ui];
-        } else if (f.subcatch_rainfall_mode[ui] == ForcingMode::ADD) {
-            ctx_.subcatches.rainfall[ui] += f.subcatch_rainfall_value[ui];
-        }
-    }
+    // ---- Subcatchment rainfall forcing ----
+    // No action needed here: subcatch_rainfall_{mode,value} are consumed by
+    // the runoff solver's rainfall assembly via forcing::effective_rainfall()
+    // so the override survives the per-step gage re-read. (Previously this
+    // block pre-wrote subcatches.rainfall, which the runoff solver then
+    // overwrote from the gage — the forcing had no effect.)
 
-    // ---- Subcatchment evaporation forcing ----
-    // (applied here; runoff solver will use subcatches.evap_rate if set)
-    for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (f.subcatch_evap_mode[ui] == ForcingMode::OVERRIDE) {
-            ctx_.subcatches.evap_loss[ui] = f.subcatch_evap_value[ui];
-        } else if (f.subcatch_evap_mode[ui] == ForcingMode::ADD) {
-            ctx_.subcatches.evap_loss[ui] += f.subcatch_evap_value[ui];
-        }
-    }
+    // ---- Subcatchment PET forcing ----
+    // No action needed here: subcatch_evap_{mode,value} hold a prescribed
+    // PET *rate* (ft/sec) that is consumed directly by the runoff, LID, and
+    // groundwater solvers via forcing::effective_evap_rate(), so capping to
+    // available water and mass-balance accounting happen along the normal
+    // computation paths. (Previously this block overwrote evap_loss, which
+    // the runoff solver then recomputed — the forcing had no effect.)
 
     // ---- Link setting forcing (pump/orifice/weir control override) ----
     for (int j = 0; j < ctx_.n_links(); ++j) {
@@ -2774,6 +3543,22 @@ void SWMMEngine::applyForcings(double dt) noexcept {
             }
         }
 
+        // ---- Link quality forcing (same semantics as the node channel) ----
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            for (int p = 0; p < np; ++p) {
+                auto flat = static_cast<std::size_t>(j) * static_cast<std::size_t>(np)
+                          + static_cast<std::size_t>(p);
+                if (f.link_quality_mode[flat] == ForcingMode::OVERRIDE) {
+                    ctx_.links.conc[flat] = f.link_quality_value[flat];
+                } else if (f.link_quality_mode[flat] == ForcingMode::ADD) {
+                    ctx_.links.conc[flat] += f.link_quality_value[flat];
+                    ctx_.mass_balance.routing_forcing_qual_inflow[
+                        static_cast<std::size_t>(p)] +=
+                        f.link_quality_value[flat] * dt;
+                }
+            }
+        }
+
         // ---- Persistent user quality mass flux (user_conc_mass_flux) ----
         // Applied as additive mass source each step, analogous to user_lat_flow.
         // mass_rate is in mass/sec; converted to concentration delta via volume.
@@ -2798,6 +3583,68 @@ void SWMMEngine::applyForcings(double dt) noexcept {
             }
         }
     }
+}
+
+// ============================================================================
+// Phase 1b: runoff interface file management
+// ============================================================================
+//
+// Thin wrappers around runoff_iface::RunoffInterfaceFile. The auto-save
+// hook lives in stepRunoff() right after accumulateRunoffMassBalance —
+// see the call site in this file for the in-loop emit.
+
+int SWMMEngine::openRunoffIfaceWrite(const std::string& path) noexcept {
+    if (runoff_iface_file_ && runoff_iface_file_->isOpen()) {
+        // Refuse to silently leak the previous file — caller must close
+        // explicitly so it's obvious in tests / debug logs.
+        return -10;
+    }
+    runoff_iface_file_ = std::make_unique<runoff_iface::RunoffInterfaceFile>();
+    const int rc = runoff_iface_file_->openForWrite(
+        path,
+        ctx_.n_subcatches(),
+        ctx_.n_pollutants(),
+        static_cast<int>(ctx_.options.flow_units));
+    if (rc != 0) runoff_iface_file_.reset();
+    return rc;
+}
+
+int SWMMEngine::openRunoffIfaceRead(const std::string& path) noexcept {
+    if (runoff_iface_file_ && runoff_iface_file_->isOpen()) return -10;
+    runoff_iface_file_ = std::make_unique<runoff_iface::RunoffInterfaceFile>();
+    const int rc = runoff_iface_file_->openForRead(
+        path,
+        ctx_.n_subcatches(),
+        ctx_.n_pollutants(),
+        static_cast<int>(ctx_.options.flow_units));
+    if (rc != 0) runoff_iface_file_.reset();
+    return rc;
+}
+
+void SWMMEngine::saveRunoffIfaceStep(double dt) noexcept {
+    if (!runoff_iface_file_) return;
+    // saveResults is a no-op if the file is not in SAVE mode.
+    runoff_iface_file_->saveResults(ctx_, dt);
+}
+
+bool SWMMEngine::readRunoffIfaceStep() noexcept {
+    if (!runoff_iface_file_) return false;
+    return runoff_iface_file_->readResults(ctx_);
+}
+
+void SWMMEngine::closeRunoffIface() noexcept {
+    if (!runoff_iface_file_) return;
+    runoff_iface_file_->close();
+    runoff_iface_file_.reset();
+}
+
+FileMode SWMMEngine::runoffIfaceMode() const noexcept {
+    if (!runoff_iface_file_ || !runoff_iface_file_->isOpen())
+        return FileMode::NONE;
+    // RunoffInterfaceFile doesn't expose its mode directly; infer from
+    // the FilesSpec which is set by the C API entry points before
+    // calling open*. Falling back to SAVE keeps the diagnostic non-NONE.
+    return ctx_.files.runoff_mode;
 }
 
 // ============================================================================
@@ -2916,8 +3763,18 @@ void SWMMEngine::initHydraulics() noexcept {
             if (ctx_.nodes.type[ui] == NodeType::OUTFALL)
                 ++n_outlets;
         }
-        // Gap #83b: drainage system must have at least one outlet
-        if (n_outlets == 0 && rm != RouteModel::STEADY) {
+        // Gap #83b: drainage system must have at least one outlet.
+        // A model with a 2D surface mesh is exempt: water can leave the
+        // system through the 2D domain (boundary conditions / vertex-node
+        // coupling), so a 1D outfall is not required. The mesh is parsed at
+        // open, so triangle/vertex counts are valid here even though
+        // surface_router_.initialize() (which sets isActive()) runs below.
+        bool has_2d_domain = false;
+#ifdef OPENSWMM_HAS_2D
+        has_2d_domain = surface_router_.mesh().n_triangles() >= 1
+                        && surface_router_.mesh().n_vertices() >= 3;
+#endif
+        if (n_outlets == 0 && rm != RouteModel::STEADY && !has_2d_domain) {
             ctx_.errors.push_back(format_error(ERR_NO_OUTLETS, ""));
             set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
         }
@@ -3071,10 +3928,23 @@ void SWMMEngine::initHydraulics() noexcept {
         next_event_ = 0;
     }
 
-    // 10e. Control rule parsing from [CONTROLS] section text
+    // 10e. Control rule parsing from [CONTROLS] section text.
+    //      Surface parser errors so malformed rules don't get silently
+    //      dropped (P1-C11). Legacy input.c returns ERR_RULE / ERR_KEYWORD
+    //      / ERR_DATETIME via error_setInpError; we use the same channel
+    //      via ctx.error_code / error_message.
     if (ctx_.control_rules.count() > 0) {
-        for (const auto& text : ctx_.control_rules.rule_text) {
-            controls_.parseRuleText(text, ctx_);
+        for (size_t i = 0; i < ctx_.control_rules.rule_text.size(); ++i) {
+            const auto& text = ctx_.control_rules.rule_text[i];
+            const int rc = controls_.parseRuleText(text, ctx_);
+            if (rc < 0) {
+                ctx_.error_code = 217;  // legacy ERR_RULE (error.h:174)
+                ctx_.error_message =
+                    "Failed to parse [CONTROLS] rule block #" +
+                    std::to_string(i + 1);
+                ctx_.errors.push_back(ctx_.error_message);
+                return;
+            }
         }
     }
 }
@@ -3171,6 +4041,32 @@ void SWMMEngine::initHydrology() noexcept {
                     soa.snn[ui] = p[6];
             }
 
+            // Fractional area of each snow surface (legacy snow_initSnowpack,
+            // snow.c:178-182). Without this the SoA fArea stays zero, so
+            // plowSnow() and the melt area-weighting treat every surface as
+            // having no area — packs could never accumulate (Gap: M3 repair).
+            //   plowable = snn * fracImperv
+            //   imperv   = (1 - snn) * fracImperv
+            //   pervious = 1 - fracImperv
+            {
+                double fimp = ctx_.subcatches.frac_imperv[ui];
+                double snn  = soa.snn[ui];
+                auto base = static_cast<std::size_t>(i * snow::N_SUBAREAS);
+                soa.fArea[base + snow::SNOW_PLOWABLE] = snn * fimp;
+                soa.fArea[base + snow::SNOW_IMPERV]   = (1.0 - snn) * fimp;
+                soa.fArea[base + snow::SNOW_PERV]     = 1.0 - fimp;
+                // Match legacy: zero initial state where the surface has no
+                // area (snow.c:184-197).
+                for (int k = 0; k < snow::N_SUBAREAS; ++k) {
+                    auto idx = base + static_cast<std::size_t>(k);
+                    if (soa.fArea[idx] <= 0.0) {
+                        soa.wsnow[idx] = 0.0;
+                        soa.fw[idx]    = 0.0;
+                        soa.si[idx]    = 0.0;
+                    }
+                }
+            }
+
             // Transfer plowing/removal parameters
             if (usp < ctx_.snowpacks.removal.size()) {
                 const auto& r = ctx_.snowpacks.removal[usp];
@@ -3197,42 +4093,48 @@ void SWMMEngine::initHydrology() noexcept {
         int evap_type = ctx_.options.evap_type;
         if (evap_type == 0) {
             // CONSTANT
-            climate_.evap_method = climate::EvapMethod::CONSTANT;
-            climate_.evap_rate = ctx_.options.evap_values[0]
-                               / ucf::Ucf[ucf::EVAPRATE][0];
+            // EVAPRATE units follow the project's unit system: in/day (US) or
+            // mm/day (SI). The conversion factor must therefore be selected by
+            // the model's flow-unit system, not hardcoded to the US index — an
+            // SI (CMS) model with `CONSTANT 3.0` means 3 mm/day, and using the
+            // US factor (1036800 vs 26334720) over-evaporates by ~25×.
+            ctx_.climate_state.evap_method = climate::EvapMethod::CONSTANT;
+            ctx_.climate_state.evap_rate = ctx_.options.evap_values[0]
+                               / ucf::UCF(ucf::EVAPRATE, ctx_.options);
         } else if (evap_type == 1) {
             // MONTHLY
-            climate_.evap_method = climate::EvapMethod::MONTHLY;
+            ctx_.climate_state.evap_method = climate::EvapMethod::MONTHLY;
+            ctx_.climate_state.evaprate_ucf = ucf::UCF(ucf::EVAPRATE, ctx_.options);
             for (int i = 0; i < 12; ++i)
-                climate_.monthly_evap[i] = ctx_.options.evap_values[i];
+                ctx_.climate_state.monthly_evap[i] = ctx_.options.evap_values[i];
         } else if (evap_type == 2) {
-            climate_.evap_method = climate::EvapMethod::TIMESERIES;
+            ctx_.climate_state.evap_method = climate::EvapMethod::TIMESERIES;
         } else if (evap_type == 3) {
-            climate_.evap_method = climate::EvapMethod::TEMPERATURE;
+            ctx_.climate_state.evap_method = climate::EvapMethod::TEMPERATURE;
         } else if (evap_type == 4) {
-            climate_.evap_method = climate::EvapMethod::PAN;
+            ctx_.climate_state.evap_method = climate::EvapMethod::PAN;
         }
 
         // Transfer latitude for Hargreaves ET calculation
-        climate_.latitude = ctx_.options.snow_lat;
+        ctx_.climate_state.latitude = ctx_.options.snow_lat;
 
         // Transfer site elevation for psychrometric constant (Gap #8)
-        climate_.elev = ctx_.options.snow_elev;
+        ctx_.climate_state.elev = ctx_.options.snow_elev;
 
         // Transfer monthly adjustment arrays
         for (int i = 0; i < 12; ++i) {
-            climate_.adjust_temp[i] = ctx_.adjust_temp[i];
-            climate_.adjust_evap[i] = ctx_.adjust_evap[i];
-            climate_.adjust_rain[i] = ctx_.adjust_rain[i];
-            climate_.adjust_hydcon[i] = ctx_.adjust_hydcon[i];
+            ctx_.climate_state.adjust_temp[i] = ctx_.adjust_temp[i];
+            ctx_.climate_state.adjust_evap[i] = ctx_.adjust_evap[i];
+            ctx_.climate_state.adjust_rain[i] = ctx_.adjust_rain[i];
+            ctx_.climate_state.adjust_hydcon[i] = ctx_.adjust_hydcon[i];
         }
 
         // Resolve timeseries names to table indices
         if (ctx_.options.temp_source == 1 && !ctx_.options.temp_ts_name.empty()) {
-            climate_.temp_ts_index = ctx_.table_names.find(ctx_.options.temp_ts_name);
+            ctx_.climate_state.temp_ts_index = ctx_.table_names.find(ctx_.options.temp_ts_name);
         }
         if (evap_type == 2 && !ctx_.options.evap_ts_name.empty()) {
-            climate_.evap_ts_index = ctx_.table_names.find(ctx_.options.evap_ts_name);
+            ctx_.climate_state.evap_ts_index = ctx_.table_names.find(ctx_.options.evap_ts_name);
         }
 
         // Resolve recovery pattern name to pattern index
@@ -3240,7 +4142,7 @@ void SWMMEngine::initHydrology() noexcept {
             int np = ctx_.patterns.count();
             for (int i = 0; i < np; ++i) {
                 if (ctx_.patterns.names[static_cast<std::size_t>(i)] == ctx_.options.evap_recovery_pat) {
-                    climate_.recovery_pat_index = i;
+                    ctx_.climate_state.recovery_pat_index = i;
                     break;
                 }
             }
@@ -3513,33 +4415,7 @@ void SWMMEngine::initQuality() noexcept {
         ctx_.subcatches.resize_total_load(ctx_.n_subcatches(), np);
 
         // Transfer parsed BuildupData/WashoffData into LanduseSolver params
-        for (int lu = 0; lu < ctx_.n_landuses(); ++lu) {
-            for (int p = 0; p < np; ++p) {
-                auto k = static_cast<std::size_t>(lu * np + p);
-                auto& bp = landuse_solver_.buildup_params[k];
-                bp.type = static_cast<landuse::BuildupType>(ctx_.buildup.func_type[k]);
-                bp.coeff[0] = ctx_.buildup.coeff1[k];  // max buildup
-                bp.coeff[1] = ctx_.buildup.coeff2[k];  // rate constant
-                bp.coeff[2] = ctx_.buildup.coeff3[k];  // exponent/half-sat
-                bp.normalizer = ctx_.buildup.normalizer[k];
-                // Compute max_days: time to reach 99.9% of max buildup
-                if (bp.type == landuse::BuildupType::EXPON && bp.coeff[1] > 0.0)
-                    bp.max_days = -std::log(0.001) / bp.coeff[1];
-                else if (bp.type == landuse::BuildupType::POWER && bp.coeff[1] > 0.0
-                         && bp.coeff[2] > 0.0 && bp.coeff[0] > 0.0)
-                    bp.max_days = std::pow(bp.coeff[0] / bp.coeff[1], 1.0 / bp.coeff[2]);
-                else if (bp.type == landuse::BuildupType::SATUR && bp.coeff[2] > 0.0
-                         && bp.coeff[0] > 0.0)
-                    bp.max_days = 999.0 * bp.coeff[2];  // asymptotic
-
-                auto& wp = landuse_solver_.washoff_params[k];
-                wp.type = static_cast<landuse::WashoffType>(ctx_.washoff.func_type[k]);
-                wp.coeff = ctx_.washoff.coeff[k];
-                wp.expon = ctx_.washoff.expon[k];
-                wp.sweep_effic = ctx_.washoff.sweep_effic[k];
-                wp.bmp_effic = ctx_.washoff.bmp_effic[k];
-            }
-        }
+        refreshLanduseParams();
 
         // Initialize quality mass balance vectors
         ctx_.mass_balance.resize_quality(np);
@@ -3630,6 +4506,35 @@ void SWMMEngine::initGeometry() noexcept {
         // Track node degree (connectivity count)
         ctx_.nodes.degree[un1]++;
         ctx_.nodes.degree[un2]++;
+    }
+
+    // 12b. PARITY: negate the degree of nodes with NO inflow links so that
+    // `degree < 0` marks an "upstream terminal" node — matching legacy
+    // flowrout.c::validateGeneralLayout. The EXTRAN surcharge depth update
+    // (setNodeDepth) multiplies dy by corr = 0.6 for these nodes
+    // (`if (Node[i].degree < 0) corr = 0.6`); without it a surcharging headwater
+    // junction (e.g. extran1 node 80408, fed only by a 45-cfs external inflow
+    // through a single OUTFLOW conduit) raised its head 1/0.6 = 1.67x too fast.
+    // An "inflow link" is one whose DOWNSTREAM node — node2, or node1 when node1
+    // is an OUTFALL — is this node. Done here, after BOTH degree passes, so the
+    // sign is not clobbered by a subsequent ++.
+    {
+        const int nn = ctx_.n_nodes();
+        std::vector<int> inflow_links(static_cast<std::size_t>(nn), 0);
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            int n1 = ctx_.links.node1[uj];
+            int n2 = ctx_.links.node2[uj];
+            int dn = n2;
+            if (n1 >= 0 && n1 < nn &&
+                ctx_.nodes.type[static_cast<std::size_t>(n1)] == NodeType::OUTFALL)
+                dn = n1;
+            if (dn >= 0 && dn < nn) inflow_links[static_cast<std::size_t>(dn)]++;
+        }
+        for (int i = 0; i < nn; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (inflow_links[ui] == 0) ctx_.nodes.degree[ui] = -ctx_.nodes.degree[ui];
+        }
     }
 
     // 13. Initialize node full volumes
@@ -3769,12 +4674,20 @@ void SWMMEngine::assembleLateralInflows() noexcept {
                                 + ctx_.nodes.dwf_inflow[uj]
                                 + ctx_.nodes.rdii_inflow[uj]
                                 + ctx_.nodes.iface_inflow[uj]
-                                + ctx_.nodes.user_lat_flow[uj];
+                                + ctx_.nodes.user_lat_flow[uj]
+                                + ctx_.nodes.coupling_inflow[uj];
 
         sum_dw   += ctx_.nodes.dwf_inflow[uj];
         sum_gw   += ctx_.nodes.gw_inflow[uj];
         sum_rdii += ctx_.nodes.rdii_inflow[uj];
         sum_ext  += ctx_.nodes.ext_inflow[uj];
+
+        // 2D → 1D coupling (positive coupling_inflow) folds into the
+        // routing_external category for continuity reporting; the negative
+        // side (1D → 2D spill) is accumulated separately in
+        // updateRoutingMassBalance as routing_flooding. See review §11.
+        if (ctx_.nodes.coupling_inflow[uj] > 0.0)
+            sum_ext += ctx_.nodes.coupling_inflow[uj];
     }
 
     ctx_.mass_balance.step_dw_inflow   = sum_dw;

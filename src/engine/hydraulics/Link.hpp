@@ -10,7 +10,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -20,6 +20,9 @@
 #include "../data/LinkData.hpp"
 #include "XSectBatch.hpp"
 #include "Node.hpp"
+#include "Transect.hpp"
+
+#include <vector>
 
 namespace openswmm {
 
@@ -111,11 +114,18 @@ double getHydPower(double flow, double head_upstream, double head_downstream);
 /**
  * @brief Build XSectParams from LinkData SoA arrays.
  *
- * @param links  Link SoA data.
- * @param uj     Link index (size_t).
+ * @param links      Link SoA data.
+ * @param uj         Link index (size_t).
+ * @param transects  Optional transect-table pool (ctx.transect_tables). When
+ *                   supplied, IRREGULAR/CUSTOM/STREET_XSECT links get their
+ *                   A/R/W table pointers attached so the per-element accessors
+ *                   can evaluate tabulated geometry. Pass nullptr when the link
+ *                   is known to be a self-contained shape.
  * @returns Populated XSectParams struct.
  */
-XSectParams buildXSectParams(const LinkData& links, std::size_t uj);
+XSectParams buildXSectParams(
+    const LinkData& links, std::size_t uj,
+    const std::vector<transect::TransectData>* transects = nullptr);
 
 // ============================================================================
 // Batch functions (for routing hot loop)

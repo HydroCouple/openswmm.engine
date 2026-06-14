@@ -4,7 +4,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -278,8 +278,10 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         c.infil            = infil_rate[i];
         // Match legacy: MaxEvap = Evap.rate * FracPerv
         // AvailEvap = max(MaxEvap - pervEvapRate, 0)
+        // A prescribed PET forcing on this subcatchment replaces/augments
+        // the broadcast climate rate (DRY_ONLY does not apply to GW evap).
         double fp = frac_perv[i];
-        c.max_evap         = max_evap * fp;
+        c.max_evap         = ctx.forcing.effective_evap_rate(ui, max_evap) * fp;
         c.avail_evap       = std::max(c.max_evap - perv_evap_rate[i], 0.0);
         c.sw_head          = sw_head[i];
         c.dt               = dt;

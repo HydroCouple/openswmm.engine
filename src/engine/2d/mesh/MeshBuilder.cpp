@@ -211,4 +211,26 @@ std::string validateMesh(const MeshData& mesh) {
     return {};
 }
 
+void recomputeVertexZDependents(MeshData& mesh, int vidx) {
+    const int nt = mesh.n_triangles();
+    for (int t = 0; t < nt; ++t) {
+        const int v0 = mesh.tri_v0[t];
+        const int v1 = mesh.tri_v1[t];
+        const int v2 = mesh.tri_v2[t];
+        if (v0 != vidx && v1 != vidx && v2 != vidx) continue;
+
+        const double z0 = mesh.vz[v0];
+        const double z1 = mesh.vz[v1];
+        const double z2 = mesh.vz[v2];
+
+        mesh.tri_cz[t] = (z0 + z1 + z2) / 3.0;
+
+        // Edge e (0..2) is opposite vertex e; its endpoints are the other two
+        // vertices of the triangle (same convention as MeshBuilder::edgeVertices).
+        mesh.edge_mz[t * 3 + 0] = 0.5 * (z1 + z2);
+        mesh.edge_mz[t * 3 + 1] = 0.5 * (z2 + z0);
+        mesh.edge_mz[t * 3 + 2] = 0.5 * (z0 + z1);
+    }
+}
+
 } // namespace openswmm::twoD

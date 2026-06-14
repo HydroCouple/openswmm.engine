@@ -21,7 +21,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -73,21 +73,34 @@ struct DPSConfig {
 
 /// Per-conduit DPS state — Structure of Arrays (persistent across timesteps).
 /// Each vector is indexed by conduit index [0..n_conduits_).
+///
+/// The head-first link-node formulation treats `hs` as a diagnostic of the
+/// node-head solution (`hs = max(depth_mid − y_full, 0)`) and accumulates
+/// `As` from `dAs = T_s · dhs` so the slot storage is path-dependent and
+/// invariant under P-only evolution.  `hs_prev_iter` snapshots `hs` at the
+/// start of each timestep so the Picard-iter increment `dhs = hs_iter − hs_prev_iter`
+/// is anchored to the previous *converged* head rather than the previous iterate.
+/// `T_s_target = g · A_C / c_pT²` is cached so the per-iter `T_s = T_s_target · P²`
+/// reduces to a single multiply.
 struct DPSLinkArrays {
-    std::vector<double>  As;          ///< Accumulated slot area (ft²)
-    std::vector<double>  hs;          ///< Current surcharge head (ft)
-    std::vector<double>  P;           ///< Current Preissmann Number (smoothed)
-    std::vector<double>  P_hat;       ///< Provisional Preissmann Number (before smoothing)
-    std::vector<double>  P_hat_0;     ///< Initial P for unpressurized conduit
-    std::vector<double>  t_s;         ///< Time when element last became surcharged (sec)
-    std::vector<uint8_t> surcharged;  ///< Currently surcharged flag
+    std::vector<double>  As;            ///< Accumulated slot area (ft²)
+    std::vector<double>  hs;            ///< Current surcharge head (ft)
+    std::vector<double>  hs_prev_iter;  ///< hs at start of current timestep (ft)
+    std::vector<double>  P;             ///< Current Preissmann Number (smoothed)
+    std::vector<double>  P_hat;         ///< Provisional Preissmann Number (before smoothing)
+    std::vector<double>  P_hat_0;       ///< Initial P for unpressurized conduit
+    std::vector<double>  T_s_target;    ///< g · A_C / c_pT² (cached at init)
+    std::vector<double>  t_s;           ///< Time when element last became surcharged (sec)
+    std::vector<uint8_t> surcharged;    ///< Currently surcharged flag
 
     void resize(std::size_t n) {
         As.assign(n, 0.0);
         hs.assign(n, 0.0);
+        hs_prev_iter.assign(n, 0.0);
         P.assign(n, 1.0);
         P_hat.assign(n, 1.0);
         P_hat_0.assign(n, 1.0);
+        T_s_target.assign(n, 0.0);
         t_s.assign(n, 0.0);
         surcharged.assign(n, 0);
     }
@@ -295,6 +308,17 @@ private:
     // Per-timestep constants
     double dt_gravity_ = 0.0;            ///< dt * GRAVITY (set once per timestep)
 
+    // --- env-gated bit-parity trace (zero runtime cost when SWMM_TRACE_RSTEP
+    //     is unset).  Dumps per-iteration converged-state doubles (%.17g) for
+    //     a single target routing step so the refactored trace can be diffed
+    //     against an lldb dump of the pristine legacy binary to find the first
+    //     element whose double diverges (below the float32 .out floor). ---
+    int          trace_rstep_      = -2;   ///< -2 unparsed; -1 off; >=0 target routing step
+    int          routing_step_idx_ = -1;   ///< increments each execute() call
+    std::string  trace_file_;              ///< SWMM_TRACE_FILE destination
+    void maybeInitTrace();
+    void dumpTrace(SimulationContext& ctx, int iter);
+
     /// Effective minimum nodal surface area (ft²) used as a floor for the
     /// dy = dV/surf_area Picard update.  Legacy `MinSurfArea` is the user
     /// override from the INP `[OPTIONS]` `MIN_SURFAREA` line, falling back
@@ -338,6 +362,35 @@ private:
     // Per-link bypass flag (true when both end nodes converged; skip momentum solve)
     // uint8_t instead of bool: avoids std::vector<bool> bit-packing overhead
     std::vector<uint8_t> bypassed_;
+    // True when findBypassedLinks marked at least one link this iteration;
+    // gates the XSectGroups bypass mask (kernel work restriction).
+    bool any_bypassed_ = false;
+
+    // Node-dense tile of the per-node invariants setNodeDepth touches every
+    // Picard iteration. setNodeDepth reads ~20 SoA arrays per node; the seven
+    // step-invariant ones below otherwise cost seven separate cache streams
+    // (legacy's AoS TNode record pays 1-2 lines per node for the same reads).
+    // Rebuilt once per routing step in execute() — amortised over the Picard
+    // iterations and automatically correct even if the editing API mutates
+    // node geometry mid-run. y_crown pre-evaluates crownElev − invertElev
+    // with the identical operands the per-call subtraction used, so the
+    // value is bit-identical (legacy setNodeDepth recomputes it per call).
+    struct NodeTile {
+        double  full_depth;
+        double  y_crown;       ///< crown_elev − invert_elev
+        double  invert_elev;
+        double  ponded_area;
+        double  sur_depth;
+        double  full_volume;
+        int32_t degree;
+        uint8_t is_storage;
+        uint8_t is_outfall;
+    };
+    std::vector<NodeTile> node_tile_;
+    // Unit system for node volume/surf-area table dispatch, hoisted from the
+    // per-call ucf::getUnitSystem(options.flow_units) (options are fixed
+    // during a run).
+    int unit_sys_ = 0;
 
     // Per-link surface area contributions to upstream/downstream nodes
     // (matching legacy Link[].surfArea1/surfArea2 from dwflow.c findSurfArea)
@@ -360,6 +413,7 @@ private:
     std::vector<double> aa_g_prev_;     ///< G(y_{k-1}) — computed depths at k-1
     std::vector<double> aa_r_prev_;     ///< Residual r_{k-1} = G(y_{k-1}) - y_{k-1}
     std::vector<uint8_t> aa_skip_;      ///< Per-node flag: skip AA this iteration
+
 
     // Per-conduit momentum category (rebuilt each Picard iteration).
     // solveMomentumBatch dispatches on category_[uj] inline — no auxiliary
@@ -398,11 +452,25 @@ public:
     /// Mutable pointer to the per-node new_surf_area array (for HydStructures scatter).
     double* nodeNewSurfAreaDataMut() { return xnode_.new_surf_area.data(); }
 
+    /// Per-link bypass flag (1 = both end nodes converged → flow held this
+    /// iteration). Read by the non_conduit_fn callback to hold bypassed
+    /// weir/orifice/pump/outlet flows, matching legacy findLinkFlows.
+    bool isBypassed(int j) const {
+        return bypassed_[static_cast<std::size_t>(j)] != 0;
+    }
+
     /// Mutable reference to the per-node sumdqdh accumulator at index n.
     double& nodeSumDqdh(int n) { return xnode_.sumdqdh[static_cast<std::size_t>(n)]; }
 
     /// Access per-node AA skip flags (read-only, for testing/diagnostics).
     const std::vector<uint8_t>& aaSkipFlags() const { return aa_skip_; }
+
+    /// Read-only access to DPS per-conduit state arrays (for tests/diagnostics).
+    const DPSLinkArrays& dpsState() const { return dps_; }
+    /// Read-only access to DPS configuration (for tests/diagnostics).
+    const DPSConfig& dpsConfig() const { return dps_config_; }
+    /// Mutable access to DPS state for tests that need to seed slot conditions.
+    DPSLinkArrays& dpsStateMut() { return dps_; }
 private:
 
     // Preissmann slot helpers (matching legacy dwflow.c)

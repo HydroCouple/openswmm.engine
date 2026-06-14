@@ -9,7 +9,7 @@
  * @ingroup engine_2d
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -18,6 +18,7 @@
 
 #include <vector>
 #include <cstring>
+#include <cmath>
 #include <algorithm>
 
 namespace openswmm::twoD {
@@ -47,11 +48,19 @@ struct SurfaceStateData {
     // Reconstructed head at vertices — [0, n_vertices)
     std::vector<double> vert_head;      ///< Head reconstructed at vertices
 
+    // Cell-centred velocity (RT0 reconstruction from edge fluxes) — per triangle
+    std::vector<double> face_vx;        ///< Cell velocity X component (m/s)
+    std::vector<double> face_vy;        ///< Cell velocity Y component (m/s)
+
+    // Per-cell continuity residual — per triangle (m³/s, ≈0 when conservative)
+    std::vector<double> cell_continuity_err;
+
     // Fluxes — flat 2D: [tri * 3 + edge]
     std::vector<double> edge_flux;      ///< Normal flux through each edge
 
     // Source/sink terms — per triangle
     std::vector<double> rainfall;       ///< Rainfall intensity (m/s)
+    std::vector<double> evap_rate;      ///< Evaporation demand rate (m/s, >= 0)
     std::vector<double> coupling_flux;  ///< Exchange with SWMM node (m/s, + = into 2D)
     std::vector<double> net_source;     ///< Net source/sink per cell (m/s)
 
@@ -62,6 +71,9 @@ struct SurfaceStateData {
     std::vector<int8_t> rainfall_forced;      ///< 0=computed, 1=override, 2=add
     std::vector<int8_t> rainfall_persist;     ///< 0=reset, 1=persist
     std::vector<double> rainfall_force_val;   ///< Forced rainfall value
+    std::vector<int8_t> evap_forced;          ///< 0=computed, 1=override, 2=add
+    std::vector<int8_t> evap_persist;         ///< 0=reset, 1=persist
+    std::vector<double> evap_force_val;       ///< Forced evaporation value
     std::vector<int8_t> coupling_forced;      ///< 0=computed, 1=override, 2=add
     std::vector<int8_t> coupling_persist;     ///< 0=reset, 1=persist
     std::vector<double> coupling_force_val;   ///< Forced coupling value
@@ -76,8 +88,15 @@ struct SurfaceStateData {
     // Cumulative statistics
     // -----------------------------------------------------------------------
 
-    std::vector<double> stat_max_depth;     ///< Maximum depth seen at each cell
-    std::vector<double> stat_cum_volume;    ///< Cumulative volume through cell
+    std::vector<double> stat_max_depth;     ///< Maximum depth ψ_o seen at each cell (m)
+    std::vector<double> stat_max_velocity;  ///< Max cell speed |v| = √(vx²+vy²) (m/s)
+    std::vector<double> stat_max_cont_err;  ///< Max |cell_continuity_err| (m³/s)
+    std::vector<double> stat_cum_volume;    ///< Cumulative volume through cell (m³)
+
+    /// Cumulative evaporation loss over the whole simulation (m³). Kept here
+    /// (not in core's MassBalance2D, owned by another work stream) and folded
+    /// into the API-level totals by Api2D.cpp.
+    double evap_loss_total = 0.0;
 
     // -----------------------------------------------------------------------
     // Lifecycle
@@ -95,21 +114,31 @@ struct SurfaceStateData {
         grad_hx_lim.assign(nt, 0.0);
         grad_hy_lim.assign(nt, 0.0);
         vert_head.assign(nv, 0.0);
+        face_vx.assign(nt, 0.0);
+        face_vy.assign(nt, 0.0);
+        cell_continuity_err.assign(nt, 0.0);
         edge_flux.assign(n3, 0.0);
         rainfall.assign(nt, 0.0);
+        evap_rate.assign(nt, 0.0);
         coupling_flux.assign(nt, 0.0);
         net_source.assign(nt, 0.0);
 
         rainfall_forced.assign(nt, 0);
         rainfall_persist.assign(nt, 0);
         rainfall_force_val.assign(nt, 0.0);
+        evap_forced.assign(nt, 0);
+        evap_persist.assign(nt, 0);
+        evap_force_val.assign(nt, 0.0);
         coupling_forced.assign(nt, 0);
         coupling_persist.assign(nt, 0);
         coupling_force_val.assign(nt, 0.0);
 
         old_depth.assign(nt, 0.0);
         stat_max_depth.assign(nt, 0.0);
+        stat_max_velocity.assign(nt, 0.0);
+        stat_max_cont_err.assign(nt, 0.0);
         stat_cum_volume.assign(nt, 0.0);
+        evap_loss_total = 0.0;
     }
 
     void save_state() noexcept {
@@ -129,6 +158,10 @@ struct SurfaceStateData {
                 rainfall_forced[i] = 0;
                 rainfall_force_val[i] = 0.0;
             }
+            if (evap_persist[i] == 0) {
+                evap_forced[i] = 0;
+                evap_force_val[i] = 0.0;
+            }
             if (coupling_persist[i] == 0) {
                 coupling_forced[i] = 0;
                 coupling_force_val[i] = 0.0;
@@ -136,12 +169,28 @@ struct SurfaceStateData {
         }
     }
 
-    /// Update cumulative statistics
+    /// Update cumulative statistics / rendering envelopes.
+    ///
+    /// Aggregates once per model (routing) step at the accepted end-of-step
+    /// state. MUST be called after computeFaceVelocity and computeCellContinuity
+    /// so face_vx/vy and cell_continuity_err hold the accepted values. All
+    /// envelopes fuse into the single per-cell loop already walked for
+    /// stat_cum_volume — no extra passes, no sub-step sampling.
     void update_statistics(const std::vector<double>& tri_area,
                            double dt) noexcept {
         for (std::size_t i = 0; i < depth.size(); ++i) {
             if (depth[i] > stat_max_depth[i])
                 stat_max_depth[i] = depth[i];
+
+            const double speed = std::sqrt(face_vx[i] * face_vx[i]
+                                         + face_vy[i] * face_vy[i]);
+            if (speed > stat_max_velocity[i])
+                stat_max_velocity[i] = speed;
+
+            const double aerr = std::abs(cell_continuity_err[i]);
+            if (aerr > stat_max_cont_err[i])
+                stat_max_cont_err[i] = aerr;
+
             stat_cum_volume[i] += depth[i] * tri_area[i] * dt;
         }
     }

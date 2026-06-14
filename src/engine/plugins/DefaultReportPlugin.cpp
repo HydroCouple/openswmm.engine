@@ -10,7 +10,7 @@
  * @ingroup engine_plugins
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -40,7 +40,7 @@ static const char* InfilModelWords[] = {
     "HORTON", "MODIFIED_HORTON", "GREEN_AMPT",
     "MODIFIED_GREEN_AMPT", "CURVE_NUMBER"
 };
-static const char* SurchargeWords[] = { "EXTRAN", "SLOT" };
+static const char* SurchargeWords[] = { "EXTRAN", "SLOT", "DYNAMIC_SLOT" };
 static const char* NodeTypeWords[] = { "JUNCTION", "OUTFALL", "DIVIDER", "STORAGE" };
 static const char* LinkTypeWords[] = { "CONDUIT", "PUMP", "ORIFICE", "WEIR", "OUTLET" };
 static const char* RainTypeWords[] = { "INTENSITY", "VOLUME", "CUMULATIVE" };
@@ -114,9 +114,12 @@ static const char* flowFmt(int fu) {
     return (fu == 2 || fu == 3) ? "%9.3f" : "%9.2f";
 }
 
-// Volume conversion factor: ft3 → 10^6 gal (US) or 10^6 liters (SI)
-static double vcf(int /*unit_system*/) {
-    return 7.48 / 1.0e6;  // US units
+// Project land-area units → internal ft². Subcatchment area is stored in
+// acres (US) or hectares (SI); multiply by this to get ft² (43560 for US,
+// 107639 for SI). Matches legacy 1/UCF(LANDAREA).
+static double landAreaToFt2(int flow_units) {
+    const int us = (flow_units >= 3) ? 1 : 0; // CMS/LPS/MLD → SI
+    return 1.0 / ucf::Ucf[ucf::LANDAREA][us];
 }
 
 // ---------------------------------------------------------------------------
@@ -487,7 +490,11 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     std::fprintf(f, "\n  Process Models:");
     std::fprintf(f, "\n    Rainfall/Runoff ........ %s",
                  (ctx.n_subcatches() > 0 && ctx.n_gages() > 0) ? "YES" : "NO");
-    std::fprintf(f, "\n    RDII ................... %s", has_rdii ? "YES" : "NO");
+    bool has_exp_decay = (ctx.rdii_decay.count() > 0);
+    std::fprintf(f, "\n    RDII ................... %s",
+                 has_rdii ? (has_exp_decay ? "YES (Exponential IA)"
+                                           : "YES (Linear IA)")
+                          : "NO");
     std::fprintf(f, "\n    Snowmelt ............... %s", has_snow ? "YES" : "NO");
     std::fprintf(f, "\n    Groundwater ............ %s", has_gw ? "YES" : "NO");
     std::fprintf(f, "\n    Flow Routing ........... %s",
@@ -512,7 +519,8 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
 
         if (rm == 2) { // DYNWAVE
             int sm = opt.surcharge_method;
-            std::fprintf(f, "\n  Surcharge Method ......... %s", SurchargeWords[sm]);
+            const char* sm_name = (sm >= 0 && sm <= 2) ? SurchargeWords[sm] : "EXTRAN";
+            std::fprintf(f, "\n  Surcharge Method ......... %s", sm_name);
             const char* nc_name = (opt.node_continuity == NodeContinuity::SEMI_IMPLICIT)
                                   ? "SEMI_IMPLICIT" : "EXPLICIT";
             std::fprintf(f, "\n  Node Continuity .......... %s", nc_name);
@@ -568,8 +576,22 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     int fu = static_cast<int>(opt.flow_units);
     if (fu < 0 || fu > 5) fu = 0;
     const char* ff = flowFmt(fu);
-    double Vcf = vcf(0);
-    double Qcf = ucf::Qcf[fu];
+
+    // Single source of truth for internal→display factors + unit words. The
+    // local aliases below preserve the names used throughout this function and
+    // mirror legacy statsrpt.c / report.c UCF()-based output exactly.
+    const ucf::DisplayUnits du = ucf::DisplayUnits::from(opt);
+    const bool   si_report = (du.unit_system == 1);
+    const double Qcf       = du.flow;        // cfs → display flow
+    const double land_vcf  = du.landvol;     // ft³ → acre-ft | hectare-m
+    const double mvol_vcf  = du.mvol;        // ft³ → 10^6 gal | 10^6 ltr
+    const double depth_vcf = du.raindepth;   // ft  → in | mm
+    const double len_ucf   = du.length;      // ft  → ft | m  (depth/HGL/velocity)
+    const double svol_ucf  = du.volume;      // ft³ → ft³ | m³ (storage volume)
+    const char*  len_word  = du.length_word; // Feet | Meters
+    const double Vcf       = du.mvol;         // node inflow/flooding volume column
+    const char*  vol_word  = du.mvol_word;    // 10^6 gal | 10^6 ltr
+    const char*  depth_word = du.depth_word;  // in | mm (rainfall/runoff depth)
 
     bool has_rdii = !ctx.rdii_assigns.node_idx.empty();
     bool has_gw = false;
@@ -587,16 +609,18 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         const auto& mb = ctx.mass_balance;
         double total_area_ft2 = 0.0;
         for (int i = 0; i < ctx.n_subcatches(); ++i)
-            total_area_ft2 += ctx.subcatches.area[static_cast<std::size_t>(i)] * ucf::ACRES_TO_FT2;
+            total_area_ft2 += ctx.subcatches.area[static_cast<std::size_t>(i)] * landAreaToFt2(fu);
 
         double sewer_rain = mb.runoff_rainfall;
         double rdii_prod = mb.routing_rdii;
         double ratio = (sewer_rain > 0.0) ? rdii_prod / sewer_rain : 0.0;
-        double ucf1 = 1.0 / ucf::ACRES_TO_FT2;
-        double ucf2 = ucf::FT3_TO_MGAL;
+        double ucf1 = land_vcf;
+        double ucf2 = mvol_vcf;
 
         std::fprintf(f, "\n  **********************           Volume        Volume");
-        std::fprintf(f, "\n  Rainfall Dependent I/I        acre-feet      10^6 gal");
+        std::fprintf(f, si_report
+            ? "\n  Rainfall Dependent I/I        hectare-m      10^6 ltr"
+            : "\n  Rainfall Dependent I/I        acre-feet      10^6 gal");
         std::fprintf(f, "\n  **********************        ---------     ---------");
         std::fprintf(f, "\n  Sewershed Rainfall ......%14.3f%14.3f", sewer_rain * ucf1, sewer_rain * ucf2);
         std::fprintf(f, "\n  RDII Produced ...........%14.3f%14.3f", rdii_prod * ucf1, rdii_prod * ucf2);
@@ -613,15 +637,17 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         const auto& mb = ctx.mass_balance;
         double total_area_ft2 = 0.0;
         for (int i = 0; i < ctx.n_subcatches(); ++i)
-            total_area_ft2 += ctx.subcatches.area[static_cast<std::size_t>(i)] * ucf::ACRES_TO_FT2;
+            total_area_ft2 += ctx.subcatches.area[static_cast<std::size_t>(i)] * landAreaToFt2(fu);
 
         std::fprintf(f, "\n  **************************        Volume         Depth");
-        std::fprintf(f, "\n  Runoff Quantity Continuity     acre-feet        inches");
+        std::fprintf(f, si_report
+            ? "\n  Runoff Quantity Continuity     hectare-m            mm"
+            : "\n  Runoff Quantity Continuity     acre-feet        inches");
         std::fprintf(f, "\n  **************************     ---------       -------");
 
         auto row = [&](const char* label, double vol_ft3) {
-            double af = vol_ft3 / ucf::ACRES_TO_FT2;
-            double depth_in = (total_area_ft2 > 0.0) ? vol_ft3 / total_area_ft2 * ucf::Ucf[ucf::RAINDEPTH][0] : 0.0;
+            double af = vol_ft3 * land_vcf;
+            double depth_in = (total_area_ft2 > 0.0) ? vol_ft3 / total_area_ft2 * depth_vcf : 0.0;
             std::fprintf(f, "\n  %s%14.3f%14.3f", label, af, depth_in);
         };
 
@@ -706,18 +732,20 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         for (int i = 0; i < ctx.n_subcatches(); ++i) {
             auto ui = static_cast<std::size_t>(i);
             if (ctx.subcatches.gw_aquifer[ui] >= 0)
-                gw_area_ft2 += ctx.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+                gw_area_ft2 += ctx.subcatches.area[ui] * landAreaToFt2(fu);
         }
         if (gw_area_ft2 <= 0.0) gw_area_ft2 = 1.0;
 
         // Volume conversion: ft³ → acre-ft (multiply by UCF(LANDAREA) for US)
         // Legacy: totals->x * UCF(LENGTH) * UCF(LANDAREA) — for US = x * 1.0 * 2.2957e-5
-        double ucf_vol = 1.0 / ucf::ACRES_TO_FT2; // ft³ → acre-ft
-        // Depth conversion: ft³ / gwArea → ft → inches (multiply by UCF(RAINDEPTH))
-        double ucf_dep = ucf::Ucf[ucf::RAINDEPTH][0]; // ft → in = 12.0
+        double ucf_vol = land_vcf;  // ft³ → acre-ft (US) | hectare-m (SI)
+        // Depth conversion: ft³ / gwArea → ft → inches (US) | mm (SI)
+        double ucf_dep = depth_vcf;
 
         std::fprintf(f, "\n  **************************        Volume         Depth");
-        std::fprintf(f, "\n  Groundwater Continuity         acre-feet        inches");
+        std::fprintf(f, si_report
+            ? "\n  Groundwater Continuity         hectare-m            mm"
+            : "\n  Groundwater Continuity         acre-feet        inches");
         std::fprintf(f, "\n  **************************     ---------       -------");
 
         auto gwRow = [&](const char* label, double vol_ft3) {
@@ -758,11 +786,13 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     if (opt.rpt_continuity) {
         const auto& mb = ctx.mass_balance;
         std::fprintf(f, "\n  **************************        Volume        Volume");
-        std::fprintf(f, "\n  Flow Routing Continuity        acre-feet      10^6 gal");
+        std::fprintf(f, si_report
+            ? "\n  Flow Routing Continuity        hectare-m      10^6 ltr"
+            : "\n  Flow Routing Continuity        acre-feet      10^6 gal");
         std::fprintf(f, "\n  **************************     ---------     ---------");
 
-        double ucf1 = 1.0 / ucf::ACRES_TO_FT2;
-        double ucf2 = ucf::FT3_TO_MGAL;
+        double ucf1 = land_vcf;
+        double ucf2 = mvol_vcf;
 
         auto row = [&](const char* label, double vol_ft3) {
             std::fprintf(f, "\n  %s%14.3f%14.3f", label, vol_ft3 * ucf1, vol_ft3 * ucf2);
@@ -781,6 +811,39 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row("Final Stored Volume ......", mb.routing_final_storage);
 
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", mb.routing_error() * 100.0);
+    }
+
+    // =====================================================================
+    // 2D Surface Routing Continuity — system mass balance for the optional
+    // 2D overland-flow domain. Volumes are SI (m³), a separate balance from
+    // the 1D routing block above (coupling terms are signed oppositely).
+    // =====================================================================
+    if (opt.rpt_continuity && ctx.mass_balance_2d.active) {
+        const auto& mb2 = ctx.mass_balance_2d;
+
+        WRITE(f, "");
+        WRITE(f, "");
+        std::fprintf(f, "\n  **************************        Volume        Volume");
+        std::fprintf(f, "\n  2D Surface Routing Continuity  cubic meters      10^6 ltr");
+        std::fprintf(f, "\n  **************************     ---------     ---------");
+
+        auto row2 = [&](const char* label, double vol_m3) {
+            std::fprintf(f, "\n  %s%14.3f%14.3f", label, vol_m3, vol_m3 * 1.0e-3);
+        };
+
+        row2("Initial Stored Volume ....", mb2.init_storage);
+        row2("Rainfall Inflow ..........", mb2.rainfall_in);
+        row2("1D -> 2D Spill Inflow ....", mb2.coupling_1d_to_2d_in);
+        row2("Outfall Inflow ...........", mb2.outfall_in);
+        row2("Boundary Inflow ..........", mb2.boundary_in);
+        row2("2D -> 1D Drain Outflow ...", mb2.coupling_2d_to_1d_out);
+        row2("Outfall Withdrawal .......", mb2.outfall_out);
+        row2("Boundary Outflow .........", mb2.boundary_out);
+        row2("Evaporation Loss .........", mb2.evap_out);
+        row2("Final Stored Volume ......", mb2.final_storage);
+
+        std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
+                     mb2.error() * 100.0);
     }
 
     WRITE(f, "");
@@ -823,6 +886,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
             double wet     = (up < mb.qual_routing_wet.size())      ? mb.qual_routing_wet[up]      : 0.0;
             double rdii    = (up < mb.qual_routing_ii_in.size())     ? mb.qual_routing_ii_in[up]    : 0.0;
+            double dwf     = (up < mb.qual_routing_dw_in.size())     ? mb.qual_routing_dw_in[up]    : 0.0;
+            double gw      = (up < mb.qual_routing_gw_in.size())     ? mb.qual_routing_gw_in[up]    : 0.0;
             double outflow = (up < mb.qual_routing_outflow.size())   ? mb.qual_routing_outflow[up]  : 0.0;
             double flood   = (up < mb.qual_routing_flood.size())     ? mb.qual_routing_flood[up]    : 0.0;
             double seep    = (up < mb.qual_routing_seep.size())      ? mb.qual_routing_seep[up]     : 0.0;
@@ -830,9 +895,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double init    = (up < mb.qual_routing_init.size())      ? mb.qual_routing_init[up]     : 0.0;
             double final_  = (up < mb.qual_routing_final.size())     ? mb.qual_routing_final[up]    : 0.0;
 
-            qrow("Dry Weather Inflow .......", 0.0);
+            qrow("Dry Weather Inflow .......", dwf);
             qrow("Wet Weather Inflow .......", wet);
-            qrow("Groundwater Inflow .......", 0.0);
+            qrow("Groundwater Inflow .......", gw);
             qrow("RDII Inflow ..............", rdii);
             qrow("External Inflow ..........", 0.0);
             qrow("External Outflow .........", outflow);
@@ -842,7 +907,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             qrow("Initial Stored Mass ......", init);
             qrow("Final Stored Mass ........", final_);
 
-            double total_in  = wet + rdii + init;
+            double total_in  = wet + rdii + dwf + gw + init;
             double total_out = outflow + flood + reacted + seep + final_;
             double err_pct = (total_in > 0.0) ? (total_in - total_out) / total_in * 100.0 : 0.0;
             std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);
@@ -930,16 +995,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "********************************");
     WRITE(f, "Highest Flow Instability Indexes");
     WRITE(f, "********************************");
-    {
-        if (ctx.max_flow_turns[0].index < 0 || ctx.max_flow_turns[0].value <= 0.0) {
-            std::fprintf(f, "\n  All links are stable.");
-        } else {
-            for (int i = 0; i < SimulationContext::MAX_STATS; ++i) {
-                const auto& ms = ctx.max_flow_turns[i];
-                if (ms.index < 0) continue;
-                std::fprintf(f, "\n  Link %s (%.0f)",
-                             ctx.link_names.name_of(ms.index).c_str(), ms.value);
-            }
+    if (ctx.max_flow_turns[0].index < 0 || ctx.max_flow_turns[0].value <= 0.0) {
+        std::fprintf(f, "\n  All links are stable.");
+    } else {
+        for (int i = 0; i < SimulationContext::MAX_STATS; ++i) {
+            const auto& ms = ctx.max_flow_turns[i];
+            if (ms.index < 0) continue;
+            std::fprintf(f, "\n  Link %s (%.0f)",
+                         ctx.link_names.name_of(ms.index).c_str(), ms.value);
         }
     }
 
@@ -1021,6 +1084,57 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     } // end rpt_flowstats
 
     // =====================================================================
+    // Rainfall File Summary — matches legacy report_writeRainStats().
+    // Printed once per simulation when any gage reads an external rain file.
+    // =====================================================================
+    {
+        bool any_rain_file = false;
+        for (int g = 0; g < ctx.n_gages(); ++g) {
+            if (ctx.gages.source[static_cast<std::size_t>(g)] == RainSource::FILE_RAIN) {
+                any_rain_file = true;
+                break;
+            }
+        }
+        if (any_rain_file) {
+            WRITE(f, "");
+            WRITE(f, "*********************");
+            WRITE(f, "Rainfall File Summary");
+            WRITE(f, "*********************");
+            std::fprintf(f,
+"\n  Station    First        Last         Recording   Periods    Periods    Periods");
+            std::fprintf(f,
+"\n  ID         Date         Date         Frequency  w/Precip    Missing    Malfunc.");
+            std::fprintf(f,
+"\n  -------------------------------------------------------------------------------");
+
+            for (int g = 0; g < ctx.n_gages(); ++g) {
+                const auto ug = static_cast<std::size_t>(g);
+                if (ctx.gages.source[ug] != RainSource::FILE_RAIN) continue;
+
+                char d1[16] = "***********", d2[16] = "***********";
+                if (ctx.gages.file_first_date[ug] > 0.0) {
+                    int y, m, d; datetime::decodeDate(ctx.gages.file_first_date[ug], y, m, d);
+                    std::snprintf(d1, sizeof(d1), "%02d/%02d/%04d", m, d, y);
+                }
+                if (ctx.gages.file_last_date[ug] > 0.0) {
+                    int y, m, d; datetime::decodeDate(ctx.gages.file_last_date[ug], y, m, d);
+                    std::snprintf(d2, sizeof(d2), "%02d/%02d/%04d", m, d, y);
+                }
+                const std::string& sta = ctx.gages.station_id[ug].empty()
+                                           ? ctx.gage_names.name_of(g)
+                                           : ctx.gages.station_id[ug];
+                std::fprintf(f,
+                    "\n  %-10s %10s   %-10s   %5d min    %6ld     %6ld     %6ld",
+                    sta.c_str(), d1, d2,
+                    ctx.gages.interval_sec[ug] / 60,
+                    ctx.gages.file_periods_precip[ug], 0L, 0L);
+                WRITE(f, "");
+            }
+            WRITE(f, "");
+        }
+    }
+
+    // =====================================================================
     // Control Actions Taken — Gap #67, matches legacy report_writeRuleAction()
     // Logged by ControlEngine::applyPendingActions() when rpt_controls == true.
     // =====================================================================
@@ -1033,15 +1147,22 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             WRITE(f, "");
             WRITE(f, "No control actions were taken.");
         } else {
+            // Match legacy report_writeControlAction() exactly:
+            //   "  %11s: %8s Link %s setting changed to %6.2f by Control %s"
+            // with absolute calendar date/time (not elapsed days).
             for (const auto& entry : ctx.control_log) {
-                int days, hrs, mins;
-                elapsedToParts(entry.date, ctx.options.start_date, days, hrs, mins);
+                int yr, mo, dy, hr, mn, sc;
+                datetime::decodeDate(entry.date, yr, mo, dy);
+                datetime::decodeTime(entry.date, hr, mn, sc);
+                char datebuf[16], timebuf[16];
+                std::snprintf(datebuf, sizeof(datebuf), "%02d/%02d/%04d", mo, dy, yr);
+                std::snprintf(timebuf, sizeof(timebuf), "%02d:%02d:%02d", hr, mn, sc);
                 std::fprintf(f,
-                    "\n  Link %s setting changed to %.3f by rule %s at day %d, hr %02d:%02d",
+                    "\n  %11s: %8s Link %s setting changed to %6.2f by Control %s",
+                    datebuf, timebuf,
                     ctx.link_names.name_of(entry.link_idx).c_str(),
                     entry.new_setting,
-                    entry.rule_name.c_str(),
-                    days, hrs, mins);
+                    entry.rule_name.c_str());
             }
         }
 
@@ -1061,29 +1182,30 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n  ------------------------------------------------------------------------------------------------------------------------------"
 "\n                            Total      Total      Total      Total     Imperv       Perv      Total       Total     Peak  Runoff"
 "\n                           Precip      Runon       Evap      Infil     Runoff     Runoff     Runoff      Runoff   Runoff   Coeff"
-"\n  Subcatchment                 in         in         in         in         in         in         in    %8s      %3s"
+"\n  Subcatchment                 %2s         %2s         %2s         %2s         %2s         %2s         %2s    %8s      %3s"
 "\n  ------------------------------------------------------------------------------------------------------------------------------",
-            "10^6 gal", FlowUnitWords[fu]);
+            depth_word, depth_word, depth_word, depth_word, depth_word,
+            depth_word, depth_word, vol_word, FlowUnitWords[fu]);
 
         for (int j = 0; j < ctx.n_subcatches(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             double a = ctx.subcatches.area[uj];
             if (a <= 0.0) continue;
-            double area_ft2 = a * ucf::ACRES_TO_FT2;
+            double area_ft2 = a * landAreaToFt2(fu);
 
-            constexpr double FT_TO_IN = 12.0;
+            // Depth columns: ft³/ft² = ft → in (US) | mm (SI) via depth_vcf.
             double precip_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_precip_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
+                ctx.subcatches.stat_precip_vol[uj] / area_ft2 * depth_vcf : 0.0;
             double evap_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_evap_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
+                ctx.subcatches.stat_evap_vol[uj] / area_ft2 * depth_vcf : 0.0;
             double infil_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_infil_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
+                ctx.subcatches.stat_infil_vol[uj] / area_ft2 * depth_vcf : 0.0;
             double imperv_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_imperv_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
+                ctx.subcatches.stat_imperv_vol[uj] / area_ft2 * depth_vcf : 0.0;
             double perv_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_perv_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
+                ctx.subcatches.stat_perv_vol[uj] / area_ft2 * depth_vcf : 0.0;
             double runoff_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_runoff_vol[uj] / area_ft2 * FT_TO_IN : 0.0;
+                ctx.subcatches.stat_runoff_vol[uj] / area_ft2 * depth_vcf : 0.0;
             double runoff_vol = ctx.subcatches.stat_runoff_vol[uj] * Vcf;
             double peak = ctx.subcatches.stat_max_runoff[uj] * Qcf;
             double r = ctx.subcatches.stat_precip_vol[uj];
@@ -1176,27 +1298,30 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n  -----------------------------------------------------------------------------------------------------"
 "\n                                            Total    Total  Maximum  Average  Average    Final    Final"
 "\n                          Total    Total    Lower  Lateral  Lateral    Upper    Water    Upper    Water"
-"\n                          Infil     Evap  Seepage  Outflow  Outflow   Moist.    Table   Moist.    Table"
-"\n  Subcatchment               in       in       in       in      %3s                ft                ft"
-"\n  -----------------------------------------------------------------------------------------------------",
+"\n                          Infil     Evap  Seepage  Outflow  Outflow   Moist.    Table   Moist.    Table");
+        std::fprintf(f, si_report
+            ? "\n  Subcatchment               mm       mm       mm       mm      %3s                 m                 m"
+            : "\n  Subcatchment               in       in       in       in      %3s                ft                ft",
             FlowUnitWords[fu]);
+        std::fprintf(f,
+"\n  -----------------------------------------------------------------------------------------------------");
 
         for (int j = 0; j < ctx.n_subcatches(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.subcatches.gw_aquifer[uj] < 0) continue;
-            double area_ft2  = ctx.subcatches.area[uj] * ucf::ACRES_TO_FT2;
-            double ft_to_in  = 12.0;
-            double infil_in  = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_infil_vol[uj]     / area_ft2 * ft_to_in : 0.0;
+            double area_ft2  = ctx.subcatches.area[uj] * landAreaToFt2(fu);
+            // Depth columns: ft → in | mm (legacy UCF(RAINDEPTH)); water table: ft → ft | m (UCF(LENGTH)).
+            double infil_in  = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_infil_vol[uj]     / area_ft2 * depth_vcf : 0.0;
             double evap_in   = (area_ft2 > 0.0) ? (ctx.subcatches.stat_gw_upper_evap_vol[uj] +
-                                                    ctx.subcatches.stat_gw_lower_evap_vol[uj]) / area_ft2 * ft_to_in : 0.0;
-            double seep_in   = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_deep_perc_vol[uj]  / area_ft2 * ft_to_in : 0.0;
-            double lat_in    = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_flow_vol[uj]       / area_ft2 * ft_to_in : 0.0;
-            double max_flow  = ctx.subcatches.stat_gw_max_flow[uj] * ucf::Qcf[fu];
+                                                    ctx.subcatches.stat_gw_lower_evap_vol[uj]) / area_ft2 * depth_vcf : 0.0;
+            double seep_in   = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_deep_perc_vol[uj]  / area_ft2 * depth_vcf : 0.0;
+            double lat_in    = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_flow_vol[uj]       / area_ft2 * depth_vcf : 0.0;
+            double max_flow  = ctx.subcatches.stat_gw_max_flow[uj] * Qcf;
             long   steps     = ctx.subcatches.stat_gw_steps[uj];
             double avg_theta = (steps > 0L) ? ctx.subcatches.stat_gw_sum_theta[uj] / static_cast<double>(steps) : 0.0;
-            double avg_depth = (steps > 0L) ? ctx.subcatches.stat_gw_sum_depth[uj] / static_cast<double>(steps) : 0.0;
+            double avg_depth = (steps > 0L) ? ctx.subcatches.stat_gw_sum_depth[uj] / static_cast<double>(steps) * len_ucf : 0.0;
             double fin_theta = ctx.subcatches.stat_gw_final_theta[uj];
-            double fin_depth = ctx.subcatches.stat_gw_final_depth[uj];
+            double fin_depth = ctx.subcatches.stat_gw_final_depth[uj] * len_ucf;
             std::fprintf(f, "\n  %-20s %8.2f %8.2f %8.2f %8.2f %8.2f %8.4f %8.2f %8.4f %8.2f",
                 ctx.subcatch_names.name_of(j).c_str(),
                 infil_in, evap_in, seep_in, lat_in, max_flow,
@@ -1235,12 +1360,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             WRITE(f, "");
             WRITE(f, "No LID performance data.");
         } else {
-            static constexpr double FT_TO_IN = 12.0;
             std::fprintf(f,
 "\n  -----------------------------------------------------------------"
 "\n                          Total    Evap   Infil  Surface   Drain"
-"\n                         Inflow    Loss    Loss    Runoff    Flow"
-"\n  Control Group    Subcatch      in      in      in       in      in"
+"\n                         Inflow    Loss    Loss    Runoff    Flow");
+            std::fprintf(f, si_report
+                ? "\n  Control Group    Subcatch      mm      mm      mm       mm      mm"
+                : "\n  Control Group    Subcatch      in      in      in       in      in");
+            std::fprintf(f,
 "\n  -----------------------------------------------------------------");
 
             for (int j = 0; j < n_usage; ++j) {
@@ -1248,8 +1375,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 int li = ctx.lid_usage.lid_index[uj];
                 int si = ctx.lid_usage.subcatch_index[uj];
 
+                // Water-balance depths: ft → in | mm (legacy UCF(RAINDEPTH)).
                 auto safe = [&](const std::vector<double>& v) -> double {
-                    return (uj < v.size()) ? v[uj] * FT_TO_IN : 0.0;
+                    return (uj < v.size()) ? v[uj] * depth_vcf : 0.0;
                 };
 
                 std::fprintf(f, "\n  %-16s %-12s",
@@ -1279,8 +1407,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         std::fprintf(f,
 "\n  ---------------------------------------------------------------------------------"
 "\n                                 Average  Maximum  Maximum  Time of Max    Reported"
-"\n                                   Depth    Depth      HGL   Occurrence   Max Depth"
-"\n  Node                 Type         Feet     Feet     Feet  days hr:min        Feet"
+"\n                                   Depth    Depth      HGL   Occurrence   Max Depth");
+        std::fprintf(f, si_report
+            ? "\n  Node                 Type       %6s   %6s   %6s  days hr:min      %6s"
+            : "\n  Node                 Type       %-6s   %-6s   %-6s  days hr:min      %-6s",
+            len_word, len_word, len_word, len_word);
+        std::fprintf(f,
 "\n  ---------------------------------------------------------------------------------");
 
         long report_steps = ctx.routing_stats.n_steps;
@@ -1289,10 +1421,11 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         for (int j = 0; j < ctx.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             int nt = static_cast<int>(ctx.nodes.type[uj]);
-            double avg_d = ctx.nodes.stat_sum_depth[uj] / static_cast<double>(report_steps);
-            double max_d = ctx.nodes.stat_max_depth[uj];
-            double max_hgl = ctx.nodes.invert_elev[uj] + max_d;
-            double rpt_max = ctx.nodes.stat_max_rpt_depth[uj];
+            double max_d_int = ctx.nodes.stat_max_depth[uj];
+            double avg_d = ctx.nodes.stat_sum_depth[uj] / static_cast<double>(report_steps) * len_ucf;
+            double max_d = max_d_int * len_ucf;
+            double max_hgl = (ctx.nodes.invert_elev[uj] + max_d_int) * len_ucf;
+            double rpt_max = ctx.nodes.stat_max_rpt_depth[uj] * len_ucf;
             int days, hrs, mins;
             elapsedToParts(ctx.nodes.stat_max_depth_date[uj], ctx.options.start_date, days, hrs, mins);
 
@@ -1322,7 +1455,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n  Node                 Type           %3s      %3s  days hr:min    %8s    %8s     Percent"
 "\n  -------------------------------------------------------------------------------------------------",
             FlowUnitWords[fu], FlowUnitWords[fu],
-            "10^6 gal", "10^6 gal");
+            vol_word, vol_word);
 
         for (int j = 0; j < ctx.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);
@@ -1375,8 +1508,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n  ---------------------------------------------------------------------"
 "\n                                               Max. Height   Min. Depth"
 "\n                                   Hours       Above Crown    Below Rim"
-"\n  Node                 Type      Surcharged           Feet         Feet"
-"\n  ---------------------------------------------------------------------");
+"\n  Node                 Type      Surcharged         %6s       %6s"
+"\n  ---------------------------------------------------------------------",
+                len_word, len_word);
 
             for (int j = 0; j < ctx.n_nodes(); ++j) {
                 auto uj = static_cast<std::size_t>(j);
@@ -1390,7 +1524,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
                 std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
                 std::fprintf(f, " %-9s", nt_str(nt));
-                std::fprintf(f, "  %9.2f      %9.3f    %9.3f", t, above_crown, below_rim);
+                std::fprintf(f, "  %9.2f      %9.3f    %9.3f",
+                    t, above_crown * len_ucf, below_rim * len_ucf);
             }
         }
     }
@@ -1422,9 +1557,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n                                                             Total   Maximum"
 "\n                                 Maximum   Time of Max       Flood    Ponded"
 "\n                        Hours       Rate    Occurrence      Volume     Depth"
-"\n  Node                 Flooded       %3s   days hr:min    %8s      Feet"
+"\n  Node                 Flooded       %3s   days hr:min    %8s    %6s"
 "\n  --------------------------------------------------------------------------",
-                FlowUnitWords[fu], "10^6 gal");
+                FlowUnitWords[fu], vol_word, len_word);
 
             for (int j = 0; j < ctx.n_nodes(); ++j) {
                 auto uj = static_cast<std::size_t>(j);
@@ -1448,7 +1583,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 std::fprintf(f, ff, max_rate);
                 std::fprintf(f, "   %4d  %02d:%02d", days, hrs, mins);
                 std::fprintf(f, "%12.3f", vol_mgal);
-                std::fprintf(f, " %9.3f", ponded);
+                std::fprintf(f, " %9.3f", ponded * len_ucf);
             }
         }
     }
@@ -1473,10 +1608,13 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f,
 "\n  ------------------------------------------------------------------------------------------------"
 "\n                         Average    Avg   Evap  Exfil     Maximum    Max    Time of Max    Maximum"
-"\n                          Volume   Pcnt   Pcnt   Pcnt      Volume   Pcnt     Occurrence    Outflow"
-"\n  Storage Unit          1000 ft3   Full   Loss   Loss    1000 ft3   Full    days hr:min        %3s"
-"\n  ------------------------------------------------------------------------------------------------",
+"\n                          Volume   Pcnt   Pcnt   Pcnt      Volume   Pcnt     Occurrence    Outflow");
+            std::fprintf(f, si_report
+                ? "\n  Storage Unit           1000 m3   Full   Loss   Loss     1000 m3   Full    days hr:min        %3s"
+                : "\n  Storage Unit          1000 ft3   Full   Loss   Loss    1000 ft3   Full    days hr:min        %3s",
                 FlowUnitWords[fu]);
+            std::fprintf(f,
+"\n  ------------------------------------------------------------------------------------------------");
 
             long report_steps = ctx.routing_stats.n_steps;
             report_steps = std::max(report_steps, 1L);
@@ -1500,9 +1638,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 pct_avg = std::min(pct_avg, 100.0);
                 pct_max = std::min(pct_max, 100.0);
 
-                // Volume approximation (using full_volume ratio)
-                double avg_vol = full_vol * (pct_avg / 100.0) / 1000.0;
-                double max_vol = full_vol * (pct_max / 100.0) / 1000.0;
+                // Volume approximation (using full_volume ratio); ft³ → 1000 ft³|m³
+                double avg_vol = full_vol * (pct_avg / 100.0) * svol_ucf / 1000.0;
+                double max_vol = full_vol * (pct_max / 100.0) * svol_ucf / 1000.0;
 
                 int days, hrs, mins;
                 elapsedToParts(ctx.nodes.stat_max_depth_date[uj],
@@ -1550,7 +1688,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
         // Header row 3
         std::fprintf(f, " \n  Outfall Node           Pcnt       %3s       %3s    %8s",
-                     FlowUnitWords[fu], FlowUnitWords[fu], "10^6 gal");
+                     FlowUnitWords[fu], FlowUnitWords[fu], vol_word);
         for (int p = 0; p < np; ++p)
             std::fprintf(f, "%14s", "lbs");
 
@@ -1634,16 +1772,16 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n  -----------------------------------------------------------------------------"
 "\n                                 Maximum  Time of Max   Maximum    Max/    Max/"
 "\n                                  |Flow|   Occurrence   |Veloc|    Full    Full"
-"\n  Link                 Type          %3s  days hr:min    ft/sec    Flow   Depth"
+"\n  Link                 Type          %3s  days hr:min    %6s    Flow   Depth"
 "\n  -----------------------------------------------------------------------------",
-            FlowUnitWords[fu]);
+            FlowUnitWords[fu], si_report ? "m/sec" : "ft/sec");
 
         for (int j = 0; j < ctx.n_links(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             int lt = static_cast<int>(ctx.links.type[uj]);
 
             double mf = ctx.links.stat_max_flow[uj] * Qcf;  // CFS → display
-            double mv = ctx.links.stat_max_veloc[uj];
+            double mv = ctx.links.stat_max_veloc[uj] * len_ucf; // ft/s → display
             double fill = ctx.links.stat_max_filling[uj];
 
             // Flow ratio (using CFS values, not display)
@@ -1802,7 +1940,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n                        Percent   Number of      Flow      Flow      Flow    Volume     Usage    Pump Curve"
 "\n  Pump                 Utilized   Start-Ups       %3s       %3s       %3s  %8s     Kw-hr    Low   High"
 "\n  ---------------------------------------------------------------------------------------------------------",
-                FlowUnitWords[fu], FlowUnitWords[fu], FlowUnitWords[fu], "10^6 gal");
+                FlowUnitWords[fu], FlowUnitWords[fu], FlowUnitWords[fu], vol_word);
 
             double totalSeconds = (ctx.options.end_date - ctx.options.start_date) * 86400.0;
 

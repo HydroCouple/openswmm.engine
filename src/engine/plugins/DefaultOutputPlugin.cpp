@@ -16,7 +16,7 @@
  * @ingroup engine_plugins
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -57,16 +57,13 @@ int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
         return -1;
     }
 
-    // Store flow units code and compute UCF factors once
+    // Per-timestep results arrive pre-converted to display units (engine
+    // boundary). Only the static-object header below is written from the
+    // SimulationContext (internal units), so retain just the length / land-area
+    // factors it needs.
     flow_units_code_ = static_cast<int>(ctx.options.flow_units);
-    unit_system_     = ucf::getUnitSystem(flow_units_code_);
-    ucf_rainfall_    = ucf::UCF(ucf::RAINFALL,  ctx.options);
-    ucf_raindepth_   = ucf::UCF(ucf::RAINDEPTH, ctx.options);
-    ucf_evaprate_    = ucf::UCF(ucf::EVAPRATE,  ctx.options);
-    ucf_length_      = ucf::UCF(ucf::LENGTH,    ctx.options);
-    ucf_landarea_    = ucf::UCF(ucf::LANDAREA,   ctx.options);
-    ucf_volume_      = ucf::UCF(ucf::VOLUME,    ctx.options);
-    ucf_flow_        = ucf::UCF(ucf::FLOW,      ctx.options);
+    ucf_length_      = ucf::UCF(ucf::LENGTH,   ctx.options);
+    ucf_landarea_    = ucf::UCF(ucf::LANDAREA, ctx.options);
 
     // Write header
     writeHeader(ctx);
@@ -81,6 +78,11 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     if (!out_file_) return -1;
     state_ = PluginState::UPDATING;
 
+    // The snapshot arrives already in project display units (the engine applies
+    // the single conversion boundary before posting), so values are written
+    // directly. Dimensionless fields (soil moisture, capacity, pollutant
+    // concentrations) need no conversion either.
+
     // Write date/time (8 bytes, REAL8 — SWMM DateTime)
     writeReal8(snapshot.sim_time);
 
@@ -92,38 +94,14 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     for (int j = 0; j < snapshot.subcatch_count; ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (uj < subcatch_rpt_flag_.size() && !subcatch_rpt_flag_[uj]) continue;
-        // [0] SUBCATCH_RAINFALL — internal ft/sec → display
-        writeReal4(static_cast<float>(
-            (uj < snapshot.subcatch.rainfall.size()
-                ? snapshot.subcatch.rainfall[uj] : 0.0) * ucf_rainfall_));
-        // [1] SUBCATCH_SNOWDEPTH — internal ft → display
-        writeReal4(static_cast<float>(
-            (uj < snapshot.subcatch.snow_depth.size()
-                ? snapshot.subcatch.snow_depth[uj] : 0.0) * ucf_raindepth_));
-        // [2] SUBCATCH_EVAP — internal ft/sec → display
-        writeReal4(static_cast<float>(
-            (uj < snapshot.subcatch.evap.size()
-                ? snapshot.subcatch.evap[uj] : 0.0) * ucf_evaprate_));
-        // [3] SUBCATCH_INFIL — internal ft/sec → display
-        writeReal4(static_cast<float>(
-            (uj < snapshot.subcatch.infil.size()
-                ? snapshot.subcatch.infil[uj] : 0.0) * ucf_rainfall_));
-        // [4] SUBCATCH_RUNOFF — internal cfs → display flow
-        writeReal4(static_cast<float>(
-            (uj < snapshot.subcatch.runoff.size()
-                ? snapshot.subcatch.runoff[uj] : 0.0) * ucf_flow_));
-        // [5] SUBCATCH_GW_FLOW — internal cfs → display flow
-        writeReal4(static_cast<float>(
-            (uj < snapshot.subcatch.gw_flow.size()
-                ? snapshot.subcatch.gw_flow[uj] : 0.0) * ucf_flow_));
-        // [6] SUBCATCH_GW_ELEV — internal ft → display length
-        writeReal4(static_cast<float>(
-            (uj < snapshot.subcatch.gw_elev.size()
-                ? snapshot.subcatch.gw_elev[uj] : 0.0) * ucf_length_));
-        // [7] SUBCATCH_SOIL_MOIST — dimensionless
-        writeReal4(static_cast<float>(
-            uj < snapshot.subcatch.soil_moist.size()
-                ? snapshot.subcatch.soil_moist[uj] : 0.0));
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.rainfall.size()   ? snapshot.subcatch.rainfall[uj]   : 0.0)); // [0] RAINFALL
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.snow_depth.size() ? snapshot.subcatch.snow_depth[uj] : 0.0)); // [1] SNOWDEPTH
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.evap.size()       ? snapshot.subcatch.evap[uj]       : 0.0)); // [2] EVAP
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.infil.size()      ? snapshot.subcatch.infil[uj]      : 0.0)); // [3] INFIL
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.runoff.size()     ? snapshot.subcatch.runoff[uj]     : 0.0)); // [4] RUNOFF
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.gw_flow.size()    ? snapshot.subcatch.gw_flow[uj]    : 0.0)); // [5] GW_FLOW
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.gw_elev.size()    ? snapshot.subcatch.gw_elev[uj]    : 0.0)); // [6] GW_ELEV
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.soil_moist.size() ? snapshot.subcatch.soil_moist[uj] : 0.0)); // [7] SOIL_MOIST (dimensionless)
         // [8..] Pollutant washoff concentrations
         for (int p = 0; p < n_polluts_; ++p) {
             auto qi = uj * static_cast<std::size_t>(n_polluts_) + static_cast<std::size_t>(p);
@@ -139,30 +117,12 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     for (int j = 0; j < snapshot.node_count; ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (uj < node_rpt_flag_.size() && !node_rpt_flag_[uj]) continue;
-        // [0] NODE_DEPTH — internal ft → display length
-        double depth_display = (uj < snapshot.nodes.depth.size()
-            ? snapshot.nodes.depth[uj] : 0.0) * ucf_length_;
-        writeReal4(static_cast<float>(depth_display));
-        // [1] NODE_HEAD — internal ft → display length
-        writeReal4(static_cast<float>(
-            (uj < snapshot.nodes.head.size()
-                ? snapshot.nodes.head[uj] : 0.0) * ucf_length_));
-        // [2] NODE_VOLUME — internal ft³ → display volume
-        writeReal4(static_cast<float>(
-            (uj < snapshot.nodes.volume.size()
-                ? snapshot.nodes.volume[uj] : 0.0) * ucf_volume_));
-        // [3] NODE_LATFLOW — internal cfs → display flow
-        writeReal4(static_cast<float>(
-            (uj < snapshot.nodes.lateral_inflow.size()
-                ? snapshot.nodes.lateral_inflow[uj] : 0.0) * ucf_flow_));
-        // [4] NODE_INFLOW — internal cfs → display flow
-        writeReal4(static_cast<float>(
-            (uj < snapshot.nodes.total_inflow.size()
-                ? snapshot.nodes.total_inflow[uj] : 0.0) * ucf_flow_));
-        // [5] NODE_OVERFLOW — internal cfs → display flow
-        writeReal4(static_cast<float>(
-            (uj < snapshot.nodes.overflow.size()
-                ? snapshot.nodes.overflow[uj] : 0.0) * ucf_flow_));
+        writeReal4(static_cast<float>(uj < snapshot.nodes.depth.size()          ? snapshot.nodes.depth[uj]          : 0.0)); // [0] DEPTH
+        writeReal4(static_cast<float>(uj < snapshot.nodes.head.size()           ? snapshot.nodes.head[uj]           : 0.0)); // [1] HEAD
+        writeReal4(static_cast<float>(uj < snapshot.nodes.volume.size()         ? snapshot.nodes.volume[uj]         : 0.0)); // [2] VOLUME
+        writeReal4(static_cast<float>(uj < snapshot.nodes.lateral_inflow.size() ? snapshot.nodes.lateral_inflow[uj] : 0.0)); // [3] LATFLOW
+        writeReal4(static_cast<float>(uj < snapshot.nodes.total_inflow.size()   ? snapshot.nodes.total_inflow[uj]   : 0.0)); // [4] INFLOW
+        writeReal4(static_cast<float>(uj < snapshot.nodes.overflow.size()       ? snapshot.nodes.overflow[uj]       : 0.0)); // [5] OVERFLOW
         // [6..] Pollutant concentrations
         for (int p = 0; p < n_polluts_; ++p) {
             auto qi = uj * static_cast<std::size_t>(n_polluts_) + static_cast<std::size_t>(p);
@@ -179,26 +139,11 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     for (int j = 0; j < snapshot.link_count; ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (uj < link_rpt_flag_.size() && !link_rpt_flag_[uj]) continue;
-        // [0] LINK_FLOW — internal cfs → display flow (direction pre-applied)
-        writeReal4(static_cast<float>(
-            (uj < snapshot.links.flow.size()
-                ? snapshot.links.flow[uj] : 0.0) * ucf_flow_));
-        // [1] LINK_DEPTH — internal ft → display length
-        writeReal4(static_cast<float>(
-            (uj < snapshot.links.depth.size()
-                ? snapshot.links.depth[uj] : 0.0) * ucf_length_));
-        // [2] LINK_VELOCITY — internal ft/sec → display length/sec (direction pre-applied)
-        writeReal4(static_cast<float>(
-            (uj < snapshot.links.velocity.size()
-                ? snapshot.links.velocity[uj] : 0.0) * ucf_length_));
-        // [3] LINK_VOLUME — internal ft³ → display volume
-        writeReal4(static_cast<float>(
-            (uj < snapshot.links.volume.size()
-                ? snapshot.links.volume[uj] : 0.0) * ucf_volume_));
-        // [4] LINK_CAPACITY — dimensionless [0, 1]
-        writeReal4(static_cast<float>(
-            uj < snapshot.links.capacity.size()
-                ? snapshot.links.capacity[uj] : 0.0));
+        writeReal4(static_cast<float>(uj < snapshot.links.flow.size()     ? snapshot.links.flow[uj]     : 0.0)); // [0] FLOW (direction pre-applied)
+        writeReal4(static_cast<float>(uj < snapshot.links.depth.size()    ? snapshot.links.depth[uj]    : 0.0)); // [1] DEPTH
+        writeReal4(static_cast<float>(uj < snapshot.links.velocity.size() ? snapshot.links.velocity[uj] : 0.0)); // [2] VELOCITY (direction pre-applied)
+        writeReal4(static_cast<float>(uj < snapshot.links.volume.size()   ? snapshot.links.volume[uj]   : 0.0)); // [3] VOLUME
+        writeReal4(static_cast<float>(uj < snapshot.links.capacity.size() ? snapshot.links.capacity[uj] : 0.0)); // [4] CAPACITY (dimensionless)
         // [5..] Pollutant concentrations
         for (int p = 0; p < n_polluts_; ++p) {
             auto qi = uj * static_cast<std::size_t>(n_polluts_) + static_cast<std::size_t>(p);
@@ -208,44 +153,25 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     }
 
     // -----------------------------------------------------------------------
-    // System results (15 REAL4 values, matching legacy SysResults order)
+    // System results (15 REAL4 values, matching legacy SysResults order).
+    // All already in display units (temperature converted in the boundary too).
     // -----------------------------------------------------------------------
     float sys[MAX_SYS_RESULTS] = {};
-
-    // [0] SYS_TEMPERATURE — °F → display (°F for US, °C for SI)
-    if (unit_system_ == 0)
-        sys[0] = static_cast<float>(snapshot.sys_temperature);
-    else
-        sys[0] = static_cast<float>((5.0 / 9.0) * (snapshot.sys_temperature - 32.0));
-
-    // [1] SYS_RAINFALL — area-weighted avg ft/sec → display rate
-    sys[1] = static_cast<float>(snapshot.sys_rainfall * ucf_rainfall_);
-    // [2] SYS_SNOWDEPTH — area-weighted avg ft → display depth
-    sys[2] = static_cast<float>(snapshot.sys_snow_depth * ucf_raindepth_);
-    // [3] SYS_INFIL — area-weighted avg ft/sec → display rate
-    sys[3] = static_cast<float>(snapshot.sys_infil * ucf_rainfall_);
-    // [4] SYS_RUNOFF — total cfs → display flow
-    sys[4] = static_cast<float>(snapshot.sys_runoff * ucf_flow_);
-    // [5] SYS_DWFLOW — cfs → display flow
-    sys[5] = static_cast<float>(snapshot.sys_dw_inflow * ucf_flow_);
-    // [6] SYS_GWFLOW — cfs → display flow
-    sys[6] = static_cast<float>(snapshot.sys_gw_inflow * ucf_flow_);
-    // [7] SYS_IIFLOW — RDII, cfs → display flow
-    sys[7] = static_cast<float>(snapshot.sys_ii_inflow * ucf_flow_);
-    // [8] SYS_EXFLOW — external inflow, cfs → display flow
-    sys[8] = static_cast<float>(snapshot.sys_ext_inflow * ucf_flow_);
-    // [9] SYS_INFLOW — total lateral inflow = runoff + dw + gw + ii + ext
-    sys[9] = sys[4] + sys[5] + sys[6] + sys[7] + sys[8];
-    // [10] SYS_FLOODING — cfs → display flow
-    sys[10] = static_cast<float>(snapshot.sys_flooding * ucf_flow_);
-    // [11] SYS_OUTFLOW — cfs → display flow
-    sys[11] = static_cast<float>(snapshot.sys_outflow * ucf_flow_);
-    // [12] SYS_STORAGE — total ft³ → display volume
-    sys[12] = static_cast<float>(snapshot.sys_storage * ucf_volume_);
-    // [13] SYS_EVAP — area-weighted avg ft/sec → display rate
-    sys[13] = static_cast<float>(snapshot.sys_evap * ucf_evaprate_);
-    // [14] SYS_PET — ft/sec → display evap rate
-    sys[14] = static_cast<float>(snapshot.sys_pet * ucf_evaprate_);
+    sys[0]  = static_cast<float>(snapshot.sys_temperature); // SYS_TEMPERATURE
+    sys[1]  = static_cast<float>(snapshot.sys_rainfall);    // SYS_RAINFALL
+    sys[2]  = static_cast<float>(snapshot.sys_snow_depth);  // SYS_SNOWDEPTH
+    sys[3]  = static_cast<float>(snapshot.sys_infil);       // SYS_INFIL
+    sys[4]  = static_cast<float>(snapshot.sys_runoff);      // SYS_RUNOFF
+    sys[5]  = static_cast<float>(snapshot.sys_dw_inflow);   // SYS_DWFLOW
+    sys[6]  = static_cast<float>(snapshot.sys_gw_inflow);   // SYS_GWFLOW
+    sys[7]  = static_cast<float>(snapshot.sys_ii_inflow);   // SYS_IIFLOW
+    sys[8]  = static_cast<float>(snapshot.sys_ext_inflow);  // SYS_EXFLOW
+    sys[9]  = sys[4] + sys[5] + sys[6] + sys[7] + sys[8];   // SYS_INFLOW (sum)
+    sys[10] = static_cast<float>(snapshot.sys_flooding);    // SYS_FLOODING
+    sys[11] = static_cast<float>(snapshot.sys_outflow);     // SYS_OUTFLOW
+    sys[12] = static_cast<float>(snapshot.sys_storage);     // SYS_STORAGE
+    sys[13] = static_cast<float>(snapshot.sys_evap);        // SYS_EVAP
+    sys[14] = static_cast<float>(snapshot.sys_pet);         // SYS_PET
 
     std::fwrite(sys, sizeof(float), MAX_SYS_RESULTS, out_file_);
 

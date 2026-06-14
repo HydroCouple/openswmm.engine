@@ -6,12 +6,16 @@
  * @ingroup engine_api
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_subcatchments.h"
+
+#include <algorithm>
+#include <cstring>
+#include <string>
 
 extern "C" {
 
@@ -52,7 +56,12 @@ SWMM_ENGINE_API int swmm_subcatch_add(SWMM_Engine engine, const char* id) {
 
     ctx.subcatch_names.add(id);
     int n = ctx.subcatch_names.size();
-    ctx.subcatches.resize(n);
+    ctx.subcatches.grow_to(n);
+    const auto un = static_cast<std::size_t>(n);
+    if (ctx.spatial.subcatch_x.size() < un)          ctx.spatial.subcatch_x.resize(un, 0.0);
+    if (ctx.spatial.subcatch_y.size() < un)          ctx.spatial.subcatch_y.resize(un, 0.0);
+    if (ctx.spatial.subcatch_polygon_x.size() < un)  ctx.spatial.subcatch_polygon_x.resize(un);
+    if (ctx.spatial.subcatch_polygon_y.size() < un)  ctx.spatial.subcatch_polygon_y.resize(un);
 
     return SWMM_OK;
 }
@@ -84,7 +93,8 @@ SWMM_ENGINE_API int swmm_subcatch_set_width(SWMM_Engine engine, int idx, double 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    ctx.subcatches.width[static_cast<std::size_t>(idx)] = width;
+    // units: width stored INTERNAL ft -> convert display->internal
+    ctx.subcatches.width[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::LENGTH, width);
     return SWMM_OK;
 }
 
@@ -93,7 +103,11 @@ SWMM_ENGINE_API int swmm_subcatch_set_slope(SWMM_Engine engine, int idx, double 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    ctx.subcatches.slope[static_cast<std::size_t>(idx)] = slope;
+    // `slope` is a percentage per the API contract (e.g. 2.0 = 2%); the runoff
+    // module and the [SUBCATCHMENTS] parser both store it as a fraction
+    // (ctx.subcatches.slope = %Slope / 100), so convert here to match — and to
+    // stay consistent with swmm_subcatch_set_imperv_pct, which divides likewise.
+    ctx.subcatches.slope[static_cast<std::size_t>(idx)] = slope / 100.0;
     return SWMM_OK;
 }
 
@@ -206,6 +220,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_area(SWMM_Engine engine, int idx, double* 
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    // units: area is stored in DISPLAY units (ac/ha), converted at-use in Runoff.cpp — return raw
     if (area) *area = ctx.subcatches.area[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
@@ -230,7 +245,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_width(SWMM_Engine engine, int idx, double*
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (w) *w = ctx.subcatches.width[static_cast<std::size_t>(idx)];
+    // units: width stored INTERNAL ft -> convert internal->display
+    if (w) *w = to_display(ctx, openswmm::ucf::LENGTH, ctx.subcatches.width[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -238,7 +254,10 @@ SWMM_ENGINE_API int swmm_subcatch_get_slope(SWMM_Engine engine, int idx, double*
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (s) *s = ctx.subcatches.slope[static_cast<std::size_t>(idx)];
+    // Internally slope is stored as a fraction (%Slope / 100). swmm_subcatch_set_slope
+    // divides the incoming percentage by 100, so the getter must multiply back by 100
+    // to round-trip — matching the symmetric swmm_subcatch_get/set_imperv_pct pair.
+    if (s) *s = ctx.subcatches.slope[static_cast<std::size_t>(idx)] * 100.0;
     return SWMM_OK;
 }
 
@@ -354,7 +373,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_stat_precip(SWMM_Engine engine, int idx, d
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (vol) *vol = ctx.subcatches.stat_precip_vol[static_cast<std::size_t>(idx)];
+    // units: stat precip volume stored INTERNAL ft³ -> convert internal->display
+    if (vol) *vol = to_display(ctx, openswmm::ucf::VOLUME, ctx.subcatches.stat_precip_vol[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -362,7 +382,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_stat_runoff_vol(SWMM_Engine engine, int id
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (vol) *vol = ctx.subcatches.stat_runoff_vol[static_cast<std::size_t>(idx)];
+    // units: stat runoff volume stored INTERNAL ft³ -> convert internal->display
+    if (vol) *vol = to_display(ctx, openswmm::ucf::VOLUME, ctx.subcatches.stat_runoff_vol[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -370,7 +391,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_stat_max_runoff(SWMM_Engine engine, int id
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (rate) *rate = ctx.subcatches.stat_max_runoff[static_cast<std::size_t>(idx)];
+    // units: stat max runoff stored INTERNAL cfs -> convert internal->display
+    if (rate) *rate = to_display(ctx, openswmm::ucf::FLOW, ctx.subcatches.stat_max_runoff[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -426,7 +448,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_runoff(SWMM_Engine engine, int idx, double
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (runoff) *runoff = ctx.subcatches.runoff[static_cast<std::size_t>(idx)];
+    // units: runoff stored INTERNAL cfs -> convert internal->display
+    if (runoff) *runoff = to_display(ctx, openswmm::ucf::FLOW, ctx.subcatches.runoff[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -434,7 +457,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_groundwater(SWMM_Engine engine, int idx, d
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (gw_flow) *gw_flow = ctx.subcatches.gw_flow[static_cast<std::size_t>(idx)];
+    // units: groundwater flow stored INTERNAL cfs -> convert internal->display
+    if (gw_flow) *gw_flow = to_display(ctx, openswmm::ucf::FLOW, ctx.subcatches.gw_flow[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -442,16 +466,122 @@ SWMM_ENGINE_API int swmm_subcatch_get_rainfall(SWMM_Engine engine, int idx, doub
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (rainfall) *rainfall = ctx.subcatches.rainfall[static_cast<std::size_t>(idx)];
+    // units: state rainfall stored INTERNAL ft/s -> convert internal->display
+    if (rainfall) *rainfall = to_display(ctx, openswmm::ucf::RAINFALL, ctx.subcatches.rainfall[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_subcatch_get_snow_depth(SWMM_Engine engine, int idx, double* depth) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    const auto* eng = to_engine(engine);
+    const auto& ctx = eng->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    // Snow state is managed by SnowSolver, not SubcatchData — return 0.0 for now
-    if (depth) *depth = 0.0;
+    // Area-weighted snow pack SWE from the snow solver state,
+    // internal ft → user depth units (in US, mm SI)
+    if (depth) *depth = to_display(ctx, openswmm::ucf::RAINDEPTH,
+                                   eng->subcatchSnowDepth(idx));
+    return SWMM_OK;
+}
+
+// ============================================================================
+// State injection (data assimilation)
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_subcatch_set_gw_state(SWMM_Engine engine, int idx,
+                                               double theta, double lower_depth) {
+    CHECK_HANDLE(engine);
+    auto* eng = to_engine(engine);
+    auto& ctx = eng->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    auto& soa = eng->gwSolver().state();
+    auto ui = static_cast<std::size_t>(idx);
+    if (ui >= soa.theta.size() || soa.total_depth[ui] <= 0.0)
+        return SWMM_ERR_BADPARAM;   // no groundwater on this subcatchment
+
+    if (theta >= 0.0) {
+        // clamp to physical range [wilting point fraction, porosity]
+        double porosity = soa.porosity[ui];
+        soa.theta[ui] = (theta > porosity) ? porosity : theta;
+    }
+    if (lower_depth >= 0.0) {
+        double ld = to_internal(ctx, openswmm::ucf::LENGTH, lower_depth);
+        double max_d = soa.total_depth[ui];
+        soa.lower_depth[ui] = (ld > max_d) ? max_d : ld;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_gw_state(SWMM_Engine engine, int idx,
+                                               double* theta, double* lower_depth) {
+    CHECK_HANDLE(engine);
+    const auto* eng = to_engine(engine);
+    const auto& ctx = eng->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    const auto& soa = eng->gwSolver().state();
+    auto ui = static_cast<std::size_t>(idx);
+    if (ui >= soa.theta.size() || soa.total_depth[ui] <= 0.0)
+        return SWMM_ERR_BADPARAM;
+
+    if (theta)       *theta = soa.theta[ui];
+    if (lower_depth) *lower_depth = to_display(ctx, openswmm::ucf::LENGTH,
+                                               soa.lower_depth[ui]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_set_snow_state(SWMM_Engine engine, int idx,
+                                                 int surface, double swe, double fw,
+                                                 double ati, double coldc) {
+    CHECK_HANDLE(engine);
+    auto* eng = to_engine(engine);
+    auto& ctx = eng->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    auto ui = static_cast<std::size_t>(idx);
+    if (ctx.subcatches.snowpack[ui] < 0) return SWMM_ERR_BADPARAM;
+    CHECK_INDEX(surface >= 0 && surface < openswmm::snow::N_SUBAREAS);
+
+    auto& soa = eng->snowSolver().state();
+    auto pk = static_cast<std::size_t>(idx * openswmm::snow::N_SUBAREAS + surface);
+    if (pk >= soa.wsnow.size()) return SWMM_ERR_BADPARAM;
+
+    int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    if (swe >= 0.0)
+        soa.wsnow[pk] = to_internal(ctx, openswmm::ucf::RAINDEPTH, swe);
+    if (fw >= 0.0)
+        soa.fw[pk] = to_internal(ctx, openswmm::ucf::RAINDEPTH, fw);
+    if (ati > -999.0) {
+        double t = ati;
+        if (unit_sys == 1) t = t * 9.0 / 5.0 + 32.0;
+        soa.ati[pk] = t;
+    }
+    if (coldc >= 0.0)
+        soa.coldc[pk] = to_internal(ctx, openswmm::ucf::RAINDEPTH, coldc);
+
+    // free water cannot exceed the pack
+    if (soa.fw[pk] > soa.wsnow[pk]) soa.fw[pk] = soa.wsnow[pk];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_snow_state(SWMM_Engine engine, int idx,
+                                                 int surface, double* swe, double* fw,
+                                                 double* ati, double* coldc) {
+    CHECK_HANDLE(engine);
+    const auto* eng = to_engine(engine);
+    const auto& ctx = eng->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    auto ui = static_cast<std::size_t>(idx);
+    if (ctx.subcatches.snowpack[ui] < 0) return SWMM_ERR_BADPARAM;
+    CHECK_INDEX(surface >= 0 && surface < openswmm::snow::N_SUBAREAS);
+
+    const auto& soa = eng->snowSolver().state();
+    auto pk = static_cast<std::size_t>(idx * openswmm::snow::N_SUBAREAS + surface);
+    if (pk >= soa.wsnow.size()) return SWMM_ERR_BADPARAM;
+
+    int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    if (swe)   *swe   = to_display(ctx, openswmm::ucf::RAINDEPTH, soa.wsnow[pk]);
+    if (fw)    *fw    = to_display(ctx, openswmm::ucf::RAINDEPTH, soa.fw[pk]);
+    if (ati)   *ati   = (unit_sys == 1) ? (soa.ati[pk] - 32.0) * 5.0 / 9.0
+                                        : soa.ati[pk];
+    if (coldc) *coldc = to_display(ctx, openswmm::ucf::RAINDEPTH, soa.coldc[pk]);
     return SWMM_OK;
 }
 
@@ -459,7 +589,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_evap(SWMM_Engine engine, int idx, double* 
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (evap) *evap = ctx.subcatches.evap_loss[static_cast<std::size_t>(idx)];
+    // units: evap loss stored INTERNAL ft/s -> convert internal->display
+    if (evap) *evap = to_display(ctx, openswmm::ucf::EVAPRATE, ctx.subcatches.evap_loss[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -467,7 +598,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_infil(SWMM_Engine engine, int idx, double*
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (infil) *infil = ctx.subcatches.infil_loss[static_cast<std::size_t>(idx)];
+    // units: infil loss stored INTERNAL ft/s -> convert internal->display
+    if (infil) *infil = to_display(ctx, openswmm::ucf::RAINFALL, ctx.subcatches.infil_loss[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -480,7 +612,8 @@ SWMM_ENGINE_API int swmm_subcatch_set_rainfall(SWMM_Engine engine, int idx, doub
     auto& ctx = to_engine(engine)->context();
     CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    ctx.subcatches.rainfall[static_cast<std::size_t>(idx)] = rainfall;
+    // units: state rainfall stored INTERNAL ft/s -> convert display->internal
+    ctx.subcatches.rainfall[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::RAINFALL, rainfall);
     return SWMM_OK;
 }
 
@@ -510,7 +643,9 @@ SWMM_ENGINE_API int swmm_subcatch_get_runoff_bulk(SWMM_Engine engine, double* bu
     const auto& ctx = to_engine(engine)->context();
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_subcatches());
-    std::copy(ctx.subcatches.runoff.begin(), ctx.subcatches.runoff.begin() + n, buf);
+    // units: runoff stored INTERNAL cfs -> convert internal->display per element
+    for (int i = 0; i < n; ++i)
+        buf[i] = to_display(ctx, openswmm::ucf::FLOW, ctx.subcatches.runoff[static_cast<std::size_t>(i)]);
     return SWMM_OK;
 }
 
@@ -526,6 +661,80 @@ SWMM_ENGINE_API int swmm_subcatch_get_quality_bulk(SWMM_Engine engine, int pollu
         buf[i] = ctx.subcatches.conc[
             static_cast<std::size_t>(i) * static_cast<std::size_t>(np) +
             static_cast<std::size_t>(pollutant_idx)];
+    }
+    return SWMM_OK;
+}
+
+// ----------------------------------------------------------------------------
+// Phase 3 bulk getters — Subcatchments.
+//
+// rainfall, evap_loss, infil_loss are simple SoA memcpys. snow_depth mirrors
+// the scalar accessor (which currently returns 0.0 since snow state lives in
+// the SnowSolver, not SubcatchData) — when snow integration lands, both the
+// scalar and bulk variants get updated together. IDs follow the stride-packed
+// UTF-8 format established by swmm_node_get_ids_bulk.
+// ----------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_subcatch_get_rainfall_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    // units: state rainfall stored INTERNAL ft/s -> convert internal->display per element
+    for (int i = 0; i < n; ++i)
+        buf[i] = to_display(ctx, openswmm::ucf::RAINFALL, ctx.subcatches.rainfall[static_cast<std::size_t>(i)]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_evap_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    // units: evap loss stored INTERNAL ft/s -> convert internal->display per element
+    for (int i = 0; i < n; ++i)
+        buf[i] = to_display(ctx, openswmm::ucf::EVAPRATE, ctx.subcatches.evap_loss[static_cast<std::size_t>(i)]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_infil_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    // units: infil loss stored INTERNAL ft/s -> convert internal->display per element
+    for (int i = 0; i < n; ++i)
+        buf[i] = to_display(ctx, openswmm::ucf::RAINFALL, ctx.subcatches.infil_loss[static_cast<std::size_t>(i)]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_snow_depth_bulk(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    // Mirror the scalar accessor's placeholder behavior: zero-fill until
+    // snow state is integrated with SubcatchData.
+    std::fill_n(buf, n, 0.0);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_ids_bulk(SWMM_Engine engine,
+                                                char* buf,
+                                                int stride,
+                                                int count) {
+    CHECK_HANDLE(engine);
+    if (!buf || stride < 2 || count <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    const int n = std::min(count, ctx.n_subcatches());
+    const std::size_t s = static_cast<std::size_t>(stride);
+
+    std::fill_n(buf, s * static_cast<std::size_t>(n), '\0');
+    for (int i = 0; i < n; ++i) {
+        const std::string& name = ctx.subcatch_names.name_of(i);
+        const std::size_t copy_n = std::min(name.size(), s - 1);
+        std::memcpy(buf + static_cast<std::size_t>(i) * s,
+                    name.data(), copy_n);
     }
     return SWMM_OK;
 }
@@ -559,6 +768,224 @@ SWMM_ENGINE_API int swmm_subcatch_set_ponded_quality(SWMM_Engine engine,
                static_cast<std::size_t>(pollutant_idx);
     if (idx < ctx.subcatches.ponded_qual.size())
         ctx.subcatches.ponded_qual[idx] = mass;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_rename(SWMM_Engine engine, int idx, const char* newId) {
+    CHECK_HANDLE(engine);
+    if (!newId || newId[0] == '\0') return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    return ctx.subcatch_names.rename(idx, newId) ? SWMM_OK : SWMM_ERR_BADPARAM;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_tag(SWMM_Engine engine, int idx,
+                                            char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    const auto u = static_cast<std::size_t>(idx);
+    const std::string& s = (u < ctx.subcatches.tags.size()) ? ctx.subcatches.tags[u]
+                                                            : std::string{};
+    const int copy_len = std::min(static_cast<int>(s.size()), buflen - 1);
+    if (copy_len > 0) std::memcpy(buf, s.c_str(), static_cast<std::size_t>(copy_len));
+    buf[copy_len] = '\0';
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_set_tag(SWMM_Engine engine, int idx,
+                                            const char* tag) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    const auto u = static_cast<std::size_t>(idx);
+    if (u >= ctx.subcatches.tags.size()) ctx.subcatches.tags.resize(u + 1);
+    ctx.subcatches.tags[u] = (tag != nullptr) ? std::string(tag) : std::string{};
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Aquifers ([AQUIFERS] section) — Slice BM.0 list + add; setters land with BP
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_aquifer_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return to_engine(engine)->context().aquifers.count();
+}
+
+SWMM_ENGINE_API int swmm_aquifer_index(SWMM_Engine engine, const char* id) {
+    if (!engine || !id) return -1;
+    const auto& names = to_engine(engine)->context().aquifers.names;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+SWMM_ENGINE_API const char* swmm_aquifer_id(SWMM_Engine engine, int idx) {
+    if (!engine) return nullptr;
+    const auto& names = to_engine(engine)->context().aquifers.names;
+    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    return names[static_cast<std::size_t>(idx)].c_str();
+}
+
+SWMM_ENGINE_API int swmm_aquifer_add(SWMM_Engine engine, const char* id) {
+    CHECK_HANDLE(engine);
+    if (!id) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+
+    auto& aq = ctx.aquifers;
+    aq.names.push_back(id);
+    aq.porosity.push_back(0.0);
+    aq.wilting_point.push_back(0.0);
+    aq.field_capacity.push_back(0.0);
+    aq.conductivity.push_back(0.0);
+    aq.conduct_slope.push_back(0.0);
+    aq.tension_slope.push_back(0.0);
+    aq.upper_evap.push_back(0.0);
+    aq.lower_evap.push_back(0.0);
+    aq.lower_loss.push_back(0.0);
+    aq.bottom_elev.push_back(0.0);
+    aq.water_table_elev.push_back(0.0);
+    aq.upper_moist.push_back(0.0);
+    aq.upper_evap_pat.push_back("");
+
+    ctx.aquifer_names.add(id);
+    return SWMM_OK;
+}
+
+namespace {
+// Map a SWMM_AquiferParam code to the backing store vector (input-file units).
+std::vector<double>* aquifer_param_vec(openswmm::SimulationContext& ctx, int param) {
+    auto& aq = ctx.aquifers;
+    switch (param) {
+        case SWMM_AQUIFER_POROSITY:         return &aq.porosity;
+        case SWMM_AQUIFER_WILTING_POINT:    return &aq.wilting_point;
+        case SWMM_AQUIFER_FIELD_CAPACITY:   return &aq.field_capacity;
+        case SWMM_AQUIFER_CONDUCTIVITY:     return &aq.conductivity;
+        case SWMM_AQUIFER_CONDUCT_SLOPE:    return &aq.conduct_slope;
+        case SWMM_AQUIFER_TENSION_SLOPE:    return &aq.tension_slope;
+        case SWMM_AQUIFER_UPPER_EVAP_FRAC:  return &aq.upper_evap;
+        case SWMM_AQUIFER_LOWER_EVAP_DEPTH: return &aq.lower_evap;
+        case SWMM_AQUIFER_LOWER_LOSS_COEFF: return &aq.lower_loss;
+        case SWMM_AQUIFER_BOTTOM_ELEV:      return &aq.bottom_elev;
+        case SWMM_AQUIFER_WATER_TABLE_ELEV: return &aq.water_table_elev;
+        case SWMM_AQUIFER_UPPER_MOISTURE:   return &aq.upper_moist;
+        default: return nullptr;
+    }
+}
+
+// Structural / initial-condition parameters bound or seed groundwater state,
+// so they may only change before start(); the flux coefficients are read
+// (via the solver's refreshed copies) each step and are sound mid-run.
+bool aquifer_param_prestart_only(int param) {
+    switch (param) {
+        case SWMM_AQUIFER_POROSITY:
+        case SWMM_AQUIFER_WILTING_POINT:
+        case SWMM_AQUIFER_FIELD_CAPACITY:
+        case SWMM_AQUIFER_BOTTOM_ELEV:
+        case SWMM_AQUIFER_WATER_TABLE_ELEV:
+        case SWMM_AQUIFER_UPPER_MOISTURE:
+            return true;
+        default:
+            return false;
+    }
+}
+} // namespace
+
+SWMM_ENGINE_API int swmm_aquifer_get_param(SWMM_Engine engine, int idx, int param, double* value) {
+    CHECK_HANDLE(engine);
+    if (!value) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.aquifers.count());
+    const auto* vec = aquifer_param_vec(ctx, param);
+    if (!vec) return SWMM_ERR_BADPARAM;
+    *value = (*vec)[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_aquifer_set_param(SWMM_Engine engine, int idx, int param, double value) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.aquifers.count());
+    auto* vec = aquifer_param_vec(ctx, param);
+    if (!vec) return SWMM_ERR_BADPARAM;
+
+    const bool editable = (ctx.state == openswmm::EngineState::BUILDING ||
+                           ctx.state == openswmm::EngineState::OPENED);
+    if (aquifer_param_prestart_only(param) && !editable)
+        return SWMM_ERR_LIFECYCLE;
+
+    // Light physical bounds (full cross-field validation runs at start —
+    // Gap #81): fractions in [0, 1], everything but elevations non-negative.
+    switch (param) {
+        case SWMM_AQUIFER_POROSITY:
+        case SWMM_AQUIFER_WILTING_POINT:
+        case SWMM_AQUIFER_FIELD_CAPACITY:
+        case SWMM_AQUIFER_UPPER_EVAP_FRAC:
+        case SWMM_AQUIFER_UPPER_MOISTURE:
+            if (value < 0.0 || value > 1.0) return SWMM_ERR_BADPARAM;
+            break;
+        case SWMM_AQUIFER_BOTTOM_ELEV:
+        case SWMM_AQUIFER_WATER_TABLE_ELEV:
+            break;  // elevations may be negative
+        default:
+            if (value < 0.0) return SWMM_ERR_BADPARAM;
+            break;
+    }
+
+    (*vec)[static_cast<std::size_t>(idx)] = value;
+
+    // The GW solver reads per-subcatchment copies made at start; re-derive
+    // the flux-coefficient columns so a mid-run edit applies next step.
+    if (!editable)
+        to_engine(engine)->refreshAquiferParams();
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Snowpacks ([SNOWPACKS] section) — Slice BM.0 list + add; setters land with BP
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_snowpack_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return to_engine(engine)->context().snowpacks.count();
+}
+
+SWMM_ENGINE_API int swmm_snowpack_index(SWMM_Engine engine, const char* id) {
+    if (!engine || !id) return -1;
+    const auto& names = to_engine(engine)->context().snowpacks.names;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+SWMM_ENGINE_API const char* swmm_snowpack_id(SWMM_Engine engine, int idx) {
+    if (!engine) return nullptr;
+    const auto& names = to_engine(engine)->context().snowpacks.names;
+    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    return names[static_cast<std::size_t>(idx)].c_str();
+}
+
+SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id) {
+    CHECK_HANDLE(engine);
+    if (!id) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+
+    auto& sp = ctx.snowpacks;
+    sp.names.push_back(id);
+    sp.plowable.push_back({});
+    sp.impervious.push_back({});
+    sp.pervious.push_back({});
+    sp.removal.push_back({});
+    sp.removal_subcatch.push_back("");
+
+    ctx.snowpack_names.add(id);
     return SWMM_OK;
 }
 

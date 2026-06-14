@@ -31,6 +31,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.cpp
     data/*.cpp
+    edit/*.cpp
     input/*.cpp
     hydrology/*.cpp
     hydraulics/*.cpp
@@ -46,6 +47,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.hpp
     data/*.hpp
+    edit/*.hpp
     input/*.hpp
     hydrology/*.hpp
     hydraulics/*.hpp
@@ -98,6 +100,8 @@ target_include_directories(openswmm_engine
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include/openswmm/plugin_sdk>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
         $<INSTALL_INTERFACE:include>
+        $<INSTALL_INTERFACE:include/openswmm/engine>
+        $<INSTALL_INTERFACE:include/openswmm/plugin_sdk>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
@@ -107,7 +111,10 @@ target_link_libraries(openswmm_engine
     PUBLIC
         openswmm_common
     PRIVATE
-        $<$<NOT:$<BOOL:$<CXX_COMPILER_ID:MSVC>>>:m>
+        # On macOS, libm is part of libSystem and HDF5/SUNDIALS already pull in
+        # -lm transitively — adding it here produces an "ignoring duplicate
+        # libraries: '-lm'" ld warning. Restrict to non-APPLE UNIX.
+        $<$<AND:$<NOT:$<BOOL:$<CXX_COMPILER_ID:MSVC>>>,$<NOT:$<PLATFORM_ID:Darwin>>>:m>
 )
 
 # ---- Threads (for IOThread) ----
@@ -166,6 +173,24 @@ else()
     endif()
 endif()
 
+# ---- Force-optimized override (for Debug parent builds) ----
+# When the engine is consumed as a subdirectory by a parent project that's
+# in Debug mode (e.g. a GUI under active development), CMAKE_BUILD_TYPE=Debug
+# normally collapses -O3 to -O0 and disables LTO. The engine is a stable
+# dependency in those scenarios — runtime perf, not engine debuggability,
+# is what matters — so this option lets a parent force the engine targets
+# to compile with the Darwin/Linux preset Release flags as PRIVATE target
+# options, overriding the parent's Debug flags for engine TUs only.
+option(OPENSWMM_ENGINE_FORCE_OPTIMIZED
+    "Always compile engine targets with optimized flags, even in Debug builds" OFF)
+if(OPENSWMM_ENGINE_FORCE_OPTIMIZED AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    target_compile_options(openswmm_engine PRIVATE
+        -O2 -fdata-sections -ffunction-sections
+        -fno-fast-math -ffp-contract=off -fno-math-errno)
+    message(STATUS "OpenSWMM Engine: OPENSWMM_ENGINE_FORCE_OPTIMIZED ON → "
+            "compiling engine with -O2 + section-gc regardless of CMAKE_BUILD_TYPE")
+endif()
+
 # ---- Link-time optimization (IPO/LTO) ----
 # Enables cross-translation-unit inlining and dead-code elimination. Critical
 # for performance when hot-path functions (fastmath::pow4_3, SIMD helpers,
@@ -174,7 +199,8 @@ endif()
 if(NOT DEFINED OPENSWMM_ENABLE_LTO)
     set(OPENSWMM_ENABLE_LTO ON CACHE BOOL "Enable interprocedural / link-time optimization for Release builds")
 endif()
-if(OPENSWMM_ENABLE_LTO AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(OPENSWMM_ENABLE_LTO AND
+   (OPENSWMM_ENGINE_FORCE_OPTIMIZED OR NOT CMAKE_BUILD_TYPE STREQUAL "Debug"))
     include(CheckIPOSupported)
     check_ipo_supported(RESULT OPENSWMM_IPO_SUPPORTED OUTPUT OPENSWMM_IPO_ERROR)
     if(OPENSWMM_IPO_SUPPORTED)
@@ -208,17 +234,35 @@ elseif(UNIX)
 endif()
 
 # ---- RPATH ----
+# INSTALL_RPATH: wheel layout — external bundled deps (libomp etc.) placed by
+# delocate/auditwheel land in openswmm/.dylibs/, one level above openswmm/engine/.
+# For standalone cmake --install the system finds libomp via its own search path.
+# CMAKE_INSTALL_RPATH_USE_LINK_PATH (set globally) appends the linked-library
+# directory automatically, so consumers can always locate this dylib.
+#
+# BUILD_WITH_INSTALL_RPATH is left FALSE (the global default) so that the
+# build-tree binary uses CMake's automatically-computed build rpath (link dirs)
+# rather than the wheel-layout path that does not exist in the build tree.
 if(APPLE)
-    set(LIB_ROOT "@loader_path/../lib;@rpath")
+    # @loader_path/../.dylibs : wheel layout (delocate places bundled deps there)
+    # @loader_path             : sibling-co-located deps when consumer puts the
+    #                            engine + its deps in the same dir
+    # @loader_path/../bin      : standalone install (cmake --install) — deps are
+    #                            bundled into bin/, engine .dylib lives in lib/
+    # @loader_path/../lib      : sibling lib dir (engine.dylib's lib/)
+    set(LIB_ROOT "@loader_path/../.dylibs;@loader_path;@loader_path/../bin;@loader_path/../lib")
+elseif(UNIX)
+    set(LIB_ROOT "$ORIGIN/../.dylibs;$ORIGIN;$ORIGIN/../bin;$ORIGIN/../lib")
 else()
-    set(LIB_ROOT "$ORIGIN/../lib;$ORIGIN")
+    set(LIB_ROOT "")
 endif()
 
-set_target_properties(openswmm_engine PROPERTIES
-    INSTALL_RPATH        "${LIB_ROOT}"
-    BUILD_RPATH          "${LIB_ROOT}"
-    BUILD_WITH_INSTALL_RPATH TRUE
-)
+if(NOT WIN32)
+    set_target_properties(openswmm_engine PROPERTIES
+        MACOSX_RPATH  TRUE
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+endif()
 
 # ---- Install ----
 install(
@@ -227,6 +271,24 @@ install(
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+# Bundle imported third-party runtime libraries next to the executables that
+# consume openswmm_engine. The CLI install (src/cli/CMakeLists.txt) already
+# captures the full closure via RUNTIME_DEPENDENCIES; this block exists for
+# downstream consumers who install openswmm_engine without an executable
+# (e.g. a Python wheel built standalone outside cibuildwheel, or a sibling
+# C++ project that links the engine). Co-locating in bin/ matches the RPATH
+# already configured on the engine ("@loader_path/../.dylibs" stays for the
+# wheel path; "@loader_path" + "$ORIGIN" cover the standalone-install path).
+openswmm_install_runtime_deps(${CMAKE_INSTALL_BINDIR}
+    SUNDIALS::cvode
+    SUNDIALS::nvecserial
+    SUNDIALS::sunmatrixdense
+    SUNDIALS::sunlinsoldense
+    hdf5::hdf5-shared
+    unofficial::sqlite3::sqlite3
+    SQLite::SQLite3
 )
 
 install(
@@ -297,6 +359,7 @@ if(OPENSWMM_BUILD_2D)
         2d/solver/SurfaceFluxCalculator.cpp
         2d/coupling/*.cpp
         2d/input/*.cpp
+        2d/output/*.cpp
         2d/SurfaceRouter2D.cpp
         2d/api/*.cpp
     )
@@ -304,11 +367,37 @@ if(OPENSWMM_BUILD_2D)
     # CVODE wrapper requires SUNDIALS
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/CvodeSurfaceSolver.cpp)
 
+    # Runtime backend selector (dlopen of the optional GPU plugin; serial CPU
+    # fallback). Lives in the core — it owns the CPU↔plugin decision — but
+    # pulls in no Kokkos/GPU dependency itself.
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceSolverFactory.cpp)
+
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
 
     # Find SUNDIALS (CVODE) via vcpkg or system install
     find_package(SUNDIALS REQUIRED COMPONENTS cvode)
     target_link_libraries(openswmm_engine PRIVATE SUNDIALS::cvode)
+
+    # Default2DOutputPlugin emits CF-1.11/UGRID-1.0 HDF5 — required dep.
+    # Prefer vcpkg's hdf5-config.cmake (CONFIG mode) since CMake's bundled
+    # FindHDF5.cmake hunts for h5cc/well-known layouts and misses vcpkg installs.
+    # Fall back to FindHDF5 for system installs (Linux distros, Homebrew) that
+    # don't ship hdf5-config.cmake.
+    find_package(hdf5 CONFIG QUIET)
+    if(hdf5_FOUND)
+        if(TARGET hdf5::hdf5-shared)
+            set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-shared)
+        elseif(TARGET hdf5::hdf5-static)
+            set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-static)
+        else()
+            message(FATAL_ERROR "hdf5 CONFIG package found but neither hdf5::hdf5-shared nor hdf5::hdf5-static is defined")
+        endif()
+        target_link_libraries(openswmm_engine PRIVATE ${_OPENSWMM_HDF5_TARGET})
+    else()
+        find_package(HDF5 REQUIRED COMPONENTS C)
+        target_link_libraries(openswmm_engine PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(openswmm_engine PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
 
     target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAS_2D=1)
 
@@ -316,10 +405,23 @@ if(OPENSWMM_BUILD_2D)
     if(TARGET openswmm_engine_internal)
         target_sources(openswmm_engine_internal PRIVATE ${OPENSWMM_2D_SOURCES})
         target_link_libraries(openswmm_engine_internal PRIVATE SUNDIALS::cvode)
+        if(hdf5_FOUND)
+            target_link_libraries(openswmm_engine_internal PRIVATE ${_OPENSWMM_HDF5_TARGET})
+        else()
+            target_link_libraries(openswmm_engine_internal PRIVATE ${HDF5_C_LIBRARIES})
+            target_include_directories(openswmm_engine_internal PRIVATE ${HDF5_INCLUDE_DIRS})
+        endif()
         target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAS_2D=1)
     endif()
 
-    message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (SUNDIALS/CVODE)")
+    message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (SUNDIALS/CVODE + HDF5)")
+
+    # Optional GPU surface-solver plugin (standalone shared lib, dlopen()ed
+    # at runtime — NOT linked into openswmm_engine). Phase 0 stub for now.
+    # See docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md.
+    if(OPENSWMM_BUILD_GPU_PLUGIN)
+        add_subdirectory(2d/gpu)
+    endif()
 else()
     message(STATUS "OpenSWMM Engine: 2D surface routing disabled (set -DOPENSWMM_BUILD_2D=ON to enable)")
 endif()
@@ -327,7 +429,70 @@ endif()
 # ---- Optional GeoPackage I/O library ----
 if(OPENSWMM_WITH_GEOPACKAGE)
     add_subdirectory(input/geopackage)
-    message(STATUS "OpenSWMM Engine: GeoPackage I/O library enabled")
+    # Slice RC.1 (APPROVED 2026-05-25, see §R.3 of openswmm.gui's
+    # GUI_IMPLEMENTATION_PLAN.md) — link the static GeoPackage lib into
+    # the engine SHARED so its IPluginComponentInfo singleton is
+    # resolvable from PluginFactory::register_builtin_infos AND so the
+    # PUBLIC OPENSWMM_HAS_GEOPACKAGE define propagates to the engine's
+    # own TUs (gating the explicit register_one call).
+    # PRIVATE because the cycle (engine ←→ geopackage PRIVATE both
+    # directions) collapses cleanly when geopackage's STATIC archive is
+    # absorbed into the engine SHARED at link time.
+    target_link_libraries(openswmm_engine PRIVATE openswmm_geopackage)
+    if(TARGET openswmm_engine_internal)
+        target_link_libraries(openswmm_engine_internal PRIVATE openswmm_geopackage)
+    endif()
+
+    # Linkers on every platform we target drop .obj/.o files from a static
+    # archive when no source in the consumer references their symbols. The
+    # swmm_gpkg_* C API exists solely for external consumers (Cython
+    # _geopackage, host apps) — nothing inside the engine itself calls it —
+    # so the openswmm_geopackage_impl translation unit is pruned and the
+    # C API never reaches the engine shared library's export table.
+    #
+    # On Windows the failure is loud: 27 LNK2019 errors at the Cython
+    # _geopackage link step (openswmm.engine.lib has no swmm_gpkg_* in it).
+    # On Linux/macOS the failure is silent: the wheel builds fine, but
+    # `from openswmm.engine._geopackage import GeoPackage` raises
+    # ImportError at runtime (undefined symbol), and test_geopackage.py
+    # wraps that import in try/except and skips its tests.
+    #
+    # Force whole-archive linking so every translation unit in the
+    # geopackage static archive is retained in the engine shared library:
+    #   - MSVC:    /WHOLEARCHIVE:<archive-name>
+    #   - Apple:   -Wl,-force_load,<archive-path>
+    #   - GNU ld:  -Wl,--whole-archive <archive-path> -Wl,--no-whole-archive
+    # The visibility attributes on swmm_gpkg_* (SWMM_ENGINE_API → either
+    # __declspec(dllexport) on MSVC or __attribute__((visibility("default")))
+    # elsewhere — see input/geopackage/CMakeLists.txt) then ensure the
+    # retained symbols are also exported.
+    if(MSVC)
+        target_link_options(openswmm_engine PRIVATE
+            "/WHOLEARCHIVE:$<TARGET_FILE_NAME:openswmm_geopackage>"
+        )
+    elseif(APPLE)
+        target_link_options(openswmm_engine PRIVATE
+            "LINKER:-force_load,$<TARGET_FILE:openswmm_geopackage>"
+        )
+    else()
+        # GNU ld / lld accept bracketed --whole-archive; the archive path
+        # must appear between the two flags.
+        target_link_options(openswmm_engine PRIVATE
+            "LINKER:--whole-archive"
+            "$<TARGET_FILE:openswmm_geopackage>"
+            "LINKER:--no-whole-archive"
+        )
+    endif()
+    # Re-export OPENSWMM_HAS_GEOPACKAGE on the engine target so consumers
+    # (tests, host apps) can compile-time gate on engine capabilities.
+    # The PRIVATE link above hides geopackage's own PUBLIC defines from
+    # engine consumers, but the capability is an engine-level fact once
+    # geopackage is absorbed into the engine SHARED.
+    target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAS_GEOPACKAGE=1)
+    if(TARGET openswmm_engine_internal)
+        target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAS_GEOPACKAGE=1)
+    endif()
+    message(STATUS "OpenSWMM Engine: GeoPackage I/O library enabled (built-in plugin)")
 else()
     message(STATUS "OpenSWMM Engine: GeoPackage I/O disabled (set -DOPENSWMM_WITH_GEOPACKAGE=ON to enable)")
 endif()

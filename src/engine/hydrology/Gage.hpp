@@ -11,7 +11,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -55,6 +55,7 @@ struct GageState {
     double rain_accum    = 0.0;   ///< Cumulative rain accumulator (for CUMULATIVE type)
     double api_rainfall  = -1.0;  ///< API-overridden rainfall (-1 = no override)
     double snow_factor   = 1.0;   ///< Snow catch factor
+    double scale_factor  = 1.0;   ///< Rainfall scaling factor (1.0 = no scaling)
     double units_factor  = 1.0;   ///< Unit conversion factor
     double adjust_factor = 1.0;   ///< Monthly/seasonal adjustment factor
     double rain_interval = 0.0;   ///< Rain recording interval (seconds)

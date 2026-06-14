@@ -4,7 +4,7 @@
  * @ingroup engine_geopackage
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -62,14 +62,8 @@ private:
     void flush_buffer();
     int lookup_variable(const std::string& name, const std::string& obj_type);
 
-    // Unit conversion factors (internal → display), computed once in prepare()
-    double ucf_rainfall_  = 1.0;
-    double ucf_raindepth_ = 1.0;
-    double ucf_evaprate_  = 1.0;
-    double ucf_length_    = 1.0;
-    double ucf_volume_    = 1.0;
-    double ucf_flow_      = 1.0;
-    int    unit_system_   = 0;     // 0=US, 1=SI
+    // Per-timestep results arrive pre-converted to display units (engine
+    // boundary), so no plugin-side unit-conversion factors are required.
 
     // Per-object report flags, captured during prepare() from SimulationContext
     std::vector<char> subcatch_rpt_flag_;

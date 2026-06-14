@@ -303,8 +303,11 @@ TEST(SectionFactor, RectangularAtFull) {
     double p[4] = {2.0, 5.0, 0, 0};  // 2ft x 5ft
     xsect::setParams(xs, static_cast<int>(XSectShape::RECT_CLOSED), p, 1.0);
 
-    // A = 10 ft², R = w*y/(w+2y) = 5*2/(5+4) = 10/9
-    double R = 10.0 / 9.0;
+    // RECT_CLOSED: when full, the crown is wetted, so the perimeter includes
+    // all four sides: P = 2*(y + w). R = A / P = 10 / (2*(2+5)) = 10/14.
+    // (Matches legacy xsect_setParams; the old open-channel R = w*y/(w+2y) was
+    // a parity bug.)
+    double R = 10.0 / 14.0;
     double expected = xs.a_full * std::pow(R, 2.0/3.0);
     EXPECT_NEAR(xs.s_full, expected, 0.01 * expected);
 }
@@ -633,8 +636,10 @@ protected:
         groups_.build(params_.data(), 2);
     }
 
-    void initSolver(SurchargeMethod method) {
+    void initSolver(SurchargeMethod method,
+                    NodeContinuity nc = NodeContinuity::EXPLICIT) {
         solver.surcharge_method = method;
+        solver.node_continuity = nc;
         solver.anderson_accel = true;
         solver.init(3, 2, groups_, ctx);
     }
@@ -664,8 +669,9 @@ TEST_F(AASkipFlagTest, FreeSurfaceNoSkip) {
 }
 
 TEST_F(AASkipFlagTest, ExtranSurchargedSkips) {
-    // EXTRAN surcharge: surcharged nodes should skip AA
-    initSolver(SurchargeMethod::EXTRAN);
+    // EXTRAN + EXPLICIT continuity: surcharged nodes skip AA (branch-discontinuous
+    // dQ/dH surcharge operator violates AA's smooth-G assumption).
+    initSolver(SurchargeMethod::EXTRAN, NodeContinuity::EXPLICIT);
 
     // Set depths above crown (surcharge) and maintain with lateral inflow
     double crown0 = ctx.nodes.full_depth[0];
@@ -689,8 +695,37 @@ TEST_F(AASkipFlagTest, ExtranSurchargedSkips) {
 
     const auto& flags = solver.aaSkipFlags();
     // J0 is surcharged → skip
-    EXPECT_EQ(flags[0], 1) << "Surcharged J0 must skip AA under EXTRAN";
+    EXPECT_EQ(flags[0], 1) << "Surcharged J0 must skip AA under EXTRAN + EXPLICIT";
     // J1 is not surcharged → no skip
+    EXPECT_EQ(flags[1], 0) << "Free-surface J1 should not skip AA";
+}
+
+TEST_F(AASkipFlagTest, ExtranSurchargedNotSkippedSemiImplicit) {
+    // EXTRAN + SEMI_IMPLICIT continuity: the unified Crank-Nicolson operator is
+    // C1-smooth through the surcharge transition, so surcharged junctions are
+    // AA-ELIGIBLE — the surcharge skip must NOT fire.
+    initSolver(SurchargeMethod::EXTRAN, NodeContinuity::SEMI_IMPLICIT);
+
+    double crown0 = ctx.nodes.full_depth[0];
+    ctx.nodes.depth[0] = crown0 + 1.0;
+    ctx.nodes.old_depth[0] = crown0 + 1.0;
+    ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + crown0 + 1.0;
+    ctx.nodes.lat_flow[0] = 100.0;
+    solver.nodeSurchargedFlag(0) = 1;
+
+    ctx.nodes.depth[1] = 0.5;
+    ctx.nodes.old_depth[1] = 0.5;
+    ctx.nodes.head[1] = ctx.nodes.invert_elev[1] + 0.5;
+
+    ctx.nodes.depth[2] = 0.5;
+    ctx.nodes.old_depth[2] = 0.5;
+    ctx.nodes.head[2] = ctx.nodes.invert_elev[2] + 0.5;
+
+    solver.execute(ctx, 10.0);
+
+    const auto& flags = solver.aaSkipFlags();
+    // J0 is surcharged but SEMI_IMPLICIT smooths the operator → NOT skipped
+    EXPECT_EQ(flags[0], 0) << "Surcharged J0 must NOT skip AA under SEMI_IMPLICIT";
     EXPECT_EQ(flags[1], 0) << "Free-surface J1 should not skip AA";
 }
 
@@ -770,6 +805,35 @@ TEST_F(AASkipFlagTest, SlotFarFromKinkNoSkip) {
     EXPECT_EQ(flags[1], 0) << "Shallow SLOT flow should not skip AA at J1";
 }
 
+TEST_F(AASkipFlagTest, SlotKinkStillSkipsUnderSemiImplicit) {
+    // Guard: the SEMI_IMPLICIT gating relaxes ONLY the EXTRAN surcharge skip.
+    // The static-slot near-cutoff kink is a link-level geometry kink, so it must
+    // STILL skip the conduit's end nodes under SEMI_IMPLICIT, exactly as it does
+    // under EXPLICIT.
+    initSolver(SurchargeMethod::SLOT, NodeContinuity::SEMI_IMPLICIT);
+
+    double yFull = ctx.links.xsect_y_full[0];      // 2.0 ft
+    double d_near_kink = 0.99 * yFull;             // ratio 0.99 ∈ [0.98, 1.02]
+    ctx.nodes.depth[0] = d_near_kink;
+    ctx.nodes.old_depth[0] = d_near_kink;
+    ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + d_near_kink;
+
+    ctx.nodes.depth[1] = d_near_kink;
+    ctx.nodes.old_depth[1] = d_near_kink;
+    ctx.nodes.head[1] = ctx.nodes.invert_elev[1] + d_near_kink;
+
+    ctx.nodes.depth[2] = 0.5;
+    ctx.nodes.old_depth[2] = 0.5;
+    ctx.nodes.head[2] = ctx.nodes.invert_elev[2] + 0.5;
+
+    solver.execute(ctx, 10.0);
+
+    const auto& flags = solver.aaSkipFlags();
+    // C0 (J0→J1) midpoint near the slot kink → both end nodes still skipped
+    EXPECT_EQ(flags[0], 1) << "SLOT kink must still skip J0 under SEMI_IMPLICIT";
+    EXPECT_EQ(flags[1], 1) << "SLOT kink must still skip J1 under SEMI_IMPLICIT";
+}
+
 TEST_F(AASkipFlagTest, AADisabledNoFlags) {
     // When anderson_accel is false, skip flags should remain all zeros
     solver.surcharge_method = SurchargeMethod::EXTRAN;
@@ -798,23 +862,30 @@ TEST_F(AASkipFlagTest, AADisabledNoFlags) {
     }
 }
 
-TEST(DPS, DeltaHsComputation) {
-    // Eq. 19: Delta_hs = c_pT^2 * Delta_As / (g * A_C * P^2)
+TEST(DPS, DeltaAsFromDhs) {
+    // Head-first form of Eq. 19: dAs = T_s · dhs, where T_s = g·A_C·P²/c_pT².
+    // In the link-node solver, dhs is set by the node-depth update and dAs
+    // is the derived slot-storage increment.
     double c_pT = 25.0 * 3.28084;  // m/s → ft/s
     double c_pT_sq = c_pT * c_pT;
-    double A_C = 7.069;  // 3ft diameter circular pipe: pi*D^2/4
-    double g = 32.174;   // ft/s^2
+    double A_C = 7.069;            // 3ft diameter circular pipe: π·D²/4
+    double g = 32.174;             // ft/s²
     double P = 100.0;
-    double deltaAs = 0.01;  // ft^2
+    double dhs = 0.01;             // ft  (driven by node continuity)
 
-    double deltaHs = c_pT_sq * deltaAs / (g * A_C * P * P);
+    double T_s = g * A_C * P * P / c_pT_sq;
+    double dAs = T_s * dhs;
 
-    // Should be positive and small
-    EXPECT_GT(deltaHs, 0.0);
+    EXPECT_GT(dAs, 0.0);
 
-    // With larger P, deltaHs should be smaller (wider effective slot)
-    double deltaHs_largeP = c_pT_sq * deltaAs / (g * A_C * 500.0 * 500.0);
-    EXPECT_LT(deltaHs_largeP, deltaHs);
+    // With larger P the slot widens, so the same dhs produces a larger dAs.
+    double T_s_largeP = g * A_C * 500.0 * 500.0 / c_pT_sq;
+    double dAs_largeP = T_s_largeP * dhs;
+    EXPECT_GT(dAs_largeP, dAs);
+
+    // Consistency with the inverted DPS relation (Eq. 19).
+    double dhs_recovered = c_pT_sq * dAs / (g * A_C * P * P);
+    EXPECT_NEAR(dhs_recovered, dhs, 1e-12);
 }
 
 TEST(DPS, InitialPreissmannNumber) {
@@ -835,8 +906,10 @@ TEST(DPS, InitialPreissmannNumber) {
     EXPECT_GT(P_hat_0, 2.0);
 }
 
-TEST(DPS, HsAccumulation) {
-    // Multiple increments should accumulate
+TEST(DPS, AsAccumulationFromDhs) {
+    // Head-first accumulation: each dhs from the node-depth solve contributes
+    // T_s · dhs to As.  Past contributions are not rewritten by future P
+    // changes — only future increments use the new T_s.
     double hs = 0.0;
     double As = 0.0;
 
@@ -844,20 +917,20 @@ TEST(DPS, HsAccumulation) {
     double g = 32.174;
     double A_C = 7.069;
     double P = 100.0;
-    double P2 = P * P;
+    double T_s = g * A_C * P * P / c_pT_sq;
 
     for (int i = 0; i < 5; ++i) {
-        double deltaAs = 0.005;
-        double deltaHs = c_pT_sq * deltaAs / (g * A_C * P2);
-        As += deltaAs;
-        hs += deltaHs;
+        double dhs = 0.002;       // a 2 mm head rise per iter
+        double dAs = T_s * dhs;
+        hs += dhs;
+        As += dAs;
     }
 
-    EXPECT_NEAR(As, 0.025, 1e-10);
-    EXPECT_GT(hs, 0.0);
-    // Verify linearity: 5 * single increment
-    double single = c_pT_sq * 0.005 / (g * A_C * P2);
-    EXPECT_NEAR(hs, 5.0 * single, 1e-10);
+    EXPECT_NEAR(hs, 0.010, 1e-12);
+    EXPECT_GT(As, 0.0);
+    // Linearity: total As = 5 × single dAs.
+    double single_dAs = T_s * 0.002;
+    EXPECT_NEAR(As, 5.0 * single_dAs, 1e-10);
 }
 
 TEST(DPS, DepressurizationHysteresis) {
@@ -903,6 +976,120 @@ TEST(DPS, OpenShapesExcluded) {
     EXPECT_TRUE(xsect::isOpen(static_cast<int>(XSectShape::TRAPEZOIDAL)));
     EXPECT_FALSE(xsect::isOpen(static_cast<int>(XSectShape::CIRCULAR)));
     EXPECT_FALSE(xsect::isOpen(static_cast<int>(XSectShape::RECT_CLOSED)));
+}
+
+// ============================================================================
+// Head-first DPS integration tests — exercise the real applyDPSGeometry path
+// through DWSolver::execute on the AASkipFlagTest fixture, then verify the
+// invariants the head-first formulation is supposed to preserve.
+// ============================================================================
+
+TEST_F(AASkipFlagTest, DPS_AsAccumulatesPositively) {
+    // Surcharge a single pipe and verify that dps_.As grows monotonically
+    // (within numerical noise) over multiple timesteps while head rises.
+    //
+    // This is the regression test for the original silent As=0 defect:
+    // when applyDPSGeometry derived dAs from (area_mid − A_full) it always
+    // produced dAs = −As_prev because the batch XSect kernel clamps depth
+    // to y_full, so As never accumulated and the slot was a no-op.
+    initSolver(SurchargeMethod::DYNAMIC_SLOT);
+
+    const double crown = ctx.links.xsect_y_full[0];  // 2.0 ft
+
+    // Surcharge J0 well above crown; J1 below crown to drive flow downstream.
+    ctx.nodes.depth[0] = crown + 0.50;
+    ctx.nodes.old_depth[0] = crown + 0.50;
+    ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + crown + 0.50;
+    ctx.nodes.sur_depth[0] = 10.0;  // permit head above crown
+    ctx.nodes.lat_flow[0] = 50.0;    // sustained inflow
+
+    ctx.nodes.depth[1] = 0.5;
+    ctx.nodes.old_depth[1] = 0.5;
+    ctx.nodes.head[1] = ctx.nodes.invert_elev[1] + 0.5;
+
+    ctx.nodes.depth[2] = 0.5;
+    ctx.nodes.old_depth[2] = 0.5;
+    ctx.nodes.head[2] = ctx.nodes.invert_elev[2] + 0.5;
+
+    // First execute: As starts at zero, should accumulate as head rises.
+    solver.execute(ctx, 1.0);
+    const auto& dps0 = solver.dpsState();
+    ASSERT_GE(dps0.As.size(), 1u);
+    double As_after_step1 = dps0.As[0];
+
+    // Push J0 head up further and run another step.
+    ctx.nodes.depth[0] = crown + 1.0;
+    ctx.nodes.old_depth[0] = crown + 1.0;
+    ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + crown + 1.0;
+    solver.execute(ctx, 1.0);
+    double As_after_step2 = solver.dpsState().As[0];
+
+    // Strict accumulation under rising head — caught nothing under the old
+    // area-first formulation because As reset every Picard iter.
+    EXPECT_GT(As_after_step2, As_after_step1);
+    EXPECT_GT(As_after_step1, 0.0)
+        << "Slot must accumulate non-zero area during sustained surcharge";
+}
+
+TEST_F(AASkipFlagTest, DPS_PastAsInvariantUnderPDecay) {
+    // Reviewer's invariance criterion: previously accumulated slot storage
+    // must NOT be rewritten when P decays in time.  With the head-first
+    // formulation, dAs = T_s · dhs.  If dhs ≈ 0 (held-fixed surcharge) and
+    // only P changes, As must stay (within ε) at its value before the decay.
+    initSolver(SurchargeMethod::DYNAMIC_SLOT);
+
+    const double crown = ctx.links.xsect_y_full[0];
+
+    // Seed a fully-developed surcharge.
+    ctx.nodes.depth[0] = crown + 1.0;
+    ctx.nodes.old_depth[0] = crown + 1.0;
+    ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + crown + 1.0;
+    ctx.nodes.sur_depth[0] = 10.0;
+    ctx.nodes.lat_flow[0] = 50.0;
+
+    ctx.nodes.depth[1] = crown + 1.0;
+    ctx.nodes.old_depth[1] = crown + 1.0;
+    ctx.nodes.head[1] = ctx.nodes.invert_elev[1] + crown + 1.0;
+    ctx.nodes.sur_depth[1] = 10.0;
+
+    ctx.nodes.depth[2] = 0.5;
+    ctx.nodes.old_depth[2] = 0.5;
+    ctx.nodes.head[2] = ctx.nodes.invert_elev[2] + 0.5;
+
+    // Run one step to populate As.
+    solver.execute(ctx, 1.0);
+    const double As_before_decay = solver.dpsState().As[0];
+    ASSERT_GT(As_before_decay, 0.0);
+
+    // Hold head fixed across subsequent steps so dhs ≈ 0 each step.
+    // Many steps allow P to decay substantially via Eq. 22.
+    for (int k = 0; k < 50; ++k) {
+        ctx.nodes.depth[0] = crown + 1.0;
+        ctx.nodes.old_depth[0] = crown + 1.0;
+        ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + crown + 1.0;
+
+        ctx.nodes.depth[1] = crown + 1.0;
+        ctx.nodes.old_depth[1] = crown + 1.0;
+        ctx.nodes.head[1] = ctx.nodes.invert_elev[1] + crown + 1.0;
+
+        solver.execute(ctx, 1.0);
+    }
+
+    const double As_after_decay = solver.dpsState().As[0];
+    const double P_after_decay  = solver.dpsState().P[0];
+
+    // P should have decayed toward 1 if it started higher.
+    EXPECT_GE(P_after_decay, 1.0);
+
+    // The reviewer's concern is that previously accumulated slot storage gets
+    // "reinterpreted under a different P-state" — i.e. As effectively shrinks
+    // when P changes without any depth change.  Under the head-first
+    // accumulation `As += T_s · dhs`, that failure mode cannot occur: past
+    // contributions to As are frozen, and future dhs increments simply use
+    // the new T_s.  Verify the actual no-shrink invariant.
+    EXPECT_GE(As_after_decay, As_before_decay - 1e-6)
+        << "Past slot storage must not shrink under P-only evolution "
+        << "(area-first formulation would shrink As as T_s narrows)";
 }
 
 TEST(DPS, CFL_WithPressureCelerity) {

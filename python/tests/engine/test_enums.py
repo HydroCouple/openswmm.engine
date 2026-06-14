@@ -26,13 +26,14 @@ class TestErrorCode:
             "OK": 0, "NOMEM": 1, "INPFILE": 2, "RPTFILE": 3,
             "OUTFILE": 4, "PARSE": 5, "LIFECYCLE": 6, "BADHANDLE": 7,
             "BADINDEX": 8, "BADPARAM": 9, "PLUGIN": 10, "IO": 11,
-            "HOTSTART": 12, "CRS": 13, "NUMERICAL": 14, "INTERNAL": 99,
+            "HOTSTART": 12, "CRS": 13, "NUMERICAL": 14, "DEPENDENCY": 15,
+            "INTERNAL": 99,
         }
         for name, val in expected.items():
             assert ErrorCode[name].value == val
 
     def test_member_count(self):
-        assert len(ErrorCode) == 16
+        assert len(ErrorCode) == 17
 
 
 # ---------------------------------------------------------------------------

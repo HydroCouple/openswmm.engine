@@ -6,7 +6,7 @@
  * @ingroup engine_api
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -96,6 +96,10 @@ SWMM_ENGINE_API int swmm_pollutant_set_gw_conc(SWMM_Engine engine, int idx, doub
 SWMM_ENGINE_API int swmm_pollutant_set_init_conc(SWMM_Engine engine, int idx, double conc) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+    // Initial conveyance-network concentration only seeds state at start(); it
+    // has no per-step consumer, so a mid-run edit would silently no-op. Guard
+    // it to the editable (pre-start) states to make the contract honest.
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
     ctx.pollutants.init_conc[static_cast<std::size_t>(idx)] = conc;
     return SWMM_OK;
@@ -158,6 +162,22 @@ SWMM_ENGINE_API int swmm_pollutant_get_rdii_conc(SWMM_Engine engine, int idx, do
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
     if (conc) *conc = ctx.pollutants.c_rdii[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_pollutant_set_dwf_conc(SWMM_Engine engine, int idx, double conc) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
+    ctx.pollutants.c_dwf[static_cast<std::size_t>(idx)] = conc;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_pollutant_get_dwf_conc(SWMM_Engine engine, int idx, double* conc) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
+    if (conc) *conc = ctx.pollutants.c_dwf[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 

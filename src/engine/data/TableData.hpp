@@ -25,13 +25,14 @@
  * @ingroup engine_data
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #ifndef OPENSWMM_ENGINE_TABLE_DATA_HPP
 #define OPENSWMM_ENGINE_TABLE_DATA_HPP
 
+#include "../core/FilePathPair.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -119,6 +120,13 @@ struct TableBlock {
 struct Table {
     std::string         id;      ///< Table identifier (from input file)
     TableType           type;    ///< Table type (TIMESERIES, CURVE_*, etc.)
+
+    /**
+     * @brief Object comment from the INP file (';'-prefixed lines immediately
+     *        above the first row of this table), joined by literal "\\n".
+     *        Empty string means no comment.
+     */
+    std::string         comment;
     std::vector<double> x;       ///< Independent variable (time, depth, etc.)
     std::vector<double> y;       ///< Dependent variable (flow, volume, etc.)
     TableCursor         cursor;  ///< Bidirectional lookup cursor
@@ -126,7 +134,8 @@ struct Table {
     // ---- File-backed time series support ----
     bool               is_file_based = false; ///< True if data is read from external file
     std::FILE*         file_handle = nullptr;  ///< Open file handle (owned)
-    std::string        file_path;              ///< Path to external data file
+    FilePathPair       file_path;              ///< Path to external data file
+                                               ///< (carries {absolute, original})
     TableBlock         first_boundary;         ///< First rows from file (for validation)
     TableBlock         last_boundary;          ///< Last rows from file (for validation)
     TableBlock         cache;                  ///< Sliding cache window for file lookups
