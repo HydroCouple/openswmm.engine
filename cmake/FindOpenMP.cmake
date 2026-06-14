@@ -14,29 +14,37 @@ if(APPLE AND NOT OpenMP_FOUND)
         if(EXISTS "${HOMEBREW_PATH}")
             message(STATUS "Found Homebrew libomp at ${HOMEBREW_PATH}")
             
-            # Create imported targets
+            # Create imported targets. GLOBAL so they outlive the directory
+            # scope of whichever CMakeLists.txt includes this finder first.
+            # include_guard(GLOBAL) above means the finder body runs exactly
+            # once (the legacy engine includes it before src/engine); without
+            # GLOBAL the targets would be visible only in that first directory
+            # subtree, so the src/engine consume site — and the transitive
+            # SUNDIALS -> Kokkos find_dependency(OpenMP REQUIRED) it triggers —
+            # would not see OpenMP::OpenMP_CXX and would fail to configure.
             if(NOT TARGET OpenMP::OpenMP_C)
-                add_library(OpenMP::OpenMP_C INTERFACE IMPORTED)
+                add_library(OpenMP::OpenMP_C INTERFACE IMPORTED GLOBAL)
                 target_compile_options(OpenMP::OpenMP_C INTERFACE -Xpreprocessor -fopenmp)
                 target_include_directories(OpenMP::OpenMP_C INTERFACE "${HOMEBREW_PATH}/include")
                 target_link_libraries(OpenMP::OpenMP_C INTERFACE "${HOMEBREW_PATH}/lib/libomp.dylib")
             endif()
-            
+
             if(NOT TARGET OpenMP::OpenMP_CXX)
-                add_library(OpenMP::OpenMP_CXX INTERFACE IMPORTED)
+                add_library(OpenMP::OpenMP_CXX INTERFACE IMPORTED GLOBAL)
                 target_compile_options(OpenMP::OpenMP_CXX INTERFACE -Xpreprocessor -fopenmp)
                 target_include_directories(OpenMP::OpenMP_CXX INTERFACE "${HOMEBREW_PATH}/include")
                 target_link_libraries(OpenMP::OpenMP_CXX INTERFACE "${HOMEBREW_PATH}/lib/libomp.dylib")
             endif()
-            
-            # No PARENT_SCOPE — include() runs in the caller's scope, so
-            # PARENT_SCOPE would skip over src/legacy/engine/CMakeLists.txt
-            # (the file that included this finder) and leave OpenMP_FOUND
-            # unset there, defeating the if(OpenMP_FOUND) gate below.
-            set(OpenMP_FOUND TRUE)
-            set(OpenMP_C_FOUND TRUE)
-            set(OpenMP_CXX_FOUND TRUE)
-            
+
+            # Cache (INTERNAL) so the found-state is visible in every scope, not
+            # just the caller's. This both satisfies the if(OpenMP_FOUND) gate in
+            # the including CMakeLists and lets a later find_package(OpenMP)
+            # (e.g. KokkosConfig's find_dependency) report OpenMP as found after
+            # include_guard short-circuits the re-run of this module.
+            set(OpenMP_FOUND TRUE CACHE INTERNAL "OpenMP located via Homebrew libomp")
+            set(OpenMP_C_FOUND TRUE CACHE INTERNAL "OpenMP C located via Homebrew libomp")
+            set(OpenMP_CXX_FOUND TRUE CACHE INTERNAL "OpenMP CXX located via Homebrew libomp")
+
             return()
         endif()
     endforeach()

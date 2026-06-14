@@ -88,6 +88,18 @@ elseif("sycl" IN_LIST FEATURES)
     set(OPENMP_HINTS)  # no libomp needed for the device build
 else()
     list(APPEND BACKEND_OPTIONS -DKokkos_ENABLE_OPENMP=ON)
+    # MSVC's default `/openmp` advertises only OpenMP 2.0, but Kokkos requires
+    # >= 3.0, so stock FindOpenMP rejects it ("Found unsuitable version 2.0").
+    # Route the Kokkos host backend through MSVC's LLVM OpenMP runtime
+    # (`/openmp:llvm`, which reports OpenMP 3.1) and tell FindOpenMP no extra
+    # link library is needed — the runtime is supplied by the compiler switch.
+    if(VCPKG_TARGET_IS_WINDOWS)
+        list(APPEND OPENMP_HINTS
+            "-DOpenMP_C_FLAGS=-openmp:llvm"
+            "-DOpenMP_C_LIB_NAMES="
+            "-DOpenMP_CXX_FLAGS=-openmp:llvm"
+            "-DOpenMP_CXX_LIB_NAMES=")
+    endif()
 endif()
 
 # Keep Kokkos' internal debug instrumentation OFF in BOTH the debug and release

@@ -26,9 +26,13 @@ if("kokkos" IN_LIST FEATURES)
     # SundialsKokkos.cmake does: find_package(Kokkos REQUIRED HINTS "${Kokkos_DIR}"
     # NO_DEFAULT_PATH) — so neither Kokkos_ROOT nor CMAKE_PREFIX_PATH is consulted;
     # Kokkos_DIR must point straight at the installed KokkosConfig.cmake directory.
+    # The kokkos overlay installs that config via vcpkg_cmake_config_fixup(
+    # PACKAGE_NAME Kokkos ...) -> share/Kokkos (capital K). Case-insensitive
+    # macOS/Windows tolerate "share/kokkos", but case-sensitive Linux does not,
+    # so spell it exactly as installed.
     set(KOKKOS_OPTIONS
         -DENABLE_KOKKOS=ON
-        "-DKokkos_DIR=${CURRENT_INSTALLED_DIR}/share/kokkos"
+        "-DKokkos_DIR=${CURRENT_INSTALLED_DIR}/share/Kokkos"
         -DCMAKE_CXX_STANDARD=20)
     # Kokkos's package config does find_dependency(OpenMP REQUIRED); on AppleClang
     # CMake cannot locate Homebrew libomp unaided, so wire it explicitly.
