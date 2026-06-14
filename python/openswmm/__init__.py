@@ -74,7 +74,7 @@ if platform.system() == "Windows" and hasattr(os, "add_dll_directory"):
 # ---------------------------------------------------------------------------
 def _register_gpu_companion() -> None:
     try:
-        import openswmm_gpu_omp  # type: ignore[import-not-found]
+        import openswmm_gpu_omp
     except ImportError:
         return  # companion not installed → CPU-only, nothing to do
     plugin_dir = os.path.dirname(os.path.abspath(openswmm_gpu_omp.__file__))
