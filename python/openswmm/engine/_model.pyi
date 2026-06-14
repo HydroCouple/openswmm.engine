@@ -44,6 +44,15 @@ class ModelBuilder:
 
     def __init__(self) -> None: ...
 
+    @property
+    def generation(self) -> int:
+        """Monotonic counter bumped on every structural mutation.
+
+        Mirrors :attr:`Solver.generation` so wrapper objects minted from a
+        :class:`ModelBuilder` can detect staleness the same way.
+        """
+        ...
+
     # =========================================================================
     # Nodes
     # =========================================================================

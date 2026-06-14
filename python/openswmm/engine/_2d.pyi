@@ -838,3 +838,48 @@ class Surface2D:
         @raise RuntimeError: If the C API rejects the assignment.
         """
         ...
+
+    # ====================================================================
+    # Edge conveyance factor
+    # ====================================================================
+
+    def get_edge_conveyance(self, tri: int, edge: int) -> float:
+        """Return the per-edge conveyance factor in C{[0, 1]}.
+
+        @param tri: Triangle index in C{[0, triangle_count)}.
+        @type tri: int
+        @param edge: Local edge index in C{{0, 1, 2}}.
+        @type edge: int
+        @return: Conveyance factor (1.0 = unrestricted, 0.0 = wall).
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def set_edge_conveyance(self, tri: int, edge: int, conveyance: float) -> None:
+        """Set the per-edge conveyance factor in C{[0, 1]}.
+
+        For interior edges the value is mirrored to the partner slot on
+        the neighbouring triangle so mass conservation is preserved.
+
+        @param tri: Triangle index in C{[0, triangle_count)}.
+        @type tri: int
+        @param edge: Local edge index in C{{0, 1, 2}}.
+        @type edge: int
+        @param conveyance: New value in C{[0, 1]}.
+        @type conveyance: float
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        ...
+
+    def get_edge_conveyance_bulk(self) -> npt.NDArray[np.float64]:
+        """Return a NumPy array of all per-edge conveyance factors.
+
+        Length is C{triangle_count * 3}, indexed C{[tri*3 + edge]}.
+        @rtype: np.ndarray
+        """
+        ...
+
+    def reset_edge_conveyance(self) -> None:
+        """Reset every edge's conveyance factor to 1.0 (unrestricted)."""
+        ...

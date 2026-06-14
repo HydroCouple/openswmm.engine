@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from ._quality import Quality
     from ._spatial import Spatial
     from ._statistics import Statistics
-    from ._subcatchments import Subcatchments
+    from ._subcatchments import Aquifers, Snowpacks, Subcatchments
     from ._tables import Patterns, Tables
 
 # Re-exported exception hierarchy. Canonical definitions in :mod:`_exceptions`.
@@ -329,6 +329,10 @@ class Solver:
     def links(self) -> "Links": ...
     @property
     def subcatchments(self) -> "Subcatchments": ...
+    @property
+    def aquifers(self) -> "Aquifers": ...
+    @property
+    def snowpacks(self) -> "Snowpacks": ...
     @property
     def gages(self) -> "Gages": ...
     @property

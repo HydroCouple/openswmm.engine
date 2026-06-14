@@ -15,7 +15,7 @@ from typing import Any, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from ._enums import InfilModel
+from ._enums import AquiferParam, InfilModel
 from ._gages import Gage
 from ._nodes import Node
 from ._solver import Solver
@@ -55,6 +55,7 @@ class Subcatchment:
 
     # Identity
     id: str
+    tag: str
     index: int
     solver: Solver
 
@@ -128,3 +129,16 @@ class Subcatchments:
     ids: NDArray[Any]
 
     def qualities(self, pollutant: _Key) -> NDArray[Any]: ...
+
+
+class Aquifers:
+    """Name-keyed collection of C{[AQUIFERS]} entries (C{solver.aquifers})."""
+
+    def get_param(self, aquifer: _Key, param: Union[AquiferParam, int]) -> float: ...
+    def set_param(
+        self, aquifer: _Key, param: Union[AquiferParam, int], value: float
+    ) -> None: ...
+
+
+class Snowpacks:
+    """Name-keyed collection of C{[SNOWPACKS]} entries (C{solver.snowpacks})."""
