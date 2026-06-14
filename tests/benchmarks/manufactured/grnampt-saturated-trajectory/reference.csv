@@ -1,0 +1,12 @@
+# Green-Ampt saturated-phase cumulative infiltration trajectory
+# Parameters: S = 1.93/12 ft, Ks = 0.43/43200 ft/s, IMD = 0.25, depth = 0
+# c1 = (S + depth) * IMD = (1.93/12) * 0.25 = 1.93/48 ft = 0.0402083 ft
+# Formula: t(F) = [F - c1 * ln(1 + F/c1)] / Ks  (implicit Green-Ampt, F(0)=0)
+# Columns: t_s [seconds], F_ft [ft cumulative infiltration]
+t_s,F_ft
+0.0,0.000000
+107.5,0.010000
+378.5,0.020000
+1759.5,0.050000
+5001.0,0.100000
+8793.0,0.150000

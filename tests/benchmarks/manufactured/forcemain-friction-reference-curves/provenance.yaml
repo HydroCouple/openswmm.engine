@@ -1,0 +1,35 @@
+benchmark: forcemain-friction-reference-curves
+created: 2026-05-14
+method: closed-form
+generator: python3 (inline script, VISCOS=1.1e-5, g=32.2)
+
+parameters:
+  R_ft: 0.5
+  C_hw: 130.0
+  roughness_ft: 0.005
+  VISCOS_ft2_per_s: 1.1e-5
+  g_ft_per_s2: 32.2
+
+velocities_fps: [0.5, 1.0, 2.0, 4.0, 8.0, 12.0]
+
+formulas:
+  HW: "Sf = (v / (1.318 * C * R^0.63))^(1/0.54)"
+  DW_turbulent: "f = 0.25 / log10(e/(3.7D) + 5.74/Re^0.9)^2; Sf = f*v^2/(2*g*D)"
+
+precision: double (IEEE 754)
+tolerance_relative: 1.0e-10
+
+attribution:
+  references:
+    hazen_williams: >
+      Williams, G.S. and Hazen, A. (1905). Hydraulic Tables, 3rd ed. Wiley.
+      (Hazen-Williams friction formula for pressurised conduits).
+    colebrook_white: >
+      Colebrook, C.F. (1939). Turbulent flow in pipes, with particular reference
+      to the transition region between smooth and rough pipe laws. Journal of the
+      Institution of Civil Engineers, 11, 133-156.
+    swamee_jain: >
+      Swamee, P.K. and Jain, A.K. (1976). Explicit equations for pipe-flow
+      problems. Journal of the Hydraulics Division, ASCE, 102(5), 657-664.
+      (explicit approximation of Colebrook-White used in SWMM DW formula).
+  license_note: benchmark data are original to this project; no copied source code.

@@ -1,0 +1,61 @@
+benchmark: grnampt-saturated-trajectory
+type: manufactured
+description: >
+  Green-Ampt infiltration trajectory under fully-saturated surface conditions.
+  Tests grnampt_getInfil in the saturated branch against the exact implicit
+  Green-Ampt equation F - c1*ln(1 + F/c1) = Ks*t, parametrized by F.
+swmm_target: src/engine/hydrology/Infiltration.cpp
+
+problem:
+  name: green-ampt-saturated
+  equation: "dF/dt = Ks * (1 + c1/F),  c1 = (S + depth)*IMD"
+  exact_solution: "t(F) = [F - c1*ln(1 + F/c1)] / Ks"
+  initial_condition: "F(0) = 0"
+  parameters:
+    S_ft: 0.160833333   # 1.93 in suction head (sandy loam)
+    Ks_ft_per_s: 9.9537037e-6   # 0.43 in/hr saturated conductivity
+    IMD: 0.25           # initial moisture deficit
+    depth_ft: 0.0       # no ponded water
+    c1_ft: 0.040208333  # (S + depth) * IMD
+
+dataset:
+  file: reference.csv
+  columns:
+    t_s: time in seconds (from formula t(F))
+    F_ft: cumulative infiltration in ft (chosen as parameter)
+  n_points: 6
+  F_values_ft: [0.0, 0.01, 0.02, 0.05, 0.10, 0.15]
+
+tolerances:
+  max_absolute_error_ft: 1.0e-3
+  basis: >
+    grnampt_getF2 Newton solver converges to |step| < 1e-5 ft per call.
+    Implicit G-A is contractive: per-step errors damp rather than accumulate.
+    1e-3 ft provides three decades of margin above the Newton tolerance.
+
+attribution:
+  references:
+    green_ampt_original: >
+      Green, W.H. and Ampt, G.A. (1911). Studies on soil physics: Part I.
+      The flow of air and water through soils. Journal of Agricultural Science,
+      4(1), 1-24. https://doi.org/10.1017/S0021859600001441
+    mein_larson_ponding: >
+      Mein, R.G. and Larson, C.L. (1973). Modeling infiltration during a steady
+      rain. Water Resources Research, 9(2), 384-394.
+      https://doi.org/10.1029/WR009i002p00384
+      (Saturation-at-surface ponding variant implemented in grnampt_getInfil.)
+  license_note: benchmark data are original to this project; no copied source code.
+
+provenance:
+  generated_by: analytic formula t(F) = [F - c1*ln(1+F/c1)] / Ks evaluated by hand
+  tool: none (closed-form)
+  date: "2026-05-05"
+  author: openswmm.engine development team
+  computation: >
+    t values computed from t(F) = [F - c1*ln(1+F/c1)]/Ks with
+    c1 = (1.93/12)*0.25 = 1.93/48 ft, Ks = 0.43/43200 ft/s.
+  reproducible: true
+  notes: >
+    Test setup: state.saturated=true, state.T=1e10, state.Lu=0, state.Fumax=0,
+    precip=1.0 ft/s (>> Ks) so the ia clamp never activates.
+    Stepping with dt=1.0s from row to row; final sub-second step taken if needed.

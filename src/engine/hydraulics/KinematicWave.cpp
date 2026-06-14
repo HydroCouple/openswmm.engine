@@ -82,8 +82,8 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
     } else if (q_in_norm <= 0.0) {
         a_in_norm = 0.0;
     } else {
-        double s_needed = q_in_norm / beta1;
-        a_in_norm = xsect::getAofS(xs, s_needed * a_full) / a_full;
+        double s_needed = q_in_norm / beta1;  // dimensional section factor = Q_in/beta
+        a_in_norm = xsect::getAofS(xs, s_needed) / a_full;
     }
 
     // Finite-difference coefficients

@@ -114,20 +114,47 @@ add_gtest_unit(test_engine_user_flags_capi   test_user_flags_capi.cpp)
 add_gtest_unit(test_engine_section_registry  test_section_registry.cpp)
 add_gtest_unit(test_engine_crs               test_crs.cpp)
 add_gtest_unit(test_engine_xsection          test_xsection.cpp)
+target_compile_definitions(test_engine_xsection PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
 # STREET cross-section end-to-end (parse → street transect → routing).
 add_gtest_unit(test_engine_street_xsect      test_street_xsect.cpp)
 # STREET cross-section programmatic builder API (set/get xsect + get_params).
 add_gtest_unit(test_engine_street_xsect_api  test_street_xsect_api.cpp)
 
 add_gtest_unit(test_engine_infiltration     test_infiltration.cpp)
+target_compile_definitions(test_engine_infiltration PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
+add_gtest_unit(test_engine_ode_solver       test_ode_solver.cpp)
+target_compile_definitions(test_engine_ode_solver PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
+add_gtest_unit(test_engine_massbalance      test_massbalance.cpp)
 add_gtest_unit(test_engine_runoff           test_runoff.cpp)
 add_gtest_unit(test_engine_snow             test_snow.cpp)
 add_gtest_unit(test_engine_gage_scalefactor test_gage_scalefactor.cpp)
 add_gtest_unit(test_engine_climate          test_climate.cpp)
 add_gtest_unit(test_engine_lid              test_lid.cpp)
+target_compile_definitions(test_engine_lid PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
 add_gtest_unit(test_engine_groundwater      test_groundwater.cpp)
+target_compile_definitions(test_engine_groundwater PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
 add_gtest_unit(test_engine_routing          test_routing.cpp)
+target_compile_definitions(test_engine_routing PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
 add_gtest_unit(test_engine_quality_routing  test_quality_routing.cpp)
+target_compile_definitions(test_engine_quality_routing PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
+add_gtest_unit(test_engine_exfiltration      test_exfiltration.cpp)
+target_compile_definitions(test_engine_exfiltration PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
 add_gtest_unit(test_engine_treatment        test_treatment.cpp)
 add_gtest_unit(test_engine_rdii             test_rdii.cpp)
 add_gtest_unit(test_engine_hydrograph_mutation test_hydrograph_mutation_api.cpp)
