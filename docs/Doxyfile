@@ -1493,7 +1493,8 @@ HTML_EXTRA_FILES       = custom/js/doxygen-awesome-darkmode-toggle.js \
                          custom/js/doxygen-awesome-fragment-copy-button.js \
                          custom/js/doxygen-awesome-interactive-toc.js \
                          custom/js/doxygen-awesome-paragraph-link.js \
-                         custom/js/doxygen-awesome-tabs.js
+                         custom/js/doxygen-awesome-tabs.js \
+                         custom/mathjax-config.js
 
 # The HTML_COLORSTYLE tag can be used to specify if the generated HTML output
 # should be rendered with a dark or light theme.
