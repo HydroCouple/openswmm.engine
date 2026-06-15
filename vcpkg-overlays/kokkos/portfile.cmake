@@ -18,6 +18,17 @@ vcpkg_from_github(
     HEAD_REF master
 )
 
+# Kokkos' shared (DLL) build is broken on MSVC: kokkoscore.dll exports no
+# symbols, so MSVC produces no import library and the dependent Kokkos DLLs
+# fail to link ("LNK1104: cannot open file 'kokkoscore.lib'"). Kokkos upstream
+# recommends static linkage on Windows. The only consumer of the Kokkos library
+# here is the openswmm_gpu_omp plugin DLL (SUNDIALS' Kokkos N_Vector is
+# header-only and links no Kokkos library of its own), so a single static
+# Kokkos copy is safe — there is no second runtime to clash with.
+if(VCPKG_TARGET_IS_WINDOWS)
+    vcpkg_check_linkage(ONLY_STATIC_LIBRARY)
+endif()
+
 string(COMPARE EQUAL "${VCPKG_LIBRARY_LINKAGE}" "dynamic" KOKKOS_SHARED)
 
 # AppleClang's stock CMake FindOpenMP cannot locate Homebrew libomp on its own.
