@@ -21,12 +21,8 @@
         {
             "name": "Windows",
             "inherits": "default",
-            "description": "Windows Release (VS gen). FP policy: /fp:precise (IEEE-754, no FMA contraction). C extensions /we4013 promote implicit-decl to error.",
-            "generator": "Visual Studio 17 2022",
-            "toolset": {
-                "value": "v143",
-                "strategy": "external"
-            },
+            "description": "Windows Release (Ninja Multi-Config, MSVC). FP policy: /fp:precise (IEEE-754, no FMA contraction). C extensions /we4013 promote implicit-decl to error.",
+            "generator": "Ninja Multi-Config",
             "binaryDir": "${sourceDir}/build/windows",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
@@ -51,12 +47,8 @@
         {
             "name": "Windows-debug",
             "inherits": "default-debug",
-            "description": "Windows Debug (VS gen). FP policy: /fp:precise (IEEE-754, no FMA contraction). C extensions /we4013 promote implicit-decl to error.",
-            "generator": "Visual Studio 17 2022",
-            "toolset": {
-                "value": "v143",
-                "strategy": "external"
-            },
+            "description": "Windows Debug (Ninja Multi-Config, MSVC). FP policy: /fp:precise (IEEE-754, no FMA contraction). C extensions /we4013 promote implicit-decl to error.",
+            "generator": "Ninja Multi-Config",
             "binaryDir": "${sourceDir}/build/windows-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",

@@ -106,6 +106,17 @@ jobs:
             vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
             vcpkg-downloads-${{ runner.os }}-
 
+      # The Windows presets use the Ninja Multi-Config generator (version-
+      # agnostic, unlike a pinned "Visual Studio 17 2022" that breaks when the
+      # runner's VS major changes). Ninja needs cl.exe/link.exe on PATH, which
+      # the VS generator used to supply implicitly — set up the MSVC dev
+      # environment so subsequent steps can find the compiler.
+      - name: Set up MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Configure
         run: >
           cmake
