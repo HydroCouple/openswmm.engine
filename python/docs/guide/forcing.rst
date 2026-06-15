@@ -72,12 +72,40 @@ plus keyword-only ``mode`` (defaulting to ``ForcingMode.REPLACE``) and
      - Flow through a link.
    * - ``link_setting(link, value)``
      - Control setting on a link.
+   * - ``link_quality(link, pollutant, conc)``
+     - Pollutant quality on a link.
    * - ``subcatchment_rainfall(sub, value)``
      - Rainfall on a subcatchment.
    * - ``subcatchment_evap(sub, value)``
      - Evaporation on a subcatchment.
+   * - ``subcatchment_snowfall(sub, value)``
+     - Snowfall on a subcatchment.
    * - ``gage_rainfall(gage, value)``
      - Rainfall on a gage.
+
+Climate forcing
+---------------
+
+System-wide climate drivers — temperature, wind, and evaporation — used
+by the snowmelt and evaporation routines. The ``climate_*`` setters
+prescribe a value; the ``get_climate_*`` getters read the current one.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 44 56
+
+   * - Method
+     - What it does
+   * - ``climate_temperature(value)`` / ``get_climate_temperature()``
+     - Air temperature used for snowmelt.
+   * - ``climate_wind(value)`` / ``get_climate_wind_speed()``
+     - Wind speed used in rain-on-snow melt.
+   * - ``climate_evap(value)``
+     - System-wide evaporation rate.
+   * - ``climate_evap_rate()``
+     - Current climate-derived evaporation rate.
+   * - ``climate_dry_only(flag)`` / ``get_climate_dry_only()``
+     - The evaporation ``DRY_ONLY`` option at runtime.
 
 Clearing
 --------

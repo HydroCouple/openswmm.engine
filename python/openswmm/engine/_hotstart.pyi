@@ -36,11 +36,26 @@ class HotStart:
 
     def apply(self, solver: Solver) -> None: ...
 
-    sim_datetime: datetime
-    crs: Optional[str]
-    node_count: int
-    link_count: int
-    warnings: List[str]
+    @property
+    def sim_datetime(self) -> datetime:
+        """Simulation moment at which the hot-start state was captured."""
+        ...
+    @property
+    def crs(self) -> Optional[str]:
+        """Coordinate reference system string recorded in the file, or ``None``."""
+        ...
+    @property
+    def node_count(self) -> int:
+        """Number of nodes stored in the hot-start blob."""
+        ...
+    @property
+    def link_count(self) -> int:
+        """Number of links stored in the hot-start blob."""
+        ...
+    @property
+    def warnings(self) -> List[str]:
+        """Warnings emitted while opening or applying the hot-start file."""
+        ...
 
     def set_node_depth(self, node_id: str, depth: float) -> None: ...
     def set_node_head(self, node_id: str, head: float) -> None: ...

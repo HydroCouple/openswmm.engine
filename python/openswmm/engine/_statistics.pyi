@@ -17,26 +17,61 @@ class Statistics:
     def __init__(self, solver: Solver) -> None: ...
 
     # Node bulk
-    node_max_depth: NDArray[Any]
-    node_max_overflow: NDArray[Any]
-    node_vol_flooded: NDArray[Any]
-    node_time_flooded: NDArray[Any]
+    @property
+    def node_max_depth(self) -> NDArray[Any]:
+        """Maximum depth reached at each node, in project units."""
+        ...
+    @property
+    def node_max_overflow(self) -> NDArray[Any]:
+        """Maximum overflow (flooding) rate at each node, in project units."""
+        ...
+    @property
+    def node_vol_flooded(self) -> NDArray[Any]:
+        """Cumulative flooded volume at each node, in project units."""
+        ...
+    @property
+    def node_time_flooded(self) -> NDArray[Any]:
+        """Cumulative flooded duration at each node, in seconds."""
+        ...
 
     # Link bulk
-    link_max_flow: NDArray[Any]
-    link_max_velocity: NDArray[Any]
-    link_max_filling: NDArray[Any]
-    link_vol_flow: NDArray[Any]
-    link_surcharge_time: NDArray[Any]
+    @property
+    def link_max_flow(self) -> NDArray[Any]:
+        """Maximum flow rate in each link, in project units."""
+        ...
+    @property
+    def link_max_velocity(self) -> NDArray[Any]:
+        """Maximum flow velocity in each link, in project units."""
+        ...
+    @property
+    def link_max_filling(self) -> NDArray[Any]:
+        """Maximum filling ratio (depth / full depth) in each link."""
+        ...
+    @property
+    def link_vol_flow(self) -> NDArray[Any]:
+        """Cumulative flow volume through each link, in project units."""
+        ...
+    @property
+    def link_surcharge_time(self) -> NDArray[Any]:
+        """Cumulative surcharge duration in each link, in seconds."""
+        ...
 
     # Subcatchment bulk
-    subcatchment_runoff_vol: NDArray[Any]
-    subcatchment_max_runoff: NDArray[Any]
-    subcatchment_precip: NDArray[Any]
-    """Cumulative precipitation depth per subcatchment, in project depth
-    units (in for US, mm for SI). The only statistic without a C ``_bulk``
-    companion; gathered scalar-wise in a ``nogil`` loop.
-    """
+    @property
+    def subcatchment_runoff_vol(self) -> NDArray[Any]:
+        """Cumulative runoff volume from each subcatchment, in project units."""
+        ...
+    @property
+    def subcatchment_max_runoff(self) -> NDArray[Any]:
+        """Peak runoff rate from each subcatchment, in project units."""
+        ...
+    @property
+    def subcatchment_precip(self) -> NDArray[Any]:
+        """Cumulative precipitation depth per subcatchment, in project depth
+        units (in for US, mm for SI). The only statistic without a C ``_bulk``
+        companion; gathered scalar-wise in a ``nogil`` loop.
+        """
+        ...
 
     # Scalar per-element getters (P2.6) — single-index reads without the
     # whole-network array allocation. All values in project units.

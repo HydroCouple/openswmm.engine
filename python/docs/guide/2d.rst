@@ -1,0 +1,333 @@
+===================
+2-D surface routing
+===================
+
+.. note::
+
+   **Engine:** OpenSWMM 6 — refactored. This page documents the
+   :class:`openswmm.engine._2d.Surface2D` view. It is only available when
+   the C/C++ engine was built with ``OPENSWMM_BUILD_2D=ON`` *and* the loaded
+   model defines a 2D mesh. Guard for it with
+   :attr:`openswmm.engine.HAS_2D` (build-time) and
+   :attr:`Surface2D.is_active` (per-model).
+
+.. currentmodule:: openswmm.engine
+
+The 2-D surface-routing module overlays a triangular mesh on the 1-D
+drainage network and advances the shallow-water surface state with a
+CVODE solver, exchanging flow with 1-D nodes at coupling points. The
+:class:`~openswmm.engine._2d.Surface2D` view hangs off the Solver as a
+lazy attribute and addresses the live mesh:
+
+.. code-block:: python
+
+    from openswmm.engine import Solver, HAS_2D
+
+    with Solver("mesh_model.inp") as s:
+        if HAS_2D and s.surface2d.is_active:
+            surf = s.surface2d          # → Surface2D
+            surf.n_triangles            # mesh size
+            surf.get_depth(0)           # state at triangle 0
+
+Reference: ``openswmm_2d.h``.
+
+----
+
+Quickstart
+==========
+
+.. code-block:: python
+
+    from openswmm.engine import Solver, HAS_2D, SurfaceForcingMode, ForcingPersist
+
+    with Solver("mesh_model.inp") as s:
+        if not (HAS_2D and s.surface2d.is_active):
+            raise RuntimeError("model has no active 2D surface")
+        surf = s.surface2d
+
+        # Drive the whole mesh with steady rain that survives every step.
+        surf.force_rainfall_uniform(
+            30.0,                                  # mm/hr
+            mode=SurfaceForcingMode.OVERRIDE,
+            persist=ForcingPersist.PERSIST,
+        )
+
+        for _ in s.steps():
+            pass
+
+        depths = surf.get_depths()                 # numpy (n_triangles,)
+        mb = surf.get_mass_balance()
+        print("continuity error:", mb["continuity_error"])
+
+----
+
+Mesh geometry & topology
+========================
+
+The mesh is fixed for the run. Vertices carry ``(x, y, z)`` coordinates;
+triangles carry area, Manning's *n*, centroid, and adjacency. Indices are
+zero-based.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 62
+
+   * - Member
+     - What it returns
+   * - ``n_vertices`` / ``n_triangles``
+     - Mesh size (properties).
+   * - ``get_vertex_coords()``
+     - ``(x, y, z)`` numpy arrays for **all** vertices (GIL released).
+   * - ``get_vertex_xyz(idx)``
+     - Scalar ``(x, y, z)`` for one vertex.
+   * - ``set_vertex_z(idx, z)``
+     - Set a vertex ground elevation.
+   * - ``get_triangle_vertices(idx)``
+     - ``(v0, v1, v2)`` vertex indices.
+   * - ``get_triangle_area(idx)``
+     - Triangle area.
+   * - ``get_triangle_centroid(idx)``
+     - ``(cx, cy, cz)`` centroid.
+   * - ``get_triangle_mannings(idx)``
+     - Manning's *n*.
+   * - ``get_triangle_neighbours(idx)``
+     - ``(n0, n1, n2)`` neighbour triangle indices (``-1`` at a boundary).
+
+Coupling to 1-D nodes
+---------------------
+
+Where the mesh exchanges flow with the 1-D network:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 62
+
+   * - Member
+     - What it returns
+   * - ``vertex_coupling_count`` / ``triangle_coupling_count``
+     - Number of coupling points (properties).
+   * - ``get_vertex_coupled_node(vertex_idx)``
+     - SWMM node index coupled to a vertex (``-1`` if uncoupled).
+   * - ``get_triangle_coupled_node(tri_idx)``
+     - SWMM node index coupled to a triangle (``-1`` if uncoupled).
+
+----
+
+Runtime state
+=============
+
+Per-triangle state is read either one triangle at a time or as bulk
+``float64`` arrays of shape ``(n_triangles,)``. Bulk getters release the
+GIL.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 14 48
+
+   * - Member
+     - Scope
+     - Meaning
+   * - ``get_depth(idx)`` / ``get_depths()``
+     - one / bulk
+     - Water depth on the triangle.
+   * - ``get_head(idx)`` / ``get_heads()``
+     - one / bulk
+     - Total head (water-surface elevation).
+   * - ``get_rainfall(idx)``
+     - one
+     - Current rainfall source.
+   * - ``get_net_source(idx)``
+     - one
+     - Net source term (rain − evap ± coupling).
+   * - ``get_coupling_flux(idx)`` / ``get_coupling_fluxes()``
+     - one / bulk
+     - Exchange flux with the coupled 1-D node.
+   * - ``get_vertex_heads()``
+     - bulk
+     - Heads reconstructed at vertices (``n_vertices``).
+   * - ``get_edge_flux_bulk()``
+     - bulk
+     - Normal flux on every triangle edge.
+   * - ``get_edge_geometry_bulk()``
+     - bulk
+     - Time-invariant edge lengths and outward unit normals.
+
+Aggregate scalars (properties): ``max_depth``, ``total_volume``
+(Σ depth × area), ``total_exchange_flow``, and the last-advance solver
+counters ``cvode_steps`` and ``cvode_last_step``.
+
+----
+
+Forcing
+=======
+
+Inject rainfall, evaporation, or a coupling flux onto the mesh. Each
+forcing setter is keyword-compatible with the 1-D :doc:`forcing` view but
+uses the 2-D-specific enums:
+
+* **mode** (:class:`SurfaceForcingMode`) — ``OVERRIDE`` (default) replaces
+  the computed source; ``ADD`` adds to it.
+* **persist** (:class:`ForcingPersist`) — ``RESET`` (default) applies for
+  the next step only; ``PERSIST`` keeps the forcing active every step
+  until cleared.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 46 54
+
+   * - Method
+     - Forces …
+   * - ``force_rainfall(idx, value, *, mode, persist)``
+     - Rainfall on one triangle.
+   * - ``force_rainfall_uniform(value, *, mode, persist)``
+     - Rainfall on every triangle.
+   * - ``force_evap(idx, value, *, mode, persist)``
+     - Evaporation on one triangle.
+   * - ``force_evap_uniform(value, *, mode, persist)``
+     - Evaporation on every triangle.
+   * - ``force_coupling_flux(idx, value, *, mode, persist)``
+     - Coupling flux on one triangle.
+   * - ``force_clear_all()``
+     - Remove every 2-D forcing.
+
+----
+
+Mass balance & continuity
+=========================
+
+``get_mass_balance()`` returns a ``dict[str, float]`` of cumulative
+volumetric terms (all m³) plus the dimensionless ``continuity_error``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - Key
+     - Term
+   * - ``init_storage`` / ``final_storage``
+     - Surface storage at the start / end.
+   * - ``rainfall_in``
+     - Cumulative rainfall input.
+   * - ``coupling_1d_to_2d_in`` / ``coupling_2d_to_1d_out``
+     - Flow exchanged with the 1-D network, each direction.
+   * - ``outfall_in`` / ``outfall_out``
+     - Flow across outfall boundaries.
+   * - ``boundary_in`` / ``boundary_out``
+     - Flow across open mesh-edge boundaries.
+   * - ``evap_out``
+     - Cumulative evaporation loss.
+   * - ``continuity_error``
+     - Global closure error as a fraction.
+
+The scalar :attr:`Surface2D.continuity_error` is the same closure error.
+Cumulative per-triangle envelopes are available after the run:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 46 54
+
+   * - Method
+     - Envelope (per triangle)
+   * - ``get_stat_max_depths()``
+     - Maximum depth reached.
+   * - ``get_stat_max_velocities()``
+     - Maximum velocity magnitude.
+   * - ``get_stat_max_continuity_err()``
+     - Maximum absolute continuity residual (m³/s).
+
+----
+
+Solver tolerances
+=================
+
+The CVODE integrator is tuned through three read/write properties:
+
+* ``dry_depth`` — depth (m) below which a triangle is treated as dry.
+* ``rel_tolerance`` — CVODE relative tolerance.
+* ``abs_tolerance`` — CVODE absolute tolerance.
+
+.. code-block:: python
+
+    surf.dry_depth = 1e-4
+    surf.rel_tolerance = 1e-6
+    surf.abs_tolerance = 1e-8
+
+----
+
+Boundary conditions
+===================
+
+Open mesh edges carry a boundary condition selected per
+``(triangle, edge)`` pair, where ``edge`` is ``0``, ``1``, or ``2``. The
+type is a :class:`SurfaceBoundaryType`: ``WALL`` (closed), ``NORMAL_FLOW``,
+``SPECIFIED_STAGE``, ``SPECIFIED_FLOW``, or ``RATING_CURVE``.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - Member
+     - What it does
+   * - ``boundary_edge_count``
+     - Number of boundary edges (property).
+   * - ``get_edge_bc_type`` / ``set_edge_bc_type``
+     - Read / set the BC type.
+   * - ``get_edge_bc_head`` / ``set_edge_bc_head``
+     - Boundary head (SPECIFIED_STAGE).
+   * - ``get_edge_bc_slope`` / ``set_edge_bc_slope``
+     - Boundary slope (NORMAL_FLOW).
+   * - ``get_edge_bc_flow`` / ``set_edge_bc_flow``
+     - Prescribed flow per metre (SPECIFIED_FLOW).
+   * - ``get_edge_bc_cum_flux``
+     - Cumulative flux across the edge.
+   * - ``get_edge_bc_flow`` (runtime)
+     - Instantaneous flow across the edge.
+   * - ``set_edge_bc_tseries_name``
+     - Name the timeseries driving a SPECIFIED_STAGE edge.
+   * - ``set_edge_bc_flow_tseries_name``
+     - Name the timeseries driving a SPECIFIED_FLOW edge.
+   * - ``set_edge_bc_rating_curve_name``
+     - Name the rating curve driving a RATING_CURVE edge.
+
+Edge conveyance
+---------------
+
+A per-edge conveyance factor in ``[0, 1]`` throttles flow across internal
+edges (1.0 = unrestricted, 0.0 = closed):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - Member
+     - What it does
+   * - ``get_edge_conveyance(tri, edge)`` / ``set_edge_conveyance(tri, edge, c)``
+     - Read / set one edge's factor.
+   * - ``get_edge_conveyance_bulk()``
+     - All factors as a numpy array.
+   * - ``reset_edge_conveyance()``
+     - Reset every edge to 1.0.
+
+----
+
+EngineState & exceptions
+========================
+
+State queries (``get_depth``, ``get_mass_balance``, the ``*_bulk`` getters)
+are only meaningful while the simulation is running or after it ends;
+calling them before :meth:`Solver.start` or when the 2-D module did not run
+raises a :exc:`RuntimeError`. Forcing setters require an active 2-D module.
+Always gate access with :attr:`Surface2D.is_active`, and guard the import
+itself with :attr:`openswmm.engine.HAS_2D` so code degrades gracefully on
+builds without 2-D support.
+
+----
+
+See also
+========
+
+* :doc:`forcing` — the 1-D runtime-forcing view; the 2-D setters mirror its
+  mode/persist semantics.
+* :doc:`nodes` — the 1-D nodes the mesh couples to.
+* :doc:`massbalance` — 1-D mass-balance terms.
+* :doc:`error_handling` — exception types referenced here.

@@ -580,7 +580,7 @@ cdef class Surface2D:
         return arr
 
     def get_stat_max_continuity_err(self):
-        """Return cumulative maximum M{|continuity residual|} envelope per triangle.
+        """Return cumulative maximum M{abs(continuity residual)} envelope per triangle.
 
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in
             C{m^3/s}.
