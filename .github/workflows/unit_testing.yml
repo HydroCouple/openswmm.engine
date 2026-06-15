@@ -125,14 +125,24 @@ jobs:
 
       - name: Diagnose Linux unit-test segfaults (gdb)
         if: failure() && runner.os == 'Linux'
-        working-directory: tests/unit/legacy/engine/data
         run: |
           sudo apt-get install -y gdb
-          for t in test_solver_api test_solver_errors test_solver_hotstart test_solver_shapes test_solver_expanded_api; do
-            bin=$(find ${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }} -name "$t" -type f -executable | head -1)
-            if [ -z "$bin" ]; then echo "Binary $t not found"; continue; fi
+          BUILD="${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}"
+          # CTest records the tests that failed in this run here, one per line
+          # as "<index>:<testName>". Derive the binaries to backtrace from that
+          # instead of a hard-coded list, so this always targets whatever
+          # actually failed.
+          FAILED_LOG=$(find "$BUILD/Testing/Temporary" -name 'LastTestsFailed*.log' 2>/dev/null | head -1)
+          if [ -z "$FAILED_LOG" ]; then
+            echo "No LastTestsFailed log found under $BUILD/Testing/Temporary"; exit 0
+          fi
+          echo "Failed tests this run:"; cat "$FAILED_LOG"
+          cut -d: -f2 "$FAILED_LOG" | while read -r t; do
+            [ -z "$t" ] && continue
+            bin=$(find "$BUILD" -name "$t" -type f -executable | head -1)
+            if [ -z "$bin" ]; then echo "Binary for test '$t' not found"; continue; fi
             echo "==================================================="
-            echo "==== gdb backtrace: $t"
+            echo "==== gdb backtrace: $t  ($bin)"
             echo "==================================================="
             gdb -batch \
               -ex 'set pagination off' \
@@ -142,6 +152,56 @@ jobs:
               -ex 'thread apply all bt full' \
               -ex quit \
               "$bin" 2>&1 | head -400 || true
+          done
+
+      - name: Diagnose macOS unit-test segfaults (lldb)
+        if: failure() && runner.os == 'macOS'
+        run: |
+          BUILD="${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}"
+          # Same approach as the Linux gdb step, using lldb (ships with Xcode).
+          FAILED_LOG=$(find "$BUILD/Testing/Temporary" -name 'LastTestsFailed*.log' 2>/dev/null | head -1)
+          if [ -z "$FAILED_LOG" ]; then
+            echo "No LastTestsFailed log found under $BUILD/Testing/Temporary"; exit 0
+          fi
+          echo "Failed tests this run:"; cat "$FAILED_LOG"
+          cut -d: -f2 "$FAILED_LOG" | while read -r t; do
+            [ -z "$t" ] && continue
+            bin=$(find "$BUILD" -name "$t" -type f -perm -u+x | head -1)
+            if [ -z "$bin" ]; then echo "Binary for test '$t' not found"; continue; fi
+            echo "==================================================="
+            echo "==== lldb backtrace: $t  ($bin)"
+            echo "==================================================="
+            lldb --batch \
+              -o 'run' \
+              -o 'thread backtrace all' \
+              -o 'quit' \
+              "$bin" 2>&1 | head -400 || true
+          done
+
+      - name: Dump failed vcpkg build logs (Windows)
+        if: failure() && runner.os == 'Windows'
+        shell: bash
+        run: |
+          # The Windows failure is during `cmake configure`, when vcpkg builds a
+          # dependency (e.g. Kokkos). vcpkg prints "See logs for more
+          # information: <path>" but CI never echoes those files, so the real
+          # compiler error is invisible. Dump every per-package out/err log so
+          # the actual error shows up in the job output.
+          BT="${{ github.workspace }}/vcpkg/buildtrees"
+          if [ ! -d "$BT" ]; then echo "No vcpkg buildtrees at $BT"; exit 0; fi
+          # Dump the per-package build logs for the deps most likely to fail
+          # here (Kokkos is the current culprit; sundials/hdf5 pull it in).
+          # Falls back to every *.log if none of those dirs exist.
+          dirs=""
+          for d in kokkos sundials hdf5; do
+            [ -d "$BT/$d" ] && dirs="$dirs $BT/$d"
+          done
+          [ -z "$dirs" ] && dirs="$BT"
+          find $dirs -type f -name '*.log' 2>/dev/null | while read -r f; do
+            echo "==================================================="
+            echo "==== vcpkg log: $f"
+            echo "==================================================="
+            tail -200 "$f" || true
           done
 
       - name: Package
