@@ -91,14 +91,26 @@ else()
     # MSVC's default `/openmp` advertises only OpenMP 2.0, but Kokkos requires
     # >= 3.0, so stock FindOpenMP rejects it ("Found unsuitable version 2.0").
     # Route the Kokkos host backend through MSVC's LLVM OpenMP runtime
-    # (`/openmp:llvm`, which reports OpenMP 3.1) and tell FindOpenMP no extra
-    # link library is needed — the runtime is supplied by the compiler switch.
+    # (`/openmp:llvm`), which implements the OpenMP 3.x constructs Kokkos uses,
+    # and tell FindOpenMP no extra link library is needed — the runtime is
+    # supplied by the compiler switch.
+    #
+    # The catch: even under `/openmp:llvm`, MSVC still defines the `_OPENMP`
+    # macro as `200203` (2.0), so FindOpenMP's version probe computes 2.0 and
+    # rejects it against Kokkos' >= 3.0 requirement. The macro is the only thing
+    # that is stale — the runtime/codegen support the newer constructs — so we
+    # pin OpenMP_<lang>_SPEC_DATE to an OpenMP 4.5 date (2015-11). FindOpenMP
+    # skips its `_OPENMP` probe when SPEC_DATE is already set, computes 4.5, and
+    # accepts the toolchain. This keeps the OpenMP host backend enabled on
+    # Windows (OpenMP is the default backend on every platform).
     if(VCPKG_TARGET_IS_WINDOWS)
         list(APPEND OPENMP_HINTS
             "-DOpenMP_C_FLAGS=-openmp:llvm"
             "-DOpenMP_C_LIB_NAMES="
+            "-DOpenMP_C_SPEC_DATE=201511"
             "-DOpenMP_CXX_FLAGS=-openmp:llvm"
-            "-DOpenMP_CXX_LIB_NAMES=")
+            "-DOpenMP_CXX_LIB_NAMES="
+            "-DOpenMP_CXX_SPEC_DATE=201511")
     endif()
 endif()
 

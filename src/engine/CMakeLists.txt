@@ -122,9 +122,19 @@ find_package(Threads REQUIRED)
 target_link_libraries(openswmm_engine PRIVATE Threads::Threads)
 
 # ---- OpenMP (for parallel solver loops) ----
-# Uses custom FindOpenMP.cmake for Apple Silicon Homebrew libomp support.
-list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
-include(${PROJECT_SOURCE_DIR}/cmake/FindOpenMP.cmake)
+# macOS/AppleClang is the only platform where the stock FindOpenMP cannot
+# locate OpenMP on its own (Homebrew libomp): there we add the project cmake/
+# dir to the module path and use the custom finder. On Linux/Windows the stock
+# FindOpenMP discovers the compiler's OpenMP — and is also what Kokkos/SUNDIALS
+# find_dependency(OpenMP) resolves to at find_package(SUNDIALS) time — so we
+# must NOT put cmake/FindOpenMP.cmake on the module path there (it is Apple-only
+# and would shadow stock, breaking that transitive find).
+if(APPLE)
+    list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+    include(${PROJECT_SOURCE_DIR}/cmake/FindOpenMP.cmake)
+else()
+    find_package(OpenMP)
+endif()
 
 if(OpenMP_FOUND OR TARGET OpenMP::OpenMP_CXX)
     target_link_libraries(openswmm_engine PRIVATE OpenMP::OpenMP_CXX)

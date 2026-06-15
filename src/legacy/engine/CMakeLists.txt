@@ -37,7 +37,7 @@ endif()
 # OpenMP::OpenMP_C / OpenMP::OpenMP_CXX imported targets with the correct
 # INTERFACE compile options and link libraries, so the target_link_libraries
 # call below is sufficient — no global flag manipulation needed.
-if(OpenMP_FOUND OR OpenMP_C_FOUND)
+if(OpenMP_FOUND OR OpenMP_C_FOUND OR TARGET OpenMP::OpenMP_C)
     message(STATUS "OpenMP found and will be used for legacy engine")
 else()
     message(WARNING "OpenMP not found - building legacy engine without parallel support")
@@ -176,15 +176,23 @@ target_include_directories(openswmm_legacy_engine
 )
 
 # Link dependencies
-# OpenMP::OpenMP_C is gated on OpenMP_FOUND so the "no OpenMP" fallback
-# (lines 33-36 above, which defines NO_OPENMP) actually produces a buildable
-# target instead of failing on a missing imported target.
+# OpenMP::OpenMP_C is gated on the imported target actually existing — not on
+# the ${OpenMP_FOUND} variable. On macOS the directory-scoped find_package(OpenMP)
+# at the top of this file fails and leaves a local OpenMP_FOUND=FALSE that
+# shadows the cached TRUE set by the Apple Homebrew finder; gating on the
+# variable then skipped this link, so the legacy .c files compiled without
+# _OPENMP and BOTH project.c and swmm5.c emitted the fallback omp_get_max_threads
+# stub -> duplicate-symbol link failure. TARGET_NAME_IF_EXISTS resolves at
+# generate time against the (GLOBAL) imported target the finder creates, so
+# libomp links, _OPENMP is defined, and the stub branch is not compiled. When no
+# OpenMP target exists (the NO_OPENMP fallback) it expands to empty, keeping the
+# target buildable.
 target_link_libraries(openswmm_legacy_engine
     PUBLIC
         openswmm_common   # INTERFACE library — exposes include/
     PRIVATE
         $<$<NOT:$<BOOL:$<C_COMPILER_ID:MSVC>>>:m>
-        $<$<BOOL:${OpenMP_FOUND}>:OpenMP::OpenMP_C>
+        $<TARGET_NAME_IF_EXISTS:OpenMP::OpenMP_C>
 )
 
 # RPATH — wheel layout: bundled deps in openswmm/.dylibs/, two levels above
