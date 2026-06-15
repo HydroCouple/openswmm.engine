@@ -84,7 +84,11 @@ jobs:
       - name: Install Doxygen 1.13.2
         run: |
           DOXYGEN_VERSION=1.13.2
-          wget -q https://github.com/doxygen/doxygen/releases/download/Release_${DOXYGEN_VERSION}/doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz
+          # Doxygen release TAGS use underscores (Release_1_13_2) while the
+          # asset filename uses dots (doxygen-1.13.2.linux.bin.tar.gz). Building
+          # the tag with dots 404s, so derive the underscore form explicitly.
+          DOXYGEN_TAG="Release_${DOXYGEN_VERSION//./_}"
+          wget -q "https://github.com/doxygen/doxygen/releases/download/${DOXYGEN_TAG}/doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz"
           tar -xzf doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz
           sudo mv doxygen-${DOXYGEN_VERSION}/bin/doxygen /usr/local/bin/doxygen
           doxygen --version
