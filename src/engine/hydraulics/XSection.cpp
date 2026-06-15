@@ -144,6 +144,17 @@ int locate(double y, const double* table, int jLast) {
 }
 
 double lookup(double x, const double* table, int n_items) {
+    // The tables are defined on the normalized domain x in [0, 1]. Guard the
+    // bounds BEFORE converting x to an int index: x can arrive non-finite when
+    // a caller normalizes by a zero full-depth (e.g. a conduit finalized
+    // before its cross-section geometry is set, so y/y_full == inf).
+    // static_cast<int> of inf/NaN is undefined behavior — on x86 (int)inf is
+    // INT_MIN, which slips past the upper-bound check below and indexes the
+    // table wildly out of bounds (segfault); ARM saturates to INT_MAX and
+    // happened to mask the bug. The legacy lookup() guarded x <= 0; restore
+    // that and add the matching upper bound so non-finite x is handled safely.
+    if (!(x > 0.0)) return table[0];            // x <= 0 or NaN
+    if (x >= 1.0)   return table[n_items - 1];   // x >= 1 or +inf
     double delta = 1.0 / static_cast<double>(n_items - 1);
     int i = static_cast<int>(x / delta);
     if (i >= n_items - 1) return table[n_items - 1];
@@ -738,6 +749,10 @@ static double powerfunc_getRofA(const XSectParams& xs, double a) {
 
 double getAofY(const XSectParams& xs, double y) {
     if (y <= 0.0) return 0.0;
+    // A section with no (or not-yet-set) full depth has no area. Guard the
+    // division so a degenerate cross-section — e.g. a conduit finalized before
+    // its geometry is assigned — yields 0 instead of normalizing to inf/NaN.
+    if (xs.y_full <= 0.0) return 0.0;
     double y_norm = y / xs.y_full;
 
     switch (static_cast<XSectShape>(xs.type)) {
