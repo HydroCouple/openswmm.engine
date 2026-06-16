@@ -255,7 +255,25 @@ case "$(uname -m)" in
   aarch64) VCPKG_TRIPLET=arm64-linux ;;
   *)       echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
 esac
+# /host persists across the manylinux and musllinux container runs within a
+# single cibuildwheel invocation, so a checkout from the earlier (manylinux)
+# run may already be at /host/vcpkg — and a bare `git clone` aborts on a
+# non-empty destination ("destination path already exists"). The vcpkg tool
+# binary is also libc-specific (a glibc binary bootstrapped under manylinux
+# cannot exec under musllinux), so the checkout must be re-cloned and
+# re-bootstrapped per container rather than reused. Wipe any stale checkout
+# first, preserving the (cache-restored) downloads/ tree so source tarballs are
+# not re-fetched.
+if [ -d /host/vcpkg ]; then
+  rm -rf /tmp/vcpkg-downloads
+  mv /host/vcpkg/downloads /tmp/vcpkg-downloads 2>/dev/null || true
+  rm -rf /host/vcpkg
+fi
 git clone --depth 1 --branch "${VCPKG_REF:-2025.02.14}" https://github.com/microsoft/vcpkg.git /host/vcpkg
+if [ -d /tmp/vcpkg-downloads ]; then
+  rm -rf /host/vcpkg/downloads
+  mv /tmp/vcpkg-downloads /host/vcpkg/downloads
+fi
 /host/vcpkg/bootstrap-vcpkg.sh -disableMetrics
 # CPU-only base wheel: opt out of vcpkg default-features so the now-default `gpu`
 # feature (Kokkos + sundials[kokkos]) is NOT built/linked here. Mirrors the
