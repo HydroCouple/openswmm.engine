@@ -23,6 +23,12 @@
 #include <stdexcept>
 #include <cassert>
 
+#if defined(SWMM_USE_OPENMP)
+#include <omp.h>
+#else
+static inline int omp_get_max_threads() { return 1; }
+#endif
+
 namespace openswmm::twoD {
 
 // ============================================================================
@@ -45,19 +51,22 @@ int CvodeSurfaceSolver::rhs_fn(double /*t*/, N_Vector y, N_Vector ydot,
     // wet/dry boundary; H is smooth across it). Depth is a derived quantity
     // and is clamped non-negative for the conductance code. dH/dt = dh/dt
     // because z is constant in time, so ydot is unchanged downstream.
+    // Per-cell unpack: each i writes only head[i]/depth[i] ⇒ schedule(static)
+    // is bit-identical to serial for any thread count.
+#pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
         state.head[i]  = y_data[i];
         state.depth[i] = std::max(y_data[i] - mesh.tri_cz[i], 0.0);
     }
 
     // 2. Reconstruct head at vertices (pseudo-Laplacian)
-    reconstructVertexHeads(mesh, state);
+    reconstructVertexHeads(mesh, state, opts.num_threads);
 
     // 3. Compute unlimited gradients (Green-Gauss)
-    computeUnlimitedGradients(mesh, state);
+    computeUnlimitedGradients(mesh, state, opts.num_threads);
 
     // 4. Apply slope limiter (Jawahar-Kamath)
-    computeLimitedGradients(mesh, state, opts.limiter_epsilon);
+    computeLimitedGradients(mesh, state, opts.limiter_epsilon, opts.num_threads);
 
     // 5. Compute edge fluxes
     computeEdgeFluxes(mesh, state, opts);
@@ -113,13 +122,17 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
 
     int nt = mesh.n_triangles();
     auto& D = solver->precond_diag_;
-    D.assign(static_cast<std::size_t>(nt), 0.0);
+    D.assign(static_cast<std::size_t>(nt), 0.0);  // sized BEFORE the parallel loop
 
     // Edge transmissivities, then sum per cell with area normalisation.
     // dh_floor regularises the divide at flat-water (|Δh| → 0). Any value
     // well below the smallest meaningful head difference works; at the
     // dry_depth ~ 1e-5 m target scale, 1e-9 m is six orders below.
     constexpr double dh_floor = 1.0e-9;
+    // Each cell writes only its own D[i] (the assign() above already sized the
+    // buffer), reading neighbour heads/fluxes read-only ⇒ schedule(static) is
+    // bit-identical to serial.
+#pragma omp parallel for schedule(static) num_threads(ctx->opts->num_threads)
     for (int i = 0; i < nt; ++i) {
         const int nbr[3] = {mesh.tri_nbr0[i], mesh.tri_nbr1[i], mesh.tri_nbr2[i]};
         double T_sum = 0.0;
@@ -154,6 +167,8 @@ int CvodeSurfaceSolver::psolve_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     // guards against pathological cases (zero-area cells, all-dry meshes)
     // where D[i] could be exactly zero or undefined.
     constexpr double m_floor = 1.0e-12;
+    // Element-wise diagonal solve: each i writes only z_data[i] ⇒ bit-exact.
+#pragma omp parallel for schedule(static) num_threads(ctx->opts->num_threads)
     for (int i = 0; i < nt; ++i) {
         double m = 1.0 - gamma * D[i];
         if (std::abs(m) < m_floor) m = std::copysign(m_floor, m);

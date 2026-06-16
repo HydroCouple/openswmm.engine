@@ -23,6 +23,12 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#if defined(SWMM_USE_OPENMP)
+#include <omp.h>
+#else
+static inline int omp_get_max_threads() { return 1; }
+#endif
+
 namespace openswmm::twoD {
 
 void SurfaceRouter2D::initialize(SimulationContext& ctx) {
@@ -284,6 +290,27 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         ctx.nodes.ponded_area[ni] = 0.0;
     }
 
+    // Resolve the OpenMP thread count for the serial-CPU 2D solver's
+    // per-cell / per-vertex loops. Mirror DWSolver::setNumThreads: honour the
+    // global THREADS option (0 = all cores), cap at the available threads, and
+    // single-thread small meshes where fork/join overhead would dominate (the
+    // 2D work unit is the triangle, so gate on n_triangles like dynwave gates
+    // on its link count). Resolved here once because the topology is final and
+    // it must be set whether or not OPENSWMM_HAS_2D — the post-step diagnostic
+    // loops (computeCellContinuity / computeFaceVelocity / update_statistics)
+    // read options_.num_threads outside the OPENSWMM_HAS_2D block below.
+#if defined(SWMM_USE_OPENMP)
+    {
+        int max_t = omp_get_max_threads();
+        int req   = ctx.options.num_threads;
+        int n_thr = (req == 0) ? max_t : std::min(req, max_t);
+        if (mesh_.n_triangles() < 4 * n_thr) n_thr = 1;
+        options_.num_threads = n_thr;
+    }
+#else
+    options_.num_threads = 1;
+#endif
+
 #ifdef OPENSWMM_HAS_2D
     // Construct the time integrator. The backend (serial CPU vs. a runtime-
     // loaded GPU plugin) is resolved by makeSurfaceSolver from the
@@ -402,7 +429,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
     computeFaceVelocity(mesh_, state_, options_);
 
     // Update statistics
-    state_.update_statistics(mesh_.tri_area, dt);
+    state_.update_statistics(mesh_.tri_area, dt, options_.num_threads);
 
     // Accumulate the global 2D mass-balance terms for this step.
     accumulateMassBalance(ctx, dt);

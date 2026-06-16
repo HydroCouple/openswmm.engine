@@ -117,6 +117,16 @@ struct SolverOptions2D {
     double flow_1d_to_2d = 1.0;  ///< 1D flow → 2D flow (ft³/s→m³/s, 0.02832)
     double flow_2d_to_1d = 1.0;  ///< 2D flow → 1D flow (m³/s→ft³/s, 35.315)
 
+    /*! Runtime-only: resolved OpenMP thread count for the embarrassingly-
+     *  parallel 2D per-cell / per-vertex loops (RHS pipeline, Jacobi
+     *  preconditioner, post-step diagnostics). Set in
+     *  SurfaceRouter2D::initialize() from SimulationOptions::num_threads (the
+     *  global THREADS option) using the same min(N,max) + size-gate
+     *  DWSolver::setNumThreads applies. 1 = serial. The parallelised loops use
+     *  schedule(static) and write only their own cell/vertex slot, so any
+     *  thread count is bit-identical to serial. Never parsed/persisted. */
+    int num_threads = 1;
+
     /*! When true, the inline `.inp` or referenced `.2dm` declared
      *  `;; UNITS: SI (m)` (or an equivalent metric keyword). The mesh on
      *  disk is already in SI metres, so SurfaceRouter2D::initialize

@@ -32,8 +32,10 @@ namespace openswmm::twoD {
  *
  * @param mesh  Mesh geometry.
  * @param state Surface state (reads head[], writes grad_hx[], grad_hy[]).
+ * @param nthreads OpenMP thread count for the per-cell loop (1 = serial).
  */
-void computeUnlimitedGradients(const MeshData& mesh, SurfaceStateData& state);
+void computeUnlimitedGradients(const MeshData& mesh, SurfaceStateData& state,
+                                int nthreads = 1);
 
 /**
  * @brief Apply Jawahar-Kamath slope limiter (Eq. [23]–[24]).
@@ -44,9 +46,10 @@ void computeUnlimitedGradients(const MeshData& mesh, SurfaceStateData& state);
  * @param mesh    Mesh geometry (for neighbour lookup).
  * @param state   Surface state (reads grad_hx/hy, writes grad_hx_lim/hy_lim).
  * @param epsilon Limiter epsilon (small positive, typically 1e-6).
+ * @param nthreads OpenMP thread count for the per-cell loop (1 = serial).
  */
 void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state,
-                              double epsilon);
+                              double epsilon, int nthreads = 1);
 
 /**
  * @brief Compute edge fluxes for all triangles.

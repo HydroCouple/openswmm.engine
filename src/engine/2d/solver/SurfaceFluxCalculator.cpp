@@ -11,6 +11,12 @@
 #include <cmath>
 #include <algorithm>
 
+#if defined(SWMM_USE_OPENMP)
+#include <omp.h>
+#else
+static inline int omp_get_max_threads() { return 1; }
+#endif
+
 namespace openswmm::twoD {
 
 namespace {
@@ -29,9 +35,14 @@ inline double sq(double x) noexcept { return x * x; }
 } // anonymous namespace
 
 
-void computeUnlimitedGradients(const MeshData& mesh, SurfaceStateData& state) {
+void computeUnlimitedGradients(const MeshData& mesh, SurfaceStateData& state,
+                                [[maybe_unused]] int nthreads) {
     int nt = mesh.n_triangles();
 
+    // Each cell writes only its own grad_hx[i]/grad_hy[i] (it reads neighbour
+    // heads, never writes them), so schedule(static) is bit-identical to the
+    // serial loop for any thread count.
+#pragma omp parallel for schedule(static) num_threads(nthreads)
     for (int i = 0; i < nt; ++i) {
         double inv_area = (mesh.tri_area[i] > 1.0e-30)
                               ? 1.0 / mesh.tri_area[i] : 0.0;
@@ -62,10 +73,14 @@ void computeUnlimitedGradients(const MeshData& mesh, SurfaceStateData& state) {
 
 
 void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state,
-                              double epsilon) {
+                              double epsilon, [[maybe_unused]] int nthreads) {
     int nt = mesh.n_triangles();
     double eps2 = epsilon * epsilon;
 
+    // Each cell writes only its own grad_*_lim[i] from its own and its
+    // neighbours' (read-only) unlimited gradients; the per-iteration q[]/
+    // gx_nbr[]/gy_nbr[] arrays are declared inside the body and thus private.
+#pragma omp parallel for schedule(static) num_threads(nthreads)
     for (int i = 0; i < nt; ++i) {
         // Regularised squared L2 norms of the unlimited gradients of this
         // cell (q0) and its three neighbours (q1..q3). Adding eps² inside
@@ -123,6 +138,11 @@ void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
                         const SolverOptions2D& opts) {
     int nt = mesh.n_triangles();
 
+    // Parallelise the OUTER per-cell loop only — the inner e=0..2 writes the
+    // cell's own edge_flux[i*3+e] slots (interior edges are stored redundantly
+    // per incident cell, so there is no cross-cell scatter). schedule(static)
+    // keeps results bit-identical to serial.
+#pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
         for (int e = 0; e < 3; ++e) {
             int idx = i * 3 + e;
@@ -215,6 +235,9 @@ void assembleRHS(const MeshData& mesh, const SurfaceStateData& state,
                   const SolverOptions2D& opts, double* ydot) {
     int nt = mesh.n_triangles();
 
+    // Per-cell gather: each cell sums its own 3 edge fluxes and writes ydot[i].
+    // No cross-cell writes → schedule(static) is bit-identical to serial.
+#pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
         double inv_area = (mesh.tri_area[i] > 1.0e-30)
                               ? 1.0 / mesh.tri_area[i] : 0.0;
@@ -244,6 +267,8 @@ void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
     }
     double inv_dt = 1.0 / dt;
 
+    // Per-cell diagnostic: each cell writes only its own cell_continuity_err[i].
+#pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
         double area = mesh.tri_area[i];
 
@@ -274,6 +299,10 @@ void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
     int nt = mesh.n_triangles();
     constexpr double kQMax = 10.0;  // clamp |b_e| against wet/dry-front spikes
 
+    // Parallelise the OUTER per-cell loop only; each cell solves its own 2×2
+    // normal-equations system and writes only face_vx[i]/face_vy[i]. The inner
+    // accumulators (a00..b1) are loop-private. schedule(static) ⇒ bit-exact.
+#pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
         double depth = state.depth[i];
         if (depth < opts.dry_depth) {

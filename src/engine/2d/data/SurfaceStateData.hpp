@@ -177,8 +177,16 @@ struct SurfaceStateData {
     /// envelopes fuse into the single per-cell loop already walked for
     /// stat_cum_volume — no extra passes, no sub-step sampling.
     void update_statistics(const std::vector<double>& tri_area,
-                           double dt) noexcept {
-        for (std::size_t i = 0; i < depth.size(); ++i) {
+                           double dt,
+                           [[maybe_unused]] int nthreads = 1) noexcept {
+        // Each cell updates only its own envelope slots (max/cum into [i]);
+        // schedule(static) keeps this bit-identical to serial for any thread
+        // count. int loop index for OpenMP canonical-loop form.
+        const int n = static_cast<int>(depth.size());
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(nthreads)
+#endif
+        for (int i = 0; i < n; ++i) {
             if (depth[i] > stat_max_depth[i])
                 stat_max_depth[i] = depth[i];
 
