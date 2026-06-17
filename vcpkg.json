@@ -113,6 +113,14 @@
                     "features": ["kokkos"]
                 }
             ]
+        },
+        "hypre": {
+            "description": "hypre BoomerAMG algebraic-multigrid preconditioner for the 2D surface solver (PRECONDITIONER=AMG). Non-default; --x-feature=hypre with -DOPENSWMM_WITH_HYPRE=ON. Pulls hypre (and its BLAS/LAPACK, plus an MPI stack on ports that require it); called sequentially via MPI_COMM_SELF.",
+            "dependencies": [
+                {
+                    "name": "hypre"
+                }
+            ]
         }
     },
     "overrides": [
