@@ -23,6 +23,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <cstdlib>
+#include <cstdio>
 
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
@@ -289,6 +290,53 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         }
         // Set ponded area to zero — 2D surface handles excess
         ctx.nodes.ponded_area[ni] = 0.0;
+    }
+
+    // C3b: vertical-datum-consistency guard for 1D↔2D coupling.
+    //
+    // computeCouplingExchange forms its driving head as dh = h_2d - h_1d,
+    // directly subtracting the 1D node head (invert + depth, converted from the
+    // engine's internal feet) from the 2D surface elevation (mesh bed + depth,
+    // SI metres). That is only physical when the 2D mesh and the 1D inverts
+    // share one vertical datum. If they don't — e.g. a model whose 1D geometry
+    // was silently rescaled (a repeated metre↔foot save round-trip inflates the
+    // inverts AND MaxDepth together) — the node's ground sits far from the 2D
+    // surface, dh is dominated by the datum offset, and the coupling drives a
+    // spurious exchange (it can drown an outfall under tens of metres of phantom
+    // tailwater and back the 1D network up, wrecking 1D continuity).
+    //
+    // We can't safely auto-correct (the true offset is unknown), so warn with
+    // the numbers. Test the node ground (rim = invert + full_depth) against the
+    // 2D mesh's own elevation envelope — the un-rescaled reference. The margin
+    // scales with the mesh relief, never with the node depth (the same
+    // corruption inflates the depth, so it can't be trusted as a yardstick).
+    if (!mesh_.vz.empty()) {
+        const double ft_to_m = options_.len_1d_to_2d;   // 0.3048 (1D feet → SI)
+        double zmin = mesh_.vz[0], zmax = mesh_.vz[0];
+        for (double z : mesh_.vz) { zmin = std::min(zmin, z); zmax = std::max(zmax, z); }
+        const double margin = std::max(10.0, 10.0 * (zmax - zmin));   // metres
+        for (const auto& cp : coupling_points_) {
+            auto ni = static_cast<std::size_t>(cp.node_idx);
+            const double bed_z = (cp.vertex_idx >= 0)
+                ? mesh_.vz[cp.vertex_idx] : mesh_.tri_cz[cp.cell_idx];
+            const double rim_m = (ctx.nodes.invert_elev[ni]
+                                  + ctx.nodes.full_depth[ni]) * ft_to_m;
+            if (rim_m < zmin - margin || rim_m > zmax + margin) {
+                char buf[512];
+                std::snprintf(buf, sizeof(buf),
+                    "WARNING: 2D-coupled node '%s' is on a different vertical "
+                    "datum than the 2D mesh: node ground (invert+MaxDepth) = "
+                    "%.2f m, but the mesh spans %.2f..%.2f m (bed = %.2f m at "
+                    "the coupling cell) — a ~%.1f m offset. The coupling head "
+                    "dh = h_2d - h_1d is dominated by this offset and will "
+                    "drive a spurious exchange (it can drown an outfall or back "
+                    "the 1D network up). Check that the 1D inverts/MaxDepth and "
+                    "the 2D mesh elevations use the same datum and units.",
+                    ctx.node_names.name_of(cp.node_idx).c_str(),
+                    rim_m, zmin, zmax, bed_z, rim_m - bed_z);
+                ctx.warnings.push_back(buf);
+            }
+        }
     }
 
     // Resolve the OpenMP thread count for the serial-CPU 2D solver's
