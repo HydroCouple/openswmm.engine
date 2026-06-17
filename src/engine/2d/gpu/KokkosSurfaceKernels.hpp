@@ -127,13 +127,27 @@ KOKKOS_INLINE_FUNCTION int nbr_of(int e, int n0, int n1, int n2) {
     return (e == 0) ? n0 : (e == 1) ? n1 : n2;
 }
 
+/// Head-difference regularization for the diffusive-wave flux (mirrors
+/// SurfaceFluxCalculator::regSqrt). Below a small head ε the bare √x — whose
+/// derivative ∂F/∂Δη ∝ 1/√|Δη| → ∞ as the surface flattens — is replaced by a
+/// C¹ quadratic with FINITE slope at 0, bounding the transmissivity in deep,
+/// near-level ponding while keeping the C-property (F → 0 as Δη → 0). ε ≤ 0
+/// restores the bare √.
+KOKKOS_INLINE_FUNCTION double regSqrt(double x, double eps) {
+    if (eps <= 0.0 || x >= eps) return Kokkos::sqrt(x);
+    const double inv = 1.0 / Kokkos::sqrt(eps);
+    return (1.5 * inv) * x - (0.5 * inv / eps) * x * x;
+}
+
 // ---------------------------------------------------------------------------
-// RHS pipeline. Evaluates ydot = f(y) for the H-formulation. Mirrors
+// RHS pipeline. Evaluates ydot = f(y) for the VOLUME formulation: y is the cell
+// water volume V; the free surface η = tri_cz + V/A and mean depth h̄ = V/A are
+// reconstructed per cell and drive the flux pipeline. Mirrors
 // CvodeSurfaceSolver::rhs_fn step-for-step.
 // ---------------------------------------------------------------------------
 inline void evaluateRhs(const MeshViews& m, const StateViews& s,
                         DView y, DView ydot,
-                        double dry_depth, double limiter_eps) {
+                        double dry_depth, double limiter_eps, double dh_eps) {
     const int nt = m.n_tri;
     const int nv = m.n_vert;
 
@@ -152,13 +166,15 @@ inline void evaluateRhs(const MeshViews& m, const StateViews& s,
     auto vhead = s.vert_head; auto eflux = s.edge_flux;
     auto rain = s.rainfall; auto coup = s.coupling_flux; auto evap = s.evap_rate;
 
-    // 1. Unpack y -> head, depth (H-formulation).
+    // 1. Unpack y -> head, depth (VOLUME formulation): flat-cell closure
+    //    h̄ = V/A, η = tri_cz + h̄ (mirrors reconstructFromVolume).
     Kokkos::parallel_for("rhs_unpack", Kokkos::RangePolicy<ExecSpace>(0, nt),
         KOKKOS_LAMBDA(int i) {
-            const double yi = y(i);
-            head(i)  = yi;
-            const double d = yi - tri_cz(i);
-            depth(i) = d > 0.0 ? d : 0.0;
+            const double A = tri_area(i);
+            const double v = y(i) > 0.0 ? y(i) : 0.0;
+            const double d = (A > 1.0e-30) ? v / A : 0.0;
+            depth(i) = d;
+            head(i)  = tri_cz(i) + d;
         });
 
     // 2. Reconstruct head at vertices (pseudo-Laplacian, CSR gather).
@@ -245,26 +261,29 @@ inline void evaluateRhs(const MeshViews& m, const StateViews& s,
                 const double n_up    = mn(up);
                 const double xi      = e_len(idx);
 
-                double F_e = -h53 * sign_dh * Kokkos::sqrt(abs_dh) * xi
+                double F_e = -h53 * sign_dh * regSqrt(abs_dh, dh_eps) * xi
                              / (n_up * Kokkos::sqrt(dx));
 
-                if (depth_up < dry_depth) {
-                    const double t = depth_up / dry_depth;
-                    F_e *= t * t * (3.0 - 2.0 * t);
-                }
+                // No explicit wet/dry shutoff: under the flat volume closure the
+                // source-side depth (= V/A) vanishes smoothly as the cell empties,
+                // so h^(5/3) → 0 and the flux shuts off C¹-smoothly with no 1 mm
+                // Hermite band (the depth_up ≤ 0 guard above zeroes a dry source).
+                // The √|Δη| is C¹-regularized (regSqrt) so the transmissivity stays
+                // bounded as the surface flattens (deep-water stiffness).
                 F_e *= e_conv(idx);
                 eflux(idx) = F_e;
             }
         });
 
-    // 6. Assemble RHS: dψ/dt = (1/A) ΣF + rain + coupling − evapSink.
+    // 6. Assemble RHS (VOLUME): dV/dt = ΣF + A·(rain + coupling − evapSink). No
+    //    1/A — V is the conserved state, so interior fluxes telescope exactly.
     Kokkos::parallel_for("rhs_assemble", Kokkos::RangePolicy<ExecSpace>(0, nt),
         KOKKOS_LAMBDA(int i) {
-            const double inv_area = (tri_area(i) > 1.0e-30) ? 1.0 / tri_area(i) : 0.0;
+            const double area = tri_area(i);
             double fs = 0.0;
             for (int e = 0; e < 3; ++e) fs += eflux(i * 3 + e);
-            ydot(i) = fs * inv_area + rain(i) + coup(i)
-                      - evapSink(evap(i), depth(i), dry_depth);
+            ydot(i) = fs + area * (rain(i) + coup(i)
+                                   - evapSink(evap(i), depth(i), dry_depth));
         });
 }
 

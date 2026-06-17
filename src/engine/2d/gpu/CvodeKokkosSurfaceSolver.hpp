@@ -49,17 +49,28 @@ namespace gpu {
 /// SUNDIALS Kokkos vector specialised on the default execution space.
 using VecType = ::sundials::kokkos::Vector<ExecSpace>;
 
+#if defined(OPENSWMM_HAVE_HYPRE)
+class KokkosAmgPreconditioner;  // complete type only in the .cpp (guarded)
+#endif
+
 /// Context handed to the CVODE callbacks via CVodeSetUserData().
 struct KokkosSolverContext {
     MeshViews*  mesh        = nullptr;
     StateViews* state       = nullptr;
     double      dry_depth   = 1.0e-3;
     double      limiter_eps = 1.0e-6;
+    double      flux_dh_eps = 1.0e-3;   ///< √|Δη| regularization (FLUX_DH_EPS)
+#if defined(OPENSWMM_HAVE_HYPRE)
+    bool                     use_amg = false;   ///< PRECONDITIONER=AMG selected
+    KokkosAmgPreconditioner* amg     = nullptr; ///< BoomerAMG (when use_amg)
+#endif
 };
 
 class CvodeKokkosSurfaceSolver final : public ISurfaceSolver {
 public:
-    CvodeKokkosSurfaceSolver() = default;
+    // Out-of-line (see CvodeSurfaceSolver) so the unique_ptr AMG member's
+    // destructor is instantiated in the .cpp where the type is complete.
+    CvodeKokkosSurfaceSolver();
     ~CvodeKokkosSurfaceSolver() override;
 
     CvodeKokkosSurfaceSolver(const CvodeKokkosSurfaceSolver&)            = delete;
@@ -80,7 +91,8 @@ private:
     SUNContext      sun_ctx_   = nullptr;
     void*           cvode_mem_ = nullptr;
     SUNLinearSolver ls_        = nullptr;
-    std::unique_ptr<VecType> y_;   ///< Kokkos N_Vector for the state (H).
+    std::unique_ptr<VecType> y_;        ///< Kokkos N_Vector for the state (volume V).
+    std::unique_ptr<VecType> abstol_;   ///< per-cell absolute tolerance (A·abs_tol)
 
     // Device mirrors.
     MeshViews  mesh_v_;
@@ -93,6 +105,10 @@ private:
 
     KokkosSolverContext ctx_;
 
+#if defined(OPENSWMM_HAVE_HYPRE)
+    std::unique_ptr<KokkosAmgPreconditioner> amg_precond_;
+#endif
+
     int  nt_ = 0;
     int  nv_ = 0;
     long last_nsteps_ = 0;
@@ -100,9 +116,9 @@ private:
 
     // Host<->device transfer helpers (no-ops in Phase 1 OpenMP host space).
     void uploadMesh();
-    void uploadSources();   ///< rainfall / coupling_flux / evap_rate
-    void uploadHeadToY();   ///< state.head -> y_ view + state_v_.head
-    void downloadState();   ///< y_ -> state.head / state.depth (host)
+    void uploadSources();        ///< rainfall / coupling_flux / evap_rate
+    void seedVolumeFromHead();   ///< state.head -> y_ as volume V (+ state.volume)
+    void downloadState();        ///< y_ (volume) -> state.volume / head / depth (host)
 
     // CVODE C-ABI callbacks.
     static int rhs_cb(sunrealtype t, N_Vector y, N_Vector ydot, void* user_data);

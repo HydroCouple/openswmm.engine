@@ -75,6 +75,12 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "omp")
         Kokkos::kokkos
         SUNDIALS::cvode)
     target_compile_definitions(openswmm_gpu_omp PRIVATE OPENSWMM_GPU_EXECSPACE_OPENMP)
+    if(OPENSWMM_WITH_HYPRE)
+        find_package(HYPRE CONFIG REQUIRED)
+        target_sources(openswmm_gpu_omp PRIVATE KokkosAmgPreconditioner.cpp)
+        target_link_libraries(openswmm_gpu_omp PRIVATE HYPRE::HYPRE)
+        target_compile_definitions(openswmm_gpu_omp PRIVATE OPENSWMM_HAVE_HYPRE)
+    endif()
     set_target_properties(openswmm_gpu_omp PROPERTIES
         OUTPUT_NAME "openswmm_gpu_omp" ${_OPENSWMM_GPU_COMMON_PROPS})
     message(STATUS "OpenSWMM Engine: GPU plugin backend = omp (Kokkos OpenMP, Phase 1)")
@@ -111,6 +117,15 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "cuda")
         Kokkos::kokkos
         SUNDIALS::cvode)
     target_compile_definitions(openswmm_gpu_cuda PRIVATE OPENSWMM_GPU_EXECSPACE_CUDA)
+    if(OPENSWMM_WITH_HYPRE)
+        # Requires a hypre built with its CUDA backend (HYPRE_WITH_CUDA=ON) so
+        # BoomerAMG runs in device memory alongside the Kokkos N_Vector. Built
+        # on a CUDA host/CI, not macOS.
+        find_package(HYPRE CONFIG REQUIRED)
+        target_sources(openswmm_gpu_cuda PRIVATE KokkosAmgPreconditioner.cpp)
+        target_link_libraries(openswmm_gpu_cuda PRIVATE HYPRE::HYPRE)
+        target_compile_definitions(openswmm_gpu_cuda PRIVATE OPENSWMM_HAVE_HYPRE)
+    endif()
     set_target_properties(openswmm_gpu_cuda PROPERTIES
         OUTPUT_NAME "openswmm_gpu_cuda" ${_OPENSWMM_GPU_COMMON_PROPS})
     message(STATUS "OpenSWMM Engine: GPU plugin backend = cuda (Kokkos CUDA, Phase 2)")
@@ -144,6 +159,16 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "hip")
         Kokkos::kokkos
         SUNDIALS::cvode)
     target_compile_definitions(openswmm_gpu_hip PRIVATE OPENSWMM_GPU_EXECSPACE_HIP)
+    if(OPENSWMM_WITH_HYPRE)
+        # Requires a hypre built with its HIP backend (HYPRE_WITH_HIP=ON) so
+        # BoomerAMG runs in device memory alongside the Kokkos N_Vector
+        # (KokkosAmgPreconditioner selects HYPRE_MEMORY_DEVICE for the HIP exec
+        # space). Built on a ROCm host/CI, not macOS.
+        find_package(HYPRE CONFIG REQUIRED)
+        target_sources(openswmm_gpu_hip PRIVATE KokkosAmgPreconditioner.cpp)
+        target_link_libraries(openswmm_gpu_hip PRIVATE HYPRE::HYPRE)
+        target_compile_definitions(openswmm_gpu_hip PRIVATE OPENSWMM_HAVE_HYPRE)
+    endif()
     set_target_properties(openswmm_gpu_hip PROPERTIES
         OUTPUT_NAME "openswmm_gpu_hip" ${_OPENSWMM_GPU_COMMON_PROPS})
     message(STATUS "OpenSWMM Engine: GPU plugin backend = hip (Kokkos HIP, Phase 5)")
@@ -178,6 +203,17 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "sycl")
         Kokkos::kokkos
         SUNDIALS::cvode)
     target_compile_definitions(openswmm_gpu_sycl PRIVATE OPENSWMM_GPU_EXECSPACE_SYCL)
+    if(OPENSWMM_WITH_HYPRE)
+        # Requires a hypre built with its SYCL backend (HYPRE_WITH_SYCL=ON) so
+        # BoomerAMG runs in device memory alongside the Kokkos N_Vector
+        # (KokkosAmgPreconditioner selects HYPRE_MEMORY_DEVICE for the SYCL exec
+        # space). hypre's SYCL backend is newer/less mature than CUDA/HIP. Built
+        # on an Intel-GPU host/CI, not macOS.
+        find_package(HYPRE CONFIG REQUIRED)
+        target_sources(openswmm_gpu_sycl PRIVATE KokkosAmgPreconditioner.cpp)
+        target_link_libraries(openswmm_gpu_sycl PRIVATE HYPRE::HYPRE)
+        target_compile_definitions(openswmm_gpu_sycl PRIVATE OPENSWMM_HAVE_HYPRE)
+    endif()
     set_target_properties(openswmm_gpu_sycl PROPERTIES
         OUTPUT_NAME "openswmm_gpu_sycl" ${_OPENSWMM_GPU_COMMON_PROPS})
     message(STATUS "OpenSWMM Engine: GPU plugin backend = sycl (Kokkos SYCL, Phase 5)")

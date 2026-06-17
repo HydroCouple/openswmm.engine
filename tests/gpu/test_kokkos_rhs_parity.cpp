@@ -13,9 +13,12 @@
  *          The mesh is synthetic and need not be physically meaningful: both
  *          paths consume identical inputs, so any disagreement is a kernel
  *          translation bug. Inputs are chosen to exercise the interesting
- *          branches: interior vs. boundary edges, hydrostatic upwinding,
- *          the cubic wet/dry shutoff (a depth below dry_depth), per-edge
+ *          branches: interior vs. boundary edges, hydrostatic upwinding, a
+ *          near-dry cell (depth below dry_depth, flux → 0 smoothly), a sub-ε
+ *          head difference (the √|Δη| regSqrt regularization), per-edge
  *          conveyance, and the rainfall/coupling/evaporation source terms.
+ *          Both paths use the VOLUME formulation: y is the cell volume V and
+ *          η = tri_cz + V/A, h̄ = V/A are reconstructed before the flux pipeline.
  *
  *          Exit code 0 on pass, 1 on failure.
  *
@@ -119,9 +122,10 @@ void buildMesh(MeshData& m, SurfaceStateData& s) {
             m.vert_stencil_ptr[b] + static_cast<int>(sten[b].size());
     }
 
-    // Heads chosen so depths span dry (below dry_depth) to wet.
-    // depth_i = head_i - tri_cz_i.
-    const double head[4] = {10.50, 10.20, 10.0005, 10.30};
+    // Heads chosen so depths span dry (below dry_depth) to wet, and so the
+    // (0,1) pair has a sub-ε head difference (Δη = 3e-4 < flux_dh_eps = 1e-3)
+    // that exercises the regSqrt regularized branch. depth_i = head_i - tri_cz_i.
+    const double head[4] = {10.50, 10.5003, 10.0005, 10.30};
     for (int i = 0; i < nt; ++i) {
         s.head[i]  = head[i];
         s.depth[i] = std::max(head[i] - m.tri_cz[i], 0.0);
@@ -142,9 +146,12 @@ int main() {
 
     const int nv = mesh.n_vertices();
 
-    // y = head (H-formulation).
+    // y = cell volume V (volume formulation): V = A·max(η − tri_cz, 0).
     std::vector<double> y(nt);
-    for (int i = 0; i < nt; ++i) y[i] = state.head[i];
+    for (int i = 0; i < nt; ++i) {
+        const double d = std::max(state.head[i] - mesh.tri_cz[i], 0.0);
+        y[i] = mesh.tri_area[i] * d;
+    }
 
     // -------- Reference: serial CPU pipeline --------
     std::vector<double> ydot_ref(nt, 0.0);
@@ -152,9 +159,14 @@ int main() {
     std::vector<double> vhead_ref(nv, 0.0);                 // node_head
     {
         SurfaceStateData st = state;   // copy so the two paths don't share buffers
+        // Reconstruct (η, h̄) from the volume state y = V (mirrors
+        // reconstructFromVolume; the same reconstruction the Kokkos unpack does).
         for (int i = 0; i < nt; ++i) {
-            st.head[i]  = y[i];
-            st.depth[i] = std::max(y[i] - mesh.tri_cz[i], 0.0);
+            const double A = mesh.tri_area[i];
+            const double v = std::max(y[i], 0.0);
+            const double d = (A > 1.0e-30) ? v / A : 0.0;
+            st.depth[i] = d;
+            st.head[i]  = mesh.tri_cz[i] + d;
         }
         // Vertex reconstruction reference (mirrors reconstructVertexHeads;
         // computed inline so the test stays linked against only the CPU flux
@@ -217,7 +229,8 @@ int main() {
         gpu::DView yv    = toD(y, "y");
         gpu::DView ydotv("ydot", nt);
 
-        gpu::evaluateRhs(mv, sv, yv, ydotv, opts.dry_depth, opts.limiter_epsilon);
+        gpu::evaluateRhs(mv, sv, yv, ydotv, opts.dry_depth, opts.limiter_epsilon,
+                         opts.flux_dh_eps);
         Kokkos::fence();
 
         auto pull = [](gpu::DView d, std::vector<double>& out) {
