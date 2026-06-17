@@ -67,6 +67,18 @@ configure_file(
     ${CMAKE_CURRENT_BINARY_DIR}/legacy_version.h
 )
 
+# Install the generated legacy_version.h alongside the legacy public headers so
+# consumers of an installed engine (e.g. the GUI's swmmvis.cpp) can resolve
+# `#include "legacy_version.h"` without referencing this target's BINARY_DIR.
+# The engine target re-exports include/openswmm/legacy/engine on its
+# INSTALL_INTERFACE (see src/engine/CMakeLists.txt) so the quoted include works.
+if(OPENSWMM_INSTALL OR OPENSWMMCORE_INSTALL)
+    install(
+        FILES ${CMAKE_CURRENT_BINARY_DIR}/legacy_version.h
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/openswmm/legacy/engine
+    )
+endif()
+
 # Public header (canonical location after Phase 1 relocation)
 set(SWMM_PUBLIC_HEADERS
     ${PROJECT_SOURCE_DIR}/include/openswmm/legacy/engine/openswmm_solver.h
