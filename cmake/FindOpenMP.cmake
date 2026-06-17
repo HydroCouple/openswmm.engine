@@ -1,7 +1,18 @@
 include_guard(GLOBAL)
 
-# Apple-specific: try Homebrew locations
-if(APPLE AND NOT OpenMP_FOUND)
+# Apple-specific: try Homebrew locations.
+#
+# Gate on the imported TARGET, not the cached OpenMP_FOUND bool. CMake caches
+# OpenMP_FOUND (we set it CACHE INTERNAL below) but does NOT persist imported
+# targets across configure runs — they are recreated each run. So on any
+# reconfigure of an existing build tree, OpenMP_FOUND is already TRUE while
+# OpenMP::OpenMP_CXX does not yet exist; gating on `NOT OpenMP_FOUND` then
+# skips this body and the target is never recreated, so every downstream
+# `target_link_libraries(... OpenMP::OpenMP_CXX)` (and Kokkos' exported
+# KokkosTargets link interface) fails with "target was not found". Gating on
+# `NOT TARGET` recreates it whenever it is missing; the inner per-target
+# `NOT TARGET` guards keep this idempotent if a target already exists.
+if(APPLE AND NOT TARGET OpenMP::OpenMP_CXX)
     message(STATUS "Searching for Homebrew OpenMP...")
     
     # Common Homebrew paths
