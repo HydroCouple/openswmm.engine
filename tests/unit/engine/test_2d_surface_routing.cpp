@@ -832,9 +832,11 @@ TEST(RHSAssembly, RainfallOnlyProducesPositiveRate) {
     std::vector<double> ydot(mesh.n_triangles());
     assembleRHS(mesh, state, opts, ydot.data());
 
+    // Volume formulation: dV/dt = Σ F + A·sources. With zero flux the rate is
+    // the rainfall volume rate = rainfall · cell area.
     for (int i = 0; i < mesh.n_triangles(); ++i) {
-        EXPECT_NEAR(ydot[i], 0.001, 1e-12)
-            << "Triangle " << i << " dψ/dt != rainfall rate";
+        EXPECT_NEAR(ydot[i], 0.001 * mesh.tri_area[i], 1e-12)
+            << "Triangle " << i << " dV/dt != rainfall volume rate";
     }
 }
 
@@ -853,8 +855,9 @@ TEST(RHSAssembly, CouplingFluxAppearsInRHS) {
     std::vector<double> ydot(mesh.n_triangles());
     assembleRHS(mesh, state, opts, ydot.data());
 
-    EXPECT_NEAR(ydot[0], -0.005, 1e-12);
-    EXPECT_NEAR(ydot[1],  0.003, 1e-12);
+    // Volume formulation: the coupling flux (m/s) enters as a volume rate A·q.
+    EXPECT_NEAR(ydot[0], -0.005 * mesh.tri_area[0], 1e-12);
+    EXPECT_NEAR(ydot[1],  0.003 * mesh.tri_area[1], 1e-12);
 }
 
 
@@ -879,9 +882,10 @@ TEST(CellContinuity, ResidualZeroForConsistentStep) {
     assembleRHS(mesh, state, opts, ydot.data());
 
     const double dt = 7.0;
-    state.save_state();  // old_depth = depth (0)
+    state.save_state();  // old_volume = volume (0)
+    // Forward-Euler-consistent VOLUME update: V = V_old + dV/dt · dt.
     for (int i = 0; i < mesh.n_triangles(); ++i)
-        state.depth[i] = state.old_depth[i] + ydot[i] * dt;
+        state.volume[i] = state.old_volume[i] + ydot[i] * dt;
 
     computeCellContinuity(mesh, state, opts, dt);
 
@@ -898,8 +902,8 @@ TEST(CellContinuity, DetectsImbalance) {
 
     // No fluxes/sources but storage grows → residual = dV/dt (nonzero).
     SolverOptions2D opts;
-    state.save_state();             // old_depth = 0
-    state.depth[0] = 0.10;          // grew with no inflow
+    state.save_state();                          // old_volume = 0
+    state.volume[0] = 0.10 * mesh.tri_area[0];   // volume grew with no inflow
     computeCellContinuity(mesh, state, opts, 5.0);
 
     double expected = 0.10 * mesh.tri_area[0] / 5.0;
@@ -1211,7 +1215,9 @@ TEST(SolverOptions, DefaultValues) {
     EXPECT_EQ(opts.coupling_interval, 0);
     EXPECT_TRUE(opts.report_2d);
     EXPECT_EQ(opts.linear_solver, LinearSolverType::GMRES);
-    EXPECT_EQ(opts.preconditioner, PreconditionerType::NONE);
+    // Default is AMG (best available); a build without hypre resolves it to
+    // JACOBI at solver initialize, so the struct default itself is AMG.
+    EXPECT_EQ(opts.preconditioner, PreconditionerType::AMG);
 }
 
 

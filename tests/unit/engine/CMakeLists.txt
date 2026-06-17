@@ -155,6 +155,13 @@ add_gtest_unit(test_engine_exfiltration      test_exfiltration.cpp)
 target_compile_definitions(test_engine_exfiltration PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
+# Presence guard: fails (does not skip) if any manufactured benchmark
+# reference.csv is missing or truncated, so the data-driven benchmark tests'
+# GTEST_SKIP()-on-missing fallback cannot silently drop coverage in CI.
+add_gtest_unit(test_engine_benchmark_corpus  test_benchmark_corpus.cpp)
+target_compile_definitions(test_engine_benchmark_corpus PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
 add_gtest_unit(test_engine_treatment        test_treatment.cpp)
 add_gtest_unit(test_engine_rdii             test_rdii.cpp)
 add_gtest_unit(test_engine_hydrograph_mutation test_hydrograph_mutation_api.cpp)
@@ -187,20 +194,15 @@ add_gtest_unit(test_engine_link_flow_roundtrip test_link_flow_roundtrip.cpp)
 add_gtest_unit(test_engine_site_drainage_builder test_site_drainage_builder.cpp)
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.
-# Non-CVODE portions can be built without SUNDIALS by compiling the needed
-# sources directly; the HDF5 output plugin test is gated on OPENSWMM_BUILD_2D
-# because it needs the real Default2DOutputPlugin + libhdf5.
+# The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
+# SectionHandlers2D, Default2DOutputPlugin) are NOT compiled into the test here:
+# the target links the engine library, which exports them. Compiling them into
+# the exe AS WELL produced duplicate definitions across the exe and the engine
+# dylib — an ODR violation whose UB surfaced as heap corruption in the CVODE
+# solver path once 2D struct sizes changed. The test calls the engine's copies.
 set(TEST_2D_SOURCES
     test_2d_surface_routing.cpp
-    ${PROJECT_SOURCE_DIR}/src/engine/2d/mesh/MeshBuilder.cpp
-    ${PROJECT_SOURCE_DIR}/src/engine/2d/mesh/VertexReconstruction.cpp
-    ${PROJECT_SOURCE_DIR}/src/engine/2d/solver/SurfaceFluxCalculator.cpp
-    ${PROJECT_SOURCE_DIR}/src/engine/2d/input/SectionHandlers2D.cpp
 )
-if(OPENSWMM_BUILD_2D)
-    list(APPEND TEST_2D_SOURCES
-        ${PROJECT_SOURCE_DIR}/src/engine/2d/output/Default2DOutputPlugin.cpp)
-endif()
 add_executable(test_engine_2d_surface ${TEST_2D_SOURCES})
 target_link_libraries(test_engine_2d_surface
     PRIVATE

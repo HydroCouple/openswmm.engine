@@ -18,11 +18,29 @@ namespace {
 
 constexpr double GRAVITY = 9.80665;  // m/s²
 
-/// Orifice exchange: Q = Cd * A * sign(Δh) * sqrt(2g|Δh|)
+/// Regularization head (m) below which the orifice √-law is replaced by a C¹
+/// quadratic. The bare law Q = Cd·A·sign(Δh)·√(2g|Δh|) has dQ/dΔh → ∞ as
+/// Δh → 0, which is exactly the weir-equilibrium regime where the 1D and 2D
+/// heads hover near-equal — a strong stiffness/oscillation source for the
+/// (explicit, step-frozen) exchange. Below H_EPS we use φ(x) that matches √x in
+/// value and slope at H_EPS and has a FINITE slope at 0.
+constexpr double ORIFICE_H_EPS = 0.02;  // 2 cm
+
+/// √-with-regularized-tail: φ(x)=√x for x≥ε; a C¹ quadratic for x<ε.
+inline double orificePhi(double a) noexcept {
+    if (a >= ORIFICE_H_EPS) return std::sqrt(a);
+    const double inv_sqrt_e = 1.0 / std::sqrt(ORIFICE_H_EPS);
+    // φ(x) = (3/(2√ε))x − (1/(2 ε^{3/2}))x² : φ(ε)=√ε, φ'(ε)=1/(2√ε), φ'(0)=3/(2√ε).
+    return (1.5 * inv_sqrt_e) * a - (0.5 * inv_sqrt_e / ORIFICE_H_EPS) * a * a;
+}
+
+/// Orifice exchange: Q = Cd · A · sign(Δh) · √(2g) · φ(|Δh|), with φ the
+/// C¹-regularized square root (bounded sensitivity at Δh → 0).
 inline double orificeFlow(double dh, double cd, double area) noexcept {
-    if (std::abs(dh) < 1.0e-12) return 0.0;
-    double sign = (dh > 0.0) ? 1.0 : -1.0;
-    return sign * cd * area * std::sqrt(2.0 * GRAVITY * std::abs(dh));
+    const double a = std::abs(dh);
+    if (a < 1.0e-12) return 0.0;
+    const double sign = (dh > 0.0) ? 1.0 : -1.0;
+    return sign * cd * area * std::sqrt(2.0 * GRAVITY) * orificePhi(a);
 }
 
 /// Smooth effective area transition for uncapped surcharge nodes

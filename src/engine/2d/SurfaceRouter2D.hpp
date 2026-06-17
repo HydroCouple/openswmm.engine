@@ -30,6 +30,7 @@
 #include "coupling/NodeCoupling.hpp"
 
 #include <memory>
+#include <fstream>
 
 #ifdef OPENSWMM_HAS_2D
 #include "solver/ISurfaceSolver.hpp"
@@ -220,6 +221,18 @@ private:
     /// Previous cumulative boundary flux (Σ edge_bc_cum_flux, m³), for the
     /// per-step delta in the global mass balance.
     double prev_boundary_cum_ = 0.0;
+
+    // -----------------------------------------------------------------------
+    // Stiffness-attribution diagnostic CSV (opt-in via OPENSWMM_2D_DIAG_CSV).
+    // One row per executed 2D advance: per-advance CVODE counter deltas
+    // correlated with the wet/dry-front size and the coupling-exchange
+    // magnitude, so the wet/dry vs coupling stiffness contributions can be
+    // separated. Disabled (null stream) unless the env var names a path.
+    // -----------------------------------------------------------------------
+    std::unique_ptr<std::ofstream> diag_csv_;   ///< open output stream, or null
+    bool diag_checked_   = false;               ///< env var resolved once
+    int  diag_prev_nwet_ = 0;                   ///< previous wet-cell count (for dn_wet)
+    void writeDiagRow(SimulationContext& ctx, double dt, double t);
 
 #ifdef OPENSWMM_HAS_2D
     /// Time integrator, chosen at runtime. Default is the serial CPU

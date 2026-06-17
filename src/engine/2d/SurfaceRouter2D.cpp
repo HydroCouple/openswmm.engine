@@ -22,6 +22,7 @@
 #include <numeric>
 #include <unordered_map>
 #include <unordered_set>
+#include <cstdlib>
 
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
@@ -434,6 +435,9 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
     // Accumulate the global 2D mass-balance terms for this step.
     accumulateMassBalance(ctx, dt);
 
+    // Stiffness-attribution diagnostic row (opt-in via OPENSWMM_2D_DIAG_CSV).
+    writeDiagRow(ctx, dt, sim_time_);
+
     // Clear RESET forcings
     state_.clear_reset_forcings();
 }
@@ -476,10 +480,12 @@ double SurfaceRouter2D::computeCflHint(const SimulationContext& /*ctx*/) const {
 
 
 double SurfaceRouter2D::totalVolume() const {
+    // Volume is the integrated state — sum it directly (for a partly-wet cell
+    // V ≠ h̄·A_total, so the old depth×area form would be wrong under VFR).
     double vol = 0.0;
     int nt = mesh_.n_triangles();
     for (int i = 0; i < nt; ++i) {
-        vol += state_.depth[i] * mesh_.tri_area[i];
+        vol += state_.volume[i];
     }
     return vol;
 }
@@ -586,6 +592,74 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
 
     // Latest storage (m³) — overwrite so the value at simulation end is final.
     mb.final_storage = totalVolume();
+}
+
+
+void SurfaceRouter2D::writeDiagRow(SimulationContext& ctx, double dt, double t) {
+    // Resolve the opt-in path once. Empty/unset env var → harness stays off.
+    if (!diag_checked_) {
+        diag_checked_ = true;
+        const char* path = std::getenv("OPENSWMM_2D_DIAG_CSV");
+        if (path && path[0]) {
+            diag_csv_ = std::make_unique<std::ofstream>(path);
+            if (diag_csv_ && diag_csv_->is_open()) {
+                (*diag_csv_)
+                    << "t_s,dt_s,flag,d_nsteps,d_newton,d_gmres,d_prec_setups,"
+                       "d_lin_fails,last_h_s,n_front,n_wet,dn_wet,max_depth_m,"
+                       "total_vol_m3,sum_abs_coupling_m3s,max_node_exch_m3s\n";
+            } else {
+                diag_csv_.reset();  // open failed — disable cleanly
+            }
+        }
+    }
+    if (!diag_csv_) return;
+
+    // Per-cell wet/dry-front metrics from the accepted end-of-step depths.
+    const int nt = mesh_.n_triangles();
+    const double dry = options_.dry_depth;
+    const double front_hi = 3.0 * dry;  // "on the front" band
+    int n_front = 0, n_wet = 0;
+    double max_depth = 0.0, sum_abs_coup = 0.0;
+    for (int i = 0; i < nt; ++i) {
+        const double d = state_.depth[i];
+        if (d > dry) ++n_wet;
+        if (d > 0.0 && d < front_hi) ++n_front;
+        if (d > max_depth) max_depth = d;
+        sum_abs_coup += std::abs(state_.coupling_flux[i]) * mesh_.tri_area[i];
+    }
+    const int dn_wet = std::abs(n_wet - diag_prev_nwet_);
+    diag_prev_nwet_ = n_wet;
+
+    // Largest single coupled-node exchange magnitude (m³/s) — surfaces the
+    // weir-flanking junctions that dominate the late-regime stiffness.
+    double max_node_exch = 0.0;
+    for (const auto& cp : coupling_points_) {
+        const auto ni = static_cast<std::size_t>(cp.node_idx);
+        const double q = std::abs(ctx.nodes.coupling_inflow[ni])
+                         * options_.flow_1d_to_2d;
+        if (q > max_node_exch) max_node_exch = q;
+    }
+
+    // Per-advance integrator deltas (zeros if no 2D solver compiled in).
+    long flag = 0, d_nsteps = 0, d_newton = 0, d_gmres = 0,
+         d_prec = 0, d_linf = 0;
+    double last_h = 0.0;
+#ifdef OPENSWMM_HAS_2D
+    if (solver_) {
+        const SolverAdvanceStats st = solver_->last_advance_stats();
+        flag = st.flag; d_nsteps = st.d_nsteps; d_newton = st.d_newton;
+        d_gmres = st.d_gmres; d_prec = st.d_prec_setups; d_linf = st.d_lin_fails;
+        last_h = st.last_h;
+    }
+#endif
+
+    (*diag_csv_) << t << ',' << dt << ',' << flag << ','
+                 << d_nsteps << ',' << d_newton << ',' << d_gmres << ','
+                 << d_prec << ',' << d_linf << ',' << last_h << ','
+                 << n_front << ',' << n_wet << ',' << dn_wet << ','
+                 << max_depth << ',' << totalVolume() << ',' << sum_abs_coup << ','
+                 << max_node_exch << '\n';
+    diag_csv_->flush();
 }
 
 } // namespace openswmm::twoD

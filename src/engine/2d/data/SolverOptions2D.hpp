@@ -40,10 +40,11 @@ enum class LinearSolverType : int8_t {
 /**
  * @brief Preconditioner selector for the Krylov inner solver.
  *
- * Phase 1 wires NONE (no preconditioning) and JACOBI (per-cell diagonal
- * approximation rebuilt each Jacobian refresh). ILU and AMG are reserved
- * for the Phase 2 hypre/BoomerAMG integration; selecting them today
- * triggers a clear runtime error in CvodeSurfaceSolver::initialize().
+ * NONE (no preconditioning) and JACOBI (per-cell diagonal approximation
+ * rebuilt each Jacobian refresh) are always available. AMG (hypre BoomerAMG)
+ * is wired only when the engine is built with OPENSWMM_WITH_HYPRE; selecting
+ * it otherwise triggers a clear runtime error in the solver's initialize().
+ * ILU remains a reserved-but-rejected slot.
  *
  * Tier rationale (see also the Phase 1/2 discussion in
  * docs/2D_KNOWN_STIFFNESS_ISSUE.md):
@@ -61,10 +62,10 @@ enum class LinearSolverType : int8_t {
  *              ~100k cells. Requires hypre/BoomerAMG. *Not yet wired.*
  */
 enum class PreconditionerType : int8_t {
-    NONE   = 0,     ///< Phase 1: WIRED (no preconditioning).
-    JACOBI = 1,     ///< Phase 1: WIRED (diagonal heuristic).
-    ILU    = 2      ///< Reserved; rejected at initialize() in Phase 1.
-    // AMG  = 3     ///< Reserved for Phase 2 (hypre BoomerAMG).
+    NONE   = 0,     ///< WIRED (no preconditioning).
+    JACOBI = 1,     ///< WIRED (diagonal heuristic).
+    ILU    = 2,     ///< Reserved; rejected at initialize().
+    AMG    = 3      ///< WIRED when built with OPENSWMM_WITH_HYPRE (BoomerAMG).
 };
 
 /**
@@ -80,6 +81,15 @@ struct SolverOptions2D {
     double abs_tolerance     = 1.0e-6;  ///< CVODE absolute tolerance (m)
     double dry_depth         = 0.001;   ///< Dry cell threshold (m)
     double limiter_epsilon   = 1.0e-6;  ///< Slope limiter epsilon
+    /// Head-difference regularization (m) for the diffusive-wave flux √|Δη|.
+    /// Below this gradient the flux is linearized (C¹) so the transmissivity
+    /// stays bounded as the water surface flattens — without it, deep near-level
+    /// ponding (e.g. a large design storm draining) makes the flux Jacobian blow
+    /// up and the implicit step collapse. Only affects sub-mm gradients, so real
+    /// flow is untouched (mass balance and peak flows unchanged); raise it for
+    /// extra robustness on very deep problems. 0 = bare √. Parsed from
+    /// [2D_OPTIONS] FLUX_DH_EPS; env OPENSWMM_2D_FLUX_DH_EPS overrides.
+    double flux_dh_eps       = 0.001;   ///< Diffusive-flux gradient floor (m)
     double coupling_cd       = 0.65;    ///< Default discharge coefficient
     int    max_krylov_dim    = 30;      ///< Max Krylov subspace dimension
     int    coupling_interval = 0;       ///< 0 = every SWMM step
@@ -87,7 +97,14 @@ struct SolverOptions2D {
     bool   report_2d         = true;    ///< Write 2D results to output
 
     LinearSolverType   linear_solver   = LinearSolverType::GMRES;
-    PreconditionerType preconditioner  = PreconditionerType::NONE;
+    // Default to AMG (hypre BoomerAMG): the only preconditioner with
+    // near-mesh-independent Krylov counts on the elliptic diffusive-wave
+    // operator, so it is the right default at every scale (and essential past
+    // ~100k cells). The value is unconditional here (keeping one struct layout
+    // across all TUs); a build WITHOUT hypre resolves AMG → JACOBI at solver
+    // initialize with a one-line notice, so the portable base build still runs.
+    // See docs/2D_KNOWN_STIFFNESS_ISSUE.md.
+    PreconditionerType preconditioner  = PreconditionerType::AMG;
 
     /// Path from [2D_MESH_FILE] FILE token. Empty = mesh is inline in main .inp.
     std::string mesh_file;

@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <cstdlib>
 
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
@@ -31,6 +32,31 @@ inline int tri_nbr(const MeshData& mesh, int t, int e) {
 }
 
 inline double sq(double x) noexcept { return x * x; }
+
+// Head-difference regularization for the diffusive-wave flux. The collapsed
+// Manning flux carries √|Δη|, whose derivative ∂F/∂Δη ∝ 1/√|Δη| → ∞ as the
+// water surface flattens — so in deep, near-level ponding (post-storm drainage)
+// the flux Jacobian / transmissivity blow up and CVODE's step collapses. Below
+// a small head ε we replace √x by a C¹ quadratic with FINITE slope at 0, which
+// bounds the transmissivity (the flux becomes linear in Δη there) while keeping
+// the C-property (F → 0 as Δη → 0). The bound feeds the implicit corrector,
+// the FD Jacobian, AND the diagonal preconditioner (all read the stored flux),
+// so the whole stiff-at-flat-water pathway is regularized in one place.
+// Value comes from SolverOptions2D::flux_dh_eps (default 1 mm, parseable from
+// [2D_OPTIONS] FLUX_DH_EPS); the env var OPENSWMM_2D_FLUX_DH_EPS overrides it
+// when set (handy for sweeps). 0 restores the bare √.
+inline double fluxDhEps(double opt_default) {
+    static const double env = []{
+        const char* s = std::getenv("OPENSWMM_2D_FLUX_DH_EPS");
+        return s ? std::atof(s) : -1.0;   // <0 ⇒ not set
+    }();
+    return (env >= 0.0) ? env : opt_default;
+}
+inline double regSqrt(double x, double eps) noexcept {
+    if (eps <= 0.0 || x >= eps) return std::sqrt(x);
+    const double inv = 1.0 / std::sqrt(eps);
+    return (1.5 * inv) * x - (0.5 * inv / eps) * x * x;
+}
 
 } // anonymous namespace
 
@@ -137,6 +163,7 @@ void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state,
 void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
                         const SolverOptions2D& opts) {
     int nt = mesh.n_triangles();
+    const double dh_eps = fluxDhEps(opts.flux_dh_eps);  // flux gradient regularization
 
     // Parallelise the OUTER per-cell loop only — the inner e=0..2 writes the
     // cell's own edge_flux[i*3+e] slots (interior edges are stored redundantly
@@ -200,18 +227,15 @@ void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
             double n_up = mesh.mannings_n[upstream];
             double xi   = mesh.edge_length[idx];
 
-            double F_e = -h53 * sign_dh * std::sqrt(abs_dh) * xi
+            double F_e = -h53 * sign_dh * regSqrt(abs_dh, dh_eps) * xi
                          / (n_up * std::sqrt(dx));
 
-            // Cubic Hermite wet/dry shutoff on the source-side depth.
-            // s(t) = 3t² − 2t³ for t = depth_up/dry_depth ∈ [0, 1]: C¹ at
-            // both endpoints, vanishing flux as the source-side cell
-            // approaches dry. Applied at the flux level so the wet/dry
-            // transition behaviour is contained in this one place.
-            if (depth_up < opts.dry_depth) {
-                double t = depth_up / opts.dry_depth;
-                F_e *= t * t * (3.0 - 2.0 * t);
-            }
+            // No explicit wet/dry shutoff: the source-side depth (= V/A under the
+            // flat volume closure) vanishes smoothly as the cell empties, so
+            // h^(5/3) → 0 and the flux shuts off C¹-smoothly with no 1 mm Hermite
+            // band. The depth_up ≤ 0 guard above already zeroes a dry source cell.
+            // The √|Δη| above is C¹-regularized (regSqrt) so the transmissivity
+            // stays bounded as the surface flattens (deep-water stiffness).
 
             // §11A — per-edge conveyance factor in [0, 1] (Q4: LAST, after
             // the wet/dry shutoff).  Default 1.0 (no-op).  Mass-conservation
@@ -239,20 +263,22 @@ void assembleRHS(const MeshData& mesh, const SurfaceStateData& state,
     // No cross-cell writes → schedule(static) is bit-identical to serial.
 #pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
-        double inv_area = (mesh.tri_area[i] > 1.0e-30)
-                              ? 1.0 / mesh.tri_area[i] : 0.0;
+        const double area = mesh.tri_area[i];
 
-        // Sum edge fluxes
+        // Sum edge fluxes (m³/s; inflow-positive contributions to cell i).
         double flux_sum = 0.0;
         for (int e = 0; e < 3; ++e) {
             flux_sum += state.edge_flux[i * 3 + e];
         }
 
-        // RHS: dψ/dt = (1/A) Σ F_j + sources − evaporation sink. The sink is
-        // depth-limited (Hermite ramp below dry_depth, see evapSink) so it
-        // can never drive a depth negative.
-        ydot[i] = flux_sum * inv_area + state.rainfall[i] + state.coupling_flux[i]
-                  - evapSink(state.evap_rate[i], state.depth[i], opts.dry_depth);
+        // Volume RHS: dV/dt = Σ F_j + A·(sources − evaporation sink). No 1/A —
+        // V is the conserved state, so interior fluxes telescope exactly. The
+        // sink is depth-limited (Hermite ramp below dry_depth) so it can never
+        // drive the volume negative.
+        ydot[i] = flux_sum
+                  + area * (state.rainfall[i] + state.coupling_flux[i]
+                            - evapSink(state.evap_rate[i], state.depth[i],
+                                       opts.dry_depth));
     }
 }
 
@@ -285,9 +311,9 @@ void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
                          - evapSink(state.evap_rate[i], state.depth[i],
                                     opts.dry_depth)) * area;
 
-        // Storage change rate (m³/s).
+        // Storage change rate (m³/s) — volume is the conserved state.
         double storage_rate =
-            (state.depth[i] - state.old_depth[i]) * area * inv_dt;
+            (state.volume[i] - state.old_volume[i]) * inv_dt;
 
         state.cell_continuity_err[i] = storage_rate - (flux_sum + source);
     }

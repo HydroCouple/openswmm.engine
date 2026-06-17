@@ -106,6 +106,9 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     } else if (iequals(key, "LIMITER_EPSILON")) {
         opts.limiter_epsilon = tryParseDouble(val, ok);
         if (!ok) return "Invalid LIMITER_EPSILON value";
+    } else if (iequals(key, "FLUX_DH_EPS")) {
+        opts.flux_dh_eps = tryParseDouble(val, ok);
+        if (!ok) return "Invalid FLUX_DH_EPS value";
     } else if (iequals(key, "MAX_CVODE_STEPS")) {
         opts.max_cvode_steps = tryParseInt(val, ok);
         if (!ok) return "Invalid MAX_CVODE_STEPS value";
@@ -125,6 +128,8 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.preconditioner = PreconditionerType::JACOBI;
         else if (iequals(val, "ILU"))
             opts.preconditioner = PreconditionerType::ILU;
+        else if (iequals(val, "AMG"))
+            opts.preconditioner = PreconditionerType::AMG;
         else
             return "Unknown PRECONDITIONER: " + val;
     } else if (iequals(key, "REPORT_2D")) {
@@ -150,7 +155,7 @@ bool is2DOptionKey(const std::string& key) {
     static const char* kKeys[] = {
         "MAX_TIMESTEP", "MIN_TIMESTEP", "REL_TOLERANCE", "ABS_TOLERANCE",
         "DRY_DEPTH", "MAX_KRYLOV_DIM", "COUPLING_INTERVAL", "COUPLING_CD",
-        "LIMITER_EPSILON", "MAX_CVODE_STEPS", "LINEAR_SOLVER",
+        "LIMITER_EPSILON", "FLUX_DH_EPS", "MAX_CVODE_STEPS", "LINEAR_SOLVER",
         "PRECONDITIONER", "REPORT_2D", "OUTPUT_FILE",
     };
     for (const char* k : kKeys) {
@@ -174,6 +179,7 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "ABS_TOLERANCE"))     return fmt_g(opts.abs_tolerance);
     if (iequals(key, "DRY_DEPTH"))         return fmt_g(opts.dry_depth);
     if (iequals(key, "LIMITER_EPSILON"))   return fmt_g(opts.limiter_epsilon);
+    if (iequals(key, "FLUX_DH_EPS"))       return fmt_g(opts.flux_dh_eps);
     if (iequals(key, "COUPLING_CD"))       return fmt_g(opts.coupling_cd);
     if (iequals(key, "MAX_KRYLOV_DIM"))    return std::to_string(opts.max_krylov_dim);
     if (iequals(key, "COUPLING_INTERVAL")) return std::to_string(opts.coupling_interval);
@@ -193,8 +199,9 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
             case PreconditionerType::NONE:   return "NONE";
             case PreconditionerType::JACOBI: return "JACOBI";
             case PreconditionerType::ILU:    return "ILU";
+            case PreconditionerType::AMG:    return "AMG";
         }
-        return "NONE";
+        return "JACOBI";
     }
     return {};
 }

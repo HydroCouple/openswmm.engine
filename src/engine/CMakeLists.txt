@@ -102,6 +102,10 @@ target_include_directories(openswmm_engine
         $<INSTALL_INTERFACE:include>
         $<INSTALL_INTERFACE:include/openswmm/engine>
         $<INSTALL_INTERFACE:include/openswmm/plugin_sdk>
+        # Lets installed-engine consumers resolve the quoted
+        # `#include "legacy_version.h"` (generated header installed by
+        # src/legacy/engine) without referencing the legacy target's BINARY_DIR.
+        $<INSTALL_INTERFACE:include/openswmm/legacy/engine>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
@@ -274,6 +278,22 @@ if(NOT WIN32)
     )
 endif()
 
+# Keep vendored static dependencies (HDF5, SQLite) PRIVATE at the dynamic-symbol
+# level, not just the link interface. Linking them PRIVATE keeps them out of the
+# CMake usage requirements, but the static archives' symbols still land in this
+# dylib's export table with default visibility (e.g. ~3.5k _H5* symbols). A
+# consumer that ALSO links its own copy — the GUI links HDF5 for its 2D mesh
+# reader and SQLite transitively via GDAL — then cross-binds some calls to this
+# dylib's copy and crashes in HDF5's atexit teardown (H5_term_library →
+# H5I_clear_type operating on a foreign HDF5's global state). Hiding these from
+# the export table makes each binary use its own copy end-to-end, regardless of
+# version. (sundials/Kokkos are not hidden here: no current consumer links its
+# own copy, and the GPU plugin carries its own statically.)
+if(APPLE)
+    target_link_options(openswmm_engine PRIVATE
+        "LINKER:-unexported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/macos_unexported_symbols.txt")
+endif()
+
 # ---- Install ----
 install(
     TARGETS openswmm_engine
@@ -377,16 +397,48 @@ if(OPENSWMM_BUILD_2D)
     # CVODE wrapper requires SUNDIALS
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/CvodeSurfaceSolver.cpp)
 
+    # Approximate-Jacobian (diffusion-stencil) assembly — pure C++, shared by
+    # the Jacobi and AMG preconditioners. Always compiled.
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceJacobian.cpp)
+
     # Runtime backend selector (dlopen of the optional GPU plugin; serial CPU
     # fallback). Lives in the core — it owns the CPU↔plugin decision — but
     # pulls in no Kokkos/GPU dependency itself.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceSolverFactory.cpp)
+
+    # hypre BoomerAMG preconditioner (PRECONDITIONER=AMG) — compiled only when
+    # OPENSWMM_WITH_HYPRE is ON (the source includes HYPRE.h).
+    if(OPENSWMM_WITH_HYPRE)
+        list(APPEND OPENSWMM_2D_SOURCES 2d/solver/HypreAmgPreconditioner.cpp)
+    endif()
 
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
 
     # Find SUNDIALS (CVODE) via vcpkg or system install
     find_package(SUNDIALS REQUIRED COMPONENTS cvode)
     target_link_libraries(openswmm_engine PRIVATE SUNDIALS::cvode)
+
+    # hypre BoomerAMG — opt-in algebraic-multigrid preconditioner for the 2D
+    # solver. We call hypre's IJ/BoomerAMG API directly from the psetup/psolve
+    # callbacks (no SUNDIALS N_VParHyp coupling), so SUNDIALS need not be built
+    # with hypre. Built sequentially (MPI_COMM_SELF); the `hypre` vcpkg feature
+    # supplies the library.
+    if(OPENSWMM_WITH_HYPRE)
+        find_package(HYPRE CONFIG REQUIRED)
+        target_link_libraries(openswmm_engine PRIVATE HYPRE::HYPRE)
+        # PUBLIC, not PRIVATE: CvodeSurfaceSolver.hpp gates the amg_precond_
+        # member on OPENSWMM_HAVE_HYPRE, so sizeof(CvodeSurfaceSolver) depends
+        # on it. Any consumer that includes the header (unit tests, GUI) MUST
+        # see the same definition or the struct layout disagrees with the
+        # library — an ODR violation that corrupts the stack. Linking hypre
+        # stays PRIVATE; only the ABI-affecting macro is propagated.
+        target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAVE_HYPRE)
+        if(TARGET openswmm_engine_internal)
+            target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAVE_HYPRE)
+        endif()
+        message(STATUS "OpenSWMM Engine: hypre BoomerAMG preconditioner ENABLED "
+                       "(PRECONDITIONER=AMG available)")
+    endif()
 
     # Default2DOutputPlugin emits CF-1.11/UGRID-1.0 HDF5 — required dep.
     # Prefer vcpkg's hdf5-config.cmake (CONFIG mode) since CMake's bundled

@@ -35,6 +35,7 @@
 #ifdef OPENSWMM_HAS_2D
 
 #include <vector>
+#include <memory>
 
 // Forward declarations for SUNDIALS types (avoid pulling in full headers)
 struct SUNContext_;
@@ -45,6 +46,9 @@ typedef struct _generic_SUNLinearSolver* SUNLinearSolver;
 namespace openswmm::twoD {
 
 class CvodeSurfaceSolver;
+#if defined(OPENSWMM_HAVE_HYPRE)
+class HypreAmgPreconditioner;  // complete type only in the .cpp (guarded)
+#endif
 
 /**
  * @brief Context passed to the CVODE RHS / preconditioner callbacks.
@@ -62,6 +66,7 @@ struct CvodeSolverContext {
     SurfaceStateData*   state  = nullptr;
     SolverOptions2D*    opts   = nullptr;
     CvodeSurfaceSolver* solver = nullptr;
+    bool                amg_active = false;  ///< effective AMG (after hypre fallback)
 };
 
 /**
@@ -69,7 +74,10 @@ struct CvodeSolverContext {
  */
 class CvodeSurfaceSolver : public ISurfaceSolver {
 public:
-    CvodeSurfaceSolver() = default;
+    // Defined out-of-line in the .cpp (where HypreAmgPreconditioner is a
+    // complete type) so the unique_ptr member's destructor can be instantiated
+    // there rather than at every construction site.
+    CvodeSurfaceSolver();
     ~CvodeSurfaceSolver() override;
 
     // Non-copyable
@@ -126,13 +134,17 @@ public:
     /// Get last internal step size used by CVODE.
     double last_step_size() const noexcept override { return last_h_; }
 
+    /// Per-advance CVODE counter deltas (see SolverAdvanceStats).
+    SolverAdvanceStats last_advance_stats() const noexcept override { return last_stats_; }
+
     /// Check if solver is initialized.
     bool is_initialized() const noexcept override { return cvode_mem_ != nullptr; }
 
 private:
     void*           cvode_mem_ = nullptr;  ///< CVODE memory block
     SUNLinearSolver ls_        = nullptr;  ///< SPGMR Krylov linear solver
-    N_Vector        y_         = nullptr;  ///< State vector (water-surface elevation H)
+    N_Vector        y_         = nullptr;  ///< State vector (cell water volume V)
+    N_Vector        abstol_    = nullptr;  ///< Per-cell absolute tolerance vector (volume)
     SUNContext      sun_ctx_   = nullptr;  ///< SUNDIALS context
 
     CvodeSolverContext ctx_;               ///< RHS callback context
@@ -140,11 +152,21 @@ private:
     long   last_nsteps_ = 0;
     double last_h_      = 0.0;
 
+    /// Per-advance counter deltas, refreshed each advance() (diagnostic CSV).
+    SolverAdvanceStats last_stats_;
+
     /// Cached diagonal of the Jacobi preconditioner, sized to n_triangles.
     /// Populated in psetup_fn from the current edge fluxes; consumed in
     /// psolve_fn. Phase 1 stores diag(J) as a heuristic per-cell value
     /// (sum of edge transmissivities, normalised by cell area, negated).
     std::vector<double> precond_diag_;
+
+#if defined(OPENSWMM_HAVE_HYPRE)
+    /// hypre BoomerAMG preconditioner (PRECONDITIONER=AMG). Null unless AMG is
+    /// selected. Owned via unique_ptr whose destructor sees the complete type
+    /// in the .cpp (where ~CvodeSurfaceSolver and the move ops are defined).
+    std::unique_ptr<HypreAmgPreconditioner> amg_precond_;
+#endif
 
     // ------------------------------------------------------------------
     // SUNDIALS callbacks. All three have C linkage requirements imposed

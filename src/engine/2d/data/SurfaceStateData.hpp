@@ -36,8 +36,9 @@ struct SurfaceStateData {
     // State variables — per triangle [0, n_triangles)
     // -----------------------------------------------------------------------
 
-    std::vector<double> depth;          ///< Overland flow depth ψ_o (m)
-    std::vector<double> head;           ///< Total head h_o = z_s + ψ_o (m)
+    std::vector<double> depth;          ///< Mean wetted depth h̄ = V/A_wet (m) [reconstructed]
+    std::vector<double> head;           ///< Free-surface elevation η (m) [reconstructed]
+    std::vector<double> volume;         ///< Cell water volume V (m³) — the integrated state
 
     // Gradient fields (per triangle)
     std::vector<double> grad_hx;        ///< ∂h/∂x (unlimited gradient)
@@ -82,7 +83,8 @@ struct SurfaceStateData {
     // Previous step state
     // -----------------------------------------------------------------------
 
-    std::vector<double> old_depth;      ///< Depth at start of coupling interval
+    std::vector<double> old_depth;      ///< Mean depth at start of coupling interval
+    std::vector<double> old_volume;     ///< Volume at start of coupling interval (m³)
 
     // -----------------------------------------------------------------------
     // Cumulative statistics
@@ -109,6 +111,7 @@ struct SurfaceStateData {
 
         depth.assign(nt, 0.0);
         head.assign(nt, 0.0);
+        volume.assign(nt, 0.0);
         grad_hx.assign(nt, 0.0);
         grad_hy.assign(nt, 0.0);
         grad_hx_lim.assign(nt, 0.0);
@@ -134,6 +137,7 @@ struct SurfaceStateData {
         coupling_force_val.assign(nt, 0.0);
 
         old_depth.assign(nt, 0.0);
+        old_volume.assign(nt, 0.0);
         stat_max_depth.assign(nt, 0.0);
         stat_max_velocity.assign(nt, 0.0);
         stat_max_cont_err.assign(nt, 0.0);
@@ -144,11 +148,15 @@ struct SurfaceStateData {
     void save_state() noexcept {
         std::memcpy(old_depth.data(), depth.data(),
                      depth.size() * sizeof(double));
+        std::memcpy(old_volume.data(), volume.data(),
+                     volume.size() * sizeof(double));
     }
 
     void reset_state() noexcept {
         std::memcpy(depth.data(), old_depth.data(),
                      old_depth.size() * sizeof(double));
+        std::memcpy(volume.data(), old_volume.data(),
+                     old_volume.size() * sizeof(double));
     }
 
     /// Clear RESET forcings after each step
@@ -176,7 +184,7 @@ struct SurfaceStateData {
     /// so face_vx/vy and cell_continuity_err hold the accepted values. All
     /// envelopes fuse into the single per-cell loop already walked for
     /// stat_cum_volume — no extra passes, no sub-step sampling.
-    void update_statistics(const std::vector<double>& tri_area,
+    void update_statistics([[maybe_unused]] const std::vector<double>& tri_area,
                            double dt,
                            [[maybe_unused]] int nthreads = 1) noexcept {
         // Each cell updates only its own envelope slots (max/cum into [i]);
@@ -199,7 +207,8 @@ struct SurfaceStateData {
             if (aerr > stat_max_cont_err[i])
                 stat_max_cont_err[i] = aerr;
 
-            stat_cum_volume[i] += depth[i] * tri_area[i] * dt;
+            // Cell water volume × dt (VFR: V is the integrated state, not h̄·A).
+            stat_cum_volume[i] += volume[i] * dt;
         }
     }
 };

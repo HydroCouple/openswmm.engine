@@ -11,6 +11,9 @@
 #include "CvodeSurfaceSolver.hpp"
 #include "SurfaceFluxCalculator.hpp"
 #include "../mesh/VertexReconstruction.hpp"
+#if defined(OPENSWMM_HAVE_HYPRE)
+#include "HypreAmgPreconditioner.hpp"
+#endif
 
 #include <cvode/cvode.h>
 #include <nvector/nvector_serial.h>
@@ -18,6 +21,8 @@
 #include <sundials/sundials_context.h>
 
 #include <cstring>
+#include <cstdlib>
+#include <cstdio>
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -30,6 +35,27 @@ static inline int omp_get_max_threads() { return 1; }
 #endif
 
 namespace openswmm::twoD {
+
+namespace {
+// ---------------------------------------------------------------------------
+// Volume ⇄ (free-surface η, mean depth h̄) reconstruction — the single place
+// the integrated-state interpretation lives. Flat-cell closure: depth = V/A,
+// η = tri_cz + depth, so the conserved volume relates linearly to the free
+// surface (V = A·(η − tri_cz)). The smooth (V/A)^(5/3) conductance vanishes at
+// the dry limit on its own, so no explicit wet/dry shutoff is needed.
+// ---------------------------------------------------------------------------
+inline void reconstructFromVolume(const MeshData& m, int i, double V,
+                                  double& head, double& depth) noexcept {
+    const double A = m.tri_area[i];
+    const double v = (V > 0.0) ? V : 0.0;
+    depth = (A > 1.0e-30) ? v / A : 0.0;
+    head  = m.tri_cz[i] + depth;
+}
+inline double volumeFromHead(const MeshData& m, int i, double head) noexcept {
+    const double d = head - m.tri_cz[i];
+    return (d > 0.0) ? m.tri_area[i] * d : 0.0;
+}
+} // namespace
 
 // ============================================================================
 // RHS function — registered as CVRhsFn callback
@@ -46,17 +72,14 @@ int CvodeSurfaceSolver::rhs_fn(double /*t*/, N_Vector y, N_Vector ydot,
     double* y_data    = N_VGetArrayPointer(y);
     double* ydot_data = N_VGetArrayPointer(ydot);
 
-    // H-formulation: CVODE integrates the water-surface elevation H, not the
-    // depth. Dry cells naturally sit at H = z (no special case for the
-    // wet/dry boundary; H is smooth across it). Depth is a derived quantity
-    // and is clamped non-negative for the conductance code. dH/dt = dh/dt
-    // because z is constant in time, so ydot is unchanged downstream.
-    // Per-cell unpack: each i writes only head[i]/depth[i] ⇒ schedule(static)
-    // is bit-identical to serial for any thread count.
+    // Volume formulation: CVODE integrates the cell water volume V. The free
+    // surface η and the mean wetted depth h̄ are reconstructed per cell (smooth,
+    // monotone closure) and drive the downstream flux pipeline. Per-cell unpack:
+    // each i writes only head[i]/depth[i] ⇒ schedule(static) is bit-identical to
+    // serial for any thread count.
 #pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
-        state.head[i]  = y_data[i];
-        state.depth[i] = std::max(y_data[i] - mesh.tri_cz[i], 0.0);
+        reconstructFromVolume(mesh, i, y_data[i], state.head[i], state.depth[i]);
     }
 
     // 2. Reconstruct head at vertices (pseudo-Laplacian)
@@ -109,16 +132,25 @@ int CvodeSurfaceSolver::rhs_fn(double /*t*/, N_Vector y, N_Vector ydot,
 // for "which preconditioner is wired today".
 
 int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
-                                   int /*jok*/, int* jcurPtr, double /*gamma*/,
+                                   int /*jok*/, int* jcurPtr, double gamma,
                                    void* user_data) {
     auto* ctx    = static_cast<CvodeSolverContext*>(user_data);
     auto& mesh   = *ctx->mesh;
     auto& state  = *ctx->state;
     auto* solver = ctx->solver;
 
-    // Phase 1 always rebuilds (jok argument ignored). Phase 2's lazy reuse
-    // will set this based on the AMG hierarchy's age policy.
+    // Always (re)build here; CVODE's psetup-calling policy provides the lag.
     *jcurPtr = 1;  // SUNTRUE
+
+#if defined(OPENSWMM_HAVE_HYPRE)
+    // AMG: assemble M = I − γ·J and rebuild the BoomerAMG hierarchy.
+    if (ctx->amg_active) {
+        solver->amg_precond_->setup(mesh, state, gamma);
+        return 0;
+    }
+#else
+    (void)gamma;
+#endif
 
     int nt = mesh.n_triangles();
     auto& D = solver->precond_diag_;
@@ -156,6 +188,16 @@ int CvodeSurfaceSolver::psolve_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     auto* ctx    = static_cast<CvodeSolverContext*>(user_data);
     auto* solver = ctx->solver;
 
+#if defined(OPENSWMM_HAVE_HYPRE)
+    // AMG: apply one BoomerAMG V-cycle z ≈ M⁻¹ r over all cells.
+    if (ctx->amg_active) {
+        const int n = ctx->mesh->n_triangles();
+        solver->amg_precond_->solve(N_VGetArrayPointer(r),
+                                    N_VGetArrayPointer(z), n);
+        return 0;
+    }
+#endif
+
     int nt = static_cast<int>(solver->precond_diag_.size());
     const double* r_data = N_VGetArrayPointer(r);
     double*       z_data = N_VGetArrayPointer(z);
@@ -181,18 +223,25 @@ int CvodeSurfaceSolver::psolve_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
 // Lifecycle
 // ============================================================================
 
+CvodeSurfaceSolver::CvodeSurfaceSolver() = default;
+
 CvodeSurfaceSolver::~CvodeSurfaceSolver() {
     finalize();
 }
 
 CvodeSurfaceSolver::CvodeSurfaceSolver(CvodeSurfaceSolver&& o) noexcept
-    : cvode_mem_(o.cvode_mem_), ls_(o.ls_), y_(o.y_),
+    : cvode_mem_(o.cvode_mem_), ls_(o.ls_), y_(o.y_), abstol_(o.abstol_),
       sun_ctx_(o.sun_ctx_), ctx_(o.ctx_),
       last_nsteps_(o.last_nsteps_), last_h_(o.last_h_),
-      precond_diag_(std::move(o.precond_diag_)) {
+      precond_diag_(std::move(o.precond_diag_))
+#if defined(OPENSWMM_HAVE_HYPRE)
+      , amg_precond_(std::move(o.amg_precond_))
+#endif
+{
     o.cvode_mem_ = nullptr;
     o.ls_        = nullptr;
     o.y_         = nullptr;
+    o.abstol_    = nullptr;
     o.sun_ctx_   = nullptr;
     // Re-bind the context's back-pointer to *this so callbacks routed via
     // o.ctx_ before the move still find the right solver.
@@ -205,12 +254,16 @@ CvodeSurfaceSolver& CvodeSurfaceSolver::operator=(CvodeSurfaceSolver&& o) noexce
         cvode_mem_    = o.cvode_mem_;    o.cvode_mem_ = nullptr;
         ls_           = o.ls_;           o.ls_        = nullptr;
         y_            = o.y_;            o.y_         = nullptr;
+        abstol_       = o.abstol_;       o.abstol_    = nullptr;
         sun_ctx_      = o.sun_ctx_;      o.sun_ctx_   = nullptr;
         ctx_          = o.ctx_;
         ctx_.solver   = this;
         last_nsteps_  = o.last_nsteps_;
         last_h_       = o.last_h_;
         precond_diag_ = std::move(o.precond_diag_);
+#if defined(OPENSWMM_HAVE_HYPRE)
+        amg_precond_  = std::move(o.amg_precond_);
+#endif
     }
     return *this;
 }
@@ -223,24 +276,33 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     if (nt <= 0) return;
 
     // ------------------------------------------------------------------
-    // Option validation: Phase 1 wires GMRES + (NONE | JACOBI). Other
-    // enum values exist as forward-looking hooks but are not implemented
-    // yet; fail loudly rather than silently substituting, so a typo in
-    // the input file doesn't quietly give the user a different solver
-    // than they asked for.
+    // Option validation: GMRES + (NONE | JACOBI | AMG). ILU is reserved and
+    // throws. AMG is the default but needs a hypre build; without one it
+    // degrades to JACOBI (the next-best always-available preconditioner) with
+    // a one-line notice, so the portable base build still runs.
     // ------------------------------------------------------------------
     if (opts.linear_solver != LinearSolverType::GMRES) {
         throw std::runtime_error(
-            "CvodeSurfaceSolver: only LINEAR_SOLVER=GMRES is wired in Phase 1; "
+            "CvodeSurfaceSolver: only LINEAR_SOLVER=GMRES is wired; "
             "BICGSTAB and TFQMR are reserved for future use");
     }
     if (opts.preconditioner != PreconditionerType::NONE &&
-        opts.preconditioner != PreconditionerType::JACOBI) {
+        opts.preconditioner != PreconditionerType::JACOBI &&
+        opts.preconditioner != PreconditionerType::AMG) {
         throw std::runtime_error(
-            "CvodeSurfaceSolver: only PRECONDITIONER=NONE or JACOBI is wired in "
-            "Phase 1; ILU and (future) AMG are reserved for the hypre/BoomerAMG "
-            "integration");
+            "CvodeSurfaceSolver: only PRECONDITIONER=NONE, JACOBI, or AMG is "
+            "wired; ILU is reserved");
     }
+    PreconditionerType pc = opts.preconditioner;  // effective preconditioner
+#if !defined(OPENSWMM_HAVE_HYPRE)
+    if (pc == PreconditionerType::AMG) {
+        std::fprintf(stderr,
+            "[openswmm 2D] PRECONDITIONER=AMG needs a hypre build "
+            "(OPENSWMM_WITH_HYPRE=ON); using JACOBI.\n");
+        pc = PreconditionerType::JACOBI;
+    }
+#endif
+    ctx_.amg_active = (pc == PreconditionerType::AMG);
 
     ctx_.mesh   = &mesh;
     ctx_.state  = &state;
@@ -257,11 +319,15 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     if (!y_)
         throw std::runtime_error("N_VNew_Serial failed");
 
-    // Copy initial water-surface elevations H into y (H-formulation).
-    // SurfaceRouter2D::initialize sets state.head[i] = mesh.tri_cz[i] for the
-    // dry initial condition; that already gives the right H = z start state.
+    // Seed y with the initial cell volume V from the initial free surface.
+    // SurfaceRouter2D::initialize sets state.head[i] = mesh.tri_cz[i] (dry) ⇒
+    // V = 0; a hot start with a raised surface seeds the matching volume. Also
+    // mirror into state.volume so totalVolume() is correct before the first step.
     double* y_data = N_VGetArrayPointer(y_);
-    std::memcpy(y_data, state.head.data(), nt * sizeof(double));
+    for (int i = 0; i < nt; ++i) {
+        y_data[i] = volumeFromHead(mesh, i, state.head[i]);
+        state.volume[i] = y_data[i];
+    }
 
     // Create CVODE memory (BDF for stiff systems). The default nonlinear
     // corrector is Newton with inexact-tolerance control — exactly the
@@ -276,22 +342,36 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     if (err != CV_SUCCESS)
         throw std::runtime_error("CVodeInit failed");
 
-    // Set tolerances. With the H-formulation, y is the water-surface
-    // elevation (≈ 100 m on typical models) but the physically interesting
-    // signal is depth (often mm-scale). CVODE's WRMS weight is
-    // w_i = rtol · |y_i| + atol; with y_i ≈ 100 and the user's rtol = 1e-4
-    // this gives w_i ≈ 1e-2, four orders of magnitude looser than the
-    // depth-formulation gave at the same nominal rtol. Compensate by
-    // collapsing the user-provided REL_TOLERANCE into a fixed per-cell ATOL
-    // computed against a depth scale (dry_depth), and disabling CVODE's
-    // automatic |y|-scaling. The effective error scale is then
-    //   atol_per_cell ≈ ABS_TOLERANCE + REL_TOLERANCE · dry_depth
-    // which matches the depth-formulation's behaviour at depths ~ dry_depth.
-    const double atol_per_cell = opts.abs_tolerance
-                                 + opts.rel_tolerance * opts.dry_depth;
-    err = CVodeSStolerances(cvode_mem_, /*rtol*/ 0.0, atol_per_cell);
+    // Tolerances. The integrated state is now VOLUME (m³), a physical quantity,
+    // so the error control is a per-cell absolute volume tolerance equal to a
+    // depth tolerance × cell area — i.e. "control each cell's mean depth error
+    // to depth_atol". This replaces the H-formulation's dry_depth-rescaled
+    // scalar atol hack (y was a ~bed-elevation magnitude). rtol stays 0 so the
+    // control is purely the physical per-cell atol.
+    // WRMS error weight per cell: w_i = rtol·|V_i| + atol_i. With VOLUME as the
+    // state both terms are physical: atol_i = ABS_TOLERANCE · A_i is a small
+    // absolute depth floor (controls shallow cells), and the relative term
+    // rtol = REL_TOLERANCE scales the tolerance with the cell's water content so
+    // deep/violent flow (e.g. the cloudburst transient) is not forced to
+    // micron-accuracy — that scaling is what lets the step size recover in deep
+    // water. (The old H-formulation had to zero rtol and fold REL_TOLERANCE into
+    // a dry_depth-scaled atol because y was a ~100 m elevation; with volume that
+    // hack is gone.)
+    abstol_ = N_VNew_Serial(nt, sun_ctx_);
+    if (!abstol_)
+        throw std::runtime_error("N_VNew_Serial (atol) failed");
+    {
+        double* av = N_VGetArrayPointer(abstol_);
+        for (int i = 0; i < nt; ++i) {
+            const double A = mesh.tri_area[i];
+            av[i] = opts.abs_tolerance * ((A > 1.0e-30) ? A : 1.0);
+        }
+    }
+    // Kept alive for the solver's lifetime (freed in finalize): CVODE may
+    // reference the tolerance vector, so it must outlive the integration.
+    err = CVodeSVtolerances(cvode_mem_, /*rtol*/ opts.rel_tolerance, abstol_);
     if (err != CV_SUCCESS)
-        throw std::runtime_error("CVodeSStolerances failed");
+        throw std::runtime_error("CVodeSVtolerances failed");
 
     // Set user data (context pointer)
     err = CVodeSetUserData(cvode_mem_, &ctx_);
@@ -322,7 +402,7 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     // δ ~ 1.5e-6 m, much larger than the flux noise floor). If/when
     // smaller dry_depth values demand more accurate JvP, we can attach an
     // analytic JacTimes routine without changing anything else here.
-    const int prec_type = (opts.preconditioner == PreconditionerType::NONE)
+    const int prec_type = (pc == PreconditionerType::NONE)
                               ? 0   // PREC_NONE
                               : 1;  // PREC_LEFT
     ls_ = SUNLinSol_SPGMR(y_, prec_type, opts.max_krylov_dim, sun_ctx_);
@@ -333,13 +413,25 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     if (err != CV_SUCCESS)
         throw std::runtime_error("CVodeSetLinearSolver failed");
 
-    if (opts.preconditioner == PreconditionerType::JACOBI) {
+    if (pc == PreconditionerType::JACOBI) {
         // Pre-allocate the diagonal store; psetup_fn reuses this buffer.
         precond_diag_.assign(static_cast<std::size_t>(nt), 0.0);
         err = CVodeSetPreconditioner(cvode_mem_, psetup_fn, psolve_fn);
         if (err != CV_SUCCESS)
             throw std::runtime_error("CVodeSetPreconditioner failed");
     }
+#if defined(OPENSWMM_HAVE_HYPRE)
+    else if (pc == PreconditionerType::AMG) {
+        // Build the hypre BoomerAMG preconditioner over the static sparsity;
+        // psetup_fn refreshes M = I − γJ and rebuilds the hierarchy, psolve_fn
+        // applies one V-cycle. Same CVODE callback surface as Jacobi.
+        amg_precond_ = std::make_unique<HypreAmgPreconditioner>();
+        amg_precond_->initialize(mesh);
+        err = CVodeSetPreconditioner(cvode_mem_, psetup_fn, psolve_fn);
+        if (err != CV_SUCCESS)
+            throw std::runtime_error("CVodeSetPreconditioner (AMG) failed");
+    }
+#endif
 }
 
 
@@ -348,6 +440,17 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
 
     int nt = ctx_.mesh->n_triangles();
 
+    // Snapshot cumulative CVODE counters before the advance so we can report
+    // per-advance deltas (stiffness-attribution CSV harness). These getters are
+    // cheap; the cumulative values persist across advances.
+    long c0_nst = 0, c0_nfe = 0, c0_nni = 0, c0_nli = 0, c0_npe = 0, c0_nlcf = 0;
+    CVodeGetNumSteps(cvode_mem_, &c0_nst);
+    CVodeGetNumRhsEvals(cvode_mem_, &c0_nfe);
+    CVodeGetNumNonlinSolvIters(cvode_mem_, &c0_nni);
+    CVodeGetNumLinIters(cvode_mem_, &c0_nli);
+    CVodeGetNumPrecEvals(cvode_mem_, &c0_npe);
+    CVodeGetNumLinConvFails(cvode_mem_, &c0_nlcf);
+
     // Set stop time to guarantee exact arrival
     CVodeSetStopTime(cvode_mem_, t_target);
 
@@ -355,16 +458,41 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
     double t_reached = t_current;
     int flag = CVode(cvode_mem_, t_target, y_, &t_reached, CV_NORMAL);
 
+    // Record per-advance counter deltas (valid whether or not CVode succeeded —
+    // the counters update even on a failed/partial advance).
+    {
+        long c1_nst = 0, c1_nfe = 0, c1_nni = 0, c1_nli = 0, c1_npe = 0, c1_nlcf = 0;
+        CVodeGetNumSteps(cvode_mem_, &c1_nst);
+        CVodeGetNumRhsEvals(cvode_mem_, &c1_nfe);
+        CVodeGetNumNonlinSolvIters(cvode_mem_, &c1_nni);
+        CVodeGetNumLinIters(cvode_mem_, &c1_nli);
+        CVodeGetNumPrecEvals(cvode_mem_, &c1_npe);
+        CVodeGetNumLinConvFails(cvode_mem_, &c1_nlcf);
+        last_stats_.d_nsteps      = c1_nst  - c0_nst;
+        last_stats_.d_nrhs        = c1_nfe  - c0_nfe;
+        last_stats_.d_newton      = c1_nni  - c0_nni;
+        last_stats_.d_gmres       = c1_nli  - c0_nli;
+        last_stats_.d_prec_setups = c1_npe  - c0_npe;
+        last_stats_.d_lin_fails   = c1_nlcf - c0_nlcf;
+        last_stats_.flag          = flag;
+        double h_last = 0.0;
+        CVodeGetLastStep(cvode_mem_, &h_last);
+        last_stats_.last_h = h_last;
+    }
+
     if (flag < 0) {
         // CVODE failure — leave state unchanged
         return t_current;
     }
 
-    // Copy solution back to state (H-formulation): y is H.
+    // Copy solution back to state: y is the cell volume V. Store V and the
+    // reconstructed (η, h̄) so totalVolume / continuity / output are consistent.
     double* y_data = N_VGetArrayPointer(y_);
     for (int i = 0; i < nt; ++i) {
-        ctx_.state->head[i]  = y_data[i];
-        ctx_.state->depth[i] = std::max(y_data[i] - ctx_.mesh->tri_cz[i], 0.0);
+        const double V = y_data[i];
+        ctx_.state->volume[i] = V;
+        reconstructFromVolume(*ctx_.mesh, i, V,
+                              ctx_.state->head[i], ctx_.state->depth[i]);
     }
 
     // Record solver statistics
@@ -379,9 +507,13 @@ void CvodeSurfaceSolver::reinitialize(double t0) {
     if (!cvode_mem_) return;
 
     int nt = ctx_.mesh->n_triangles();
-    // H-formulation: y is water-surface elevation.
+    // y is the cell volume V; reseed it from the (possibly externally edited)
+    // free surface and mirror into state.volume.
     double* y_data = N_VGetArrayPointer(y_);
-    std::memcpy(y_data, ctx_.state->head.data(), nt * sizeof(double));
+    for (int i = 0; i < nt; ++i) {
+        y_data[i] = volumeFromHead(*ctx_.mesh, i, ctx_.state->head[i]);
+        ctx_.state->volume[i] = y_data[i];
+    }
 
     CVodeReInit(cvode_mem_, t0, y_);
 }
@@ -391,6 +523,24 @@ void CvodeSurfaceSolver::finalize() {
     // CVode must be freed before its linear solver (CVODE holds an internal
     // pointer to ls_ via CVodeSetLinearSolver). Likewise free the N_Vector
     // and context last, since N_Vector destruction touches the context.
+    //
+    // Optional CVODE-statistics dump (set OPENSWMM_2D_CVODE_STATS) — cumulative
+    // counts useful for comparing preconditioners and mesh-size scaling.
+    if (cvode_mem_ && std::getenv("OPENSWMM_2D_CVODE_STATS")) {
+        long nst = 0, nfe = 0, nni = 0, nli = 0, npe = 0, nps = 0, nlcf = 0;
+        CVodeGetNumSteps(cvode_mem_, &nst);
+        CVodeGetNumRhsEvals(cvode_mem_, &nfe);
+        CVodeGetNumNonlinSolvIters(cvode_mem_, &nni);
+        CVodeGetNumLinIters(cvode_mem_, &nli);
+        CVodeGetNumPrecEvals(cvode_mem_, &npe);
+        CVodeGetNumPrecSolves(cvode_mem_, &nps);
+        CVodeGetNumLinConvFails(cvode_mem_, &nlcf);
+        std::fprintf(stderr,
+            "[2D CVODE stats] steps=%ld rhs=%ld newton=%ld gmres=%ld "
+            "prec_setup=%ld prec_solve=%ld lin_fails=%ld | gmres/newton=%.2f\n",
+            nst, nfe, nni, nli, npe, nps, nlcf,
+            nni > 0 ? static_cast<double>(nli) / nni : 0.0);
+    }
     if (cvode_mem_) {
         CVodeFree(&cvode_mem_);
         cvode_mem_ = nullptr;
@@ -403,11 +553,18 @@ void CvodeSurfaceSolver::finalize() {
         N_VDestroy(y_);
         y_ = nullptr;
     }
+    if (abstol_) {
+        N_VDestroy(abstol_);
+        abstol_ = nullptr;
+    }
     if (sun_ctx_) {
         SUNContext_Free(&sun_ctx_);
         sun_ctx_ = nullptr;
     }
     precond_diag_.clear();
+#if defined(OPENSWMM_HAVE_HYPRE)
+    amg_precond_.reset();  // releases the hypre IJ matrix/vectors + AMG hierarchy
+#endif
     ctx_.solver = nullptr;
 }
 
