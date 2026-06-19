@@ -124,6 +124,26 @@ SWMM_ENGINE_API int swmm_2d_triangle_get_centroid(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_2d_triangle_get_mannings(SWMM_Engine engine, int idx,
                                                     double* n);
 
+/** @brief Set triangle Manning's roughness coefficient.
+ *
+ *  Rejected if not strictly positive (SWMM_ERR_BADPARAM). Persists in the
+ *  `MANNINGS_N` column of `[2D_TRIANGLES]` on save.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_triangle_mannings(SWMM_Engine engine, int idx,
+                                                    double n);
+
+/** @brief Set the descriptive tag of a vertex (the `[2D_VERTICES]` TAG
+ *         column). Distinct from the 1D<->2D coupling node. Empty / NULL
+ *         clears it. @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_vertex_tag(SWMM_Engine engine, int idx,
+                                             const char* tag);
+
+/** @brief Set the descriptive tag of a triangle (the `[2D_TRIANGLES]` TAG
+ *         column, e.g. a region / subcatchment id). Empty / NULL clears it.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_triangle_tag(SWMM_Engine engine, int idx,
+                                               const char* tag);
+
 /** @brief Get triangle neighbour indices (-1 = boundary edge).
  *  @param n0,n1,n2 Adjacent triangle indices across edges opposite v0,v1,v2.
  *  @ingroup engine_2d */
@@ -174,6 +194,25 @@ SWMM_ENGINE_API int swmm_2d_triangle_get_coupled_node(SWMM_Engine engine,
                                                         int tri_idx,
                                                         int* node_idx);
 
+/** @brief Set (or clear) the SWMM node a vertex is coupled to, by name.
+ *
+ *  Stores the node NAME verbatim and resolves it to an index against the
+ *  current model (-1 when not found, mirroring the deferred-resolution rule
+ *  in SurfaceRouter2D::initialize). An empty / NULL name clears the coupling
+ *  (name cleared, index set to -1). Discharge coefficient and exchange area
+ *  keep their existing values (defaults 0.65 / 1.0 for a freshly coupled
+ *  vertex); only the node association is changed. The `.inp` writer emits the
+ *  name in `[2D_VERTEX_NODE_MAP]`, so this is what persists an interactive
+ *  coupling edit on save.
+ *
+ *  @param vertex_idx Vertex index in `[0, vertex_count)`.
+ *  @param node_name  SWMM node id, or "" / NULL to clear.
+ *  @return SWMM_OK on success; SWMM_ERR_BADINDEX on out-of-range vertex.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_vertex_coupled_node(SWMM_Engine engine,
+                                                      int vertex_idx,
+                                                      const char* node_name);
+
 /* =========================================================================
  * 2D State — Per-Triangle (read during RUNNING)
  * ========================================================================= */
@@ -221,11 +260,15 @@ SWMM_ENGINE_API int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine,
  *
  *  Output array must be pre-allocated to `triangle_count * 3` doubles,
  *  indexed `[tri*3 + localEdge]`. Sign convention: **positive flux flows
- *  outward through the edge's outward normal**. Units `m^2 s^-1` (depth-
- *  integrated normal speed). Combine with `swmm_2d_edge_get_geometry_bulk`
- *  to reconstruct cell-centred velocity (RT0): for each triangle, solve
- *  `(NᵀN) v = Nᵀ q` where rows of `N` are the outward unit normals and
- *  `q[e] = flux[e] / length[e]`.
+ *  outward through the edge's outward normal** (positive = leaving the cell).
+ *  NOTE: the integrator stores edge_flux INFLOW-positive internally (a positive
+ *  value raises the cell depth); this accessor (and the HDF5 `Mesh2_edge_flux`
+ *  dataset) flip the sign so the *public* convention is outward-positive as
+ *  documented here. Units `m^2 s^-1` (depth-integrated normal speed). Combine
+ *  with `swmm_2d_edge_get_geometry_bulk` to reconstruct cell-centred velocity
+ *  (RT0): for each triangle, solve `(NᵀN) v = Nᵀ q` where rows of `N` are the
+ *  outward unit normals and `q[e] = flux[e] / length[e]`; with the
+ *  outward-positive sign this yields the physical (down-gradient) velocity.
  *
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine,

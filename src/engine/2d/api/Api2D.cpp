@@ -139,6 +139,38 @@ int swmm_2d_triangle_get_centroid(SWMM_Engine engine, int idx,
     return SWMM_OK;
 }
 
+int swmm_2d_set_triangle_mannings(SWMM_Engine engine, int idx, double n) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(idx, router2d);
+    if (!(n > 0.0)) return SWMM_ERR_BADPARAM;
+
+    router2d.mesh().mannings_n[idx] = n;
+    return SWMM_OK;
+}
+
+int swmm_2d_set_vertex_tag(SWMM_Engine engine, int idx, const char* tag) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_VERT_IDX(idx, router2d);
+
+    auto& m = router2d.mesh();
+    if (!tag || tag[0] == '\0') m.vtag[idx].clear();
+    else                        m.vtag[idx] = tag;
+    return SWMM_OK;
+}
+
+int swmm_2d_set_triangle_tag(SWMM_Engine engine, int idx, const char* tag) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(idx, router2d);
+
+    auto& m = router2d.mesh();
+    if (!tag || tag[0] == '\0') m.tri_tag[idx].clear();
+    else                        m.tri_tag[idx] = tag;
+    return SWMM_OK;
+}
+
 int swmm_2d_triangle_get_mannings(SWMM_Engine engine, int idx, double* n) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
@@ -212,6 +244,27 @@ int swmm_2d_triangle_get_coupled_node(SWMM_Engine engine, int tri_idx,
     if (!node_idx) return SWMM_ERR_BADPARAM;
 
     *node_idx = router2d.mesh().tri_coupled_node[tri_idx];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_vertex_coupled_node(SWMM_Engine engine, int vertex_idx,
+                                      const char* node_name) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_VERT_IDX(vertex_idx, router2d);
+
+    auto& m = router2d.mesh();
+    if (!node_name || node_name[0] == '\0') {
+        m.vert_coupled_node_name[vertex_idx].clear();
+        m.vert_coupled_node[vertex_idx] = -1;
+    } else {
+        m.vert_coupled_node_name[vertex_idx] = node_name;
+        // Resolve against the live model now; -1 (unknown) is tolerated —
+        // the .inp writer emits the stored name regardless, so the coupling
+        // survives a save even before the node exists / is re-resolved.
+        m.vert_coupled_node[vertex_idx] =
+            eng->context().node_names.find(node_name);
+    }
     return SWMM_OK;
 }
 
@@ -390,8 +443,13 @@ int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine, double* flux) {
     if (!flux) return SWMM_ERR_BADPARAM;
 
     auto& s = router2d.state();
-    std::memcpy(flux, s.edge_flux.data(),
-                s.edge_flux.size() * sizeof(double));
+    // Output convention is OUTWARD-positive (openswmm_2d.h): positive flux
+    // leaves the cell through the edge's outward normal. The integrator stores
+    // edge_flux INFLOW-positive, so flip the sign on the way out. The internal
+    // state is untouched (the volume update relies on the inflow-positive array).
+    const auto& ef = s.edge_flux;
+    for (std::size_t i = 0; i < ef.size(); ++i)
+        flux[i] = -ef[i];
     return SWMM_OK;
 }
 
