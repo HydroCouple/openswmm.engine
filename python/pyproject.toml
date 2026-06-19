@@ -279,12 +279,16 @@ fi
 # feature (Kokkos + sundials[kokkos]) is NOT built/linked here. Mirrors the
 # CMake-side opt-out in python/CMakeLists.txt; keeps this wheel Kokkos-free and
 # portable. OpenMP acceleration ships via the openswmm-gpu-omp companion wheel.
+# `hypre` IS pulled here so PRECONDITIONER=AMG (the 2D solver default) works in
+# the wheel via the serial BoomerAMG preconditioner — must mirror the `2d;hypre`
+# feature list in python/CMakeLists.txt (OPENSWMM_WITH_HYPRE defaults ON).
 /host/vcpkg/vcpkg install \
   --triplet "$VCPKG_TRIPLET" \
   --x-manifest-root /project \
   --x-install-root /host/vcpkg/installed \
   --x-no-default-features \
-  --x-feature 2d
+  --x-feature 2d \
+  --x-feature hypre
 """
 before-build = "pip install ninja"
 environment  = { VCPKG_ROOT = "/host/vcpkg", CMAKE_POLICY_VERSION_MINIMUM = "3.5" }

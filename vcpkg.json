@@ -23,7 +23,8 @@
     ],
     "default-features": [
         "2d",
-        "gpu"
+        "gpu",
+        "hypre"
     ],
     "features": {
         "2d": {

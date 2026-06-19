@@ -35,8 +35,13 @@ if(NOT DEFINED CACHE{VCPKG_MANIFEST_NO_DEFAULT_FEATURES})
         "Companion pulls only the gpu feature, not the engine defaults" FORCE)
 endif()
 if(NOT DEFINED CACHE{VCPKG_MANIFEST_FEATURES})
-    set(VCPKG_MANIFEST_FEATURES "gpu" CACHE STRING
-        "Kokkos + SUNDIALS[kokkos] for the OpenMP plugin" FORCE)
+    # gpu   → Kokkos + SUNDIALS[kokkos] for the OpenMP plugin.
+    # hypre → BoomerAMG so the plugin's PRECONDITIONER=AMG path (the Kokkos
+    #         KokkosAmgPreconditioner) is compiled; OPENSWMM_WITH_HYPRE defaults
+    #         ON, so this must be listed or the plugin build fails at
+    #         find_package(HYPRE REQUIRED).
+    set(VCPKG_MANIFEST_FEATURES "gpu;hypre" CACHE STRING
+        "Kokkos + SUNDIALS[kokkos] + hypre BoomerAMG for the OpenMP plugin" FORCE)
 endif()
 
 # Auto-load the vcpkg toolchain from VCPKG_ROOT (mirrors python/CMakeLists.txt).

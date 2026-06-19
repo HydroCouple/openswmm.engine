@@ -121,7 +121,8 @@ git clone --depth 1 --branch "${VCPKG_REF:-2025.02.14}" https://github.com/micro
   --x-manifest-root /project \
   --x-install-root /host/vcpkg/installed \
   --x-no-default-features \
-  --x-feature gpu
+  --x-feature gpu \
+  --x-feature hypre
 """
 before-build = "pip install ninja"
 environment  = { VCPKG_ROOT = "/host/vcpkg", CMAKE_POLICY_VERSION_MINIMUM = "3.5" }

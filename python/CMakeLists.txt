@@ -77,8 +77,15 @@ if(NOT DEFINED CACHE{VCPKG_MANIFEST_NO_DEFAULT_FEATURES})
         "Base wheel opts out of vcpkg default-features (excludes gpu/Kokkos)" FORCE)
 endif()
 if(NOT DEFINED CACHE{VCPKG_MANIFEST_FEATURES})
-    set(VCPKG_MANIFEST_FEATURES "2d" CACHE STRING
-        "Explicit vcpkg features for the CPU-only base wheel" FORCE)
+    # 2d  → SUNDIALS/CVODE + HDF5 (the surface solver + its output).
+    # hypre → BoomerAMG preconditioner so PRECONDITIONER=AMG (the 2D solver's
+    #         default) works in the published wheel. Pulls BLAS/LAPACK (+ MPI on
+    #         some ports, used sequentially via MPI_COMM_SELF); keeps the wheel
+    #         CPU-only/Kokkos-free — AMG here is the serial HypreAmgPreconditioner.
+    #         OPENSWMM_WITH_HYPRE defaults ON, so this must stay listed or the
+    #         build fails at find_package(HYPRE REQUIRED).
+    set(VCPKG_MANIFEST_FEATURES "2d;hypre" CACHE STRING
+        "Explicit vcpkg features for the CPU-only base wheel (2d + hypre BoomerAMG)" FORCE)
 endif()
 
 # Auto-load vcpkg toolchain when VCPKG_ROOT is set in the environment.
