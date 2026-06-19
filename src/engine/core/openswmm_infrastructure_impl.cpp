@@ -584,8 +584,72 @@ SWMM_ENGINE_API int swmm_lid_usage_add(SWMM_Engine engine, int subcatch_idx, int
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(subcatch_idx >= 0 && subcatch_idx < ctx.n_subcatches());
-    (void)lid_idx; (void)number; (void)area; (void)width; (void)init_sat; (void)from_imperv;
-    // TODO: implement when LID usage SoA store is expanded
+    CHECK_INDEX(lid_idx >= 0 && lid_idx < ctx.lid_controls.count());
+    auto& u = ctx.lid_usage;
+    u.subcatch_index.push_back(subcatch_idx);
+    u.lid_index.push_back(lid_idx);
+    u.number.push_back(number);
+    u.area.push_back(area);
+    u.width.push_back(width);
+    u.init_sat.push_back(init_sat);
+    u.from_imperv.push_back(from_imperv);
+    u.to_perv.push_back(0);
+    u.rpt_file.emplace_back();
+    u.drain_to.emplace_back();
+    u.from_perv.push_back(0.0);
+    u.resize_wb(u.count());   // keep water-balance vectors sized to the config rows
+    return SWMM_OK;
+}
+
+// Total number of LID usage rows across all subcatchments. To enumerate the
+// usages on one subcatchment, iterate [0, count) and filter on the
+// subcatch_idx returned by swmm_lid_usage_get (mirrors how ext-inflows are
+// filtered per node).
+SWMM_ENGINE_API int swmm_lid_usage_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return to_engine(engine)->context().lid_usage.count();
+}
+
+// Read one LID usage row by global index. Any out-param may be null.
+SWMM_ENGINE_API int swmm_lid_usage_get(SWMM_Engine engine, int usage_idx,
+                                       int* subcatch_idx, int* lid_idx, int* number,
+                                       double* area, double* width, double* init_sat,
+                                       double* from_imperv, int* to_perv, double* from_perv) {
+    CHECK_HANDLE(engine);
+    const auto& u = to_engine(engine)->context().lid_usage;
+    CHECK_INDEX(usage_idx >= 0 && usage_idx < u.count());
+    auto ui = static_cast<std::size_t>(usage_idx);
+    if (subcatch_idx) *subcatch_idx = u.subcatch_index[ui];
+    if (lid_idx)      *lid_idx      = u.lid_index[ui];
+    if (number)       *number       = u.number[ui];
+    if (area)         *area         = u.area[ui];
+    if (width)        *width        = u.width[ui];
+    if (init_sat)     *init_sat     = u.init_sat[ui];
+    if (from_imperv)  *from_imperv  = u.from_imperv[ui];
+    if (to_perv)      *to_perv      = u.to_perv[ui];
+    if (from_perv)    *from_perv    = u.from_perv[ui];
+    return SWMM_OK;
+}
+
+// Remove one LID usage row by global index (erases the row from every parallel
+// vector in lockstep). Indices of later rows shift down by one.
+SWMM_ENGINE_API int swmm_lid_usage_remove(SWMM_Engine engine, int usage_idx) {
+    CHECK_HANDLE(engine);
+    auto& u = to_engine(engine)->context().lid_usage;
+    CHECK_INDEX(usage_idx >= 0 && usage_idx < u.count());
+    auto ui = static_cast<std::ptrdiff_t>(usage_idx);
+    u.subcatch_index.erase(u.subcatch_index.begin() + ui);
+    u.lid_index.erase(u.lid_index.begin() + ui);
+    u.number.erase(u.number.begin() + ui);
+    u.area.erase(u.area.begin() + ui);
+    u.width.erase(u.width.begin() + ui);
+    u.init_sat.erase(u.init_sat.begin() + ui);
+    u.from_imperv.erase(u.from_imperv.begin() + ui);
+    u.to_perv.erase(u.to_perv.begin() + ui);
+    u.rpt_file.erase(u.rpt_file.begin() + ui);
+    u.drain_to.erase(u.drain_to.begin() + ui);
+    u.from_perv.erase(u.from_perv.begin() + ui);
+    u.resize_wb(u.count());
     return SWMM_OK;
 }
 

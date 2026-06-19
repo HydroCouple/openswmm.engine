@@ -178,6 +178,21 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_green_ampt(SWMM_Engine engine, int i
 SWMM_ENGINE_API int swmm_subcatch_set_infil_curve_number(SWMM_Engine engine, int idx,
                                                            double cn);
 
+/**
+ * @brief Set ONLY the infiltration model code for a subcatchment.
+ *
+ * @details model: 0=HORTON, 1=MOD_HORTON, 2=GREEN_AMPT, 3=MOD_GREEN_AMPT,
+ *          4=CURVE_NUMBER. The per-model parameters are positionally
+ *          overloaded, so after switching the model code callers should set
+ *          the matching parameters via swmm_subcatch_set_infil_horton /
+ *          _green_ampt / _curve_number.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based subcatchment index.
+ * @param model   Infiltration model code (0..4).
+ * @returns SWMM_OK, or SWMM_ERR_BADPARAM if model is out of range.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_infil_model(SWMM_Engine engine, int idx, int model);
+
 /* =========================================================================
  * Property getters
  * ========================================================================= */
@@ -455,6 +470,48 @@ SWMM_ENGINE_API int swmm_subcatch_get_snow_depth(SWMM_Engine engine, int idx, do
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_evap(SWMM_Engine engine, int idx, double* evap);
+
+/* =========================================================================
+ * Groundwater configuration ([GROUNDWATER])
+ * =========================================================================
+ * Configure a subcatchment's [GROUNDWATER] flow routing. Values are stored
+ * exactly as parsed from the input file (raw user units) so they round-trip
+ * identically. Distinct from the runtime gw STATE (theta / lower_depth)
+ * injected via swmm_subcatch_set_gw_state. All are BUILDING/OPENED editable.
+ */
+
+/** @brief Assign the aquifer (by index, -1 = none) used by a subcatchment. */
+SWMM_ENGINE_API int swmm_subcatch_set_aquifer(SWMM_Engine engine, int idx, int aquifer_idx);
+
+/** @brief Get the aquifer index assigned to a subcatchment (-1 = none). */
+SWMM_ENGINE_API int swmm_subcatch_get_aquifer(SWMM_Engine engine, int idx, int* aquifer_idx);
+
+/** @brief Set the node (by index, -1 = none) receiving the subcatchment's groundwater flow. */
+SWMM_ENGINE_API int swmm_subcatch_set_gw_node(SWMM_Engine engine, int idx, int node_idx);
+
+/** @brief Get the node index receiving the subcatchment's groundwater flow (-1 = none). */
+SWMM_ENGINE_API int swmm_subcatch_get_gw_node(SWMM_Engine engine, int idx, int* node_idx);
+
+/**
+ * @brief Set the groundwater flow parameters ([GROUNDWATER] token order).
+ * @param surf_elev  Surface elevation (SurfEl).
+ * @param a1,b1      Groundwater outflow coefficient & exponent.
+ * @param a2,b2      Surface-water outflow coefficient & exponent.
+ * @param a3         Surface/groundwater interaction coefficient.
+ * @param tw         Threshold groundwater table elevation (Twgr).
+ * @param hstar      Water-table elevation at which lateral GW flow ceases (Hstar).
+ * @returns SWMM_OK or error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_gw_params(SWMM_Engine engine, int idx,
+                                                double surf_elev, double a1, double b1,
+                                                double a2, double b2, double a3,
+                                                double tw, double hstar);
+
+/** @brief Get the groundwater flow parameters (see swmm_subcatch_set_gw_params). */
+SWMM_ENGINE_API int swmm_subcatch_get_gw_params(SWMM_Engine engine, int idx,
+                                                double* surf_elev, double* a1, double* b1,
+                                                double* a2, double* b2, double* a3,
+                                                double* tw, double* hstar);
 
 /* =========================================================================
  * State injection (data assimilation)

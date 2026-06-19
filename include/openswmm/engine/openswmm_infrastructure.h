@@ -518,6 +518,42 @@ SWMM_ENGINE_API const char* swmm_lid_id(SWMM_Engine engine, int idx);
  */
 SWMM_ENGINE_API int swmm_lid_usage_add(SWMM_Engine engine, int subcatch_idx, int lid_idx, int number, double area, double width, double init_sat, double from_imperv);
 
+/**
+ * @brief Total number of LID usage rows across all subcatchments.
+ * @details To enumerate the usages on one subcatchment, iterate
+ *          [0, count) and filter on the subcatch index returned by
+ *          swmm_lid_usage_get.
+ * @returns The usage count, or -1 on a bad handle.
+ */
+SWMM_ENGINE_API int swmm_lid_usage_count(SWMM_Engine engine);
+
+/**
+ * @brief Read one LID usage row by global index.
+ * @param engine             Engine handle.
+ * @param usage_idx          Zero-based global usage index ([0, count)).
+ * @param[out] subcatch_idx  Owning subcatchment index (nullable).
+ * @param[out] lid_idx       LID control index (nullable).
+ * @param[out] number        Number of replicate units (nullable).
+ * @param[out] area          Area per unit (nullable).
+ * @param[out] width         Overland flow top width (nullable).
+ * @param[out] init_sat      Initial saturation 0–1 (nullable).
+ * @param[out] from_imperv   Fraction of impervious runoff treated (nullable).
+ * @param[out] to_perv       1 = route outflow to pervious area (nullable).
+ * @param[out] from_perv     Fraction of pervious runoff treated (nullable).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_lid_usage_get(SWMM_Engine engine, int usage_idx,
+                                       int* subcatch_idx, int* lid_idx, int* number,
+                                       double* area, double* width, double* init_sat,
+                                       double* from_imperv, int* to_perv, double* from_perv);
+
+/**
+ * @brief Remove one LID usage row by global index.
+ * @details Later usage indices shift down by one after removal.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_lid_usage_remove(SWMM_Engine engine, int usage_idx);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

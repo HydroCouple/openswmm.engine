@@ -212,6 +212,23 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_curve_number(SWMM_Engine engine, int
     return SWMM_OK;
 }
 
+// Set ONLY the infiltration model code (0=HORTON, 1=MOD_HORTON, 2=GREEN_AMPT,
+// 3=MOD_GREEN_AMPT, 4=CURVE_NUMBER). The per-model parameters in infil_p1..p5
+// are positionally overloaded (their meaning depends on the model), so a model
+// switch leaves the stored parameters interpreted under the new model. Callers
+// that change the model type should follow this with the matching
+// swmm_subcatch_set_infil_horton / _green_ampt / _curve_number call to install
+// the correct parameters. Returns SWMM_ERR_BADPARAM for an out-of-range code.
+SWMM_ENGINE_API int swmm_subcatch_set_infil_model(SWMM_Engine engine, int idx, int model) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    if (model < 0 || model > 4) return SWMM_ERR_BADPARAM;
+    ctx.subcatches.infil_model[static_cast<std::size_t>(idx)] = model;
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Property getters
 // ============================================================================
@@ -480,6 +497,90 @@ SWMM_ENGINE_API int swmm_subcatch_get_snow_depth(SWMM_Engine engine, int idx, do
     // internal ft → user depth units (in US, mm SI)
     if (depth) *depth = to_display(ctx, openswmm::ucf::RAINDEPTH,
                                    eng->subcatchSnowDepth(idx));
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Groundwater configuration ([GROUNDWATER])
+// ============================================================================
+// These configure the subcatchment's [GROUNDWATER] flow routing. Values are
+// stored exactly as parsed from the input file (raw user units, no internal
+// conversion) so they round-trip identically — mirroring HydrologyHandler's
+// handle_groundwater(). This is distinct from the runtime gw STATE
+// (theta / lower_depth) injected via swmm_subcatch_set_gw_state below.
+
+SWMM_ENGINE_API int swmm_subcatch_set_aquifer(SWMM_Engine engine, int idx, int aquifer_idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    ctx.subcatches.gw_aquifer[static_cast<std::size_t>(idx)] = aquifer_idx;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_aquifer(SWMM_Engine engine, int idx, int* aquifer_idx) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    if (aquifer_idx) *aquifer_idx = ctx.subcatches.gw_aquifer[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_set_gw_node(SWMM_Engine engine, int idx, int node_idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    ctx.subcatches.gw_node[static_cast<std::size_t>(idx)] = node_idx;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_gw_node(SWMM_Engine engine, int idx, int* node_idx) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    if (node_idx) *node_idx = ctx.subcatches.gw_node[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+// Groundwater flow parameters, in [GROUNDWATER] token order:
+// SurfEl, A1, B1, A2, B2, A3, Twgr (gw_tw), Hstar (gw_hstar). Stored raw.
+SWMM_ENGINE_API int swmm_subcatch_set_gw_params(SWMM_Engine engine, int idx,
+                                                double surf_elev, double a1, double b1,
+                                                double a2, double b2, double a3,
+                                                double tw, double hstar) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    auto uidx = static_cast<std::size_t>(idx);
+    ctx.subcatches.gw_surf_elev[uidx] = surf_elev;
+    ctx.subcatches.gw_a1[uidx]        = a1;
+    ctx.subcatches.gw_b1[uidx]        = b1;
+    ctx.subcatches.gw_a2[uidx]        = a2;
+    ctx.subcatches.gw_b2[uidx]        = b2;
+    ctx.subcatches.gw_a3[uidx]        = a3;
+    ctx.subcatches.gw_tw[uidx]        = tw;
+    ctx.subcatches.gw_hstar[uidx]     = hstar;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_gw_params(SWMM_Engine engine, int idx,
+                                                double* surf_elev, double* a1, double* b1,
+                                                double* a2, double* b2, double* a3,
+                                                double* tw, double* hstar) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    auto uidx = static_cast<std::size_t>(idx);
+    if (surf_elev) *surf_elev = ctx.subcatches.gw_surf_elev[uidx];
+    if (a1)        *a1        = ctx.subcatches.gw_a1[uidx];
+    if (b1)        *b1        = ctx.subcatches.gw_b1[uidx];
+    if (a2)        *a2        = ctx.subcatches.gw_a2[uidx];
+    if (b2)        *b2        = ctx.subcatches.gw_b2[uidx];
+    if (a3)        *a3        = ctx.subcatches.gw_a3[uidx];
+    if (tw)        *tw        = ctx.subcatches.gw_tw[uidx];
+    if (hstar)     *hstar     = ctx.subcatches.gw_hstar[uidx];
     return SWMM_OK;
 }
 
