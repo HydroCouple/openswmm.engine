@@ -33,6 +33,126 @@ static inline int omp_get_max_threads() { return 1; }
 
 namespace openswmm::twoD {
 
+void SurfaceRouter2D::drainPendingRows() {
+    if (mesh_.n_triangles() < 1) return;             // nothing to drain into
+
+    // Initialize per-edge boundary condition storage (n_triangles * 3 slots,
+    // all initialized to WALL with zero head/slope/cum_flux).
+    boundary_.resize(mesh_.n_triangles() * 3);
+
+    // V-E3 — drain any [2D_BOUNDARY_CONDITIONS] rows the parser accumulated
+    // into boundary_. Out-of-range rows are silently skipped — defensive
+    // against partial INPs.
+    {
+        const int n_edges = boundary_.size();
+        for (const auto& r : pending_bc_rows_) {
+            if (r.tri < 0 || r.tri >= mesh_.n_triangles()) continue;
+            if (r.edge < 0 || r.edge > 2) continue;
+            const int idx = r.tri * 3 + r.edge;
+            if (idx < 0 || idx >= n_edges) continue;
+            boundary_.edge_bc_type[idx] = static_cast<int8_t>(r.bc_type);
+            switch (static_cast<BoundaryType>(r.bc_type)) {
+            case BoundaryType::NORMAL_FLOW:
+                boundary_.edge_bed_slope[idx] = r.param1;
+                break;
+            case BoundaryType::SPECIFIED_STAGE:
+                if (!r.name.empty()) {
+                    boundary_.edge_bc_tseries_name[idx] = r.name;
+                    boundary_.edge_bc_tseries[idx]      = -2;  // deferred resolve
+                } else {
+                    boundary_.edge_bc_head[idx] = r.param1;
+                }
+                break;
+            case BoundaryType::SPECIFIED_FLOW:
+                if (!r.name.empty()) {
+                    boundary_.edge_bc_flow_tseries_name[idx] = r.name;
+                    boundary_.edge_bc_flow_tseries[idx]      = -2;
+                } else {
+                    boundary_.edge_bc_flow[idx] = r.param1;
+                }
+                break;
+            case BoundaryType::RATING_CURVE:
+                boundary_.edge_bc_rating_curve_name[idx] = r.name;
+                boundary_.edge_bc_rating_curve[idx]      = -2;
+                break;
+            case BoundaryType::WALL:
+                break;
+            }
+        }
+        // pending_bc_rows_ NOT cleared: retained so InpWriter / GeoPackage can
+        // serialize the authored rows (group label, TS-vs-constant choice,
+        // authored NORMAL_FLOW slope=0 sentinel are unrecoverable from
+        // boundary_). Re-draining is idempotent (resize re-defaults first).
+    }
+
+    // §11A — drain [2D_EDGE_CONVEYANCE] rows. Build a one-shot vertex-pair ->
+    // list-of-(tri*3+edge_local) slot map, then write each parsed factor into
+    // every matching slot (naturally mirroring interior edges).
+    {
+        struct EdgeKey {
+            std::int64_t packed;  ///< (min_v << 32) | max_v
+            bool operator==(EdgeKey o) const noexcept { return packed == o.packed; }
+        };
+        struct EdgeKeyHash {
+            std::size_t operator()(EdgeKey k) const noexcept {
+                return std::hash<std::int64_t>{}(k.packed);
+            }
+        };
+        auto makeKey = [](int va, int vb) -> EdgeKey {
+            const std::int64_t lo = std::min(va, vb);
+            const std::int64_t hi = std::max(va, vb);
+            return EdgeKey{ (lo << 32) | (hi & 0xFFFFFFFFLL) };
+        };
+
+        std::unordered_map<EdgeKey, std::vector<int>, EdgeKeyHash> edge_key_to_slots;
+        edge_key_to_slots.reserve(static_cast<std::size_t>(mesh_.n_triangles()) * 3);
+
+        const int nt = mesh_.n_triangles();
+        for (int t = 0; t < nt; ++t) {
+            const int v[3] = { mesh_.tri_v0[t], mesh_.tri_v1[t], mesh_.tri_v2[t] };
+            for (int e = 0; e < 3; ++e) {
+                const int va = v[(e + 1) % 3];
+                const int vb = v[(e + 2) % 3];
+                edge_key_to_slots[makeKey(va, vb)].push_back(t * 3 + e);
+            }
+        }
+
+        for (const auto& r : pending_edge_conveyance_rows_) {
+            if (r.v_from < 0 || r.v_from >= mesh_.n_vertices() ||
+                r.v_to   < 0 || r.v_to   >= mesh_.n_vertices()) {
+                throw std::runtime_error(
+                    "[2D_EDGE_CONVEYANCE]: vertex index out of range ("
+                    + std::to_string(r.v_from) + ", " + std::to_string(r.v_to)
+                    + "); n_vertices = " + std::to_string(mesh_.n_vertices()));
+            }
+            auto it = edge_key_to_slots.find(makeKey(r.v_from, r.v_to));
+            if (it == edge_key_to_slots.end()) {
+                throw std::runtime_error(
+                    "[2D_EDGE_CONVEYANCE]: vertices ("
+                    + std::to_string(r.v_from) + ", " + std::to_string(r.v_to)
+                    + ") do not form a mesh edge");
+            }
+            for (const int slot : it->second) {
+                mesh_.edge_conveyance[slot] = r.conveyance;
+            }
+        }
+    }
+
+    // From here on the drained arrays are the live state (API mutators edit
+    // them, not the pending rows) — tell the serialization collectors to read
+    // the arrays instead of the now-stale rows.
+    options_.pending_rows_drained = true;
+}
+
+void SurfaceRouter2D::prepareForEdit() {
+    // Make the parsed mesh editable in OPENED (not INITIALIZED) state: size
+    // BoundaryData and move the authored BC / conveyance rows into the live
+    // arrays so per-edge API edits take effect and serialize on save. Guarded
+    // so it never re-drains over edits already made (initialize() re-defaults;
+    // this must not).
+    if (!options_.pending_rows_drained) drainPendingRows();
+}
+
 void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Check if 2D sections were parsed (vertices present)
     if (mesh_.n_vertices() < 3 || mesh_.n_triangles() < 1) {
@@ -129,126 +249,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Initialize surface state
     state_.resize(mesh_.n_triangles(), mesh_.n_vertices());
 
-    // Initialize per-edge boundary condition storage (n_triangles * 3 slots,
-    // all initialized to WALL with zero head/slope/cum_flux).
-    boundary_.resize(mesh_.n_triangles() * 3);
-
-    // V-E3 — drain any [2D_BOUNDARY_CONDITIONS] rows the parser
-    // accumulated into boundary_. Out-of-range (tri/edge beyond mesh
-    // size) rows are silently skipped — defensive against partial INPs.
-    {
-        const int n_edges = boundary_.size();
-        for (const auto& r : pending_bc_rows_) {
-            if (r.tri < 0 || r.tri >= mesh_.n_triangles()) continue;
-            if (r.edge < 0 || r.edge > 2) continue;
-            const int idx = r.tri * 3 + r.edge;
-            if (idx < 0 || idx >= n_edges) continue;
-            boundary_.edge_bc_type[idx] = static_cast<int8_t>(r.bc_type);
-            switch (static_cast<BoundaryType>(r.bc_type)) {
-            case BoundaryType::NORMAL_FLOW:
-                boundary_.edge_bed_slope[idx] = r.param1;
-                break;
-            case BoundaryType::SPECIFIED_STAGE:
-                if (!r.name.empty()) {
-                    boundary_.edge_bc_tseries_name[idx] = r.name;
-                    boundary_.edge_bc_tseries[idx]      = -2;  // deferred resolve
-                } else {
-                    boundary_.edge_bc_head[idx] = r.param1;
-                }
-                break;
-            case BoundaryType::SPECIFIED_FLOW:
-                if (!r.name.empty()) {
-                    boundary_.edge_bc_flow_tseries_name[idx] = r.name;
-                    boundary_.edge_bc_flow_tseries[idx]      = -2;
-                } else {
-                    boundary_.edge_bc_flow[idx] = r.param1;
-                }
-                break;
-            case BoundaryType::RATING_CURVE:
-                boundary_.edge_bc_rating_curve_name[idx] = r.name;
-                boundary_.edge_bc_rating_curve[idx]      = -2;
-                break;
-            case BoundaryType::WALL:
-                break;
-            }
-        }
-        // NOT cleared: retained so InpWriter / GeoPackage can serialize the
-        // authored rows (group label, TS-vs-constant choice, authored
-        // NORMAL_FLOW slope=0 sentinel are unrecoverable from boundary_).
-        // Re-draining on a second initialize() is idempotent because
-        // boundary_.resize() re-defaults every slot first.
-    }
-
-    // §11A — drain [2D_EDGE_CONVEYANCE] rows.
-    //
-    // Build a one-shot vertex-pair → list-of-(tri*3+edge_local) slot map by
-    // walking the mesh once.  Each parsed (FROM, TO) row hashes into the
-    // map (with vertices sorted so the key is direction-symmetric) and
-    // writes the conveyance factor into every matching slot — naturally
-    // mirroring across interior edges (Q3 silent partner mirror) and
-    // gracefully handling the single-slot case for boundary edges.
-    {
-        struct EdgeKey {
-            std::int64_t packed;  ///< (min_v << 32) | max_v
-            bool operator==(EdgeKey o) const noexcept { return packed == o.packed; }
-        };
-        struct EdgeKeyHash {
-            std::size_t operator()(EdgeKey k) const noexcept {
-                return std::hash<std::int64_t>{}(k.packed);
-            }
-        };
-        auto makeKey = [](int va, int vb) -> EdgeKey {
-            const std::int64_t lo = std::min(va, vb);
-            const std::int64_t hi = std::max(va, vb);
-            return EdgeKey{ (lo << 32) | (hi & 0xFFFFFFFFLL) };
-        };
-
-        std::unordered_map<EdgeKey, std::vector<int>, EdgeKeyHash> edge_key_to_slots;
-        edge_key_to_slots.reserve(static_cast<std::size_t>(mesh_.n_triangles()) * 3);
-
-        const int nt = mesh_.n_triangles();
-        for (int t = 0; t < nt; ++t) {
-            const int v[3] = { mesh_.tri_v0[t], mesh_.tri_v1[t], mesh_.tri_v2[t] };
-            for (int e = 0; e < 3; ++e) {
-                // Local edge e is opposite vertex e, connecting v[(e+1)%3] and v[(e+2)%3].
-                const int va = v[(e + 1) % 3];
-                const int vb = v[(e + 2) % 3];
-                edge_key_to_slots[makeKey(va, vb)].push_back(t * 3 + e);
-            }
-        }
-
-        for (const auto& r : pending_edge_conveyance_rows_) {
-            if (r.v_from < 0 || r.v_from >= mesh_.n_vertices() ||
-                r.v_to   < 0 || r.v_to   >= mesh_.n_vertices()) {
-                throw std::runtime_error(
-                    "[2D_EDGE_CONVEYANCE]: vertex index out of range ("
-                    + std::to_string(r.v_from) + ", " + std::to_string(r.v_to)
-                    + "); n_vertices = " + std::to_string(mesh_.n_vertices()));
-            }
-            auto it = edge_key_to_slots.find(makeKey(r.v_from, r.v_to));
-            if (it == edge_key_to_slots.end()) {
-                throw std::runtime_error(
-                    "[2D_EDGE_CONVEYANCE]: vertices ("
-                    + std::to_string(r.v_from) + ", " + std::to_string(r.v_to)
-                    + ") do not form a mesh edge");
-            }
-            // Q3 — silent partner mirroring: write the same factor into
-            // every slot the edge-key resolves to (1 slot for boundary
-            // edges, 2 for interior).  Duplicate parse-row last-write-wins
-            // falls out naturally because we just overwrite.
-            for (const int slot : it->second) {
-                mesh_.edge_conveyance[slot] = r.conveyance;
-            }
-        }
-        // NOT cleared: retained for faithful re-serialization (see the
-        // pending-BC note above). The drain overwrites slots, so a second
-        // initialize() reproduces the same edge_conveyance values.
-
-        // From here on the drained arrays are the live state (API mutators
-        // edit them, not the pending rows) — tell the serialization
-        // collectors to read the arrays instead of the now-stale rows.
-        options_.pending_rows_drained = true;
-    }
+    // Drain pending [2D_BOUNDARY_CONDITIONS] / [2D_EDGE_CONVEYANCE] rows into
+    // BoundaryData / mesh edge slots (sizes boundary_, flips the drained flag).
+    drainPendingRows();
 
     // Set initial heads from ground elevation
     for (int i = 0; i < mesh_.n_triangles(); ++i) {
@@ -360,13 +363,18 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     options_.num_threads = 1;
 #endif
 
+    // Attach the per-edge boundary conditions to the state so the flux kernels
+    // (serial computeEdgeFluxes and the Kokkos RHS) apply them at boundary
+    // edges instead of walling them. Non-owning: boundary_ outlives state_.
+    state_.boundary = &boundary_;
+
 #ifdef OPENSWMM_HAS_2D
     // Construct the time integrator. The backend (serial CPU vs. a runtime-
     // loaded GPU plugin) is resolved by makeSurfaceSolver from the
     // OPENSWMM_2D_BACKEND policy; absent/unusable plugins fall back to the
     // serial CPU solver. See docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md §4.2.
     if (!solver_) {
-        solver_ = makeSurfaceSolver(options_);
+        solver_ = makeSurfaceSolver(options_, nullptr, mesh_.n_triangles());
     }
     solver_->initialize(mesh_, state_, options_);
 #endif
@@ -454,6 +462,11 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
         }
     }
 
+    // Resolve time-varying / rating-curve boundary driving values for this step
+    // (host-side; the kernels read the resolved edge_bc_head / edge_bc_flow).
+    // No-op for WALL / NORMAL_FLOW and for constant SPECIFIED_* edges.
+    resolveBoundaryValues(ctx, t);
+
 #ifdef OPENSWMM_HAS_2D
     // Advance CVODE by dt
     double t_target = sim_time_ + dt;
@@ -466,6 +479,20 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
     // not the accepted state.
     computeEdgeFluxes(mesh_, state_, options_);
 #endif
+
+    // Boundary outflow over the step: integrate the refreshed end-of-step
+    // boundary edge fluxes (inflow-positive) as −F·dt (outward-positive) into
+    // the cumulative tracker the 2D mass balance reads (accumulateMassBalance).
+    // First-order in dt (end-of-step flux), consistent with computeCellContinuity.
+    {
+        const int ne = boundary_.size();
+        for (int idx = 0; idx < ne; ++idx) {
+            if (static_cast<BoundaryType>(boundary_.edge_bc_type[idx])
+                != BoundaryType::WALL) {
+                boundary_.edge_bc_cum_flux[idx] += -state_.edge_flux[idx] * dt;
+            }
+        }
+    }
 
     sim_time_ += dt;
 
@@ -574,6 +601,63 @@ void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
 
     for (int i = 0; i < nt; ++i) {
         state_.rainfall[i] = rain_m_per_s;
+    }
+}
+
+
+void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
+    const int ne = boundary_.size();
+    if (ne == 0) return;
+
+    // One-shot: resolve deferred timeseries / curve names to registry indices.
+    // ctx.table_names is only populated post-parse, so this can't happen at
+    // parse time; -2 = "name pending", -1 = not found (then treated as constant).
+    if (!boundary_names_resolved_) {
+        boundary_names_resolved_ = true;
+        for (int idx = 0; idx < ne; ++idx) {
+            if (boundary_.edge_bc_tseries[idx] == -2)
+                boundary_.edge_bc_tseries[idx] =
+                    ctx.table_names.find(boundary_.edge_bc_tseries_name[idx]);
+            if (boundary_.edge_bc_flow_tseries[idx] == -2)
+                boundary_.edge_bc_flow_tseries[idx] =
+                    ctx.table_names.find(boundary_.edge_bc_flow_tseries_name[idx]);
+            if (boundary_.edge_bc_rating_curve[idx] == -2)
+                boundary_.edge_bc_rating_curve[idx] =
+                    ctx.table_names.find(boundary_.edge_bc_rating_curve_name[idx]);
+        }
+    }
+
+    const int n_tables = static_cast<int>(ctx.tables.tables.size());
+    for (int idx = 0; idx < ne; ++idx) {
+        switch (static_cast<BoundaryType>(boundary_.edge_bc_type[idx])) {
+            case BoundaryType::SPECIFIED_STAGE: {
+                const int ts = boundary_.edge_bc_tseries[idx];
+                if (ts >= 0 && ts < n_tables)
+                    boundary_.edge_bc_head[idx] =
+                        table_lookup_cursor(ctx.tables.tables[ts], t);
+                break;  // else constant: edge_bc_head already holds the value
+            }
+            case BoundaryType::SPECIFIED_FLOW: {
+                const int ts = boundary_.edge_bc_flow_tseries[idx];
+                if (ts >= 0 && ts < n_tables)
+                    boundary_.edge_bc_flow[idx] =
+                        table_lookup_cursor(ctx.tables.tables[ts], t);
+                break;
+            }
+            case BoundaryType::RATING_CURVE: {
+                const int cv = boundary_.edge_bc_rating_curve[idx];
+                if (cv >= 0 && cv < n_tables) {
+                    // Stage = boundary cell water-surface elevation (lagged to
+                    // start-of-step). Curve maps stage → outward discharge per
+                    // metre of edge (m³/s/m), consistent with SPECIFIED_FLOW.
+                    const int i = idx / 3;
+                    boundary_.edge_bc_flow[idx] =
+                        table_lookupEx(ctx.tables.tables[cv], state_.head[i]);
+                }
+                break;
+            }
+            default: break;  // WALL, NORMAL_FLOW — nothing to resolve per step
+        }
     }
 }
 

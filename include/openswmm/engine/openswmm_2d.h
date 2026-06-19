@@ -54,6 +54,18 @@ extern "C" {
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_is_active(SWMM_Engine engine, int* active);
 
+/** @brief Make the parsed 2D mesh editable without a full initialize().
+ *
+ *  The mesh-edit/query setters work as soon as the mesh is parsed (OPENED
+ *  state) — they do not require the solver to be initialized. Per-edge BC and
+ *  conveyance edits additionally need the authored `[2D_BOUNDARY_CONDITIONS]`
+ *  / `[2D_EDGE_CONVEYANCE]` rows drained into live storage first; call this
+ *  once before editing those so the changes take effect and are written on
+ *  save. No-op when already initialized/drained or when no mesh is loaded.
+ *  @returns SWMM_OK, or SWMM_ERR_BADPARAM when no 2D mesh is present.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_prepare_for_edit(SWMM_Engine engine);
+
 /* =========================================================================
  * Mesh Geometry — Query (read-only after initialization)
  * ========================================================================= */
@@ -143,6 +155,20 @@ SWMM_ENGINE_API int swmm_2d_set_vertex_tag(SWMM_Engine engine, int idx,
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_triangle_tag(SWMM_Engine engine, int idx,
                                                const char* tag);
+
+/** @brief Get the descriptive tag of a vertex (the `[2D_VERTICES]` TAG
+ *         column). Copies up to `buflen-1` bytes into `buf` and always
+ *         NUL-terminates; empty string when the vertex has no tag.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_vertex_tag(SWMM_Engine engine, int idx,
+                                           char* buf, int buflen);
+
+/** @brief Get the descriptive tag of a triangle (the `[2D_TRIANGLES]` TAG
+ *         column). Copies up to `buflen-1` bytes into `buf` and always
+ *         NUL-terminates; empty string when the triangle has no tag.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_triangle_tag(SWMM_Engine engine, int idx,
+                                             char* buf, int buflen);
 
 /** @brief Get triangle neighbour indices (-1 = boundary edge).
  *  @param n0,n1,n2 Adjacent triangle indices across edges opposite v0,v1,v2.

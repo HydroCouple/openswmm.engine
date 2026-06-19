@@ -123,6 +123,19 @@ public:
     /// Check if the 2D module is active.
     bool isActive() const noexcept { return active_; }
 
+    /**
+     * @brief Make the parsed mesh editable without a full initialize().
+     *
+     * The GUI keeps the engine in OPENED (not INITIALIZED) state so 1D
+     * property edits stay legal. In that state the 2D mesh is parsed but the
+     * [2D_BOUNDARY_CONDITIONS] / [2D_EDGE_CONVEYANCE] rows still live in the
+     * pending-row buffers, which the serializer prefers over live state. This
+     * drains those rows into BoundaryData / mesh edge slots (the same drain
+     * initialize() performs) so per-edge API edits take effect and are written
+     * on save. No-op once drained or when no mesh is loaded.
+     */
+    void prepareForEdit();
+
     /// Access mesh data (read-only).
     const MeshData& mesh() const noexcept { return mesh_; }
 
@@ -199,6 +212,11 @@ public:
 #endif
 
 private:
+    /// Drain pending [2D_BOUNDARY_CONDITIONS] / [2D_EDGE_CONVEYANCE] rows into
+    /// BoundaryData / mesh edge slots and flip pending_rows_drained. Shared by
+    /// initialize() and prepareForEdit(); idempotent.
+    void drainPendingRows();
+
     MeshData         mesh_;
     SurfaceStateData state_;
     SolverOptions2D  options_;
@@ -222,6 +240,11 @@ private:
     /// per-step delta in the global mass balance.
     double prev_boundary_cum_ = 0.0;
 
+    /// One-shot guard: resolve deferred boundary timeseries/curve NAMES to
+    /// registry indices on the first advance (ctx.table_names is populated by
+    /// then), not at parse time.
+    bool boundary_names_resolved_ = false;
+
     // -----------------------------------------------------------------------
     // Stiffness-attribution diagnostic CSV (opt-in via OPENSWMM_2D_DIAG_CSV).
     // One row per executed 2D advance: per-advance CVODE counter deltas
@@ -244,6 +267,13 @@ private:
 
     /// Update rainfall from system rain gages.
     void updateRainfall(SimulationContext& ctx);
+
+    /// Resolve per-step boundary driving values: evaluate SPECIFIED_STAGE /
+    /// SPECIFIED_FLOW timeseries at time @p t and RATING_CURVE from the boundary
+    /// cell stage into edge_bc_head / edge_bc_flow (which the flux kernels read).
+    /// Resolves deferred timeseries/curve names to registry indices once. No-op
+    /// for WALL / NORMAL_FLOW and for constant SPECIFIED_* edges.
+    void resolveBoundaryValues(SimulationContext& ctx, double t);
 
     /// Accumulate the global 2D mass-balance terms for one executed step
     /// into ctx.mass_balance_2d (rainfall, coupling, outfall, boundary,

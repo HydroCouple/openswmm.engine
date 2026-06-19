@@ -27,6 +27,13 @@
     auto& router2d = eng->surfaceRouter2D(); \
     if (!router2d.isActive()) return SWMM_ERR_BADPARAM
 
+// Mesh-data edit/query guard: requires a parsed mesh but NOT an initialized
+// solver, so these operations work in the OPENED state the GUI keeps the
+// engine in. Solver-state readers keep using CHECK_2D_ACTIVE.
+#define CHECK_2D_MESH(eng) \
+    auto& router2d = eng->surfaceRouter2D(); \
+    if (router2d.mesh().n_vertices() <= 0) return SWMM_ERR_BADPARAM
+
 #define CHECK_TRI_IDX(idx, router2d) \
     if ((idx) < 0 || (idx) >= router2d.mesh().n_triangles()) \
         return SWMM_ERR_BADINDEX
@@ -48,13 +55,20 @@ int swmm_2d_is_active(SWMM_Engine engine, int* active) {
     return SWMM_OK;
 }
 
+int swmm_2d_prepare_for_edit(SWMM_Engine engine) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    router2d.prepareForEdit();
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Mesh Geometry
 // ============================================================================
 
 int swmm_2d_vertex_count(SWMM_Engine engine, int* count) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     if (!count) return SWMM_ERR_BADPARAM;
     *count = router2d.mesh().n_vertices();
     return SWMM_OK;
@@ -62,7 +76,7 @@ int swmm_2d_vertex_count(SWMM_Engine engine, int* count) {
 
 int swmm_2d_triangle_count(SWMM_Engine engine, int* count) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     if (!count) return SWMM_ERR_BADPARAM;
     *count = router2d.mesh().n_triangles();
     return SWMM_OK;
@@ -71,7 +85,7 @@ int swmm_2d_triangle_count(SWMM_Engine engine, int* count) {
 int swmm_2d_vertex_get_xyz(SWMM_Engine engine, int idx,
                              double* x, double* y, double* z) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_VERT_IDX(idx, router2d);
     if (!x || !y || !z) return SWMM_ERR_BADPARAM;
 
@@ -96,7 +110,7 @@ int swmm_2d_vertex_get_xyz_bulk(SWMM_Engine engine,
 
 int swmm_2d_set_vertex_z(SWMM_Engine engine, int idx, double z) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_VERT_IDX(idx, router2d);
 
     auto& m = router2d.mesh();
@@ -141,7 +155,7 @@ int swmm_2d_triangle_get_centroid(SWMM_Engine engine, int idx,
 
 int swmm_2d_set_triangle_mannings(SWMM_Engine engine, int idx, double n) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(idx, router2d);
     if (!(n > 0.0)) return SWMM_ERR_BADPARAM;
 
@@ -151,7 +165,7 @@ int swmm_2d_set_triangle_mannings(SWMM_Engine engine, int idx, double n) {
 
 int swmm_2d_set_vertex_tag(SWMM_Engine engine, int idx, const char* tag) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_VERT_IDX(idx, router2d);
 
     auto& m = router2d.mesh();
@@ -162,12 +176,40 @@ int swmm_2d_set_vertex_tag(SWMM_Engine engine, int idx, const char* tag) {
 
 int swmm_2d_set_triangle_tag(SWMM_Engine engine, int idx, const char* tag) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(idx, router2d);
 
     auto& m = router2d.mesh();
     if (!tag || tag[0] == '\0') m.tri_tag[idx].clear();
     else                        m.tri_tag[idx] = tag;
+    return SWMM_OK;
+}
+
+int swmm_2d_get_vertex_tag(SWMM_Engine engine, int idx,
+                           char* buf, int buflen) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_VERT_IDX(idx, router2d);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+
+    const std::string& s = router2d.mesh().vtag[idx];
+    const int copy_len = std::min(static_cast<int>(s.size()), buflen - 1);
+    if (copy_len > 0) std::memcpy(buf, s.c_str(), static_cast<std::size_t>(copy_len));
+    buf[copy_len] = '\0';
+    return SWMM_OK;
+}
+
+int swmm_2d_get_triangle_tag(SWMM_Engine engine, int idx,
+                             char* buf, int buflen) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(idx, router2d);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+
+    const std::string& s = router2d.mesh().tri_tag[idx];
+    const int copy_len = std::min(static_cast<int>(s.size()), buflen - 1);
+    if (copy_len > 0) std::memcpy(buf, s.c_str(), static_cast<std::size_t>(copy_len));
+    buf[copy_len] = '\0';
     return SWMM_OK;
 }
 
@@ -250,7 +292,7 @@ int swmm_2d_triangle_get_coupled_node(SWMM_Engine engine, int tri_idx,
 int swmm_2d_set_vertex_coupled_node(SWMM_Engine engine, int vertex_idx,
                                       const char* node_name) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_VERT_IDX(vertex_idx, router2d);
 
     auto& m = router2d.mesh();
@@ -400,7 +442,7 @@ int swmm_2d_set_edge_conveyance(SWMM_Engine engine, int tri, int edge,
                                   double conveyance)
 {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri, router2d);
     if (edge < 0 || edge > 2)                          return SWMM_ERR_BADINDEX;
     if (!(conveyance >= 0.0 && conveyance <= 1.0))     return SWMM_ERR_BADPARAM;
@@ -815,7 +857,7 @@ int swmm_2d_get_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
 int swmm_2d_set_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
                               int bc_type) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
     if (bc_type != SWMM_2D_BC_WALL &&
@@ -845,7 +887,7 @@ int swmm_2d_get_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
 int swmm_2d_set_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
                               double head) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
 
@@ -867,7 +909,7 @@ int swmm_2d_get_edge_bc_slope(SWMM_Engine engine, int tri_idx, int edge,
 int swmm_2d_set_edge_bc_slope(SWMM_Engine engine, int tri_idx, int edge,
                                double slope) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
     if (slope < 0.0) return SWMM_ERR_BADPARAM;
@@ -896,7 +938,7 @@ int swmm_2d_get_edge_bc_cum_flux(SWMM_Engine engine, int tri_idx, int edge,
 int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine, int tri_idx, int edge,
                                        const char* name) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
 
@@ -926,7 +968,7 @@ int swmm_2d_get_edge_bc_flow(SWMM_Engine engine, int tri_idx, int edge,
 int swmm_2d_set_edge_bc_flow(SWMM_Engine engine, int tri_idx, int edge,
                                double flow) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
 
@@ -937,7 +979,7 @@ int swmm_2d_set_edge_bc_flow(SWMM_Engine engine, int tri_idx, int edge,
 int swmm_2d_set_edge_bc_flow_tseries_name(SWMM_Engine engine, int tri_idx, int edge,
                                             const char* name) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
 
@@ -956,7 +998,7 @@ int swmm_2d_set_edge_bc_flow_tseries_name(SWMM_Engine engine, int tri_idx, int e
 int swmm_2d_set_edge_bc_rating_curve_name(SWMM_Engine engine, int tri_idx, int edge,
                                             const char* name) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
 
