@@ -195,6 +195,27 @@ add_gtest_unit(test_engine_link_flow_roundtrip test_link_flow_roundtrip.cpp)
 # against a fresh run of the reference .inp.
 add_gtest_unit(test_engine_site_drainage_builder test_site_drainage_builder.cpp)
 
+# ---- Serialize tests that share the site_drainage_model.out fixture ----
+# These targets all run site_drainage_model.inp with site_drainage_model.out as
+# the output path (swmm_engine_open truncates/recreates it), while
+# test_engine_output_node_stats opens that same file read-only as its fixture.
+# All share data/ as their WORKING_DIRECTORY, so under `ctest -jN` a writer
+# truncating the file races the reader's open → intermittent
+# "Failed to open fixture 'site_drainage_model.out'" failures. A shared
+# RESOURCE_LOCK makes CTest never schedule these concurrently; they still run in
+# parallel with the rest of the suite.
+set_property(TEST
+    test_engine_output_node_stats
+    test_engine_links_bulk_phase3
+    test_engine_links_pump_stats_bulk
+    test_engine_nodes_bulk_phase3
+    test_engine_subcatchments_bulk_phase3
+    test_engine_subcatch_editor_api
+    test_engine_statistics_bulk_phase3
+    test_engine_runoff_interface_capi
+    test_engine_site_drainage_builder
+    APPEND PROPERTY RESOURCE_LOCK site_drainage_model_out)
+
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
 # SectionHandlers2D, Default2DOutputPlugin) are NOT compiled into the test here:
