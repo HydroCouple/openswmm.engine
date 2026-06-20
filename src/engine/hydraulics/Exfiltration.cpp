@@ -91,7 +91,9 @@ void ExfilSolver::init(SimulationContext& ctx) {
                             ctx.options);
 
         // --- Compute bottom area and bank geometry from storage shape
-        int curve_idx = nodes.storage_curve[ui];
+        //     Storage geometry from the side-table (sr from above), wide fallback.
+        int curve_idx = (sr >= 0)
+            ? ctx.node_subtypes.storages.curve[static_cast<size_t>(sr)] : nodes.storage_curve[ui];
 
         if (curve_idx >= 0) {
             // --- TABULAR: storage shape given by a storage curve
@@ -136,9 +138,9 @@ void ExfilSolver::init(SimulationContext& ctx) {
             //     Legacy: exfil_initState() FUNCTIONAL case
             //     Bottom area: at depth=0, area = A*0^B + C = C
             //     Exception: if B==0 (exponent is zero), area = A*1 + C = A+C
-            double a_coeff = nodes.storage_a[ui];
-            double b_coeff = nodes.storage_b[ui];
-            double c_coeff = nodes.storage_c[ui];
+            double a_coeff = (sr >= 0) ? ctx.node_subtypes.storages.a[static_cast<size_t>(sr)] : nodes.storage_a[ui];
+            double b_coeff = (sr >= 0) ? ctx.node_subtypes.storages.b[static_cast<size_t>(sr)] : nodes.storage_b[ui];
+            double c_coeff = (sr >= 0) ? ctx.node_subtypes.storages.c[static_cast<size_t>(sr)] : nodes.storage_c[ui];
 
             double btm = c_coeff;
             if (b_coeff == 0.0) {

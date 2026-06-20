@@ -1,0 +1,62 @@
+[TITLE]
+QA Phase 3-exfilgeom — TABULAR storage + exfiltration (curve geometry path).
+Exercises ExfilSolver::init's TABULAR branch: storage_curve read via the
+side-table (sr from storage_row), wide fallback. Exfil + seep set via C-API.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         KINWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+END_TIME             06:00:00
+REPORT_STEP          00:05:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         10
+ALLOW_PONDING        NO
+
+[JUNCTIONS]
+;;Name   Elev   MaxDepth  InitDepth  SurDepth  Aponded
+J1       20     6         0          0         0
+
+[STORAGE]
+;;Name   Elev  MaxDepth  InitDepth  Shape    Curve       SurDepth  Fevap
+STOR1    10    12        2          TABULAR  STOR_CURVE  0         0
+
+[CURVES]
+;;Name       Type     Depth  Area
+STOR_CURVE   STORAGE  0      500
+STOR_CURVE            4      1500
+STOR_CURVE            8      3000
+STOR_CURVE            12     5000
+
+[OUTFALLS]
+;;Name   Elev   Type   StageData   Gated
+OUT1     5      FREE               NO
+
+[CONDUITS]
+;;Name   FromNode  ToNode  Length  Roughness  InOffset  OutOffset  InitFlow  MaxFlow
+C_IN     J1        STOR1   200     0.013      0         0          0         0
+C_OUT    STOR1     OUT1    200     0.013      0         0          0         0
+
+[XSECTIONS]
+;;Link   Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C_IN     CIRCULAR  3.0    0      0      0      1
+C_OUT    CIRCULAR  2.0    0      0      0      1
+
+[INFLOWS]
+;;Node  Constituent  TimeSeries  Type   Mfactor  Sfactor  Baseline  Pattern
+J1      FLOW         TS_IN       FLOW   1.0      1.0
+
+[TIMESERIES]
+;;Name   Date  Time   Value
+TS_IN          0:00   10.0
+TS_IN          2:00   10.0
+TS_IN          2:05   0.0
+TS_IN          6:00   0.0
+
+[REPORT]
+INPUT     NO
+NODES     ALL
+LINKS     ALL
