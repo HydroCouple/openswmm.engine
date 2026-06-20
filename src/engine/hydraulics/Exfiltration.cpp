@@ -39,7 +39,12 @@ void ExfilSolver::init(SimulationContext& ctx) {
     int n_exfil = 0;
     for (int i = 0; i < n_nodes; ++i) {
         auto ui = static_cast<size_t>(i);
-        if (nodes.type[ui] == NodeType::STORAGE && nodes.exfil_ksat[ui] > 0.0) {
+        // Relational refactor (Phase 3): exfil conductivity from the side-table
+        // (ExfilSolver::init runs after node_subtypes.build), wide fallback otherwise.
+        const int sr = ctx.node_subtypes.storage_row(i);
+        const double ksat = (sr >= 0)
+            ? ctx.node_subtypes.storages.exfil_ksat[static_cast<size_t>(sr)] : nodes.exfil_ksat[ui];
+        if (nodes.type[ui] == NodeType::STORAGE && ksat > 0.0) {
             ++n_exfil;
         }
     }
@@ -56,7 +61,16 @@ void ExfilSolver::init(SimulationContext& ctx) {
     int k = 0;
     for (int i = 0; i < n_nodes; ++i) {
         auto ui = static_cast<size_t>(i);
-        if (nodes.type[ui] != NodeType::STORAGE || nodes.exfil_ksat[ui] <= 0.0) {
+        // Relational refactor (Phase 3): exfil Green-Ampt params from the
+        // side-table (fresh at init), with a wide-array fallback.
+        const int sr = ctx.node_subtypes.storage_row(i);
+        const double exf_suction = (sr >= 0)
+            ? ctx.node_subtypes.storages.exfil_suction[static_cast<size_t>(sr)] : nodes.exfil_suction[ui];
+        const double exf_ksat = (sr >= 0)
+            ? ctx.node_subtypes.storages.exfil_ksat[static_cast<size_t>(sr)] : nodes.exfil_ksat[ui];
+        const double exf_imd = (sr >= 0)
+            ? ctx.node_subtypes.storages.exfil_imd[static_cast<size_t>(sr)] : nodes.exfil_imd[ui];
+        if (nodes.type[ui] != NodeType::STORAGE || exf_ksat <= 0.0) {
             continue;
         }
 
@@ -66,14 +80,14 @@ void ExfilSolver::init(SimulationContext& ctx) {
         // --- Initialize Green-Ampt states for bottom and bank
         //     Uses the same soil parameters for both (matching legacy createStorageExfil)
         infil::grnampt_init(soa_.btm_ga[uk],
-                            nodes.exfil_suction[ui],
-                            nodes.exfil_ksat[ui],
-                            nodes.exfil_imd[ui],
+                            exf_suction,
+                            exf_ksat,
+                            exf_imd,
                             ctx.options);
         infil::grnampt_init(soa_.bank_ga[uk],
-                            nodes.exfil_suction[ui],
-                            nodes.exfil_ksat[ui],
-                            nodes.exfil_imd[ui],
+                            exf_suction,
+                            exf_ksat,
+                            exf_imd,
                             ctx.options);
 
         // --- Compute bottom area and bank geometry from storage shape

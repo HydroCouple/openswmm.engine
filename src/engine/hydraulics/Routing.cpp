@@ -411,14 +411,24 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
         // (matching legacy node.c storage_getLosses)
         double loss_rate = 0.0;
         if (nodes.type[ui] == NodeType::STORAGE) {
-            double stor_evap_rate = evap_rate * nodes.storage_evap_frac[ui];
+            // Relational refactor (Phase 3): storage config (evap fraction, seep
+            // rate) from the dense side-table — fresh per routing step, with a
+            // wide-array fallback when the side-table isn't built.
+            const int sr = ctx.node_subtypes.storage_row(i);
+            const double evap_frac = (sr >= 0)
+                ? ctx.node_subtypes.storages.evap_frac[static_cast<std::size_t>(sr)]
+                : nodes.storage_evap_frac[ui];
+            const double seep_rate = (sr >= 0)
+                ? ctx.node_subtypes.storages.seep_rate[static_cast<std::size_t>(sr)]
+                : nodes.storage_seep_rate[ui];
+            double stor_evap_rate = evap_rate * evap_frac;
 
             // exfil_cfs is pre-computed by ExfilSolver::computeAll() (called
             // before router_.step()) and stored as a volume in storage_exfil_loss.
             // Convert back to a rate for joint capping with evaporation.
             double exfil_cfs = (dt > 0.0) ? nodes.storage_exfil_loss[ui] / dt : 0.0;
 
-            if (stor_evap_rate > 0.0 || nodes.storage_seep_rate[ui] > 0.0 || exfil_cfs > 0.0) {
+            if (stor_evap_rate > 0.0 || seep_rate > 0.0 || exfil_cfs > 0.0) {
                 double depth = nodes.depth[ui];
                 double area = node::getSurfArea(nodes, i, depth, &ctx.tables,
                     ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
