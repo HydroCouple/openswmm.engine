@@ -3208,10 +3208,20 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     snap.surface_rainfall       = st.rainfall;
     snap.surface_coupling_flux  = st.coupling_flux;
     snap.surface_net_source     = st.net_source;
+    // Output sign convention: the integrator stores edge_flux and the face
+    // velocity INFLOW-positive (a positive edge_flux raises the cell — see
+    // SurfaceFluxCalculator), whereas the documented public/HDF5 convention
+    // (openswmm_2d.h) is OUTWARD-positive: positive flux leaves the cell and the
+    // reported velocity is the physical down-gradient flow. Flip the sign here,
+    // at the output boundary only; the internal state is untouched so the volume
+    // update and mass balance are unaffected.
     snap.surface_edge_flux      = st.edge_flux;
+    for (double& f : snap.surface_edge_flux) f = -f;
     snap.surface_vert_head      = st.vert_head;
     snap.surface_face_vx        = st.face_vx;
     snap.surface_face_vy        = st.face_vy;
+    for (double& v : snap.surface_face_vx) v = -v;
+    for (double& v : snap.surface_face_vy) v = -v;
     snap.surface_continuity_err = st.cell_continuity_err;
     // Cumulative rendering envelopes (SI-native; not display-converted).
     snap.surface_stat_max_depth    = st.stat_max_depth;

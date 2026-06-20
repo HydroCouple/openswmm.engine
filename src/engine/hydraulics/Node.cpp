@@ -63,11 +63,12 @@ double getVolume(const NodeData& nodes, int idx, double depth,
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
-        const StorageGeom g = storageGeom(nodes, subs, ui);
-
         // Clamp at fullDepth → fullVolume (matching legacy node.c lines 909-910)
         if (depth >= nodes.full_depth[ui] && nodes.full_volume[ui] > 0.0)
             return nodes.full_volume[ui];
+
+        // Geometry fetched lazily, only after the clamp early-out (as legacy did).
+        const StorageGeom g = storageGeom(nodes, subs, ui);
 
         if (g.curve >= 0) {
             // Tabulated: trapezoidal integration of area curve
@@ -113,11 +114,12 @@ double getDepth(const NodeData& nodes, int idx, double volume,
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
-        const StorageGeom g = storageGeom(nodes, subs, ui);
-
         double fd = nodes.full_depth[ui];
         double fv = nodes.full_volume[ui];
         if (fv > 0.0 && volume >= fv) return fd;
+
+        // Geometry fetched lazily, only after the clamp early-out (as legacy did).
+        const StorageGeom g = storageGeom(nodes, subs, ui);
 
         if (g.curve >= 0) {
             // Tabulated: quadratic solve per interval (Gap #12).

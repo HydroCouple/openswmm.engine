@@ -1210,8 +1210,9 @@ const char* preconditioner_token(twoD::PreconditionerType t) {
         case twoD::PreconditionerType::NONE:   return "NONE";
         case twoD::PreconditionerType::JACOBI: return "JACOBI";
         case twoD::PreconditionerType::ILU:    return "ILU";
+        case twoD::PreconditionerType::AMG:    return "AMG";
     }
-    return "NONE";
+    return "JACOBI";
 }
 
 // True when a 2D mesh worth persisting is present (mirrors the

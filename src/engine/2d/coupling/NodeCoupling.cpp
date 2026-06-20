@@ -333,32 +333,32 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
             }
 
             // Cap drainage at the water actually available in the receiving 2D
-            // cell (ci = cp.cell_idx, where the sink is applied below). Without
-            // this, the constant per-step sink can pull the cell's H below its
-            // bed — the H-formulation floors depth at max(H−z,0), so less water
-            // leaves the 2D domain than the 1D node was credited (Q·dt), which
-            // shows up as a 2D continuity error. Uses the start-of-step depth,
-            // mirroring the 1D node-capacity clamp above. Same clamped Q feeds
-            // both sides of the exchange, so the boundary stays conservative.
+            // cell(s) the sink draws from (the whole stencil for vertex coupling,
+            // one cell for triangle coupling — matching scatterCouplingFlux below
+            // so the cap stays conservative). Without this, the head-driven sink
+            // keeps draining at a fixed rate even after the cell empties, pulling
+            // its volume negative — which becomes a runaway once a working
+            // boundary outflow thins the mesh (the orifice Δh stays positive
+            // because an empty cell's surface floors to its bed).
+            //
+            // Use the SIGNED cell volume, not the depth-floored max(V,0): a cell
+            // already over-drawn negative then contributes negatively, tightening
+            // the cap so the drain backs off and the cell recovers instead of
+            // running away. Clamp at 0 so a net-empty stencil simply stops
+            // draining (never reverses the sign of the exchange). The same
+            // clamped Q feeds both domains, so the exchange stays conservative.
             if (dt > 0.0) {
-                // Sum the wet volume across the cells the sink actually draws
-                // from — the whole stencil for vertex coupling, one cell for
-                // triangle coupling — matching the distributed sink applied by
-                // scatterCouplingFlux below so the cap stays conservative.
-                double avail_2d;
+                double avail_2d = 0.0;
                 if (cp.vertex_idx >= 0) {
                     int vv = cp.vertex_idx;
                     int s = mesh.vert_stencil_ptr[vv];
                     int e = mesh.vert_stencil_ptr[vv + 1];
-                    avail_2d = 0.0;
-                    for (int k = s; k < e; ++k) {
-                        int kc = mesh.vert_stencil_idx[k];
-                        avail_2d += state.depth[kc] * mesh.tri_area[kc];  // m³
-                    }
+                    for (int k = s; k < e; ++k)
+                        avail_2d += state.volume[mesh.vert_stencil_idx[k]];  // m³ signed
                 } else {
-                    avail_2d = state.depth[ci] * mesh.tri_area[ci];  // m³
+                    avail_2d = state.volume[ci];  // m³ signed
                 }
-                double Q_max_2d = avail_2d / dt;
+                double Q_max_2d = std::max(0.0, avail_2d) / dt;
                 Q = std::min(Q, Q_max_2d);
             }
         }

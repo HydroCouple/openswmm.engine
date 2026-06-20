@@ -179,6 +179,7 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
         if      (val == "NONE")   o->preconditioner = twoD::PreconditionerType::NONE;
         else if (val == "JACOBI") o->preconditioner = twoD::PreconditionerType::JACOBI;
         else if (val == "ILU")    o->preconditioner = twoD::PreconditionerType::ILU;
+        else if (val == "AMG")    o->preconditioner = twoD::PreconditionerType::AMG;
     }
     else if (key == "2D_REPORT_2D")     o->report_2d = (val == "YES");
     // HDF5 results path — restoring it lets SWMMEngine::open re-create the
