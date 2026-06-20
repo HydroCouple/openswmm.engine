@@ -21,6 +21,7 @@
 #include "../hydraulics/ForceMain.hpp"
 #include <cmath>
 #include <algorithm>
+#include <cassert>
 #include <vector>
 #include "../hydraulics/TimestepController.hpp"
 #include "../input/PostParseResolver.hpp"
@@ -3743,6 +3744,17 @@ void SWMMEngine::initHydraulics() noexcept {
     if (ctx_.options.routing_model == RoutingModel::KINWAVE) rm = RouteModel::KINWAVE;
     else if (ctx_.options.routing_model == RoutingModel::STEADY) rm = RouteModel::STEADY;
     router_.init(ctx_, rm);
+
+    // Relational node refactor — Phase 1 (shadow): build the storage/outfall/
+    // divider side-tables from the resolved wide arrays. Not read by the solver
+    // yet; a debug-only self-check asserts the mirror is exact.
+    // See docs/relational/RELATIONAL_NODE_REFACTOR_PLAN.md.
+    ctx_.node_subtypes.build(ctx_.nodes);
+#ifndef NDEBUG
+    assert(ctx_.node_subtypes.verify_mirror(ctx_.nodes) &&
+           "NodeSubtypes side-tables must exactly mirror NodeData (Phase 1 shadow)");
+#endif
+
     // Gap #83: Outfall connectivity + no-outlets validation
     // Gap #84: Conduit adverse slope (non-DW) + regulator from non-storage
     {

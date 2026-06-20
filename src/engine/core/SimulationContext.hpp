@@ -67,6 +67,7 @@
 #include "../data/LinkData.hpp"
 #include "../data/NameIndex.hpp"
 #include "../data/NodeData.hpp"
+#include "../data/NodeSubtypes.hpp"
 #include "../data/PollutantData.hpp"
 #include "../data/SubcatchData.hpp"
 #include "../data/TableData.hpp"
@@ -394,6 +395,17 @@ struct SimulationContext {
      * @see Legacy: Node[], NodeStats[] in globals.h + TNode in objects.h
      */
     NodeData nodes;
+
+    /**
+     * @brief Relational side-tables for node subtypes (storage/outfall/divider).
+     *
+     * @details Phase 1 (shadow) of the relational node refactor: built from
+     *          `nodes` at hydraulics init and kept as an exact mirror of the
+     *          wide subtype arrays. Not yet read by the solver. See
+     *          docs/relational/RELATIONAL_NODE_REFACTOR_PLAN.md and
+     *          src/engine/data/NodeSubtypes.hpp.
+     */
+    NodeSubtypes node_subtypes;
 
     /**
      * @brief All link state and properties.
