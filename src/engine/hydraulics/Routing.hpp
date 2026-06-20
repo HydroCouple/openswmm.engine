@@ -105,7 +105,7 @@ private:
     XSectGroups groups_;
     kinwave::KWSolver kw_solver_;
     dynwave::DWSolver dw_solver_;
-    divider::DividerSoA dividers_;
+    // Divider data moved to ctx.node_subtypes.dividers (relational side-table).
     std::vector<int> steady_sorted_links_;  ///< Topological link order for STEADY routing
     bool cycle_detected_ = false;           ///< Gap #44: set true when toposort detects a loop
 
