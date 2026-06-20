@@ -113,6 +113,42 @@ void buildOutfallLinkMap(SimulationContext& ctx) {
     }
 }
 
+namespace {
+// Static (boundary-condition) outfall properties. Phase 3.2 of the relational
+// refactor: read from the dense OutfallData side-table when available, else from
+// the wide NodeData arrays. The side-table is built at hydraulics init *after*
+// buildOutfallLinkMap, so link_idx/link_offset are resolved; and these fields are
+// static during a run, so the side-table is an exact mirror of the wide arrays.
+// The per-step-mutable outfall_2d_head is deliberately NOT included here — it is
+// still read from the live wide array.
+struct OutfallStatic {
+    OutfallType bc_type;
+    double      param;
+    uint8_t     has_flap;
+    int         link_idx;
+    double      link_offset;
+};
+
+inline OutfallStatic outfallStatic(const NodeData& nodes, const NodeSubtypes& subs,
+                                   std::size_t uj) {
+    const int j = static_cast<int>(uj);
+    if (j < static_cast<int>(subs.subtype_row.size())) {
+        const int r = subs.subtype_row[uj];
+        if (r >= 0 && r < subs.outfalls.count() &&
+            subs.outfalls.node_idx[static_cast<std::size_t>(r)] == j) {
+            const auto ur = static_cast<std::size_t>(r);
+            return OutfallStatic{ subs.outfalls.bc_type[ur], subs.outfalls.param[ur],
+                                  subs.outfalls.has_flap_gate[ur], subs.outfalls.link_idx[ur],
+                                  subs.outfalls.link_offset[ur] };
+        }
+    }
+    const int    li = (uj < nodes.outfall_link_idx.size())    ? nodes.outfall_link_idx[uj]    : -1;
+    const double lo = (uj < nodes.outfall_link_offset.size()) ? nodes.outfall_link_offset[uj] : 0.0;
+    return OutfallStatic{ nodes.outfall_type[uj], nodes.outfall_param[uj],
+                          nodes.outfall_has_flap_gate[uj], li, lo };
+}
+}  // namespace
+
 void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
     auto& nodes = ctx.nodes;
     int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
@@ -134,8 +170,9 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
         // Cached outfall → conduit mapping (populated once at init).
         // Falls back to a scan only if the cache is empty (e.g. in unit
         // tests that skip Router::init).
-        int link_idx = nodes.outfall_link_idx[uj];
-        double z = nodes.outfall_link_offset[uj];
+        const OutfallStatic ost = outfallStatic(nodes, ctx.node_subtypes, uj);
+        int link_idx = ost.link_idx;
+        double z = ost.link_offset;
         if (link_idx < 0 && !nodes.outfall_link_idx.empty()) {
             for (int k = 0; k < ctx.n_links(); ++k) {
                 auto uk = static_cast<std::size_t>(k);
@@ -159,7 +196,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
             yCrit = xsect::getYcrit(xs, q);
         }
 
-        switch (nodes.outfall_type[uj]) {
+        switch (ost.bc_type) {
             case OutfallType::FREE:
                 // Legacy: depth = z + MIN(yNorm, yCrit)
                 depth = z + std::min(yNorm, yCrit);
@@ -178,7 +215,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 // a second division inflated the stage by 1/ucf_len in metric
                 // models (e.g. user3: 223.7 m → 733.9 m), driving huge spurious
                 // outfall backflow that flooded the upstream storage nodes.
-                double stage = nodes.outfall_param[uj];
+                double stage = ost.param;
                 // Legacy outfall_setOutletDepth (node.c:1429-1454):
                 //   yCrit = MIN(yCrit, yNorm)
                 //   if (yCrit+z+inv < stage)  yNew = stage - inv
@@ -205,7 +242,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
             }
 
             case OutfallType::TIDAL: {
-                int curve_idx = static_cast<int>(nodes.outfall_param[uj]);
+                int curve_idx = static_cast<int>(ost.param);
                 double stage = nodes.invert_elev[uj];
                 if (curve_idx >= 0 && curve_idx < static_cast<int>(ctx.tables.tables.size())) {
                     int h_tmp, m_tmp, s_tmp;
@@ -226,7 +263,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
             }
 
             case OutfallType::TIMESERIES: {
-                int ts_idx = static_cast<int>(nodes.outfall_param[uj]);
+                int ts_idx = static_cast<int>(ost.param);
                 double stage = nodes.invert_elev[uj];
                 if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
                     stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(ts_idx)], current_time) / ucf_len;
@@ -275,7 +312,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
         // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C4, C5).
         double h_2d = nodes.outfall_2d_head[uj];
         if (h_2d > z_inv) {
-            bool flap_closed = (nodes.outfall_has_flap_gate[uj] != 0)
+            bool flap_closed = (ost.has_flap != 0)
                                && (h_2d > h_standard);
             if (!flap_closed) {
                 double depth_2d = h_2d - z_inv;
