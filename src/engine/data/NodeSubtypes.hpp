@@ -350,6 +350,30 @@ struct NodeSubtypes {
         return -1;
     }
 
+    /** @brief Outfall side-table row for base node @p i, or -1 if not an outfall
+     *  (or the side-table is unbuilt). O(1). */
+    int outfall_row(int i) const noexcept {
+        if (i >= 0 && i < static_cast<int>(subtype_row.size())) {
+            const int r = subtype_row[static_cast<std::size_t>(i)];
+            if (r >= 0 && r < outfalls.count() &&
+                outfalls.node_idx[static_cast<std::size_t>(r)] == i)
+                return r;
+        }
+        return -1;
+    }
+
+    /** @brief Divider side-table row for base node @p i, or -1 if not a divider
+     *  (or the side-table is unbuilt). O(1). */
+    int divider_row(int i) const noexcept {
+        if (i >= 0 && i < static_cast<int>(subtype_row.size())) {
+            const int r = subtype_row[static_cast<std::size_t>(i)];
+            if (r >= 0 && r < dividers.count() &&
+                dividers.node_idx[static_cast<std::size_t>(r)] == i)
+                return r;
+        }
+        return -1;
+    }
+
     /**
      * @brief Debug self-check: every side-table row equals the matching wide
      *        NodeData field, and the reverse map is consistent.

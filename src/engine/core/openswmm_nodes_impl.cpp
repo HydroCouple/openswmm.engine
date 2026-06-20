@@ -611,14 +611,19 @@ SWMM_ENGINE_API int swmm_node_set_outfall_type(SWMM_Engine engine, int idx, int 
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.outfall_type[static_cast<std::size_t>(idx)] = static_cast<openswmm::OutfallType>(type);
+    ctx.node_subtypes.mark_dirty();
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_node_get_outfall_type(SWMM_Engine engine, int idx, int* type) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    if (type) *type = static_cast<int>(ctx.nodes.outfall_type[static_cast<std::size_t>(idx)]);
+    ctx.node_subtypes.ensure_fresh(ctx.nodes);
+    const int r = ctx.node_subtypes.outfall_row(idx);
+    if (type) *type = (r >= 0)
+        ? static_cast<int>(ctx.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)])
+        : static_cast<int>(ctx.nodes.outfall_type[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -630,6 +635,7 @@ SWMM_ENGINE_API int swmm_node_set_outfall_stage(SWMM_Engine engine, int idx, dou
     auto uidx = static_cast<std::size_t>(idx);
     ctx.nodes.outfall_param[uidx] = to_internal(ctx, openswmm::ucf::LENGTH, stage); // units
     ctx.nodes.outfall_type[uidx]  = openswmm::OutfallType::FIXED;
+    ctx.node_subtypes.mark_dirty();
     return SWMM_OK;
 }
 
@@ -641,6 +647,7 @@ SWMM_ENGINE_API int swmm_node_set_outfall_tidal(SWMM_Engine engine, int idx, int
     auto uidx = static_cast<std::size_t>(idx);
     ctx.nodes.outfall_param[uidx] = static_cast<double>(curve_idx);
     ctx.nodes.outfall_type[uidx]  = openswmm::OutfallType::TIDAL;
+    ctx.node_subtypes.mark_dirty();
     return SWMM_OK;
 }
 
@@ -652,46 +659,63 @@ SWMM_ENGINE_API int swmm_node_set_outfall_timeseries(SWMM_Engine engine, int idx
     auto uidx = static_cast<std::size_t>(idx);
     ctx.nodes.outfall_param[uidx] = static_cast<double>(ts_idx);
     ctx.nodes.outfall_type[uidx]  = openswmm::OutfallType::TIMESERIES;
+    ctx.node_subtypes.mark_dirty();
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_node_get_outfall_param(SWMM_Engine engine, int idx, double* param) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    ctx.node_subtypes.ensure_fresh(ctx.nodes);
+    const int r = ctx.node_subtypes.outfall_row(idx);
     const auto pidx = static_cast<std::size_t>(idx);
+    const auto otype = (r >= 0) ? ctx.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)]
+                                : ctx.nodes.outfall_type[pidx];
+    const double opar = (r >= 0) ? ctx.node_subtypes.outfalls.param[static_cast<std::size_t>(r)]
+                                 : ctx.nodes.outfall_param[pidx];
     if (param) {
         // units: param holds a LENGTH (stage) only when type==FIXED; for
         // TIDAL/TIMESERIES it is a raw curve/timeseries index — never convert.
-        if (ctx.nodes.outfall_type[pidx] == openswmm::OutfallType::FIXED)
-            *param = to_display(ctx, openswmm::ucf::LENGTH, ctx.nodes.outfall_param[pidx]); // units
+        if (otype == openswmm::OutfallType::FIXED)
+            *param = to_display(ctx, openswmm::ucf::LENGTH, opar); // units
         else
-            *param = ctx.nodes.outfall_param[pidx];
+            *param = opar;
     }
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_node_get_outfall_tidal(SWMM_Engine engine, int idx, int* curve_idx) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     if (!curve_idx) return SWMM_ERR_BADPARAM;
+    ctx.node_subtypes.ensure_fresh(ctx.nodes);
+    const int r = ctx.node_subtypes.outfall_row(idx);
     const auto uidx = static_cast<std::size_t>(idx);
-    if (ctx.nodes.outfall_type[uidx] != openswmm::OutfallType::TIDAL)
+    const auto otype = (r >= 0) ? ctx.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)]
+                                : ctx.nodes.outfall_type[uidx];
+    if (otype != openswmm::OutfallType::TIDAL)
         return SWMM_ERR_BADPARAM;
-    *curve_idx = static_cast<int>(ctx.nodes.outfall_param[uidx]);
+    *curve_idx = static_cast<int>((r >= 0) ? ctx.node_subtypes.outfalls.param[static_cast<std::size_t>(r)]
+                                           : ctx.nodes.outfall_param[uidx]);
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_node_get_outfall_timeseries(SWMM_Engine engine, int idx, int* ts_idx) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     if (!ts_idx) return SWMM_ERR_BADPARAM;
+    ctx.node_subtypes.ensure_fresh(ctx.nodes);
+    const int r = ctx.node_subtypes.outfall_row(idx);
     const auto uidx = static_cast<std::size_t>(idx);
-    if (ctx.nodes.outfall_type[uidx] != openswmm::OutfallType::TIMESERIES)
+    const auto otype = (r >= 0) ? ctx.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)]
+                                : ctx.nodes.outfall_type[uidx];
+    if (otype != openswmm::OutfallType::TIMESERIES)
         return SWMM_ERR_BADPARAM;
-    *ts_idx = static_cast<int>(ctx.nodes.outfall_param[uidx]);
+    *ts_idx = static_cast<int>((r >= 0) ? ctx.node_subtypes.outfalls.param[static_cast<std::size_t>(r)]
+                                        : ctx.nodes.outfall_param[uidx]);
     return SWMM_OK;
 }
 
@@ -701,14 +725,19 @@ SWMM_ENGINE_API int swmm_node_set_outfall_flap_gate(SWMM_Engine engine, int idx,
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.outfall_has_flap_gate[static_cast<std::size_t>(idx)] = (has_gate != 0);
+    ctx.node_subtypes.mark_dirty();
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_node_get_outfall_flap_gate(SWMM_Engine engine, int idx, int* has_gate) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    if (has_gate) *has_gate = ctx.nodes.outfall_has_flap_gate[static_cast<std::size_t>(idx)] ? 1 : 0;
+    ctx.node_subtypes.ensure_fresh(ctx.nodes);
+    const int r = ctx.node_subtypes.outfall_row(idx);
+    const int hf = (r >= 0) ? ctx.node_subtypes.outfalls.has_flap_gate[static_cast<std::size_t>(r)]
+                            : ctx.nodes.outfall_has_flap_gate[static_cast<std::size_t>(idx)];
+    if (has_gate) *has_gate = hf ? 1 : 0;
     return SWMM_OK;
 }
 
@@ -725,14 +754,19 @@ SWMM_ENGINE_API int swmm_node_set_divider_type(SWMM_Engine engine, int idx, int 
         return SWMM_ERR_BADPARAM;
     ctx.nodes.divider_type[static_cast<std::size_t>(idx)] =
         static_cast<openswmm::DividerType>(type);
+    ctx.node_subtypes.mark_dirty();
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_node_get_divider_type(SWMM_Engine engine, int idx, int* type) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    if (type) *type = static_cast<int>(ctx.nodes.divider_type[static_cast<std::size_t>(idx)]);
+    ctx.node_subtypes.ensure_fresh(ctx.nodes);
+    const int r = ctx.node_subtypes.divider_row(idx);
+    if (type) *type = (r >= 0)
+        ? static_cast<int>(ctx.node_subtypes.dividers.method[static_cast<std::size_t>(r)])
+        : static_cast<int>(ctx.nodes.divider_type[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -853,14 +887,19 @@ SWMM_ENGINE_API int swmm_node_set_outfall_route_to(SWMM_Engine engine, int idx, 
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.outfall_route_to[static_cast<std::size_t>(idx)] = subcatch_idx;
+    ctx.node_subtypes.mark_dirty();
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_node_get_outfall_route_to(SWMM_Engine engine, int idx, int* subcatch_idx) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    if (subcatch_idx) *subcatch_idx = ctx.nodes.outfall_route_to[static_cast<std::size_t>(idx)];
+    ctx.node_subtypes.ensure_fresh(ctx.nodes);
+    const int r = ctx.node_subtypes.outfall_row(idx);
+    if (subcatch_idx) *subcatch_idx = (r >= 0)
+        ? ctx.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)]
+        : ctx.nodes.outfall_route_to[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
