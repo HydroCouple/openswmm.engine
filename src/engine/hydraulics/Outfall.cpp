@@ -123,9 +123,11 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
     // Then calls node_setOutletDepth(n, yNorm, yCrit, z).
     // For FREE outfall: depth = z + MIN(yNorm, yCrit).
 
-    for (int j = 0; j < ctx.n_nodes(); ++j) {
+    // Per-outfall computation body (unchanged from the original loop). Reads
+    // the wide NodeData arrays by node index `j` so results are bit-for-bit
+    // identical regardless of how outfalls are enumerated below.
+    auto process_outfall = [&](int j) {
         auto uj = static_cast<std::size_t>(j);
-        if (nodes.type[uj] != NodeType::OUTFALL) continue;
 
         double depth = 0.0;
 
@@ -308,6 +310,23 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
 
         nodes.depth[uj] = depth;
         nodes.head[uj] = nodes.invert_elev[uj] + depth;
+    };
+
+    // Phase 2 (relational refactor): iterate the dense outfall side-table
+    // instead of scanning every node, turning this per-routing-step pass from
+    // O(n_nodes) into O(n_outfalls). The computation body is unchanged, so
+    // results stay bit-for-bit identical. Falls back to a full node scan when
+    // the side-tables are not built (e.g. unit tests that skip hydraulics init).
+    // See docs/relational/RELATIONAL_NODE_REFACTOR_PLAN.md (Phase 2).
+    const auto& outs = ctx.node_subtypes.outfalls;
+    if (static_cast<int>(ctx.node_subtypes.subtype_row.size()) == ctx.n_nodes()) {
+        for (int r = 0; r < outs.count(); ++r)
+            process_outfall(outs.node_idx[static_cast<std::size_t>(r)]);
+    } else {
+        for (int j = 0; j < ctx.n_nodes(); ++j) {
+            if (nodes.type[static_cast<std::size_t>(j)] == NodeType::OUTFALL)
+                process_outfall(j);
+        }
     }
 }
 
