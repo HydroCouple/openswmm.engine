@@ -337,7 +337,8 @@ int Router::step(SimulationContext& ctx, double dt,
 
                     // Overflow check
                     double full_vol = node::getVolume(ctx.nodes, j, ctx.nodes.full_depth[uj], &ctx.tables,
-                        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)));
+                        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
+                        &ctx.node_subtypes);
                     if (v_new > full_vol) {
                         ctx.nodes.overflow[uj] = (v_new - full_vol) / dt;
                         v_new = full_vol;
@@ -347,7 +348,7 @@ int Router::step(SimulationContext& ctx, double dt,
                     // Invert volume → depth using node::getDepth (Newton / table lookup)
                     // Matches legacy node_getDepth() in node.c (Gap #12)
                     int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-                    double d2 = node::getDepth(ctx.nodes, j, v_new, &ctx.tables, us);
+                    double d2 = node::getDepth(ctx.nodes, j, v_new, &ctx.tables, us, &ctx.node_subtypes);
 
                     // Under-relaxation
                     d2 = 0.45 * d1 + 0.55 * d2;
@@ -420,7 +421,8 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
             if (stor_evap_rate > 0.0 || nodes.storage_seep_rate[ui] > 0.0 || exfil_cfs > 0.0) {
                 double depth = nodes.depth[ui];
                 double area = node::getSurfArea(nodes, i, depth, &ctx.tables,
-                    ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)));
+                    ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
+                    &ctx.node_subtypes);
 
                 // Evaporation rate over surface area (cfs)
                 double evap_cfs = 0.0;

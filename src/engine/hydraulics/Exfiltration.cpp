@@ -176,7 +176,8 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
             // area = MIN(area, exfil->bankMaxArea))
             double area = openswmm::node::getSurfArea(ctx.nodes, soa_.node_idx[uk], depth,
                                             &ctx.tables,
-                                            openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)));
+                                            openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
+                                            &ctx.node_subtypes);
             double bank_area = std::min(area, soa_.bank_max_area[uk]);
             double bank_rate = infil::grnampt_getInfil(soa_.bank_ga[uk], 0.0, bank_depth, dt);
             total_loss += bank_rate * bank_area;

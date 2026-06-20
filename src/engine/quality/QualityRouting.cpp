@@ -510,9 +510,9 @@ void QualitySolver::applyTreatment(SimulationContext& ctx, double dt) {
 
         // AREA: average surface area at old and new depth (Gap #16)
         double a1 = node::getSurfArea(nodes, j, nodes.old_depth[uj], &ctx.tables,
-                                      ucf::getUnitSystem(unit_sys));
+                                      ucf::getUnitSystem(unit_sys), &ctx.node_subtypes);
         double a2 = node::getSurfArea(nodes, j, nodes.depth[uj],     &ctx.tables,
-                                      ucf::getUnitSystem(unit_sys));
+                                      ucf::getUnitSystem(unit_sys), &ctx.node_subtypes);
         double area = (a1 + a2) * 0.5 * ucf_length * ucf_length;  // user units²
 
         // 3. Update HRT for storage nodes (matching legacy updateHRT)

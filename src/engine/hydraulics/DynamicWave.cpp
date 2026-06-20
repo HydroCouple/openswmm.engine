@@ -839,8 +839,8 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
         // getSurfArea() understated the area of ponded nodes, so flood water
         // that legacy stores instead overflowed and broke routing continuity.
         xnode_.new_surf_area[ui] = ctx.options.allow_ponding
-            ? node::getPondedArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys)
-            : node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys);
+            ? node::getPondedArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys, &ctx.node_subtypes)
+            : node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys, &ctx.node_subtypes);
 
         // Reset node flows (matching legacy initNodeStates)
         nodes.inflow[ui] = 0.0;
@@ -2398,7 +2398,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         if (nodes.overflow[ui] < FUDGE) nodes.overflow[ui] = 0.0;
     } else {
         nodes.volume[ui] = node::getVolume(nodes, node_idx, y_new, &ctx.tables,
-                                           unit_sys_);
+                                           unit_sys_, &ctx.node_subtypes);
     }
 
     // --- Compute change in depth w.r.t. time (for CFL) ---
