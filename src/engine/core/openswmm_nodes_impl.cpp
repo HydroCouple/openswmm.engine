@@ -495,14 +495,19 @@ SWMM_ENGINE_API int swmm_node_set_storage_curve(SWMM_Engine engine, int idx, int
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.storage_curve[static_cast<std::size_t>(idx)] = curve_idx;
+    ctx.node_subtypes.mark_dirty();
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_node_get_storage_curve(SWMM_Engine engine, int idx, int* curve_idx) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    if (curve_idx) *curve_idx = ctx.nodes.storage_curve[static_cast<std::size_t>(idx)];
+    ctx.node_subtypes.ensure_fresh(ctx.nodes);
+    const int r = ctx.node_subtypes.storage_row(idx);
+    if (curve_idx)
+        *curve_idx = (r >= 0) ? ctx.node_subtypes.storages.curve[static_cast<std::size_t>(r)]
+                              : ctx.nodes.storage_curve[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -516,17 +521,27 @@ SWMM_ENGINE_API int swmm_node_set_storage_functional(SWMM_Engine engine, int idx
     ctx.nodes.storage_a[uidx] = a;
     ctx.nodes.storage_b[uidx] = b;
     ctx.nodes.storage_c[uidx] = c;
+    ctx.node_subtypes.mark_dirty();
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_node_get_storage_functional(SWMM_Engine engine, int idx, double* a, double* b, double* c) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    ctx.node_subtypes.ensure_fresh(ctx.nodes);
+    const int r = ctx.node_subtypes.storage_row(idx);
     auto uidx = static_cast<std::size_t>(idx);
-    if (a) *a = ctx.nodes.storage_a[uidx];
-    if (b) *b = ctx.nodes.storage_b[uidx];
-    if (c) *c = ctx.nodes.storage_c[uidx];
+    if (r >= 0) {
+        const auto ur = static_cast<std::size_t>(r);
+        if (a) *a = ctx.node_subtypes.storages.a[ur];
+        if (b) *b = ctx.node_subtypes.storages.b[ur];
+        if (c) *c = ctx.node_subtypes.storages.c[ur];
+    } else {
+        if (a) *a = ctx.nodes.storage_a[uidx];
+        if (b) *b = ctx.nodes.storage_b[uidx];
+        if (c) *c = ctx.nodes.storage_c[uidx];
+    }
     return SWMM_OK;
 }
 
@@ -537,14 +552,18 @@ SWMM_ENGINE_API int swmm_node_set_storage_seep_rate(SWMM_Engine engine, int idx,
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     ctx.nodes.storage_seep_rate[static_cast<std::size_t>(idx)] = rate;
+    ctx.node_subtypes.mark_dirty();
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_node_get_storage_seep_rate(SWMM_Engine engine, int idx, double* rate) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    if (rate) *rate = ctx.nodes.storage_seep_rate[static_cast<std::size_t>(idx)];
+    ctx.node_subtypes.ensure_fresh(ctx.nodes);
+    const int r = ctx.node_subtypes.storage_row(idx);
+    if (rate) *rate = (r >= 0) ? ctx.node_subtypes.storages.seep_rate[static_cast<std::size_t>(r)]
+                               : ctx.nodes.storage_seep_rate[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -558,17 +577,27 @@ SWMM_ENGINE_API int swmm_node_set_exfil_params(SWMM_Engine engine, int idx, doub
     ctx.nodes.exfil_suction[uidx] = suction;
     ctx.nodes.exfil_ksat[uidx]    = ksat;
     ctx.nodes.exfil_imd[uidx]     = imd;
+    ctx.node_subtypes.mark_dirty();
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_node_get_exfil_params(SWMM_Engine engine, int idx, double* suction, double* ksat, double* imd) {
     CHECK_HANDLE(engine);
-    const auto& ctx = to_engine(engine)->context();
+    auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    ctx.node_subtypes.ensure_fresh(ctx.nodes);
+    const int r = ctx.node_subtypes.storage_row(idx);
     auto uidx = static_cast<std::size_t>(idx);
-    if (suction) *suction = ctx.nodes.exfil_suction[uidx];
-    if (ksat)    *ksat    = ctx.nodes.exfil_ksat[uidx];
-    if (imd)     *imd     = ctx.nodes.exfil_imd[uidx];
+    if (r >= 0) {
+        const auto ur = static_cast<std::size_t>(r);
+        if (suction) *suction = ctx.node_subtypes.storages.exfil_suction[ur];
+        if (ksat)    *ksat    = ctx.node_subtypes.storages.exfil_ksat[ur];
+        if (imd)     *imd     = ctx.node_subtypes.storages.exfil_imd[ur];
+    } else {
+        if (suction) *suction = ctx.nodes.exfil_suction[uidx];
+        if (ksat)    *ksat    = ctx.nodes.exfil_ksat[uidx];
+        if (imd)     *imd     = ctx.nodes.exfil_imd[uidx];
+    }
     return SWMM_OK;
 }
 

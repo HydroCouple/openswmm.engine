@@ -1391,6 +1391,13 @@ void resolve_cross_references(SimulationContext& ctx) {
     // Release excess vector capacity accumulated during parsing
     // -------------------------------------------------------------------------
     ctx.shrink_all_to_fit();
+
+    // Relational refactor (Phase 3.0): build the node subtype side-tables from
+    // the fully-resolved wide arrays, so non-run readers (C-API getters, IO)
+    // have a valid mirror in OPENED state. Rebuilt again at hydraulics init (to
+    // also capture the outfall→conduit cache) and refreshed after edits via
+    // NodeSubtypes::ensure_fresh(). See docs/relational/PHASE3_EXECUTION_PLAN.md.
+    ctx.node_subtypes.build(ctx.nodes);
 }
 
 } /* namespace openswmm::input */

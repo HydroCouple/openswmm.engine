@@ -264,6 +264,14 @@ struct NodeSubtypes {
     /** @brief base node index → row in its subtype table (-1 for junctions). */
     std::vector<int> subtype_row;
 
+    /**
+     * @brief True when the wide subtype arrays were mutated after the last
+     *        build(), so the side-tables may be stale until ensure_fresh().
+     * @details Set O(1) by mark_dirty() from C-API setters / editing; cleared by
+     *          build(). Only consulted by non-hot-path readers via ensure_fresh().
+     */
+    bool dirty_ = false;
+
     /** @brief Drop all rows and the reverse map. */
     void clear() noexcept {
         storages.clear();
@@ -317,6 +325,29 @@ struct NodeSubtypes {
                     break;  // subtype_row stays -1
             }
         }
+        dirty_ = false;
+    }
+
+    /** @brief Flag the side-tables as stale after a runtime mutation of the wide
+     *  subtype arrays (C-API setters, editing). O(1). */
+    void mark_dirty() noexcept { dirty_ = true; }
+
+    /** @brief Rebuild from the wide arrays only if a mutation occurred since the
+     *  last build(). For non-hot-path readers (C-API getters, IO) in OPENED
+     *  state. No-op during a run: the init build clears the flag and nothing
+     *  dirties mid-run. */
+    void ensure_fresh(const NodeData& nodes) { if (dirty_) build(nodes); }
+
+    /** @brief Storage side-table row for base node @p i, or -1 if @p i is not a
+     *  storage node (or the side-table is unbuilt). O(1). */
+    int storage_row(int i) const noexcept {
+        if (i >= 0 && i < static_cast<int>(subtype_row.size())) {
+            const int r = subtype_row[static_cast<std::size_t>(i)];
+            if (r >= 0 && r < storages.count() &&
+                storages.node_idx[static_cast<std::size_t>(r)] == i)
+                return r;
+        }
+        return -1;
     }
 
     /**
