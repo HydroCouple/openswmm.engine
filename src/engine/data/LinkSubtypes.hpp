@@ -43,6 +43,7 @@
 #include <vector>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 
 #include "LinkData.hpp"
 
@@ -362,54 +363,62 @@ struct LinkSubtypes {
     void build(const LinkData& L) {
         clear();
         const int n = L.count();
+        // Size-guarded copy: a hand-built SimulationContext (unit-test fixture)
+        // may leave some init-derived wide arrays (slope/beta/q_full/…) unsized;
+        // fall back to the add_default seed rather than reading out of bounds. A
+        // production ctx has every array sized, so this is a no-op there.
+        const auto cp = [](const auto& v, std::size_t u, auto& dst) {
+            if (u < v.size()) dst = static_cast<std::decay_t<decltype(dst)>>(v[u]);
+        };
         for (int i = 0; i < n; ++i) {
             const auto u = static_cast<std::size_t>(i);
             switch (L.type[u]) {
                 case LinkType::CONDUIT: {
                     const auto r = static_cast<std::size_t>(conduits.add_default(i));
-                    conduits.roughness[r]    = L.roughness[u];
-                    conduits.length[r]       = L.length[u];
-                    conduits.slope[r]        = L.slope[u];
-                    conduits.mod_length[r]   = L.mod_length[u];
-                    conduits.barrels[r]      = L.barrels[u];
-                    conduits.beta[r]         = L.beta[u];
-                    conduits.rough_factor[r] = L.rough_factor[u];
-                    conduits.q_full[r]       = L.q_full[u];
-                    conduits.q_max[r]        = L.q_max[u];
-                    conduits.loss_inlet[r]   = L.loss_inlet[u];
-                    conduits.loss_outlet[r]  = L.loss_outlet[u];
-                    conduits.loss_avg[r]     = L.loss_avg[u];
-                    conduits.seep_rate[r]    = L.seep_rate[u];
-                    conduits.culvert_code[r] = L.culvert_code[u];
+                    cp(L.roughness, u, conduits.roughness[r]);
+                    cp(L.length, u, conduits.length[r]);
+                    cp(L.slope, u, conduits.slope[r]);
+                    cp(L.mod_length, u, conduits.mod_length[r]);
+                    cp(L.barrels, u, conduits.barrels[r]);
+                    cp(L.beta, u, conduits.beta[r]);
+                    cp(L.rough_factor, u, conduits.rough_factor[r]);
+                    cp(L.q_full, u, conduits.q_full[r]);
+                    cp(L.q_max, u, conduits.q_max[r]);
+                    cp(L.loss_inlet, u, conduits.loss_inlet[r]);
+                    cp(L.loss_outlet, u, conduits.loss_outlet[r]);
+                    cp(L.loss_avg, u, conduits.loss_avg[r]);
+                    cp(L.seep_rate, u, conduits.seep_rate[r]);
+                    cp(L.culvert_code, u, conduits.culvert_code[r]);
                 } break;
                 case LinkType::PUMP: {
                     const auto r = static_cast<std::size_t>(pumps.add_default(i));
-                    pumps.curve[r]      = L.pump_curve[u];
-                    pumps.init_state[r] = L.pump_init_state[u] ? uint8_t{1} : uint8_t{0};
-                    pumps.startup[r]    = L.pump_startup[u];
-                    pumps.shutoff[r]    = L.pump_shutoff[u];
-                    pumps.curve_type[r] = L.pump_curve_type[u];
+                    cp(L.pump_curve, u, pumps.curve[r]);
+                    if (u < L.pump_init_state.size())
+                        pumps.init_state[r] = L.pump_init_state[u] ? uint8_t{1} : uint8_t{0};
+                    cp(L.pump_startup, u, pumps.startup[r]);
+                    cp(L.pump_shutoff, u, pumps.shutoff[r]);
+                    cp(L.pump_curve_type, u, pumps.curve_type[r]);
                 } break;
                 case LinkType::ORIFICE: {
                     const auto r = static_cast<std::size_t>(orifices.add_default(i));
-                    orifices.orifice_type[r] = L.param1[u];
-                    orifices.cd[r]           = L.cd[u];
-                    orifices.orate[r]        = L.orate[u];
+                    cp(L.param1, u, orifices.orifice_type[r]);
+                    cp(L.cd, u, orifices.cd[r]);
+                    cp(L.orate, u, orifices.orate[r]);
                 } break;
                 case LinkType::WEIR: {
                     const auto r = static_cast<std::size_t>(weirs.add_default(i));
-                    weirs.weir_type[r]        = L.param1[u];
-                    weirs.cd[r]               = L.cd[u];
-                    weirs.end_contractions[r] = L.param2[u];
-                    weirs.crest_height[r]     = L.crest_height[u];
+                    cp(L.param1, u, weirs.weir_type[r]);
+                    cp(L.cd, u, weirs.cd[r]);
+                    cp(L.param2, u, weirs.end_contractions[r]);
+                    cp(L.crest_height, u, weirs.crest_height[r]);
                 } break;
                 case LinkType::OUTLET: {
                     const auto r = static_cast<std::size_t>(outlets.add_default(i));
-                    outlets.outlet_type[r]  = L.param1[u];
-                    outlets.crest_height[r] = L.crest_height[u];
-                    outlets.coeff[r]        = L.cd[u];
-                    outlets.expon[r]        = L.param2[u];
-                    outlets.curve[r]        = L.pump_curve[u];   // TABULAR rating curve index
+                    cp(L.param1, u, outlets.outlet_type[r]);
+                    cp(L.crest_height, u, outlets.crest_height[r]);
+                    cp(L.cd, u, outlets.coeff[r]);
+                    cp(L.param2, u, outlets.expon[r]);
+                    cp(L.pump_curve, u, outlets.curve[r]);   // TABULAR rating curve index
                 } break;
             }
         }

@@ -1108,7 +1108,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-16s %-12s %-12s %-12s %-12s %-10s %-10s\n","----------------","----------------","----------------","------------","------------","------------","------------","----------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::CONDUIT)continue;
     write_obj_comment(f, ctx.links.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s %12.4f %12.6f %12.4f %12.4f %10.4f %10.4f\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.length[u],ctx.links.roughness[u],ctx.links.offset1[u],ctx.links.offset2[u],ctx.links.q0[u],ctx.links.q_limit[u]);
+    const int cr=ctx.link_subtypes.conduit_row(j); const auto& CD=ctx.link_subtypes.conduits;
+    std::fprintf(f,"%-16s %-16s %-16s %12.4f %12.6f %12.4f %12.4f %10.4f %10.4f\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),(cr>=0)?CD.length[static_cast<size_t>(cr)]:0.0,(cr>=0)?CD.roughness[static_cast<size_t>(cr)]:0.01,ctx.links.offset1[u],ctx.links.offset2[u],ctx.links.q0[u],ctx.links.q_limit[u]);
     }}
 
     // [PUMPS]
@@ -1117,7 +1118,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-16s %-16s %-10s %-10s %-10s\n","----------------","----------------","----------------","----------------","----------","----------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::PUMP)continue;
     write_obj_comment(f, ctx.links.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s %-16s %-10s 0          0\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),tN(ctx,ctx.links.pump_curve[u]),ctx.links.setting[u]>0?"ON":"OFF");
+    const int pr=ctx.link_subtypes.pump_row(j);
+    std::fprintf(f,"%-16s %-16s %-16s %-16s %-10s 0          0\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),tN(ctx,(pr>=0)?ctx.link_subtypes.pumps.curve[static_cast<size_t>(pr)]:-1),ctx.links.setting[u]>0?"ON":"OFF");
     }}
 
     // [ORIFICES]
@@ -1126,7 +1128,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s\n","----------------","----------------","----------------","----------","----------","----------","--------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::ORIFICE)continue;
     write_obj_comment(f, ctx.links.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s SIDE       %10.4f %10.4f NO\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.offset1[u],ctx.links.cd[u]);
+    const int orr=ctx.link_subtypes.orifice_row(j);
+    std::fprintf(f,"%-16s %-16s %-16s SIDE       %10.4f %10.4f NO\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.offset1[u],(orr>=0)?ctx.link_subtypes.orifices.cd[static_cast<size_t>(orr)]:0.0);
     }}
 
     // [WEIRS]
@@ -1135,7 +1138,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","----------","--------","----------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::WEIR)continue;
     write_obj_comment(f, ctx.links.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s %-12s %10.4f %10.4f NO       0          0\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),"TRANSVERSE",ctx.links.crest_height[u],ctx.links.cd[u]);
+    const int wr=ctx.link_subtypes.weir_row(j); const auto& WD=ctx.link_subtypes.weirs;
+    std::fprintf(f,"%-16s %-16s %-16s %-12s %10.4f %10.4f NO       0          0\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),"TRANSVERSE",(wr>=0)?WD.crest_height[static_cast<size_t>(wr)]:0.0,(wr>=0)?WD.cd[static_cast<size_t>(wr)]:0.0);
     }}
 
     // [OUTLETS]
@@ -1144,7 +1148,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-16s %-10s %-16s %-10s %-10s\n","----------------","----------------","----------------","----------","----------------","----------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::OUTLET)continue;
     write_obj_comment(f, ctx.links.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s %10.4f FUNCTIONAL   %10g %10g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.offset1[u],ctx.links.cd[u],ctx.links.param2[u]);
+    const int olr=ctx.link_subtypes.outlet_row(j); const auto& OUT=ctx.link_subtypes.outlets;
+    std::fprintf(f,"%-16s %-16s %-16s %10.4f FUNCTIONAL   %10g %10g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.offset1[u],(olr>=0)?OUT.coeff[static_cast<size_t>(olr)]:0.0,(olr>=0)?OUT.expon[static_cast<size_t>(olr)]:0.0);
     }}
 
     // [XSECTIONS]
@@ -1153,6 +1158,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s\n","----------------","----------------","------------","------------","------------","------------","--------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
     if(ctx.links.type[u]==LinkType::PUMP)continue;
+    const int cr=ctx.link_subtypes.conduit_row(j);
+    const int xbarrels=(cr>=0)?ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)]:1;
     // Emit the retained raw Geom1–Geom4 (preserves trapezoid bottom width /
     // side slopes the derived fields can't reproduce).  xsect_geom1 == 0 means
     // the object was built by a path that didn't populate them; fall back to
@@ -1164,7 +1171,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-16s %-16s %-12s %12.4f %12.4f %12.4f %8d\n",
             ctx.link_names.name_of(j).c_str(),
             xsName(static_cast<int>(ctx.links.xsect_shape[u])),
-            ctx.links.pump_curve_name[u].c_str(),0.0,0.0,0.0,ctx.links.barrels[u]);
+            ctx.links.pump_curve_name[u].c_str(),0.0,0.0,0.0,xbarrels);
         continue;
     }
     double g1,g2,g3,g4;
@@ -1174,23 +1181,27 @@ int writeInpFile(const SimulationContext& ctx_internal,
     } else {
         g1=ctx.links.xsect_y_full[u]; g2=ctx.links.xsect_w_max[u]; g3=0.0; g4=0.0;
     }
-    std::fprintf(f,"%-16s %-16s %12.4f %12.4f %12.4f %12.4f %8d\n",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),g1,g2,g3,g4,ctx.links.barrels[u]);
+    std::fprintf(f,"%-16s %-16s %12.4f %12.4f %12.4f %12.4f %8d\n",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),g1,g2,g3,g4,xbarrels);
     }}
 
     // [LOSSES]
     {bool hasLoss=false;
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
-    if(ctx.links.type[u]==LinkType::CONDUIT&&(ctx.links.loss_inlet[u]!=0||ctx.links.loss_outlet[u]!=0||ctx.links.loss_avg[u]!=0||ctx.links.has_flap_gate[u]||ctx.links.seep_rate[u]!=0)){hasLoss=true;break;}}
+    {const int cr=ctx.link_subtypes.conduit_row(j);const auto&CD=ctx.link_subtypes.conduits;
+    if(ctx.links.type[u]==LinkType::CONDUIT&&cr>=0&&(CD.loss_inlet[static_cast<size_t>(cr)]!=0||CD.loss_outlet[static_cast<size_t>(cr)]!=0||CD.loss_avg[static_cast<size_t>(cr)]!=0||ctx.links.has_flap_gate[u]||CD.seep_rate[static_cast<size_t>(cr)]!=0)){hasLoss=true;break;}}}
     if(hasLoss){sec(f,"LOSSES");
     std::fprintf(f,";;%-16s %-10s %-10s %-10s %-8s %-10s\n","Link","Kentry","Kexit","Kavg","Flap","Seepage");
     std::fprintf(f,";;%-16s %-10s %-10s %-10s %-8s %-10s\n","----------------","----------","----------","----------","--------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
     if(ctx.links.type[u]!=LinkType::CONDUIT)continue;
-    if(ctx.links.loss_inlet[u]==0&&ctx.links.loss_outlet[u]==0&&ctx.links.loss_avg[u]==0&&!ctx.links.has_flap_gate[u]&&ctx.links.seep_rate[u]==0)continue;
+    const int cr=ctx.link_subtypes.conduit_row(j); const auto& CD=ctx.link_subtypes.conduits;
+    if(cr<0)continue;
+    const auto ucr=static_cast<size_t>(cr);
+    if(CD.loss_inlet[ucr]==0&&CD.loss_outlet[ucr]==0&&CD.loss_avg[ucr]==0&&!ctx.links.has_flap_gate[u]&&CD.seep_rate[ucr]==0)continue;
     std::fprintf(f,"%-16s %10.4f %10.4f %10.4f %-8s %10.6f\n",
         ctx.link_names.name_of(j).c_str(),
-        ctx.links.loss_inlet[u],ctx.links.loss_outlet[u],ctx.links.loss_avg[u],
-        ctx.links.has_flap_gate[u]?"YES":"NO",ctx.links.seep_rate[u]);
+        CD.loss_inlet[ucr],CD.loss_outlet[ucr],CD.loss_avg[ucr],
+        ctx.links.has_flap_gate[u]?"YES":"NO",CD.seep_rate[ucr]);
     }}}
 
     // [TRANSECTS]

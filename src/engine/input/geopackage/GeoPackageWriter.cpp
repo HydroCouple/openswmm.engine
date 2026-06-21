@@ -449,8 +449,20 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 11, safe_dbl(ctx.links.xsect_geom2, i));
         bind_double(stmt.get(), 12, safe_dbl(ctx.links.xsect_geom3, i));
         bind_double(stmt.get(), 13, safe_dbl(ctx.links.xsect_geom4, i));
-        bind_int(stmt.get(), 14, safe_get(ctx.links.barrels, (size_t)i, 1));
-        bind_int(stmt.get(), 15, safe_get(ctx.links.culvert_code, (size_t)i, 0));
+        // Phase 6 Stage C: subtype config sourced from the relational side-tables
+        // (defaults match the wide resize() defaults so .gpkg bytes are unchanged).
+        const int cr  = ctx.link_subtypes.conduit_row(i);
+        const int pr  = ctx.link_subtypes.pump_row(i);
+        const int orr = ctx.link_subtypes.orifice_row(i);
+        const int wr  = ctx.link_subtypes.weir_row(i);
+        const int olr = ctx.link_subtypes.outlet_row(i);
+        const auto& CD = ctx.link_subtypes.conduits;
+        const auto& PD = ctx.link_subtypes.pumps;
+        const auto& ORF = ctx.link_subtypes.orifices;
+        const auto& WD = ctx.link_subtypes.weirs;
+        const auto& OUT = ctx.link_subtypes.outlets;
+        bind_int(stmt.get(), 14, (cr >= 0) ? CD.barrels[(size_t)cr] : 1);
+        bind_int(stmt.get(), 15, (cr >= 0) ? CD.culvert_code[(size_t)cr] : 0);
 
         // xsect named reference (col 16). IRREGULAR/STREET/CUSTOM reference a
         // transect/street/shape-curve by NAME — the parser keeps that name in
@@ -469,13 +481,13 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
             else                bind_null(stmt.get(), 16);
         }
 
-        bind_double(stmt.get(), 17, safe_dbl(ctx.links.roughness, i));
-        bind_double(stmt.get(), 18, safe_dbl(ctx.links.length, i));
-        bind_double(stmt.get(), 19, safe_dbl(ctx.links.loss_inlet, i));
-        bind_double(stmt.get(), 20, safe_dbl(ctx.links.loss_outlet, i));
-        bind_double(stmt.get(), 21, safe_dbl(ctx.links.loss_avg, i));
+        bind_double(stmt.get(), 17, (cr >= 0) ? CD.roughness[(size_t)cr] : 0.01);
+        bind_double(stmt.get(), 18, (cr >= 0) ? CD.length[(size_t)cr] : 0.0);
+        bind_double(stmt.get(), 19, (cr >= 0) ? CD.loss_inlet[(size_t)cr] : 0.0);
+        bind_double(stmt.get(), 20, (cr >= 0) ? CD.loss_outlet[(size_t)cr] : 0.0);
+        bind_double(stmt.get(), 21, (cr >= 0) ? CD.loss_avg[(size_t)cr] : 0.0);
         bind_int(stmt.get(), 22, safe_get(ctx.links.has_flap_gate, (size_t)i, uint8_t{0}) ? 1 : 0);
-        bind_double(stmt.get(), 23, safe_dbl(ctx.links.seep_rate, i));
+        bind_double(stmt.get(), 23, (cr >= 0) ? CD.seep_rate[(size_t)cr] : 0.0);
         bind_double(stmt.get(), 24, safe_dbl(ctx.links.q0, i));
         bind_double(stmt.get(), 25, safe_dbl(ctx.links.q_limit, i));
 
@@ -484,9 +496,9 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
             std::string pcname = i < (int)ctx.links.pump_curve_name.size() ? ctx.links.pump_curve_name[i] : "";
             if (!pcname.empty()) bind_text(stmt.get(), 26, pcname);
             else bind_null(stmt.get(), 26);
-            bind_double(stmt.get(), 27, safe_get(ctx.links.pump_init_state, (size_t)i, false) ? 1.0 : 0.0);
-            bind_double(stmt.get(), 28, safe_dbl(ctx.links.pump_startup, i));
-            bind_double(stmt.get(), 29, safe_dbl(ctx.links.pump_shutoff, i));
+            bind_double(stmt.get(), 27, (pr >= 0 && PD.init_state[(size_t)pr]) ? 1.0 : 0.0);
+            bind_double(stmt.get(), 28, (pr >= 0) ? PD.startup[(size_t)pr] : 0.0);
+            bind_double(stmt.get(), 29, (pr >= 0) ? PD.shutoff[(size_t)pr] : 0.0);
         } else {
             bind_null(stmt.get(), 26);
             bind_null(stmt.get(), 27);
@@ -499,11 +511,20 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
         // param2 = end-contractions (weir) / derived area (orifice); orate =
         // orifice open/close time. All dimensionless or ctx-native → as-is.
         // Without these a SIDE orifice loads as BOTTOM (changed discharge).
-        bind_double(stmt.get(), 30, safe_dbl(ctx.links.crest_height, i));
-        bind_double(stmt.get(), 31, safe_dbl(ctx.links.cd, i));
-        bind_double(stmt.get(), 32, safe_dbl(ctx.links.param1, i));
-        bind_double(stmt.get(), 33, safe_dbl(ctx.links.param2, i));
-        bind_double(stmt.get(), 34, safe_dbl(ctx.links.orate, i));
+        // crest_height: weir or outlet row. cd: orifice/weir/outlet (coeff).
+        // param1: orifice_type/weir_type/outlet_type. param2: weir end_contractions
+        // / outlet expon. orate: orifice only. Defaults 0 match wide resize().
+        bind_double(stmt.get(), 30, (wr >= 0) ? WD.crest_height[(size_t)wr]
+                                  : (olr >= 0) ? OUT.crest_height[(size_t)olr] : 0.0);
+        bind_double(stmt.get(), 31, (orr >= 0) ? ORF.cd[(size_t)orr]
+                                  : (wr >= 0) ? WD.cd[(size_t)wr]
+                                  : (olr >= 0) ? OUT.coeff[(size_t)olr] : 0.0);
+        bind_double(stmt.get(), 32, (orr >= 0) ? ORF.orifice_type[(size_t)orr]
+                                  : (wr >= 0) ? WD.weir_type[(size_t)wr]
+                                  : (olr >= 0) ? OUT.outlet_type[(size_t)olr] : 0.0);
+        bind_double(stmt.get(), 33, (wr >= 0) ? WD.end_contractions[(size_t)wr]
+                                  : (olr >= 0) ? OUT.expon[(size_t)olr] : 0.0);
+        bind_double(stmt.get(), 34, (orr >= 0) ? ORF.orate[(size_t)orr] : 0.0);
         // Flow direction (+1/-1). Adverse-slope DW conduits are stored already
         // reversed (positive slope), so direction can't be re-derived on read —
         // persist it so the .out offset-direction echo + routing round-trip.

@@ -312,6 +312,10 @@ protected:
             }
         }
 
+        // Phase 6: this fixture sets the wide LinkData arrays directly (no parse/
+        // init), so populate the relational link side-tables the writer now reads.
+        ctx.link_subtypes.ensure_built(ctx.links);
+
         return ctx;
     }
 };

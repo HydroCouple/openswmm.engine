@@ -569,14 +569,26 @@ void convert_internal_to_display(SimulationContext& ctx) {
             ctx.links.xsect_y_bot[uj] *= len;
 
         if (ctx.links.type[uj] == LinkType::CONDUIT) {
-            if (ctx.links.length[uj] > 0.0) ctx.links.length[uj] *= len;
+            const int cr = ctx.link_subtypes.conduit_row(j);
+            const auto ucr = static_cast<std::size_t>(cr);
+            if (ctx.links.length[uj] > 0.0) {
+                ctx.links.length[uj] *= len;
+                if (cr >= 0) ctx.link_subtypes.conduits.length[ucr] *= len;
+            }
             ctx.links.q0[uj]        *= flow;
             ctx.links.q_limit[uj]   *= flow;
             ctx.links.seep_rate[uj] *= rain;
+            if (cr >= 0) ctx.link_subtypes.conduits.seep_rate[ucr] *= rain;
         }
         ctx.links.offset1[uj]      *= len;
         ctx.links.offset2[uj]      *= len;
         ctx.links.crest_height[uj] *= len;
+        const int wr = ctx.link_subtypes.weir_row(j);
+        if (wr >= 0) ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] *= len;
+        else {
+            const int olr = ctx.link_subtypes.outlet_row(j);
+            if (olr >= 0) ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)] *= len;
+        }
     }
 
     // --- Subcatchments ---
