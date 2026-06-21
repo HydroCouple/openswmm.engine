@@ -338,23 +338,34 @@ void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
         if (n_val <= 0.0) n_val = ctx.links.roughness[uj];
     }
 
+    // Phase 6 Stage A.3: dual-write the conduit side-table row alongside the wide
+    // arrays (the row exists — LinksHandler created it via set_link_type).
+    const int cr = ctx.link_subtypes.conduit_row(j);
+    const auto ucr = static_cast<std::size_t>(cr);
+    auto& CD = ctx.link_subtypes.conduits;
+
     // Roughness factor for DW friction slope: GRAVITY * (n/PHI)^2
     ctx.links.rough_factor[uj] = GRAVITY * (n_val / PHI) * (n_val / PHI);
+    if (cr >= 0) CD.rough_factor[ucr] = ctx.links.rough_factor[uj];
 
     // Conveyance factor: beta = PHI * sqrt(|slope|) / n
     double beta = PHI * std::sqrt(slope) / n_val;
     ctx.links.beta[uj] = beta;
+    if (cr >= 0) CD.beta[ucr] = beta;
 
     // Full-flow rate: q_full = sFull * beta
     ctx.links.q_full[uj] = s_full * beta;
+    if (cr >= 0) CD.q_full[ucr] = ctx.links.q_full[uj];
 
     // Max flow at max section factor
     ctx.links.q_max[uj] = s_max * beta;
+    if (cr >= 0) CD.q_max[ucr] = ctx.links.q_max[uj];
 
     // Conduit volume = A_full * modLength (or length if no lengthening)
     double mod_len = ctx.links.mod_length[uj];
     if (mod_len <= 0.0) mod_len = ctx.links.length[uj];
     ctx.links.mod_length[uj] = mod_len;
+    if (cr >= 0) CD.mod_length[ucr] = mod_len;
     ctx.links.volume[uj] = a_full * mod_len;
 
     // For DW force mains, store roughness factor in xsect_s_bot (Gap #22)
@@ -455,10 +466,16 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
             ctx.links.xsect_y_bot[uj] *= inv_len;
 
         if (ctx.links.type[uj] == LinkType::CONDUIT) {
-            if (ctx.links.length[uj] > 0.0) ctx.links.length[uj] *= inv_len;
+            const int cr = ctx.link_subtypes.conduit_row(j);
+            const auto ucr = static_cast<std::size_t>(cr);
+            if (ctx.links.length[uj] > 0.0) {
+                ctx.links.length[uj] *= inv_len;
+                if (cr >= 0) ctx.link_subtypes.conduits.length[ucr] *= inv_len;
+            }
             ctx.links.q0[uj]        *= inv_flow;
             ctx.links.q_limit[uj]   *= inv_flow;
             ctx.links.seep_rate[uj] *= inv_rain;   // legacy /UCF(RAINFALL)
+            if (cr >= 0) ctx.link_subtypes.conduits.seep_rate[ucr] *= inv_rain;
         }
         // Offsets / crest heights are length-dimension in both DEPTH and ELEV
         // modes; the later ELEV→DEPTH subtraction stays consistent because the
@@ -466,6 +483,13 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
         ctx.links.offset1[uj]      *= inv_len;
         ctx.links.offset2[uj]      *= inv_len;
         ctx.links.crest_height[uj] *= inv_len;
+        // Crest lives on the weir/outlet side-table row (no-op for other types).
+        const int wr = ctx.link_subtypes.weir_row(j);
+        if (wr >= 0) ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] *= inv_len;
+        else {
+            const int olr = ctx.link_subtypes.outlet_row(j);
+            if (olr >= 0) ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)] *= inv_len;
+        }
     }
 
     // --- Subcatchments: width → ft.  Area/infiltration/depression storage are
@@ -792,6 +816,8 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (ctx.links.pump_curve[uj] >= 0) continue; // already resolved
         if (ctx.links.pump_curve_name[uj].empty()) continue;
         ctx.links.pump_curve[uj] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
+        const int pr = ctx.link_subtypes.pump_row(j);
+        if (pr >= 0) ctx.link_subtypes.pumps.curve[static_cast<std::size_t>(pr)] = ctx.links.pump_curve[uj];
     }
 
     // Outlet (TABULAR) rating curve name resolution — curve name stored in
@@ -804,6 +830,8 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (ctx.links.pump_curve[uj] >= 0) continue; // already resolved
         if (ctx.links.pump_curve_name[uj].empty()) continue;
         ctx.links.pump_curve[uj] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
+        const int olr = ctx.link_subtypes.outlet_row(j);
+        if (olr >= 0) ctx.link_subtypes.outlets.curve[static_cast<std::size_t>(olr)] = ctx.links.pump_curve[uj];
     }
 
     // Convert pump startup/shutoff depths from display units → internal (ft)
@@ -813,10 +841,16 @@ void resolve_cross_references(SimulationContext& ctx) {
         for (int j = 0; j < n_links; ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.links.type[uj] != LinkType::PUMP) continue;
-            if (ctx.links.pump_startup[uj] > 0.0)
+            const int pr = ctx.link_subtypes.pump_row(j);
+            const auto upr = static_cast<std::size_t>(pr);
+            if (ctx.links.pump_startup[uj] > 0.0) {
                 ctx.links.pump_startup[uj] /= ucf_len;
-            if (ctx.links.pump_shutoff[uj] > 0.0)
+                if (pr >= 0) ctx.link_subtypes.pumps.startup[upr] /= ucf_len;
+            }
+            if (ctx.links.pump_shutoff[uj] > 0.0) {
                 ctx.links.pump_shutoff[uj] /= ucf_len;
+                if (pr >= 0) ctx.link_subtypes.pumps.shutoff[upr] /= ucf_len;
+            }
         }
     }
 
@@ -979,6 +1013,13 @@ void resolve_cross_references(SimulationContext& ctx) {
                         ctx.links.crest_height[uj] = std::max(0.0, inv2 - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)]);
                         ctx.warnings.push_back(format_warning(WARN_REGULATOR_CREST_LOW, ctx.link_names.name_of(j)));
                     }
+                }
+                // Sync the converted crest to the weir/outlet side-table row.
+                const int wr = ctx.link_subtypes.weir_row(j);
+                if (wr >= 0) ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] = ctx.links.crest_height[uj];
+                else {
+                    const int olr = ctx.link_subtypes.outlet_row(j);
+                    if (olr >= 0) ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)] = ctx.links.crest_height[uj];
                 }
             }
         }
@@ -1263,6 +1304,8 @@ void resolve_cross_references(SimulationContext& ctx) {
 
         double length = ctx.links.length[uj];
         if (length <= 0.0) continue;
+        const int cr = ctx.link_subtypes.conduit_row(j);  // ≥0 (length>0 ⇒ conduit)
+        const auto ucr = static_cast<std::size_t>(cr);
 
         // Convert elevation offsets if ELEV_OFFSET mode
         if (ctx.options.link_offsets == 1) { // ELEV_OFFSET
@@ -1303,6 +1346,7 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (elev1 < elev2) slope = -slope;
 
         ctx.links.slope[uj] = slope;
+        if (cr >= 0) ctx.link_subtypes.conduits.slope[ucr] = slope;
 
         // Reverse conduit orientation for adverse slopes in DW routing
         // (matching legacy conduit_reverse in link.c). A GeoPackage already
@@ -1320,6 +1364,11 @@ void resolve_cross_references(SimulationContext& ctx) {
             ctx.links.slope[uj] = -slope;
             ctx.links.direction[uj] *= -1;
             ctx.links.q0[uj] = -ctx.links.q0[uj];
+            if (cr >= 0) {
+                std::swap(ctx.link_subtypes.conduits.loss_inlet[ucr],
+                          ctx.link_subtypes.conduits.loss_outlet[ucr]);
+                ctx.link_subtypes.conduits.slope[ucr] = -slope;
+            }
         }
     }
 

@@ -364,7 +364,8 @@ int SWMMEngine::initialize() noexcept {
         for (int j = 0; j < ctx_.n_links(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx_.links.type[uj] != LinkType::PUMP) continue;
-            int ci = ctx_.links.pump_curve[uj];
+            const int pr = ctx_.link_subtypes.pump_row(j);
+            int ci = (pr >= 0) ? ctx_.link_subtypes.pumps.curve[static_cast<std::size_t>(pr)] : -1;
             if (ci < 0 || ci >= static_cast<int>(ctx_.tables.tables.size())) continue;
             const auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ci)];
             if (tbl.type != TableType::CURVE_PUMP1) continue;
@@ -409,10 +410,13 @@ int SWMMEngine::initialize() noexcept {
         ctx_.links.flow[uj]     = q0;
         ctx_.links.old_flow[uj] = q0;
         if (ctx_.links.type[uj] == LinkType::CONDUIT && q0 != 0.0) {
+            const int cr = ctx_.link_subtypes.conduit_row(j);
+            const auto& CD = ctx_.link_subtypes.conduits;
             XSectParams xs = link::buildXSectParams(ctx_.links, uj, &ctx_.transect_tables);
-            int barrels = ctx_.links.barrels[uj];
+            int barrels = (cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1;
             double q_per_barrel = std::fabs(q0) / std::max(barrels, 1);
-            double y = link::getDepthFromFlow(xs, ctx_.links.beta[uj], q_per_barrel);
+            double beta = (cr >= 0) ? CD.beta[static_cast<std::size_t>(cr)] : 0.0;
+            double y = link::getDepthFromFlow(xs, beta, q_per_barrel);
             ctx_.links.depth[uj]     = y;
             ctx_.links.old_depth[uj] = y;
             // Initial conduit storage volume = area(y) * length * barrels,
@@ -420,7 +424,8 @@ int SWMMEngine::initialize() noexcept {
             // * barrels). Without this the routing mass-balance "Initial Stored
             // Volume" omitted conduits that start with flow (e.g. extran8a
             // q0=20), producing a large false continuity error (-22%).
-            double vol = xsect::getAofY(xs, y) * ctx_.links.length[uj] * barrels;
+            double len = (cr >= 0) ? CD.length[static_cast<std::size_t>(cr)] : 0.0;
+            double vol = xsect::getAofY(xs, y) * len * barrels;
             ctx_.links.volume[uj]     = vol;
             ctx_.links.old_volume[uj] = vol;
         }
@@ -509,8 +514,11 @@ int SWMMEngine::initialize() noexcept {
         ctx_.links.old_depth[uj] = y;
         XSectParams xs = link::buildXSectParams(ctx_.links, uj,
                                                 &ctx_.transect_tables);
-        int barrels = std::max(ctx_.links.barrels[uj], 1);
-        double vol = xsect::getAofY(xs, y) * ctx_.links.length[uj] * barrels;
+        const int cr = ctx_.link_subtypes.conduit_row(j);
+        const auto& CD = ctx_.link_subtypes.conduits;
+        int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
+        double len = (cr >= 0) ? CD.length[static_cast<std::size_t>(cr)] : 0.0;
+        double vol = xsect::getAofY(xs, y) * len * barrels;
         ctx_.links.volume[uj]     = vol;
         ctx_.links.old_volume[uj] = vol;
     }
@@ -564,8 +572,11 @@ int SWMMEngine::initialize() noexcept {
                 ctx_.links.old_depth[uj] = y;
                 XSectParams xs = link::buildXSectParams(ctx_.links, uj,
                                                         &ctx_.transect_tables);
-                int barrels = std::max(ctx_.links.barrels[uj], 1);
-                double vol = xsect::getAofY(xs, y) * ctx_.links.length[uj] * barrels;
+                const int cr = ctx_.link_subtypes.conduit_row(j);
+                const auto& CD = ctx_.link_subtypes.conduits;
+                int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
+                double len = (cr >= 0) ? CD.length[static_cast<std::size_t>(cr)] : 0.0;
+                double vol = xsect::getAofY(xs, y) * len * barrels;
                 ctx_.links.volume[uj]     = vol;
                 ctx_.links.old_volume[uj] = vol;
             }
@@ -3820,7 +3831,8 @@ void SWMMEngine::initHydraulics() noexcept {
             for (int j = 0; j < n_ll; ++j) {
                 auto uj = static_cast<std::size_t>(j);
                 if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
-                if (ctx_.links.slope[uj] < 0.0) {
+                const int cr = ctx_.link_subtypes.conduit_row(j);
+                if (cr >= 0 && ctx_.link_subtypes.conduits.slope[static_cast<std::size_t>(cr)] < 0.0) {
                     ctx_.errors.push_back(format_error(ERR_SLOPE, ctx_.link_names.names()[uj]));
                     set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
                 }
