@@ -186,10 +186,9 @@ SWMM_ENGINE_API int swmm_node_delete(SWMM_Engine engine, int idx,
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    // Relational refactor (Phase 4): delete_node erases the node's subtype row and
+    // renumbers the side-table join keys in-place (ctx.node_subtypes is authoritative).
     auto res = openswmm::edit::delete_node(ctx, idx);
-    // Relational refactor (Phase 3.0): deleting a node shifts every later index,
-    // invalidating the side-table mapping; flag stale so the next reader rebuilds.
-    ctx.node_subtypes.mark_dirty();
     cascade_to_c(res, cascade_out);
     return SWMM_OK;
 }
@@ -268,10 +267,9 @@ SWMM_ENGINE_API int swmm_node_convert(SWMM_Engine engine, int idx, int new_type,
     if (ctx.nodes.type[ui] == internal_new)
         return SWMM_ERR_BADPARAM;  // same type — no-op
 
+    // Relational refactor (Phase 4): convert_node moves the node's subtype row
+    // (set_node_type) so ctx.node_subtypes stays the single source of truth.
     auto res = openswmm::edit::convert_node(ctx, idx, internal_new);
-    // Relational refactor (Phase 3.0): a type change rewrites subtype membership,
-    // so flag the side-tables stale; the next reader refreshes via ensure_fresh().
-    ctx.node_subtypes.mark_dirty();
     conversion_to_c(res, result_out);
     return SWMM_OK;
 }

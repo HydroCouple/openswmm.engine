@@ -12,18 +12,19 @@
  *          A reverse map (`subtype_row`) gives O(1) base-index → side-table-row
  *          lookup.
  *
- *          **Phase 1 (shadow):** the side-tables are *built from* the existing
- *          wide arrays at init and not yet read by the solver. They mirror the
- *          wide arrays exactly (verifiable via verify_mirror()), so behaviour is
- *          unchanged. Later phases switch compute and IO to read the side-tables
- *          and then remove the wide subtype arrays from NodeData.
+ *          **Phase 4 (authoritative):** the side-tables are the single source of
+ *          truth for subtype config. Parse/edit writers populate the rows
+ *          directly (no build-from-wide, no `verify_mirror`/`ensure_fresh`
+ *          mirror machinery); compute and the C-API read them. Rows are kept in
+ *          ascending `node_idx` order so per-row iteration (e.g. the outfall
+ *          pass) matches a base-node-ascending scan bit-for-bit. The wide
+ *          subtype arrays remain on NodeData until they are deleted at the end
+ *          of the cutover (Phase 4 Stage D).
  *
- *          Design note: building once at init from the resolved wide arrays
- *          (mirroring xsect_batch::XSectGroups::build and StructureSolver::init)
- *          keeps NodeData's resize/grow_to/erase_at/shrink_to_fit untouched in
- *          this phase — a single build site instead of threading population
- *          through every parser. `subtype_row` lives here, not on NodeData, for
- *          the same reason.
+ *          Structural mutations go through `set_node_type` (insert/move a row on
+ *          a type change), `erase_node` (drop a row + renumber join keys on a
+ *          base-node delete), and `rebuild_index` (re-derive the reverse map).
+ *          `subtype_row` lives here, not on NodeData.
  *
  * @see src/engine/data/NodeData.hpp — base NodeData SoA
  * @see src/engine/hydraulics/XSectBatch.hpp — XSectGroups::build (batch pattern)
@@ -37,6 +38,7 @@
 #ifndef OPENSWMM_ENGINE_NODE_SUBTYPES_HPP
 #define OPENSWMM_ENGINE_NODE_SUBTYPES_HPP
 
+#include <algorithm>
 #include <vector>
 #include <cstdint>
 #include <string>
@@ -104,22 +106,44 @@ struct StorageData {
         exfil_suction.reserve(un); exfil_ksat.reserve(un); exfil_imd.reserve(un);
     }
 
-    /** @brief Append one storage row copied from base node `i` of `nodes`. */
-    void push_from(const NodeData& nodes, int i) {
-        const auto ui = static_cast<std::size_t>(i);
-        node_idx.push_back(i);
-        curve.push_back(nodes.storage_curve[ui]);
-        curve_name.push_back(nodes.storage_curve_name[ui]);
-        a.push_back(nodes.storage_a[ui]);
-        b.push_back(nodes.storage_b[ui]);
-        c.push_back(nodes.storage_c[ui]);
-        seep_rate.push_back(nodes.storage_seep_rate[ui]);
-        evap_frac.push_back(nodes.storage_evap_frac[ui]);
-        evap_loss.push_back(nodes.storage_evap_loss[ui]);
-        exfil_loss.push_back(nodes.storage_exfil_loss[ui]);
-        exfil_suction.push_back(nodes.exfil_suction[ui]);
-        exfil_ksat.push_back(nodes.exfil_ksat[ui]);
-        exfil_imd.push_back(nodes.exfil_imd[ui]);
+    /** @brief Insert a default storage row for base node `i`, keeping `node_idx`
+     *  ascending; returns the inserted row index. Defaults match NodeData::resize.
+     *  Ascending parse inserts at the end (O(1)); edits may insert in the middle. */
+    int add_default(int i) {
+        const auto p = static_cast<std::ptrdiff_t>(
+            std::lower_bound(node_idx.begin(), node_idx.end(), i) - node_idx.begin());
+        node_idx.insert(node_idx.begin() + p, i);
+        curve.insert(curve.begin() + p, -1);
+        curve_name.insert(curve_name.begin() + p, std::string{});
+        a.insert(a.begin() + p, 0.0);
+        b.insert(b.begin() + p, 0.0);
+        c.insert(c.begin() + p, 0.0);
+        seep_rate.insert(seep_rate.begin() + p, 0.0);
+        evap_frac.insert(evap_frac.begin() + p, 0.0);
+        evap_loss.insert(evap_loss.begin() + p, 0.0);
+        exfil_loss.insert(exfil_loss.begin() + p, 0.0);
+        exfil_suction.insert(exfil_suction.begin() + p, 0.0);
+        exfil_ksat.insert(exfil_ksat.begin() + p, 0.0);
+        exfil_imd.insert(exfil_imd.begin() + p, 0.0);
+        return static_cast<int>(p);
+    }
+
+    /** @brief Erase storage row `r` from every column. */
+    void erase_at(int r) {
+        const auto p = static_cast<std::ptrdiff_t>(r);
+        node_idx.erase(node_idx.begin() + p);
+        curve.erase(curve.begin() + p);
+        curve_name.erase(curve_name.begin() + p);
+        a.erase(a.begin() + p);
+        b.erase(b.begin() + p);
+        c.erase(c.begin() + p);
+        seep_rate.erase(seep_rate.begin() + p);
+        evap_frac.erase(evap_frac.begin() + p);
+        evap_loss.erase(evap_loss.begin() + p);
+        exfil_loss.erase(exfil_loss.begin() + p);
+        exfil_suction.erase(exfil_suction.begin() + p);
+        exfil_ksat.erase(exfil_ksat.begin() + p);
+        exfil_imd.erase(exfil_imd.begin() + p);
     }
 };
 
@@ -168,17 +192,33 @@ struct OutfallData {
         link_idx.reserve(un); link_offset.reserve(un); head_2d.reserve(un);
     }
 
-    /** @brief Append one outfall row copied from base node `i` of `nodes`. */
-    void push_from(const NodeData& nodes, int i) {
-        const auto ui = static_cast<std::size_t>(i);
-        node_idx.push_back(i);
-        bc_type.push_back(nodes.outfall_type[ui]);
-        param.push_back(nodes.outfall_param[ui]);
-        has_flap_gate.push_back(nodes.outfall_has_flap_gate[ui]);
-        route_to.push_back(nodes.outfall_route_to[ui]);
-        link_idx.push_back(nodes.outfall_link_idx[ui]);
-        link_offset.push_back(nodes.outfall_link_offset[ui]);
-        head_2d.push_back(nodes.outfall_2d_head[ui]);
+    /** @brief Insert a default outfall row for base node `i`, keeping `node_idx`
+     *  ascending; returns the inserted row index. Defaults match NodeData::resize. */
+    int add_default(int i) {
+        const auto p = static_cast<std::ptrdiff_t>(
+            std::lower_bound(node_idx.begin(), node_idx.end(), i) - node_idx.begin());
+        node_idx.insert(node_idx.begin() + p, i);
+        bc_type.insert(bc_type.begin() + p, OutfallType::FREE);
+        param.insert(param.begin() + p, 0.0);
+        has_flap_gate.insert(has_flap_gate.begin() + p, uint8_t{0});
+        route_to.insert(route_to.begin() + p, -1);
+        link_idx.insert(link_idx.begin() + p, -1);
+        link_offset.insert(link_offset.begin() + p, 0.0);
+        head_2d.insert(head_2d.begin() + p, -1.0e30);
+        return static_cast<int>(p);
+    }
+
+    /** @brief Erase outfall row `r` from every column. */
+    void erase_at(int r) {
+        const auto p = static_cast<std::ptrdiff_t>(r);
+        node_idx.erase(node_idx.begin() + p);
+        bc_type.erase(bc_type.begin() + p);
+        param.erase(param.begin() + p);
+        has_flap_gate.erase(has_flap_gate.begin() + p);
+        route_to.erase(route_to.begin() + p);
+        link_idx.erase(link_idx.begin() + p);
+        link_offset.erase(link_offset.begin() + p);
+        head_2d.erase(head_2d.begin() + p);
     }
 };
 
@@ -229,18 +269,35 @@ struct DividerData {
         link_name.reserve(un); curve_name.reserve(un);
     }
 
-    /** @brief Append one divider row copied from base node `i` of `nodes`. */
-    void push_from(const NodeData& nodes, int i) {
-        const auto ui = static_cast<std::size_t>(i);
-        node_idx.push_back(i);
-        method.push_back(nodes.divider_type[ui]);
-        cutoff.push_back(nodes.divider_cutoff[ui]);
-        cd.push_back(nodes.divider_cd[ui]);
-        max_depth.push_back(nodes.divider_max_depth[ui]);
-        curve.push_back(nodes.divider_curve[ui]);
-        link.push_back(nodes.divider_link[ui]);
-        link_name.push_back(nodes.divider_link_name[ui]);
-        curve_name.push_back(nodes.divider_curve_name[ui]);
+    /** @brief Insert a default divider row for base node `i`, keeping `node_idx`
+     *  ascending; returns the inserted row index. Defaults match NodeData::resize. */
+    int add_default(int i) {
+        const auto p = static_cast<std::ptrdiff_t>(
+            std::lower_bound(node_idx.begin(), node_idx.end(), i) - node_idx.begin());
+        node_idx.insert(node_idx.begin() + p, i);
+        method.insert(method.begin() + p, DividerType::CUTOFF);
+        cutoff.insert(cutoff.begin() + p, 0.0);
+        cd.insert(cd.begin() + p, 0.0);
+        max_depth.insert(max_depth.begin() + p, 0.0);
+        curve.insert(curve.begin() + p, -1);
+        link.insert(link.begin() + p, -1);
+        link_name.insert(link_name.begin() + p, std::string{});
+        curve_name.insert(curve_name.begin() + p, std::string{});
+        return static_cast<int>(p);
+    }
+
+    /** @brief Erase divider row `r` from every column. */
+    void erase_at(int r) {
+        const auto p = static_cast<std::ptrdiff_t>(r);
+        node_idx.erase(node_idx.begin() + p);
+        method.erase(method.begin() + p);
+        cutoff.erase(cutoff.begin() + p);
+        cd.erase(cd.begin() + p);
+        max_depth.erase(max_depth.begin() + p);
+        curve.erase(curve.begin() + p);
+        link.erase(link.begin() + p);
+        link_name.erase(link_name.begin() + p);
+        curve_name.erase(curve_name.begin() + p);
     }
 };
 
@@ -264,14 +321,6 @@ struct NodeSubtypes {
     /** @brief base node index → row in its subtype table (-1 for junctions). */
     std::vector<int> subtype_row;
 
-    /**
-     * @brief True when the wide subtype arrays were mutated after the last
-     *        build(), so the side-tables may be stale until ensure_fresh().
-     * @details Set O(1) by mark_dirty() from C-API setters / editing; cleared by
-     *          build(). Only consulted by non-hot-path readers via ensure_fresh().
-     */
-    bool dirty_ = false;
-
     /** @brief Drop all rows and the reverse map. */
     void clear() noexcept {
         storages.clear();
@@ -281,62 +330,104 @@ struct NodeSubtypes {
     }
 
     /**
-     * @brief (Re)build all side-tables from the resolved wide NodeData arrays.
+     * @brief Recompute the reverse map (`subtype_row`) from the side-table rows.
      *
-     * @details Single build site (called at hydraulics init, after PostParse
-     *          resolution). Idempotent: clears first, then one pass over nodes.
-     *          Junctions contribute no subtype row (subtype_row = -1).
+     * @details Phase 4: the side-tables are the authoritative store (no longer
+     *          built from the wide arrays), so this only re-derives the O(1)
+     *          base→row index from each table's `node_idx`. Sizes `subtype_row`
+     *          to @p n_nodes (junctions and untyped nodes stay -1). Used after a
+     *          structural edit (insert/erase/convert) and as the end-of-parse /
+     *          hydraulics-init consistency pass. Does not touch row data.
      */
-    void build(const NodeData& nodes) {
-        clear();
-        const int n = nodes.count();
-        subtype_row.assign(static_cast<std::size_t>(n), -1);
-
-        // Pre-count for tight allocation (the memory win this refactor targets).
-        int n_storage = 0, n_outfall = 0, n_divider = 0;
-        for (int i = 0; i < n; ++i) {
-            switch (nodes.type[static_cast<std::size_t>(i)]) {
-                case NodeType::STORAGE: ++n_storage; break;
-                case NodeType::OUTFALL: ++n_outfall; break;
-                case NodeType::DIVIDER: ++n_divider; break;
-                default: break;
-            }
-        }
-        storages.reserve(n_storage);
-        outfalls.reserve(n_outfall);
-        dividers.reserve(n_divider);
-
-        for (int i = 0; i < n; ++i) {
-            switch (nodes.type[static_cast<std::size_t>(i)]) {
-                case NodeType::STORAGE:
-                    subtype_row[static_cast<std::size_t>(i)] = storages.count();
-                    storages.push_from(nodes, i);
-                    break;
-                case NodeType::OUTFALL:
-                    subtype_row[static_cast<std::size_t>(i)] = outfalls.count();
-                    outfalls.push_from(nodes, i);
-                    break;
-                case NodeType::DIVIDER:
-                    subtype_row[static_cast<std::size_t>(i)] = dividers.count();
-                    dividers.push_from(nodes, i);
-                    break;
-                case NodeType::JUNCTION:
-                default:
-                    break;  // subtype_row stays -1
-            }
-        }
-        dirty_ = false;
+    void rebuild_index(int n_nodes) {
+        subtype_row.assign(static_cast<std::size_t>(n_nodes), -1);
+        for (int r = 0; r < storages.count(); ++r)
+            subtype_row[static_cast<std::size_t>(storages.node_idx[static_cast<std::size_t>(r)])] = r;
+        for (int r = 0; r < outfalls.count(); ++r)
+            subtype_row[static_cast<std::size_t>(outfalls.node_idx[static_cast<std::size_t>(r)])] = r;
+        for (int r = 0; r < dividers.count(); ++r)
+            subtype_row[static_cast<std::size_t>(dividers.node_idx[static_cast<std::size_t>(r)])] = r;
     }
 
-    /** @brief Flag the side-tables as stale after a runtime mutation of the wide
-     *  subtype arrays (C-API setters, editing). O(1). */
-    void mark_dirty() noexcept { dirty_ = true; }
+    /**
+     * @brief Set node @p i to @p t, creating/removing/moving its subtype row so
+     *        the side-table stays the single source of truth. Returns the new
+     *        subtype row (or -1 for JUNCTION). Also sets `nodes.type[i]`.
+     *
+     * @details Idempotent: re-setting the same subtype type returns the existing
+     *          row (parse duplicate lines, no-op). On a real type change the old
+     *          row is erased and a fresh default row inserted (keeping `node_idx`
+     *          ascending). Fresh ascending parse appends at the end in O(1); any
+     *          mid-table insert or erase triggers an O(n) `rebuild_index`. New
+     *          rows carry NodeData::resize defaults (so a converted node starts
+     *          clean, matching the legacy clear-then-apply-defaults path).
+     */
+    int set_node_type(NodeData& nodes, int i, NodeType t) {
+        const auto ui = static_cast<std::size_t>(i);
+        if (i >= static_cast<int>(subtype_row.size()))
+            subtype_row.resize(static_cast<std::size_t>(i) + 1, -1);
 
-    /** @brief Rebuild from the wide arrays only if a mutation occurred since the
-     *  last build(). For non-hot-path readers (C-API getters, IO) in OPENED
-     *  state. No-op during a run: the init build clears the flag and nothing
-     *  dirties mid-run. */
-    void ensure_fresh(const NodeData& nodes) { if (dirty_) build(nodes); }
+        const NodeType old = nodes.type[ui];
+        const int existing = subtype_row[ui];
+        if (old == t && existing >= 0)
+            return existing;  // already this subtype with a row — idempotent.
+
+        bool shifted = false;
+        if (existing >= 0) {  // remove the old subtype row (real re-type/convert).
+            switch (old) {
+                case NodeType::STORAGE: storages.erase_at(existing); break;
+                case NodeType::OUTFALL: outfalls.erase_at(existing); break;
+                case NodeType::DIVIDER: dividers.erase_at(existing); break;
+                default: break;
+            }
+            shifted = true;
+        }
+
+        nodes.type[ui] = t;
+
+        int row = -1;
+        switch (t) {
+            case NodeType::STORAGE: row = storages.add_default(i);
+                                    if (row != storages.count() - 1) shifted = true; break;
+            case NodeType::OUTFALL: row = outfalls.add_default(i);
+                                    if (row != outfalls.count() - 1) shifted = true; break;
+            case NodeType::DIVIDER: row = dividers.add_default(i);
+                                    if (row != dividers.count() - 1) shifted = true; break;
+            case NodeType::JUNCTION:
+            default: break;  // no subtype row
+        }
+
+        if (shifted) {
+            rebuild_index(nodes.count());
+            return (t == NodeType::JUNCTION) ? -1 : subtype_row[ui];
+        }
+        subtype_row[ui] = row;  // O(1) ascending-parse / end-insert path
+        return row;
+    }
+
+    /**
+     * @brief Drop node @p i's subtype row and renumber the join keys after a base
+     *        node erase. Call after `NodeData::erase_at(i)` (so @p n_after is the
+     *        new node count). Every `node_idx > i` shifts down by one.
+     */
+    void erase_node(int i, int n_after) {
+        // Erase the row whose node_idx == i (in whichever table holds it).
+        auto drop = [i](auto& tbl) -> bool {
+            for (int r = 0; r < tbl.count(); ++r)
+                if (tbl.node_idx[static_cast<std::size_t>(r)] == i) { tbl.erase_at(r); return true; }
+            return false;
+        };
+        drop(storages) || drop(outfalls) || drop(dividers);
+
+        auto shift = [i](std::vector<int>& keys) {
+            for (auto& k : keys) if (k > i) --k;
+        };
+        shift(storages.node_idx);
+        shift(outfalls.node_idx);
+        shift(dividers.node_idx);
+
+        rebuild_index(n_after);
+    }
 
     /** @brief Storage side-table row for base node @p i, or -1 if @p i is not a
      *  storage node (or the side-table is unbuilt). O(1). */
@@ -372,75 +463,6 @@ struct NodeSubtypes {
                 return r;
         }
         return -1;
-    }
-
-    /**
-     * @brief Debug self-check: every side-table row equals the matching wide
-     *        NodeData field, and the reverse map is consistent.
-     * @return true if the side-tables exactly mirror NodeData.
-     * @note Phase-1 shadow guard. Intended for use inside assert() in debug
-     *       builds; not called on the release hot path.
-     */
-    bool verify_mirror(const NodeData& nodes) const {
-        const int n = nodes.count();
-        if (static_cast<int>(subtype_row.size()) != n) return false;
-
-        for (int i = 0; i < n; ++i) {
-            const auto ui = static_cast<std::size_t>(i);
-            const int r = subtype_row[ui];
-            switch (nodes.type[ui]) {
-                case NodeType::STORAGE: {
-                    if (r < 0 || r >= storages.count()) return false;
-                    const auto ur = static_cast<std::size_t>(r);
-                    if (storages.node_idx[ur] != i) return false;
-                    if (storages.curve[ur]      != nodes.storage_curve[ui]) return false;
-                    if (storages.curve_name[ur] != nodes.storage_curve_name[ui]) return false;
-                    if (storages.a[ur] != nodes.storage_a[ui]) return false;
-                    if (storages.b[ur] != nodes.storage_b[ui]) return false;
-                    if (storages.c[ur] != nodes.storage_c[ui]) return false;
-                    if (storages.seep_rate[ur]     != nodes.storage_seep_rate[ui]) return false;
-                    if (storages.evap_frac[ur]     != nodes.storage_evap_frac[ui]) return false;
-                    if (storages.evap_loss[ur]     != nodes.storage_evap_loss[ui]) return false;
-                    if (storages.exfil_loss[ur]    != nodes.storage_exfil_loss[ui]) return false;
-                    if (storages.exfil_suction[ur] != nodes.exfil_suction[ui]) return false;
-                    if (storages.exfil_ksat[ur]    != nodes.exfil_ksat[ui]) return false;
-                    if (storages.exfil_imd[ur]     != nodes.exfil_imd[ui]) return false;
-                    break;
-                }
-                case NodeType::OUTFALL: {
-                    if (r < 0 || r >= outfalls.count()) return false;
-                    const auto ur = static_cast<std::size_t>(r);
-                    if (outfalls.node_idx[ur] != i) return false;
-                    if (outfalls.bc_type[ur]       != nodes.outfall_type[ui]) return false;
-                    if (outfalls.param[ur]         != nodes.outfall_param[ui]) return false;
-                    if (outfalls.has_flap_gate[ur] != nodes.outfall_has_flap_gate[ui]) return false;
-                    if (outfalls.route_to[ur]      != nodes.outfall_route_to[ui]) return false;
-                    if (outfalls.link_idx[ur]      != nodes.outfall_link_idx[ui]) return false;
-                    if (outfalls.link_offset[ur]   != nodes.outfall_link_offset[ui]) return false;
-                    if (outfalls.head_2d[ur]       != nodes.outfall_2d_head[ui]) return false;
-                    break;
-                }
-                case NodeType::DIVIDER: {
-                    if (r < 0 || r >= dividers.count()) return false;
-                    const auto ur = static_cast<std::size_t>(r);
-                    if (dividers.node_idx[ur] != i) return false;
-                    if (dividers.method[ur]    != nodes.divider_type[ui]) return false;
-                    if (dividers.cutoff[ur]    != nodes.divider_cutoff[ui]) return false;
-                    if (dividers.cd[ur]        != nodes.divider_cd[ui]) return false;
-                    if (dividers.max_depth[ur] != nodes.divider_max_depth[ui]) return false;
-                    if (dividers.curve[ur]     != nodes.divider_curve[ui]) return false;
-                    if (dividers.link[ur]      != nodes.divider_link[ui]) return false;
-                    if (dividers.link_name[ur] != nodes.divider_link_name[ui]) return false;
-                    if (dividers.curve_name[ur] != nodes.divider_curve_name[ui]) return false;
-                    break;
-                }
-                case NodeType::JUNCTION:
-                default:
-                    if (r != -1) return false;
-                    break;
-            }
-        }
-        return true;
     }
 };
 

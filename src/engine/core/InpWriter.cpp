@@ -1012,8 +1012,13 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-12s %-12s %-8s\n","----------------","------------","------------","--------");
     for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::OUTFALL)continue;
     write_obj_comment(f, ctx.nodes.comments, u);
-    std::fprintf(f,"%-16s %12.4f %-12s %s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ofName(ctx.nodes.outfall_type[u]),ctx.nodes.outfall_has_flap_gate[u]?"YES":"NO");
-    if(ctx.nodes.outfall_type[u]==OutfallType::FIXED)std::fprintf(f," %12.4f",ctx.nodes.outfall_param[u]);
+    // Relational side-table (Phase 4).
+    const int orow = ctx.node_subtypes.outfall_row(j); const auto& O = ctx.node_subtypes.outfalls;
+    const OutfallType otype = (orow>=0)?O.bc_type[static_cast<size_t>(orow)]:OutfallType::FREE;
+    const int oflap = (orow>=0)?O.has_flap_gate[static_cast<size_t>(orow)]:0;
+    const double oparam = (orow>=0)?O.param[static_cast<size_t>(orow)]:0.0;
+    std::fprintf(f,"%-16s %12.4f %-12s %s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ofName(otype),oflap?"YES":"NO");
+    if(otype==OutfallType::FIXED)std::fprintf(f," %12.4f",oparam);
     std::fprintf(f,"\n");
     }}
 
@@ -1023,17 +1028,20 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-12s %-16s %-12s\n","----------------","------------","----------------","------------");
     for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::DIVIDER)continue;
     write_obj_comment(f, ctx.nodes.comments, u);
+    // Relational side-table (Phase 4).
+    const int drow = ctx.node_subtypes.divider_row(j); const auto& D = ctx.node_subtypes.dividers;
     // Resolve diversion link name
     const char* divLinkName = "*";
     std::string dlnStr;
-    int dlIdx = (u < ctx.nodes.divider_link.size()) ? ctx.nodes.divider_link[u] : -1;
+    int dlIdx = (drow>=0) ? D.link[static_cast<size_t>(drow)]
+                          : -1;
     if(dlIdx >= 0 && dlIdx < ctx.link_names.size()) {
         dlnStr = ctx.link_names.name_of(dlIdx); divLinkName = dlnStr.c_str();
-    } else if(u < ctx.nodes.divider_link_name.size() && !ctx.nodes.divider_link_name[u].empty()) {
-        divLinkName = ctx.nodes.divider_link_name[u].c_str();
+    } else if(drow>=0 && !D.link_name[static_cast<size_t>(drow)].empty()) {
+        divLinkName = D.link_name[static_cast<size_t>(drow)].c_str();
     }
-    auto dtype = (u < ctx.nodes.divider_type.size()) ? ctx.nodes.divider_type[u] : DividerType::CUTOFF;
-    double cutoff = (u < ctx.nodes.divider_cutoff.size()) ? ctx.nodes.divider_cutoff[u] : 0.0;
+    auto dtype = (drow>=0) ? D.method[static_cast<size_t>(drow)] : DividerType::CUTOFF;
+    double cutoff = (drow>=0) ? D.cutoff[static_cast<size_t>(drow)] : 0.0;
     switch(dtype) {
     case DividerType::CUTOFF:
         std::fprintf(f,"%-16s %12.4f %-16s CUTOFF   %12.4f %12.4f %12.4f %12.4f %12.4f\n",
@@ -1050,11 +1058,12 @@ int writeInpFile(const SimulationContext& ctx_internal,
     case DividerType::TABULAR: {
         const char* curveName = "*";
         std::string cnStr;
-        int ci = (u < ctx.nodes.divider_curve.size()) ? ctx.nodes.divider_curve[u] : -1;
+        int ci = (drow>=0) ? D.curve[static_cast<size_t>(drow)]
+                           : -1;
         if(ci >= 0 && ci < ctx.table_names.size()) {
             cnStr = ctx.table_names.name_of(ci); curveName = cnStr.c_str();
-        } else if(u < ctx.nodes.divider_curve_name.size() && !ctx.nodes.divider_curve_name[u].empty()) {
-            curveName = ctx.nodes.divider_curve_name[u].c_str();
+        } else if(drow>=0 && !D.curve_name[static_cast<size_t>(drow)].empty()) {
+            curveName = D.curve_name[static_cast<size_t>(drow)].c_str();
         }
         std::fprintf(f,"%-16s %12.4f %-16s TABULAR  %-16s %12.4f %12.4f %12.4f %12.4f\n",
             ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
@@ -1063,8 +1072,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
         break;
     }
     case DividerType::WEIR: {
-        double cd = (u < ctx.nodes.divider_cd.size()) ? ctx.nodes.divider_cd[u] : 0.0;
-        double maxd = (u < ctx.nodes.divider_max_depth.size()) ? ctx.nodes.divider_max_depth[u] : 0.0;
+        double cd = (drow>=0) ? D.cd[static_cast<size_t>(drow)] : 0.0;
+        double maxd = (drow>=0) ? D.max_depth[static_cast<size_t>(drow)] : 0.0;
         std::fprintf(f,"%-16s %12.4f %-16s WEIR     %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f\n",
             ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
             cutoff, cd, maxd, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
@@ -1080,10 +1089,17 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s\n","----------------","------------","------------","------------","------------");
     for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::STORAGE)continue;
     write_obj_comment(f, ctx.nodes.comments, u);
-    if(ctx.nodes.storage_curve[u]>=0)
-        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f TABULAR    %s 0 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],tN(ctx,ctx.nodes.storage_curve[u]),ctx.nodes.sur_depth[u]);
-    else
-        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f FUNCTIONAL %g %g %g 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],ctx.nodes.storage_a[u],ctx.nodes.storage_b[u],ctx.nodes.storage_c[u],ctx.nodes.sur_depth[u]);
+    // Relational side-table (Phase 4).
+    const int srow = ctx.node_subtypes.storage_row(j); const auto& S = ctx.node_subtypes.storages;
+    const int scurve = (srow>=0)?S.curve[static_cast<size_t>(srow)]:-1;
+    if(scurve>=0)
+        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f TABULAR    %s 0 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],tN(ctx,scurve),ctx.nodes.sur_depth[u]);
+    else {
+        const double sa=(srow>=0)?S.a[static_cast<size_t>(srow)]:0.0;
+        const double sb=(srow>=0)?S.b[static_cast<size_t>(srow)]:0.0;
+        const double sc=(srow>=0)?S.c[static_cast<size_t>(srow)]:0.0;
+        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f FUNCTIONAL %g %g %g 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],sa,sb,sc,ctx.nodes.sur_depth[u]);
+    }
     }}
 
     // [CONDUITS]

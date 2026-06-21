@@ -112,7 +112,8 @@ CascadeResult analyze_node_impact(const SimulationContext& ctx, int node_idx) {
     const int nn = ctx.n_nodes();
     for (int i = 0; i < nn; ++i) {
         if (i == node_idx) continue;
-        if (ctx.nodes.outfall_route_to[static_cast<std::size_t>(i)] == node_idx)
+        const int r = ctx.node_subtypes.outfall_row(i);
+        if (r >= 0 && ctx.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)] == node_idx)
             result.add(SWMM_REF_NODE, i, "outfall_route_to", false);
     }
     const int niu = ctx.inlet_usages.count();
@@ -131,7 +132,8 @@ CascadeResult analyze_link_impact(const SimulationContext& ctx, int link_idx) {
     CascadeResult result;
     const int nn = ctx.n_nodes();
     for (int i = 0; i < nn; ++i) {
-        if (ctx.nodes.divider_link[static_cast<std::size_t>(i)] == link_idx)
+        const int r = ctx.node_subtypes.divider_row(i);
+        if (r >= 0 && ctx.node_subtypes.dividers.link[static_cast<std::size_t>(r)] == link_idx)
             result.add(SWMM_REF_NODE, i, "divider_link", false);
     }
     const int niu = ctx.inlet_usages.count();
@@ -156,7 +158,8 @@ CascadeResult analyze_subcatch_impact(const SimulationContext& ctx, int sc_idx) 
     }
     const int nn = ctx.n_nodes();
     for (int i = 0; i < nn; ++i) {
-        if (ctx.nodes.outfall_route_to[static_cast<std::size_t>(i)] == sc_idx)
+        const int r = ctx.node_subtypes.outfall_row(i);
+        if (r >= 0 && ctx.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)] == sc_idx)
             result.add(SWMM_REF_NODE, i, "outfall_route_to", false);
     }
     return result;
@@ -190,20 +193,37 @@ CascadeResult analyze_table_impact(const SimulationContext& ctx, int table_idx) 
             result.add(SWMM_REF_GAGE, i, "ts_index", false);
     }
 
-    // Nodes
+    // Nodes — dispatch by type so cascade entries stay in ascending-node order.
+    const auto& subs = ctx.node_subtypes;
     const int nn = ctx.n_nodes();
     for (int i = 0; i < nn; ++i) {
-        const auto ui = static_cast<std::size_t>(i);
-        if (ctx.nodes.storage_curve[ui] == table_idx)
-            result.add(SWMM_REF_NODE, i, "storage_curve", false);
-        if (ctx.nodes.divider_curve[ui] == table_idx)
-            result.add(SWMM_REF_NODE, i, "divider_curve", false);
-        // outfall_param encodes table index as double when type is TIDAL or TIMESERIES
-        if (ctx.nodes.type[ui] == NodeType::OUTFALL &&
-            (ctx.nodes.outfall_type[ui] == OutfallType::TIDAL ||
-             ctx.nodes.outfall_type[ui] == OutfallType::TIMESERIES) &&
-            static_cast<int>(ctx.nodes.outfall_param[ui]) == table_idx)
-            result.add(SWMM_REF_NODE, i, "outfall_param", false);
+        switch (ctx.nodes.type[static_cast<std::size_t>(i)]) {
+            case NodeType::STORAGE: {
+                const int r = subs.storage_row(i);
+                if (r >= 0 && subs.storages.curve[static_cast<std::size_t>(r)] == table_idx)
+                    result.add(SWMM_REF_NODE, i, "storage_curve", false);
+                break;
+            }
+            case NodeType::DIVIDER: {
+                const int r = subs.divider_row(i);
+                if (r >= 0 && subs.dividers.curve[static_cast<std::size_t>(r)] == table_idx)
+                    result.add(SWMM_REF_NODE, i, "divider_curve", false);
+                break;
+            }
+            case NodeType::OUTFALL: {
+                // outfall param encodes table index as double for TIDAL/TIMESERIES
+                const int r = subs.outfall_row(i);
+                if (r >= 0) {
+                    const auto ur = static_cast<std::size_t>(r);
+                    if ((subs.outfalls.bc_type[ur] == OutfallType::TIDAL ||
+                         subs.outfalls.bc_type[ur] == OutfallType::TIMESERIES) &&
+                        static_cast<int>(subs.outfalls.param[ur]) == table_idx)
+                        result.add(SWMM_REF_NODE, i, "outfall_param", false);
+                }
+                break;
+            }
+            default: break;
+        }
     }
 
     // Links
@@ -280,8 +300,9 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
     const int nn = ctx.n_nodes();
     for (int i = 0; i < nn; ++i) {
         if (i == node_idx) continue;
-        if (ctx.nodes.outfall_route_to[static_cast<std::size_t>(i)] == node_idx) {
-            ctx.nodes.outfall_route_to[static_cast<std::size_t>(i)] = -1;
+        const int r = ctx.node_subtypes.outfall_row(i);
+        if (r >= 0 && ctx.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)] == node_idx) {
+            ctx.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)] = -1;
             result.add(SWMM_REF_NODE, i, "outfall_route_to", false);
         }
     }
@@ -295,16 +316,19 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
         }
     }
 
-    // --- Step 5: erase SoA row ---
+    // --- Step 5: erase SoA row (base + subtype side-table) ---
     erase_node_spatial(ctx, node_idx);
     ctx.node_names.remove_at(node_idx);
     ctx.nodes.erase_at(node_idx);
+    // Drop this node's subtype row and shift the side-table join keys for nodes
+    // after node_idx (mirrors the base-array index shift just done above).
+    ctx.node_subtypes.erase_node(node_idx, ctx.nodes.count());
 
     // --- Step 6: renumber cross-references for nodes with index > node_idx ---
     renumber_refs(ctx.links.node1, node_idx);
     renumber_refs(ctx.links.node2, node_idx);
     renumber_refs(ctx.subcatches.outlet_node, node_idx);
-    renumber_refs(ctx.nodes.outfall_route_to, node_idx);
+    renumber_refs(ctx.node_subtypes.outfalls.route_to, node_idx);
     renumber_refs(ctx.inlet_usages.node_index, node_idx);
     // gw_node in subcatches also references nodes
     renumber_refs(ctx.subcatches.gw_node, node_idx);
@@ -322,8 +346,9 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
     // --- Step 1: nullify divider_link on nodes ---
     const int nn = ctx.n_nodes();
     for (int i = 0; i < nn; ++i) {
-        if (ctx.nodes.divider_link[static_cast<std::size_t>(i)] == link_idx) {
-            ctx.nodes.divider_link[static_cast<std::size_t>(i)] = -1;
+        const int r = ctx.node_subtypes.divider_row(i);
+        if (r >= 0 && ctx.node_subtypes.dividers.link[static_cast<std::size_t>(r)] == link_idx) {
+            ctx.node_subtypes.dividers.link[static_cast<std::size_t>(r)] = -1;
             result.add(SWMM_REF_NODE, i, "divider_link", false);
         }
     }
@@ -348,10 +373,10 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
     ctx.links.erase_at(link_idx);
 
     // --- Step 4: renumber cross-references ---
-    renumber_refs(ctx.nodes.divider_link, link_idx);
+    renumber_refs(ctx.node_subtypes.dividers.link, link_idx);
     renumber_refs(ctx.inlet_usages.link_index, link_idx);
-    // outfall_link_idx is a cached value rebuilt at init; nullify for safety
-    for (auto& v : ctx.nodes.outfall_link_idx) {
+    // outfall link_idx is a cached value rebuilt at init; nullify for safety
+    for (auto& v : ctx.node_subtypes.outfalls.link_idx) {
         if (v == link_idx) v = -1;
         else if (v > link_idx) --v;
     }
@@ -379,8 +404,9 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
     // --- Step 2: nullify outfall_route_to on nodes ---
     const int nn = ctx.n_nodes();
     for (int i = 0; i < nn; ++i) {
-        if (ctx.nodes.outfall_route_to[static_cast<std::size_t>(i)] == sc_idx) {
-            ctx.nodes.outfall_route_to[static_cast<std::size_t>(i)] = -1;
+        const int r = ctx.node_subtypes.outfall_row(i);
+        if (r >= 0 && ctx.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)] == sc_idx) {
+            ctx.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)] = -1;
             result.add(SWMM_REF_NODE, i, "outfall_route_to", false);
         }
     }
@@ -393,7 +419,7 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
 
     // --- Step 4: renumber ---
     renumber_refs(ctx.subcatches.outlet_subcatch, sc_idx);
-    renumber_refs(ctx.nodes.outfall_route_to, sc_idx);
+    renumber_refs(ctx.node_subtypes.outfalls.route_to, sc_idx);
 
     return result;
 }
@@ -443,21 +469,39 @@ CascadeResult delete_table(SimulationContext& ctx, int table_idx) {
 
     const int nn = ctx.n_nodes();
     for (int i = 0; i < nn; ++i) {
-        const auto ui = static_cast<std::size_t>(i);
-        if (ctx.nodes.storage_curve[ui] == table_idx) {
-            ctx.nodes.storage_curve[ui] = -1;
-            result.add(SWMM_REF_NODE, i, "storage_curve", false);
-        }
-        if (ctx.nodes.divider_curve[ui] == table_idx) {
-            ctx.nodes.divider_curve[ui] = -1;
-            result.add(SWMM_REF_NODE, i, "divider_curve", false);
-        }
-        if (ctx.nodes.type[ui] == NodeType::OUTFALL &&
-            (ctx.nodes.outfall_type[ui] == OutfallType::TIDAL ||
-             ctx.nodes.outfall_type[ui] == OutfallType::TIMESERIES) &&
-            static_cast<int>(ctx.nodes.outfall_param[ui]) == table_idx) {
-            ctx.nodes.outfall_param[ui] = 0.0;
-            result.add(SWMM_REF_NODE, i, "outfall_param", false);
+        switch (ctx.nodes.type[static_cast<std::size_t>(i)]) {
+            case NodeType::STORAGE: {
+                const int r = ctx.node_subtypes.storage_row(i);
+                if (r >= 0 && ctx.node_subtypes.storages.curve[static_cast<std::size_t>(r)] == table_idx) {
+                    ctx.node_subtypes.storages.curve[static_cast<std::size_t>(r)] = -1;
+                    result.add(SWMM_REF_NODE, i, "storage_curve", false);
+                }
+                break;
+            }
+            case NodeType::DIVIDER: {
+                const int r = ctx.node_subtypes.divider_row(i);
+                if (r >= 0 && ctx.node_subtypes.dividers.curve[static_cast<std::size_t>(r)] == table_idx) {
+                    ctx.node_subtypes.dividers.curve[static_cast<std::size_t>(r)] = -1;
+                    result.add(SWMM_REF_NODE, i, "divider_curve", false);
+                }
+                break;
+            }
+            case NodeType::OUTFALL: {
+                // outfall param encodes table index as double for TIDAL/TIMESERIES
+                const int r = ctx.node_subtypes.outfall_row(i);
+                if (r >= 0) {
+                    const auto ur = static_cast<std::size_t>(r);
+                    auto& O = ctx.node_subtypes.outfalls;
+                    if ((O.bc_type[ur] == OutfallType::TIDAL ||
+                         O.bc_type[ur] == OutfallType::TIMESERIES) &&
+                        static_cast<int>(O.param[ur]) == table_idx) {
+                        O.param[ur] = 0.0;
+                        result.add(SWMM_REF_NODE, i, "outfall_param", false);
+                    }
+                }
+                break;
+            }
+            default: break;
         }
     }
 
@@ -480,19 +524,21 @@ CascadeResult delete_table(SimulationContext& ctx, int table_idx) {
 
     // --- Step 3: renumber cross-references for indices > table_idx ---
     renumber_refs(ctx.gages.ts_index, table_idx);
-    renumber_refs(ctx.nodes.storage_curve, table_idx);
-    renumber_refs(ctx.nodes.divider_curve, table_idx);
+    renumber_refs(ctx.node_subtypes.storages.curve, table_idx);
+    renumber_refs(ctx.node_subtypes.dividers.curve, table_idx);
     renumber_refs(ctx.links.pump_curve, table_idx);
     renumber_refs(ctx.links.xsect_curve, table_idx);
 
-    // outfall_param stores table index as double for TIDAL/TIMESERIES — renumber
-    for (int i = 0; i < nn; ++i) {
-        const auto ui = static_cast<std::size_t>(i);
-        if (ctx.nodes.type[ui] == NodeType::OUTFALL &&
-            (ctx.nodes.outfall_type[ui] == OutfallType::TIDAL ||
-             ctx.nodes.outfall_type[ui] == OutfallType::TIMESERIES)) {
-            int ref = static_cast<int>(ctx.nodes.outfall_param[ui]);
-            if (ref > table_idx) ctx.nodes.outfall_param[ui] = static_cast<double>(ref - 1);
+    // outfall param stores table index as double for TIDAL/TIMESERIES — renumber
+    {
+        auto& O = ctx.node_subtypes.outfalls;
+        for (int r = 0; r < O.count(); ++r) {
+            const auto ur = static_cast<std::size_t>(r);
+            if (O.bc_type[ur] == OutfallType::TIDAL ||
+                O.bc_type[ur] == OutfallType::TIMESERIES) {
+                int ref = static_cast<int>(O.param[ur]);
+                if (ref > table_idx) O.param[ur] = static_cast<double>(ref - 1);
+            }
         }
     }
 

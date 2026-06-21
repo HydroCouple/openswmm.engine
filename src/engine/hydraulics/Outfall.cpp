@@ -85,11 +85,12 @@ static double getYnorm(const XSectParams& xs, double beta, double q_max,
 
 void buildOutfallLinkMap(SimulationContext& ctx) {
     auto& nodes = ctx.nodes;
-    const int n_nodes = ctx.n_nodes();
+    auto& outs  = ctx.node_subtypes.outfalls;   // relational side-table (authoritative)
     const int n_links = ctx.n_links();
 
-    nodes.outfall_link_idx.assign(static_cast<std::size_t>(n_nodes), -1);
-    nodes.outfall_link_offset.assign(static_cast<std::size_t>(n_nodes), 0.0);
+    // Reset the cached connectivity on every outfall row.
+    outs.link_idx.assign(static_cast<std::size_t>(outs.count()), -1);
+    outs.link_offset.assign(static_cast<std::size_t>(outs.count()), 0.0);
 
     // Single pass over links; first matching conduit wins (matches the
     // first-break legacy behaviour of the inner scan).
@@ -100,15 +101,19 @@ void buildOutfallLinkMap(SimulationContext& ctx) {
         int n1 = ctx.links.node1[uk];
         int n2 = ctx.links.node2[uk];
 
-        if (n2 >= 0 && nodes.type[static_cast<std::size_t>(n2)] == NodeType::OUTFALL &&
-            nodes.outfall_link_idx[static_cast<std::size_t>(n2)] < 0) {
-            nodes.outfall_link_idx[static_cast<std::size_t>(n2)]    = k;
-            nodes.outfall_link_offset[static_cast<std::size_t>(n2)] = ctx.links.offset2[uk];
+        if (n2 >= 0 && nodes.type[static_cast<std::size_t>(n2)] == NodeType::OUTFALL) {
+            const int r = ctx.node_subtypes.outfall_row(n2);
+            if (r >= 0 && outs.link_idx[static_cast<std::size_t>(r)] < 0) {
+                outs.link_idx[static_cast<std::size_t>(r)]    = k;
+                outs.link_offset[static_cast<std::size_t>(r)] = ctx.links.offset2[uk];
+            }
         }
-        if (n1 >= 0 && nodes.type[static_cast<std::size_t>(n1)] == NodeType::OUTFALL &&
-            nodes.outfall_link_idx[static_cast<std::size_t>(n1)] < 0) {
-            nodes.outfall_link_idx[static_cast<std::size_t>(n1)]    = k;
-            nodes.outfall_link_offset[static_cast<std::size_t>(n1)] = ctx.links.offset1[uk];
+        if (n1 >= 0 && nodes.type[static_cast<std::size_t>(n1)] == NodeType::OUTFALL) {
+            const int r = ctx.node_subtypes.outfall_row(n1);
+            if (r >= 0 && outs.link_idx[static_cast<std::size_t>(r)] < 0) {
+                outs.link_idx[static_cast<std::size_t>(r)]    = k;
+                outs.link_offset[static_cast<std::size_t>(r)] = ctx.links.offset1[uk];
+            }
         }
     }
 }
@@ -119,8 +124,8 @@ namespace {
 // the wide NodeData arrays. The side-table is built at hydraulics init *after*
 // buildOutfallLinkMap, so link_idx/link_offset are resolved; and these fields are
 // static during a run, so the side-table is an exact mirror of the wide arrays.
-// The per-step-mutable outfall_2d_head is deliberately NOT included here — it is
-// still read from the live wide array.
+// The per-step-mutable head_2d is deliberately NOT included here — it is read
+// separately from the side-table (outfalls.head_2d) at the use site.
 struct OutfallStatic {
     OutfallType bc_type;
     double      param;
@@ -131,21 +136,16 @@ struct OutfallStatic {
 
 inline OutfallStatic outfallStatic(const NodeData& nodes, const NodeSubtypes& subs,
                                    std::size_t uj) {
-    const int j = static_cast<int>(uj);
-    if (j < static_cast<int>(subs.subtype_row.size())) {
-        const int r = subs.subtype_row[uj];
-        if (r >= 0 && r < subs.outfalls.count() &&
-            subs.outfalls.node_idx[static_cast<std::size_t>(r)] == j) {
-            const auto ur = static_cast<std::size_t>(r);
-            return OutfallStatic{ subs.outfalls.bc_type[ur], subs.outfalls.param[ur],
-                                  subs.outfalls.has_flap_gate[ur], subs.outfalls.link_idx[ur],
-                                  subs.outfalls.link_offset[ur] };
-        }
+    (void)nodes;
+    const int r = subs.outfall_row(static_cast<int>(uj));
+    if (r >= 0) {
+        const auto ur = static_cast<std::size_t>(r);
+        return OutfallStatic{ subs.outfalls.bc_type[ur], subs.outfalls.param[ur],
+                              subs.outfalls.has_flap_gate[ur], subs.outfalls.link_idx[ur],
+                              subs.outfalls.link_offset[ur] };
     }
-    const int    li = (uj < nodes.outfall_link_idx.size())    ? nodes.outfall_link_idx[uj]    : -1;
-    const double lo = (uj < nodes.outfall_link_offset.size()) ? nodes.outfall_link_offset[uj] : 0.0;
-    return OutfallStatic{ nodes.outfall_type[uj], nodes.outfall_param[uj],
-                          nodes.outfall_has_flap_gate[uj], li, lo };
+    // Non-outfall / no row: resize defaults (FREE, no flap, no cached link).
+    return OutfallStatic{ OutfallType::FREE, 0.0, 0, -1, 0.0 };
 }
 }  // namespace
 
@@ -173,7 +173,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
         const OutfallStatic ost = outfallStatic(nodes, ctx.node_subtypes, uj);
         int link_idx = ost.link_idx;
         double z = ost.link_offset;
-        if (link_idx < 0 && !nodes.outfall_link_idx.empty()) {
+        if (link_idx < 0) {
             for (int k = 0; k < ctx.n_links(); ++k) {
                 auto uk = static_cast<std::size_t>(k);
                 if (ctx.links.type[uk] != LinkType::CONDUIT) continue;
@@ -310,7 +310,12 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
         // h_standard intact.
         //
         // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C4, C5).
-        double h_2d = nodes.outfall_2d_head[uj];
+        // Mutable 2D head from the outfall side-table; -1e30 sentinel (no override)
+        // when there is no outfall row.
+        const int orow = ctx.node_subtypes.outfall_row(static_cast<int>(uj));
+        double h_2d = (orow >= 0)
+            ? ctx.node_subtypes.outfalls.head_2d[static_cast<std::size_t>(orow)]
+            : -1.0e30;
         if (h_2d > z_inv) {
             bool flap_closed = (ost.has_flap != 0)
                                && (h_2d > h_standard);

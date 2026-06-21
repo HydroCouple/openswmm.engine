@@ -153,7 +153,9 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
 
         auto ui = static_cast<std::size_t>(node_idx);
         cp.is_outfall = (ctx.nodes.type[ui] == NodeType::OUTFALL);
-        cp.has_flap_gate = cp.is_outfall && ctx.nodes.outfall_has_flap_gate[ui];
+        const int ofr = ctx.node_subtypes.outfall_row(node_idx);
+        cp.has_flap_gate = cp.is_outfall && ofr >= 0 &&
+                           ctx.node_subtypes.outfalls.has_flap_gate[static_cast<std::size_t>(ofr)];
 
         cps.push_back(cp);
     }
@@ -173,7 +175,9 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
 
         auto ui = static_cast<std::size_t>(node_idx);
         cp.is_outfall = (ctx.nodes.type[ui] == NodeType::OUTFALL);
-        cp.has_flap_gate = cp.is_outfall && ctx.nodes.outfall_has_flap_gate[ui];
+        const int ofr = ctx.node_subtypes.outfall_row(node_idx);
+        cp.has_flap_gate = cp.is_outfall && ofr >= 0 &&
+                           ctx.node_subtypes.outfalls.has_flap_gate[static_cast<std::size_t>(ofr)];
 
         cps.push_back(cp);
     }
@@ -418,8 +422,6 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
     for (const auto& cp : cps) {
         if (!cp.is_outfall) continue;
 
-        auto ni = static_cast<std::size_t>(cp.node_idx);
-
         // 2D head and bed elevation at the outfall coupling point
         double h_2d, bed_z;
         if (cp.vertex_idx >= 0) {
@@ -431,14 +433,16 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
         }
 
         double depth_2d = h_2d - bed_z;
-        if (depth_2d > DRY_DEPTH_THRESHOLD) {
-            // h_2d is SI (metres). The 1D consumer (Outfall::setAllOutfallDepths)
-            // always compares against h_standard in feet (1D US internal units),
-            // so convert back here (opts.len_2d_to_1d ≈ 3.281 always).
-            nodes.outfall_2d_head[ni] = h_2d * opts.len_2d_to_1d;
-        } else {
-            nodes.outfall_2d_head[ni] = -1.0e30;  // dry — no override
-        }
+        // h_2d is SI (metres). The 1D consumer (Outfall::setAllOutfallDepths)
+        // always compares against h_standard in feet (1D US internal units),
+        // so convert back here (opts.len_2d_to_1d ≈ 3.281 always). Cache into the
+        // outfall side-table (Phase 4 Stage B), wide fallback.
+        const double set_head = (depth_2d > DRY_DEPTH_THRESHOLD)
+            ? h_2d * opts.len_2d_to_1d
+            : -1.0e30;  // dry — no override
+        const int orow = ctx.node_subtypes.outfall_row(cp.node_idx);
+        if (orow >= 0)
+            ctx.node_subtypes.outfalls.head_2d[static_cast<std::size_t>(orow)] = set_head;
     }
 }
 

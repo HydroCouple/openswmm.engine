@@ -309,22 +309,26 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 8, safe_dbl(ctx.nodes.sur_depth, i));
         bind_double(stmt.get(), 9, safe_dbl(ctx.nodes.ponded_area, i));
 
-        // Outfall fields
+        // Outfall fields (relational side-table, Phase 4)
         if (ntype == NodeType::OUTFALL) {
-            bind_text(stmt.get(), 10, outfall_type_str(safe_get(ctx.nodes.outfall_type, (size_t)i, OutfallType::FREE)));
-            bind_double(stmt.get(), 11, safe_dbl(ctx.nodes.outfall_param, i));
-            bind_int(stmt.get(), 12, safe_get(ctx.nodes.outfall_has_flap_gate, (size_t)i, uint8_t{0}) ? 1 : 0);
+            const int r = ctx.node_subtypes.outfall_row(i); const auto& O = ctx.node_subtypes.outfalls;
+            const auto ur = static_cast<size_t>(r);
+            bind_text(stmt.get(), 10, outfall_type_str(r>=0 ? O.bc_type[ur] : OutfallType::FREE));
+            bind_double(stmt.get(), 11, r>=0 ? O.param[ur] : 0.0);
+            bind_int(stmt.get(), 12, (r>=0 ? O.has_flap_gate[ur] : uint8_t{0}) ? 1 : 0);
         } else {
             bind_null(stmt.get(), 10);
             bind_null(stmt.get(), 11);
             bind_null(stmt.get(), 12);
         }
 
-        // Divider fields
+        // Divider fields (relational side-table, Phase 4)
         if (ntype == NodeType::DIVIDER) {
-            bind_text(stmt.get(), 13, divider_type_str(safe_get(ctx.nodes.divider_type, (size_t)i, DividerType::CUTOFF)));
-            bind_double(stmt.get(), 14, safe_dbl(ctx.nodes.divider_cutoff, i));
-            std::string cname = i < (int)ctx.nodes.divider_curve_name.size() ? ctx.nodes.divider_curve_name[i] : "";
+            const int r = ctx.node_subtypes.divider_row(i); const auto& D = ctx.node_subtypes.dividers;
+            const auto ur = static_cast<size_t>(r);
+            bind_text(stmt.get(), 13, divider_type_str(r>=0 ? D.method[ur] : DividerType::CUTOFF));
+            bind_double(stmt.get(), 14, r>=0 ? D.cutoff[ur] : 0.0);
+            std::string cname = (r>=0) ? D.curve_name[ur] : std::string{};
             if (!cname.empty()) bind_text(stmt.get(), 15, cname);
             else bind_null(stmt.get(), 15);
         } else {
@@ -333,14 +337,16 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
             bind_null(stmt.get(), 15);
         }
 
-        // Storage fields
+        // Storage fields (relational side-table, Phase 4)
         if (ntype == NodeType::STORAGE) {
-            std::string cname = i < (int)ctx.nodes.storage_curve_name.size() ? ctx.nodes.storage_curve_name[i] : "";
+            const int r = ctx.node_subtypes.storage_row(i); const auto& S = ctx.node_subtypes.storages;
+            const auto ur = static_cast<size_t>(r);
+            std::string cname = (r>=0) ? S.curve_name[ur] : std::string{};
             if (!cname.empty()) bind_text(stmt.get(), 16, cname);
             else bind_null(stmt.get(), 16);
-            bind_double(stmt.get(), 17, safe_dbl(ctx.nodes.storage_a, i));
-            bind_double(stmt.get(), 18, safe_dbl(ctx.nodes.storage_b, i));
-            bind_double(stmt.get(), 19, safe_dbl(ctx.nodes.storage_c, i));
+            bind_double(stmt.get(), 17, r>=0 ? S.a[ur] : 0.0);
+            bind_double(stmt.get(), 18, r>=0 ? S.b[ur] : 0.0);
+            bind_double(stmt.get(), 19, r>=0 ? S.c[ur] : 0.0);
         } else {
             bind_null(stmt.get(), 16);
             bind_null(stmt.get(), 17);

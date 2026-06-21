@@ -492,31 +492,35 @@ TEST(NodeHydraulics, JunctionSurfAreaReturnsZero) {
 TEST(NodeHydraulics, StorageFunctionalVolume) {
     NodeData nodes;
     nodes.resize(1);
-    nodes.type[0] = NodeType::STORAGE;
     nodes.full_depth[0] = 10.0;
-    nodes.storage_curve[0] = -1;  // functional
-    nodes.storage_a[0] = 1000.0;  // A coefficient
-    nodes.storage_b[0] = 0.0;     // B exponent → A = 1000 * y^0 = 1000
-    nodes.storage_c[0] = 0.0;     // C constant
+    NodeSubtypes subs;
+    const auto sr = static_cast<std::size_t>(
+        subs.set_node_type(nodes, 0, NodeType::STORAGE));
+    subs.storages.curve[sr] = -1;  // functional
+    subs.storages.a[sr] = 1000.0;  // A coefficient
+    subs.storages.b[sr] = 0.0;     // B exponent → A = 1000 * y^0 = 1000
+    subs.storages.c[sr] = 0.0;     // C constant
 
     // V = integral of A dy from 0 to y
     // With A = 1000 (constant), V = 1000 * y
-    double v = node::getVolume(nodes, 0, 5.0);
+    double v = node::getVolume(nodes, 0, 5.0, nullptr, 0, &subs);
     EXPECT_NEAR(v, 5000.0, 1.0);
 }
 
 TEST(NodeHydraulics, StorageSurfAreaFunctional) {
     NodeData nodes;
     nodes.resize(1);
-    nodes.type[0] = NodeType::STORAGE;
     nodes.full_depth[0] = 10.0;
-    nodes.storage_curve[0] = -1;
-    nodes.storage_a[0] = 500.0;
-    nodes.storage_b[0] = 0.0;
-    nodes.storage_c[0] = 0.0;
+    NodeSubtypes subs;
+    const auto sr = static_cast<std::size_t>(
+        subs.set_node_type(nodes, 0, NodeType::STORAGE));
+    subs.storages.curve[sr] = -1;
+    subs.storages.a[sr] = 500.0;
+    subs.storages.b[sr] = 0.0;
+    subs.storages.c[sr] = 0.0;
 
     // A(y) = 500 * y^0 + 0 = 500
-    double sa = node::getSurfArea(nodes, 0, 5.0);
+    double sa = node::getSurfArea(nodes, 0, 5.0, nullptr, 0, &subs);
     EXPECT_NEAR(sa, 500.0, 1.0);
 }
 
@@ -1256,7 +1260,11 @@ TEST(KWSolverSteadyState, NormalDepthRecovered) {
 //      offset (~10% of V_in) that persists cumulatively.
 // ============================================================================
 
-// Step-inflow transient: SS convergence and mass balance for RECT_OPEN channel.
+// Step-inflow transient: SS convergence + mass-balance SMOKE CHECK for a
+// RECT_OPEN channel. The 5% mass-balance gate has limited discriminating power:
+// it must absorb the first-step "no-flow" branch (~10% of V_in, a tracked engine
+// gap — see docs/TODO_LEGACY_ALIGNMENT.md). It guards against gross
+// volume-tracking regressions, not precise conservation.
 TEST(KWSolverTransient, StepInflowMassBalance) {
     const std::string csv_path =
         std::string(BENCHMARK_DATA_DIR)
@@ -1519,11 +1527,15 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
     }
 
     // J5 is the fixed-stage outfall (downstream BC)
-    ctx.nodes.type[5]             = NodeType::OUTFALL;
-    ctx.nodes.outfall_type[5]     = OutfallType::FIXED;
-    ctx.nodes.outfall_param[5]    = y_d;  // stage = invert(0) + y_d = y_d
-    ctx.nodes.outfall_link_idx[5] = 4;    // last conduit L4 (J4→J5)
-    ctx.nodes.outfall_link_offset[5] = 0.0;
+    {
+        const auto orow = static_cast<std::size_t>(
+            ctx.node_subtypes.set_node_type(ctx.nodes, 5, NodeType::OUTFALL));
+        auto& O = ctx.node_subtypes.outfalls;
+        O.bc_type[orow]     = OutfallType::FIXED;
+        O.param[orow]       = y_d;  // stage = invert(0) + y_d = y_d
+        O.link_idx[orow]    = 4;    // last conduit L4 (J4→J5)
+        O.link_offset[orow] = 0.0;
+    }
     ctx.nodes.depth[5]            = y_d;
     ctx.nodes.old_depth[5]        = y_d;
     ctx.nodes.head[5]             = z_inv[5] + y_d;
@@ -1605,7 +1617,14 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
 //   Front position error   : < 3 Δx = 15 ft                  (all 4 times)
 // ============================================================================
 
-TEST(DWSolverRitter, DryBedDamBreak) {
+// Shared driver: builds the strip, runs the DW solver to t=8 s, and checks the
+// solver depths against the Ritter reference at t in {2,4,6,8} s using the
+// supplied tolerances. Two tests below call it: a regression baseline pinned to
+// the solver's current (known-imperfect) dry-bed behaviour, and a DISABLED test
+// carrying the true analytical targets (it auto-enables when the wet/dry front
+// handling is fixed). See README.md and docs/TODO_LEGACY_ALIGNMENT.md.
+static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
+                            double tol_front_ft) {
     const std::string csv_path =
         std::string(BENCHMARK_DATA_DIR)
         + "/manufactured/dw-ritter-drybed-strip/reference.csv";
@@ -1677,19 +1696,27 @@ TEST(DWSolverRitter, DryBedDamBreak) {
     }
 
     // Node 0: FIXED stage outfall — infinite upstream reservoir at h0
-    ctx.nodes.type[0]          = NodeType::OUTFALL;
-    ctx.nodes.outfall_type[0]  = OutfallType::FIXED;
-    ctx.nodes.outfall_param[0] = h0;    // stage (ft); ucf_len = 1.0 for CFS
-    ctx.nodes.outfall_link_idx[0]    = 0;    // conduit 0 connects here
-    ctx.nodes.outfall_link_offset[0] = 0.0;
+    {
+        const auto orow = static_cast<std::size_t>(
+            ctx.node_subtypes.set_node_type(ctx.nodes, 0, NodeType::OUTFALL));
+        auto& O = ctx.node_subtypes.outfalls;
+        O.bc_type[orow]     = OutfallType::FIXED;
+        O.param[orow]       = h0;    // stage (ft); ucf_len = 1.0 for CFS
+        O.link_idx[orow]    = 0;     // conduit 0 connects here
+        O.link_offset[orow] = 0.0;
+    }
 
     // Node 50: FREE outfall — transmissive approximation
     // With β=0 (frictionless+horizontal) getYnorm returns 0, so depth → 0.
     // This is correct: the outfall stays dry for all comparison times t ≤ 8 s.
-    ctx.nodes.type[50]          = NodeType::OUTFALL;
-    ctx.nodes.outfall_type[50]  = OutfallType::FREE;
-    ctx.nodes.outfall_link_idx[50]    = N_cond - 1;  // conduit 49
-    ctx.nodes.outfall_link_offset[50] = 0.0;
+    {
+        const auto orow = static_cast<std::size_t>(
+            ctx.node_subtypes.set_node_type(ctx.nodes, 50, NodeType::OUTFALL));
+        auto& O = ctx.node_subtypes.outfalls;
+        O.bc_type[orow]     = OutfallType::FREE;
+        O.link_idx[orow]    = N_cond - 1;  // conduit 49
+        O.link_offset[orow] = 0.0;
+    }
 
     // ── 50 conduits: frictionless (n=0), horizontal, RECT_OPEN ───────────
     for (int i = 0; i < N_cond; ++i) {
@@ -1727,14 +1754,11 @@ TEST(DWSolverRitter, DryBedDamBreak) {
     const int n_steps    = 16;
     const int check_each = 4;  // every 2 s
 
-    // Tolerances: calibrated to the solver's observed baseline performance.
-    // The Preissmann implicit scheme cannot resolve the Ritter rarefaction
-    // origin (SKIP_DRY freezes the wet/dry front). See README.md for details.
-    // These are regression thresholds — they will tighten once the engine
-    // wet/dry handling is enhanced. Targets from definition.md are in comments.
-    const double tol_dam_ft    = 0.40;   // dam station; target: 10% of 4h0/9=0.044 ft
-    const double tol_l1_ft     = 0.10;   // L1 wet region; target: 0.05 ft
-    const double tol_front_ft  = 65.0;   // front position; target: 15 ft (3*dx)
+    // Tolerances (tol_dam_ft, tol_l1_ft, tol_front_ft) are supplied by the
+    // caller. The Preissmann implicit scheme cannot resolve the Ritter
+    // rarefaction origin (SKIP_DRY freezes the wet/dry front), so the baseline
+    // caller pins generous regression thresholds while the analytical caller
+    // carries the true targets. See README.md for details.
     const double h_wet_tol     = 0.01;   // exclude near-dry nodes from L1
 
     for (int step = 1; step <= n_steps; ++step) {
@@ -1812,4 +1836,22 @@ TEST(DWSolverRitter, DryBedDamBreak) {
             << "  solver=" << x_front_solver << " ft"
             << "  ref=" << x_front_ref << " ft";
     }
+}
+
+// Regression baseline: tolerances pinned to the solver's CURRENT dry-bed
+// behaviour, NOT the Ritter analytical solution. The Preissmann scheme cannot
+// resolve the rarefaction origin (engine gap, see README.md), so these
+// generous thresholds only guard against further regression — passing here does
+// NOT mean the solver reproduces Ritter.
+TEST(DWSolverRitter, DryBedRegressionBaseline) {
+    runRitterDryBed(/*tol_dam_ft=*/0.40, /*tol_l1_ft=*/0.10, /*tol_front_ft=*/65.0);
+}
+
+// True analytical-verification targets from the benchmark provenance metrics
+// (dam-station |h - 4h0/9| within 10% of h0 = 0.10 ft, L1 < 0.05 ft, front
+// within 3*dx = 15 ft). DISABLED because the current wet/dry handling cannot
+// meet them; remove the DISABLED_ prefix once the engine gap is fixed so this
+// becomes a genuine Ritter analytical check.
+TEST(DWSolverRitter, DISABLED_DryBedMatchesRitterAnalytical) {
+    runRitterDryBed(/*tol_dam_ft=*/0.10, /*tol_l1_ft=*/0.05, /*tol_front_ft=*/15.0);
 }

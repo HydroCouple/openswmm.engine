@@ -411,22 +411,22 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
         // (matching legacy node.c storage_getLosses)
         double loss_rate = 0.0;
         if (nodes.type[ui] == NodeType::STORAGE) {
-            // Relational refactor (Phase 3): storage config (evap fraction, seep
-            // rate) from the dense side-table — fresh per routing step, with a
-            // wide-array fallback when the side-table isn't built.
+            // Relational refactor (Phase 4): storage config (evap fraction, seep
+            // rate) and per-step losses live in the dense side-table; storage_row
+            // is valid for any STORAGE node.
             const int sr = ctx.node_subtypes.storage_row(i);
-            const double evap_frac = (sr >= 0)
-                ? ctx.node_subtypes.storages.evap_frac[static_cast<std::size_t>(sr)]
-                : nodes.storage_evap_frac[ui];
-            const double seep_rate = (sr >= 0)
-                ? ctx.node_subtypes.storages.seep_rate[static_cast<std::size_t>(sr)]
-                : nodes.storage_seep_rate[ui];
+            auto& st = ctx.node_subtypes.storages;
+            const auto sru = static_cast<std::size_t>(sr);
+            const double evap_frac = (sr >= 0) ? st.evap_frac[sru] : 0.0;
+            const double seep_rate = (sr >= 0) ? st.seep_rate[sru] : 0.0;
             double stor_evap_rate = evap_rate * evap_frac;
 
-            // exfil_cfs is pre-computed by ExfilSolver::computeAll() (called
-            // before router_.step()) and stored as a volume in storage_exfil_loss.
+            // exfil_cfs is pre-computed by ExfilSolver::computeAll() (called before
+            // router_.step()) and stored as a volume in the side-table's exfil_loss.
             // Convert back to a rate for joint capping with evaporation.
-            double exfil_cfs = (dt > 0.0) ? nodes.storage_exfil_loss[ui] / dt : 0.0;
+            double exfil_cfs = 0.0;
+            if (dt > 0.0 && sr >= 0)
+                exfil_cfs = st.exfil_loss[sru] / dt;
 
             if (stor_evap_rate > 0.0 || seep_rate > 0.0 || exfil_cfs > 0.0) {
                 double depth = nodes.depth[ui];
@@ -448,12 +448,14 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
                     exfil_cfs *= ratio;
                 }
 
-                nodes.storage_evap_loss[ui]  = evap_cfs * dt;
-                nodes.storage_exfil_loss[ui] = exfil_cfs * dt;
+                if (sr >= 0) {
+                    st.evap_loss[sru]  = evap_cfs * dt;
+                    st.exfil_loss[sru] = exfil_cfs * dt;
+                }
                 loss_rate = evap_cfs + exfil_cfs;
-            } else {
-                nodes.storage_evap_loss[ui]  = 0.0;
-                nodes.storage_exfil_loss[ui] = 0.0;
+            } else if (sr >= 0) {
+                st.evap_loss[sru]  = 0.0;
+                st.exfil_loss[sru] = 0.0;
             }
         }
         nodes.losses[ui] = loss_rate;

@@ -408,19 +408,29 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
         ctx.nodes.init_depth[ui]  *= inv_len;
         ctx.nodes.sur_depth[ui]   *= inv_len;
         ctx.nodes.ponded_area[ui] *= inv_area;
-        if (ctx.nodes.type[ui] == NodeType::OUTFALL &&
-            ctx.nodes.outfall_type[ui] == OutfallType::FIXED)
-            ctx.nodes.outfall_param[ui] *= inv_len;
-        if (ctx.nodes.type[ui] == NodeType::DIVIDER)
-            ctx.nodes.divider_cutoff[ui] *= inv_flow;
+        if (ctx.nodes.type[ui] == NodeType::OUTFALL) {
+            const int r = ctx.node_subtypes.outfall_row(i);
+            if (r >= 0 && ctx.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)]
+                              == OutfallType::FIXED)
+                ctx.node_subtypes.outfalls.param[static_cast<std::size_t>(r)] *= inv_len;
+        }
+        if (ctx.nodes.type[ui] == NodeType::DIVIDER) {
+            const int r = ctx.node_subtypes.divider_row(i);
+            if (r >= 0)
+                ctx.node_subtypes.dividers.cutoff[static_cast<std::size_t>(r)] *= inv_flow;
+        }
         // Functional storage A(d) = a0 + a1·d^a2 (a2 dimensionless).  a0 is an
         // area (inv_area); a1 must keep A in ft² when d is in ft, i.e. scale by
-        // inv_len^(2 - a2).  Tabulated storage (storage_curve >= 0) self-converts
+        // inv_len^(2 - a2).  Tabulated storage (curve >= 0) self-converts
         // at lookup, so leave it.
-        if (ctx.nodes.type[ui] == NodeType::STORAGE &&
-            ctx.nodes.storage_curve[ui] < 0) {
-            ctx.nodes.storage_c[ui] *= inv_area;                                  // a0
-            ctx.nodes.storage_a[ui] *= std::pow(inv_len, 2.0 - ctx.nodes.storage_b[ui]); // a1
+        if (ctx.nodes.type[ui] == NodeType::STORAGE) {
+            const int r = ctx.node_subtypes.storage_row(i);
+            auto& S = ctx.node_subtypes.storages;
+            if (r >= 0 && S.curve[static_cast<std::size_t>(r)] < 0) {
+                const auto ur = static_cast<std::size_t>(r);
+                S.c[ur] *= inv_area;                                  // a0
+                S.a[ur] *= std::pow(inv_len, 2.0 - S.b[ur]);         // a1
+            }
         }
     }
 
@@ -497,18 +507,28 @@ void convert_internal_to_display(SimulationContext& ctx) {
         ctx.nodes.init_depth[ui]  *= len;
         ctx.nodes.sur_depth[ui]   *= len;
         ctx.nodes.ponded_area[ui] *= area;
-        if (ctx.nodes.type[ui] == NodeType::OUTFALL &&
-            ctx.nodes.outfall_type[ui] == OutfallType::FIXED)
-            ctx.nodes.outfall_param[ui] *= len;
-        if (ctx.nodes.type[ui] == NodeType::DIVIDER)
-            ctx.nodes.divider_cutoff[ui] *= flow;
+        if (ctx.nodes.type[ui] == NodeType::OUTFALL) {
+            const int r = ctx.node_subtypes.outfall_row(i);
+            if (r >= 0 && ctx.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)]
+                              == OutfallType::FIXED)
+                ctx.node_subtypes.outfalls.param[static_cast<std::size_t>(r)] *= len;
+        }
+        if (ctx.nodes.type[ui] == NodeType::DIVIDER) {
+            const int r = ctx.node_subtypes.divider_row(i);
+            if (r >= 0)
+                ctx.node_subtypes.dividers.cutoff[static_cast<std::size_t>(r)] *= flow;
+        }
         // Functional storage A(d) = a0 + a1·d^a2: a0 (storage_c) is an area;
         // a1 (storage_a) scales by len^(2 - a2) so A stays ft²-consistent.
         // a2 (storage_b) is dimensionless and unchanged in both directions.
-        if (ctx.nodes.type[ui] == NodeType::STORAGE &&
-            ctx.nodes.storage_curve[ui] < 0) {
-            ctx.nodes.storage_c[ui] *= area;
-            ctx.nodes.storage_a[ui] *= std::pow(len, 2.0 - ctx.nodes.storage_b[ui]);
+        if (ctx.nodes.type[ui] == NodeType::STORAGE) {
+            const int r = ctx.node_subtypes.storage_row(i);
+            auto& S = ctx.node_subtypes.storages;
+            if (r >= 0 && S.curve[static_cast<std::size_t>(r)] < 0) {
+                const auto ur = static_cast<std::size_t>(r);
+                S.c[ur] *= area;
+                S.a[ur] *= std::pow(len, 2.0 - S.b[ur]);
+            }
         }
     }
 
@@ -749,12 +769,13 @@ void resolve_cross_references(SimulationContext& ctx) {
     // Storage curve name resolution
     // -------------------------------------------------------------------------
     for (int i = 0; i < n_nodes; ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (ctx.nodes.type[ui] == NodeType::STORAGE &&
-            ctx.nodes.storage_curve[ui] < 0 &&
-            !ctx.nodes.storage_curve_name[ui].empty()) {
-            ctx.nodes.storage_curve[ui] = ctx.table_names.find(ctx.nodes.storage_curve_name[ui]);
-        }
+        if (ctx.nodes.type[static_cast<std::size_t>(i)] != NodeType::STORAGE) continue;
+        const int r = ctx.node_subtypes.storage_row(i);
+        if (r < 0) continue;
+        auto& S = ctx.node_subtypes.storages;
+        const auto ur = static_cast<std::size_t>(r);
+        if (S.curve[ur] < 0 && !S.curve_name[ur].empty())
+            S.curve[ur] = ctx.table_names.find(S.curve_name[ur]);
     }
 
     // -------------------------------------------------------------------------
@@ -863,20 +884,19 @@ void resolve_cross_references(SimulationContext& ctx) {
     // Divider link and curve re-resolution
     // -------------------------------------------------------------------------
     for (int i = 0; i < n_nodes; ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (ctx.nodes.type[ui] != NodeType::DIVIDER) continue;
+        if (ctx.nodes.type[static_cast<std::size_t>(i)] != NodeType::DIVIDER) continue;
+        const int r = ctx.node_subtypes.divider_row(i);
+        if (r < 0) continue;
+        auto& D = ctx.node_subtypes.dividers;
+        const auto ur = static_cast<std::size_t>(r);
 
         // Re-resolve diversion link name → index
-        if (ctx.nodes.divider_link[ui] < 0 &&
-            !ctx.nodes.divider_link_name[ui].empty()) {
-            ctx.nodes.divider_link[ui] = ctx.link_names.find(ctx.nodes.divider_link_name[ui]);
-        }
+        if (D.link[ur] < 0 && !D.link_name[ur].empty())
+            D.link[ur] = ctx.link_names.find(D.link_name[ur]);
 
         // Re-resolve diversion curve name → index (TABULAR dividers)
-        if (ctx.nodes.divider_curve[ui] < 0 &&
-            !ctx.nodes.divider_curve_name[ui].empty()) {
-            ctx.nodes.divider_curve[ui] = ctx.table_names.find(ctx.nodes.divider_curve_name[ui]);
-        }
+        if (D.curve[ur] < 0 && !D.curve_name[ur].empty())
+            D.curve[ur] = ctx.table_names.find(D.curve_name[ur]);
     }
 
     // -------------------------------------------------------------------------
@@ -1392,12 +1412,11 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     ctx.shrink_all_to_fit();
 
-    // Relational refactor (Phase 3.0): build the node subtype side-tables from
-    // the fully-resolved wide arrays, so non-run readers (C-API getters, IO)
-    // have a valid mirror in OPENED state. Rebuilt again at hydraulics init (to
-    // also capture the outfall→conduit cache) and refreshed after edits via
-    // NodeSubtypes::ensure_fresh(). See docs/relational/PHASE3_EXECUTION_PLAN.md.
-    ctx.node_subtypes.build(ctx.nodes);
+    // Relational refactor (Phase 4): the side-table rows were populated directly
+    // by the parse/resolution writers above; this only re-derives the base→row
+    // reverse map and sizes it to the final node count (a consistency pass after
+    // any in-parse re-types). No build-from-wide.
+    ctx.node_subtypes.rebuild_index(ctx.nodes.count());
 }
 
 } /* namespace openswmm::input */

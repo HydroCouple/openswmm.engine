@@ -20,36 +20,29 @@ namespace openswmm {
 namespace node {
 
 // ============================================================================
-// Storage geometry accessor (relational side-table, with wide-array fallback)
+// Storage geometry accessor (relational side-table)
 // ============================================================================
 //
-// Phase 3.1 of the relational node refactor: storage geometry (curve, a, b, c)
-// is read from the dense StorageData side-table when a NodeSubtypes is supplied,
-// otherwise from the legacy wide NodeData arrays. The two are kept in exact
-// mirror (NodeData build + verify_mirror), so the value returned is identical
-// either way — this is purely a data-source migration. The fallback keeps the
-// many direct unit-test callers (which build a bare NodeData with no side-table)
-// working unchanged; Phase 4 removes the fallback together with the wide arrays.
-// See docs/relational/PHASE3_EXECUTION_PLAN.md (3.1).
+// Relational node refactor (Phase 4): storage geometry (curve, a, b, c) lives in
+// the dense StorageData side-table (the wide NodeData arrays are gone). Returns
+// the row's geometry when a NodeSubtypes with a matching storage row is supplied;
+// otherwise the resize defaults (-1 curve / 0 a,b,c) for the degenerate case
+// (no side-table, or a non-storage node — callers gate on type[i]==STORAGE).
 namespace {
 struct StorageGeom { int curve; double a; double b; double c; };
 
 inline StorageGeom storageGeom(const NodeData& nodes, const NodeSubtypes* subs,
                                std::size_t ui) {
+    (void)nodes;
     if (subs != nullptr) {
-        const int i = static_cast<int>(ui);
-        if (i < static_cast<int>(subs->subtype_row.size())) {
-            const int r = subs->subtype_row[ui];
-            if (r >= 0 && r < subs->storages.count() &&
-                subs->storages.node_idx[static_cast<std::size_t>(r)] == i) {
-                const auto ur = static_cast<std::size_t>(r);
-                return StorageGeom{ subs->storages.curve[ur], subs->storages.a[ur],
-                                    subs->storages.b[ur], subs->storages.c[ur] };
-            }
+        const int r = subs->storage_row(static_cast<int>(ui));
+        if (r >= 0) {
+            const auto ur = static_cast<std::size_t>(r);
+            return StorageGeom{ subs->storages.curve[ur], subs->storages.a[ur],
+                                subs->storages.b[ur], subs->storages.c[ur] };
         }
     }
-    return StorageGeom{ nodes.storage_curve[ui], nodes.storage_a[ui],
-                        nodes.storage_b[ui], nodes.storage_c[ui] };
+    return StorageGeom{ -1, 0.0, 0.0, 0.0 };
 }
 }  // namespace
 

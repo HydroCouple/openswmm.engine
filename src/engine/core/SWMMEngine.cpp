@@ -337,7 +337,8 @@ int SWMMEngine::initialize() noexcept {
         double d = ctx_.nodes.init_depth[ui];
         if (d > 0.0) {
             double vol = node::getVolume(ctx_.nodes, i, d, &ctx_.tables,
-                ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)));
+                ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)),
+                &ctx_.node_subtypes);
             ctx_.nodes.volume[ui] = vol;
             ctx_.nodes.old_volume[ui] = vol;
         }
@@ -345,7 +346,8 @@ int SWMMEngine::initialize() noexcept {
         double fd = ctx_.nodes.full_depth[ui];
         if (fd > 0.0) {
             ctx_.nodes.full_volume[ui] = node::getVolume(ctx_.nodes, i, fd, &ctx_.tables,
-                ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)));
+                ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)),
+                &ctx_.node_subtypes);
         }
     }
 
@@ -482,8 +484,10 @@ int SWMMEngine::initialize() noexcept {
     for (int oi = 0; oi < ctx_.n_nodes(); ++oi) {
         auto uo = static_cast<std::size_t>(oi);
         if (ctx_.nodes.type[uo] != NodeType::OUTFALL) continue;
-        if (ctx_.nodes.outfall_type[uo] == OutfallType::FIXED) {
-            double stage = ctx_.nodes.outfall_param[uo];  // internal ft
+        const int r = ctx_.node_subtypes.outfall_row(oi);
+        if (r >= 0 &&
+            ctx_.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)] == OutfallType::FIXED) {
+            double stage = ctx_.node_subtypes.outfalls.param[static_cast<std::size_t>(r)];  // internal ft
             ctx_.nodes.depth[uo] =
                 std::max(0.0, stage - ctx_.nodes.invert_elev[uo]);
         }
@@ -547,7 +551,8 @@ int SWMMEngine::initialize() noexcept {
             double y = ctx_.nodes.depth[ui];
             ctx_.nodes.old_depth[ui] = y;
             ctx_.nodes.head[ui]      = ctx_.nodes.invert_elev[ui] + y;
-            double vol = node::getVolume(ctx_.nodes, i, y, &ctx_.tables, us_hs);
+            double vol = node::getVolume(ctx_.nodes, i, y, &ctx_.tables, us_hs,
+                                         &ctx_.node_subtypes);
             ctx_.nodes.volume[ui]     = vol;
             ctx_.nodes.old_volume[ui] = vol;
         }
@@ -2698,7 +2703,9 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
 
                 // Gap #28: accumulate outfall discharge as routed volume for next
                 // runoff step (matching legacy Outfall[i].vRouted accumulation).
-                int sc = ctx_.nodes.outfall_route_to[uj];
+                const int ofr = ctx_.node_subtypes.outfall_row(static_cast<int>(uj));
+                int sc = (ofr >= 0)
+                    ? ctx_.node_subtypes.outfalls.route_to[static_cast<std::size_t>(ofr)] : -1;
                 if (sc >= 0 && sc < ctx_.n_subcatches() && q_in > 0.0) {
                     auto usc = static_cast<std::size_t>(sc);
                     ctx_.subcatches.outfall_runon_vol[usc] += q_in * dt_routing;
@@ -3755,15 +3762,13 @@ void SWMMEngine::initHydraulics() noexcept {
     else if (ctx_.options.routing_model == RoutingModel::STEADY) rm = RouteModel::STEADY;
     router_.init(ctx_, rm);
 
-    // Relational node refactor — Phase 1 (shadow): build the storage/outfall/
-    // divider side-tables from the resolved wide arrays. Not read by the solver
-    // yet; a debug-only self-check asserts the mirror is exact.
-    // See docs/relational/RELATIONAL_NODE_REFACTOR_PLAN.md.
-    ctx_.node_subtypes.build(ctx_.nodes);
-#ifndef NDEBUG
-    assert(ctx_.node_subtypes.verify_mirror(ctx_.nodes) &&
-           "NodeSubtypes side-tables must exactly mirror NodeData (Phase 1 shadow)");
-#endif
+    // Relational node refactor — Phase 4 (authoritative): the storage/outfall/
+    // divider side-tables are the single source of truth, populated by the
+    // parse/edit writers. Re-derive the base→row reverse map here so it is
+    // consistent and sized before compute (also captures the outfall→conduit
+    // cache written by buildOutfallLinkMap during router_.init above). No
+    // build-from-wide. See docs/relational/RELATIONAL_NODE_REFACTOR_PLAN.md.
+    ctx_.node_subtypes.rebuild_index(ctx_.nodes.count());
 
     // Gap #83: Outfall connectivity + no-outlets validation
     // Gap #84: Conduit adverse slope (non-DW) + regulator from non-storage
@@ -4564,7 +4569,8 @@ void SWMMEngine::initGeometry() noexcept {
         auto uj = static_cast<std::size_t>(j);
         ctx_.nodes.full_volume[uj] =
             node::getVolume(ctx_.nodes, j, ctx_.nodes.full_depth[uj], &ctx_.tables,
-                ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)));
+                ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)),
+                &ctx_.node_subtypes);
     }
 }
 

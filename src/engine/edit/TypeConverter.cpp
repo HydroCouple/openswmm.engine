@@ -16,34 +16,20 @@ namespace openswmm::edit {
 // Node conversion
 // ============================================================================
 
-static void clear_outfall_fields(NodeData& nd, std::size_t ui,
-                                  std::vector<std::string>& cleared) {
-    nd.outfall_type[ui]          = OutfallType::FREE;
-    nd.outfall_param[ui]         = 0.0;
-    nd.outfall_has_flap_gate[ui] = 0;
-    nd.outfall_route_to[ui]      = -1;
-    nd.outfall_link_idx[ui]      = -1;
-    nd.outfall_link_offset[ui]   = 0.0;
+// Relational refactor (Phase 4): a node's subtype config now lives in the dense
+// side-table (ctx.node_subtypes). Converting a node moves its row via
+// set_node_type — which erases the old subtype row and inserts a fresh
+// default row (matching the legacy clear-old-then-apply-defaults behavior) — so
+// these helpers only record which logical fields the conversion cleared, for the
+// cascade report. The field-name lists are preserved exactly from the legacy path.
+static void record_cleared_outfall(std::vector<std::string>& cleared) {
     cleared.insert(cleared.end(), {
         "outfall_type", "outfall_param", "outfall_has_flap_gate",
         "outfall_route_to", "outfall_link_idx", "outfall_link_offset"
     });
 }
 
-static void clear_storage_fields(NodeData& nd, std::size_t ui,
-                                  std::vector<std::string>& cleared) {
-    nd.storage_curve[ui]       = -1;
-    nd.storage_curve_name[ui]  = {};
-    nd.storage_a[ui]           = 0.0;
-    nd.storage_b[ui]           = 0.0;
-    nd.storage_c[ui]           = 0.0;
-    nd.storage_seep_rate[ui]   = 0.0;
-    nd.storage_evap_frac[ui]   = 0.0;
-    nd.storage_evap_loss[ui]   = 0.0;
-    nd.storage_exfil_loss[ui]  = 0.0;
-    nd.exfil_suction[ui]       = 0.0;
-    nd.exfil_ksat[ui]          = 0.0;
-    nd.exfil_imd[ui]           = 0.0;
+static void record_cleared_storage(std::vector<std::string>& cleared) {
     cleared.insert(cleared.end(), {
         "storage_curve", "storage_a", "storage_b", "storage_c",
         "storage_seep_rate", "storage_evap_frac",
@@ -51,44 +37,11 @@ static void clear_storage_fields(NodeData& nd, std::size_t ui,
     });
 }
 
-static void clear_divider_fields(NodeData& nd, std::size_t ui,
-                                  std::vector<std::string>& cleared) {
-    nd.divider_type[ui]       = DividerType::CUTOFF;
-    nd.divider_cutoff[ui]     = 0.0;
-    nd.divider_cd[ui]         = 0.0;
-    nd.divider_max_depth[ui]  = 0.0;
-    nd.divider_curve[ui]      = -1;
-    nd.divider_link[ui]       = -1;
-    nd.divider_link_name[ui]  = {};
-    nd.divider_curve_name[ui] = {};
+static void record_cleared_divider(std::vector<std::string>& cleared) {
     cleared.insert(cleared.end(), {
         "divider_type", "divider_cutoff", "divider_cd", "divider_max_depth",
         "divider_curve", "divider_link"
     });
-}
-
-static void apply_outfall_defaults(NodeData& nd, std::size_t ui) {
-    nd.outfall_type[ui]          = OutfallType::FREE;
-    nd.outfall_param[ui]         = 0.0;
-    nd.outfall_has_flap_gate[ui] = 0;
-    nd.outfall_route_to[ui]      = -1;
-    nd.outfall_link_idx[ui]      = -1;
-}
-
-static void apply_storage_defaults(NodeData& nd, std::size_t ui) {
-    nd.storage_curve[ui]     = -1;
-    nd.storage_a[ui]         = 0.0;
-    nd.storage_b[ui]         = 0.0;
-    nd.storage_c[ui]         = 0.0;
-    nd.storage_seep_rate[ui] = 0.0;
-    nd.storage_evap_frac[ui] = 0.0;
-}
-
-static void apply_divider_defaults(NodeData& nd, std::size_t ui) {
-    nd.divider_type[ui]   = DividerType::CUTOFF;
-    nd.divider_cutoff[ui] = 0.0;
-    nd.divider_link[ui]   = -1;
-    nd.divider_curve[ui]  = -1;
 }
 
 ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type) {
@@ -98,45 +51,41 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
     NodeData& nd = ctx.nodes;
     const NodeType old_type = nd.type[ui];
 
-    // Clear old type-specific fields
+    // Record the old type-specific fields cleared by the conversion.
     switch (old_type) {
-        case NodeType::OUTFALL:  clear_outfall_fields(nd, ui, result.cleared_fields); break;
-        case NodeType::STORAGE:  clear_storage_fields(nd, ui, result.cleared_fields); break;
+        case NodeType::OUTFALL:  record_cleared_outfall(result.cleared_fields); break;
+        case NodeType::STORAGE:  record_cleared_storage(result.cleared_fields); break;
         case NodeType::DIVIDER:
-            // Nullify any link whose divider_link points to this node
-            for (int i = 0; i < ctx.n_nodes(); ++i) {
-                if (i == idx) continue;
-                if (ctx.nodes.divider_link[static_cast<std::size_t>(i)] == idx) {
+            // Warn for any divider whose diversion link points to this node
+            // (preserves the legacy scan; node_idx-ascending rows match the
+            // legacy ascending node scan order).
+            for (int r = 0; r < ctx.node_subtypes.dividers.count(); ++r) {
+                const int dn = ctx.node_subtypes.dividers.node_idx[static_cast<std::size_t>(r)];
+                if (dn == idx) continue;
+                if (ctx.node_subtypes.dividers.link[static_cast<std::size_t>(r)] == idx) {
                     result.warnings.push_back(
-                        "Node " + ctx.node_names.name_of(i) +
+                        "Node " + ctx.node_names.name_of(dn) +
                         ": divider_link reference cleared because source node changed type");
                 }
             }
-            clear_divider_fields(nd, ui, result.cleared_fields);
+            record_cleared_divider(result.cleared_fields);
             break;
         default: break;
     }
 
-    // Apply new type defaults
-    switch (new_type) {
-        case NodeType::OUTFALL:  apply_outfall_defaults(nd, ui);  break;
-        case NodeType::STORAGE:  apply_storage_defaults(nd, ui);  break;
-        case NodeType::DIVIDER: {
-            apply_divider_defaults(nd, ui);
-            // Count connecting links to warn if degree != 3
-            int degree = 0;
-            for (int i = 0; i < ctx.n_links(); ++i) {
-                const auto li = static_cast<std::size_t>(i);
-                if (ctx.links.node1[li] == idx || ctx.links.node2[li] == idx)
-                    ++degree;
-            }
-            if (degree != 3)
-                result.warnings.push_back(
-                    "Divider node has " + std::to_string(degree) +
-                    " connecting links; exactly 3 are required (1 inlet, 2 outlets)");
-            break;
+    // New-type warnings (new defaults are applied by set_node_type below).
+    if (new_type == NodeType::DIVIDER) {
+        // Count connecting links to warn if degree != 3
+        int degree = 0;
+        for (int i = 0; i < ctx.n_links(); ++i) {
+            const auto li = static_cast<std::size_t>(i);
+            if (ctx.links.node1[li] == idx || ctx.links.node2[li] == idx)
+                ++degree;
         }
-        default: break;
+        if (degree != 3)
+            result.warnings.push_back(
+                "Divider node has " + std::to_string(degree) +
+                " connecting links; exactly 3 are required (1 inlet, 2 outlets)");
     }
 
     // Warn if we're converting the only OUTFALL away from OUTFALL
@@ -150,7 +99,9 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
             result.warnings.push_back("Model will have no outfall boundary after this conversion");
     }
 
-    nd.type[ui] = new_type;
+    // Move the subtype row and set nd.type (single source of truth). Erases the
+    // old row (if any) and inserts a fresh default row for the new subtype.
+    ctx.node_subtypes.set_node_type(nd, idx, new_type);
     return result;
 }
 

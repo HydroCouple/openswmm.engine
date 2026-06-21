@@ -68,20 +68,24 @@ static SimulationContext make_fixed_stage_storage_context() {
     auto& nodes = ctx.nodes;
     nodes.resize(1);
 
-    nodes.type[0] = NodeType::STORAGE;
     nodes.full_depth[0] = 5.0;
-    nodes.storage_curve[0] = -1;
-    nodes.storage_a[0] = 100.0;  // A(d) = 50 + 100 * d
-    nodes.storage_b[0] = 1.0;
-    nodes.storage_c[0] = 50.0;
-    nodes.full_volume[0] = openswmm::node::getVolume(nodes, 0, nodes.full_depth[0]);
+    // Relational side-table: create the storage row and populate its config.
+    const int sr = ctx.node_subtypes.set_node_type(nodes, 0, NodeType::STORAGE);
+    auto& S = ctx.node_subtypes.storages;
+    const auto ur = static_cast<std::size_t>(sr);
+    S.curve[ur] = -1;
+    S.a[ur] = 100.0;  // A(d) = 50 + 100 * d
+    S.b[ur] = 1.0;
+    S.c[ur] = 50.0;
+    nodes.full_volume[0] = openswmm::node::getVolume(nodes, 0, nodes.full_depth[0],
+                                                     nullptr, 0, &ctx.node_subtypes);
 
     nodes.depth[0] = 2.0;
     nodes.volume[0] = 1.0e9;  // effectively fixed-stage for the benchmark horizon
 
-    nodes.exfil_suction[0] = 6.0;  // 0.5 ft in project rain-depth units
-    nodes.exfil_ksat[0] = 4.32;    // in/hr -> internal Ks = 1.0e-4 ft/s
-    nodes.exfil_imd[0] = 0.2;
+    S.exfil_suction[ur] = 6.0;  // 0.5 ft in project rain-depth units
+    S.exfil_ksat[ur] = 4.32;    // in/hr -> internal Ks = 1.0e-4 ft/s
+    S.exfil_imd[ur] = 0.2;
     return ctx;
 }
 
@@ -141,7 +145,8 @@ TEST(StorageExfilGeometry, FixedStageGreenAmptGeometryBenchmark) {
         EXPECT_NEAR(ctx.nodes.depth[0], 2.0, 1e-6)
             << "Storage depth drifted from 2.0 ft at step " << i;
 
-        double step_loss = ctx.nodes.storage_exfil_loss[0];
+        double step_loss = ctx.node_subtypes.storages.exfil_loss[
+            static_cast<std::size_t>(ctx.node_subtypes.storage_row(0))];
         cumulative_loss += step_loss;
         max_rate_err = std::max(max_rate_err,
             std::abs(step_loss / dt - rows[i].exfil_rate_cfs));

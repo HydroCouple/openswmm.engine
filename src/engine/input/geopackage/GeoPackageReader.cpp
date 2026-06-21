@@ -304,7 +304,7 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
         ensure_node_capacity(ctx, idx);
 
         NodeType ntype = parse_node_type(type_str);
-        ctx.nodes.type[idx] = ntype;
+        const int subrow = ctx.node_subtypes.set_node_type(ctx.nodes, idx, ntype);
 
         // Geometry
         if (!column_is_null(stmt.get(), 2)) {
@@ -321,24 +321,30 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
         ctx.nodes.ponded_area[idx] = column_double(stmt.get(), 7);
 
         if (ntype == NodeType::OUTFALL && !column_is_null(stmt.get(), 8)) {
-            ctx.nodes.outfall_type[idx] = parse_outfall_type(column_text(stmt.get(), 8));
-            ctx.nodes.outfall_param[idx] = column_double(stmt.get(), 9);
-            ctx.nodes.outfall_has_flap_gate[idx] = column_int(stmt.get(), 10) != 0;
+            auto& O = ctx.node_subtypes.outfalls;
+            const auto r = static_cast<std::size_t>(subrow);
+            O.bc_type[r] = parse_outfall_type(column_text(stmt.get(), 8));
+            O.param[r] = column_double(stmt.get(), 9);
+            O.has_flap_gate[r] = column_int(stmt.get(), 10) != 0;
         }
 
         if (ntype == NodeType::DIVIDER && !column_is_null(stmt.get(), 11)) {
-            ctx.nodes.divider_type[idx] = parse_divider_type(column_text(stmt.get(), 11));
-            ctx.nodes.divider_cutoff[idx] = column_double(stmt.get(), 12);
+            auto& D = ctx.node_subtypes.dividers;
+            const auto r = static_cast<std::size_t>(subrow);
+            D.method[r] = parse_divider_type(column_text(stmt.get(), 11));
+            D.cutoff[r] = column_double(stmt.get(), 12);
             if (!column_is_null(stmt.get(), 13))
-                ctx.nodes.divider_curve_name[idx] = column_text(stmt.get(), 13);
+                D.curve_name[r] = column_text(stmt.get(), 13);
         }
 
         if (ntype == NodeType::STORAGE) {
+            auto& S = ctx.node_subtypes.storages;
+            const auto r = static_cast<std::size_t>(subrow);
             if (!column_is_null(stmt.get(), 14))
-                ctx.nodes.storage_curve_name[idx] = column_text(stmt.get(), 14);
-            ctx.nodes.storage_a[idx] = column_double(stmt.get(), 15);
-            ctx.nodes.storage_b[idx] = column_double(stmt.get(), 16);
-            ctx.nodes.storage_c[idx] = column_double(stmt.get(), 17);
+                S.curve_name[r] = column_text(stmt.get(), 14);
+            S.a[r] = column_double(stmt.get(), 15);
+            S.b[r] = column_double(stmt.get(), 16);
+            S.c[r] = column_double(stmt.get(), 17);
         }
 
         if (!column_is_null(stmt.get(), 18)) {

@@ -87,18 +87,6 @@ protected:
             ctx.nodes.init_depth.resize(n);
             ctx.nodes.sur_depth.resize(n);
             ctx.nodes.ponded_area.resize(n);
-            ctx.nodes.outfall_type.resize(n);
-            ctx.nodes.outfall_param.resize(n);
-            ctx.nodes.outfall_has_flap_gate.resize(n);
-            ctx.nodes.storage_curve.resize(n);
-            ctx.nodes.storage_curve_name.resize(n);
-            ctx.nodes.storage_a.resize(n);
-            ctx.nodes.storage_b.resize(n);
-            ctx.nodes.storage_c.resize(n);
-            ctx.nodes.divider_type.resize(n);
-            ctx.nodes.divider_cutoff.resize(n);
-            ctx.nodes.divider_curve.resize(n);
-            ctx.nodes.divider_curve_name.resize(n);
 
             ctx.nodes.type[idx] = NodeType::JUNCTION;
             ctx.nodes.invert_elev[idx] = 100.0 - idx * 2.0;
@@ -118,23 +106,13 @@ protected:
             ctx.nodes.init_depth.resize(n);
             ctx.nodes.sur_depth.resize(n);
             ctx.nodes.ponded_area.resize(n);
-            ctx.nodes.outfall_type.resize(n);
-            ctx.nodes.outfall_param.resize(n);
-            ctx.nodes.outfall_has_flap_gate.resize(n);
-            ctx.nodes.storage_curve.resize(n);
-            ctx.nodes.storage_curve_name.resize(n);
-            ctx.nodes.storage_a.resize(n);
-            ctx.nodes.storage_b.resize(n);
-            ctx.nodes.storage_c.resize(n);
-            ctx.nodes.divider_type.resize(n);
-            ctx.nodes.divider_cutoff.resize(n);
-            ctx.nodes.divider_curve.resize(n);
-            ctx.nodes.divider_curve_name.resize(n);
 
-            ctx.nodes.type[idx] = NodeType::OUTFALL;
+            const int outfall_row =
+                ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::OUTFALL);
             ctx.nodes.invert_elev[idx] = 90.0;
             ctx.nodes.full_depth[idx] = 0.0;
-            ctx.nodes.outfall_type[idx] = OutfallType::FREE;
+            ctx.node_subtypes.outfalls.bc_type[
+                static_cast<std::size_t>(outfall_row)] = OutfallType::FREE;
         }
 
         // --- COORDINATES ---
@@ -440,7 +418,9 @@ TEST_F(GeoPackageTest, OutfallRoundTrip) {
     int o1 = ctx_in.node_names.find("O1");
     ASSERT_GE(o1, 0);
     EXPECT_EQ(ctx_in.nodes.type[o1], NodeType::OUTFALL);
-    EXPECT_EQ(ctx_in.nodes.outfall_type[o1], OutfallType::FREE);
+    EXPECT_EQ(ctx_in.node_subtypes.outfalls.bc_type[
+                  static_cast<std::size_t>(ctx_in.node_subtypes.outfall_row(o1))],
+              OutfallType::FREE);
     EXPECT_DOUBLE_EQ(ctx_in.nodes.invert_elev[o1], 90.0);
 }
 
@@ -957,18 +937,6 @@ protected:
             ctx.nodes.init_depth.resize(idx + 1);
             ctx.nodes.sur_depth.resize(idx + 1);
             ctx.nodes.ponded_area.resize(idx + 1);
-            ctx.nodes.outfall_type.resize(idx + 1);
-            ctx.nodes.outfall_param.resize(idx + 1);
-            ctx.nodes.outfall_has_flap_gate.resize(idx + 1);
-            ctx.nodes.storage_curve.resize(idx + 1);
-            ctx.nodes.storage_curve_name.resize(idx + 1);
-            ctx.nodes.storage_a.resize(idx + 1);
-            ctx.nodes.storage_b.resize(idx + 1);
-            ctx.nodes.storage_c.resize(idx + 1);
-            ctx.nodes.divider_type.resize(idx + 1);
-            ctx.nodes.divider_cutoff.resize(idx + 1);
-            ctx.nodes.divider_curve.resize(idx + 1);
-            ctx.nodes.divider_curve_name.resize(idx + 1);
             ctx.nodes.type[idx] = NodeType::JUNCTION;
             ctx.nodes.invert_elev[idx] = 100.0 - idx * 2.0;
             ctx.nodes.full_depth[idx] = 6.0;

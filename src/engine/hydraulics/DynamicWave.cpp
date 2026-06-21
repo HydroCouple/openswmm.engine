@@ -1599,15 +1599,15 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     if (tile_has_flap_gate_[uci]) {
         if (q * static_cast<double>(tile_direction_[uci]) < 0.0) q = 0.0;
     }
-    if (q < 0.0 && n2 >= 0 &&
-        nodes.type[un2] == NodeType::OUTFALL &&
-        nodes.outfall_has_flap_gate[un2]) {
-        q = 0.0;
+    if (q < 0.0 && n2 >= 0 && nodes.type[un2] == NodeType::OUTFALL) {
+        const int ofr = ctx.node_subtypes.outfall_row(n2);
+        if (ofr >= 0 && ctx.node_subtypes.outfalls.has_flap_gate[static_cast<std::size_t>(ofr)])
+            q = 0.0;
     }
-    if (q > 0.0 && n1 >= 0 &&
-        nodes.type[un1] == NodeType::OUTFALL &&
-        nodes.outfall_has_flap_gate[un1]) {
-        q = 0.0;
+    if (q > 0.0 && n1 >= 0 && nodes.type[un1] == NodeType::OUTFALL) {
+        const int ofr = ctx.node_subtypes.outfall_row(n1);
+        if (ofr >= 0 && ctx.node_subtypes.outfalls.has_flap_gate[static_cast<std::size_t>(ofr)])
+            q = 0.0;
     }
 
     // Dry node check
