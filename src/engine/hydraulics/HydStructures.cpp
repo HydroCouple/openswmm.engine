@@ -72,13 +72,17 @@ void StructureSolver::init(SimulationContext& ctx) {
         switch (ctx.links.type[uj]) {
             case LinkType::PUMP: {
                 auto uk = static_cast<size_t>(ip);
+                // Phase 6: pump config from the relational side-table; `setting`
+                // is common control state and stays on base LinkData.
+                const auto& P = ctx.link_subtypes.pumps;
+                const auto pr = static_cast<size_t>(ctx.link_subtypes.pump_row(j));
                 pumps_.link_idx[uk] = j;
-                pumps_.curve_idx[uk] = ctx.links.pump_curve[uj];
+                pumps_.curve_idx[uk] = P.curve[pr];
                 pumps_.speed[uk] = ctx.links.setting[uj];
-                pumps_.y_on[uk]  = ctx.links.pump_startup[uj];
-                pumps_.y_off[uk] = ctx.links.pump_shutoff[uj];
+                pumps_.y_on[uk]  = P.startup[pr];
+                pumps_.y_off[uk] = P.shutoff[pr];
                 // Determine curve type from table type
-                int ci = ctx.links.pump_curve[uj];
+                int ci = P.curve[pr];
                 if (ci >= 0 && ci < static_cast<int>(ctx.tables.tables.size())) {
                     int tt = static_cast<int>(ctx.tables.tables[static_cast<size_t>(ci)].type);
                     // TableType CURVE_PUMP1=7, PUMP2=8, PUMP3=9, PUMP4=10, PUMP5=11
@@ -106,7 +110,8 @@ void StructureSolver::init(SimulationContext& ctx) {
                 using constants::GRAVITY;
                 double a_full = ctx.links.xsect_a_full[uj];
                 double y_full = ctx.links.xsect_y_full[uj];
-                double cd_val = ctx.links.cd[uj];
+                double cd_val = ctx.link_subtypes.orifices.cd[
+                    static_cast<size_t>(ctx.link_subtypes.orifice_row(j))];
 
                 orifices_.c_orifice[uk] = cd_val * a_full * std::sqrt(2.0 * GRAVITY);
                 // Weir coefficient for partially-open orifice
@@ -130,11 +135,13 @@ void StructureSolver::init(SimulationContext& ctx) {
             }
             case LinkType::WEIR: {
                 auto uk = static_cast<size_t>(iw);
+                const auto& W = ctx.link_subtypes.weirs;
+                const auto wr = static_cast<size_t>(ctx.link_subtypes.weir_row(j));
                 weirs_.link_idx[uk]   = j;
-                weirs_.c_disch1[uk]   = ctx.links.cd[uj] * weir_cf;
+                weirs_.c_disch1[uk]   = W.cd[wr] * weir_cf;
                 weirs_.has_flap[uk]   = ctx.links.has_flap_gate[uj];
-                weirs_.weir_type[uk]  = static_cast<int>(ctx.links.param1[uj]);
-                weirs_.end_con[uk]    = ctx.links.param2[uj];
+                weirs_.weir_type[uk]  = static_cast<int>(W.weir_type[wr]);
+                weirs_.end_con[uk]    = W.end_contractions[wr];
                 // V-notch / trapezoidal side slope comes from the cross-section,
                 // not from the INP weir row. Legacy: Weir[k].slope = xsect.sBot
                 // (populated by weir_validate). SIDEFLOW / TRANSVERSE → 0.
@@ -153,11 +160,12 @@ void StructureSolver::init(SimulationContext& ctx) {
             }
             case LinkType::OUTLET: {
                 auto uk = static_cast<size_t>(ix);
+                const auto& O = ctx.link_subtypes.outlets;
+                const auto xr = static_cast<size_t>(ctx.link_subtypes.outlet_row(j));
                 outlets_.link_idx[uk] = j;
-                outlets_.q_coeff[uk]  = ctx.links.cd[uj];
-                outlets_.q_expon[uk]  = ctx.links.param2[uj];
-                // pump_curve stores resolved rating-curve index for TABULAR outlets
-                outlets_.curve_idx[uk] = ctx.links.pump_curve[uj];
+                outlets_.q_coeff[uk]  = O.coeff[xr];
+                outlets_.q_expon[uk]  = O.expon[xr];
+                outlets_.curve_idx[uk] = O.curve[xr];
                 ++ix;
                 break;
             }

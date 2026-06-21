@@ -68,6 +68,7 @@
 #include "../data/NameIndex.hpp"
 #include "../data/NodeData.hpp"
 #include "../data/NodeSubtypes.hpp"
+#include "../data/LinkSubtypes.hpp"
 #include "../data/PollutantData.hpp"
 #include "../data/SubcatchData.hpp"
 #include "../data/TableData.hpp"
@@ -412,6 +413,14 @@ struct SimulationContext {
      * @see Legacy: Link[], LinkStats[] in globals.h + TLink in objects.h
      */
     LinkData links;
+
+    /**
+     * @brief Relational per-subtype link side-tables (Phase 6) — the link
+     *        analogue of node_subtypes. Authoritative store for conduit/pump/
+     *        orifice/weir/outlet config; shared fields (xsect_*, has_flap_gate,
+     *        pump_curve_name) stay on `links`. @see data/LinkSubtypes.hpp.
+     */
+    LinkSubtypes link_subtypes;
 
     /**
      * @brief All subcatchment state and properties.
