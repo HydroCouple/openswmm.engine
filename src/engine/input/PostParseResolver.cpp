@@ -596,7 +596,12 @@ void resolve_cross_references(SimulationContext& ctx) {
     // Display → internal (feet) unit conversion — must run before any derived
     // geometry/head/conveyance computation below.
     // -------------------------------------------------------------------------
-    convert_inputs_to_internal(ctx, n_nodes, n_links, n_subcatch);
+    // A GeoPackage stores hydraulic fields already in internal units (its
+    // canonical form); converting again would be wrong (and the non-invertible
+    // ×0.3048 would also break bit-exact round-trip). The .inp path leaves the
+    // flag false and converts here as before.
+    if (!ctx.gpkg_units_internal)
+        convert_inputs_to_internal(ctx, n_nodes, n_links, n_subcatch);
 
     // Spatial coordinate arrays
     const auto un = static_cast<std::size_t>(n_nodes);
@@ -1300,7 +1305,11 @@ void resolve_cross_references(SimulationContext& ctx) {
         ctx.links.slope[uj] = slope;
 
         // Reverse conduit orientation for adverse slopes in DW routing
-        // (matching legacy conduit_reverse in link.c)
+        // (matching legacy conduit_reverse in link.c). A GeoPackage already
+        // stores the model POST-reverse — its adverse conduits were flipped to a
+        // positive slope at the original parse, so this never fires for a gpkg
+        // load; the reversed `direction` is restored from the persisted column
+        // in read_links instead (it is not derivable from the now-positive slope).
         if (ctx.options.routing_model == RoutingModel::DYNWAVE &&
             slope < 0.0 &&
             ctx.links.xsect_shape[uj] != XsectShape::DUMMY) {

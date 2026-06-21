@@ -135,6 +135,10 @@ protected:
             ctx.links.xsect_y_full.resize(n);
             ctx.links.xsect_a_full.resize(n);
             ctx.links.xsect_w_max.resize(n);
+            ctx.links.xsect_geom1.resize(n);
+            ctx.links.xsect_geom2.resize(n);
+            ctx.links.xsect_geom3.resize(n);
+            ctx.links.xsect_geom4.resize(n);
             ctx.links.xsect_curve.resize(n);
             ctx.links.roughness.resize(n);
             ctx.links.length.resize(n);
@@ -163,6 +167,7 @@ protected:
             ctx.links.node2[idx] = i + 1;
             ctx.links.xsect_shape[idx] = XsectShape::CIRCULAR;
             ctx.links.xsect_y_full[idx] = 2.0;
+            ctx.links.xsect_geom1[idx] = 2.0;   // raw [XSECTIONS] geom1 (diameter), persisted by the gpkg
             ctx.links.roughness[idx] = 0.013;
             ctx.links.length[idx] = 400.0;
             ctx.links.barrels[idx] = 1;
@@ -422,6 +427,88 @@ TEST_F(GeoPackageTest, OutfallRoundTrip) {
                   static_cast<std::size_t>(ctx_in.node_subtypes.outfall_row(o1))],
               OutfallType::FREE);
     EXPECT_DOUBLE_EQ(ctx_in.nodes.invert_elev[o1], 90.0);
+}
+
+// Relational node child tables (storages/outfalls/dividers): full lossless field
+// set round-trip, incl. the divider subtype (no QA model exercises dividers) and
+// the fields the flat schema used to drop (storage seep/evap/exfil, outfall
+// route_to, divider cd/max_depth/curve/link).
+TEST_F(GeoPackageTest, NodeSubtypeChildTablesRoundTrip) {
+    SimulationContext ctx{};
+    ctx.options.flow_units = FlowUnits::CFS;   // US: no unit conversion in play
+    ctx.spatial.crs = "EPSG:4326";
+
+    auto add_node = [&](const char* nm) {
+        int idx = ctx.node_names.add(nm);
+        const auto n = static_cast<std::size_t>(idx + 1);
+        ctx.nodes.type.resize(n); ctx.nodes.invert_elev.resize(n);
+        ctx.nodes.full_depth.resize(n); ctx.nodes.init_depth.resize(n);
+        ctx.nodes.sur_depth.resize(n); ctx.nodes.ponded_area.resize(n);
+        ctx.nodes.type[static_cast<std::size_t>(idx)] = NodeType::JUNCTION;
+        return idx;
+    };
+    add_node("J1");
+    const int st = add_node("ST1");
+    const int of = add_node("OF1");
+    const int dv = add_node("DV1");
+    ctx.spatial.node_x = {0.0, 1.0, 2.0, 3.0};
+    ctx.spatial.node_y = {0.0, 0.0, 0.0, 0.0};
+
+    // A subcatchment for the outfall route_to target.
+    { int s = ctx.subcatch_names.add("S1");
+      const auto n = static_cast<std::size_t>(s + 1);
+      ctx.subcatches.outlet_node.resize(n, -1);
+      ctx.subcatches.outlet_subcatch.resize(n, -1);
+      ctx.subcatches.outlet_name.resize(n); }
+
+    auto& S = ctx.node_subtypes.storages;
+    const auto sr = static_cast<std::size_t>(ctx.node_subtypes.set_node_type(ctx.nodes, st, NodeType::STORAGE));
+    S.curve_name[sr] = "StoreCurve"; S.a[sr] = 1.5; S.b[sr] = 0.6; S.c[sr] = 2.5;
+    S.seep_rate[sr] = 0.1; S.evap_frac[sr] = 0.2;
+    S.exfil_suction[sr] = 3.0; S.exfil_ksat[sr] = 0.05; S.exfil_imd[sr] = 0.3;
+
+    auto& O = ctx.node_subtypes.outfalls;
+    const auto orr = static_cast<std::size_t>(ctx.node_subtypes.set_node_type(ctx.nodes, of, NodeType::OUTFALL));
+    O.bc_type[orr] = OutfallType::FIXED; O.param[orr] = 12.5; O.has_flap_gate[orr] = 1;
+    O.route_to[orr] = ctx.subcatch_names.find("S1");
+
+    auto& D = ctx.node_subtypes.dividers;
+    const auto dr = static_cast<std::size_t>(ctx.node_subtypes.set_node_type(ctx.nodes, dv, NodeType::DIVIDER));
+    D.method[dr] = DividerType::WEIR; D.cutoff[dr] = 1.1; D.cd[dr] = 0.9; D.max_depth[dr] = 4.0;
+    D.curve_name[dr] = "DivCurve"; D.link_name[dr] = "DivLink";
+
+    ASSERT_EQ(write_to_file(db_path_, ctx, "r"), 0);
+    SimulationContext in{};
+    ASSERT_EQ(read_from_file(db_path_, in, "r"), 0);
+
+    const int ist = in.node_names.find("ST1");
+    const auto uis = static_cast<std::size_t>(in.node_subtypes.storage_row(ist));
+    ASSERT_GE(in.node_subtypes.storage_row(ist), 0);
+    const auto& IS = in.node_subtypes.storages;
+    EXPECT_EQ(IS.curve_name[uis], "StoreCurve");
+    EXPECT_DOUBLE_EQ(IS.a[uis], 1.5); EXPECT_DOUBLE_EQ(IS.b[uis], 0.6); EXPECT_DOUBLE_EQ(IS.c[uis], 2.5);
+    EXPECT_DOUBLE_EQ(IS.seep_rate[uis], 0.1); EXPECT_DOUBLE_EQ(IS.evap_frac[uis], 0.2);
+    EXPECT_DOUBLE_EQ(IS.exfil_suction[uis], 3.0); EXPECT_DOUBLE_EQ(IS.exfil_ksat[uis], 0.05);
+    EXPECT_DOUBLE_EQ(IS.exfil_imd[uis], 0.3);
+
+    const int iof = in.node_names.find("OF1");
+    const auto uio = static_cast<std::size_t>(in.node_subtypes.outfall_row(iof));
+    ASSERT_GE(in.node_subtypes.outfall_row(iof), 0);
+    const auto& IO = in.node_subtypes.outfalls;
+    EXPECT_EQ(IO.bc_type[uio], OutfallType::FIXED);
+    EXPECT_DOUBLE_EQ(IO.param[uio], 12.5);
+    EXPECT_EQ(IO.has_flap_gate[uio], 1);
+    EXPECT_EQ(IO.route_to[uio], in.subcatch_names.find("S1"));  // name -> index resolved
+
+    const int idv = in.node_names.find("DV1");
+    const auto uid = static_cast<std::size_t>(in.node_subtypes.divider_row(idv));
+    ASSERT_GE(in.node_subtypes.divider_row(idv), 0);
+    const auto& ID = in.node_subtypes.dividers;
+    EXPECT_EQ(ID.method[uid], DividerType::WEIR);
+    EXPECT_DOUBLE_EQ(ID.cutoff[uid], 1.1); EXPECT_DOUBLE_EQ(ID.cd[uid], 0.9);
+    EXPECT_DOUBLE_EQ(ID.max_depth[uid], 4.0);
+    EXPECT_EQ(ID.curve_name[uid], "DivCurve");
+    EXPECT_EQ(ID.link_name[uid], "DivLink");
 }
 
 TEST_F(GeoPackageTest, CoordinatesRoundTrip) {

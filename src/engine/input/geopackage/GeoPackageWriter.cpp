@@ -12,6 +12,7 @@
 
 #include "core/SimulationContext.hpp"
 #include "core/UnitConversion.hpp"
+#include "input/PostParseResolver.hpp"
 #include "data/NodeData.hpp"
 #include "data/LinkData.hpp"
 #include "data/SubcatchData.hpp"
@@ -42,27 +43,16 @@ namespace {
 static constexpr double kAbsoluteTsThreshold = 3650.0;
 
 // Format a time series x value for storage in the GeoPackage.
-// PostParseResolver adds start_date to relative series; strip it back out
-// using the same detection condition before formatting.
-static std::string format_ts_timestamp(double x, double startDate) {
-    const double xRel = x - startDate;
-    const bool wasRelative = xRel >= 0.0 && xRel < 366.0;
-    const double xv = wasRelative ? xRel : x;
-
-    if (!wasRelative && xv >= kAbsoluteTsThreshold) {
-        // True absolute calendar date entered by user.
-        int y, mo, d, h, mi, s;
-        datetime::decodeDate(xv, y, mo, d);
-        datetime::decodeTime(xv, h, mi, s);
-        char buf[32];
-        std::snprintf(buf, sizeof(buf), "%02d/%02d/%04d %02d:%02d", mo, d, y, h, mi);
-        return buf;
-    } else {
-        // Relative: fractional days → decimal hours string
-        char buf[32];
-        std::snprintf(buf, sizeof(buf), "%.6f", xv * 24.0);
-        return buf;
-    }
+// Stored as the RAW OADate at full double precision (the canonical "store
+// internal" form). By save time PostParseResolver has already absolutized every
+// series (x>=366), and on read it applies NO offset to absolute series, so the
+// value round-trips bit-for-bit. The prior relative-hours/date-string forms lost
+// precision to the start_date subtraction (catastrophic cancellation at ~36000),
+// the 6-dp start_date, and HH:MM truncation — breaking byte-exact .out parity.
+static std::string format_ts_timestamp(double x, double /*startDate*/) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.17g", x);
+    return buf;
 }
 } // anonymous namespace
 
@@ -179,6 +169,12 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
         bind_text(stmt.get(), 3, val);
         sqlite3_step(stmt.get());
     };
+    // Double-valued options at FULL precision — std::to_string emits only 6 dp,
+    // which rounds dates/steps/tolerances (e.g. START_DATE 36161.0416666… →
+    // 36161.041667, a ~0.026 s shift) and breaks byte-exact .out round-trip.
+    auto insert_d = [&](const std::string& key, double val) {
+        char b[32]; std::snprintf(b, sizeof(b), "%.17g", val); insert(key, b);
+    };
 
     insert("FLOW_UNITS", std::to_string(static_cast<int>(opts.flow_units)));
     insert("INFILTRATION", std::to_string(static_cast<int>(opts.infiltration)));
@@ -191,36 +187,36 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
     insert("IGNORE_GW", opts.ignore_groundwater ? "YES" : "NO");
     insert("IGNORE_ROUTING", opts.ignore_routing ? "YES" : "NO");
     insert("IGNORE_QUALITY", opts.ignore_quality ? "YES" : "NO");
-    insert("WET_STEP", std::to_string(opts.wet_step));
-    insert("DRY_STEP", std::to_string(opts.dry_step));
-    insert("ROUTING_STEP", std::to_string(opts.routing_step));
-    insert("REPORT_STEP", std::to_string(opts.report_step));
-    insert("START_DATE", std::to_string(opts.start_date));
-    insert("END_DATE", std::to_string(opts.end_date));
-    insert("REPORT_START", std::to_string(opts.report_start));
+    insert_d("WET_STEP", opts.wet_step);
+    insert_d("DRY_STEP", opts.dry_step);
+    insert_d("ROUTING_STEP", opts.routing_step);
+    insert_d("REPORT_STEP", opts.report_step);
+    insert_d("START_DATE", opts.start_date);
+    insert_d("END_DATE", opts.end_date);
+    insert_d("REPORT_START", opts.report_start);
     insert("SWEEP_START", std::to_string(opts.sweep_start));
     insert("SWEEP_END", std::to_string(opts.sweep_end));
     insert("NODE_CONTINUITY", std::to_string(static_cast<int>(opts.node_continuity)));
     insert("ANDERSON_ACCEL", std::to_string(opts.anderson_accel ? 1 : 0));
     insert("SURCHARGE_METHOD", std::to_string(opts.surcharge_method));
     if (opts.surcharge_method == 2) {
-        insert("DPS_CELERITY", std::to_string(opts.dps_target_celerity));
-        insert("DPS_ALPHA", std::to_string(opts.dps_alpha));
-        insert("DPS_DECAY_TIME", std::to_string(opts.dps_decay_time));
+        insert_d("DPS_CELERITY", opts.dps_target_celerity);
+        insert_d("DPS_ALPHA", opts.dps_alpha);
+        insert_d("DPS_DECAY_TIME", opts.dps_decay_time);
     }
     insert("INERTIAL_DAMPING", std::to_string(opts.inertial_damping));
     insert("NORMAL_FLOW_LIMITED", std::to_string(opts.normal_flow_ltd));
     insert("MAX_TRIALS", std::to_string(opts.max_trials));
-    insert("HEAD_TOLERANCE", std::to_string(opts.head_tol));
-    insert("VARIABLE_STEP", std::to_string(opts.variable_step));
-    insert("MINIMUM_STEP", std::to_string(opts.min_routing_step));
-    insert("LENGTHENING_STEP", std::to_string(opts.lengthening_step));
-    insert("MIN_SLOPE", std::to_string(opts.min_slope));
-    insert("MIN_SURFAREA", std::to_string(opts.min_surf_area));
-    insert("SYS_FLOW_TOL", std::to_string(opts.sys_flow_tol));
-    insert("LAT_FLOW_TOL", std::to_string(opts.lat_flow_tol));
+    insert_d("HEAD_TOLERANCE", opts.head_tol);
+    insert_d("VARIABLE_STEP", opts.variable_step);
+    insert_d("MINIMUM_STEP", opts.min_routing_step);
+    insert_d("LENGTHENING_STEP", opts.lengthening_step);
+    insert_d("MIN_SLOPE", opts.min_slope);
+    insert_d("MIN_SURFAREA", opts.min_surf_area);
+    insert_d("SYS_FLOW_TOL", opts.sys_flow_tol);
+    insert_d("LAT_FLOW_TOL", opts.lat_flow_tol);
     insert("THREADS", std::to_string(opts.num_threads));
-    insert("DRY_DAYS", std::to_string(opts.dry_days));
+    insert_d("DRY_DAYS", opts.dry_days);
     insert("IGNORE_RDII", opts.ignore_rdii ? "YES" : "NO");
 
     // Report settings
@@ -275,13 +271,27 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
 
 static void write_nodes(sqlite3* db, const SimulationContext& ctx,
                         const std::string& sim_id, int srs_id) {
+    // Relational node schema: base nodes row + one per-type child row sourced
+    // from the node_subtypes side-tables. Child FK -> nodes(simulation_id,
+    // node_id); the base row is inserted first each iteration so the FK resolves.
     auto stmt = prepare(db,
         "INSERT INTO nodes (simulation_id, node_id, node_type, geom, "
-        "invert_elev, max_depth, init_depth, surcharge_depth, ponded_area, "
-        "outfall_type, outfall_stage, outfall_has_flap_gate, "
-        "divider_type, divider_cutoff, divider_curve, "
-        "storage_curve, storage_a, storage_b, storage_c, tag) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        "invert_elev, max_depth, init_depth, surcharge_depth, ponded_area, tag) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)");
+    auto st_stmt = prepare(db,
+        "INSERT INTO storages (simulation_id, node_id, curve_name, a, b, c, "
+        "seep_rate, evap_frac, exfil_suction, exfil_ksat, exfil_imd) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+    auto of_stmt = prepare(db,
+        "INSERT INTO outfalls (simulation_id, node_id, outfall_type, param, "
+        "has_flap_gate, route_to) VALUES (?,?,?,?,?,?)");
+    auto dv_stmt = prepare(db,
+        "INSERT INTO dividers (simulation_id, node_id, divider_type, cutoff, cd, "
+        "max_depth, curve_name, divider_link) VALUES (?,?,?,?,?,?,?,?)");
+
+    auto bind_name = [](sqlite3_stmt* s, int col, const std::string& v) {
+        if (!v.empty()) bind_text(s, col, v); else bind_null(s, col);
+    };
 
     int n = ctx.node_names.size();
     for (int i = 0; i < n; ++i) {
@@ -309,66 +319,72 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 8, safe_dbl(ctx.nodes.sur_depth, i));
         bind_double(stmt.get(), 9, safe_dbl(ctx.nodes.ponded_area, i));
 
-        // Outfall fields (relational side-table, Phase 4)
-        if (ntype == NodeType::OUTFALL) {
-            const int r = ctx.node_subtypes.outfall_row(i); const auto& O = ctx.node_subtypes.outfalls;
-            const auto ur = static_cast<size_t>(r);
-            bind_text(stmt.get(), 10, outfall_type_str(r>=0 ? O.bc_type[ur] : OutfallType::FREE));
-            bind_double(stmt.get(), 11, r>=0 ? O.param[ur] : 0.0);
-            bind_int(stmt.get(), 12, (r>=0 ? O.has_flap_gate[ur] : uint8_t{0}) ? 1 : 0);
-        } else {
-            bind_null(stmt.get(), 10);
-            bind_null(stmt.get(), 11);
-            bind_null(stmt.get(), 12);
-        }
-
-        // Divider fields (relational side-table, Phase 4)
-        if (ntype == NodeType::DIVIDER) {
-            const int r = ctx.node_subtypes.divider_row(i); const auto& D = ctx.node_subtypes.dividers;
-            const auto ur = static_cast<size_t>(r);
-            bind_text(stmt.get(), 13, divider_type_str(r>=0 ? D.method[ur] : DividerType::CUTOFF));
-            bind_double(stmt.get(), 14, r>=0 ? D.cutoff[ur] : 0.0);
-            std::string cname = (r>=0) ? D.curve_name[ur] : std::string{};
-            if (!cname.empty()) bind_text(stmt.get(), 15, cname);
-            else bind_null(stmt.get(), 15);
-        } else {
-            bind_null(stmt.get(), 13);
-            bind_null(stmt.get(), 14);
-            bind_null(stmt.get(), 15);
-        }
-
-        // Storage fields (relational side-table, Phase 4)
-        if (ntype == NodeType::STORAGE) {
-            const int r = ctx.node_subtypes.storage_row(i); const auto& S = ctx.node_subtypes.storages;
-            const auto ur = static_cast<size_t>(r);
-            std::string cname = (r>=0) ? S.curve_name[ur] : std::string{};
-            if (!cname.empty()) bind_text(stmt.get(), 16, cname);
-            else bind_null(stmt.get(), 16);
-            bind_double(stmt.get(), 17, r>=0 ? S.a[ur] : 0.0);
-            bind_double(stmt.get(), 18, r>=0 ? S.b[ur] : 0.0);
-            bind_double(stmt.get(), 19, r>=0 ? S.c[ur] : 0.0);
-        } else {
-            bind_null(stmt.get(), 16);
-            bind_null(stmt.get(), 17);
-            bind_null(stmt.get(), 18);
-            bind_null(stmt.get(), 19);
-        }
-
-        // Tag — pulled from per-NodeData field (was: ctx.node_tags map).
         const auto utag = static_cast<std::size_t>(i);
         if (utag < ctx.nodes.tags.size() && !ctx.nodes.tags[utag].empty())
-            bind_text(stmt.get(), 20, ctx.nodes.tags[utag]);
+            bind_text(stmt.get(), 10, ctx.nodes.tags[utag]);
         else
-            bind_null(stmt.get(), 20);
+            bind_null(stmt.get(), 10);
 
         sqlite3_step(stmt.get());
+
+        // --- per-subtype child row ---
+        if (ntype == NodeType::STORAGE) {
+            const int r = ctx.node_subtypes.storage_row(i);
+            const auto& S = ctx.node_subtypes.storages;
+            const auto ur = static_cast<size_t>(r);
+            sqlite3_reset(st_stmt.get()); sqlite3_clear_bindings(st_stmt.get());
+            bind_text(st_stmt.get(), 1, sim_id);
+            bind_text(st_stmt.get(), 2, name);
+            bind_name(st_stmt.get(), 3, r >= 0 ? S.curve_name[ur] : std::string{});
+            bind_double(st_stmt.get(), 4,  r >= 0 ? S.a[ur] : 0.0);
+            bind_double(st_stmt.get(), 5,  r >= 0 ? S.b[ur] : 0.0);
+            bind_double(st_stmt.get(), 6,  r >= 0 ? S.c[ur] : 0.0);
+            bind_double(st_stmt.get(), 7,  r >= 0 ? S.seep_rate[ur] : 0.0);
+            bind_double(st_stmt.get(), 8,  r >= 0 ? S.evap_frac[ur] : 0.0);
+            bind_double(st_stmt.get(), 9,  r >= 0 ? S.exfil_suction[ur] : 0.0);
+            bind_double(st_stmt.get(), 10, r >= 0 ? S.exfil_ksat[ur] : 0.0);
+            bind_double(st_stmt.get(), 11, r >= 0 ? S.exfil_imd[ur] : 0.0);
+            sqlite3_step(st_stmt.get());
+        } else if (ntype == NodeType::OUTFALL) {
+            const int r = ctx.node_subtypes.outfall_row(i);
+            const auto& O = ctx.node_subtypes.outfalls;
+            const auto ur = static_cast<size_t>(r);
+            sqlite3_reset(of_stmt.get()); sqlite3_clear_bindings(of_stmt.get());
+            bind_text(of_stmt.get(), 1, sim_id);
+            bind_text(of_stmt.get(), 2, name);
+            bind_text(of_stmt.get(), 3, outfall_type_str(r >= 0 ? O.bc_type[ur] : OutfallType::FREE));
+            bind_double(of_stmt.get(), 4, r >= 0 ? O.param[ur] : 0.0);
+            bind_int(of_stmt.get(), 5, (r >= 0 && O.has_flap_gate[ur]) ? 1 : 0);
+            const int rt = (r >= 0) ? O.route_to[ur] : -1;   // subcatch index -> name
+            bind_name(of_stmt.get(), 6,
+                      (rt >= 0 && rt < ctx.subcatch_names.size())
+                          ? ctx.subcatch_names.name_of(rt) : std::string{});
+            sqlite3_step(of_stmt.get());
+        } else if (ntype == NodeType::DIVIDER) {
+            const int r = ctx.node_subtypes.divider_row(i);
+            const auto& D = ctx.node_subtypes.dividers;
+            const auto ur = static_cast<size_t>(r);
+            sqlite3_reset(dv_stmt.get()); sqlite3_clear_bindings(dv_stmt.get());
+            bind_text(dv_stmt.get(), 1, sim_id);
+            bind_text(dv_stmt.get(), 2, name);
+            bind_text(dv_stmt.get(), 3, divider_type_str(r >= 0 ? D.method[ur] : DividerType::CUTOFF));
+            bind_double(dv_stmt.get(), 4, r >= 0 ? D.cutoff[ur] : 0.0);
+            bind_double(dv_stmt.get(), 5, r >= 0 ? D.cd[ur] : 0.0);
+            bind_double(dv_stmt.get(), 6, r >= 0 ? D.max_depth[ur] : 0.0);
+            bind_name(dv_stmt.get(), 7, r >= 0 ? D.curve_name[ur] : std::string{});
+            bind_name(dv_stmt.get(), 8, r >= 0 ? D.link_name[ur] : std::string{});
+            sqlite3_step(dv_stmt.get());
+        }
     }
 }
 
 static void write_links(sqlite3* db, const SimulationContext& ctx,
                         const std::string& sim_id, int srs_id) {
-    int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-    double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys]; // ft → display (1.0 US, 0.3048 SI)
+    // Unit conversion is handled globally in write_model (convert_internal_to_
+    // display on a ctx copy); fields are written here as-is. pump_startup/
+    // pump_shutoff are NOT in the convert set (left ctx-native, like the .inp
+    // path), so they round-trip verbatim — the previous per-field ×ucf_len was
+    // a one-sided conversion the reader never undid (broke SI round-trip).
     auto stmt = prepare(db,
         "INSERT INTO links (simulation_id, link_id, link_type, geom, "
         "from_node, to_node, offset1, offset2, "
@@ -377,8 +393,8 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
         "roughness, length, loss_inlet, loss_outlet, loss_avg, "
         "has_flap_gate, seep_rate, q0, q_limit, "
         "pump_curve, pump_init_state, pump_startup, pump_shutoff, "
-        "crest_height, discharge_coeff, tag) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        "crest_height, discharge_coeff, param1, param2, orate, direction, tag) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
 
     int n = ctx.link_names.size();
     for (int i = 0; i < n; ++i) {
@@ -423,21 +439,35 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 7, safe_dbl(ctx.links.offset1, i));
         bind_double(stmt.get(), 8, safe_dbl(ctx.links.offset2, i));
 
-        // Cross-section
+        // Cross-section — persist the RAW [XSECTIONS] geom1-4 (display units,
+        // preserved by the parser), NOT the derived y_full/w_max/a_full/y_bot.
+        // The derived fields overwrite the inputs at init and are lossy for
+        // shapes like TRAPEZOIDAL (bottom width + side slopes); storing the raw
+        // geoms lets the reader rebuild them and init derive identically.
         bind_text(stmt.get(), 9, xsect_shape_str(safe_get(ctx.links.xsect_shape, (size_t)i, XsectShape::CIRCULAR)));
-        bind_double(stmt.get(), 10, safe_dbl(ctx.links.xsect_y_full, i));
-        bind_double(stmt.get(), 11, safe_dbl(ctx.links.xsect_w_max, i));
-        bind_double(stmt.get(), 12, safe_dbl(ctx.links.xsect_a_full, i));
-        bind_double(stmt.get(), 13, safe_dbl(ctx.links.xsect_y_bot, i));
+        bind_double(stmt.get(), 10, safe_dbl(ctx.links.xsect_geom1, i));
+        bind_double(stmt.get(), 11, safe_dbl(ctx.links.xsect_geom2, i));
+        bind_double(stmt.get(), 12, safe_dbl(ctx.links.xsect_geom3, i));
+        bind_double(stmt.get(), 13, safe_dbl(ctx.links.xsect_geom4, i));
         bind_int(stmt.get(), 14, safe_get(ctx.links.barrels, (size_t)i, 1));
         bind_int(stmt.get(), 15, safe_get(ctx.links.culvert_code, (size_t)i, 0));
 
-        // xsect curve name
-        int xc = safe_int(ctx.links.xsect_curve, i);
-        if (xc >= 0 && xc < ctx.table_names.size())
-            bind_text(stmt.get(), 16, ctx.table_names.name_of(xc));
-        else
-            bind_null(stmt.get(), 16);
+        // xsect named reference (col 16). IRREGULAR/STREET/CUSTOM reference a
+        // transect/street/shape-curve by NAME — the parser keeps that name in
+        // pump_curve_name (xsect_curve later holds the resolved index, which is
+        // NOT a [CURVES] table index, so the old table_names.name_of() wrote a
+        // garbage curve name). Other shapes carry no named xsect reference.
+        {
+            const XsectShape wshp = safe_get(ctx.links.xsect_shape, (size_t)i, XsectShape::CIRCULAR);
+            std::string xname;
+            if (wshp == XsectShape::IRREGULAR || wshp == XsectShape::STREET_XSECT ||
+                wshp == XsectShape::CUSTOM) {
+                if (i < (int)ctx.links.pump_curve_name.size())
+                    xname = ctx.links.pump_curve_name[i];
+            }
+            if (!xname.empty()) bind_text(stmt.get(), 16, xname);
+            else                bind_null(stmt.get(), 16);
+        }
 
         bind_double(stmt.get(), 17, safe_dbl(ctx.links.roughness, i));
         bind_double(stmt.get(), 18, safe_dbl(ctx.links.length, i));
@@ -455,8 +485,8 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
             if (!pcname.empty()) bind_text(stmt.get(), 26, pcname);
             else bind_null(stmt.get(), 26);
             bind_double(stmt.get(), 27, safe_get(ctx.links.pump_init_state, (size_t)i, false) ? 1.0 : 0.0);
-            bind_double(stmt.get(), 28, safe_dbl(ctx.links.pump_startup, i) * ucf_len);
-            bind_double(stmt.get(), 29, safe_dbl(ctx.links.pump_shutoff, i) * ucf_len);
+            bind_double(stmt.get(), 28, safe_dbl(ctx.links.pump_startup, i));
+            bind_double(stmt.get(), 29, safe_dbl(ctx.links.pump_shutoff, i));
         } else {
             bind_null(stmt.get(), 26);
             bind_null(stmt.get(), 27);
@@ -464,16 +494,27 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
             bind_null(stmt.get(), 29);
         }
 
-        // Weir/Orifice
+        // Weir/Orifice/Outlet. param1 = type discriminator (orifice SIDE/BOTTOM,
+        // weir TRANSVERSE/SIDEFLOW/V-NOTCH/TRAPEZOIDAL, outlet rating type);
+        // param2 = end-contractions (weir) / derived area (orifice); orate =
+        // orifice open/close time. All dimensionless or ctx-native → as-is.
+        // Without these a SIDE orifice loads as BOTTOM (changed discharge).
         bind_double(stmt.get(), 30, safe_dbl(ctx.links.crest_height, i));
         bind_double(stmt.get(), 31, safe_dbl(ctx.links.cd, i));
+        bind_double(stmt.get(), 32, safe_dbl(ctx.links.param1, i));
+        bind_double(stmt.get(), 33, safe_dbl(ctx.links.param2, i));
+        bind_double(stmt.get(), 34, safe_dbl(ctx.links.orate, i));
+        // Flow direction (+1/-1). Adverse-slope DW conduits are stored already
+        // reversed (positive slope), so direction can't be re-derived on read —
+        // persist it so the .out offset-direction echo + routing round-trip.
+        bind_int(stmt.get(), 35, safe_get(ctx.links.direction, (size_t)i, 1));
 
         // Tag — per-LinkData field.
         const auto utag = static_cast<std::size_t>(i);
         if (utag < ctx.links.tags.size() && !ctx.links.tags[utag].empty())
-            bind_text(stmt.get(), 32, ctx.links.tags[utag]);
+            bind_text(stmt.get(), 36, ctx.links.tags[utag]);
         else
-            bind_null(stmt.get(), 32);
+            bind_null(stmt.get(), 36);
 
         sqlite3_step(stmt.get());
     }
@@ -1143,6 +1184,116 @@ static void write_treatment(sqlite3* db, const SimulationContext& ctx,
     }
 }
 
+static void write_inflows(sqlite3* db, const SimulationContext& ctx,
+                          const std::string& sim_id) {
+    const auto& E = ctx.ext_inflows;
+    if (E.count() == 0) return;
+    auto stmt = prepare(db,
+        "INSERT INTO inflows (simulation_id, node_id, constituent, timeseries, "
+        "inflow_type, m_factor, s_factor, baseline, pattern) "
+        "VALUES (?,?,?,?,?,?,?,?,?)");
+    for (int j = 0; j < E.count(); ++j) {
+        const auto u = static_cast<std::size_t>(j);
+        const int ni = E.node_idx[u];
+        if (ni < 0 || ni >= ctx.node_names.size()) continue;
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+        bind_text(stmt.get(), 1, sim_id);
+        bind_text(stmt.get(), 2, ctx.node_names.name_of(ni));
+        bind_text(stmt.get(), 3, E.constituent[u]);
+        if (!E.ts_name[u].empty()) bind_text(stmt.get(), 4, E.ts_name[u]);
+        else                       bind_null(stmt.get(), 4);
+        bind_text(stmt.get(), 5, E.inflow_type[u]);
+        bind_double(stmt.get(), 6, E.m_factor[u]);
+        bind_double(stmt.get(), 7, E.s_factor[u]);
+        bind_double(stmt.get(), 8, E.baseline[u]);
+        if (!E.pattern_name[u].empty()) bind_text(stmt.get(), 9, E.pattern_name[u]);
+        else                            bind_null(stmt.get(), 9);
+        sqlite3_step(stmt.get());
+    }
+}
+
+static void write_dwf(sqlite3* db, const SimulationContext& ctx,
+                      const std::string& sim_id) {
+    const auto& D = ctx.dwf_inflows;
+    if (D.count() == 0) return;
+    auto stmt = prepare(db,
+        "INSERT INTO dwf_inflows (simulation_id, node_id, constituent, avg_value, "
+        "pat1, pat2, pat3, pat4) VALUES (?,?,?,?,?,?,?,?)");
+    auto bind_pat = [&](int col, const std::string& p) {
+        if (!p.empty()) bind_text(stmt.get(), col, p); else bind_null(stmt.get(), col);
+    };
+    for (int j = 0; j < D.count(); ++j) {
+        const auto u = static_cast<std::size_t>(j);
+        const int ni = D.node_idx[u];
+        if (ni < 0 || ni >= ctx.node_names.size()) continue;
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+        bind_text(stmt.get(), 1, sim_id);
+        bind_text(stmt.get(), 2, ctx.node_names.name_of(ni));
+        bind_text(stmt.get(), 3, D.constituent[u]);
+        bind_double(stmt.get(), 4, D.avg_value[u]);
+        bind_pat(5, D.pat1[u]); bind_pat(6, D.pat2[u]);
+        bind_pat(7, D.pat3[u]); bind_pat(8, D.pat4[u]);
+        sqlite3_step(stmt.get());
+    }
+}
+
+static void write_transects(sqlite3* db, const SimulationContext& ctx,
+                            const std::string& sim_id) {
+    const auto& T = ctx.transects;
+    if (T.count() == 0) return;
+    auto stmt = prepare(db,
+        "INSERT INTO transects (simulation_id, transect_id, ordinal, station, elevation, "
+        "n_left, n_right, n_channel, x_left_bank, x_right_bank, "
+        "x_left_encroach, x_right_encroach, x_factor, y_factor, length_factor, comment) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    for (int t = 0; t < T.count(); ++t) {
+        const auto ut = static_cast<std::size_t>(t);
+        const auto& xs = T.stations[ut];
+        const auto& ys = T.elevations[ut];
+        const int np = static_cast<int>(xs.size());
+        for (int p = 0; p < np; ++p) {
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            bind_text(stmt.get(), 1, sim_id);
+            bind_text(stmt.get(), 2, T.names[ut]);
+            bind_int(stmt.get(), 3, p);
+            bind_double(stmt.get(), 4, xs[static_cast<std::size_t>(p)]);
+            bind_double(stmt.get(), 5, ys[static_cast<std::size_t>(p)]);
+            bind_double(stmt.get(), 6, T.n_left[ut]);
+            bind_double(stmt.get(), 7, T.n_right[ut]);
+            bind_double(stmt.get(), 8, T.n_channel[ut]);
+            bind_double(stmt.get(), 9, T.x_left_bank[ut]);
+            bind_double(stmt.get(), 10, T.x_right_bank[ut]);
+            bind_double(stmt.get(), 11, T.x_left_encroachment[ut]);
+            bind_double(stmt.get(), 12, T.x_right_encroachment[ut]);
+            bind_double(stmt.get(), 13, T.x_factor[ut]);
+            bind_double(stmt.get(), 14, T.y_factor[ut]);
+            bind_double(stmt.get(), 15, T.length_factor[ut]);
+            if (!T.comments[ut].empty()) bind_text(stmt.get(), 16, T.comments[ut]);
+            else                         bind_null(stmt.get(), 16);
+            sqlite3_step(stmt.get());
+        }
+    }
+}
+
+static void write_controls(sqlite3* db, const SimulationContext& ctx,
+                           const std::string& sim_id) {
+    const auto& C = ctx.control_rules;
+    if (C.count() == 0) return;
+    auto stmt = prepare(db,
+        "INSERT INTO control_rules (simulation_id, ordinal, rule_text) VALUES (?,?,?)");
+    for (int i = 0; i < C.count(); ++i) {
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+        bind_text(stmt.get(), 1, sim_id);
+        bind_int(stmt.get(), 2, i);
+        bind_text(stmt.get(), 3, C.rule_text[static_cast<std::size_t>(i)]);
+        sqlite3_step(stmt.get());
+    }
+}
+
 // ============================================================================
 // Part E — 2D surface-routing mesh + solver options
 //
@@ -1492,6 +1643,16 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
 
 void write_model(sqlite3* db, const SimulationContext& ctx,
                  const std::string& simulation_id, int srs_id) {
+    // The .gpkg is the engine's CANONICAL store: values are persisted in
+    // internal units (feet/cfs/ft³) exactly as the engine holds them after
+    // open, NO display conversion. The read path sets ctx.gpkg_units_internal
+    // and resolve_cross_references then SKIPS convert_inputs_to_internal, so the
+    // round-trip is bit-for-bit identical for every unit system (a display-unit
+    // store would lose ULPs to the non-invertible ×0.3048 / ×(1/0.3048) on
+    // metric models and also re-trigger the GUI metric-save ×3.2808 inflation).
+    // The ONLY display-unit fields written are the link cross-section RAW
+    // geom1-4 (ctx-native display, like the .inp); the reader converts those.
+
     Transaction txn(db);
 
     // Register CRS and feature tables
@@ -1530,6 +1691,10 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
     write_lid_usage(db, ctx, simulation_id);
     write_rdii(db, ctx, simulation_id);
     write_treatment(db, ctx, simulation_id);
+    write_inflows(db, ctx, simulation_id);
+    write_dwf(db, ctx, simulation_id);
+    write_transects(db, ctx, simulation_id);
+    write_controls(db, ctx, simulation_id);
 
     // Part E — 2D mesh model definition + solver options. No-ops when the
     // engine has no 2D module (ctx.twod_io pointers null) or no mesh is

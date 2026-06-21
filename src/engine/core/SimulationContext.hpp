@@ -510,6 +510,16 @@ struct SimulationContext {
     /// consumers holding per-link XSectParams caches know to rebuild
     /// (e.g. SWMMEngine's reporting-path cache).
     std::uint64_t xsect_generation = 0;
+
+    /// True when the model was loaded from a GeoPackage, whose hydraulic fields
+    /// are stored in CANONICAL internal units (feet/cfs/ft³) — NOT the display
+    /// units a .inp uses. resolve_cross_references then SKIPS the display→
+    /// internal conversion (convert_inputs_to_internal) so the round-trip is
+    /// bit-for-bit identical (no non-invertible ×0.3048). The GeoPackage reader
+    /// converts only the cross-section raw geom1-4 (the lone display-unit fields
+    /// it stores) itself. Left false for the .inp path.
+    bool gpkg_units_internal = false;
+
     StreetStore      streets;
     InletStore       inlets;
     InletUsageStore  inlet_usages;

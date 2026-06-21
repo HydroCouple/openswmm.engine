@@ -10,6 +10,7 @@
 #include "GpkgGeometry.hpp"
 
 #include "core/SimulationContext.hpp"
+#include "core/UnitConversion.hpp"
 #include "data/NodeData.hpp"
 #include "data/LinkData.hpp"
 #include "data/SubcatchData.hpp"
@@ -39,19 +40,15 @@ namespace {
 // Parse a timestamp string written by GeoPackageWriter back to an OADate.
 // Accepts "MM/DD/YYYY HH:MM" (absolute) or decimal-hours string (relative).
 static double parse_ts_timestamp(const std::string& s) {
-    int mo = 0, d = 0, y = 0, h = 0, mi = 0;
+    // The writer stores the raw OADate at full precision (%.17g). A "/" date
+    // string is decoded defensively (legacy / hand-edited files), but the
+    // canonical form is a bare double returned verbatim — bit-exact round-trip.
     if (s.find('/') != std::string::npos) {
-        // Absolute: "MM/DD/YYYY HH:MM"
+        int mo = 0, d = 0, y = 0, h = 0, mi = 0;
         std::sscanf(s.c_str(), "%d/%d/%d %d:%d", &mo, &d, &y, &h, &mi);
-        return datetime::encodeDate(y, mo, d)
-             + datetime::encodeTime(h, mi, 0);
+        return datetime::encodeDate(y, mo, d) + datetime::encodeTime(h, mi, 0);
     }
-    // Relative or legacy raw-OADate float: decimal hours or raw OADate
-    double v = std::stod(s);
-    // If value looks like a raw OADate (>= threshold), return as-is;
-    // otherwise it's decimal hours → convert to fractional days.
-    if (v >= 3650.0) return v;       // legacy raw OADate float
-    return v / 24.0;                 // decimal hours → fractional days
+    return std::stod(s);
 }
 } // anonymous namespace
 
@@ -286,72 +283,116 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
     }
 }
 
+static bool table_exists(sqlite3* db, const std::string& name);  // defined below
+
 static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    // --- base nodes (common columns + discriminator + geometry) ---
+    {
+        auto stmt = prepare(db,
+            "SELECT node_id, node_type, geom, invert_elev, max_depth, init_depth, "
+            "surcharge_depth, ponded_area, tag "
+            "FROM nodes WHERE simulation_id = ? ORDER BY fid");
+        bind_text(stmt.get(), 1, sim_id);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            std::string name = column_text(stmt.get(), 0);
+            int idx = ctx.node_names.find(name);
+            if (idx < 0) idx = ctx.node_names.add(name);
+            ensure_node_capacity(ctx, idx);
+
+            ctx.node_subtypes.set_node_type(ctx.nodes, idx, parse_node_type(column_text(stmt.get(), 1)));
+
+            if (!column_is_null(stmt.get(), 2)) {
+                auto pt = decode_point(column_blob(stmt.get(), 2));
+                ctx.spatial.node_x[idx] = pt.x;
+                ctx.spatial.node_y[idx] = pt.y;
+            }
+            ctx.nodes.invert_elev[idx] = column_double(stmt.get(), 3);
+            ctx.nodes.full_depth[idx]  = column_double(stmt.get(), 4);
+            ctx.nodes.init_depth[idx]  = column_double(stmt.get(), 5);
+            ctx.nodes.sur_depth[idx]   = column_double(stmt.get(), 6);
+            ctx.nodes.ponded_area[idx] = column_double(stmt.get(), 7);
+            if (!column_is_null(stmt.get(), 8)) {
+                const auto u = static_cast<std::size_t>(idx);
+                if (u >= ctx.nodes.tags.size()) ctx.nodes.tags.resize(u + 1);
+                ctx.nodes.tags[u] = column_text(stmt.get(), 8);
+            }
+        }
+    }
+
+    // --- storages child table → side-table (rows created above by set_node_type) ---
+    {
+        auto stmt = prepare(db,
+            "SELECT node_id, curve_name, a, b, c, seep_rate, evap_frac, "
+            "exfil_suction, exfil_ksat, exfil_imd FROM storages WHERE simulation_id = ?");
+        bind_text(stmt.get(), 1, sim_id);
+        auto& S = ctx.node_subtypes.storages;
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int r = ctx.node_subtypes.storage_row(ctx.node_names.find(column_text(stmt.get(), 0)));
+            if (r < 0) continue;
+            const auto ur = static_cast<std::size_t>(r);
+            if (!column_is_null(stmt.get(), 1)) S.curve_name[ur] = column_text(stmt.get(), 1);
+            S.a[ur]             = column_double(stmt.get(), 2);
+            S.b[ur]             = column_double(stmt.get(), 3);
+            S.c[ur]             = column_double(stmt.get(), 4);
+            S.seep_rate[ur]     = column_double(stmt.get(), 5);
+            S.evap_frac[ur]     = column_double(stmt.get(), 6);
+            S.exfil_suction[ur] = column_double(stmt.get(), 7);
+            S.exfil_ksat[ur]    = column_double(stmt.get(), 8);
+            S.exfil_imd[ur]     = column_double(stmt.get(), 9);
+        }
+    }
+
+    // --- outfalls child table → side-table (route_to resolved after subcatchments) ---
+    {
+        auto stmt = prepare(db,
+            "SELECT node_id, outfall_type, param, has_flap_gate "
+            "FROM outfalls WHERE simulation_id = ?");
+        bind_text(stmt.get(), 1, sim_id);
+        auto& O = ctx.node_subtypes.outfalls;
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int r = ctx.node_subtypes.outfall_row(ctx.node_names.find(column_text(stmt.get(), 0)));
+            if (r < 0) continue;
+            const auto ur = static_cast<std::size_t>(r);
+            O.bc_type[ur]       = parse_outfall_type(column_text(stmt.get(), 1));
+            O.param[ur]         = column_double(stmt.get(), 2);
+            O.has_flap_gate[ur] = column_int(stmt.get(), 3) != 0;
+        }
+    }
+
+    // --- dividers child table → side-table ---
+    {
+        auto stmt = prepare(db,
+            "SELECT node_id, divider_type, cutoff, cd, max_depth, curve_name, divider_link "
+            "FROM dividers WHERE simulation_id = ?");
+        bind_text(stmt.get(), 1, sim_id);
+        auto& D = ctx.node_subtypes.dividers;
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int r = ctx.node_subtypes.divider_row(ctx.node_names.find(column_text(stmt.get(), 0)));
+            if (r < 0) continue;
+            const auto ur = static_cast<std::size_t>(r);
+            D.method[ur]    = parse_divider_type(column_text(stmt.get(), 1));
+            D.cutoff[ur]    = column_double(stmt.get(), 2);
+            D.cd[ur]        = column_double(stmt.get(), 3);
+            D.max_depth[ur] = column_double(stmt.get(), 4);
+            if (!column_is_null(stmt.get(), 5)) D.curve_name[ur] = column_text(stmt.get(), 5);
+            if (!column_is_null(stmt.get(), 6)) D.link_name[ur]  = column_text(stmt.get(), 6);
+        }
+    }
+}
+
+// Resolve outfall route_to (subcatchment NAME → index). Deferred: outfalls are
+// read before [SUBCATCHMENTS], so subcatch_names isn't populated until after.
+static void resolve_outfall_route_to(sqlite3* db, SimulationContext& ctx,
+                                     const std::string& sim_id) {
     auto stmt = prepare(db,
-        "SELECT node_id, node_type, geom, invert_elev, max_depth, init_depth, "
-        "surcharge_depth, ponded_area, outfall_type, outfall_stage, outfall_has_flap_gate, "
-        "divider_type, divider_cutoff, divider_curve, "
-        "storage_curve, storage_a, storage_b, storage_c, tag "
-        "FROM nodes WHERE simulation_id = ?");
+        "SELECT node_id, route_to FROM outfalls "
+        "WHERE simulation_id = ? AND route_to IS NOT NULL");
     bind_text(stmt.get(), 1, sim_id);
-
+    auto& O = ctx.node_subtypes.outfalls;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-        std::string name = column_text(stmt.get(), 0);
-        std::string type_str = column_text(stmt.get(), 1);
-
-        int idx = ctx.node_names.find(name);
-        if (idx < 0) idx = ctx.node_names.add(name);
-        ensure_node_capacity(ctx, idx);
-
-        NodeType ntype = parse_node_type(type_str);
-        const int subrow = ctx.node_subtypes.set_node_type(ctx.nodes, idx, ntype);
-
-        // Geometry
-        if (!column_is_null(stmt.get(), 2)) {
-            auto blob = column_blob(stmt.get(), 2);
-            auto pt = decode_point(blob);
-            ctx.spatial.node_x[idx] = pt.x;
-            ctx.spatial.node_y[idx] = pt.y;
-        }
-
-        ctx.nodes.invert_elev[idx] = column_double(stmt.get(), 3);
-        ctx.nodes.full_depth[idx] = column_double(stmt.get(), 4);
-        ctx.nodes.init_depth[idx] = column_double(stmt.get(), 5);
-        ctx.nodes.sur_depth[idx] = column_double(stmt.get(), 6);
-        ctx.nodes.ponded_area[idx] = column_double(stmt.get(), 7);
-
-        if (ntype == NodeType::OUTFALL && !column_is_null(stmt.get(), 8)) {
-            auto& O = ctx.node_subtypes.outfalls;
-            const auto r = static_cast<std::size_t>(subrow);
-            O.bc_type[r] = parse_outfall_type(column_text(stmt.get(), 8));
-            O.param[r] = column_double(stmt.get(), 9);
-            O.has_flap_gate[r] = column_int(stmt.get(), 10) != 0;
-        }
-
-        if (ntype == NodeType::DIVIDER && !column_is_null(stmt.get(), 11)) {
-            auto& D = ctx.node_subtypes.dividers;
-            const auto r = static_cast<std::size_t>(subrow);
-            D.method[r] = parse_divider_type(column_text(stmt.get(), 11));
-            D.cutoff[r] = column_double(stmt.get(), 12);
-            if (!column_is_null(stmt.get(), 13))
-                D.curve_name[r] = column_text(stmt.get(), 13);
-        }
-
-        if (ntype == NodeType::STORAGE) {
-            auto& S = ctx.node_subtypes.storages;
-            const auto r = static_cast<std::size_t>(subrow);
-            if (!column_is_null(stmt.get(), 14))
-                S.curve_name[r] = column_text(stmt.get(), 14);
-            S.a[r] = column_double(stmt.get(), 15);
-            S.b[r] = column_double(stmt.get(), 16);
-            S.c[r] = column_double(stmt.get(), 17);
-        }
-
-        if (!column_is_null(stmt.get(), 18)) {
-            const auto u = static_cast<std::size_t>(idx);
-            if (u >= ctx.nodes.tags.size()) ctx.nodes.tags.resize(u + 1);
-            ctx.nodes.tags[u] = column_text(stmt.get(), 18);
-        }
+        const int r = ctx.node_subtypes.outfall_row(ctx.node_names.find(column_text(stmt.get(), 0)));
+        if (r < 0) continue;
+        O.route_to[static_cast<std::size_t>(r)] = ctx.subcatch_names.find(column_text(stmt.get(), 1));
     }
 }
 
@@ -363,8 +404,8 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
         "roughness, length, loss_inlet, loss_outlet, loss_avg, "
         "has_flap_gate, seep_rate, q0, q_limit, "
         "pump_curve, pump_init_state, pump_startup, pump_shutoff, "
-        "crest_height, discharge_coeff, tag "
-        "FROM links WHERE simulation_id = ?");
+        "crest_height, discharge_coeff, param1, param2, orate, direction, tag "
+        "FROM links WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -439,17 +480,53 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
 
         if (!column_is_null(stmt.get(), 7))
             ctx.links.xsect_shape[idx] = parse_xsect_shape(column_text(stmt.get(), 7));
-        ctx.links.xsect_y_full[idx] = column_double(stmt.get(), 8);
-        ctx.links.xsect_w_max[idx] = column_double(stmt.get(), 9);
-        ctx.links.xsect_a_full[idx] = column_double(stmt.get(), 10);
-        ctx.links.xsect_y_bot[idx] = column_double(stmt.get(), 11);
+        // xsect_geom1-4 hold the RAW [XSECTIONS] parameters (display units).
+        // Restore them and replay the parser's pre-init field assignment so
+        // convert_inputs_to_internal + the init xsect setup derive the final
+        // geometry identically to the .inp path (lossless for TRAPEZOIDAL etc.).
+        // RAW [XSECTIONS] geom1-4 (display units — the only display-unit fields
+        // the .gpkg stores). Keep them verbatim for serialization, and rebuild
+        // y_full/w_max/y_bot/r_bot applying the SAME display→internal scaling
+        // convert_inputs_to_internal would (since that global pass is skipped for
+        // gpkg loads). Keep this in lock-step with that function's xsect block.
+        const double g1 = column_double(stmt.get(), 8);
+        const double g2 = column_double(stmt.get(), 9);
+        const double g3 = column_double(stmt.get(), 10);
+        const double g4 = column_double(stmt.get(), 11);
+        ctx.links.xsect_geom1[idx] = g1;
+        ctx.links.xsect_geom2[idx] = g2;
+        ctx.links.xsect_geom3[idx] = g3;
+        ctx.links.xsect_geom4[idx] = g4;
+        const XsectShape shp = ctx.links.xsect_shape[idx];
+        if (shp != XsectShape::IRREGULAR && shp != XsectShape::STREET_XSECT) {
+            const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+            const double inv_len = ucf::Ucf_inv[ucf::LENGTH][static_cast<std::size_t>(us)];
+            ctx.links.xsect_y_full[idx] = g1 * inv_len;   // geom1 (depth/diameter) — always a length
+            if (shp != XsectShape::CUSTOM)
+                ctx.links.xsect_w_max[idx] =
+                    (shp != XsectShape::FORCE_MAIN) ? g2 * inv_len : g2;   // geom2 (width); FM = H-W C
+            ctx.links.xsect_y_bot[idx] =
+                (shp == XsectShape::RECT_TRIANG || shp == XsectShape::RECT_ROUND ||
+                 shp == XsectShape::MODBASKETHANDLE) ? g3 * inv_len : g3;  // geom3 (length only for these)
+            ctx.links.xsect_r_bot[idx] = g4;              // geom4 (dimensionless / not convert-scaled)
+        }
         ctx.links.barrels[idx] = column_int(stmt.get(), 12);
         ctx.links.culvert_code[idx] = column_int(stmt.get(), 13);
 
         if (!column_is_null(stmt.get(), 14)) {
-            std::string curve_name = column_text(stmt.get(), 14);
-            int ci = ctx.table_names.find(curve_name);
-            ctx.links.xsect_curve[idx] = ci;
+            std::string ref_name = column_text(stmt.get(), 14);
+            const XsectShape rshp = ctx.links.xsect_shape[idx];
+            if (rshp == XsectShape::IRREGULAR || rshp == XsectShape::STREET_XSECT ||
+                rshp == XsectShape::CUSTOM) {
+                // Restore the [XSECTIONS] handler's pre-init state: transect/
+                // street/shape-curve NAME in pump_curve_name, index unresolved.
+                // resolve_cross_references re-resolves it against the loaded
+                // transects/streets/curves.
+                ctx.links.pump_curve_name[idx] = ref_name;
+                ctx.links.xsect_curve[idx] = -1;
+            } else {
+                ctx.links.xsect_curve[idx] = ctx.table_names.find(ref_name);
+            }
         }
 
         ctx.links.roughness[idx] = column_double(stmt.get(), 15);
@@ -472,11 +549,17 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
 
         ctx.links.crest_height[idx] = column_double(stmt.get(), 28);
         ctx.links.cd[idx] = column_double(stmt.get(), 29);
+        ctx.links.param1[idx] = column_double(stmt.get(), 30);
+        ctx.links.param2[idx] = column_double(stmt.get(), 31);
+        ctx.links.orate[idx]  = column_double(stmt.get(), 32);
+        // Persisted flow direction (adverse-slope DW reverse) — not derivable on
+        // read because the stored geometry is already reversed (positive slope).
+        ctx.links.direction[idx] = column_int(stmt.get(), 33);
 
-        if (!column_is_null(stmt.get(), 30)) {
+        if (!column_is_null(stmt.get(), 34)) {
             const auto u = static_cast<std::size_t>(idx);
             if (u >= ctx.links.tags.size()) ctx.links.tags.resize(u + 1);
-            ctx.links.tags[u] = column_text(stmt.get(), 30);
+            ctx.links.tags[u] = column_text(stmt.get(), 34);
         }
     }
 }
@@ -488,7 +571,7 @@ static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::s
         "n_imperv, n_perv, ds_imperv, ds_perv, pct_zero_imperv, "
         "subarea_routing, pct_routed, "
         "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag "
-        "FROM subcatchments WHERE simulation_id = ?");
+        "FROM subcatchments WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -562,7 +645,7 @@ static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::s
 static void read_rain_gages(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     auto stmt = prepare(db,
         "SELECT gage_id, geom, rain_type, rain_interval, snow_catch, data_source, source_name "
-        "FROM rain_gages WHERE simulation_id = ?");
+        "FROM rain_gages WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -571,12 +654,12 @@ static void read_rain_gages(sqlite3* db, SimulationContext& ctx, const std::stri
         if (idx < 0) idx = ctx.gage_names.add(name);
 
         size_t n = static_cast<size_t>(idx + 1);
+        // Size every gage SoA column (not just the ones written below) so the
+        // resolve pass — which indexes ts_name/co_gage_index/etc. up to
+        // n_gages — never reads past the end. count()==source.size() would
+        // otherwise equal n_gages and skip resolve's guarded resize.
+        ctx.gages.grow_to(idx + 1);
         auto grow = [n](auto& vec) { if (vec.size() < n) vec.resize(n); };
-        grow(ctx.gages.rain_type);
-        grow(ctx.gages.interval_sec);
-        grow(ctx.gages.snow_factor);
-        grow(ctx.gages.source);
-        grow(ctx.gages.ts_index);
         grow(ctx.spatial.gage_x);
         grow(ctx.spatial.gage_y);
 
@@ -594,8 +677,11 @@ static void read_rain_gages(sqlite3* db, SimulationContext& ctx, const std::stri
 
         if (!column_is_null(stmt.get(), 6)) {
             std::string src = column_text(stmt.get(), 6);
-            int ti = ctx.table_names.find(src);
-            ctx.gages.ts_index[idx] = ti;
+            // Store the source name so resolve_cross_references can re-link the
+            // timeseries: gages are read before [TIMESERIES], so find() here is
+            // -1 until the deferred re-resolution runs against ts_name.
+            ctx.gages.ts_name[static_cast<size_t>(idx)] = src;
+            ctx.gages.ts_index[idx] = ctx.table_names.find(src);
         }
     }
 }
@@ -603,7 +689,7 @@ static void read_rain_gages(sqlite3* db, SimulationContext& ctx, const std::stri
 static void read_curves(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     auto stmt = prepare(db,
         "SELECT curve_id, curve_type, x_value, y_value "
-        "FROM curves WHERE simulation_id = ? ORDER BY curve_id, ordinal");
+        "FROM curves WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     std::string prev_name;
@@ -631,7 +717,7 @@ static void read_curves(sqlite3* db, SimulationContext& ctx, const std::string& 
 static void read_timeseries(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     auto stmt = prepare(db,
         "SELECT series_id, timestamp, value "
-        "FROM input_timeseries WHERE simulation_id = ? ORDER BY series_id, ordinal");
+        "FROM input_timeseries WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     std::string prev_name;
@@ -692,7 +778,7 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
 static void read_patterns(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     auto stmt = prepare(db,
         "SELECT pattern_id, pattern_type, factor "
-        "FROM patterns WHERE simulation_id = ? ORDER BY pattern_id, ordinal");
+        "FROM patterns WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     std::string prev_name;
@@ -1138,6 +1224,91 @@ static void read_treatment(sqlite3* db, SimulationContext& ctx,
     }
 }
 
+static void read_inflows(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "inflows")) return;
+    auto stmt = prepare(db,
+        "SELECT node_id, constituent, timeseries, inflow_type, m_factor, s_factor, "
+        "baseline, pattern FROM inflows WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        const int ni = ctx.node_names.find(column_text(stmt.get(), 0));
+        if (ni < 0) continue;
+        std::string cons = column_text(stmt.get(), 1);
+        std::string ts   = column_is_null(stmt.get(), 2) ? std::string{} : column_text(stmt.get(), 2);
+        std::string type = column_is_null(stmt.get(), 3) ? std::string("FLOW") : column_text(stmt.get(), 3);
+        double mf   = column_double(stmt.get(), 4);
+        double sf   = column_double(stmt.get(), 5);
+        double base = column_double(stmt.get(), 6);
+        std::string pat = column_is_null(stmt.get(), 7) ? std::string{} : column_text(stmt.get(), 7);
+        ctx.ext_inflows.add(ni, cons, ts, type, mf, sf, base, pat);
+    }
+}
+
+static void read_controls(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "control_rules")) return;
+    auto stmt = prepare(db,
+        "SELECT rule_text FROM control_rules WHERE simulation_id = ? ORDER BY ordinal");
+    bind_text(stmt.get(), 1, sim_id);
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW)
+        ctx.control_rules.rule_text.push_back(column_text(stmt.get(), 0));
+}
+
+static void read_transects(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "transects")) return;
+    auto stmt = prepare(db,
+        "SELECT transect_id, ordinal, station, elevation, n_left, n_right, n_channel, "
+        "x_left_bank, x_right_bank, x_left_encroach, x_right_encroach, "
+        "x_factor, y_factor, length_factor, comment "
+        "FROM transects WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+    auto& T = ctx.transects;
+    std::string prev;
+    int ti = -1;
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        std::string name = column_text(stmt.get(), 0);
+        if (ti < 0 || name != prev) {
+            // New transect — push its per-transect scalars (mirrors handle_transects).
+            T.names.push_back(name);
+            T.comments.push_back(column_is_null(stmt.get(), 14) ? std::string{}
+                                                                : column_text(stmt.get(), 14));
+            T.n_left.push_back(column_double(stmt.get(), 4));
+            T.n_right.push_back(column_double(stmt.get(), 5));
+            T.n_channel.push_back(column_double(stmt.get(), 6));
+            T.x_left_bank.push_back(column_double(stmt.get(), 7));
+            T.x_right_bank.push_back(column_double(stmt.get(), 8));
+            T.x_left_encroachment.push_back(column_double(stmt.get(), 9));
+            T.x_right_encroachment.push_back(column_double(stmt.get(), 10));
+            T.x_factor.push_back(column_double(stmt.get(), 11));
+            T.y_factor.push_back(column_double(stmt.get(), 12));
+            T.length_factor.push_back(column_double(stmt.get(), 13));
+            T.stations.emplace_back();
+            T.elevations.emplace_back();
+            ti = T.count() - 1;
+            prev = name;
+        }
+        const auto ut = static_cast<std::size_t>(ti);
+        T.stations[ut].push_back(column_double(stmt.get(), 2));
+        T.elevations[ut].push_back(column_double(stmt.get(), 3));
+    }
+}
+
+static void read_dwf(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "dwf_inflows")) return;
+    auto stmt = prepare(db,
+        "SELECT node_id, constituent, avg_value, pat1, pat2, pat3, pat4 "
+        "FROM dwf_inflows WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+    auto txt = [&](int col) {
+        return column_is_null(stmt.get(), col) ? std::string{} : column_text(stmt.get(), col);
+    };
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        const int ni = ctx.node_names.find(column_text(stmt.get(), 0));
+        if (ni < 0) continue;
+        ctx.dwf_inflows.add(ni, column_text(stmt.get(), 1), column_double(stmt.get(), 2),
+                            txt(3), txt(4), txt(5), txt(6));
+    }
+}
+
 // ============================================================================
 // Part E — 2D surface-routing mesh (model definition; 2D results live in
 // the HDF5 file referenced by the 2D_OUTPUT_FILE option key, never here).
@@ -1323,11 +1494,30 @@ int read_model(sqlite3* db, SimulationContext& ctx,
                 const std::string& simulation_id,
                 const std::string& scratch_dir) {
     try {
+        // Hard schema-version gate (no backward compatibility). The relational
+        // node schema carries storages/outfalls/dividers child tables; a
+        // pre-relational flat .gpkg (subtype columns on `nodes`, no child
+        // tables) or a foreign file is rejected with an actionable error rather
+        // than silently misread.
+        if (!table_exists(db, "storages") || !table_exists(db, "outfalls") ||
+            !table_exists(db, "dividers")) {
+            ctx.errors.push_back(
+                "GeoPackage uses an unsupported (pre-relational) node schema: "
+                "missing storages/outfalls/dividers tables. Re-export the model "
+                "with this engine version.");
+            return -1;
+        }
+
+        // The .gpkg stores hydraulic fields in canonical internal units, so
+        // resolve_cross_references must SKIP the display→internal conversion
+        // (bit-exact round-trip). See SimulationContext::gpkg_units_internal.
+        ctx.gpkg_units_internal = true;
         read_options(db, ctx, simulation_id);
         read_nodes(db, ctx, simulation_id);
         read_links(db, ctx, simulation_id);
         read_rain_gages(db, ctx, simulation_id);
         read_subcatchments(db, ctx, simulation_id);
+        resolve_outfall_route_to(db, ctx, simulation_id);  // needs subcatch_names
         read_curves(db, ctx, simulation_id);
         read_timeseries(db, ctx, simulation_id);
         read_pollutants(db, ctx, simulation_id);
@@ -1340,6 +1530,10 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         read_lid_usage(db, ctx, simulation_id);
         read_rdii(db, ctx, simulation_id);
         read_treatment(db, ctx, simulation_id);
+        read_inflows(db, ctx, simulation_id);
+        read_dwf(db, ctx, simulation_id);
+        read_transects(db, ctx, simulation_id);
+        read_controls(db, ctx, simulation_id);
 
         // Part E — 2D mesh model definition. Options keys (2D_*) were
         // already applied by read_options above, so mesh_units_si is set
