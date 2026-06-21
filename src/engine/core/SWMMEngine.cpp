@@ -3952,12 +3952,11 @@ void SWMMEngine::initHydraulics() noexcept {
         }
     }
 
-    // 10b. Non-conduit hydraulic structures (pumps, orifices, weirs, outlets)
-    // Phase 6 Stage A: refresh the relational link side-tables from the wide
-    // arrays (still authoritative this stage) so the repointed init source-reads
-    // below see identical data (parity-safe mirror). Removed at Stage D when the
-    // writers become side-table-authoritative.
-    ctx_.link_subtypes.build(ctx_.links);
+    // 10b. Non-conduit hydraulic structures (pumps, orifices, weirs, outlets).
+    // Phase 6 Stage D: the relational link side-tables are now populated
+    // authoritatively at parse/resolve (LinksHandler + PostParseResolver +
+    // Router::init) and on GeoPackage load, so the temporary build() mirror is
+    // gone — the side-tables stand on their own.
     hydstruct_.init(ctx_);
 
     // 10c. Exfiltration solver: initialize Green-Ampt state for storage nodes
