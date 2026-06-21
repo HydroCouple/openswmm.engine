@@ -202,38 +202,59 @@ ConversionResult convert_link(SimulationContext& ctx, int idx, LinkType new_type
             break;
     }
 
-    // Apply new type defaults
+    // Move the subtype row and set ld.type[ui] (single source of truth): erases
+    // the old subtype row and inserts a fresh default row for the new subtype.
+    // Phase 6 Stage A.3: the wide arrays below are dual-written and remain
+    // authoritative until Stage D, so the temporary build() mirror reproduces
+    // identical values if the model is later initialized.
+    ctx.link_subtypes.set_link_type(ld, idx, new_type);
+
+    // Apply new type defaults (wide + freshly-created side-table row). Only
+    // values that DIFFER from the side-table add_default seeds need an explicit
+    // side-table write; the rest already match the seed.
     switch (new_type) {
-        case LinkType::CONDUIT:
+        case LinkType::CONDUIT: {
             ld.roughness[ui]    = 0.013;
             ld.xsect_shape[ui]  = XsectShape::CIRCULAR;
             ld.xsect_y_full[ui] = 1.0;
             ld.barrels[ui]      = 1;
+            const int cr = ctx.link_subtypes.conduit_row(idx);
+            if (cr >= 0) ctx.link_subtypes.conduits.roughness[static_cast<std::size_t>(cr)] = 0.013;
             if (ld.length[ui] <= 0.0)
                 result.warnings.push_back("Conduit length is 0; set a valid length before initializing");
             break;
+        }
         case LinkType::PUMP:
             ld.pump_curve[ui]      = -1;
             ld.pump_init_state[ui] = false;
             ld.pump_startup[ui]    = 0.0;
             ld.pump_shutoff[ui]    = 0.0;
             ld.pump_curve_type[ui] = -1;
+            // Side-table pump row already seeded with these defaults by add_default.
             result.warnings.push_back("Pump curve is unset (-1); assign a pump curve before initializing");
             break;
-        case LinkType::ORIFICE:
+        case LinkType::ORIFICE: {
             ld.cd[ui]     = 0.65;
             ld.param1[ui] = 0.0;  // BOTTOM type
+            const int orr = ctx.link_subtypes.orifice_row(idx);
+            if (orr >= 0) ctx.link_subtypes.orifices.cd[static_cast<std::size_t>(orr)] = 0.65;
             break;
-        case LinkType::WEIR:
+        }
+        case LinkType::WEIR: {
             ld.cd[ui]     = 3.33;  // standard transverse weir (US units)
             ld.param1[ui] = 0.0;   // TRANSVERSE
+            const int wr = ctx.link_subtypes.weir_row(idx);
+            if (wr >= 0) ctx.link_subtypes.weirs.cd[static_cast<std::size_t>(wr)] = 3.33;
             break;
-        case LinkType::OUTLET:
+        }
+        case LinkType::OUTLET: {
             ld.cd[ui] = 1.0;
+            const int olr = ctx.link_subtypes.outlet_row(idx);
+            if (olr >= 0) ctx.link_subtypes.outlets.coeff[static_cast<std::size_t>(olr)] = 1.0;
             break;
+        }
     }
 
-    ld.type[ui] = new_type;
     return result;
 }
 

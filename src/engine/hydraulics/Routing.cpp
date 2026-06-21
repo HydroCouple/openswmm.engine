@@ -481,12 +481,15 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
 // ============================================================================
 
 void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap_rate) {
+    ctx.link_subtypes.ensure_built(ctx.links);  // Phase 6 Stage A: mirror guard
     auto& links = ctx.links;
     int n = ctx.n_links();
 
     for (int j = 0; j < n; ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (links.type[uj] != LinkType::CONDUIT) continue;
+        const auto& CD = ctx.link_subtypes.conduits;
+        const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
 
         double depth = 0.5 * (links.old_depth[uj] + links.depth[uj]);
         double evap_loss = 0.0;
@@ -500,8 +503,8 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             // conduits — NOT `Conduit[k].modLength` (lengthened).
             // The lengthened length appears only in the momentum equation
             // (`dwflow.c:133`), not in loss-volume accounting.
-            double length = links.length[uj];
-            if (length <= 0.0) length = links.mod_length[uj];
+            double length = CD.length[ucr];
+            if (length <= 0.0) length = CD.mod_length[ucr];
             int batch_shape = links.xsect_batch_shape[uj];
 
             // Evaporation for open conduits only
@@ -530,7 +533,7 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             }
 
             // Seepage loss
-            if (links.seep_rate[uj] > 0.0) {
+            if (CD.seep_rate[ucr] > 0.0) {
                 XSectParams xs{};
                 xs.type   = batch_shape;
                 xs.y_full = links.xsect_y_full[uj];
@@ -545,7 +548,7 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
                 else if (d_seep >= xs.yw_max)
                     d_seep = xs.yw_max;
                 double width = xsect::getWofY(xs, d_seep);
-                seep_loss = links.seep_rate[uj] * width * length;
+                seep_loss = CD.seep_rate[ucr] * width * length;
             }
 
             // Limit total to available volume (DW) or flow (other models)
@@ -578,6 +581,7 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
 // ============================================================================
 
 int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
+    ctx.link_subtypes.ensure_built(ctx.links);  // Phase 6 Stage A: mirror guard
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
@@ -608,6 +612,8 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
             }
             continue;
         }
+        const auto& CD = ctx.link_subtypes.conduits;
+        const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
 
         // DUMMY cross-section: zero area, pass flow through.
         if (links.xsect_shape[uj] == XsectShape::DUMMY) {
@@ -634,7 +640,7 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
             qin = std::min(qin, q_max);
         }
 
-        double barrels = static_cast<double>(std::max(links.barrels[uj], 1));
+        double barrels = static_cast<double>(std::max(CD.barrels[ucr], 1));
         double q       = qin / barrels;
 
         // Subtract pre-computed conduit loss rate (evap + seep per barrel).
@@ -647,7 +653,7 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         XSectParams xs = buildXSP(links, uj);
 
         // Manning normal-depth area.
-        double q_full = links.q_full[uj];
+        double q_full = CD.q_full[ucr];
         double a_full = links.xsect_a_full[uj];
         double a;
         if (q >= q_full) {
@@ -659,7 +665,7 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         } else {
             // s = q / beta  →  a = xsect::getAofS(xs, s)
             // Matches legacy: s = q / beta; a1 = xsect_getAofS(&xsect, s).
-            double beta = links.beta[uj];
+            double beta = CD.beta[ucr];
             if (beta > 0.0) {
                 double s = q / beta;
                 a = xsect::getAofS(xs, s);
@@ -680,8 +686,8 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         // Update link depth and volume.
         // In steady state a1 == a2, so depth and volume are uniform.
         double y = xsect::getYofA(xs, a);
-        double length = links.mod_length[uj];
-        if (length <= 0.0) length = links.length[uj];
+        double length = CD.mod_length[ucr];
+        if (length <= 0.0) length = CD.length[ucr];
 
         links.depth[uj]  = y;
         links.volume[uj] = a * length * barrels;

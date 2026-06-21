@@ -2177,7 +2177,9 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
             // orate is stored in hours (from inp file); convert to seconds
             // Legacy: Orifice[k].orate = x[4] * 3600 (hours → seconds)
             // Legacy: step = tstep / Orifice[k].orate (fraction of full opening per step)
-            double orate_sec = ctx_.links.orate[uj] * 3600.0;
+            const int orr = ctx_.link_subtypes.orifice_row(j);
+            double orate_sec = ((orr >= 0)
+                ? ctx_.link_subtypes.orifices.orate[static_cast<std::size_t>(orr)] : 0.0) * 3600.0;
             if (orate_sec > 0.0 && dt_routing > 0.0) {
                 double step = dt_routing / orate_sec;
                 double delta_val = std::fabs(target - current);
@@ -2505,8 +2507,9 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         // guards on depth <= 0.01, and divides flow by barrels.
         double vel = 0.0;
         if (ctx_.links.type[uj] == LinkType::CONDUIT) {
-            vel = link::getVelocity(xsp_cache_[uj], q, ctx_.links.depth[uj],
-                                     ctx_.links.barrels[uj]);
+            const int cr = ctx_.link_subtypes.conduit_row(j);
+            const int nb = (cr >= 0) ? ctx_.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)] : 1;
+            vel = link::getVelocity(xsp_cache_[uj], q, ctx_.links.depth[uj], nb);
         }
         if (vel > ctx_.links.stat_max_veloc[uj])
             ctx_.links.stat_max_veloc[uj] = vel;
@@ -2542,9 +2545,11 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
                     n1 >= 0 && n2 >= 0) {
                     double h1h = ctx_.nodes.head[static_cast<std::size_t>(n1)];
                     double h2h = ctx_.nodes.head[static_cast<std::size_t>(n2)];
-                    double len = ctx_.links.mod_length[uj];
-                    if (len <= 0.0) len = ctx_.links.length[uj];
-                    double slp = std::fabs(ctx_.links.slope[uj]);
+                    const int cr = ctx_.link_subtypes.conduit_row(j);
+                    const auto& CD = ctx_.link_subtypes.conduits;
+                    double len = (cr >= 0) ? CD.mod_length[static_cast<std::size_t>(cr)] : 0.0;
+                    if (len <= 0.0) len = (cr >= 0) ? CD.length[static_cast<std::size_t>(cr)] : 0.0;
+                    double slp = std::fabs((cr >= 0) ? CD.slope[static_cast<std::size_t>(cr)] : 0.0);
                     cap_ltd = (h1h - h2h) > slp * len;
                 }
                 if (cap_ltd) ctx_.links.stat_time_capacity_limited[uj] += dt_routing;
@@ -2735,7 +2740,8 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (ctx_.links.type[uj] == LinkType::CONDUIT) {
-            int barrels = std::max(ctx_.links.barrels[uj], 1);
+            const int cr = ctx_.link_subtypes.conduit_row(j);
+            int barrels = std::max((cr >= 0) ? ctx_.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)] : 1, 1);
             ctx_.mass_balance.routing_evap_loss +=
                 ctx_.links.evap_loss_rate[uj] * barrels * dt_routing;
             ctx_.mass_balance.routing_seep_loss +=
@@ -3009,7 +3015,9 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     auto lt = ctx_.links.type[uj];
                     if (lt == LinkType::CONDUIT) {
                         const XSectParams& xs = xsp_cache_[uj];
-                        veloc = link::getVelocity(xs, q, d, ctx_.links.barrels[uj]);
+                        const int cr = ctx_.link_subtypes.conduit_row(j);
+                        const int nb = (cr >= 0) ? ctx_.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)] : 1;
+                        veloc = link::getVelocity(xs, q, d, nb);
                         cap   = link::getCapacity(xs, d);
                     } else {
                         cap = ctx_.links.setting[uj];
@@ -3269,7 +3277,9 @@ void SWMMEngine::accumulateAvgResults() noexcept {
         auto lt = ctx_.links.type[uj];
         if (lt == LinkType::CONDUIT) {
             const XSectParams& xs = xsp_cache_[uj];
-            avg_.link_velocity[uj] += link::getVelocity(xs, q, d, ctx_.links.barrels[uj]);
+            const int cr = ctx_.link_subtypes.conduit_row(j);
+            const int nb = (cr >= 0) ? ctx_.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)] : 1;
+            avg_.link_velocity[uj] += link::getVelocity(xs, q, d, nb);
             avg_.link_capacity[uj] += link::getCapacity(xs, d);
         } else {
             // Non-conduit capacity (pump speed, regulator opening):
@@ -3936,9 +3946,10 @@ void SWMMEngine::initHydraulics() noexcept {
     culvert_links_.clear();
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (ctx_.links.type[uj] == LinkType::CONDUIT &&
-            ctx_.links.culvert_code[uj] > 0) {
-            culvert_links_.push_back(j);
+        if (ctx_.links.type[uj] == LinkType::CONDUIT) {
+            const int cr = ctx_.link_subtypes.conduit_row(j);
+            if (cr >= 0 && ctx_.link_subtypes.conduits.culvert_code[static_cast<std::size_t>(cr)] > 0)
+                culvert_links_.push_back(j);
         }
     }
 

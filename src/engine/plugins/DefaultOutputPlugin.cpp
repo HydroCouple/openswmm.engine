@@ -313,9 +313,11 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
                 writeReal4(static_cast<float>(ctx.links.xsect_y_full[uj] * ucf_length_));
 
             // Length (conduit only)
-            if (lt == LinkType::CONDUIT)
-                writeReal4(static_cast<float>(ctx.links.length[uj] * ucf_length_));
-            else
+            if (lt == LinkType::CONDUIT) {
+                const int cr = ctx.link_subtypes.conduit_row(j);
+                const double len = (cr >= 0) ? ctx.link_subtypes.conduits.length[static_cast<size_t>(cr)] : 0.0;
+                writeReal4(static_cast<float>(len * ucf_length_));
+            } else
                 writeReal4(0.0f);
         }
     }

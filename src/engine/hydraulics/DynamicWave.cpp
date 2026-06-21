@@ -574,6 +574,8 @@ void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
     tile_q_limit_.resize(nc);
     tile_loss_inlet_.resize(nc);
     tile_loss_outlet_.resize(nc);
+    tile_loss_avg_.resize(nc);
+    tile_roughness_.resize(nc);
     tile_has_flap_gate_.resize(nc);
     tile_direction_.resize(nc);
     // Reverse map sized n_links_, -1 for non-conduits
@@ -581,6 +583,11 @@ void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
 
     const auto& links = ctx.links;
     const auto& nodes = ctx.nodes;
+    // NOTE (Phase 6 / Stage A.2): refreshConduitTile runs inside router_.init
+    // (~SWMMEngine 3763), BEFORE link_subtypes.build() (~3926). The side-tables
+    // are still empty here, so the tile must continue to gather from the wide
+    // LinkData arrays. The gather source flips to ConduitData at Stage D, once
+    // build() is hoisted / writers own the side-table.
     for (int ci = 0; ci < n_conduits_; ++ci) {
         auto uci = static_cast<std::size_t>(ci);
         int j = conduit_idx_[uci];
@@ -621,6 +628,8 @@ void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
         tile_q_limit_[uci]       = links.q_limit[uj];
         tile_loss_inlet_[uci]    = links.loss_inlet[uj];
         tile_loss_outlet_[uci]   = links.loss_outlet[uj];
+        tile_loss_avg_[uci]      = links.loss_avg[uj];
+        tile_roughness_[uci]     = links.roughness[uj];
         tile_has_flap_gate_[uci] = links.has_flap_gate[uj] ? 1 : 0;
         tile_direction_[uci]     = static_cast<int8_t>(links.direction[uj]);
         tile_uj_to_ci_[uj]       = ci;
@@ -651,6 +660,9 @@ void DWSolver::setNumThreads(int n) {
 
 int DWSolver::execute(SimulationContext& ctx, double dt,
                       DWSolver::NonConduitFlowFunc non_conduit_fn) {
+    // Phase 6 Stage A: ensure the relational link mirror is populated before any
+    // side-table read (no-op in production where build() ran at init).
+    ctx.link_subtypes.ensure_built(ctx.links);
     int steps = 0;
     bool converged = false;
 
@@ -1470,7 +1482,7 @@ void DWSolver::classifyMomentumCategories(SimulationContext& ctx) {
             fc == FlowClass::DN_DRY || aMid <= FUDGE || tile_is_closed_[uci]) {
             cat = MomentumCategory::SKIP_DRY;
         } else if (tile_is_force_main_[uci] && isFull) {
-            cat = (links.roughness[uj] < 1.0)
+            cat = (tile_roughness_[uci] < 1.0)
                 ? MomentumCategory::FORCE_MAIN_DW
                 : MomentumCategory::FORCE_MAIN_HW;
         } else if (!tile_is_open_[uci] && isFull) {
@@ -1750,7 +1762,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
         double losses = 0.0;
         if (area1_[uj] > FUDGE) losses += tile_loss_inlet_[uci] * (absq / area1_[uj]);
         if (area2_[uj] > FUDGE) losses += tile_loss_outlet_[uci] * (absq / area2_[uj]);
-        if (aMid > FUDGE) losses += links.loss_avg[uj] * (absq / aMid);
+        if (aMid > FUDGE) losses += tile_loss_avg_[uci] * (absq / aMid);
         dq5 = losses * 0.5 * inv_len * dt;
     }
 
@@ -1819,7 +1831,7 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     (void)rWtd;  // reserved for future friction variants
 
     // Force main friction
-    double fm_coeff = links.roughness[uj];
+    double fm_coeff = tile_roughness_[uci];
     double sf;
     if (is_dw)
         sf = forcemain::getFricSlope_DW(v, rMid, fm_coeff);
@@ -1837,9 +1849,9 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     if (has_losses_[uj]) {
         double absq = std::fabs(qLast);
         double losses = 0.0;
-        if (area1_[uj] > FUDGE) losses += links.loss_inlet[uj] * (absq / area1_[uj]);
-        if (area2_[uj] > FUDGE) losses += links.loss_outlet[uj] * (absq / area2_[uj]);
-        if (aMid > FUDGE) losses += links.loss_avg[uj] * (absq / aMid);
+        if (area1_[uj] > FUDGE) losses += tile_loss_inlet_[uci] * (absq / area1_[uj]);
+        if (area2_[uj] > FUDGE) losses += tile_loss_outlet_[uci] * (absq / area2_[uj]);
+        if (aMid > FUDGE) losses += tile_loss_avg_[uci] * (absq / aMid);
         dq5 = losses * 0.5 * inv_len * dt;
     }
 
@@ -1920,7 +1932,7 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
         // Add conduit evap/seepage loss to node outflows (matching legacy lines 542-558)
         if (links.type[uj] == LinkType::CONDUIT) {
             double conduit_loss = (links.evap_loss_rate[uj] + links.seep_loss_rate[uj])
-                                  * static_cast<double>(std::max(links.barrels[uj], 1));
+                                  * tile_barrels_d_[static_cast<std::size_t>(tile_uj_to_ci_[uj])];
             if (conduit_loss > 0.0) {
                 // Split loss between nodes unless one is an outfall
                 if (nodes.type[un1] != NodeType::OUTFALL &&
@@ -1935,7 +1947,9 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
 
         // Accumulate link surface area contributions to nodes
         // (matching legacy dynwave.c updateNodeFlows: surfArea * barrels)
-        int barrels = std::max(links.barrels[uj], 1);
+        const int ci_b = tile_uj_to_ci_[uj];
+        int barrels = (ci_b >= 0)
+            ? static_cast<int>(tile_barrels_d_[static_cast<std::size_t>(ci_b)]) : 1;
         double b = static_cast<double>(barrels);
         xnode_.new_surf_area[un1] += sa1 * b;
         xnode_.new_surf_area[un2] += sa2 * b;
@@ -2051,7 +2065,10 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
         //             fixed at offset1.)
         double hcrown;
         if (lt == LinkType::WEIR) {
-            hcrown = nodes.invert_elev[un1] + links.crest_height[uj] + y_full;
+            const int wr = ctx.link_subtypes.weir_row(j);
+            const double crest = (wr >= 0)
+                ? ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] : 0.0;
+            hcrown = nodes.invert_elev[un1] + crest + y_full;
         } else {
             hcrown = nodes.invert_elev[un1] + links.offset1[uj]
                    + y_full * setting;
@@ -2418,6 +2435,8 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
 double DWSolver::getRoutingStep(SimulationContext& ctx,
                                  double fixed_step, double courant_factor) {
     if (courant_factor <= 0.0) return fixed_step;
+    // Phase 6 Stage A: getLinkStep reads ConduitData; ensure the mirror exists.
+    ctx.link_subtypes.ensure_built(ctx.links);
 
     // On first call (no flows yet), use minimum step (matching legacy line 201-204:
     // "if (VariableStep == 0.0) VariableStep = MinRouteStep")
@@ -2486,10 +2505,12 @@ double DWSolver::getRoutingStep(SimulationContext& ctx,
 double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
     auto uj = static_cast<std::size_t>(link_idx);
     if (ctx.links.type[uj] != LinkType::CONDUIT) return 1.0e10;
+    const auto& CD = ctx.link_subtypes.conduits;
+    const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(link_idx));
 
     // Match legacy getLinkStep (dynwave.c lines 846-856):
     // q = |newFlow| / barrels (per-barrel flow)
-    int barrels = std::max(ctx.links.barrels[uj], 1);
+    int barrels = std::max(CD.barrels[ucr], 1);
     double q = std::fabs(ctx.links.flow[uj]) / static_cast<double>(barrels);
     if (q <= FUDGE) return 1.0e10;
 
@@ -2497,8 +2518,8 @@ double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
     double a = area_mid_[uj];
     if (a <= FUDGE) return 1.0e10;
 
-    double L = ctx.links.length[uj];
-    double modL = ctx.links.mod_length[uj];
+    double L = CD.length[ucr];
+    double modL = CD.mod_length[ucr];
     const double Lscale = (L > 0.0 && modL > 0.0) ? (modL / L) : 1.0;
 
     // ---- DPS-surcharged path: CFL against pressure celerity c_p = c_pT / P ----

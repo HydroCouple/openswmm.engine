@@ -297,6 +297,8 @@ private:
     std::vector<double>  tile_q_limit_;
     std::vector<double>  tile_loss_inlet_;
     std::vector<double>  tile_loss_outlet_;
+    std::vector<double>  tile_loss_avg_;     ///< ConduitData.loss_avg
+    std::vector<double>  tile_roughness_;    ///< ConduitData.roughness (force-main detection)
     std::vector<uint8_t> tile_has_flap_gate_;
     std::vector<int8_t>  tile_direction_;
 

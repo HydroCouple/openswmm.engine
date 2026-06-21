@@ -217,6 +217,9 @@ static XSectParams buildXSP_KW(const LinkData& links, std::size_t uk) {
 }
 
 int KWSolver::execute(SimulationContext& ctx, double dt) {
+    // Phase 6 Stage A: ensure the relational link mirror is populated before any
+    // side-table read (no-op in production where build() ran at init).
+    ctx.link_subtypes.ensure_built(ctx.links);
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
     int total_iters = 0;
@@ -262,6 +265,8 @@ int KWSolver::execute(SimulationContext& ctx, double dt) {
             }
             continue;
         }
+        const auto& CD = ctx.link_subtypes.conduits;
+        const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
 
         // Gather inflow from upstream node
         // (matching legacy getLinkInflow: use node inflow, limited by max outflow)
@@ -276,18 +281,18 @@ int KWSolver::execute(SimulationContext& ctx, double dt) {
         }
 
         // Divide by barrels (KW solves per barrel)
-        double barrels = static_cast<double>(std::max(links.barrels[uj], 1));
+        double barrels = static_cast<double>(std::max(CD.barrels[ucr], 1));
         double qin_per_barrel = qin / barrels;
 
         // Build XSectParams for this conduit
         XSectParams xs = buildXSP_KW(links, uj);
 
-        double q_full = links.q_full[uj];
+        double q_full = CD.q_full[ucr];
         double a_full = links.xsect_a_full[uj];
         double s_full = links.xsect_s_full[uj];
-        double beta   = links.beta[uj];
-        double length = links.mod_length[uj];
-        if (length <= 0.0) length = links.length[uj];
+        double beta   = CD.beta[ucr];
+        double length = CD.mod_length[ucr];
+        if (length <= 0.0) length = CD.length[ucr];
 
         // Compute evaporation + seepage loss rate
         double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];

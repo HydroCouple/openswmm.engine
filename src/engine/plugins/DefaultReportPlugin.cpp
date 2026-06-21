@@ -418,11 +418,13 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                 ctx.link_names.name_of(i).c_str(), n1_name, n2_name);
 
             if (lt == static_cast<int>(LinkType::CONDUIT)) {
+                const int cr = ctx.link_subtypes.conduit_row(i);
+                const auto& CD = ctx.link_subtypes.conduits;
                 std::fprintf(f, "%-12s%10.1f%10.4f%10.4f",
                     "CONDUIT",
-                    ctx.links.length[ui],
-                    ctx.links.slope[ui] * 100.0,
-                    ctx.links.roughness[ui]);
+                    (cr >= 0) ? CD.length[static_cast<size_t>(cr)] : 0.0,
+                    ((cr >= 0) ? CD.slope[static_cast<size_t>(cr)] : 0.0) * 100.0,
+                    (cr >= 0) ? CD.roughness[static_cast<size_t>(cr)] : 0.01);
             } else {
                 std::fprintf(f, "%-12s", lt_str(lt));
             }
@@ -460,6 +462,8 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                 const char* shape_str = (shape >= 0 && shape <= 25) ?
                     XsectShapeWords[shape] : "CIRCULAR";
 
+                const int cr = ctx.link_subtypes.conduit_row(i);
+                const auto& CD = ctx.link_subtypes.conduits;
                 std::fprintf(f, "\n  %-16s %-16s %8.2f %8.2f %8.2f %8.2f      %3d %8.2f",
                     ctx.link_names.name_of(i).c_str(),
                     shape_str,
@@ -467,8 +471,8 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                     ctx.links.xsect_a_full[ui],
                     ctx.links.xsect_r_full[ui],
                     ctx.links.xsect_w_max[ui],
-                    ctx.links.barrels[ui],
-                    ctx.links.q_full[ui] * Qcf_pre);
+                    (cr >= 0) ? CD.barrels[static_cast<size_t>(cr)] : 1,
+                    ((cr >= 0) ? CD.q_full[static_cast<size_t>(cr)] : 0.0) * Qcf_pre);
             }
             WRITE(f, "");
             WRITE(f, "");
@@ -1787,9 +1791,11 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             // Flow ratio (using CFS values, not display)
             double flow_ratio = 0.0;
             if (lt == static_cast<int>(LinkType::CONDUIT)) {
+                const int cr = ctx.link_subtypes.conduit_row(j);
+                const auto& CD = ctx.link_subtypes.conduits;
                 double mf_cfs = ctx.links.stat_max_flow[uj];
-                double qf = ctx.links.q_full[uj];
-                int barrels = std::max(ctx.links.barrels[uj], 1);
+                double qf = (cr >= 0) ? CD.q_full[static_cast<size_t>(cr)] : 0.0;
+                int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<size_t>(cr)] : 1, 1);
                 flow_ratio = (qf > 0.0) ? mf_cfs / qf / static_cast<double>(barrels) : 0.0;
             }
 
@@ -1840,8 +1846,11 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
             // Adjusted/actual length ratio
             double len_ratio = 1.0;
-            if (ctx.links.length[uj] > 0.0)
-                len_ratio = ctx.links.mod_length[uj] / ctx.links.length[uj];
+            const int cr = ctx.link_subtypes.conduit_row(j);
+            const auto& CD = ctx.link_subtypes.conduits;
+            const double L = (cr >= 0) ? CD.length[static_cast<size_t>(cr)] : 0.0;
+            if (L > 0.0)
+                len_ratio = ((cr >= 0) ? CD.mod_length[static_cast<size_t>(cr)] : 0.0) / L;
 
             std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
             std::fprintf(f, "  %6.2f ", len_ratio);

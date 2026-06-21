@@ -371,6 +371,9 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
     erase_link_spatial(ctx, link_idx);
     ctx.link_names.remove_at(link_idx);
     ctx.links.erase_at(link_idx);
+    // Drop the subtype side-table row and renumber its join keys (mirrors
+    // delete_node's erase_node). Must run after LinkData::erase_at.
+    ctx.link_subtypes.erase_link(link_idx, ctx.links.count());
 
     // --- Step 4: renumber cross-references ---
     renumber_refs(ctx.node_subtypes.dividers.link, link_idx);

@@ -189,10 +189,14 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
         double yNorm = 0.0, yCrit = 0.0;
         if (link_idx >= 0) {
             auto uk = static_cast<std::size_t>(link_idx);
-            int barrels = std::max(ctx.links.barrels[uk], 1);
+            const auto& CD = ctx.link_subtypes.conduits;
+            const int cr = ctx.link_subtypes.conduit_row(link_idx);
+            int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
             double q = std::fabs(ctx.links.flow[uk]) / barrels;
             XSectParams xs = buildXSectParams(ctx, uk);
-            yNorm = getYnorm(xs, ctx.links.beta[uk], ctx.links.q_max[uk], q);
+            const double beta_v = (cr >= 0) ? CD.beta[static_cast<std::size_t>(cr)] : 0.0;
+            const double qmax_v = (cr >= 0) ? CD.q_max[static_cast<std::size_t>(cr)] : 0.0;
+            yNorm = getYnorm(xs, beta_v, qmax_v, q);
             yCrit = xsect::getYcrit(xs, q);
         }
 

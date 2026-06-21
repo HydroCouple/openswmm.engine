@@ -395,6 +395,22 @@ struct LinkSubtypes {
         rebuild_index(n);
     }
 
+    /**
+     * @brief Stage-A scaffold: (re)build the mirror only if it is stale, i.e.
+     *        the reverse-index size no longer matches the base link count.
+     * @details Cheap O(1) guard; the O(n) @ref build runs only when needed.
+     *          In production @ref build already ran at engine init so this is a
+     *          no-op. It exists so unit tests / callers that drive a solver on a
+     *          hand-built `SimulationContext` (without the engine init that calls
+     *          @ref build) still see a populated mirror before any side-table
+     *          read. TEMPORARY — removed together with @ref build at Stage D,
+     *          once the side-tables are written authoritatively at parse/edit.
+     */
+    void ensure_built(const LinkData& L) {
+        if (subtype_row.size() != static_cast<std::size_t>(L.count()))
+            build(L);
+    }
+
     void clear() noexcept {
         conduits.clear(); pumps.clear(); orifices.clear();
         weirs.clear(); outlets.clear(); subtype_row.clear();
