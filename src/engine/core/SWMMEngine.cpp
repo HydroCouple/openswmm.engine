@@ -2341,8 +2341,10 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
 
             // Scatter dqdh — legacy dynwave.c lines 565-575:
             // TYPE4_PUMP adds dqdh to node1 (inlet) only; skip node2.
+            const int pr_t4 = ctx_.link_subtypes.pump_row(j);
             const bool is_type4_pump = (links.type[uj] == LinkType::PUMP &&
-                                        links.pump_curve_type[uj] == 4);
+                                        pr_t4 >= 0 &&
+                                        ctx_.link_subtypes.pumps.curve_type[static_cast<std::size_t>(pr_t4)] == 4);
             dw.nodeSumDqdh(n1) += dqdh;
             if (!is_type4_pump) dw.nodeSumDqdh(n2) += dqdh;
 
@@ -2541,7 +2543,9 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         if (ctx_.links.type[uj] == LinkType::CONDUIT && y_full > 0.0) {
             int n1 = ctx_.links.node1[uj];
             int n2 = ctx_.links.node2[uj];
-            int8_t fs = ctx_.links.full_state[uj];
+            const int cr = ctx_.link_subtypes.conduit_row(j);
+            const auto& CD = ctx_.link_subtypes.conduits;
+            int8_t fs = (cr >= 0) ? CD.full_state[static_cast<std::size_t>(cr)] : int8_t{0};
             bool up_full = (fs & 1) != 0;
             bool dn_full = (fs & 2) != 0;
             if (up_full) ctx_.links.stat_time_full_upstream[uj] += dt_routing;
@@ -2556,8 +2560,6 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
                     n1 >= 0 && n2 >= 0) {
                     double h1h = ctx_.nodes.head[static_cast<std::size_t>(n1)];
                     double h2h = ctx_.nodes.head[static_cast<std::size_t>(n2)];
-                    const int cr = ctx_.link_subtypes.conduit_row(j);
-                    const auto& CD = ctx_.link_subtypes.conduits;
                     double len = (cr >= 0) ? CD.mod_length[static_cast<std::size_t>(cr)] : 0.0;
                     if (len <= 0.0) len = (cr >= 0) ? CD.length[static_cast<std::size_t>(cr)] : 0.0;
                     double slp = std::fabs((cr >= 0) ? CD.slope[static_cast<std::size_t>(cr)] : 0.0);
@@ -2575,14 +2577,22 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
                 ++ctx_.links.stat_flow_class[fc_idx];
         }
 
-        // Normal flow limited / inlet control counters
-        if (ctx_.links.normal_flow_limited[uj]) {
-            ++ctx_.links.stat_norm_ltd[uj];
-            ctx_.links.normal_flow_limited[uj] = false;  // reset for next step
-        }
-        if (ctx_.links.inlet_control[uj]) {
-            ++ctx_.links.stat_inlet_ctrl[uj];
-            ctx_.links.inlet_control[uj] = false;
+        // Normal flow limited / inlet control counters (conduit-only side-table
+        // fields; non-conduits had a false wide default -> skip).
+        {
+            const int crs = ctx_.link_subtypes.conduit_row(j);
+            if (crs >= 0) {
+                const auto ucrs = static_cast<std::size_t>(crs);
+                auto& CDs = ctx_.link_subtypes.conduits;
+                if (CDs.normal_flow_limited[ucrs]) {
+                    ++ctx_.links.stat_norm_ltd[uj];
+                    CDs.normal_flow_limited[ucrs] = uint8_t{0};  // reset for next step
+                }
+                if (CDs.inlet_control[ucrs]) {
+                    ++ctx_.links.stat_inlet_ctrl[uj];
+                    CDs.inlet_control[ucrs] = uint8_t{0};
+                }
+            }
         }
 
         // Pump utilization statistics
@@ -2752,11 +2762,13 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         auto uj = static_cast<std::size_t>(j);
         if (ctx_.links.type[uj] == LinkType::CONDUIT) {
             const int cr = ctx_.link_subtypes.conduit_row(j);
-            int barrels = std::max((cr >= 0) ? ctx_.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)] : 1, 1);
+            const auto& CD = ctx_.link_subtypes.conduits;
+            const auto ucr = static_cast<std::size_t>(cr);
+            int barrels = std::max((cr >= 0) ? CD.barrels[ucr] : 1, 1);
             ctx_.mass_balance.routing_evap_loss +=
-                ctx_.links.evap_loss_rate[uj] * barrels * dt_routing;
+                ((cr >= 0) ? CD.evap_loss_rate[ucr] : 0.0) * barrels * dt_routing;
             ctx_.mass_balance.routing_seep_loss +=
-                ctx_.links.seep_loss_rate[uj] * barrels * dt_routing;
+                ((cr >= 0) ? CD.seep_loss_rate[ucr] : 0.0) * barrels * dt_routing;
         }
     }
 

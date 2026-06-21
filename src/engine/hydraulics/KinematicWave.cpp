@@ -265,7 +265,7 @@ int KWSolver::execute(SimulationContext& ctx, double dt) {
             }
             continue;
         }
-        const auto& CD = ctx.link_subtypes.conduits;
+        auto& CD = ctx.link_subtypes.conduits;
         const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
 
         // Gather inflow from upstream node
@@ -295,7 +295,7 @@ int KWSolver::execute(SimulationContext& ctx, double dt) {
         if (length <= 0.0) length = CD.length[ucr];
 
         // Compute evaporation + seepage loss rate
-        double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
+        double loss_rate = CD.evap_loss_rate[ucr] + CD.seep_loss_rate[ucr];
 
         // Set inflow for this conduit
         q_in_[uj] = qin_per_barrel;
@@ -334,7 +334,7 @@ int KWSolver::execute(SimulationContext& ctx, double dt) {
                 if (a_in_[uj]  >= a_full) fs |= 1;
                 if (a_out_[uj] >= a_full) fs |= 2;
             }
-            links.full_state[uj] = fs;
+            CD.full_state[ucr] = fs;
         }
 
         // Update non-storage end-node depths (Gap #13)

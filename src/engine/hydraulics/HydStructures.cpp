@@ -92,8 +92,12 @@ void StructureSolver::init(SimulationContext& ctx) {
                     else
                         pumps_.curve_type[uk] = 6; // Ideal pump if no curve
                 }
-                // Mirror curve_type into LinkData for use by DW non_conduit_fn
-                // (TYPE4_PUMP excluded from dqdh per legacy dynwave.c:565-575)
+                // Mirror curve_type for use by DW non_conduit_fn (TYPE4_PUMP
+                // excluded from dqdh per legacy dynwave.c:565-575). Phase 6
+                // Stage B: PumpData.curve_type is the authoritative store (this
+                // runs AFTER build() at engine init, so it is not clobbered);
+                // dual-write the wide slot until Stage D removes it.
+                ctx.link_subtypes.pumps.curve_type[pr] = pumps_.curve_type[uk];
                 ctx.links.pump_curve_type[uj] = pumps_.curve_type[uk];
                 ++ip;
                 break;

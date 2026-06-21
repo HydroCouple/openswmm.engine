@@ -405,7 +405,7 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
         if (v_old > ZERO_VOLUME) {
             int cr = ctx.link_subtypes.conduit_row(j);
             int nb = (cr >= 0) ? ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)] : 1;
-            double evap_rate = (uj < links.evap_loss_rate.size()) ? links.evap_loss_rate[uj] : 0.0;
+            double evap_rate = (cr >= 0) ? ctx.link_subtypes.conduits.evap_loss_rate[static_cast<size_t>(cr)] : 0.0;
             double v_evap = evap_rate * static_cast<double>(nb) * dt;
             if (v_evap > 0.0) fEvap = 1.0 + v_evap / v_old;
         }

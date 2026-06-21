@@ -1536,6 +1536,7 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
                                double barrels_d, bool isFull) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
+    auto& CD = ctx.link_subtypes.conduits;  // Phase 6 Stage B: inlet_control / normal_flow_limited (row==uci)
     const int normal_flow_ltd = ctx.options.normal_flow_ltd;
     // Phase A extension: read invariants from the conduit-dense tile.
     auto uci = static_cast<std::size_t>(tile_uj_to_ci_[uj]);
@@ -1547,8 +1548,8 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     auto un2 = static_cast<std::size_t>(n2);
 
     // Inlet control and normal flow limiting
-    links.inlet_control[uj] = false;
-    links.normal_flow_limited[uj] = false;
+    CD.inlet_control[uci] = uint8_t{0};
+    CD.normal_flow_limited[uci] = uint8_t{0};
     if (q > 0.0) {
         if (tile_culvert_code_[uci] > 0 && !isFull) {
             double dqdh_culv = 0.0;
@@ -1557,7 +1558,7 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
                 tile_slope_[uci], tile_culvert_code_[uci], dqdh_culv);
             if (q_inlet < q) {
                 q = q_inlet;
-                links.inlet_control[uj] = true;
+                CD.inlet_control[uci] = uint8_t{1};
             }
         } else {
             FlowClass fc2 = links.flow_class[uj];
@@ -1588,7 +1589,7 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
                     double qNorm = tile_beta_[uci] * s1;
                     if (qNorm < q) {
                         q = qNorm;
-                        links.normal_flow_limited[uj] = true;
+                        CD.normal_flow_limited[uci] = uint8_t{1};
                     }
                 }
             }
@@ -1647,6 +1648,7 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
 void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
                                   std::size_t uj, MomentumCategory cat) {
     auto& links = ctx.links;
+    const auto& CD = ctx.link_subtypes.conduits;  // Phase 6 Stage B: per-step evap/seep
     const int inert_damping = ctx.options.inertial_damping;
     const double dt_g = dt_gravity_;
     const bool is_closed_full = (cat == MomentumCategory::MANNING_CLOSED_FULL);
@@ -1772,7 +1774,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     double dq6 = 0.0;
     {
         double conduit_length = tile_links_length_[uci];
-        double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
+        double loss_rate = CD.evap_loss_rate[uci] + CD.seep_loss_rate[uci];  // row==uci
         if (loss_rate > 0.0 && conduit_length > 0.0)
             dq6 = loss_rate * 2.5 * dt * v / conduit_length;
     }
@@ -1794,6 +1796,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
 void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
                                     std::size_t uj, MomentumCategory cat) {
     auto& links = ctx.links;
+    const auto& CD = ctx.link_subtypes.conduits;  // Phase 6 Stage B: per-step evap/seep
     const double dt_g = dt_gravity_;
     const bool is_dw = (cat == MomentumCategory::FORCE_MAIN_DW);
 
@@ -1861,7 +1864,7 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     double dq6 = 0.0;
     {
         double conduit_length = tile_links_length_[uci];
-        double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
+        double loss_rate = CD.evap_loss_rate[uci] + CD.seep_loss_rate[uci];  // row==uci
         if (loss_rate > 0.0 && conduit_length > 0.0)
             dq6 = loss_rate * 2.5 * dt * v / conduit_length;
     }
@@ -1931,8 +1934,10 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx, bool conduits_only) {
 
         // Add conduit evap/seepage loss to node outflows (matching legacy lines 542-558)
         if (links.type[uj] == LinkType::CONDUIT) {
-            double conduit_loss = (links.evap_loss_rate[uj] + links.seep_loss_rate[uj])
-                                  * tile_barrels_d_[static_cast<std::size_t>(tile_uj_to_ci_[uj])];
+            const auto uci_l = static_cast<std::size_t>(tile_uj_to_ci_[uj]);  // row==ci
+            double conduit_loss = (ctx.link_subtypes.conduits.evap_loss_rate[uci_l]
+                                   + ctx.link_subtypes.conduits.seep_loss_rate[uci_l])
+                                  * tile_barrels_d_[uci_l];
             if (conduit_loss > 0.0) {
                 // Split loss between nodes unless one is an outfall
                 if (nodes.type[un1] != NodeType::OUTFALL &&

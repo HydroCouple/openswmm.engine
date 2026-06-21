@@ -77,6 +77,13 @@ struct ConduitData {
     std::vector<double> seep_rate;
     std::vector<int>    culvert_code;
 
+    // Phase 6 Stage B: mutable per-step conduit state moved off wide LinkData.
+    std::vector<double>  evap_loss_rate;      ///< per-step evaporation loss
+    std::vector<double>  seep_loss_rate;      ///< per-step seepage loss
+    std::vector<uint8_t> normal_flow_limited; ///< per-step flag (reset each step)
+    std::vector<uint8_t> inlet_control;       ///< per-step culvert inlet-control flag
+    std::vector<int8_t>  full_state;          ///< per-step up/down full bitmask
+
     int count() const noexcept { return static_cast<int>(link_idx.size()); }
 
     void clear() noexcept {
@@ -84,6 +91,8 @@ struct ConduitData {
         mod_length.clear(); barrels.clear(); beta.clear(); rough_factor.clear();
         q_full.clear(); q_max.clear(); loss_inlet.clear(); loss_outlet.clear();
         loss_avg.clear(); seep_rate.clear(); culvert_code.clear();
+        evap_loss_rate.clear(); seep_loss_rate.clear(); normal_flow_limited.clear();
+        inlet_control.clear(); full_state.clear();
     }
 
     void reserve(int n) {
@@ -92,6 +101,8 @@ struct ConduitData {
         mod_length.reserve(un); barrels.reserve(un); beta.reserve(un); rough_factor.reserve(un);
         q_full.reserve(un); q_max.reserve(un); loss_inlet.reserve(un); loss_outlet.reserve(un);
         loss_avg.reserve(un); seep_rate.reserve(un); culvert_code.reserve(un);
+        evap_loss_rate.reserve(un); seep_loss_rate.reserve(un); normal_flow_limited.reserve(un);
+        inlet_control.reserve(un); full_state.reserve(un);
     }
 
     /// Insert a default conduit row for base link @p i, keeping link_idx
@@ -114,6 +125,11 @@ struct ConduitData {
         loss_avg.insert(loss_avg.begin() + p, 0.0);
         seep_rate.insert(seep_rate.begin() + p, 0.0);
         culvert_code.insert(culvert_code.begin() + p, 0);
+        evap_loss_rate.insert(evap_loss_rate.begin() + p, 0.0);
+        seep_loss_rate.insert(seep_loss_rate.begin() + p, 0.0);
+        normal_flow_limited.insert(normal_flow_limited.begin() + p, uint8_t{0});
+        inlet_control.insert(inlet_control.begin() + p, uint8_t{0});
+        full_state.insert(full_state.begin() + p, int8_t{0});
         return static_cast<int>(p);
     }
 
@@ -134,6 +150,11 @@ struct ConduitData {
         loss_avg.erase(loss_avg.begin() + p);
         seep_rate.erase(seep_rate.begin() + p);
         culvert_code.erase(culvert_code.begin() + p);
+        evap_loss_rate.erase(evap_loss_rate.begin() + p);
+        seep_loss_rate.erase(seep_loss_rate.begin() + p);
+        normal_flow_limited.erase(normal_flow_limited.begin() + p);
+        inlet_control.erase(inlet_control.begin() + p);
+        full_state.erase(full_state.begin() + p);
     }
 };
 

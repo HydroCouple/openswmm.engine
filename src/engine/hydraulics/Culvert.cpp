@@ -207,7 +207,7 @@ void batchComputeInletControl(const int* link_indices, int n,
 
         // Only process conduit links with a valid culvert code
         if (links.type[j] != LinkType::CONDUIT) continue;
-        const auto& CD = ctx.link_subtypes.conduits;
+        auto& CD = ctx.link_subtypes.conduits;
         const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
         int code = CD.culvert_code[ucr];
         if (code <= 0 || code > MAX_CULVERT_CODE) continue;
@@ -230,8 +230,8 @@ void batchComputeInletControl(const int* link_indices, int n,
 
         // Inlet controls only if q_inlet < |q0|
         if (q_inlet < std::fabs(q0)) {
-            links.inlet_control[j] = true;
-            links.dqdh[j] = dq;
+            CD.inlet_control[ucr] = uint8_t{1};
+            links.dqdh[j] = dq;  // dqdh stays on base LinkData
             // Preserve flow sign (direction)
             links.flow[j] = (q0 >= 0.0) ? q_inlet : -q_inlet;
         }
