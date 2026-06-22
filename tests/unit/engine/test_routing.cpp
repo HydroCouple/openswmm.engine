@@ -616,18 +616,20 @@ protected:
         // 2 conduits: C0 (J0→J1), C1 (J1→O2)
         ctx.links.resize(2);
         for (int i = 0; i < 2; ++i) {
-            ctx.links.type[i] = LinkType::CONDUIT;
+            const auto cr = static_cast<std::size_t>(
+                ctx.link_subtypes.set_link_type(ctx.links, i, LinkType::CONDUIT));
+            auto& C = ctx.link_subtypes.conduits;
             ctx.links.xsect_shape[i] = XsectShape::CIRCULAR;
             ctx.links.xsect_y_full[i] = 2.0;
             ctx.links.xsect_a_full[i] = M_PI;  // π·1²
             ctx.links.xsect_w_max[i] = 2.0;
-            ctx.links.roughness[i] = 0.013;
-            ctx.links.length[i] = 400.0;
-            ctx.links.mod_length[i] = 400.0;
-            ctx.links.barrels[i] = 1;
-            ctx.links.loss_inlet[i] = 0.0;
-            ctx.links.loss_outlet[i] = 0.0;
-            ctx.links.loss_avg[i] = 0.0;
+            C.roughness[cr] = 0.013;
+            C.length[cr] = 400.0;
+            C.mod_length[cr] = 400.0;
+            C.barrels[cr] = 1;
+            C.loss_inlet[cr] = 0.0;
+            C.loss_outlet[cr] = 0.0;
+            C.loss_avg[cr] = 0.0;
         }
         ctx.links.node1[0] = 0;  ctx.links.node2[0] = 1;
         ctx.links.node1[1] = 1;  ctx.links.node2[1] = 2;
@@ -1545,7 +1547,9 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
 
     // Configure 5 conduits (J0→J1, J1→J2, ..., J4→J5)
     for (int i = 0; i < 5; ++i) {
-        ctx.links.type[i]               = LinkType::CONDUIT;
+        const auto cr = static_cast<std::size_t>(
+            ctx.link_subtypes.set_link_type(ctx.links, i, LinkType::CONDUIT));
+        auto& C = ctx.link_subtypes.conduits;
         ctx.links.xsect_shape[i]        = XsectShape::RECT_OPEN;
         ctx.links.xsect_batch_shape[i]  = static_cast<int>(XSectShape::RECT_OPEN);
         ctx.links.xsect_y_full[i]       = xs.y_full;
@@ -1554,15 +1558,15 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
         ctx.links.xsect_r_full[i]       = xs.r_full;
         ctx.links.xsect_s_full[i]       = xs.s_full;
         ctx.links.xsect_s_max[i]        = xs.s_max;
-        ctx.links.beta[i]               = beta;
-        ctx.links.rough_factor[i]       = rough_factor;
-        ctx.links.q_full[i]             = q_full;
-        ctx.links.q_max[i]              = q_full;
-        ctx.links.length[i]             = L;
-        ctx.links.mod_length[i]         = L;
-        ctx.links.slope[i]              = S0;
-        ctx.links.roughness[i]          = n_mann;
-        ctx.links.barrels[i]            = 1;
+        C.beta[cr]                      = beta;
+        C.rough_factor[cr]              = rough_factor;
+        C.q_full[cr]                    = q_full;
+        C.q_max[cr]                     = q_full;
+        C.length[cr]                    = L;
+        C.mod_length[cr]                = L;
+        C.slope[cr]                     = S0;
+        C.roughness[cr]                 = n_mann;
+        C.barrels[cr]                   = 1;
         ctx.links.node1[i]              = i;
         ctx.links.node2[i]              = i + 1;
         ctx.links.flow[i]               = Q;
@@ -1721,7 +1725,9 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
     // ── 50 conduits: frictionless (n=0), horizontal, RECT_OPEN ───────────
     for (int i = 0; i < N_cond; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        ctx.links.type[ui]              = LinkType::CONDUIT;
+        const auto cr = static_cast<std::size_t>(
+            ctx.link_subtypes.set_link_type(ctx.links, i, LinkType::CONDUIT));
+        auto& C = ctx.link_subtypes.conduits;
         ctx.links.xsect_shape[ui]       = XsectShape::RECT_OPEN;
         ctx.links.xsect_batch_shape[ui] = static_cast<int>(XSectShape::RECT_OPEN);
         ctx.links.xsect_y_full[ui]      = xs.y_full;
@@ -1730,15 +1736,15 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
         ctx.links.xsect_r_full[ui]      = xs.r_full;
         ctx.links.xsect_s_full[ui]      = xs.s_full;
         ctx.links.xsect_s_max[ui]       = xs.s_max;
-        ctx.links.beta[ui]              = 0.0;  // PHI*sqrt(S0)/n: S0=0 → 0
-        ctx.links.rough_factor[ui]      = 0.0;  // GRAVITY*(n/PHI)^2: n=0 → 0
-        ctx.links.roughness[ui]         = 0.0;
-        ctx.links.q_full[ui]            = 0.0;
-        ctx.links.q_max[ui]             = 0.0;
-        ctx.links.length[ui]            = dx;
-        ctx.links.mod_length[ui]        = dx;
-        ctx.links.slope[ui]             = 0.0;
-        ctx.links.barrels[ui]           = 1;
+        C.beta[cr]                      = 0.0;  // PHI*sqrt(S0)/n: S0=0 → 0
+        C.rough_factor[cr]              = 0.0;  // GRAVITY*(n/PHI)^2: n=0 → 0
+        C.roughness[cr]                 = 0.0;
+        C.q_full[cr]                    = 0.0;
+        C.q_max[cr]                     = 0.0;
+        C.length[cr]                    = dx;
+        C.mod_length[cr]                = dx;
+        C.slope[cr]                     = 0.0;
+        C.barrels[cr]                   = 1;
         ctx.links.node1[ui]             = i;
         ctx.links.node2[ui]             = i + 1;
         ctx.links.flow[ui]              = 0.0;

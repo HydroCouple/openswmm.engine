@@ -520,10 +520,8 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
         const int wr  = ctx.link_subtypes.weir_row(idx);
         const int olr = ctx.link_subtypes.outlet_row(idx);
         auto& CD = ctx.link_subtypes.conduits;
-        ctx.links.barrels[idx] = column_int(stmt.get(), 12);
-        ctx.links.culvert_code[idx] = column_int(stmt.get(), 13);
-        if (cr >= 0) { CD.barrels[(size_t)cr] = ctx.links.barrels[idx];
-                       CD.culvert_code[(size_t)cr] = ctx.links.culvert_code[idx]; }
+        if (cr >= 0) { CD.barrels[(size_t)cr] = column_int(stmt.get(), 12);
+                       CD.culvert_code[(size_t)cr] = column_int(stmt.get(), 13); }
 
         if (!column_is_null(stmt.get(), 14)) {
             std::string ref_name = column_text(stmt.get(), 14);
@@ -541,21 +539,15 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
             }
         }
 
-        ctx.links.roughness[idx] = column_double(stmt.get(), 15);
-        ctx.links.length[idx] = column_double(stmt.get(), 16);
-        ctx.links.loss_inlet[idx] = column_double(stmt.get(), 17);
-        ctx.links.loss_outlet[idx] = column_double(stmt.get(), 18);
-        ctx.links.loss_avg[idx] = column_double(stmt.get(), 19);
         ctx.links.has_flap_gate[idx] = column_int(stmt.get(), 20) != 0;
-        ctx.links.seep_rate[idx] = column_double(stmt.get(), 21);
         if (cr >= 0) {
             const auto ucr = (size_t)cr;
-            CD.roughness[ucr]   = ctx.links.roughness[idx];
-            CD.length[ucr]      = ctx.links.length[idx];
-            CD.loss_inlet[ucr]  = ctx.links.loss_inlet[idx];
-            CD.loss_outlet[ucr] = ctx.links.loss_outlet[idx];
-            CD.loss_avg[ucr]    = ctx.links.loss_avg[idx];
-            CD.seep_rate[ucr]   = ctx.links.seep_rate[idx];
+            CD.roughness[ucr]   = column_double(stmt.get(), 15);
+            CD.length[ucr]      = column_double(stmt.get(), 16);
+            CD.loss_inlet[ucr]  = column_double(stmt.get(), 17);
+            CD.loss_outlet[ucr] = column_double(stmt.get(), 18);
+            CD.loss_avg[ucr]    = column_double(stmt.get(), 19);
+            CD.seep_rate[ucr]   = column_double(stmt.get(), 21);
         }
         ctx.links.q0[idx] = column_double(stmt.get(), 22);
         ctx.links.q_limit[idx] = column_double(stmt.get(), 23);
@@ -563,42 +555,39 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
         if (ltype == LinkType::PUMP) {
             if (!column_is_null(stmt.get(), 24))
                 ctx.links.pump_curve_name[idx] = column_text(stmt.get(), 24);
-            ctx.links.pump_init_state[idx] = column_double(stmt.get(), 25) > 0.5;
-            ctx.links.pump_startup[idx] = column_double(stmt.get(), 26);
-            ctx.links.pump_shutoff[idx] = column_double(stmt.get(), 27);
             if (pr >= 0) {
                 auto& PD = ctx.link_subtypes.pumps;
-                PD.init_state[(size_t)pr] = ctx.links.pump_init_state[idx] ? uint8_t{1} : uint8_t{0};
-                PD.startup[(size_t)pr] = ctx.links.pump_startup[idx];
-                PD.shutoff[(size_t)pr] = ctx.links.pump_shutoff[idx];
+                PD.init_state[(size_t)pr] = (column_double(stmt.get(), 25) > 0.5) ? uint8_t{1} : uint8_t{0};
+                PD.startup[(size_t)pr] = column_double(stmt.get(), 26);
+                PD.shutoff[(size_t)pr] = column_double(stmt.get(), 27);
             }
         }
 
-        ctx.links.crest_height[idx] = column_double(stmt.get(), 28);
-        ctx.links.cd[idx] = column_double(stmt.get(), 29);
-        ctx.links.param1[idx] = column_double(stmt.get(), 30);
-        ctx.links.param2[idx] = column_double(stmt.get(), 31);
-        ctx.links.orate[idx]  = column_double(stmt.get(), 32);
-        // crest_height -> weir/outlet; cd -> orifice/weir(coeff)/outlet(coeff);
-        // param1 -> *_type; param2 -> weir end_contractions / outlet expon;
-        // orate -> orifice. (Verbatim — display units, like the writer stored.)
+        // Structure config straight into the side-tables (verbatim — display
+        // units, as the writer stored). Columns: 28 crest, 29 cd, 30 param1
+        // (type), 31 param2 (end_con/expon), 32 orate.
+        const double g_crest = column_double(stmt.get(), 28);
+        const double g_cd    = column_double(stmt.get(), 29);
+        const double g_p1    = column_double(stmt.get(), 30);
+        const double g_p2    = column_double(stmt.get(), 31);
+        const double g_orate = column_double(stmt.get(), 32);
         if (orr >= 0) {
             auto& ORF = ctx.link_subtypes.orifices;
-            ORF.orifice_type[(size_t)orr] = ctx.links.param1[idx];
-            ORF.cd[(size_t)orr]           = ctx.links.cd[idx];
-            ORF.orate[(size_t)orr]        = ctx.links.orate[idx];
+            ORF.orifice_type[(size_t)orr] = g_p1;
+            ORF.cd[(size_t)orr]           = g_cd;
+            ORF.orate[(size_t)orr]        = g_orate;
         } else if (wr >= 0) {
             auto& WD = ctx.link_subtypes.weirs;
-            WD.weir_type[(size_t)wr]        = ctx.links.param1[idx];
-            WD.cd[(size_t)wr]               = ctx.links.cd[idx];
-            WD.end_contractions[(size_t)wr] = ctx.links.param2[idx];
-            WD.crest_height[(size_t)wr]     = ctx.links.crest_height[idx];
+            WD.weir_type[(size_t)wr]        = g_p1;
+            WD.cd[(size_t)wr]               = g_cd;
+            WD.end_contractions[(size_t)wr] = g_p2;
+            WD.crest_height[(size_t)wr]     = g_crest;
         } else if (olr >= 0) {
             auto& OUT = ctx.link_subtypes.outlets;
-            OUT.outlet_type[(size_t)olr]  = ctx.links.param1[idx];
-            OUT.coeff[(size_t)olr]        = ctx.links.cd[idx];
-            OUT.expon[(size_t)olr]        = ctx.links.param2[idx];
-            OUT.crest_height[(size_t)olr] = ctx.links.crest_height[idx];
+            OUT.outlet_type[(size_t)olr]  = g_p1;
+            OUT.coeff[(size_t)olr]        = g_cd;
+            OUT.expon[(size_t)olr]        = g_p2;
+            OUT.crest_height[(size_t)olr] = g_crest;
         }
         // Persisted flow direction (adverse-slope DW reverse) — not derivable on
         // read because the stored geometry is already reversed (positive slope).

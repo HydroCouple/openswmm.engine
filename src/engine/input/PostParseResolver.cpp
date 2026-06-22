@@ -296,13 +296,15 @@ void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
 
     auto uj = static_cast<std::size_t>(j);
     if (ctx.links.type[uj] != LinkType::CONDUIT) return;
+    auto& CD = ctx.link_subtypes.conduits;
+    const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
 
     // Signal XSectParams-cache holders (e.g. SWMMEngine's reporting cache)
     // that this link's cross-section-derived fields are changing.
     ++ctx.xsect_generation;
 
-    double n_val    = ctx.links.roughness[uj];
-    double slope    = std::fabs(ctx.links.slope[uj]);
+    double n_val    = CD.roughness[ucr];
+    double slope    = std::fabs(CD.slope[ucr]);
     double a_full   = ctx.links.xsect_a_full[uj];
     double s_full   = ctx.links.xsect_s_full[uj];
     double s_max    = ctx.links.xsect_s_max[uj];
@@ -335,37 +337,26 @@ void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
         double r_bot  = ctx.links.xsect_r_bot[uj];
         double y_full = ctx.links.xsect_y_full[uj];
         n_val = forcemain::getEquivN(fm, r_bot, y_full, slope, n_val);
-        if (n_val <= 0.0) n_val = ctx.links.roughness[uj];
+        if (n_val <= 0.0) n_val = CD.roughness[ucr];
     }
 
-    // Phase 6 Stage A.3: dual-write the conduit side-table row alongside the wide
-    // arrays (the row exists — LinksHandler created it via set_link_type).
-    const int cr = ctx.link_subtypes.conduit_row(j);
-    const auto ucr = static_cast<std::size_t>(cr);
-    auto& CD = ctx.link_subtypes.conduits;
-
     // Roughness factor for DW friction slope: GRAVITY * (n/PHI)^2
-    ctx.links.rough_factor[uj] = GRAVITY * (n_val / PHI) * (n_val / PHI);
-    if (cr >= 0) CD.rough_factor[ucr] = ctx.links.rough_factor[uj];
+    CD.rough_factor[ucr] = GRAVITY * (n_val / PHI) * (n_val / PHI);
 
     // Conveyance factor: beta = PHI * sqrt(|slope|) / n
     double beta = PHI * std::sqrt(slope) / n_val;
-    ctx.links.beta[uj] = beta;
-    if (cr >= 0) CD.beta[ucr] = beta;
+    CD.beta[ucr] = beta;
 
     // Full-flow rate: q_full = sFull * beta
-    ctx.links.q_full[uj] = s_full * beta;
-    if (cr >= 0) CD.q_full[ucr] = ctx.links.q_full[uj];
+    CD.q_full[ucr] = s_full * beta;
 
     // Max flow at max section factor
-    ctx.links.q_max[uj] = s_max * beta;
-    if (cr >= 0) CD.q_max[ucr] = ctx.links.q_max[uj];
+    CD.q_max[ucr] = s_max * beta;
 
     // Conduit volume = A_full * modLength (or length if no lengthening)
-    double mod_len = ctx.links.mod_length[uj];
-    if (mod_len <= 0.0) mod_len = ctx.links.length[uj];
-    ctx.links.mod_length[uj] = mod_len;
-    if (cr >= 0) CD.mod_length[ucr] = mod_len;
+    double mod_len = CD.mod_length[ucr];
+    if (mod_len <= 0.0) mod_len = CD.length[ucr];
+    CD.mod_length[ucr] = mod_len;
     ctx.links.volume[uj] = a_full * mod_len;
 
     // For DW force mains, store roughness factor in xsect_s_bot (Gap #22)
@@ -373,8 +364,8 @@ void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
     //   Link[j].xsect.sBot = forcemain_getRoughFactor(j, lengthFactor)
     // The lengthFactor = mod_length / length (1.0 if not lengthened).
     if (is_dw && is_force_main) {
-        double length_factor = (ctx.links.length[uj] > 0.0)
-            ? mod_len / ctx.links.length[uj] : 1.0;
+        double length_factor = (CD.length[ucr] > 0.0)
+            ? mod_len / CD.length[ucr] : 1.0;
         auto fm = static_cast<forcemain::FrictionModel>(ctx.options.force_main_eqn);
         ctx.links.xsect_s_bot[uj] =
             forcemain::getRoughFactor(fm, ctx.links.xsect_r_bot[uj], length_factor);
@@ -468,22 +459,15 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
         if (ctx.links.type[uj] == LinkType::CONDUIT) {
             const int cr = ctx.link_subtypes.conduit_row(j);
             const auto ucr = static_cast<std::size_t>(cr);
-            if (ctx.links.length[uj] > 0.0) {
-                ctx.links.length[uj] *= inv_len;
-                if (cr >= 0) ctx.link_subtypes.conduits.length[ucr] *= inv_len;
-            }
+            if (cr >= 0 && ctx.link_subtypes.conduits.length[ucr] > 0.0)
+                ctx.link_subtypes.conduits.length[ucr] *= inv_len;
             ctx.links.q0[uj]        *= inv_flow;
             ctx.links.q_limit[uj]   *= inv_flow;
-            ctx.links.seep_rate[uj] *= inv_rain;   // legacy /UCF(RAINFALL)
-            if (cr >= 0) ctx.link_subtypes.conduits.seep_rate[ucr] *= inv_rain;
+            if (cr >= 0) ctx.link_subtypes.conduits.seep_rate[ucr] *= inv_rain;  // legacy /UCF(RAINFALL)
         }
-        // Offsets / crest heights are length-dimension in both DEPTH and ELEV
-        // modes; the later ELEV→DEPTH subtraction stays consistent because the
-        // node inverts above are converted too.
+        // Offsets are length-dimension; crest lives on the weir/outlet row.
         ctx.links.offset1[uj]      *= inv_len;
         ctx.links.offset2[uj]      *= inv_len;
-        ctx.links.crest_height[uj] *= inv_len;
-        // Crest lives on the weir/outlet side-table row (no-op for other types).
         const int wr = ctx.link_subtypes.weir_row(j);
         if (wr >= 0) ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] *= inv_len;
         else {
@@ -571,18 +555,14 @@ void convert_internal_to_display(SimulationContext& ctx) {
         if (ctx.links.type[uj] == LinkType::CONDUIT) {
             const int cr = ctx.link_subtypes.conduit_row(j);
             const auto ucr = static_cast<std::size_t>(cr);
-            if (ctx.links.length[uj] > 0.0) {
-                ctx.links.length[uj] *= len;
-                if (cr >= 0) ctx.link_subtypes.conduits.length[ucr] *= len;
-            }
+            if (cr >= 0 && ctx.link_subtypes.conduits.length[ucr] > 0.0)
+                ctx.link_subtypes.conduits.length[ucr] *= len;
             ctx.links.q0[uj]        *= flow;
             ctx.links.q_limit[uj]   *= flow;
-            ctx.links.seep_rate[uj] *= rain;
             if (cr >= 0) ctx.link_subtypes.conduits.seep_rate[ucr] *= rain;
         }
         ctx.links.offset1[uj]      *= len;
         ctx.links.offset2[uj]      *= len;
-        ctx.links.crest_height[uj] *= len;
         const int wr = ctx.link_subtypes.weir_row(j);
         if (wr >= 0) ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] *= len;
         else {
@@ -825,25 +805,27 @@ void resolve_cross_references(SimulationContext& ctx) {
     for (int j = 0; j < n_links; ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (ctx.links.type[uj] != LinkType::PUMP) continue;
-        if (ctx.links.pump_curve[uj] >= 0) continue; // already resolved
-        if (ctx.links.pump_curve_name[uj].empty()) continue;
-        ctx.links.pump_curve[uj] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
         const int pr = ctx.link_subtypes.pump_row(j);
-        if (pr >= 0) ctx.link_subtypes.pumps.curve[static_cast<std::size_t>(pr)] = ctx.links.pump_curve[uj];
+        if (pr < 0) continue;
+        const auto upr = static_cast<std::size_t>(pr);
+        if (ctx.link_subtypes.pumps.curve[upr] >= 0) continue; // already resolved
+        if (ctx.links.pump_curve_name[uj].empty()) continue;
+        ctx.link_subtypes.pumps.curve[upr] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
     }
 
     // Outlet (TABULAR) rating curve name resolution — curve name stored in
-    // pump_curve_name; resolved index stored in pump_curve (mutual exclusion).
+    // pump_curve_name; resolved index stored in OutletData.curve.
     for (int j = 0; j < n_links; ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (ctx.links.type[uj] != LinkType::OUTLET) continue;
-        int outlet_type = static_cast<int>(ctx.links.param1[uj]);
-        if (outlet_type < 2) continue; // FUNCTIONAL — no curve needed
-        if (ctx.links.pump_curve[uj] >= 0) continue; // already resolved
-        if (ctx.links.pump_curve_name[uj].empty()) continue;
-        ctx.links.pump_curve[uj] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
         const int olr = ctx.link_subtypes.outlet_row(j);
-        if (olr >= 0) ctx.link_subtypes.outlets.curve[static_cast<std::size_t>(olr)] = ctx.links.pump_curve[uj];
+        if (olr < 0) continue;
+        const auto uolr = static_cast<std::size_t>(olr);
+        int outlet_type = static_cast<int>(ctx.link_subtypes.outlets.outlet_type[uolr]);
+        if (outlet_type < 2) continue; // FUNCTIONAL — no curve needed
+        if (ctx.link_subtypes.outlets.curve[uolr] >= 0) continue; // already resolved
+        if (ctx.links.pump_curve_name[uj].empty()) continue;
+        ctx.link_subtypes.outlets.curve[uolr] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
     }
 
     // Convert pump startup/shutoff depths from display units → internal (ft)
@@ -854,15 +836,12 @@ void resolve_cross_references(SimulationContext& ctx) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.links.type[uj] != LinkType::PUMP) continue;
             const int pr = ctx.link_subtypes.pump_row(j);
+            if (pr < 0) continue;
             const auto upr = static_cast<std::size_t>(pr);
-            if (ctx.links.pump_startup[uj] > 0.0) {
-                ctx.links.pump_startup[uj] /= ucf_len;
-                if (pr >= 0) ctx.link_subtypes.pumps.startup[upr] /= ucf_len;
-            }
-            if (ctx.links.pump_shutoff[uj] > 0.0) {
-                ctx.links.pump_shutoff[uj] /= ucf_len;
-                if (pr >= 0) ctx.link_subtypes.pumps.shutoff[upr] /= ucf_len;
-            }
+            if (ctx.link_subtypes.pumps.startup[upr] > 0.0)
+                ctx.link_subtypes.pumps.startup[upr] /= ucf_len;
+            if (ctx.link_subtypes.pumps.shutoff[upr] > 0.0)
+                ctx.link_subtypes.pumps.shutoff[upr] /= ucf_len;
         }
     }
 
@@ -1011,27 +990,26 @@ void resolve_cross_references(SimulationContext& ctx) {
                     }
                 }
             } else if (lt == LinkType::WEIR || lt == LinkType::OUTLET) {
-                // [WEIRS]/[OUTLETS]: crest_height = absolute crest elevation → convert to depth above n1
-                // offset1/offset2 are not explicit input fields for weirs/outlets, keep at 0
-                if (n1 >= 0 && n1 < n_nodes) {
-                    double rawCrest = ctx.links.crest_height[uj] - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
-                    ctx.links.crest_height[uj] = std::max(0.0, rawCrest);
+                // [WEIRS]/[OUTLETS]: crest_height = absolute crest elevation →
+                // convert to depth above n1, operating on the side-table row.
+                const int wr  = ctx.link_subtypes.weir_row(j);
+                const int olr = (wr < 0) ? ctx.link_subtypes.outlet_row(j) : -1;
+                double* crest = (wr >= 0)
+                    ? &ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)]
+                    : (olr >= 0 ? &ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)]
+                                : nullptr);
+                if (crest && n1 >= 0 && n1 < n_nodes) {
+                    double rawCrest = *crest - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
+                    *crest = std::max(0.0, rawCrest);
                 }
                 // WARNING 10: if crest (absolute) < downstream node invert
-                if (n1 >= 0 && n1 < n_nodes && n2 >= 0 && n2 < n_nodes) {
-                    double crest_abs = ctx.links.crest_height[uj] + ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
+                if (crest && n1 >= 0 && n1 < n_nodes && n2 >= 0 && n2 < n_nodes) {
+                    double crest_abs = *crest + ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
                     double inv2     = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)];
                     if (crest_abs < inv2) {
-                        ctx.links.crest_height[uj] = std::max(0.0, inv2 - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)]);
+                        *crest = std::max(0.0, inv2 - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)]);
                         ctx.warnings.push_back(format_warning(WARN_REGULATOR_CREST_LOW, ctx.link_names.name_of(j)));
                     }
-                }
-                // Sync the converted crest to the weir/outlet side-table row.
-                const int wr = ctx.link_subtypes.weir_row(j);
-                if (wr >= 0) ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] = ctx.links.crest_height[uj];
-                else {
-                    const int olr = ctx.link_subtypes.outlet_row(j);
-                    if (olr >= 0) ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)] = ctx.links.crest_height[uj];
                 }
             }
         }
@@ -1314,10 +1292,10 @@ void resolve_cross_references(SimulationContext& ctx) {
         int n2 = ctx.links.node2[uj];
         if (n1 < 0 || n2 < 0) continue;
 
-        double length = ctx.links.length[uj];
-        if (length <= 0.0) continue;
-        const int cr = ctx.link_subtypes.conduit_row(j);  // ≥0 (length>0 ⇒ conduit)
+        const int cr = ctx.link_subtypes.conduit_row(j);  // ≥0 (CONDUIT)
         const auto ucr = static_cast<std::size_t>(cr);
+        double length = (cr >= 0) ? ctx.link_subtypes.conduits.length[ucr] : 0.0;
+        if (length <= 0.0) continue;
 
         // Convert elevation offsets if ELEV_OFFSET mode
         if (ctx.options.link_offsets == 1) { // ELEV_OFFSET
@@ -1357,7 +1335,6 @@ void resolve_cross_references(SimulationContext& ctx) {
         // Negative slope for adverse gradient
         if (elev1 < elev2) slope = -slope;
 
-        ctx.links.slope[uj] = slope;
         if (cr >= 0) ctx.link_subtypes.conduits.slope[ucr] = slope;
 
         // Reverse conduit orientation for adverse slopes in DW routing
@@ -1372,8 +1349,6 @@ void resolve_cross_references(SimulationContext& ctx) {
 
             std::swap(ctx.links.node1[uj], ctx.links.node2[uj]);
             std::swap(ctx.links.offset1[uj], ctx.links.offset2[uj]);
-            std::swap(ctx.links.loss_inlet[uj], ctx.links.loss_outlet[uj]);
-            ctx.links.slope[uj] = -slope;
             ctx.links.direction[uj] *= -1;
             ctx.links.q0[uj] = -ctx.links.q0[uj];
             if (cr >= 0) {

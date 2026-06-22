@@ -217,9 +217,6 @@ static XSectParams buildXSP_KW(const LinkData& links, std::size_t uk) {
 }
 
 int KWSolver::execute(SimulationContext& ctx, double dt) {
-    // Phase 6 Stage A: ensure the relational link mirror is populated before any
-    // side-table read (no-op in production where build() ran at init).
-    ctx.link_subtypes.ensure_built(ctx.links);
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
     int total_iters = 0;

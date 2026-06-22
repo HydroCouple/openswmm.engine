@@ -226,12 +226,20 @@ CascadeResult analyze_table_impact(const SimulationContext& ctx, int table_idx) 
         }
     }
 
-    // Links
+    // Links — pump curve (PumpData) and outlet TABULAR rating curve (OutletData).
+    {
+        const auto& PD = ctx.link_subtypes.pumps;
+        for (int r = 0; r < PD.count(); ++r)
+            if (PD.curve[static_cast<std::size_t>(r)] == table_idx)
+                result.add(SWMM_REF_LINK, PD.link_idx[static_cast<std::size_t>(r)], "pump_curve", false);
+        const auto& OUT = ctx.link_subtypes.outlets;
+        for (int r = 0; r < OUT.count(); ++r)
+            if (OUT.curve[static_cast<std::size_t>(r)] == table_idx)
+                result.add(SWMM_REF_LINK, OUT.link_idx[static_cast<std::size_t>(r)], "pump_curve", false);
+    }
     const int nl = ctx.n_links();
     for (int i = 0; i < nl; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        if (ctx.links.pump_curve[ui] == table_idx)
-            result.add(SWMM_REF_LINK, i, "pump_curve", false);
         if (ctx.links.xsect_curve[ui] == table_idx)
             result.add(SWMM_REF_LINK, i, "xsect_curve", false);
     }
@@ -508,13 +516,23 @@ CascadeResult delete_table(SimulationContext& ctx, int table_idx) {
         }
     }
 
+    {
+        auto& PD = ctx.link_subtypes.pumps;
+        for (int r = 0; r < PD.count(); ++r)
+            if (PD.curve[static_cast<std::size_t>(r)] == table_idx) {
+                PD.curve[static_cast<std::size_t>(r)] = -1;
+                result.add(SWMM_REF_LINK, PD.link_idx[static_cast<std::size_t>(r)], "pump_curve", false);
+            }
+        auto& OUT = ctx.link_subtypes.outlets;
+        for (int r = 0; r < OUT.count(); ++r)
+            if (OUT.curve[static_cast<std::size_t>(r)] == table_idx) {
+                OUT.curve[static_cast<std::size_t>(r)] = -1;
+                result.add(SWMM_REF_LINK, OUT.link_idx[static_cast<std::size_t>(r)], "pump_curve", false);
+            }
+    }
     const int nl = ctx.n_links();
     for (int i = 0; i < nl; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        if (ctx.links.pump_curve[ui] == table_idx) {
-            ctx.links.pump_curve[ui] = -1;
-            result.add(SWMM_REF_LINK, i, "pump_curve", false);
-        }
         if (ctx.links.xsect_curve[ui] == table_idx) {
             ctx.links.xsect_curve[ui] = -1;
             result.add(SWMM_REF_LINK, i, "xsect_curve", false);
@@ -529,7 +547,8 @@ CascadeResult delete_table(SimulationContext& ctx, int table_idx) {
     renumber_refs(ctx.gages.ts_index, table_idx);
     renumber_refs(ctx.node_subtypes.storages.curve, table_idx);
     renumber_refs(ctx.node_subtypes.dividers.curve, table_idx);
-    renumber_refs(ctx.links.pump_curve, table_idx);
+    renumber_refs(ctx.link_subtypes.pumps.curve, table_idx);
+    renumber_refs(ctx.link_subtypes.outlets.curve, table_idx);
     renumber_refs(ctx.links.xsect_curve, table_idx);
 
     // outfall param stores table index as double for TIDAL/TIMESERIES — renumber

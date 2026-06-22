@@ -131,34 +131,8 @@ XSectParams buildXSectParams(
 // Batch functions (for routing hot loop)
 // ============================================================================
 
-/**
- * @brief Compute velocity for all links in batch.
- *
- * @param links     SoA link data.
- * @param xs_groups Shape-grouped xsect manager (for area computation).
- * @param velocity  [out] Velocity array (indexed by link).
- */
-void computeVelocities(const LinkData& links, double* velocity);
-
-/**
- * @brief Compute Froude numbers for all conduit links.
- *
- * @param links   SoA link data.
- * @param velocity [in] Velocity array.
- * @param froude  [out] Froude number array (indexed by link).
- */
-void computeFroude(const LinkData& links, const double* velocity, double* froude);
-
-/**
- * @brief Compute Manning conveyance for all conduit links.
- *
- * @details Sets links.beta, links.rough_factor, links.q_full for each
- *          conduit link. Must be called once after slope/roughness/xsect
- *          are set (at init time, not each timestep).
- *
- * @param links  SoA link data (modified in place).
- */
-void computeAllConveyance(LinkData& links);
+// Phase 6: computeVelocities/computeFroude/computeAllConveyance removed (dead
+// code; referenced conduit fields now in ConduitData — see LinkSubtypes.hpp).
 
 /**
  * @brief Translate LinkData::XsectShape to batch XSectShape int code.

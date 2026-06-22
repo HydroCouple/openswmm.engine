@@ -428,9 +428,11 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     inv_length_.resize(ul, 0.0);
 
     const auto& links = ctx.links;
+    const auto& CD = ctx.link_subtypes.conduits;
     for (int ci = 0; ci < n_conduits_; ++ci) {
         int j = conduit_idx_[static_cast<std::size_t>(ci)];
         auto uj = static_cast<std::size_t>(j);
+        const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
         XsectShape shape = links.xsect_shape[uj];
 
         is_open_[uj] = (shape == XsectShape::RECT_OPEN ||
@@ -438,12 +440,12 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
                         shape == XsectShape::TRIANGULAR ||
                         shape == XsectShape::PARABOLIC);
         is_force_main_[uj] = (shape == XsectShape::FORCE_MAIN);
-        has_losses_[uj] = (links.loss_inlet[uj] != 0.0 ||
-                           links.loss_outlet[uj] != 0.0 ||
-                           links.loss_avg[uj] != 0.0);
-        barrels_d_[uj] = static_cast<double>(std::max(links.barrels[uj], 1));
-        double len = links.mod_length[uj];
-        if (len <= 0.0) len = links.length[uj];
+        has_losses_[uj] = (CD.loss_inlet[ucr] != 0.0 ||
+                           CD.loss_outlet[ucr] != 0.0 ||
+                           CD.loss_avg[ucr] != 0.0);
+        barrels_d_[uj] = static_cast<double>(std::max(CD.barrels[ucr], 1));
+        double len = CD.mod_length[ucr];
+        if (len <= 0.0) len = CD.length[ucr];
         cached_length_[uj] = len;
         inv_length_[uj] = (len > 0.0) ? 1.0 / len : 0.0;
 
@@ -583,15 +585,15 @@ void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
 
     const auto& links = ctx.links;
     const auto& nodes = ctx.nodes;
-    // NOTE (Phase 6 / Stage A.2): refreshConduitTile runs inside router_.init
-    // (~SWMMEngine 3763), BEFORE link_subtypes.build() (~3926). The side-tables
-    // are still empty here, so the tile must continue to gather from the wide
-    // LinkData arrays. The gather source flips to ConduitData at Stage D, once
-    // build() is hoisted / writers own the side-table.
+    const auto& CD = ctx.link_subtypes.conduits;
+    // Phase 6 Stage D: the side-tables are populated by parse/resolve/Router::init
+    // (which all run before this, during router_.init) so the tile gathers its
+    // conduit invariants directly from ConduitData.
     for (int ci = 0; ci < n_conduits_; ++ci) {
         auto uci = static_cast<std::size_t>(ci);
         int j = conduit_idx_[uci];
         auto uj = static_cast<std::size_t>(j);
+        const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
         auto un1 = static_cast<std::size_t>(n1);
@@ -610,10 +612,10 @@ void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
         tile_w_max_[uci]         = links.xsect_w_max[uj];
         tile_length_[uci]        = cached_length_[uj];
         tile_inv_length_[uci]    = inv_length_[uj];
-        tile_links_length_[uci]  = links.length[uj];
-        tile_beta_[uci]          = links.beta[uj];
-        tile_q_max_[uci]         = links.q_max[uj];
-        tile_rough_factor_[uci]  = links.rough_factor[uj];
+        tile_links_length_[uci]  = CD.length[ucr];
+        tile_beta_[uci]          = CD.beta[ucr];
+        tile_q_max_[uci]         = CD.q_max[ucr];
+        tile_rough_factor_[uci]  = CD.rough_factor[ucr];
         tile_barrels_d_[uci]     = barrels_d_[uj];
         tile_is_open_[uci]       = is_open_[uj];
         tile_is_force_main_[uci] = is_force_main_[uj];
@@ -623,13 +625,13 @@ void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
         tile_shape_[uci]         = links.xsect_shape[uj];
         tile_has_offset_[uci]    = (links.offset1[uj] > 0.0 ||
                                     links.offset2[uj] > 0.0) ? 1 : 0;
-        tile_culvert_code_[uci]  = links.culvert_code[uj];
-        tile_slope_[uci]         = links.slope[uj];
+        tile_culvert_code_[uci]  = CD.culvert_code[ucr];
+        tile_slope_[uci]         = CD.slope[ucr];
         tile_q_limit_[uci]       = links.q_limit[uj];
-        tile_loss_inlet_[uci]    = links.loss_inlet[uj];
-        tile_loss_outlet_[uci]   = links.loss_outlet[uj];
-        tile_loss_avg_[uci]      = links.loss_avg[uj];
-        tile_roughness_[uci]     = links.roughness[uj];
+        tile_loss_inlet_[uci]    = CD.loss_inlet[ucr];
+        tile_loss_outlet_[uci]   = CD.loss_outlet[ucr];
+        tile_loss_avg_[uci]      = CD.loss_avg[ucr];
+        tile_roughness_[uci]     = CD.roughness[ucr];
         tile_has_flap_gate_[uci] = links.has_flap_gate[uj] ? 1 : 0;
         tile_direction_[uci]     = static_cast<int8_t>(links.direction[uj]);
         tile_uj_to_ci_[uj]       = ci;
@@ -660,9 +662,6 @@ void DWSolver::setNumThreads(int n) {
 
 int DWSolver::execute(SimulationContext& ctx, double dt,
                       DWSolver::NonConduitFlowFunc non_conduit_fn) {
-    // Phase 6 Stage A: ensure the relational link mirror is populated before any
-    // side-table read (no-op in production where build() ran at init).
-    ctx.link_subtypes.ensure_built(ctx.links);
     int steps = 0;
     bool converged = false;
 
@@ -2440,8 +2439,6 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
 double DWSolver::getRoutingStep(SimulationContext& ctx,
                                  double fixed_step, double courant_factor) {
     if (courant_factor <= 0.0) return fixed_step;
-    // Phase 6 Stage A: getLinkStep reads ConduitData; ensure the mirror exists.
-    ctx.link_subtypes.ensure_built(ctx.links);
 
     // On first call (no flows yet), use minimum step (matching legacy line 201-204:
     // "if (VariableStep == 0.0) VariableStep = MinRouteStep")

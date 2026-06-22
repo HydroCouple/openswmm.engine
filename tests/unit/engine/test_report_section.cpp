@@ -78,10 +78,11 @@ static void build_small_model(SimulationContext& ctx, int n_subcatch, int n_node
     ctx.links.resize(n_links);
     for (int i = 0; i < n_links; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        ctx.links.type[ui] = openswmm::LinkType::CONDUIT;
+        const auto cr = static_cast<std::size_t>(
+            ctx.link_subtypes.set_link_type(ctx.links, i, openswmm::LinkType::CONDUIT));
         ctx.links.direction[ui] = 1;
-        ctx.links.barrels[ui] = 1;
-        ctx.links.length[ui] = 100.0;
+        ctx.link_subtypes.conduits.barrels[cr] = 1;
+        ctx.link_subtypes.conduits.length[cr] = 100.0;
     }
 }
 

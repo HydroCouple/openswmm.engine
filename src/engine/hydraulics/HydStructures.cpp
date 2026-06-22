@@ -98,7 +98,6 @@ void StructureSolver::init(SimulationContext& ctx) {
                 // runs AFTER build() at engine init, so it is not clobbered);
                 // dual-write the wide slot until Stage D removes it.
                 ctx.link_subtypes.pumps.curve_type[pr] = pumps_.curve_type[uk];
-                ctx.links.pump_curve_type[uj] = pumps_.curve_type[uk];
                 ++ip;
                 break;
             }
@@ -435,7 +434,7 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
         //   cOrif = cDisch * f_area
         //   cWeir = orifice_getWeirCoeff(j, k, h) * f_area
         double y_full = links.xsect_y_full[uj];
-        double cd_val = links.cd[uj];
+        double cd_val = ctx.link_subtypes.orifices.cd[static_cast<size_t>(ctx.link_subtypes.orifice_row(j))];
         double h_open = setting * y_full;
         if (h_open < FUDGE_ORI) {
             links.flow[uj] = 0.0;
@@ -451,7 +450,7 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
         double cOrif = cd_val * f_area;
 
         // Critical depth and weir coefficient (matching legacy orifice_getWeirCoeff)
-        bool is_side = (links.param1[uj] > 0.5); // 1=SIDE, 0=BOTTOM
+        bool is_side = (ctx.link_subtypes.orifices.orifice_type[static_cast<size_t>(ctx.link_subtypes.orifice_row(j))] > 0.5); // 1=SIDE, 0=BOTTOM
         double hCrit, cWeir;
         if (!is_side) {  // BOTTOM orifice
             double aOverL;
@@ -658,7 +657,7 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx,
         double y_full = links.xsect_y_full[uj];
         double setting = links.setting[uj];
         double hcrest = nodes.invert_elev[un1]
-                      + links.crest_height[uj]
+                      + ctx.link_subtypes.weirs.crest_height[static_cast<size_t>(ctx.link_subtypes.weir_row(j))]
                       + (1.0 - setting) * y_full;
 
         double hcrown = hcrest + y_full * setting;
@@ -896,7 +895,7 @@ void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
         // outlet_type encoding in the refactored parser:
         //   0 = FUNCTIONAL_HEAD, 1 = FUNCTIONAL_DEPTH,
         //   2 = TABULAR_HEAD,    3 = TABULAR_DEPTH
-        int outlet_type = static_cast<int>(links.param1[uj]);
+        int outlet_type = static_cast<int>(ctx.link_subtypes.outlets.outlet_type[static_cast<size_t>(ctx.link_subtypes.outlet_row(j))]);
         bool depth_based = (outlet_type == 1 || outlet_type == 3);
 
         double head = depth_based

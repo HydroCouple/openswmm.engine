@@ -354,91 +354,25 @@ struct LinkSubtypes {
     std::vector<int> subtype_row;
 
     /**
-     * @brief Stage-A scaffold: (re)build all side-tables from the wide LinkData
-     *        subtype arrays. TEMPORARY — during the cutover the wide arrays
-     *        remain authoritative and this mirrors them so repointed readers see
-     *        identical data (parity-safe). Removed at Stage D when the writers
-     *        become side-table-authoritative and the wide arrays are deleted.
+     * @brief Create a fresh default subtype row for every link, keyed by
+     *        `links.type[i]`, and rebuild the reverse index. Used by unit-test
+     *        fixtures that hand-build a `SimulationContext` (set link types +
+     *        write subtype config directly into these tables). Production never
+     *        needs it — the parse/resolve/edit paths create rows as they go.
      */
-    void build(const LinkData& L) {
+    void build_default_rows(const LinkData& L) {
         clear();
         const int n = L.count();
-        // Size-guarded copy: a hand-built SimulationContext (unit-test fixture)
-        // may leave some init-derived wide arrays (slope/beta/q_full/…) unsized;
-        // fall back to the add_default seed rather than reading out of bounds. A
-        // production ctx has every array sized, so this is a no-op there.
-        const auto cp = [](const auto& v, std::size_t u, auto& dst) {
-            if (u < v.size()) dst = static_cast<std::decay_t<decltype(dst)>>(v[u]);
-        };
         for (int i = 0; i < n; ++i) {
-            const auto u = static_cast<std::size_t>(i);
-            switch (L.type[u]) {
-                case LinkType::CONDUIT: {
-                    const auto r = static_cast<std::size_t>(conduits.add_default(i));
-                    cp(L.roughness, u, conduits.roughness[r]);
-                    cp(L.length, u, conduits.length[r]);
-                    cp(L.slope, u, conduits.slope[r]);
-                    cp(L.mod_length, u, conduits.mod_length[r]);
-                    cp(L.barrels, u, conduits.barrels[r]);
-                    cp(L.beta, u, conduits.beta[r]);
-                    cp(L.rough_factor, u, conduits.rough_factor[r]);
-                    cp(L.q_full, u, conduits.q_full[r]);
-                    cp(L.q_max, u, conduits.q_max[r]);
-                    cp(L.loss_inlet, u, conduits.loss_inlet[r]);
-                    cp(L.loss_outlet, u, conduits.loss_outlet[r]);
-                    cp(L.loss_avg, u, conduits.loss_avg[r]);
-                    cp(L.seep_rate, u, conduits.seep_rate[r]);
-                    cp(L.culvert_code, u, conduits.culvert_code[r]);
-                } break;
-                case LinkType::PUMP: {
-                    const auto r = static_cast<std::size_t>(pumps.add_default(i));
-                    cp(L.pump_curve, u, pumps.curve[r]);
-                    if (u < L.pump_init_state.size())
-                        pumps.init_state[r] = L.pump_init_state[u] ? uint8_t{1} : uint8_t{0};
-                    cp(L.pump_startup, u, pumps.startup[r]);
-                    cp(L.pump_shutoff, u, pumps.shutoff[r]);
-                    cp(L.pump_curve_type, u, pumps.curve_type[r]);
-                } break;
-                case LinkType::ORIFICE: {
-                    const auto r = static_cast<std::size_t>(orifices.add_default(i));
-                    cp(L.param1, u, orifices.orifice_type[r]);
-                    cp(L.cd, u, orifices.cd[r]);
-                    cp(L.orate, u, orifices.orate[r]);
-                } break;
-                case LinkType::WEIR: {
-                    const auto r = static_cast<std::size_t>(weirs.add_default(i));
-                    cp(L.param1, u, weirs.weir_type[r]);
-                    cp(L.cd, u, weirs.cd[r]);
-                    cp(L.param2, u, weirs.end_contractions[r]);
-                    cp(L.crest_height, u, weirs.crest_height[r]);
-                } break;
-                case LinkType::OUTLET: {
-                    const auto r = static_cast<std::size_t>(outlets.add_default(i));
-                    cp(L.param1, u, outlets.outlet_type[r]);
-                    cp(L.crest_height, u, outlets.crest_height[r]);
-                    cp(L.cd, u, outlets.coeff[r]);
-                    cp(L.param2, u, outlets.expon[r]);
-                    cp(L.pump_curve, u, outlets.curve[r]);   // TABULAR rating curve index
-                } break;
+            switch (L.type[static_cast<std::size_t>(i)]) {
+                case LinkType::CONDUIT: conduits.add_default(i); break;
+                case LinkType::PUMP:    pumps.add_default(i);    break;
+                case LinkType::ORIFICE: orifices.add_default(i); break;
+                case LinkType::WEIR:    weirs.add_default(i);    break;
+                case LinkType::OUTLET:  outlets.add_default(i);  break;
             }
         }
         rebuild_index(n);
-    }
-
-    /**
-     * @brief Stage-A scaffold: (re)build the mirror only if it is stale, i.e.
-     *        the reverse-index size no longer matches the base link count.
-     * @details Cheap O(1) guard; the O(n) @ref build runs only when needed.
-     *          In production @ref build already ran at engine init so this is a
-     *          no-op. It exists so unit tests / callers that drive a solver on a
-     *          hand-built `SimulationContext` (without the engine init that calls
-     *          @ref build) still see a populated mirror before any side-table
-     *          read. TEMPORARY — removed together with @ref build at Stage D,
-     *          once the side-tables are written authoritatively at parse/edit.
-     */
-    void ensure_built(const LinkData& L) {
-        if (subtype_row.size() != static_cast<std::size_t>(L.count()))
-            build(L);
     }
 
     void clear() noexcept {

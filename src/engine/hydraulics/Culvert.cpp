@@ -198,7 +198,6 @@ double getInflow(double q_proposed, double head, double y_full,
 
 void batchComputeInletControl(const int* link_indices, int n,
                                SimulationContext& ctx) {
-    ctx.link_subtypes.ensure_built(ctx.links);  // Phase 6 Stage A: mirror guard
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 

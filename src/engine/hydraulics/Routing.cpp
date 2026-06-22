@@ -140,36 +140,30 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
         auto& CD = ctx.link_subtypes.conduits;  // Phase 6 Stage B: mod_length authority
         if (lengthening_step <= 0.0) {
             // Legacy: skip Courant lengthening when LENGTHENING_STEP not set
-            for (int j = 0; j < n_links; ++j) {
-                const auto luj = static_cast<std::size_t>(j);
-                ctx.links.mod_length[luj] = ctx.links.length[luj];
-                const int cr = ctx.link_subtypes.conduit_row(j);
-                if (cr >= 0) CD.mod_length[static_cast<std::size_t>(cr)] = ctx.links.length[luj];
+            for (int r = 0; r < CD.count(); ++r) {
+                const auto ur = static_cast<std::size_t>(r);
+                CD.mod_length[ur] = CD.length[ur];
             }
         } else {
             double tStep = std::min(route_step, lengthening_step);
 
             for (int j = 0; j < n_links; ++j) {
                 auto uj = static_cast<std::size_t>(j);
-                if (ctx.links.type[uj] != LinkType::CONDUIT) {
-                    ctx.links.mod_length[uj] = ctx.links.length[uj];
-                    continue;
-                }
+                if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
                 const int cr = ctx.link_subtypes.conduit_row(j);  // ≥0 (conduit)
                 const auto ucr = static_cast<std::size_t>(cr);
 
-                double L = ctx.links.length[uj];
+                double L = CD.length[ucr];
                 if (L <= 0.0) {
-                    ctx.links.mod_length[uj] = L;
-                    if (cr >= 0) CD.mod_length[ucr] = L;
+                    CD.mod_length[ucr] = L;
                     continue;
                 }
 
                 double yFull = ctx.links.xsect_y_full[uj];
                 double aFull = ctx.links.xsect_a_full[uj];
                 double sFull = ctx.links.xsect_s_full[uj];
-                double n_rough = ctx.links.roughness[uj];
-                double slope_abs = std::fabs(ctx.links.slope[uj]);
+                double n_rough = CD.roughness[ucr];
+                double slope_abs = std::fabs(CD.slope[ucr]);
 
                 // For open channels, use hydraulic depth (aFull / top-width)
                 // rather than geometric full depth for the wave-speed term.
@@ -188,11 +182,9 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
                     double vFull = PHI / n_rough * sFull * std::sqrt(slope_abs) / aFull;
                     double ratio = (std::sqrt(GRAVITY * yFull) + vFull) * tStep / L;
                     double factor = (ratio > 1.0) ? ratio : 1.0;
-                    ctx.links.mod_length[uj] = factor * L;
-                    if (cr >= 0) CD.mod_length[ucr] = factor * L;
+                    CD.mod_length[ucr] = factor * L;
                 } else {
-                    ctx.links.mod_length[uj] = L;
-                    if (cr >= 0) CD.mod_length[ucr] = L;
+                    CD.mod_length[ucr] = L;
                 }
             }
         }
@@ -211,26 +203,20 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             const int cr = ctx.link_subtypes.conduit_row(j);
             const auto ucr = static_cast<std::size_t>(cr);
 
-            double L = ctx.links.length[uj];
-            double modL = ctx.links.mod_length[uj];
+            double L = CD.length[ucr];
+            double modL = CD.mod_length[ucr];
             if (L <= 0.0 || modL <= L) continue;  // not lengthened
 
             double factor = modL / L;
-            double slope_abs = std::fabs(ctx.links.slope[uj]) / factor;
-            double roughness = ctx.links.roughness[uj] / std::sqrt(factor);
+            double slope_abs = std::fabs(CD.slope[ucr]) / factor;
+            double roughness = CD.roughness[ucr] / std::sqrt(factor);
 
             // Update conveyance with adjusted slope and roughness
             double beta = PHI * std::sqrt(slope_abs) / roughness;
-            ctx.links.beta[uj] = beta;
-            ctx.links.rough_factor[uj] = GRAVITY * (roughness / PHI) * (roughness / PHI);
-            ctx.links.q_full[uj] = ctx.links.xsect_s_full[uj] * beta;
-            ctx.links.q_max[uj]  = ctx.links.xsect_s_max[uj] * beta;
-            if (cr >= 0) {
-                CD.beta[ucr]         = beta;
-                CD.rough_factor[ucr] = ctx.links.rough_factor[uj];
-                CD.q_full[ucr]       = ctx.links.q_full[uj];
-                CD.q_max[ucr]        = ctx.links.q_max[uj];
-            }
+            CD.beta[ucr]         = beta;
+            CD.rough_factor[ucr] = GRAVITY * (roughness / PHI) * (roughness / PHI);
+            CD.q_full[ucr]       = ctx.links.xsect_s_full[uj] * beta;
+            CD.q_max[ucr]        = ctx.links.xsect_s_max[uj] * beta;
         }
     }
 
@@ -501,7 +487,6 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
 // ============================================================================
 
 void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap_rate) {
-    ctx.link_subtypes.ensure_built(ctx.links);  // Phase 6 Stage A: mirror guard
     auto& links = ctx.links;
     int n = ctx.n_links();
 
@@ -601,7 +586,6 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
 // ============================================================================
 
 int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
-    ctx.link_subtypes.ensure_built(ctx.links);  // Phase 6 Stage A: mirror guard
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 

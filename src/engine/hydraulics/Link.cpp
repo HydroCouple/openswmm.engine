@@ -184,87 +184,9 @@ XSectParams buildXSectParams(
     return xs;
 }
 
-// ============================================================================
-// Batch: computeVelocities
-// ============================================================================
-
-void computeVelocities(const LinkData& links, double* velocity) {
-    int n = links.count();
-    for (int i = 0; i < n; ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (links.type[ui] != LinkType::CONDUIT) {
-            velocity[i] = 0.0;
-            continue;
-        }
-        if (links.depth[ui] <= 0.01) {
-            velocity[i] = 0.0;
-            continue;
-        }
-
-        // Build per-element XSectParams from SoA
-        XSectParams xs;
-        xs.type   = links.xsect_batch_shape[ui];
-        xs.y_full = links.xsect_y_full[ui];
-        xs.a_full = links.xsect_a_full[ui];
-        xs.w_max  = links.xsect_w_max[ui];
-
-        int b = links.barrels[ui];
-        double q = links.flow[ui] / static_cast<double>(std::max(b, 1));
-        double area = xsect::getAofY(xs, links.depth[ui]);
-
-        velocity[i] = (area > constants::FUDGE) ? q / area : 0.0;
-    }
-}
-
-// ============================================================================
-// Batch: computeFroude
-// ============================================================================
-
-void computeFroude(const LinkData& links, const double* velocity, double* froude) {
-    int n = links.count();
-    for (int i = 0; i < n; ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (links.type[ui] != LinkType::CONDUIT) {
-            froude[i] = 0.0;
-            continue;
-        }
-
-        double y = links.depth[ui];
-        if (y <= constants::FUDGE) {
-            froude[i] = 0.0;
-            continue;
-        }
-
-        XSectParams xs;
-        xs.type   = links.xsect_batch_shape[ui];
-        xs.y_full = links.xsect_y_full[ui];
-        xs.a_full = links.xsect_a_full[ui];
-        xs.w_max  = links.xsect_w_max[ui];
-
-        froude[i] = getFroude(xs, velocity[i], y);
-    }
-}
-
-// ============================================================================
-// Batch: computeAllConveyance
-// ============================================================================
-
-void computeAllConveyance(LinkData& links) {
-    int n = links.count();
-    for (int i = 0; i < n; ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (links.type[ui] != LinkType::CONDUIT) continue;
-
-        computeConveyance(
-            links.roughness[ui],
-            links.slope[ui],
-            links.xsect_s_full[ui],
-            links.beta[ui],
-            links.rough_factor[ui],
-            links.q_full[ui]
-        );
-    }
-}
+// Phase 6: the dead batch helpers computeVelocities/computeFroude/
+// computeAllConveyance were removed — they had no callers repo-wide and
+// referenced conduit fields now owned by ConduitData (LinkSubtypes.hpp).
 
 } // namespace link
 } // namespace openswmm

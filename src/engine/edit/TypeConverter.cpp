@@ -111,37 +111,24 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
 
 static void clear_conduit_fields(LinkData& ld, std::size_t ui,
                                   std::vector<std::string>& cleared) {
+    // Phase 6: conduit config lives in ConduitData and is dropped when
+    // set_link_type erases the old row. Only the shared base cross-section /
+    // flap-gate fields are reset here.
     ld.xsect_shape[ui]      = XsectShape::CIRCULAR;
     ld.xsect_y_full[ui]     = 0.0;
     ld.xsect_a_full[ui]     = 0.0;
     ld.xsect_w_max[ui]      = 0.0;
     ld.xsect_curve[ui]      = -1;
-    ld.roughness[ui]        = 0.0;
-    ld.length[ui]           = 0.0;
-    ld.slope[ui]            = 0.0;
-    ld.mod_length[ui]       = 0.0;
-    ld.barrels[ui]          = 1;
-    ld.beta[ui]             = 0.0;
-    ld.rough_factor[ui]     = 0.0;
-    ld.q_full[ui]           = 0.0;
     ld.xsect_r_full[ui]     = 0.0;
     ld.xsect_s_full[ui]     = 0.0;
     ld.xsect_s_max[ui]      = 0.0;
-    ld.q_max[ui]            = 0.0;
     ld.xsect_y_bot[ui]      = 0.0;
     ld.xsect_a_bot[ui]      = 0.0;
     ld.xsect_s_bot[ui]      = 0.0;
     ld.xsect_r_bot[ui]      = 0.0;
     ld.xsect_yw_max[ui]     = 0.0;
     ld.xsect_batch_shape[ui]= 0;
-    ld.loss_inlet[ui]       = 0.0;
-    ld.loss_outlet[ui]      = 0.0;
-    ld.loss_avg[ui]         = 0.0;
     ld.has_flap_gate[ui]    = 0;
-    ld.seep_rate[ui]        = 0.0;
-    ld.evap_loss_rate[ui]   = 0.0;
-    ld.seep_loss_rate[ui]   = 0.0;
-    ld.culvert_code[ui]     = 0;
     cleared.insert(cleared.end(), {
         "xsect_shape", "xsect_y_full", "roughness", "length", "slope",
         "barrels", "loss_inlet", "loss_outlet", "loss_avg", "has_flap_gate", "seep_rate"
@@ -150,11 +137,8 @@ static void clear_conduit_fields(LinkData& ld, std::size_t ui,
 
 static void clear_pump_fields(LinkData& ld, std::size_t ui,
                                std::vector<std::string>& cleared) {
-    ld.pump_curve[ui]      = -1;
-    ld.pump_init_state[ui] = false;
-    ld.pump_startup[ui]    = 0.0;
-    ld.pump_shutoff[ui]    = 0.0;
-    ld.pump_curve_type[ui] = -1;
+    // Phase 6: pump config lives in PumpData (dropped by set_link_type); only
+    // the shared base pump_curve_name is reset here.
     ld.pump_curve_name[ui] = {};
     cleared.insert(cleared.end(), {
         "pump_curve", "pump_init_state", "pump_startup", "pump_shutoff"
@@ -163,11 +147,9 @@ static void clear_pump_fields(LinkData& ld, std::size_t ui,
 
 static void clear_structure_fields(LinkData& ld, std::size_t ui,
                                     std::vector<std::string>& cleared) {
-    ld.crest_height[ui] = 0.0;
-    ld.cd[ui]           = 0.0;
-    ld.param1[ui]       = 0.0;
-    ld.param2[ui]       = 0.0;
-    ld.orate[ui]        = 0.0;
+    // Phase 6: orifice/weir/outlet config lives in the side-tables (dropped by
+    // set_link_type) — name-list only.
+    (void)ld; (void)ui;
     cleared.insert(cleared.end(), {"crest_height", "cd", "param1", "param2", "orate"});
 }
 
@@ -180,16 +162,20 @@ ConversionResult convert_link(SimulationContext& ctx, int idx, LinkType new_type
 
     // Clear old type-specific fields
     switch (old_type) {
-        case LinkType::CONDUIT:
+        case LinkType::CONDUIT: {
             if (ld.xsect_shape[ui] == XsectShape::IRREGULAR ||
                 ld.xsect_shape[ui] == XsectShape::CUSTOM)
                 result.warnings.push_back("Transect/shape-curve reference cleared");
-            if (ld.barrels[ui] > 1)
+            const int ccr = ctx.link_subtypes.conduit_row(idx);
+            const int cbarrels = (ccr >= 0)
+                ? ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(ccr)] : 1;
+            if (cbarrels > 1)
                 result.warnings.push_back(
                     "Multi-barrel property (barrels=" +
-                    std::to_string(ld.barrels[ui]) + ") discarded");
+                    std::to_string(cbarrels) + ") discarded");
             clear_conduit_fields(ld, ui, result.cleared_fields);
             break;
+        }
         case LinkType::PUMP:
             result.warnings.push_back(
                 "Pump curve reference cleared; set conduit length after conversion");
@@ -203,54 +189,41 @@ ConversionResult convert_link(SimulationContext& ctx, int idx, LinkType new_type
     }
 
     // Move the subtype row and set ld.type[ui] (single source of truth): erases
-    // the old subtype row and inserts a fresh default row for the new subtype.
-    // Phase 6 Stage A.3: the wide arrays below are dual-written and remain
-    // authoritative until Stage D, so the temporary build() mirror reproduces
-    // identical values if the model is later initialized.
+    // the old subtype row and inserts a fresh default (add_default-seeded) row
+    // for the new subtype.
     ctx.link_subtypes.set_link_type(ld, idx, new_type);
 
-    // Apply new type defaults (wide + freshly-created side-table row). Only
-    // values that DIFFER from the side-table add_default seeds need an explicit
-    // side-table write; the rest already match the seed.
+    // Apply new-type defaults to the freshly-created side-table row. Only values
+    // that DIFFER from the add_default seeds need an explicit write; the rest
+    // (barrels=1, pump curve/init/startup/shutoff/type, orifice/weir type=0)
+    // already match. xsect_shape / xsect_y_full stay on base LinkData.
     switch (new_type) {
         case LinkType::CONDUIT: {
-            ld.roughness[ui]    = 0.013;
             ld.xsect_shape[ui]  = XsectShape::CIRCULAR;
             ld.xsect_y_full[ui] = 1.0;
-            ld.barrels[ui]      = 1;
             const int cr = ctx.link_subtypes.conduit_row(idx);
-            if (cr >= 0) ctx.link_subtypes.conduits.roughness[static_cast<std::size_t>(cr)] = 0.013;
-            if (ld.length[ui] <= 0.0)
+            if (cr >= 0) ctx.link_subtypes.conduits.roughness[static_cast<std::size_t>(cr)] = 0.013;  // seed 0.01
+            if (cr < 0 || ctx.link_subtypes.conduits.length[static_cast<std::size_t>(cr)] <= 0.0)
                 result.warnings.push_back("Conduit length is 0; set a valid length before initializing");
             break;
         }
         case LinkType::PUMP:
-            ld.pump_curve[ui]      = -1;
-            ld.pump_init_state[ui] = false;
-            ld.pump_startup[ui]    = 0.0;
-            ld.pump_shutoff[ui]    = 0.0;
-            ld.pump_curve_type[ui] = -1;
-            // Side-table pump row already seeded with these defaults by add_default.
+            // PumpData defaults already seeded by add_default.
             result.warnings.push_back("Pump curve is unset (-1); assign a pump curve before initializing");
             break;
         case LinkType::ORIFICE: {
-            ld.cd[ui]     = 0.65;
-            ld.param1[ui] = 0.0;  // BOTTOM type
             const int orr = ctx.link_subtypes.orifice_row(idx);
-            if (orr >= 0) ctx.link_subtypes.orifices.cd[static_cast<std::size_t>(orr)] = 0.65;
+            if (orr >= 0) ctx.link_subtypes.orifices.cd[static_cast<std::size_t>(orr)] = 0.65;  // seed 0.0
             break;
         }
         case LinkType::WEIR: {
-            ld.cd[ui]     = 3.33;  // standard transverse weir (US units)
-            ld.param1[ui] = 0.0;   // TRANSVERSE
             const int wr = ctx.link_subtypes.weir_row(idx);
-            if (wr >= 0) ctx.link_subtypes.weirs.cd[static_cast<std::size_t>(wr)] = 3.33;
+            if (wr >= 0) ctx.link_subtypes.weirs.cd[static_cast<std::size_t>(wr)] = 3.33;  // seed 0.0
             break;
         }
         case LinkType::OUTLET: {
-            ld.cd[ui] = 1.0;
             const int olr = ctx.link_subtypes.outlet_row(idx);
-            if (olr >= 0) ctx.link_subtypes.outlets.coeff[static_cast<std::size_t>(olr)] = 1.0;
+            if (olr >= 0) ctx.link_subtypes.outlets.coeff[static_cast<std::size_t>(olr)] = 1.0;  // seed 0.0
             break;
         }
     }

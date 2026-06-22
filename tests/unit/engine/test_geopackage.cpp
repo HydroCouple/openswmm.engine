@@ -140,37 +140,26 @@ protected:
             ctx.links.xsect_geom3.resize(n);
             ctx.links.xsect_geom4.resize(n);
             ctx.links.xsect_curve.resize(n);
-            ctx.links.roughness.resize(n);
-            ctx.links.length.resize(n);
-            ctx.links.barrels.resize(n);
-            ctx.links.culvert_code.resize(n);
-            ctx.links.loss_inlet.resize(n);
-            ctx.links.loss_outlet.resize(n);
-            ctx.links.loss_avg.resize(n);
             ctx.links.has_flap_gate.resize(n);
-            ctx.links.seep_rate.resize(n);
-            ctx.links.pump_curve.resize(n);
             ctx.links.pump_curve_name.resize(n);
-            ctx.links.pump_init_state.resize(n);
-            ctx.links.pump_startup.resize(n);
-            ctx.links.pump_shutoff.resize(n);
-            ctx.links.crest_height.resize(n);
-            ctx.links.cd.resize(n);
             ctx.links.xsect_y_bot.resize(n);
             ctx.spatial.link_vertices_x.resize(n);
             ctx.spatial.link_vertices_y.resize(n);
             ctx.spatial.link_x.resize(n);
             ctx.spatial.link_y.resize(n);
 
-            ctx.links.type[idx] = LinkType::CONDUIT;
+            // Phase 6: subtype config lives in the relational side-tables.
+            const auto cr = static_cast<std::size_t>(
+                ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::CONDUIT));
+            auto& C = ctx.link_subtypes.conduits;
             ctx.links.node1[idx] = i;
             ctx.links.node2[idx] = i + 1;
             ctx.links.xsect_shape[idx] = XsectShape::CIRCULAR;
             ctx.links.xsect_y_full[idx] = 2.0;
             ctx.links.xsect_geom1[idx] = 2.0;   // raw [XSECTIONS] geom1 (diameter), persisted by the gpkg
-            ctx.links.roughness[idx] = 0.013;
-            ctx.links.length[idx] = 400.0;
-            ctx.links.barrels[idx] = 1;
+            C.roughness[cr] = 0.013;
+            C.length[cr] = 400.0;
+            C.barrels[cr] = 1;
             ctx.links.xsect_curve[idx] = -1;
         }
 
@@ -311,10 +300,6 @@ protected:
                 ctx.subcatches.tags[u] = "residential";
             }
         }
-
-        // Phase 6: this fixture sets the wide LinkData arrays directly (no parse/
-        // init), so populate the relational link side-tables the writer now reads.
-        ctx.link_subtypes.ensure_built(ctx.links);
 
         return ctx;
     }
@@ -542,8 +527,9 @@ TEST_F(GeoPackageTest, ConduitsRoundTrip) {
     EXPECT_EQ(ctx_in.links.type[c1], LinkType::CONDUIT);
     EXPECT_EQ(ctx_in.links.xsect_shape[c1], XsectShape::CIRCULAR);
     EXPECT_DOUBLE_EQ(ctx_in.links.xsect_y_full[c1], 2.0);
-    EXPECT_DOUBLE_EQ(ctx_in.links.roughness[c1], 0.013);
-    EXPECT_DOUBLE_EQ(ctx_in.links.length[c1], 400.0);
+    const auto ccr = static_cast<std::size_t>(ctx_in.link_subtypes.conduit_row(c1));
+    EXPECT_DOUBLE_EQ(ctx_in.link_subtypes.conduits.roughness[ccr], 0.013);
+    EXPECT_DOUBLE_EQ(ctx_in.link_subtypes.conduits.length[ccr], 400.0);
 }
 
 TEST_F(GeoPackageTest, LinkConnectivity) {
@@ -1050,34 +1036,22 @@ protected:
             ctx.links.xsect_a_full.resize(idx + 1);
             ctx.links.xsect_w_max.resize(idx + 1);
             ctx.links.xsect_curve.resize(idx + 1, -1);
-            ctx.links.roughness.resize(idx + 1);
-            ctx.links.length.resize(idx + 1);
-            ctx.links.barrels.resize(idx + 1, 1);
-            ctx.links.culvert_code.resize(idx + 1);
-            ctx.links.loss_inlet.resize(idx + 1);
-            ctx.links.loss_outlet.resize(idx + 1);
-            ctx.links.loss_avg.resize(idx + 1);
             ctx.links.has_flap_gate.resize(idx + 1);
-            ctx.links.seep_rate.resize(idx + 1);
-            ctx.links.pump_curve.resize(idx + 1, -1);
             ctx.links.pump_curve_name.resize(idx + 1);
-            ctx.links.pump_init_state.resize(idx + 1);
-            ctx.links.pump_startup.resize(idx + 1);
-            ctx.links.pump_shutoff.resize(idx + 1);
-            ctx.links.crest_height.resize(idx + 1);
-            ctx.links.cd.resize(idx + 1);
             ctx.links.xsect_y_bot.resize(idx + 1);
             ctx.spatial.link_vertices_x.resize(idx + 1);
             ctx.spatial.link_vertices_y.resize(idx + 1);
             ctx.spatial.link_x.resize(idx + 1);
             ctx.spatial.link_y.resize(idx + 1);
-            ctx.links.type[idx] = LinkType::CONDUIT;
+            const auto cr = static_cast<std::size_t>(
+                ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::CONDUIT));
+            auto& C = ctx.link_subtypes.conduits;
             ctx.links.node1[idx] = 0;
             ctx.links.node2[idx] = 1;
             ctx.links.xsect_shape[idx] = XsectShape::CIRCULAR;
             ctx.links.xsect_y_full[idx] = 2.0;
-            ctx.links.roughness[idx] = 0.013;
-            ctx.links.length[idx] = 400.0;
+            C.roughness[cr] = 0.013;
+            C.length[cr] = 400.0;
         }
 
         return ctx;

@@ -1483,21 +1483,23 @@ SimulationContext buildSteadyCtx(double lat_inflow_cfs) {
     const int NL = 1;
     ctx.links.resize(NL);
     auto ul = std::size_t{0};
-    ctx.links.type[ul]             = LinkType::CONDUIT;
+    const auto cr = static_cast<std::size_t>(
+        ctx.link_subtypes.set_link_type(ctx.links, 0, LinkType::CONDUIT));
+    auto& C = ctx.link_subtypes.conduits;
     ctx.links.node1[ul]            = 0;
     ctx.links.node2[ul]            = 1;
-    ctx.links.barrels[ul]          = 1;
+    C.barrels[cr]                  = 1;
     ctx.links.xsect_shape[ul]      = XsectShape::CIRCULAR;
     ctx.links.xsect_y_full[ul]     = 1.0;   // 1 ft diameter
     ctx.links.xsect_w_max[ul]      = 1.0;
-    ctx.links.length[ul]           = 100.0; // ft
-    ctx.links.roughness[ul]        = 0.015; // Manning n
-    ctx.links.slope[ul]            = 0.005; // ft/ft
+    C.length[cr]                   = 100.0; // ft
+    C.roughness[cr]                = 0.015; // Manning n
+    C.slope[cr]                    = 0.005; // ft/ft
     ctx.links.offset1[ul]          = 0.0;
     ctx.links.offset2[ul]          = 0.0;
-    ctx.links.seep_rate[ul]        = 0.0;
-    ctx.links.evap_loss_rate[ul]   = 0.0;
-    ctx.links.seep_loss_rate[ul]   = 0.0;
+    C.seep_rate[cr]                = 0.0;
+    C.evap_loss_rate[cr]           = 0.0;
+    C.seep_loss_rate[cr]           = 0.0;
     ctx.links.old_flow[ul]         = 99.0;  // sentinel: must not be copied
 
     // Pre-compute xsect properties (the Router::init does this, but we do it
@@ -1516,12 +1518,12 @@ SimulationContext buildSteadyCtx(double lat_inflow_cfs) {
     ctx.links.xsect_r_bot[ul]  = xs.r_bot;
 
     using constants::PHI;
-    double beta = PHI * std::sqrt(ctx.links.slope[ul]) / ctx.links.roughness[ul];
-    ctx.links.beta[ul]         = beta;
-    ctx.links.q_full[ul]       = xs.s_full * beta;
-    ctx.links.q_max[ul]        = xs.s_max  * beta;
-    ctx.links.mod_length[ul]   = ctx.links.length[ul];
-    ctx.links.rough_factor[ul] = 0.0;
+    double beta = PHI * std::sqrt(C.slope[cr]) / C.roughness[cr];
+    C.beta[cr]         = beta;
+    C.q_full[cr]       = xs.s_full * beta;
+    C.q_max[cr]        = xs.s_max  * beta;
+    C.mod_length[cr]   = C.length[cr];
+    C.rough_factor[cr] = 0.0;
 
     return ctx;
 }
@@ -1551,7 +1553,7 @@ TEST(SteadyFlowRouting, FlowEqualsManningSolution) {
     xs.type = static_cast<int>(XSectShape::CIRCULAR);
     double p[4] = {1.0, 0.0, 0.0, 0.0};
     xsect::setParams(xs, xs.type, p, 1.0);
-    double beta    = ctx.links.beta[ul];
+    double beta    = ctx.link_subtypes.conduits.beta[static_cast<std::size_t>(ctx.link_subtypes.conduit_row(static_cast<int>(ul)))];
     double s       = Q_in / beta;
     double a_exp   = xsect::getAofS(xs, s);
     double y_exp   = xsect::getYofA(xs, a_exp);
@@ -1569,7 +1571,7 @@ TEST(SteadyFlowRouting, FlowCappedAtQFull) {
     router.init(ctx, RouteModel::STEADY);
     router.step(ctx, 300.0);
 
-    double q_full = ctx.links.q_full[ul];
+    double q_full = ctx.link_subtypes.conduits.q_full[static_cast<std::size_t>(ctx.link_subtypes.conduit_row(static_cast<int>(ul)))];
     EXPECT_NEAR(ctx.links.flow[ul], q_full, q_full * 1e-6)
         << "Flow exceeding q_full must be capped";
     EXPECT_NEAR(ctx.links.depth[ul], ctx.links.xsect_y_full[ul], 1e-6)
@@ -1748,7 +1750,8 @@ TEST(TopoSortCycle44, RouterHasCycleFlagSet) {
     ctx.link_names.add("l0"); ctx.link_names.add("l1");
     ctx.nodes.resize(2);
     ctx.links.resize(2);
-    ctx.links.type[0] = ctx.links.type[1] = openswmm::LinkType::CONDUIT;
+    ctx.link_subtypes.set_link_type(ctx.links, 0, openswmm::LinkType::CONDUIT);
+    ctx.link_subtypes.set_link_type(ctx.links, 1, openswmm::LinkType::CONDUIT);
     ctx.links.node1[0] = 0; ctx.links.node2[0] = 1;
     ctx.links.node1[1] = 1; ctx.links.node2[1] = 0;  // forms cycle
     ctx.links.xsect_shape[0] = ctx.links.xsect_shape[1] = openswmm::XsectShape::CIRCULAR;
@@ -2415,12 +2418,16 @@ TEST(LinkFullState57, SteadyFlowPartialPipe) {
     EXPECT_EQ(fs, 0);
 }
 
-// LinkData resize initialises full_state to 0
+// ConduitData rows initialise full_state to 0 (Phase 6: moved off LinkData)
 TEST(LinkFullState57, ResizeInitialisesZero) {
     LinkData ld;
     ld.resize(5);
     for (int i = 0; i < 5; ++i)
-        EXPECT_EQ(ld.full_state[static_cast<std::size_t>(i)], 0);
+        ld.type[static_cast<std::size_t>(i)] = LinkType::CONDUIT;
+    LinkSubtypes ls;
+    ls.build_default_rows(ld);
+    for (int i = 0; i < 5; ++i)
+        EXPECT_EQ(ls.conduits.full_state[static_cast<std::size_t>(ls.conduit_row(i))], 0);
 }
 
 // Stat tracking: up_full time accumulates when bit 0 is set
