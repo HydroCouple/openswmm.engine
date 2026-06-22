@@ -31,7 +31,8 @@ tolerances:
   basis: >
     grnampt_getF2 Newton solver converges to |step| < 1e-5 ft per call.
     Implicit G-A is contractive: per-step errors damp rather than accumulate.
-    1e-3 ft provides three decades of margin above the Newton tolerance.
+    With full-precision reference times the solver matches F to ~5e-7 ft, so
+    1e-3 ft keeps ~100x (two decades) of margin above the Newton tolerance.
 
 attribution:
   references:

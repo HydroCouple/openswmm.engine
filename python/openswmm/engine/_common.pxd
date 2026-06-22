@@ -484,6 +484,20 @@ cdef extern from "openswmm_subcatchments.h":
     cdef int swmm_subcatch_rename(SWMM_Engine e, int idx, const char* newId)
     cdef int swmm_subcatch_get_tag(SWMM_Engine e, int idx, char* buf, int buflen)
     cdef int swmm_subcatch_set_tag(SWMM_Engine e, int idx, const char* tag)
+    # Groundwater / aquifer assignment + infiltration-model setter
+    cdef int swmm_subcatch_get_aquifer(SWMM_Engine e, int idx, int* aquifer_idx)
+    cdef int swmm_subcatch_set_aquifer(SWMM_Engine e, int idx, int aquifer_idx)
+    cdef int swmm_subcatch_get_gw_node(SWMM_Engine e, int idx, int* node_idx)
+    cdef int swmm_subcatch_set_gw_node(SWMM_Engine e, int idx, int node_idx)
+    cdef int swmm_subcatch_get_gw_params(SWMM_Engine e, int idx,
+                                         double* surf_elev, double* a1, double* b1,
+                                         double* a2, double* b2, double* a3,
+                                         double* tw, double* hstar)
+    cdef int swmm_subcatch_set_gw_params(SWMM_Engine e, int idx,
+                                         double surf_elev, double a1, double b1,
+                                         double a2, double b2, double a3,
+                                         double tw, double hstar)
+    cdef int swmm_subcatch_set_infil_model(SWMM_Engine e, int idx, int model)
 
 cdef extern from "openswmm_gages.h":
     # Identity
@@ -498,11 +512,19 @@ cdef extern from "openswmm_gages.h":
     cdef int swmm_gage_set_data_source(SWMM_Engine e, int idx, int source)
     cdef int swmm_gage_set_timeseries(SWMM_Engine e, int idx, const char* ts_id)
     cdef int swmm_gage_set_filename(SWMM_Engine e, int idx, const char* path, const char* station_id)
+    cdef int swmm_gage_set_station_id(SWMM_Engine e, int idx, const char* station_id)
+    cdef int swmm_gage_set_snow_factor(SWMM_Engine e, int idx, double factor)
+    cdef int swmm_gage_set_rain_units(SWMM_Engine e, int idx, int units)
     cdef int swmm_gage_set_scale_factor(SWMM_Engine e, int idx, double factor)
     # Property getters
     cdef int swmm_gage_get_rain_type(SWMM_Engine e, int idx, int* type)
     cdef int swmm_gage_get_data_source(SWMM_Engine e, int idx, int* source)
     cdef int swmm_gage_get_scale_factor(SWMM_Engine e, int idx, double* factor)
+    cdef int swmm_gage_get_rain_interval(SWMM_Engine e, int idx, double* seconds)
+    cdef int swmm_gage_get_snow_factor(SWMM_Engine e, int idx, double* factor)
+    cdef int swmm_gage_get_timeseries(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_gage_get_station_id(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_gage_get_rain_units(SWMM_Engine e, int idx, int* units)
     # State
     cdef int swmm_gage_get_rainfall(SWMM_Engine e, int idx, double* rainfall)
     cdef int swmm_gage_set_rainfall(SWMM_Engine e, int idx, double rainfall)
@@ -725,6 +747,12 @@ cdef extern from "openswmm_infrastructure.h":
     cdef int swmm_lid_count(SWMM_Engine e)
     # LID usage
     cdef int swmm_lid_usage_add(SWMM_Engine e, int subcatch_idx, int lid_idx, int number, double area, double width, double init_sat, double from_imperv)
+    cdef int swmm_lid_usage_count(SWMM_Engine e)
+    cdef int swmm_lid_usage_get(SWMM_Engine e, int usage_idx,
+                                int* subcatch_idx, int* lid_idx, int* number,
+                                double* area, double* width, double* init_sat,
+                                double* from_imperv, int* to_perv, double* from_perv)
+    cdef int swmm_lid_usage_remove(SWMM_Engine e, int usage_idx)
     # Identity lookups (read side)
     cdef int         swmm_transect_index(SWMM_Engine e, const char* id)
     cdef const char* swmm_transect_id(SWMM_Engine e, int idx)

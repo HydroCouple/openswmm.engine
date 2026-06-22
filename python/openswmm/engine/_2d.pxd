@@ -15,12 +15,18 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_vertex_get_xyz_bulk(void* engine,
                                      double* x, double* y, double* z) nogil
     int swmm_2d_set_vertex_z(void* engine, int idx, double z)
+    int swmm_2d_prepare_for_edit(void* engine)
     int swmm_2d_triangle_get_vertices(void* engine, int idx,
                                        int* v0, int* v1, int* v2)
     int swmm_2d_triangle_get_area(void* engine, int idx, double* area)
     int swmm_2d_triangle_get_centroid(void* engine, int idx,
                                        double* cx, double* cy, double* cz)
     int swmm_2d_triangle_get_mannings(void* engine, int idx, double* n)
+    int swmm_2d_set_triangle_mannings(void* engine, int idx, double n)
+    int swmm_2d_set_triangle_tag(void* engine, int idx, const char* tag)
+    int swmm_2d_set_vertex_tag(void* engine, int idx, const char* tag)
+    int swmm_2d_get_triangle_tag(void* engine, int idx, char* buf, int buflen)
+    int swmm_2d_get_vertex_tag(void* engine, int idx, char* buf, int buflen)
     int swmm_2d_triangle_get_neighbours(void* engine, int idx,
                                          int* n0, int* n1, int* n2)
     int swmm_2d_edge_get_geometry_bulk(void* engine,
@@ -30,6 +36,7 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_vertex_coupling_count(void* engine, int* count)
     int swmm_2d_triangle_coupling_count(void* engine, int* count)
     int swmm_2d_vertex_get_coupled_node(void* engine, int vidx, int* nidx)
+    int swmm_2d_set_vertex_coupled_node(void* engine, int vidx, const char* node_name)
     int swmm_2d_triangle_get_coupled_node(void* engine, int tidx, int* nidx)
 
     # State — per triangle

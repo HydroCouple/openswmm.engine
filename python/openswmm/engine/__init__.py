@@ -189,7 +189,7 @@ from ._report import (
 # =============================================================================
 from ._nodes import Nodes
 from ._links import Links
-from ._subcatchments import Subcatchments, Aquifers, Snowpacks
+from ._subcatchments import Subcatchments, Aquifers, Snowpacks, GroundwaterParams
 from ._gages import Gages
 
 # =============================================================================

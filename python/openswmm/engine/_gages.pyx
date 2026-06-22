@@ -134,6 +134,70 @@ cdef class Gage:
         _check_fresh(self)
         _check(swmm_gage_set_scale_factor(_h(self._solver), self._index, value))
 
+    @property
+    def snow_factor(self) -> float:
+        """Snow-catch deficiency correction factor (SCF; 1.0 = no correction).
+
+        This is the legacy [RAINGAGES] SCF column, distinct from
+        :attr:`scale_factor`. Raises if assigned a non-positive value.
+        """
+        _check_fresh(self)
+        cdef double v = 1.0
+        _check(swmm_gage_get_snow_factor(_h(self._solver), self._index, &v))
+        return v
+
+    @snow_factor.setter
+    def snow_factor(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_gage_set_snow_factor(_h(self._solver), self._index, value))
+
+    @property
+    def rain_interval(self) -> float:
+        """Rain recording interval in seconds."""
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_gage_get_rain_interval(_h(self._solver), self._index, &v))
+        return v
+
+    @rain_interval.setter
+    def rain_interval(self, value) -> None:
+        self.set_rain_interval(value)
+
+    @property
+    def rain_units(self) -> int:
+        """Rain-depth units declared for a file source: 0 = IN, 1 = MM."""
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_gage_get_rain_units(_h(self._solver), self._index, &v))
+        return v
+
+    @rain_units.setter
+    def rain_units(self, int value) -> None:
+        _check_fresh(self)
+        _check(swmm_gage_set_rain_units(_h(self._solver), self._index, value))
+
+    @property
+    def timeseries(self) -> str:
+        """Assigned time-series id (empty when the source is not a series)."""
+        _check_fresh(self)
+        cdef char buf[256]
+        _check(swmm_gage_get_timeseries(_h(self._solver), self._index, buf, 256))
+        return buf.decode('utf-8')
+
+    @property
+    def station_id(self) -> str:
+        """Station id for a file source (empty when unset)."""
+        _check_fresh(self)
+        cdef char buf[256]
+        _check(swmm_gage_get_station_id(_h(self._solver), self._index, buf, 256))
+        return buf.decode('utf-8')
+
+    @station_id.setter
+    def station_id(self, str value) -> None:
+        _check_fresh(self)
+        cdef bytes b = value.encode('utf-8')
+        _check(swmm_gage_set_station_id(_h(self._solver), self._index, b))
+
     def set_rain_interval(self, seconds) -> None:
         """Set the rain-interval duration. Accepts a number of seconds
         or a :class:`datetime.timedelta`."""

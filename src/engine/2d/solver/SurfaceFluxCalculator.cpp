@@ -7,6 +7,7 @@
  */
 
 #include "SurfaceFluxCalculator.hpp"
+#include "../data/BoundaryData.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -56,6 +57,57 @@ inline double regSqrt(double x, double eps) noexcept {
     if (eps <= 0.0 || x >= eps) return std::sqrt(x);
     const double inv = 1.0 / std::sqrt(eps);
     return (1.5 * inv) * x - (0.5 * inv / eps) * x * x;
+}
+
+// Boundary-edge flux: inflow-positive contribution to cell i across boundary
+// edge idx (outward discharge is negative — it leaves the cell). Returns 0 for
+// a WALL or when no boundary data is attached (state.boundary == nullptr), which
+// reproduces the legacy "all boundaries are walls" behaviour. The serial path
+// and the Kokkos kernel implement the identical per-type math so every backend
+// agrees. h_bc / per-metre flow values are resolved on the host each step
+// (SurfaceRouter2D::resolveBoundaryValues); a RATING_CURVE is resolved there
+// into edge_bc_flow, so it is handled identically to SPECIFIED_FLOW here.
+inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& state,
+                               double dh_eps, int i, int idx) noexcept {
+    const BoundaryData* b = state.boundary;
+    if (!b) return 0.0;
+    const double L = mesh.edge_length[idx];
+    const double n = mesh.mannings_n[i];
+    const double depth = state.depth[i];
+    switch (static_cast<BoundaryType>(b->edge_bc_type[idx])) {
+        case BoundaryType::WALL:
+            return 0.0;
+        case BoundaryType::NORMAL_FLOW: {
+            // Manning normal-flow outlet: per-metre outflow q = (1/n)·h^(5/3)·√S.
+            const double S = b->edge_bed_slope[idx];
+            if (S <= 0.0 || depth <= 0.0 || n <= 0.0) return 0.0;
+            const double h53 = depth * std::cbrt(depth * depth);
+            return -(h53 * std::sqrt(S) / n) * L;
+        }
+        case BoundaryType::SPECIFIED_FLOW:
+        case BoundaryType::RATING_CURVE:
+            // edge_bc_flow holds outward discharge per metre of edge (m³/s/m).
+            return -b->edge_bc_flow[idx] * L;
+        case BoundaryType::SPECIFIED_STAGE: {
+            // Collapsed-Manning flux toward the prescribed stage h_bc, mirroring
+            // the interior operator with the ghost at h_bc and the centroid→edge
+            // distance Δx = 2A/(3L) (triangle centroid is 1/3 of the height up).
+            if (n <= 0.0) return 0.0;
+            const double h_bc = b->edge_bc_head[idx];
+            const double dh   = state.head[i] - h_bc;
+            const double A    = mesh.tri_area[i];
+            const double dx_b = (L > 1.0e-12) ? (2.0 * A) / (3.0 * L) : 0.0;
+            if (dx_b <= 1.0e-12) return 0.0;
+            const double h_up = (dh > 0.0) ? depth
+                                           : std::max(h_bc - mesh.tri_cz[i], 0.0);
+            if (h_up <= 0.0) return 0.0;
+            const double h53     = h_up * std::cbrt(h_up * h_up);
+            const double sign_dh = (dh > 0.0) ? 1.0 : (dh < 0.0 ? -1.0 : 0.0);
+            return -h53 * sign_dh * regSqrt(std::abs(dh), dh_eps) * L
+                   / (n * std::sqrt(dx_b));
+        }
+    }
+    return 0.0;
 }
 
 } // anonymous namespace
@@ -176,8 +228,9 @@ void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
             int nbr = tri_nbr(mesh, i, e);
 
             if (nbr < 0) {
-                // Boundary edge: zero-flux (wall) condition.
-                state.edge_flux[idx] = 0.0;
+                // Domain boundary: no-flux wall by default; apply the configured
+                // boundary condition when one is attached (state.boundary).
+                state.edge_flux[idx] = boundaryEdgeFlux(mesh, state, dh_eps, i, idx);
                 continue;
             }
 

@@ -80,6 +80,10 @@ value below 5% indicates a real regression in volume tracking across timesteps.
 
 ## Numerical accuracy guidance
 
+Treat this benchmark as a **conservation smoke check** — it catches gross
+volume-tracking regressions, not precise conservation. The first-step no-flow
+offset is a tracked engine gap (see `docs/TODO_LEGACY_ALIGNMENT.md`).
+
 The KW solver uses an implicit Preissmann scheme which introduces first-order
 numerical diffusion.  The scheme is mass-conservative by construction but not
 monotone-exact near the wave front.  The 0.5% SS tolerance and 5% mass-balance

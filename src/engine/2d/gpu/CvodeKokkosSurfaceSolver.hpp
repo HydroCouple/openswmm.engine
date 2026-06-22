@@ -116,9 +116,11 @@ private:
 
     // Host<->device transfer helpers (no-ops in Phase 1 OpenMP host space).
     void uploadMesh();
-    void uploadSources();        ///< rainfall / coupling_flux / evap_rate
-    void seedVolumeFromHead();   ///< state.head -> y_ as volume V (+ state.volume)
-    void downloadState();        ///< y_ (volume) -> state.volume / head / depth (host)
+    void uploadSources();          ///< rainfall / coupling_flux / evap_rate
+    void uploadBoundaryStatic();   ///< allocate + upload BC type/slope (once)
+    void uploadBoundaryDynamic();  ///< upload resolved BC head/flow (per step)
+    void seedVolumeFromHead();     ///< state.head -> y_ as volume V (+ state.volume)
+    void downloadState();          ///< y_ (volume) -> state.volume / head / depth (host)
 
     // CVODE C-ABI callbacks.
     static int rhs_cb(sunrealtype t, N_Vector y, N_Vector ydot, void* user_data);

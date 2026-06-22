@@ -28,9 +28,9 @@ The downstream node J5 is a FIXED outfall at water-surface elevation y_d = 1.5 �
 
 Derived quantities (PHI = 1.486, US customary):
 ```
-beta      = PHI * sqrt(S₀) / n  ≈ 3.6163 ft^{1/3}/s
+beta      = PHI * sqrt(S₀) / n  ≈ 3.6147 ft^{1/3}/s
 y_n       = 0.781692 ft  (Manning normal depth at Q = 10 cfs)
-y_c       = 0.498963 ft  (critical depth at Q = 10 cfs)
+y_c       = 0.499097 ft  (critical depth at Q = 10 cfs)
 Fr_n      ≈ 0.510  (mild slope: y_n > y_c ✓)
 y_d       = 1.5 × y_n = 1.172539 ft  (fixed tailwater BC)
 ```

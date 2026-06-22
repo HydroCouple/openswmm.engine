@@ -518,6 +518,57 @@ class LIDs:
         _check(swmm_lid_usage_add(
             h, si, li, number, area, width, init_sat, from_imperv))
 
+    def usage_count(self) -> int:
+        """Number of ``[LID_USAGE]`` placement rows across all subcatchments.
+
+        @rtype: int
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        return swmm_lid_usage_count(h)
+
+    def usage_get(self, int usage_idx) -> dict:
+        """Read one ``[LID_USAGE]`` placement row by global index.
+
+        @param usage_idx: Zero-based global usage index in
+            C{[0, usage_count())}.
+        @type usage_idx: int
+        @return: Mapping with keys ``subcatch_index``, ``lid_index``,
+            ``number``, ``area``, ``width``, ``init_sat``, ``from_imperv``,
+            ``to_perv``, ``from_perv``.
+        @rtype: dict
+        @raise EngineError: On C API failure (e.g. index out of range).
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int subcatch_idx = 0, lid_idx = 0, number = 0, to_perv = 0
+        cdef double area = 0.0, width = 0.0, init_sat = 0.0
+        cdef double from_imperv = 0.0, from_perv = 0.0
+        _check(swmm_lid_usage_get(
+            h, usage_idx, &subcatch_idx, &lid_idx, &number,
+            &area, &width, &init_sat, &from_imperv, &to_perv, &from_perv))
+        return {
+            "subcatch_index": subcatch_idx,
+            "lid_index": lid_idx,
+            "number": number,
+            "area": area,
+            "width": width,
+            "init_sat": init_sat,
+            "from_imperv": from_imperv,
+            "to_perv": to_perv,
+            "from_perv": from_perv,
+        }
+
+    def usage_remove(self, int usage_idx) -> None:
+        """Remove one ``[LID_USAGE]`` placement row by global index.
+
+        @param usage_idx: Zero-based global usage index in
+            C{[0, usage_count())}.
+        @type usage_idx: int
+        @raise EngineError: On C API failure (e.g. index out of range).
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_lid_usage_remove(h, usage_idx))
+        self._solver._bump_generation()
+
 
 # ---- Top-level Infrastructure view ----------------------------------
 

@@ -88,8 +88,12 @@ zero-based.
      - Triangle area.
    * - ``get_triangle_centroid(idx)``
      - ``(cx, cy, cz)`` centroid.
-   * - ``get_triangle_mannings(idx)``
-     - Manning's *n*.
+   * - ``get_triangle_mannings(idx)`` / ``set_triangle_mannings(idx, n)``
+     - Manning's *n* (the setter rejects non-positive values).
+   * - ``get_triangle_tag(idx)`` / ``set_triangle_tag(idx, tag)``
+     - ``[2D_TRIANGLES]`` TAG column; ``""`` clears it.
+   * - ``get_vertex_tag(idx)`` / ``set_vertex_tag(idx, tag)``
+     - ``[2D_VERTICES]`` TAG column; ``""`` clears it.
    * - ``get_triangle_neighbours(idx)``
      - ``(n0, n1, n2)`` neighbour triangle indices (``-1`` at a boundary).
 
@@ -108,6 +112,8 @@ Where the mesh exchanges flow with the 1-D network:
      - Number of coupling points (properties).
    * - ``get_vertex_coupled_node(vertex_idx)``
      - SWMM node index coupled to a vertex (``-1`` if uncoupled).
+   * - ``set_vertex_coupled_node(vertex_idx, node_name)``
+     - Couple a vertex to a 1-D node by id (``""`` clears the coupling).
    * - ``get_triangle_coupled_node(tri_idx)``
      - SWMM node index coupled to a triangle (``-1`` if uncoupled).
 

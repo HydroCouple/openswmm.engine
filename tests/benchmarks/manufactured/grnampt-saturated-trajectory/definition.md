@@ -51,8 +51,9 @@ state.saturated = true;      // force saturated branch from t=0
 ```
 
 Call `grnampt_getInfil(state, precip=1.0, depth=0.0, dt, InfilModel::GREEN_AMPT)`
-with `dt = 1.0 s` (final step may be fractional), stepping from each reference
-time to the next and comparing `state.F` to the reference `F_ft`.
+stepping from each reference time to the next in a single call (so
+`dt = t[i] - t[i-1]`, the row-to-row interval) and comparing `state.F` to the
+reference `F_ft`.
 
 The `precip = 1.0 ft/s` is chosen so that `ia >> dF/dt` at all points, keeping
 the `fp = min(fp, ia)` clamp inactive throughout.
@@ -64,7 +65,8 @@ the `fp = min(fp, ia)` clamp inactive throughout.
 ```
 
 `grnampt_getF2` converges each Newton solve to |step| < 1e-5 ft, and the
-implicit G-A update is contractive (errors damp over successive steps), so
-1e-3 ft provides three decades of headroom above the solver tolerance.
+implicit G-A update is contractive (errors damp over successive steps). With the
+full-precision reference times the solver reproduces `F_ft` to ~5e-7 ft, so the
+1e-3 ft tolerance keeps ~100x (two decades) of headroom above the Newton solve.
 
 **Do not loosen this tolerance** — if the test fails, the solver is wrong.

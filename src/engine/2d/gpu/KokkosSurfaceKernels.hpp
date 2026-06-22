@@ -106,6 +106,15 @@ struct StateViews {
     DView edge_flux;                                ///< [n_tri*3]
     DView rainfall, coupling_flux, evap_rate;       ///< [n_tri] sources
     DView precond_diag;                             ///< [n_tri] Jacobi diag
+
+    // Per-edge boundary conditions [n_tri*3]; extent 0 ⇒ all boundary edges are
+    // no-flux walls (the default, and what the standalone parity test gets).
+    // Mirror of SurfaceRouter2D's BoundaryData; edge_bc_head / edge_bc_flow are
+    // resolved on the host each step (timeseries / rating) and re-uploaded.
+    IView edge_bc_type;     ///< BoundaryType per edge (0=WALL..4=RATING_CURVE)
+    DView edge_bed_slope;   ///< NORMAL_FLOW bed slope (static)
+    DView edge_bc_head;     ///< SPECIFIED_STAGE prescribed head (per step)
+    DView edge_bc_flow;     ///< SPECIFIED_FLOW / RATING_CURVE per-metre flow (per step)
 };
 
 // ---------------------------------------------------------------------------
@@ -139,6 +148,46 @@ KOKKOS_INLINE_FUNCTION double regSqrt(double x, double eps) {
     return (1.5 * inv) * x - (0.5 * inv / eps) * x * x;
 }
 
+// Boundary types (mirror BoundaryData.hpp BoundaryType); plain ints so the
+// device kernel needs no host enum header.
+enum : int { BC_WALL = 0, BC_NORMAL_FLOW = 1, BC_SPECIFIED_STAGE = 2,
+             BC_SPECIFIED_FLOW = 3, BC_RATING_CURVE = 4 };
+
+// Boundary-edge flux (inflow-positive contribution to the owning cell; outward
+// discharge is negative). Byte-for-byte mirror of SurfaceFluxCalculator's
+// boundaryEdgeFlux so every backend agrees. h_bc / q_flow are resolved on the
+// host (timeseries / rating) and uploaded; a RATING_CURVE arrives as a per-metre
+// flow in q_flow, handled identically to SPECIFIED_FLOW.
+KOKKOS_INLINE_FUNCTION
+double boundaryEdgeFlux(int bc, double slope, double h_bc, double q_flow,
+                        double depth, double head, double tri_cz, double area,
+                        double L, double n, double dh_eps) {
+    switch (bc) {
+        case BC_NORMAL_FLOW: {
+            if (slope <= 0.0 || depth <= 0.0 || n <= 0.0) return 0.0;
+            const double h53 = depth * Kokkos::cbrt(depth * depth);
+            return -(h53 * Kokkos::sqrt(slope) / n) * L;
+        }
+        case BC_SPECIFIED_FLOW:
+        case BC_RATING_CURVE:
+            return -q_flow * L;
+        case BC_SPECIFIED_STAGE: {
+            if (n <= 0.0) return 0.0;
+            const double dh   = head - h_bc;
+            const double dx_b = (L > 1.0e-12) ? (2.0 * area) / (3.0 * L) : 0.0;
+            if (dx_b <= 1.0e-12) return 0.0;
+            const double h_up = (dh > 0.0) ? depth
+                                           : Kokkos::fmax(h_bc - tri_cz, 0.0);
+            if (h_up <= 0.0) return 0.0;
+            const double h53 = h_up * Kokkos::cbrt(h_up * h_up);
+            const double sgn = (dh > 0.0) ? 1.0 : (dh < 0.0 ? -1.0 : 0.0);
+            return -h53 * sgn * regSqrt(Kokkos::fabs(dh), dh_eps) * L
+                   / (n * Kokkos::sqrt(dx_b));
+        }
+        default: return 0.0;  // WALL
+    }
+}
+
 // ---------------------------------------------------------------------------
 // RHS pipeline. Evaluates ydot = f(y) for the VOLUME formulation: y is the cell
 // water volume V; the free surface η = tri_cz + V/A and mean depth h̄ = V/A are
@@ -165,6 +214,9 @@ inline void evaluateRhs(const MeshViews& m, const StateViews& s,
     auto gxl = s.grad_hx_lim; auto gyl = s.grad_hy_lim;
     auto vhead = s.vert_head; auto eflux = s.edge_flux;
     auto rain = s.rainfall; auto coup = s.coupling_flux; auto evap = s.evap_rate;
+    auto bc_type = s.edge_bc_type; auto bc_slope = s.edge_bed_slope;
+    auto bc_head = s.edge_bc_head; auto bc_flow = s.edge_bc_flow;
+    const bool has_bc = (bc_type.extent(0) > 0);
 
     // 1. Unpack y -> head, depth (VOLUME formulation): flat-cell closure
     //    h̄ = V/A, η = tri_cz + h̄ (mirrors reconstructFromVolume).
@@ -242,7 +294,15 @@ inline void evaluateRhs(const MeshViews& m, const StateViews& s,
             for (int e = 0; e < 3; ++e) {
                 const int idx = i * 3 + e;
                 const int nbr = nbr_of(e, n0, n1, n2);
-                if (nbr < 0) { eflux(idx) = 0.0; continue; }
+                if (nbr < 0) {
+                    // Domain boundary: no-flux wall, or the configured BC.
+                    eflux(idx) = has_bc
+                        ? boundaryEdgeFlux(bc_type(idx), bc_slope(idx),
+                              bc_head(idx), bc_flow(idx), depth(i), head(i),
+                              tri_cz(i), tri_area(i), e_len(idx), mn(i), dh_eps)
+                        : 0.0;
+                    continue;
+                }
 
                 const double h_L = head(i), h_R = head(nbr);
                 const int up = (h_L >= h_R) ? i : nbr;

@@ -10,7 +10,7 @@ Type stubs for :mod:`openswmm.engine._subcatchments`.
 """
 
 from collections.abc import Iterator, MutableMapping
-from typing import Any, Optional, Tuple, Union
+from typing import Any, NamedTuple, Optional, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray
@@ -22,6 +22,17 @@ from ._solver import Solver
 
 
 _Key = Union[int, str]
+
+
+class GroundwaterParams(NamedTuple):
+    surf_elev: float
+    a1: float
+    b1: float
+    a2: float
+    b2: float
+    a3: float
+    tw: float
+    hstar: float
 
 
 class SubcatchmentStatsView:
@@ -73,6 +84,11 @@ class Subcatchment:
     gage: Gage
     outlet: Union[Node, "Subcatchment", None]
 
+    # Groundwater / aquifer assignment
+    aquifer: Optional[int]
+    gw_node: Optional[int]
+    gw_params: GroundwaterParams
+
     # Runtime state
     runoff: float
     groundwater: float
@@ -95,6 +111,9 @@ class Subcatchment:
     def ponded_quality(self, pollutant: _Key) -> float: ...
     def set_ponded_quality(self, pollutant: _Key, mass: float) -> None: ...
 
+    def set_gw_params(self, surf_elev: float, a1: float, b1: float,
+                      a2: float, b2: float, a3: float,
+                      tw: float, hstar: float) -> None: ...
     def set_gw_state(self, theta: float = ..., lower_depth: float = ...) -> None: ...
     def get_gw_state(self) -> tuple[float, float]: ...
     def set_snow_state(self, surface: int, swe: float = ..., fw: float = ...,

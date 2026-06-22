@@ -28,9 +28,9 @@ parameters:
   g_fts2: 32.174
   unit_system: US
   derived:
-    beta_ft13_per_s: 3.616272    # PHI * sqrt(S0) / n
+    beta_ft13_per_s: 3.614727    # PHI * sqrt(S0) / n
     y_n_ft: 0.781692              # normal depth at Q = 10 cfs
-    y_c_ft: 0.498963              # critical depth at Q = 10 cfs
+    y_c_ft: 0.499097              # critical depth at Q = 10 cfs (g = 32.174)
     Fr_n: 0.510                   # Froude at normal depth (mild slope: Fr_n < 1)
     y_d_ft: 1.172539              # tailwater BC = 1.5 * y_n
 

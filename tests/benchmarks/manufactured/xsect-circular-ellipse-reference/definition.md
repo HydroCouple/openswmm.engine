@@ -35,7 +35,7 @@ of A_full as an absolute tolerance for all rows.
 
 ## Verification target
 
-`src/engine/hydraulics/XSect.cpp` — `xsect::getArea` (CIRCULAR table lookup with quadratic interpolation).
+`src/engine/hydraulics/XSect.cpp` — `xsect::getAofY` (CIRCULAR table lookup with quadratic interpolation).
 
 ## Consuming test
 

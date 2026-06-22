@@ -39,12 +39,14 @@ dataset:
   t_values_hr: [0.0, 0.25, 0.50, 0.75, 1.0, 2.0, 4.0]
 
 tolerances:
-  f_max_absolute_ft_per_s: 1.0e-8
-  F_max_absolute_ft: 1.0e-7
+  f_max_absolute_ft_per_s: 1.0e-8   # informational; the rate column is not asserted by the test
+  F_max_absolute_ft: 1.0e-9         # cumulative depth — matches the consuming test assertion
   basis: >
     Closed-form Horton evaluation in double precision is exact to machine
-    epsilon. If the implementation uses an ODE step internally, loosen to
-    1e-6 ft/s and 1e-5 ft.
+    epsilon, and the capacity-limited solver reproduces the cumulative depth to
+    ~machine precision against the full-precision reference, so the consuming
+    test asserts 1e-9 ft. If an implementation uses an ODE step internally,
+    loosen to 1e-6 ft/s and 1e-5 ft.
 
 provenance:
   generated_by: analytic formula evaluated in double-precision arithmetic

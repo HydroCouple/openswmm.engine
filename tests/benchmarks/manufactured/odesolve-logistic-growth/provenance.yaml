@@ -52,12 +52,14 @@ tolerances:
     global error well below 1e-4 over this interval.
 
 provenance:
-  generated_by: analytic formula evaluated in double-precision arithmetic
-  tool: none (closed-form)
-  date: "2026-05-05"
+  generated_by: scripts/generate_reference.py — closed-form y(t) evaluated in double precision
+  tool: python3 scripts/generate_reference.py
+  date: "2026-06-15"
   author: openswmm.engine development team
-  computation: "y[i] = 1.0 / (1.0 + 9.0 * std::exp(-0.5 * t[i])) for t in {0,2,4,6,8,10,12,14}"
+  computation: "y[i] = 1.0 / (1.0 + 9.0 * exp(-0.5 * t[i])) for t in {0,2,4,6,8,10,12,14}"
   reproducible: true
   notes: >
-    Values are exact to double-precision ULP. The S-curve covers y from 0.1
-    to 0.99, exercising the integrator across the full sigmoid range.
+    Values are the exact closed-form solution at full double precision (the
+    column is the genuine analytic reference, not a numerical integration).
+    The S-curve covers y from 0.1 to 0.99, exercising the integrator across the
+    full sigmoid range.

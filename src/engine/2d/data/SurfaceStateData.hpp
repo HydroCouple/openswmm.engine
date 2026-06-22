@@ -30,11 +30,22 @@ namespace openswmm::twoD {
  * Edge arrays are flat 2D: [tri * 3 + edge].
  * Vertex arrays are indexed [0, n_vertices).
  */
+struct BoundaryData;  // fwd decl — per-edge boundary conditions (BoundaryData.hpp)
+
 struct SurfaceStateData {
 
     // -----------------------------------------------------------------------
     // State variables — per triangle [0, n_triangles)
     // -----------------------------------------------------------------------
+
+    /// Non-owning view of the per-edge boundary conditions (owned by
+    /// SurfaceRouter2D). nullptr ⇒ all boundary edges are no-flux walls (the
+    /// legacy behaviour, and what the unit-test call sites that build a bare
+    /// state get). When set, computeEdgeFluxes applies the per-type boundary
+    /// flux (NORMAL_FLOW / SPECIFIED_STAGE / SPECIFIED_FLOW / RATING_CURVE).
+    /// The pointer is shallow-copied on assignment (it references config, not
+    /// per-cell state), which is fine — both copies see the same BC config.
+    const BoundaryData* boundary = nullptr;
 
     std::vector<double> depth;          ///< Mean wetted depth h̄ = V/A_wet (m) [reconstructed]
     std::vector<double> head;           ///< Free-surface elevation η (m) [reconstructed]

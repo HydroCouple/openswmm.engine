@@ -14,6 +14,7 @@
 #include "../data/MeshData.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../data/SolverOptions2D.hpp"
+#include "../data/BoundaryData.hpp"
 
 #include <cvode/cvode.h>
 #include <cvode/cvode_ls.h>
@@ -97,6 +98,35 @@ void CvodeKokkosSurfaceSolver::uploadSources() {
     copyToDevice(state_host_->rainfall,      state_v_.rainfall);
     copyToDevice(state_host_->coupling_flux, state_v_.coupling_flux);
     copyToDevice(state_host_->evap_rate,     state_v_.evap_rate);
+}
+
+void CvodeKokkosSurfaceSolver::uploadBoundaryStatic() {
+    // Allocate + upload the static boundary fields (type, bed slope) once. When
+    // no boundary conditions are attached the views stay extent-0 and the kernel
+    // treats every boundary edge as a wall (legacy behaviour).
+    const BoundaryData* b = state_host_->boundary;
+    if (!b || b->size() == 0) return;
+    const auto ne = static_cast<std::size_t>(b->size());
+    state_v_.edge_bc_type   = IView("s_bctype",  ne);
+    state_v_.edge_bed_slope = DView("s_bcslope", ne);
+    state_v_.edge_bc_head   = DView("s_bchead",  ne);
+    state_v_.edge_bc_flow   = DView("s_bcflow",  ne);
+    // edge_bc_type is int8 on the host; widen to int for the device IView.
+    std::vector<int> bctype_i(ne);
+    for (std::size_t k = 0; k < ne; ++k)
+        bctype_i[k] = static_cast<int>(b->edge_bc_type[k]);
+    Kokkos::deep_copy(state_v_.edge_bc_type, HostConstI(bctype_i.data(), ne));
+    copyToDevice(b->edge_bed_slope, state_v_.edge_bed_slope);
+    uploadBoundaryDynamic();
+}
+
+void CvodeKokkosSurfaceSolver::uploadBoundaryDynamic() {
+    // Re-upload the per-step-resolved boundary driving values (timeseries /
+    // rating curve), already updated host-side by SurfaceRouter2D before advance.
+    const BoundaryData* b = state_host_->boundary;
+    if (!b || b->size() == 0) return;
+    copyToDevice(b->edge_bc_head, state_v_.edge_bc_head);
+    copyToDevice(b->edge_bc_flow, state_v_.edge_bc_flow);
 }
 
 void CvodeKokkosSurfaceSolver::seedVolumeFromHead() {
@@ -258,6 +288,7 @@ void CvodeKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& stat
     // tri_cz[i] ⇒ V = 0; a hot start with a raised surface seeds the volume).
     seedVolumeFromHead();
     uploadSources();
+    uploadBoundaryStatic();
 
     // Resolve the √|Δη| flux regularization: [2D_OPTIONS] FLUX_DH_EPS, with the
     // env var OPENSWMM_2D_FLUX_DH_EPS overriding it when set (mirrors the serial
@@ -333,6 +364,7 @@ double CvodeKokkosSurfaceSolver::advance(double t_current, double t_target) {
 
     // Refresh the sources held constant across CVODE's internal sub-steps.
     uploadSources();
+    uploadBoundaryDynamic();
 
     CVodeSetStopTime(cvode_mem_, t_target);
     double t_reached = t_current;

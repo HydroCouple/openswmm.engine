@@ -104,6 +104,10 @@ class Surface2D:
         """
         ...
 
+    def prepare_for_edit(self) -> None:
+        """Make the parsed 2D mesh editable without a full ``initialize()``."""
+        ...
+
     def set_vertex_z(self, idx: int, z: float) -> None:
         """Set the ground elevation of a mesh vertex.
 
@@ -178,6 +182,26 @@ class Surface2D:
         """
         ...
 
+    def set_triangle_mannings(self, idx: int, n: float) -> None:
+        """Set Manning's M{n} for a triangle (must be strictly positive)."""
+        ...
+
+    def get_triangle_tag(self, idx: int) -> str:
+        """Return the descriptive tag of a triangle (C{[2D_TRIANGLES]} TAG)."""
+        ...
+
+    def set_triangle_tag(self, idx: int, tag: str) -> None:
+        """Set the descriptive tag of a triangle (empty string clears it)."""
+        ...
+
+    def get_vertex_tag(self, idx: int) -> str:
+        """Return the descriptive tag of a vertex (C{[2D_VERTICES]} TAG)."""
+        ...
+
+    def set_vertex_tag(self, idx: int, tag: str) -> None:
+        """Set the descriptive tag of a vertex (empty string clears it)."""
+        ...
+
     def get_triangle_neighbours(self, idx: int) -> tuple[int, int, int]:
         """Return the (n0, n1, n2) neighbour triangle indices.
 
@@ -223,6 +247,10 @@ class Surface2D:
         @rtype: int
         @raise RuntimeError: If the C API call fails.
         """
+        ...
+
+    def set_vertex_coupled_node(self, vertex_idx: int, node_name: str) -> None:
+        """Couple a mesh vertex to a 1D SWMM node by name (C{""} clears)."""
         ...
 
     def get_triangle_coupled_node(self, tri_idx: int) -> int:

@@ -206,7 +206,8 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
 } // anonymous namespace
 
 std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& /*opts*/,
-                                                  std::string* chosen) {
+                                                  std::string* chosen,
+                                                  int n_cells) {
     auto cpu = [&]() -> std::unique_ptr<ISurfaceSolver> {
         if (chosen) *chosen = "cpu (serial CVODE)";
         return std::make_unique<CvodeSurfaceSolver>();
@@ -215,6 +216,17 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& /*opts*
     const std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
 
     if (mode.empty() || mode == "auto") {
+        // Small-mesh gate: a Kokkos plugin (OpenMP/CUDA/HIP/SYCL) pays a
+        // per-kernel launch overhead that dominates on small meshes, where the
+        // serial CVODE solver is faster. Below a threshold, stay serial unless
+        // the backend was requested explicitly above. Threshold is env-tunable
+        // (OPENSWMM_2D_MIN_PARALLEL_CELLS); 0 cells = unknown ⇒ no gate.
+        if (n_cells > 0) {
+            long min_par = 20000;
+            if (const char* s = std::getenv("OPENSWMM_2D_MIN_PARALLEL_CELLS"))
+                min_par = std::atol(s);
+            if (n_cells < min_par) return cpu();
+        }
         // Prefer a GPU device, then the Kokkos-OpenMP CPU-parallel plugin, then
         // the serial solver. `omp` is auto-selected by design as of 2026-06-13
         // (docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md §4.2, revised) — so OpenMP is

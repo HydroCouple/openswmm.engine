@@ -54,11 +54,19 @@ class ISurfaceSolver;
  * @param opts    Solver options (reserved for future per-model backend hints).
  * @param chosen  Optional out-param; receives a human-readable backend label
  *                (e.g. "cpu (serial CVODE)" or "cuda (NVIDIA A100)").
+ * @param n_cells Triangle count of the mesh (0 = unknown). Under the default
+ *                `auto` policy a mesh below the parallel-worthwhile threshold
+ *                (env OPENSWMM_2D_MIN_PARALLEL_CELLS, default 20000) selects the
+ *                serial CPU solver even when a GPU/OpenMP plugin is present —
+ *                Kokkos' per-kernel launch overhead makes the accelerated path
+ *                slower than serial on small meshes. An explicit
+ *                OPENSWMM_2D_BACKEND always wins (no size gate).
  * @return An owned ISurfaceSolver. For a plugin-backed solver the owning
  *         shared library is kept resident for the process lifetime.
  */
 std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
-                                                  std::string* chosen = nullptr);
+                                                  std::string* chosen = nullptr,
+                                                  int n_cells = 0);
 
 } // namespace openswmm::twoD
 

@@ -74,6 +74,65 @@ class TestGageProperties:
         g0.scale_factor = 3.0
         assert g0.scale_factor == pytest.approx(3.0)
 
+    # ---- DA.2 parity — interval / SCF / series / station / units ----
+
+    def test_rain_interval_parsed_value(self, opened_solver):
+        # Fixture: "RainGage VOLUME 0:05 1.0 TIMESERIES 2-yr" -> 300 s.
+        g0 = opened_solver.gages[0]
+        assert g0.rain_interval == pytest.approx(300.0)
+
+    def test_rain_interval_round_trip(self, opened_solver):
+        g0 = opened_solver.gages[0]
+        g0.rain_interval = 900.0
+        assert g0.rain_interval == pytest.approx(900.0)
+
+    def test_rain_interval_accepts_timedelta(self, opened_solver):
+        from datetime import timedelta
+        g0 = opened_solver.gages[0]
+        g0.rain_interval = timedelta(minutes=15)
+        assert g0.rain_interval == pytest.approx(900.0)
+
+    def test_snow_factor_parsed_default(self, opened_solver):
+        g0 = opened_solver.gages[0]
+        assert g0.snow_factor == pytest.approx(1.0)
+
+    def test_snow_factor_round_trip(self, opened_solver):
+        g0 = opened_solver.gages[0]
+        g0.snow_factor = 1.4
+        assert g0.snow_factor == pytest.approx(1.4)
+
+    def test_snow_factor_rejects_nonpositive(self, opened_solver):
+        g0 = opened_solver.gages[0]
+        with pytest.raises(Exception):
+            g0.snow_factor = 0.0
+        assert g0.snow_factor == pytest.approx(1.0)
+
+    def test_snow_factor_distinct_from_scale_factor(self, opened_solver):
+        g0 = opened_solver.gages[0]
+        g0.snow_factor = 1.7
+        g0.scale_factor = 2.3
+        assert g0.snow_factor == pytest.approx(1.7)
+        assert g0.scale_factor == pytest.approx(2.3)
+
+    def test_timeseries_parsed_value(self, opened_solver):
+        # Fixture source is "TIMESERIES 2-yr".
+        g0 = opened_solver.gages[0]
+        assert g0.timeseries == "2-yr"
+
+    def test_rain_units_default_is_inches(self, opened_solver):
+        g0 = opened_solver.gages[0]
+        assert g0.rain_units == 0
+
+    def test_rain_units_round_trip(self, opened_solver):
+        g0 = opened_solver.gages[0]
+        g0.rain_units = 1  # MM
+        assert g0.rain_units == 1
+
+    def test_station_id_round_trip(self, opened_solver):
+        g0 = opened_solver.gages[0]
+        g0.station_id = "STA_07"
+        assert g0.station_id == "STA_07"
+
 
 class TestBulk:
     def test_rainfalls_array(self, running_solver):

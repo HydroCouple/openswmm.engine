@@ -40,6 +40,6 @@ Values are computed as `exp(-0.5 * t_s)` in double precision.
 
 ## Consuming test
 
-`tests/unit/engine/test_infiltration.cpp` — `TEST(OdeSolver, ExponentialDecay)` spot-checks
-a single end-point; extend that test (or add `test_ode_solver.cpp`) to walk the full grid and
-compute max absolute and RMS error against this table.
+`tests/unit/engine/test_ode_solver.cpp` — `TEST(OdeSolver, ExponentialDecayTrajectory)` walks the full grid and computes
+max absolute and RMS error against this table; `TEST(OdeSolver, ExponentialDecay)`
+additionally spot-checks a single end-point.

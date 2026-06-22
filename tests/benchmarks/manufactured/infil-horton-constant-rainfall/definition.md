@@ -36,8 +36,9 @@ to f_min and accumulate F(t) accordingly.
 
 Successive calls to `horton_getInfil` over the time grid should reproduce the
 rate trajectory to within 1e-8 ft/s (absolute) and the cumulative depth to within
-1e-7 ft. Looser tolerances may be appropriate if the implementation uses an ODE
-integrator step internally rather than evaluating the formula directly.
+1e-9 ft (the consuming test asserts 1e-9 ft on cumulative depth). Looser
+tolerances may be appropriate if the implementation uses an ODE integrator step
+internally rather than evaluating the formula directly.
 
 ## Reference dataset
 

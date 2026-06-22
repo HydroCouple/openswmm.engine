@@ -36,11 +36,18 @@ parameters, coverage, and statistics.
 import numpy as np
 cimport numpy as np
 
+from collections import namedtuple
 from collections.abc import MutableMapping
 
 from ._common cimport *
 from ._enums import InfilModel, AquiferParam
 from ._exceptions import ElementNotFoundError, StaleObjectError
+
+
+#: Groundwater flow parameters in C{[GROUNDWATER]} token order. Returned by
+#: :attr:`Subcatchment.gw_params`.
+GroundwaterParams = namedtuple(
+    "GroundwaterParams", "surf_elev a1 b1 a2 b2 a3 tw hstar")
 
 
 # =============================================================================
@@ -145,6 +152,19 @@ cdef class InfiltrationView:
         _check(swmm_subcatch_get_infil_model(
             _h(self._sub._solver), self._sub._index, &v))
         return InfilModel(v)
+
+    @model.setter
+    def model(self, value) -> None:
+        """Switch the active infiltration model.
+
+        Accepts an :class:`InfilModel` enum value (or its integer code). The
+        parameter sub-arrays for the selected model are preserved; use the
+        ``set_horton`` / ``set_green_ampt`` / ``set_curve_number`` writers to
+        populate them.
+        """
+        _check_fresh(self._sub)
+        _check(swmm_subcatch_set_infil_model(
+            _h(self._sub._solver), self._sub._index, int(value)))
 
     @property
     def horton(self) -> tuple:
@@ -475,6 +495,113 @@ cdef class Subcatchment:
             si = _resolve_subcatch(self._solver, sub)
         _check(swmm_subcatch_set_outlet_subcatch(
             _h(self._solver), self._index, si))
+
+    # ---- Groundwater / aquifer assignment --------------------------
+
+    @property
+    def aquifer(self):
+        """The aquifer index assigned to this subcatchment, or C{None} when
+        it has no groundwater.
+
+        Assign an aquifer index, a string id (resolved against
+        C{solver.aquifers}), or C{None} to detach the aquifer.
+
+        @rtype: int | None
+        """
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_subcatch_get_aquifer(_h(self._solver), self._index, &v))
+        return None if v < 0 else v
+
+    @aquifer.setter
+    def aquifer(self, value) -> None:
+        _check_fresh(self)
+        cdef int ai
+        if value is None:
+            ai = -1
+        elif isinstance(value, int):
+            ai = value
+        else:
+            ai = _resolve_index(
+                _h(self._solver), value,
+                swmm_aquifer_index, swmm_aquifer_count, "Aquifer")
+        _check(swmm_subcatch_set_aquifer(_h(self._solver), self._index, ai))
+
+    @property
+    def gw_node(self):
+        """The node index receiving this subcatchment's groundwater flow, or
+        C{None} when none is assigned.
+
+        Assign a :class:`Node`, a node index, a string id, or C{None} to
+        detach the receiving node.
+
+        @rtype: int | None
+        """
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_subcatch_get_gw_node(_h(self._solver), self._index, &v))
+        return None if v < 0 else v
+
+    @gw_node.setter
+    def gw_node(self, value) -> None:
+        _check_fresh(self)
+        from ._nodes import Node
+        cdef int ni
+        if value is None:
+            ni = -1
+        elif isinstance(value, Node):
+            ni = value._index
+        elif isinstance(value, int):
+            ni = value
+        else:
+            ni = _resolve_index(
+                _h(self._solver), value,
+                swmm_node_index, swmm_node_count, "Node")
+        _check(swmm_subcatch_set_gw_node(_h(self._solver), self._index, ni))
+
+    @property
+    def gw_params(self):
+        """Groundwater flow parameters as a :class:`GroundwaterParams` named
+        tuple C{(surf_elev, a1, b1, a2, b2, a3, tw, hstar)} — the
+        C{[GROUNDWATER]} token order.
+
+        The subcatchment must have an aquifer assigned. C{a1}/C{b1} are the
+        groundwater outflow coefficient/exponent, C{a2}/C{b2} the
+        surface-water outflow coefficient/exponent, C{a3} the combined
+        coefficient, C{tw} the tailwater elevation and C{hstar} the threshold
+        groundwater elevation.
+
+        @rtype: GroundwaterParams
+        """
+        _check_fresh(self)
+        cdef double surf_elev = 0.0, a1 = 0.0, b1 = 0.0, a2 = 0.0
+        cdef double b2 = 0.0, a3 = 0.0, tw = 0.0, hstar = 0.0
+        _check(swmm_subcatch_get_gw_params(
+            _h(self._solver), self._index,
+            &surf_elev, &a1, &b1, &a2, &b2, &a3, &tw, &hstar))
+        return GroundwaterParams(surf_elev, a1, b1, a2, b2, a3, tw, hstar)
+
+    def set_gw_params(self, double surf_elev, double a1, double b1,
+                      double a2, double b2, double a3,
+                      double tw, double hstar) -> None:
+        """Set the groundwater flow parameters (C{[GROUNDWATER]} token order).
+
+        Inverse of :attr:`gw_params`. The subcatchment must have an aquifer
+        assigned.
+
+        @param surf_elev: Surface elevation (SurfEl).
+        @param a1: Groundwater outflow coefficient.
+        @param b1: Groundwater outflow exponent.
+        @param a2: Surface-water outflow coefficient.
+        @param b2: Surface-water outflow exponent.
+        @param a3: Combined outflow coefficient.
+        @param tw: Tailwater elevation.
+        @param hstar: Threshold groundwater elevation.
+        """
+        _check_fresh(self)
+        _check(swmm_subcatch_set_gw_params(
+            _h(self._solver), self._index,
+            surf_elev, a1, b1, a2, b2, a3, tw, hstar))
 
     # ---- Runtime state ---------------------------------------------
 

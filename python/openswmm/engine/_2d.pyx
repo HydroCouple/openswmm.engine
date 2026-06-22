@@ -76,6 +76,21 @@ cdef class Surface2D:
     # Mesh definition - geometry
     # ====================================================================
 
+    def prepare_for_edit(self) -> None:
+        """Make the parsed 2D mesh editable without a full ``initialize()``.
+
+        Mesh-edit setters (vertex Z, triangle Manning's *n*, triangle/vertex
+        tags, vertex→node coupling) work as soon as the mesh is parsed, but
+        per-edge boundary-condition and conveyance edits additionally need the
+        authored ``[2D_BOUNDARY_CONDITIONS]`` / ``[2D_EDGE_CONVEYANCE]`` rows
+        drained into live storage first. Call this once before editing those
+        so the changes take effect and are written on save. No-op when the
+        engine is already initialized/drained.
+
+        @raise RuntimeError: If no 2D mesh is present.
+        """
+        _check(swmm_2d_prepare_for_edit(self._engine))
+
     @property
     def n_vertices(self) -> int:
         """Number of mesh vertices.
@@ -171,6 +186,34 @@ cdef class Surface2D:
         _check(swmm_2d_vertex_get_head(self._engine, idx, &head))
         return head
 
+    def get_vertex_tag(self, int idx) -> str:
+        """Return the descriptive tag of a vertex (C{[2D_VERTICES]} TAG).
+
+        Distinct from the 1D<->2D coupling node (see
+        :meth:`get_vertex_coupled_node`).
+
+        @param idx: Vertex index (0-based).
+        @type idx: int
+        @return: The tag string; empty when the vertex has no tag.
+        @rtype: str
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef char buf[256]
+        _check(swmm_2d_get_vertex_tag(self._engine, idx, buf, 256))
+        return buf.decode('utf-8')
+
+    def set_vertex_tag(self, int idx, str tag) -> None:
+        """Set the descriptive tag of a vertex (C{[2D_VERTICES]} TAG).
+
+        @param idx: Vertex index (0-based).
+        @type idx: int
+        @param tag: New tag; an empty string clears it.
+        @type tag: str
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        cdef bytes b = (tag or "").encode('utf-8')
+        _check(swmm_2d_set_vertex_tag(self._engine, idx, b))
+
     def get_triangle_vertices(self, int idx):
         """Return the (v0, v1, v2) vertex indices for a triangle.
 
@@ -222,6 +265,44 @@ cdef class Surface2D:
         cdef double n
         _check(swmm_2d_triangle_get_mannings(self._engine, idx, &n))
         return n
+
+    def set_triangle_mannings(self, int idx, double n) -> None:
+        """Set Manning's M{n} for a triangle.
+
+        Persists in the C{MANNINGS_N} column of C{[2D_TRIANGLES]} on save.
+
+        @param idx: Triangle index (0-based).
+        @type idx: int
+        @param n: New Manning's roughness; must be strictly positive.
+        @type n: float
+        @raise RuntimeError: If the C API rejects the value (e.g. C{n <= 0}).
+        """
+        _check(swmm_2d_set_triangle_mannings(self._engine, idx, n))
+
+    def get_triangle_tag(self, int idx) -> str:
+        """Return the descriptive tag of a triangle (C{[2D_TRIANGLES]} TAG).
+
+        @param idx: Triangle index (0-based).
+        @type idx: int
+        @return: The tag string; empty when the triangle has no tag.
+        @rtype: str
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef char buf[256]
+        _check(swmm_2d_get_triangle_tag(self._engine, idx, buf, 256))
+        return buf.decode('utf-8')
+
+    def set_triangle_tag(self, int idx, str tag) -> None:
+        """Set the descriptive tag of a triangle (C{[2D_TRIANGLES]} TAG).
+
+        @param idx: Triangle index (0-based).
+        @type idx: int
+        @param tag: New tag; an empty string clears it.
+        @type tag: str
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        cdef bytes b = (tag or "").encode('utf-8')
+        _check(swmm_2d_set_triangle_tag(self._engine, idx, b))
 
     def get_triangle_neighbours(self, int idx):
         """Return the (n0, n1, n2) neighbour triangle indices.
@@ -278,6 +359,23 @@ cdef class Surface2D:
         _check(swmm_2d_vertex_get_coupled_node(self._engine, vertex_idx,
                                                  &node_idx))
         return node_idx
+
+    def set_vertex_coupled_node(self, int vertex_idx, str node_name) -> None:
+        """Couple a mesh vertex to a 1D SWMM node by name.
+
+        Establishes the per-vertex 1D<->2D exchange point. Pass an empty
+        string to clear the coupling. The name is resolved against the 1D
+        node registry by the C API.
+
+        @param vertex_idx: Vertex index (0-based).
+        @type vertex_idx: int
+        @param node_name: Target 1D node id, or C{""} to clear.
+        @type node_name: str
+        @raise RuntimeError: If the C API rejects the assignment (e.g. the
+            node name does not resolve).
+        """
+        cdef bytes b = (node_name or "").encode('utf-8')
+        _check(swmm_2d_set_vertex_coupled_node(self._engine, vertex_idx, b))
 
     def get_triangle_coupled_node(self, int tri_idx) -> int:
         """Return the SWMM node index coupled to a triangle.
