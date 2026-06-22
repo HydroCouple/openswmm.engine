@@ -451,6 +451,8 @@ CREATE TABLE IF NOT EXISTS climate_settings (
     snow_lat        REAL DEFAULT 0.0,
     snow_min_melt   REAL DEFAULT 0.0,
     snow_max_melt   REAL DEFAULT 0.0,
+    snow_elev       REAL DEFAULT 0.0,
+    snow_dtlong     REAL DEFAULT 0.0,
     adc_imperv      TEXT,
     adc_perv        TEXT,
     UNIQUE(simulation_id)

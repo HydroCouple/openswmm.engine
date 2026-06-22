@@ -386,6 +386,40 @@ TEST_F(GeoPackageTest, OptionsRoundTrip) {
     EXPECT_EQ(ctx_in.spatial.crs, "EPSG:4326");
 }
 
+// Climate settings ([TEMPERATURE]/[WINDSPEED]/SNOWMELT/ADC) round-trip,
+// including snow_elev and snow_dtlong (added to the climate_settings schema).
+TEST_F(GeoPackageTest, ClimateSettingsRoundTrip) {
+    auto ctx_out = build_test_context();
+    ctx_out.options.temp_source    = 1;        // TIMESERIES
+    ctx_out.options.temp_ts_name   = "TempTS";
+    ctx_out.options.wind_type      = 0;        // MONTHLY
+    for (int i = 0; i < 12; ++i) ctx_out.options.wind_speed[i] = i + 1;
+    ctx_out.options.snow_divt      = 32.5;
+    ctx_out.options.snow_ati_wt    = 0.45;
+    ctx_out.options.snow_nrg_ratio = 0.55;
+    ctx_out.options.snow_lat       = 40.5;
+    ctx_out.options.snow_elev      = 100.0;    // newly round-tripped
+    ctx_out.options.snow_dtlong    = 240.0;    // newly round-tripped (minutes)
+    for (int i = 0; i < 10; ++i) ctx_out.options.adc_imperv[i] = 1.0 - i * 0.1;
+
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "clim"), 0);
+
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "clim"), 0);
+
+    EXPECT_EQ(ctx_in.options.temp_source, 1);
+    EXPECT_EQ(ctx_in.options.temp_ts_name, "TempTS");
+    EXPECT_EQ(ctx_in.options.wind_type, 0);
+    EXPECT_DOUBLE_EQ(ctx_in.options.wind_speed[11], 12.0);
+    EXPECT_DOUBLE_EQ(ctx_in.options.snow_divt, 32.5);
+    EXPECT_DOUBLE_EQ(ctx_in.options.snow_ati_wt, 0.45);
+    EXPECT_DOUBLE_EQ(ctx_in.options.snow_nrg_ratio, 0.55);
+    EXPECT_DOUBLE_EQ(ctx_in.options.snow_lat, 40.5);
+    EXPECT_DOUBLE_EQ(ctx_in.options.snow_elev, 100.0);
+    EXPECT_DOUBLE_EQ(ctx_in.options.snow_dtlong, 240.0);
+    EXPECT_DOUBLE_EQ(ctx_in.options.adc_imperv[0], 1.0);
+}
+
 TEST_F(GeoPackageTest, JunctionsRoundTrip) {
     auto ctx_out = build_test_context();
     ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);

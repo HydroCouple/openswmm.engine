@@ -888,6 +888,19 @@ static bool table_exists(sqlite3* db, const std::string& name) {
     return false;
 }
 
+/// True if @p column exists on @p table. Used to read columns added in a later
+/// schema revision while still loading older GeoPackages that predate them.
+static bool column_exists(sqlite3* db, const std::string& table,
+                          const std::string& column) {
+    auto stmt = prepare(db,
+        "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?");
+    bind_text(stmt.get(), 1, table);
+    bind_text(stmt.get(), 2, column);
+    if (sqlite3_step(stmt.get()) == SQLITE_ROW)
+        return column_int(stmt.get(), 0) > 0;
+    return false;
+}
+
 /// Parse a comma-separated string of doubles into a fixed-size array.
 static void parse_csv_doubles(const std::string& csv, double* out, int n) {
     std::istringstream ss(csv);
@@ -972,6 +985,19 @@ static void read_climate_settings(sqlite3* db, SimulationContext& ctx,
 
     if (!column_is_null(stmt.get(), 13))
         parse_csv_doubles(column_text(stmt.get(), 13), ctx.options.adc_perv, 10);
+
+    // snow_elev / snow_dtlong were added in a later schema revision; read them
+    // only when present so pre-revision GeoPackages still load.
+    if (column_exists(db, "climate_settings", "snow_dtlong")) {
+        auto s2 = prepare(db,
+            "SELECT snow_elev, snow_dtlong FROM climate_settings "
+            "WHERE simulation_id = ?");
+        bind_text(s2.get(), 1, sim_id);
+        if (sqlite3_step(s2.get()) == SQLITE_ROW) {
+            ctx.options.snow_elev   = column_double(s2.get(), 0);
+            ctx.options.snow_dtlong = column_double(s2.get(), 1);
+        }
+    }
 }
 
 static void read_snowpacks(sqlite3* db, SimulationContext& ctx,
