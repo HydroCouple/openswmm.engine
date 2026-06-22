@@ -666,7 +666,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
     {
         const auto& opts = ctx.options;
         bool has_temp = (opts.temp_source > 0 || opts.wind_type > 0 ||
-                         opts.snow_divt != 34.0 || opts.snow_lat != 0.0);
+                         opts.snow_divt != 34.0 || opts.snow_lat != 0.0 ||
+                         opts.snow_dtlong != 0.0);
         for (int i = 0; i < 10 && !has_temp; ++i)
             if (opts.adc_imperv[i] != 1.0 || opts.adc_perv[i] != 1.0) has_temp = true;
         // Check monthly wind speeds
@@ -695,10 +696,20 @@ int writeInpFile(const SimulationContext& ctx_internal,
                 std::fprintf(f,"WINDSPEED    FILE\n");
             }
 
-            std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.6f %.6f %.4f\n",
-                         opts.snow_divt, opts.snow_ati_wt, opts.snow_nrg_ratio,
-                         opts.snow_lat, opts.snow_min_melt, opts.snow_max_melt,
-                         opts.snow_elev);
+            if (opts.snow_dtlong != 0.0) {
+                // Legacy 9-token form carries the longitude/solar-time
+                // correction (minutes):
+                //   SNOWMELT divt ati nrg elev lat dtlong minMelt maxMelt
+                std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.4f %.4f %.6f %.6f\n",
+                             opts.snow_divt, opts.snow_ati_wt, opts.snow_nrg_ratio,
+                             opts.snow_elev, opts.snow_lat, opts.snow_dtlong,
+                             opts.snow_min_melt, opts.snow_max_melt);
+            } else {
+                std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.6f %.6f %.4f\n",
+                             opts.snow_divt, opts.snow_ati_wt, opts.snow_nrg_ratio,
+                             opts.snow_lat, opts.snow_min_melt, opts.snow_max_melt,
+                             opts.snow_elev);
+            }
 
             std::fprintf(f,"ADC          IMPERVIOUS");
             for (int i = 0; i < 10; ++i)

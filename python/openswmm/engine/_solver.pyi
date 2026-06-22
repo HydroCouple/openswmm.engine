@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     # Imports for type-checking only — avoids cycles at runtime because the
     # collection modules import Solver themselves.
     from ._2d import Surface2D
+    from ._climate import Climate
     from ._controls import Controls
     from ._edit import ModelEditor
     from ._forcing import Forcing
@@ -347,6 +348,8 @@ class Solver:
     def controls(self) -> "Controls": ...
     @property
     def forcing(self) -> "Forcing": ...
+    @property
+    def climate(self) -> "Climate": ...
     @property
     def infrastructure(self) -> "Infrastructure": ...
     @property

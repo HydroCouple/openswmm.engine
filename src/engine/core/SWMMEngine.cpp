@@ -4187,6 +4187,12 @@ void SWMMEngine::initHydrology() noexcept {
         // Transfer site elevation for psychrometric constant (Gap #8)
         ctx_.climate_state.elev = ctx_.options.snow_elev;
 
+        // Transfer longitude/solar-time correction. The [TEMPERATURE] SNOWMELT
+        // field and the C API store minutes; ClimateState::dtlong is in hours
+        // (used directly in the sunrise/sunset calc), matching legacy
+        // climate.c (Temp.dtlong = x[5] / 60.0).
+        ctx_.climate_state.dtlong = ctx_.options.snow_dtlong / 60.0;
+
         // Transfer monthly adjustment arrays
         for (int i = 0; i < 12; ++i) {
             ctx_.climate_state.adjust_temp[i] = ctx_.adjust_temp[i];

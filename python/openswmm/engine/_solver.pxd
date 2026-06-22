@@ -35,6 +35,7 @@ cdef class Solver:
     cdef object _inflows
     cdef object _controls
     cdef object _forcing
+    cdef object _climate
     cdef object _infrastructure
     cdef object _spatial
     cdef object _quality

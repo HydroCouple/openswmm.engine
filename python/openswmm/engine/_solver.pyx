@@ -190,6 +190,7 @@ cdef class Solver:
         self._inflows = None
         self._controls = None
         self._forcing = None
+        self._climate = None
         self._infrastructure = None
         self._spatial = None
         self._quality = None
@@ -772,6 +773,13 @@ cdef class Solver:
             from ._forcing import Forcing
             self._forcing = Forcing(self)
         return self._forcing
+
+    @property
+    def climate(self):
+        if self._climate is None:
+            from ._climate import Climate
+            self._climate = Climate(self)
+        return self._climate
 
     @property
     def infrastructure(self):

@@ -229,7 +229,9 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
                 // Legacy: elev at [4], lat at [5], dtlong at [6], min at [7], max at [8]
                 ctx.options.snow_elev      = to_double(tok[4]);
                 ctx.options.snow_lat       = to_double(tok[5]);
-                // tok[6] = longitude offset (not used in refactored engine)
+                // tok[6] = longitude/solar-time correction (minutes); stored
+                // verbatim and converted to hours at init (legacy climate.c).
+                ctx.options.snow_dtlong    = to_double(tok[6]);
                 ctx.options.snow_min_melt  = to_double(tok[7]);
                 ctx.options.snow_max_melt  = to_double(tok[8]);
             } else {

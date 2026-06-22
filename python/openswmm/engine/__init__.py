@@ -209,6 +209,7 @@ from ._tables import Tables, Patterns
 from ._inflows import Inflows
 from ._controls import Controls
 from ._forcing import Forcing
+from ._climate import Climate
 
 # =============================================================================
 # Spatial / infrastructure / 2D
@@ -292,6 +293,7 @@ __all__ = [
     "HotStart", "MassBalance", "Statistics", "OutputReader",
     # --- Hydrology, water quality, and time-varying inputs ---
     "Pollutants", "Quality", "Tables", "Patterns", "Inflows", "Controls", "Forcing",
+    "Climate",
     # --- Spatial / infrastructure / 2D ---
     "Infrastructure", "Spatial",
     "Surface2D", "HAS_2D",

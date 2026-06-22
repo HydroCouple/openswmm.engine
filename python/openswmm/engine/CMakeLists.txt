@@ -32,6 +32,7 @@ set(_engine_modules
     _output_reader
     _spatial
     _forcing
+    _climate
 )
 
 foreach(_mod IN LISTS _engine_modules)

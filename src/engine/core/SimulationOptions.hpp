@@ -441,6 +441,13 @@ struct SimulationOptions {
     /** @brief Snowmelt: latitude (degrees). */
     double snow_lat = 0.0;
 
+    /** @brief Snowmelt: longitude/solar-time correction (minutes).
+     *  @details Legacy [TEMPERATURE] SNOWMELT longitude field. Stored verbatim
+     *           in minutes; converted to hours (÷60) into ClimateState::dtlong
+     *           at init, matching legacy climate.c (Temp.dtlong = x[5]/60.0).
+     *           0 = use true solar time. */
+    double snow_dtlong = 0.0;
+
     /** @brief Snowmelt: site elevation above sea level (ft, internal units).
      *  @details Used to compute atmospheric pressure for psychrometric constant.
      *           Legacy field: Temp.elev (from [TEMPERATURE] SNOWMELT section).
