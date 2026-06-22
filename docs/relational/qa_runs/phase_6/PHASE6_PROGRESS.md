@@ -3,7 +3,27 @@
 Branch `swmm6_rel`. Foundation + Stage A.1 **committed** at `71ae12a5` (on top of
 Phase 5 `c268af1a`). All gates green at the checkpoint.
 
-## RESUME POINT (latest) — Stage C done (`c241d574`) + Stage D in progress
+## ✅ PHASE 6 COMPLETE — `9b25ee65` (wide arrays deleted, side-tables are the sole store)
+The full in-memory relational LINK cutover is done and committed. The wide
+LinkData subtype arrays no longer exist; ConduitData/PumpData/Orifice/Weir/Outlet
+side-tables are the single source of truth, written at parse/resolve/edit/GPKG-read
+and read everywhere. Commits (on Phase-5 `c268af1a`):
+`71ae12a5` (foundation/A.1) → `b9f5e966` (A.2+A.3 edit-API) → `903b6524` (A.3
+parse/resolve) → `e60b3b36` (B) → `c241d574` (C) → `92ecf215` (D.1 remove mirror)
+→ `9b25ee65` (D.2 delete wide arrays). **All gates green at every boundary:**
+build clean, **ctest 86/86**, **.out EXACT ×18**, `openswmm_links.h` byte-unchanged.
+
+### Optional housekeeping remaining (not blocking)
+- **Squash**: collapse `71ae12a5..9b25ee65` into one "Phase 6" commit
+  (`git reset --soft 71ae12a5~1 && git commit`). DESTRUCTIVE history rewrite —
+  left for the user to decide (the per-stage commits are useful for review/bisect).
+- **Precise RSS before/after**: measured AFTER ≈15.0 MB on user4 (largest QA
+  model); a true before/after needs the pre-Phase-6 binary on a link-heavy model
+  (QA models are small, so the absolute delta is minor — the structural win is
+  ~29 fewer std::vectors per link in LinkData).
+
+---
+## (historical) RESUME POINT — Stage C done (`c241d574`) + Stage D in progress
 **Stage C committed** (`c241d574`): InpWriter / GeoPackageReader+Writer /
 convert_internal_to_display sourced from side-tables; build() made size-guarded.
 **Stage D started (uncommitted):** removed the init-time `build()` mirror call at
