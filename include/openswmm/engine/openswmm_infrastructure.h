@@ -408,6 +408,41 @@ SWMM_ENGINE_API int swmm_inlet_index(SWMM_Engine engine, const char* id);
  */
 SWMM_ENGINE_API const char* swmm_inlet_id(SWMM_Engine engine, int idx);
 
+/**
+ * @brief Read an inlet's geometric parameters. Inverse of @ref swmm_inlet_set_params.
+ *
+ * @details Lets the GUI inlet editor load an existing definition instead of
+ *          only writing one. Any out-param may be null. The inlet @e type
+ *          string (set at @ref swmm_inlet_add) is read separately via
+ *          @ref swmm_inlet_get_type.
+ *
+ * @param engine            Engine handle.
+ * @param idx               Zero-based inlet index.
+ * @param[out] length       Receives the inlet length.
+ * @param[out] width        Receives the inlet width.
+ * @param[out] grate_type   Buffer for the grate-type string (NUL-terminated,
+ *                          truncated to `grate_buflen`); may be null to skip.
+ * @param grate_buflen      Size of `grate_type` in bytes; ignored when
+ *                          `grate_type` is null.
+ * @param[out] open_area    Receives the open-area fraction.
+ * @param[out] splash_veloc Receives the splash-over velocity threshold.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_inlet_get_params(SWMM_Engine engine, int idx,
+                                            double* length, double* width,
+                                            char* grate_type, int grate_buflen,
+                                            double* open_area, double* splash_veloc);
+
+/**
+ * @brief Read an inlet's type string (the value passed to @ref swmm_inlet_add).
+ * @param engine     Engine handle.
+ * @param idx        Zero-based inlet index.
+ * @param[out] buf   Destination buffer (NUL-terminated, truncated to `buflen`).
+ * @param buflen     Size of `buf` in bytes (must be > 0).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_inlet_get_type(SWMM_Engine engine, int idx, char* buf, int buflen);
+
 /* =========================================================================
  * LID controls
  * ========================================================================= */
@@ -474,6 +509,43 @@ SWMM_ENGINE_API int swmm_lid_set_storage(SWMM_Engine engine, int idx, double thi
 SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff, double expon, double offset);
 
 /**
+ * @brief Set the porous-pavement layer properties for a LID control.
+ *
+ * @details Used by PERM_PAVEMENT (and any LID with a `PAVEMENT` line). The six
+ *          values of the `[LID_CONTROLS] ... PAVEMENT` line, in input-file
+ *          units. Pre-start-only (BUILDING/OPENED) — the layer seeds per-unit
+ *          LID state at start().
+ *
+ * @param engine       Engine handle.
+ * @param idx          Zero-based LID index.
+ * @param thick        Pavement layer thickness.
+ * @param void_ratio   Void ratio (volume of voids / volume of solids).
+ * @param frac_imperv  Impervious surface fraction (0–1).
+ * @param ksat         Permeability / saturated conductivity.
+ * @param clog_factor  Clogging factor (0 = no clogging).
+ * @param regen_days   Days between clogging regeneration (0 = never).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double thick, double void_ratio,
+                                          double frac_imperv, double ksat, double clog_factor, double regen_days);
+
+/**
+ * @brief Set the drainage-mat layer properties for a LID control.
+ *
+ * @details Used by GREEN_ROOF (and any LID with a `DRAINMAT` line). The three
+ *          values of the `[LID_CONTROLS] ... DRAINMAT` line, in input-file
+ *          units. Pre-start-only (BUILDING/OPENED).
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based LID index.
+ * @param thick      Drainage-mat thickness.
+ * @param void_frac  Void fraction of the mat (0–1).
+ * @param roughness  Manning's n for flow through the mat.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_lid_set_drainmat(SWMM_Engine engine, int idx, double thick, double void_frac, double roughness);
+
+/**
  * @brief Get the total number of LID controls in the model.
  * @param engine  Engine handle.
  * @returns Number of LID controls, or -1 on error.
@@ -495,6 +567,39 @@ SWMM_ENGINE_API int swmm_lid_index(SWMM_Engine engine, const char* id);
  * @returns Null-terminated string owned by the engine, or NULL on error.
  */
 SWMM_ENGINE_API const char* swmm_lid_id(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Read a LID control's type code. Inverse of the `type` argument to
+ *        @ref swmm_lid_add.
+ * @param engine     Engine handle.
+ * @param idx        Zero-based LID index.
+ * @param[out] type  Receives the LID type code (0=BIO_CELL … 7=VEGETATIVE_SWALE).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_lid_get_type(SWMM_Engine engine, int idx, int* type);
+
+/**
+ * @brief Read the surface layer properties. Inverse of @ref swmm_lid_set_surface.
+ * @details Lets the GUI LID editor load an existing control's layers instead of
+ *          only writing them. Any out-param may be null.
+ */
+SWMM_ENGINE_API int swmm_lid_get_surface(SWMM_Engine engine, int idx, double* storage, double* roughness, double* slope);
+
+/** @brief Read the soil layer properties. Inverse of @ref swmm_lid_set_soil. Any out-param may be null. */
+SWMM_ENGINE_API int swmm_lid_get_soil(SWMM_Engine engine, int idx, double* thick, double* porosity, double* fc, double* wp, double* ksat, double* kslope);
+
+/** @brief Read the storage layer properties. Inverse of @ref swmm_lid_set_storage. Any out-param may be null. */
+SWMM_ENGINE_API int swmm_lid_get_storage(SWMM_Engine engine, int idx, double* thick, double* void_frac, double* ksat);
+
+/** @brief Read the underdrain properties. Inverse of @ref swmm_lid_set_drain. Any out-param may be null. */
+SWMM_ENGINE_API int swmm_lid_get_drain(SWMM_Engine engine, int idx, double* coeff, double* expon, double* offset);
+
+/** @brief Read the porous-pavement layer. Inverse of @ref swmm_lid_set_pavement. Any out-param may be null. */
+SWMM_ENGINE_API int swmm_lid_get_pavement(SWMM_Engine engine, int idx, double* thick, double* void_ratio,
+                                          double* frac_imperv, double* ksat, double* clog_factor, double* regen_days);
+
+/** @brief Read the drainage-mat layer. Inverse of @ref swmm_lid_set_drainmat. Any out-param may be null. */
+SWMM_ENGINE_API int swmm_lid_get_drainmat(SWMM_Engine engine, int idx, double* thick, double* void_frac, double* roughness);
 
 /* =========================================================================
  * LID usage (assign LID to subcatchment)

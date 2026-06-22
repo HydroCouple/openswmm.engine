@@ -201,6 +201,12 @@ public:
     int execute(SimulationContext& ctx, double dt,
                 NonConduitFlowFunc non_conduit_fn = nullptr);
 
+    /// Whether the most recent execute() reached Picard convergence on its final
+    /// iteration (legacy dynwave.c: a step is "not converging" iff this is false
+    /// after MaxTrials — NOT merely because it used all trials). Used for the
+    /// "% of Steps Not Converging" stability statistic.
+    bool lastConverged() const { return last_converged_; }
+
     /**
      * @brief Compute CFL-based variable timestep.
      * @details Also updates per-node/link CFL-critical counters (matching
@@ -317,6 +323,7 @@ private:
     //     element whose double diverges (below the float32 .out floor). ---
     int          trace_rstep_      = -2;   ///< -2 unparsed; -1 off; >=0 target routing step
     int          routing_step_idx_ = -1;   ///< increments each execute() call
+    bool         last_converged_   = false; ///< final Picard converged flag of last execute()
     std::string  trace_file_;              ///< SWMM_TRACE_FILE destination
     void maybeInitTrace();
     void dumpTrace(SimulationContext& ctx, int iter);

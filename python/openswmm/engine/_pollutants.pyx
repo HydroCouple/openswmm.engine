@@ -98,6 +98,18 @@ cdef class Pollutant:
         _check(swmm_pollutant_get_units(_h(self._solver), self._index, &v))
         return ConcentrationUnits(v)
 
+    @units.setter
+    def units(self, value) -> None:
+        """Change the concentration units (a L{ConcentrationUnits} value or its
+        integer code: 0=MG/L, 1=UG/L, 2=#/L).
+
+        Units are normally fixed at creation; this lets a model builder correct
+        them. Editable in the pre-start states only — a mid-run change raises
+        L{LifecycleError}.
+        """
+        _check_fresh(self)
+        _check(swmm_pollutant_set_units(_h(self._solver), self._index, int(value)))
+
     # ---- Decay / fate properties -----------------------------------
 
     @property

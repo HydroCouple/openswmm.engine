@@ -14,8 +14,10 @@
 #include "../../../include/openswmm/engine/openswmm_subcatchments.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <string>
+#include <vector>
 
 extern "C" {
 
@@ -1047,6 +1049,29 @@ SWMM_ENGINE_API int swmm_aquifer_set_param(SWMM_Engine engine, int idx, int para
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_aquifer_get_evap_pattern(SWMM_Engine engine, int idx, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.aquifers.count());
+    const std::string& s = ctx.aquifers.upper_evap_pat[static_cast<std::size_t>(idx)];
+    const std::size_t n = std::min(s.size(), static_cast<std::size_t>(buflen - 1));
+    std::memcpy(buf, s.data(), n);
+    buf[n] = '\0';
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_aquifer_set_evap_pattern(SWMM_Engine engine, int idx, const char* name) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    // The pattern name is resolved to a [PATTERNS] index at start(), so it is
+    // only meaningful while the model is still being built (pre-start).
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.aquifers.count());
+    ctx.aquifers.upper_evap_pat[static_cast<std::size_t>(idx)] = (name ? std::string(name) : std::string{});
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Snowpacks ([SNOWPACKS] section) — Slice BM.0 list + add; setters land with BP
 // ============================================================================
@@ -1087,6 +1112,139 @@ SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id) {
     sp.removal_subcatch.push_back("");
 
     ctx.snowpack_names.add(id);
+    return SWMM_OK;
+}
+
+namespace {
+// The three snow-melt surfaces (PLOWABLE / IMPERVIOUS / PERVIOUS) share an
+// identical 7-value layout; these helpers back the per-surface API functions.
+// Surface parameters seed per-subcatchment snow state at start(), so writes are
+// pre-start-only (BUILDING / OPENED).
+int snowpack_set_surface(openswmm::SimulationContext& ctx,
+                         std::vector<std::array<double, 7>>& surf, int idx,
+                         double cmin, double cmax, double tbase,
+                         double fwfrac, double sd0, double fw0, double last) {
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED)
+        return SWMM_ERR_LIFECYCLE;
+    if (idx < 0 || idx >= ctx.snowpacks.count()) return SWMM_ERR_BADINDEX;
+    auto& p = surf[static_cast<std::size_t>(idx)];
+    p[0] = cmin; p[1] = cmax; p[2] = tbase; p[3] = fwfrac;
+    p[4] = sd0;  p[5] = fw0;  p[6] = last;
+    return SWMM_OK;
+}
+
+int snowpack_get_surface(const openswmm::SimulationContext& ctx,
+                         const std::vector<std::array<double, 7>>& surf, int idx,
+                         double* cmin, double* cmax, double* tbase,
+                         double* fwfrac, double* sd0, double* fw0, double* last) {
+    if (idx < 0 || idx >= ctx.snowpacks.count()) return SWMM_ERR_BADINDEX;
+    const auto& p = surf[static_cast<std::size_t>(idx)];
+    if (cmin)   *cmin   = p[0];
+    if (cmax)   *cmax   = p[1];
+    if (tbase)  *tbase  = p[2];
+    if (fwfrac) *fwfrac = p[3];
+    if (sd0)    *sd0    = p[4];
+    if (fw0)    *fw0    = p[5];
+    if (last)   *last   = p[6];
+    return SWMM_OK;
+}
+} // namespace
+
+SWMM_ENGINE_API int swmm_snowpack_set_plowable(SWMM_Engine engine, int idx,
+                                               double cmin, double cmax, double tbase,
+                                               double fwfrac, double sd0, double fw0, double last) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    return snowpack_set_surface(ctx, ctx.snowpacks.plowable, idx, cmin, cmax, tbase, fwfrac, sd0, fw0, last);
+}
+
+SWMM_ENGINE_API int swmm_snowpack_get_plowable(SWMM_Engine engine, int idx,
+                                               double* cmin, double* cmax, double* tbase,
+                                               double* fwfrac, double* sd0, double* fw0, double* last) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    return snowpack_get_surface(ctx, ctx.snowpacks.plowable, idx, cmin, cmax, tbase, fwfrac, sd0, fw0, last);
+}
+
+SWMM_ENGINE_API int swmm_snowpack_set_impervious(SWMM_Engine engine, int idx,
+                                                 double cmin, double cmax, double tbase,
+                                                 double fwfrac, double sd0, double fw0, double last) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    return snowpack_set_surface(ctx, ctx.snowpacks.impervious, idx, cmin, cmax, tbase, fwfrac, sd0, fw0, last);
+}
+
+SWMM_ENGINE_API int swmm_snowpack_get_impervious(SWMM_Engine engine, int idx,
+                                                 double* cmin, double* cmax, double* tbase,
+                                                 double* fwfrac, double* sd0, double* fw0, double* last) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    return snowpack_get_surface(ctx, ctx.snowpacks.impervious, idx, cmin, cmax, tbase, fwfrac, sd0, fw0, last);
+}
+
+SWMM_ENGINE_API int swmm_snowpack_set_pervious(SWMM_Engine engine, int idx,
+                                               double cmin, double cmax, double tbase,
+                                               double fwfrac, double sd0, double fw0, double last) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    return snowpack_set_surface(ctx, ctx.snowpacks.pervious, idx, cmin, cmax, tbase, fwfrac, sd0, fw0, last);
+}
+
+SWMM_ENGINE_API int swmm_snowpack_get_pervious(SWMM_Engine engine, int idx,
+                                               double* cmin, double* cmax, double* tbase,
+                                               double* fwfrac, double* sd0, double* fw0, double* last) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    return snowpack_get_surface(ctx, ctx.snowpacks.pervious, idx, cmin, cmax, tbase, fwfrac, sd0, fw0, last);
+}
+
+SWMM_ENGINE_API int swmm_snowpack_set_removal(SWMM_Engine engine, int idx,
+                                              double dsnow, double fout, double fimp,
+                                              double fperv, double fimelt, double fsubcatch) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.snowpacks.count());
+    auto& r = ctx.snowpacks.removal[static_cast<std::size_t>(idx)];
+    r[0] = dsnow; r[1] = fout; r[2] = fimp; r[3] = fperv; r[4] = fimelt; r[5] = fsubcatch;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_snowpack_get_removal(SWMM_Engine engine, int idx,
+                                              double* dsnow, double* fout, double* fimp,
+                                              double* fperv, double* fimelt, double* fsubcatch) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.snowpacks.count());
+    const auto& r = ctx.snowpacks.removal[static_cast<std::size_t>(idx)];
+    if (dsnow)     *dsnow     = r[0];
+    if (fout)      *fout      = r[1];
+    if (fimp)      *fimp      = r[2];
+    if (fperv)     *fperv     = r[3];
+    if (fimelt)    *fimelt    = r[4];
+    if (fsubcatch) *fsubcatch = r[5];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_snowpack_set_removal_subcatch(SWMM_Engine engine, int idx, const char* name) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.snowpacks.count());
+    ctx.snowpacks.removal_subcatch[static_cast<std::size_t>(idx)] = (name ? std::string(name) : std::string{});
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_snowpack_get_removal_subcatch(SWMM_Engine engine, int idx, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.snowpacks.count());
+    const std::string& s = ctx.snowpacks.removal_subcatch[static_cast<std::size_t>(idx)];
+    const std::size_t n = std::min(s.size(), static_cast<std::size_t>(buflen - 1));
+    std::memcpy(buf, s.data(), n);
+    buf[n] = '\0';
     return SWMM_OK;
 }
 

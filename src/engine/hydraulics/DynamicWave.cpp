@@ -778,6 +778,10 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         updateDPSState(ctx, dt);
     }
 
+    // Record the actual final convergence (legacy counts a step as
+    // non-converging only when this is false, even if it used all MaxTrials —
+    // a step that converges ON the last allowed iteration is "converged").
+    last_converged_ = converged;
     return steps;
 }
 

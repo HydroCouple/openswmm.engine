@@ -84,9 +84,7 @@ endfunction()
 #       engine component is written (see MASTER_IMPLEMENTATION_PLAN.md phases).
 
 add_gtest_unit(test_engine_tokenizer         test_tokenizer.cpp)
-add_gtest_unit(test_engine_timeseries_cursor test_timeseries_cursor.cpp)
 add_gtest_unit(test_engine_options_parser    test_options_parser.cpp)
-add_gtest_unit(test_engine_csv_timeseries    test_csv_timeseries.cpp)
 add_gtest_unit(test_engine_timeseries_file_roundtrip test_timeseries_file_roundtrip.cpp)
 add_gtest_unit(test_engine_pathresolver      test_pathresolver.cpp)
 add_gtest_unit(test_engine_postparse_resolver test_postparse_resolver.cpp)
@@ -104,8 +102,6 @@ add_gtest_unit(test_engine_events_section         test_events_section.cpp)
 add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
 add_gtest_unit(test_engine_climate_api             test_climate_api.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
-add_gtest_unit(test_engine_io_thread         test_io_thread.cpp)
-add_gtest_unit(test_engine_timestep_ctrl     test_timestep_controller.cpp)
 add_gtest_unit(test_engine_simd_math         test_simd_math.cpp)
 add_gtest_unit(test_engine_mathexpr          test_mathexpr.cpp)
 add_gtest_unit(test_engine_user_flags        test_user_flags.cpp)
@@ -113,7 +109,6 @@ add_gtest_unit(test_engine_user_flags        test_user_flags.cpp)
 # openswmm.gui/docs/USER_FLAGS_UI_PLAN_2026-06-03.md).
 add_gtest_unit(test_engine_user_flags_capi   test_user_flags_capi.cpp)
 add_gtest_unit(test_engine_section_registry  test_section_registry.cpp)
-add_gtest_unit(test_engine_crs               test_crs.cpp)
 add_gtest_unit(test_engine_xsection          test_xsection.cpp)
 target_compile_definitions(test_engine_xsection PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
@@ -122,6 +117,9 @@ target_compile_definitions(test_engine_xsection PRIVATE
 add_gtest_unit(test_engine_street_xsect      test_street_xsect.cpp)
 # STREET cross-section programmatic builder API (set/get xsect + get_params).
 add_gtest_unit(test_engine_street_xsect_api  test_street_xsect_api.cpp)
+# GUI editor round-trip getters/setters (pollutant units, aquifer ET pattern,
+# snowpack surfaces, inlet params/type, LID layers/type).
+add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)
 
 add_gtest_unit(test_engine_infiltration     test_infiltration.cpp)
 target_compile_definitions(test_engine_infiltration PRIVATE

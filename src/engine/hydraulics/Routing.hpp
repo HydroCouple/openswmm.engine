@@ -100,6 +100,13 @@ public:
     /// Access the DW solver (for non-conduit node state scatter).
     dynwave::DWSolver& dwSolver() { return dw_solver_; }
 
+    /// Whether the most recent step() converged. DYNWAVE returns the solver's
+    /// real final Picard flag; other models always converge (legacy only tracks
+    /// dynwave non-convergence). Feeds the "% of Steps Not Converging" stat.
+    bool lastStepConverged() const {
+        return (model_ == RouteModel::DYNWAVE) ? dw_solver_.lastConverged() : true;
+    }
+
 private:
     RouteModel model_ = RouteModel::DYNWAVE;
     XSectGroups groups_;

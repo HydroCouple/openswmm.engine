@@ -377,6 +377,44 @@ class Inlets:
         _check(swmm_inlet_set_params(
             h, idx, length, width, b_grate, open_area, splash_veloc))
 
+    def get_params(self, int idx) -> dict:
+        """Read back an inlet's geometric parameters.
+
+        Inverse of :meth:`set_params` — lets an editor load an existing inlet.
+        The inlet *type* string (set at :meth:`add`) is returned separately by
+        :meth:`get_type`.
+
+        @param idx: Zero-based inlet index.
+        @type idx: int
+        @return: Mapping with keys ``length``, ``width``, ``grate_type``,
+            ``open_area``, ``splash_veloc``.
+        @rtype: dict
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double length = 0.0, width = 0.0, open_area = 0.0, splash_veloc = 0.0
+        cdef char grate[256]
+        _check(swmm_inlet_get_params(
+            h, idx, &length, &width, grate, sizeof(grate),
+            &open_area, &splash_veloc))
+        return {
+            "length": length, "width": width,
+            "grate_type": grate.decode('utf-8'),
+            "open_area": open_area, "splash_veloc": splash_veloc,
+        }
+
+    def get_type(self, int idx) -> str:
+        """Return the inlet's type string (the value passed to :meth:`add`).
+
+        @param idx: Zero-based inlet index.
+        @rtype: str
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef char buf[256]
+        _check(swmm_inlet_get_type(h, idx, buf, sizeof(buf)))
+        return buf.decode('utf-8')
+
     def get_index(self, str inlet_id) -> int:
         """Resolve an inlet's zero-based index from its string id.
 
@@ -501,6 +539,106 @@ class LIDs:
                   double coeff, double expon, double offset) -> None:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_drain(h, idx, coeff, expon, offset))
+
+    def set_pavement(self, int idx, *,
+                     double thick, double void_ratio, double frac_imperv,
+                     double ksat, double clog_factor=0.0, double regen_days=0.0) -> None:
+        """Set the porous-pavement layer (PERM_PAVEMENT LIDs)."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_lid_set_pavement(h, idx, thick, void_ratio, frac_imperv,
+                                     ksat, clog_factor, regen_days))
+
+    def set_drainmat(self, int idx, *,
+                     double thick, double void_frac, double roughness) -> None:
+        """Set the drainage-mat layer (GREEN_ROOF LIDs)."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_lid_set_drainmat(h, idx, thick, void_frac, roughness))
+
+    def get_type(self, int idx) -> int:
+        """Return the LID control's type code (inverse of the ``lid_type``
+        argument to :meth:`add`).
+
+        @param idx: Zero-based LID index.
+        @return: An integer L{LidType} code (0=BIO_CELL … 7=VEGETATIVE_SWALE).
+        @rtype: int
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int t = -1
+        _check(swmm_lid_get_type(h, idx, &t))
+        return t
+
+    def get_surface(self, int idx) -> dict:
+        """Read the surface layer. Inverse of :meth:`set_surface`.
+
+        @return: Mapping ``storage``, ``roughness``, ``slope``.
+        @rtype: dict
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double storage = 0.0, roughness = 0.0, slope = 0.0
+        _check(swmm_lid_get_surface(h, idx, &storage, &roughness, &slope))
+        return {"storage": storage, "roughness": roughness, "slope": slope}
+
+    def get_soil(self, int idx) -> dict:
+        """Read the soil layer. Inverse of :meth:`set_soil`.
+
+        @return: Mapping ``thick``, ``porosity``, ``fc``, ``wp``, ``ksat``,
+            ``kslope``.
+        @rtype: dict
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double thick = 0.0, porosity = 0.0, fc = 0.0, wp = 0.0, ksat = 0.0, kslope = 0.0
+        _check(swmm_lid_get_soil(h, idx, &thick, &porosity, &fc, &wp, &ksat, &kslope))
+        return {"thick": thick, "porosity": porosity, "fc": fc,
+                "wp": wp, "ksat": ksat, "kslope": kslope}
+
+    def get_storage(self, int idx) -> dict:
+        """Read the storage layer. Inverse of :meth:`set_storage`.
+
+        @return: Mapping ``thick``, ``void_frac``, ``ksat``.
+        @rtype: dict
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double thick = 0.0, void_frac = 0.0, ksat = 0.0
+        _check(swmm_lid_get_storage(h, idx, &thick, &void_frac, &ksat))
+        return {"thick": thick, "void_frac": void_frac, "ksat": ksat}
+
+    def get_drain(self, int idx) -> dict:
+        """Read the underdrain layer. Inverse of :meth:`set_drain`.
+
+        @return: Mapping ``coeff``, ``expon``, ``offset``.
+        @rtype: dict
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double coeff = 0.0, expon = 0.0, offset = 0.0
+        _check(swmm_lid_get_drain(h, idx, &coeff, &expon, &offset))
+        return {"coeff": coeff, "expon": expon, "offset": offset}
+
+    def get_pavement(self, int idx) -> dict:
+        """Read the porous-pavement layer. Inverse of :meth:`set_pavement`.
+
+        @return: Mapping ``thick``, ``void_ratio``, ``frac_imperv``, ``ksat``,
+            ``clog_factor``, ``regen_days``.
+        @rtype: dict
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double thick = 0.0, void_ratio = 0.0, frac_imperv = 0.0
+        cdef double ksat = 0.0, clog_factor = 0.0, regen_days = 0.0
+        _check(swmm_lid_get_pavement(h, idx, &thick, &void_ratio, &frac_imperv,
+                                     &ksat, &clog_factor, &regen_days))
+        return {"thick": thick, "void_ratio": void_ratio, "frac_imperv": frac_imperv,
+                "ksat": ksat, "clog_factor": clog_factor, "regen_days": regen_days}
+
+    def get_drainmat(self, int idx) -> dict:
+        """Read the drainage-mat layer. Inverse of :meth:`set_drainmat`.
+
+        @return: Mapping ``thick``, ``void_frac``, ``roughness``.
+        @rtype: dict
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double thick = 0.0, void_frac = 0.0, roughness = 0.0
+        _check(swmm_lid_get_drainmat(h, idx, &thick, &void_frac, &roughness))
+        return {"thick": thick, "void_frac": void_frac, "roughness": roughness}
 
     def usage_add(self, subcatchment, lid, *,
                   int number, double area, double width,

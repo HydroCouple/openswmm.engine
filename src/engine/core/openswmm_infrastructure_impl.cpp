@@ -434,6 +434,45 @@ SWMM_ENGINE_API const char* swmm_inlet_id(SWMM_Engine engine, int idx) {
     return names[static_cast<std::size_t>(idx)].c_str();
 }
 
+namespace {
+// Copy a std::string into a caller buffer, NUL-terminated and truncated to
+// buflen (mirrors swmm_transect_get_comments). Returns SWMM_ERR_BADPARAM for a
+// null/empty buffer.
+int copy_str(const std::string& s, char* buf, int buflen) {
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const std::size_t n = std::min(s.size(), static_cast<std::size_t>(buflen - 1));
+    std::memcpy(buf, s.data(), n);
+    buf[n] = '\0';
+    return SWMM_OK;
+}
+} // namespace
+
+SWMM_ENGINE_API int swmm_inlet_get_params(SWMM_Engine engine, int idx,
+                                            double* length, double* width,
+                                            char* grate_type, int grate_buflen,
+                                            double* open_area, double* splash_veloc) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
+    const auto ui = static_cast<std::size_t>(idx);
+    if (length)       *length       = ctx.inlets.length[ui];
+    if (width)        *width        = ctx.inlets.width[ui];
+    if (open_area)    *open_area    = ctx.inlets.open_area[ui];
+    if (splash_veloc) *splash_veloc = ctx.inlets.splash_veloc[ui];
+    if (grate_type) {
+        const int rc = copy_str(ctx.inlets.grate_type[ui], grate_type, grate_buflen);
+        if (rc != SWMM_OK) return rc;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_inlet_get_type(SWMM_Engine engine, int idx, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
+    return copy_str(ctx.inlets.inlet_type[static_cast<std::size_t>(idx)], buf, buflen);
+}
+
 // ============================================================================
 // LID controls
 // ============================================================================
@@ -447,6 +486,14 @@ inline const char* lid_type_code(int type) {
     if (type < 0 || type >= static_cast<int>(sizeof(codes) / sizeof(codes[0])))
         return "";
     return codes[type];
+}
+// Inverse of lid_type_code: 2-letter code string -> type enum int, or -1 if
+// unrecognised.
+inline int lid_type_from_code(const std::string& code) {
+    static const char* codes[] = {"BC", "RG", "GR", "IT", "PP", "RB", "RD", "VS"};
+    for (int i = 0; i < static_cast<int>(sizeof(codes) / sizeof(codes[0])); ++i)
+        if (code == codes[i]) return i;
+    return -1;
 }
 } // namespace
 
@@ -555,6 +602,45 @@ SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double thick, double void_ratio,
+                                          double frac_imperv, double ksat, double clog_factor, double regen_days) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED)
+        return SWMM_ERR_LIFECYCLE;
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (thick < 0.0 || void_ratio < 0.0 || frac_imperv < 0.0 || frac_imperv > 1.0
+        || ksat < 0.0 || clog_factor < 0.0 || regen_days < 0.0)
+        return SWMM_ERR_BADPARAM;
+    // PAVEMENT layer: [0]=Thick, [1]=VoidRatio, [2]=FracImperv, [3]=Ksat, [4]=ClogFactor, [5]=RegenDays
+    auto& p = ctx.lid_controls.pavement[static_cast<std::size_t>(idx)];
+    p[0] = thick;
+    p[1] = void_ratio;
+    p[2] = frac_imperv;
+    p[3] = ksat;
+    p[4] = clog_factor;
+    p[5] = regen_days;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_set_drainmat(SWMM_Engine engine, int idx, double thick, double void_frac, double roughness) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED)
+        return SWMM_ERR_LIFECYCLE;
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (thick < 0.0 || void_frac < 0.0 || void_frac > 1.0 || roughness < 0.0)
+        return SWMM_ERR_BADPARAM;
+    // DRAINMAT layer: [0]=Thick, [1]=VoidRatio, [2]=Roughness
+    auto& p = ctx.lid_controls.drainmat[static_cast<std::size_t>(idx)];
+    p[0] = thick;
+    p[1] = void_frac;
+    p[2] = roughness;
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_lid_count(SWMM_Engine engine) {
     if (!engine) return -1;
     return to_engine(engine)->context().lid_controls.count();
@@ -574,6 +660,96 @@ SWMM_ENGINE_API const char* swmm_lid_id(SWMM_Engine engine, int idx) {
     const auto& names = to_engine(engine)->context().lid_controls.names;
     if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
     return names[static_cast<std::size_t>(idx)].c_str();
+}
+
+// ----------------------------------------------------------------------------
+// LID getters (inverse of the add/set_* layer writers) — let the GUI load an
+// existing LID control. Layer indices match the set_* writers above:
+//   SURFACE [0]=storage [2]=roughness [3]=slope
+//   SOIL    [0]=thick [1]=poros [2]=fc [3]=wp [4]=ksat [5]=kslope
+//   STORAGE [0]=thick [1]=void_frac [2]=ksat
+//   DRAIN   [0]=coeff [1]=expon [2]=offset
+// ----------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_lid_get_type(SWMM_Engine engine, int idx, int* type) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (type) *type = lid_type_from_code(ctx.lid_controls.lid_type[static_cast<std::size_t>(idx)]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_get_surface(SWMM_Engine engine, int idx, double* storage, double* roughness, double* slope) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    const auto& p = ctx.lid_controls.surface[static_cast<std::size_t>(idx)];
+    if (storage)   *storage   = p[0];
+    if (roughness) *roughness = p[2];
+    if (slope)     *slope     = p[3];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_get_soil(SWMM_Engine engine, int idx, double* thick, double* porosity, double* fc, double* wp, double* ksat, double* kslope) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    const auto& p = ctx.lid_controls.soil[static_cast<std::size_t>(idx)];
+    if (thick)    *thick    = p[0];
+    if (porosity) *porosity = p[1];
+    if (fc)       *fc       = p[2];
+    if (wp)       *wp       = p[3];
+    if (ksat)     *ksat     = p[4];
+    if (kslope)   *kslope   = p[5];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_get_storage(SWMM_Engine engine, int idx, double* thick, double* void_frac, double* ksat) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    const auto& p = ctx.lid_controls.storage[static_cast<std::size_t>(idx)];
+    if (thick)     *thick     = p[0];
+    if (void_frac) *void_frac = p[1];
+    if (ksat)      *ksat      = p[2];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_get_drain(SWMM_Engine engine, int idx, double* coeff, double* expon, double* offset) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    const auto& p = ctx.lid_controls.drain[static_cast<std::size_t>(idx)];
+    if (coeff)  *coeff  = p[0];
+    if (expon)  *expon  = p[1];
+    if (offset) *offset = p[2];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_get_pavement(SWMM_Engine engine, int idx, double* thick, double* void_ratio,
+                                          double* frac_imperv, double* ksat, double* clog_factor, double* regen_days) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    const auto& p = ctx.lid_controls.pavement[static_cast<std::size_t>(idx)];
+    if (thick)       *thick       = p[0];
+    if (void_ratio)  *void_ratio  = p[1];
+    if (frac_imperv) *frac_imperv = p[2];
+    if (ksat)        *ksat        = p[3];
+    if (clog_factor) *clog_factor = p[4];
+    if (regen_days)  *regen_days  = p[5];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_get_drainmat(SWMM_Engine engine, int idx, double* thick, double* void_frac, double* roughness) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    const auto& p = ctx.lid_controls.drainmat[static_cast<std::size_t>(idx)];
+    if (thick)     *thick     = p[0];
+    if (void_frac) *void_frac = p[1];
+    if (roughness) *roughness = p[2];
+    return SWMM_OK;
 }
 
 // ============================================================================

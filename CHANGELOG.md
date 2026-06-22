@@ -13,6 +13,34 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
 
 ### Added
 
+- **GUI-editor round-trip APIs** — getters/setters so the property and
+  category editors can *load* an existing definition, not just write one
+  (closes the gaps in `openswmm.gui/docs/HANDOFF_compile_verify_agent.md`
+  §5.2–§5.2f):
+  - Pollutant: `swmm_pollutant_set_units` (inverse of the existing
+    `_get_units`; pre-start-only).
+  - Aquifer: `swmm_aquifer_get_evap_pattern` / `_set_evap_pattern` — the one
+    string column (`[ETupat]`) the param-code API didn't cover.
+  - Snowpack (previously add/list-only): `swmm_snowpack_set/get_plowable`,
+    `_impervious`, `_pervious` (the seven `[SNOWPACKS]` surface values),
+    `_set/get_removal` (six values) and `_set/get_removal_subcatch`.
+  - Inlet: `swmm_inlet_get_params` (inverse of `_set_params`) and
+    `swmm_inlet_get_type`.
+  - LID: `swmm_lid_get_surface` / `_soil` / `_storage` / `_drain` (inverse of
+    the four layer setters), `swmm_lid_get_type`, and full set/get for the
+    remaining two layers — `swmm_lid_set/get_pavement` (6 values: thick,
+    void-ratio, frac-imperv, ksat, clog-factor, regen-days) and
+    `swmm_lid_set/get_drainmat` (3 values: thick, void-frac, roughness) — so
+    PERM_PAVEMENT and GREEN_ROOF controls now round-trip every layer.
+  - Python bindings for all of the above (`Pollutant.units` setter,
+    `Aquifers.get/set_evap_pattern`, `Snowpacks.set/get_*`,
+    `Inlets.get_params/get_type`,
+    `LIDs.get_surface/soil/storage/drain/type` + `set/get_pavement` +
+    `set/get_drainmat`) with `.pyi` stubs. Tests:
+    `tests/unit/engine/test_editor_roundtrip_api.cpp` (bit-exact C round-trips)
+    and `python/tests/engine/test_editor_roundtrip.py`. All six LID layers are
+    now covered end-to-end.
+
 - **Phase 4 wave B1 — runtime time-pattern factors (P6) & street sweeping
   (P4).** Audited the mid-run mutation semantics of both groups and added the
   legacy parity setters so both engines share the contract:

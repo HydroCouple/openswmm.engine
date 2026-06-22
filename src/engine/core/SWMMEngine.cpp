@@ -351,6 +351,12 @@ int SWMMEngine::initialize() noexcept {
         }
     }
 
+    // Legacy-convention reported full volume (see report_full_volume_ doc): 0 for
+    // plain junctions/outfalls/dividers, pump wet-well xMax set in the loop below.
+    // Used ONLY to map the reported .out NODE_VOLUME to legacy; the internal
+    // volume-state (ctx_.nodes.volume / full_volume) is untouched.
+    report_full_volume_.assign(static_cast<std::size_t>(ctx_.n_nodes()), 0.0);
+
     // Type-1 (volume-controlled) pumps: the inlet junction acts as a wet well
     // whose full volume is the pump curve's maximum volume. Legacy pump_validate
     // (link.c) overrides the inlet node's fullVolume with the curve's xMax; the
@@ -382,6 +388,9 @@ int SWMMEngine::initialize() noexcept {
             double xmax_internal = xmax / ucf_vol;
             ctx_.nodes.full_volume[un1] =
                 std::max(ctx_.nodes.full_volume[un1], xmax_internal);
+            // Legacy reports the pump wet-well's volume from this xMax.
+            report_full_volume_[un1] =
+                std::max(report_full_volume_[un1], xmax_internal);
         }
     }
 
@@ -2362,7 +2371,11 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     exfil_.computeAll(ctx_, dt_routing);
 
     int iters = router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
-    ctx_.routing_stats.update_iterations(iters, iters < ctx_.options.max_trials);
+    // Legacy counts a step as non-converging from the ACTUAL final Picard flag,
+    // not merely from "used all MaxTrials" — a step converging on the last
+    // allowed iteration is converged (dynwave.c:245). Using the real flag here
+    // matches legacy's "% of Steps Not Converging".
+    ctx_.routing_stats.update_iterations(iters, router_.lastStepConverged());
 
 #ifdef OPENSWMM_HAS_2D
     // B3+. Post-routing: compute 2D↔1D coupling exchange, update rainfall,
@@ -2870,11 +2883,13 @@ void SWMMEngine::computeFinalStorage() noexcept {
     }
 
     // B8. Compute routing final storage for mass balance
-    //     Sum node volumes + link volumes (matching legacy)
+    //     Sum node volumes + link volumes (matching legacy). Nodes use the
+    //     legacy-convention reported volume (junctions contribute 0, as in
+    //     legacy node_getVolume) so the continuity error matches legacy rather
+    //     than crediting the MIN_SURFAREA junction-state volume as storage.
     ctx_.mass_balance.routing_final_storage = 0.0;
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
-        auto uj = static_cast<std::size_t>(j);
-        ctx_.mass_balance.routing_final_storage += ctx_.nodes.volume[uj];
+        ctx_.mass_balance.routing_final_storage += reportedNodeVolume(j);
     }
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
@@ -3013,6 +3028,14 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             snap.nodes.lateral_inflow = ctx_.nodes.lat_flow;
             snap.nodes.total_inflow   = ctx_.nodes.inflow;
             snap.nodes.overflow       = ctx_.nodes.overflow;
+
+            // Align the REPORTED node volume to legacy node_getVolume() (plain
+            // junctions => 0; pump wet-wells => xMax-based; STORAGE => curve
+            // volume). The internal volume-state (MIN_SURFAREA*depth for the
+            // volume solver) is preserved — this is an output-only mapping so the
+            // .out matches legacy without perturbing the bit-identical routing.
+            for (int i = 0; i < ctx_.n_nodes(); ++i)
+                snap.nodes.volume[static_cast<std::size_t>(i)] = reportedNodeVolume(i);
 
             // Copy link state (apply direction to flow/velocity for display)
             snap.links.flow     = ctx_.links.flow;
@@ -3183,11 +3206,14 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             snap.sys_flooding   = ctx_.mass_balance.step_flooding;
             snap.sys_outflow    = ctx_.mass_balance.step_outflow;
 
-            // Total storage volume (sum of node + link volumes)
+            // Total storage volume (sum of node + link volumes). Nodes use the
+            // legacy-convention reported volume (junctions => 0, as legacy
+            // node_getVolume) so SYS_STORAGE matches legacy rather than crediting
+            // the MIN_SURFAREA junction-state volume (same basis as #A).
             {
                 double tot_store = 0.0;
                 for (int j = 0; j < ctx_.n_nodes(); ++j)
-                    tot_store += ctx_.nodes.volume[static_cast<std::size_t>(j)];
+                    tot_store += reportedNodeVolume(j);
                 for (int j = 0; j < ctx_.n_links(); ++j)
                     tot_store += ctx_.links.volume[static_cast<std::size_t>(j)];
                 snap.sys_storage = tot_store;
@@ -3201,7 +3227,33 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             // Single conversion boundary: convert the 1D snapshot to project
             // display units once here so all output plugins consume display
             // data directly (2D surface_* fields stay SI-native, untouched).
-            convertSnapshotToDisplay(snap, ucf::DisplayUnits::from(ctx_.options));
+            const auto du = ucf::DisplayUnits::from(ctx_.options);
+            convertSnapshotToDisplay(snap, du);
+
+            // Reproduce legacy node_getResults() NODE_HEAD bit-for-bit (node.c:484-486):
+            //   x[NODE_DEPTH] = (float)(depth_disp);
+            //   x[NODE_HEAD]  = x[NODE_DEPTH] + (float)(invertElev * UCF(LENGTH));
+            // i.e. head = f32( f32(depth_disp) + f32(invert_disp) ): two SEPARATELY
+            // float32-rounded terms summed in float arithmetic (double-rounded depth).
+            // Our routed head double is the more-accurate single-rounded
+            // f32(invert+depth); that differs from legacy by +/-1 ULP on ~15% of rows.
+            // This is an OUTPUT-ONLY rewrite of snap.nodes.head: it touches neither
+            // ctx_.nodes.head nor depth/flow/volume, so routing parity is preserved.
+            // Term-by-term (not via head-depth subtraction) so it is exact in every
+            // unit system, including SI where du.length != 1.0. Skipped under
+            // rpt_averages (that path averages the double head; legacy averages the
+            // per-step float32 head — a separate concern from this 1-ULP instant bug).
+            if (!ctx_.options.rpt_averages) {
+                const std::size_t nn =
+                    std::min<std::size_t>(snap.nodes.head.size(), snap.nodes.depth.size());
+                for (std::size_t i = 0; i < nn; ++i) {
+                    const float depth_f32  = static_cast<float>(snap.nodes.depth[i]);
+                    const float invert_f32 =
+                        static_cast<float>(ctx_.nodes.invert_elev[i] * du.length);
+                    snap.nodes.head[i] =
+                        static_cast<double>(depth_f32 + invert_f32);
+                }
+            }
 
             // Attach name table pointers (valid for lifetime of ctx_)
             snap.node_ids     = &ctx_.node_names.names();
@@ -4820,12 +4872,23 @@ bool SWMMEngine::isInSteadyState(int action_count) const {
     return true;
 }
 
+double SWMMEngine::reportedNodeVolume(int i) const noexcept {
+    auto ui = static_cast<std::size_t>(i);
+    if (ctx_.nodes.type[ui] == NodeType::STORAGE)
+        return ctx_.nodes.volume[ui];          // storage curve volume (= legacy)
+    double fd = ctx_.nodes.full_depth[ui];
+    return (fd > 0.0)
+               ? report_full_volume_[ui] * (ctx_.nodes.depth[ui] / fd)
+               : 0.0;                            // plain junction → 0 (= legacy)
+}
+
 void SWMMEngine::initMassBalance() noexcept {
     // 14. Mass balance: record initial storage (nodes + links, matching legacy)
     ctx_.mass_balance.reset();
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
-        ctx_.mass_balance.routing_init_storage +=
-            ctx_.nodes.volume[static_cast<std::size_t>(j)];
+        // Legacy-convention node volume (junctions => 0) so init storage matches
+        // legacy; the internal volume-state is unchanged.
+        ctx_.mass_balance.routing_init_storage += reportedNodeVolume(j);
     }
     for (int j = 0; j < ctx_.n_links(); ++j) {
         ctx_.mass_balance.routing_init_storage +=

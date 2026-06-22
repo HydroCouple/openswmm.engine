@@ -1075,6 +1075,32 @@ cdef class Aquifers(_NamedObjects):
         cdef int idx = aquifer if isinstance(aquifer, int) else self.get_index(aquifer)
         _check(swmm_aquifer_set_param(_h(self._solver), idx, int(param), value))
 
+    def get_evap_pattern(self, aquifer) -> str:
+        """Get the aquifer's upper-zone evaporation pattern name (empty if none).
+
+        Completes the round-trip for the one string column of ``[AQUIFERS]``;
+        the 12 numeric parameters are reached via :meth:`get_param`.
+
+        @param aquifer: Aquifer index or string id.
+        @rtype: str
+        """
+        cdef int idx = aquifer if isinstance(aquifer, int) else self.get_index(aquifer)
+        cdef char buf[256]
+        _check(swmm_aquifer_get_evap_pattern(_h(self._solver), idx, buf, sizeof(buf)))
+        return buf.decode('utf-8')
+
+    def set_evap_pattern(self, aquifer, name) -> None:
+        """Set or clear the aquifer's upper-zone evaporation pattern name.
+
+        Pre-start-only; a mid-run change raises L{LifecycleError}.
+
+        @param aquifer: Aquifer index or string id.
+        @param name: A ``[PATTERNS]`` name, or C{None}/``""`` to clear.
+        """
+        cdef int idx = aquifer if isinstance(aquifer, int) else self.get_index(aquifer)
+        cdef bytes b = (name or "").encode('utf-8')
+        _check(swmm_aquifer_set_evap_pattern(_h(self._solver), idx, b))
+
     def __repr__(self) -> str:
         try:
             return f"<Aquifers n={len(self)}>"
@@ -1097,6 +1123,85 @@ cdef class Snowpacks(_NamedObjects):
     cdef int _add(self, bytes b) except -1:
         _check(swmm_snowpack_add(_h(self._solver), b))
         return 0
+
+    # ---- Surface parameters (pre-start-only) -----------------------
+    # Each of the three snow-melt surfaces takes seven values; ``last`` is the
+    # plowable-area fraction for PLOWABLE and the 100%-cover depth for the
+    # IMPERVIOUS / PERVIOUS surfaces. Getters are the exact inverse of the
+    # setters so the GUI editor can load existing definitions.
+
+    def _idx(self, snowpack) -> int:
+        return snowpack if isinstance(snowpack, int) else self.get_index(snowpack)
+
+    def set_plowable(self, snowpack, *, double cmin, double cmax, double tbase,
+                     double fwfrac, double sd0, double fw0, double last) -> None:
+        """Set the PLOWABLE surface (``last`` = plowable-area fraction)."""
+        cdef int idx = self._idx(snowpack)
+        _check(swmm_snowpack_set_plowable(_h(self._solver), idx, cmin, cmax, tbase, fwfrac, sd0, fw0, last))
+
+    def get_plowable(self, snowpack) -> dict:
+        """Read the PLOWABLE surface. Inverse of :meth:`set_plowable`."""
+        cdef int idx = self._idx(snowpack)
+        cdef double cmin = 0.0, cmax = 0.0, tbase = 0.0, fwfrac = 0.0, sd0 = 0.0, fw0 = 0.0, last = 0.0
+        _check(swmm_snowpack_get_plowable(_h(self._solver), idx, &cmin, &cmax, &tbase, &fwfrac, &sd0, &fw0, &last))
+        return {"cmin": cmin, "cmax": cmax, "tbase": tbase, "fwfrac": fwfrac,
+                "sd0": sd0, "fw0": fw0, "last": last}
+
+    def set_impervious(self, snowpack, *, double cmin, double cmax, double tbase,
+                       double fwfrac, double sd0, double fw0, double last) -> None:
+        """Set the IMPERVIOUS surface (``last`` = 100%-cover depth)."""
+        cdef int idx = self._idx(snowpack)
+        _check(swmm_snowpack_set_impervious(_h(self._solver), idx, cmin, cmax, tbase, fwfrac, sd0, fw0, last))
+
+    def get_impervious(self, snowpack) -> dict:
+        """Read the IMPERVIOUS surface. Inverse of :meth:`set_impervious`."""
+        cdef int idx = self._idx(snowpack)
+        cdef double cmin = 0.0, cmax = 0.0, tbase = 0.0, fwfrac = 0.0, sd0 = 0.0, fw0 = 0.0, last = 0.0
+        _check(swmm_snowpack_get_impervious(_h(self._solver), idx, &cmin, &cmax, &tbase, &fwfrac, &sd0, &fw0, &last))
+        return {"cmin": cmin, "cmax": cmax, "tbase": tbase, "fwfrac": fwfrac,
+                "sd0": sd0, "fw0": fw0, "last": last}
+
+    def set_pervious(self, snowpack, *, double cmin, double cmax, double tbase,
+                     double fwfrac, double sd0, double fw0, double last) -> None:
+        """Set the PERVIOUS surface (``last`` = 100%-cover depth)."""
+        cdef int idx = self._idx(snowpack)
+        _check(swmm_snowpack_set_pervious(_h(self._solver), idx, cmin, cmax, tbase, fwfrac, sd0, fw0, last))
+
+    def get_pervious(self, snowpack) -> dict:
+        """Read the PERVIOUS surface. Inverse of :meth:`set_pervious`."""
+        cdef int idx = self._idx(snowpack)
+        cdef double cmin = 0.0, cmax = 0.0, tbase = 0.0, fwfrac = 0.0, sd0 = 0.0, fw0 = 0.0, last = 0.0
+        _check(swmm_snowpack_get_pervious(_h(self._solver), idx, &cmin, &cmax, &tbase, &fwfrac, &sd0, &fw0, &last))
+        return {"cmin": cmin, "cmax": cmax, "tbase": tbase, "fwfrac": fwfrac,
+                "sd0": sd0, "fw0": fw0, "last": last}
+
+    def set_removal(self, snowpack, *, double dsnow, double fout, double fimp,
+                    double fperv, double fimelt, double fsubcatch) -> None:
+        """Set the REMOVAL fractions (snow redistribution at depth ``dsnow``)."""
+        cdef int idx = self._idx(snowpack)
+        _check(swmm_snowpack_set_removal(_h(self._solver), idx, dsnow, fout, fimp, fperv, fimelt, fsubcatch))
+
+    def get_removal(self, snowpack) -> dict:
+        """Read the REMOVAL fractions. Inverse of :meth:`set_removal`."""
+        cdef int idx = self._idx(snowpack)
+        cdef double dsnow = 0.0, fout = 0.0, fimp = 0.0, fperv = 0.0, fimelt = 0.0, fsubcatch = 0.0
+        _check(swmm_snowpack_get_removal(_h(self._solver), idx, &dsnow, &fout, &fimp, &fperv, &fimelt, &fsubcatch))
+        return {"dsnow": dsnow, "fout": fout, "fimp": fimp,
+                "fperv": fperv, "fimelt": fimelt, "fsubcatch": fsubcatch}
+
+    def set_removal_subcatch(self, snowpack, name) -> None:
+        """Set/clear the destination subcatchment for the REMOVAL ``fsubcatch``
+        fraction (C{None}/``""`` clears)."""
+        cdef int idx = self._idx(snowpack)
+        cdef bytes b = (name or "").encode('utf-8')
+        _check(swmm_snowpack_set_removal_subcatch(_h(self._solver), idx, b))
+
+    def get_removal_subcatch(self, snowpack) -> str:
+        """Read the REMOVAL destination subcatchment name (empty if none)."""
+        cdef int idx = self._idx(snowpack)
+        cdef char buf[256]
+        _check(swmm_snowpack_get_removal_subcatch(_h(self._solver), idx, buf, sizeof(buf)))
+        return buf.decode('utf-8')
 
     def __repr__(self) -> str:
         try:

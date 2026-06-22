@@ -105,6 +105,20 @@ SWMM_ENGINE_API int swmm_pollutant_set_init_conc(SWMM_Engine engine, int idx, do
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_pollutant_set_units(SWMM_Engine engine, int idx, int units) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    // Units define how every stored/reported concentration is read; only
+    // meaningful while still building the model (pre-start), like init_conc.
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED)
+        return SWMM_ERR_LIFECYCLE;
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
+    if (units < 0 || units > 2) return SWMM_ERR_BADPARAM;
+    ctx.pollutants.units[static_cast<std::size_t>(idx)] = static_cast<openswmm::MassUnits>(units);
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_pollutant_get_units(SWMM_Engine engine, int idx, int* units) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();

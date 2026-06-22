@@ -67,6 +67,24 @@ SWMM_ENGINE_API int swmm_pollutant_add(SWMM_Engine engine, const char* id, int u
  * ========================================================================= */
 
 /**
+ * @brief Change the concentration units of an existing pollutant.
+ *
+ * @details Inverse of @ref swmm_pollutant_get_units. The units are normally
+ *          fixed at creation by @ref swmm_pollutant_add; this lets a model
+ *          builder (e.g. the GUI pollutant editor) correct them afterwards.
+ *          Editable in the BUILDING or OPENED (pre-start) states only — units
+ *          define how every stored/reported concentration is interpreted, so a
+ *          mid-run change has no well-defined meaning and is rejected with
+ *          SWMM_ERR_LIFECYCLE.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based pollutant index.
+ * @param units   Concentration units code (0=MG/L, 1=UG/L, 2=#/L).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_pollutant_set_units(SWMM_Engine engine, int idx, int units);
+
+/**
  * @brief Set the first-order decay coefficient for a pollutant.
  * @param engine  Engine handle.
  * @param idx     Zero-based pollutant index.

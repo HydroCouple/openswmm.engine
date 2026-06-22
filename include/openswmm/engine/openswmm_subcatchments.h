@@ -812,6 +812,41 @@ SWMM_ENGINE_API int swmm_aquifer_get_param(SWMM_Engine engine, int idx, int para
  */
 SWMM_ENGINE_API int swmm_aquifer_set_param(SWMM_Engine engine, int idx, int param, double value);
 
+/**
+ * @brief Read the aquifer's upper-zone evaporation pattern name.
+ *
+ * @details The optional monthly time pattern (`[PATTERNS]` MONTHLY) that scales
+ *          the upper-zone evaporation fraction — the trailing `[ETupat]` column
+ *          of the `[AQUIFERS]` line. The 12 numeric parameters are reached via
+ *          @ref swmm_aquifer_get_param; this completes the round-trip for the
+ *          one string-valued column. Writes a NUL-terminated string into `buf`
+ *          (empty when no pattern is assigned), truncating if `buflen` is too
+ *          small.
+ *
+ * @param engine       Engine handle.
+ * @param idx          Zero-based aquifer index.
+ * @param[out] buf     Destination buffer for the pattern name.
+ * @param buflen       Size of `buf` in bytes (must be > 0).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_aquifer_get_evap_pattern(SWMM_Engine engine, int idx, char* buf, int buflen);
+
+/**
+ * @brief Set or clear the aquifer's upper-zone evaporation pattern name.
+ *
+ * @details Inverse of @ref swmm_aquifer_get_evap_pattern. The name is resolved
+ *          to a `[PATTERNS]` entry at start(); a null or empty string clears
+ *          the assignment. Pre-start-only (BUILDING / OPENED): the pattern
+ *          index is bound when the simulation starts, so a mid-run change
+ *          returns SWMM_ERR_LIFECYCLE.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based aquifer index.
+ * @param name    Pattern name, or null/empty to clear.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_aquifer_set_evap_pattern(SWMM_Engine engine, int idx, const char* name);
+
 /* =========================================================================
  * Snowpack definitions ([SNOWPACKS] section) — Slice BM.0 / BP.6.6.5
  * ========================================================================= */
@@ -853,6 +888,81 @@ SWMM_ENGINE_API const char* swmm_snowpack_id(SWMM_Engine engine, int idx);
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id);
+
+/* -------------------------------------------------------------------------
+ * Snowpack surface parameters
+ *
+ * A snowpack carries three snow-melt surfaces — PLOWABLE, IMPERVIOUS and
+ * PERVIOUS — plus an optional REMOVAL row, matching the four line types of
+ * the legacy `[SNOWPACKS]` section. Each surface takes seven values in
+ * input-file units:
+ *
+ *   cmin    Minimum melt coefficient                 (in or mm /hr/deg)
+ *   cmax    Maximum melt coefficient                 (in or mm /hr/deg)
+ *   tbase   Snow-melt base temperature               (deg F or C)
+ *   fwfrac  Free-water capacity as a fraction of depth
+ *   sd0     Initial snow depth                       (in or mm water equiv.)
+ *   fw0     Initial free water                       (in or mm)
+ *   last    PLOWABLE: fraction of the impervious area that is plowable;
+ *           IMPERVIOUS / PERVIOUS: snow depth above which there is 100% cover
+ *           (in or mm).
+ *
+ * Setters are pre-start-only (BUILDING / OPENED) — the surface parameters seed
+ * per-subcatchment snow state at start(); a mid-run change returns
+ * SWMM_ERR_LIFECYCLE. Each setter has an inverse getter so the GUI snowpack
+ * editor can load existing definitions. Any getter out-param may be null.
+ * ------------------------------------------------------------------------- */
+
+/** @brief Set the PLOWABLE surface parameters (`last` = plowable area fraction). */
+SWMM_ENGINE_API int swmm_snowpack_set_plowable(SWMM_Engine engine, int idx,
+                                               double cmin, double cmax, double tbase,
+                                               double fwfrac, double sd0, double fw0, double last);
+/** @brief Read the PLOWABLE surface parameters. Inverse of @ref swmm_snowpack_set_plowable. */
+SWMM_ENGINE_API int swmm_snowpack_get_plowable(SWMM_Engine engine, int idx,
+                                               double* cmin, double* cmax, double* tbase,
+                                               double* fwfrac, double* sd0, double* fw0, double* last);
+
+/** @brief Set the IMPERVIOUS surface parameters (`last` = 100%-cover depth). */
+SWMM_ENGINE_API int swmm_snowpack_set_impervious(SWMM_Engine engine, int idx,
+                                                 double cmin, double cmax, double tbase,
+                                                 double fwfrac, double sd0, double fw0, double last);
+/** @brief Read the IMPERVIOUS surface parameters. Inverse of @ref swmm_snowpack_set_impervious. */
+SWMM_ENGINE_API int swmm_snowpack_get_impervious(SWMM_Engine engine, int idx,
+                                                 double* cmin, double* cmax, double* tbase,
+                                                 double* fwfrac, double* sd0, double* fw0, double* last);
+
+/** @brief Set the PERVIOUS surface parameters (`last` = 100%-cover depth). */
+SWMM_ENGINE_API int swmm_snowpack_set_pervious(SWMM_Engine engine, int idx,
+                                               double cmin, double cmax, double tbase,
+                                               double fwfrac, double sd0, double fw0, double last);
+/** @brief Read the PERVIOUS surface parameters. Inverse of @ref swmm_snowpack_set_pervious. */
+SWMM_ENGINE_API int swmm_snowpack_get_pervious(SWMM_Engine engine, int idx,
+                                               double* cmin, double* cmax, double* tbase,
+                                               double* fwfrac, double* sd0, double* fw0, double* last);
+
+/**
+ * @brief Set the REMOVAL parameters (snow redistribution at depth `dsnow`).
+ *
+ * @details The six fractions of the `[SNOWPACKS] ... REMOVAL` line:
+ *          `dsnow` (depth at which removal begins, in/mm), then the fractions
+ *          routed out of the watershed (`fout`), to impervious area (`fimp`),
+ *          to pervious area (`fperv`), converted to immediate melt (`fimelt`),
+ *          and transferred to another subcatchment (`fsubcatch`). The optional
+ *          destination subcatchment is named via
+ *          @ref swmm_snowpack_set_removal_subcatch. Pre-start-only.
+ */
+SWMM_ENGINE_API int swmm_snowpack_set_removal(SWMM_Engine engine, int idx,
+                                              double dsnow, double fout, double fimp,
+                                              double fperv, double fimelt, double fsubcatch);
+/** @brief Read the REMOVAL parameters. Inverse of @ref swmm_snowpack_set_removal. */
+SWMM_ENGINE_API int swmm_snowpack_get_removal(SWMM_Engine engine, int idx,
+                                              double* dsnow, double* fout, double* fimp,
+                                              double* fperv, double* fimelt, double* fsubcatch);
+
+/** @brief Set/clear the destination subcatchment for the REMOVAL `fsubcatch` fraction. Pre-start-only. */
+SWMM_ENGINE_API int swmm_snowpack_set_removal_subcatch(SWMM_Engine engine, int idx, const char* name);
+/** @brief Read the REMOVAL destination subcatchment name (empty if none). NUL-terminates, truncates to `buflen`. */
+SWMM_ENGINE_API int swmm_snowpack_get_removal_subcatch(SWMM_Engine engine, int idx, char* buf, int buflen);
 
 /* =========================================================================
  * Tag — free-form string label from the INP `[TAGS]` section
