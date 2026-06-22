@@ -409,16 +409,34 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
     // here; setAllOutfallDepths checks the node's flap-gate flag and the
     // current h_standard to decide whether to apply the override.
     //
-    // Dry-mesh guard: when the cell at the coupling point is essentially
-    // dry, leave the sentinel value (-1e30) in place so setAllOutfallDepths
-    // does not fire the override. The naive check `h_2d > z_inv` in
+    // Wet/dry gating: the tailwater override must engage only when the 2D
+    // cell is genuinely wet, otherwise the outfall reverts to its legacy
+    // free-discharge condition. The naive check `h_2d > z_inv` in
     // setAllOutfallDepths is true whenever bed_z > z_inv (the common
     // physical case — outfall pipe enters underground beneath the surface
-    // mesh), because h_2d = bed_z + depth = bed_z on dry cells. Gating on
-    // actual surface depth here keeps the cached value semantically
-    // meaningful: "the 2D water surface elevation at this outfall, if any
-    // water is present, else absent."
-    constexpr double DRY_DEPTH_THRESHOLD = 1.0e-4;  // 0.1 mm
+    // mesh), because h_2d = bed_z + depth ≈ bed_z on near-dry cells. A
+    // residual film thinner than the 2D solver's own dry_depth (which the
+    // surface solver itself treats as immovable) would otherwise pin the
+    // outfall stage at bed_z and deadlock the pipe.
+    //
+    // So we cache two things: the raw 2D surface head h_2d (always), and a
+    // Hermite wet/dry ramp factor in [0,1]. setAllOutfallDepths blends the
+    // prescribed stage from the free condition (ramp=0, dry) up to the full
+    // tailwater (ramp=1, wet), keeping the transition C¹ so the outfall cell
+    // does not chatter as its own discharge re-wets it.
+    //
+    // The ramp is keyed on the surface depth IN EXCESS of opts.dry_depth, the
+    // same threshold the 2D solver uses to call a cell dry (and below which it
+    // freezes the water as immovable). A draining cell therefore comes to rest
+    // at a film at/just below dry_depth, so the ramp must read ZERO there —
+    // hence (depth_2d - dry_depth)/dry_depth, full tailwater only once the cell
+    // holds more than ~2·dry_depth of real water. A ramp keyed on depth_2d
+    // alone would read ≈1 at that resting film and reinstate the deadlock.
+    auto wetRamp = [&opts](double d) {
+        double t = std::min(1.0, std::max(0.0,
+                                (d - opts.dry_depth) / opts.dry_depth));
+        return t * t * (3.0 - 2.0 * t);  // smoothstep, C¹ continuous
+    };
     for (const auto& cp : cps) {
         if (!cp.is_outfall) continue;
 
@@ -432,17 +450,18 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
             bed_z = mesh.tri_cz[cp.cell_idx];
         }
 
-        double depth_2d = h_2d - bed_z;
+        double depth_2d = h_2d - bed_z;   // SI (metres); opts.dry_depth is metres
         // h_2d is SI (metres). The 1D consumer (Outfall::setAllOutfallDepths)
         // always compares against h_standard in feet (1D US internal units),
         // so convert back here (opts.len_2d_to_1d ≈ 3.281 always). Cache into the
-        // outfall side-table (Phase 4 Stage B), wide fallback.
-        const double set_head = (depth_2d > DRY_DEPTH_THRESHOLD)
-            ? h_2d * opts.len_2d_to_1d
-            : -1.0e30;  // dry — no override
+        // outfall side-table (Phase 4 Stage B). The wet/dry decision now lives in
+        // ramp_2d, so the head is cached unconditionally.
         const int orow = ctx.node_subtypes.outfall_row(cp.node_idx);
-        if (orow >= 0)
-            ctx.node_subtypes.outfalls.head_2d[static_cast<std::size_t>(orow)] = set_head;
+        if (orow >= 0) {
+            auto ur = static_cast<std::size_t>(orow);
+            ctx.node_subtypes.outfalls.head_2d[ur] = h_2d * opts.len_2d_to_1d;
+            ctx.node_subtypes.outfalls.ramp_2d[ur] = wetRamp(depth_2d);
+        }
     }
 }
 

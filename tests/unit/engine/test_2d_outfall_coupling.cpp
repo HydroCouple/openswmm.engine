@@ -41,6 +41,7 @@
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_massbalance.h>
+#include <openswmm/engine/openswmm_nodes.h>
 
 namespace fs = std::filesystem;
 
@@ -217,6 +218,203 @@ TEST_F(OutfallCoupling2DTest, OutfallDischargeReaches2DAndContinuityCloses) {
         << "peak_2d_depth_m," << r.peak_depth << "\n"
         << "outfall_in_m3," << r.outfall_in << "\n"
         << "outfall_out_m3," << r.outfall_out << "\n"
+        << "continuity_2d_frac," << r.cont_2d << "\n"
+        << "continuity_routing_frac," << r.cont_routing << "\n";
+}
+
+// ============================================================================
+// Buried-outfall drain-recovery regression (the dry-threshold deadlock).
+// ============================================================================
+//
+// The model above sits on a FLAT mesh at Z=0 matching the outfall invert, so
+// bed_z == z_inv and the wet/dry-gate bug never fires. The real failure needs a
+// BURIED outfall: the 2D cell bed (ground surface) is ABOVE the outfall invert
+// because the pipe daylights at the surface (the common physical case). Here the
+// patch sits at Z=3.0 m while O1's invert is 0.0 m.
+//
+// Pre-fix, updateOutfallBoundaries gated the 2D tailwater override on a private
+// 0.1 mm threshold — smaller than the 2D solver's own dry_depth. After the storm
+// the patch drains to a residual film at/just below dry_depth that the surface
+// solver treats as immovable (dry), yet the coupling still read it as wet and
+// cached h_2d = bed_z + film ≈ 3 m as the outfall tailwater. That phantom 3 m
+// stage pinned the downstream BC, so the upstream junction J1 could not drain
+// below ~2 m (head 3 m − invert 1 m) — a deadlock, even though the surface is
+// effectively dry.
+//
+// The fix shares the solver's dry_depth and ramps the override to zero at/below
+// it (free discharge when dry), so once the patch drains the outfall frees and
+// J1 empties. A two-phase inflow wets the patch, then stops so it drains; the
+// NORMAL_FLOW outflow edges let the ponded water leave the domain.
+std::string build_buried_outfall_model() {
+    return
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CMS\n"
+        "FLOW_ROUTING         DYNWAVE\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2026\n"
+        "END_TIME             01:00:00\n"
+        "REPORT_STEP          00:01:00\n"
+        "ROUTING_STEP         2\n"
+        "\n"
+        "[JUNCTIONS]\n"
+        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+        "J1      1.0   5.0       0          0         0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev  Type  Gated\n"
+        "O1      0.0   FREE  NO\n"
+        "\n"
+        "[CONDUITS]\n"
+        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+        "C1      J1    O1  50.0    0.013      0         0          0\n"
+        "\n"
+        "[XSECTIONS]\n"
+        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+        "C1      CIRCULAR  0.5    0      0      0      1\n"
+        "\n"
+        "[INFLOWS]\n"
+        ";;Node  Constituent  Tseries  Type  Mfactor  Sfactor  Baseline\n"
+        "J1      FLOW         IN_TS    FLOW  1.0      1.0\n"
+        "\n"
+        "[TIMESERIES]\n"
+        ";;Name  Time   Value      (0.05 CMS for 10 min, then off so the patch drains)\n"
+        "IN_TS   0:00   0.05\n"
+        "IN_TS   0:10   0.05\n"
+        "IN_TS   0:11   0.0\n"
+        "IN_TS   1:00   0.0\n"
+        "\n"
+        "[2D_OPTIONS]\n"
+        "MAX_TIMESTEP     2\n"
+        "DRY_DEPTH        0.002\n"
+        "COUPLING_CD      0.7\n"
+        "LINEAR_SOLVER    GMRES\n"
+        "PRECONDITIONER   JACOBI\n"
+        "REPORT_2D        NO\n"
+        "\n"
+        "[2D_VERTICES]\n"
+        ";;X      Y      Z   (flat patch elevated 3 m above the outfall invert)\n"
+        " 0.0    0.0   3.0\n"   // v0 — coupled cell vertex (bed_z = 3 m > z_inv = 0)
+        "20.0    0.0   3.0\n"   // v1
+        "20.0   20.0   3.0\n"   // v2
+        " 0.0   20.0   3.0\n"   // v3
+        "\n"
+        "[2D_TRIANGLES]\n"
+        ";;V1  V2  V3  MANNINGS_N\n"
+        "0     1   2   0.03\n"   // T0
+        "0     2   3   0.03\n"   // T1
+        "\n"
+        "[2D_BOUNDARY_CONDITIONS]\n"
+        ";;TRI  EDGE  TYPE         SLOPE   (open edges away from v0 so the patch drains)\n"
+        "0      0     NORMAL_FLOW  0.05\n"   // T0 edge0 = v1-v2 (right, x=20)
+        "1      0     NORMAL_FLOW  0.05\n"   // T1 edge0 = v2-v3 (top,   y=20)
+        "\n"
+        "[2D_VERTEX_NODE_MAP]\n"
+        ";;Vertex  Node  Cd   Area\n"
+        "0         O1    0.7  2.5\n";
+}
+
+struct BuriedRunResult {
+    bool   ok = false;
+    double peak_depth = 0.0;        // max per-cell 2D depth over the run (m)
+    double final_j1_depth = 0.0;    // upstream junction depth at the last step (m)
+    double final_o1_depth = 0.0;    // outfall node depth at the last step (m)
+    double final_cell_depth = 0.0;  // coupled-cell 2D depth at the last step (m)
+    double cont_2d = 0.0;
+    double cont_routing = 0.0;
+};
+
+BuriedRunResult run_buried_outfall_model(const fs::path& dir) {
+    BuriedRunResult r;
+    const fs::path inp = dir / "buried_outfall.inp";
+    const fs::path rpt = dir / "buried_outfall.rpt";
+    const fs::path out = dir / "buried_outfall.out";
+    { std::ofstream f(inp); f << build_buried_outfall_model(); }
+
+    SWMM_Engine eng = swmm_engine_create();
+    if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
+                         out.string().c_str(), nullptr) != SWMM_OK) {
+        swmm_engine_destroy(eng); return r;
+    }
+    if (swmm_engine_initialize(eng) != SWMM_OK) {
+        swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
+    }
+    int active = 0;
+    swmm_2d_is_active(eng, &active);
+    if (!active) { swmm_engine_close(eng); swmm_engine_destroy(eng); return r; }
+    int n_tri = 0;
+    swmm_2d_triangle_count(eng, &n_tri);
+    const int j1 = swmm_node_index(eng, "J1");
+    const int o1 = swmm_node_index(eng, "O1");
+    if (j1 < 0 || o1 < 0) { swmm_engine_close(eng); swmm_engine_destroy(eng); return r; }
+
+    if (swmm_engine_start(eng, 1) != SWMM_OK) {
+        swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
+    }
+
+    std::vector<double> depths(static_cast<std::size_t>(n_tri));
+    double elapsed = 0.0;
+    while (true) {
+        if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0) break;
+        if (swmm_2d_get_depths_bulk(eng, depths.data()) == SWMM_OK) {
+            for (double d : depths) r.peak_depth = std::max(r.peak_depth, d);
+            r.final_cell_depth = depths[0];  // T0 contains coupled vertex v0
+        }
+    }
+    swmm_node_get_depth(eng, j1, &r.final_j1_depth);
+    swmm_node_get_depth(eng, o1, &r.final_o1_depth);
+
+    swmm_engine_end(eng);
+    swmm_2d_get_continuity_error(eng, &r.cont_2d);
+    swmm_get_routing_continuity_error(eng, &r.cont_routing);
+    swmm_engine_report(eng);
+    swmm_engine_close(eng);
+    swmm_engine_destroy(eng);
+    r.ok = true;
+    return r;
+}
+
+// Pre-fix this deadlocks: the residual film pins the outfall at the ~3 m bed
+// elevation and J1 cannot drain below ~2 m. Post-fix the outfall frees once the
+// surface dries and J1 empties.
+TEST_F(OutfallCoupling2DTest, BuriedOutfallFreesAndJunctionDrainsWhenSurfaceDries) {
+    BuriedRunResult r = run_buried_outfall_model(dir_);
+
+    ASSERT_TRUE(r.ok) << "buried-outfall coupled run failed";
+
+    // (1) The storm wetted the patch above the dry threshold.
+    EXPECT_GT(r.peak_depth, 0.002)
+        << "outfall discharge never wetted the patch (peak depth "
+        << r.peak_depth << " m)";
+
+    // (2) After the inflow stops the patch drains to a near-dry film.
+    EXPECT_LT(r.final_cell_depth, 0.05)
+        << "coupled cell never drained (final depth " << r.final_cell_depth
+        << " m) — cannot exercise the dry-gate path";
+
+    // (3) THE BUG: with the surface dry the outfall must use free discharge,
+    //     NOT the phantom ~3 m bed tailwater, so the upstream junction drains.
+    //     Pre-fix J1 is pinned at ~2 m (head 3 m − invert 1 m).
+    constexpr double bed_above_invert = 3.0;  // bed_z (3 m) − z_inv (0 m)
+    EXPECT_LT(r.final_j1_depth, 0.5)
+        << "upstream junction did not drain (J1 depth " << r.final_j1_depth
+        << " m) — the outfall is pinned by a phantom dry-film tailwater";
+    EXPECT_LT(r.final_o1_depth, 0.5 * bed_above_invert)
+        << "outfall stage pinned near bed elevation (O1 depth "
+        << r.final_o1_depth << " m) instead of free discharge";
+
+    // (4) Both continuity ledgers still close.
+    EXPECT_LT(std::abs(r.cont_2d), 0.05)
+        << "2D surface continuity error too large: " << r.cont_2d;
+    EXPECT_LT(std::abs(r.cont_routing), 0.05)
+        << "1D routing continuity error too large: " << r.cont_routing;
+
+    std::ofstream csv(dir_ / "buried_outfall_massbalance.csv");
+    csv << "metric,value\n"
+        << "peak_2d_depth_m," << r.peak_depth << "\n"
+        << "final_cell_depth_m," << r.final_cell_depth << "\n"
+        << "final_j1_depth_m," << r.final_j1_depth << "\n"
+        << "final_o1_depth_m," << r.final_o1_depth << "\n"
         << "continuity_2d_frac," << r.cont_2d << "\n"
         << "continuity_routing_frac," << r.cont_routing << "\n";
 }

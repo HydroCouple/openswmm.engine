@@ -173,6 +173,9 @@ struct OutfallData {
     std::vector<double>      link_offset;
     /** @brief Cached 2D surface head at the coupling point (sentinel -1e30). */
     std::vector<double>      head_2d;
+    /** @brief Cached wet/dry ramp factor [0,1] for the 2D tailwater override
+     *  (0 = dry → free discharge, 1 = wet → full tailwater); default 0. */
+    std::vector<double>      ramp_2d;
 
     /** @brief Number of outfall rows. */
     int count() const noexcept { return static_cast<int>(node_idx.size()); }
@@ -182,6 +185,7 @@ struct OutfallData {
         node_idx.clear(); bc_type.clear(); param.clear();
         has_flap_gate.clear(); route_to.clear();
         link_idx.clear(); link_offset.clear(); head_2d.clear();
+        ramp_2d.clear();
     }
 
     /** @brief Reserve capacity for `n` rows. */
@@ -190,6 +194,7 @@ struct OutfallData {
         node_idx.reserve(un); bc_type.reserve(un); param.reserve(un);
         has_flap_gate.reserve(un); route_to.reserve(un);
         link_idx.reserve(un); link_offset.reserve(un); head_2d.reserve(un);
+        ramp_2d.reserve(un);
     }
 
     /** @brief Insert a default outfall row for base node `i`, keeping `node_idx`
@@ -205,6 +210,7 @@ struct OutfallData {
         link_idx.insert(link_idx.begin() + p, -1);
         link_offset.insert(link_offset.begin() + p, 0.0);
         head_2d.insert(head_2d.begin() + p, -1.0e30);
+        ramp_2d.insert(ramp_2d.begin() + p, 0.0);
         return static_cast<int>(p);
     }
 
@@ -219,6 +225,7 @@ struct OutfallData {
         link_idx.erase(link_idx.begin() + p);
         link_offset.erase(link_offset.begin() + p);
         head_2d.erase(head_2d.begin() + p);
+        ramp_2d.erase(ramp_2d.begin() + p);
     }
 };
 

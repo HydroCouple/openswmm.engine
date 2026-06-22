@@ -307,27 +307,41 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
         // is robust against any future outfall type whose h_standard
         // might fall below z_inv.
         //
+        // Wet/dry blend: updateOutfallBoundaries caches a Hermite ramp
+        // factor in [0,1] (0 = dry → free discharge, 1 = wet → full
+        // tailwater) keyed on the 2D solver's dry_depth. The override
+        // blends the prescribed stage from h_standard (free) up to the
+        // raw tailwater h_2d as the cell wets, so a near-dry outfall cell
+        // reverts to free discharge instead of being pinned at bed level
+        // (which deadlocked the pipe), and the wet/dry transition stays
+        // C¹ to avoid step-to-step chatter.
+        //
         // Flap-gate logic (matches the original updateOutfallBoundaries
-        // intent): when h_2d would *raise* the stage above h_standard,
-        // a closed flap gate prevents the 2D side from pushing water
-        // back into the pipe network, so we skip the override and leave
-        // h_standard intact.
+        // intent): when the raw tailwater h_2d would *raise* the stage
+        // above h_standard, a closed flap gate prevents the 2D side from
+        // pushing water back into the pipe network, so we skip the
+        // override and leave h_standard intact.
         //
         // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C4, C5).
         // Mutable 2D head from the outfall side-table; -1e30 sentinel (no override)
-        // when there is no outfall row.
+        // when there is no outfall row; ramp 0 = dry (override suppressed).
         const int orow = ctx.node_subtypes.outfall_row(static_cast<int>(uj));
         double h_2d = (orow >= 0)
             ? ctx.node_subtypes.outfalls.head_2d[static_cast<std::size_t>(orow)]
             : -1.0e30;
-        if (h_2d > z_inv) {
+        double ramp_2d = (orow >= 0)
+            ? ctx.node_subtypes.outfalls.ramp_2d[static_cast<std::size_t>(orow)]
+            : 0.0;
+        if (h_2d > z_inv && ramp_2d > 0.0) {
             bool flap_closed = (ost.has_flap != 0)
                                && (h_2d > h_standard);
             if (!flap_closed) {
-                double depth_2d = h_2d - z_inv;
-                if (depth_2d > depth) {
-                    depth      = depth_2d;
-                    h_standard = z_inv + depth;
+                // Blend free (h_standard) → tailwater (h_2d) by wetness.
+                // ramp=1 reproduces the legacy max(h_standard, h_2d).
+                double h_blend = h_standard + ramp_2d * std::max(0.0, h_2d - h_standard);
+                if (h_blend > h_standard) {
+                    h_standard = h_blend;
+                    depth      = h_standard - z_inv;
                 }
             }
         }
