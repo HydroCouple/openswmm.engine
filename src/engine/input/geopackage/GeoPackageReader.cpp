@@ -397,14 +397,12 @@ static void resolve_outfall_route_to(sqlite3* db, SimulationContext& ctx,
 }
 
 static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    // Phase 7: slim base row; subtype config comes from the child tables below.
     auto stmt = prepare(db,
         "SELECT link_id, link_type, geom, from_node, to_node, offset1, offset2, "
-        "xsect_shape, xsect_geom1, xsect_geom2, xsect_geom3, xsect_geom4, "
-        "xsect_barrels, xsect_culvert, xsect_curve, "
-        "roughness, length, loss_inlet, loss_outlet, loss_avg, "
-        "has_flap_gate, seep_rate, q0, q_limit, "
-        "pump_curve, pump_init_state, pump_startup, pump_shutoff, "
-        "crest_height, discharge_coeff, param1, param2, orate, direction, tag "
+        "q0, q_limit, direction, "
+        "xsect_shape, xsect_geom1, xsect_geom2, xsect_geom3, xsect_geom4, xsect_curve, "
+        "has_flap_gate, tag "
         "FROM links WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
@@ -478,9 +476,12 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
 
         ctx.links.offset1[idx] = column_double(stmt.get(), 5);
         ctx.links.offset2[idx] = column_double(stmt.get(), 6);
+        ctx.links.q0[idx]      = column_double(stmt.get(), 7);
+        ctx.links.q_limit[idx] = column_double(stmt.get(), 8);
+        ctx.links.direction[idx] = column_int(stmt.get(), 9);
 
-        if (!column_is_null(stmt.get(), 7))
-            ctx.links.xsect_shape[idx] = parse_xsect_shape(column_text(stmt.get(), 7));
+        if (!column_is_null(stmt.get(), 10))
+            ctx.links.xsect_shape[idx] = parse_xsect_shape(column_text(stmt.get(), 10));
         // xsect_geom1-4 hold the RAW [XSECTIONS] parameters (display units).
         // Restore them and replay the parser's pre-init field assignment so
         // convert_inputs_to_internal + the init xsect setup derive the final
@@ -490,10 +491,10 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
         // y_full/w_max/y_bot/r_bot applying the SAME display→internal scaling
         // convert_inputs_to_internal would (since that global pass is skipped for
         // gpkg loads). Keep this in lock-step with that function's xsect block.
-        const double g1 = column_double(stmt.get(), 8);
-        const double g2 = column_double(stmt.get(), 9);
-        const double g3 = column_double(stmt.get(), 10);
-        const double g4 = column_double(stmt.get(), 11);
+        const double g1 = column_double(stmt.get(), 11);
+        const double g2 = column_double(stmt.get(), 12);
+        const double g3 = column_double(stmt.get(), 13);
+        const double g4 = column_double(stmt.get(), 14);
         ctx.links.xsect_geom1[idx] = g1;
         ctx.links.xsect_geom2[idx] = g2;
         ctx.links.xsect_geom3[idx] = g3;
@@ -511,92 +512,124 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
                  shp == XsectShape::MODBASKETHANDLE) ? g3 * inv_len : g3;  // geom3 (length only for these)
             ctx.links.xsect_r_bot[idx] = g4;              // geom4 (dimensionless / not convert-scaled)
         }
-        // Phase 6 Stage C: dual-write the subtype side-tables (rows created above
-        // by set_link_type). GPKG stores display units and skips the global
-        // convert pass, so write verbatim (no per-field conversion).
-        const int cr  = ctx.link_subtypes.conduit_row(idx);
-        const int pr  = ctx.link_subtypes.pump_row(idx);
-        const int orr = ctx.link_subtypes.orifice_row(idx);
-        const int wr  = ctx.link_subtypes.weir_row(idx);
-        const int olr = ctx.link_subtypes.outlet_row(idx);
-        auto& CD = ctx.link_subtypes.conduits;
-        if (cr >= 0) { CD.barrels[(size_t)cr] = column_int(stmt.get(), 12);
-                       CD.culvert_code[(size_t)cr] = column_int(stmt.get(), 13); }
-
-        if (!column_is_null(stmt.get(), 14)) {
-            std::string ref_name = column_text(stmt.get(), 14);
+        // xsect named reference (IRREGULAR/STREET/CUSTOM): transect/street/
+        // shape-curve NAME kept in pump_curve_name (resolve_cross_references
+        // re-resolves it); other shapes resolve to a [CURVES] index.
+        if (!column_is_null(stmt.get(), 15)) {
+            std::string ref_name = column_text(stmt.get(), 15);
             const XsectShape rshp = ctx.links.xsect_shape[idx];
             if (rshp == XsectShape::IRREGULAR || rshp == XsectShape::STREET_XSECT ||
                 rshp == XsectShape::CUSTOM) {
-                // Restore the [XSECTIONS] handler's pre-init state: transect/
-                // street/shape-curve NAME in pump_curve_name, index unresolved.
-                // resolve_cross_references re-resolves it against the loaded
-                // transects/streets/curves.
                 ctx.links.pump_curve_name[idx] = ref_name;
                 ctx.links.xsect_curve[idx] = -1;
             } else {
                 ctx.links.xsect_curve[idx] = ctx.table_names.find(ref_name);
             }
         }
-
-        ctx.links.has_flap_gate[idx] = column_int(stmt.get(), 20) != 0;
-        if (cr >= 0) {
-            const auto ucr = (size_t)cr;
-            CD.roughness[ucr]   = column_double(stmt.get(), 15);
-            CD.length[ucr]      = column_double(stmt.get(), 16);
-            CD.loss_inlet[ucr]  = column_double(stmt.get(), 17);
-            CD.loss_outlet[ucr] = column_double(stmt.get(), 18);
-            CD.loss_avg[ucr]    = column_double(stmt.get(), 19);
-            CD.seep_rate[ucr]   = column_double(stmt.get(), 21);
-        }
-        ctx.links.q0[idx] = column_double(stmt.get(), 22);
-        ctx.links.q_limit[idx] = column_double(stmt.get(), 23);
-
-        if (ltype == LinkType::PUMP) {
-            if (!column_is_null(stmt.get(), 24))
-                ctx.links.pump_curve_name[idx] = column_text(stmt.get(), 24);
-            if (pr >= 0) {
-                auto& PD = ctx.link_subtypes.pumps;
-                PD.init_state[(size_t)pr] = (column_double(stmt.get(), 25) > 0.5) ? uint8_t{1} : uint8_t{0};
-                PD.startup[(size_t)pr] = column_double(stmt.get(), 26);
-                PD.shutoff[(size_t)pr] = column_double(stmt.get(), 27);
-            }
-        }
-
-        // Structure config straight into the side-tables (verbatim — display
-        // units, as the writer stored). Columns: 28 crest, 29 cd, 30 param1
-        // (type), 31 param2 (end_con/expon), 32 orate.
-        const double g_crest = column_double(stmt.get(), 28);
-        const double g_cd    = column_double(stmt.get(), 29);
-        const double g_p1    = column_double(stmt.get(), 30);
-        const double g_p2    = column_double(stmt.get(), 31);
-        const double g_orate = column_double(stmt.get(), 32);
-        if (orr >= 0) {
-            auto& ORF = ctx.link_subtypes.orifices;
-            ORF.orifice_type[(size_t)orr] = g_p1;
-            ORF.cd[(size_t)orr]           = g_cd;
-            ORF.orate[(size_t)orr]        = g_orate;
-        } else if (wr >= 0) {
-            auto& WD = ctx.link_subtypes.weirs;
-            WD.weir_type[(size_t)wr]        = g_p1;
-            WD.cd[(size_t)wr]               = g_cd;
-            WD.end_contractions[(size_t)wr] = g_p2;
-            WD.crest_height[(size_t)wr]     = g_crest;
-        } else if (olr >= 0) {
-            auto& OUT = ctx.link_subtypes.outlets;
-            OUT.outlet_type[(size_t)olr]  = g_p1;
-            OUT.coeff[(size_t)olr]        = g_cd;
-            OUT.expon[(size_t)olr]        = g_p2;
-            OUT.crest_height[(size_t)olr] = g_crest;
-        }
-        // Persisted flow direction (adverse-slope DW reverse) — not derivable on
-        // read because the stored geometry is already reversed (positive slope).
-        ctx.links.direction[idx] = column_int(stmt.get(), 33);
-
-        if (!column_is_null(stmt.get(), 34)) {
+        ctx.links.has_flap_gate[idx] = column_int(stmt.get(), 16) != 0;
+        if (!column_is_null(stmt.get(), 17)) {
             const auto u = static_cast<std::size_t>(idx);
             if (u >= ctx.links.tags.size()) ctx.links.tags.resize(u + 1);
-            ctx.links.tags[u] = column_text(stmt.get(), 34);
+            ctx.links.tags[u] = column_text(stmt.get(), 17);
+        }
+    }
+
+    // ---- Subtype child tables → side-tables (rows created above; GPKG stores
+    //      display units and skips the global convert pass, so write verbatim) ----
+    {  // conduits
+        auto cs = prepare(db,
+            "SELECT link_id, roughness, length, xsect_barrels, xsect_culvert, "
+            "loss_inlet, loss_outlet, loss_avg, seep_rate FROM conduits "
+            "WHERE simulation_id = ?");
+        bind_text(cs.get(), 1, sim_id);
+        auto& CD = ctx.link_subtypes.conduits;
+        while (sqlite3_step(cs.get()) == SQLITE_ROW) {
+            const int idx = ctx.link_names.find(column_text(cs.get(), 0));
+            const int cr = (idx >= 0) ? ctx.link_subtypes.conduit_row(idx) : -1;
+            if (cr < 0) continue;
+            const auto u = (size_t)cr;
+            CD.roughness[u]    = column_double(cs.get(), 1);
+            CD.length[u]       = column_double(cs.get(), 2);
+            CD.barrels[u]      = column_int(cs.get(), 3);
+            CD.culvert_code[u] = column_int(cs.get(), 4);
+            CD.loss_inlet[u]   = column_double(cs.get(), 5);
+            CD.loss_outlet[u]  = column_double(cs.get(), 6);
+            CD.loss_avg[u]     = column_double(cs.get(), 7);
+            CD.seep_rate[u]    = column_double(cs.get(), 8);
+        }
+    }
+    {  // pumps
+        auto ps = prepare(db,
+            "SELECT link_id, pump_curve, init_state, startup_depth, shutoff_depth "
+            "FROM pumps WHERE simulation_id = ?");
+        bind_text(ps.get(), 1, sim_id);
+        auto& PD = ctx.link_subtypes.pumps;
+        while (sqlite3_step(ps.get()) == SQLITE_ROW) {
+            const int idx = ctx.link_names.find(column_text(ps.get(), 0));
+            const int pr = (idx >= 0) ? ctx.link_subtypes.pump_row(idx) : -1;
+            if (pr < 0) continue;
+            if (!column_is_null(ps.get(), 1))
+                ctx.links.pump_curve_name[idx] = column_text(ps.get(), 1);
+            const auto u = (size_t)pr;
+            PD.init_state[u] = (column_double(ps.get(), 2) > 0.5) ? uint8_t{1} : uint8_t{0};
+            PD.startup[u]    = column_double(ps.get(), 3);
+            PD.shutoff[u]    = column_double(ps.get(), 4);
+        }
+    }
+    {  // orifices
+        auto os = prepare(db,
+            "SELECT link_id, orientation, discharge_coeff, orate FROM orifices "
+            "WHERE simulation_id = ?");
+        bind_text(os.get(), 1, sim_id);
+        auto& ORF = ctx.link_subtypes.orifices;
+        while (sqlite3_step(os.get()) == SQLITE_ROW) {
+            const int idx = ctx.link_names.find(column_text(os.get(), 0));
+            const int orr = (idx >= 0) ? ctx.link_subtypes.orifice_row(idx) : -1;
+            if (orr < 0) continue;
+            const auto u = (size_t)orr;
+            ORF.orifice_type[u] = (column_text(os.get(), 1) == std::string("SIDE")) ? 1.0 : 0.0;
+            ORF.cd[u]           = column_double(os.get(), 2);
+            ORF.orate[u]        = column_double(os.get(), 3);
+        }
+    }
+    {  // weirs
+        auto ws = prepare(db,
+            "SELECT link_id, weir_type, discharge_coeff, crest_height, end_contractions "
+            "FROM weirs WHERE simulation_id = ?");
+        bind_text(ws.get(), 1, sim_id);
+        auto& WD = ctx.link_subtypes.weirs;
+        while (sqlite3_step(ws.get()) == SQLITE_ROW) {
+            const int idx = ctx.link_names.find(column_text(ws.get(), 0));
+            const int wr = (idx >= 0) ? ctx.link_subtypes.weir_row(idx) : -1;
+            if (wr < 0) continue;
+            const auto u = (size_t)wr;
+            const std::string wt = column_text(ws.get(), 1);
+            WD.weir_type[u] = (wt == "SIDEFLOW") ? 1.0 : (wt == "V-NOTCH") ? 2.0
+                            : (wt == "TRAPEZOIDAL") ? 3.0 : (wt == "ROADWAY") ? 4.0 : 0.0;
+            WD.cd[u]               = column_double(ws.get(), 2);
+            WD.crest_height[u]     = column_double(ws.get(), 3);
+            WD.end_contractions[u] = static_cast<double>(column_int(ws.get(), 4));
+        }
+    }
+    {  // outlets
+        auto outs = prepare(db,
+            "SELECT link_id, rating_type, rating_curve, q_coeff, q_expon, crest_height "
+            "FROM outlets WHERE simulation_id = ?");
+        bind_text(outs.get(), 1, sim_id);
+        auto& OUT = ctx.link_subtypes.outlets;
+        while (sqlite3_step(outs.get()) == SQLITE_ROW) {
+            const int idx = ctx.link_names.find(column_text(outs.get(), 0));
+            const int olr = (idx >= 0) ? ctx.link_subtypes.outlet_row(idx) : -1;
+            if (olr < 0) continue;
+            const auto u = (size_t)olr;
+            const std::string rt = column_text(outs.get(), 1);
+            OUT.outlet_type[u] = (rt == "FUNCTIONAL/DEPTH") ? 1.0 : (rt == "TABULAR/HEAD") ? 2.0
+                               : (rt == "TABULAR/DEPTH") ? 3.0 : 0.0;
+            if (!column_is_null(outs.get(), 2))      // TABULAR rating-curve NAME
+                ctx.links.pump_curve_name[idx] = column_text(outs.get(), 2);
+            OUT.coeff[u]        = column_double(outs.get(), 3);
+            OUT.expon[u]        = column_double(outs.get(), 4);
+            OUT.crest_height[u] = column_double(outs.get(), 5);
         }
     }
 }
@@ -1542,6 +1575,20 @@ int read_model(sqlite3* db, SimulationContext& ctx,
                 "GeoPackage uses an unsupported (pre-relational) node schema: "
                 "missing storages/outfalls/dividers tables. Re-export the model "
                 "with this engine version.");
+            return -1;
+        }
+        // Phase 7: the link schema is normalized too — a slim `links` base plus
+        // conduits/pumps/orifices/weirs/outlets child tables. A pre-Phase-7 file
+        // (flat `links` with NULL-padded subtype + param1/param2 columns, no link
+        // child tables) — including a Phase-5-era file (normalized nodes, flat
+        // links) — is rejected rather than silently misread.
+        if (!table_exists(db, "conduits") || !table_exists(db, "pumps") ||
+            !table_exists(db, "orifices") || !table_exists(db, "weirs") ||
+            !table_exists(db, "outlets")) {
+            ctx.errors.push_back(
+                "GeoPackage uses an unsupported (pre-relational) link schema: "
+                "missing conduits/pumps/orifices/weirs/outlets tables. Re-export "
+                "the model with this engine version.");
             return -1;
         }
 

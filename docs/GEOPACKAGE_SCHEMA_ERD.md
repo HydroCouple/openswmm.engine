@@ -126,36 +126,66 @@ erDiagram
         string to_node FK
         float offset1
         float offset2
+        float q0
+        float q_limit
+        int direction
         string xsect_shape
         float xsect_geom1
         float xsect_geom2
         float xsect_geom3
         float xsect_geom4
-        int xsect_barrels
-        int xsect_culvert
         string xsect_curve FK
+        int has_flap_gate
+        string tag
+    }
+
+    conduits {
+        string simulation_id PK,FK
+        string link_id PK,FK
         float roughness
         float length
+        int xsect_barrels
+        int xsect_culvert
         float loss_inlet
         float loss_outlet
         float loss_avg
-        int has_flap_gate
         float seep_rate
-        float q0
-        float q_limit
+    }
+
+    pumps {
+        string simulation_id PK,FK
+        string link_id PK,FK
         string pump_curve FK
-        float pump_init_state
-        float pump_startup
-        float pump_shutoff
-        float crest_height
+        float init_state
+        float startup_depth
+        float shutoff_depth
+    }
+
+    orifices {
+        string simulation_id PK,FK
+        string link_id PK,FK
+        string orientation
         float discharge_coeff
-        float param1
-        float param2
         float orate
-        int direction
+    }
+
+    weirs {
+        string simulation_id PK,FK
+        string link_id PK,FK
+        string weir_type
+        float discharge_coeff
+        float crest_height
         int end_contractions
-        int can_surcharge
-        string tag
+    }
+
+    outlets {
+        string simulation_id PK,FK
+        string link_id PK,FK
+        string rating_type
+        string rating_curve FK
+        float q_coeff
+        float q_expon
+        float crest_height
     }
 
     subcatchments {
@@ -531,8 +561,13 @@ erDiagram
     nodes ||--o{ dwf_inflows : "DWF at node"
     nodes ||--o{ links : "from node"
     nodes ||--o{ links : "to node"
-    curves ||--o{ links : "uses curve"
-    curves ||--o{ links : "uses curve"
+    links ||--o{ conduits : "conduit subtype"
+    links ||--o{ pumps : "pump subtype"
+    links ||--o{ orifices : "orifice subtype"
+    links ||--o{ weirs : "weir subtype"
+    links ||--o{ outlets : "outlet subtype"
+    curves ||--o{ pumps : "pump curve"
+    curves ||--o{ outlets : "rating curve"
     links ||--o{ node_links : "mirrors link"
     nodes ||--o{ node_links : "from node"
     nodes ||--o{ node_links : "to node"
@@ -587,6 +622,11 @@ erDiagram
 - `outfalls`
 - `dividers`
 - `links`
+- `conduits`
+- `pumps`
+- `orifices`
+- `weirs`
+- `outlets`
 - `subcatchments`
 - `rain_gages`
 

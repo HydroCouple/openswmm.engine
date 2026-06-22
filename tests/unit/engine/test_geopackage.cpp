@@ -500,6 +500,116 @@ TEST_F(GeoPackageTest, NodeSubtypeChildTablesRoundTrip) {
     EXPECT_EQ(ID.link_name[uid], "DivLink");
 }
 
+// Phase 7: relational link child tables (conduits/pumps/orifices/weirs/outlets):
+// lossless field-set round-trip with the param1/param2 -> NAMED column mapping.
+// Emphasis on weir + outlet (no QA model exercises them) and the TABULAR outlet
+// rating-curve NAME path; pump/orifice are covered by extran6/extran3 parity too.
+TEST_F(GeoPackageTest, LinkSubtypeChildTablesRoundTrip) {
+    SimulationContext ctx{};
+    ctx.options.flow_units = FlowUnits::CFS;   // US: no unit conversion in play
+    ctx.spatial.crs = "EPSG:4326";
+
+    auto add_node = [&](const char* nm) {
+        int idx = ctx.node_names.add(nm);
+        const auto n = static_cast<std::size_t>(idx + 1);
+        ctx.nodes.type.resize(n); ctx.nodes.invert_elev.resize(n);
+        ctx.nodes.full_depth.resize(n); ctx.nodes.init_depth.resize(n);
+        ctx.nodes.sur_depth.resize(n); ctx.nodes.ponded_area.resize(n);
+        ctx.nodes.type[static_cast<std::size_t>(idx)] = NodeType::JUNCTION;
+        return idx;
+    };
+    for (const char* nm : {"N0","N1","N2","N3","N4","N5"}) add_node(nm);
+    ctx.spatial.node_x = {0.0, 1.0, 2.0, 3.0, 4.0, 5.0};
+    ctx.spatial.node_y = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+
+    auto add_link = [&](const char* nm, LinkType t, int n1, int n2) {
+        int idx = ctx.link_names.add(nm);
+        const auto n = static_cast<std::size_t>(idx + 1);
+        ctx.links.type.resize(n);
+        ctx.links.node1.resize(n); ctx.links.node2.resize(n);
+        ctx.links.offset1.resize(n); ctx.links.offset2.resize(n);
+        ctx.links.q0.resize(n); ctx.links.q_limit.resize(n);
+        ctx.links.direction.resize(n, 1);
+        ctx.links.xsect_shape.resize(n); ctx.links.xsect_geom1.resize(n);
+        ctx.links.xsect_geom2.resize(n); ctx.links.xsect_geom3.resize(n);
+        ctx.links.xsect_geom4.resize(n); ctx.links.xsect_curve.resize(n, -1);
+        ctx.links.has_flap_gate.resize(n); ctx.links.pump_curve_name.resize(n);
+        ctx.spatial.link_vertices_x.resize(n); ctx.spatial.link_vertices_y.resize(n);
+        ctx.spatial.link_x.resize(n); ctx.spatial.link_y.resize(n);
+        const int row = ctx.link_subtypes.set_link_type(ctx.links, idx, t);
+        ctx.links.node1[idx] = n1; ctx.links.node2[idx] = n2;
+        return std::make_pair(idx, static_cast<std::size_t>(row));
+    };
+
+    auto [pi, pr]  = add_link("PMP", LinkType::PUMP, 0, 1);
+    ctx.links.pump_curve_name[pi] = "PumpCurve";
+    { auto& P = ctx.link_subtypes.pumps;
+      P.init_state[pr] = 1; P.startup[pr] = 2.5; P.shutoff[pr] = 1.5; }
+
+    auto [oi, orr] = add_link("ORF", LinkType::ORIFICE, 1, 2);
+    { auto& O = ctx.link_subtypes.orifices;
+      O.orifice_type[orr] = 1.0;  // SIDE
+      O.cd[orr] = 0.65; O.orate[orr] = 3600.0; }
+
+    auto [wi, wr]  = add_link("WER", LinkType::WEIR, 2, 3);
+    { auto& W = ctx.link_subtypes.weirs;
+      W.weir_type[wr] = 3.0;  // TRAPEZOIDAL
+      W.cd[wr] = 3.33; W.crest_height[wr] = 1.25; W.end_contractions[wr] = 2.0; }
+
+    auto [fi, fr]  = add_link("OLF", LinkType::OUTLET, 3, 4);
+    { auto& U = ctx.link_subtypes.outlets;
+      U.outlet_type[fr] = 0.0;  // FUNCTIONAL/HEAD
+      U.coeff[fr] = 2.5; U.expon[fr] = 0.6; U.crest_height[fr] = 0.75; }
+
+    auto [ti, tr]  = add_link("OLT", LinkType::OUTLET, 4, 5);
+    ctx.links.pump_curve_name[ti] = "RatingCurve";  // TABULAR rating-curve NAME
+    { auto& U = ctx.link_subtypes.outlets;
+      U.outlet_type[tr] = 3.0;  // TABULAR/DEPTH
+      U.crest_height[tr] = 0.5; }
+
+    ASSERT_EQ(write_to_file(db_path_, ctx, "r"), 0);
+    SimulationContext in{};
+    ASSERT_EQ(read_from_file(db_path_, in, "r"), 0);
+
+    const int ipmp = in.link_names.find("PMP");
+    ASSERT_GE(in.link_subtypes.pump_row(ipmp), 0);
+    const auto upr = static_cast<std::size_t>(in.link_subtypes.pump_row(ipmp));
+    EXPECT_EQ(in.links.type[ipmp], LinkType::PUMP);
+    EXPECT_EQ(in.links.pump_curve_name[ipmp], "PumpCurve");
+    EXPECT_EQ(in.link_subtypes.pumps.init_state[upr], 1);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.pumps.startup[upr], 2.5);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.pumps.shutoff[upr], 1.5);
+
+    const int iorf = in.link_names.find("ORF");
+    ASSERT_GE(in.link_subtypes.orifice_row(iorf), 0);
+    const auto uor = static_cast<std::size_t>(in.link_subtypes.orifice_row(iorf));
+    EXPECT_DOUBLE_EQ(in.link_subtypes.orifices.orifice_type[uor], 1.0);  // SIDE round-trips
+    EXPECT_DOUBLE_EQ(in.link_subtypes.orifices.cd[uor], 0.65);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.orifices.orate[uor], 3600.0);
+
+    const int iwer = in.link_names.find("WER");
+    ASSERT_GE(in.link_subtypes.weir_row(iwer), 0);
+    const auto uwr = static_cast<std::size_t>(in.link_subtypes.weir_row(iwer));
+    EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.weir_type[uwr], 3.0);  // TRAPEZOIDAL round-trips
+    EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.cd[uwr], 3.33);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.crest_height[uwr], 1.25);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.end_contractions[uwr], 2.0);
+
+    const int iolf = in.link_names.find("OLF");
+    ASSERT_GE(in.link_subtypes.outlet_row(iolf), 0);
+    const auto ufr = static_cast<std::size_t>(in.link_subtypes.outlet_row(iolf));
+    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.outlet_type[ufr], 0.0);  // FUNCTIONAL/HEAD
+    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.coeff[ufr], 2.5);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.expon[ufr], 0.6);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.crest_height[ufr], 0.75);
+
+    const int iolt = in.link_names.find("OLT");
+    ASSERT_GE(in.link_subtypes.outlet_row(iolt), 0);
+    const auto utr = static_cast<std::size_t>(in.link_subtypes.outlet_row(iolt));
+    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.outlet_type[utr], 3.0);  // TABULAR/DEPTH
+    EXPECT_EQ(in.links.pump_curve_name[iolt], "RatingCurve");  // rating-curve NAME round-trips
+}
+
 TEST_F(GeoPackageTest, CoordinatesRoundTrip) {
     auto ctx_out = build_test_context();
     ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);

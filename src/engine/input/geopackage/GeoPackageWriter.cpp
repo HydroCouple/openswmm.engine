@@ -81,6 +81,31 @@ static const char* link_type_str(LinkType t) {
     return "CONDUIT";
 }
 
+// Phase 7: subtype discriminator code -> NAMED string (mirrors LinksHandler
+// parse mapping). Round-tripped by the reader's *_from_str() below.
+static const char* orifice_orientation_str(double t) {  // OrificeData.orifice_type
+    return (t >= 0.5) ? "SIDE" : "BOTTOM";              // 1.0=SIDE, 0.0=BOTTOM
+}
+static const char* weir_type_str(double t) {            // WeirData.weir_type
+    switch (static_cast<int>(t + 0.5)) {
+        case 0: return "TRANSVERSE";
+        case 1: return "SIDEFLOW";
+        case 2: return "V-NOTCH";
+        case 3: return "TRAPEZOIDAL";
+        case 4: return "ROADWAY";
+    }
+    return "TRANSVERSE";
+}
+static const char* outlet_rating_str(double t) {        // OutletData.outlet_type
+    switch (static_cast<int>(t + 0.5)) {
+        case 0: return "FUNCTIONAL/HEAD";
+        case 1: return "FUNCTIONAL/DEPTH";
+        case 2: return "TABULAR/HEAD";
+        case 3: return "TABULAR/DEPTH";
+    }
+    return "FUNCTIONAL/HEAD";
+}
+
 static const char* outfall_type_str(OutfallType t) {
     switch (t) {
         case OutfallType::FREE:       return "FREE";
@@ -385,16 +410,29 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
     // pump_shutoff are NOT in the convert set (left ctx-native, like the .inp
     // path), so they round-trip verbatim — the previous per-field ×ucf_len was
     // a one-sided conversion the reader never undid (broke SI round-trip).
+    // Phase 7: slim base row + one 1:1 child row per link type.
     auto stmt = prepare(db,
         "INSERT INTO links (simulation_id, link_id, link_type, geom, "
-        "from_node, to_node, offset1, offset2, "
-        "xsect_shape, xsect_geom1, xsect_geom2, xsect_geom3, xsect_geom4, "
-        "xsect_barrels, xsect_culvert, xsect_curve, "
-        "roughness, length, loss_inlet, loss_outlet, loss_avg, "
-        "has_flap_gate, seep_rate, q0, q_limit, "
-        "pump_curve, pump_init_state, pump_startup, pump_shutoff, "
-        "crest_height, discharge_coeff, param1, param2, orate, direction, tag) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        "from_node, to_node, offset1, offset2, q0, q_limit, direction, "
+        "xsect_shape, xsect_geom1, xsect_geom2, xsect_geom3, xsect_geom4, xsect_curve, "
+        "has_flap_gate, tag) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    auto st_conduit = prepare(db,
+        "INSERT INTO conduits (simulation_id, link_id, roughness, length, "
+        "xsect_barrels, xsect_culvert, loss_inlet, loss_outlet, loss_avg, seep_rate) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)");
+    auto st_pump = prepare(db,
+        "INSERT INTO pumps (simulation_id, link_id, pump_curve, init_state, "
+        "startup_depth, shutoff_depth) VALUES (?,?,?,?,?,?)");
+    auto st_orifice = prepare(db,
+        "INSERT INTO orifices (simulation_id, link_id, orientation, discharge_coeff, orate) "
+        "VALUES (?,?,?,?,?)");
+    auto st_weir = prepare(db,
+        "INSERT INTO weirs (simulation_id, link_id, weir_type, discharge_coeff, "
+        "crest_height, end_contractions) VALUES (?,?,?,?,?,?)");
+    auto st_outlet = prepare(db,
+        "INSERT INTO outlets (simulation_id, link_id, rating_type, rating_curve, "
+        "q_coeff, q_expon, crest_height) VALUES (?,?,?,?,?,?,?)");
 
     int n = ctx.link_names.size();
     for (int i = 0; i < n; ++i) {
@@ -439,105 +477,100 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 7, safe_dbl(ctx.links.offset1, i));
         bind_double(stmt.get(), 8, safe_dbl(ctx.links.offset2, i));
 
-        // Cross-section — persist the RAW [XSECTIONS] geom1-4 (display units,
-        // preserved by the parser), NOT the derived y_full/w_max/a_full/y_bot.
-        // The derived fields overwrite the inputs at init and are lossy for
-        // shapes like TRAPEZOIDAL (bottom width + side slopes); storing the raw
-        // geoms lets the reader rebuild them and init derive identically.
-        bind_text(stmt.get(), 9, xsect_shape_str(safe_get(ctx.links.xsect_shape, (size_t)i, XsectShape::CIRCULAR)));
-        bind_double(stmt.get(), 10, safe_dbl(ctx.links.xsect_geom1, i));
-        bind_double(stmt.get(), 11, safe_dbl(ctx.links.xsect_geom2, i));
-        bind_double(stmt.get(), 12, safe_dbl(ctx.links.xsect_geom3, i));
-        bind_double(stmt.get(), 13, safe_dbl(ctx.links.xsect_geom4, i));
-        // Phase 6 Stage C: subtype config sourced from the relational side-tables
-        // (defaults match the wide resize() defaults so .gpkg bytes are unchanged).
+        bind_double(stmt.get(), 9,  safe_dbl(ctx.links.q0, i));
+        bind_double(stmt.get(), 10, safe_dbl(ctx.links.q_limit, i));
+        // Flow direction (+1/-1). Adverse-slope DW conduits are stored already
+        // reversed (positive slope), so direction can't be re-derived on read.
+        bind_int(stmt.get(), 11, safe_get(ctx.links.direction, (size_t)i, 1));
+
+        // Cross-section (shared by conduit/orifice/weir) — persist the RAW
+        // [XSECTIONS] geom1-4 (display units, preserved by the parser), NOT the
+        // derived y_full/w_max/a_full/y_bot, which init re-derives identically.
+        bind_text(stmt.get(), 12, xsect_shape_str(safe_get(ctx.links.xsect_shape, (size_t)i, XsectShape::CIRCULAR)));
+        bind_double(stmt.get(), 13, safe_dbl(ctx.links.xsect_geom1, i));
+        bind_double(stmt.get(), 14, safe_dbl(ctx.links.xsect_geom2, i));
+        bind_double(stmt.get(), 15, safe_dbl(ctx.links.xsect_geom3, i));
+        bind_double(stmt.get(), 16, safe_dbl(ctx.links.xsect_geom4, i));
+        // xsect named reference (col 17): IRREGULAR/STREET/CUSTOM reference a
+        // transect/street/shape-curve by NAME, kept in pump_curve_name.
+        {
+            const XsectShape wshp = safe_get(ctx.links.xsect_shape, (size_t)i, XsectShape::CIRCULAR);
+            std::string xname;
+            if ((wshp == XsectShape::IRREGULAR || wshp == XsectShape::STREET_XSECT ||
+                 wshp == XsectShape::CUSTOM) && i < (int)ctx.links.pump_curve_name.size())
+                xname = ctx.links.pump_curve_name[i];
+            if (!xname.empty()) bind_text(stmt.get(), 17, xname);
+            else                bind_null(stmt.get(), 17);
+        }
+        bind_int(stmt.get(), 18, safe_get(ctx.links.has_flap_gate, (size_t)i, uint8_t{0}) ? 1 : 0);
+        const auto utag = static_cast<std::size_t>(i);
+        if (utag < ctx.links.tags.size() && !ctx.links.tags[utag].empty())
+            bind_text(stmt.get(), 19, ctx.links.tags[utag]);
+        else
+            bind_null(stmt.get(), 19);
+        sqlite3_step(stmt.get());
+
+        // ---- per-type child row, sourced from the relational side-tables ----
         const int cr  = ctx.link_subtypes.conduit_row(i);
         const int pr  = ctx.link_subtypes.pump_row(i);
         const int orr = ctx.link_subtypes.orifice_row(i);
         const int wr  = ctx.link_subtypes.weir_row(i);
         const int olr = ctx.link_subtypes.outlet_row(i);
-        const auto& CD = ctx.link_subtypes.conduits;
-        const auto& PD = ctx.link_subtypes.pumps;
-        const auto& ORF = ctx.link_subtypes.orifices;
-        const auto& WD = ctx.link_subtypes.weirs;
-        const auto& OUT = ctx.link_subtypes.outlets;
-        bind_int(stmt.get(), 14, (cr >= 0) ? CD.barrels[(size_t)cr] : 1);
-        bind_int(stmt.get(), 15, (cr >= 0) ? CD.culvert_code[(size_t)cr] : 0);
-
-        // xsect named reference (col 16). IRREGULAR/STREET/CUSTOM reference a
-        // transect/street/shape-curve by NAME — the parser keeps that name in
-        // pump_curve_name (xsect_curve later holds the resolved index, which is
-        // NOT a [CURVES] table index, so the old table_names.name_of() wrote a
-        // garbage curve name). Other shapes carry no named xsect reference.
-        {
-            const XsectShape wshp = safe_get(ctx.links.xsect_shape, (size_t)i, XsectShape::CIRCULAR);
-            std::string xname;
-            if (wshp == XsectShape::IRREGULAR || wshp == XsectShape::STREET_XSECT ||
-                wshp == XsectShape::CUSTOM) {
-                if (i < (int)ctx.links.pump_curve_name.size())
-                    xname = ctx.links.pump_curve_name[i];
-            }
-            if (!xname.empty()) bind_text(stmt.get(), 16, xname);
-            else                bind_null(stmt.get(), 16);
-        }
-
-        bind_double(stmt.get(), 17, (cr >= 0) ? CD.roughness[(size_t)cr] : 0.01);
-        bind_double(stmt.get(), 18, (cr >= 0) ? CD.length[(size_t)cr] : 0.0);
-        bind_double(stmt.get(), 19, (cr >= 0) ? CD.loss_inlet[(size_t)cr] : 0.0);
-        bind_double(stmt.get(), 20, (cr >= 0) ? CD.loss_outlet[(size_t)cr] : 0.0);
-        bind_double(stmt.get(), 21, (cr >= 0) ? CD.loss_avg[(size_t)cr] : 0.0);
-        bind_int(stmt.get(), 22, safe_get(ctx.links.has_flap_gate, (size_t)i, uint8_t{0}) ? 1 : 0);
-        bind_double(stmt.get(), 23, (cr >= 0) ? CD.seep_rate[(size_t)cr] : 0.0);
-        bind_double(stmt.get(), 24, safe_dbl(ctx.links.q0, i));
-        bind_double(stmt.get(), 25, safe_dbl(ctx.links.q_limit, i));
-
-        // Pump
-        if (ltype == LinkType::PUMP) {
+        if (cr >= 0) {
+            const auto& CD = ctx.link_subtypes.conduits; const auto u = (size_t)cr;
+            sqlite3_reset(st_conduit.get()); sqlite3_clear_bindings(st_conduit.get());
+            bind_text(st_conduit.get(), 1, sim_id); bind_text(st_conduit.get(), 2, name);
+            bind_double(st_conduit.get(), 3, CD.roughness[u]);
+            bind_double(st_conduit.get(), 4, CD.length[u]);
+            bind_int(st_conduit.get(), 5, CD.barrels[u]);
+            bind_int(st_conduit.get(), 6, CD.culvert_code[u]);
+            bind_double(st_conduit.get(), 7, CD.loss_inlet[u]);
+            bind_double(st_conduit.get(), 8, CD.loss_outlet[u]);
+            bind_double(st_conduit.get(), 9, CD.loss_avg[u]);
+            bind_double(st_conduit.get(), 10, CD.seep_rate[u]);
+            sqlite3_step(st_conduit.get());
+        } else if (pr >= 0) {
+            const auto& PD = ctx.link_subtypes.pumps; const auto u = (size_t)pr;
+            sqlite3_reset(st_pump.get()); sqlite3_clear_bindings(st_pump.get());
+            bind_text(st_pump.get(), 1, sim_id); bind_text(st_pump.get(), 2, name);
             std::string pcname = i < (int)ctx.links.pump_curve_name.size() ? ctx.links.pump_curve_name[i] : "";
-            if (!pcname.empty()) bind_text(stmt.get(), 26, pcname);
-            else bind_null(stmt.get(), 26);
-            bind_double(stmt.get(), 27, (pr >= 0 && PD.init_state[(size_t)pr]) ? 1.0 : 0.0);
-            bind_double(stmt.get(), 28, (pr >= 0) ? PD.startup[(size_t)pr] : 0.0);
-            bind_double(stmt.get(), 29, (pr >= 0) ? PD.shutoff[(size_t)pr] : 0.0);
-        } else {
-            bind_null(stmt.get(), 26);
-            bind_null(stmt.get(), 27);
-            bind_null(stmt.get(), 28);
-            bind_null(stmt.get(), 29);
+            if (!pcname.empty()) bind_text(st_pump.get(), 3, pcname); else bind_null(st_pump.get(), 3);
+            bind_double(st_pump.get(), 4, PD.init_state[u] ? 1.0 : 0.0);
+            bind_double(st_pump.get(), 5, PD.startup[u]);
+            bind_double(st_pump.get(), 6, PD.shutoff[u]);
+            sqlite3_step(st_pump.get());
+        } else if (orr >= 0) {
+            const auto& ORF = ctx.link_subtypes.orifices; const auto u = (size_t)orr;
+            sqlite3_reset(st_orifice.get()); sqlite3_clear_bindings(st_orifice.get());
+            bind_text(st_orifice.get(), 1, sim_id); bind_text(st_orifice.get(), 2, name);
+            bind_text(st_orifice.get(), 3, orifice_orientation_str(ORF.orifice_type[u]));
+            bind_double(st_orifice.get(), 4, ORF.cd[u]);
+            bind_double(st_orifice.get(), 5, ORF.orate[u]);
+            sqlite3_step(st_orifice.get());
+        } else if (wr >= 0) {
+            const auto& WD = ctx.link_subtypes.weirs; const auto u = (size_t)wr;
+            sqlite3_reset(st_weir.get()); sqlite3_clear_bindings(st_weir.get());
+            bind_text(st_weir.get(), 1, sim_id); bind_text(st_weir.get(), 2, name);
+            bind_text(st_weir.get(), 3, weir_type_str(WD.weir_type[u]));
+            bind_double(st_weir.get(), 4, WD.cd[u]);
+            bind_double(st_weir.get(), 5, WD.crest_height[u]);
+            bind_int(st_weir.get(), 6, static_cast<int>(WD.end_contractions[u] + 0.5));
+            sqlite3_step(st_weir.get());
+        } else if (olr >= 0) {
+            const auto& OUT = ctx.link_subtypes.outlets; const auto u = (size_t)olr;
+            sqlite3_reset(st_outlet.get()); sqlite3_clear_bindings(st_outlet.get());
+            bind_text(st_outlet.get(), 1, sim_id); bind_text(st_outlet.get(), 2, name);
+            bind_text(st_outlet.get(), 3, outlet_rating_str(OUT.outlet_type[u]));
+            // TABULAR rating curve NAME is kept in pump_curve_name (base).
+            std::string rname = (static_cast<int>(OUT.outlet_type[u] + 0.5) >= 2 &&
+                                 i < (int)ctx.links.pump_curve_name.size())
+                                ? ctx.links.pump_curve_name[i] : "";
+            if (!rname.empty()) bind_text(st_outlet.get(), 4, rname); else bind_null(st_outlet.get(), 4);
+            bind_double(st_outlet.get(), 5, OUT.coeff[u]);
+            bind_double(st_outlet.get(), 6, OUT.expon[u]);
+            bind_double(st_outlet.get(), 7, OUT.crest_height[u]);
+            sqlite3_step(st_outlet.get());
         }
-
-        // Weir/Orifice/Outlet. param1 = type discriminator (orifice SIDE/BOTTOM,
-        // weir TRANSVERSE/SIDEFLOW/V-NOTCH/TRAPEZOIDAL, outlet rating type);
-        // param2 = end-contractions (weir) / derived area (orifice); orate =
-        // orifice open/close time. All dimensionless or ctx-native → as-is.
-        // Without these a SIDE orifice loads as BOTTOM (changed discharge).
-        // crest_height: weir or outlet row. cd: orifice/weir/outlet (coeff).
-        // param1: orifice_type/weir_type/outlet_type. param2: weir end_contractions
-        // / outlet expon. orate: orifice only. Defaults 0 match wide resize().
-        bind_double(stmt.get(), 30, (wr >= 0) ? WD.crest_height[(size_t)wr]
-                                  : (olr >= 0) ? OUT.crest_height[(size_t)olr] : 0.0);
-        bind_double(stmt.get(), 31, (orr >= 0) ? ORF.cd[(size_t)orr]
-                                  : (wr >= 0) ? WD.cd[(size_t)wr]
-                                  : (olr >= 0) ? OUT.coeff[(size_t)olr] : 0.0);
-        bind_double(stmt.get(), 32, (orr >= 0) ? ORF.orifice_type[(size_t)orr]
-                                  : (wr >= 0) ? WD.weir_type[(size_t)wr]
-                                  : (olr >= 0) ? OUT.outlet_type[(size_t)olr] : 0.0);
-        bind_double(stmt.get(), 33, (wr >= 0) ? WD.end_contractions[(size_t)wr]
-                                  : (olr >= 0) ? OUT.expon[(size_t)olr] : 0.0);
-        bind_double(stmt.get(), 34, (orr >= 0) ? ORF.orate[(size_t)orr] : 0.0);
-        // Flow direction (+1/-1). Adverse-slope DW conduits are stored already
-        // reversed (positive slope), so direction can't be re-derived on read —
-        // persist it so the .out offset-direction echo + routing round-trip.
-        bind_int(stmt.get(), 35, safe_get(ctx.links.direction, (size_t)i, 1));
-
-        // Tag — per-LinkData field.
-        const auto utag = static_cast<std::size_t>(i);
-        if (utag < ctx.links.tags.size() && !ctx.links.tags[utag].empty())
-            bind_text(stmt.get(), 36, ctx.links.tags[utag]);
-        else
-            bind_null(stmt.get(), 36);
-
-        sqlite3_step(stmt.get());
     }
 }
 
