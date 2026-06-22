@@ -112,6 +112,22 @@ SWMM_ENGINE_API int swmm_climate_set_temp_file_start(SWMM_Engine engine, double 
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_climate_get_temp_units(SWMM_Engine engine, int* units) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    if (units) *units = ctx.options.temp_units;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_set_temp_units(SWMM_Engine engine, int units) {
+    CHECK_HANDLE(engine);
+    if (units < -1 || units > 2) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    ctx.options.temp_units = units;
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_climate_get_elevation(SWMM_Engine engine, double* elev) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();

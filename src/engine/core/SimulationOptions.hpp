@@ -423,6 +423,12 @@ struct SimulationOptions {
     /** @brief Temperature file start date (OADate). */
     double temp_file_start = 0.0;
 
+    /** @brief Climate-file temperature units: 0=tenths-degC (C10), 1=degC (C),
+     *  2=degF (F); -1 = unspecified (reader keeps its per-format default).
+     *  @details Maps the legacy [TEMPERATURE] FILE units keyword (TempUnitsWords
+     *           {"C10","C","F"} in climate.c) and ClimateFile TempUnits enum. */
+    int temp_units = -1;
+
     /** @brief Wind speed type: 0=MONTHLY, 1=FILE. */
     int wind_type = 0;
 

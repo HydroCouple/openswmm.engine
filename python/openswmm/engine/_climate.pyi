@@ -12,6 +12,7 @@ class Climate:
     temp_source: int
     temp_timeseries: str
     temp_file_start: float
+    temp_units: int
     elevation: float
     latitude: float
     longitude_correction: float

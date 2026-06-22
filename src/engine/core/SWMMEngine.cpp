@@ -4225,7 +4225,8 @@ void SWMMEngine::initHydrology() noexcept {
             !ctx_.options.temp_file.empty()) {
             int us = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
             climate_file_.open(ctx_.options.temp_file,
-                               ctx_.options.temp_file_start, us);
+                               ctx_.options.temp_file_start, us,
+                               ctx_.options.temp_units);
         }
     }
 

@@ -202,8 +202,16 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
         else if (key == "FILE" && tok.size() >= 2) {
             ctx.options.temp_source = 2;
             ctx.options.temp_file = tok[1];
-            if (tok.size() >= 3)
+            if (tok.size() >= 3 && tok[2] != "*")
                 ctx.options.temp_file_start = to_double(tok[2]);
+            // Optional climate-file temperature units keyword (legacy tok[3]):
+            //   C10 = tenths degC, C = degC, F = degF.
+            if (tok.size() >= 4) {
+                const std::string u = Tokenizer::to_upper(tok[3]);
+                if      (u == "C10") ctx.options.temp_units = 0;
+                else if (u == "C")   ctx.options.temp_units = 1;
+                else if (u == "F")   ctx.options.temp_units = 2;
+            }
         }
         else if (key == "WINDSPEED" && tok.size() >= 2) {
             const std::string wtype = Tokenizer::to_upper(tok[1]);

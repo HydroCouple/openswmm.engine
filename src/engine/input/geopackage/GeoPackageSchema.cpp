@@ -443,6 +443,7 @@ CREATE TABLE IF NOT EXISTS climate_settings (
     temp_ts_name    TEXT,
     temp_file       TEXT,
     temp_file_start REAL,
+    temp_units      INTEGER DEFAULT -1,
     wind_type       TEXT NOT NULL DEFAULT 'MONTHLY',
     wind_speed      TEXT,
     snow_divt       REAL DEFAULT 34.0,

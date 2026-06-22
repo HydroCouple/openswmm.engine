@@ -392,6 +392,7 @@ TEST_F(GeoPackageTest, ClimateSettingsRoundTrip) {
     auto ctx_out = build_test_context();
     ctx_out.options.temp_source    = 1;        // TIMESERIES
     ctx_out.options.temp_ts_name   = "TempTS";
+    ctx_out.options.temp_units     = 2;        // degF (newly round-tripped)
     ctx_out.options.wind_type      = 0;        // MONTHLY
     for (int i = 0; i < 12; ++i) ctx_out.options.wind_speed[i] = i + 1;
     ctx_out.options.snow_divt      = 32.5;
@@ -409,6 +410,7 @@ TEST_F(GeoPackageTest, ClimateSettingsRoundTrip) {
 
     EXPECT_EQ(ctx_in.options.temp_source, 1);
     EXPECT_EQ(ctx_in.options.temp_ts_name, "TempTS");
+    EXPECT_EQ(ctx_in.options.temp_units, 2);
     EXPECT_EQ(ctx_in.options.wind_type, 0);
     EXPECT_DOUBLE_EQ(ctx_in.options.wind_speed[11], 12.0);
     EXPECT_DOUBLE_EQ(ctx_in.options.snow_divt, 32.5);

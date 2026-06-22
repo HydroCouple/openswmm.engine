@@ -86,6 +86,10 @@ TEST_F(ClimateConfigCApi, ScalarsMatchParsedInput) {
     EXPECT_EQ(swmm_climate_get_longitude_correction(engine_, &d), SWMM_OK);
     EXPECT_DOUBLE_EQ(d, 300.0);  // minutes, as written in the .inp
 
+    int tunits = -99;
+    EXPECT_EQ(swmm_climate_get_temp_units(engine_, &tunits), SWMM_OK);
+    EXPECT_EQ(tunits, -1);  // fixture uses TIMESERIES temp source: units unspecified
+
     int etype = -1;
     EXPECT_EQ(swmm_climate_get_evap_type(engine_, &etype), SWMM_OK);
     EXPECT_EQ(etype, SWMM_EVAP_MONTHLY);
@@ -176,6 +180,13 @@ TEST_F(ClimateConfigCApi, ScalarSettersRoundTrip) {
     EXPECT_EQ(swmm_climate_set_wind_type(engine_, SWMM_WIND_FILE), SWMM_OK);
     EXPECT_EQ(swmm_climate_get_wind_type(engine_, &t), SWMM_OK);
     EXPECT_EQ(t, SWMM_WIND_FILE);
+
+    EXPECT_EQ(swmm_climate_set_temp_units(engine_, 0), SWMM_OK);  // C10
+    EXPECT_EQ(swmm_climate_get_temp_units(engine_, &t), SWMM_OK);
+    EXPECT_EQ(t, 0);
+    EXPECT_EQ(swmm_climate_set_temp_units(engine_, 2), SWMM_OK);  // F
+    EXPECT_EQ(swmm_climate_get_temp_units(engine_, &t), SWMM_OK);
+    EXPECT_EQ(t, 2);
 }
 
 TEST_F(ClimateConfigCApi, ArraySettersRoundTrip) {
@@ -249,6 +260,9 @@ TEST_F(ClimateConfigCApi, EnumSettersRejectOutOfRange) {
     EXPECT_NE(swmm_climate_set_evap_type(engine_, -1),   SWMM_OK);
     EXPECT_NE(swmm_climate_set_wind_type(engine_, 2),    SWMM_OK);
     EXPECT_NE(swmm_climate_set_wind_type(engine_, -1),   SWMM_OK);
+    EXPECT_NE(swmm_climate_set_temp_units(engine_, 3),   SWMM_OK);
+    EXPECT_NE(swmm_climate_set_temp_units(engine_, -2),  SWMM_OK);
+    EXPECT_EQ(swmm_climate_set_temp_units(engine_, -1),  SWMM_OK);  // -1 is valid (unspecified)
 }
 
 TEST_F(ClimateConfigCApi, RangeSettersRejectOutOfRange) {

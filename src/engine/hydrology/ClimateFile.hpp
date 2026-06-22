@@ -78,7 +78,11 @@ public:
     /// @param path           File path.
     /// @param start_oa_date   Start date (OADate) — skip data before this date.
     /// @param unit_system    0 = US, 1 = SI.
-    bool open(const std::string& path, double start_oa_date, int unit_system);
+    /// @param temp_units     Climate-file temperature units override
+    ///                       (0=C10, 1=C, 2=F); -1 keeps the per-format default
+    ///                       (legacy [TEMPERATURE] FILE units keyword).
+    bool open(const std::string& path, double start_oa_date, int unit_system,
+              int temp_units = -1);
 
     /// Close file and release resources.
     void close();

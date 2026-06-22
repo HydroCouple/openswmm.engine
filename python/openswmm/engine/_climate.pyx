@@ -111,6 +111,18 @@ class Climate:
         _check(swmm_climate_set_temp_file_start(_ch(self._solver), value))
 
     @property
+    def temp_units(self) -> int:
+        """Climate-file temperature units: 0=tenths-degC (C10), 1=degC, 2=degF;
+        -1 = unspecified (reader's per-format default)."""
+        cdef int v = 0
+        _check(swmm_climate_get_temp_units(_ch(self._solver), &v))
+        return v
+
+    @temp_units.setter
+    def temp_units(self, int value) -> None:
+        _check(swmm_climate_set_temp_units(_ch(self._solver), value))
+
+    @property
     def elevation(self) -> float:
         """Site elevation (project length units)."""
         cdef double v = 0.0

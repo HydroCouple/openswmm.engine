@@ -101,6 +101,13 @@ SWMM_ENGINE_API int swmm_climate_get_temp_file_start(SWMM_Engine engine, double*
 /** @brief Set the climate-file start date (DateTime decimal days; 0 = file start). */
 SWMM_ENGINE_API int swmm_climate_set_temp_file_start(SWMM_Engine engine, double date);
 
+/** @brief Get the climate-file temperature units: 0=tenths-degC (C10),
+ *  1=degC (C), 2=degF (F); -1 = unspecified (reader's per-format default). */
+SWMM_ENGINE_API int swmm_climate_get_temp_units(SWMM_Engine engine, int* units);
+/** @brief Set the climate-file temperature units (-1, 0, 1, or 2).
+ *  @returns SWMM_ERR_BADPARAM if not in {-1,0,1,2}. */
+SWMM_ENGINE_API int swmm_climate_set_temp_units(SWMM_Engine engine, int units);
+
 /** @brief Get the site elevation (project length units; for psychrometric constant). */
 SWMM_ENGINE_API int swmm_climate_get_elevation(SWMM_Engine engine, double* elev);
 /** @brief Set the site elevation (project length units). */

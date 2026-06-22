@@ -1050,6 +1050,8 @@ cdef extern from "openswmm_climate.h":
     cdef int swmm_climate_set_temp_timeseries(SWMM_Engine e, const char* ts_id)
     cdef int swmm_climate_get_temp_file_start(SWMM_Engine e, double* date)
     cdef int swmm_climate_set_temp_file_start(SWMM_Engine e, double date)
+    cdef int swmm_climate_get_temp_units(SWMM_Engine e, int* units)
+    cdef int swmm_climate_set_temp_units(SWMM_Engine e, int units)
     cdef int swmm_climate_get_elevation(SWMM_Engine e, double* elev)
     cdef int swmm_climate_set_elevation(SWMM_Engine e, double elev)
     cdef int swmm_climate_get_latitude(SWMM_Engine e, double* latitude)

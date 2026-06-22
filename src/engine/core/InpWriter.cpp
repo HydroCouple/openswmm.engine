@@ -682,8 +682,16 @@ int writeInpFile(const SimulationContext& ctx_internal,
                 const std::string tok =
                     emit_path_token(opts.temp_file, dst_dir, force_abs_paths, warnings);
                 std::fprintf(f,"FILE         \"%s\"", tok.c_str());
+                // Legacy positional form: FILE fname [startdate] [units]. Emit a
+                // "*" start-date placeholder when units are set without a date.
                 if (opts.temp_file_start > 0.0)
                     std::fprintf(f," %.6f", opts.temp_file_start);
+                else if (opts.temp_units >= 0)
+                    std::fprintf(f," *");
+                if (opts.temp_units >= 0) {
+                    static const char* kUnitsWords[] = {"C10", "C", "F"};
+                    std::fprintf(f," %s", kUnitsWords[opts.temp_units]);
+                }
                 std::fprintf(f,"\n");
             }
 

@@ -852,8 +852,8 @@ static void write_climate_settings(sqlite3* db, const SimulationContext& ctx,
         "INSERT INTO climate_settings (simulation_id, temp_source, temp_ts_name, "
         "temp_file, temp_file_start, wind_type, wind_speed, snow_divt, snow_ati_wt, "
         "snow_nrg_ratio, snow_lat, snow_min_melt, snow_max_melt, "
-        "adc_imperv, adc_perv, snow_elev, snow_dtlong) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        "adc_imperv, adc_perv, snow_elev, snow_dtlong, temp_units) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
     const auto& opts = ctx.options;
 
     static const char* src_names[] = {"NONE", "TIMESERIES", "FILE"};
@@ -887,6 +887,7 @@ static void write_climate_settings(sqlite3* db, const SimulationContext& ctx,
     bind_text(stmt.get(),   15, join_doubles(opts.adc_perv, 10));
     bind_double(stmt.get(), 16, opts.snow_elev);
     bind_double(stmt.get(), 17, opts.snow_dtlong);
+    bind_int(stmt.get(),    18, opts.temp_units);
     sqlite3_step(stmt.get());
 }
 

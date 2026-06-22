@@ -998,6 +998,15 @@ static void read_climate_settings(sqlite3* db, SimulationContext& ctx,
             ctx.options.snow_dtlong = column_double(s2.get(), 1);
         }
     }
+
+    // temp_units added in a later schema revision; guard independently.
+    if (column_exists(db, "climate_settings", "temp_units")) {
+        auto s3 = prepare(db,
+            "SELECT temp_units FROM climate_settings WHERE simulation_id = ?");
+        bind_text(s3.get(), 1, sim_id);
+        if (sqlite3_step(s3.get()) == SQLITE_ROW)
+            ctx.options.temp_units = column_int(s3.get(), 0);
+    }
 }
 
 static void read_snowpacks(sqlite3* db, SimulationContext& ctx,
