@@ -1,0 +1,160 @@
+name: Documentation
+
+on:
+  push:
+#    branches: [main, develop]
+    branches: [main, develop, swmm6_rel]
+    tags: ["v*.*.*"]
+    paths: ['docs/**', 'python/docs/**', 'python/openswmm/**', 'include/**', '**/*.md']
+  pull_request:
+    branches: [main, develop]
+    # branches: [main]
+    paths: ['docs/**', 'python/docs/**', 'python/openswmm/**', 'include/**', '**/*.md']
+  workflow_dispatch:
+
+# Allow only one concurrent deployment.  Do NOT cancel in-progress runs so
+# that production deployments always complete.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 1 – Build Python (Sphinx) documentation
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  build_python_docs:
+    name: Build Python Bindings Docs (Sphinx)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Sphinx and theme dependencies
+        # Install from requirements.txt (single source of truth — keeps
+        # CI in lockstep with the doc-author's local environment, including
+        # sphinx-design for the grid/tab-set directives in the User Guide
+        # and Migration pages).
+        run: |
+          pip install -r python/docs/requirements.txt
+          pip install numpy
+
+      - name: Build Sphinx HTML docs
+        # conf.py adds python/ to sys.path and installs the Cython stub-file
+        # finder, so no compiled extensions or package installation is needed.
+        # -W promotes warnings to errors so a regression in the docs blocks
+        # the build; --keep-going still surfaces every issue in one pass.
+        run: |
+          sphinx-build -b html -W --keep-going python/docs python/docs/_build/html
+
+      - name: Upload Python docs artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: python-docs
+          path: python/docs/_build/html/
+          retention-days: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 2 – Build C/C++ documentation (Doxygen)
+#   Runs after the Python docs build per the documented deployment order.
+# ─────────────────────────────────────────────────────────────────────────────
+  build_doxygen_docs:
+    name: Build C/C++ Engine Docs (Doxygen)
+    needs: build_python_docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Graphviz and download tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz wget tar
+
+      - name: Install Doxygen 1.13.2
+        run: |
+          DOXYGEN_VERSION=1.13.2
+          # Doxygen release TAGS use underscores (Release_1_13_2) while the
+          # asset filename uses dots (doxygen-1.13.2.linux.bin.tar.gz). Building
+          # the tag with dots 404s, so derive the underscore form explicitly.
+          DOXYGEN_TAG="Release_${DOXYGEN_VERSION//./_}"
+          wget -q "https://github.com/doxygen/doxygen/releases/download/${DOXYGEN_TAG}/doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz"
+          tar -xzf doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz
+          sudo mv doxygen-${DOXYGEN_VERSION}/bin/doxygen /usr/local/bin/doxygen
+          doxygen --version
+
+      - name: Build Doxygen HTML docs
+        working-directory: docs
+        run: doxygen Doxyfile
+
+      - name: Upload Doxygen docs artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: doxygen-docs
+          path: docs/html/
+          retention-days: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 3 – Merge both doc sets and deploy to GitHub Pages
+#   Final site layout:
+#     /          → Doxygen C/C++ engine docs (main entry point)
+#     /python/   → Sphinx openswmm Python bindings docs
+# ─────────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to GitHub Pages
+    # Deploys fire on direct pushes to a whitelisted branch and on manual
+    # workflow_dispatch runs targeting one of those same branches. PR events
+    # are intentionally excluded — PR builds verify the docs compile but must
+    # not overwrite the live Pages site. To preview a PR, push the source
+    # branch (swmm6_rel) or dispatch the workflow manually against it from
+    # the Actions tab.
+    if: |
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && (github.ref == 'refs/heads/main'
+          || github.ref == 'refs/heads/develop'
+          || github.ref == 'refs/heads/swmm6_rel')
+    needs: [build_python_docs, build_doxygen_docs]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Download Doxygen docs
+        uses: actions/download-artifact@v5
+        with:
+          name: doxygen-docs
+          path: site/
+
+      - name: Download Python docs
+        uses: actions/download-artifact@v5
+        with:
+          name: python-docs
+          path: site/python/
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload combined site artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+
