@@ -296,9 +296,13 @@ CREATE TABLE IF NOT EXISTS dividers (
         ON DELETE CASCADE ON UPDATE CASCADE
 );
 
--- Links (LINESTRING feature table). Phase 7: slim relational base; subtype
--- properties in the conduits/pumps/orifices/weirs/outlets child tables.
--- xsect_*/has_flap_gate stay on base (shared by conduit/orifice/weir).
+-- Links (LINESTRING feature table). Phase 7: slim relational base — common
+-- fields + discriminator + geom. Subtype properties live in the
+-- conduits/pumps/orifices/weirs/outlets child tables (1:1 specialization,
+-- FK on (simulation_id, link_id), the link analogue of the node child tables).
+-- xsect_*/has_flap_gate stay on the base table because they are SHARED by
+-- conduit/orifice/weir (mirroring LinkData, where they stay on the base SoA
+-- rather than any one LinkSubtypes side-table); pumps/outlets leave them NULL.
 CREATE TABLE IF NOT EXISTS links (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,
     simulation_id   TEXT NOT NULL,
@@ -311,51 +315,97 @@ CREATE TABLE IF NOT EXISTS links (
     offset2         REAL,
     q0              REAL,
     q_limit         REAL,
-    direction       INTEGER DEFAULT 1,
+    direction       INTEGER DEFAULT 1,  -- +1 node1->node2, -1 reversed (adverse-slope DW reverse)
     xsect_shape     TEXT,
     xsect_geom1     REAL,
     xsect_geom2     REAL,
     xsect_geom3     REAL,
     xsect_geom4     REAL,
-    xsect_curve     TEXT,
+    xsect_curve     TEXT,    -- IRREGULAR/STREET/CUSTOM transect/street/shape-curve NAME
     has_flap_gate   INTEGER DEFAULT 0,
     tag             TEXT,
     UNIQUE(simulation_id, link_id)
 );
+
+-- Conduits (1:1 with a CONDUIT link). Mirrors ConduitData input fields; the
+-- init-derived geometry (beta/q_full/q_max/slope/mod_length) is recomputed on
+-- read by Router::init and intentionally NOT persisted.
 CREATE TABLE IF NOT EXISTS conduits (
-    simulation_id TEXT NOT NULL, link_id TEXT NOT NULL,
-    roughness REAL, length REAL, xsect_barrels INTEGER, xsect_culvert INTEGER,
-    loss_inlet REAL, loss_outlet REAL, loss_avg REAL, seep_rate REAL,
+    simulation_id   TEXT NOT NULL,
+    link_id         TEXT NOT NULL,
+    roughness       REAL,
+    length          REAL,
+    xsect_barrels   INTEGER,
+    xsect_culvert   INTEGER,
+    loss_inlet      REAL,
+    loss_outlet     REAL,
+    loss_avg        REAL,
+    seep_rate       REAL,
     PRIMARY KEY (simulation_id, link_id),
-    FOREIGN KEY (simulation_id, link_id) REFERENCES links(simulation_id, link_id)
+    FOREIGN KEY (simulation_id, link_id)
+        REFERENCES links(simulation_id, link_id)
         ON DELETE CASCADE ON UPDATE CASCADE
 );
+
+-- Pumps (1:1 with a PUMP link). pump_curve is the curve NAME (deferred-resolved
+-- on read); init_state/startup/shutoff are ctx-native. curve_type is derived at
+-- init from the curve's table type and not persisted.
 CREATE TABLE IF NOT EXISTS pumps (
-    simulation_id TEXT NOT NULL, link_id TEXT NOT NULL,
-    pump_curve TEXT, init_state REAL, startup_depth REAL, shutoff_depth REAL,
+    simulation_id   TEXT NOT NULL,
+    link_id         TEXT NOT NULL,
+    pump_curve      TEXT,
+    init_state      REAL,
+    startup_depth   REAL,
+    shutoff_depth   REAL,
     PRIMARY KEY (simulation_id, link_id),
-    FOREIGN KEY (simulation_id, link_id) REFERENCES links(simulation_id, link_id)
+    FOREIGN KEY (simulation_id, link_id)
+        REFERENCES links(simulation_id, link_id)
         ON DELETE CASCADE ON UPDATE CASCADE
 );
+
+-- Orifices (1:1 with an ORIFICE link). orientation = SIDE|BOTTOM (was param1);
+-- the sill height is the base offset1.
 CREATE TABLE IF NOT EXISTS orifices (
-    simulation_id TEXT NOT NULL, link_id TEXT NOT NULL,
-    orientation TEXT, discharge_coeff REAL, orate REAL,
+    simulation_id   TEXT NOT NULL,
+    link_id         TEXT NOT NULL,
+    orientation     TEXT,                -- SIDE | BOTTOM
+    discharge_coeff REAL,
+    orate           REAL,                -- open/close rate (s)
     PRIMARY KEY (simulation_id, link_id),
-    FOREIGN KEY (simulation_id, link_id) REFERENCES links(simulation_id, link_id)
+    FOREIGN KEY (simulation_id, link_id)
+        REFERENCES links(simulation_id, link_id)
         ON DELETE CASCADE ON UPDATE CASCADE
 );
+
+-- Weirs (1:1 with a WEIR link). weir_type = TRANSVERSE|SIDEFLOW|V-NOTCH|
+-- TRAPEZOIDAL|ROADWAY (was param1); end_contractions was param2.
 CREATE TABLE IF NOT EXISTS weirs (
-    simulation_id TEXT NOT NULL, link_id TEXT NOT NULL,
-    weir_type TEXT, discharge_coeff REAL, crest_height REAL, end_contractions INTEGER,
+    simulation_id    TEXT NOT NULL,
+    link_id          TEXT NOT NULL,
+    weir_type        TEXT,
+    discharge_coeff  REAL,
+    crest_height     REAL,
+    end_contractions INTEGER,
     PRIMARY KEY (simulation_id, link_id),
-    FOREIGN KEY (simulation_id, link_id) REFERENCES links(simulation_id, link_id)
+    FOREIGN KEY (simulation_id, link_id)
+        REFERENCES links(simulation_id, link_id)
         ON DELETE CASCADE ON UPDATE CASCADE
 );
+
+-- Outlets (1:1 with an OUTLET link). rating_type = FUNCTIONAL/HEAD,
+-- FUNCTIONAL/DEPTH, TABULAR/HEAD, TABULAR/DEPTH (was param1). rating_curve is the
+-- TABULAR curve NAME; q_coeff/q_expon are the FUNCTIONAL C1/C2.
 CREATE TABLE IF NOT EXISTS outlets (
-    simulation_id TEXT NOT NULL, link_id TEXT NOT NULL,
-    rating_type TEXT, rating_curve TEXT, q_coeff REAL, q_expon REAL, crest_height REAL,
+    simulation_id   TEXT NOT NULL,
+    link_id         TEXT NOT NULL,
+    rating_type     TEXT,
+    rating_curve    TEXT,
+    q_coeff         REAL,
+    q_expon         REAL,
+    crest_height    REAL,
     PRIMARY KEY (simulation_id, link_id),
-    FOREIGN KEY (simulation_id, link_id) REFERENCES links(simulation_id, link_id)
+    FOREIGN KEY (simulation_id, link_id)
+        REFERENCES links(simulation_id, link_id)
         ON DELETE CASCADE ON UPDATE CASCADE
 );
 
