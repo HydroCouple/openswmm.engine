@@ -398,10 +398,6 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
     const double inv_len = ucf::Ucf_inv[ucf::LENGTH][usz];
     if (inv_len == 1.0) return;  // US units: input already in internal units.
 
-    const double inv_area = inv_len * inv_len;
-    const double inv_flow = ucf::Qcf_inv[static_cast<std::size_t>(ctx.options.flow_units)];
-    const double inv_rain = ucf::Ucf_inv[ucf::RAINFALL][usz];
-
     // PARITY: legacy converts metric input to internal feet by DIVIDING by the
     // forward factor (internal = display / UCF, e.g. m / 0.3048), NOT multiplying
     // by the precomputed reciprocal (display * (1/0.3048)). The two differ by up
@@ -410,7 +406,12 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
     // seeds a spurious sign-flip/clamp flow in the dynamic-wave solve. Divide by
     // the forward length factor here (one-time at parse — no hot-loop cost) to
     // match legacy bit-for-bit. See UnitConversion.hpp ("internal = display / Ucf").
-    const double len = ucf::Ucf[ucf::LENGTH][usz];
+    // Same divide convention for area (legacy node.c:154 `/ (UCF_L*UCF_L)`), flow
+    // (`/ Qcf`), and rainfall (`/ UCF(RAINFALL)`).
+    const double len  = ucf::Ucf[ucf::LENGTH][usz];
+    const double len2 = len * len;
+    const double qcf  = ucf::Qcf[static_cast<std::size_t>(ctx.options.flow_units)];
+    const double rain = ucf::Ucf[ucf::RAINFALL][usz];
 
     // --- Nodes: elevations/depths → ft, ponded area → ft², stage/cutoff ---
     for (int i = 0; i < n_nodes; ++i) {
@@ -419,7 +420,7 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
         ctx.nodes.full_depth[ui]  /= len;
         ctx.nodes.init_depth[ui]  /= len;
         ctx.nodes.sur_depth[ui]   /= len;
-        ctx.nodes.ponded_area[ui] *= inv_area;
+        ctx.nodes.ponded_area[ui] /= len2;
         if (ctx.nodes.type[ui] == NodeType::OUTFALL) {
             const int r = ctx.node_subtypes.outfall_row(i);
             if (r >= 0 && ctx.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)]
@@ -429,7 +430,7 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
         if (ctx.nodes.type[ui] == NodeType::DIVIDER) {
             const int r = ctx.node_subtypes.divider_row(i);
             if (r >= 0)
-                ctx.node_subtypes.dividers.cutoff[static_cast<std::size_t>(r)] *= inv_flow;
+                ctx.node_subtypes.dividers.cutoff[static_cast<std::size_t>(r)] /= qcf;
         }
         // Functional storage A(d) = a0 + a1·d^a2 (a2 dimensionless).  a0 is an
         // area (inv_area); a1 must keep A in ft² when d is in ft, i.e. scale by
@@ -440,8 +441,8 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
             auto& S = ctx.node_subtypes.storages;
             if (r >= 0 && S.curve[static_cast<std::size_t>(r)] < 0) {
                 const auto ur = static_cast<std::size_t>(r);
-                S.c[ur] *= inv_area;                                  // a0
-                S.a[ur] *= std::pow(inv_len, 2.0 - S.b[ur]);         // a1
+                S.c[ur] /= len2;                                  // a0
+                S.a[ur] /= std::pow(len, 2.0 - S.b[ur]);         // a1
             }
         }
     }
@@ -471,9 +472,9 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
             const auto ucr = static_cast<std::size_t>(cr);
             if (cr >= 0 && ctx.link_subtypes.conduits.length[ucr] > 0.0)
                 ctx.link_subtypes.conduits.length[ucr] /= len;
-            ctx.links.q0[uj]        *= inv_flow;
-            ctx.links.q_limit[uj]   *= inv_flow;
-            if (cr >= 0) ctx.link_subtypes.conduits.seep_rate[ucr] *= inv_rain;  // legacy /UCF(RAINFALL)
+            ctx.links.q0[uj]        /= qcf;
+            ctx.links.q_limit[uj]   /= qcf;
+            if (cr >= 0) ctx.link_subtypes.conduits.seep_rate[ucr] /= rain;  // legacy /UCF(RAINFALL)
         }
         // Offsets are length-dimension; crest lives on the weir/outlet row.
         ctx.links.offset1[uj]      /= len;
