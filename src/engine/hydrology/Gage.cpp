@@ -172,8 +172,11 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
         }
 
         if (rain_type == 1 && interval > 0.0) {
-            // VOLUME: value is depth per interval → convert to in/hr
-            raw_value = raw_value / (interval / 3600.0);
+            // VOLUME: value is depth per interval → convert to in/hr.
+            // Match legacy gage.c:692 operand order exactly: r/interval*3600.0
+            // (one divide then one multiply), NOT r/(interval/3600.0) which forms
+            // the non-representable 1/12 constant first and rounds differently.
+            raw_value = raw_value / interval * 3600.0;
         } else if (rain_type == 2 && interval > 0.0) {
             // CUMULATIVE (Gap #31): raw_value is cumulative depth; compute delta.
             // Matches legacy convertRainfall() CUMULATIVE_RAINFALL case:
@@ -185,7 +188,7 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
                 ? raw_value              // counter reset — use full value as depth
                 : (raw_value - prev);    // normal incremental delta
             ctx.gages.cumul_rain_accum[uj] = raw_value;
-            raw_value = depth / (interval / 3600.0);  // depth → in/hr
+            raw_value = depth / interval * 3600.0;  // depth → in/hr (legacy gage.c:697 order)
         }
         // INTENSITY (type 0): already in/hr — no conversion needed
 

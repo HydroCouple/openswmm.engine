@@ -391,6 +391,21 @@ int SWMMEngine::initialize() noexcept {
             // Legacy reports the pump wet-well's volume from this xMax.
             report_full_volume_[un1] =
                 std::max(report_full_volume_[un1], xmax_internal);
+            // The initial volume/old_volume loop above ran BEFORE this xMax
+            // override, so it sized the wet well with the MIN_SURFAREA fallback
+            // (full_volume was still 0). Legacy sets fullVolume in pump_validate
+            // BEFORE node_initState computes oldVolume, so recompute the inlet's
+            // initial volume here with the corrected full_volume — otherwise the
+            // Type-1 pump's getMaxOutflow cap (inflow + oldVolume/dt) uses an
+            // undersized oldVolume and under-pumps at startup (extran6: cap 1.34
+            // vs legacy 3.0), seeding a wet-well surcharge instability.
+            double d0 = ctx_.nodes.init_depth[un1];
+            if (d0 > 0.0) {
+                double v0 = node::getVolume(ctx_.nodes, n1, d0, &ctx_.tables,
+                                            us, &ctx_.node_subtypes);
+                ctx_.nodes.volume[un1] = v0;
+                ctx_.nodes.old_volume[un1] = v0;
+            }
         }
     }
 
@@ -3094,6 +3109,37 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             snap.subcatch.infil    = ctx_.subcatches.infil_loss;
             snap.subcatch.runoff   = ctx_.subcatches.runoff;
             snap.subcatch.gw_flow  = ctx_.subcatches.gw_flow;
+
+            // Report subcatchment RUNOFF time-interpolated between the old/new
+            // WET_STEP values, matching legacy subcatch_getResults (subcatch.c:865)
+            // + output.c:323 which use f = (reportTime-OldRunoffTime)/span. The
+            // routing lateral inflow already applies this interpolation; the .out
+            // column previously used the raw constant new value, so the reported
+            // runoff stepped instead of ramping within a WET_STEP. This is
+            // OUTPUT-ONLY (the applied routing inflow is unchanged). Legacy also
+            // zeroes runoff below MIN_RUNOFF * area_ft2. Skipped under rpt_averages
+            // (that path accumulates its own average).
+            if (!ctx_.options.rpt_averages) {
+                constexpr double MIN_RUNOFF = 2.31481e-8;  // ft/s (legacy consts.h)
+                // Weight at the REPORT time (legacy output.c:323). After advance()
+                // ctx_.current_time sits on the report boundary = legacy reportTime;
+                // the routing-step interpolation used the step-START time (one
+                // routing step earlier), which biased the reported runoff low.
+                const double span = new_runoff_time_ - old_runoff_time_;
+                double f = (span > 0.0)
+                         ? (ctx_.current_time - old_runoff_time_) / span : 1.0;
+                f = std::max(0.0, std::min(1.0, f));
+                const double f1 = 1.0 - f;
+                const double land2ft2 = 1.0 / ucf::UCF(ucf::LANDAREA, ctx_.options);
+                for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                    auto ui = static_cast<std::size_t>(i);
+                    double ro = f1 * ctx_.subcatches.old_runoff[ui]
+                              + f  * ctx_.subcatches.runoff[ui];
+                    if (ro < MIN_RUNOFF * (ctx_.subcatches.area[ui] * land2ft2))
+                        ro = 0.0;
+                    snap.subcatch.runoff[ui] = ro;
+                }
+            }
 
             // GW elevation and soil moisture (matching legacy subcatch_getResults):
             //   gw_elev   = (bottomElev + lowerDepth) * UCF(LENGTH)
