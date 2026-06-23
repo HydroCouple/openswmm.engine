@@ -1608,7 +1608,13 @@ void DWSolver::processDryLink(SimulationContext& ctx, double dt,
     double aMid = area_mid_[uj];
     double barrels_d = tile_barrels_d_[uci];
     area_mid_[uj] = 0.5 * (area1_[uj] + area2_[uj]);
-    dqdh_[uj] = dt_g * aMid * tile_inv_length_[uci] * barrels_d;
+    // PARITY dwflow.c:171: dry-link dqdh = GRAVITY*dt*aMid / length * barrels.
+    // Divide by the cached (mod)length directly — x/L != x*(1/L) in IEEE-754,
+    // and this dqdh is scattered into the node sumdqdh denominator, so a 1-ULP
+    // error here (e.g. high-offset dry conduit TW01221) shifts the surcharge
+    // head solve and gets amplified by the sign-flip clamp. (dt_g == dt*GRAVITY
+    // matches legacy GRAVITY*dt by commutativity.)
+    dqdh_[uj] = dt_g * aMid / tile_length_[uci] * barrels_d;
     froude_[uj] = 0.0;
     new_flow_[uj] = 0.0;
     double yf = tile_y_full_[uci];
