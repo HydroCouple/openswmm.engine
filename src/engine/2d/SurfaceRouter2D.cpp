@@ -261,38 +261,72 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Build coupling point descriptors
     coupling_points_ = buildCouplingPoints(mesh_, ctx);
 
-    // Suppress ponding for 2D-coupled nodes. The 2D surface owns the
-    // surface storage, so any legacy ponded_area would double-count.
+    // Auto-align ponded storage on 2D-coupled junctions with the 2D surface.
     //
-    // C3a: warn (don't fail) when the user-supplied INP marks a coupled
-    // node with sur_depth > 0 or ponded_area > 0. The engine still proceeds
-    // — the surcharge gate in computeCouplingExchange honours sur_depth
-    // (C1+C2), and ponded_area is zeroed below — but the user should know
-    // that membership in [2D_VERTEX_NODE_MAP] / [2D_TRIANGLE_NODE_MAP] is
-    // the unambiguous "uncapped" flag and the other two attributes have
-    // their meaning narrowed to "physical surcharge cap" only.
-    // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C3a).
+    // A coupled junction must be able to surcharge above its crown so the 1D
+    // HGL tracks the overlying 2D water surface and the spill/inlet exchange
+    // can fire. The dynamic-wave solver only lets a node pond above the crown
+    // when it has a non-zero ponded_area, so instead of zeroing it (which
+    // pinned the HGL at the crown and disabled junction spill — see
+    // docs/1D_2D_COUPLING_GATE_REVIEW.md §6 C3a) we OVERRIDE ponded_area with
+    // the footprint of the surrounding 2D cells (median-dual area), and flag
+    // the node in ctx.coupled_node so setNodeDepth treats it as pond-capable
+    // regardless of the global ALLOW_PONDING option.
+    //
+    // Outfalls are excluded: they couple through a prescribed tailwater head
+    // BC (updateOutfallBoundaries / setAllOutfallDepths), not surface ponding.
+    //
+    // Tradeoff: the 1D pond and the stencil 2D cells represent the same near-
+    // manhole surface, so storage there is double-counted; the median-dual
+    // share (Σ incident tri_area / 3) keeps that area minimal, and a real
+    // flood spreads onto the broader mesh (cells beyond the stencil), which
+    // stays single-counted.
+    ctx.coupled_node.assign(static_cast<std::size_t>(ctx.n_nodes()), std::uint8_t{0});
+
+    // 2D cell areas are SI m²; 1D ponded_area is 1D-internal ft² (the engine
+    // works in feet for every project). No dedicated area factor exists, so
+    // convert by squaring the length factor (len_2d_to_1d² ≈ 10.764).
+    const double area_2d_to_1d = options_.len_2d_to_1d * options_.len_2d_to_1d;
+
     for (const auto& cp : coupling_points_) {
         if (cp.is_outfall) continue;
         auto ni = static_cast<std::size_t>(cp.node_idx);
-        const auto& nname = ctx.node_names.name_of(cp.node_idx);
-        if (ctx.nodes.sur_depth[ni] > 0.0) {
-            ctx.warnings.push_back(
-                "WARNING: 2D-coupled node '" + nname
-                + "' has sur_depth > 0 — surcharge gate uses invert + "
-                  "full_depth + sur_depth as the spill threshold "
-                  "(z_top). Below z_top the orifice ramp is closed in "
-                  "both directions; above z_top it opens.");
+
+        // First time we touch this node: warn about any overridden user values
+        // and reset ponded_area before accumulating the auto footprint. A node
+        // mapped to several vertices accumulates each vertex's share (the
+        // `else` below just adds for subsequent coupling points).
+        if (!ctx.coupled_node[ni]) {
+            const auto& nname = ctx.node_names.name_of(cp.node_idx);
+            if (ctx.nodes.sur_depth[ni] > 0.0) {
+                ctx.warnings.push_back(
+                    "WARNING: 2D-coupled node '" + nname
+                    + "' has sur_depth > 0 — surcharge gate uses invert + "
+                      "full_depth + sur_depth as the spill threshold (z_top).");
+            }
+            if (ctx.nodes.ponded_area[ni] > 0.0) {
+                ctx.warnings.push_back(
+                    "WARNING: 2D-coupled node '" + nname
+                    + "' has ponded_area > 0 — it is being overridden with the "
+                      "surrounding 2D-cell footprint so the 1D HGL stays "
+                      "aligned with the 2D surface.");
+            }
+            ctx.nodes.ponded_area[ni] = 0.0;
+            ctx.coupled_node[ni] = std::uint8_t{1};
         }
-        if (ctx.nodes.ponded_area[ni] > 0.0) {
-            ctx.warnings.push_back(
-                "WARNING: 2D-coupled node '" + nname
-                + "' has ponded_area > 0 — the 2D mesh owns surface "
-                  "storage for coupled nodes; ponded_area is being "
-                  "zeroed.");
+
+        // Median-dual footprint of the cells around the coupling point (SI m²).
+        double foot_m2 = 0.0;
+        if (cp.vertex_idx >= 0) {
+            const int s = mesh_.vert_stencil_ptr[cp.vertex_idx];
+            const int e = mesh_.vert_stencil_ptr[cp.vertex_idx + 1];
+            for (int k = s; k < e; ++k)
+                foot_m2 += mesh_.tri_area[mesh_.vert_stencil_idx[k]];
+            foot_m2 /= 3.0;  // each triangle contributes ~1/3 of its area per vertex
+        } else {
+            foot_m2 = mesh_.tri_area[cp.cell_idx];
         }
-        // Set ponded area to zero — 2D surface handles excess
-        ctx.nodes.ponded_area[ni] = 0.0;
+        ctx.nodes.ponded_area[ni] += foot_m2 * area_2d_to_1d;
     }
 
     // C3b: vertical-datum-consistency guard for 1D↔2D coupling.

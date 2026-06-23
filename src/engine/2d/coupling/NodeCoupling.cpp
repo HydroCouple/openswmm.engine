@@ -273,53 +273,60 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
         }
         double depth_1d_avail = nodes.depth[ni] * opts.len_1d_to_2d;
 
-        // Head difference (positive = 2D → 1D)
-        double dh = h_2d - h_1d;
-
-        // C1: surcharge envelope top — coupling activates above this elevation.
-        // For an uncapped node, sur_depth = 0 and z_top reduces to the rim
-        // elevation, preserving the legacy behaviour. For a capped node
-        // (sur_depth > 0), z_top is the elevation at which the physical cap
-        // (manhole bolt, sealed inlet) yields and water reaches the surface.
-        // The effective-area widening from inlet-grate to manhole-opening
-        // is also anchored at z_top so both transitions share one threshold.
-        // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C1, C2).
-        double z_top = (nodes.invert_elev[ni] + nodes.full_depth[ni]
-                       + nodes.sur_depth[ni]) * opts.len_1d_to_2d;
+        // ----------------------------------------------------------------
+        // Two-regime junction exchange. The coupling switches smoothly between
+        // two physical regimes as the 1D node fills to its crown (rim):
+        //
+        //   • Free-inlet capture (node BELOW crown): the pipe has air space, so
+        //     surface water falls into the inlet as a free orifice driven by
+        //     the SURFACE PONDING DEPTH alone (depth_2d = h_2d − z_2d), one-way
+        //     INTO the node. The 1D head is below the inlet and does not oppose.
+        //   • Submerged surcharge (node AT/ABOVE crown): the inlet is
+        //     pressurised on the pipe side, so exchange is the bidirectional
+        //     orifice on the head difference (h_2d − h_1d) — spill out when the
+        //     pipe is higher, drain back when the surface is higher.
+        //
+        // A C¹ Hermite blend on h_1d across a small band below the crown
+        // interpolates BOTH the driving head and the directionality, so neither
+        // the flux nor its derivative jumps (CVODE/BDF stability). This replaces
+        // the old z_top surcharge gate, which closed the exchange below the rim
+        // in both directions and thereby blocked inlet capture entirely (the
+        // reason coupled junctions could not drain the surface).
+        // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6.
+        double crown = (nodes.invert_elev[ni] + nodes.full_depth[ni])
+                       * opts.len_1d_to_2d;
+        // z_top (crown + sealed surcharge depth) still anchors the inlet→manhole
+        // effective-area widening (the cover pops once water reaches the surface).
+        double z_top = crown + nodes.sur_depth[ni] * opts.len_1d_to_2d;
         double h_max = std::max(h_1d, h_2d);
         double A_eff = effectiveArea(h_max, z_top, nodes.full_depth[ni],
                                       cp.area, cp.area * 2.0);
 
-        // Orifice exchange flow (full 1D–2D gradient, signed/bidirectional;
-        // see review §3 R1c).
+        // Surcharge fraction s: 0 = free inlet (pipe well below crown),
+        // 1 = submerged (pipe at/above crown); C¹ over a 5 cm band.
+        constexpr double SURCH_BAND = 0.05;  // m
+        double st = std::min(1.0, std::max(0.0,
+                        (h_1d - (crown - SURCH_BAND)) / SURCH_BAND));
+        double s  = st * st * (3.0 - 2.0 * st);
+
+        // Blend the driving head: free-inlet surface depth (≥ 0 ⇒ inflow only)
+        // below the crown → signed head difference (bidirectional) above it.
+        double depth_2d_surf = h_2d - z_2d;  // surface ponding depth at the inlet
+        double dh = (1.0 - s) * std::max(0.0, depth_2d_surf)
+                  + s * (h_2d - h_1d);
         double Q = orificeFlow(dh, cp.cd, A_eff);
 
-        // Smoothly ramp Q to zero as the source side dries up. A hard
-        // cutoff at opts.dry_depth would introduce a step-discontinuity in
-        // ydot that breaks CVODE's BDF corrector. The Hermite ramp matches
-        // the one used by the conductance, so both wet/dry transitions
-        // share the same C¹ shape.
+        // Smoothly ramp Q to zero as the source side dries up. A hard cutoff at
+        // opts.dry_depth would step-discontinue ydot and break CVODE's BDF
+        // corrector. For inflow (Q>0) this also enforces "the surface must hold
+        // more than dry_depth to be captured" — and kills the spurious inflow a
+        // dry low-spot vertex's reconstructed depth_2d_surf could otherwise
+        // produce (depth_2d_avail is the robust max-over-stencil wetness).
         auto wetRamp = [&opts](double d) {
             double t = std::min(1.0, std::max(0.0, d / opts.dry_depth));
             return t * t * (3.0 - 2.0 * t);
         };
         Q *= (Q > 0.0) ? wetRamp(depth_2d_avail) : wetRamp(depth_1d_avail);
-
-        // C2: surcharge gate — exchange may only carry flow when either side
-        // is above z_top. The ramp is direction-symmetric (multiplies Q
-        // regardless of sign) so R1c bidirectionality is preserved: a 2D
-        // cell flooded above a still-pressurised capped pipe drains in
-        // through the same gate that a surcharging pipe spills out through.
-        // The 5 cm transition matches effectiveArea() above so both
-        // discontinuity sources widen together. Reduces to a no-op for
-        // uncapped nodes (sur_depth = 0) the moment water reaches the rim.
-        {
-            double surcharge_excess = h_max - z_top;
-            double t = std::min(1.0, std::max(0.0,
-                                              surcharge_excess / 0.05));
-            double capRamp = t * t * (3.0 - 2.0 * t);
-            Q *= capRamp;
-        }
 
         // Throttle return flow (2D → 1D) if node is at capacity
         if (Q > 0.0) {
