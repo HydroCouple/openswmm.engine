@@ -1704,7 +1704,16 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
             XSectParams xs = buildXSP(ctx, uj);
             wMid = xsect::getWofY(xs, depth_mid_[uj]);
         }
-        if (depth_mid_[uj] > FUDGE && !isFull) {
+        // PARITY: legacy link_getFroude (link.c:864-873) zeros Froude ONLY for a
+        // CLOSED conduit within FUDGE of full (yFull - yMid <= FUDGE); for an OPEN
+        // conduit it computes a real Froude even when full (NO isFull short-
+        // circuit). Use that exact per-shape gate, not the both-ends-full isFull
+        // test — otherwise open/IRREGULAR channels that fill (user2/5) get fr=0
+        // (and sigma=1) and closed pipes straddling the crown (user3) get a
+        // spurious nonzero fr, both seeding surcharge divergence.
+        const bool closed_nearfull =
+            !tile_is_open_[uci] && (yf - depth_mid_[uj] <= FUDGE);
+        if (depth_mid_[uj] > FUDGE && !closed_nearfull) {
             double dh = (wMid > FUDGE) ? aMid / wMid : 0.0;
             // PARITY: legacy link_getFroude computes sqrt(GRAVITY * y) directly
             // (link.c). Using the precomputed SQRT_GRAVITY constant (a truncated

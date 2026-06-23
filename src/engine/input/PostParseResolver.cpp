@@ -402,19 +402,29 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
     const double inv_flow = ucf::Qcf_inv[static_cast<std::size_t>(ctx.options.flow_units)];
     const double inv_rain = ucf::Ucf_inv[ucf::RAINFALL][usz];
 
+    // PARITY: legacy converts metric input to internal feet by DIVIDING by the
+    // forward factor (internal = display / UCF, e.g. m / 0.3048), NOT multiplying
+    // by the precomputed reciprocal (display * (1/0.3048)). The two differ by up
+    // to 1 ULP (e.g. 223.48/0.3048 = 733.2020997375328 vs *recip 733.2020997375326),
+    // which breaks the exact flatness of an initial water surface (h1==h2) and
+    // seeds a spurious sign-flip/clamp flow in the dynamic-wave solve. Divide by
+    // the forward length factor here (one-time at parse — no hot-loop cost) to
+    // match legacy bit-for-bit. See UnitConversion.hpp ("internal = display / Ucf").
+    const double len = ucf::Ucf[ucf::LENGTH][usz];
+
     // --- Nodes: elevations/depths → ft, ponded area → ft², stage/cutoff ---
     for (int i = 0; i < n_nodes; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        ctx.nodes.invert_elev[ui] *= inv_len;
-        ctx.nodes.full_depth[ui]  *= inv_len;
-        ctx.nodes.init_depth[ui]  *= inv_len;
-        ctx.nodes.sur_depth[ui]   *= inv_len;
+        ctx.nodes.invert_elev[ui] /= len;
+        ctx.nodes.full_depth[ui]  /= len;
+        ctx.nodes.init_depth[ui]  /= len;
+        ctx.nodes.sur_depth[ui]   /= len;
         ctx.nodes.ponded_area[ui] *= inv_area;
         if (ctx.nodes.type[ui] == NodeType::OUTFALL) {
             const int r = ctx.node_subtypes.outfall_row(i);
             if (r >= 0 && ctx.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)]
                               == OutfallType::FIXED)
-                ctx.node_subtypes.outfalls.param[static_cast<std::size_t>(r)] *= inv_len;
+                ctx.node_subtypes.outfalls.param[static_cast<std::size_t>(r)] /= len;
         }
         if (ctx.nodes.type[ui] == NodeType::DIVIDER) {
             const int r = ctx.node_subtypes.divider_row(i);
@@ -441,45 +451,45 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
         const auto uj = static_cast<std::size_t>(j);
         const XsectShape shp = ctx.links.xsect_shape[uj];
         // geom1 (full depth/diameter) — always a length, every shape.
-        ctx.links.xsect_y_full[uj] *= inv_len;
+        ctx.links.xsect_y_full[uj] /= len;
         // geom2 (width) — a length for every shape EXCEPT FORCE_MAIN, whose
         // geom2 is the Hazen-Williams C-factor / Darcy-Weisbach roughness
         // height (saved to r_bot in the xsect loop). For shapes that derive
         // w_max from y_full the input is overwritten, so converting is harmless.
         if (shp != XsectShape::FORCE_MAIN)
-            ctx.links.xsect_w_max[uj] *= inv_len;
+            ctx.links.xsect_w_max[uj] /= len;
         // geom3 (y_bot/r_bot) — a length only for these three shapes; for
         // RECT_OPEN it is a sides flag and for TRAPEZOIDAL/TRIANGULAR/POWER a
         // side slope/exponent (dimensionless) — leave those.
         if (shp == XsectShape::RECT_TRIANG ||
             shp == XsectShape::RECT_ROUND ||
             shp == XsectShape::MODBASKETHANDLE)
-            ctx.links.xsect_y_bot[uj] *= inv_len;
+            ctx.links.xsect_y_bot[uj] /= len;
 
         if (ctx.links.type[uj] == LinkType::CONDUIT) {
             const int cr = ctx.link_subtypes.conduit_row(j);
             const auto ucr = static_cast<std::size_t>(cr);
             if (cr >= 0 && ctx.link_subtypes.conduits.length[ucr] > 0.0)
-                ctx.link_subtypes.conduits.length[ucr] *= inv_len;
+                ctx.link_subtypes.conduits.length[ucr] /= len;
             ctx.links.q0[uj]        *= inv_flow;
             ctx.links.q_limit[uj]   *= inv_flow;
             if (cr >= 0) ctx.link_subtypes.conduits.seep_rate[ucr] *= inv_rain;  // legacy /UCF(RAINFALL)
         }
         // Offsets are length-dimension; crest lives on the weir/outlet row.
-        ctx.links.offset1[uj]      *= inv_len;
-        ctx.links.offset2[uj]      *= inv_len;
+        ctx.links.offset1[uj]      /= len;
+        ctx.links.offset2[uj]      /= len;
         const int wr = ctx.link_subtypes.weir_row(j);
-        if (wr >= 0) ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] *= inv_len;
+        if (wr >= 0) ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] /= len;
         else {
             const int olr = ctx.link_subtypes.outlet_row(j);
-            if (olr >= 0) ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)] *= inv_len;
+            if (olr >= 0) ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)] /= len;
         }
     }
 
     // --- Subcatchments: width → ft.  Area/infiltration/depression storage are
     //     converted at init/at-use and intentionally excluded here. ---
     for (int s = 0; s < n_subcatch; ++s)
-        ctx.subcatches.width[static_cast<std::size_t>(s)] *= inv_len;
+        ctx.subcatches.width[static_cast<std::size_t>(s)] /= len;
 }
 
 // ---------------------------------------------------------------------------
