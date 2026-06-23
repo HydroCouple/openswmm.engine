@@ -148,7 +148,7 @@ Advanced forcing
 # =============================================================================
 # Engine lifecycle & errors
 # =============================================================================
-from ._solver import Solver, run, run_with_callback
+from ._solver import Solver, run, run_with_callback, GEOPACKAGE_PLUGIN_ID
 from ._exceptions import (
     EngineError,
     BadHandleError,
@@ -271,7 +271,7 @@ __all__ = [
     # --- DateTime conversion (SWMM DateTime <-> Python datetime) ---
     "oadate_to_datetime", "datetime_to_oadate", "datetime_api",
     # --- Engine lifecycle & errors ---
-    "Solver", "run", "run_with_callback",
+    "Solver", "run", "run_with_callback", "GEOPACKAGE_PLUGIN_ID",
     "EngineError",
     "BadHandleError", "BadIndexError", "BadParamError",
     "LifecycleError", "HotStartError", "PluginError",

@@ -13,6 +13,18 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
 
 ### Added
 
+- **Python GeoPackage model export** — `Solver.write_with_plugin(path,
+  output_plugin_id)` and the convenience `Solver.write_geopackage(path,
+  crs=...)` so a loaded model can be exported to a `.gpkg` from Python (the C
+  API already had `swmm_model_write_with_plugin`; only `ModelBuilder` wrapped
+  it before). `write_geopackage(crs="EPSG:2284")` applies the CRS via
+  `solver.spatial.crs` first, so every feature layer is tagged with that SRS —
+  without a CRS the geometries get an undefined SRS (`srs_id 0`) and GIS tools
+  cannot place them. Added the `GEOPACKAGE_PLUGIN_ID` constant (the real id is
+  `org.hydrocouple.openswmm.plugins.geopackage`; corrected the stale example in
+  `openswmm_model.h` that omitted `.plugins.`). Tests:
+  `python/tests/engine/test_geopackage_export.py`.
+
 - **GUI-editor round-trip APIs** — getters/setters so the property and
   category editors can *load* an existing definition, not just write one
   (closes the gaps in `openswmm.gui/docs/HANDOFF_compile_verify_agent.md`

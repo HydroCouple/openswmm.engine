@@ -81,6 +81,10 @@ from ._exceptions import (
 
 _SECONDS_PER_DAY = 86400.0
 
+#: Registered id of the built-in GeoPackage model writer/reader plugin. Pass to
+#: :meth:`Solver.write_with_plugin` (or use :meth:`Solver.write_geopackage`).
+GEOPACKAGE_PLUGIN_ID = "org.hydrocouple.openswmm.plugins.geopackage"
+
 
 def _path_to_str(p) -> str:
     """Accept ``str``, ``os.PathLike``, or ``None``; return a ``str`` (empty
@@ -605,6 +609,41 @@ cdef class Solver:
         """Write the current model to a SWMM ``.inp`` file."""
         cdef bytes b = _path_to_str(path).encode('utf-8')
         _check(swmm_model_write(self._handle, b))
+
+    def write_with_plugin(self, path, str output_plugin_id="") -> None:
+        """Write the current model using an output plugin.
+
+        Pass an empty ``output_plugin_id`` (the default) for the built-in
+        ``.inp`` writer; pass a registered plugin id (e.g.
+        :data:`GEOPACKAGE_PLUGIN_ID`) to serialise the model with that plugin.
+
+        @param path: Destination file path.
+        @param output_plugin_id: Plugin id, or ``""`` for the built-in writer.
+        @raise EngineError: On C API failure (e.g. unknown plugin id).
+        """
+        cdef bytes bp = _path_to_str(path).encode('utf-8')
+        cdef bytes bid = output_plugin_id.encode('utf-8')
+        _check(swmm_model_write_with_plugin(self._handle, bp, bid))
+
+    def write_geopackage(self, path, crs=None) -> None:
+        """Write the model to an OGC GeoPackage (``.gpkg``).
+
+        Convenience wrapper over :meth:`write_with_plugin` using the built-in
+        GeoPackage writer. Network nodes, links, subcatchments and rain gages
+        are written as feature layers.
+
+        @param path: Destination ``.gpkg`` path.
+        @param crs: Optional coordinate reference system string (e.g.
+            ``"EPSG:2284"``). When given it is applied via
+            ``solver.spatial.crs`` first, so every feature is tagged with that
+            SRS — without it the geometries are written with an undefined SRS
+            and GIS tools cannot place them. Pass ``None`` to keep the model's
+            existing CRS.
+        @raise EngineError: On C API failure.
+        """
+        if crs is not None:
+            self.spatial.crs = crs
+        self.write_with_plugin(path, GEOPACKAGE_PLUGIN_ID)
 
     # ------------------------------------------------------------------
     # Views: options / userflags / events
