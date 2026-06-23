@@ -853,7 +853,14 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
         // (0 for non-storage, the curve area for STORAGE).  Always using
         // getSurfArea() understated the area of ponded nodes, so flood water
         // that legacy stores instead overflowed and broke routing continuity.
-        xnode_.new_surf_area[ui] = ctx.options.allow_ponding
+        //
+        // 2D-coupled junctions always use the ponded-area baseline (their
+        // ponded_area is the auto-assigned 2D-cell footprint) so the HGL can
+        // rise above the crown to track the 2D surface, independent of the
+        // global ALLOW_PONDING option. See ctx.coupled_node.
+        const bool node_can_pond = ctx.options.allow_ponding
+            || (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
+        xnode_.new_surf_area[ui] = node_can_pond
             ? node::getPondedArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys, &ctx.node_subtypes)
             : node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys, &ctx.node_subtypes);
 
@@ -1587,9 +1594,11 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
                     }
                 }
                 if (slope_check || froude_check) {
-                    double r1_for_norm = (hrad1_[uj] > FUDGE) ? hrad1_[uj] : FUDGE;
-                    double s1 = area1_[uj] * fastmath::pow2_3(r1_for_norm);
-                    double qNorm = tile_beta_[uci] * s1;
+                    // PARITY dwflow.c:675: qNorm = beta*a1*pow(r1,2./3.) — (beta*a1)
+                    // grouped first, libm std::pow (NOT cbrt(x*x)), raw upstream
+                    // hyd radius (no FUDGE clamp).
+                    double qNorm = tile_beta_[uci] * area1_[uj]
+                                 * std::pow(hrad1_[uj], 2.0 / 3.0);
                     if (qNorm < q) {
                         q = qNorm;
                         CD.normal_flow_limited[uci] = uint8_t{1};
@@ -1725,8 +1734,10 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     if (!is_closed_full && !isFull && qLast > 0.0 && h1 >= h2)
         rho = sig;
     double aWtd = area1_[uj] + (aMid - area1_[uj]) * rho;
+    // PARITY dwflow.c:198: legacy uses the raw interpolated rWtd in pow(rWtd,
+    // 1.33333) — no clamp. The DRY / aMid<=FUDGE branch already returned, and
+    // r1_val/rMid > 0 for any wet section, so rWtd > 0 here (no div-by-zero).
     double rWtd = r1_val + (rMid - r1_val) * rho;
-    rWtd = std::max(rWtd, FUDGE);
 
     // Apply InertDamping override AFTER rho computation
     if (!is_closed_full) {
@@ -1737,9 +1748,9 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     }
     sigma_[uj] = sig;
 
-    // Manning friction — rWtd >= FUDGE > 0 from max() above, so r43 > 0 always.
-    // The legacy (dwflow.c:211) applies this unconditionally; the damping from
-    // large dq1 is the correct physical behaviour for nearly-dry conduits.
+    // Manning friction — rWtd > 0 (wet section; DRY branch already returned), so
+    // r43 > 0 always. The legacy (dwflow.c:211) applies this unconditionally on
+    // the raw rWtd; the damping from large dq1 (small rWtd) is correct physics.
     // PARITY: legacy uses the truncated literal exponent pow(rWtd, 1.33333),
     // NOT the exact 4/3. The two differ by ~3.3e-6 in the exponent, which is a
     // ~2e-6..1e-5 relative error in r^exp (largest for nearly-dry conduits with
@@ -1748,8 +1759,9 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     double r43 = std::pow(rWtd, 1.33333);
     double dq1 = dt * tile_rough_factor_[uci] / r43 * absv;
 
-    // Head gradient
-    double dq2 = dt_g * aWtd * (h2 - h1) * inv_len;
+    // Head gradient. PARITY dwflow.c:214: divide by length directly
+    // (x/L != x*(1/L) in IEEE-754); dt_g == dt*GRAVITY matches legacy grouping.
+    double dq2 = dt_g * aWtd * (h2 - h1) / length;
 
     // Unsteady + convective acceleration (skip if sig==0)
     double aOld = std::max(area_old_[uj], FUDGE);
@@ -1757,7 +1769,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     if (sig > 0.0) {
         dq3 = 2.0 * v * (aMid - aOld) * sig;
         if (length > 0.0)
-            dq4 = dt * v * v * (area2_[uj] - area1_[uj]) * inv_len * sig;
+            dq4 = dt * v * v * (area2_[uj] - area1_[uj]) / length * sig;  // PARITY dwflow.c:222
     }
 
     // Local losses
@@ -1768,7 +1780,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
         if (area1_[uj] > FUDGE) losses += tile_loss_inlet_[uci] * (absq / area1_[uj]);
         if (area2_[uj] > FUDGE) losses += tile_loss_outlet_[uci] * (absq / area2_[uj]);
         if (aMid > FUDGE) losses += tile_loss_avg_[uci] * (absq / aMid);
-        dq5 = losses * 0.5 * inv_len * dt;
+        dq5 = losses / 2.0 / length * dt;  // PARITY dwflow.c:229
     }
 
     // Evaporation/seepage. Length divisor uses RAW length (matching legacy
@@ -1786,7 +1798,10 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     double qOld = links.old_flow[uj] / barrels_d;
     double denom = 1.0 + dq1 + dq5;
     double q = (qOld - dq2 + dq3 + dq4 + dq6) / denom;
-    dqdh_[uj] = (1.0 / denom) * dt_g * aWtd * inv_len * barrels_d;
+    // PARITY dwflow.c:240: legacy groups ((1/denom)*GRAVITY)*dt and divides by
+    // length directly (NOT dt_g=dt*GRAVITY). dqdh feeds the surcharge node-depth
+    // Jacobian (sumdqdh denominator), so the grouping/divide must match exactly.
+    dqdh_[uj] = 1.0 / denom * GRAVITY * dt * aWtd / length * barrels_d;
 
     // Shared post-processing
     applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
@@ -2235,7 +2250,12 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     // with a non-zero ponded_area (set out of habit by modellers) will pond
     // against the user's intent and accumulate water above full_depth that
     // legacy would have discarded via the "add to losses" branch.
-    bool can_pond = ctx.options.allow_ponding && (t.ponded_area > 0.0);
+    //
+    // 2D-coupled junctions are an exception: their ponded_area is the auto-
+    // assigned 2D-cell footprint, and they must pond above the crown so the
+    // 1D HGL tracks the overlying 2D surface — regardless of ALLOW_PONDING.
+    const bool is_coupled = (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
+    bool can_pond = (ctx.options.allow_ponding || is_coupled) && (t.ponded_area > 0.0);
     bool is_ponded = (can_pond && y_last > full_depth);
 
     nodes.overflow[ui] = 0.0;
