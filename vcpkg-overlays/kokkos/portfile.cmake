@@ -112,7 +112,12 @@ if("cuda" IN_LIST FEATURES)
                 "-DKokkos_ENABLE_COMPILE_AS_CMAKE_LANGUAGE=ON"
                 "-DCMAKE_CUDA_COMPILER=${_kokkos_nvcc}"
                 "-DCMAKE_CUDA_STANDARD=20"
-                "-DCMAKE_CUDA_STANDARD_REQUIRED=ON")
+                "-DCMAKE_CUDA_STANDARD_REQUIRED=ON"
+                # CUDA 13.x CCCL headers require MSVC standard-conforming preprocessor.
+                # cmake's CUDA language does NOT auto-wrap CMAKE_CXX_FLAGS into -Xcompiler
+                # for nvcc, so the flag must be injected directly via CMAKE_CUDA_FLAGS.
+                # VCPKG_CXX_FLAGS (below) covers regular CXX-only translation units.
+                "-DCMAKE_CUDA_FLAGS=-Xcompiler=/Zc:preprocessor")
         else()
             message(FATAL_ERROR
                 "kokkos[cuda] on Windows: nvcc.exe not found. "
