@@ -75,13 +75,14 @@ if("cuda" IN_LIST FEATURES)
             "auto-detect the GPU arch (may fail in CI without a visible device).")
     endif()
     # On Windows, neither nvcc_wrapper (bash script) nor Clang (separate install)
-    # may be available. Kokkos 4.x offers a third path: set
-    # KOKKOS_COMPILER_IS_KOKKOS_LAUNCH_COMPILER=ON, which tells Kokkos to use
-    # cmake's native CUDA language (enable_language(CUDA)) for device code while
-    # keeping MSVC as the CXX compiler for host code. cmake invokes nvcc for .cu
-    # files and cl.exe for .cpp files; MSVC flags are never forwarded to nvcc so
-    # the "-std:c++20 unknown option" failure that occurs when nvcc is used as
-    # CMAKE_CXX_COMPILER is avoided.
+    # may be available. Kokkos 4.7 offers a built-in path: set
+    # Kokkos_ENABLE_COMPILE_AS_CMAKE_LANGUAGE=ON (cmake/kokkos_enable_options.cmake:87).
+    # This tells Kokkos to check CMAKE_CUDA_COMPILER (nvcc) instead of
+    # CMAKE_CXX_COMPILER (cl.exe) when identifying the compiler, which sets
+    # KOKKOS_CXX_COMPILER_ID=NVIDIA and satisfies kokkos_test_cxx_std.cmake:140
+    # without requiring nvcc_wrapper or Clang. cmake's native CUDA language then
+    # compiles device code with nvcc and host C++ with MSVC; MSVC flags (e.g.
+    # -std:c++20 with MSVC colon syntax) are never forwarded to nvcc.
     if(VCPKG_TARGET_IS_WINDOWS)
         set(_kokkos_nvcc "")
         if(DEFINED ENV{CUDA_PATH} AND EXISTS "$ENV{CUDA_PATH}/bin/nvcc.exe")
@@ -99,7 +100,7 @@ if("cuda" IN_LIST FEATURES)
         if(_kokkos_nvcc)
             message(STATUS "kokkos[cuda] Windows: CUDA language mode (MSVC+nvcc), nvcc=${_kokkos_nvcc}")
             list(APPEND BACKEND_OPTIONS
-                "-DKOKKOS_COMPILER_IS_KOKKOS_LAUNCH_COMPILER=ON"
+                "-DKokkos_ENABLE_COMPILE_AS_CMAKE_LANGUAGE=ON"
                 "-DCMAKE_CUDA_COMPILER=${_kokkos_nvcc}"
                 "-DCMAKE_CUDA_STANDARD=20"
                 "-DCMAKE_CUDA_STANDARD_REQUIRED=ON")
