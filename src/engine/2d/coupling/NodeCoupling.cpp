@@ -369,6 +369,20 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
                 Q = std::min(Q, Q_max_2d);
             }
         }
+        // Extractive 1D → 2D spill (Q < 0): bound the withdrawal by the water
+        // the 1D node can actually give up — its FLOODED volume above the crown
+        // (the ponded / surcharge store), converted to the 2D solver's SI units.
+        // Symmetric to the 2D-cell cap above: an exchange must move only water
+        // that exists at the source. Without it the head-driven orifice can
+        // withdraw more than the node holds, putting phantom water on the 2D
+        // surface and driving the 1D node volume negative. The pipe's in-line
+        // (below-crown) flow is NOT spillable — only the flood store is.
+        else if (Q < 0.0 && dt > 0.0) {
+            double flooded = (nodes.volume[ni] - nodes.full_volume[ni])
+                             * opts.vol_1d_to_2d;          // m³ above the crown
+            double Q_min = -std::max(0.0, flooded) / dt;   // most-negative allowed
+            Q = std::max(Q, Q_min);
+        }
 
         // Inject as a dedicated 2D-coupling source on the SWMM node.
         // Multiple coupling points targeting the same node accumulate via
