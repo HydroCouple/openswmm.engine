@@ -67,12 +67,21 @@ if("cuda" IN_LIST FEATURES)
         -DKokkos_ENABLE_CUDA=ON
         -DKokkos_ENABLE_CUDA_LAMBDA=ON
         -DKokkos_ENABLE_CUDA_CONSTEXPR=ON)
-    if(DEFINED ENV{OPENSWMM_KOKKOS_CUDA_ARCH})
+    if(DEFINED ENV{OPENSWMM_KOKKOS_CUDA_ARCH} AND NOT "$ENV{OPENSWMM_KOKKOS_CUDA_ARCH}" STREQUAL "")
         list(APPEND BACKEND_OPTIONS "-DKokkos_ARCH_$ENV{OPENSWMM_KOKKOS_CUDA_ARCH}=ON")
+    elseif(DEFINED ENV{OPENSWMMENGINE_KOKKOS_CUDA_ARCH} AND NOT "$ENV{OPENSWMMENGINE_KOKKOS_CUDA_ARCH}" STREQUAL "")
+        list(APPEND BACKEND_OPTIONS "-DKokkos_ARCH_$ENV{OPENSWMMENGINE_KOKKOS_CUDA_ARCH}=ON")
     else()
-        message(WARNING
-            "kokkos[cuda]: OPENSWMM_KOKKOS_CUDA_ARCH not set -- letting Kokkos "
-            "auto-detect the GPU arch (may fail in CI without a visible device).")
+        # vcpkg sanitizes its cmake subprocess environment, so OPENSWMM_KOKKOS_CUDA_ARCH
+        # does not reach this portfile script. Kokkos' GPU auto-detection also fails in
+        # vcpkg's sandboxed build (cannot run device executables during cmake configure).
+        # Fall back to ADA89 (Ada Lovelace SM 8.9) = NVIDIA RTX 2000 Ada series.
+        # To build for a different GPU, set OPENSWMM_KOKKOS_CUDA_ARCH in the environment
+        # or add -DKokkos_ARCH_<ARCH>=ON via VCPKG_CMAKE_CONFIGURE_OPTIONS in a triplet.
+        list(APPEND BACKEND_OPTIONS "-DKokkos_ARCH_ADA89=ON")
+        message(STATUS
+            "kokkos[cuda]: OPENSWMM_KOKKOS_CUDA_ARCH not in vcpkg env -- "
+            "defaulting to ADA89 (Ada Lovelace SM 8.9, RTX 2000 Ada).")
     endif()
     # On Windows, neither nvcc_wrapper (bash script) nor Clang (separate install)
     # may be available. Kokkos 4.7 offers a built-in path: set
