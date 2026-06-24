@@ -101,7 +101,8 @@ $$Q = C_d \cdot A_{\text{eff}} \cdot \operatorname{sign}(\Delta h) \cdot \sqrt{2
   manhole connection. Lower `Cd` ⇒ a more throttled, lossier inlet.
 - **`Area`** (`A_eff`) is the **hydraulic opening** the water passes through — the
   inlet-grate / manhole-throat area. It scales the flow but **stores no water**.
-- `Δh` is the head difference (or surface depth — see §4) that drives the flow.
+- `Δh = h_2d − h_1d` is the head difference that drives the flow, gated by the
+  capped-pipe rim — see §4.
 
 `A_eff` widens automatically from the configured inlet area to a manhole opening
 (`2 × Area`) once the water surcharges past the rim, modelling a popped cover.
@@ -110,43 +111,62 @@ $$Q = C_d \cdot A_{\text{eff}} \cdot \operatorname{sign}(\Delta h) \cdot \sqrt{2
 > coefficient. Set `Area` to the physical inlet/grate open area (m²). They affect
 > *how fast* water exchanges, never *how much* the surface stores.
 
-## 4. The two exchange regimes
+## 4. The capped-pipe exchange model
 
-A coupled junction switches **smoothly** between two physical regimes as its 1D
-head rises to the pipe **crown** (`invert + full_depth`):
+A coupled junction is modelled as a **pipe sealed by a cover at the surcharge
+HGL**:
+
+```
+z_top = invert + full_depth + sur_depth   (= crown + sur_depth, the "rim" / cover)
+```
+
+Below `z_top` the node **pressurises internally** — the surcharge volume is held in
+the node (over its auto-sized ponded shaft; §5) and the HGL climbs from the crown
+toward `z_top` — with **no exchange** across the interface. The cover only connects
+the two domains once water **overtops it**; above `z_top` the exchange is the
+**bidirectional** orifice on the head difference.
 
 ```mermaid
 flowchart TD
-    A{"1D head vs crown?"}
-    A -->|"below crown<br/>(pipe has freeboard)"| B["FREE-INLET CAPTURE<br/>one-way INTO the pipe<br/>driven by surface depth h2d − z_bed"]
-    A -->|"at / above crown<br/>(pipe pressurised)"| C["SURCHARGE EXCHANGE<br/>bidirectional orifice<br/>driven by head diff h2d − h1d"]
-    B --> D["surface water drained from the<br/>surrounding cells into the network"]
+    A{"max(h1d, h2d) vs z_top<br/>(the rim / cover)"}
+    A -->|"below z_top"| B["NO EXCHANGE<br/>pipe pressurises internally<br/>(surcharge stored, no spilling)"]
+    A -->|"above z_top"| C["ORIFICE EXCHANGE<br/>bidirectional, driven by<br/>head diff h2d − h1d"]
     C -->|"pipe higher"| E["SPILL OUT onto the mesh"]
-    C -->|"surface higher"| F["DRAIN BACK into the pipe"]
+    C -->|"surface higher"| F["DRAIN IN to the pipe"]
 ```
 
-- **Free-inlet capture** (pipe below crown): ponded surface water falls into the
-  inlet as a free orifice driven by the **surface ponding depth alone**. The pipe
-  head is below the inlet and does not oppose it. One-way (into the network).
-- **Surcharge exchange** (pipe at/above crown): the inlet is submerged on the pipe
-  side, so the flow is the **bidirectional** orifice on the head difference —
-  spilling out when the pipe is higher, draining back when the surface is higher.
+- **Capped (below the rim):** the pipe is sealed. Inflow that would surcharge the
+  node is stored internally and the HGL rises toward `z_top` — it does **not** spill
+  onto the surface, and surface water does **not** drain in. This is the user's
+  *"capped pipe allowing pressurisation but no spilling"*.
+- **Overtopped (above the rim):** once water exceeds `z_top` the cover is submerged
+  from one or both sides and the orifice connects them. Flow is **bidirectional**
+  on `h2d − h1d` — spilling out when the pipe is higher, draining in when the
+  surface is higher (so when `h2d > h1d` with both above the rim, flow is still
+  passed *into* the 1D node).
 
-A C¹ blend across a thin band at the crown switches the driving head and the
-directionality without a jump (numerical stability).
+A C¹ Hermite ramp on `max(h1d, h2d)` across a 5 cm band above `z_top` opens the
+gate without a flux or derivative jump (CVODE/BDF stability).
 
 ```mermaid
 flowchart TB
-    Z3["surface / rim ── inlet-grate opening (A = Area)"]
-    Z2["crown = invert + full_depth ── regime switch"]
+    Z3["z_top = crown + sur_depth ── rim / cover (gate opens here)"]
+    Z2["crown = invert + full_depth ── pipe top"]
     Z1["invert"]
     Z3 --- Z2 --- Z1
-    Z3 -. "above: A widens to manhole (2·Area)" .-> Z3
+    Z3 -. "exchange only above z_top; A widens to manhole (2·Area)" .-> Z3
+    Z2 -. "crown→z_top: internal pressurisation, no exchange" .-> Z3
 ```
 
-> Elevation ladder: **invert → crown (`+full_depth`) → rim/surface**. The crown is
-> where the regime switches; `z_top = crown + sur_depth` (a sealed manhole cap)
-> anchors the inlet→manhole area widening.
+> Elevation ladder: **invert → crown (`+full_depth`) → rim `z_top` (`+sur_depth`)**.
+> The crown is the pipe top; `z_top` is the sealed cover where the gate opens. With
+> `sur_depth = 0` the rim coincides with the crown (no internal surcharge band).
+>
+> **Geometry consistency.** The rim `z_top` should match the **2D mesh bed
+> elevation** at the coupling node — that is where surface water meets the cover.
+> If the mesh bed sits *below* `z_top` (e.g. `sur_depth` set larger than the actual
+> pipe-crown-to-ground depth), ponded surface water never reaches the rim and the
+> inlet never captures. For a culvert that daylights at grade, use `sur_depth = 0`.
 
 ## 5. Exchange `Area` vs ponded area (`Aponded`) — the key distinction
 
@@ -178,28 +198,34 @@ acts when `ALLOW_PONDING` is on. For a **2D-coupled** junction the surface stora
   the surrounding 2D cells** (the median-dual area, `Σ incident cell area / 3`),
   converted to internal units.
 - It lets that node **pond above its crown regardless of the global
-  `ALLOW_PONDING`** flag, so the 1D HGL can rise to track the overlying 2D water
-  surface — which is what makes surcharge spill and inlet capture work at all.
+  `ALLOW_PONDING`** flag, so the 1D HGL can rise above the crown. In the capped-pipe
+  model this is the **internal pressurisation store**: between the crown and `z_top`
+  the surcharge volume is held over `Aponded` (and the HGL climbs) *without* spilling
+  to the surface, since the exchange gate stays shut below `z_top` (§4). Above
+  `z_top` the gate opens and the HGL tracks the overlying 2D water surface.
 
 > **Why this matters.** Earlier the coupling *zeroed* `Aponded` on coupled nodes.
-> That pinned the 1D head at the crown, so junction spill could never fire and the
-> surface could not drain into a non-surcharged inlet. Auto-sizing `Aponded` to
-> the 2D footprint frees the HGL to rise, aligning the 1D node with the 2D surface.
+> That pinned the 1D head at the crown, so the node could neither store its
+> surcharge internally nor track the 2D surface. Auto-sizing `Aponded` to the 2D
+> footprint frees the HGL to rise — storing the surcharge below `z_top` and aligning
+> the node with the 2D surface above it.
 
-> **Tradeoff (bounded).** The 1D pond and the stencil 2D cells represent the same
-> near-manhole surface, so storage there is mildly double-counted; the median-dual
-> share keeps that area small, and a real flood spreads onto the broader mesh
-> (cells beyond the stencil), which stays single-counted. You do **not** set
-> `Aponded` yourself on coupled nodes — a value in the INP is overridden (with a
-> warning).
+> **Tradeoff (bounded).** Below `z_top` the gate is shut, so the 1D pressurisation
+> store and the 2D cells hold water independently (no exchange ⇒ no double-count in
+> that band). Above `z_top` they exchange and equilibrate; there the 1D pond and the
+> stencil cells represent the same near-manhole surface, so storage is mildly
+> double-counted. The median-dual share keeps that area small, and a real flood
+> spreads onto the broader mesh (cells beyond the stencil), which stays
+> single-counted. You do **not** set `Aponded` yourself on coupled nodes — a value
+> in the INP is overridden (with a warning).
 
 ## 6. Junctions vs outfalls
 
 | | **Junction / inlet** | **Outfall** |
 |---|---|---|
-| Exchange | Bidirectional orifice + free-inlet capture (§4) | Pipe discharge injected onto the mesh |
-| 2D → 1D | Inlet capture / surcharge drain-back | **Tailwater head BC**: the 2D surface sets the outfall stage (only when the cell is genuinely wet; a dry surface ⇒ free discharge) |
-| `Aponded` | Auto-set to 2D footprint | Not used (outfalls don't pond) |
+| Exchange | Capped-pipe gated orifice (§4): no exchange below `z_top`, bidirectional above | Pipe discharge injected onto the mesh |
+| 2D → 1D | Drain in once surface overtops `z_top` (`h2d > h1d`) | **Tailwater head BC**: the 2D surface sets the outfall stage (only when the cell is genuinely wet; a dry surface ⇒ free discharge) |
+| `Aponded` | Auto-set to 2D footprint (internal pressurisation store below `z_top`) | Not used (outfalls don't pond) |
 
 ## 7. `[2D_OPTIONS]` coupling keys
 
@@ -219,7 +245,12 @@ ALLOW_PONDING NO              ; coupled nodes still pond — the engine handles 
 [JUNCTIONS]
 ;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
 J1      0.0   1.0       0          0         0       ; Aponded auto-set from 2D
-
+```
+Here `SurDepth 0` ⇒ the rim `z_top` coincides with the 1 m crown (the inlet
+daylights at grade — set the mesh bed there to ~1.0). A buried pipe with a real
+manhole shaft would use `SurDepth` = the crown-to-grade depth, and the mesh bed at
+the coupling node should equal `z_top`.
+```
 [2D_OPTIONS]
 DRY_DEPTH     0.002
 COUPLING_CD   0.7
@@ -229,10 +260,10 @@ COUPLING_CD   0.7
 0         J1    0.7  1.0          ; 0.7 loss, 1 m² inlet throat
 ```
 
-When rain ponds on the cells around vertex 0, water with depth above `DRY_DEPTH`
-is captured into `J1` (free inlet). If the pipe network surcharges `J1` past its
-1 m crown, the HGL rises above the rim (over the auto-sized footprint) and spills
-back onto those same cells.
+When rain ponds on the cells around vertex 0 and the surface rises above the rim
+`z_top` (= 1 m here), water is drained into `J1` through the orifice. If the pipe
+network surcharges `J1`, the HGL first pressurises internally from the crown toward
+`z_top` (no spilling); once it reaches the rim it spills back onto those same cells.
 
 ---
 
@@ -251,12 +282,13 @@ internal **feet / ft² / cfs** for every project; the **2D** solver is **SI**
 - `effectiveArea` (≈47–53): `A_inlet` (= map `Area`) below `z_top`, ramping to
   `A_manhole = 2·Area` over a 5 cm band above it.
 
-### Two-regime junction exchange
+### Capped-pipe junction exchange
 `2d/coupling/NodeCoupling.cpp` `computeCouplingExchange` (≈218–388):
-- `crown = (invert_elev + full_depth)·len_1d_to_2d`; `z_top = crown + sur_depth·…`.
-- Surcharge fraction `s` = Hermite smoothstep over a 5 cm band below the crown.
-- Blended driver `Δh = (1−s)·max(0, h_2d − z_2d) + s·(h_2d − h_1d)`: surface depth
-  (free inlet, one-way) below the crown → head difference (bidirectional) above.
+- `crown = (invert_elev + full_depth)·len_1d_to_2d`; `z_top = crown + sur_depth·len`.
+- Driver `Q = orificeFlow(h_2d − h_1d, Cd, A_eff)` — bidirectional head difference.
+- **Capped-pipe gate** `capRamp` = Hermite smoothstep of `(max(h_1d,h_2d) − z_top)`
+  over a 5 cm band: `Q *= capRamp`. Below `z_top` ⇒ `Q = 0` (internal
+  pressurisation, no spilling); above ⇒ full bidirectional exchange.
 - Source-side wet/dry `wetRamp` on `DRY_DEPTH` suppresses dry-cell exchange and
   kills spurious inflow from a dry low-spot vertex.
 - Node-capacity and 2D-cell-volume caps throttle 2D→1D drainage conservatively.
