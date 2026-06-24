@@ -275,37 +275,38 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
 
         // ----------------------------------------------------------------
         // Capped-pipe junction exchange. The manhole/inlet is modelled as a
-        // pipe sealed by a cover at the surcharge HGL
-        //   z_top = (invert + full_depth + sur_depth)·len   (= crown + sur_depth)
-        // Below z_top the 1D node PRESSURISES INTERNALLY: surcharge volume is
-        // stored in the node's ponded shaft over the auto-set ponded_area (see
-        // SurfaceRouter2D), and the HGL climbs from the crown toward z_top with
-        // NO exchange across the interface — no spill out, no capture in. The
-        // cover only connects the two domains once water overtops it, after
-        // which exchange is the BIDIRECTIONAL orifice on the head difference
-        // (h_2d − h_1d): drain INTO the pipe when the surface is higher, spill
-        // OUT onto the surface when the pipe is higher.
+        // pipe sealed by a cover at the **surcharge threshold** — the pipe crown
+        //   z_top = (invert + full_depth)·len   (= crown, the slot-engagement point)
+        // Below the crown the 1D node fills sub-full with NO exchange across the
+        // interface — no spill out, no capture in. The cover only connects the
+        // two domains once water reaches the crown (the same point the 1D
+        // dynamic-wave solver engages its Preissmann slot, SLOT_CROWN_CUTOFF),
+        // after which exchange is the BIDIRECTIONAL orifice on the head
+        // difference (h_2d − h_1d): drain INTO the pipe when the surface is
+        // higher, spill OUT onto the surface when the pipe is higher.
         //
-        // A C¹ Hermite ramp on max(h_1d,h_2d) across a 5 cm band above z_top
-        // opens the gate without a derivative jump (CVODE/BDF stability). This
-        // is the user-directed "capped pipe: pressurisation, no spilling": the
-        // surcharge height caps the pipe, allowing pressurisation but no
-        // spilling until both the pipe and surface heads overtop it.
-        // See docs/1D_2D_COUPLING_CONFIGURATION.md.
+        // Tying the gate to the crown — NOT crown + sur_depth — keeps the inlet
+        // consistent with the slot (exchange opens exactly when the pipe
+        // surcharges) and leaves `sur_depth` FREE to size the slot's storage
+        // headroom above the crown, so captured surcharge volume is stored in
+        // the slot instead of being dropped. A C¹ Hermite ramp on max(h_1d,h_2d)
+        // across a 5 cm band above the crown opens the gate without a derivative
+        // jump (CVODE/BDF stability). See docs/1D_2D_COUPLING_CONFIGURATION.md.
         double crown = (nodes.invert_elev[ni] + nodes.full_depth[ni])
                        * opts.len_1d_to_2d;
-        double z_top = crown + nodes.sur_depth[ni] * opts.len_1d_to_2d;
+        double z_top = crown;
         double h_max = std::max(h_1d, h_2d);
-        double A_eff = effectiveArea(h_max, z_top, nodes.full_depth[ni],
+        double A_eff = effectiveArea(h_max, crown, nodes.full_depth[ni],
                                       cp.area, cp.area * 2.0);
 
         // Gradient-driven orifice (bidirectional): positive Q = 2D → 1D drain,
         // negative Q = 1D → 2D spill.
         double Q = orificeFlow(h_2d - h_1d, cp.cd, A_eff);
 
-        // Capped-pipe gate: no exchange until water overtops the surcharge HGL.
-        // Below z_top the pipe pressurises internally (1D solver / ponded shaft);
-        // the gate is a C¹ Hermite ramp over a 5 cm band above z_top.
+        // Capped-pipe gate: no exchange until water reaches the surcharge
+        // threshold z_top (= the slot-trigger depth). Below it the pipe fills
+        // sub-full / pressurises internally; the gate is a C¹ Hermite ramp over
+        // a 5 cm band above z_top.
         constexpr double CAP_BAND = 0.05;  // m
         double ct = std::min(1.0, std::max(0.0, (h_max - z_top) / CAP_BAND));
         double capRamp = ct * ct * (3.0 - 2.0 * ct);
