@@ -181,6 +181,7 @@ endif()
 # conforming preprocessor for all Kokkos compilation units.
 if(VCPKG_TARGET_IS_WINDOWS AND "cuda" IN_LIST FEATURES)
     string(APPEND VCPKG_CXX_FLAGS " /Zc:preprocessor")
+    string(APPEND VCPKG_C_FLAGS " /Zc:preprocessor")
 endif()
 
 # Keep Kokkos' internal debug instrumentation OFF in BOTH the debug and release
