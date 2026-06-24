@@ -163,6 +163,52 @@
             }
         },
         {
+            "name": "Windows-cuda",
+            "inherits": "Windows",
+            "description": "Windows Release — Kokkos CUDA backend for NVIDIA RTX 2000 Ada (Ada Lovelace, SM 8.9 = ADA89). Requires CUDA Toolkit installed (nvcc on PATH) and MSVC. Disables hypre (needs a CUDA-enabled hypre build). GPU plugin output: openswmm_gpu_cuda.dll.",
+            "binaryDir": "${sourceDir}/build/windows-cuda",
+            "environment": {
+                "OPENSWMM_KOKKOS_CUDA_ARCH": "ADA89"
+            },
+            "cacheVariables": {
+                "VCPKG_MANIFEST_NO_DEFAULT_FEATURES": "ON",
+                "VCPKG_MANIFEST_FEATURES": "2d;gpu-cuda",
+                "OPENSWMM_GPU_BACKEND": "cuda",
+                "OPENSWMMENGINE_KOKKOS_CUDA_ARCH": "ADA89",
+                "CMAKE_CUDA_ARCHITECTURES": "89",
+                "OPENSWMM_WITH_HYPRE": "OFF",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/install/Windows"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "Windows-cuda-debug",
+            "inherits": "Windows-debug",
+            "description": "Windows Debug — Kokkos CUDA backend for NVIDIA RTX 2000 Ada (Ada Lovelace, SM 8.9 = ADA89). Requires CUDA Toolkit installed (nvcc on PATH) and MSVC.",
+            "binaryDir": "${sourceDir}/build/windows-cuda-debug",
+            "environment": {
+                "OPENSWMM_KOKKOS_CUDA_ARCH": "ADA89"
+            },
+            "cacheVariables": {
+                "VCPKG_MANIFEST_NO_DEFAULT_FEATURES": "ON",
+                "VCPKG_MANIFEST_FEATURES": "2d;gpu-cuda",
+                "OPENSWMM_GPU_BACKEND": "cuda",
+                "OPENSWMMENGINE_KOKKOS_CUDA_ARCH": "ADA89",
+                "CMAKE_CUDA_ARCHITECTURES": "89",
+                "OPENSWMM_WITH_HYPRE": "OFF",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/install/Windows"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
             "name": "Windows-tests",
             "inherits": "Windows-debug",
             "description": "Windows debug build with unit + regression tests + geopackage",
@@ -281,6 +327,17 @@
             "name": "Darwin-debug",
             "description": "Build all targets for debugging on macOS",
             "configurePreset": "Darwin-debug"
+        },
+        {
+            "name": "Windows-cuda",
+            "description": "Build the CUDA GPU plugin and install (Ada Lovelace ADA89)",
+            "configurePreset": "Windows-cuda",
+            "targets": ["package"]
+        },
+        {
+            "name": "Windows-cuda-debug",
+            "description": "Build the CUDA GPU plugin in Debug mode (Ada Lovelace ADA89)",
+            "configurePreset": "Windows-cuda-debug"
         },
         {
             "name": "Windows-tests",

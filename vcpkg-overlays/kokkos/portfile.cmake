@@ -71,8 +71,44 @@ if("cuda" IN_LIST FEATURES)
         list(APPEND BACKEND_OPTIONS "-DKokkos_ARCH_$ENV{OPENSWMM_KOKKOS_CUDA_ARCH}=ON")
     else()
         message(WARNING
-            "kokkos[cuda]: OPENSWMM_KOKKOS_CUDA_ARCH not set — letting Kokkos "
+            "kokkos[cuda]: OPENSWMM_KOKKOS_CUDA_ARCH not set -- letting Kokkos "
             "auto-detect the GPU arch (may fail in CI without a visible device).")
+    endif()
+    # On Windows, neither nvcc_wrapper (bash script) nor Clang (separate install)
+    # may be available. Kokkos 4.x offers a third path: set
+    # KOKKOS_COMPILER_IS_KOKKOS_LAUNCH_COMPILER=ON, which tells Kokkos to use
+    # cmake's native CUDA language (enable_language(CUDA)) for device code while
+    # keeping MSVC as the CXX compiler for host code. cmake invokes nvcc for .cu
+    # files and cl.exe for .cpp files; MSVC flags are never forwarded to nvcc so
+    # the "-std:c++20 unknown option" failure that occurs when nvcc is used as
+    # CMAKE_CXX_COMPILER is avoided.
+    if(VCPKG_TARGET_IS_WINDOWS)
+        set(_kokkos_nvcc "")
+        if(DEFINED ENV{CUDA_PATH} AND EXISTS "$ENV{CUDA_PATH}/bin/nvcc.exe")
+            set(_kokkos_nvcc "$ENV{CUDA_PATH}/bin/nvcc.exe")
+        else()
+            foreach(_cuda_ver 13.3 13.2 13.1 13.0 12.8 12.6 12.5 12.4)
+                set(_probe
+                    "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v${_cuda_ver}/bin/nvcc.exe")
+                if(EXISTS "${_probe}")
+                    set(_kokkos_nvcc "${_probe}")
+                    break()
+                endif()
+            endforeach()
+        endif()
+        if(_kokkos_nvcc)
+            message(STATUS "kokkos[cuda] Windows: CUDA language mode (MSVC+nvcc), nvcc=${_kokkos_nvcc}")
+            list(APPEND BACKEND_OPTIONS
+                "-DKOKKOS_COMPILER_IS_KOKKOS_LAUNCH_COMPILER=ON"
+                "-DCMAKE_CUDA_COMPILER=${_kokkos_nvcc}"
+                "-DCMAKE_CUDA_STANDARD=20"
+                "-DCMAKE_CUDA_STANDARD_REQUIRED=ON")
+        else()
+            message(FATAL_ERROR
+                "kokkos[cuda] on Windows: nvcc.exe not found. "
+                "Install the CUDA Toolkit and set CUDA_PATH, or install to the "
+                "default path (C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v<ver>).")
+        endif()
     endif()
     set(OPENMP_HINTS)  # no libomp needed for the device build
 elseif("rocm" IN_LIST FEATURES)
@@ -154,12 +190,14 @@ file(REMOVE_RECURSE
     "${CURRENT_PACKAGES_DIR}/debug/include"
     "${CURRENT_PACKAGES_DIR}/debug/share")
 
-# Kokkos installs helper scripts (hpcbind, nvcc_wrapper) into bin/. For a host
-# build these are unused and trip vcpkg's static-lib bin/ policy, so drop them;
-# for the cuda backend, nvcc_wrapper is the compiler consumers need, so keep it.
-# The rocm/sycl backends compile via external hipcc/icpx (no Kokkos wrapper to
-# keep), so they drop bin/ like the host build.
-if("cuda" IN_LIST FEATURES)
+# Kokkos installs helper scripts (hpcbind, nvcc_wrapper, kokkos_launch_compiler)
+# into bin/. For a host build these are unused and trip vcpkg's static-lib bin/
+# policy, so drop them. For CUDA on Linux: nvcc_wrapper is the compiler consumers
+# need, so keep it. For CUDA on Windows: we use cmake's native CUDA language mode
+# (KOKKOS_COMPILER_IS_KOKKOS_LAUNCH_COMPILER=ON), so consumers use cmake's CUDA
+# language directly instead of kokkos_launch_compiler -- drop bin/ entirely.
+# The rocm/sycl backends drop bin/ like the host build.
+if("cuda" IN_LIST FEATURES AND NOT VCPKG_TARGET_IS_WINDOWS)
     vcpkg_copy_tools(TOOL_NAMES nvcc_wrapper AUTO_CLEAN)
 else()
     file(REMOVE_RECURSE

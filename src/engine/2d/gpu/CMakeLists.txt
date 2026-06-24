@@ -91,9 +91,17 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "cuda")
     # execution space changes (OPENSWMM_GPU_EXECSPACE_CUDA -> Kokkos::Cuda) and
     # the probe reports an NVIDIA device. Requires a CUDA-enabled Kokkos
     # (Kokkos_ENABLE_CUDA=ON, built for the target Kokkos_ARCH_*) and a SUNDIALS
-    # with the Kokkos N_Vector. Kokkos drives CUDA compilation of the device
-    # lambdas; configure the plugin with Kokkos' nvcc_wrapper as CMAKE_CXX_COMPILER
-    # (or a CUDA-clang toolchain) — see docs/2D_GPU_PHASE2_VERIFICATION.md.
+    # with the Kokkos N_Vector.
+    #
+    # Compiler strategy by platform:
+    #   Linux/macOS — configure the plugin with Kokkos' nvcc_wrapper as
+    #                 CMAKE_CXX_COMPILER (or a CUDA-clang toolchain).
+    #   Windows     — nvcc_wrapper is a bash script and unavailable on Windows.
+    #                 Use CMake's native CUDA language instead: CMake invokes nvcc
+    #                 with cl.exe as the host compiler, then MSVC for the remaining
+    #                 C++ translation units. Source files containing Kokkos device
+    #                 lambdas are tagged LANGUAGE CUDA so nvcc compiles them.
+    #
     # NOT buildable on macOS/Apple Silicon (no nvcc); built on a CUDA host/CI.
     find_package(Kokkos REQUIRED)
     find_package(SUNDIALS REQUIRED COMPONENTS cvode nveckokkos)
@@ -104,9 +112,35 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "cuda")
             "Kokkos_ENABLE_CUDA=ON (found devices: ${Kokkos_DEVICES})")
     endif()
 
+    # On Windows, enable CMake's CUDA language so nvcc (with cl.exe as host) can
+    # compile device-lambda sources that nvcc_wrapper would handle on Linux.
+    if(WIN32)
+        enable_language(CUDA)
+        # Propagate the C++20 standard to nvcc; nvcc does not inherit CXX_STANDARD.
+        set(CMAKE_CUDA_STANDARD 20)
+        set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+        # Separable compilation is required when device code spans multiple TUs
+        # (Kokkos parallel kernels across GpuPluginCuda + CvodeKokkosSurfaceSolver).
+        set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+    endif()
+
     add_library(openswmm_gpu_cuda SHARED
         GpuPluginCuda.cpp
         CvodeKokkosSurfaceSolver.cpp)
+
+    # On Windows, mark the device-lambda sources so CMake routes them through nvcc.
+    # On Linux, nvcc_wrapper as CMAKE_CXX_COMPILER handles all .cpp files uniformly.
+    if(WIN32)
+        set_source_files_properties(
+            GpuPluginCuda.cpp
+            CvodeKokkosSurfaceSolver.cpp
+            PROPERTIES LANGUAGE CUDA)
+        set_target_properties(openswmm_gpu_cuda PROPERTIES
+            CUDA_STANDARD 20
+            CUDA_STANDARD_REQUIRED ON
+            CUDA_SEPARABLE_COMPILATION ON)
+    endif()
+
     target_include_directories(openswmm_gpu_cuda PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../solver
         ${CMAKE_CURRENT_SOURCE_DIR}/../data)
