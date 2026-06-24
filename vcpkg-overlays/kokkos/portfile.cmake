@@ -171,6 +171,18 @@ else()
     endif()
 endif()
 
+# CUDA 13.x CCCL headers (bundled in the CUDA toolkit) require the MSVC
+# standard-conforming preprocessor. cl.exe's legacy default preprocessor
+# triggers a fatal #error in cuda/std/__cccl/preprocessor.h(23):
+#   "MSVC/cl.exe with traditional preprocessor is used ... pass /Zc:preprocessor"
+# When nvcc uses cl.exe as the host compiler it forwards CMAKE_CXX_FLAGS via
+# -Xcompiler, so adding /Zc:preprocessor to VCPKG_CXX_FLAGS (which flows into
+# CMAKE_CXX_FLAGS via the vcpkg toolchain) silences the error and enables the
+# conforming preprocessor for all Kokkos compilation units.
+if(VCPKG_TARGET_IS_WINDOWS AND "cuda" IN_LIST FEATURES)
+    string(APPEND VCPKG_CXX_FLAGS " /Zc:preprocessor")
+endif()
+
 # Keep Kokkos' internal debug instrumentation OFF in BOTH the debug and release
 # sub-builds. vcpkg installs a single (release) header set, but under a Debug
 # CMAKE_BUILD_TYPE Kokkos turns KOKKOS_ENABLE_DEBUG on, which changes the
