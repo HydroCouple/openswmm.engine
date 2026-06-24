@@ -34,6 +34,33 @@ if("kokkos" IN_LIST FEATURES)
         -DENABLE_KOKKOS=ON
         "-DKokkos_DIR=${CURRENT_INSTALLED_DIR}/share/Kokkos"
         -DCMAKE_CXX_STANDARD=20)
+    # KokkosConfig.cmake calls find_dependency(CUDAToolkit REQUIRED) when Kokkos
+    # was built with the CUDA backend. vcpkg sandboxes the cmake subprocess
+    # environment so nvcc is not on PATH — provide CUDAToolkit_ROOT explicitly.
+    if(VCPKG_TARGET_IS_WINDOWS)
+        set(_cuda_root "")
+        if(DEFINED ENV{CUDA_PATH} AND EXISTS "$ENV{CUDA_PATH}/bin/nvcc.exe")
+            set(_cuda_root "$ENV{CUDA_PATH}")
+        else()
+            foreach(_cuda_ver 13.3 13.2 13.1 13.0 12.8 12.6 12.5 12.4)
+                set(_probe
+                    "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v${_cuda_ver}")
+                if(EXISTS "${_probe}/bin/nvcc.exe")
+                    set(_cuda_root "${_probe}")
+                    break()
+                endif()
+            endforeach()
+        endif()
+        if(_cuda_root)
+            message(STATUS "sundials[kokkos] Windows: CUDAToolkit_ROOT=${_cuda_root}")
+            list(APPEND KOKKOS_OPTIONS "-DCUDAToolkit_ROOT=${_cuda_root}")
+        else()
+            message(WARNING
+                "sundials[kokkos] Windows: nvcc.exe not found; "
+                "KokkosConfig.cmake will fail to locate CUDAToolkit. "
+                "Install CUDA Toolkit or set CUDA_PATH.")
+        endif()
+    endif()
     # Kokkos's package config does find_dependency(OpenMP REQUIRED); on AppleClang
     # CMake cannot locate Homebrew libomp unaided, so wire it explicitly.
     if(VCPKG_TARGET_IS_OSX)
