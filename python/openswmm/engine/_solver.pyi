@@ -56,6 +56,8 @@ from ._exceptions import (
 
 _PathLike = Union[str, PathLike[str]]
 
+GEOPACKAGE_PLUGIN_ID: str
+
 
 # ---------------------------------------------------------------------------
 # Event record
@@ -369,6 +371,8 @@ class Solver:
 
     # ------------- Model write -------------
     def write(self, path: _PathLike) -> None: ...
+    def write_with_plugin(self, path: _PathLike, output_plugin_id: str = ...) -> None: ...
+    def write_geopackage(self, path: _PathLike, crs: Optional[str] = ...) -> None: ...
 
     # ------------- Runoff interface file -------------
     def open_runoff_interface_write(self, path: _PathLike) -> None: ...

@@ -433,6 +433,13 @@ private:
     void initNodeStates(SimulationContext& ctx);
     void findBypassedLinks(const SimulationContext& ctx);
     void computeLinkGeometry(SimulationContext& ctx);
+    /// Recompute conduit evap/seepage loss rates PER Picard iteration, matching
+    /// legacy dwflow_findConduitFlow which calls link_getLossRate every iteration
+    /// for non-dry conduits (and skips DRY/UP_DRY/DN_DRY via its early return,
+    /// leaving the prior loss rate untouched). Uses the current-iteration depth
+    /// and the faithful transect top width. Replaces the once-per-step
+    /// Router::computeConduitLosses for the DYNWAVE path.
+    void recomputeConduitLosses(SimulationContext& ctx, double dt);
     void solveMomentumBatch(SimulationContext& ctx, double dt, int step);
     void classifyMomentumCategories(SimulationContext& ctx);
 

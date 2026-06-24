@@ -107,7 +107,7 @@ SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_pat
  *
  *          @p output_plugin_id is resolved via the engine's
  *          PluginFactory::find_component() — accepts a plugin id
- *          (e.g., "org.hydrocouple.openswmm.geopackage"), an
+ *          (e.g., "org.hydrocouple.openswmm.plugins.geopackage"), an
  *          `id:version` pair, or a shared-library path.  The resolved
  *          plugin must advertise input capability
  *          (`IPluginComponentInfo::has_input()` returns true), since

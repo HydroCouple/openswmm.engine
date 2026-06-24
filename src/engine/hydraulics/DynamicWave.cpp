@@ -715,6 +715,13 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         // findNodeDepths[iter N-1].
         computeLinkGeometry(ctx);
 
+        // Step 1.5: recompute conduit evap/seepage losses for this iterate,
+        // gated by the just-classified flow class (legacy parity — see
+        // recomputeConduitLosses). Must run AFTER computeLinkGeometry (sets the
+        // flow class + current depth) and BEFORE solveMomentumBatch (dq6 reads
+        // the loss rate) and updateNodeFlows (node-outflow loss term).
+        recomputeConduitLosses(ctx, dt);
+
         // Step 2: batch solve momentum for ALL conduit links
         solveMomentumBatch(ctx, dt, steps);
 
@@ -1407,6 +1414,87 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
 }
 
 // ============================================================================
+// recomputeConduitLosses -- per-Picard-iteration evap/seepage (legacy parity)
+//
+// Mirrors legacy dwflow_findConduitFlow: link_getLossRate (link.c:1337) is
+// called EVERY iteration for each conduit that is NOT DRY/UP_DRY/DN_DRY (those
+// hit the dwflow.c:162 early return, so their stored loss rate is left
+// unchanged). Uses depth = 0.5*(oldDepth + newDepth) at the current iterate and
+// the FAITHFUL transect top width (xsect::getWofY via buildXSP), with the DW
+// volume cap = newVolume/tstep and legacy's per-component clamp order
+// (comp*q/total). The once-per-step Router::computeConduitLosses used the
+// start-of-step depth with NO flow-class gate, which (a) leaked a spurious
+// evap/seep loss onto dry/up-dry conduits (e.g. user2 TW01250) and (b) froze
+// the rate for the whole step — both seeds amplified by surcharge.
+// ============================================================================
+
+void DWSolver::recomputeConduitLosses(SimulationContext& ctx, double dt) {
+    auto& links = ctx.links;
+    auto& CD = ctx.link_subtypes.conduits;
+    const double evap = evap_rate;
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        const auto uci = static_cast<std::size_t>(ci);
+        const int uj = conduit_idx_[uci];
+        const auto u = static_cast<std::size_t>(uj);
+
+        // Legacy dwflow.c:162 early return for DRY/UP_DRY/DN_DRY: link_getLossRate
+        // is NOT called, so the previously-stored rate is retained. Skip (leave
+        // CD.evap_loss_rate/seep_loss_rate[uci] untouched).
+        const FlowClass fc = links.flow_class[u];
+        if (fc == FlowClass::DRY || fc == FlowClass::UP_DRY ||
+            fc == FlowClass::DN_DRY)
+            continue;
+
+        // depth = 0.5*(oldDepth + newDepth) — current iterate (legacy link.c:1349)
+        const double depth = 0.5 * (links.old_depth[u] + links.depth[u]);
+        double evap_loss = 0.0;
+        double seep_loss = 0.0;
+
+        if (depth > FUDGE) {
+            // Raw user length (legacy conduit_getLength), not modLength.
+            double length = CD.length[uci];
+            if (length <= 0.0) length = CD.mod_length[uci];
+            const int shape = links.xsect_batch_shape[u];
+
+            const bool wantEvap = xsect::isOpen(shape) && evap > 0.0;
+            const bool wantSeep = CD.seep_rate[uci] > 0.0;
+            if (wantEvap || wantSeep) {
+                const XSectParams xs = buildXSP(ctx, u);  // faithful incl. transect
+                if (wantEvap) {
+                    const double topWidth = xsect::getWofY(xs, depth);
+                    evap_loss = topWidth * length * evap;
+                }
+                if (wantSeep) {
+                    double d_seep = depth;
+                    if (shape != static_cast<int>(XSectShape::RECT_CLOSED) &&
+                        d_seep >= xs.yw_max)
+                        d_seep = xs.yw_max;
+                    const double width =
+                        (shape == static_cast<int>(XSectShape::RECT_CLOSED))
+                            ? xs.w_max
+                            : xsect::getWofY(xs, d_seep);
+                    seep_loss = CD.seep_rate[uci] * width * length;
+                }
+            }
+
+            // DW volume cap (legacy link.c:1389): q = newVolume/tstep; if the
+            // total loss exceeds it, scale each component (comp*q/total order).
+            double total = evap_loss + seep_loss;
+            if (total > 0.0) {
+                const double q = links.volume[u] / dt;
+                if (total > q) {
+                    evap_loss = evap_loss * q / total;
+                    seep_loss = seep_loss * q / total;
+                }
+            }
+        }
+
+        CD.evap_loss_rate[uci] = evap_loss;
+        CD.seep_loss_rate[uci] = seep_loss;
+    }
+}
+
+// ============================================================================
 // solveMomentumBatch -- category-classified dispatch for branch-free kernels
 // ============================================================================
 
@@ -1520,7 +1608,13 @@ void DWSolver::processDryLink(SimulationContext& ctx, double dt,
     double aMid = area_mid_[uj];
     double barrels_d = tile_barrels_d_[uci];
     area_mid_[uj] = 0.5 * (area1_[uj] + area2_[uj]);
-    dqdh_[uj] = dt_g * aMid * tile_inv_length_[uci] * barrels_d;
+    // PARITY dwflow.c:171: dry-link dqdh = GRAVITY*dt*aMid / length * barrels.
+    // Divide by the cached (mod)length directly — x/L != x*(1/L) in IEEE-754,
+    // and this dqdh is scattered into the node sumdqdh denominator, so a 1-ULP
+    // error here (e.g. high-offset dry conduit TW01221) shifts the surcharge
+    // head solve and gets amplified by the sign-flip clamp. (dt_g == dt*GRAVITY
+    // matches legacy GRAVITY*dt by commutativity.)
+    dqdh_[uj] = dt_g * aMid / tile_length_[uci] * barrels_d;
     froude_[uj] = 0.0;
     new_flow_[uj] = 0.0;
     double yf = tile_y_full_[uci];
@@ -1704,7 +1798,16 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
             XSectParams xs = buildXSP(ctx, uj);
             wMid = xsect::getWofY(xs, depth_mid_[uj]);
         }
-        if (depth_mid_[uj] > FUDGE && !isFull) {
+        // PARITY: legacy link_getFroude (link.c:864-873) zeros Froude ONLY for a
+        // CLOSED conduit within FUDGE of full (yFull - yMid <= FUDGE); for an OPEN
+        // conduit it computes a real Froude even when full (NO isFull short-
+        // circuit). Use that exact per-shape gate, not the both-ends-full isFull
+        // test — otherwise open/IRREGULAR channels that fill (user2/5) get fr=0
+        // (and sigma=1) and closed pipes straddling the crown (user3) get a
+        // spurious nonzero fr, both seeding surcharge divergence.
+        const bool closed_nearfull =
+            !tile_is_open_[uci] && (yf - depth_mid_[uj] <= FUDGE);
+        if (depth_mid_[uj] > FUDGE && !closed_nearfull) {
             double dh = (wMid > FUDGE) ? aMid / wMid : 0.0;
             // PARITY: legacy link_getFroude computes sqrt(GRAVITY * y) directly
             // (link.c). Using the precomputed SQRT_GRAVITY constant (a truncated

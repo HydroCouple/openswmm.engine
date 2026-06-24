@@ -305,8 +305,15 @@ int Router::step(SimulationContext& ctx, double dt,
     // 2. Init node flows from laterals and losses (includes storage evap)
     initNodeFlows(ctx, dt, evap_rate);
 
-    // 2b. Compute conduit evaporation and seepage loss rates
-    computeConduitLosses(ctx, dt, evap_rate);
+    // 2b. Compute conduit evaporation and seepage loss rates.
+    // For DYNWAVE this is done PER Picard iteration inside DWSolver::execute
+    // (recomputeConduitLosses), matching legacy dwflow which calls
+    // link_getLossRate every iteration with a flow-class gate. Computing it
+    // once here (start-of-step, ungated) would leak loss onto dry/up-dry
+    // conduits and freeze the rate. KINWAVE/STEADY are non-iterative, so the
+    // once-per-step computation matches their legacy behavior.
+    if (model_ != RouteModel::DYNWAVE)
+        computeConduitLosses(ctx, dt, evap_rate);
 
     // 3. Set outfall boundary depths (P8-G03)
     outfall::setAllOutfallDepths(ctx, ctx.current_date);
@@ -512,19 +519,28 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             if (length <= 0.0) length = CD.mod_length[ucr];
             int batch_shape = links.xsect_batch_shape[uj];
 
-            // Evaporation for open conduits only
+            // Evaporation for open conduits only.
+            //
+            // NOTE (IRREGULAR conduit evap, user2/user5): the cross-section
+            // GEOMETRY is bit-faithful to legacy (verified: extran8a's IRREGULAR
+            // conduits are byte-identical; buildTables + lookup are 1:1 ports).
+            // The residual divergence is NOT geometry — it is the conduit-loss
+            // ACCOUNTING timing: legacy computes conduit evap PER PICARD ITERATION
+            // inside dwflow_findConduitFlow (using the current-iteration depth +
+            // the DW volume cap, and skipping bypassed conduits), whereas this
+            // runs ONCE per step before the Picard loop using the start-of-step
+            // depth. On natural channels this seeds a ~1e-5 cfs difference that
+            // the surcharge dynamics amplify. Reproducing legacy bit-for-bit
+            // requires moving conduit-loss evaluation into the iteration loop.
+            // The transect top-width below uses the linear approximation; the
+            // faithful getWofY was tried and does NOT resolve the parity gap
+            // (the gap is the timing, not the width). See PARITY_FINDINGS.
             if (xsect::isOpen(batch_shape) && evap_rate > 0.0) {
                 double top_width = 0.0;
-                // IRREGULAR/CUSTOM shapes: getWofY doesn't have transect
-                // table access in per-element mode, so use w_max scaled by
-                // depth fraction as approximation. For standard shapes, use
-                // the proper geometric dispatch.
                 if (batch_shape == static_cast<int>(XSectShape::IRREGULAR) ||
                     batch_shape == static_cast<int>(XSectShape::CUSTOM)) {
                     double y_full = links.xsect_y_full[uj];
                     double w_max  = links.xsect_w_max[uj];
-                    // Linear interpolation: w ≈ w_max * (depth / y_full)
-                    // (conservative estimate for natural channels)
                     top_width = (y_full > 0.0) ? w_max * std::min(depth / y_full, 1.0) : 0.0;
                 } else {
                     XSectParams xs{};

@@ -732,6 +732,19 @@ struct SimulationContext {
      */
     std::vector<std::string> errors;
 
+    /**
+     * @brief Per-node flag: 1 if the node is a 2D-coupled junction (a non-outfall
+     *        coupling point), else 0. Empty when the 2D module is inactive.
+     * @details Populated by SurfaceRouter2D::initialize from the coupling map.
+     *          Lets the 1D dynamic-wave solver treat a coupled junction as
+     *          pond-capable so its HGL can rise above the crown over the
+     *          auto-assigned ponded_area (the 2D-cell footprint), regardless of
+     *          the global ALLOW_PONDING option — which only governs ordinary
+     *          (uncoupled) junctions. Outfall coupling uses a tailwater head BC
+     *          instead, so outfalls are NOT flagged here.
+     */
+    std::vector<std::uint8_t> coupled_node;
+
     // =========================================================================
     // Mass balance accumulators (SoA — vectorisable batch updates)
     // =========================================================================
