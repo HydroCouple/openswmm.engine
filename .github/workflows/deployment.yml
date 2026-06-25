@@ -119,11 +119,22 @@ jobs:
 
       - name: Configure (Release)
         # Release packaging skips the test/benchmark targets so vcpkg pulls only
-        # the runtime deps (default features → sundials for 2D).
+        # the runtime deps. Kokkos + hypre/AMG are vcpkg/CMake defaults, but
+        # requested EXPLICITLY here so the release zip always ships the
+        # Kokkos-OpenMP plugin and a BoomerAMG-linked engine even if a default
+        # ever flips: VCPKG_MANIFEST_FEATURES "2d;gpu;hypre" pulls Kokkos +
+        # sundials[kokkos] + hypre; OPENSWMM_BUILD_GPU_PLUGIN=ON (omp backend)
+        # builds the plugin (find_package(Kokkos REQUIRED) fails configure if
+        # Kokkos is absent); OPENSWMM_WITH_HYPRE=ON wires BoomerAMG
+        # (find_package(HYPRE REQUIRED) fails configure if hypre is absent).
         run: >
           cmake
           --preset=${{ matrix.cmake_preset }}
           -B build-${{ matrix.vcpkg_triplet }}
+          -DVCPKG_MANIFEST_FEATURES="2d;gpu;hypre"
+          -DOPENSWMM_BUILD_GPU_PLUGIN=ON
+          -DOPENSWMM_GPU_BACKEND=omp
+          -DOPENSWMM_WITH_HYPRE=ON
           -DOPENSWMM_BUILD_TESTS=OFF
           -DOPENSWMM_BUILD_UNIT_TESTS=OFF
           -DOPENSWMM_BUILD_REGRESSION_TESTS=OFF
@@ -132,6 +143,36 @@ jobs:
 
       - name: Build and package
         run: cmake --build build-${{ matrix.vcpkg_triplet }} --target package --config Release
+
+      # Gate: fail if the Kokkos GPU plugin did not build (silent Kokkos-default
+      # regression). The AMG link is already gated by OPENSWMM_WITH_HYPRE=ON ->
+      # find_package(HYPRE REQUIRED) at configure; this catches a plugin that
+      # configured but failed to produce a binary.
+      - name: Verify Kokkos plugin built (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLUGIN=$(find build-${{ matrix.vcpkg_triplet }} \
+                     \( -name 'libopenswmm_gpu_omp.dylib' -o -name 'libopenswmm_gpu_omp.so' \) \
+                     | head -1 || true)
+          if [ -z "$PLUGIN" ]; then
+            echo "::error::Kokkos GPU plugin (libopenswmm_gpu_omp) was not built — Kokkos default regressed"
+            exit 1
+          fi
+          echo "Kokkos plugin built: $PLUGIN"
+
+      - name: Verify Kokkos plugin built (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $plugin = Get-ChildItem -Recurse -Path "build-${{ matrix.vcpkg_triplet }}" `
+                      -Filter "openswmm_gpu_omp.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $plugin) {
+            Write-Host "::error::Kokkos GPU plugin (openswmm_gpu_omp.dll) was not built — Kokkos default regressed"
+            exit 1
+          }
+          Write-Host "Kokkos plugin built: $($plugin.FullName)"
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v5

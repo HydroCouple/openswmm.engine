@@ -117,14 +117,22 @@ jobs:
         with:
           arch: x64
 
+      # gpu;hypre are vcpkg default-features and the plugin/hypre CMake options
+      # default ON, but request them EXPLICITLY so the Kokkos `tests/gpu` parity
+      # tests and the BoomerAMG path are always built+exercised here even if an
+      # upstream default flips (find_package(Kokkos/HYPRE REQUIRED) → configure
+      # fails loudly rather than silently dropping Kokkos/AMG).
       - name: Configure
         run: >
           cmake
           --preset=${{ matrix.cmake_preset }}-debug
           -B build-${{ matrix.vcpkg_triplet }}
-          -DVCPKG_MANIFEST_FEATURES="tests;geopackage"
+          -DVCPKG_MANIFEST_FEATURES="tests;geopackage;gpu;hypre"
           -DOPENSWMM_BUILD_TESTS=OFF
           -DOPENSWMM_BUILD_UNIT_TESTS=ON
+          -DOPENSWMM_BUILD_GPU_PLUGIN=ON
+          -DOPENSWMM_GPU_BACKEND=omp
+          -DOPENSWMM_WITH_HYPRE=ON
           -DOPENSWMM_WITH_GEOPACKAGE=ON
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
@@ -235,11 +243,14 @@ jobs:
           cmake
           --preset=${{ matrix.cmake_preset }}
           -B build-${{ matrix.vcpkg_triplet }}-release
-          -DVCPKG_MANIFEST_FEATURES="geopackage"
+          -DVCPKG_MANIFEST_FEATURES="geopackage;gpu;hypre"
           -DOPENSWMM_BUILD_TESTS=OFF
           -DOPENSWMM_BUILD_UNIT_TESTS=OFF
           -DOPENSWMM_BUILD_REGRESSION_TESTS=OFF
           -DOPENSWMM_BUILD_BENCHMARKS=OFF
+          -DOPENSWMM_BUILD_GPU_PLUGIN=ON
+          -DOPENSWMM_GPU_BACKEND=omp
+          -DOPENSWMM_WITH_HYPRE=ON
           -DOPENSWMM_WITH_GEOPACKAGE=ON
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
@@ -257,7 +268,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd "${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}/bin"
+          INST="${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}"
+          cd "$INST/bin"
           echo "--- bin/ contents ---"
           ls -la
           echo
@@ -270,14 +282,29 @@ jobs:
               ldd "$exe"
             fi
           done
+          # Gate: the Kokkos-OpenMP plugin must be installed (lib/ on Unix).
+          PLUGIN=$(find "$INST/lib" \( -name 'libopenswmm_gpu_omp.dylib' -o -name 'libopenswmm_gpu_omp.so' \) | head -1 || true)
+          if [ -z "$PLUGIN" ]; then
+            echo "::error::Kokkos GPU plugin (libopenswmm_gpu_omp) missing from $INST/lib — Kokkos default regressed"
+            exit 1
+          fi
+          echo "Kokkos plugin installed: $PLUGIN"
 
       - name: Verify bundled runtime libs (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Set-Location "${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}/bin"
+          $inst = "${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}"
+          Set-Location "$inst/bin"
           Write-Host "--- bin/ contents ---"
           Get-ChildItem | Format-Table Mode,Length,Name
+          # Gate: the Kokkos-OpenMP plugin must be installed (bin/ on Windows).
+          $plugin = Get-ChildItem -Recurse -Path $inst -Filter "openswmm_gpu_omp.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $plugin) {
+            Write-Host "::error::Kokkos GPU plugin (openswmm_gpu_omp.dll) missing from $inst — Kokkos default regressed"
+            exit 1
+          }
+          Write-Host "Kokkos plugin installed: $($plugin.FullName)"
 
       - name: Upload engine install artifact
         uses: actions/upload-artifact@v5
