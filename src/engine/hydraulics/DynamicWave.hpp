@@ -316,17 +316,7 @@ private:
     // Per-timestep constants
     double dt_gravity_ = 0.0;            ///< dt * GRAVITY (set once per timestep)
 
-    // --- env-gated bit-parity trace (zero runtime cost when SWMM_TRACE_RSTEP
-    //     is unset).  Dumps per-iteration converged-state doubles (%.17g) for
-    //     a single target routing step so the refactored trace can be diffed
-    //     against an lldb dump of the pristine legacy binary to find the first
-    //     element whose double diverges (below the float32 .out floor). ---
-    int          trace_rstep_      = -2;   ///< -2 unparsed; -1 off; >=0 target routing step
-    int          routing_step_idx_ = -1;   ///< increments each execute() call
     bool         last_converged_   = false; ///< final Picard converged flag of last execute()
-    std::string  trace_file_;              ///< SWMM_TRACE_FILE destination
-    void maybeInitTrace();
-    void dumpTrace(SimulationContext& ctx, int iter);
 
     /// Effective minimum nodal surface area (ft²) used as a floor for the
     /// dy = dV/surf_area Picard update.  Legacy `MinSurfArea` is the user

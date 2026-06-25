@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
-#include <cstdio>
 #include <filesystem>
 #include <map>
 #include <mutex>
@@ -145,8 +144,7 @@ using MakeFn  = void* (*)(const OpenSwmmGpuProbe*);
 // Try to load a specific backend plugin and build its solver. Returns null
 // (without throwing) if the plugin is absent, broken, or reports no device.
 std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
-                                           std::string* chosen,
-                                           bool warn_if_broken) {
+                                           std::string* chosen) {
     for (const auto& dir : search_dirs()) {
         for (const auto& fname : plugin_filenames(backend)) {
             const fs::path path = fs::path(dir) / fname;
@@ -154,49 +152,22 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
             if (!fs::exists(path, ec)) continue;
 
             void* h = load_cached(path.string());
-            if (!h) {
-                if (warn_if_broken)
-                    std::fprintf(stderr,
-                        "[openswmm 2D] plugin '%s' present but failed to load\n",
-                        path.string().c_str());
-                continue;
-            }
+            if (!h) continue;
             auto probe = reinterpret_cast<ProbeFn>(platform_sym(h, "openswmm_gpu_probe"));
             auto make  = reinterpret_cast<MakeFn>(platform_sym(h, "openswmm_make_gpu_surface_solver"));
-            if (!probe || !make) {
-                if (warn_if_broken)
-                    std::fprintf(stderr,
-                        "[openswmm 2D] plugin '%s' missing ABI symbols\n",
-                        path.string().c_str());
-                continue;
-            }
+            if (!probe || !make) continue;
             OpenSwmmGpuProbe info{};
             const int rc = probe(&info);
-            if (info.abi_version != OPENSWMM_GPU_ABI_VERSION) {
-                if (warn_if_broken)
-                    std::fprintf(stderr,
-                        "[openswmm 2D] plugin '%s' ABI %d != engine ABI %d\n",
-                        path.string().c_str(), info.abi_version,
-                        OPENSWMM_GPU_ABI_VERSION);
-                continue;
-            }
+            if (info.abi_version != OPENSWMM_GPU_ABI_VERSION) continue;
             if (rc != 0 || info.device_count <= 0) {
                 // No usable device behind this plugin — try the next candidate.
                 continue;
             }
             void* raw = make(&info);
-            if (!raw) {
-                if (warn_if_broken)
-                    std::fprintf(stderr,
-                        "[openswmm 2D] plugin '%s' failed to build solver\n",
-                        path.string().c_str());
-                continue;
-            }
+            if (!raw) continue;
             auto* solver = static_cast<ISurfaceSolver*>(raw);
             const std::string label = backend + " (" + info.device_name + ")";
             if (chosen) *chosen = label;
-            std::fprintf(stderr, "[openswmm 2D] using GPU backend: %s\n",
-                         label.c_str());
             return std::unique_ptr<ISurfaceSolver>(solver);
         }
     }
@@ -235,7 +206,7 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& /*opts*
         // device plugins), so a stock install finds no plugin here and falls
         // through to the serial CPU solver. The base build stays Kokkos-free.
         for (const char* b : {"cuda", "hip", "sycl", "omp"}) {
-            if (auto s = try_plugin(b, chosen, /*warn_if_broken=*/false))
+            if (auto s = try_plugin(b, chosen))
                 return s;
         }
         return cpu();
@@ -244,17 +215,11 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& /*opts*
     if (mode == "cpu") return cpu();
 
     if (mode == "omp" || mode == "cuda" || mode == "hip" || mode == "sycl") {
-        if (auto s = try_plugin(mode, chosen, /*warn_if_broken=*/true))
+        if (auto s = try_plugin(mode, chosen))
             return s;
-        std::fprintf(stderr,
-            "[openswmm 2D] requested backend '%s' unavailable; using CPU solver\n",
-            mode.c_str());
         return cpu();
     }
 
-    std::fprintf(stderr,
-        "[openswmm 2D] unknown OPENSWMM_2D_BACKEND='%s'; using CPU solver\n",
-        mode.c_str());
     return cpu();
 }
 

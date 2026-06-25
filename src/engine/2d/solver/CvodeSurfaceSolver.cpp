@@ -22,7 +22,6 @@
 
 #include <cstring>
 #include <cstdlib>
-#include <cstdio>
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -296,9 +295,6 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     PreconditionerType pc = opts.preconditioner;  // effective preconditioner
 #if !defined(OPENSWMM_HAVE_HYPRE)
     if (pc == PreconditionerType::AMG) {
-        std::fprintf(stderr,
-            "[openswmm 2D] PRECONDITIONER=AMG needs a hypre build "
-            "(OPENSWMM_WITH_HYPRE=ON); using JACOBI.\n");
         pc = PreconditionerType::JACOBI;
     }
 #endif
@@ -523,24 +519,6 @@ void CvodeSurfaceSolver::finalize() {
     // CVode must be freed before its linear solver (CVODE holds an internal
     // pointer to ls_ via CVodeSetLinearSolver). Likewise free the N_Vector
     // and context last, since N_Vector destruction touches the context.
-    //
-    // Optional CVODE-statistics dump (set OPENSWMM_2D_CVODE_STATS) — cumulative
-    // counts useful for comparing preconditioners and mesh-size scaling.
-    if (cvode_mem_ && std::getenv("OPENSWMM_2D_CVODE_STATS")) {
-        long nst = 0, nfe = 0, nni = 0, nli = 0, npe = 0, nps = 0, nlcf = 0;
-        CVodeGetNumSteps(cvode_mem_, &nst);
-        CVodeGetNumRhsEvals(cvode_mem_, &nfe);
-        CVodeGetNumNonlinSolvIters(cvode_mem_, &nni);
-        CVodeGetNumLinIters(cvode_mem_, &nli);
-        CVodeGetNumPrecEvals(cvode_mem_, &npe);
-        CVodeGetNumPrecSolves(cvode_mem_, &nps);
-        CVodeGetNumLinConvFails(cvode_mem_, &nlcf);
-        std::fprintf(stderr,
-            "[2D CVODE stats] steps=%ld rhs=%ld newton=%ld gmres=%ld "
-            "prec_setup=%ld prec_solve=%ld lin_fails=%ld | gmres/newton=%.2f\n",
-            nst, nfe, nni, nli, npe, nps, nlcf,
-            nni > 0 ? static_cast<double>(nli) / nni : 0.0);
-    }
     if (cvode_mem_) {
         CVodeFree(&cvode_mem_);
         cvode_mem_ = nullptr;

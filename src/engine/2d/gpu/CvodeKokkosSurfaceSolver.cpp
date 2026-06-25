@@ -22,7 +22,6 @@
 
 #include <stdexcept>
 #include <vector>
-#include <cstdio>
 #include <cstdlib>
 
 // The kernels treat the SUNDIALS vector payload as double. SUNDIALS must be
@@ -252,9 +251,6 @@ void CvodeKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& stat
     PreconditionerType pc = opts.preconditioner;  // effective preconditioner
 #if !defined(OPENSWMM_HAVE_HYPRE)
     if (pc == PreconditionerType::AMG) {
-        std::fprintf(stderr,
-            "[openswmm 2D] PRECONDITIONER=AMG needs the GPU plugin built with "
-            "hypre (OPENSWMM_WITH_HYPRE=ON); using JACOBI.\n");
         pc = PreconditionerType::JACOBI;
     }
 #endif

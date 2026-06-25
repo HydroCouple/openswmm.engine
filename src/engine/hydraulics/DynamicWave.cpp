@@ -47,7 +47,6 @@
 
 #include <cmath>
 #include <algorithm>
-#include <cstdio>
 #include <cstdlib>
 #include <numeric>
 
@@ -665,9 +664,6 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
     int steps = 0;
     bool converged = false;
 
-    maybeInitTrace();
-    ++routing_step_idx_;
-
     // Per-timestep constant
     dt_gravity_ = dt * GRAVITY;
 
@@ -757,7 +753,6 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         // Step 6: update node depths, check convergence
         converged = updateNodeDepths(ctx, dt, steps);
 
-        if (routing_step_idx_ == trace_rstep_) dumpTrace(ctx, steps);
         steps++;
 
         if (steps > 1) {
@@ -790,54 +785,6 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
     // a step that converges ON the last allowed iteration is "converged").
     last_converged_ = converged;
     return steps;
-}
-
-// ============================================================================
-// Env-gated bit-parity trace (zero cost when SWMM_TRACE_RSTEP unset)
-// ============================================================================
-
-void DWSolver::maybeInitTrace() {
-    if (trace_rstep_ != -2) return;           // already parsed
-    const char* rs = std::getenv("SWMM_TRACE_RSTEP");
-    trace_rstep_ = rs ? std::atoi(rs) : -1;
-    const char* tf = std::getenv("SWMM_TRACE_FILE");
-    trace_file_ = tf ? tf : "/tmp/swmm_trace_ref.txt";
-}
-
-void DWSolver::dumpTrace(SimulationContext& ctx, int iter) {
-    std::FILE* f = std::fopen(trace_file_.c_str(), iter == 0 ? "w" : "a");
-    if (!f) return;
-    auto& links = ctx.links;
-    auto& nodes = ctx.nodes;
-    // Conduits: name + converged geometry/flow doubles
-    for (int ci = 0; ci < static_cast<int>(conduit_idx_.size()); ++ci) {
-        const int uj = conduit_idx_[static_cast<std::size_t>(ci)];
-        const auto u = static_cast<std::size_t>(uj);
-        XSectParams xs_dbg = buildXSP(ctx, u);
-        double wofy_dmid = xsect::getWofY(xs_dbg, depth_mid_[u]);
-        int fc_dbg = static_cast<int>(links.flow_class[u]);
-        std::fprintf(f,
-            "R%d I%d LINK %s q=%.17g dmid=%.17g a1=%.17g a2=%.17g amid=%.17g "
-            "aold=%.17g rmid=%.17g wmid=%.17g fc=%d wofyDmid=%.17g fr=%.17g sig=%.17g dqdh=%.17g "
-            "d1=%.17g d2=%.17g w1=%.17g w2=%.17g sa1=%.17g sa2=%.17g fasnh=%.17g\n",
-            routing_step_idx_, iter, ctx.link_names.name_of(uj).c_str(),
-            new_flow_[u], depth_mid_[u], area1_[u], area2_[u], area_mid_[u],
-            area_old_[u], hrad_mid_[u], width_mid_[u], fc_dbg, wofy_dmid, froude_[u], sigma_[u], dqdh_[u],
-            depth1_[u], depth2_[u], width1_[u], width2_[u],
-            surf_area1_[u], surf_area2_[u], fasnh_[u]);
-    }
-    // Nodes: name + continuity doubles
-    for (int i = 0; i < n_nodes_; ++i) {
-        const auto ui = static_cast<std::size_t>(i);
-        std::fprintf(f,
-            "R%d I%d NODE %s y=%.17g H=%.17g A=%.17g sumdqdh=%.17g "
-            "in=%.17g out=%.17g v=%.17g\n",
-            routing_step_idx_, iter, ctx.node_names.name_of(i).c_str(),
-            nodes.depth[ui], nodes.head[ui], xnode_.new_surf_area[ui],
-            xnode_.sumdqdh[ui], nodes.inflow[ui], nodes.outflow[ui],
-            nodes.volume[ui]);
-    }
-    std::fclose(f);
 }
 
 // ============================================================================
