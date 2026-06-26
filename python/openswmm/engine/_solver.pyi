@@ -56,7 +56,7 @@ from ._exceptions import (
 
 _PathLike = Union[str, PathLike[str]]
 
-GEOPACKAGE_PLUGIN_ID: str
+GEOPACKAGE_PLUGIN_ID: str = "org.hydrocouple.openswmm.plugins.geopackage"
 
 
 # ---------------------------------------------------------------------------
