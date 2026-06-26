@@ -37,12 +37,6 @@
 
 #include <cstring>
 
-#if defined(_WIN32)
-#  define OPENSWMM_GPU_EXPORT __declspec(dllexport)
-#else
-#  define OPENSWMM_GPU_EXPORT __attribute__((visibility("default")))
-#endif
-
 namespace {
 void ensureKokkosInitialized() {
     if (!Kokkos::is_initialized() && !Kokkos::is_finalized()) {
@@ -51,7 +45,7 @@ void ensureKokkosInitialized() {
 }
 } // namespace
 
-extern "C" OPENSWMM_GPU_EXPORT int
+extern "C" OPENSWMM_GPU_ABI int
 openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     if (out == nullptr) return 1;
     std::memset(out, 0, sizeof(*out));
@@ -77,7 +71,7 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     return 0;  // usable device present
 }
 
-extern "C" OPENSWMM_GPU_EXPORT void*
+extern "C" OPENSWMM_GPU_ABI void*
 openswmm_make_gpu_surface_solver(const OpenSwmmGpuProbe* /*probe*/) {
     ensureKokkosInitialized();
     // Up-cast to the interface BEFORE erasing to void* so the core's

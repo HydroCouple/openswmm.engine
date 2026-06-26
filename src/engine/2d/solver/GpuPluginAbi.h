@@ -26,6 +26,30 @@
 #ifndef OPENSWMM_ENGINE_2D_GPU_PLUGIN_ABI_H
 #define OPENSWMM_ENGINE_2D_GPU_PLUGIN_ABI_H
 
+/*
+ * Export/visibility marker for the two ABI entry points.
+ *
+ * The declaration here and the definition in each plugin .cpp must agree on
+ * linkage or MSVC rejects the definition with C2375 ("redefinition; different
+ * linkage") — a plain `extern "C"` declaration followed by an
+ * `__declspec(dllexport)` definition is a mismatch. A plugin translation unit
+ * defines OPENSWMM_GPU_PLUGIN_BUILD (see the gpu CMakeLists) so it both
+ * declares and defines the symbols as dllexport. The core never link-imports
+ * these (it resolves them via dlsym/GetProcAddress), so the non-plugin case is
+ * a no-op marker.
+ */
+#if defined(_WIN32)
+#  if defined(OPENSWMM_GPU_PLUGIN_BUILD)
+#    define OPENSWMM_GPU_ABI __declspec(dllexport)
+#  else
+#    define OPENSWMM_GPU_ABI
+#  endif
+#elif defined(__GNUC__)
+#  define OPENSWMM_GPU_ABI __attribute__((visibility("default")))
+#else
+#  define OPENSWMM_GPU_ABI
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -62,7 +86,7 @@ typedef struct OpenSwmmGpuProbe {
  *         device is available or the probe failed. A non-zero return tells
  *         the core to fall back to the CPU solver.
  */
-int openswmm_gpu_probe(OpenSwmmGpuProbe* out);
+OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out);
 
 /**
  * @brief Construct the GPU surface solver.
@@ -71,7 +95,7 @@ int openswmm_gpu_probe(OpenSwmmGpuProbe* out);
  * @return An ISurfaceSolver* (as void*) owned by the caller, or NULL on
  *         failure. The core deletes it via the ISurfaceSolver destructor.
  */
-void* openswmm_make_gpu_surface_solver(const OpenSwmmGpuProbe* probe);
+OPENSWMM_GPU_ABI void* openswmm_make_gpu_surface_solver(const OpenSwmmGpuProbe* probe);
 
 #ifdef __cplusplus
 } /* extern "C" */

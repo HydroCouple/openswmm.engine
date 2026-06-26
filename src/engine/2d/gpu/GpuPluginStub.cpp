@@ -22,13 +22,7 @@
 
 #include <cstring>
 
-#if defined(_WIN32)
-#  define OPENSWMM_GPU_EXPORT __declspec(dllexport)
-#else
-#  define OPENSWMM_GPU_EXPORT __attribute__((visibility("default")))
-#endif
-
-extern "C" OPENSWMM_GPU_EXPORT int
+extern "C" OPENSWMM_GPU_ABI int
 openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     if (out == nullptr) {
         return 1;
@@ -43,7 +37,7 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     return 1;
 }
 
-extern "C" OPENSWMM_GPU_EXPORT void*
+extern "C" OPENSWMM_GPU_ABI void*
 openswmm_make_gpu_surface_solver(const OpenSwmmGpuProbe* /*probe*/) {
     // The Kokkos/CUDA/HIP/SYCL solver is not implemented until Phase 2.
     return nullptr;

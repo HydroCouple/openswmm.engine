@@ -50,6 +50,7 @@ if(OPENSWMM_GPU_BACKEND STREQUAL "stub")
     add_library(openswmm_gpu_stub SHARED GpuPluginStub.cpp)
     target_include_directories(openswmm_gpu_stub
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../solver)
+    target_compile_definitions(openswmm_gpu_stub PRIVATE OPENSWMM_GPU_PLUGIN_BUILD)
     set_target_properties(openswmm_gpu_stub PROPERTIES
         OUTPUT_NAME "openswmm_gpu_stub" ${_OPENSWMM_GPU_COMMON_PROPS})
     message(STATUS "OpenSWMM Engine: GPU plugin backend = stub (no Kokkos)")
@@ -74,7 +75,16 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "omp")
     target_link_libraries(openswmm_gpu_omp PRIVATE
         Kokkos::kokkos
         SUNDIALS::cvode)
-    target_compile_definitions(openswmm_gpu_omp PRIVATE OPENSWMM_GPU_EXECSPACE_OPENMP)
+    target_compile_definitions(openswmm_gpu_omp PRIVATE
+        OPENSWMM_GPU_EXECSPACE_OPENMP OPENSWMM_GPU_PLUGIN_BUILD)
+    # MSVC's legacy `/openmp` (OpenMP 2.0/2.5) lacks omp_get_level(), which
+    # Kokkos' OpenMP backend (<OpenMP/Kokkos_OpenMP_Instance.hpp>) calls — it
+    # fails to compile with C3861. `/openmp:llvm` provides OpenMP 3.0+ runtime
+    # routines. Added as a PRIVATE option so it follows (and overrides, with a
+    # benign D9025) any `/openmp` injected via Kokkos' interface flags.
+    if(MSVC)
+        target_compile_options(openswmm_gpu_omp PRIVATE /openmp:llvm)
+    endif()
     if(OPENSWMM_WITH_HYPRE)
         find_package(HYPRE CONFIG REQUIRED)
         target_sources(openswmm_gpu_omp PRIVATE KokkosAmgPreconditioner.cpp)
@@ -150,7 +160,8 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "cuda")
     target_link_libraries(openswmm_gpu_cuda PRIVATE
         Kokkos::kokkos
         SUNDIALS::cvode)
-    target_compile_definitions(openswmm_gpu_cuda PRIVATE OPENSWMM_GPU_EXECSPACE_CUDA)
+    target_compile_definitions(openswmm_gpu_cuda PRIVATE
+        OPENSWMM_GPU_EXECSPACE_CUDA OPENSWMM_GPU_PLUGIN_BUILD)
     if(OPENSWMM_WITH_HYPRE)
         # Requires a hypre built with its CUDA backend (HYPRE_WITH_CUDA=ON) so
         # BoomerAMG runs in device memory alongside the Kokkos N_Vector. Built
@@ -192,7 +203,8 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "hip")
     target_link_libraries(openswmm_gpu_hip PRIVATE
         Kokkos::kokkos
         SUNDIALS::cvode)
-    target_compile_definitions(openswmm_gpu_hip PRIVATE OPENSWMM_GPU_EXECSPACE_HIP)
+    target_compile_definitions(openswmm_gpu_hip PRIVATE
+        OPENSWMM_GPU_EXECSPACE_HIP OPENSWMM_GPU_PLUGIN_BUILD)
     if(OPENSWMM_WITH_HYPRE)
         # Requires a hypre built with its HIP backend (HYPRE_WITH_HIP=ON) so
         # BoomerAMG runs in device memory alongside the Kokkos N_Vector
@@ -236,7 +248,8 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "sycl")
     target_link_libraries(openswmm_gpu_sycl PRIVATE
         Kokkos::kokkos
         SUNDIALS::cvode)
-    target_compile_definitions(openswmm_gpu_sycl PRIVATE OPENSWMM_GPU_EXECSPACE_SYCL)
+    target_compile_definitions(openswmm_gpu_sycl PRIVATE
+        OPENSWMM_GPU_EXECSPACE_SYCL OPENSWMM_GPU_PLUGIN_BUILD)
     if(OPENSWMM_WITH_HYPRE)
         # Requires a hypre built with its SYCL backend (HYPRE_WITH_SYCL=ON) so
         # BoomerAMG runs in device memory alongside the Kokkos N_Vector
