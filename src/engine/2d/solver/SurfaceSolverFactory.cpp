@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <map>
@@ -168,6 +169,11 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
             auto* solver = static_cast<ISurfaceSolver*>(raw);
             const std::string label = backend + " (" + info.device_name + ")";
             if (chosen) *chosen = label;
+            // Announce the selected acceleration backend once, on successful
+            // plugin load. This is the signal test_engine_2d_omp_default checks
+            // for; it also gives operators a record of which 2D backend ran.
+            std::fprintf(stderr, "[openswmm 2D] using GPU backend: %s\n",
+                         label.c_str());
             return std::unique_ptr<ISurfaceSolver>(solver);
         }
     }
