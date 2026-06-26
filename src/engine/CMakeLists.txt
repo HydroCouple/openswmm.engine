@@ -467,6 +467,16 @@ if(OPENSWMM_BUILD_2D)
     if(TARGET openswmm_engine_internal)
         target_sources(openswmm_engine_internal PRIVATE ${OPENSWMM_2D_SOURCES})
         target_link_libraries(openswmm_engine_internal PRIVATE SUNDIALS::cvode)
+        # The 2D sources include HypreAmgPreconditioner.cpp, which references
+        # HYPRE_* symbols when OPENSWMM_HAVE_HYPRE is set. The shared engine
+        # links HYPRE above; the internal STATIC lib must link it too, or MSVC
+        # unit-test exes (which link openswmm_engine_internal, not the shared
+        # lib) fail with LNK1120 unresolved HYPRE_* externals. Static libraries
+        # don't carry their deps, so this PRIVATE link is propagated to the
+        # exe link line by CMake.
+        if(OPENSWMM_WITH_HYPRE)
+            target_link_libraries(openswmm_engine_internal PRIVATE HYPRE::HYPRE)
+        endif()
         if(hdf5_FOUND)
             target_link_libraries(openswmm_engine_internal PRIVATE ${_OPENSWMM_HDF5_TARGET})
         else()
