@@ -36,7 +36,7 @@
  * @ingroup engine_core
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -146,6 +146,34 @@ public:
     }
 
     /**
+     * @brief Remove a flag definition and all per-object values assigned to it.
+     * @returns true if the definition existed and was removed.
+     */
+    bool undefine(const std::string& name) {
+        const auto it = def_index_.find(name);
+        if (it == def_index_.end()) return false;
+        const std::size_t idx = it->second;
+        defs_.erase(defs_.begin() + static_cast<std::ptrdiff_t>(idx));
+        def_index_.erase(it);
+        // Reindex definitions that followed the erased slot.
+        for (auto& kv : def_index_)
+            if (kv.second > idx) --kv.second;
+        // Remove orphaned per-object values (key = "TYPE:NAME:FLAG";
+        // same left-to-right decomposition as InpWriter).
+        for (auto vit = values_.begin(); vit != values_.end(); ) {
+            const auto& key = vit->first;
+            const auto p1 = key.find(':');
+            const auto p2 = (p1 == std::string::npos)
+                                ? std::string::npos : key.find(':', p1 + 1);
+            if (p2 != std::string::npos && key.compare(p2 + 1, std::string::npos, name) == 0)
+                vit = values_.erase(vit);
+            else
+                ++vit;
+        }
+        return true;
+    }
+
+    /**
      * @brief Check whether a flag name has been defined (schema).
      */
     bool is_defined(const std::string& name) const {
@@ -187,6 +215,16 @@ public:
              const std::string& flag_name,
              UserFlagValue      value) {
         values_[make_key(object_type, object_name, flag_name)] = std::move(value);
+    }
+
+    /**
+     * @brief Remove the value assigned to (object_type, object_name, flag_name).
+     * @returns true if a value existed and was removed.
+     */
+    bool unset(const std::string& object_type,
+               const std::string& object_name,
+               const std::string& flag_name) {
+        return values_.erase(make_key(object_type, object_name, flag_name)) != 0;
     }
 
     /**

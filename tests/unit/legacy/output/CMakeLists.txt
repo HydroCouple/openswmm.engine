@@ -49,3 +49,5 @@ set_target_properties(
         RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
         INSTALL_RPATH "${LIB_ROOT}"
 )
+
+openswmm_stage_test_runtime_deps(test_output)

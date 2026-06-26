@@ -4,7 +4,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -37,6 +37,7 @@ void SnowSoA::resize(int n) {
     si.assign(total, 0.0);
     sba.assign(total, 0.0);
     sbws.assign(total, 0.0);
+    asc.assign(total, 1.0);
     snn.assign(un, 0.0);
     weplow.assign(un, 0.0);
     sfrac.assign(static_cast<std::size_t>(n * 5), 0.0);
@@ -66,45 +67,81 @@ static double getArealSnowCover(const double* adc, double awesi) {
 }
 
 // ============================================================================
-// Batch ATI update — VECTORISABLE
+// Areal depletion with new-snow ADC transition (Gap #18)
+// Matches legacy getArealDepletion() in snow.c.
+// wsnow is the PRE-snowfall snow water equivalent for this step.
 // ============================================================================
 
-void SnowSolver::batchATIUpdate(double* ati, double temp, double tipm,
-                                 double dt, int count) {
-    // tipm adjusted for timestep: tipm_adj = 1 - (1-tipm)^(dt/21600)
-    double tipm_adj = 1.0 - std::pow(1.0 - tipm, dt / 21600.0);
-    for (int i = 0; i < count; ++i) {
-        ati[i] += tipm_adj * (temp - ati[i]);
+/// @param soa      Snow state arrays (sba/sbws/awe updated in place).
+/// @param ui       Flat array index (subcatch * N_SUBAREAS + subarea).
+/// @param subarea  Subarea index (SNOW_PLOWABLE, SNOW_IMPERV, SNOW_PERV).
+/// @param snowfall Snowfall rate this step (ft/sec); 0 = melting/no-snow event.
+/// @param dt       Timestep (sec).
+/// @return         Areal snow coverage fraction (0 to 1).
+static double getArealDepletion(SnowSoA& soa, std::size_t ui, int subarea,
+                                double snowfall, double dt) {
+    // Plowable sub-area not subject to areal depletion (always 100% covered).
+    if (subarea == SNOW_PLOWABLE) return 1.0;
+
+    double si_val = soa.si[ui];
+    double wsnow  = soa.wsnow[ui];
+
+    // No depletion if si == 0 or pack is at or above 100%-cover depth.
+    if (si_val <= 0.0 || wsnow >= si_val) {
+        soa.awe[ui] = 1.0;
+        return 1.0;
     }
+    // Zero snow → no coverage.
+    if (wsnow <= 0.0) {
+        soa.awe[ui] = 1.0;
+        return 0.0;
+    }
+
+    const double* adc = (subarea == SNOW_PERV) ? soa.adc_perv : soa.adc_imperv;
+
+    // Case: new snowfall this step (Gap #18 — new-snow ADC branch).
+    // wsnow is pre-snowfall, so awe is the index before the new snow was added.
+    if (snowfall > 0.0) {
+        double awe   = wsnow / si_val;                             // pre-snow index
+        awe = std::max(awe, 0.0);
+        double sba   = getArealSnowCover(adc, awe);               // coverage at that index
+        double sbws  = awe + (0.75 * snowfall * dt) / si_val;     // end of new-snow ADC
+        sbws = std::min(sbws, 1.0);
+        soa.awe[ui]  = awe;
+        soa.sba[ui]  = sba;
+        soa.sbws[ui] = sbws;
+        return 1.0;   // full coverage while actively snowing
+    }
+
+    // Case: no new snow — deplete using stored new-snow ADC state.
+    double awe   = soa.awe[ui];
+    double sba   = soa.sba[ui];
+    double sbws  = soa.sbws[ui];
+    double awesi = wsnow / si_val;   // current relative index
+
+    if (awesi < awe) {
+        // Pack has melted below the start of the new-snow ADC → use regular curve.
+        soa.awe[ui] = 1.0;   // reset for next snowfall event
+        return getArealSnowCover(adc, awesi);
+    }
+    if (awesi >= sbws) {
+        // Pack depth still at or above end of new-snow ADC → full coverage.
+        return 1.0;
+    }
+    // On the linear new-snow ADC segment.
+    if (sbws <= awe) return sba;   // degenerate: zero-width interval
+    return sba + (1.0 - sba) / (sbws - awe) * (awesi - awe);
 }
 
 // ============================================================================
-// Batch degree-day melt — VECTORISABLE
+// Rain-on-snow melt rate (legacy: getRainmelt) — one rainfall value
 // ============================================================================
 
-void SnowSolver::batchDegreeDayMelt(const double* dhm, const double* tbase,
-                                     double temp, double* melt, int count) {
-    for (int i = 0; i < count; ++i) {
-        double excess = temp - tbase[i];
-        melt[i] = (excess > 0.0) ? dhm[i] * excess : 0.0;
-    }
-}
-
-// ============================================================================
-// Batch rain-on-snow melt — VECTORISABLE (uniform inputs broadcast)
-// ============================================================================
-
-void SnowSolver::batchRainOnSnowMelt(double temp, double wind, double gamma,
-                                      double ea, double rainfall,
-                                      double* melt, int count) {
-    // Rain-on-snow formula (legacy: getRainmelt)
+double SnowSolver::rainMeltRate(double temp, double wind, double gamma,
+                                 double ea, double rainfall) {
     // Only applies when rainfall > 0.02 in/hr converted to ft/sec
     const double ucf_rain_us = ucf::Ucf[ucf::RAINFALL][0]; // US: in/hr ↔ ft/sec
-    const double RAIN_THRESHOLD = 0.02 / ucf_rain_us;
-    if (rainfall <= RAIN_THRESHOLD) {
-        std::fill(melt, melt + count, 0.0);
-        return;
-    }
+    if (rainfall <= 0.02 / ucf_rain_us) return 0.0;
 
     double rain_in_hr = rainfall * ucf_rain_us;  // ft/sec → in/hr
     double uadj = 0.006 * wind;
@@ -112,22 +149,21 @@ void SnowSolver::batchRainOnSnowMelt(double temp, double wind, double gamma,
     double t2 = 7.5 * gamma * uadj;
     double t3 = 8.5 * uadj * (ea - 0.18);
     double smelt_in_hr = t1 * (0.001167 + t2 + 0.007 * rain_in_hr) + t3;
-    double smelt = smelt_in_hr / ucf_rain_us;  // in/hr → ft/sec
-    smelt = std::max(smelt, 0.0);
-
-    // Broadcast same melt rate to all subareas (uniform climate)
-    std::fill(melt, melt + count, smelt);
+    return std::max(smelt_in_hr / ucf_rain_us, 0.0);  // in/hr → ft/sec
 }
 
 // ============================================================================
-// Batch snow accumulation — VECTORISABLE
+// Execute — scalar convenience overload (broadcast to all subcatchments)
 // ============================================================================
 
-void SnowSolver::batchAccumulate(double* wsnow, double snowfall, double dt, int count) {
-    double accum = snowfall * dt;
-    for (int i = 0; i < count; ++i) {
-        wsnow[i] += accum;
-    }
+void SnowSolver::execute(SimulationContext& ctx, double dt,
+                          double temp, double wind, double rainfall,
+                          double snowfall, double gamma, double ea) {
+    int n = soa_.n_subcatch;
+    if (n == 0) return;
+    std::vector<double> rain(static_cast<std::size_t>(n), rainfall);
+    std::vector<double> snow(static_cast<std::size_t>(n), snowfall);
+    execute(ctx, dt, temp, wind, rain.data(), snow.data(), gamma, ea);
 }
 
 // ============================================================================
@@ -135,42 +171,70 @@ void SnowSolver::batchAccumulate(double* wsnow, double snowfall, double dt, int 
 // ============================================================================
 
 void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
-                          double temp, double wind, double rainfall,
-                          double gamma, double ea) {
+                          double temp, double wind, const double* rainfall,
+                          const double* snowfall, double gamma, double ea) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
     int total = n * N_SUBAREAS;
 
-    // 1. ATI update — only during NON-MELT (sub-freezing) conditions
-    //    (matching legacy snow.c updateColdContent: ATI only updated when temp < tbase)
+    // -----------------------------------------------------------------------
+    // Step 0 (Gap #19): 0.001-inch minimum pack threshold.
+    // Packs thinner than this are melted instantly (matching legacy).
+    // -----------------------------------------------------------------------
+    constexpr double MIN_PACK_FT = 0.001 / 12.0;
     for (int i = 0; i < total; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        if (soa_.wsnow[ui] <= 0.0) continue;
-        if (temp < soa_.tbase[ui]) {
-            // Sub-freezing: update ATI
-            double tipm_adj = 1.0 - std::pow(1.0 - soa_.tipm, dt / 21600.0);
-            soa_.ati[ui] += tipm_adj * (temp - soa_.ati[ui]);
-            soa_.ati[ui] = std::min(soa_.ati[ui], soa_.tbase[ui]);
+        double ws = soa_.wsnow[ui];
+        if (ws > 0.0 && ws <= MIN_PACK_FT) {
+            soa_.imelt[ui]  += (ws + soa_.fw[ui]) / dt;
+            soa_.wsnow[ui]   = 0.0;
+            soa_.fw[ui]      = 0.0;
+            soa_.coldc[ui]   = 0.0;
+            soa_.asc[ui]     = 0.0;   // no coverage after instant melt
         }
     }
 
-    // 2. Cold content generation during sub-freezing periods
-    //    (matching legacy: cc += rnm * dhm * (ati - Ta) * dt * asc)
+    // -----------------------------------------------------------------------
+    // Step 1 (Gap #18): Compute areal snow coverage per subarea.
+    // Uses sba/sbws new-snow ADC tracking (matching legacy getArealDepletion).
+    // -----------------------------------------------------------------------
+    for (int i = 0; i < total; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (soa_.wsnow[ui] <= 0.0) {
+            soa_.asc[ui] = 0.0;
+            continue;
+        }
+        int subarea = i % N_SUBAREAS;
+        soa_.asc[ui] = getArealDepletion(soa_, ui, subarea,
+                                         snowfall[i / N_SUBAREAS], dt);
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 2: ATI update — only during sub-freezing conditions (temp < tbase).
+    // -----------------------------------------------------------------------
     for (int i = 0; i < total; ++i) {
         auto ui = static_cast<std::size_t>(i);
         if (soa_.wsnow[ui] <= 0.0) continue;
         if (temp < soa_.tbase[ui]) {
-            // Areal snow coverage from ADC curve
-            int subarea = i % N_SUBAREAS;
-            const double* adc = (subarea == SNOW_PERV)
-                                ? soa_.adc_perv : soa_.adc_imperv;
-            double si_val = soa_.si[ui];
-            double awesi = (si_val > 0.0) ? soa_.wsnow[ui] / si_val : 1.0;
-            double asc = getArealSnowCover(adc, awesi);
+            double tipm_adj = 1.0 - std::pow(1.0 - soa_.tipm, dt / 21600.0);
+            soa_.ati[ui] += tipm_adj * (temp - soa_.ati[ui]);
+            soa_.ati[ui]  = std::min(soa_.ati[ui], soa_.tbase[ui]);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 3: Cold content accumulation during sub-freezing periods.
+    // Uses stored soa_.asc[ui] (already computed in Step 1).
+    // -----------------------------------------------------------------------
+    for (int i = 0; i < total; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (soa_.wsnow[ui] <= 0.0) continue;
+        if (temp < soa_.tbase[ui]) {
+            double asc     = soa_.asc[ui];
             double cc_incr = soa_.rnm * soa_.dhm[ui] *
                              (soa_.ati[ui] - temp) * dt * asc;
             soa_.coldc[ui] += std::max(0.0, cc_incr);
-            // Cap cold content (matching legacy ccMax = wsnow * 0.007/12 * (tbase - ati))
+            // Cap cold content (legacy: ccMax = wsnow * 0.007/12 * (tbase - ati))
             double ccMax = soa_.wsnow[ui] * 0.007 / 12.0 *
                            (soa_.tbase[ui] - soa_.ati[ui]);
             if (ccMax > 0.0 && soa_.coldc[ui] > ccMax)
@@ -178,83 +242,78 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
         }
     }
 
-    // 3. Compute melt rate — choose degree-day or rain-on-snow
+    // -----------------------------------------------------------------------
+    // Step 4: Compute melt rate — degree-day or rain-on-snow, selected per
+    // subcatchment from that subcatchment's own rainfall (matching legacy
+    // meltSnowpack: rmelt > 0 wins, else degree-day).
+    // -----------------------------------------------------------------------
     const double RAIN_THRESHOLD = 0.02 / ucf::Ucf[ucf::RAINFALL][0];
-    if (rainfall > RAIN_THRESHOLD) {
-        // Rain-on-snow using climate gamma/ea (Fix #16)
-        batchRainOnSnowMelt(temp, wind, gamma, ea, rainfall,
-                            soa_.imelt.data(), total);
-    } else {
-        // Degree-day melt
-        batchDegreeDayMelt(soa_.dhm.data(), soa_.tbase.data(), temp,
-                           soa_.imelt.data(), total);
+    for (int i = 0; i < total; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        double rain_sc = rainfall[i / N_SUBAREAS];
+        if (rain_sc > RAIN_THRESHOLD) {
+            soa_.imelt[ui] = rainMeltRate(temp, wind, gamma, ea, rain_sc);
+        } else {
+            double excess = temp - soa_.tbase[ui];
+            soa_.imelt[ui] = (excess > 0.0) ? soa_.dhm[ui] * excess : 0.0;
+        }
     }
 
-    // 3b. Scale melt by areal snow coverage (matching legacy meltSnowpack)
+    // Step 4b: Scale melt by areal coverage (using stored soa_.asc[ui]).
     for (int i = 0; i < total; ++i) {
         auto ui = static_cast<std::size_t>(i);
         if (soa_.wsnow[ui] <= 0.0 || soa_.imelt[ui] <= 0.0) continue;
-        int subarea = i % N_SUBAREAS;
-        const double* adc = (subarea == SNOW_PERV)
-                            ? soa_.adc_perv : soa_.adc_imperv;
-        double si_val = soa_.si[ui];
-        double awesi = (si_val > 0.0) ? soa_.wsnow[ui] / si_val : 1.0;
-        double asc = getArealSnowCover(adc, awesi);
-        soa_.imelt[ui] *= asc;
+        soa_.imelt[ui] *= soa_.asc[ui];
     }
 
-    // 4. Apply cold content — melt only occurs after cold content is satisfied
+    // -----------------------------------------------------------------------
+    // Step 5: Cold content absorption — melt only exits after cc is satisfied.
+    // -----------------------------------------------------------------------
     for (int i = 0; i < total; ++i) {
         auto ui = static_cast<std::size_t>(i);
         if (soa_.wsnow[ui] <= 0.0) {
             soa_.imelt[ui] = 0.0;
             continue;
         }
-        // Cold content absorbs melt (matching legacy reduceColdContent)
         double melt_vol = soa_.imelt[ui] * dt;
         if (melt_vol <= soa_.coldc[ui]) {
             soa_.coldc[ui] -= melt_vol;
-            soa_.imelt[ui] = 0.0;
+            soa_.imelt[ui]  = 0.0;
         } else {
-            soa_.imelt[ui] = (melt_vol - soa_.coldc[ui]) / dt;
-            soa_.coldc[ui] = 0.0;
+            soa_.imelt[ui]  = (melt_vol - soa_.coldc[ui]) / dt;
+            soa_.coldc[ui]  = 0.0;
         }
-
         // Limit melt to available snow
-        double max_melt = soa_.wsnow[ui] / dt;
-        soa_.imelt[ui] = std::min(soa_.imelt[ui], max_melt);
+        soa_.imelt[ui] = std::min(soa_.imelt[ui], soa_.wsnow[ui] / dt);
     }
 
-    // 5. Free water routing — melt fills pack liquid capacity first
-    // (matching legacy snow.c routeSnowmelt logic)
+    // -----------------------------------------------------------------------
+    // Step 6: Free water routing — excess drains as output melt.
+    // -----------------------------------------------------------------------
     for (int i = 0; i < total; ++i) {
         auto ui = static_cast<std::size_t>(i);
         if (soa_.wsnow[ui] <= 0.0) continue;
 
-        // Maximum free water capacity = fwfrac * wsnow
         double fw_cap = soa_.fwfrac[ui] * soa_.wsnow[ui];
+        soa_.fw[ui]  += soa_.imelt[ui] * dt;
 
-        // Add melt to free water
-        soa_.fw[ui] += soa_.imelt[ui] * dt;
-
-        // Excess drains as actual melt output; retained stays in pack
         if (soa_.fw[ui] > fw_cap) {
-            double excess = soa_.fw[ui] - fw_cap;
-            soa_.fw[ui] = fw_cap;
-            soa_.imelt[ui] = excess / dt;
+            double excess   = soa_.fw[ui] - fw_cap;
+            soa_.fw[ui]     = fw_cap;
+            soa_.imelt[ui]  = excess / dt;
         } else {
-            // All melt retained as liquid in pack
-            soa_.imelt[ui] = 0.0;
+            soa_.imelt[ui]  = 0.0;
         }
     }
 
-    // 6. Update snow water equivalent (melt + free water drain)
+    // -----------------------------------------------------------------------
+    // Step 7: Update SWE.
+    // -----------------------------------------------------------------------
     for (int i = 0; i < total; ++i) {
         auto ui = static_cast<std::size_t>(i);
         soa_.wsnow[ui] -= soa_.imelt[ui] * dt;
-        soa_.wsnow[ui] = std::max(soa_.wsnow[ui], 0.0);
-        // Free water cannot exceed remaining SWE
-        soa_.fw[ui] = std::min(soa_.fw[ui], soa_.wsnow[ui]);
+        soa_.wsnow[ui]  = std::max(soa_.wsnow[ui], 0.0);
+        soa_.fw[ui]     = std::min(soa_.fw[ui], soa_.wsnow[ui]);
     }
 }
 
@@ -288,15 +347,22 @@ void SnowSolver::setMeltCoeffs(int day_of_year) {
 void SnowSolver::plowSnow(SimulationContext& ctx, double dt, double snowfall) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
+    std::vector<double> snow(static_cast<std::size_t>(n), snowfall);
+    plowSnow(ctx, dt, snow.data());
+}
+
+void SnowSolver::plowSnow(SimulationContext& ctx, double dt, const double* snowfall) {
+    int n = soa_.n_subcatch;
+    if (n == 0) return;
 
     for (int j = 0; j < n; ++j) {
         auto uj = static_cast<std::size_t>(j);
 
-        // Add snowfall to all subareas
+        // Add this subcatchment's snowfall to all subareas
         for (int k = SNOW_PLOWABLE; k <= SNOW_PERV; ++k) {
             auto idx = static_cast<std::size_t>(j * N_SUBAREAS + k);
             if (soa_.fArea[idx] > 0.0) {
-                soa_.wsnow[idx] += snowfall * dt;
+                soa_.wsnow[idx] += snowfall[uj] * dt;
                 soa_.imelt[idx] = 0.0;
             }
         }
@@ -312,9 +378,14 @@ void SnowSolver::plowSnow(SimulationContext& ctx, double dt, double snowfall) {
         double sfracTotal = 0.0;
 
         // Plow out of system (sfrac[0])
-        // Accumulate removed volume: depth (ft) * plowable area fraction * subcatch area (ft2)
+        // Accumulate removed volume: depth (ft) * plowable area fraction * non-LID area (ft2)
+        // Gap #60: exclude LID area from plow volume (matches legacy snow.c Build 5.2.0).
         if (soa_.sfrac[sf + 0] > 0.0) {
-            double area_ft2 = ctx.subcatches.area[uj] * 43560.0; // acres → ft2
+            double lid_ft2 = (uj < ctx.subcatches.total_lid_area_ft2.size())
+                             ? ctx.subcatches.total_lid_area_ft2[uj] : 0.0;
+            double area_ft2 = ctx.subcatches.area[uj] * 43560.0 // acres → ft2
+                              - lid_ft2;
+            if (area_ft2 < 0.0) area_ft2 = 0.0;
             soa_.removed += soa_.sfrac[sf + 0] * exc *
                             soa_.fArea[plow_idx] * area_ft2;
         }

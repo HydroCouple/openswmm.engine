@@ -4,34 +4,25 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #include "Divider.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
 
 namespace openswmm {
 namespace divider {
 
-void DividerSoA::resize(int n) {
-    count = n;
-    auto un = static_cast<size_t>(n);
-    node_idx.assign(un, -1);
-    div_link_idx.assign(un, -1);
-    method.assign(un, 0);
-    cutoff_flow.assign(un, 0.0);
-    weir_cd.assign(un, 0.0);
-    weir_max_depth.assign(un, 0.0);
-    table_idx.assign(un, -1);
-}
+void computeDividerFlows(SimulationContext& ctx, const DividerData& divs) {
+    double ucf_flow = ucf::Qcf[static_cast<int>(ctx.options.flow_units)];
 
-void computeDividerFlows(SimulationContext& ctx, const DividerSoA& soa) {
-    for (int k = 0; k < soa.count; ++k) {
+    for (int k = 0; k < divs.count(); ++k) {
         auto uk = static_cast<size_t>(k);
-        int ni = soa.node_idx[uk];
+        int ni = divs.node_idx[uk];
         if (ni < 0 || ni >= ctx.n_nodes()) continue;
         auto uni = static_cast<size_t>(ni);
 
@@ -39,12 +30,12 @@ void computeDividerFlows(SimulationContext& ctx, const DividerSoA& soa) {
         if (q_total <= 0.0) continue;
 
         double q_divert = 0.0;
-        auto dm = static_cast<DividerMethod>(soa.method[uk]);
+        auto dm = static_cast<DividerMethod>(static_cast<int>(divs.method[uk]));
 
         switch (dm) {
             case DividerMethod::CUTOFF: {
                 // Diversion gets flow above cutoff
-                double qmin = soa.cutoff_flow[uk];
+                double qmin = divs.cutoff[uk];
                 q_divert = std::max(0.0, q_total - qmin);
                 break;
             }
@@ -60,9 +51,9 @@ void computeDividerFlows(SimulationContext& ctx, const DividerSoA& soa) {
             }
             case DividerMethod::TABULAR: {
                 // Lookup diversion fraction from curve
-                int ti = soa.table_idx[uk];
+                int ti = divs.curve[uk];
                 if (ti >= 0 && ti < static_cast<int>(ctx.tables.tables.size())) {
-                    double frac = table_lookup_cursor(ctx.tables.tables[static_cast<size_t>(ti)], q_total);
+                    double frac = table_lookup_cursor(ctx.tables.tables[static_cast<size_t>(ti)], q_total * ucf_flow);
                     q_divert = q_total * std::max(0.0, std::min(1.0, frac));
                 }
                 break;
@@ -70,8 +61,8 @@ void computeDividerFlows(SimulationContext& ctx, const DividerSoA& soa) {
             case DividerMethod::WEIR: {
                 // Weir equation: Q = Cd * W * H^1.5
                 double depth = ctx.nodes.depth[uni];
-                double cd = soa.weir_cd[uk];
-                double w = soa.weir_max_depth[uk];  // weir width
+                double cd = divs.cd[uk];
+                double w = divs.max_depth[uk];  // weir width
                 if (depth > 0.0 && cd > 0.0 && w > 0.0) {
                     q_divert = cd * w * depth * std::sqrt(depth);
                     q_divert = std::min(q_divert, q_total);
@@ -81,7 +72,7 @@ void computeDividerFlows(SimulationContext& ctx, const DividerSoA& soa) {
         }
 
         // Apply diversion: set diversion link flow
-        int dl = soa.div_link_idx[uk];
+        int dl = divs.link[uk];
         if (dl >= 0 && dl < ctx.n_links()) {
             ctx.links.flow[static_cast<size_t>(dl)] = q_divert;
         }

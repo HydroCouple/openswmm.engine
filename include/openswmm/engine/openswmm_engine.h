@@ -12,6 +12,7 @@
  *            - The SWMM_ENGINE_API export macro
  *
  *          Domain-specific APIs are in separate headers:
+ *            - openswmm_datetime.h      — SWMM DateTime encode/decode utilities
  *            - openswmm_model.h         — model building, validation, serialisation, options, user flags
  *            - openswmm_nodes.h         — node creation, properties, state, forcing, bulk
  *            - openswmm_links.h         — link creation, properties, cross-sections, state, bulk
@@ -61,7 +62,7 @@
  * @ingroup  new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -112,6 +113,7 @@ typedef enum SWMM_ErrorCode {
     SWMM_ERR_HOTSTART    = 12,
     SWMM_ERR_CRS         = 13,
     SWMM_ERR_NUMERICAL   = 14,
+    SWMM_ERR_DEPENDENCY  = 15,  /**< Object has dependents that would be affected by deletion. */
     SWMM_ERR_INTERNAL    = 99
 } SWMM_ErrorCode;
 
@@ -192,6 +194,21 @@ SWMM_ENGINE_API int swmm_engine_start(SWMM_Engine engine, int save_results);
 
 /** @brief Advance one explicit timestep. elapsed_time==0 when done. */
 SWMM_ENGINE_API int swmm_engine_step(SWMM_Engine engine, double* elapsed_time);
+
+/**
+ * @brief Advance up to n_steps routing steps in one call (Gap #50 — swmm_stride equivalent).
+ *
+ * @details Calls step() n_steps times and stops early on error or when the
+ *          simulation ends (elapsed_time == 0).  elapsed_time receives the
+ *          last non-zero elapsed value, or 0.0 when the simulation has ended.
+ *          Passing n_steps <= 0 is a no-op (returns SWMM_OK).
+ *
+ * @param engine        Engine handle.
+ * @param n_steps       Maximum number of routing steps to advance.
+ * @param elapsed_time  Receives elapsed time (decimal days) after the last step.
+ * @return SWMM_OK on success; first non-OK error code encountered otherwise.
+ */
+SWMM_ENGINE_API int swmm_engine_stride(SWMM_Engine engine, int n_steps, double* elapsed_time);
 
 /** @brief End the simulation → SWMM_STATE_ENDED. */
 SWMM_ENGINE_API int swmm_engine_end(SWMM_Engine engine);
@@ -278,18 +295,152 @@ SWMM_ENGINE_API int swmm_get_current_time(SWMM_Engine engine, double* current);
 SWMM_ENGINE_API int swmm_get_routing_step(SWMM_Engine engine, double* dt);
 
 /* =========================================================================
+ * Unit system query
+ * =========================================================================
+ * All C API getters return — and all setters accept — values in the project's
+ * DISPLAY units, selected by [OPTIONS] FLOW_UNITS. These accessors report which
+ * units are in effect so callers (bindings, coupling) can interpret values.
+ */
+
+/** @brief Get the active flow-units code (0=CFS,1=GPM,2=MGD,3=CMS,4=LPS,5=MLD).
+ *  @note  Typed equivalent of swmm_options_get(engine,"FLOW_UNITS",...). */
+SWMM_ENGINE_API int swmm_get_flow_units(SWMM_Engine engine, int* flow_units);
+
+/** @brief Get the active unit system (0 = US/imperial, 1 = SI/metric).
+ *  @note  Derived from flow units: CMS/LPS/MLD => SI, otherwise US. */
+SWMM_ENGINE_API int swmm_get_unit_system(SWMM_Engine engine, int* unit_system);
+
+/* =========================================================================
  * Routing event and steady-state status
  * ========================================================================= */
 
 /** @brief Check if simulation is currently between routing events. */
 SWMM_ENGINE_API int swmm_is_between_events(SWMM_Engine engine, int* is_between);
 
-/** @brief Get number of routing events defined. */
+/** @brief Get number of routing events defined.
+ *  @note Synonymous with swmm_events_count (Slice CW). */
 SWMM_ENGINE_API int swmm_get_event_count(SWMM_Engine engine, int* count);
+
+/* -------------------------------------------------------------------------
+ * [EVENTS] section accessors (Slice CW — added 2026-05-21).
+ *
+ * Mirrors the per-row reader in `handle_events` (InfraHandler.cpp). All times
+ * are DateTime decimal days (consistent with `swmm_get_start_time` etc.).
+ * `swmm_events_count` is a synonym of the legacy `swmm_get_event_count` and
+ * is provided so the [EVENTS] surface is self-consistent.
+ * ------------------------------------------------------------------------- */
+
+/** @brief Number of [EVENTS] entries. Alias of swmm_get_event_count. */
+SWMM_ENGINE_API int swmm_events_count(SWMM_Engine engine, int* count);
+
+/** @brief Get the start/end DateTime of the idx-th event.
+ *  @returns SWMM_OK on success; SWMM_ERR_BADINDEX if idx is out of range. */
+SWMM_ENGINE_API int swmm_events_get(SWMM_Engine engine, int idx,
+                                    double* start, double* end);
+
+/** @brief Overwrite the idx-th event's window.
+ *  @returns SWMM_OK on success; SWMM_ERR_BADINDEX if idx out of range;
+ *           SWMM_ERR_BADPARAM if start >= end. */
+SWMM_ENGINE_API int swmm_events_set(SWMM_Engine engine, int idx,
+                                    double start, double end);
+
+/** @brief Append a new event window.
+ *  @param out_idx Receives the new event's index (optional, may be NULL).
+ *  @returns SWMM_OK on success; SWMM_ERR_BADPARAM if start >= end. */
+SWMM_ENGINE_API int swmm_events_add(SWMM_Engine engine,
+                                    double start, double end, int* out_idx);
+
+/** @brief Remove the idx-th event. Trailing entries shift down by one.
+ *  @returns SWMM_OK on success; SWMM_ERR_BADINDEX if idx is out of range. */
+SWMM_ENGINE_API int swmm_events_remove(SWMM_Engine engine, int idx);
+
+/** @brief Remove all events. */
+SWMM_ENGINE_API int swmm_events_clear(SWMM_Engine engine);
 
 /** @brief Get/set steady-state skip flag. */
 SWMM_ENGINE_API int swmm_get_steady_state_skip(SWMM_Engine engine, int* enabled);
 SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled);
+
+/* =========================================================================
+ * Phase 1b: Runoff interface file (legacy "Frunoff").
+ *
+ * Persists per-subcatchment runoff snapshots to a binary file so the
+ * runoff phase of a long simulation can be cached and replayed in a
+ * downstream routing-only run.  Mirrors the legacy SWMM-5 file format
+ * (see src/engine/hydrology/RunoffInterface.hpp).
+ *
+ * SAVE mode is fully integrated: open the file in SAVE before
+ * @c swmm_engine_start, run the simulation as normal, then close.  The
+ * engine emits one record per runoff substep automatically.
+ *
+ * USE mode currently exposes the file but does NOT yet auto-skip the
+ * engine's runoff computation — callers must invoke
+ * @ref swmm_runoff_iface_read_step between simulation steps and
+ * understand that the engine will overwrite the loaded state if runoff
+ * still runs.  Full USE-mode auto-skip is tracked as a follow-up.
+ *
+ * @since 6.0.0
+ * ========================================================================= */
+
+/**
+ * @brief Open the runoff interface file for writing (SAVE mode).
+ *
+ * @param engine  Engine handle (any state).
+ * @param path    Output file path.  Existing file is truncated.
+ * @returns @c SWMM_OK on success.  Non-zero error codes include
+ *          @c SWMM_ERR_BADHANDLE (invalid engine), @c SWMM_ERR_BADPARAM
+ *          (null path), and a non-zero file-I/O error code when the
+ *          file could not be opened or a runoff file is already open.
+ */
+SWMM_ENGINE_API int swmm_runoff_iface_open_write(SWMM_Engine engine, const char* path);
+
+/**
+ * @brief Open the runoff interface file for reading (USE mode).
+ *
+ * @param engine  Engine handle.
+ * @param path    Path to an existing runoff interface file.
+ * @returns @c SWMM_OK on success; non-zero on file-open failure or
+ *          header mismatch (subcatchment count, pollutant count, or
+ *          flow units differ from the current model).
+ */
+SWMM_ENGINE_API int swmm_runoff_iface_open_read(SWMM_Engine engine, const char* path);
+
+/**
+ * @brief Manually emit one runoff substep record to the open SAVE file.
+ *
+ * @details Normally the engine emits records automatically inside
+ *          @c stepRunoff().  This entry point is exposed so plugin
+ *          authors and tests can force a snapshot at well-defined
+ *          times; it is a no-op when no file is open or the file is
+ *          in USE mode.
+ *
+ * @param engine  Engine handle.
+ * @param dt      Substep duration (seconds) to record in the file for
+ *                this snapshot.
+ */
+SWMM_ENGINE_API int swmm_runoff_iface_save_step(SWMM_Engine engine, double dt);
+
+/**
+ * @brief Read one runoff substep record from the open USE file into
+ *        the current subcatchment state.
+ *
+ * @param engine     Engine handle.
+ * @param[out] has_data  Set to @c 1 when a record was successfully
+ *                       read, @c 0 on EOF.  May be NULL.
+ * @returns @c SWMM_OK in either case (use @p has_data to tell EOF
+ *          apart from a successful read).  Returns @c SWMM_ERR_BADHANDLE
+ *          on null engine; @c SWMM_ERR_BADPARAM if no USE-mode file is
+ *          open.
+ */
+SWMM_ENGINE_API int swmm_runoff_iface_read_step(SWMM_Engine engine, int* has_data);
+
+/**
+ * @brief Close the runoff interface file.
+ *
+ * Safe to call multiple times; safe to call when no file was opened.
+ * Also called automatically as part of @c swmm_engine_close.
+ */
+SWMM_ENGINE_API int swmm_runoff_iface_close(SWMM_Engine engine);
 
 #ifdef __cplusplus
 } /* extern "C" */
@@ -302,6 +453,7 @@ SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled);
  * and the handle typedef), so include guards prevent recursion.
  * ========================================================================= */
 
+#include "openswmm_datetime.h"
 #include "openswmm_model.h"
 #include "openswmm_nodes.h"
 #include "openswmm_links.h"
@@ -319,6 +471,8 @@ SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled);
 #include "openswmm_statistics.h"
 #include "openswmm_forcing.h"
 #include "openswmm_operator_snapshot.h"
+#include "openswmm_climate.h"
+#include "openswmm_edit.h"
 
 #ifdef OPENSWMM_HAS_2D
 #include "openswmm_2d.h"

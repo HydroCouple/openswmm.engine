@@ -7,7 +7,7 @@
  * @ingroup engine_data
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -27,13 +27,21 @@ struct TransectStore {
     int count() const { return static_cast<int>(names.size()); }
 
     std::vector<std::string> names;
+    std::vector<std::string> comments;          ///< Free-form description per transect (DA-ENG-09)
     std::vector<double>      n_left;
     std::vector<double>      n_right;
     std::vector<double>      n_channel;
     std::vector<double>      x_left_bank;
     std::vector<double>      x_right_bank;
+    /// Encroachment stations — independent of bank stations (BQ-TR-02).
+    /// Default to 0.0 at add-time; the GUI surfaces them as a distinct
+    /// field set. An INP parser extension may default these to the bank
+    /// stations on legacy files lacking the trailing columns.
+    std::vector<double>      x_left_encroachment;
+    std::vector<double>      x_right_encroachment;
     std::vector<double>      x_factor;
     std::vector<double>      y_factor;
+    std::vector<double>      length_factor;     ///< Meander factor (channel/floodplain length ratio); default 1.0
     /// Station-elevation pairs per transect
     std::vector<std::vector<double>> stations;
     std::vector<std::vector<double>> elevations;
@@ -92,6 +100,20 @@ struct InletUsageStore {
     std::vector<double>      local_depress;  ///< Local gutter depression (ft)
     std::vector<double>      local_width;    ///< Local depression width (ft)
     std::vector<int>         street_index;   ///< Index into StreetStore (-1 if none)
+
+    // Stats (populated by InletSolver::gatherStats() before reporting)
+    std::vector<double> stat_capture_vol;   ///< Total captured volume (ft³)
+    std::vector<double> stat_bypass_vol;    ///< Total bypassed volume (ft³)
+    std::vector<double> stat_backflow_vol;  ///< Total backflow volume (ft³)
+    std::vector<double> stat_peak_flow;     ///< Peak captured flow (cfs)
+
+    void resize_stats(int n) {
+        auto un = static_cast<std::size_t>(n);
+        stat_capture_vol.assign(un, 0.0);
+        stat_bypass_vol.assign(un, 0.0);
+        stat_backflow_vol.assign(un, 0.0);
+        stat_peak_flow.assign(un, 0.0);
+    }
 };
 
 // ============================================================================

@@ -1,57 +1,45 @@
 """
-Mass Balance and Continuity
-===========================
-
-:author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
-:license: MIT
+Mass balance & continuity (Pythonic v1 surface)
+===============================================
 
 Type stubs for :mod:`openswmm.engine._massbalance`.
-
-The :class:`MassBalance` class provides continuity error queries after a
-simulation completes.
 """
 
+from typing import Union
+
+from ._enums import RoutingTotal, RunoffTotal
+from ._report import RoutingDiagnostics
 from ._solver import Solver
 
 
+_Key = Union[int, str]
+
+
 class MassBalance:
-    """Query continuity errors and cumulative flux totals.
-
-    All methods operate on the engine handle held by the :class:`Solver`
-    passed at construction time.
-
-    Args:
-        solver: An active :class:`Solver` instance (typically after the
-                simulation has ended).
-
-    Example::
-
-        from openswmm.engine import Solver, MassBalance
-
-        with Solver("model.inp") as s:
-            while s.step():
-                pass
-
-        mb = MassBalance(s)
-        print(f"Runoff error:  {mb.get_runoff_continuity_error():.4%}")
-        print(f"Routing error: {mb.get_routing_continuity_error():.4%}")
-    """
-
     def __init__(self, solver: Solver) -> None: ...
 
-    def get_runoff_continuity_error(self) -> float:
-        """Return the runoff continuity error.
-
-        Returns:
-            Continuity error as a fraction (e.g., 0.001 = 0.1%).
-        """
+    @property
+    def runoff_continuity_error(self) -> float:
+        """Runoff continuity (mass-balance) error, as a percentage."""
+        ...
+    @property
+    def routing_continuity_error(self) -> float:
+        """Flow-routing continuity (mass-balance) error, as a percentage."""
+        ...
+    @property
+    def routing_diagnostics(self) -> RoutingDiagnostics:
+        """Routing-solver time-step diagnostics (step sizes, Courant number,
+        convergence counts) as a :class:`RoutingDiagnostics` record."""
+        ...
+    @property
+    def max_courant(self) -> float:
+        """Maximum Courant number reached over the routing run."""
         ...
 
-    def get_routing_continuity_error(self) -> float:
-        """Return the routing continuity error.
+    def quality_continuity_error(self, pollutant: _Key) -> float: ...
+    def runoff_total(self, component: RunoffTotal) -> float: ...
+    def routing_total(self, component: RoutingTotal) -> float: ...
+    def quality_seep_loss(self, pollutant: _Key) -> float: ...
+    def quality_evap_loss(self, pollutant: _Key) -> float: ...
 
-        Returns:
-            Continuity error as a fraction.
-        """
-        ...
+    def __repr__(self) -> str: ...

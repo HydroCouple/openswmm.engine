@@ -27,13 +27,14 @@
  * @ingroup engine_input
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #include "NodesHandler.hpp"
 
 #include "../Tokenizer.hpp"
+#include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/NodeData.hpp"
 
@@ -62,8 +63,8 @@ static void ensure_spatial_capacity(SimulationContext& ctx, int n_nodes) {
 // ============================================================================
 
 void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 2) continue;
 
         const std::string& name = tok[0];
@@ -74,12 +75,14 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
 
         ensure_node_capacity(ctx, idx);
 
-        ctx.nodes.type[idx]       = NodeType::JUNCTION;
+        ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::JUNCTION);
         ctx.nodes.invert_elev[idx] = to_double(tok[1]);                          // Elev
         if (tok.size() > 2) ctx.nodes.full_depth[idx]  = to_double(tok[2]);     // MaxDepth
         if (tok.size() > 3) ctx.nodes.init_depth[idx]  = to_double(tok[3]);     // InitDepth
         if (tok.size() > 4) ctx.nodes.sur_depth[idx]   = to_double(tok[4]);     // SurDepth
         if (tok.size() > 5) ctx.nodes.ponded_area[idx] = to_double(tok[5]);     // Aponded
+        if (!pl.comment.empty())
+            ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -88,8 +91,8 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
 // ============================================================================
 
 void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -98,37 +101,40 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
 
         ensure_node_capacity(ctx, idx);
 
-        ctx.nodes.type[idx]       = NodeType::OUTFALL;
+        const auto orow = static_cast<std::size_t>(
+            ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::OUTFALL));
+        auto& O = ctx.node_subtypes.outfalls;
         ctx.nodes.invert_elev[idx] = to_double(tok[1]);  // Elev
 
         // Type: FREE, NORMAL, FIXED, TIDAL, TIMESERIES
         const std::string otype = Tokenizer::to_upper(tok[2]);
-        if      (otype == "FREE")       ctx.nodes.outfall_type[idx] = OutfallType::FREE;
-        else if (otype == "NORMAL")     ctx.nodes.outfall_type[idx] = OutfallType::NORMAL;
-        else if (otype == "FIXED")      ctx.nodes.outfall_type[idx] = OutfallType::FIXED;
-        else if (otype == "TIDAL")      ctx.nodes.outfall_type[idx] = OutfallType::TIDAL;
-        else if (otype == "TIMESERIES") ctx.nodes.outfall_type[idx] = OutfallType::TIMESERIES;
+        if      (otype == "FREE")       O.bc_type[orow] = OutfallType::FREE;
+        else if (otype == "NORMAL")     O.bc_type[orow] = OutfallType::NORMAL;
+        else if (otype == "FIXED")      O.bc_type[orow] = OutfallType::FIXED;
+        else if (otype == "TIDAL")      O.bc_type[orow] = OutfallType::TIDAL;
+        else if (otype == "TIMESERIES") O.bc_type[orow] = OutfallType::TIMESERIES;
 
         // Stage or curve reference
         if (tok.size() > 3) {
             // For FIXED: numeric stage; for TIDAL/TIMESERIES: curve/tseries name → resolve later
-            if (ctx.nodes.outfall_type[idx] == OutfallType::FIXED) {
-                ctx.nodes.outfall_param[idx] = to_double(tok[3]);
+            if (O.bc_type[orow] == OutfallType::FIXED) {
+                O.param[orow] = to_double(tok[3]);
             }
             // For TIDAL / TIMESERIES, the name resolution is deferred to a post-parse pass
         }
 
         // Gated (YES/NO)
         if (tok.size() > 4) {
-            ctx.nodes.outfall_has_flap_gate[idx] =
-                Tokenizer::parse_boolean(tok[4]);
+            O.has_flap_gate[orow] = Tokenizer::parse_boolean(tok[4]);
         }
 
         // Route-to subcatchment (optional last field)
         if (tok.size() > 5 && !tok[5].empty() && tok[5] != "*") {
             int sc = ctx.subcatch_names.find(tok[5]);
-            ctx.nodes.outfall_route_to[idx] = sc;  // may be -1 if not yet parsed
+            O.route_to[orow] = sc;  // may be -1 if not yet parsed
         }
+        if (!pl.comment.empty())
+            ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -137,8 +143,8 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
 // ============================================================================
 
 void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 4) continue;
 
         const std::string& name = tok[0];
@@ -148,36 +154,38 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
         ensure_node_capacity(ctx, idx);
         auto ui = static_cast<std::size_t>(idx);
 
-        ctx.nodes.type[ui]        = NodeType::DIVIDER;
+        const auto drow = static_cast<std::size_t>(
+            ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::DIVIDER));
+        auto& D = ctx.node_subtypes.dividers;
         ctx.nodes.invert_elev[ui] = to_double(tok[1]);
 
         // tok[2] = diversion link name (resolved in post-parse)
         // Store link name for deferred resolution
         const std::string& div_link_name = tok[2];
-        ctx.nodes.divider_link_name[ui] = div_link_name;
+        D.link_name[drow] = div_link_name;
         int dl = ctx.link_names.find(div_link_name);
-        ctx.nodes.divider_link[ui] = dl; // may be -1 if not yet parsed
+        D.link[drow] = dl; // may be -1 if not yet parsed
 
         // tok[3] = divider type
         const std::string dtype = Tokenizer::to_upper(tok[3]);
         if (dtype == "CUTOFF") {
-            ctx.nodes.divider_type[ui] = DividerType::CUTOFF;
-            if (tok.size() > 4) ctx.nodes.divider_cutoff[ui] = to_double(tok[4]);
+            D.method[drow] = DividerType::CUTOFF;
+            if (tok.size() > 4) D.cutoff[drow] = to_double(tok[4]);
         } else if (dtype == "OVERFLOW") {
-            ctx.nodes.divider_type[ui] = DividerType::OVERFLOW_DIV;
+            D.method[drow] = DividerType::OVERFLOW_DIV;
         } else if (dtype == "TABULAR") {
-            ctx.nodes.divider_type[ui] = DividerType::TABULAR;
+            D.method[drow] = DividerType::TABULAR;
             // tok[4] = curve name (deferred)
             if (tok.size() > 4) {
-                ctx.nodes.divider_curve_name[ui] = tok[4];
+                D.curve_name[drow] = tok[4];
                 int ci = ctx.table_names.find(tok[4]);
-                ctx.nodes.divider_curve[ui] = ci; // may be -1
+                D.curve[drow] = ci; // may be -1
             }
         } else if (dtype == "WEIR") {
-            ctx.nodes.divider_type[ui] = DividerType::WEIR;
-            if (tok.size() > 4) ctx.nodes.divider_cutoff[ui] = to_double(tok[4]);
-            if (tok.size() > 5) ctx.nodes.divider_cd[ui]     = to_double(tok[5]);
-            if (tok.size() > 6) ctx.nodes.divider_max_depth[ui] = to_double(tok[6]);
+            D.method[drow] = DividerType::WEIR;
+            if (tok.size() > 4) D.cutoff[drow]    = to_double(tok[4]);
+            if (tok.size() > 5) D.cd[drow]        = to_double(tok[5]);
+            if (tok.size() > 6) D.max_depth[drow] = to_double(tok[6]);
         }
 
         // MaxDepth after type-specific fields
@@ -187,6 +195,8 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
         else if (dtype == "WEIR") md_offset = 7;
         if (static_cast<int>(tok.size()) > md_offset)
             ctx.nodes.full_depth[ui] = to_double(tok[md_offset]);
+        if (!pl.comment.empty())
+            ctx.nodes.comments[ui] = pl.comment;
     }
 }
 
@@ -195,8 +205,8 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
 // ============================================================================
 
 void handle_storage(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 4) continue;
 
         const std::string& name = tok[0];
@@ -205,24 +215,30 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
 
         ensure_node_capacity(ctx, idx);
 
-        ctx.nodes.type[idx]        = NodeType::STORAGE;
+        const auto srow = static_cast<std::size_t>(
+            ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::STORAGE));
+        auto& S = ctx.node_subtypes.storages;
         ctx.nodes.invert_elev[idx] = to_double(tok[1]);  // Elev
         ctx.nodes.full_depth[idx]  = to_double(tok[2]);  // MaxDepth
         ctx.nodes.init_depth[idx]  = to_double(tok[3]);  // InitDepth
 
-        if (tok.size() < 5) continue;
+        if (tok.size() < 5) {
+            if (!pl.comment.empty())
+                ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
+            continue;
+        }
         const std::string shape = Tokenizer::to_upper(tok[4]);
 
         if (shape == "TABULAR") {
             // Next token is curve name — resolve to index in post-parse pass
-            ctx.nodes.storage_curve[idx] = -1;
+            S.curve[srow] = -1;
             if (tok.size() > 5)
-                ctx.nodes.storage_curve_name[idx] = tok[5];
+                S.curve_name[srow] = tok[5];
         } else if (shape == "FUNCTIONAL") {
             // A1, A2, A0
-            if (tok.size() > 5) ctx.nodes.storage_a[idx] = to_double(tok[5]);
-            if (tok.size() > 6) ctx.nodes.storage_b[idx] = to_double(tok[6]);
-            if (tok.size() > 7) ctx.nodes.storage_c[idx] = to_double(tok[7]);
+            if (tok.size() > 5) S.a[srow] = to_double(tok[5]);
+            if (tok.size() > 6) S.b[srow] = to_double(tok[6]);
+            if (tok.size() > 7) S.c[srow] = to_double(tok[7]);
         }
 
         // Optional: SurDepth, Fevap, Seep
@@ -230,9 +246,11 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
         if (static_cast<int>(tok.size()) > param_offset)
             ctx.nodes.sur_depth[idx] = to_double(tok[param_offset]);
         if (static_cast<int>(tok.size()) > param_offset + 1)
-            ctx.nodes.storage_evap_frac[idx] = to_double(tok[param_offset + 1]);
+            S.evap_frac[srow] = to_double(tok[param_offset + 1]);
         if (static_cast<int>(tok.size()) > param_offset + 2)
-            ctx.nodes.storage_seep_rate[idx] = to_double(tok[param_offset + 2]);
+            S.seep_rate[srow] = to_double(tok[param_offset + 2]);
+        if (!pl.comment.empty())
+            ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 

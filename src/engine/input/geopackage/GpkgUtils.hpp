@@ -4,7 +4,7 @@
  * @ingroup engine_geopackage
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -48,6 +48,19 @@ inline DbPtr open_database(const std::string& path, int flags = SQLITE_OPEN_READ
     if (rc != SQLITE_OK) {
         std::string msg = raw ? sqlite3_errmsg(raw) : "unknown error";
         throw GpkgError("Failed to open database '" + path + "': " + msg, rc);
+    }
+
+    // Slice IO-5: every connection enforces foreign keys. This is a
+    // per-connection SQLite setting, so we set it here rather than only
+    // in create_schema — reader connections need it too if they want
+    // cascading-delete or orphan-rejection semantics to hold.
+    char* err = nullptr;
+    if (sqlite3_exec(db.get(), "PRAGMA foreign_keys=ON", nullptr, nullptr,
+                      &err) != SQLITE_OK) {
+        std::string msg = err ? err : "unknown error";
+        sqlite3_free(err);
+        throw GpkgError("Failed to enable foreign_keys pragma on '" + path
+                          + "': " + msg, rc);
     }
     return db;
 }

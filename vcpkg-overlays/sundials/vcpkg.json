@@ -1,0 +1,24 @@
+{
+    "name": "sundials",
+    "version-semver": "7.6.0",
+    "description": "SUNDIALS (SUite of Nonlinear and DIfferential/ALgebraic equation Solvers). Overlay of the stock vcpkg port adding an optional `kokkos` feature that builds the Kokkos N_Vector (SUNDIALS::nveckokkos) for the OpenSWMM Phase 1 OpenMP GPU plugin.",
+    "homepage": "https://computing.llnl.gov/projects/sundials",
+    "dependencies": [
+        {
+            "name": "vcpkg-cmake",
+            "host": true
+        },
+        {
+            "name": "vcpkg-cmake-config",
+            "host": true
+        }
+    ],
+    "features": {
+        "kokkos": {
+            "description": "Build the Kokkos N_Vector (SUNDIALS::nveckokkos) against the kokkos overlay port. Required by the openswmm_gpu_omp plugin backend.",
+            "dependencies": [
+                "kokkos"
+            ]
+        }
+    }
+}

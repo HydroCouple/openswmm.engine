@@ -16,6 +16,9 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <vector>
 #include <algorithm>
 #include <numeric>
@@ -490,6 +493,196 @@ TEST(QualityConstantsTest, ZeroVolumeIsOneLiterInFt3) {
 
 TEST(QualityConstantsTest, ZeroDepthIsOneMillimeterInFt) {
     EXPECT_NEAR(openswmm::quality::ZERO_DEPTH, 0.003281, 1e-5);
+}
+
+// ============================================================================
+// Gap #38: Steady Flow quality routing (findSFLinkQual)
+// ============================================================================
+
+// For STEADY routing the link gets upstream node concentration scaled by
+// fEvap and exact exponential decay over dt — no volume-balance mixing.
+
+TEST(SteadyFlowQuality, NoDecayLinkGetsUpstreamConc) {
+    SimulationContext ctx = makeContext(1);
+    ctx.options.routing_model = openswmm::RoutingModel::STEADY;
+    QualitySolver solver;
+    solver.init(ctx.n_nodes(), ctx.n_links(), 1);
+
+    // Upstream node 0 has concentration 10.0 after node mixing
+    ctx.nodes.conc[0] = 10.0;
+
+    // Link 0 (N0→N1): flowing, no decay, no evap
+    ctx.links.flow[0]       = 1.0;
+    ctx.links.volume[0]     = 100.0;
+    ctx.links.old_volume[0] = 100.0;
+    ctx.links.conc_old[0]   = 5.0;   // old link conc shouldn't matter for STEADY
+
+    // k_decay = 0 → no decay
+    ctx.pollutants.k_decay.assign(1, 0.0);
+
+    solver.updateLinkQuality(ctx, 300.0);
+
+    // link[0] conc should equal upstream (node 0) conc = 10.0
+    EXPECT_NEAR(ctx.links.conc[0], 10.0, 1e-10);
+}
+
+TEST(SteadyFlowQuality, WithDecayUsesExponentialNotLinear) {
+    SimulationContext ctx = makeContext(1);
+    ctx.options.routing_model = openswmm::RoutingModel::STEADY;
+    QualitySolver solver;
+    solver.init(ctx.n_nodes(), ctx.n_links(), 1);
+
+    const double dt    = 300.0;   // routing step
+    const double k     = 0.001;   // /sec decay constant
+    const double c_up  = 8.0;     // upstream conc
+
+    ctx.nodes.conc[0]       = c_up;
+    ctx.links.flow[0]       = 1.0;
+    ctx.links.volume[0]     = 100.0;
+    ctx.links.old_volume[0] = 100.0;
+    ctx.links.conc_old[0]   = 999.0;  // irrelevant for STEADY
+    ctx.pollutants.k_decay.assign(1, k);
+
+    solver.updateLinkQuality(ctx, dt);
+
+    double expected = c_up * std::exp(-k * dt);
+    EXPECT_NEAR(ctx.links.conc[0], expected, 1e-9);
+
+    // Verify it differs from the linear approximation (1 - k*dt):
+    double linear_approx = c_up * (1.0 - k * dt);
+    EXPECT_NE(ctx.links.conc[0], linear_approx)
+        << "STEADY should use exp(-k*dt), not linear (1-k*dt)";
+}
+
+TEST(SteadyFlowQuality, OldLinkConcIgnored) {
+    // Regardless of old link concentration, STEADY routing uses upstream node.
+    SimulationContext ctx = makeContext(1);
+    ctx.options.routing_model = openswmm::RoutingModel::STEADY;
+    QualitySolver solver;
+    solver.init(ctx.n_nodes(), ctx.n_links(), 1);
+
+    ctx.nodes.conc[0]       = 5.0;
+    ctx.links.flow[0]       = 2.0;
+    ctx.links.volume[0]     = 50.0;
+    ctx.links.old_volume[0] = 50.0;
+    ctx.links.conc_old[0]   = 100.0;  // very different old conc
+    ctx.pollutants.k_decay.assign(1, 0.0);
+
+    solver.updateLinkQuality(ctx, 60.0);
+
+    // Result must equal upstream conc, NOT some mixture with old conc
+    EXPECT_NEAR(ctx.links.conc[0], 5.0, 1e-10);
+}
+
+// ============================================================================
+// CSTR first-order decay trajectory benchmark
+//
+// Benchmark dataset: tests/benchmarks/manufactured/quality-cstr-first-order-decay/
+//
+// No inflow, no outflow, constant volume.  k_decay = 1e-3 /s, dt = 60 s.
+// execute() applies factor = 1 - k*dt = 0.94 per step.  Reference:
+//   C[N] = 100 * 0.94^N   (discrete recurrence — NOT exp(-k*t))
+//
+// After each execute() the test copies conc → conc_old to advance timestep
+// state, matching what the simulation loop does between routing steps.
+// ============================================================================
+
+#ifndef BENCHMARK_DATA_DIR
+#  define BENCHMARK_DATA_DIR ""
+#endif
+
+// First-order decay trajectory: C[N] = C0 * (1-k*dt)^N.
+// Verifies applyDecay applies the linear factor correctly across multiple steps.
+TEST(QualityCSTR, FirstOrderDecayTrajectory) {
+    const std::string path = std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/quality-cstr-first-order-decay/reference.csv";
+
+    // Load reference CSV (t_s, C_mgl)
+    struct DecayRow { double t_s, C_mgl; };
+    std::vector<DecayRow> rows;
+    {
+        std::ifstream in(path);
+        if (!in.is_open()) {
+            GTEST_SKIP() << "Benchmark data not found: " << path;
+        }
+        std::string line;
+        bool header_seen = false;
+        while (std::getline(in, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            if (!header_seen) { header_seen = true; continue; }
+            std::istringstream ss(line);
+            std::string tok;
+            double vals[2] = {};
+            int col = 0;
+            while (std::getline(ss, tok, ',') && col < 2)
+                vals[col++] = std::stod(tok);
+            if (col >= 2)
+                rows.push_back({vals[0], vals[1]});
+        }
+    }
+    if (rows.empty()) {
+        GTEST_SKIP() << "Benchmark data empty: " << path;
+    }
+
+    // 1 pollutant, 3 nodes, 2 links (from makeContext(1))
+    SimulationContext ctx = makeContext(1);
+    QualitySolver solver;
+    solver.init(ctx.n_nodes(), ctx.n_links(), 1);
+
+    const double K_DECAY = 1.0e-3;     // /s — first-order decay rate
+    const double C_0     = rows[0].C_mgl;  // 100.0 mg/L
+    const double V_NODE  = 1000.0;         // constant volume — must be > ZERO_VOLUME
+
+    ctx.pollutants.k_decay.assign(1, K_DECAY);
+
+    // Zero all flows (no mixing, no inflow — pure decay)
+    for (size_t j = 0; j < static_cast<size_t>(ctx.n_links()); ++j) {
+        ctx.links.flow[j] = 0.0;
+    }
+    ctx.subcatches.runoff[0]     = 0.0;
+    ctx.subcatches.old_runoff[0] = 0.0;
+
+    // Initialise node 0 with C_0; other nodes at 0 (not tested)
+    for (size_t i = 0; i < static_cast<size_t>(ctx.n_nodes()); ++i) {
+        ctx.nodes.old_volume[i] = V_NODE;
+        ctx.nodes.volume[i]     = V_NODE;
+        ctx.nodes.conc_old[i]   = (i == 0) ? C_0 : 0.0;
+        ctx.nodes.conc[i]       = (i == 0) ? C_0 : 0.0;
+    }
+    for (size_t j = 0; j < static_cast<size_t>(ctx.n_links()); ++j) {
+        ctx.links.old_volume[j] = V_NODE;
+        ctx.links.volume[j]     = V_NODE;
+        ctx.links.conc_old[j]   = 0.0;
+        ctx.links.conc[j]       = 0.0;
+    }
+
+    double max_err  = 0.0;
+    double sum_sq   = 0.0;
+    double prev_t   = rows[0].t_s;
+
+    for (size_t i = 1; i < rows.size(); ++i) {
+        double dt = rows[i].t_s - prev_t;
+
+        // Advance "old" state before each execute() — mirrors simulation loop
+        ctx.nodes.conc_old[0] = ctx.nodes.conc[0];
+        ctx.links.conc_old[0] = ctx.links.conc[0];
+
+        solver.execute(ctx, dt);
+
+        double err = std::abs(ctx.nodes.conc[0] - rows[i].C_mgl);
+        max_err  = std::max(max_err, err);
+        sum_sq  += err * err;
+        prev_t   = rows[i].t_s;
+    }
+
+    ASSERT_GE(rows.size(), 2u) << "benchmark CSV must have at least one data row";
+    double n = static_cast<double>(rows.size() - 1);
+
+    EXPECT_LT(max_err, 1e-9)
+        << "CSTR decay max error " << max_err
+        << " mg/L exceeds 1e-9 (benchmark: " << path << ")";
+    EXPECT_LT(std::sqrt(sum_sq / n), 1e-10)
+        << "CSTR decay RMS error exceeds 1e-10 mg/L";
 }
 
 } /* anonymous namespace */

@@ -1,26 +1,30 @@
 """
-Spatial Coordinate Access
-=========================
+Spatial / CRS / coordinates (Pythonic v1 surface)
+=================================================
 
 :author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
+:copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
-The :class:`Spatial` class provides access to geographic coordinates of
-nodes, links, subcatchments, and rain gages.
+Reach via ``solver.spatial``. Provides CRS read/write, per-object
+coordinate access, link vertices, and subcatchment polygons. Every
+object selector accepts ``int | str``.
 
 .. code-block:: python
 
     from openswmm.engine import Solver
-    from openswmm.engine._spatial import Spatial
 
-    with Solver("model.inp", "model.rpt", "model.out") as s:
-        sp = Spatial(s)
-        x, y = sp.get_node_coord(0)
-        sp.set_node_coord(0, x + 100.0, y)
+    with Solver("model.inp") as s:
+        s.spatial.crs                     # 'EPSG:4326' or WKT
+        s.spatial.node_coord("J1")        # (x, y) tuple
+        s.spatial.node_coords()           # np.ndarray shape (n_nodes, 2)
+        s.spatial.link_vertices("C1")     # np.ndarray (n, 2)
+        s.spatial.subcatchment_polygon("S1")  # np.ndarray (n, 2)
 """
 
 # cython: language_level=3
+
+from typing import Tuple
 
 import numpy as np
 cimport numpy as np
@@ -28,11 +32,30 @@ cimport numpy as np
 from ._common cimport *
 
 
-class Spatial:
-    """Access geographic coordinates for model elements.
+cdef inline SWMM_Engine _h(solver):
+    return <SWMM_Engine><size_t>solver.handle
 
-    :param solver: An active :class:`~openswmm.engine.Solver` instance.
-    """
+
+cdef inline int _resolve_node(solver, key) except -1:
+    return _resolve_index(_h(solver), key, swmm_node_index, swmm_node_count, "Node")
+
+
+cdef inline int _resolve_link(solver, key) except -1:
+    return _resolve_index(_h(solver), key, swmm_link_index, swmm_link_count, "Link")
+
+
+cdef inline int _resolve_subcatch(solver, key) except -1:
+    return _resolve_index(_h(solver), key,
+                          swmm_subcatch_index, swmm_subcatch_count,
+                          "Subcatchment")
+
+
+cdef inline int _resolve_gage(solver, key) except -1:
+    return _resolve_index(_h(solver), key, swmm_gage_index, swmm_gage_count, "Gage")
+
+
+class Spatial:
+    """``solver.spatial`` — geographic coordinates and CRS."""
 
     def __init__(self, solver):
         self._solver = solver
@@ -41,236 +64,163 @@ class Spatial:
     # CRS
     # ------------------------------------------------------------------
 
-    def set_crs(self, str crs):
-        """Set the coordinate reference system string.
-
-        :param crs: CRS identifier (e.g. EPSG code or WKT).
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef bytes b = crs.encode('utf-8')
-        _check(swmm_spatial_set_crs(h, b))
-
-    def get_crs(self) -> str:
-        """Return the coordinate reference system string.
-
-        :returns: CRS identifier.
-        """
+    @property
+    def crs(self) -> str:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef char buf[256]
         _check(swmm_spatial_get_crs(h, buf, 256))
         return buf.decode('utf-8')
 
-    # ------------------------------------------------------------------
-    # Node coordinates
-    # ------------------------------------------------------------------
-
-    def set_node_coord(self, int idx, double x, double y):
-        """Set the coordinate of a node.
-
-        :param idx: Node index.
-        :param x: X coordinate.
-        :param y: Y coordinate.
-        """
+    @crs.setter
+    def crs(self, str value) -> None:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_spatial_set_node_coord(h, idx, x, y))
+        cdef bytes b = value.encode('utf-8')
+        _check(swmm_spatial_set_crs(h, b))
 
-    def get_node_coord(self, int idx) -> tuple:
-        """Return the coordinate of a node.
+    # ------------------------------------------------------------------
+    # Node coords
+    # ------------------------------------------------------------------
 
-        :param idx: Node index.
-        :returns: Tuple of (x, y).
-        """
+    def node_coord(self, node) -> Tuple[float, float]:
+        cdef int i = _resolve_node(self._solver, node)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double x = 0.0
-        cdef double y = 0.0
-        _check(swmm_spatial_get_node_coord(h, idx, &x, &y))
+        cdef double x = 0.0, y = 0.0
+        _check(swmm_spatial_get_node_coord(h, i, &x, &y))
         return (x, y)
 
-    def get_node_coords_bulk(self) -> tuple:
-        """Return coordinates for all nodes as NumPy arrays.
+    def set_node_coord(self, node, double x, double y) -> None:
+        cdef int i = _resolve_node(self._solver, node)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_spatial_set_node_coord(h, i, x, y))
 
-        :returns: Tuple of (x_array, y_array), each with dtype ``float64``.
-        """
+    def node_coords(self):
+        """All node coordinates as a ``(n_nodes, 2)`` ``float64`` array."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
-        cdef np.ndarray[double, ndim=1] x_buf = np.empty(n, dtype=np.float64)
-        cdef np.ndarray[double, ndim=1] y_buf = np.empty(n, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] xs = np.empty(n, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] ys = np.empty(n, dtype=np.float64)
         _check(swmm_spatial_get_node_coords_bulk(
-            h, <double*>x_buf.data, <double*>y_buf.data, n))
-        return (x_buf, y_buf)
+            h, <double*>xs.data, <double*>ys.data, n))
+        return np.column_stack((xs, ys))
 
-    def set_node_coords_bulk(self, np.ndarray[double, ndim=1] x,
-                             np.ndarray[double, ndim=1] y):
-        """Set coordinates for all nodes from NumPy arrays.
-
-        :param x: X coordinates array of shape ``(n_nodes,)``.
-        :param y: Y coordinates array of shape ``(n_nodes,)``.
-        """
+    def set_node_coords(self, coords) -> None:
+        """``coords`` is shape ``(n_nodes, 2)`` ``float64``."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
+        cdef np.ndarray[double, ndim=2] arr = np.ascontiguousarray(
+            coords, dtype=np.float64)
+        if arr.shape[0] != n or arr.shape[1] != 2:
+            raise ValueError(
+                f"node coords array must have shape ({n}, 2), got "
+                f"({arr.shape[0]}, {arr.shape[1]})")
+        cdef np.ndarray[double, ndim=1] xs = np.ascontiguousarray(arr[:, 0])
+        cdef np.ndarray[double, ndim=1] ys = np.ascontiguousarray(arr[:, 1])
         _check(swmm_spatial_set_node_coords_bulk(
-            h, <const double*>x.data, <const double*>y.data, n))
+            h, <const double*>xs.data, <const double*>ys.data, n))
 
     # ------------------------------------------------------------------
-    # Link coordinates
+    # Link coords + vertices
     # ------------------------------------------------------------------
 
-    def set_link_coord(self, int idx, double x, double y):
-        """Set the coordinate of a link.
-
-        :param idx: Link index.
-        :param x: X coordinate.
-        :param y: Y coordinate.
-        """
+    def link_coord(self, link) -> Tuple[float, float]:
+        cdef int i = _resolve_link(self._solver, link)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_spatial_set_link_coord(h, idx, x, y))
-
-    def get_link_coord(self, int idx) -> tuple:
-        """Return the coordinate of a link.
-
-        :param idx: Link index.
-        :returns: Tuple of (x, y).
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double x = 0.0
-        cdef double y = 0.0
-        _check(swmm_spatial_get_link_coord(h, idx, &x, &y))
+        cdef double x = 0.0, y = 0.0
+        _check(swmm_spatial_get_link_coord(h, i, &x, &y))
         return (x, y)
 
-    # ------------------------------------------------------------------
-    # Link vertices
-    # ------------------------------------------------------------------
-
-    def set_link_vertices(self, int idx, np.ndarray[double, ndim=1] x,
-                          np.ndarray[double, ndim=1] y):
-        """Set the vertices of a link.
-
-        :param idx: Link index.
-        :param x: X coordinates of vertices.
-        :param y: Y coordinates of vertices.
-        """
+    def set_link_coord(self, link, double x, double y) -> None:
+        cdef int i = _resolve_link(self._solver, link)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int n = len(x)
-        _check(swmm_spatial_set_link_vertices(
-            h, idx, <const double*>x.data, <const double*>y.data, n))
+        _check(swmm_spatial_set_link_coord(h, i, x, y))
 
-    def get_link_vertex_count(self, int idx) -> int:
-        """Return the number of vertices for a link.
-
-        :param idx: Link index.
-        :returns: Vertex count.
-        """
+    def link_vertices(self, link):
+        """``(n, 2)`` ``float64`` numpy array of polyline vertices."""
+        cdef int i = _resolve_link(self._solver, link)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int count = 0
-        _check(swmm_spatial_get_link_vertex_count(h, idx, &count))
-        return count
-
-    def get_link_vertices(self, int idx) -> tuple:
-        """Return the vertices of a link as NumPy arrays.
-
-        :param idx: Link index.
-        :returns: Tuple of (x_array, y_array), each with dtype ``float64``.
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int count = 0
-        _check(swmm_spatial_get_link_vertex_count(h, idx, &count))
-        cdef np.ndarray[double, ndim=1] x_buf = np.empty(count, dtype=np.float64)
-        cdef np.ndarray[double, ndim=1] y_buf = np.empty(count, dtype=np.float64)
+        cdef int n = 0
+        _check(swmm_spatial_get_link_vertex_count(h, i, &n))
+        cdef np.ndarray[double, ndim=1] xs = np.empty(n, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] ys = np.empty(n, dtype=np.float64)
         _check(swmm_spatial_get_link_vertices(
-            h, idx, <double*>x_buf.data, <double*>y_buf.data, count))
-        return (x_buf, y_buf)
+            h, i, <double*>xs.data, <double*>ys.data, n))
+        return np.column_stack((xs, ys))
+
+    def set_link_vertices(self, link, vertices) -> None:
+        cdef int i = _resolve_link(self._solver, link)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef np.ndarray[double, ndim=2] arr = np.ascontiguousarray(
+            vertices, dtype=np.float64)
+        if arr.ndim != 2 or arr.shape[1] != 2:
+            raise ValueError(
+                f"link vertices must be shape (n, 2); got "
+                f"({arr.shape[0]}, {arr.shape[1]})")
+        cdef int n = arr.shape[0]
+        cdef np.ndarray[double, ndim=1] xs = np.ascontiguousarray(arr[:, 0])
+        cdef np.ndarray[double, ndim=1] ys = np.ascontiguousarray(arr[:, 1])
+        _check(swmm_spatial_set_link_vertices(
+            h, i, <const double*>xs.data, <const double*>ys.data, n))
 
     # ------------------------------------------------------------------
-    # Subcatchment coordinates
+    # Subcatchment coords + polygons
     # ------------------------------------------------------------------
 
-    def set_subcatch_coord(self, int idx, double x, double y):
-        """Set the centroid coordinate of a subcatchment.
-
-        :param idx: Subcatchment index.
-        :param x: X coordinate.
-        :param y: Y coordinate.
-        """
+    def subcatchment_coord(self, sub) -> Tuple[float, float]:
+        cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_spatial_set_subcatch_coord(h, idx, x, y))
-
-    def get_subcatch_coord(self, int idx) -> tuple:
-        """Return the centroid coordinate of a subcatchment.
-
-        :param idx: Subcatchment index.
-        :returns: Tuple of (x, y).
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double x = 0.0
-        cdef double y = 0.0
-        _check(swmm_spatial_get_subcatch_coord(h, idx, &x, &y))
+        cdef double x = 0.0, y = 0.0
+        _check(swmm_spatial_get_subcatch_coord(h, i, &x, &y))
         return (x, y)
 
-    # ------------------------------------------------------------------
-    # Subcatchment polygon
-    # ------------------------------------------------------------------
-
-    def set_subcatch_polygon(self, int idx, np.ndarray[double, ndim=1] x,
-                             np.ndarray[double, ndim=1] y):
-        """Set the polygon vertices of a subcatchment.
-
-        :param idx: Subcatchment index.
-        :param x: X coordinates of polygon vertices.
-        :param y: Y coordinates of polygon vertices.
-        """
+    def set_subcatchment_coord(self, sub, double x, double y) -> None:
+        cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int n = len(x)
-        _check(swmm_spatial_set_subcatch_polygon(
-            h, idx, <const double*>x.data, <const double*>y.data, n))
+        _check(swmm_spatial_set_subcatch_coord(h, i, x, y))
 
-    def get_subcatch_polygon_count(self, int idx) -> int:
-        """Return the number of polygon vertices for a subcatchment.
-
-        :param idx: Subcatchment index.
-        :returns: Vertex count.
-        """
+    def subcatchment_polygon(self, sub):
+        cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int count = 0
-        _check(swmm_spatial_get_subcatch_polygon_count(h, idx, &count))
-        return count
-
-    def get_subcatch_polygon(self, int idx) -> tuple:
-        """Return the polygon vertices of a subcatchment as NumPy arrays.
-
-        :param idx: Subcatchment index.
-        :returns: Tuple of (x_array, y_array), each with dtype ``float64``.
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef int count = 0
-        _check(swmm_spatial_get_subcatch_polygon_count(h, idx, &count))
-        cdef np.ndarray[double, ndim=1] x_buf = np.empty(count, dtype=np.float64)
-        cdef np.ndarray[double, ndim=1] y_buf = np.empty(count, dtype=np.float64)
+        cdef int n = 0
+        _check(swmm_spatial_get_subcatch_polygon_count(h, i, &n))
+        cdef np.ndarray[double, ndim=1] xs = np.empty(n, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] ys = np.empty(n, dtype=np.float64)
         _check(swmm_spatial_get_subcatch_polygon(
-            h, idx, <double*>x_buf.data, <double*>y_buf.data, count))
-        return (x_buf, y_buf)
+            h, i, <double*>xs.data, <double*>ys.data, n))
+        return np.column_stack((xs, ys))
+
+    def set_subcatchment_polygon(self, sub, polygon) -> None:
+        cdef int i = _resolve_subcatch(self._solver, sub)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef np.ndarray[double, ndim=2] arr = np.ascontiguousarray(
+            polygon, dtype=np.float64)
+        if arr.ndim != 2 or arr.shape[1] != 2:
+            raise ValueError(
+                f"polygon must be shape (n, 2); got "
+                f"({arr.shape[0]}, {arr.shape[1]})")
+        cdef int n = arr.shape[0]
+        cdef np.ndarray[double, ndim=1] xs = np.ascontiguousarray(arr[:, 0])
+        cdef np.ndarray[double, ndim=1] ys = np.ascontiguousarray(arr[:, 1])
+        _check(swmm_spatial_set_subcatch_polygon(
+            h, i, <const double*>xs.data, <const double*>ys.data, n))
 
     # ------------------------------------------------------------------
-    # Gage coordinates
+    # Gage coords
     # ------------------------------------------------------------------
 
-    def set_gage_coord(self, int idx, double x, double y):
-        """Set the coordinate of a rain gage.
-
-        :param idx: Gage index.
-        :param x: X coordinate.
-        :param y: Y coordinate.
-        """
+    def gage_coord(self, gage) -> Tuple[float, float]:
+        cdef int i = _resolve_gage(self._solver, gage)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_spatial_set_gage_coord(h, idx, x, y))
-
-    def get_gage_coord(self, int idx) -> tuple:
-        """Return the coordinate of a rain gage.
-
-        :param idx: Gage index.
-        :returns: Tuple of (x, y).
-        """
-        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef double x = 0.0
-        cdef double y = 0.0
-        _check(swmm_spatial_get_gage_coord(h, idx, &x, &y))
+        cdef double x = 0.0, y = 0.0
+        _check(swmm_spatial_get_gage_coord(h, i, &x, &y))
         return (x, y)
+
+    def set_gage_coord(self, gage, double x, double y) -> None:
+        cdef int i = _resolve_gage(self._solver, gage)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_spatial_set_gage_coord(h, i, x, y))
+
+    def __repr__(self) -> str:
+        try:
+            return f"<Spatial crs={self.crs!r}>"
+        except Exception:
+            return "<Spatial (no CRS / closed)>"

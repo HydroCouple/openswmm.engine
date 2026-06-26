@@ -2,14 +2,17 @@ name: Unit Testing
 
 on:
   push:
-    branches: [master, main, develop]
+    branches: [main, develop]
   pull_request:
-    branches: [master, main, develop]
+    branches: [main, develop]
 
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_EXE: ${{ github.workspace }}/vcpkg/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  # Note: the vcpkg `tests` feature is enabled via -DVCPKG_MANIFEST_FEATURES on
+  # the Configure step below; the env-var form isn't honored by the vcpkg
+  # toolchain at CMake configure time.
   OMP_NUM_THREADS: 1
 
 jobs:
@@ -94,13 +97,43 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
+      - name: Cache vcpkg downloads (source tarballs)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/downloads
+          key: vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
+            vcpkg-downloads-${{ runner.os }}-
+
+      # The Windows presets use the Ninja Multi-Config generator (version-
+      # agnostic, unlike a pinned "Visual Studio 17 2022" that breaks when the
+      # runner's VS major changes). Ninja needs cl.exe/link.exe on PATH, which
+      # the VS generator used to supply implicitly — set up the MSVC dev
+      # environment so subsequent steps can find the compiler.
+      - name: Set up MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # gpu;hypre are vcpkg default-features and the plugin/hypre CMake options
+      # default ON, but request them EXPLICITLY so the Kokkos `tests/gpu` parity
+      # tests and the BoomerAMG path are always built+exercised here even if an
+      # upstream default flips (find_package(Kokkos/HYPRE REQUIRED) → configure
+      # fails loudly rather than silently dropping Kokkos/AMG).
       - name: Configure
         run: >
           cmake
           --preset=${{ matrix.cmake_preset }}-debug
           -B build-${{ matrix.vcpkg_triplet }}
+          -DVCPKG_MANIFEST_FEATURES="tests;geopackage;gpu;hypre"
           -DOPENSWMM_BUILD_TESTS=OFF
           -DOPENSWMM_BUILD_UNIT_TESTS=ON
+          -DOPENSWMM_BUILD_GPU_PLUGIN=ON
+          -DOPENSWMM_GPU_BACKEND=omp
+          -DOPENSWMM_WITH_HYPRE=ON
+          -DOPENSWMM_WITH_GEOPACKAGE=ON
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
       - name: Build
@@ -108,6 +141,87 @@ jobs:
 
       - name: Unit tests
         run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit --output-on-failure
+
+      - name: Diagnose Linux unit-test segfaults (gdb)
+        if: failure() && runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y gdb
+          BUILD="${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}"
+          # CTest records the tests that failed in this run here, one per line
+          # as "<index>:<testName>". Derive the binaries to backtrace from that
+          # instead of a hard-coded list, so this always targets whatever
+          # actually failed.
+          FAILED_LOG=$(find "$BUILD/Testing/Temporary" -name 'LastTestsFailed*.log' 2>/dev/null | head -1)
+          if [ -z "$FAILED_LOG" ]; then
+            echo "No LastTestsFailed log found under $BUILD/Testing/Temporary"; exit 0
+          fi
+          echo "Failed tests this run:"; cat "$FAILED_LOG"
+          cut -d: -f2 "$FAILED_LOG" | while read -r t; do
+            [ -z "$t" ] && continue
+            bin=$(find "$BUILD" -name "$t" -type f -executable | head -1)
+            if [ -z "$bin" ]; then echo "Binary for test '$t' not found"; continue; fi
+            echo "==================================================="
+            echo "==== gdb backtrace: $t  ($bin)"
+            echo "==================================================="
+            gdb -batch \
+              -ex 'set pagination off' \
+              -ex 'set confirm off' \
+              -ex 'handle SIGSEGV stop print nopass' \
+              -ex run \
+              -ex 'thread apply all bt full' \
+              -ex quit \
+              "$bin" 2>&1 | head -400 || true
+          done
+
+      - name: Diagnose macOS unit-test segfaults (lldb)
+        if: failure() && runner.os == 'macOS'
+        run: |
+          BUILD="${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}"
+          # Same approach as the Linux gdb step, using lldb (ships with Xcode).
+          FAILED_LOG=$(find "$BUILD/Testing/Temporary" -name 'LastTestsFailed*.log' 2>/dev/null | head -1)
+          if [ -z "$FAILED_LOG" ]; then
+            echo "No LastTestsFailed log found under $BUILD/Testing/Temporary"; exit 0
+          fi
+          echo "Failed tests this run:"; cat "$FAILED_LOG"
+          cut -d: -f2 "$FAILED_LOG" | while read -r t; do
+            [ -z "$t" ] && continue
+            bin=$(find "$BUILD" -name "$t" -type f -perm -u+x | head -1)
+            if [ -z "$bin" ]; then echo "Binary for test '$t' not found"; continue; fi
+            echo "==================================================="
+            echo "==== lldb backtrace: $t  ($bin)"
+            echo "==================================================="
+            lldb --batch \
+              -o 'run' \
+              -o 'thread backtrace all' \
+              -o 'quit' \
+              "$bin" 2>&1 | head -400 || true
+          done
+
+      - name: Dump failed vcpkg build logs (Windows)
+        if: failure() && runner.os == 'Windows'
+        shell: bash
+        run: |
+          # The Windows failure is during `cmake configure`, when vcpkg builds a
+          # dependency (e.g. Kokkos). vcpkg prints "See logs for more
+          # information: <path>" but CI never echoes those files, so the real
+          # compiler error is invisible. Dump every per-package out/err log so
+          # the actual error shows up in the job output.
+          BT="${{ github.workspace }}/vcpkg/buildtrees"
+          if [ ! -d "$BT" ]; then echo "No vcpkg buildtrees at $BT"; exit 0; fi
+          # Dump the per-package build logs for the deps most likely to fail
+          # here (Kokkos is the current culprit; sundials/hdf5 pull it in).
+          # Falls back to every *.log if none of those dirs exist.
+          dirs=""
+          for d in kokkos sundials hdf5; do
+            [ -d "$BT/$d" ] && dirs="$dirs $BT/$d"
+          done
+          [ -z "$dirs" ] && dirs="$BT"
+          find $dirs -type f -name '*.log' 2>/dev/null | while read -r f; do
+            echo "==================================================="
+            echo "==== vcpkg log: $f"
+            echo "==================================================="
+            tail -200 "$f" || true
+          done
 
       - name: Package
         run: cmake --build build-${{ matrix.vcpkg_triplet }} --target package
@@ -121,101 +235,79 @@ jobs:
             build-${{ matrix.vcpkg_triplet }}/*.tar.gz
             build-${{ matrix.vcpkg_triplet }}/*.zip
 
-  # ──────────────────────────────────────────────────────────────────────
-  #  Python bindings — build, test, and wheel packaging
-  # ──────────────────────────────────────────────────────────────────────
-  # python:
-  #   name: "Python (${{ matrix.alias }})"
-  #   needs: engine
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       include:
-  #         - os: ubuntu-latest
-  #           alias: Linux-x64
-  #           vcpkg_triplet: x64-linux
-  #           cmake_osx_arch: ""
+      # ── Release build for Python wheel consumption ────────────────────────
+      # vcpkg packages are already in the binary cache from the Debug build
+      # above, so this configure is fast (no SUNDIALS recompilation).
+      - name: Configure (Release, for Python wheel)
+        run: >
+          cmake
+          --preset=${{ matrix.cmake_preset }}
+          -B build-${{ matrix.vcpkg_triplet }}-release
+          -DVCPKG_MANIFEST_FEATURES="geopackage;gpu;hypre"
+          -DOPENSWMM_BUILD_TESTS=OFF
+          -DOPENSWMM_BUILD_UNIT_TESTS=OFF
+          -DOPENSWMM_BUILD_REGRESSION_TESTS=OFF
+          -DOPENSWMM_BUILD_BENCHMARKS=OFF
+          -DOPENSWMM_BUILD_GPU_PLUGIN=ON
+          -DOPENSWMM_GPU_BACKEND=omp
+          -DOPENSWMM_WITH_HYPRE=ON
+          -DOPENSWMM_WITH_GEOPACKAGE=ON
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
-  #         - os: macos-latest
-  #           alias: macOS-arm64
-  #           vcpkg_triplet: arm64-osx
-  #           cmake_osx_arch: arm64
+      - name: Build (Release, for Python wheel)
+        run: cmake --build build-${{ matrix.vcpkg_triplet }}-release --config Release
 
-  #         - os: macos-15-intel
-  #           alias: macOS-x64
-  #           vcpkg_triplet: x64-osx
-  #           cmake_osx_arch: x86_64
+      - name: Install (Release, for Python wheel)
+        run: >
+          cmake --install build-${{ matrix.vcpkg_triplet }}-release
+          --config Release
+          --prefix "${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}"
 
-  #         - os: windows-latest
-  #           alias: Windows-x64
-  #           vcpkg_triplet: x64-windows
-  #           cmake_osx_arch: ""
+      - name: Verify bundled runtime libs (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          INST="${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}"
+          cd "$INST/bin"
+          echo "--- bin/ contents ---"
+          ls -la
+          echo
+          for exe in openswmm openswmm-legacy; do
+            [ -x "$exe" ] || continue
+            echo "--- $exe linkage ---"
+            if [[ "${{ runner.os }}" == "macOS" ]]; then
+              otool -L "$exe"
+            else
+              ldd "$exe"
+            fi
+          done
+          # Gate: the Kokkos-OpenMP plugin must be installed (lib/ on Unix).
+          PLUGIN=$(find "$INST/lib" \( -name 'libopenswmm_gpu_omp.dylib' -o -name 'libopenswmm_gpu_omp.so' \) | head -1 || true)
+          if [ -z "$PLUGIN" ]; then
+            echo "::error::Kokkos GPU plugin (libopenswmm_gpu_omp) missing from $INST/lib — Kokkos default regressed"
+            exit 1
+          fi
+          echo "Kokkos plugin installed: $PLUGIN"
 
-  #   runs-on: ${{ matrix.os }}
-  #   steps:
-  #     - name: Checkout repository
-  #       uses: actions/checkout@v5
+      - name: Verify bundled runtime libs (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $inst = "${{ github.workspace }}/engine-install-${{ matrix.vcpkg_triplet }}"
+          Set-Location "$inst/bin"
+          Write-Host "--- bin/ contents ---"
+          Get-ChildItem | Format-Table Mode,Length,Name
+          # Gate: the Kokkos-OpenMP plugin must be installed (bin/ on Windows).
+          $plugin = Get-ChildItem -Recurse -Path $inst -Filter "openswmm_gpu_omp.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $plugin) {
+            Write-Host "::error::Kokkos GPU plugin (openswmm_gpu_omp.dll) missing from $inst — Kokkos default regressed"
+            exit 1
+          }
+          Write-Host "Kokkos plugin installed: $($plugin.FullName)"
 
-  #     - name: Install OpenMP and Ninja (macOS)
-  #       if: runner.os == 'macOS'
-  #       run: brew install libomp ninja
-
-  #     - name: Install Ninja (Linux)
-  #       if: runner.os == 'Linux'
-  #       run: sudo apt-get update && sudo apt-get install -y ninja-build
-
-  #     - name: Set up Python
-  #       uses: actions/setup-python@v5
-  #       with:
-  #         python-version: "3.13"
-
-  #     - name: Install Python requirements
-  #       working-directory: python
-  #       run: |
-  #         python -m pip install --upgrade pip
-  #         python -m pip install -r requirements.txt
-
-  #     - name: Build and install (Windows)
-  #       if: runner.os == 'Windows'
-  #       working-directory: python
-  #       env:
-  #         CMAKE_GENERATOR: "Visual Studio 17 2022"
-  #       run: python -m pip install .
-
-  #     - name: Build and install (Unix)
-  #       if: runner.os != 'Windows'
-  #       working-directory: python
-  #       env:
-  #         CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-  #       run: python -m pip install .
-
-  #     - name: Run Python tests
-  #       env:
-  #         CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-  #       working-directory: python
-  #       run: |
-  #         # Temporarily hide source tree so installed package is used
-  #         mv openswmm openswmm_src
-  #         python -m pytest -v tests
-  #         mv openswmm_src openswmm
-
-  #     - name: Build wheel (Windows)
-  #       if: runner.os == 'Windows'
-  #       working-directory: python
-  #       env:
-  #         CMAKE_GENERATOR: "Visual Studio 17 2022"
-  #       run: python setup.py bdist_wheel
-
-  #     - name: Build wheel (Unix)
-  #       if: runner.os != 'Windows'
-  #       working-directory: python
-  #       env:
-  #         CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_arch }}
-  #       run: python setup.py bdist_wheel
-
-  #     - name: Upload Python wheel
-  #       if: always()
-  #       uses: actions/upload-artifact@v5
-  #       with:
-  #         name: python-wheel-${{ matrix.vcpkg_triplet }}
-  #         path: python/dist/*.whl
+      - name: Upload engine install artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: engine-install-${{ matrix.vcpkg_triplet }}
+          path: engine-install-${{ matrix.vcpkg_triplet }}/

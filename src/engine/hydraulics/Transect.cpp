@@ -4,7 +4,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -18,80 +18,136 @@ namespace transect {
 
 static constexpr double PHI = 1.486;
 
+// Faithful 1:1 port of legacy transect.c (transect_validate + createTables +
+// getGeometry + getSliceGeom + getFlow). AREA and WIDTH are the same geometric
+// integrals as a simple area/perimeter sweep, but the hydraulic radius is NOT
+// area/perimeter — legacy back-solves an *effective* hyd-radius from the
+// divided-channel composite-roughness conveyance, so that (used with the main
+// channel n) it reproduces the total normal flow. A lumped geometric hrad is
+// too SMALL on overbank / multi-roughness sections (e.g. user5 T171: R=2.46 vs
+// legacy 3.22 at full depth), over-stating friction and collapsing the initial
+// flow on q0 transect conduits (extran8a). See src/legacy/engine/transect.c.
 void buildTables(TransectData& td) {
-    int n_sta = static_cast<int>(td.stations.size());
-    if (n_sta < 2) return;
+    int n_in = static_cast<int>(td.stations.size());
+    if (n_in < 2 || static_cast<int>(td.elevations.size()) != n_in) return;
 
-    // Find thalweg (minimum elevation)
-    double y_min = *std::min_element(td.elevations.begin(), td.elevations.end());
-    double y_max = *std::max_element(td.elevations.begin(), td.elevations.end());
-    td.y_full = y_max - y_min;
+    double nChannel = td.n_channel;
+    if (nChannel <= 0.0) return;
+    double nLeft  = (td.n_left  > 0.0) ? td.n_left  : nChannel;
+    double nRight = (td.n_right > 0.0) ? td.n_right : nChannel;
+
+    double lFactor = (td.length_factor > 0.0) ? td.length_factor : 1.0;
+    nChannel *= std::sqrt(lFactor);
+
+    const double xLeftBank  = td.x_left_bank;
+    const double xRightBank = td.x_right_bank;
+
+    double ymin = td.elevations[0], ymax = td.elevations[0];
+    for (int i = 1; i < n_in; ++i) {
+        ymin = std::min(ymin, td.elevations[i]);
+        ymax = std::max(ymax, td.elevations[i]);
+    }
+    td.y_full = ymax - ymin;
     if (td.y_full <= 0.0) return;
 
-    double dy = td.y_full / static_cast<double>(N_TRANSECT_TBL - 1);
+    // add vertical end-walls reaching full height (legacy transect_validate)
+    int N = n_in;
+    std::vector<double> X(static_cast<size_t>(N) + 2);
+    std::vector<double> Y(static_cast<size_t>(N) + 2);
+    X[0] = td.stations[0];              Y[0] = ymax;
+    for (int i = 0; i < N; ++i) {
+        X[static_cast<size_t>(i + 1)] = td.stations[static_cast<size_t>(i)];
+        Y[static_cast<size_t>(i + 1)] = td.elevations[static_cast<size_t>(i)];
+    }
+    X[static_cast<size_t>(N + 1)] = td.stations[static_cast<size_t>(N - 1)];
+    Y[static_cast<size_t>(N + 1)] = ymax;
+    const int Nsta = N + 1;
 
-    // Build tables at each depth increment
-    for (int d = 0; d < N_TRANSECT_TBL; ++d) {
-        double depth = static_cast<double>(d) * dy;
-        double wse = y_min + depth;  // water surface elevation
-
-        double area = 0.0;
-        double perimeter = 0.0;
-        double width = 0.0;
-
-        // Integrate area and perimeter across station pairs
-        for (int k = 1; k < n_sta; ++k) {
-            auto uk = static_cast<size_t>(k);
-            auto ukm = static_cast<size_t>(k - 1);
-
-            double x0 = td.stations[ukm];
-            double x1 = td.stations[uk];
-            double y0 = td.elevations[ukm];
-            double y1 = td.elevations[uk];
-            double w = std::fabs(x1 - x0);
-
-            if (y0 >= wse && y1 >= wse) continue;  // both above water
-
-            double ylo = std::min(y0, y1);
-            double yhi = std::max(y0, y1);
-
-            if (wse >= yhi) {
-                // Fully submerged
-                area += w * ((wse - yhi) + (wse - ylo)) / 2.0;
-                double dy_seg = yhi - ylo;
-                perimeter += std::sqrt(w * w + dy_seg * dy_seg);
-                width += w;
-            } else if (wse > ylo) {
-                // Partially submerged
-                double ratio = (wse - ylo) / (yhi - ylo);
-                double w_wet = w * ratio;
-                double dy_wet = (yhi - ylo) * ratio;
-                area += w_wet * (wse - ylo) / 2.0;
-                perimeter += std::sqrt(w_wet * w_wet + dy_wet * dy_wet);
-                width += w_wet;
+    auto getFlow = [&](int k, double a, double wp, bool findFlow) -> double {
+        if (!findFlow) {
+            if (k == Nsta - 1) {
+                findFlow = true;
+            } else if (X[static_cast<size_t>(k)] == xLeftBank) {
+                if (nLeft != nChannel &&
+                    X[static_cast<size_t>(k)] != X[static_cast<size_t>(k - 1)])
+                    findFlow = true;
+            } else if (X[static_cast<size_t>(k)] == xRightBank) {
+                if (nRight != nChannel &&
+                    X[static_cast<size_t>(k)] != X[static_cast<size_t>(k + 1)])
+                    findFlow = true;
             }
         }
+        if (findFlow) {
+            double n = nChannel;
+            if (X[static_cast<size_t>(k - 1)] < xLeftBank)  n = nLeft;
+            if (X[static_cast<size_t>(k)]     > xRightBank) n = nRight;
+            return PHI / n * a * std::pow(a / wp, 2.0 / 3.0);
+        }
+        return 0.0;
+    };
 
-        td.area_tbl[d]  = area;
-        td.hrad_tbl[d]  = (perimeter > 0.0) ? area / perimeter : 0.0;
-        td.width_tbl[d] = width;
+    const double dy = td.y_full / static_cast<double>(N_TRANSECT_TBL - 1);
+
+    td.area_tbl[0] = 0.0;
+    td.hrad_tbl[0] = 0.0;
+    td.width_tbl[0] = 0.0;
+
+    for (int idx = 1; idx < N_TRANSECT_TBL; ++idx) {
+        const double y = ymin + static_cast<double>(idx) * dy;
+        double wpSum = 0.0, aSum = 0.0, qSum = 0.0;
+        double areaT = 0.0, widthT = 0.0;
+
+        for (int k = 1; k <= Nsta; ++k) {
+            const double ek  = Y[static_cast<size_t>(k)];
+            const double ekm = Y[static_cast<size_t>(k - 1)];
+            const double yhi = std::max(ekm, ek);
+            const double ylo = std::min(ekm, ek);
+            if (ylo >= y) continue;
+
+            const double width = std::fabs(X[static_cast<size_t>(k)] -
+                                           X[static_cast<size_t>(k - 1)]);
+            double w  = width;
+            double wp = std::sqrt(width * width + (yhi - ylo) * (yhi - ylo));
+            double a  = 0.0;
+            if (y > yhi) {
+                a = width * ((y - yhi) + (y - ylo)) / 2.0;
+            } else if (yhi > ylo) {
+                const double ratio = (y - ylo) / (yhi - ylo);
+                a   = width * (yhi - ylo) / 2.0 * ratio * ratio;
+                w  *= ratio;
+                wp *= ratio;
+            }
+
+            wpSum  += wp;
+            aSum   += a;
+            areaT  += a;
+            widthT += w;
+
+            const bool findFlow = (ek >= y);
+            const double q = getFlow(k, aSum, wpSum, findFlow);
+            if (q > 0.0) { qSum += q; aSum = 0.0; wpSum = 0.0; }
+        }
+
+        td.area_tbl[idx]  = areaT;
+        td.width_tbl[idx] = widthT;
+        if (areaT == 0.0)
+            td.hrad_tbl[idx] = td.hrad_tbl[idx - 1];
+        else
+            td.hrad_tbl[idx] = std::pow(qSum * nChannel / PHI / areaT, 1.5);
     }
 
-    // Full-depth properties
-    td.a_full = td.area_tbl[N_TRANSECT_TBL - 1];
-    td.r_full = td.hrad_tbl[N_TRANSECT_TBL - 1];
-    td.w_max  = *std::max_element(td.width_tbl, td.width_tbl + N_TRANSECT_TBL);
+    const int nLast = N_TRANSECT_TBL - 1;
+    td.a_full = td.area_tbl[nLast];
+    td.r_full = td.hrad_tbl[nLast];
+    td.w_max  = td.width_tbl[nLast];
 
-    // Normalize tables
-    if (td.a_full > 0.0) {
-        for (int d = 0; d < N_TRANSECT_TBL; ++d) td.area_tbl[d] /= td.a_full;
+    for (int i = 1; i <= nLast; ++i) {
+        if (td.a_full > 0.0) td.area_tbl[i]  /= td.a_full;
+        if (td.r_full > 0.0) td.hrad_tbl[i]  /= td.r_full;
+        if (td.w_max  > 0.0) td.width_tbl[i] /= td.w_max;
     }
-    if (td.r_full > 0.0) {
-        for (int d = 0; d < N_TRANSECT_TBL; ++d) td.hrad_tbl[d] /= td.r_full;
-    }
-    if (td.w_max > 0.0) {
-        for (int d = 0; d < N_TRANSECT_TBL; ++d) td.width_tbl[d] /= td.w_max;
-    }
+    // width at zero depth = width at first increment (legacy createTables:309)
+    td.width_tbl[0] = td.width_tbl[1];
 }
 
 void buildCustomTables(TransectData& td, double y_full,

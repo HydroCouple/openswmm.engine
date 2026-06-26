@@ -61,6 +61,7 @@
 *     - Added a project structure to hold project-wide settings to for thread safety and rentrancy.
 *     - Use vectors instead of linked lists for computational efficiency.
 *     - Use structures of arrays for selected data structures to improve cache performance.
+*.    - Added support for reporting rain gage scaling factor. 
 */
 
 #ifndef OBJECTS_H
@@ -151,6 +152,7 @@ typedef struct
    int           coGage;          // index of gage with same rain timeseries
    int           isUsed;          // TRUE if gage used by any subcatchment
    int           isCurrent;       // TRUE if gage's rainfall is current 
+   double        scaleFactor;     // rainfall scaling factor added in Build 5.3.0
 }  TGage;
 
 //-------------------
@@ -170,6 +172,7 @@ typedef struct
    double        ea;              // saturation vapor pressure (in Hg)
    double        gamma;           // psychrometric constant
    double        tanAnglat;       // tangent of latitude angle
+   double        apiTemp;         // api prescribed air temperature (deg F); MISSING when not set
 }  TTemp;
 
 //-----------------
@@ -181,6 +184,7 @@ typedef struct
    double       aws[12];          // monthly avg. wind speed (mph)
    //-----------------------------
    double        ws;              // wind speed (mph)
+   double        apiWs;           // api prescribed wind speed (mph); MISSING when not set
 }  TWind;
 
 //------------
@@ -210,7 +214,8 @@ typedef struct
     int          dryOnly;         // true if evaporation only in dry periods
     //----------------------------
     double       rate;            // current evaporation rate (ft/sec)
-    double       recoveryFactor;  // current soil recovery factor 
+    double       recoveryFactor;  // current soil recovery factor
+    double       apiRate;         // api prescribed evaporation rate (ft/sec); MISSING when not set
 }   TEvap;
 
 //-------------------
@@ -409,6 +414,7 @@ typedef struct
    double        rainfall;        // current rainfall (ft/sec)
    double        apiRainfall;     // api provided rainfall (ft/sec)
    double        apiSnowfall;     // api provided snowfall (ft/sec)
+   double        apiEvapRate;     // api prescribed PET rate (ft/sec); MISSING when not set
    double        evapLoss;        // current evap losses (ft/sec)
    double        infilLoss;       // current infil losses (ft/sec) 
    double        runon;           // runon from other subcatchments (cfs)

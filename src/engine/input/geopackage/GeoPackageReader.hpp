@@ -4,7 +4,7 @@
  * @ingroup engine_geopackage
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -24,12 +24,25 @@ namespace openswmm::gpkg {
 /**
  * @brief Read a model definition from a GeoPackage into a SimulationContext.
  *
+ * @details When `scratch_dir` is non-empty (Slice IO-8), the reader also
+ *          walks the Part D content tables (raingage_data, climate_data,
+ *          routing_interface_*, hotstart_*) and materialises one scratch
+ *          file per role under `scratch_dir`. Each ctx external-file
+ *          slot's `FilePathPair.absolute` is then bound to the matching
+ *          scratch path so legacy `fopen` sites keep working. See
+ *          `ExternalContentReader.hpp` for details.
+ *
  * @param db             Open SQLite database handle.
  * @param ctx            Simulation context to populate.
  * @param simulation_id  Which model instance to load.
+ * @param scratch_dir    Directory for materialised scratch files
+ *                       (sibling of the source `.gpkg`). Pass empty to
+ *                       skip Part D hydration.
  * @returns 0 on success, non-zero on error.
  */
-int read_model(sqlite3* db, SimulationContext& ctx, const std::string& simulation_id);
+int read_model(sqlite3* db, SimulationContext& ctx,
+               const std::string& simulation_id,
+               const std::string& scratch_dir = "");
 
 /**
  * @brief Convenience: open a GeoPackage file and read a model.

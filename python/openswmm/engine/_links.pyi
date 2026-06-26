@@ -1,155 +1,170 @@
 """
-Link Access
-===========
+Link access (Pythonic v1 surface)
+=================================
 
 :author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
+:copyright: Copyright (c) 2026 Caleb Buahin
 :license: MIT
 
 Type stubs for :mod:`openswmm.engine._links`.
-
-The :class:`Links` class provides access to link (conduit/pump/orifice/weir/outlet)
-properties during a simulation.
 """
 
-from typing import Union
+from collections.abc import Iterator
+from typing import Any, Tuple, Union
 
 import numpy as np
-import numpy.typing as npt
+from numpy.typing import NDArray
 
+from ._enums import LinkType, OrificeType, OutletRatingType, WeirType, XSectShape
+from ._nodes import Node
 from ._solver import Solver
 
 
+_Key = Union[int, str]
+
+
+class LinkStatsView:
+    max_flow: float
+    max_velocity: float
+    max_filling: float
+    vol_flow: float
+    surcharge_time: float
+    pump_cycles: int
+    pump_on_time: float
+    pump_volume: float
+
+
+class XSection:
+    shape: XSectShape
+    g1: float
+    g2: float
+    g3: float
+    g4: float
+    def as_tuple(self) -> Tuple[XSectShape, float, float, float, float]: ...
+    def __iter__(self) -> Iterator[Any]: ...
+
+
+class PumpView:
+    curve: int
+    init_state: bool
+    startup_depth: float
+    shutoff_depth: float
+
+
+class WeirView:
+    type: WeirType
+    crest_height: float
+    discharge_coeff: float
+    end_contractions: float
+
+
+class OrificeView:
+    type: OrificeType
+    open_close_rate: float
+
+
+class OutletView:
+    rating_type: OutletRatingType
+    expon: float
+
+
+class Link:
+    """Single-link wrapper. See :class:`Links` for the collection."""
+
+    # Identity
+    id: str
+    tag: str
+    index: int
+    type: LinkType
+    solver: Solver
+
+    # Topology
+    from_node: Node
+    to_node: Node
+
+    # Geometry
+    length: float
+    roughness: float
+    slope: float
+    offset_up: float
+    offset_dn: float
+    initial_flow: float
+    max_flow: float
+
+    # Cross-section — setter accepts XSection or (shape, g1, g2, g3, g4) tuple.
+    @property
+    def xsect(self) -> XSection: ...
+    @xsect.setter
+    def xsect(self, value: Union[XSection, Tuple[XSectShape, float, float, float, float]]) -> None: ...
+
+    # Hydraulic state
+    flow: float
+    depth: float
+    velocity: float
+    capacity: float
+    volume: float
+    hyd_power: float
+
+    # Control
+    control_setting: float
+    target_setting: float
+    closed: bool
+
+    # Common conduit knobs
+    loss_coeff: Tuple[float, float, float]
+    flap_gate: bool
+    seep_rate: float
+    culvert_code: int
+    barrels: int
+
+    # Sub-views
+    stats: LinkStatsView
+    pump: PumpView
+    weir: WeirView
+    orifice: OrificeView
+    outlet: OutletView
+
+    def __init__(self, solver: Solver, index: int) -> None: ...
+    def set_nodes(self, from_node: Union[Node, _Key], to_node: Union[Node, _Key]) -> None: ...
+    def quality(self, pollutant: _Key) -> float: ...
+
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+
 class Links:
-    """Access link properties during a simulation.
-
-    All per-element methods accept either an integer index or a string link
-    ID.  When a string is passed it is resolved via :meth:`get_index`.
-
-    Args:
-        solver: An active :class:`Solver` instance. The solver must remain
-                alive for the lifetime of this object.
-
-    Example::
-
-        from openswmm.engine import Solver, Links
-
-        with Solver("model.inp", "model.rpt", "model.out") as s:
-            links = Links(s)
-            flow = links.get_flow(0)      # by index
-            flow = links.get_flow("C1")   # by name
-    """
+    """Indexable, iterable collection of :class:`Link` wrappers."""
 
     def __init__(self, solver: Solver) -> None: ...
 
-    def _resolve(self, idx: Union[int, str]) -> int:
-        """Resolve *idx* to an integer index.
+    # Container protocol
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[Link]: ...
+    def __getitem__(self, key: _Key) -> Link: ...
+    def __contains__(self, key: object) -> bool: ...
 
-        Args:
-            idx: Integer index or string link ID.
+    # Identity lookups
+    def get_index(self, link_id: str) -> int: ...
+    def get_id(self, idx: int) -> str: ...
 
-        Returns:
-            Integer index.
+    # Editing (bumps generation)
+    def add(self, link_id: str, link_type: LinkType) -> Link: ...
+    def pop_last(self, link_id: str) -> None: ...
+    def rename(self, key: _Key, new_id: str) -> None: ...
 
-        Raises:
-            KeyError: If a string ID is not found.
-        """
-        ...
+    # Bulk numpy properties
+    flows: NDArray[Any]
+    depths: NDArray[Any]
+    velocities: NDArray[Any]
+    capacities: NDArray[Any]
+    volumes: NDArray[Any]
+    control_settings: NDArray[Any]
+    target_settings: NDArray[Any]
+    hyd_powers: NDArray[Any]
+    ids: NDArray[Any]
 
-    def count(self) -> int:
-        """Return the number of links in the model.
+    def qualities(self, pollutant: _Key) -> NDArray[Any]: ...
+    def pump_stats(self) -> Tuple[NDArray[Any], NDArray[Any], NDArray[Any]]: ...
 
-        Returns:
-            Link count.
-        """
-        ...
-
-    def get_index(self, link_id: str) -> int:
-        """Return the integer index of a link by its string ID.
-
-        Args:
-            link_id: Link identifier string.
-
-        Returns:
-            Link index, or -1 if not found.
-        """
-        ...
-
-    def get_id(self, idx: int) -> str:
-        """Return the string ID of a link by index.
-
-        Args:
-            idx: Link index.
-
-        Returns:
-            Link ID string.
-        """
-        ...
-
-    def get_flow(self, idx: Union[int, str]) -> float:
-        """Return the current flow rate in a link.
-
-        Args:
-            idx: Link index (int) or link ID (str).
-
-        Returns:
-            Flow rate (project flow units). Positive = node1 -> node2.
-        """
-        ...
-
-    def set_flow(self, idx: Union[int, str], value: float) -> None:
-        """Set the flow rate in a link.
-
-        Args:
-            idx: Link index (int) or link ID (str).
-            value: New flow rate (project flow units).
-        """
-        ...
-
-    def get_depth(self, idx: Union[int, str]) -> float:
-        """Return the current water depth at the midpoint of a link.
-
-        Args:
-            idx: Link index (int) or link ID (str).
-
-        Returns:
-            Water depth (project length units).
-        """
-        ...
-
-    def set_control_setting(self, idx: Union[int, str], setting: float) -> None:
-        """Override the control/pump setting on a link (RUNNING state).
-
-        Args:
-            idx: Link index (int) or link ID (str).
-            setting: New setting (0.0=closed to 1.0=fully open for
-                     orifices/weirs; 0.0=off to 1.0=full speed for pumps).
-        """
-        ...
-
-    def get_control_setting(self, idx: Union[int, str]) -> float:
-        """Return the current control setting of a link.
-
-        Args:
-            idx: Link index (int) or link ID (str).
-
-        Returns:
-            Setting value (0.0--1.0).
-        """
-        ...
-
-    def get_flows_bulk(self) -> npt.NDArray[np.float64]:
-        """Return all link flows as a NumPy array.
-
-        Returns:
-            Array of shape ``(n_links,)`` with dtype ``float64``.
-        """
-        ...
-
-    def set_flows_bulk(self, values: npt.NDArray[np.float64]) -> None:
-        """Set all link flows from a NumPy array.
-
-        Args:
-            values: Array of shape ``(n_links,)`` with dtype ``float64``.
-        """
-        ...
+    def __repr__(self) -> str: ...

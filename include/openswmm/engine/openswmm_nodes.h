@@ -9,7 +9,7 @@
  * @see openswmm_engine.h
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -64,21 +64,52 @@ SWMM_ENGINE_API int swmm_node_index(SWMM_Engine engine, const char* id);
 SWMM_ENGINE_API const char* swmm_node_id(SWMM_Engine engine, int idx);
 
 /* =========================================================================
- * Creation (BUILDING state only)
+ * Creation (BUILDING or OPENED — "editable" states)
  * ========================================================================= */
 
 /**
  * @brief Add a new node to the model.
  *
- * @details The engine must be in SWMM_STATE_BUILDING. The node is appended
- *          to the model's node list and its index equals the previous count.
+ * @details The engine must be in SWMM_STATE_BUILDING (programmatic
+ *          construction) or SWMM_STATE_OPENED (interactive editing after
+ *          the .inp has been parsed). Returns SWMM_ERR_LIFECYCLE for any
+ *          other state — once the simulation has been initialized, started,
+ *          or run, the node-count invariant is baked into solver state and
+ *          the engine must be closed + re-opened to accept new objects.
+ *
+ *          The node is appended to the model's node list and its index
+ *          equals the previous count.
  *
  * @param engine  Engine handle.
  * @param id      Unique null-terminated identifier for the new node.
  * @param type    Node type (see @ref SWMM_NodeType).
- * @returns SWMM_OK on success, or an error code.
+ * @returns SWMM_OK on success, SWMM_ERR_LIFECYCLE if not in an editable
+ *          state, or another error code.
  */
 SWMM_ENGINE_API int swmm_node_add(SWMM_Engine engine, const char* id, int type);
+
+/**
+ * @brief Remove the most recently added node (undo-of-add).
+ *
+ * @details Pops the tail of the node list. The engine must be in
+ *          SWMM_STATE_BUILDING or SWMM_STATE_OPENED. Returns
+ *          SWMM_ERR_BADINDEX if the tail doesn't match \p id (guards
+ *          against undo / redo order mismatches), SWMM_ERR_BADPARAM if
+ *          any link references the tail node (the caller must cascade
+ *          those removals first via @ref swmm_link_pop_last), or
+ *          SWMM_ERR_LIFECYCLE for any other state.
+ *
+ *          This is an intentionally narrow surface that avoids
+ *          renumbering any cross-references; for a general
+ *          swmm_node_remove(idx) see the engine roadmap — full remove
+ *          requires renumbering every link / subcatch / control / report
+ *          reference and is tracked separately.
+ *
+ * @param engine  Engine handle.
+ * @param id      Expected tail identifier (null-terminated).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_node_pop_last(SWMM_Engine engine, const char* id);
 
 /* =========================================================================
  * Geometry setters (BUILDING or OPENED)
@@ -457,6 +488,36 @@ SWMM_ENGINE_API int swmm_node_set_outfall_timeseries(SWMM_Engine engine, int idx
 SWMM_ENGINE_API int swmm_node_get_outfall_param(SWMM_Engine engine, int idx, double* param);
 
 /**
+ * @brief Get the tidal curve index assigned to a TIDAL outfall.
+ *
+ * @details The outfall parameter slot is union-typed across stage / tidal-idx /
+ *          ts-idx; this accessor returns the slot interpreted as a curve index
+ *          only when the outfall is currently of TIDAL type. Returns
+ *          @ref SWMM_ERR_BADPARAM if the outfall type is not TIDAL, so the
+ *          caller can distinguish "unassigned" from a genuine index of 0.
+ *
+ * @param engine          Engine handle.
+ * @param idx             Zero-based node index.
+ * @param[out] curve_idx  Receives the zero-based curve index.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if outfall type != TIDAL.
+ */
+SWMM_ENGINE_API int swmm_node_get_outfall_tidal(SWMM_Engine engine, int idx, int* curve_idx);
+
+/**
+ * @brief Get the time-series index assigned to a TIMESERIES outfall.
+ *
+ * @details Symmetric to @ref swmm_node_get_outfall_tidal. Returns
+ *          @ref SWMM_ERR_BADPARAM unless the outfall is currently of
+ *          TIMESERIES type.
+ *
+ * @param engine       Engine handle.
+ * @param idx          Zero-based node index.
+ * @param[out] ts_idx  Receives the zero-based time-series index.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if outfall type != TIMESERIES.
+ */
+SWMM_ENGINE_API int swmm_node_get_outfall_timeseries(SWMM_Engine engine, int idx, int* ts_idx);
+
+/**
  * @brief Set whether a flap gate exists at the outfall.
  *
  * @details A flap gate prevents reverse flow through the outfall.
@@ -476,6 +537,43 @@ SWMM_ENGINE_API int swmm_node_set_outfall_flap_gate(SWMM_Engine engine, int idx,
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_node_get_outfall_flap_gate(SWMM_Engine engine, int idx, int* has_gate);
+
+/* =========================================================================
+ * Divider Node API
+ * ========================================================================= */
+
+/**
+ * @brief Flow divider method.
+ *
+ * @details Selects how a divider node splits inflow between its diversion
+ *          link and its main outflow link. The value is stored in the
+ *          per-node divider_type SoA array and only consulted when
+ *          type[i] == @ref SWMM_NODE_DIVIDER.
+ */
+typedef enum SWMM_DividerType {
+    SWMM_DIVIDER_CUTOFF      = 0, /**< Flow above cutoff is diverted. */
+    SWMM_DIVIDER_OVERFLOW    = 1, /**< Diverted flow = max link capacity exceedance. */
+    SWMM_DIVIDER_TABULAR     = 2, /**< Diverted flow looked up on a curve. */
+    SWMM_DIVIDER_WEIR        = 3  /**< Weir equation governs diversion. */
+} SWMM_DividerType;
+
+/**
+ * @brief Set the divider method for a flow-divider node.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based node index (must be SWMM_NODE_DIVIDER).
+ * @param type    Divider type code (see @ref SWMM_DividerType).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_node_set_divider_type(SWMM_Engine engine, int idx, int type);
+
+/**
+ * @brief Get the divider method for a flow-divider node.
+ * @param engine     Engine handle.
+ * @param idx        Zero-based node index.
+ * @param[out] type  Receives the divider type code.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_node_get_divider_type(SWMM_Engine engine, int idx, int* type);
 
 /* =========================================================================
  * Additional Geometry / State Getters
@@ -662,6 +760,108 @@ SWMM_ENGINE_API int swmm_node_set_lat_inflows_bulk(SWMM_Engine engine, const dou
 SWMM_ENGINE_API int swmm_node_get_quality_bulk(SWMM_Engine engine, int pollutant_idx,
                                                     double* buf, int count);
 
+/**
+ * @brief Get current stored volumes for all nodes in a single call.
+ *
+ * @details Single-pass bulk variant of @ref swmm_node_get_volume — avoids
+ *          @c N round-trips through the C ABI for whole-network reads.
+ *          Used by the MCP server's per-node info builders and the
+ *          `mass_balance` resource.
+ *
+ * @param engine     Engine handle.
+ * @param[out] buf   Caller-allocated buffer of at least @p count doubles.
+ * @param count      Number of elements. If smaller than @c swmm_node_count()
+ *                   only the first @c min(count, n_nodes) entries are written.
+ * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
+ *          invalid; @c SWMM_ERR_BADPARAM if @p buf is NULL or @p count <= 0.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_node_get_volumes_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get current outflows for all nodes in a single call.
+ *
+ * @details Single-pass bulk variant of @ref swmm_node_get_outflow.
+ *
+ * @param engine     Engine handle.
+ * @param[out] buf   Caller-allocated buffer of at least @p count doubles.
+ * @param count      Number of elements.
+ * @returns @c SWMM_OK on success, or an error code (see @ref swmm_node_get_volumes_bulk).
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_node_get_outflows_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get accumulated node losses (exfil + evap) for all nodes in one call.
+ *
+ * @details Single-pass bulk variant of @ref swmm_node_get_losses.
+ *
+ * @param engine     Engine handle.
+ * @param[out] buf   Caller-allocated buffer of at least @p count doubles.
+ * @param count      Number of elements.
+ * @returns @c SWMM_OK on success, or an error code.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_node_get_losses_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get current lateral inflows for all nodes in a single call.
+ *
+ * @details Single-pass bulk variant of @ref swmm_node_get_lateral_inflow.
+ *          The matching setter is @ref swmm_node_set_lat_inflows_bulk.
+ *
+ * @param engine     Engine handle.
+ * @param[out] buf   Caller-allocated buffer of at least @p count doubles.
+ * @param count      Number of elements.
+ * @returns @c SWMM_OK on success, or an error code.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_node_get_lateral_inflows_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get node IDs for all nodes in a single call (stride-packed UTF-8).
+ *
+ * @details Each ID is written into a fixed-size slot @c buf[i*stride .. i*stride+stride-1].
+ *          The ID is NUL-terminated within its slot; if the ID is longer than
+ *          @c stride-1 bytes it is truncated and still NUL-terminated. The
+ *          caller can recover each ID via @c strlen(buf + i*stride) (or
+ *          equivalent UTF-8-safe slicing).
+ *
+ *          This is the Phase 3 alternative to looping @ref swmm_node_id @c N
+ *          times through the C ABI. A typical stride for SWMM node IDs is
+ *          32–64 bytes (SWMM IDs are limited to MAX_ID_CHARS = 31 in legacy);
+ *          callers should choose a stride that comfortably accommodates the
+ *          longest ID in their model.
+ *
+ * @param engine   Engine handle.
+ * @param[out] buf Caller-allocated buffer of @c stride*count bytes.
+ * @param stride   Per-ID slot size in bytes (must be > 1 to allow at least
+ *                 one character plus the NUL).
+ * @param count    Number of IDs to read.
+ * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
+ *          invalid; @c SWMM_ERR_BADPARAM if @p buf is NULL, @p stride < 2,
+ *          or @p count <= 0.
+ *
+ * @par Example
+ * @code{.c}
+ *   int n = swmm_node_count(eng);
+ *   int stride = 64;
+ *   char* buf = calloc(n, stride);
+ *   swmm_node_get_ids_bulk(eng, buf, stride, n);
+ *   for (int i = 0; i < n; ++i) {
+ *       const char* id = buf + i * stride;
+ *       printf("node %d: %s\n", i, id);
+ *   }
+ * @endcode
+ *
+ * @see swmm_node_id
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_node_get_ids_bulk(SWMM_Engine engine,
+                                            char* buf,
+                                            int stride,
+                                            int count);
+
 /* =========================================================================
  * Outfall-to-subcatchment routing
  * ========================================================================= */
@@ -679,6 +879,27 @@ SWMM_ENGINE_API int swmm_node_get_outfall_route_to(SWMM_Engine engine, int idx, 
 /** @brief Compute depth from volume for a node (inverse of volume-depth curve). */
 SWMM_ENGINE_API int swmm_node_get_depth_from_volume(SWMM_Engine engine, int idx,
                                                       double volume, double* depth);
+
+/** @brief Rename the node at `idx` to `newId`.
+ *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
+ *  idx is out of range. */
+SWMM_ENGINE_API int swmm_node_rename(SWMM_Engine engine, int idx, const char* newId);
+
+/* =========================================================================
+ * Tag — free-form string label from the INP `[TAGS]` section
+ * ========================================================================= */
+
+/** @brief Read the tag string into `buf` (NUL-terminated, truncated to
+ *  `buflen-1` chars if necessary). Returns empty string when the node has
+ *  no tag. */
+SWMM_ENGINE_API int swmm_node_get_tag(SWMM_Engine engine, int idx,
+                                       char* buf, int buflen);
+
+/** @brief Set or clear the node's tag. Pass null or empty string to clear.
+ *  Tag persists across `swmm_node_rename` (it is keyed by index, not name).
+ *  Writes are honoured in any engine lifecycle state. */
+SWMM_ENGINE_API int swmm_node_set_tag(SWMM_Engine engine, int idx,
+                                       const char* tag);
 
 #ifdef __cplusplus
 } /* extern "C" */

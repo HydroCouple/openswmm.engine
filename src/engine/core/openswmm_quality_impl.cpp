@@ -6,7 +6,7 @@
  * @ingroup engine_api
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -45,7 +45,11 @@ SWMM_ENGINE_API int swmm_landuse_add(SWMM_Engine engine, const char* id) {
     if (!id) return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING)
+    // Landuses may be added during programmatic construction (BUILDING) or on a
+    // model opened from an .inp (OPENED) — mirroring swmm_lid_add. Buildup /
+    // washoff configuration itself imposes no lifecycle gate.
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
 
     // Check for duplicate
@@ -132,6 +136,9 @@ SWMM_ENGINE_API int swmm_buildup_set(SWMM_Engine engine, int lu_idx, int pollut_
     ctx.buildup.coeff2[k]     = c2;
     ctx.buildup.coeff3[k]     = c3;
     ctx.buildup.normalizer[k] = normalizer;
+    // Refresh the per-step buildup/washoff parameter cache so a mid-run edit
+    // takes effect on the next step (the accumulated pool is preserved).
+    to_engine(engine)->refreshLanduseParams();
     return SWMM_OK;
 }
 
@@ -183,6 +190,8 @@ SWMM_ENGINE_API int swmm_washoff_set(SWMM_Engine engine, int lu_idx, int pollut_
     ctx.washoff.expon[k]       = expon;
     ctx.washoff.sweep_effic[k] = sweep_effic;
     ctx.washoff.bmp_effic[k]   = bmp_effic;
+    // Refresh the per-step parameter cache so a mid-run edit takes effect.
+    to_engine(engine)->refreshLanduseParams();
     return SWMM_OK;
 }
 
@@ -229,7 +238,17 @@ SWMM_ENGINE_API int swmm_treatment_set(SWMM_Engine engine, int node_idx, int pol
     auto k = static_cast<std::size_t>(node_idx) *
              static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
+    // The step loop evaluates the compiled cache, so recompile the edited cell
+    // (mid-run edits take effect next step). A parse failure restores the
+    // previous expression and rejects the call rather than leaving the cell
+    // silently inert.
+    const std::string prev = ctx.treatment.expressions[k];
     ctx.treatment.expressions[k] = expression;
+    if (to_engine(engine)->refreshTreatment(node_idx, pollut_idx) != 0) {
+        ctx.treatment.expressions[k] = prev;
+        to_engine(engine)->refreshTreatment(node_idx, pollut_idx);
+        return SWMM_ERR_BADPARAM;
+    }
     return SWMM_OK;
 }
 
@@ -268,6 +287,9 @@ SWMM_ENGINE_API int swmm_treatment_clear(SWMM_Engine engine, int node_idx, int p
 
     if (k < ctx.treatment.expressions.size()) {
         ctx.treatment.expressions[k].clear();
+        // Clear the compiled cell + per-node flag so the removal applies
+        // on the next step.
+        to_engine(engine)->refreshTreatment(node_idx, pollut_idx);
     }
     return SWMM_OK;
 }

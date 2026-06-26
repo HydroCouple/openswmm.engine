@@ -12,7 +12,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -65,6 +65,11 @@ public:
      */
     void addWetWeatherLoads(SimulationContext& ctx, double dt);
 
+    /// Update link quality using volume-balance mixing with upstream node
+    /// (DW/KW) or upstream node concentration with exponential decay (STEADY).
+    /// Public for testing.
+    void updateLinkQuality(SimulationContext& ctx, double dt);
+
 private:
     int n_pollutants_ = 0;
 
@@ -74,6 +79,12 @@ private:
 
     /// Add RDII pollutant loads to node quality inflows.
     void addRdiiLoads(SimulationContext& ctx, double dt);
+
+    /// Add default dry weather pollutant loads (c_dwf) to node inflows.
+    void addDwfLoads(SimulationContext& ctx, double dt);
+
+    /// Add groundwater inflow pollutant loads (c_gw) to node inflows.
+    void addGwLoads(SimulationContext& ctx, double dt);
 
     /// Batch accumulate link mass flows to downstream nodes.
     void accumulateLinkLoads(SimulationContext& ctx, double dt);
@@ -87,8 +98,6 @@ private:
     /// Batch first-order decay.
     void applyDecay(SimulationContext& ctx, double dt);
 
-    /// Update link quality from upstream node concentration.
-    void updateLinkQuality(SimulationContext& ctx);
 };
 
 } // namespace quality

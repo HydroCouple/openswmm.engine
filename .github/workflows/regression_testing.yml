@@ -2,7 +2,10 @@ name: Regression Testing
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
+  pull_request:
+    branches: [main]
+
   workflow_dispatch:
 
 env:
@@ -57,6 +60,10 @@ jobs:
           ref: 2025.02.14
           path: vcpkg
 
+      - name: Install OpenMP (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
       - name: Install Ninja (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build
@@ -82,6 +89,15 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
+      - name: Cache vcpkg downloads (source tarballs)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/downloads
+          key: vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
+            vcpkg-downloads-${{ runner.os }}-
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -92,32 +108,150 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest numpy
 
-      - name: Configure
+      - name: Configure (Release with tests)
+        # The *-tests-release preset sets VCPKG_MANIFEST_FEATURES=tests;geopackage
+        # and enables OPENSWMM_BUILD_UNIT_TESTS + OPENSWMM_BUILD_REGRESSION_TESTS
+        # + OPENSWMM_WITH_GEOPACKAGE on top of the Release-flavoured base preset.
+        # gpu;hypre are vcpkg defaults, but added EXPLICITLY (overriding the
+        # preset's feature list) + the Kokkos/AMG CMake options pinned ON so the
+        # 2D-parity regression suite always exercises the Kokkos-OpenMP plugin
+        # and BoomerAMG path; find_package(Kokkos/HYPRE REQUIRED) fails configure
+        # if either default ever regresses.
         run: >
           cmake
-          --preset=${{ matrix.cmake_preset }}-debug
+          --preset=${{ matrix.cmake_preset }}-tests-release
           -B build-${{ matrix.vcpkg_triplet }}
-          -DOPENSWMM_BUILD_TESTS=OFF
-          -DOPENSWMM_BUILD_UNIT_TESTS=ON
-          -DOPENSWMM_BUILD_REGRESSION_TESTS=ON
+          -DVCPKG_MANIFEST_FEATURES="tests;geopackage;gpu;hypre"
+          -DOPENSWMM_BUILD_GPU_PLUGIN=ON
+          -DOPENSWMM_GPU_BACKEND=omp
+          -DOPENSWMM_WITH_HYPRE=ON
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
-      - name: Build
-        run: cmake --build build-${{ matrix.vcpkg_triplet }} --config Debug
+      - name: Build (Release)
+        run: cmake --build build-${{ matrix.vcpkg_triplet }} --config Release
 
       - name: Unit tests (sanity check)
-        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit --output-on-failure
+        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Release -L unit --output-on-failure
+
+      # - name: Diagnose Linux unit-test segfaults (gdb)
+      #   if: failure() && runner.os == 'Linux'
+      #   working-directory: tests/unit/legacy/engine/data
+      #   run: |
+      #     sudo apt-get install -y gdb
+      #     for t in test_solver_api test_solver_errors test_solver_hotstart test_solver_shapes test_solver_expanded_api; do
+      #       bin=$(find ${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }} -name "$t" -type f -executable | head -1)
+      #       if [ -z "$bin" ]; then echo "Binary $t not found"; continue; fi
+      #       echo "==================================================="
+      #       echo "==== gdb backtrace: $t"
+      #       echo "==================================================="
+      #       gdb -batch \
+      #         -ex 'set pagination off' \
+      #         -ex 'set confirm off' \
+      #         -ex 'handle SIGSEGV stop print nopass' \
+      #         -ex run \
+      #         -ex 'thread apply all bt full' \
+      #         -ex quit \
+      #         "$bin" 2>&1 | head -400 || true
+      #     done
 
       - name: C++ regression tests
-        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L regression --output-on-failure
+        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Release -L regression --output-on-failure
 
       - name: Python regression tests
         working-directory: tests/regression_testing
+        env:
+          OPENSWMM_BUILD_DIR: ${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}
         run: python -m pytest -v --tb=short
 
-      - name: Upload artifacts
+      - name: Install Release tree
+        run: >
+          cmake --install build-${{ matrix.vcpkg_triplet }}
+          --config Release
+          --prefix "${{ github.workspace }}/regression-release-${{ matrix.vcpkg_triplet }}"
+
+      - name: Verify bundled runtime libs (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          INST="${{ github.workspace }}/regression-release-${{ matrix.vcpkg_triplet }}"
+          cd "$INST/bin"
+          echo "--- bin/ contents ---"
+          ls -la
+          echo
+          for exe in openswmm openswmm-legacy; do
+            [ -x "$exe" ] || continue
+            echo "--- $exe linkage ---"
+            if [[ "${{ runner.os }}" == "macOS" ]]; then
+              otool -L "$exe"
+            else
+              ldd "$exe"
+            fi
+          done
+          # Gate: the Kokkos-OpenMP plugin must be installed (lib/ on Unix).
+          PLUGIN=$(find "$INST/lib" \( -name 'libopenswmm_gpu_omp.dylib' -o -name 'libopenswmm_gpu_omp.so' \) | head -1 || true)
+          if [ -z "$PLUGIN" ]; then
+            echo "::error::Kokkos GPU plugin (libopenswmm_gpu_omp) missing from $INST/lib — Kokkos default regressed"
+            exit 1
+          fi
+          echo "Kokkos plugin installed: $PLUGIN"
+
+      - name: Verify bundled runtime libs (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $inst = "${{ github.workspace }}/regression-release-${{ matrix.vcpkg_triplet }}"
+          Set-Location "$inst/bin"
+          Write-Host "--- bin/ contents ---"
+          Get-ChildItem | Format-Table Mode,Length,Name
+          # Gate: the Kokkos-OpenMP plugin must be installed (bin/ on Windows).
+          $plugin = Get-ChildItem -Recurse -Path $inst -Filter "openswmm_gpu_omp.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $plugin) {
+            Write-Host "::error::Kokkos GPU plugin (openswmm_gpu_omp.dll) missing from $inst — Kokkos default regressed"
+            exit 1
+          }
+          Write-Host "Kokkos plugin installed: $($plugin.FullName)"
+
+      - name: Upload Release install artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: regression-release-${{ matrix.vcpkg_triplet }}
+          path: regression-release-${{ matrix.vcpkg_triplet }}/
+
+      - name: Upload regression results
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: regression-${{ matrix.vcpkg_triplet }}
           path: tests/regression_testing/results/
+          if-no-files-found: ignore
+
+  # ──────────────────────────────────────────────────────────────────────
+  #  Python source distribution (sdist) — platform-independent, built once.
+  # ──────────────────────────────────────────────────────────────────────
+  sdist:
+    name: "Python sdist"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build frontend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+
+      - name: Build sdist
+        working-directory: python
+        run: python -m build --sdist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v5
+        with:
+          name: python-sdist
+          path: python/dist/*.tar.gz

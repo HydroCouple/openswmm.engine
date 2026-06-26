@@ -4,7 +4,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -206,13 +206,15 @@ void batchComputeInletControl(const int* link_indices, int n,
 
         // Only process conduit links with a valid culvert code
         if (links.type[j] != LinkType::CONDUIT) continue;
-        int code = links.culvert_code[j];
+        auto& CD = ctx.link_subtypes.conduits;
+        const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
+        int code = CD.culvert_code[ucr];
         if (code <= 0 || code > MAX_CULVERT_CODE) continue;
 
         // Gather parameters
         double y_full = links.xsect_y_full[j];
         double a_full = links.xsect_a_full[j];
-        double s      = links.slope[j];
+        double s      = CD.slope[ucr];
         double q0     = links.flow[j];
 
         // Compute upstream head above culvert invert
@@ -227,8 +229,8 @@ void batchComputeInletControl(const int* link_indices, int n,
 
         // Inlet controls only if q_inlet < |q0|
         if (q_inlet < std::fabs(q0)) {
-            links.inlet_control[j] = true;
-            links.dqdh[j] = dq;
+            CD.inlet_control[ucr] = uint8_t{1};
+            links.dqdh[j] = dq;  // dqdh stays on base LinkData
             // Preserve flow sign (direction)
             links.flow[j] = (q0 >= 0.0) ? q_inlet : -q_inlet;
         }

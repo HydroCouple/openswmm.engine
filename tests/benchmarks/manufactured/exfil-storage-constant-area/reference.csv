@@ -1,0 +1,14 @@
+# Storage exfiltration — constant rate, no clogging, no drain, no inflow
+# depth_0=2.0 ft, stor_void=0.4, kSat=1e-4 ft/s
+# depth(t) = 2.0 - (kSat/phi)*t = 2.0 - 2.5e-4*t
+# E_cumul(t) = kSat*t = 1e-4*t
+# Linear regime only (t < 8000 s; storage never empties in this table)
+# Columns: t_s [s], stor_depth_ft [ft], E_cumul_ft [ft water]
+t_s,stor_depth_ft,E_cumul_ft
+0,2.000000000000000,0.000000000000000
+1000,1.750000000000000,0.100000000000000
+2000,1.500000000000000,0.200000000000000
+3000,1.250000000000000,0.300000000000000
+4000,1.000000000000000,0.400000000000000
+5000,0.750000000000000,0.500000000000000
+6000,0.500000000000000,0.600000000000000

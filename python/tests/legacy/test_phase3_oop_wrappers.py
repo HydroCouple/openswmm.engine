@@ -94,6 +94,32 @@ class TestLegacyNodeProperties(unittest.TestCase):
         self.assertIsInstance(j6.total_inflow, float)
         s.finalize()
 
+    def test_read_outflow_during_sim(self):
+        s = _make_solver()
+        s.initialize()
+        nodes = LegacyNodes(s)
+        # Step enough times to develop flow through the network
+        for _ in range(24):
+            s.step()
+        j6 = nodes["J6"]
+        self.assertIsInstance(j6.outflow, float)
+        self.assertGreaterEqual(j6.outflow, 0.0)
+        s.finalize()
+
+    def test_outflow_via_get_value(self):
+        s = _make_solver()
+        s.initialize()
+        for _ in range(24):
+            s.step()
+        val = s.get_value(
+            object_type=solver.SWMMObjects.NODE,
+            property_type=solver.SWMMNodeProperties.OUTFLOW,
+            index=5,
+        )
+        self.assertIsInstance(val, float)
+        self.assertGreaterEqual(val, 0.0)
+        s.finalize()
+
     def test_node_type(self):
         s = _make_solver()
         s.initialize()
@@ -280,6 +306,17 @@ class TestLegacyRainGages(unittest.TestCase):
         gages["RainGage"].set_rainfall(3.6)
         s.step()
         # Verify no crash
+        s.finalize()
+
+    def test_scale_factor_round_trip(self):
+        s = _make_solver()
+        s.initialize()
+        gages = LegacyRainGages(s)
+        rg = gages["RainGage"]
+        # Default unscaled gage reads back as 1.0.
+        self.assertAlmostEqual(rg.scale_factor, 1.0)
+        rg.scale_factor = 2.5
+        self.assertAlmostEqual(rg.scale_factor, 2.5)
         s.finalize()
 
 

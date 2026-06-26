@@ -61,7 +61,7 @@
  * @ingroup engine_input
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -202,8 +202,16 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
         else if (key == "FILE" && tok.size() >= 2) {
             ctx.options.temp_source = 2;
             ctx.options.temp_file = tok[1];
-            if (tok.size() >= 3)
+            if (tok.size() >= 3 && tok[2] != "*")
                 ctx.options.temp_file_start = to_double(tok[2]);
+            // Optional climate-file temperature units keyword (legacy tok[3]):
+            //   C10 = tenths degC, C = degC, F = degF.
+            if (tok.size() >= 4) {
+                const std::string u = Tokenizer::to_upper(tok[3]);
+                if      (u == "C10") ctx.options.temp_units = 0;
+                else if (u == "C")   ctx.options.temp_units = 1;
+                else if (u == "F")   ctx.options.temp_units = 2;
+            }
         }
         else if (key == "WINDSPEED" && tok.size() >= 2) {
             const std::string wtype = Tokenizer::to_upper(tok[1]);
@@ -217,12 +225,32 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
             }
         }
         else if (key == "SNOWMELT" && tok.size() >= 7) {
+            // Legacy [TEMPERATURE] SNOWMELT format (9 tokens):
+            //   SNOWMELT divT ATIwt nrgRatio elev lat dtlong minMelt maxMelt
+            // New engine format (7 tokens):
+            //   SNOWMELT divT ATIwt nrgRatio lat minMelt maxMelt
+            // Disambiguate: if 9+ tokens, treat as legacy (elevation at tok[4])
             ctx.options.snow_divt      = to_double(tok[1]);
             ctx.options.snow_ati_wt    = to_double(tok[2]);
             ctx.options.snow_nrg_ratio = to_double(tok[3]);
-            ctx.options.snow_lat       = to_double(tok[4]);
-            ctx.options.snow_min_melt  = to_double(tok[5]);
-            ctx.options.snow_max_melt  = to_double(tok[6]);
+            if (tok.size() >= 9) {
+                // Legacy: elev at [4], lat at [5], dtlong at [6], min at [7], max at [8]
+                ctx.options.snow_elev      = to_double(tok[4]);
+                ctx.options.snow_lat       = to_double(tok[5]);
+                // tok[6] = longitude/solar-time correction (minutes); stored
+                // verbatim and converted to hours at init (legacy climate.c).
+                ctx.options.snow_dtlong    = to_double(tok[6]);
+                ctx.options.snow_min_melt  = to_double(tok[7]);
+                ctx.options.snow_max_melt  = to_double(tok[8]);
+            } else {
+                // New engine: lat at [4], min at [5], max at [6]
+                ctx.options.snow_lat       = to_double(tok[4]);
+                ctx.options.snow_min_melt  = to_double(tok[5]);
+                ctx.options.snow_max_melt  = to_double(tok[6]);
+                // Optional elevation at tok[7] (new extended format)
+                if (tok.size() >= 8)
+                    ctx.options.snow_elev  = to_double(tok[7]);
+            }
         }
         else if (key == "ADC" && tok.size() >= 12) {
             const std::string surface = Tokenizer::to_upper(tok[1]);

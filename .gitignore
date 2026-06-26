@@ -1,6 +1,10 @@
 
 .DS_Store
 
+# Working notes not intended for version control
+doc/FlashX_SWMM_crosswalk.md
+doc/Verification_Implementation_Plan.md
+
 # Eclipse Stuff
 .metadata/
 .settings/

@@ -4,7 +4,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -53,6 +53,7 @@ void GWSoA::resize(int n) {
     upper_evap.assign(un, 0.0);
     lower_evap.assign(un, 0.0);
     deep_loss.assign(un, 0.0);
+    max_infil_vol.assign(un, 0.0);
 
     lateral_expr.resize(un);
     deep_expr.resize(un);
@@ -277,8 +278,10 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         c.infil            = infil_rate[i];
         // Match legacy: MaxEvap = Evap.rate * FracPerv
         // AvailEvap = max(MaxEvap - pervEvapRate, 0)
+        // A prescribed PET forcing on this subcatchment replaces/augments
+        // the broadcast climate rate (DRY_ONLY does not apply to GW evap).
         double fp = frac_perv[i];
-        c.max_evap         = max_evap * fp;
+        c.max_evap         = ctx.forcing.effective_evap_rate(ui, max_evap) * fp;
         c.avail_evap       = std::max(c.max_evap - perv_evap_rate[i], 0.0);
         c.sw_head          = sw_head[i];
         c.dt               = dt;
@@ -341,6 +344,18 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         // --- Save updated state ---
         soa_.theta[ui]       = x[0];
         soa_.lower_depth[ui] = x[1];
+
+        // Gap #40: compute max infiltration volume the upper zone can accept
+        // in the next timestep (matching legacy gwater.c line ~597).
+        // = (total_depth - new_lower_depth) * (porosity - new_theta) / frac_perv
+        double fp_gw = frac_perv[i];
+        if (fp_gw > 0.0 && c.total_depth > 0.0) {
+            soa_.max_infil_vol[ui] =
+                (c.total_depth - x[1]) * (c.porosity - x[0]) / fp_gw;
+            soa_.max_infil_vol[ui] = std::max(soa_.max_infil_vol[ui], 0.0);
+        } else {
+            soa_.max_infil_vol[ui] = 0.0;
+        }
 
         // --- Compute final fluxes at new state ---
         getFluxes(c, x[0], x[1]);

@@ -519,8 +519,13 @@ void gwater_getGroundwater(int j, double evap, double infil, double tStep)
 
     // --- convert max. surface evap rate (ft/sec) to a rate
     //     that applies to GW evap (GW evap can only occur
-    //     through the pervious land surface area)
-    MaxEvap = Evap.rate * FracPerv;
+    //     through the pervious land surface area);
+    //     an externally prescribed PET rate replaces Evap.rate
+    //     (DRY_ONLY is not applied here, matching original behavior)
+    if ( Subcatch[j].apiEvapRate != MISSING )
+        MaxEvap = Subcatch[j].apiEvapRate * FracPerv;
+    else
+        MaxEvap = Evap.rate * FracPerv;
 
     // --- available subsurface evaporation is difference between max.
     //     rate and pervious surface evap already exerted

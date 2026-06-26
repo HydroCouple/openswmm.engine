@@ -14,13 +14,14 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #ifndef OPENSWMM_CONTROLS_HPP
 #define OPENSWMM_CONTROLS_HPP
 
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -120,6 +121,7 @@ struct Action {
     double     value         = 0.0;      ///< Direct value or computed result
     int        curve_idx     = -1;       ///< Curve index (for CURVE type)
     int        tseries_idx   = -1;       ///< Timeseries index (for TIMESERIES type)
+    int        pid_idx       = -1;       ///< PID state index (for PID type)
 };
 
 // ============================================================================
@@ -197,6 +199,11 @@ public:
     /// Number of actions taken in the last evaluate() call.
     int lastActionCount() const { return last_action_count_; }
 
+    /// Reset the RULE_STEP timer; called when a new run begins so the
+    /// first call to evaluate() always runs.
+    /// @see Legacy: routing.c:286-290 (RuleStep gating)
+    void resetRuleStep() { next_rule_eval_time_ = -1.0; }
+
     // ========================================================================
     // SoA batch evaluation index (AD-14)
     // ========================================================================
@@ -224,6 +231,7 @@ public:
         std::vector<int>    rule_idx;     ///< Which rule this premise belongs to
         std::vector<int>    premise_idx;  ///< Position within the rule's premise list
         std::vector<int>    obj_idx;      ///< Object index (node/link/gage)
+        std::vector<int>    flat_idx;     ///< Position in flat premise_results_ cache
         std::vector<int>    op;           ///< CompareOp as int
         std::vector<double> rhs_value;    ///< RHS threshold value
 
@@ -255,12 +263,33 @@ private:
     // SoA premise groups (one per variable type that has premises)
     std::vector<PremiseSoA>  premise_groups_;
 
+    // ------------------------------------------------------------------
+    // Two-phase evaluator state (§7 of CONTROL_RULES_LEGACY_PARITY_AUDIT)
+    // ------------------------------------------------------------------
+    // Phase 1 batch-evaluates premises (group-major) into the flat cache.
+    // Phase 2 walks each rule's premises in declaration order and applies
+    // legacy AND/OR semantics by reading the flat cache.
+    //
+    // Layout: premise_results_[ rule_premise_offset_[r] + p ] holds the
+    // result of rule r's premise p.  uint8_t (not bool) so Phase 1's
+    // compare loops remain SIMD-writable.
+
+    std::vector<uint8_t> premise_results_;       ///< Flat per-(rule,premise) cache
+    std::vector<int>     rule_premise_offset_;   ///< Size rules.size()+1; cumulative offsets
+    int                  total_premises_ = 0;    ///< Sum of premises across all rules
+
     // Per-rule premise result tracking (for combining AND/OR)
     std::vector<bool>        rule_results_;   ///< [rule_idx] → current result
 
     // TIMEOPEN/TIMECLOSED tracking: when each link's setting last changed.
     // Stored as absolute date (decimal days) matching legacy Link[j].timeLastSet.
+    // Step 6 of the parity remediation will move this to ctx.links.time_last_set.
     std::vector<double> link_time_last_set_;
+
+    /// Next absolute date (decimal days) at which evaluate() should run.
+    /// Honors options.rule_step.  -1.0 means "not yet primed".
+    /// @see Legacy: routing.c:286-290 (NewRuleTime)
+    double next_rule_eval_time_ = -1.0;
 
     // Tracked across a single evaluate() call
     double control_value_ = 0.0;
@@ -268,10 +297,11 @@ private:
 
     // Pending action list (for priority deduplication)
     struct PendingAction {
-        int    link_idx;
-        double value;
-        double priority;
-        int    rule_idx;
+        int        link_idx;
+        double     value;
+        double     priority;
+        int        rule_idx;
+        ActionType type = ActionType::NUMERIC;  ///< For report filtering (P1-C08).
     };
     std::vector<PendingAction> pending_actions_;
 
@@ -285,7 +315,8 @@ private:
     bool compareValues(double lhs, CompareOp op, double rhs) const;
     bool compareTimes(double lhs, CompareOp op, double rhs, double half_step) const;
 
-    double computePIDSetting(PIDState& pid, double control_value, double dt);
+    double computePIDSetting(PIDState& pid, double control_value,
+                             double current_setting, bool is_pump, double dt);
 
     void updateActionValue(Action& a, SimulationContext& ctx,
                            double current_time, double dt);

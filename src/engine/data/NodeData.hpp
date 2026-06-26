@@ -18,7 +18,7 @@
  * @ingroup engine_data
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -127,92 +127,15 @@ struct NodeData {
     std::vector<double>     ponded_area;
 
     // -----------------------------------------------------------------------
-    // Outfall-specific properties (valid when type[i] == OUTFALL)
+    // Node subtype properties (storage / outfall / divider)
     // -----------------------------------------------------------------------
-
-    /** @brief Outfall boundary condition type. */
-    std::vector<OutfallType> outfall_type;
-
-    /**
-     * @brief Fixed outfall stage or tidal curve / time series index.
-     * @details If outfall_type == FIXED, stores the fixed water surface elevation.
-     *          If TIDAL or TIMESERIES, stores the index into TableData.
-     */
-    std::vector<double>     outfall_param;
-
-    /** @brief True if the outfall has a gated flap. */
-    std::vector<bool>       outfall_has_flap_gate;
-
-    /** @brief Subcatchment index to route outfall discharge to (-1 = none).
-     *  @see Legacy: Outfall[j].routeTo */
-    std::vector<int>        outfall_route_to;
-
-    // -----------------------------------------------------------------------
-    // Storage-specific properties (valid when type[i] == STORAGE)
-    // -----------------------------------------------------------------------
-
-    /**
-     * @brief Storage curve index into TableData (CURVE_STORAGE).
-     * @details -1 if storage uses functional relationship (a,b,c parameters).
-     */
-    std::vector<int>        storage_curve;
-
-    /** @brief Curve name for deferred resolution (populated during parsing). */
-    std::vector<std::string> storage_curve_name;
-
-    /** @brief Functional storage area parameter A (area = A * depth^B + C). */
-    std::vector<double>     storage_a;
-    /** @brief Functional storage area parameter B. */
-    std::vector<double>     storage_b;
-    /** @brief Functional storage area parameter C (baseline area). */
-    std::vector<double>     storage_c;
-
-    /** @brief Seepage rate from storage node (project units/day). */
-    std::vector<double>     storage_seep_rate;
-
-    /** @brief Fraction of potential evaporation realized at storage node (0-1). */
-    std::vector<double>     storage_evap_frac;
-
-    /** @brief Storage node evaporation loss this timestep (ft3). */
-    std::vector<double>     storage_evap_loss;
-
-    /** @brief Storage node exfiltration loss this timestep (ft3). */
-    std::vector<double>     storage_exfil_loss;
-
-    /** @brief Green-Ampt suction head for exfiltration (in or mm, converted to ft). */
-    std::vector<double>     exfil_suction;
-    /** @brief Green-Ampt saturated hydraulic conductivity for exfiltration (in/hr or mm/hr, converted to ft/sec). */
-    std::vector<double>     exfil_ksat;
-    /** @brief Green-Ampt initial moisture deficit for exfiltration (0-1). */
-    std::vector<double>     exfil_imd;
-
-    // -----------------------------------------------------------------------
-    // Divider-specific properties (valid when type[i] == DIVIDER)
-    // -----------------------------------------------------------------------
-
-    /** @brief Divider method (DividerType enum value). */
-    std::vector<DividerType> divider_type;
-
-    /** @brief Cutoff flow for CUTOFF dividers. */
-    std::vector<double>     divider_cutoff;
-
-    /** @brief Weir discharge coefficient for WEIR dividers. */
-    std::vector<double>     divider_cd;
-
-    /** @brief Weir max depth for WEIR dividers. */
-    std::vector<double>     divider_max_depth;
-
-    /** @brief Diversion curve index for TABULAR dividers (-1 = none). */
-    std::vector<int>        divider_curve;
-
-    /** @brief Diversion link index (-1 = not set). */
-    std::vector<int>        divider_link;
-
-    /** @brief Diversion link name (for deferred resolution). */
-    std::vector<std::string> divider_link_name;
-
-    /** @brief Diversion curve name (for deferred resolution, TABULAR only). */
-    std::vector<std::string> divider_curve_name;
+    // Relational node refactor (Phase 4): the wide per-node storage_* / outfall_*
+    // / divider_* / exfil_* arrays that used to live here have been REMOVED. They
+    // now live in the dense relational side-tables (StorageData / OutfallData /
+    // DividerData in NodeSubtypes.hpp), sized to the count of each subtype and
+    // joined to base nodes by node_idx — the memory win of the refactor. Only the
+    // base `type[i]` discriminator remains on NodeData. See
+    // docs/relational/RELATIONAL_NODE_REFACTOR_PLAN.md.
 
     // -----------------------------------------------------------------------
     // State variables — updated each timestep
@@ -275,6 +198,29 @@ struct NodeData {
     /** @brief Interface file (upstream model coupling) inflows (project flow units). */
     std::vector<double>     iface_inflow;
 
+    /**
+     * @brief 2D ↔ 1D coupling exchange flow at the node (project flow units).
+     *
+     * @details Signed: positive = 2D → 1D (surface drainage into the node),
+     *          negative = 1D → 2D (surcharge spill onto the surface).
+     *          Written by SurfaceRouter2D::advancePostRouting at the end of
+     *          step N; read by assembleLateralInflows at the start of step
+     *          N+1 (so the value persists across the step boundary and is
+     *          consumed exactly once by the DW solver).
+     *
+     *          For mass-balance accounting the signed value is split:
+     *          - positive side folds into step_ext_inflow → routing_external
+     *          - negative side folds into routing_flooding (absolute value)
+     *
+     *          This replaces the earlier scheme of routing coupling Q through
+     *          forcing.node_lat_inflow_value, which conflated user forcing
+     *          with 2D coupling and dropped the negative (1D→2D) volume from
+     *          the mass balance entirely.
+     *
+     * @see docs/1D_2D_COUPLING_GATE_REVIEW.md §11
+     */
+    std::vector<double>     coupling_inflow;
+
     // -----------------------------------------------------------------------
     // Quality mass inflow assembly arrays
     // assembleQualityInflows() writes these; mixAtNodes() reads them.
@@ -286,6 +232,25 @@ struct NodeData {
 
     /** @brief Accumulated volume inflow rate per node (ft3/sec). */
     std::vector<double>     qual_vol_in;
+
+    /**
+     * @brief LID drain quality mass rate per (node, pollutant) (mass/sec).
+     * @details Set once per runoff step (cleared at runoff step start); read
+     *          each routing step by addWetWeatherLoads() → added to qual_mass_in.
+     *          Flat 2D: [node * n_pollutants + pollutant].
+     *          Covers drain-to-node and drain-to-subcatch (routed to outlet node).
+     *          Matches legacy lid_addDrainInflow() / lid_addDrainRunon() quality.
+     * @see Legacy: lid.c lid_addDrainInflow(), lid_addDrainRunon()
+     */
+    std::vector<double>     lid_drain_qual_load;
+
+    /**
+     * @brief LID drain volume inflow rate per node (ft3/sec).
+     * @details Set once per runoff step; read each routing step by
+     *          addWetWeatherLoads() → added to qual_vol_in (denominator for mixing).
+     * @see Legacy: lid.c lid_addDrainInflow() Node[k].newLatFlow contribution
+     */
+    std::vector<double>     lid_drain_qual_vol;
 
     // -----------------------------------------------------------------------
     // Per-node quality state — flat 2D: [node * n_pollutants + pollutant]
@@ -378,6 +343,34 @@ struct NodeData {
 
     /** @brief Lateral flow at the previous timestep. */
     std::vector<double>     old_lat_flow;
+
+    // -----------------------------------------------------------------------
+    // Per-object INP comment
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Object comment from the INP file (lines with a single ';' prefix
+     *        immediately above this object's data row).
+     *
+     * @details Multiple comment lines are joined by the literal two-character
+     *          token "\\n" (backslash + n).  Empty string means no comment.
+     *          Written back to INP by InpWriter as one ';'-prefixed row per
+     *          part.  Also stored verbatim in the GeoPackage 'comment' column.
+     */
+    std::vector<std::string> comments;
+
+    /**
+     * @brief Per-object tag from the INP `[TAGS]` section.
+     *
+     * @details Free-form string label, used by GUIs for filtering and grouping
+     *          (e.g. catchment-name labels, asset IDs, user-defined groups).
+     *          Empty string means no tag. Written back to INP by InpWriter as
+     *          a `Node <name> <tag>` row in `[TAGS]`. Index-keyed (per-`NodeData`
+     *          field) so `swmm_node_rename` keeps the tag attached — the
+     *          earlier name-keyed `SimulationContext::node_tags` map lost
+     *          tags on rename.
+     */
+    std::vector<std::string> tags;
 
     // -----------------------------------------------------------------------
     // Report flag — per-object output filter
@@ -528,33 +521,7 @@ struct NodeData {
         sur_depth.assign(un, 0.0);
         ponded_area.assign(un, 0.0);
 
-        outfall_type.assign(un, OutfallType::FREE);
-        outfall_param.assign(un, 0.0);
-        outfall_has_flap_gate.assign(un, false);
-        outfall_route_to.assign(un, -1);
-
-        storage_curve.assign(un, -1);
-        storage_curve_name.resize(un);
-        storage_a.assign(un, 0.0);
-        storage_b.assign(un, 0.0);
-        storage_c.assign(un, 0.0);
-        storage_seep_rate.assign(un, 0.0);
-        storage_evap_frac.assign(un, 0.0);
-        storage_evap_loss.assign(un, 0.0);
-        storage_exfil_loss.assign(un, 0.0);
-        exfil_suction.assign(un, 0.0);
-        exfil_ksat.assign(un, 0.0);
-        exfil_imd.assign(un, 0.0);
-
-        divider_type.assign(un, DividerType::CUTOFF);
-        divider_cutoff.assign(un, 0.0);
-        divider_cd.assign(un, 0.0);
-        divider_max_depth.assign(un, 0.0);
-        divider_curve.assign(un, -1);
-        divider_link.assign(un, -1);
-        divider_link_name.resize(un);
-        divider_curve_name.resize(un);
-
+        // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         depth.assign(un, 0.0);
         head.assign(un, 0.0);
         volume.assign(un, 0.0);
@@ -566,8 +533,11 @@ struct NodeData {
         dwf_inflow.assign(un, 0.0);
         rdii_inflow.assign(un, 0.0);
         iface_inflow.assign(un, 0.0);
+        coupling_inflow.assign(un, 0.0);
         qual_mass_in.clear();
         qual_vol_in.assign(un, 0.0);
+        lid_drain_qual_load.clear();
+        lid_drain_qual_vol.assign(un, 0.0);
         inflow.assign(un, 0.0);
         outflow.assign(un, 0.0);
         overflow.assign(un, 0.0);
@@ -579,6 +549,9 @@ struct NodeData {
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
         old_lat_flow.assign(un, 0.0);
+
+        comments.assign(un, std::string{});
+        tags.assign(un, std::string{});
 
         rpt_flag.assign(un, 0);
 
@@ -619,26 +592,21 @@ struct NodeData {
         g(type, NodeType::JUNCTION);
         g(invert_elev, 0.0); g(full_depth, 0.0); g(init_depth, 0.0);
         g(sur_depth, 0.0); g(ponded_area, 0.0);
-        g(outfall_type, OutfallType::FREE); g(outfall_param, 0.0);
-        g(outfall_has_flap_gate, false); g(outfall_route_to, -1);
-        g(storage_curve, -1); storage_curve_name.resize(un);
-        g(storage_a, 0.0); g(storage_b, 0.0); g(storage_c, 0.0);
-        g(storage_seep_rate, 0.0); g(storage_evap_frac, 0.0);
-        g(storage_evap_loss, 0.0); g(storage_exfil_loss, 0.0);
-        g(exfil_suction, 0.0); g(exfil_ksat, 0.0); g(exfil_imd, 0.0);
-        g(divider_type, DividerType::CUTOFF); g(divider_cutoff, 0.0);
-        g(divider_cd, 0.0); g(divider_max_depth, 0.0);
-        g(divider_curve, -1); g(divider_link, -1);
-        divider_link_name.resize(un); divider_curve_name.resize(un);
+        // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         g(depth, 0.0); g(head, 0.0); g(volume, 0.0);
         g(lat_flow, 0.0); g(user_lat_flow, 0.0);
         g(runoff_inflow, 0.0); g(gw_inflow, 0.0); g(ext_inflow, 0.0);
         g(dwf_inflow, 0.0); g(rdii_inflow, 0.0); g(iface_inflow, 0.0);
+        g(coupling_inflow, 0.0);
         qual_vol_in.resize(un, 0.0);
+        lid_drain_qual_vol.resize(un, 0.0);
         g(inflow, 0.0); g(outflow, 0.0); g(overflow, 0.0);
         g(losses, 0.0); g(crown_elev, 0.0); g(degree, 0);
         g(old_net_inflow, 0.0); g(full_volume, 0.0);
         g(old_depth, 0.0); g(old_volume, 0.0); g(old_lat_flow, 0.0);
+        comments.resize(un, std::string{});
+        tags.resize(un, std::string{});
+
         g(rpt_flag, static_cast<char>(0));
         g(stat_vol_flooded, 0.0); g(stat_time_flooded, 0.0);
         g(stat_max_depth, 0.0); g(stat_max_overflow, 0.0);
@@ -653,6 +621,68 @@ struct NodeData {
         g(stat_outfall_periods, 0L);
         g(stat_non_converged_count, 0); g(stat_time_courant_critical, 0.0);
         // Note: qual_mass_in, conc, conc_old, hrt handled by resize_quality()
+    }
+
+    /**
+     * @brief Erase the node at index `idx` from every parallel array.
+     *
+     * @details Removes the element at `idx` from every SoA vector. For flat-2D
+     *          quality arrays indexed as [node * n_pollutants + p], the full
+     *          stride for `idx` is removed. Spatial arrays are NOT touched here;
+     *          ObjectDeleter erases spatial data separately after calling this.
+     *          Only call in BUILDING or OPENED state.
+     */
+    void erase_at(int idx) {
+        const auto ui = static_cast<std::size_t>(idx);
+        auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
+
+        e(type); e(invert_elev); e(full_depth); e(init_depth); e(sur_depth); e(ponded_area);
+
+        // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables;
+        // its rows are erased/renumbered by NodeSubtypes::erase_node (called by the
+        // node-delete path), not here.
+        e(depth); e(head); e(volume);
+        e(lat_flow); e(user_lat_flow);
+        e(runoff_inflow); e(gw_inflow); e(ext_inflow); e(dwf_inflow);
+        e(rdii_inflow); e(iface_inflow);
+        e(coupling_inflow);
+        e(qual_vol_in); e(lid_drain_qual_vol);
+        e(inflow); e(outflow); e(overflow); e(losses);
+        e(crown_elev); e(degree); e(old_net_inflow); e(full_volume);
+        e(old_depth); e(old_volume); e(old_lat_flow);
+        e(comments); e(tags); e(rpt_flag);
+
+        e(stat_vol_flooded); e(stat_time_flooded); e(stat_max_depth); e(stat_max_overflow);
+        e(stat_max_overflow_date); e(stat_sum_depth); e(stat_max_depth_date);
+        e(stat_max_rpt_depth); e(stat_max_inflow_date); e(stat_time_surcharged);
+        e(stat_max_surcharge_height); e(stat_outfall_avg_flow); e(stat_max_lat_inflow);
+        e(stat_max_total_inflow); e(stat_lat_inflow_vol); e(stat_total_inflow_vol);
+        e(stat_total_outflow_vol); e(stat_outfall_max_flow); e(stat_outfall_periods);
+        e(stat_non_converged_count); e(stat_time_courant_critical);
+
+        // Flat 2D quality arrays: [node * np + p] → erase the stride for idx
+        if (conc_n_pollutants > 0) {
+            const auto np = static_cast<std::size_t>(conc_n_pollutants);
+            const auto base = ui * np;
+            auto erase2d = [&](auto& v) {
+                if (base + np <= v.size())
+                    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
+                            v.begin() + static_cast<std::ptrdiff_t>(base + np));
+            };
+            erase2d(conc); erase2d(conc_old);
+            erase2d(qual_mass_in); erase2d(lid_drain_qual_load); erase2d(user_conc_mass_flux);
+            if (ui < hrt.size()) hrt.erase(hrt.begin() + static_cast<std::ptrdiff_t>(idx));
+        }
+
+        // Flat 2D stat load: [node * np + p]
+        if (stat_n_pollutants > 0) {
+            const auto np = static_cast<std::size_t>(stat_n_pollutants);
+            const auto base = ui * np;
+            if (base + np <= stat_total_load.size())
+                stat_total_load.erase(
+                    stat_total_load.begin() + static_cast<std::ptrdiff_t>(base),
+                    stat_total_load.begin() + static_cast<std::ptrdiff_t>(base + np));
+        }
     }
 
     /**
@@ -680,6 +710,7 @@ struct NodeData {
             hrt.assign(static_cast<std::size_t>(count()), 0.0);
             user_conc_mass_flux.assign(total, 0.0);
             qual_mass_in.assign(total, 0.0);
+            lid_drain_qual_load.assign(total, 0.0);
         }
     }
 
@@ -698,33 +729,7 @@ struct NodeData {
         sur_depth.shrink_to_fit();
         ponded_area.shrink_to_fit();
 
-        outfall_type.shrink_to_fit();
-        outfall_param.shrink_to_fit();
-        outfall_has_flap_gate.shrink_to_fit();
-        outfall_route_to.shrink_to_fit();
-
-        storage_curve.shrink_to_fit();
-        storage_curve_name.shrink_to_fit();
-        storage_a.shrink_to_fit();
-        storage_b.shrink_to_fit();
-        storage_c.shrink_to_fit();
-        storage_seep_rate.shrink_to_fit();
-        storage_evap_frac.shrink_to_fit();
-        storage_evap_loss.shrink_to_fit();
-        storage_exfil_loss.shrink_to_fit();
-        exfil_suction.shrink_to_fit();
-        exfil_ksat.shrink_to_fit();
-        exfil_imd.shrink_to_fit();
-
-        divider_type.shrink_to_fit();
-        divider_cutoff.shrink_to_fit();
-        divider_cd.shrink_to_fit();
-        divider_max_depth.shrink_to_fit();
-        divider_curve.shrink_to_fit();
-        divider_link.shrink_to_fit();
-        divider_link_name.shrink_to_fit();
-        divider_curve_name.shrink_to_fit();
-
+        // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         depth.shrink_to_fit();
         head.shrink_to_fit();
         volume.shrink_to_fit();
@@ -736,6 +741,7 @@ struct NodeData {
         dwf_inflow.shrink_to_fit();
         rdii_inflow.shrink_to_fit();
         iface_inflow.shrink_to_fit();
+        coupling_inflow.shrink_to_fit();
         qual_mass_in.shrink_to_fit();
         qual_vol_in.shrink_to_fit();
         conc.shrink_to_fit();
@@ -752,6 +758,9 @@ struct NodeData {
         old_depth.shrink_to_fit();
         old_volume.shrink_to_fit();
         old_lat_flow.shrink_to_fit();
+
+        comments.shrink_to_fit();
+        tags.shrink_to_fit();
 
         rpt_flag.shrink_to_fit();
 
@@ -816,6 +825,10 @@ struct NodeData {
         std::fill(losses.begin(),   losses.end(),   0.0);
         std::fill(old_net_inflow.begin(), old_net_inflow.end(), 0.0);
         std::fill(old_lat_flow.begin(), old_lat_flow.end(), 0.0);
+        // coupling_inflow is NOT cleared by clearInflowSources (its end-of-
+        // step value must persist into the next step's assembly), so zero it
+        // explicitly on cold start.
+        std::fill(coupling_inflow.begin(), coupling_inflow.end(), 0.0);
         clearInflowSources();
         std::fill(conc.begin(), conc.end(), 0.0);
         std::fill(conc_old.begin(), conc_old.end(), 0.0);

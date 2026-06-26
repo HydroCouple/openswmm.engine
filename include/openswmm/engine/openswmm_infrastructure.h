@@ -9,7 +9,7 @@
  * @see openswmm_engine.h
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -66,6 +66,215 @@ SWMM_ENGINE_API int swmm_transect_add_station(SWMM_Engine engine, int idx, doubl
  */
 SWMM_ENGINE_API int swmm_transect_count(SWMM_Engine engine);
 
+/**
+ * @brief Look up a transect's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated transect identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_transect_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of a transect by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based transect index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_transect_id(SWMM_Engine engine, int idx);
+
+/* -------------------------------------------------------------------------
+ * Per-field getters / setters (DA-ENG-09 + BQ-TR-02)
+ *
+ * GUI editors (Slice BQ Phase 6.7.4 TransectEditor) need round-trip access
+ * to every transect field; the legacy 3-function surface (add / set_roughness
+ * / add_station) only covers a fraction. The functions below close that gap.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @brief Get the Manning's roughness values for a transect.
+ * @param engine     Engine handle.
+ * @param idx        Zero-based transect index.
+ * @param n_left     [out] Manning's n for the left overbank. May be NULL.
+ * @param n_right    [out] Manning's n for the right overbank. May be NULL.
+ * @param n_channel  [out] Manning's n for the main channel. May be NULL.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_get_roughness(SWMM_Engine engine, int idx,
+                                                 double* n_left, double* n_right, double* n_channel);
+
+/**
+ * @brief Set the left and right bank stations for a transect.
+ *
+ * @details Bank stations delimit the main channel from the overbanks; they
+ *          are independent of the encroachment stations (BQ-TR-02).
+ *
+ * @param engine   Engine handle.
+ * @param idx      Zero-based transect index.
+ * @param x_left   Station of the left bank.
+ * @param x_right  Station of the right bank.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_set_bank_stations(SWMM_Engine engine, int idx,
+                                                     double x_left, double x_right);
+
+/**
+ * @brief Get the left and right bank stations for a transect.
+ * @param engine   Engine handle.
+ * @param idx      Zero-based transect index.
+ * @param x_left   [out] Station of the left bank. May be NULL.
+ * @param x_right  [out] Station of the right bank. May be NULL.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_get_bank_stations(SWMM_Engine engine, int idx,
+                                                     double* x_left, double* x_right);
+
+/**
+ * @brief Set the left and right encroachment stations for a transect (BQ-TR-02).
+ *
+ * @details Encroachment stations are distinct from bank stations and identify
+ *          floodplain encroachment limits (HEC-RAS convention). On legacy
+ *          `[TRANSECTS]` X1 records that omit the trailing encroachment
+ *          columns, the INP parser may default these to the bank stations
+ *          to preserve backward compatibility; callers writing programmatic
+ *          values via this API are setting them explicitly.
+ *
+ * @param engine   Engine handle.
+ * @param idx      Zero-based transect index.
+ * @param x_left   Station of the left encroachment limit.
+ * @param x_right  Station of the right encroachment limit.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_set_encroachment_stations(SWMM_Engine engine, int idx,
+                                                             double x_left, double x_right);
+
+/**
+ * @brief Get the left and right encroachment stations for a transect (BQ-TR-02).
+ * @param engine   Engine handle.
+ * @param idx      Zero-based transect index.
+ * @param x_left   [out] Station of the left encroachment limit. May be NULL.
+ * @param x_right  [out] Station of the right encroachment limit. May be NULL.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_get_encroachment_stations(SWMM_Engine engine, int idx,
+                                                             double* x_left, double* x_right);
+
+/**
+ * @brief Set the station, elevation, and meander modifiers for a transect.
+ *
+ * @details Maps to the `xFactor`, `yFactor`, and `lengthFactor` parameters
+ *          on the `[TRANSECTS]` X1 record:
+ *          - `x_factor`      = station-spacing multiplier (default 1.0).
+ *          - `y_factor`      = elevation offset added to every station
+ *                              elevation (default 0.0 — engine stores 1.0
+ *                              as a no-op marker at `swmm_transect_add` time).
+ *          - `length_factor` = meander factor = channel / floodplain length
+ *                              ratio (default 1.0).
+ *
+ * @param engine         Engine handle.
+ * @param idx            Zero-based transect index.
+ * @param x_factor       Station spacing multiplier.
+ * @param y_factor       Elevation offset.
+ * @param length_factor  Meander factor (channel/floodplain length ratio).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_set_modifiers(SWMM_Engine engine, int idx,
+                                                 double x_factor, double y_factor, double length_factor);
+
+/**
+ * @brief Get the station, elevation, and meander modifiers for a transect.
+ * @param engine         Engine handle.
+ * @param idx            Zero-based transect index.
+ * @param x_factor       [out] Station spacing multiplier. May be NULL.
+ * @param y_factor       [out] Elevation offset. May be NULL.
+ * @param length_factor  [out] Meander factor. May be NULL.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_get_modifiers(SWMM_Engine engine, int idx,
+                                                 double* x_factor, double* y_factor, double* length_factor);
+
+/**
+ * @brief Set the free-form comments / description for a transect.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based transect index.
+ * @param text    Null-terminated comment string. NULL clears the comment.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_set_comments(SWMM_Engine engine, int idx, const char* text);
+
+/**
+ * @brief Get the free-form comments / description for a transect.
+ *
+ * @details Writes the comment into @p buf with NUL termination; truncates
+ *          if the buffer is smaller than the comment. Always returns SWMM_OK
+ *          (an empty comment results in @p buf[0] == '\0').
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based transect index.
+ * @param buf     Destination buffer.
+ * @param buflen  Size of @p buf in bytes (must be > 0).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_get_comments(SWMM_Engine engine, int idx, char* buf, int buflen);
+
+/**
+ * @brief Get the number of station–elevation points stored for a transect.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based transect index.
+ * @returns Station count, or -1 on error.
+ */
+SWMM_ENGINE_API int swmm_transect_get_station_count(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Get a single station–elevation pair from a transect.
+ * @param engine       Engine handle.
+ * @param idx          Zero-based transect index.
+ * @param station_idx  Zero-based station-pair index.
+ * @param station      [out] Horizontal distance. May be NULL.
+ * @param elevation    [out] Elevation at this station. May be NULL.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_get_station(SWMM_Engine engine, int idx, int station_idx,
+                                               double* station, double* elevation);
+
+/**
+ * @brief Remove all station–elevation pairs from a transect.
+ *
+ * @details Used by the GUI's snapshot-and-rewrite path: clear then re-add
+ *          the full station list in one shot.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based transect index.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_clear_stations(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Rename an existing transect.
+ *
+ * @details Refuses on collision with another existing transect name (case
+ *          insensitive); same-name is a no-op SWMM_OK.
+ *
+ * @param engine   Engine handle.
+ * @param idx      Zero-based transect index.
+ * @param new_id   New null-terminated identifier.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_rename(SWMM_Engine engine, int idx, const char* new_id);
+
+/**
+ * @brief Remove a transect by index.
+ *
+ * @details Out-of-range indices are a SWMM_OK no-op (mirrors the pattern
+ *          mutation API — see test_pattern_mutation_api.cpp). Remaining
+ *          transects preserve their relative order; their indices shift
+ *          down by one.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based transect index.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_transect_remove(SWMM_Engine engine, int idx);
+
 /* =========================================================================
  * Streets
  * ========================================================================= */
@@ -107,6 +316,48 @@ SWMM_ENGINE_API int swmm_street_set_params(SWMM_Engine engine, int idx,
  */
 SWMM_ENGINE_API int swmm_street_count(SWMM_Engine engine);
 
+/**
+ * @brief Look up a street's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated street identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_street_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of a street by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based street index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_street_id(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Read back the geometric parameters of a street cross-section.
+ *
+ * @details Inverse of @ref swmm_street_set_params. Any out-pointer may be NULL
+ *          if that field is not needed. Values are returned in the same units
+ *          they were supplied (display units).
+ *
+ * @param engine         Engine handle.
+ * @param idx            Zero-based street index.
+ * @param[out] t_crown        Crown thickness.
+ * @param[out] h_curb         Curb height.
+ * @param[out] sx             Cross slope of the roadway.
+ * @param[out] n_road         Manning's n for the road surface.
+ * @param[out] gutter_depres  Gutter depression depth.
+ * @param[out] gutter_width   Gutter width.
+ * @param[out] sides          Number of sides (1 or 2).
+ * @param[out] back_width     Backing (sidewalk) width.
+ * @param[out] back_slope     Backing slope.
+ * @param[out] back_n         Manning's n for the backing area.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_street_get_params(SWMM_Engine engine, int idx,
+                                             double* t_crown, double* h_curb, double* sx, double* n_road,
+                                             double* gutter_depres, double* gutter_width, int* sides,
+                                             double* back_width, double* back_slope, double* back_n);
+
 /* =========================================================================
  * Inlets
  * ========================================================================= */
@@ -140,6 +391,57 @@ SWMM_ENGINE_API int swmm_inlet_set_params(SWMM_Engine engine, int idx, double le
  * @returns Number of inlets, or -1 on error.
  */
 SWMM_ENGINE_API int swmm_inlet_count(SWMM_Engine engine);
+
+/**
+ * @brief Look up an inlet's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated inlet identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_inlet_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of an inlet by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based inlet index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_inlet_id(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Read an inlet's geometric parameters. Inverse of @ref swmm_inlet_set_params.
+ *
+ * @details Lets the GUI inlet editor load an existing definition instead of
+ *          only writing one. Any out-param may be null. The inlet @e type
+ *          string (set at @ref swmm_inlet_add) is read separately via
+ *          @ref swmm_inlet_get_type.
+ *
+ * @param engine            Engine handle.
+ * @param idx               Zero-based inlet index.
+ * @param[out] length       Receives the inlet length.
+ * @param[out] width        Receives the inlet width.
+ * @param[out] grate_type   Buffer for the grate-type string (NUL-terminated,
+ *                          truncated to `grate_buflen`); may be null to skip.
+ * @param grate_buflen      Size of `grate_type` in bytes; ignored when
+ *                          `grate_type` is null.
+ * @param[out] open_area    Receives the open-area fraction.
+ * @param[out] splash_veloc Receives the splash-over velocity threshold.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_inlet_get_params(SWMM_Engine engine, int idx,
+                                            double* length, double* width,
+                                            char* grate_type, int grate_buflen,
+                                            double* open_area, double* splash_veloc);
+
+/**
+ * @brief Read an inlet's type string (the value passed to @ref swmm_inlet_add).
+ * @param engine     Engine handle.
+ * @param idx        Zero-based inlet index.
+ * @param[out] buf   Destination buffer (NUL-terminated, truncated to `buflen`).
+ * @param buflen     Size of `buf` in bytes (must be > 0).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_inlet_get_type(SWMM_Engine engine, int idx, char* buf, int buflen);
 
 /* =========================================================================
  * LID controls
@@ -207,11 +509,97 @@ SWMM_ENGINE_API int swmm_lid_set_storage(SWMM_Engine engine, int idx, double thi
 SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff, double expon, double offset);
 
 /**
+ * @brief Set the porous-pavement layer properties for a LID control.
+ *
+ * @details Used by PERM_PAVEMENT (and any LID with a `PAVEMENT` line). The six
+ *          values of the `[LID_CONTROLS] ... PAVEMENT` line, in input-file
+ *          units. Pre-start-only (BUILDING/OPENED) — the layer seeds per-unit
+ *          LID state at start().
+ *
+ * @param engine       Engine handle.
+ * @param idx          Zero-based LID index.
+ * @param thick        Pavement layer thickness.
+ * @param void_ratio   Void ratio (volume of voids / volume of solids).
+ * @param frac_imperv  Impervious surface fraction (0–1).
+ * @param ksat         Permeability / saturated conductivity.
+ * @param clog_factor  Clogging factor (0 = no clogging).
+ * @param regen_days   Days between clogging regeneration (0 = never).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double thick, double void_ratio,
+                                          double frac_imperv, double ksat, double clog_factor, double regen_days);
+
+/**
+ * @brief Set the drainage-mat layer properties for a LID control.
+ *
+ * @details Used by GREEN_ROOF (and any LID with a `DRAINMAT` line). The three
+ *          values of the `[LID_CONTROLS] ... DRAINMAT` line, in input-file
+ *          units. Pre-start-only (BUILDING/OPENED).
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based LID index.
+ * @param thick      Drainage-mat thickness.
+ * @param void_frac  Void fraction of the mat (0–1).
+ * @param roughness  Manning's n for flow through the mat.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_lid_set_drainmat(SWMM_Engine engine, int idx, double thick, double void_frac, double roughness);
+
+/**
  * @brief Get the total number of LID controls in the model.
  * @param engine  Engine handle.
  * @returns Number of LID controls, or -1 on error.
  */
 SWMM_ENGINE_API int swmm_lid_count(SWMM_Engine engine);
+
+/**
+ * @brief Look up a LID control's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated LID identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_lid_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of a LID control by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based LID index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_lid_id(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Read a LID control's type code. Inverse of the `type` argument to
+ *        @ref swmm_lid_add.
+ * @param engine     Engine handle.
+ * @param idx        Zero-based LID index.
+ * @param[out] type  Receives the LID type code (0=BIO_CELL … 7=VEGETATIVE_SWALE).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_lid_get_type(SWMM_Engine engine, int idx, int* type);
+
+/**
+ * @brief Read the surface layer properties. Inverse of @ref swmm_lid_set_surface.
+ * @details Lets the GUI LID editor load an existing control's layers instead of
+ *          only writing them. Any out-param may be null.
+ */
+SWMM_ENGINE_API int swmm_lid_get_surface(SWMM_Engine engine, int idx, double* storage, double* roughness, double* slope);
+
+/** @brief Read the soil layer properties. Inverse of @ref swmm_lid_set_soil. Any out-param may be null. */
+SWMM_ENGINE_API int swmm_lid_get_soil(SWMM_Engine engine, int idx, double* thick, double* porosity, double* fc, double* wp, double* ksat, double* kslope);
+
+/** @brief Read the storage layer properties. Inverse of @ref swmm_lid_set_storage. Any out-param may be null. */
+SWMM_ENGINE_API int swmm_lid_get_storage(SWMM_Engine engine, int idx, double* thick, double* void_frac, double* ksat);
+
+/** @brief Read the underdrain properties. Inverse of @ref swmm_lid_set_drain. Any out-param may be null. */
+SWMM_ENGINE_API int swmm_lid_get_drain(SWMM_Engine engine, int idx, double* coeff, double* expon, double* offset);
+
+/** @brief Read the porous-pavement layer. Inverse of @ref swmm_lid_set_pavement. Any out-param may be null. */
+SWMM_ENGINE_API int swmm_lid_get_pavement(SWMM_Engine engine, int idx, double* thick, double* void_ratio,
+                                          double* frac_imperv, double* ksat, double* clog_factor, double* regen_days);
+
+/** @brief Read the drainage-mat layer. Inverse of @ref swmm_lid_set_drainmat. Any out-param may be null. */
+SWMM_ENGINE_API int swmm_lid_get_drainmat(SWMM_Engine engine, int idx, double* thick, double* void_frac, double* roughness);
 
 /* =========================================================================
  * LID usage (assign LID to subcatchment)
@@ -234,6 +622,42 @@ SWMM_ENGINE_API int swmm_lid_count(SWMM_Engine engine);
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_lid_usage_add(SWMM_Engine engine, int subcatch_idx, int lid_idx, int number, double area, double width, double init_sat, double from_imperv);
+
+/**
+ * @brief Total number of LID usage rows across all subcatchments.
+ * @details To enumerate the usages on one subcatchment, iterate
+ *          [0, count) and filter on the subcatch index returned by
+ *          swmm_lid_usage_get.
+ * @returns The usage count, or -1 on a bad handle.
+ */
+SWMM_ENGINE_API int swmm_lid_usage_count(SWMM_Engine engine);
+
+/**
+ * @brief Read one LID usage row by global index.
+ * @param engine             Engine handle.
+ * @param usage_idx          Zero-based global usage index ([0, count)).
+ * @param[out] subcatch_idx  Owning subcatchment index (nullable).
+ * @param[out] lid_idx       LID control index (nullable).
+ * @param[out] number        Number of replicate units (nullable).
+ * @param[out] area          Area per unit (nullable).
+ * @param[out] width         Overland flow top width (nullable).
+ * @param[out] init_sat      Initial saturation 0–1 (nullable).
+ * @param[out] from_imperv   Fraction of impervious runoff treated (nullable).
+ * @param[out] to_perv       1 = route outflow to pervious area (nullable).
+ * @param[out] from_perv     Fraction of pervious runoff treated (nullable).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_lid_usage_get(SWMM_Engine engine, int usage_idx,
+                                       int* subcatch_idx, int* lid_idx, int* number,
+                                       double* area, double* width, double* init_sat,
+                                       double* from_imperv, int* to_perv, double* from_perv);
+
+/**
+ * @brief Remove one LID usage row by global index.
+ * @details Later usage indices shift down by one after removal.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_lid_usage_remove(SWMM_Engine engine, int usage_idx);
 
 #ifdef __cplusplus
 } /* extern "C" */

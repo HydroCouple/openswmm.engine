@@ -21,12 +21,14 @@
  * @ingroup engine_hotstart
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #include "HotStartManager.hpp"
 #include "SimulationContext.hpp"
+#include "../hydrology/Runoff.hpp"
+#include "../hydrology/Groundwater.hpp"
 
 #include <cstring>
 #include <ctime>
@@ -157,6 +159,16 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         if (!write_string(buf, s.id))    return false;
         if (!write_pod(buf, s.runoff))   return false;
         if (!write_pod(buf, s.gwater))   return false;
+        // V2: infiltration model state + GW zone state
+        if (hs.header.version >= 2u) {
+            uint32_t im = static_cast<uint32_t>(s.infil_model < 0 ? 0 : s.infil_model);
+            if (!write_pod(buf, im)) return false;
+            for (int k = 0; k < 6; ++k) {
+                if (!write_pod(buf, s.infil[k])) return false;
+            }
+            if (!write_pod(buf, s.gw_theta))       return false;
+            if (!write_pod(buf, s.gw_lower_depth)) return false;
+        }
     }
 
     // Compute CRC32 over the body
@@ -229,7 +241,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version != 1u) {
+    if (hs.header.version != 1u && hs.header.version != 2u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -270,6 +282,17 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
         if (!read_string(is, s.id))    return false;
         if (!read_pod(is, s.runoff))   return false;
         if (!read_pod(is, s.gwater))   return false;
+        // V2: infiltration model state + GW zone state
+        if (hs.header.version >= 2u) {
+            uint32_t im = 0;
+            if (!read_pod(is, im)) return false;
+            s.infil_model = static_cast<int>(im);
+            for (int k = 0; k < 6; ++k) {
+                if (!read_pod(is, s.infil[k])) return false;
+            }
+            if (!read_pod(is, s.gw_theta))       return false;
+            if (!read_pod(is, s.gw_lower_depth)) return false;
+        }
     }
 
     hs.path = path;
@@ -323,11 +346,14 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const std::string& path) {
     tl_last_io_error.clear();
 
+    // Auto-promote to V2 when ctx exposes solver-internal state via accessors.
+    const bool use_v2 = ctx.state_accessors.can_read();
+
     auto* hs = new HotStartFile();
     hs->path = path;
 
     // Header
-    hs->header.version    = 1;
+    hs->header.version    = use_v2 ? 2u : 1u;
     hs->header.timestamp  = static_cast<int64_t>(std::time(nullptr));
     hs->header.sim_time   = ctx.current_time;
     hs->header.start_date = ctx.options.start_date;
@@ -356,14 +382,105 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->links[ui].volume = ctx.links.volume[ui];
     }
 
-    // Subcatchments
+    // Subcatchments — V2 includes infil + GW state pulled via accessors
     const int n_sub = ctx.n_subcatches();
     hs->subcatches.resize(static_cast<std::size_t>(n_sub));
     for (int i = 0; i < n_sub; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        hs->subcatches[ui].id     = ctx.subcatch_names.name_of(i);
-        hs->subcatches[ui].runoff = ctx.subcatches.runoff[ui];
-        hs->subcatches[ui].gwater = ctx.subcatches.gw_flow[ui];
+        auto& rec = hs->subcatches[ui];
+        rec.id     = ctx.subcatch_names.name_of(i);
+        rec.runoff = ctx.subcatches.runoff[ui];
+        rec.gwater = ctx.subcatches.gw_flow[ui];
+
+        if (use_v2) {
+            if (ctx.state_accessors.get_infil_state) {
+                ctx.state_accessors.get_infil_state(i, rec.infil_model, rec.infil);
+            } else {
+                rec.infil_model = 0;
+            }
+            if (ctx.state_accessors.get_gw_state) {
+                ctx.state_accessors.get_gw_state(i, rec.gw_theta, rec.gw_lower_depth);
+            }
+        }
+    }
+
+    if (!write_file(*hs, path)) {
+        delete hs;
+        return nullptr;
+    }
+
+    return hs;
+}
+
+// ============================================================================
+// HotStartManager::save() — V2 overload with infil + GW state (Gap #54)
+// ============================================================================
+
+HotStartFile* HotStartManager::save(const SimulationContext& ctx,
+                                    const runoff::RunoffSolver* runoff_solver,
+                                    const groundwater::GWSolver* gw_solver,
+                                    const std::string& path) {
+    tl_last_io_error.clear();
+
+    auto* hs = new HotStartFile();
+    hs->path = path;
+
+    // Header — V2
+    hs->header.version    = 2;
+    hs->header.timestamp  = static_cast<int64_t>(std::time(nullptr));
+    hs->header.sim_time   = ctx.current_time;
+    hs->header.start_date = ctx.options.start_date;
+    hs->header.end_date   = ctx.options.end_date;
+    hs->header.crs        = ctx.spatial.crs;
+
+    // Nodes
+    const int n_nodes = ctx.n_nodes();
+    hs->nodes.resize(static_cast<std::size_t>(n_nodes));
+    for (int i = 0; i < n_nodes; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        hs->nodes[ui].id     = ctx.node_names.name_of(i);
+        hs->nodes[ui].depth  = ctx.nodes.depth[ui];
+        hs->nodes[ui].head   = ctx.nodes.head[ui];
+        hs->nodes[ui].volume = ctx.nodes.volume[ui];
+    }
+
+    // Links
+    const int n_links = ctx.n_links();
+    hs->links.resize(static_cast<std::size_t>(n_links));
+    for (int i = 0; i < n_links; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        hs->links[ui].id     = ctx.link_names.name_of(i);
+        hs->links[ui].flow   = ctx.links.flow[ui];
+        hs->links[ui].depth  = ctx.links.depth[ui];
+        hs->links[ui].volume = ctx.links.volume[ui];
+    }
+
+    // Subcatchments — V2: include infil + GW state
+    const int n_sub = ctx.n_subcatches();
+    hs->subcatches.resize(static_cast<std::size_t>(n_sub));
+    for (int i = 0; i < n_sub; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        auto& rec    = hs->subcatches[ui];
+        rec.id       = ctx.subcatch_names.name_of(i);
+        rec.runoff   = ctx.subcatches.runoff[ui];
+        rec.gwater   = ctx.subcatches.gw_flow[ui];
+
+        // Infiltration state
+        if (runoff_solver) {
+            runoff_solver->infil_get_state(i, rec.infil_model, rec.infil);
+        } else {
+            rec.infil_model = 0;
+        }
+
+        // GW zone state
+        if (gw_solver) {
+            const auto& gwa = gw_solver->state();
+            if (ui < gwa.theta.size()) {
+                rec.gw_theta       = gwa.theta[ui];
+                rec.gw_lower_depth = ui < gwa.lower_depth.size()
+                                     ? gwa.lower_depth[ui] : 0.0;
+            }
+        }
     }
 
     if (!write_file(*hs, path)) {
@@ -431,7 +548,10 @@ int HotStartManager::apply(HotStartFile& hs,
         ctx.links.volume[i] = rec.volume;
     }
 
-    // Apply subcatchment records
+    // Apply subcatchment records — and any V2 solver-internal state via
+    // ctx.state_accessors when the file is V2 and accessors are wired.
+    const bool apply_v2 = (hs.header.version >= 2u) && ctx.state_accessors.can_write();
+
     for (const auto& rec : hs.subcatches) {
         const int idx = ctx.subcatch_names.find(rec.id);
         if (idx < 0) {
@@ -442,9 +562,165 @@ int HotStartManager::apply(HotStartFile& hs,
         const auto i = static_cast<std::size_t>(idx);
         ctx.subcatches.runoff[i] = rec.runoff;
         ctx.subcatches.gw_flow[i] = rec.gwater;
+
+        if (apply_v2) {
+            if (ctx.state_accessors.set_infil_state && rec.infil_model >= 0) {
+                ctx.state_accessors.set_infil_state(idx, rec.infil_model, rec.infil);
+            }
+            if (ctx.state_accessors.set_gw_state && rec.gw_theta >= 0.0) {
+                ctx.state_accessors.set_gw_state(idx, rec.gw_theta, rec.gw_lower_depth);
+            }
+        }
     }
 
     return missing;
+}
+
+// ============================================================================
+// HotStartManager::apply() — V2 overload with infil + GW state (Gap #54)
+// ============================================================================
+
+int HotStartManager::apply(HotStartFile& hs,
+                           SimulationContext& ctx,
+                           runoff::RunoffSolver* runoff_solver,
+                           groundwater::GWSolver* gw_solver,
+                           std::function<void(const std::string&)> warn_cb) {
+    // Apply hydraulic state (nodes, links) via the existing V1 overload
+    int missing = apply(hs, ctx, warn_cb);
+
+    // Apply V2 infiltration + GW state if the file has it
+    if (hs.header.version < 2u) return missing;
+
+    for (const auto& rec : hs.subcatches) {
+        const int idx = ctx.subcatch_names.find(rec.id);
+        if (idx < 0) continue;  // already counted as missing in V1 path
+
+        // Infiltration model state
+        if (runoff_solver && rec.infil_model >= 0) {
+            runoff_solver->infil_set_state(idx, rec.infil_model, rec.infil);
+        }
+
+        // GW zone state
+        if (gw_solver && rec.gw_theta >= 0.0) {
+            auto& gwa = gw_solver->state();
+            const auto ui = static_cast<std::size_t>(idx);
+            if (ui < gwa.theta.size())       gwa.theta[ui]       = rec.gw_theta;
+            if (ui < gwa.lower_depth.size()) gwa.lower_depth[ui] = rec.gw_lower_depth;
+        }
+    }
+
+    return missing;
+}
+
+// ============================================================================
+// HotStartManager::apply_legacy_routing()
+// ============================================================================
+//
+// Reads a legacy EPA SWMM5 `.hsf` file (the format written by the reference
+// engine for SAVE/USE HOTSTART) and applies its node/link routing state BY
+// OBJECT INDEX. Mirrors legacy hotstart.c initializeFromHotstartFile() +
+// readRouting(); see also hotstart_is_valid() for the stamp/version logic.
+
+int HotStartManager::apply_legacy_routing(
+        const std::string& path,
+        SimulationContext& ctx,
+        std::function<void(const std::string&)> warn_cb) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        tl_last_io_error = "Cannot open hotstart file '" + path + "'";
+        return 1;
+    }
+
+    // --- detect version from the file stamp (hotstart_is_valid) ---
+    // Versions 2-4 use a 15-char stamp "SWMM5-HOTSTART<n>"; version 1 uses the
+    // 14-char "SWMM5-HOTSTART".
+    char stamp[16] = {};
+    file.read(stamp, 15);
+    if (!file) {
+        tl_last_io_error = "Hotstart file '" + path + "' too small for header";
+        return 1;
+    }
+    int version = 0;
+    if      (std::memcmp(stamp, "SWMM5-HOTSTART4", 15) == 0) version = 4;
+    else if (std::memcmp(stamp, "SWMM5-HOTSTART3", 15) == 0) version = 3;
+    else if (std::memcmp(stamp, "SWMM5-HOTSTART2", 15) == 0) version = 2;
+    else {
+        file.clear();
+        file.seekg(0, std::ios::beg);
+        char s14[15] = {};
+        file.read(s14, 14);
+        if (file && std::memcmp(s14, "SWMM5-HOTSTART", 14) == 0) version = 1;
+        else {
+            tl_last_io_error =
+                "'" + path + "' is not a legacy EPA SWMM5 hotstart file";
+            return 2;
+        }
+    }
+
+    // --- header object counts (legacy initializeFromHotstartFile) ---
+    int32_t nSub = 0, nLand = 0, nNodes = 0, nLinks = 0, nPollut = 0, flowUnits = 0;
+    if (version >= 2) { if (!read_pod(file, nSub))  return 1; } else nSub = ctx.n_subcatches();
+    if (version >= 3) { if (!read_pod(file, nLand)) return 1; }
+    if (!read_pod(file, nNodes))    return 1;
+    if (!read_pod(file, nLinks))    return 1;
+    if (!read_pod(file, nPollut))   return 1;
+    if (!read_pod(file, flowUnits)) return 1;
+
+    if (nNodes != ctx.n_nodes() || nLinks != ctx.n_links()) {
+        tl_last_io_error = "Hotstart node/link count mismatch (file " +
+            std::to_string(nNodes) + "/" + std::to_string(nLinks) + " vs model " +
+            std::to_string(ctx.n_nodes()) + "/" + std::to_string(ctx.n_links()) + ")";
+        return 3;
+    }
+    if (nSub != 0) {
+        // The runoff section (legacy readRunoff) is not yet parsed, so the
+        // file offset for the routing records can't be located. Routing-only
+        // hotstarts (extran*) work; subcatchment hotstarts are a follow-up.
+        tl_last_io_error =
+            "Hotstart with subcatchments is not yet supported (routing-only)";
+        return 4;
+    }
+
+    auto& nodes = ctx.nodes;
+    auto& links = ctx.links;
+
+    // --- node states (legacy readRouting): depth, lateral inflow, [storage hrt],
+    //     pollutant quality. All float, internal units. ---
+    for (int i = 0; i < nNodes; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        float depth = 0.0f, lat = 0.0f;
+        if (!read_pod(file, depth)) return 1;
+        if (!read_pod(file, lat))   return 1;
+        nodes.depth[ui]    = static_cast<double>(depth);
+        nodes.lat_flow[ui] = static_cast<double>(lat);
+        if (version >= 4 && nodes.type[ui] == NodeType::STORAGE) {
+            float hrt = 0.0f;
+            if (!read_pod(file, hrt)) return 1;  // storage residence time (unused here)
+        }
+        for (int j = 0; j < nPollut; ++j) { float q = 0.0f; if (!read_pod(file, q)) return 1; }
+        if (version <= 2)
+            for (int j = 0; j < nPollut; ++j) { float q = 0.0f; if (!read_pod(file, q)) return 1; }
+    }
+
+    // --- link states (legacy readRouting): flow, depth, setting, quality. ---
+    for (int i = 0; i < nLinks; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        float flow = 0.0f, depth = 0.0f, setting = 0.0f;
+        if (!read_pod(file, flow))    return 1;
+        if (!read_pod(file, depth))   return 1;
+        if (!read_pod(file, setting)) return 1;
+        links.flow[ui]           = static_cast<double>(flow);
+        links.depth[ui]          = static_cast<double>(depth);
+        links.setting[ui]        = static_cast<double>(setting);
+        links.target_setting[ui] = static_cast<double>(setting);
+        for (int j = 0; j < nPollut; ++j) { float q = 0.0f; if (!read_pod(file, q)) return 1; }
+    }
+
+    (void)flowUnits;
+    (void)nLand;
+    (void)warn_cb;
+    tl_last_io_error.clear();
+    return 0;
 }
 
 // ============================================================================

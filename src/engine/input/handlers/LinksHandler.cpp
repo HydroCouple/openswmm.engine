@@ -18,13 +18,14 @@
  * @ingroup engine_input
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #include "LinksHandler.hpp"
 
 #include "../Tokenizer.hpp"
+#include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/LinkData.hpp"
 #include "../../data/InfraData.hpp"
@@ -46,8 +47,8 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
 // ============================================================================
 
 void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 7) continue;  // Name Node1 Node2 Length Roughness In Out required
 
         const std::string& name = tok[0];
@@ -56,17 +57,20 @@ void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lin
 
         ensure_link_capacity(ctx, idx);
 
-        ctx.links.type[idx] = LinkType::CONDUIT;
+        const int cr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::CONDUIT);
+        const auto ucr = static_cast<std::size_t>(cr);
 
         // Resolve node indices — nodes must be parsed before conduits
         ctx.links.node1[idx]     = ctx.node_names.find(tok[1]);
         ctx.links.node2[idx]     = ctx.node_names.find(tok[2]);
-        ctx.links.length[idx]    = to_double(tok[3]);
-        ctx.links.roughness[idx] = to_double(tok[4]);
+        ctx.link_subtypes.conduits.length[ucr]    = to_double(tok[3]);
+        ctx.link_subtypes.conduits.roughness[ucr] = to_double(tok[4]);
         ctx.links.offset1[idx]   = to_double(tok[5]);
         ctx.links.offset2[idx]   = to_double(tok[6]);
         if (tok.size() > 7) ctx.links.q0[idx]      = to_double(tok[7]);
         if (tok.size() > 8) ctx.links.q_limit[idx] = to_double(tok[8]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -75,8 +79,8 @@ void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lin
 // ============================================================================
 
 void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -85,27 +89,30 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
 
         ensure_link_capacity(ctx, idx);
 
-        ctx.links.type[idx]  = LinkType::PUMP;
+        const int pr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::PUMP);
+        const auto upr = static_cast<std::size_t>(pr);
         ctx.links.node1[idx] = ctx.node_names.find(tok[1]);
         ctx.links.node2[idx] = ctx.node_names.find(tok[2]);
         // tok[3]: pump curve name — store for deferred resolution
         if (tok.size() > 3) {
             ctx.links.pump_curve_name[idx] = tok[3];
-            ctx.links.pump_curve[idx] = ctx.table_names.find(tok[3]);
+            ctx.link_subtypes.pumps.curve[upr] = ctx.table_names.find(tok[3]);
         }
         // tok[4]: init status (ON/OFF)
         if (tok.size() > 4) {
-            ctx.links.pump_init_state[idx] =
-                Tokenizer::to_upper(tok[4]) == "ON";
-            double init_val = ctx.links.pump_init_state[idx] ? 1.0 : 0.0;
+            const bool on = Tokenizer::to_upper(tok[4]) == "ON";
+            ctx.link_subtypes.pumps.init_state[upr] = on ? uint8_t{1} : uint8_t{0};
+            double init_val = on ? 1.0 : 0.0;
             ctx.links.setting[idx]        = init_val;
             ctx.links.target_setting[idx] = init_val;
         }
         // tok[5]: startup depth, tok[6]: shutoff depth
         if (tok.size() > 5)
-            ctx.links.pump_startup[idx] = to_double(tok[5]);
+            ctx.link_subtypes.pumps.startup[upr] = to_double(tok[5]);
         if (tok.size() > 6)
-            ctx.links.pump_shutoff[idx] = to_double(tok[6]);
+            ctx.link_subtypes.pumps.shutoff[upr] = to_double(tok[6]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -114,8 +121,8 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
 // ============================================================================
 
 void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -124,22 +131,24 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
 
         ensure_link_capacity(ctx, idx);
 
-        ctx.links.type[idx]         = LinkType::ORIFICE;
+        const int orr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::ORIFICE);
+        const auto uorr = static_cast<std::size_t>(orr);
         ctx.links.node1[idx]        = ctx.node_names.find(tok[1]);
         ctx.links.node2[idx]        = ctx.node_names.find(tok[2]);
-        // tok[3]: SIDE or BOTTOM → store in param1 (0=BOTTOM, 1=SIDE)
-        if (tok.size() > 3) {
-            std::string otype = Tokenizer::to_upper(tok[3]);
-            ctx.links.param1[idx] = (otype == "SIDE") ? 1.0 : 0.0;
-        }
+        // tok[3]: SIDE or BOTTOM → orifice_type (0=BOTTOM, 1=SIDE)
+        if (tok.size() > 3)
+            ctx.link_subtypes.orifices.orifice_type[uorr] =
+                (Tokenizer::to_upper(tok[3]) == "SIDE") ? 1.0 : 0.0;
         // tok[4]: offset (height above invert)
         if (tok.size() > 4) ctx.links.offset1[idx]      = to_double(tok[4]);
         // tok[5]: discharge coefficient
-        if (tok.size() > 5) ctx.links.cd[idx]            = to_double(tok[5]);
+        if (tok.size() > 5) ctx.link_subtypes.orifices.cd[uorr] = to_double(tok[5]);
         // tok[6]: flap gate (YES/NO)
         if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::to_upper(tok[6]) == "YES";
         // tok[7]: open/close time (seconds)
-        if (tok.size() > 7) ctx.links.orate[idx]         = to_double(tok[7]);
+        if (tok.size() > 7) ctx.link_subtypes.orifices.orate[uorr] = to_double(tok[7]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -148,8 +157,8 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
 // ============================================================================
 
 void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -158,25 +167,29 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
 
         ensure_link_capacity(ctx, idx);
 
-        ctx.links.type[idx]  = LinkType::WEIR;
+        const int wr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::WEIR);
+        const auto uwr = static_cast<std::size_t>(wr);
         ctx.links.node1[idx] = ctx.node_names.find(tok[1]);
         ctx.links.node2[idx] = ctx.node_names.find(tok[2]);
         // tok[3]: weir type (TRANSVERSE=0, SIDEFLOW=1, V-NOTCH=2, TRAPEZOIDAL=3)
         if (tok.size() > 3) {
             std::string wtype = Tokenizer::to_upper(tok[3]);
-            if (wtype == "TRANSVERSE")  ctx.links.param1[idx] = 0.0;
-            else if (wtype == "SIDEFLOW") ctx.links.param1[idx] = 1.0;
-            else if (wtype == "V-NOTCH") ctx.links.param1[idx] = 2.0;
-            else if (wtype == "TRAPEZOIDAL") ctx.links.param1[idx] = 3.0;
+            double wt = 0.0;
+            if (wtype == "SIDEFLOW") wt = 1.0;
+            else if (wtype == "V-NOTCH") wt = 2.0;
+            else if (wtype == "TRAPEZOIDAL") wt = 3.0;
+            ctx.link_subtypes.weirs.weir_type[uwr] = wt;
         }
         // tok[4]: crest height (above invert)
-        if (tok.size() > 4) ctx.links.crest_height[idx] = to_double(tok[4]);
+        if (tok.size() > 4) ctx.link_subtypes.weirs.crest_height[uwr] = to_double(tok[4]);
         // tok[5]: discharge coefficient
-        if (tok.size() > 5) ctx.links.cd[idx]           = to_double(tok[5]);
+        if (tok.size() > 5) ctx.link_subtypes.weirs.cd[uwr] = to_double(tok[5]);
         // tok[6]: flap gate (YES/NO)
         if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::to_upper(tok[6]) == "YES";
         // tok[7]: end contractions
-        if (tok.size() > 7) ctx.links.param2[idx]       = to_double(tok[7]);
+        if (tok.size() > 7) ctx.link_subtypes.weirs.end_contractions[uwr] = to_double(tok[7]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -185,8 +198,8 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
 // ============================================================================
 
 void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
@@ -195,13 +208,40 @@ void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& line
 
         ensure_link_capacity(ctx, idx);
 
-        ctx.links.type[idx]         = LinkType::OUTLET;
+        const int olr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::OUTLET);
+        const auto uolr = static_cast<std::size_t>(olr);
         ctx.links.node1[idx]        = ctx.node_names.find(tok[1]);
         ctx.links.node2[idx]        = ctx.node_names.find(tok[2]);
-        if (tok.size() > 3) ctx.links.crest_height[idx] = to_double(tok[3]);
-        // tok[4]: TABULAR/FUNCTIONAL, tok[5]: curve name or C1, tok[6]: C2
-        if (tok.size() > 5) ctx.links.cd[idx]    = to_double(tok[5]);
-        if (tok.size() > 6) ctx.links.param2[idx] = to_double(tok[6]);
+        if (tok.size() > 3)
+            ctx.link_subtypes.outlets.crest_height[uolr] = to_double(tok[3]);
+        // tok[4]: type string (TABULAR/HEAD, TABULAR/DEPTH, FUNCTIONAL/HEAD, FUNCTIONAL/DEPTH)
+        // tok[5]: curve name (TABULAR) or C1 coefficient (FUNCTIONAL)
+        // tok[6]: C2 exponent (FUNCTIONAL only)
+        // outlet_type: 0=FUNCTIONAL_HEAD, 1=FUNCTIONAL_DEPTH,
+        //              2=TABULAR_HEAD,     3=TABULAR_DEPTH
+        if (tok.size() > 4) {
+            const auto& type_str = tok[4];
+            bool is_tabular    = (type_str.find("TABULAR")    != std::string::npos);
+            bool is_depth_based = (type_str.find("DEPTH")     != std::string::npos);
+            ctx.link_subtypes.outlets.outlet_type[uolr] =
+                is_tabular ? (is_depth_based ? 3.0 : 2.0) : (is_depth_based ? 1.0 : 0.0);
+        }
+        int outlet_type = static_cast<int>(ctx.link_subtypes.outlets.outlet_type[uolr]);
+        bool is_tabular = (outlet_type >= 2);
+        if (tok.size() > 5) {
+            if (is_tabular) {
+                // Store curve name in pump_curve_name for PostParseResolver
+                auto uidx = static_cast<size_t>(idx);
+                if (uidx < ctx.links.pump_curve_name.size())
+                    ctx.links.pump_curve_name[uidx] = tok[5];
+            } else {
+                ctx.link_subtypes.outlets.coeff[uolr] = to_double(tok[5]);
+            }
+        }
+        if (tok.size() > 6 && !is_tabular)
+            ctx.link_subtypes.outlets.expon[uolr] = to_double(tok[6]);
+        if (!pl.comment.empty())
+            ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
 }
 
@@ -257,11 +297,14 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
         }
 
         // IRREGULAR shapes: tok[2] is transect name, not a dimension.
-        // CUSTOM shapes: tok[2] = y_full, tok[3] = shape curve name.
-        // Both need deferred resolution (TRANSECTS/CURVES may not be parsed yet).
-        if (ctx.links.xsect_shape[idx] == XsectShape::IRREGULAR) {
+        // STREET shapes:    tok[2] is street name, not a dimension.
+        // CUSTOM shapes:    tok[2] = y_full, tok[3] = shape curve name.
+        // All need deferred resolution (TRANSECTS/STREETS/CURVES may not be
+        // parsed yet).
+        if (ctx.links.xsect_shape[idx] == XsectShape::IRREGULAR ||
+            ctx.links.xsect_shape[idx] == XsectShape::STREET_XSECT) {
             if (tok.size() > 2) {
-                ctx.links.pump_curve_name[idx] = tok[2]; // Reuse field for transect name
+                ctx.links.pump_curve_name[idx] = tok[2]; // Reuse field for transect/street name
                 ctx.links.xsect_curve[idx] = -1;
             }
         } else if (ctx.links.xsect_shape[idx] == XsectShape::CUSTOM) {
@@ -286,16 +329,33 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
         // Geom4 = fourth shape parameter (rBot, etc.)
         if (tok.size() > 5) ctx.links.xsect_r_bot[idx]  = to_double(tok[5]);
 
-        // Barrels (number of identical conduits, default 1)
-        if (tok.size() > 6) {
+        // Retain raw Geom1–Geom4 (display units) for lossless serialization —
+        // the fields above are overwritten with derived geometry during init,
+        // discarding e.g. a trapezoid's bottom width / side slopes.  Mirrors
+        // swmm_link_set_xsect.  See LinkData::xsect_geom1.
+        if (ctx.links.xsect_shape[idx] != XsectShape::IRREGULAR &&
+            ctx.links.xsect_shape[idx] != XsectShape::STREET_XSECT) {
+            if (tok.size() > 2) ctx.links.xsect_geom1[idx] = to_double(tok[2]);
+            if (tok.size() > 3) ctx.links.xsect_geom2[idx] = to_double(tok[3]);
+            if (tok.size() > 4) ctx.links.xsect_geom3[idx] = to_double(tok[4]);
+            if (tok.size() > 5) ctx.links.xsect_geom4[idx] = to_double(tok[5]);
+        }
+
+        // Barrels (number of identical conduits, default 1). Cross-cutting
+        // section: dual-write the conduit side-table row if it exists (the
+        // [CONDUITS] handler created it); no-op for non-conduit links.
+        const int cr = ctx.link_subtypes.conduit_row(idx);
+        if (tok.size() > 6 && cr >= 0) {
             int barrels = static_cast<int>(to_double(tok[6]));
-            if (barrels > 0) ctx.links.barrels[idx] = barrels;
+            if (barrels > 0)
+                ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)] = barrels;
         }
 
         // Culvert code (optional, token 7)
-        if (tok.size() > 7) {
+        if (tok.size() > 7 && cr >= 0) {
             int cc = static_cast<int>(to_double(tok[7]));
-            if (cc > 0) ctx.links.culvert_code[idx] = cc;
+            if (cc > 0)
+                ctx.link_subtypes.conduits.culvert_code[static_cast<std::size_t>(cr)] = cc;
         }
     }
 }
@@ -314,11 +374,15 @@ void handle_losses(SimulationContext& ctx, const std::vector<std::string>& lines
 
         ensure_link_capacity(ctx, idx);
 
-        if (tok.size() > 1) ctx.links.loss_inlet[idx]    = to_double(tok[1]);
-        if (tok.size() > 2) ctx.links.loss_outlet[idx]   = to_double(tok[2]);
-        if (tok.size() > 3) ctx.links.loss_avg[idx]      = to_double(tok[3]);
+        const int cr = ctx.link_subtypes.conduit_row(idx);
+        const auto ucr = static_cast<std::size_t>(cr);
+        if (cr >= 0) {
+            if (tok.size() > 1) ctx.link_subtypes.conduits.loss_inlet[ucr]  = to_double(tok[1]);
+            if (tok.size() > 2) ctx.link_subtypes.conduits.loss_outlet[ucr] = to_double(tok[2]);
+            if (tok.size() > 3) ctx.link_subtypes.conduits.loss_avg[ucr]    = to_double(tok[3]);
+            if (tok.size() > 5) ctx.link_subtypes.conduits.seep_rate[ucr]   = to_double(tok[5]);
+        }
         if (tok.size() > 4) ctx.links.has_flap_gate[idx] = Tokenizer::parse_boolean(tok[4]);
-        if (tok.size() > 5) ctx.links.seep_rate[idx]     = to_double(tok[5]);
     }
 }
 
@@ -349,12 +413,31 @@ void handle_transects(SimulationContext& ctx, const std::vector<std::string>& li
             if (tok.size() > 3) nc_channel = to_double(tok[3]);
         }
         else if (keyword == "X1") {
-            // X1  name  nSta  xLeftBank  xRightBank  0  0  0  xFactor  yFactor
+            // Per EPA SWMM 5 (transect.c::setParams) the X1 layout is:
+            //   X1  Name  Nsta  Xleft  Xright  0  0  Lfactor  Xfactor  Yfactor
+            // Tokens:  1     2     3      4    5  6    7         8         9
+            // (Only two placeholder zeros sit between Xright and Lfactor —
+            // NOT three; the SWMM 5 user-manual line "0 0 0 Lfactor Wfactor
+            // Eoff" misled an earlier read of this code.)
+            //
+            // SWMM also treats Lfactor==0 / Xfactor==0 as "use 1.0" — both
+            // are multiplicative modifiers, and EPA SWMM-generated files
+            // routinely emit zero placeholders here. Without the same
+            // default-to-one fallback the chart collapses every station to
+            // x*0 = 0 (the "vertical line" cross-section bug).
             if (tok.size() < 3) continue;
 
             const std::string& name = tok[1];
 
             ctx.transects.names.push_back(name);
+            // All parallel arrays in TransectStore must be kept in lock-step
+            // with `names` — count() reports names.size() and downstream
+            // accessors (swmm_transect_get_comments / _encroachment /
+            // _modifiers) index every array by the same `ui`. Missing a
+            // push_back here lets a subsequent get_*() read past end of an
+            // empty vector and crash. INP doesn't supply comments /
+            // encroachment, so default them at parse time.
+            ctx.transects.comments.emplace_back();
             ctx.transects.n_left.push_back(nc_left);
             ctx.transects.n_right.push_back(nc_right);
             ctx.transects.n_channel.push_back(nc_channel);
@@ -362,10 +445,18 @@ void handle_transects(SimulationContext& ctx, const std::vector<std::string>& li
                 (tok.size() > 3) ? to_double(tok[3]) : 0.0);
             ctx.transects.x_right_bank.push_back(
                 (tok.size() > 4) ? to_double(tok[4]) : 0.0);
-            ctx.transects.x_factor.push_back(
-                (tok.size() > 8) ? to_double(tok[8]) : 1.0);
-            ctx.transects.y_factor.push_back(
-                (tok.size() > 9) ? to_double(tok[9]) : 1.0);
+            ctx.transects.x_left_encroachment.push_back(0.0);
+            ctx.transects.x_right_encroachment.push_back(0.0);
+
+            double lFactor = (tok.size() > 7) ? to_double(tok[7]) : 1.0;
+            double xFactor = (tok.size() > 8) ? to_double(tok[8]) : 1.0;
+            double yFactor = (tok.size() > 9) ? to_double(tok[9]) : 0.0;
+            if (lFactor == 0.0) lFactor = 1.0;
+            if (xFactor == 0.0) xFactor = 1.0;
+            ctx.transects.length_factor.push_back(lFactor);
+            ctx.transects.x_factor.push_back(xFactor);
+            ctx.transects.y_factor.push_back(yFactor);
+
             ctx.transects.stations.emplace_back();
             ctx.transects.elevations.emplace_back();
         }

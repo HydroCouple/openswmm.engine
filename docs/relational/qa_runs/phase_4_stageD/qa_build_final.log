@@ -1,0 +1,323 @@
+[1/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_options_parser.dir/test_options_parser.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_options_parser.cpp:14:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[2/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_postparse_resolver.dir/test_postparse_resolver.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_postparse_resolver.cpp:33:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[3/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_massbalance.dir/test_massbalance.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_massbalance.cpp:19:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SWMMEngine.hpp:39:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[4/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_capi_file_paths.dir/test_capi_file_paths.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_capi_file_paths.cpp:34:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[5/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_snow.dir/test_snow.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_snow.cpp:22:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[6/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_section_registry.dir/test_section_registry.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_section_registry.cpp:13:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[7/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_timeseries_file_roundtrip.dir/test_timeseries_file_roundtrip.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_timeseries_file_roundtrip.cpp:27:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[8/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_inp_writer_relative_paths.dir/test_inp_writer_relative_paths.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_inp_writer_relative_paths.cpp:35:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[9/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_user_flags.dir/test_user_flags.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_user_flags.cpp:20:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[10/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_plugin_lifecycle.dir/test_plugin_lifecycle.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_plugin_lifecycle.cpp:31:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[11/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_files_section.dir/test_files_section.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_files_section.cpp:29:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[12/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_hotstart.dir/test_hotstart.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_hotstart.cpp:28:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[13/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_groundwater.dir/test_groundwater.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_groundwater.cpp:25:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[14/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_gage_scalefactor.dir/test_gage_scalefactor.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_gage_scalefactor.cpp:25:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[15/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_exfiltration.dir/test_exfiltration.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_exfiltration.cpp:20:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[16/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_controls_legacy_parity.dir/test_controls_legacy_parity.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_controls_legacy_parity.cpp:29:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[17/107] Linking CXX executable bin/Debug/test_engine_tokenizer
+[18/107] Linking CXX executable bin/Debug/test_engine_timeseries_cursor
+[19/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_report_section.dir/test_report_section.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_report_section.cpp:32:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/../../src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[20/107] Linking CXX executable bin/Debug/test_engine_options_parser
+[21/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_quality_routing.dir/test_quality_routing.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_quality_routing.cpp:27:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[22/107] Linking CXX executable bin/Debug/test_engine_csv_timeseries
+[23/107] Linking CXX executable bin/Debug/test_engine_timeseries_file_roundtrip
+[24/107] Linking CXX executable bin/Debug/test_engine_pathresolver
+[25/107] Linking CXX executable bin/Debug/test_engine_postparse_resolver
+[26/107] Linking CXX executable bin/Debug/test_engine_inp_writer_relative_paths
+[27/107] Linking CXX executable bin/Debug/test_engine_plugin_lifecycle
+[28/107] Linking CXX executable bin/Debug/test_engine_plugin_filter_invariant
+[29/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_lid.dir/test_lid.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_lid.cpp:30:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[30/107] Linking CXX executable bin/Debug/test_engine_pluginfactory_builtins
+[31/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_rdii.dir/test_rdii.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_rdii.cpp:18:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_rdii.cpp:75:12: warning: unused variable 'tPeak' [-Wunused-variable]
+   75 |     double tPeak = 3600.0;  // 1 hour
+      |            ^~~~~
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_rdii.cpp:89:12: warning: unused variable 'tPeak' [-Wunused-variable]
+   89 |     double tPeak = 1800.0;
+      |            ^~~~~
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_rdii.cpp:544:12: warning: unused variable 'q_last' [-Wunused-variable]
+  544 |     double q_last = q_peak;
+      |            ^~~~~~
+4 warnings generated.
+[32/107] Linking CXX executable bin/Debug/test_engine_output_node_stats
+[33/107] Linking CXX executable bin/Debug/test_engine_model_write_with_plugin
+[34/107] Linking CXX executable bin/Debug/test_engine_files_section
+[35/107] Linking CXX executable bin/Debug/test_engine_capi_file_paths
+[36/107] Linking CXX executable bin/Debug/test_engine_events_section
+[37/107] Linking CXX executable bin/Debug/test_engine_report_options_api
+[38/107] Linking CXX executable bin/Debug/test_engine_hotstart
+[39/107] Linking CXX executable bin/Debug/test_engine_io_thread
+[40/107] Linking CXX executable bin/Debug/test_engine_timestep_ctrl
+[41/107] Linking CXX executable bin/Debug/test_engine_mathexpr
+[42/107] Linking CXX executable bin/Debug/test_engine_simd_math
+[43/107] Linking CXX executable bin/Debug/test_engine_user_flags_capi
+[44/107] Linking CXX executable bin/Debug/test_engine_user_flags
+[45/107] Linking CXX executable bin/Debug/test_engine_section_registry
+[46/107] Linking CXX executable bin/Debug/test_engine_crs
+[47/107] Linking CXX executable bin/Debug/test_engine_street_xsect_api
+[48/107] Linking CXX executable bin/Debug/test_engine_xsection
+[49/107] Linking CXX executable bin/Debug/test_engine_street_xsect
+[50/107] Linking CXX executable bin/Debug/test_engine_infiltration
+[51/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_2d_surface.dir/test_2d_surface_routing.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_2d_surface_routing.cpp:41:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[52/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_routing.dir/test_routing.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_routing.cpp:36:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/hydraulics/Node.hpp:21:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/hydraulics/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_routing.cpp:393:12: warning: unused variable 'expected' [-Wunused-variable]
+  393 |     double expected = M_PI * 4.0;  // pi * r^2 / 2 = pi * 4 / 2... Actually A = pi*R^2 at half = pi*4/2 = 2pi
+      |            ^~~~~~~~
+2 warnings generated.
+[53/107] Linking CXX executable bin/Debug/test_engine_ode_solver
+[54/107] Linking CXX executable bin/Debug/test_engine_massbalance
+[55/107] Linking CXX executable bin/Debug/test_engine_runoff
+[56/107] Linking CXX executable bin/Debug/test_engine_snow
+[57/107] Linking CXX executable bin/Debug/test_engine_gage_scalefactor
+[58/107] Linking CXX executable bin/Debug/test_engine_climate
+[59/107] Linking CXX executable bin/Debug/test_engine_lid
+[60/107] Linking CXX executable bin/Debug/test_engine_gage_attributes
+[61/107] Linking CXX executable bin/Debug/test_engine_groundwater
+[62/107] Linking CXX executable bin/Debug/test_engine_routing
+[63/107] Linking CXX executable bin/Debug/test_engine_benchmark_corpus
+[64/107] Linking CXX executable bin/Debug/test_engine_quality_routing
+[65/107] Linking CXX executable bin/Debug/test_engine_exfiltration
+[66/107] Linking CXX executable bin/Debug/test_engine_hydrograph_mutation
+[67/107] Linking CXX executable bin/Debug/test_engine_rdii
+[68/107] Linking CXX executable bin/Debug/test_engine_treatment
+[69/107] Linking CXX executable bin/Debug/test_engine_controls
+[70/107] Linking CXX executable bin/Debug/test_engine_transect_inp_parser
+[71/107] Linking CXX executable bin/Debug/test_engine_da4_api
+[72/107] Linking CXX executable bin/Debug/test_engine_transect_mutation
+[73/107] Linking CXX executable bin/Debug/test_engine_control_rule_validate
+[74/107] Linking CXX executable bin/Debug/test_engine_pattern_mutation
+[75/107] Linking CXX executable bin/Debug/test_engine_controls_legacy_parity
+[76/107] Linking CXX executable bin/Debug/test_engine_nodes_bulk_phase3
+[77/107] Linking CXX executable bin/Debug/test_engine_links_pump_stats_bulk
+[78/107] Linking CXX executable bin/Debug/test_engine_links_bulk_phase3
+[79/107] Linking CXX executable bin/Debug/test_engine_subcatch_editor_api
+[80/107] Linking CXX executable bin/Debug/test_engine_subcatchments_bulk_phase3
+[81/107] Linking CXX executable bin/Debug/test_engine_runoff_interface_capi
+[82/107] Linking CXX executable bin/Debug/test_engine_statistics_bulk_phase3
+[83/107] Linking CXX executable bin/Debug/test_engine_report_section
+[84/107] Linking CXX executable bin/Debug/test_engine_object_deletion
+[85/107] Linking CXX executable bin/Debug/test_engine_concurrent
+[86/107] Linking CXX executable bin/Debug/test_engine_tags
+[87/107] Linking CXX executable bin/Debug/test_engine_type_conversion
+[88/107] Linking CXX executable bin/Debug/test_engine_link_flow_roundtrip
+[89/107] Linking CXX executable bin/Debug/test_engine_site_drainage_builder
+[90/107] Linking CXX executable bin/Debug/test_engine_2d_coupling_units
+[91/107] Linking CXX executable bin/Debug/test_engine_inp_writer_2d
+[92/107] Linking CXX executable bin/Debug/test_engine_xsect_parity
+[93/107] Linking CXX executable bin/Debug/test_engine_2d_outfall_coupling
+[94/107] Linking CXX executable bin/Debug/test_engine_geopackage_formats
+[95/107] Linking CXX executable bin/Debug/test_engine_geopackage_schema_external_content
+[96/107] Linking CXX executable tests/regression/test_engine_regression
+[97/107] Linking CXX executable bin/Debug/test_engine_2d_surface
+[98/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_geopackage.dir/test_geopackage.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_geopackage.cpp:18:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[99/107] Linking CXX executable bin/Debug/test_engine_geopackage
+[100/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_gap_fixes.dir/test_gap_fixes.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_gap_fixes.cpp:21:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_gap_fixes.cpp:112:12: warning: unused variable 'sc1_p0' [-Wunused-variable]
+  112 |     size_t sc1_p0 = 1 * 3 + 0;
+      |            ^~~~~~
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_gap_fixes.cpp:2042:9: warning: unused variable 'rain_type' [-Wunused-variable]
+ 2042 |     int rain_type = 2;   // CUMULATIVE
+      |         ^~~~~~~~~
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_gap_fixes.cpp:2058:9: warning: unused variable 'rain_type' [-Wunused-variable]
+ 2058 |     int rain_type = 2;
+      |         ^~~~~~~~~
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_gap_fixes.cpp:2717:18: warning: unused variable 'dt' [-Wunused-variable]
+ 2717 |     const double dt         = 300.0;             // 5-min step
+      |                  ^~
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_gap_fixes.cpp:3120:9: warning: unused variable 'np' [-Wunused-variable]
+ 3120 |     int np = 1;
+      |         ^~
+6 warnings generated.
+[101/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_geopackage_external_content_writer.dir/test_geopackage_external_content_writer.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_geopackage_external_content_writer.cpp:36:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[102/107] Linking CXX executable bin/Debug/test_engine_gap_fixes
+[103/107] Linking CXX executable bin/Debug/test_engine_geopackage_external_content_writer
+[104/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_geopackage_mesh2d.dir/test_geopackage_mesh2d.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_geopackage_mesh2d.cpp:26:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[105/107] Building CXX object tests/unit/engine/CMakeFiles/test_engine_geopackage_external_content_reader.dir/test_geopackage_external_content_reader.cpp.o
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_geopackage_external_content_reader.cpp:29:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/SimulationContext.hpp:66:
+In file included from /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/GageData.hpp:26:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/core/../data/TableData.hpp:652:47: warning: missing field 'cursor' initializer [-Wmissing-field-initializers]
+  652 |         tables.push_back({id, type, {}, {}, {}});
+      |                                               ^
+1 warning generated.
+[106/107] Linking CXX executable bin/Debug/test_engine_geopackage_mesh2d
+[107/107] Linking CXX executable bin/Debug/test_engine_geopackage_external_content_reader

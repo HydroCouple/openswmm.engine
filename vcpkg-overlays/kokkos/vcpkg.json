@@ -1,0 +1,28 @@
+{
+    "name": "kokkos",
+    "version-string": "4.7.04",
+    "description": "Kokkos C++ Performance Portability Programming Ecosystem. Overlay port for OpenSWMM: Serial + OpenMP host backends by default (Phase 1); the optional `cuda` (Phase 2), `rocm`, and `sycl` (Phase 5) features build the CUDA/HIP/SYCL device backends.",
+    "homepage": "https://github.com/kokkos/kokkos",
+    "license": "Apache-2.0 WITH LLVM-exception",
+    "dependencies": [
+        {
+            "name": "vcpkg-cmake",
+            "host": true
+        },
+        {
+            "name": "vcpkg-cmake-config",
+            "host": true
+        }
+    ],
+    "features": {
+        "cuda": {
+            "description": "Build the Kokkos CUDA device backend (Phase 2). Requires the CUDA toolkit and the target GPU arch via the OPENSWMM_KOKKOS_CUDA_ARCH env var (a Kokkos_ARCH_* suffix, e.g. AMPERE80). Not buildable on macOS."
+        },
+        "rocm": {
+            "description": "Build the Kokkos HIP device backend (Phase 5, AMD). Requires ROCm/hipcc and the target GPU arch via the OPENSWMM_KOKKOS_HIP_ARCH env var (a Kokkos_ARCH_* suffix, e.g. AMD_GFX90A). Not buildable on macOS."
+        },
+        "sycl": {
+            "description": "Build the Kokkos SYCL device backend (Phase 5, Intel). Requires the oneAPI toolkit/icpx and the target GPU arch via the OPENSWMM_KOKKOS_SYCL_ARCH env var (a Kokkos_ARCH_* suffix, e.g. INTEL_PVC). Not buildable on macOS."
+        }
+    }
+}

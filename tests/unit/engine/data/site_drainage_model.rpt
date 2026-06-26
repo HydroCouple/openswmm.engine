@@ -1,8 +1,20 @@
 
   OPENSWMM ENGINE - VERSION 6.0.0-alpha.1
   -------------------------------------------
+  ;;Project Title/Notes
   A site surface drainage model.
   See Site_Drainage_Model.txt for more details.
+    WARNING 02: maximum depth increased for Node J1.
+    WARNING 02: maximum depth increased for Node J5.
+    WARNING 02: maximum depth increased for Node J2.
+    WARNING 02: maximum depth increased for Node J11.
+    WARNING 02: maximum depth increased for Node J3.
+    WARNING 02: maximum depth increased for Node J4.
+    WARNING 02: maximum depth increased for Node J6.
+    WARNING 02: maximum depth increased for Node J7.
+    WARNING 02: maximum depth increased for Node J8.
+    WARNING 02: maximum depth increased for Node J9.
+    WARNING 02: maximum depth increased for Node J10.
   
   ****************
   Analysis Options

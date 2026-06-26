@@ -1,0 +1,24 @@
+{
+  "name": "hypre",
+  "version": "2.32.0",
+  "description": "Parallel solvers for sparse linear systems featuring multigrid methods. OpenSWMM overlay: SEQUENTIAL build (HYPRE_ENABLE_MPI=OFF) so it carries no MPI dependency — BoomerAMG is used single-process via mpistubs (MPI_COMM_WORLD). Uses external BLAS/LAPACK on Linux/macOS; on Windows uses hypre's bundled C BLAS/LAPACK to avoid the lapack-reference Fortran/LLVMFlang toolchain conflict.",
+  "homepage": "https://computation.llnl.gov/projects/hypre-scalable-linear-solvers-multigrid-methods",
+  "dependencies": [
+    {
+      "name": "blas",
+      "platform": "!windows"
+    },
+    {
+      "name": "lapack",
+      "platform": "!windows"
+    },
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ]
+}

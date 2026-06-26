@@ -20,7 +20,11 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <fstream>
 #include <numeric>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "hydrology/LID.hpp"
 #include "core/SimulationContext.hpp"
@@ -28,6 +32,13 @@
 
 using namespace openswmm;
 using namespace openswmm::lid;
+
+// Per-unit evap-rate arrays for the batch*Flux APIs (which take
+// const double* per-unit PET); every group exercised with evap in
+// this file has exactly one unit.
+static constexpr double kNoEvap[1]   = {0.0};
+static constexpr double kEvap1em6[1] = {1e-6};
+static constexpr double kEvap1em4[1] = {1e-4};
 
 // ============================================================================
 // Helper: create a context with one LID control and one usage entry
@@ -243,7 +254,7 @@ TEST(LIDBioCell, RainfallFillsSurface) {
 
     double rainfall = 1e-4;  // ft/sec
     double dt = 60.0;
-    LIDSolver::batchBioCellFlux(g, rainfall, 0.0, dt);
+    LIDSolver::batchBioCellFlux(g, rainfall, kNoEvap, dt);
 
     // With no soil ksat, all rainfall accumulates on surface (up to storage)
     EXPECT_GT(g.surf_depth[0], 0.0);
@@ -268,7 +279,7 @@ TEST(LIDBioCell, SoilPercolationOccurs) {
     g.area[0]       = 1000.0;
 
     double dt = 300.0;
-    LIDSolver::batchBioCellFlux(g, 0.0, 0.0, dt);
+    LIDSolver::batchBioCellFlux(g, 0.0, kNoEvap, dt);
 
     // Storage depth should increase (soil percolated into it)
     EXPECT_GT(g.stor_depth[0], 0.0)
@@ -294,7 +305,7 @@ TEST(LIDBioCell, DrainActivatesAboveOffset) {
     g.drain_offset[0]= 0.5;  // drain at 0.5 ft
     g.area[0]        = 1000.0;
 
-    LIDSolver::batchBioCellFlux(g, 0.0, 0.0, 300.0);
+    LIDSolver::batchBioCellFlux(g, 0.0, kNoEvap, 300.0);
 
     EXPECT_GT(g.drain_flow[0], 0.0)
         << "Drain should activate when storage > offset";
@@ -316,7 +327,7 @@ TEST(LIDBioCell, DrainInactiveWhenBelowOffset) {
     g.drain_offset[0]= 0.5;
     g.area[0]        = 1000.0;
 
-    LIDSolver::batchBioCellFlux(g, 0.0, 0.0, 300.0);
+    LIDSolver::batchBioCellFlux(g, 0.0, kNoEvap, 300.0);
 
     EXPECT_DOUBLE_EQ(g.drain_flow[0], 0.0)
         << "Drain should be zero when storage < offset";
@@ -437,7 +448,7 @@ TEST(LIDSwale, ManningsOutflowOccurs) {
     g.full_width[0]  = 10.0;
     g.area[0]        = 500.0;
 
-    LIDSolver::batchSwaleFlux(g, 0.0, 0.0, 300.0);
+    LIDSolver::batchSwaleFlux(g, 0.0, kNoEvap, 300.0);
 
     EXPECT_GT(g.surface_runoff[0], 0.0)
         << "Swale should produce surface runoff when depth > storage";
@@ -473,7 +484,7 @@ TEST(LIDGreenRoof, SoilPercolationToDrainMat) {
     g.full_width[0]  = 20.0;
     g.area[0]        = 1000.0;
 
-    LIDSolver::batchGreenRoofFlux(g, 1e-4, 1e-6, 300.0);
+    LIDSolver::batchGreenRoofFlux(g, 1e-4, kEvap1em6, 300.0);
 
     // Drain flow should occur since drainage mat has water and drainmatAlpha > 0
     EXPECT_GT(g.drain_flow[0], 0.0)
@@ -511,7 +522,7 @@ TEST(LIDPavement, PavementPercolation) {
     g.full_width[0]    = 30.0;
     g.area[0]          = 2000.0;
 
-    LIDSolver::batchPavementFlux(g, 1e-4, 0.0, 300.0);
+    LIDSolver::batchPavementFlux(g, 1e-4, kNoEvap, 300.0);
 
     // Storage should receive water through pavement
     EXPECT_GT(g.stor_depth[0], 0.0)
@@ -538,8 +549,8 @@ TEST(LIDPavement, CloggingReducesPermeability) {
     g_clogged.pave_clog_factor[0] = 1.0;  // will clog
     g_clogged.vol_treated[0] = 0.8;       // 80% clogged
 
-    LIDSolver::batchPavementFlux(g_clean, 1e-4, 0.0, 300.0);
-    LIDSolver::batchPavementFlux(g_clogged, 1e-4, 0.0, 300.0);
+    LIDSolver::batchPavementFlux(g_clean, 1e-4, kNoEvap, 300.0);
+    LIDSolver::batchPavementFlux(g_clogged, 1e-4, kNoEvap, 300.0);
 
     // Clogged pavement should have less water reaching storage
     EXPECT_GE(g_clean.stor_depth[0], g_clogged.stor_depth[0])
@@ -562,7 +573,7 @@ TEST(LIDRoof, SplitsBetweenOverflowAndDrain) {
     g.area[0]        = 500.0;
     g.full_width[0]  = 20.0;
 
-    LIDSolver::batchRoofDisconFlux(g, 5e-4, 0.0, 300.0);
+    LIDSolver::batchRoofDisconFlux(g, 5e-4, kNoEvap, 300.0);
 
     // Both overflow and drain should have flow
     // drain = min(drain_coeff, surfaceOutflow)
@@ -590,7 +601,7 @@ TEST(LIDBioCell, EvaporationReducesSurfaceDepth) {
     g.stor_thick[0]  = 0.0;
     g.area[0]        = 1000.0;
 
-    double evap = 5e-6;  // ft/sec evaporation
+    const double evap[1] = {5e-6};  // per-unit ft/sec evaporation
     double dt = 600.0;
     double initial = g.surf_depth[0];
     LIDSolver::batchBioCellFlux(g, 0.0, evap, dt);
@@ -669,7 +680,7 @@ TEST(LIDEdge, NegativeDepthsClamped) {
     g.area[0]       = 1000.0;
 
     // No rainfall, high evap → should drain everything without going negative
-    LIDSolver::batchBioCellFlux(g, 0.0, 1e-4, 600.0);
+    LIDSolver::batchBioCellFlux(g, 0.0, kEvap1em4, 600.0);
 
     EXPECT_GE(g.surf_depth[0], 0.0);
     EXPECT_GE(g.soil_moist[0], g.soil_wp[0]);
@@ -818,7 +829,7 @@ TEST(LIDModPuls, SwaleConvergesToSteadyState) {
     // Run until steady state
     double prev_depth = 0.0;
     for (int t = 0; t < 200; ++t) {
-        LIDSolver::batchSwaleModPuls(g, rainfall, 0.0, dt);
+        LIDSolver::batchSwaleModPuls(g, rainfall, kNoEvap, dt);
         if (t > 100) {
             // After warmup, depth should stabilize
             double change = std::abs(g.surf_depth[0] - prev_depth);
@@ -856,9 +867,9 @@ TEST(LIDModPuls, SwaleModPulsMoreStableThanEuler) {
     setup(g_mp); setup(g_euler);
 
     // Modified Puls path (via batchSwaleModPuls)
-    LIDSolver::batchSwaleModPuls(g_mp, 0.0, 0.0, 300.0);  // no inflow, drain
+    LIDSolver::batchSwaleModPuls(g_mp, 0.0, kNoEvap, 300.0);  // no inflow, drain
     // Euler path (via batchSwaleFlux)
-    LIDSolver::batchSwaleFlux(g_euler, 0.0, 0.0, 300.0);  // no inflow, drain
+    LIDSolver::batchSwaleFlux(g_euler, 0.0, kNoEvap, 300.0);  // no inflow, drain
 
     // Both should reduce depth but not go negative
     EXPECT_GE(g_mp.surf_depth[0], 0.0);
@@ -886,7 +897,7 @@ TEST(LIDModPuls, SwalePreservesFOldBetweenTimesteps) {
     EXPECT_DOUBLE_EQ(g.f_old_surf[0], 0.0)
         << "f_old should start at zero";
 
-    LIDSolver::batchSwaleModPuls(g, 1e-4, 0.0, 60.0);
+    LIDSolver::batchSwaleModPuls(g, 1e-4, kNoEvap, 60.0);
 
     // After first timestep, f_old_surf should be updated (non-zero if there's runoff)
     // The exact value depends on the converged state, but it should be finite
@@ -915,7 +926,7 @@ TEST(LIDModPuls, SwaleWaterBalanceWithModPuls) {
     double rainfall = 2e-4;
     double dt = 60.0;
     for (int t = 0; t < 50; ++t)
-        LIDSolver::batchSwaleModPuls(g, rainfall, 1e-6, dt);
+        LIDSolver::batchSwaleModPuls(g, rainfall, kEvap1em6, dt);
 
     double in = g.wb_inflow[0];
     double out = g.wb_evap[0] + g.wb_infil[0] + g.wb_surf_flow[0];
@@ -950,7 +961,7 @@ TEST(LIDDrainHysteresis, DrainOpensAtHOpen) {
     g.drain_open[0]  = 0;     // starts closed
     g.area[0]        = 1000.0;
 
-    LIDSolver::batchBioCellFlux(g, 0.0, 0.0, 300.0);
+    LIDSolver::batchBioCellFlux(g, 0.0, kNoEvap, 300.0);
 
     EXPECT_GT(g.drain_flow[0], 0.0)
         << "Drain should open when head >= hOpen";
@@ -975,7 +986,7 @@ TEST(LIDDrainHysteresis, DrainStaysOpenAboveHClose) {
     g.drain_hclose[0]= 0.3;
     g.drain_open[0]  = 1;     // already open
 
-    LIDSolver::batchBioCellFlux(g, 0.0, 0.0, 300.0);
+    LIDSolver::batchBioCellFlux(g, 0.0, kNoEvap, 300.0);
 
     EXPECT_GT(g.drain_flow[0], 0.0)
         << "Drain should stay open when head >= hClose";
@@ -1000,7 +1011,7 @@ TEST(LIDDrainHysteresis, DrainClosesBelow) {
     g.drain_hclose[0]= 0.3;
     g.drain_open[0]  = 1;     // was open
 
-    LIDSolver::batchBioCellFlux(g, 0.0, 0.0, 300.0);
+    LIDSolver::batchBioCellFlux(g, 0.0, kNoEvap, 300.0);
 
     EXPECT_DOUBLE_EQ(g.drain_flow[0], 0.0)
         << "Drain should close when head < hClose";
@@ -1114,8 +1125,8 @@ TEST(LIDStorageClog, CloggingReducesExfiltration) {
     g_clogged.stor_clog[0] = 1.0;  // clogs at 1 ft of cumulative inflow
     g_clogged.wb_inflow[0] = 0.8;  // 80% clogged
 
-    LIDSolver::batchBioCellFlux(g_clean, 0.0, 0.0, 300.0);
-    LIDSolver::batchBioCellFlux(g_clogged, 0.0, 0.0, 300.0);
+    LIDSolver::batchBioCellFlux(g_clean, 0.0, kNoEvap, 300.0);
+    LIDSolver::batchBioCellFlux(g_clogged, 0.0, kNoEvap, 300.0);
 
     EXPECT_GT(g_clean.infil_loss[0], g_clogged.infil_loss[0])
         << "Clogging should reduce exfiltration loss";
@@ -1145,7 +1156,7 @@ TEST(LIDPavementRegen, RegenerationReducesClogging) {
 
     double vol_before = g.vol_treated[0];
     // Run a timestep long enough for regeneration to trigger
-    LIDSolver::batchPavementFlux(g, 1e-4, 0.0, 100.0);
+    LIDSolver::batchPavementFlux(g, 1e-4, kNoEvap, 100.0);
 
     // vol_treated should have been reduced by regeneration
     EXPECT_LT(g.vol_treated[0], vol_before)
@@ -1233,4 +1244,192 @@ TEST(LIDPollutantRemoval, RemovalsStoreParsedCorrectly) {
     EXPECT_NEAR(store.removals[0][0].second, 0.75, 1e-10);
     EXPECT_EQ(store.removals[0][1].first, 2);
     EXPECT_NEAR(store.removals[0][1].second, 0.50, 1e-10);
+}
+
+// ============================================================================
+// Storage exfiltration trajectory benchmark
+//
+// batchBarrelFlux with no inflow, no drain, no evap, and clogFactor=0 reduces
+// to d(depth)/dt = -kSat/phi — a constant-rate ODE that Euler integrates
+// exactly.  Depth and cumulative exfiltration are compared against the
+// closed-form linear solution to machine-precision tolerance.
+// ============================================================================
+
+#ifndef BENCHMARK_DATA_DIR
+#  define BENCHMARK_DATA_DIR ""
+#endif
+
+namespace {
+
+struct ExfilBenchRow { double t_s, stor_depth_ft, E_cumul_ft; };
+
+static std::vector<ExfilBenchRow> load_exfil_bench(const std::string& path) {
+    std::vector<ExfilBenchRow> rows;
+    std::ifstream in(path);
+    if (!in.is_open()) return rows;
+    std::string line;
+    bool header_seen = false;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        if (!header_seen) { header_seen = true; continue; }
+        // columns: t_s, stor_depth_ft, E_cumul_ft
+        std::istringstream ss(line);
+        std::string tok;
+        double vals[3] = {};
+        int col = 0;
+        while (std::getline(ss, tok, ',') && col < 3)
+            vals[col++] = std::stod(tok);
+        if (col >= 3)
+            rows.push_back({vals[0], vals[1], vals[2]});
+    }
+    return rows;
+}
+
+}  // namespace
+
+// Constant-area storage draining at constant kSat (no clogging, no drain).
+// Exact solution: depth(t) = 2.0 - 2.5e-4*t, E_cumul(t) = 1e-4*t.
+// Euler is exact for this linear ODE, so tolerance is machine-epsilon tight.
+TEST(LIDStorageExfil, TrajectoryMatchesBenchmark) {
+    std::string path = std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/exfil-storage-constant-area/reference.csv";
+
+    auto rows = load_exfil_bench(path);
+    if (rows.empty()) {
+        GTEST_SKIP() << "Benchmark data not found: " << path;
+    }
+
+    LIDGroupSoA g;
+    g.type = LIDType::RAIN_BARREL;
+    g.resize(1);
+    g.stor_thick[0]  = 2.0;
+    g.stor_void[0]   = 0.4;
+    g.stor_ksat[0]   = 1.0e-4;
+    g.stor_clog[0]   = 0.0;
+    g.drain_coeff[0] = 0.0;
+    g.stor_depth[0]  = rows[0].stor_depth_ft;  // 2.0 ft (full)
+    g.surf_depth[0]  = 0.0;
+
+    double max_depth_err = 0.0, max_exfil_err = 0.0;
+    double sum_sq_depth  = 0.0, sum_sq_exfil  = 0.0;
+    double prev_t = rows[0].t_s;
+
+    for (size_t i = 1; i < rows.size(); ++i) {
+        double dt = rows[i].t_s - prev_t;
+        LIDSolver::batchBarrelFlux(g, 0.0, dt);
+
+        double depth_err = std::abs(g.stor_depth[0] - rows[i].stor_depth_ft);
+        double exfil_err = std::abs(g.wb_infil[0]   - rows[i].E_cumul_ft);
+
+        max_depth_err = std::max(max_depth_err, depth_err);
+        max_exfil_err = std::max(max_exfil_err, exfil_err);
+        sum_sq_depth += depth_err * depth_err;
+        sum_sq_exfil += exfil_err * exfil_err;
+        prev_t = rows[i].t_s;
+    }
+
+    ASSERT_GE(rows.size(), 2u) << "benchmark CSV must have at least one data row";
+    double n = static_cast<double>(rows.size() - 1);
+
+    // DO NOT loosen these tolerances.
+    // The ODE is constant-rate; Euler is exact; actual FP error is ~1e-15 ft.
+    // The 1e-9 ft threshold sits a million times above the expected noise floor.
+    // If either assertion fails, investigate the rate, volume-limiter, or Euler
+    // update in batchBarrelFlux — do not widen the tolerance to make it pass.
+    EXPECT_LT(max_depth_err, 1e-9)
+        << "Storage depth max error " << max_depth_err
+        << " ft exceeds 1e-9 ft (benchmark: " << path << ")";
+    EXPECT_LT(max_exfil_err, 1e-9)
+        << "Cumulative exfil max error " << max_exfil_err
+        << " ft exceeds 1e-9 ft";
+    EXPECT_LT(std::sqrt(sum_sq_depth / n), 1e-10)
+        << "Storage depth RMS error exceeds 1e-10 ft";
+    EXPECT_LT(std::sqrt(sum_sq_exfil / n), 1e-10)
+        << "Cumulative exfil RMS error exceeds 1e-10 ft";
+
+    // Mass-balance identity: E_cumul == (depth_0 - depth) * phi
+    double depth_loss  = (rows[0].stor_depth_ft - g.stor_depth[0]) * g.stor_void[0];
+    double exfil_total = g.wb_infil[0];
+    EXPECT_NEAR(depth_loss, exfil_total, 1e-9)
+        << "Mass-balance identity violated: depth_loss=" << depth_loss
+        << " exfil_total=" << exfil_total;
+}
+
+// ============================================================================
+// Storage exfiltration clogging trajectory benchmark
+//
+// batchBarrelFlux with constant rainfall inflow r = kSat causes wb_inflow to
+// grow by r*dt = 6e-3 ft each step, reducing keff linearly via the clogging
+// model: keff[n] = kSat*(1 - n*r*dt/clogFactor).
+//
+// Because keff is recomputed from the deterministic wb_inflow[n] = n*6e-3 at
+// the start of each call, the Euler step is exact.  The closed-form reference:
+//   D[N] = 2.0 - 0.009*N + 0.00015*N*(N-1)
+//   E[N] = 0.006*N - 0.00006*N*(N-1)
+//
+// At N=10, clogging has reduced keff to 80% of kSat, making the trajectory
+// visibly non-linear and distinct from the constant-area benchmark.
+// ============================================================================
+
+// Clogging trajectory: constant rainfall inflow equals kSat, partial clogging.
+// Exact solution: D[N] = 2.0 - 0.009*N + 0.00015*N*(N-1), E[N] = 0.006*N - 0.00006*N*(N-1).
+TEST(LIDStorageExfil, CloggingTrajectoryMatchesBenchmark) {
+    std::string path = std::string(BENCHMARK_DATA_DIR)
+        + "/manufactured/exfil-cylindrical-storage-greenampt/reference.csv";
+
+    auto rows = load_exfil_bench(path);
+    if (rows.empty()) {
+        GTEST_SKIP() << "Benchmark data not found: " << path;
+    }
+
+    const double RAINFALL = 1.0e-4;  // ft/s — unit inflow rate (= kSat)
+
+    LIDGroupSoA g;
+    g.type = LIDType::RAIN_BARREL;
+    g.resize(1);
+    g.stor_thick[0]  = 3.0;          // large enough to never overflow
+    g.stor_void[0]   = 0.4;
+    g.stor_ksat[0]   = 1.0e-4;
+    g.stor_clog[0]   = 0.3;          // clogFactor: fully clogs at 0.3 ft inflow
+    g.drain_coeff[0] = 0.0;
+    g.stor_depth[0]  = rows[0].stor_depth_ft;   // 2.0 ft
+    g.surf_depth[0]  = 0.0;
+    // g.inflow[0] stays 0 — unit_inflow comes from rainfall parameter
+    // g.stor_covered[0] stays 0 — rainfall is NOT blocked
+
+    double max_depth_err = 0.0, max_exfil_err = 0.0;
+    double sum_sq_depth  = 0.0, sum_sq_exfil  = 0.0;
+    double prev_t = rows[0].t_s;
+
+    for (size_t i = 1; i < rows.size(); ++i) {
+        double dt = rows[i].t_s - prev_t;
+        LIDSolver::batchBarrelFlux(g, RAINFALL, dt);
+
+        double depth_err = std::abs(g.stor_depth[0] - rows[i].stor_depth_ft);
+        double exfil_err = std::abs(g.wb_infil[0]   - rows[i].E_cumul_ft);
+
+        max_depth_err = std::max(max_depth_err, depth_err);
+        max_exfil_err = std::max(max_exfil_err, exfil_err);
+        sum_sq_depth += depth_err * depth_err;
+        sum_sq_exfil += exfil_err * exfil_err;
+        prev_t = rows[i].t_s;
+    }
+
+    ASSERT_GE(rows.size(), 2u) << "benchmark CSV must have at least one data row";
+    double n = static_cast<double>(rows.size() - 1);
+
+    // DO NOT loosen these tolerances.
+    // keff is recomputed from wb_inflow[n] = n*6e-3 (deterministic integer multiple)
+    // at the start of every call.  Euler is exact for each step.  Actual FP error
+    // is ~1e-15 ft.  If either assertion fails, investigate the clogging formula,
+    // the exfil rate, the volume-limiter, or the Euler update.
+    EXPECT_LT(max_depth_err, 1e-9)
+        << "Storage depth max error " << max_depth_err
+        << " ft exceeds 1e-9 ft (benchmark: " << path << ")";
+    EXPECT_LT(max_exfil_err, 1e-9)
+        << "Cumulative exfil max error " << max_exfil_err << " ft exceeds 1e-9 ft";
+    EXPECT_LT(std::sqrt(sum_sq_depth / n), 1e-10)
+        << "Storage depth RMS error exceeds 1e-10 ft";
+    EXPECT_LT(std::sqrt(sum_sq_exfil / n), 1e-10)
+        << "Cumulative exfil RMS error exceeds 1e-10 ft";
 }

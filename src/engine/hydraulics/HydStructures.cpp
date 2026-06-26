@@ -4,7 +4,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -12,6 +12,8 @@
 #include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
+#include "../math/SIMD.hpp"
+#include "Node.hpp"
 #include "XSectBatch.hpp"
 #include <cmath>
 #include <algorithm>
@@ -20,8 +22,8 @@ namespace openswmm {
 namespace hydstruct {
 
 void PumpGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); curve_idx.resize(u,-1); curve_type.resize(u,0); speed.resize(u,1.0); y_on.resize(u,0); y_off.resize(u,0); }
-void OrificeGroup::resize(int n) { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); shape.resize(u,0); c_orifice.resize(u,0); c_weir.resize(u,0); h_crit.resize(u,0); has_flap.resize(u,false); }
-void WeirGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); weir_type.resize(u,0); c_disch1.resize(u,0); c_disch2.resize(u,0); end_con.resize(u,0); slope.resize(u,0); cd_curve.resize(u,-1); has_flap.resize(u,false); }
+void OrificeGroup::resize(int n) { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); shape.resize(u,0); c_orifice.resize(u,0); c_weir.resize(u,0); h_crit.resize(u,0); has_flap.resize(u,false); surf_area.resize(u,0); length_eff.resize(u,0); }
+void WeirGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); weir_type.resize(u,0); c_disch1.resize(u,0); c_disch2.resize(u,0); end_con.resize(u,0); slope.resize(u,0); cd_curve.resize(u,-1); has_flap.resize(u,false); surf_area.resize(u,0); length_eff.resize(u,0); }
 void OutletGroup::resize(int n)  { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); curve_idx.resize(u,-1); q_coeff.resize(u,0); q_expon.resize(u,1); }
 
 void StructureSolver::init(SimulationContext& ctx) {
@@ -46,6 +48,23 @@ void StructureSolver::init(SimulationContext& ctx) {
     weirs_.resize(n_weirs);
     outlets_.resize(n_outlets);
 
+    // Legacy weir flow (link.c weir_getFlow) evaluates Q in the project's
+    // DISPLAY units — length & head are multiplied by UCF(LENGTH) — then the
+    // CMS result is divided by M3perFT3 to get CFS. Every weir formula
+    // (transverse L·H^1.5, sideflow L^0.83·H^1.67, v-notch H^2.5, trapezoidal)
+    // is degree-2.5 homogeneous in length, so that whole round-trip collapses
+    // to one scale factor on the discharge coefficient:
+    //     UCF(LENGTH)^2.5 / M3perFT3   (= 1/sqrt(UCF) for SI, 1.0 for US).
+    // Our geometry is already in internal feet, so pre-scaling the stored
+    // coefficient lets the ft-based formulas below yield CFS directly and keeps
+    // the unit-conversion in exactly one place (matches the internal-imperial
+    // convention used everywhere else).
+    constexpr double M3perFT3 = 0.028317; // legacy consts.h
+    const int    weir_us   = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    const double weir_ucfL = ucf::Ucf[ucf::LENGTH][weir_us];
+    const double weir_cf   = (weir_us == 1)
+        ? std::pow(weir_ucfL, 2.5) / M3perFT3 : 1.0;
+
     // Second pass: populate
     int ip = 0, io = 0, iw = 0, ix = 0;
     for (int j = 0; j < ctx.n_links(); ++j) {
@@ -53,22 +72,32 @@ void StructureSolver::init(SimulationContext& ctx) {
         switch (ctx.links.type[uj]) {
             case LinkType::PUMP: {
                 auto uk = static_cast<size_t>(ip);
+                // Phase 6: pump config from the relational side-table; `setting`
+                // is common control state and stays on base LinkData.
+                const auto& P = ctx.link_subtypes.pumps;
+                const auto pr = static_cast<size_t>(ctx.link_subtypes.pump_row(j));
                 pumps_.link_idx[uk] = j;
-                pumps_.curve_idx[uk] = ctx.links.pump_curve[uj];
+                pumps_.curve_idx[uk] = P.curve[pr];
                 pumps_.speed[uk] = ctx.links.setting[uj];
-                pumps_.y_on[uk]  = ctx.links.pump_startup[uj];
-                pumps_.y_off[uk] = ctx.links.pump_shutoff[uj];
+                pumps_.y_on[uk]  = P.startup[pr];
+                pumps_.y_off[uk] = P.shutoff[pr];
                 // Determine curve type from table type
-                int ci = ctx.links.pump_curve[uj];
+                int ci = P.curve[pr];
                 if (ci >= 0 && ci < static_cast<int>(ctx.tables.tables.size())) {
                     int tt = static_cast<int>(ctx.tables.tables[static_cast<size_t>(ci)].type);
-                    // TableType CURVE_PUMP1=7, PUMP2=8, PUMP3=9, PUMP4=10
-                    // Map to curve_type 1..4 (matching legacy PumpCurve enum)
-                    if (tt >= 7 && tt <= 10)
-                        pumps_.curve_type[uk] = tt - 6; // 7→1, 8→2, 9→3, 10→4
+                    // TableType CURVE_PUMP1=7, PUMP2=8, PUMP3=9, PUMP4=10, PUMP5=11
+                    // Map to curve_type 1..5 (matching legacy PumpCurve enum)
+                    if (tt >= 7 && tt <= 11)
+                        pumps_.curve_type[uk] = tt - 6; // 7→1, 8→2, 9→3, 10→4, 11→5
                     else
                         pumps_.curve_type[uk] = 6; // Ideal pump if no curve
                 }
+                // Mirror curve_type for use by DW non_conduit_fn (TYPE4_PUMP
+                // excluded from dqdh per legacy dynwave.c:565-575). Phase 6
+                // Stage B: PumpData.curve_type is the authoritative store (this
+                // runs AFTER build() at engine init, so it is not clobbered);
+                // dual-write the wide slot until Stage D removes it.
+                ctx.link_subtypes.pumps.curve_type[pr] = pumps_.curve_type[uk];
                 ++ip;
                 break;
             }
@@ -84,7 +113,8 @@ void StructureSolver::init(SimulationContext& ctx) {
                 using constants::GRAVITY;
                 double a_full = ctx.links.xsect_a_full[uj];
                 double y_full = ctx.links.xsect_y_full[uj];
-                double cd_val = ctx.links.cd[uj];
+                double cd_val = ctx.link_subtypes.orifices.cd[
+                    static_cast<size_t>(ctx.link_subtypes.orifice_row(j))];
 
                 orifices_.c_orifice[uk] = cd_val * a_full * std::sqrt(2.0 * GRAVITY);
                 // Weir coefficient for partially-open orifice
@@ -95,23 +125,50 @@ void StructureSolver::init(SimulationContext& ctx) {
                     ? 2.0 * (w_max + y_full) : 3.14159 * y_full;
                 orifices_.c_weir[uk] = cd_val * perim * std::sqrt(2.0 * GRAVITY);
                 orifices_.h_crit[uk] = (perim > 0.0) ? a_full / perim : y_full;
+                // Equivalent length for SIDE-orifice surface-area scatter
+                // (legacy link.c:1724: max(200, 2·routingStep·sqrt(g·yFull))).
+                {
+                    double route_step = ctx.options.routing_step;
+                    double L = 2.0 * route_step * std::sqrt(GRAVITY * y_full);
+                    orifices_.length_eff[uk] = std::max(200.0, L);
+                }
 
                 ++io;
                 break;
             }
             case LinkType::WEIR: {
                 auto uk = static_cast<size_t>(iw);
-                weirs_.link_idx[uk] = j;
-                weirs_.c_disch1[uk] = ctx.links.cd[uj];
-                weirs_.has_flap[uk] = ctx.links.has_flap_gate[uj];
+                const auto& W = ctx.link_subtypes.weirs;
+                const auto wr = static_cast<size_t>(ctx.link_subtypes.weir_row(j));
+                weirs_.link_idx[uk]   = j;
+                weirs_.c_disch1[uk]   = W.cd[wr] * weir_cf;
+                weirs_.has_flap[uk]   = ctx.links.has_flap_gate[uj];
+                weirs_.weir_type[uk]  = static_cast<int>(W.weir_type[wr]);
+                weirs_.end_con[uk]    = W.end_contractions[wr];
+                // V-notch / trapezoidal side slope comes from the cross-section,
+                // not from the INP weir row. Legacy: Weir[k].slope = xsect.sBot
+                // (populated by weir_validate). SIDEFLOW / TRANSVERSE → 0.
+                weirs_.slope[uk]      = ctx.links.xsect_s_bot[uj];
+                // Effective length for surface-area scatter. Legacy weir_validate:
+                //   Weir[k].length = max(200, 2·routingStep·sqrt(g·yFull))
+                {
+                    using constants::GRAVITY;
+                    double y_full = ctx.links.xsect_y_full[uj];
+                    double route_step = ctx.options.routing_step;
+                    double L = 2.0 * route_step * std::sqrt(GRAVITY * y_full);
+                    weirs_.length_eff[uk] = std::max(200.0, L);
+                }
                 ++iw;
                 break;
             }
             case LinkType::OUTLET: {
                 auto uk = static_cast<size_t>(ix);
+                const auto& O = ctx.link_subtypes.outlets;
+                const auto xr = static_cast<size_t>(ctx.link_subtypes.outlet_row(j));
                 outlets_.link_idx[uk] = j;
-                outlets_.q_coeff[uk] = ctx.links.cd[uj];
-                outlets_.q_expon[uk] = ctx.links.param2[uj];
+                outlets_.q_coeff[uk]  = O.coeff[xr];
+                outlets_.q_expon[uk]  = O.expon[xr];
+                outlets_.curve_idx[uk] = O.curve[xr];
                 ++ix;
                 break;
             }
@@ -147,6 +204,11 @@ void StructureSolver::updatePumpTargetSettings(SimulationContext& ctx) {
         if (n1 < 0) continue;
         auto un1 = static_cast<size_t>(n1);
 
+        // Reset target to current setting so hysteresis checks below are the
+        // only thing that can override. Matches legacy link.c:618
+        // (targetSetting = setting, then conditional overrides).
+        links.target_setting[uj] = links.setting[uj];
+
         // Use depth from START of timestep (matching legacy Node[n1].newDepth)
         double depth = nodes.depth[un1];
 
@@ -163,13 +225,17 @@ void StructureSolver::updatePumpTargetSettings(SimulationContext& ctx) {
 // Batch pump flow
 // ============================================================================
 
-void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
+void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt,
+                                       const double* node_new_surf_area) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
     // Flow unit conversion: pump curves store flow in display units
     int fu = static_cast<int>(ctx.options.flow_units);
     double ucf_flow = ucf::Qcf[fu]; // display → CFS
+    int unit_sys  = ucf::getUnitSystem(fu);
+    double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys]; // internal ft → display
+    double ucf_vol = ucf::Ucf[ucf::VOLUME][unit_sys]; // internal ft³ → display
 
     for (int k = 0; k < pumps_.count; ++k) {
         auto uk = static_cast<size_t>(k);
@@ -204,15 +270,19 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
         auto uci = static_cast<size_t>(ci);
 
         switch (ct) {
-            case 1: // Volume-based: Q = f(volume)
+            case 1: // Volume-based: Q = f(volume) — PUMP1_CURVE
+                // Legacy uses table_intervalLookup (step function): curve
+                // describes discrete operating volumes, not a smooth Q(V).
                 if (ci >= 0 && uci < ctx.tables.tables.size()) {
-                    double vol = nodes.volume[un1];
-                    q = table_lookup_cursor(ctx.tables.tables[uci], vol);
+                    double vol = nodes.volume[un1] * ucf_vol;
+                    q = table_intervalLookup(ctx.tables.tables[uci], vol);
                 }
                 break;
-            case 2: // Depth-based: Q = f(depth)
+            case 2: // Depth-based: Q = f(depth) — PUMP2_CURVE
+                // Legacy uses table_intervalLookup (step function): curve
+                // describes discrete operating depths, not a smooth Q(d).
                 if (ci >= 0 && uci < ctx.tables.tables.size()) {
-                    q = table_lookup_cursor(ctx.tables.tables[uci], depth);
+                    q = table_intervalLookup(ctx.tables.tables[uci], depth * ucf_len);
                 }
                 break;
             case 3: // Head-based with speed
@@ -220,15 +290,30 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
                 double s = links.setting[uj];
                 double h = (s > 0.0) ? std::max(head / (s * s), 0.0) : 0.0;
                 if (ci >= 0 && uci < ctx.tables.tables.size()) {
-                    q = table_lookup_cursor(ctx.tables.tables[uci], h) * s;
+                    auto& curve = ctx.tables.tables[uci];
+                    q = table_lookup_cursor(curve, h * ucf_len) * s;
+                    // dQ/dh matching legacy pump.c PUMP3/5 lines 1606-1609:
+                    //   Link[j].dqdh = -table_getSlope(&Curve[m], head)
+                    //                  * UCF(LENGTH) / UCF(FLOW) / s
+                    // sign reversed because flow decreases with increasing head.
+                    if (s > 0.0) {
+                        double slope = table_getSlope(curve, h * ucf_len);
+                        links.dqdh[uj] = -slope * ucf_len / ucf_flow / s;
+                    }
                 }
                 break;
             }
-            case 4: // Depth-based: Q = f(depth)
+            case 4: { // Depth-based: Q = f(depth) — legacy PUMP4_CURVE
                 if (ci >= 0 && uci < ctx.tables.tables.size()) {
-                    q = table_lookup_cursor(ctx.tables.tables[uci], depth);
+                    q = table_lookup_cursor(ctx.tables.tables[uci], depth * ucf_len);
+                    // Compute dQ/dh matching legacy pump.c PUMP4_CURVE lines 1621-1622:
+                    // dqdh = (Q(depth+dh) - Q(depth)) / dh  (in CFS/ft)
+                    constexpr double dh = 0.001; // matching legacy
+                    double q1 = table_lookup_cursor(ctx.tables.tables[uci], (depth + dh) * ucf_len);
+                    links.dqdh[uj] = (q1 - q) / (dh * ucf_flow);
                 }
                 break;
+            }
             case 6: // Ideal pump
                 q = nodes.inflow[un1] + nodes.overflow[un1];
                 break;
@@ -242,16 +327,27 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt) {
         // Limit pump flow to prevent inlet node from going dry
         // (matching legacy getModPumpFlow in dynwave.c lines 445-486)
         if (q > 0.0) {
-            if (nodes.type[un1] == NodeType::STORAGE) {
-                // Storage node: don't let volume go negative
-                double max_q = nodes.volume[un1] / dt + nodes.inflow[un1];
-                if (q > max_q && max_q > 0.0) q = max_q;
+            if (nodes.type[un1] == NodeType::STORAGE ||
+                pumps_.curve_type[uk] == 1 /* TYPE1 pump, legacy node_getMaxOutflow */) {
+                // Storage node (or TYPE1 pump on any node): cap q so node
+                // volume doesn't go negative. Legacy uses oldVolume (the
+                // start-of-step volume), not the current-iter volume, to
+                // avoid cascading clamps across Picard iterations.
+                if (nodes.full_volume[un1] > 0.0) {
+                    double max_q = nodes.inflow[un1] + nodes.old_volume[un1] / dt;
+                    if (q > max_q) q = max_q;
+                }
+                if (q < 0.0) q = 0.0;
             } else {
-                // Non-storage: check if pumping would make depth negative
+                // Non-storage: if pumping would make depth negative, clamp
+                // q to inflow. Legacy uses Xnode[j].newSurfArea (accumulated
+                // from connected conduits this iter); refactored falls back
+                // to MIN_SURFAREA if caller didn't supply it.
                 double net_inflow = nodes.inflow[un1] - nodes.outflow[un1] - q;
                 double net_vol = 0.5 * (nodes.old_net_inflow[un1] + net_inflow) * dt;
-                // Approximate surface area at current depth
-                double surf = constants::MIN_SURFAREA; // junction default
+                double surf = (node_new_surf_area != nullptr)
+                                ? node_new_surf_area[un1]
+                                : constants::MIN_SURFAREA;
                 surf = std::max(surf, constants::MIN_SURFAREA);
                 double y_new = nodes.old_depth[un1] + net_vol / surf;
                 if (y_new <= 0.0) q = std::max(nodes.inflow[un1], 0.0);
@@ -287,11 +383,35 @@ static XSectParams buildXSP(const LinkData& links, std::size_t uk) {
 // Batch orifice flow — Q = Cd*A*sqrt(2gH), matching legacy orifice_getInflow
 // ============================================================================
 
-void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
+void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
+                                          double* node_new_surf_area) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
     using constants::GRAVITY;
     constexpr double FUDGE_ORI = 0.0001;
+
+    // Scatter an orifice's surface area to its end nodes, replicating legacy
+    // findNonConduitSurfArea (dynwave.c:498-510): HALF of Orifice.surfArea is
+    // added to each end node, then the contribution to node1 is zeroed when the
+    // link is UP_CRITICAL (or node1 is STORAGE) and the contribution to node2 is
+    // zeroed when DN_CRITICAL (or node2 is STORAGE). Must run on EVERY exit path
+    // (including dry/flap) — legacy adds the FUDGE*length baseline even when the
+    // orifice carries no flow. Omitting that baseline, and omitting the
+    // critical-class zeroing, understated/overstated node surface area at low
+    // depth and seeded a per-iteration node-head divergence (extran3 1570/1630).
+    auto scatterOrificeSurfArea = [&](std::size_t uk_, std::size_t uj_,
+                                      std::size_t un1_, std::size_t un2_) {
+        if (node_new_surf_area == nullptr) return;
+        double sa1 = orifices_.surf_area[uk_] * 0.5;
+        double sa2 = sa1;
+        auto fc = links.flow_class[uj_];
+        if (fc == FlowClass::UP_CRITICAL || nodes.type[un1_] == NodeType::STORAGE)
+            sa1 = 0.0;
+        if (fc == FlowClass::DN_CRITICAL || nodes.type[un2_] == NodeType::STORAGE)
+            sa2 = 0.0;
+        node_new_surf_area[un1_] += sa1;
+        node_new_surf_area[un2_] += sa2;
+    };
 
     for (int k = 0; k < orifices_.count; ++k) {
         auto uk = static_cast<size_t>(k);
@@ -314,11 +434,12 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
         //   cOrif = cDisch * f_area
         //   cWeir = orifice_getWeirCoeff(j, k, h) * f_area
         double y_full = links.xsect_y_full[uj];
-        double cd_val = links.cd[uj];
+        double cd_val = ctx.link_subtypes.orifices.cd[static_cast<size_t>(ctx.link_subtypes.orifice_row(j))];
         double h_open = setting * y_full;
         if (h_open < FUDGE_ORI) {
             links.flow[uj] = 0.0;
             links.depth[uj] = 0.0;
+            orifices_.surf_area[uk] = 0.0;
             continue;
         }
 
@@ -329,7 +450,7 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
         double cOrif = cd_val * f_area;
 
         // Critical depth and weir coefficient (matching legacy orifice_getWeirCoeff)
-        bool is_side = (links.param1[uj] > 0.5); // 1=SIDE, 0=BOTTOM
+        bool is_side = (ctx.link_subtypes.orifices.orifice_type[static_cast<size_t>(ctx.link_subtypes.orifice_row(j))] > 0.5); // 1=SIDE, 0=BOTTOM
         double hCrit, cWeir;
         if (!is_side) {  // BOTTOM orifice
             double aOverL;
@@ -386,6 +507,11 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
             links.flow[uj] = 0.0;
             links.depth[uj] = 0.0;
             links.dqdh[uj] = 0.0;
+            links.flow_class[uj] = FlowClass::DRY;   // legacy link.c:1898
+            // Legacy orifice_getInflow:1899: on dry-exit, surfArea = FUDGE·length
+            // so the node depth solver still sees a non-zero equivalent area.
+            orifices_.surf_area[uk] = FUDGE_ORI * orifices_.length_eff[uk];
+            scatterOrificeSurfArea(uk, uj, un1, un2);  // DRY → both ends, no zeroing
             continue;
         }
 
@@ -394,6 +520,9 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
             links.flow[uj] = 0.0;
             links.depth[uj] = 0.0;
             links.dqdh[uj] = 0.0;
+            links.flow_class[uj] = FlowClass::DRY;
+            orifices_.surf_area[uk] = FUDGE_ORI * orifices_.length_eff[uk];
+            scatterOrificeSurfArea(uk, uj, un1, un2);
             continue;
         }
 
@@ -404,12 +533,19 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
             links.flow_class[uj] = FlowClass::SUBCRITICAL;
         }
 
-        // --- Compute flow depth (matching legacy) ---
+        // --- Compute flow depth and surface area (matching legacy
+        //     orifice_getInflow lines 1911-1919):
+        //     SIDE   : newDepth = y1·f ; surfArea = W(newDepth)·length_eff
+        //     BOTTOM : newDepth = y1   ; surfArea = A(y1)
         double y_link = y_full * setting;
         if (is_side) {
-            links.depth[uj] = y_link * std::max(f, 0.0);
+            double link_depth = y_link * std::max(f, 0.0);
+            links.depth[uj] = link_depth;
+            double width_at_depth = xsect::getWofY(xs, link_depth);
+            orifices_.surf_area[uk] = width_at_depth * orifices_.length_eff[uk];
         } else {
             links.depth[uj] = y_link;
+            orifices_.surf_area[uk] = xsect::getAofY(xs, y_link);
         }
 
         // --- Compute flow (matching legacy orifice_getFlow) ---
@@ -418,7 +554,7 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
         if (f <= 0.0) {
             q = 0.0;
         } else if (f < 1.0) {
-            q = cWeir * std::pow(f, 1.5);
+            q = cWeir * fastmath::pow3_2(f);
             dqdh = 1.5 * q / (f * hCrit);
         } else {
             q = cOrif * std::sqrt(head);
@@ -442,7 +578,7 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
                 q = 0.0;
                 dqdh = 0.0;
             } else if (f < 1.0) {
-                q = cWeir * std::pow(f, 1.5);
+                q = cWeir * fastmath::pow3_2(f);
                 dqdh = 1.5 * q / (f * hCrit);
             } else {
                 q = cOrif * std::sqrt(head);
@@ -454,13 +590,19 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
         if (f < 1.0 && h2 > hcrest && h1 > hcrest) {
             double ratio = (h2 - hcrest) / (h1 - hcrest);
             if (ratio < 1.0 && ratio > 0.0) {
-                q *= std::pow(1.0 - std::pow(ratio, 1.5), 0.385);
+                double inner = 1.0 - fastmath::pow3_2(ratio);
+                if (inner > 0.0) q *= std::pow(inner, 0.385);
             }
         }
 
         q = std::max(q, 0.0);
         links.flow[uj] = q * dir;
         links.dqdh[uj] = dqdh;
+
+        // Scatter orifice surface area to end nodes via legacy
+        // findNonConduitSurfArea (half each, then zero the UP_CRITICAL end's
+        // node1 / DN_CRITICAL end's node2 and any STORAGE end).
+        scatterOrificeSurfArea(uk, uj, un1, un2);
     }
 }
 
@@ -468,7 +610,8 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx) {
 // Batch weir flow — Q = Cd*L*H^expon, VECTORISABLE
 // ============================================================================
 
-void StructureSolver::computeWeirFlows(SimulationContext& ctx) {
+void StructureSolver::computeWeirFlows(SimulationContext& ctx,
+                                       double* node_new_surf_area) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
     constexpr double FUDGE_W = 0.0001;
@@ -480,7 +623,12 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx) {
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
-        if (n1 < 0 || n2 < 0) { links.flow[uj] = 0.0; continue; }
+        if (n1 < 0 || n2 < 0) {
+            links.flow[uj] = 0.0;
+            links.depth[uj] = 0.0;
+            weirs_.surf_area[uk] = 0.0;
+            continue;
+        }
         auto un1 = static_cast<size_t>(n1);
         auto un2 = static_cast<size_t>(n2);
 
@@ -488,92 +636,208 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx) {
         double hgl2 = nodes.depth[un2] + nodes.invert_elev[un2];
         double dir = (hgl1 >= hgl2) ? 1.0 : -1.0;
 
-        // Flap gate check
+        // Flap gate check — legacy link_setFlapGate: if forward flow blocked,
+        // zero flow. Our has_flap_gate flag matches the legacy sense.
         if (links.has_flap_gate[uj] && dir < 0.0) {
             links.flow[uj] = 0.0;
+            links.depth[uj] = 0.0;
+            links.dqdh[uj] = 0.0;
+            weirs_.surf_area[uk] = 0.0;
             continue;
         }
 
-        // Swap for reverse flow
+        // Swap hgl values for reverse flow so that hgl1 is always the
+        // *upstream* head, matching legacy lines 2230-2234.
         if (dir < 0.0) std::swap(hgl1, hgl2);
 
-        // Crest elevation: setting raises the effective crest
-        // (matching legacy line 2257: hcrest += (1-setting)*yFull)
+        // Crest elevation — ALWAYS referenced to node1's invert, regardless
+        // of flow direction (the weir crest is a physical feature of the
+        // link, not a function of which side is upstream this iteration).
+        // Legacy link.c:2252-2257 always uses Node[n1].invertElev.
         double y_full = links.xsect_y_full[uj];
         double setting = links.setting[uj];
-        double hcrest = nodes.invert_elev[(dir > 0.0) ? un1 : un2]
-                      + links.crest_height[uj]
+        double hcrest = nodes.invert_elev[un1]
+                      + ctx.link_subtypes.weirs.crest_height[static_cast<size_t>(ctx.link_subtypes.weir_row(j))]
                       + (1.0 - setting) * y_full;
 
         double hcrown = hcrest + y_full * setting;
         double head = hgl1 - hcrest;
-        if (head <= FUDGE_W) { links.flow[uj] = 0.0; continue; }
+        if (head <= FUDGE_W || hcrest >= hcrown) {
+            links.flow[uj] = 0.0;
+            links.depth[uj] = 0.0;   // legacy weir_getInflow: DRY → newDepth=0
+            links.dqdh[uj] = 0.0;
+            weirs_.surf_area[uk] = 0.0;
+            continue;
+        }
 
-        double cd = links.cd[uj];
+        double cd     = weirs_.c_disch1[uk];
         double length = links.xsect_w_max[uj];
-        int wt = static_cast<int>(links.param1[uj]); // weir type
-
+        int    wt     = weirs_.weir_type[uk];
         double q = 0.0;
 
-        // --- Surcharge check (matching legacy weir_getInflow lines 2285-2301)
-        // When water exceeds crown and weir can surcharge, use orifice equation
-        // with coefficient derived from weir flow at full opening.
+        // Surface-area contribution: matches legacy weir_getInflow lines
+        // 2271-2273 —   y = yFull - (hcrown - min(h1, hcrown))
+        //               surfArea = xsect_getWofY(xsect, y) * length_eff
+        // Scattered into node surface-area accumulators by the non_conduit_fn
+        // callback in SWMMEngine::stepRouting. Zero when the weir is fully
+        // surcharged (h1 >= hcrown) so that it behaves like an orifice.
+        {
+            double h1_min = std::min(hgl1, hcrown);
+            double y_sa = y_full - (hcrown - h1_min);
+            // For the common rectangular/triangular/trapezoidal weirs the
+            // width at depth y can be computed inline without a full xsect
+            // dispatch; fall back to xsect::getWofY for anything else.
+            double width_at_y = 0.0;
+            if (y_sa > 0.0) {
+                switch (wt) {
+                    case 0: // TRANSVERSE — rectangular open channel
+                    case 1: // SIDEFLOW   — rectangular open channel
+                        width_at_y = length;
+                        break;
+                    case 2: // V-NOTCH    — triangular, w = 2·slope·y
+                        width_at_y = 2.0 * weirs_.slope[uk] * y_sa;
+                        break;
+                    case 3: { // TRAPEZOIDAL — w = base + 2·slope·y
+                        double y_bot = links.xsect_y_bot[uj];  // base (crest) width
+                        width_at_y = y_bot + 2.0 * weirs_.slope[uk] * y_sa;
+                        break;
+                    }
+                    default: width_at_y = length; break;
+                }
+            }
+            weirs_.surf_area[uk] = width_at_y * weirs_.length_eff[uk];
+        }
+
+        // --- Surcharge path: legacy weir_getInflow lines 2285-2301
         if (hgl1 >= hcrown && y_full > 0.0 && setting > 0.0) {
-            // Compute cSurcharge: evaluate weir flow at full opening height,
-            // then derive equivalent orifice coeff (matching legacy weir_setSetting)
+            // c_surcharge = q(at h_full) / sqrt(h_full/2). Recomputing this
+            // per call rather than caching because `setting` can change via
+            // controls. Uses the SAME weir formula as below so the two modes
+            // match at the transition point.
             double h_full = setting * y_full;
             double q_full = 0.0;
             switch (wt) {
-                case 0: q_full = cd * length * std::pow(h_full, 1.5); break;
-                case 1: q_full = cd * std::pow(length, 0.83) * std::pow(h_full, 1.67); break;
-                case 2: q_full = cd * links.param2[uj] * std::pow(h_full, 2.5); break;
-                case 3: q_full = cd * length * std::pow(h_full, 1.5); break;
+                case 0: q_full = cd * length * fastmath::pow3_2(h_full); break;
+                case 1: q_full = cd * std::pow(length, 0.83)
+                                    * fastmath::pow5_3(h_full); break;
+                case 2: q_full = cd * weirs_.slope[uk]
+                                    * fastmath::pow5_2(h_full); break;
+                case 3: { // TRAPEZOIDAL: q = q1 (rect) + q2 (V-notch sides)
+                    double y_bot = links.xsect_y_bot[uj];
+                    double q1 = cd * y_bot * fastmath::pow3_2(h_full);
+                    double q2 = weirs_.c_disch2[uk] * weirs_.slope[uk]
+                              * fastmath::pow5_2(h_full);
+                    q_full = q1 + q2;
+                    break;
+                }
             }
-            double h_half = h_full / 2.0;
+            double h_half = h_full * 0.5;
             double c_surcharge = (h_half > 0.0) ? q_full / std::sqrt(h_half) : 0.0;
 
-            // Orifice-mode head (matching legacy lines 2290-2292)
-            double y_mid = (hcrest + hcrown) / 2.0;
+            double y_mid = (hcrest + hcrown) * 0.5;
             double h_orif = (hgl2 < y_mid) ? hgl1 - y_mid : hgl1 - hgl2;
             h_orif = std::max(h_orif, 0.0);
-
             q = c_surcharge * std::sqrt(h_orif);
+
+            // Reported weir depth on the surcharge (orifice-equivalent) path:
+            // legacy weir_getInflow link.c:2294-2296 sets newDepth = hcrown-hcrest
+            // (the weir opening height), not the head above the crest.
+            links.depth[uj] = hcrown - hcrest;
+
+            // Surcharged weir dqdh uses the ORIFICE head, not the full head
+            // above the crest (legacy weir_getOrificeFlow, link.c:2435 sets
+            // Link[j].dqdh = q / (2·head) with head == the orifice head).
+            links.dqdh[uj] = (h_orif > 0.0) ? q / (2.0 * h_orif) : 0.0;
         } else {
-            // --- Normal weir flow
+            // --- Free (weir) flow path.  Track q1 (central) and q2 (end
+            // sections) separately so dqdh can match legacy weir_getdqdh
+            // (link.c:2495), which weights them 1.5×/1.67×/2.5× by weir type.
+            double q1 = 0.0, q2 = 0.0;
             switch (wt) {
-                case 0: { // TRANSVERSE: Q = Cd * L * H^1.5
-                    double ec = links.param2[uj]; // end contractions
+                case 0: { // TRANSVERSE — Q = Cd·L·H^1.5
+                    double ec = weirs_.end_con[uk];
                     double L = length - 0.1 * ec * head;
-                    L = std::max(L, 0.0);
-                    q = cd * L * std::pow(head, 1.5);
+                    if (L < 0.0) L = 0.0;
+                    q1 = cd * L * fastmath::pow3_2(head);
                     break;
                 }
-                case 1: // SIDEFLOW: Q = Cd * L^0.83 * H^1.67
-                    q = cd * std::pow(length, 0.83) * std::pow(head, 1.67);
+                case 1: // SIDEFLOW — reverse flow behaves as TRANSVERSE
+                        // (legacy link.c:2380-2388).
+                    if (dir < 0.0)
+                        q1 = cd * length * fastmath::pow3_2(head);
+                    else
+                        q1 = cd * std::pow(length, 0.83) * fastmath::pow5_3(head);
                     break;
-                case 2: { // V-NOTCH: Q = Cd * slope * H^2.5
-                    double slope = links.param2[uj];
-                    q = cd * slope * std::pow(head, 2.5);
+                case 2: // V-NOTCH — Q = Cd·slope·H^2.5
+                    q1 = cd * weirs_.slope[uk] * fastmath::pow5_2(head);
                     break;
-                }
-                case 3: { // TRAPEZOIDAL
-                    q = cd * length * std::pow(head, 1.5);
+                case 3: { // TRAPEZOIDAL — q1 (rect crest) + q2 (V-notch sides)
+                    double y_bot = links.xsect_y_bot[uj];
+                    q1 = cd * y_bot * fastmath::pow3_2(head);
+                    q2 = weirs_.c_disch2[uk] * weirs_.slope[uk]
+                              * fastmath::pow5_2(head);
                     break;
                 }
             }
 
-            // Villemonte submergence correction
+            // dqdh from the UN-submerged q1/q2 (legacy sets dqdh inside
+            // weir_getFlow, BEFORE Villemonte is applied in weir_getInflow).
+            // weir_getdqdh (link.c:2495):
+            //   TRANSVERSE  : 1.5·|q1/h|
+            //   SIDEFLOW    : reverse 1.5·|q1/h|, forward 1.67·|q1/h|
+            //   V-NOTCH     : 2.5·|q1/h| (fully open, q2==0)
+            //   TRAPEZOIDAL : 1.5·|q1/h| + 2.5·|q2/h|
+            // The previous flat q/(2·head) understated a transverse weir's
+            // dqdh by 3×, letting the implicit surcharge solve under-damp and
+            // driving a weir-flow limit cycle (e.g. Bellinge G80F66Yw1).
+            if (head > FUDGE_W) {
+                double q1h = std::fabs(q1 / head);
+                double q2h = std::fabs(q2 / head);
+                switch (wt) {
+                    case 0:  links.dqdh[uj] = 1.5 * q1h; break;
+                    case 1:  links.dqdh[uj] = (dir < 0.0 ? 1.5 : 1.67) * q1h; break;
+                    case 2:  links.dqdh[uj] = (q2h == 0.0) ? 2.5 * q1h
+                                                           : 1.5 * q1h + 2.5 * q2h; break;
+                    default: links.dqdh[uj] = 1.5 * q1h + 2.5 * q2h; break;
+                }
+            } else {
+                links.dqdh[uj] = 0.0;
+            }
+
+            q = q1 + q2;
+
+            // Villemonte submergence correction — leave the 0.385 power
+            // as std::pow (no closed form); replace the inner 1.5.
             double h_tail = hgl2 - hcrest;
             if (h_tail > 0.0 && head > 0.0) {
                 double ratio = h_tail / head;
                 if (ratio > 0.0 && ratio < 1.0) {
-                    q *= std::pow(1.0 - std::pow(ratio, 1.5), 0.385);
+                    double inner = 1.0 - fastmath::pow3_2(ratio);
+                    if (inner > 0.0) q *= std::pow(inner, 0.385);
                 }
             }
+
+            // Reported weir depth on the free-flow path: legacy
+            // weir_getInflow link.c:2318 sets newDepth = MIN(h1-hcrest, yFull),
+            // i.e. the head above the crest capped at the weir opening height.
+            // (head == hgl1 - hcrest here, unmodified on this branch.)
+            links.depth[uj] = std::min(head, y_full);
         }
 
-        q = std::max(q, 0.0);
+        if (q < 0.0) q = 0.0;
         links.flow[uj] = q * dir;
+
+        // Legacy findNonConduitSurfArea (dynwave.c:503-506) explicitly
+        // sets weir surfArea1/surfArea2 = 0 "to maintain SWMM 4 compatibility"
+        // — i.e. weirs contribute NO surface area to their end nodes.
+        // The refactored engine previously scattered `width_at_y*length_eff/2`
+        // here, which added a huge phantom term (e.g. ~2 550 ft² per end for
+        // the Rich_BC_CSO TWIN-WEIR) that biased the Picard denominator at
+        // weir-fed junctions and drove the TWIN66-0 over-surcharge. Leaving
+        // node_new_surf_area untouched restores alignment with legacy.
+        (void)node_new_surf_area;
+        (void)un1;
+        (void)un2;
     }
 }
 
@@ -585,6 +849,12 @@ void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
+    int fu = static_cast<int>(ctx.options.flow_units);
+    int unit_sys  = ucf::getUnitSystem(fu);
+    double ucf_len  = ucf::Ucf[ucf::LENGTH][unit_sys];
+    double ucf_flow = ucf::Qcf[fu];
+    constexpr double FUDGE_OUT = 0.0001;
+
     for (int k = 0; k < outlets_.count; ++k) {
         auto uk = static_cast<size_t>(k);
         int j = outlets_.link_idx[uk];
@@ -592,29 +862,90 @@ void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
+        if (n1 < 0 || n2 < 0) {
+            links.flow[uj] = 0.0;
+            links.depth[uj] = 0.0;
+            continue;
+        }
         auto un1 = static_cast<size_t>(n1);
         auto un2 = static_cast<size_t>(n2);
 
         double h1 = nodes.depth[un1] + nodes.invert_elev[un1];
         double h2 = nodes.depth[un2] + nodes.invert_elev[un2];
-        double head = std::fabs(h1 - h2);
         int dir = (h1 >= h2) ? 1 : -1;
 
-        if (head <= 0.0) { links.flow[uj] = 0.0; continue; }
-
-        double q;
-        if (outlets_.curve_idx[uk] >= 0) {
-            auto uci = static_cast<size_t>(outlets_.curve_idx[uk]);
-            if (uci < ctx.tables.tables.size()) {
-                q = table_lookup_cursor(ctx.tables.tables[uci], head);
-            } else {
-                q = 0.0;
-            }
-        } else {
-            q = outlets_.q_coeff[uk] * std::pow(head, outlets_.q_expon[uk]);
+        // Track which node provides the upstream depth (legacy: y1 is
+        // Node[n1].newDepth, swapped to Node[n2].newDepth for reverse flow).
+        double y1 = nodes.depth[un1];
+        if (dir < 0) {
+            std::swap(h1, h2);
+            y1 = nodes.depth[un2];
         }
 
-        links.flow[uj] = q * dir;
+        // Crest elevation is a physical feature of the outlet — ALWAYS
+        // referenced to n1's invert regardless of flow direction. Matches
+        // legacy link.c:2650  hcrest = Node[n1].invertElev + Link[j].offset1.
+        double hcrest = nodes.invert_elev[un1] + links.offset1[uj];
+
+        // Effective head — NODE_HEAD (functional/tabular head-based) outlets
+        // in DW routing account for downstream submergence via
+        //     head = h1 - max(h2, hcrest)
+        // matching legacy link.c:2651-2653. NODE_DEPTH outlets use simply
+        //     head = h1 - hcrest (= y1 for upstream node).
+        // outlet_type encoding in the refactored parser:
+        //   0 = FUNCTIONAL_HEAD, 1 = FUNCTIONAL_DEPTH,
+        //   2 = TABULAR_HEAD,    3 = TABULAR_DEPTH
+        int outlet_type = static_cast<int>(ctx.link_subtypes.outlets.outlet_type[static_cast<size_t>(ctx.link_subtypes.outlet_row(j))]);
+        bool depth_based = (outlet_type == 1 || outlet_type == 3);
+
+        double head = depth_based
+                        ? (h1 - hcrest)
+                        : (h1 - std::max(h2, hcrest));
+        // Flap gate (closed against reverse flow)
+        bool blocked_by_flap = (links.has_flap_gate[uj] && dir < 0);
+
+        if (head <= FUDGE_OUT || y1 <= FUDGE_OUT || blocked_by_flap) {
+            links.flow[uj] = 0.0;
+            links.depth[uj] = 0.0;
+            links.flow_class[uj] = FlowClass::DRY;
+            links.dqdh[uj] = 0.0;
+            continue;
+        }
+
+        // Rating curve is indexed on user-units of length (legacy calls
+        // UCF(LENGTH) before the table lookup).
+        double lookup_val = depth_based
+                                ? (y1 * ucf_len)
+                                : (head * ucf_len);
+
+        double q = 0.0;
+        int ci = outlets_.curve_idx[uk];
+        if (ci >= 0 && static_cast<size_t>(ci) < ctx.tables.tables.size()) {
+            q = table_lookup_cursor(ctx.tables.tables[static_cast<size_t>(ci)], lookup_val);
+            q /= ucf_flow;
+        } else {
+            // FUNCTIONAL outlet — legacy outlet_getFlow:
+            //   q = qCoeff * pow(head*UCF(LENGTH), qExpon) / UCF(FLOW)
+            // i.e. the user coefficient operates on the DISPLAY-unit head and
+            // yields a DISPLAY-unit flow, which is then converted to CFS. Use
+            // lookup_val (already head*ucf_len) directly and divide by ucf_flow.
+            if (lookup_val > 0.0)
+                q = outlets_.q_coeff[uk]
+                  * std::pow(lookup_val, outlets_.q_expon[uk]) / ucf_flow;
+        }
+
+        // Legacy outlet_getInflow line 2669 applies the setting multiplier:
+        //   return dir * Link[j].setting * outlet_getFlow(k, head)
+        // The refactored code previously overwrote links.setting[uj] with a
+        // 0/1 flag, which silently clobbered any control-rule action on
+        // the outlet. Preserve the setting, apply it as a multiplier.
+        q *= links.setting[uj];
+
+        if (q < 0.0) q = 0.0;
+        links.flow[uj] = q * static_cast<double>(dir);
+        links.depth[uj] = head;
+        links.flow_class[uj] = FlowClass::SUBCRITICAL;
+        links.dqdh[uj] = (head > FUDGE_OUT) ? q / (2.0 * head) : 0.0;
     }
 }
 
@@ -622,10 +953,15 @@ void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
 // Main dispatch
 // ============================================================================
 
-void StructureSolver::computeAllFlows(SimulationContext& ctx, double dt) {
-    if (pumps_.count > 0)    computePumpFlows(ctx, dt);
-    if (orifices_.count > 0) computeOrificeFlows(ctx);
-    if (weirs_.count > 0)    computeWeirFlows(ctx);
+void StructureSolver::computeAllFlows(SimulationContext& ctx, double dt,
+                                      double* node_new_surf_area) {
+    // Ordering: pumps first (they READ node_new_surf_area via the flow-
+    // limiter); orifices + weirs next (they WRITE their per-link surfArea
+    // contribution into node_new_surf_area, matching legacy
+    // findNonConduitSurfArea); outlets last (zero surfArea per legacy).
+    if (pumps_.count > 0)    computePumpFlows(ctx, dt, node_new_surf_area);
+    if (orifices_.count > 0) computeOrificeFlows(ctx, node_new_surf_area);
+    if (weirs_.count > 0)    computeWeirFlows(ctx, node_new_surf_area);
     if (outlets_.count > 0)  computeOutletFlows(ctx);
 }
 

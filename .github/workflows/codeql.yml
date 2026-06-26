@@ -1,0 +1,108 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]                         # drop develop — covered by PR
+    paths: ['src/**', 'include/**', 'python/**', 'CMakeLists.txt', 'vcpkg.json']
+  pull_request:
+    branches: [main]
+    paths: ['src/**', 'include/**', 'python/**', 'CMakeLists.txt', 'vcpkg.json']
+  schedule: [{ cron: "0 6 * * 1" }]
+  workflow_dispatch:
+    
+env:
+  VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # C/C++ requires a real compile so CodeQL can hook every translation unit.
+          - language: c-cpp
+            build-mode: manual
+          # Python is scanned from source — no build needed.
+          - language: python
+            build-mode: none
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
+
+      # ── C/C++ build pipeline (mirrors unit_testing.yml) ────────────────
+      - name: Checkout vcpkg
+        if: matrix.language == 'c-cpp'
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: 2025.02.14
+          path: vcpkg
+
+      - name: Install Ninja
+        if: matrix.language == 'c-cpp'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Bootstrap vcpkg
+        if: matrix.language == 'c-cpp'
+        working-directory: ${{ env.VCPKG_ROOT }}
+        run: |
+          ./bootstrap-vcpkg.sh
+          chmod +x vcpkg
+
+      - name: Export GitHub Actions cache variables
+        if: matrix.language == 'c-cpp'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Cache vcpkg downloads (source tarballs)
+        if: matrix.language == 'c-cpp'
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/downloads
+          key: vcpkg-downloads-codeql-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-downloads-codeql-
+            vcpkg-downloads-Linux-x64-linux-
+
+      # Tests are off by default — CodeQL needs the engine libs compiled,
+      # not the test exes, so we skip them to keep the analysis window tight.
+      - name: Configure
+        if: matrix.language == 'c-cpp'
+        run: >
+          cmake
+          --preset=Linux-debug
+          -B build-codeql
+          -DOPENSWMM_BUILD_TESTS=OFF
+          -DOPENSWMM_BUILD_UNIT_TESTS=OFF
+          -DOPENSWMM_BUILD_REGRESSION_TESTS=OFF
+          -DOPENSWMM_BUILD_BENCHMARKS=OFF
+          -DOPENSWMM_BUILD_PYTHON=OFF
+
+      - name: Build
+        if: matrix.language == 'c-cpp'
+        run: cmake --build build-codeql --config Debug
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

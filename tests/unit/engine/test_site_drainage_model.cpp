@@ -30,6 +30,30 @@
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_nodes.h>
+
+TEST(NodeApiTypeMappingTest, StorageAndDividerRoundTrip) {
+    SWMM_Engine engine = swmm_engine_new();
+    ASSERT_NE(engine, nullptr);
+
+    ASSERT_EQ(swmm_node_add(engine, "S1", SWMM_NODE_STORAGE), SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "D1", SWMM_NODE_DIVIDER), SWMM_OK);
+
+    const int s1 = swmm_node_index(engine, "S1");
+    const int d1 = swmm_node_index(engine, "D1");
+    ASSERT_GE(s1, 0);
+    ASSERT_GE(d1, 0);
+
+    int t = -1;
+    ASSERT_EQ(swmm_node_get_type(engine, s1, &t), SWMM_OK);
+    EXPECT_EQ(t, SWMM_NODE_STORAGE);
+
+    ASSERT_EQ(swmm_node_get_type(engine, d1, &t), SWMM_OK);
+    EXPECT_EQ(t, SWMM_NODE_DIVIDER);
+
+    swmm_engine_destroy(engine);
+}
 
 // ---------------------------------------------------------------------------
 // Test fixture

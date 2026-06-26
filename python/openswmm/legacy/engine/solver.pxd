@@ -67,6 +67,7 @@ cdef extern from "openswmm_solver.h":
         swmm_GAGE_TOTAL_PRECIPITATION # Total precipitation
         swmm_GAGE_RAINFALL          # Snow depth
         swmm_GAGE_SNOWFALL            # Snowfall
+        swmm_GAGE_SCALEFACTOR         # Rainfall scaling factor
     
     # SWMM Subcatchment properties
     ctypedef enum swmm_SubcatchProperty:
@@ -118,6 +119,13 @@ cdef extern from "openswmm_solver.h":
         swmm_SUBCATCH_POLLUTANT_RUNOFF_CONCENTRATION # Pollutant ponded concentration
         swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION # Pollutant runoff concentration
         swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD # Pollutant total load
+        swmm_SUBCATCH_API_PET # API prescribed potential evapotranspiration rate
+        swmm_SUBCATCH_GW_MOISTURE # Groundwater upper zone moisture content
+        swmm_SUBCATCH_GW_LOWER_DEPTH # Groundwater saturated zone depth
+        swmm_SUBCATCH_SNOW_SWE # Snow pack SWE on a snow subarea
+        swmm_SUBCATCH_SNOW_FW # Snow pack free water on a snow subarea
+        swmm_SUBCATCH_SNOW_ATI # Snow pack antecedent temperature index
+        swmm_SUBCATCH_SNOW_COLDC # Snow pack cold content
 
     # SWMM Node properties
     ctypedef enum swmm_NodeProperty:
@@ -136,6 +144,7 @@ cdef extern from "openswmm_solver.h":
         swmm_NODE_INITIAL_DEPTH # Initial depth
         swmm_NODE_POLLUTANT_CONCENTRATION # Pollutant concentration
         swmm_NODE_POLLUTANT_LATMASS_FLUX  # Pollutant lateral mass flux
+        swmm_NODE_OUTFLOW                 # Total outflow
 
     # SWMM Link properties
     ctypedef enum swmm_LinkProperty:
@@ -212,6 +221,61 @@ cdef extern from "openswmm_solver.h":
         swmm_HEADTOL             # The head tolerance.
         swmm_SYSFLOWTOL          # The system flow tolerance.
         swmm_LATFLOWTOL          # The lateral flow tolerance.
+        swmm_EVAPRATE            # The current climate-derived evaporation rate (read-only).
+        swmm_TEMPERATURE         # The current air temperature (read-only).
+        swmm_API_TEMPERATURE     # API prescribed air temperature.
+        swmm_WINDSPEED           # The current wind speed (read-only).
+        swmm_API_WINDSPEED       # API prescribed wind speed.
+        swmm_API_EVAP            # API prescribed system-wide evaporation rate.
+        swmm_EVAP_DRY_ONLY       # Evaporation DRY_ONLY option.
+
+    # SWMM Pollutant properties
+    ctypedef enum swmm_PollutProperty:
+        swmm_POLLUT_RAIN_CONCEN    # Rain (wet deposition) concentration
+        swmm_POLLUT_GW_CONCEN      # Groundwater inflow concentration
+        swmm_POLLUT_RDII_CONCEN    # RDII inflow concentration
+        swmm_POLLUT_DWF_CONCEN     # Dry weather sanitary flow concentration
+        swmm_POLLUT_KDECAY         # First-order decay constant (1/day)
+        swmm_POLLUT_CO_POLLUTANT   # Co-pollutant index (-1 = none)
+        swmm_POLLUT_CO_FRACTION    # Co-pollutant fraction (0-1)
+        swmm_POLLUT_SNOW_ONLY      # Buildup-only-under-snow flag (0/1)
+        swmm_POLLUT_INIT_CONCEN    # Initial network concentration (pre-start)
+
+    # SWMM time-pattern properties
+    ctypedef enum swmm_PatternProperty:
+        swmm_PATTERN_FACTOR  # One multiplier factor (subIndex = factor position)
+        swmm_PATTERN_COUNT   # Number of factors (read-only)
+        swmm_PATTERN_TYPE    # Pattern type code (read-only)
+
+    # SWMM land-use properties
+    ctypedef enum swmm_LanduseProperty:
+        swmm_LANDUSE_SWEEP_INTERVAL      # Street-sweeping interval (days)
+        swmm_LANDUSE_SWEEP_REMOVAL       # Fraction of buildup available for sweeping
+        swmm_LANDUSE_BUILDUP_FUNC        # Buildup function type (subIndex = pollutant)
+        swmm_LANDUSE_BUILDUP_COEFF1      # Buildup c0 / max buildup
+        swmm_LANDUSE_BUILDUP_COEFF2      # Buildup c1 / rate
+        swmm_LANDUSE_BUILDUP_COEFF3      # Buildup c2 / exponent
+        swmm_LANDUSE_BUILDUP_NORMALIZER  # Buildup normalizer (0 area, 1 curb)
+        swmm_LANDUSE_WASHOFF_FUNC        # Washoff function type
+        swmm_LANDUSE_WASHOFF_COEFF       # Washoff coefficient
+        swmm_LANDUSE_WASHOFF_EXPON       # Washoff exponent
+        swmm_LANDUSE_WASHOFF_SWEEP_EFFIC # Washoff sweeping efficiency (0-1)
+        swmm_LANDUSE_WASHOFF_BMP_EFFIC   # Washoff BMP efficiency (0-1)
+
+    # SWMM aquifer properties (input-file units)
+    ctypedef enum swmm_AquiferProperty:
+        swmm_AQUIFER_POROSITY = 800      # Porosity (fraction, pre-start-only)
+        swmm_AQUIFER_WILTING_POINT       # Wilting point (fraction, pre-start-only)
+        swmm_AQUIFER_FIELD_CAPACITY      # Field capacity (fraction, pre-start-only)
+        swmm_AQUIFER_CONDUCTIVITY        # Saturated conductivity (in/hr or mm/hr)
+        swmm_AQUIFER_CONDUCT_SLOPE       # Conductivity slope
+        swmm_AQUIFER_TENSION_SLOPE       # Tension slope (ft or m)
+        swmm_AQUIFER_UPPER_EVAP_FRAC     # Upper-zone evap fraction (0-1)
+        swmm_AQUIFER_LOWER_EVAP_DEPTH    # Lower-zone evap depth (ft or m)
+        swmm_AQUIFER_LOWER_LOSS_COEFF    # Lower-zone loss coeff (in/hr or mm/hr)
+        swmm_AQUIFER_BOTTOM_ELEV         # Bottom elevation (ft or m, pre-start-only)
+        swmm_AQUIFER_WATER_TABLE_ELEV    # Water table elev (ft or m, pre-start-only)
+        swmm_AQUIFER_UPPER_MOISTURE      # Upper moisture (fraction, pre-start-only)
 
     # SWMM flow units enumeration
     ctypedef enum swmm_FlowUnitsProperty:
@@ -369,6 +433,24 @@ cdef extern from "openswmm_solver.h":
     # param: index: object index
     # param: value: property value
     cdef int swmm_setValueExpanded(int objType, int property, int index, int subindex, int pollutantIndex, double value)
+
+    # Sets (or replaces) the treatment expression for a node/pollutant pair
+    # param: nodeIndex: node index
+    # param: pollutantIndex: pollutant index
+    # param: expression: treatment expression in input-file form, e.g. "R = 0.5"
+    cdef int swmm_setTreatment(int nodeIndex, int pollutantIndex, const char *expression)
+
+    # Removes the treatment expression for a node/pollutant pair
+    # param: nodeIndex: node index
+    # param: pollutantIndex: pollutant index
+    cdef int swmm_clearTreatment(int nodeIndex, int pollutantIndex)
+
+    # Sets the underdrain flow parameters of a LID process at runtime
+    # param: lidIndex: LID process index
+    # param: coeff: underdrain flow coefficient (in/hr or mm/hr)
+    # param: expon: underdrain head exponent
+    # param: offset: offset height of underdrain (in or mm)
+    cdef int swmm_setLidDrain(int lidIndex, double coeff, double expon, double offset)
 
     # Retrieves the value of a property for an object of a given type and index
     # param: property: property type
