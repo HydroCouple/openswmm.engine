@@ -622,6 +622,7 @@ protected:
             ctx.links.xsect_shape[i] = XsectShape::CIRCULAR;
             ctx.links.xsect_y_full[i] = 2.0;
             ctx.links.xsect_a_full[i] = M_PI;  // π·1²
+            ctx.links.xsect_r_full[i] = 0.5;   // full-flow hyd. radius D/4 (2 ft pipe)
             ctx.links.xsect_w_max[i] = 2.0;
             C.roughness[cr] = 0.013;
             C.length[cr] = 400.0;
@@ -1000,37 +1001,39 @@ TEST_F(AASkipFlagTest, DPS_AsAccumulatesPositively) {
     // to y_full, so As never accumulated and the slot was a no-op.
     //
     // The head-first formulation gates the slot on the conduit MIDPOINT depth
-    // (hs_iter = max(depth_mid − y_full, 0)), so BOTH ends of a conduit must
-    // sit above crown before its slot accumulates. We therefore hold the whole
-    // chain pressurized at a uniform head (zero head gradient → no drainage)
-    // and make the downstream boundary a junction so a free outfall cannot
-    // drain the chain below crown mid-step (which would correctly reset the
-    // slot and make the accumulation check vacuous).
-    ctx.nodes.type[2] = NodeType::JUNCTION;
+    // (hs_iter = max(depth_mid − y_full, 0)), so BOTH ends of a conduit must sit
+    // above crown for its slot to accumulate. We surcharge both junctions and
+    // sustain inflow at both so conduit 0 stays pressurized across the Picard
+    // solve; node 2 remains the free outfall, giving the chain an outlet so the
+    // continuity solve stays well-conditioned. (The fixture also sets a non-zero
+    // xsect_r_full — without it the surcharged hyd-radius override is 0 and the
+    // Manning term divides by zero, NaN-ing the depths and silently resetting
+    // the slot.)
     initSolver(SurchargeMethod::DYNAMIC_SLOT);
 
-    // Pin every node to a uniform head. Inverts are 100/99/98 and crowns are
-    // 102/101/100, so a uniform head puts all conduit midpoints above crown
-    // with zero gradient between nodes — a static, fully-surcharged chain.
-    auto setUniformHead = [&](double head) {
-        for (int i = 0; i < 3; ++i) {
-            ctx.nodes.head[i]      = head;
-            ctx.nodes.depth[i]     = head - ctx.nodes.invert_elev[i];
-            ctx.nodes.old_depth[i] = head - ctx.nodes.invert_elev[i];
-            ctx.nodes.sur_depth[i] = 10.0;  // permit head above crown
+    const double crown = ctx.links.xsect_y_full[0];  // 2.0 ft
+
+    auto surchargeChain = [&](double above) {
+        for (int i = 0; i < 2; ++i) {
+            ctx.nodes.depth[i]     = crown + above;
+            ctx.nodes.old_depth[i] = crown + above;
+            ctx.nodes.head[i]      = ctx.nodes.invert_elev[i] + crown + above;
+            ctx.nodes.sur_depth[i] = 10.0;   // permit head above crown
         }
+        ctx.nodes.lat_flow[0] = 50.0;        // sustained inflow keeps the
+        ctx.nodes.lat_flow[1] = 30.0;        // conduit pressurized
+        ctx.nodes.depth[2]     = 0.5;        // free outfall drains downstream
+        ctx.nodes.old_depth[2] = 0.5;
+        ctx.nodes.head[2]      = ctx.nodes.invert_elev[2] + 0.5;
     };
 
-    // First execute: head 1 ft above the highest crown. As starts at zero and
-    // should accumulate to a positive value as the slot opens.
-    setUniformHead(103.0);
+    surchargeChain(0.5);
     solver.execute(ctx, 1.0);
     const auto& dps0 = solver.dpsState();
     ASSERT_GE(dps0.As.size(), 1u);
     double As_after_step1 = dps0.As[0];
 
-    // Raise the uniform head → larger hs_iter → dhs > 0 → As must grow.
-    setUniformHead(104.0);
+    surchargeChain(1.0);
     solver.execute(ctx, 1.0);
     double As_after_step2 = solver.dpsState().As[0];
 
