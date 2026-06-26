@@ -4,8 +4,23 @@
 # so the port has no `mpi` dependency. OpenSWMM uses BoomerAMG single-process
 # from the CVODE psetup/psolve callbacks (MPI_COMM_WORLD resolves to hypre's
 # mpistubs no-op communicator), which is all the 2D surface preconditioner
-# needs and keeps the portable build free of an MPI stack. BLAS/LAPACK are
-# still required by hypre's dense kernels.
+# needs and keeps the portable build free of an MPI stack.
+#
+# BLAS/LAPACK: on Linux/macOS we link the external vcpkg `lapack` (reference
+# LAPACK), which builds cleanly with the platform's gfortran. On Windows that
+# pulls `lapack-reference`, whose Fortran dependency (`vcpkg-gfortran` ->
+# LLVMFlang) puts a GNU-driver `clang.exe` on PATH; CMake's C-compiler ABI
+# probe then picks that clang while the x64-windows triplet injects MSVC-style
+# flags (/nologo, /MDd, ...), so the probe fails ("clang: error: no such file or
+# directory: '/nologo'") and the whole configure aborts. hypre ships portable C
+# implementations of the small BLAS/LAPACK subset BoomerAMG needs, so on Windows
+# we use those instead -- no Fortran toolchain, no lapack-reference, no external
+# blas/lapack dependency. See vcpkg.json (blas/lapack are gated to !windows).
+if(VCPKG_TARGET_IS_WINDOWS)
+    set(HYPRE_USE_BUNDLED_BLAS_LAPACK ON)
+else()
+    set(HYPRE_USE_BUNDLED_BLAS_LAPACK OFF)
+endif()
 
 if(VCPKG_TARGET_IS_WINDOWS)
     vcpkg_check_linkage(ONLY_STATIC_LIBRARY)
@@ -27,8 +42,9 @@ vcpkg_cmake_configure(
     OPTIONS
         -DHYPRE_SHARED=${HYPRE_SHARED}
         -DHYPRE_WITH_MPI=OFF            # sequential (HYPRE_SEQUENTIAL) — no MPI dependency
-        -DHYPRE_ENABLE_HYPRE_BLAS=OFF
-        -DHYPRE_ENABLE_HYPRE_LAPACK=OFF
+        # ON on Windows → use hypre's bundled C BLAS/LAPACK (no external lapack).
+        -DHYPRE_ENABLE_HYPRE_BLAS=${HYPRE_USE_BUNDLED_BLAS_LAPACK}
+        -DHYPRE_ENABLE_HYPRE_LAPACK=${HYPRE_USE_BUNDLED_BLAS_LAPACK}
     OPTIONS_RELEASE
         -DHYPRE_BUILD_TYPE=Release
         "-DHYPRE_INSTALL_PREFIX=${CURRENT_PACKAGES_DIR}"

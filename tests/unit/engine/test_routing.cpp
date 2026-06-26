@@ -991,42 +991,46 @@ TEST(DPS, OpenShapesExcluded) {
 // ============================================================================
 
 TEST_F(AASkipFlagTest, DPS_AsAccumulatesPositively) {
-    // Surcharge a single pipe and verify that dps_.As grows monotonically
-    // (within numerical noise) over multiple timesteps while head rises.
+    // Verify that dps_.As grows monotonically over multiple timesteps while
+    // head rises.
     //
     // This is the regression test for the original silent As=0 defect:
     // when applyDPSGeometry derived dAs from (area_mid − A_full) it always
     // produced dAs = −As_prev because the batch XSect kernel clamps depth
     // to y_full, so As never accumulated and the slot was a no-op.
+    //
+    // The head-first formulation gates the slot on the conduit MIDPOINT depth
+    // (hs_iter = max(depth_mid − y_full, 0)), so BOTH ends of a conduit must
+    // sit above crown before its slot accumulates. We therefore hold the whole
+    // chain pressurized at a uniform head (zero head gradient → no drainage)
+    // and make the downstream boundary a junction so a free outfall cannot
+    // drain the chain below crown mid-step (which would correctly reset the
+    // slot and make the accumulation check vacuous).
+    ctx.nodes.type[2] = NodeType::JUNCTION;
     initSolver(SurchargeMethod::DYNAMIC_SLOT);
 
-    const double crown = ctx.links.xsect_y_full[0];  // 2.0 ft
+    // Pin every node to a uniform head. Inverts are 100/99/98 and crowns are
+    // 102/101/100, so a uniform head puts all conduit midpoints above crown
+    // with zero gradient between nodes — a static, fully-surcharged chain.
+    auto setUniformHead = [&](double head) {
+        for (int i = 0; i < 3; ++i) {
+            ctx.nodes.head[i]      = head;
+            ctx.nodes.depth[i]     = head - ctx.nodes.invert_elev[i];
+            ctx.nodes.old_depth[i] = head - ctx.nodes.invert_elev[i];
+            ctx.nodes.sur_depth[i] = 10.0;  // permit head above crown
+        }
+    };
 
-    // Surcharge J0 well above crown; J1 below crown to drive flow downstream.
-    ctx.nodes.depth[0] = crown + 0.50;
-    ctx.nodes.old_depth[0] = crown + 0.50;
-    ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + crown + 0.50;
-    ctx.nodes.sur_depth[0] = 10.0;  // permit head above crown
-    ctx.nodes.lat_flow[0] = 50.0;    // sustained inflow
-
-    ctx.nodes.depth[1] = 0.5;
-    ctx.nodes.old_depth[1] = 0.5;
-    ctx.nodes.head[1] = ctx.nodes.invert_elev[1] + 0.5;
-
-    ctx.nodes.depth[2] = 0.5;
-    ctx.nodes.old_depth[2] = 0.5;
-    ctx.nodes.head[2] = ctx.nodes.invert_elev[2] + 0.5;
-
-    // First execute: As starts at zero, should accumulate as head rises.
+    // First execute: head 1 ft above the highest crown. As starts at zero and
+    // should accumulate to a positive value as the slot opens.
+    setUniformHead(103.0);
     solver.execute(ctx, 1.0);
     const auto& dps0 = solver.dpsState();
     ASSERT_GE(dps0.As.size(), 1u);
     double As_after_step1 = dps0.As[0];
 
-    // Push J0 head up further and run another step.
-    ctx.nodes.depth[0] = crown + 1.0;
-    ctx.nodes.old_depth[0] = crown + 1.0;
-    ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + crown + 1.0;
+    // Raise the uniform head → larger hs_iter → dhs > 0 → As must grow.
+    setUniformHead(104.0);
     solver.execute(ctx, 1.0);
     double As_after_step2 = solver.dpsState().As[0];
 
@@ -1042,27 +1046,25 @@ TEST_F(AASkipFlagTest, DPS_PastAsInvariantUnderPDecay) {
     // must NOT be rewritten when P decays in time.  With the head-first
     // formulation, dAs = T_s · dhs.  If dhs ≈ 0 (held-fixed surcharge) and
     // only P changes, As must stay (within ε) at its value before the decay.
+    // Hold the whole chain at a uniform, fixed head (zero gradient, junction
+    // downstream boundary) so dhs ≈ 0 every step and the surcharge is sustained.
+    // The slot is gated on the conduit midpoint depth; a free outfall would
+    // drain the chain below crown and the slot would (correctly) reset, making
+    // this invariance check vacuous.
+    ctx.nodes.type[2] = NodeType::JUNCTION;
     initSolver(SurchargeMethod::DYNAMIC_SLOT);
 
-    const double crown = ctx.links.xsect_y_full[0];
+    auto setUniformHead = [&](double head) {
+        for (int i = 0; i < 3; ++i) {
+            ctx.nodes.head[i]      = head;
+            ctx.nodes.depth[i]     = head - ctx.nodes.invert_elev[i];
+            ctx.nodes.old_depth[i] = head - ctx.nodes.invert_elev[i];
+            ctx.nodes.sur_depth[i] = 10.0;
+        }
+    };
 
-    // Seed a fully-developed surcharge.
-    ctx.nodes.depth[0] = crown + 1.0;
-    ctx.nodes.old_depth[0] = crown + 1.0;
-    ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + crown + 1.0;
-    ctx.nodes.sur_depth[0] = 10.0;
-    ctx.nodes.lat_flow[0] = 50.0;
-
-    ctx.nodes.depth[1] = crown + 1.0;
-    ctx.nodes.old_depth[1] = crown + 1.0;
-    ctx.nodes.head[1] = ctx.nodes.invert_elev[1] + crown + 1.0;
-    ctx.nodes.sur_depth[1] = 10.0;
-
-    ctx.nodes.depth[2] = 0.5;
-    ctx.nodes.old_depth[2] = 0.5;
-    ctx.nodes.head[2] = ctx.nodes.invert_elev[2] + 0.5;
-
-    // Run one step to populate As.
+    // Run one step to populate As at a fully-developed surcharge.
+    setUniformHead(103.0);
     solver.execute(ctx, 1.0);
     const double As_before_decay = solver.dpsState().As[0];
     ASSERT_GT(As_before_decay, 0.0);
@@ -1070,14 +1072,7 @@ TEST_F(AASkipFlagTest, DPS_PastAsInvariantUnderPDecay) {
     // Hold head fixed across subsequent steps so dhs ≈ 0 each step.
     // Many steps allow P to decay substantially via Eq. 22.
     for (int k = 0; k < 50; ++k) {
-        ctx.nodes.depth[0] = crown + 1.0;
-        ctx.nodes.old_depth[0] = crown + 1.0;
-        ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + crown + 1.0;
-
-        ctx.nodes.depth[1] = crown + 1.0;
-        ctx.nodes.old_depth[1] = crown + 1.0;
-        ctx.nodes.head[1] = ctx.nodes.invert_elev[1] + crown + 1.0;
-
+        setUniformHead(103.0);
         solver.execute(ctx, 1.0);
     }
 
