@@ -17,13 +17,14 @@
  * @ingroup  new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #ifndef OPENSWMM_ENGINE_SIMULATION_OPTIONS_HPP
 #define OPENSWMM_ENGINE_SIMULATION_OPTIONS_HPP
 
+#include "FilePathPair.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -271,6 +272,17 @@ struct SimulationOptions {
      *  @see Legacy: SkipSteadyState */
     bool skip_steady_state = false;
 
+    /** @brief Slice IO-4 opt-out: emit external-file paths verbatim absolute.
+     *  @details Default (false) makes InpWriter rebase every external-file
+     *           reference relative to the destination `.inp` directory for
+     *           portability. Set true to disable rebasing — paths are
+     *           emitted in their resolved absolute form. Used by power
+     *           users locked to legacy tools that don't accept relative
+     *           paths in `.inp`. See IO_PORTABILITY_PLAN.md §1A & §5.4.
+     *  @see Legacy: no equivalent — relative paths always work in EPA SWMM.
+     */
+    bool write_absolute_paths = false;
+
     // -----------------------------------------------------------------------
     // System settings
     // -----------------------------------------------------------------------
@@ -300,6 +312,15 @@ struct SimulationOptions {
     bool ignore_quality = false;
 
     // -----------------------------------------------------------------------
+    /**
+     * @brief Control rule evaluation interval (seconds).
+     *
+     * @details Parsed from RULE_STEP in [OPTIONS].  0.0 means evaluate control
+     *          rules every routing step (legacy default behaviour).
+     * @see Legacy: globals.h RuleStep
+     */
+    double rule_step = 0.0;
+
     // Threading
     // -----------------------------------------------------------------------
 
@@ -396,11 +417,17 @@ struct SimulationOptions {
     /** @brief Timeseries name for temperature data. */
     std::string temp_ts_name;
 
-    /** @brief File path for temperature data. */
-    std::string temp_file;
+    /** @brief File path for temperature data. Carries {absolute, original}. */
+    FilePathPair temp_file;
 
     /** @brief Temperature file start date (OADate). */
     double temp_file_start = 0.0;
+
+    /** @brief Climate-file temperature units: 0=tenths-degC (C10), 1=degC (C),
+     *  2=degF (F); -1 = unspecified (reader keeps its per-format default).
+     *  @details Maps the legacy [TEMPERATURE] FILE units keyword (TempUnitsWords
+     *           {"C10","C","F"} in climate.c) and ClimateFile TempUnits enum. */
+    int temp_units = -1;
 
     /** @brief Wind speed type: 0=MONTHLY, 1=FILE. */
     int wind_type = 0;
@@ -419,6 +446,19 @@ struct SimulationOptions {
 
     /** @brief Snowmelt: latitude (degrees). */
     double snow_lat = 0.0;
+
+    /** @brief Snowmelt: longitude/solar-time correction (minutes).
+     *  @details Legacy [TEMPERATURE] SNOWMELT longitude field. Stored verbatim
+     *           in minutes; converted to hours (÷60) into ClimateState::dtlong
+     *           at init, matching legacy climate.c (Temp.dtlong = x[5]/60.0).
+     *           0 = use true solar time. */
+    double snow_dtlong = 0.0;
+
+    /** @brief Snowmelt: site elevation above sea level (ft, internal units).
+     *  @details Used to compute atmospheric pressure for psychrometric constant.
+     *           Legacy field: Temp.elev (from [TEMPERATURE] SNOWMELT section).
+     *           Default 0.0 = sea level → pa = 29.9 in-Hg → gamma ≈ 0.01073. */
+    double snow_elev = 0.0;
 
     /** @brief Snowmelt: minimum melt coefficient. */
     double snow_min_melt = 0.0;

@@ -13,7 +13,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -24,6 +24,7 @@
 #include "KinematicWave.hpp"
 #include "DynamicWave.hpp"
 #include "Divider.hpp"
+#include <vector>
 
 namespace openswmm {
 
@@ -89,18 +90,31 @@ public:
     /// Access the shape-grouped xsect manager.
     const XSectGroups& xsectGroups() const { return groups_; }
 
+    /// Gap #44: true if a routing cycle was detected during the last init().
+    /// For KW/STEADY routing only (DW does not toposort).
+    bool hasCycle() const { return cycle_detected_; }
+
     /// Set the DWSolver OpenMP thread count (delegates to DWSolver::setNumThreads).
     void setDWNumThreads(int n) { dw_solver_.setNumThreads(n); }
 
     /// Access the DW solver (for non-conduit node state scatter).
     dynwave::DWSolver& dwSolver() { return dw_solver_; }
 
+    /// Whether the most recent step() converged. DYNWAVE returns the solver's
+    /// real final Picard flag; other models always converge (legacy only tracks
+    /// dynwave non-convergence). Feeds the "% of Steps Not Converging" stat.
+    bool lastStepConverged() const {
+        return (model_ == RouteModel::DYNWAVE) ? dw_solver_.lastConverged() : true;
+    }
+
 private:
     RouteModel model_ = RouteModel::DYNWAVE;
     XSectGroups groups_;
     kinwave::KWSolver kw_solver_;
     dynwave::DWSolver dw_solver_;
-    divider::DividerSoA dividers_;
+    // Divider data moved to ctx.node_subtypes.dividers (relational side-table).
+    std::vector<int> steady_sorted_links_;  ///< Topological link order for STEADY routing
+    bool cycle_detected_ = false;           ///< Gap #44: set true when toposort detects a loop
 
     /// Save old hydraulic states before routing.
     void saveOldStates(SimulationContext& ctx);
@@ -113,6 +127,10 @@ private:
 
     /// Update final link states (depth, volume) after routing.
     void updateLinkStates(SimulationContext& ctx);
+
+    /// Execute steady-state flow routing (Gap #33).
+    /// Matches legacy flowrout.c::steadyflow_execute() loop.
+    int executeSteadyFlow(SimulationContext& ctx, double dt);
 };
 
 } // namespace openswmm

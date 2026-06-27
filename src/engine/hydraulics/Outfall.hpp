@@ -9,7 +9,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -36,6 +36,20 @@ namespace outfall {
  * @param current_time  Current simulation time (decimal days).
  */
 void setAllOutfallDepths(SimulationContext& ctx, double current_time);
+
+/**
+ * @brief Precompute outfall → connecting-conduit index map.
+ *
+ * @details Walks the link table once at init and, for every outfall
+ *          node, records the first conduit whose node2 (or node1) is
+ *          that outfall, together with its offset at the outfall end.
+ *          Results are stored in ctx.outfall_link_idx / outfall_link_offset
+ *          so that setAllOutfallDepths can skip the O(N_links) inner scan
+ *          per Picard iteration.
+ *
+ * @param ctx  Simulation context (populates outfall_link_idx / offset).
+ */
+void buildOutfallLinkMap(SimulationContext& ctx);
 
 } // namespace outfall
 } // namespace openswmm

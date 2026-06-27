@@ -9,7 +9,7 @@
  * @see openswmm_engine.h
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -50,18 +50,21 @@ SWMM_ENGINE_API int swmm_subcatch_index(SWMM_Engine engine, const char* id);
 SWMM_ENGINE_API const char* swmm_subcatch_id(SWMM_Engine engine, int idx);
 
 /* =========================================================================
- * Creation (BUILDING state only)
+ * Creation (BUILDING or OPENED — "editable" states)
  * ========================================================================= */
 
 /**
  * @brief Add a new subcatchment to the model.
  *
- * @details The engine must be in SWMM_STATE_BUILDING. After creation, use
- *          the property setters to configure area, slope, imperviousness, etc.
+ * @details The engine must be in SWMM_STATE_BUILDING or SWMM_STATE_OPENED.
+ *          Returns SWMM_ERR_LIFECYCLE for any other state. After creation,
+ *          use the property setters to configure area, slope, imperviousness,
+ *          etc.
  *
  * @param engine  Engine handle.
  * @param id      Unique null-terminated identifier for the new subcatchment.
- * @returns SWMM_OK on success, or an error code.
+ * @returns SWMM_OK on success, SWMM_ERR_LIFECYCLE if not in an editable
+ *          state, or another error code.
  */
 SWMM_ENGINE_API int swmm_subcatch_add(SWMM_Engine engine, const char* id);
 
@@ -174,6 +177,21 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_green_ampt(SWMM_Engine engine, int i
 /** @brief Set Curve Number infiltration parameter. */
 SWMM_ENGINE_API int swmm_subcatch_set_infil_curve_number(SWMM_Engine engine, int idx,
                                                            double cn);
+
+/**
+ * @brief Set ONLY the infiltration model code for a subcatchment.
+ *
+ * @details model: 0=HORTON, 1=MOD_HORTON, 2=GREEN_AMPT, 3=MOD_GREEN_AMPT,
+ *          4=CURVE_NUMBER. The per-model parameters are positionally
+ *          overloaded, so after switching the model code callers should set
+ *          the matching parameters via swmm_subcatch_set_infil_horton /
+ *          _green_ampt / _curve_number.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based subcatchment index.
+ * @param model   Infiltration model code (0..4).
+ * @returns SWMM_OK, or SWMM_ERR_BADPARAM if model is out of range.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_infil_model(SWMM_Engine engine, int idx, int model);
 
 /* =========================================================================
  * Property getters
@@ -453,6 +471,118 @@ SWMM_ENGINE_API int swmm_subcatch_get_snow_depth(SWMM_Engine engine, int idx, do
  */
 SWMM_ENGINE_API int swmm_subcatch_get_evap(SWMM_Engine engine, int idx, double* evap);
 
+/* =========================================================================
+ * Groundwater configuration ([GROUNDWATER])
+ * =========================================================================
+ * Configure a subcatchment's [GROUNDWATER] flow routing. Values are stored
+ * exactly as parsed from the input file (raw user units) so they round-trip
+ * identically. Distinct from the runtime gw STATE (theta / lower_depth)
+ * injected via swmm_subcatch_set_gw_state. All are BUILDING/OPENED editable.
+ */
+
+/** @brief Assign the aquifer (by index, -1 = none) used by a subcatchment. */
+SWMM_ENGINE_API int swmm_subcatch_set_aquifer(SWMM_Engine engine, int idx, int aquifer_idx);
+
+/** @brief Get the aquifer index assigned to a subcatchment (-1 = none). */
+SWMM_ENGINE_API int swmm_subcatch_get_aquifer(SWMM_Engine engine, int idx, int* aquifer_idx);
+
+/** @brief Set the node (by index, -1 = none) receiving the subcatchment's groundwater flow. */
+SWMM_ENGINE_API int swmm_subcatch_set_gw_node(SWMM_Engine engine, int idx, int node_idx);
+
+/** @brief Get the node index receiving the subcatchment's groundwater flow (-1 = none). */
+SWMM_ENGINE_API int swmm_subcatch_get_gw_node(SWMM_Engine engine, int idx, int* node_idx);
+
+/**
+ * @brief Set the groundwater flow parameters ([GROUNDWATER] token order).
+ * @param surf_elev  Surface elevation (SurfEl).
+ * @param a1,b1      Groundwater outflow coefficient & exponent.
+ * @param a2,b2      Surface-water outflow coefficient & exponent.
+ * @param a3         Surface/groundwater interaction coefficient.
+ * @param tw         Threshold groundwater table elevation (Twgr).
+ * @param hstar      Water-table elevation at which lateral GW flow ceases (Hstar).
+ * @returns SWMM_OK or error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_gw_params(SWMM_Engine engine, int idx,
+                                                double surf_elev, double a1, double b1,
+                                                double a2, double b2, double a3,
+                                                double tw, double hstar);
+
+/** @brief Get the groundwater flow parameters (see swmm_subcatch_set_gw_params). */
+SWMM_ENGINE_API int swmm_subcatch_get_gw_params(SWMM_Engine engine, int idx,
+                                                double* surf_elev, double* a1, double* b1,
+                                                double* a2, double* b2, double* a3,
+                                                double* tw, double* hstar);
+
+/* =========================================================================
+ * State injection (data assimilation)
+ * ========================================================================= */
+
+/**
+ * @brief Set the groundwater state on a subcatchment.
+ *
+ * State injection for data assimilation / external coupling. Pass a
+ * negative value to leave that component unchanged. Note that mass
+ * balance reports will reflect the storage discontinuity, mirroring
+ * hotstart loading.
+ *
+ * @param engine       Engine handle.
+ * @param idx          Subcatchment index (must have groundwater).
+ * @param theta        Upper zone moisture content (0..porosity), or < 0 to keep.
+ * @param lower_depth  Saturated zone depth above aquifer bottom in user
+ *                     length units (ft US, m SI), or < 0 to keep.
+ * @returns SWMM_OK or error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_gw_state(SWMM_Engine engine, int idx,
+                                               double theta, double lower_depth);
+
+/**
+ * @brief Get the groundwater state on a subcatchment.
+ *
+ * @param engine            Engine handle.
+ * @param idx               Subcatchment index (must have groundwater).
+ * @param[out] theta        Receives the upper zone moisture content.
+ * @param[out] lower_depth  Receives the saturated zone depth (user length units).
+ * @returns SWMM_OK or error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_gw_state(SWMM_Engine engine, int idx,
+                                               double* theta, double* lower_depth);
+
+/**
+ * @brief Set the snow pack state on one snow subarea of a subcatchment.
+ *
+ * State injection for data assimilation (e.g. observed SWE). Pass a
+ * negative value to leave that component unchanged.
+ *
+ * @param engine   Engine handle.
+ * @param idx      Subcatchment index (must have a snow pack).
+ * @param surface  Snow subarea: 0 plowable, 1 impervious, 2 pervious.
+ * @param swe      Snow water equivalent in user depth units (in US, mm SI), or < 0 to keep.
+ * @param fw       Free water in user depth units, or < 0 to keep.
+ * @param ati      Antecedent temperature index (deg F US, deg C SI); pass
+ *                 <= -999 to keep (negative temperatures are valid).
+ * @param coldc    Cold content in user depth units of melt equivalent, or < 0 to keep.
+ * @returns SWMM_OK or error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_snow_state(SWMM_Engine engine, int idx,
+                                                 int surface, double swe, double fw,
+                                                 double ati, double coldc);
+
+/**
+ * @brief Get the snow pack state on one snow subarea of a subcatchment.
+ *
+ * @param engine      Engine handle.
+ * @param idx         Subcatchment index (must have a snow pack).
+ * @param surface     Snow subarea: 0 plowable, 1 impervious, 2 pervious.
+ * @param[out] swe    Receives SWE (user depth units); may be NULL.
+ * @param[out] fw     Receives free water (user depth units); may be NULL.
+ * @param[out] ati    Receives ATI (user temperature units); may be NULL.
+ * @param[out] coldc  Receives cold content (user depth units); may be NULL.
+ * @returns SWMM_OK or error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_snow_state(SWMM_Engine engine, int idx,
+                                                 int surface, double* swe, double* fw,
+                                                 double* ati, double* coldc);
+
 /**
  * @brief Get the current infiltration rate at a subcatchment.
  * @param engine      Engine handle.
@@ -513,6 +643,66 @@ SWMM_ENGINE_API int swmm_subcatch_get_quality_bulk(SWMM_Engine engine, int pollu
                                                     double* buf, int count);
 
 /* =========================================================================
+ * Phase 3 bulk getters — added in OpenSWMM 6.0.0 to eliminate the N
+ * round-trip cost of per-subcatchment scalar accessors. All return a
+ * caller-allocated @c double buffer of length @c count (clipped at
+ * @c swmm_subcatch_count()); the IDs variant returns a stride-packed
+ * UTF-8 buffer following the same format as @ref swmm_node_get_ids_bulk.
+ * ========================================================================= */
+
+/**
+ * @brief Get rainfall rates for all subcatchments in a single call.
+ * @details Bulk variant of @ref swmm_subcatch_get_rainfall. Simple SoA copy.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_rainfall_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get evaporation losses for all subcatchments in a single call.
+ * @details Bulk variant of @ref swmm_subcatch_get_evap. Simple SoA copy of
+ *          the @c evap_loss column.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_evap_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get infiltration losses for all subcatchments in a single call.
+ * @details Bulk variant of @ref swmm_subcatch_get_infil. Simple SoA copy
+ *          of the @c infil_loss column.
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_infil_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get snow depths for all subcatchments in a single call.
+ * @details Bulk variant of @ref swmm_subcatch_get_snow_depth. Snow state
+ *          currently lives in the SnowSolver, not SubcatchData; like the
+ *          scalar accessor this returns zeros for every entry pending
+ *          full snow-state integration (see plan Appendix A).
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_snow_depth_bulk(SWMM_Engine engine, double* buf, int count);
+
+/**
+ * @brief Get subcatchment IDs for all subcatchments in a single call
+ *        (stride-packed UTF-8).
+ * @details Format identical to @ref swmm_node_get_ids_bulk.
+ * @param engine  Engine handle.
+ * @param[out] buf Caller-allocated buffer of @c stride*count bytes.
+ * @param stride  Per-ID slot size in bytes (must be > 1).
+ * @param count   Number of IDs to read.
+ * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
+ *          invalid; @c SWMM_ERR_BADPARAM if @p buf is NULL,
+ *          @p stride < 2, or @p count <= 0.
+ * @see swmm_subcatch_id, swmm_node_get_ids_bulk
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_ids_bulk(SWMM_Engine engine,
+                                                char* buf,
+                                                int stride,
+                                                int count);
+
+/* =========================================================================
  * Ponded quality (mass in standing water between events)
  * ========================================================================= */
 
@@ -523,6 +713,268 @@ SWMM_ENGINE_API int swmm_subcatch_get_ponded_quality(SWMM_Engine engine,
 /** @brief Set ponded quality mass for a subcatchment-pollutant pair. */
 SWMM_ENGINE_API int swmm_subcatch_set_ponded_quality(SWMM_Engine engine,
     int subcatch_idx, int pollutant_idx, double mass);
+
+/** @brief Rename the subcatchment at `idx` to `newId`.
+ *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
+ *  idx is out of range. */
+SWMM_ENGINE_API int swmm_subcatch_rename(SWMM_Engine engine, int idx, const char* newId);
+
+/* =========================================================================
+ * Aquifer definitions ([AQUIFERS] section) — Slice BM.0 / BP.6.6.4
+ * ========================================================================= */
+
+/**
+ * @brief Get the total number of aquifer definitions in the model.
+ * @param engine  Engine handle.
+ * @returns Number of aquifer definitions, or -1 on error.
+ */
+SWMM_ENGINE_API int swmm_aquifer_count(SWMM_Engine engine);
+
+/**
+ * @brief Look up an aquifer's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated aquifer identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_aquifer_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of an aquifer definition by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based aquifer index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_aquifer_id(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Add a new aquifer definition with default (zero) parameters.
+ *
+ * @details Parameters default to 0.0 / empty strings — use the property
+ *          setters from Slice BP `AquiferEditor` to configure porosity,
+ *          conductivity, etc. Lifecycle: BUILDING or OPENED.
+ *
+ * @param engine  Engine handle.
+ * @param id      Unique null-terminated identifier.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_aquifer_add(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Aquifer parameter codes for swmm_aquifer_get_param / _set_param.
+ *
+ * @details Values use input-file units (the same columns as the [AQUIFERS]
+ *          line). The flux-coefficient parameters (CONDUCTIVITY,
+ *          CONDUCT_SLOPE, TENSION_SLOPE, UPPER_EVAP_FRAC, LOWER_EVAP_DEPTH,
+ *          LOWER_LOSS_COEFF) are settable both before the simulation starts
+ *          and while it is running; the structural / initial-condition
+ *          parameters (POROSITY, WILTING_POINT, FIELD_CAPACITY, BOTTOM_ELEV,
+ *          WATER_TABLE_ELEV, UPPER_MOISTURE) bound or seed the groundwater
+ *          state and are pre-start-only.
+ */
+typedef enum SWMM_AquiferParam {
+    SWMM_AQUIFER_POROSITY = 0,
+    SWMM_AQUIFER_WILTING_POINT = 1,
+    SWMM_AQUIFER_FIELD_CAPACITY = 2,
+    SWMM_AQUIFER_CONDUCTIVITY = 3,
+    SWMM_AQUIFER_CONDUCT_SLOPE = 4,
+    SWMM_AQUIFER_TENSION_SLOPE = 5,
+    SWMM_AQUIFER_UPPER_EVAP_FRAC = 6,
+    SWMM_AQUIFER_LOWER_EVAP_DEPTH = 7,
+    SWMM_AQUIFER_LOWER_LOSS_COEFF = 8,
+    SWMM_AQUIFER_BOTTOM_ELEV = 9,
+    SWMM_AQUIFER_WATER_TABLE_ELEV = 10,
+    SWMM_AQUIFER_UPPER_MOISTURE = 11
+} SWMM_AquiferParam;
+
+/**
+ * @brief Get an aquifer parameter (input-file units).
+ * @param engine  Engine handle.
+ * @param idx     Zero-based aquifer index.
+ * @param param   A SWMM_AquiferParam code.
+ * @param value   Receives the parameter value.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_aquifer_get_param(SWMM_Engine engine, int idx, int param, double* value);
+
+/**
+ * @brief Set an aquifer parameter (input-file units).
+ *
+ * @details Flux-coefficient parameters take effect on the next step when set
+ *          mid-run (the groundwater solver's per-subcatchment copies are
+ *          refreshed); structural / initial-condition parameters return
+ *          SWMM_ERR_LIFECYCLE while the simulation is running.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based aquifer index.
+ * @param param   A SWMM_AquiferParam code.
+ * @param value   New parameter value.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_aquifer_set_param(SWMM_Engine engine, int idx, int param, double value);
+
+/**
+ * @brief Read the aquifer's upper-zone evaporation pattern name.
+ *
+ * @details The optional monthly time pattern (`[PATTERNS]` MONTHLY) that scales
+ *          the upper-zone evaporation fraction — the trailing `[ETupat]` column
+ *          of the `[AQUIFERS]` line. The 12 numeric parameters are reached via
+ *          @ref swmm_aquifer_get_param; this completes the round-trip for the
+ *          one string-valued column. Writes a NUL-terminated string into `buf`
+ *          (empty when no pattern is assigned), truncating if `buflen` is too
+ *          small.
+ *
+ * @param engine       Engine handle.
+ * @param idx          Zero-based aquifer index.
+ * @param[out] buf     Destination buffer for the pattern name.
+ * @param buflen       Size of `buf` in bytes (must be > 0).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_aquifer_get_evap_pattern(SWMM_Engine engine, int idx, char* buf, int buflen);
+
+/**
+ * @brief Set or clear the aquifer's upper-zone evaporation pattern name.
+ *
+ * @details Inverse of @ref swmm_aquifer_get_evap_pattern. The name is resolved
+ *          to a `[PATTERNS]` entry at start(); a null or empty string clears
+ *          the assignment. Pre-start-only (BUILDING / OPENED): the pattern
+ *          index is bound when the simulation starts, so a mid-run change
+ *          returns SWMM_ERR_LIFECYCLE.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based aquifer index.
+ * @param name    Pattern name, or null/empty to clear.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_aquifer_set_evap_pattern(SWMM_Engine engine, int idx, const char* name);
+
+/* =========================================================================
+ * Snowpack definitions ([SNOWPACKS] section) — Slice BM.0 / BP.6.6.5
+ * ========================================================================= */
+
+/**
+ * @brief Get the total number of snowpack definitions in the model.
+ * @param engine  Engine handle.
+ * @returns Number of snowpack definitions, or -1 on error.
+ */
+SWMM_ENGINE_API int swmm_snowpack_count(SWMM_Engine engine);
+
+/**
+ * @brief Look up a snowpack's zero-based index by its string identifier.
+ * @param engine  Engine handle.
+ * @param id      Null-terminated snowpack identifier.
+ * @returns Zero-based index, or -1 if not found.
+ */
+SWMM_ENGINE_API int swmm_snowpack_index(SWMM_Engine engine, const char* id);
+
+/**
+ * @brief Get the string identifier of a snowpack definition by index.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based snowpack index.
+ * @returns Null-terminated string owned by the engine, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_snowpack_id(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Add a new snowpack definition with default (zero) parameters.
+ *
+ * @details All three surface arrays (plowable / impervious / pervious) and
+ *          the removal row are zero-initialised. Use the property setters
+ *          from Slice BP `SnowpackEditor` to configure melt coefficients,
+ *          ATI, negative-melt-ratio, and removal fractions.
+ *          Lifecycle: BUILDING or OPENED.
+ *
+ * @param engine  Engine handle.
+ * @param id      Unique null-terminated identifier.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id);
+
+/* -------------------------------------------------------------------------
+ * Snowpack surface parameters
+ *
+ * A snowpack carries three snow-melt surfaces — PLOWABLE, IMPERVIOUS and
+ * PERVIOUS — plus an optional REMOVAL row, matching the four line types of
+ * the legacy `[SNOWPACKS]` section. Each surface takes seven values in
+ * input-file units:
+ *
+ *   cmin    Minimum melt coefficient                 (in or mm /hr/deg)
+ *   cmax    Maximum melt coefficient                 (in or mm /hr/deg)
+ *   tbase   Snow-melt base temperature               (deg F or C)
+ *   fwfrac  Free-water capacity as a fraction of depth
+ *   sd0     Initial snow depth                       (in or mm water equiv.)
+ *   fw0     Initial free water                       (in or mm)
+ *   last    PLOWABLE: fraction of the impervious area that is plowable;
+ *           IMPERVIOUS / PERVIOUS: snow depth above which there is 100% cover
+ *           (in or mm).
+ *
+ * Setters are pre-start-only (BUILDING / OPENED) — the surface parameters seed
+ * per-subcatchment snow state at start(); a mid-run change returns
+ * SWMM_ERR_LIFECYCLE. Each setter has an inverse getter so the GUI snowpack
+ * editor can load existing definitions. Any getter out-param may be null.
+ * ------------------------------------------------------------------------- */
+
+/** @brief Set the PLOWABLE surface parameters (`last` = plowable area fraction). */
+SWMM_ENGINE_API int swmm_snowpack_set_plowable(SWMM_Engine engine, int idx,
+                                               double cmin, double cmax, double tbase,
+                                               double fwfrac, double sd0, double fw0, double last);
+/** @brief Read the PLOWABLE surface parameters. Inverse of @ref swmm_snowpack_set_plowable. */
+SWMM_ENGINE_API int swmm_snowpack_get_plowable(SWMM_Engine engine, int idx,
+                                               double* cmin, double* cmax, double* tbase,
+                                               double* fwfrac, double* sd0, double* fw0, double* last);
+
+/** @brief Set the IMPERVIOUS surface parameters (`last` = 100%-cover depth). */
+SWMM_ENGINE_API int swmm_snowpack_set_impervious(SWMM_Engine engine, int idx,
+                                                 double cmin, double cmax, double tbase,
+                                                 double fwfrac, double sd0, double fw0, double last);
+/** @brief Read the IMPERVIOUS surface parameters. Inverse of @ref swmm_snowpack_set_impervious. */
+SWMM_ENGINE_API int swmm_snowpack_get_impervious(SWMM_Engine engine, int idx,
+                                                 double* cmin, double* cmax, double* tbase,
+                                                 double* fwfrac, double* sd0, double* fw0, double* last);
+
+/** @brief Set the PERVIOUS surface parameters (`last` = 100%-cover depth). */
+SWMM_ENGINE_API int swmm_snowpack_set_pervious(SWMM_Engine engine, int idx,
+                                               double cmin, double cmax, double tbase,
+                                               double fwfrac, double sd0, double fw0, double last);
+/** @brief Read the PERVIOUS surface parameters. Inverse of @ref swmm_snowpack_set_pervious. */
+SWMM_ENGINE_API int swmm_snowpack_get_pervious(SWMM_Engine engine, int idx,
+                                               double* cmin, double* cmax, double* tbase,
+                                               double* fwfrac, double* sd0, double* fw0, double* last);
+
+/**
+ * @brief Set the REMOVAL parameters (snow redistribution at depth `dsnow`).
+ *
+ * @details The six fractions of the `[SNOWPACKS] ... REMOVAL` line:
+ *          `dsnow` (depth at which removal begins, in/mm), then the fractions
+ *          routed out of the watershed (`fout`), to impervious area (`fimp`),
+ *          to pervious area (`fperv`), converted to immediate melt (`fimelt`),
+ *          and transferred to another subcatchment (`fsubcatch`). The optional
+ *          destination subcatchment is named via
+ *          @ref swmm_snowpack_set_removal_subcatch. Pre-start-only.
+ */
+SWMM_ENGINE_API int swmm_snowpack_set_removal(SWMM_Engine engine, int idx,
+                                              double dsnow, double fout, double fimp,
+                                              double fperv, double fimelt, double fsubcatch);
+/** @brief Read the REMOVAL parameters. Inverse of @ref swmm_snowpack_set_removal. */
+SWMM_ENGINE_API int swmm_snowpack_get_removal(SWMM_Engine engine, int idx,
+                                              double* dsnow, double* fout, double* fimp,
+                                              double* fperv, double* fimelt, double* fsubcatch);
+
+/** @brief Set/clear the destination subcatchment for the REMOVAL `fsubcatch` fraction. Pre-start-only. */
+SWMM_ENGINE_API int swmm_snowpack_set_removal_subcatch(SWMM_Engine engine, int idx, const char* name);
+/** @brief Read the REMOVAL destination subcatchment name (empty if none). NUL-terminates, truncates to `buflen`. */
+SWMM_ENGINE_API int swmm_snowpack_get_removal_subcatch(SWMM_Engine engine, int idx, char* buf, int buflen);
+
+/* =========================================================================
+ * Tag — free-form string label from the INP `[TAGS]` section
+ * ========================================================================= */
+
+/** @brief Read the subcatchment's tag into `buf` (NUL-terminated, truncated if too small). */
+SWMM_ENGINE_API int swmm_subcatch_get_tag(SWMM_Engine engine, int idx,
+                                            char* buf, int buflen);
+
+/** @brief Set or clear the subcatchment's tag. Null/empty clears. Persists across rename. */
+SWMM_ENGINE_API int swmm_subcatch_set_tag(SWMM_Engine engine, int idx,
+                                            const char* tag);
 
 #ifdef __cplusplus
 } /* extern "C" */

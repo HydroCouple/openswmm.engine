@@ -1,0 +1,75 @@
+benchmark: quality-cstr-first-order-decay
+type: manufactured
+description: >
+  CSTR first-order decay trajectory.  No inflow, no outflow, constant volume.
+  The discrete solver applies factor = 1 - k*dt per step; reference is
+  C[N] = C_0 * (1 - k*dt)^N — the exact solution of the discrete recurrence.
+swmm_target: src/engine/quality/QualityRouting.cpp (QualitySolver::applyDecay)
+
+problem:
+  name: cstr-first-order-decay
+  ode_continuous: "dC/dt = -k*C"
+  exact_continuous: "C(t) = C_0 * exp(-k*t)"
+  ode_discrete: "C[n+1] = C[n] * (1 - k*dt)"
+  exact_discrete: "C[N] = C_0 * (1 - k*dt)^N"
+  benchmark_tests: discrete  # engine uses linear approximation, not exp(-k*dt)
+
+parameters:
+  C_0_mgl: 100.0
+  k_decay_per_s: 1.0e-3
+  dt_s: 60.0
+  factor: 0.94                 # 1 - k*dt = 1 - 0.06 = 0.94 (approx in double)
+  n_steps: 10
+  node_count: 1
+  pollutant_count: 1
+
+dataset:
+  file: reference.csv
+  columns:
+    t_s:   time in seconds
+    C_mgl: exact (discrete) concentration in mg/L
+  n_points: 11
+  t_values_s: [0, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600]
+  dt_s: 60.0
+
+tolerances:
+  C_max_abs_mgl: 1.0e-9
+  rms_mgl: 1.0e-10
+  basis: >
+    The factor 1.0 - 1e-3*60.0 is not exactly 0.94 in IEEE 754 double, but the
+    same computation is done in both the engine and the reference generation.
+    Per-step IEEE 754 rounding is ~10^{-15}; accumulated over 10 steps: ~10^{-14}.
+    The 1e-9 threshold absorbs minor platform differences.
+
+test_protocol: >
+  For a multi-step trajectory test, the caller must copy conc -> conc_old at
+  all nodes after each execute() call to advance the timestep state.
+  No flow, no subcatch runoff; set volumes and old_volumes to positive constants
+  to avoid division by zero in mixAtNodes.
+
+attribution:
+  references:
+    cstr_model: >
+      Fogler, H.S. (2016). Elements of Chemical Reaction Engineering, 5th ed.
+      Prentice Hall.  Section 2.3 (batch reactor with first-order decay).
+    swmm_quality: >
+      Rossman, L.A. and Huber, W.C. (2016). Storm Water Management Model
+      Reference Manual Volume III — Water Quality. EPA/600/R-16/093.
+  license_note: benchmark data are original to this project; no copied source code.
+
+provenance:
+  generated_by: exact rational arithmetic under the recurrence C[n] = C[n-1]*0.94
+  tool: hand computation using exact fraction multiplication
+  date: "2026-05-13"
+  author: openswmm.engine development team
+  computation: |
+    factor = 0.94 (exact under rational arithmetic)
+    C[0] = 100.0
+    C[n] = C[n-1] * 94 / 100  (exact rational multiply)
+    Final 15-decimal-place values stored in reference.csv.
+  reproducible: true
+  notes: >
+    All values are exact rational multiples of 100/100^N * 94^N.
+    The continuous exponential C(600) = 100*exp(-0.6) = 54.88 differs from
+    the discrete C[10] = 53.86 by ~1.9%, confirming non-trivial discrete/continuous
+    discrepancy that validates the test is checking the right code path.

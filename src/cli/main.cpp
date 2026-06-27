@@ -15,10 +15,11 @@
 #include <ctime>
 
 #include "openswmm_engine.h"
+#include "version.h"
 
 static void print_help() {
     std::printf("\n");
-    std::printf("OpenSWMM Engine 6.0 — Storm Water Management Model\n");
+    std::printf("Open Source Storm Water Management Model %s\n", OPENSWMM_VERSION_FULL);
     std::printf("===================================================\n\n");
     std::printf("USAGE:\n");
     std::printf("  openswmm <input.inp> <report.rpt> [output.out]\n\n");
@@ -33,7 +34,7 @@ static void print_help() {
 }
 
 static void print_version() {
-    std::printf("openswmm.engine 6.0.0-alpha.1\n");
+    std::printf("openswmm.engine %s\n", OPENSWMM_VERSION_FULL);
 }
 
 int main(int argc, char* argv[]) {
@@ -63,7 +64,7 @@ int main(int argc, char* argv[]) {
     const char* rpt_file = argv[2];
     const char* out_file = (argc > 3) ? argv[3] : "";
 
-    std::printf("\n... OpenSWMM Engine 6.0.0-alpha.1\n");
+    std::printf("\n... OpenSWMM Engine %s\n", OPENSWMM_VERSION_FULL);
     std::printf("... Input: %s\n", inp_file);
     std::printf("... Report: %s\n", rpt_file);
     std::printf("... Output: %s\n", out_file);
@@ -72,18 +73,14 @@ int main(int argc, char* argv[]) {
     std::time_t start = std::time(nullptr);
 
     // ---- Create engine ----
-    std::printf("... Creating engine...\n"); std::fflush(stdout);
     SWMM_Engine engine = swmm_engine_create();
     if (!engine) {
         std::printf("Error: failed to create engine instance.\n");
         return 1;
     }
-    std::printf("... Engine created.\n"); std::fflush(stdout);
 
     // ---- Open input file ----
-    std::printf("... Opening input file...\n"); std::fflush(stdout);
     int err = swmm_engine_open(engine, inp_file, rpt_file, out_file, nullptr);
-    std::printf("... open() returned %d\n", err); std::fflush(stdout);
     if (err != SWMM_OK) {
         std::printf("Error opening input file: %s\n", swmm_get_last_error_msg(engine));
         swmm_engine_destroy(engine);
@@ -91,9 +88,7 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Initialize ----
-    std::printf("... Initializing...\n"); std::fflush(stdout);
     err = swmm_engine_initialize(engine);
-    std::printf("... initialize() returned %d\n", err); std::fflush(stdout);
     if (err != SWMM_OK) {
         std::printf("Error initializing: %s\n", swmm_get_last_error_msg(engine));
         swmm_engine_close(engine);
@@ -102,11 +97,8 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Start simulation ----
-    std::printf("... Starting simulation...\n"); std::fflush(stdout);
     int save = (out_file[0] != '\0') ? 1 : 0;
-    std::printf("... save=%d\n", save); std::fflush(stdout);
     err = swmm_engine_start(engine, save);
-    std::printf("... start() returned %d\n", err); std::fflush(stdout);
     if (err != SWMM_OK) {
         std::printf("Error starting simulation: %s\n", swmm_get_last_error_msg(engine));
         swmm_engine_close(engine);
@@ -117,20 +109,14 @@ int main(int argc, char* argv[]) {
     // ---- Step loop ----
     double elapsed = 0.0;
     long step_count = 0;
-    std::printf("... Starting step loop (state after start: err=%d)\n", err);
-    std::fflush(stdout);
     while (true) {
         err = swmm_engine_step(engine, &elapsed);
         if (err != SWMM_OK) {
-            std::printf("\nError at step %ld (err=%d): %s\n", step_count, err,
+            std::printf("\nError at step %ld: %s\n", step_count,
                         swmm_get_last_error_msg(engine));
             break;
         }
-        if (elapsed <= 0.0) {
-            std::printf("... step() returned elapsed=%.6f at step %ld — simulation complete\n",
-                        elapsed, step_count);
-            break;
-        }
+        if (elapsed <= 0.0) break;  // simulation complete
 
         step_count++;
         if (step_count % 1000 == 0) {
@@ -141,19 +127,8 @@ int main(int argc, char* argv[]) {
     std::printf("\n... %ld steps completed.\n", step_count);
 
     // ---- End and report ----
-    std::time_t t0 = std::time(nullptr);
-    std::printf("... Finalizing (end)...\n");
-    std::fflush(stdout);
     swmm_engine_end(engine);
-    std::printf("... end() took %.0f sec. Writing report...\n",
-                std::difftime(std::time(nullptr), t0));
-    std::fflush(stdout);
-
-    std::time_t t1 = std::time(nullptr);
     swmm_engine_report(engine);
-    std::printf("... report() took %.0f sec.\n",
-                std::difftime(std::time(nullptr), t1));
-    std::fflush(stdout);
 
     // ---- Close and destroy ----
     swmm_engine_close(engine);

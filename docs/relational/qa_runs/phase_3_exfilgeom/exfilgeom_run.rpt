@@ -1,0 +1,29 @@
+
+  OPENSWMM ENGINE - VERSION 6.0.0-alpha.1
+  -------------------------------------------
+  QA Phase 3-exfilgeom — TABULAR storage + exfiltration (curve geometry path).
+  Exercises ExfilSolver::init's TABULAR branch: storage_curve read via the
+  side-table (sr from storage_row), wide fallback. Exfil + seep set via C-API.
+  
+  ****************
+  Analysis Options
+  ****************
+  Flow Units ............... CFS
+  Process Models:
+    Rainfall/Runoff ........ NO
+    RDII ................... NO
+    Snowmelt ............... NO
+    Groundwater ............ NO
+    Flow Routing ........... YES
+    Ponding Allowed ........ NO
+    Water Quality .......... NO
+  Flow Routing Method ...... KINWAVE
+  Starting Date ............ 01/01/2020 00:00:00
+  Ending Date .............. 01/01/2020 06:00:00
+  Antecedent Dry Days ...... 0.0
+  Report Time Step ......... 00:05:00
+  Routing Time Step ........ 10.00 sec
+  
+  
+
+  [Report interrupted — simulation did not complete normally]

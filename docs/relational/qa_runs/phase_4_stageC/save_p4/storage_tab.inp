@@ -1,0 +1,129 @@
+
+[TITLE]
+;;Project Title/Notes
+QA Phase 3-exfilgeom — TABULAR storage + exfiltration (curve geometry path).
+Exercises ExfilSolver::init's TABULAR branch: storage_curve read via the
+side-table (sr from storage_row), wide fallback. Exfil + seep set via C-API.
+
+[OPTIONS]
+;;Option               Value
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         KINWAVE
+LINK_OFFSETS         DEPTH
+MIN_SLOPE            0
+ALLOW_PONDING        NO
+SKIP_STEADY_STATE    NO
+
+IGNORE_RAINFALL      NO
+IGNORE_SNOWMELT      NO
+IGNORE_GROUNDWATER   NO
+IGNORE_RDII          NO
+IGNORE_ROUTING       NO
+IGNORE_QUALITY       NO
+
+START_DATE           01/01/2020
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2020
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2020
+END_TIME             06:00:00
+SWEEP_START          1/1
+SWEEP_END            12/31
+DRY_DAYS             0
+REPORT_STEP          0:05:00
+WET_STEP             0:05:00
+DRY_STEP             0:05:00
+ROUTING_STEP         0:00:10
+RULE_STEP            0:00:00
+
+INERTIAL_DAMPING     PARTIAL
+NORMAL_FLOW_LIMITED  BOTH
+FORCE_MAIN_EQUATION  H-W
+SURCHARGE_METHOD     EXTRAN
+VARIABLE_STEP        0.75
+LENGTHENING_STEP     0
+MIN_SURFAREA         0
+MAX_TRIALS           8
+HEAD_TOLERANCE       0.005
+SYS_FLOW_TOL         5
+LAT_FLOW_TOL         5
+MINIMUM_STEP         0.5
+THREADS              1
+
+[EVAPORATION]
+;;Type       Parameters
+;;---------- ----------
+CONSTANT     0.0000
+DRY_ONLY     NO
+
+[JUNCTIONS]
+;;Name             Elev         MaxDepth     InitDepth    SurDepth     Aponded     
+;;---------------- ------------ ------------ ------------ ------------ ------------
+J1                    20.0000       6.0000       0.0000       0.0000       0.0000
+
+[OUTFALLS]
+;;Name             Elev         Type         Gated   
+;;---------------- ------------ ------------ --------
+OUT1                   5.0000 FREE         NO
+
+[STORAGE]
+;;Name             Elev         MaxDepth     InitDepth    Shape       
+;;---------------- ------------ ------------ ------------ ------------
+STOR1                 10.0000      12.0000       2.0000 TABULAR    STOR_CURVE 0 0       0.0000
+
+[CONDUITS]
+;;Name             FromNode         ToNode           Length       Roughness    InOffset     OutOffset    InitFlow   MaxFlow   
+;;---------------- ---------------- ---------------- ------------ ------------ ------------ ------------ ---------- ----------
+C_IN             J1               STOR1                200.0000     0.013000       0.0000       0.0000     0.0000     0.0000
+C_OUT            STOR1            OUT1                 200.0000     0.013000       0.0000       0.0000     0.0000     0.0000
+
+[XSECTIONS]
+;;Link             Shape            Geom1        Geom2        Geom3        Geom4        Barrels 
+;;---------------- ---------------- ------------ ------------ ------------ ------------ --------
+C_IN             CIRCULAR               3.0000       0.0000       0.0000       0.0000        1
+C_OUT            CIRCULAR               2.0000       0.0000       0.0000       0.0000        1
+
+[REPORT]
+;;Keyword          Value
+DISABLED             NO
+INPUT                NO
+CONTINUITY           YES
+FLOWSTATS            YES
+CONTROLS             NO
+AVERAGES             NO
+SUBCATCHMENTS        ALL
+NODES                ALL
+LINKS                ALL
+
+[INFLOWS]
+;;Node             Constituent      TimeSeries       Type             Mfactor    Sfactor    Baseline   Pattern         
+;;---------------- ---------------- ---------------- ---------------- ---------- ---------- ---------- ----------------
+J1               FLOW             TS_IN            FLOW                 1.0000     1.0000     0.0000                 
+
+[TIMESERIES]
+;;Name             Date/Time            Value       
+;;---------------- -------------------- ------------
+TS_IN            0:00    10.000000
+TS_IN            2:00    10.000000
+TS_IN            2:05     0.000000
+TS_IN            6:00     0.000000
+
+[CURVES]
+;;Name             Type         X-Value      Y-Value     
+;;---------------- ------------ ------------ ------------
+STOR_CURVE       STORAGE          0.000000   500.000000
+STOR_CURVE       STORAGE          4.000000  1500.000000
+STOR_CURVE       STORAGE          8.000000  3000.000000
+STOR_CURVE       STORAGE         12.000000  5000.000000
+
+[MAP]
+DIMENSIONS 0.0000             0.0000             0.0000             0.0000            
+Units      None
+
+[COORDINATES]
+;;Node           X-Coord            Y-Coord           
+;;-------------- ------------------ ------------------
+J1               0.0000             0.0000            
+STOR1            0.0000             0.0000            
+OUT1             0.0000             0.0000            

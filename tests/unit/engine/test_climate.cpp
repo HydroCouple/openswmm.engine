@@ -316,18 +316,22 @@ TEST(DailyClimate, GammaComputedPositive) {
     EXPECT_GT(state.gamma, 0.0);
 }
 
-TEST(DailyClimate, GammaIncreasesWithTemp) {
-    ClimateState cold, warm;
-    cold.evap_method = warm.evap_method = EvapMethod::CONSTANT;
-    cold.temperature = 32.0;
-    warm.temperature = 90.0;
+TEST(DailyClimate, GammaDecreasesWithElevation) {
+    // Gap #8 fix: gamma uses elevation-based atmospheric pressure formula
+    // (matching legacy climate.c: pa = 29.9 - 1.02*z + 0.0032*z^2.4)
+    // Higher elevation → lower atmospheric pressure → lower gamma.
+    ClimateState sea_level, high;
+    sea_level.evap_method = high.evap_method = EvapMethod::CONSTANT;
+    sea_level.temperature = high.temperature = 70.0;
+    sea_level.elev = 0.0;
+    high.elev = 5000.0;  // 5000 ft elevation
 
-    updateDailyClimate(cold, 180, 6);
-    updateDailyClimate(warm, 180, 6);
+    updateDailyClimate(sea_level, 180, 6);
+    updateDailyClimate(high, 180, 6);
 
-    // gamma = 0.000359 / (0.27 + 0.000459*ta)
-    // Denominator increases with temp → gamma decreases
-    EXPECT_GT(cold.gamma, warm.gamma);
+    // At sea level: pa = 29.9, gamma = 0.000359 * 29.9 ≈ 0.01073
+    // At 5000 ft:   pa < 29.9, gamma < sea_level.gamma
+    EXPECT_GT(sea_level.gamma, high.gamma);
 }
 
 // ============================================================================
@@ -526,18 +530,36 @@ TEST(DailyClimate, EvapAdjustmentZeroKillsRate) {
 }
 
 TEST(DailyClimate, GammaMatchesLegacyFormula) {
+    // Gap #8 fix: gamma uses elevation-based atmospheric pressure formula
+    // matching legacy climate.c::climate_validate():
+    //   z = elev / 1000 (ft → thousands of ft)
+    //   pa = 29.9 - 1.02*z + 0.0032*z^2.4   (when z > 0)
+    //   gamma = 0.000359 * pa
     ClimateState state;
     state.evap_method = EvapMethod::CONSTANT;
+    state.temperature = 70.0;
 
-    // Test several temperatures against the exact formula
-    double temps[] = {0.0, 32.0, 50.0, 70.0, 100.0};
-    for (double ta : temps) {
-        state.temperature = ta;
-        updateDailyClimate(state, 180, 6);
-        double expected = 0.000359 / (0.27 + 0.000459 * ta);
-        EXPECT_NEAR(state.gamma, expected, 1e-12)
-            << "Gamma mismatch at temperature " << ta;
-    }
+    // Sea level: z=0 → pa=29.9 → gamma = 0.000359 * 29.9
+    state.elev = 0.0;
+    updateDailyClimate(state, 180, 6);
+    EXPECT_NEAR(state.gamma, 0.000359 * 29.9, 1e-10)
+        << "Gamma mismatch at sea level";
+
+    // 1000 ft: z=1 → pa = 29.9 - 1.02 + 0.0032 = 28.8832
+    state.elev = 1000.0;
+    updateDailyClimate(state, 180, 6);
+    double z1 = 1.0;
+    double pa1 = 29.9 - 1.02 * z1 + 0.0032 * std::pow(z1, 2.4);
+    EXPECT_NEAR(state.gamma, 0.000359 * pa1, 1e-10)
+        << "Gamma mismatch at 1000 ft elevation";
+
+    // 5000 ft: z=5 → pa = 29.9 - 5.1 + 0.0032*5^2.4
+    state.elev = 5000.0;
+    updateDailyClimate(state, 180, 6);
+    double z5 = 5.0;
+    double pa5 = 29.9 - 1.02 * z5 + 0.0032 * std::pow(z5, 2.4);
+    EXPECT_NEAR(state.gamma, 0.000359 * pa5, 1e-10)
+        << "Gamma mismatch at 5000 ft elevation";
 }
 
 TEST(DailyClimate, EaMatchesLegacyFormula) {
@@ -552,4 +574,112 @@ TEST(DailyClimate, EaMatchesLegacyFormula) {
         EXPECT_NEAR(state.ea, expected, 1e-12)
             << "Ea mismatch at temperature " << ta;
     }
+}
+
+// ============================================================================
+// Gap #9: Sub-daily sinusoidal temperature interpolation
+// ============================================================================
+//
+// Legacy climate.c: updateTempTimes() computes sunrise/sunset from latitude
+// and day-of-year; setTemp() applies a three-zone sinusoidal model.
+// Must match: tmin at sunrise, tmax at hrss, smooth curves between.
+
+static openswmm::climate::ClimateState makeTempState(
+        double lat, int doy, double tmin, double tmax, double prev_tmax) {
+    ClimateState s;
+    s.latitude      = lat;
+    s.dtlong        = 0.0;
+    s.tmin_daily    = tmin;
+    s.tmax_daily    = tmax;
+    s.prev_tmax     = prev_tmax;
+    s.has_minmax    = true;
+    updateTempTimes(s, doy);
+    return s;
+}
+
+// updateTempTimes: equatorial summer — sunrise ~6h, sunset ~18h → hrss ≈ 15h
+TEST(SubdailyTemp9, EquatorialSummerSunriseHour) {
+    auto s = makeTempState(0.0, 172, 60.0, 90.0, 88.0);
+    // Latitude 0 → hrsr ≈ 6, hrss ≈ 15
+    EXPECT_NEAR(s.hrsr, 6.0, 0.5);
+    EXPECT_NEAR(s.hrss, 15.0, 0.5);
+}
+
+// At sunrise (hrsr), temperature should equal tmin
+TEST(SubdailyTemp9, TemperatureAtSunriseEqualsTmin) {
+    auto s = makeTempState(35.0, 172, 55.0, 90.0, 89.0);
+    double ta = getSubdailyTemp(s, s.hrsr);
+    EXPECT_NEAR(ta, 55.0, 0.5);
+}
+
+// At hrss (sunset-3), temperature should equal tmax
+TEST(SubdailyTemp9, TemperatureAtHrssEqualsTmax) {
+    auto s = makeTempState(35.0, 172, 55.0, 90.0, 89.0);
+    double ta = getSubdailyTemp(s, s.hrss);
+    EXPECT_NEAR(ta, 90.0, 0.5);
+}
+
+// At midnight (hour=0), temperature should be > tmin (carry-over from prev day)
+TEST(SubdailyTemp9, MidnightAboveTmin) {
+    // prev_tmax=85 > tmin=55 → zone 1 at hour=0 gives a value above tmin
+    auto s = makeTempState(35.0, 172, 55.0, 90.0, 85.0);
+    double ta = getSubdailyTemp(s, 0.0);
+    EXPECT_GT(ta, 55.0);
+    EXPECT_LT(ta, 90.0);
+}
+
+// Temperature monotonically increases from sunrise to hrss
+TEST(SubdailyTemp9, MonotonicallyRisingFromSunriseToHrss) {
+    auto s = makeTempState(35.0, 172, 50.0, 90.0, 88.0);
+    double t_prev = s.tmin_daily;
+    for (double h = s.hrsr; h <= s.hrss; h += 0.5) {
+        double t = getSubdailyTemp(s, h);
+        EXPECT_GE(t, t_prev - 0.01) << "Non-monotone at hour=" << h;
+        t_prev = t;
+    }
+    EXPECT_NEAR(t_prev, 90.0, 0.5);
+}
+
+// Zone 3 is a half-period sinusoid: temp falls from tmax (at hrss) to a minimum
+// at hrss + dydif/2, then rises again.  Verify that the midpoint gives
+// approximately tmax - trng (i.e., tave).
+TEST(SubdailyTemp9, Zone3MinAtMidpoint) {
+    auto s = makeTempState(35.0, 172, 50.0, 90.0, 88.0);
+    double h_mid = s.hrss + s.dydif / 2.0;
+    double ta_mid = getSubdailyTemp(s, h_mid);
+    // At the midpoint sin=1 → ta = tmax - trng = tave
+    double tave = (s.tmin_daily + s.tmax_daily) / 2.0;
+    EXPECT_NEAR(ta_mid, tave, 0.5);
+}
+
+// Temperature falls from hrss to the midpoint (hrss + dydif/2)
+TEST(SubdailyTemp9, FallingToMidpoint) {
+    auto s = makeTempState(35.0, 172, 50.0, 90.0, 88.0);
+    double h_mid = s.hrss + s.dydif / 2.0;
+    double t_prev = s.tmax_daily;
+    for (double h = s.hrss; h <= std::min(h_mid, 23.9); h += 0.5) {
+        double t = getSubdailyTemp(s, h);
+        EXPECT_LE(t, t_prev + 0.01) << "Not falling at hour=" << h;
+        t_prev = t;
+    }
+}
+
+// Polar night (lat=90, winter doy=355): hrsr==hrss==12, daily average returned
+TEST(SubdailyTemp9, PolarNightFlatTemp) {
+    auto s = makeTempState(90.0, 355, 10.0, 20.0, 18.0);
+    // hrsr == hrss → no zone 2, all points in zone 1 or 3
+    // verify it returns a finite temperature in [tmin, tmax]
+    for (double h = 0.0; h <= 23.5; h += 1.0) {
+        double t = getSubdailyTemp(s, h);
+        EXPECT_GE(t, 9.0);   // slightly below tmin is allowed by zone 1
+        EXPECT_LE(t, 25.0);  // slightly above prev_tmax is allowed
+    }
+}
+
+// dydif and dhrdy have correct sign relationships
+TEST(SubdailyTemp9, DerivedParamsSign) {
+    auto s = makeTempState(35.0, 172, 55.0, 90.0, 88.0);
+    EXPECT_LT(s.dhrdy, 0.0);                   // hrsr < hrss → negative
+    EXPECT_NEAR(s.dydif, 24.0 + s.dhrdy, 1e-9);
+    EXPECT_NEAR(s.hrday, (s.hrsr + s.hrss)/2.0, 1e-9);
 }

@@ -19,7 +19,7 @@
  * @see IOutputPlugin.hpp
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -32,17 +32,26 @@
 
 namespace openswmm {
 
+// NOTE ON UNITS: the 1D node / link / subcatchment / gage / system fields below
+// are delivered in PROJECT DISPLAY units (e.g. m, m³, CMS for an SI project;
+// ft, ft³, CFS for US). The engine applies a single conversion boundary
+// (convertSnapshotToDisplay) when building the snapshot, so output plugins
+// write values directly without re-applying Ucf/Qcf. Dimensionless fields
+// (capacity, soil moisture, pollutant concentrations) are unconverted. The 2D
+// surface_* arrays on SimulationSnapshot are the exception: they are SI-native
+// solver outputs and are NOT touched by the boundary.
+
 /**
  * @brief Snapshot of node state at an output time step.
  * @ingroup engine_plugins
  */
 struct NodeSnapshot {
-    std::vector<double> depth;          ///< Water depth [project length units]
-    std::vector<double> head;           ///< Hydraulic head [project length units]
-    std::vector<double> volume;         ///< Stored volume [project volume units]
-    std::vector<double> lateral_inflow; ///< Lateral inflow [project flow units]
-    std::vector<double> total_inflow;   ///< Total inflow [project flow units]
-    std::vector<double> overflow;       ///< Overflow / surcharge [project flow units]
+    std::vector<double> depth;          ///< Water depth [display length units]
+    std::vector<double> head;           ///< Hydraulic head [display length units]
+    std::vector<double> volume;         ///< Stored volume [display volume units]
+    std::vector<double> lateral_inflow; ///< Lateral inflow [display flow units]
+    std::vector<double> total_inflow;   ///< Total inflow [display flow units]
+    std::vector<double> overflow;       ///< Overflow / surcharge [display flow units]
 };
 
 /**
@@ -50,10 +59,10 @@ struct NodeSnapshot {
  * @ingroup engine_plugins
  */
 struct LinkSnapshot {
-    std::vector<double> flow;       ///< Flow rate [internal flow units]
-    std::vector<double> depth;      ///< Water depth [internal length units]
-    std::vector<double> velocity;   ///< Mean velocity [internal length/time]
-    std::vector<double> volume;     ///< Link volume [internal volume units]
+    std::vector<double> flow;       ///< Flow rate [display flow units]
+    std::vector<double> depth;      ///< Water depth [display length units]
+    std::vector<double> velocity;   ///< Mean velocity [display length/time]
+    std::vector<double> volume;     ///< Link volume [display volume units]
     std::vector<double> capacity;   ///< Full-flow capacity fraction [0, 1]
 };
 
@@ -62,13 +71,13 @@ struct LinkSnapshot {
  * @ingroup engine_plugins
  */
 struct SubcatchSnapshot {
-    std::vector<double> rainfall;   ///< Rainfall rate [internal rate units]
-    std::vector<double> snow_depth; ///< Snow depth [internal length units]
-    std::vector<double> evap;       ///< Evaporation [internal rate units]
-    std::vector<double> infil;      ///< Infiltration [internal rate units]
-    std::vector<double> runoff;     ///< Surface runoff [internal flow units]
-    std::vector<double> gw_flow;    ///< Groundwater outflow [internal flow units]
-    std::vector<double> gw_elev;    ///< Groundwater elevation [internal length units]
+    std::vector<double> rainfall;   ///< Rainfall rate [display rate units]
+    std::vector<double> snow_depth; ///< Snow depth [display depth units]
+    std::vector<double> evap;       ///< Evaporation [display rate units]
+    std::vector<double> infil;      ///< Infiltration [display rate units]
+    std::vector<double> runoff;     ///< Surface runoff [display flow units]
+    std::vector<double> gw_flow;    ///< Groundwater outflow [display flow units]
+    std::vector<double> gw_elev;    ///< Groundwater elevation [display length units]
     std::vector<double> soil_moist; ///< Soil moisture [-]
 };
 
@@ -194,6 +203,49 @@ struct SimulationSnapshot {
 
     /** @brief Flow units code (FlowUnits enum value: 0=CFS, 3=CMS, etc.). */
     int flow_units_code = 0;
+
+    // -----------------------------------------------------------------------
+    // 2D surface routing state (optional; populated only when the engine was
+    // built with OPENSWMM_BUILD_2D and the input file contains a 2D mesh)
+    //
+    // Layout: per-triangle vectors are sized `surface_tri_count`; per-vertex
+    // vectors are sized `surface_vert_count`. `surface_edge_flux` is flat
+    // [tri * 3 + edge] of size `surface_tri_count * 3`.
+    //
+    // Fields are deep-copied from `SurfaceRouter2D::state()` on the main
+    // simulation thread; consumers (Default2DOutputPlugin and any third-party
+    // 2D output plugins) read them through the IO-thread snapshot reference
+    // without further synchronization.
+    //
+    // Vectors are empty when 2D is inactive (either OPENSWMM_BUILD_2D=OFF or
+    // the input file contained no [2D_VERTICES] section). Plugins must check
+    // `surface_tri_count == 0` to skip 2D-specific work in that case.
+    // -----------------------------------------------------------------------
+
+    int surface_tri_count  = 0;             ///< Number of triangles (faces)
+    int surface_vert_count = 0;             ///< Number of vertices (nodes)
+
+    std::vector<double> surface_depth;          ///< Overland flow depth ψ_o (m), per face
+    std::vector<double> surface_head;           ///< Total head h_o = z_s + ψ_o (m), per face
+    std::vector<double> surface_grad_hx;        ///< Unlimited head gradient ∂h/∂x, per face
+    std::vector<double> surface_grad_hy;        ///< Unlimited head gradient ∂h/∂y, per face
+    std::vector<double> surface_grad_hx_lim;    ///< Slope-limited head gradient ∂h/∂x, per face
+    std::vector<double> surface_grad_hy_lim;    ///< Slope-limited head gradient ∂h/∂y, per face
+    std::vector<double> surface_rainfall;       ///< Rainfall intensity (m/s), per face
+    std::vector<double> surface_coupling_flux;  ///< Coupling flux to SWMM node (m/s, + = into 2D), per face
+    std::vector<double> surface_net_source;     ///< Net source/sink (m/s), per face
+    std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
+    std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m)
+    std::vector<double> surface_face_vx;        ///< Cell-centred velocity X (m/s), per face
+    std::vector<double> surface_face_vy;        ///< Cell-centred velocity Y (m/s), per face
+    std::vector<double> surface_continuity_err; ///< Per-cell continuity residual (m³/s), per face
+
+    // Cumulative rendering envelopes (SI-native, monotone over the run), per face.
+    // A snapshot of these at any time is the envelope up to that time; the 2D
+    // output plugin overwrites the fixed [nFace] envelope datasets in place.
+    std::vector<double> surface_stat_max_depth;    ///< Max overland depth ψ_o (m), per face
+    std::vector<double> surface_stat_max_velocity; ///< Max cell speed |v| (m/s), per face
+    std::vector<double> surface_stat_max_cont_err; ///< Max |continuity residual| (m³/s), per face
 };
 
 } /* namespace openswmm */

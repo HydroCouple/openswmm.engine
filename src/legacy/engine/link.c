@@ -50,6 +50,7 @@
 //   - Conduit evap+seepage loss under DW routing limited by conduit volume.
 //   Build 5.3.0:
 //   - Modified to use global constants defined in consts.h.
+//   - Support added for API provided pollutant fluxes and inflows.
 //-----------------------------------------------------------------------------
 #define _CRT_SECURE_NO_DEPRECATE
 

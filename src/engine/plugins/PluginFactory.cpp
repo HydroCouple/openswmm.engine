@@ -6,17 +6,28 @@
  * @ingroup engine_plugins
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
 #include "PluginFactory.hpp"
+#include "BuiltinPluginInfos.hpp"
+
+// Slice RC.1 — GeoPackage is registered as an explicit built-in so it
+// appears in the discovery API alongside the four Default plugins,
+// instead of being picked up accidentally through the discover() scan's
+// dlsym(openswmm_plugin_info) on the engine's own binary. See §R.3 in
+// docs/GUI_IMPLEMENTATION_PLAN.md for the rationale.
+#ifdef OPENSWMM_HAS_GEOPACKAGE
+#  include "../input/geopackage/GeoPackagePluginInfo.hpp"
+#endif
 
 #include "../core/SimulationContext.hpp"
 #include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
 #include "../../../include/openswmm/plugin_sdk/IInputPlugin.hpp"
 #include "../../../include/openswmm/plugin_sdk/IOutputPlugin.hpp"
 #include "../../../include/openswmm/plugin_sdk/IReportPlugin.hpp"
+#include "../../../include/openswmm/plugin_sdk/IStateIOPlugin.hpp"
 #include "../../../include/openswmm/plugin_sdk/PluginState.hpp"
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
 
@@ -44,6 +55,7 @@ namespace openswmm {
 // ============================================================================
 
 PluginFactory::PluginFactory() {
+    register_builtin_infos();
     discover();
 }
 
@@ -259,6 +271,9 @@ IPluginComponentInfo* PluginFactory::load_library(
         registry_[id] = idx;
     }
 
+    // Verify the plugin's file_filters() advertise every capability it claims.
+    validate_filter_invariant(info, path, warn_cb);
+
     return info;
 }
 
@@ -300,12 +315,19 @@ std::vector<PluginFactory::ComponentEntry> PluginFactory::discovered_components(
     for (const auto& lib : libs_) {
         if (!lib.info) continue;
         ComponentEntry e;
-        e.id         = lib.info->id();
-        e.version    = lib.info->version();
-        e.has_input  = lib.info->has_input();
-        e.has_output = lib.info->has_output();
-        e.has_report = lib.info->has_report();
-        e.info       = lib.info;
+        e.id           = lib.info->id();
+        e.version      = lib.info->version();
+        e.has_input    = lib.info->has_input();
+        e.has_output   = lib.info->has_output();
+        e.has_report   = lib.info->has_report();
+        e.has_state_io = lib.info->has_state_io();
+        e.info         = lib.info;
+        // Slice RC.3 — built-ins are registered with a synthetic
+        // `<built-in>` path and a null dlopen handle. Either marker
+        // would do; matching on path keeps the check stable across
+        // the future case where built-ins might be promoted to
+        // load-on-demand shared libs.
+        e.is_builtin   = (lib.path == "<built-in>");
         result.push_back(e);
     }
     return result;
@@ -340,6 +362,10 @@ int PluginFactory::load_plugins(
         if (info->has_report()) {
             IReportPlugin* rp = info->create_report_plugin();
             if (rp) report_plugins_.push_back(rp);
+        }
+        if (info->has_state_io()) {
+            IStateIOPlugin* sp = info->create_state_io_plugin();
+            if (sp) state_io_plugins_.push_back(sp);
         }
 
         ++loaded;
@@ -384,6 +410,18 @@ int PluginFactory::initialize_all(SimulationContext& /*ctx*/) {
         if (rc != 0) last_err = rc;
     }
 
+    for (auto* p : state_io_plugins_) {
+        IPluginComponentInfo* info = nullptr;
+        for (const auto& le : libs_) {
+            if (le.info && le.info->has_state_io()) {
+                info = le.info;
+                break;
+            }
+        }
+        const int rc = p->initialize({}, info);
+        if (rc != 0) last_err = rc;
+    }
+
     return last_err;
 }
 
@@ -399,6 +437,11 @@ int PluginFactory::validate_all(SimulationContext& ctx) {
         if (rc != 0) last_err = rc;
     }
     for (auto* p : report_plugins_) {
+        if (p->state() != PluginState::INITIALIZED) continue;
+        const int rc = p->validate(ctx);
+        if (rc != 0) last_err = rc;
+    }
+    for (auto* p : state_io_plugins_) {
         if (p->state() != PluginState::INITIALIZED) continue;
         const int rc = p->validate(ctx);
         if (rc != 0) last_err = rc;
@@ -460,6 +503,10 @@ int PluginFactory::finalize_all(SimulationContext& ctx) {
         const int rc = p->finalize(ctx);
         if (rc != 0) last_err = rc;
     }
+    for (auto* p : state_io_plugins_) {
+        const int rc = p->finalize(ctx);
+        if (rc != 0) last_err = rc;
+    }
     return last_err;
 }
 
@@ -494,6 +541,10 @@ void PluginFactory::add_input_plugin(IInputPlugin* plugin) {
     input_plugins_.push_back(plugin);
 }
 
+void PluginFactory::add_state_io_plugin(IStateIOPlugin* plugin) {
+    state_io_plugins_.push_back(plugin);
+}
+
 // ============================================================================
 // unload_all()
 // ============================================================================
@@ -506,6 +557,8 @@ void PluginFactory::unload_all() {
     output_plugins_.clear();
     for (auto* p : report_plugins_) delete p;
     report_plugins_.clear();
+    for (auto* p : state_io_plugins_) delete p;
+    state_io_plugins_.clear();
     init_args_.clear();
 
     // Clear registry
@@ -516,6 +569,85 @@ void PluginFactory::unload_all() {
         platform_unload(lib.handle);
     }
     libs_.clear();
+}
+
+// ============================================================================
+// register_builtin_infos()
+// ============================================================================
+
+void PluginFactory::register_builtin_infos() {
+    auto register_one = [this](IPluginComponentInfo* info) {
+        if (!info) return;
+        const std::string id  = info->id();
+        const std::string ver = info->version();
+        const std::string key = id + ":" + ver;
+        if (registry_.find(key) != registry_.end()) return;  // idempotent
+
+        LibEntry entry;
+        entry.handle = nullptr;            // synthetic — no dlopen handle
+        entry.info   = info;
+        entry.path   = "<built-in>";
+        const std::size_t idx = libs_.size();
+        libs_.push_back(entry);
+
+        registry_[key] = idx;
+        if (registry_.find(id) == registry_.end()) {
+            registry_[id] = idx;
+        }
+    };
+
+    register_one(&BuiltinDefaultInputPluginInfo::instance());
+    register_one(&BuiltinDefaultOutputPluginInfo::instance());
+    register_one(&BuiltinDefaultReportPluginInfo::instance());
+    register_one(&BuiltinDefaultStateIOPluginInfo::instance());
+
+    // Slice RC.1 (APPROVED 2026-05-25, see §R.3) — GeoPackage is a first-
+    // class statically-linked plugin. Registering it explicitly here, plus
+    // the symbol-visibility hardening on the openswmm_geopackage target
+    // (Slice RC.2), removes the accidental dlsym-leak via the engine
+    // binary that produced phantom rows in the Simulation Options
+    // Plugins tab.
+#ifdef OPENSWMM_HAS_GEOPACKAGE
+    register_one(&openswmm::gpkg::GeoPackagePluginInfo::instance());
+#endif
+}
+
+// ============================================================================
+// validate_filter_invariant()
+// ============================================================================
+
+void PluginFactory::validate_filter_invariant(
+    IPluginComponentInfo* info,
+    const std::string& source_path,
+    std::function<void(const std::string&)> warn_cb)
+{
+    if (!info) return;
+
+    const auto filters = info->file_filters();
+    auto has_role = [&](PluginRole r) {
+        for (const auto& f : filters) if (f.role == r) return true;
+        return false;
+    };
+
+    auto warn = [&](const char* cap, PluginRole r) {
+        std::string msg = "PluginFactory: plugin '" + info->id() +
+                          "' (" + source_path + ") declares " + cap +
+                          " capability but advertises no FileFilter with role " +
+                          plugin_role_to_string(r) +
+                          " — host file dialogs will show no label for this format.";
+        if (warn_cb) warn_cb(msg);
+    };
+
+    if (info->has_input()    && !has_role(PluginRole::INPUT_READ))
+        warn("INPUT",    PluginRole::INPUT_READ);
+    if (info->has_output()   && !has_role(PluginRole::OUTPUT_WRITE))
+        warn("OUTPUT",   PluginRole::OUTPUT_WRITE);
+    if (info->has_report()   && !has_role(PluginRole::REPORT_WRITE))
+        warn("REPORT",   PluginRole::REPORT_WRITE);
+    if (info->has_state_io()
+        && !has_role(PluginRole::STATE_READ)
+        && !has_role(PluginRole::STATE_WRITE))
+        warn("STATE_IO", PluginRole::STATE_READ);
 }
 
 } /* namespace openswmm */

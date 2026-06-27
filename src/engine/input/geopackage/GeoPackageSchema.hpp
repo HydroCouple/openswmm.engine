@@ -4,7 +4,7 @@
  * @ingroup engine_geopackage
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -26,6 +26,13 @@ namespace openswmm::gpkg {
  *             patterns, pollutants, transects
  *   - Part B: simulations, variables, result_timeseries, result_summary
  *   - Part C: observed_series, observed_values
+ *   - Part D (Slice IO-5): hotstart_slots + hotstart_{node,link,subcatch}_state
+ *             + hotstart_{node,link,subcatch}_pollutant_state, raingage_data,
+ *             climate_data, routing_interface_{node,subcatch,gage}, and
+ *             routing_interface_node_pollutants. Composite foreign keys
+ *             into the existing model tables enforce cascading delete /
+ *             update and reject orphan rows.  See IO_PORTABILITY_PLAN.md
+ *             §3.4 for the design rationale.
  *
  * @param db  Open SQLite database handle.
  * @throws GpkgError on failure.

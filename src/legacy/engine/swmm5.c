@@ -115,6 +115,7 @@ int omp_get_max_threads(void) { return 1; }
 #include "funcs.h"   // declaration of all global functions
 #include "error.h"   // error message codes
 #include "text.h"    // listing of all text strings
+#include "lid.h"     // LID runtime parameter API
 
 #include "openswmm_solver.h" // declaration of SWMM's API functions
 
@@ -335,6 +336,80 @@ static int setGageValue(int property, int index, int subIndex, double value);
  * \return Error code
  */
 static int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, double value);
+
+/*!
+ * \brief Get pollutant value given its property type and index.
+ * \param[in] property Property type
+ * \param[in] index Pollutant index
+ * \return Property value or error code
+ */
+static double getPollutValue(int property, int index);
+
+/*!
+ * \brief Set pollutant value given its property type, index, and value.
+ * \param[in] property Property type
+ * \param[in] index Pollutant index
+ * \param[in] value Property value
+ * \return Error code
+ */
+static int setPollutValue(int property, int index, double value);
+
+/*!
+ * \brief Get a time-pattern property (factor / count / type).
+ * \param[in] property Property type (swmm_PatternProperty)
+ * \param[in] index Pattern index
+ * \param[in] subIndex Factor position for swmm_PATTERN_FACTOR
+ * \return Property value or API error sentinel
+ */
+static double getPatternValue(int property, int index, int subIndex);
+
+/*!
+ * \brief Set a time-pattern multiplier factor (running or pre-start).
+ * \param[in] property Property type (swmm_PatternProperty)
+ * \param[in] index Pattern index
+ * \param[in] subIndex Factor position (0-based)
+ * \param[in] value Factor value
+ * \return Error code
+ */
+static int setPatternValue(int property, int index, int subIndex, double value);
+
+/*!
+ * \brief Get a land-use property (sweeping, or per-pollutant buildup/washoff).
+ * \param[in] property Property type (swmm_LanduseProperty)
+ * \param[in] index Land-use index
+ * \param[in] subIndex Pollutant index for buildup/washoff properties
+ * \return Property value or API error sentinel
+ */
+static double getLanduseValue(int property, int index, int subIndex);
+
+/*!
+ * \brief Set a land-use property (sweeping, or per-pollutant buildup/washoff).
+ * \param[in] property Property type (swmm_LanduseProperty)
+ * \param[in] index Land-use index
+ * \param[in] subIndex Pollutant index for buildup/washoff properties
+ * \param[in] value Property value
+ * \return Error code
+ */
+static int setLanduseValue(int property, int index, int subIndex, double value);
+
+/*!
+ * \brief Get an aquifer property (input-file units).
+ * \param[in] property Property type (swmm_AquiferProperty)
+ * \param[in] index Aquifer index
+ * \return Property value or API error sentinel
+ */
+static double getAquiferValue(int property, int index);
+
+/*!
+ * \brief Set an aquifer property (input-file units). Flux coefficients are
+ * settable while running; structural / initial-condition properties are
+ * pre-start-only.
+ * \param[in] property Property type (swmm_AquiferProperty)
+ * \param[in] index Aquifer index
+ * \param[in] value Property value
+ * \return Error code
+ */
+static int setAquiferValue(int property, int index, double value);
 
 /*!
  * \brief Set node value given its property type, index, subindex, and value.
@@ -1075,6 +1150,26 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getMassBalErr(float *runoffErr, float *f
 }
 
 /*!
+ * \copydoc swmm_getRunningMassBalErr
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getRunningMassBalErr(float *runoffErr, float *flowErr)
+{
+    *runoffErr = 0.0;
+    *flowErr = 0.0;
+
+    // --- only meaningful while a simulation is running (after swmm_start,
+    //     before swmm_end). The getters recompute the error from the live
+    //     accumulators and current storage; this does not affect the final
+    //     errors, which massbal_report recomputes at swmm_end.
+    if (IsOpenFlag && IsStartedFlag)
+    {
+        *runoffErr = (float)massbal_getRunoffError();
+        *flowErr = (float)massbal_getFlowError();
+    }
+    return 0;
+}
+
+/*!
  * \copydoc swmm_getVersion
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getVersion()
@@ -1088,6 +1183,16 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getVersion()
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getWarnings()
 {
     return Warnings;
+}
+
+/*!
+ * \copydoc swmm_setWarningCallback
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setWarningCallback(swmm_LegacyWarningCallback cb, void *userData)
+{
+    WarningCallback = cb;
+    WarningCallbackData = userData;
+    return 0;
 }
 
 /*!
@@ -1250,6 +1355,14 @@ double EXPORT_OPENSWMMCORE_SOLVER_API swmm_getValueExpanded(int objType, int pro
         return getNodeValue(property, index, subIndex, pollutantIndex);
     case swmm_LINK:
         return getLinkValue(property, index, subIndex, pollutantIndex);
+    case swmm_POLLUTANT:
+        return getPollutValue(property, index);
+    case swmm_TIME_PATTERN:
+        return getPatternValue(property, index, subIndex);
+    case swmm_LANDUSE:
+        return getLanduseValue(property, index, subIndex);
+    case swmm_AQUIFER:
+        return getAquiferValue(property, index);
     default:
         return ERR_API_OBJECT_TYPE;
     }
@@ -1271,6 +1384,12 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValue(int property, int index, double
             return 0;
         if (value >= 0.0)
             Gage[index].apiRainfall = value;
+        return 0;
+    case swmm_GAGE_SCALEFACTOR:
+        if (index < 0 || index >= Nobjects[GAGE])
+            return 0;
+        if (value > 0.0)
+            Gage[index].scaleFactor = value;
         return 0;
     case swmm_SUBCATCH_RPTFLAG:
         if (!IsStartedFlag && index >= 0 && index < Nobjects[SUBCATCH])
@@ -1329,8 +1448,518 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValueExpanded(int objType, int proper
         return setNodeValue(property, index, subIndex, pollutantIndex, value);
     case swmm_LINK:
         return setLinkValue(property, index, subIndex, pollutantIndex, value);
+    case swmm_POLLUTANT:
+        return setPollutValue(property, index, value);
+    case swmm_TIME_PATTERN:
+        return setPatternValue(property, index, subIndex, value);
+    case swmm_LANDUSE:
+        return setLanduseValue(property, index, subIndex, value);
+    case swmm_AQUIFER:
+        return setAquiferValue(property, index, value);
     default:
         return ERR_API_OBJECT_TYPE;
+    }
+}
+
+/*!
+ * \copydoc swmm_setTreatment
+ * \details Re-uses the [TREATMENT] input parser (treatmnt_readExpression),
+ * so the expression has the input-file form "R = ..." or "C = ...". Any
+ * existing equation for the (node, pollutant) pair is freed before the new
+ * one is installed, so the function is safe to call repeatedly while the
+ * simulation is running; the new expression is evaluated from the next
+ * routing step on. A failed parse leaves no treatment in place for the pair.
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setTreatment(int nodeIndex, int pollutantIndex, const char *expression)
+{
+    char exprCopy[MAXLINE + 1];
+    char *tok[3];
+
+    if (!IsOpenFlag)
+        return ERR_API_NOT_OPEN;
+    if (nodeIndex < 0 || nodeIndex >= Nobjects[NODE])
+        return ERR_API_OBJECT_INDEX;
+    if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
+        return ERR_API_OBJECT_INDEX;
+    if (expression == NULL || expression[0] == '\0')
+        return ERR_API_PROPERTY_VALUE;
+
+    // --- free any existing equation so a runtime replace doesn't leak
+    if (Node[nodeIndex].treatment != NULL &&
+        Node[nodeIndex].treatment[pollutantIndex].equation != NULL)
+    {
+        mathexpr_delete(Node[nodeIndex].treatment[pollutantIndex].equation);
+        Node[nodeIndex].treatment[pollutantIndex].equation = NULL;
+    }
+
+    // --- re-use the [TREATMENT] line parser: tok = {node, pollut, "R = ..."}
+    //     (it concatenates tok[2..n] itself, so the whole expression can be
+    //      passed as a single token)
+    sstrncpy(exprCopy, expression, MAXLINE);
+    tok[0] = Node[nodeIndex].ID;
+    tok[1] = Pollut[pollutantIndex].ID;
+    tok[2] = exprCopy;
+    if (treatmnt_readExpression(tok, 3) != 0)
+        return ERR_API_PROPERTY_VALUE;
+    return 0;
+}
+
+/*!
+ * \copydoc swmm_setLidDrain
+ * \details The underdrain parameters are read live each routing step
+ * (lidproc.c), so the edit takes effect on the next step. Values use
+ * input-file units, matching the [LID_CONTROLS] DRAIN line
+ * (coeff in/hr or mm/hr; offset in or mm).
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setLidDrain(int lidIndex, double coeff, double expon, double offset)
+{
+    int rc;
+    if (!IsOpenFlag)
+        return ERR_API_NOT_OPEN;
+    rc = lid_setDrainParams(lidIndex, coeff, expon, offset);
+    if (rc == 1) return ERR_API_OBJECT_INDEX;
+    if (rc == 2) return ERR_API_PROPERTY_VALUE;
+    return 0;
+}
+
+/*!
+ * \copydoc swmm_clearTreatment
+ * \details Removes the treatment expression for the (node, pollutant) pair;
+ * treatmnt_treat() applies zero removal for pairs with no equation. Callable
+ * before the simulation starts or while it is running.
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_clearTreatment(int nodeIndex, int pollutantIndex)
+{
+    if (!IsOpenFlag)
+        return ERR_API_NOT_OPEN;
+    if (nodeIndex < 0 || nodeIndex >= Nobjects[NODE])
+        return ERR_API_OBJECT_INDEX;
+    if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
+        return ERR_API_OBJECT_INDEX;
+
+    if (Node[nodeIndex].treatment != NULL &&
+        Node[nodeIndex].treatment[pollutantIndex].equation != NULL)
+    {
+        mathexpr_delete(Node[nodeIndex].treatment[pollutantIndex].equation);
+        Node[nodeIndex].treatment[pollutantIndex].equation = NULL;
+    }
+    return 0;
+}
+
+/*!
+ * \copydoc getPollutValue
+ */
+double getPollutValue(int property, int index)
+{
+    if (index < 0 || index >= Nobjects[POLLUT])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_POLLUT_RAIN_CONCEN:
+        return Pollut[index].pptConcen;
+    case swmm_POLLUT_GW_CONCEN:
+        return Pollut[index].gwConcen;
+    case swmm_POLLUT_RDII_CONCEN:
+        return Pollut[index].rdiiConcen;
+    case swmm_POLLUT_DWF_CONCEN:
+        return Pollut[index].dwfConcen;
+    case swmm_POLLUT_KDECAY:
+        // stored internally in 1/sec; report in 1/day (INP units)
+        return Pollut[index].kDecay * SECperDAY;
+    case swmm_POLLUT_CO_POLLUTANT:
+        return (double)Pollut[index].coPollut;
+    case swmm_POLLUT_CO_FRACTION:
+        return Pollut[index].coFraction;
+    case swmm_POLLUT_SNOW_ONLY:
+        return (double)Pollut[index].snowOnly;
+    case swmm_POLLUT_INIT_CONCEN:
+        return Pollut[index].initConcen;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc setPollutValue
+ * \details The source concentrations and decay kinetics are settable both
+ * before the simulation starts and while it is running (dynamic quality
+ * forcing): source concentrations feed existing inflow terms, and the decay
+ * constant / co-pollutant / snow-only flag are read live each step. The
+ * initial conveyance-network concentration only seeds state at start, so it
+ * is rejected while running. Mass balance is unchanged.
+ */
+int setPollutValue(int property, int index, double value)
+{
+    if (index < 0 || index >= Nobjects[POLLUT])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_POLLUT_RAIN_CONCEN:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Pollut[index].pptConcen = value;
+        return 0;
+    case swmm_POLLUT_GW_CONCEN:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Pollut[index].gwConcen = value;
+        return 0;
+    case swmm_POLLUT_RDII_CONCEN:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Pollut[index].rdiiConcen = value;
+        return 0;
+    case swmm_POLLUT_DWF_CONCEN:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Pollut[index].dwfConcen = value;
+        return 0;
+    case swmm_POLLUT_KDECAY:
+        // accept 1/day (INP units); store internally as 1/sec
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Pollut[index].kDecay = value / SECperDAY;
+        return 0;
+    case swmm_POLLUT_CO_POLLUTANT:
+        if (value < -1.0 || (int)value >= Nobjects[POLLUT])
+            return ERR_API_PROPERTY_VALUE;
+        Pollut[index].coPollut = (int)value;
+        return 0;
+    case swmm_POLLUT_CO_FRACTION:
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Pollut[index].coFraction = value;
+        return 0;
+    case swmm_POLLUT_SNOW_ONLY:
+        Pollut[index].snowOnly = (value != 0.0) ? TRUE : FALSE;
+        return 0;
+    case swmm_POLLUT_INIT_CONCEN:
+        // pre-start only: initConcen seeds state at start, no runtime effect
+        if (IsStartedFlag)
+            return ERR_API_IS_RUNNING;
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Pollut[index].initConcen = value;
+        return 0;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc getPatternValue
+ */
+double getPatternValue(int property, int index, int subIndex)
+{
+    if (index < 0 || index >= Nobjects[TIMEPATTERN])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_PATTERN_FACTOR:
+        if (subIndex < 0 || subIndex >= Pattern[index].count)
+            return ERR_API_PROPERTY_VALUE;
+        return Pattern[index].factor[subIndex];
+    case swmm_PATTERN_COUNT:
+        return (double)Pattern[index].count;
+    case swmm_PATTERN_TYPE:
+        return (double)Pattern[index].type;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc setPatternValue
+ * \details Pattern factors are looked up afresh on every step (DWF/GW/inflow
+ * scaling), so a mid-run edit takes effect on the next step. Factors must be
+ * non-negative. Count and type are read-only.
+ */
+int setPatternValue(int property, int index, int subIndex, double value)
+{
+    if (index < 0 || index >= Nobjects[TIMEPATTERN])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_PATTERN_FACTOR:
+        if (subIndex < 0 || subIndex >= Pattern[index].count)
+            return ERR_API_PROPERTY_VALUE;
+        if (value < 0.0)
+            return ERR_API_PROPERTY_VALUE;
+        Pattern[index].factor[subIndex] = value;
+        return 0;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \brief Recompute a buildup function's time-to-max (maxDays), mirroring
+ * landuse_readBuildup() so runtime coefficient edits stay self-consistent.
+ */
+static void recomputeBuildupMaxDays(int lu, int p)
+{
+    double* c = Landuse[lu].buildupFunc[p].coeff;
+    double tmax = 0.0;
+    switch (Landuse[lu].buildupFunc[p].funcType)
+    {
+    case POWER_BUILDUP:
+        if (c[1] * c[2] == 0.0) tmax = 0.0;
+        else if (c[0] > 0.0 && log10(c[0]) / c[2] > 3.5) tmax = 3650.0;
+        else if (c[1] != 0.0) tmax = pow(c[0] / c[1], 1.0 / c[2]);
+        break;
+    case EXPON_BUILDUP:
+        if (c[1] == 0.0) tmax = 0.0;
+        else tmax = -log(0.001) / c[1];
+        break;
+    case SATUR_BUILDUP:
+        tmax = 1000.0 * c[2];
+        break;
+    default:
+        tmax = 0.0;
+    }
+    Landuse[lu].buildupFunc[p].maxDays = tmax;
+}
+
+/*!
+ * \copydoc getLanduseValue
+ */
+double getLanduseValue(int property, int index, int subIndex)
+{
+    if (index < 0 || index >= Nobjects[LANDUSE])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_LANDUSE_SWEEP_INTERVAL:
+        return Landuse[index].sweepInterval;
+    case swmm_LANDUSE_SWEEP_REMOVAL:
+        return Landuse[index].sweepRemoval;
+    default:
+        break;
+    }
+
+    // Per-pollutant buildup/washoff properties (subIndex = pollutant index)
+    if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_LANDUSE_BUILDUP_FUNC:
+        return (double)Landuse[index].buildupFunc[subIndex].funcType;
+    case swmm_LANDUSE_BUILDUP_COEFF1:
+        return Landuse[index].buildupFunc[subIndex].coeff[0];
+    case swmm_LANDUSE_BUILDUP_COEFF2:
+        return Landuse[index].buildupFunc[subIndex].coeff[1];
+    case swmm_LANDUSE_BUILDUP_COEFF3:
+        return Landuse[index].buildupFunc[subIndex].coeff[2];
+    case swmm_LANDUSE_BUILDUP_NORMALIZER:
+        return (double)Landuse[index].buildupFunc[subIndex].normalizer;
+    case swmm_LANDUSE_WASHOFF_FUNC:
+        return (double)Landuse[index].washoffFunc[subIndex].funcType;
+    case swmm_LANDUSE_WASHOFF_COEFF:
+        return Landuse[index].washoffFunc[subIndex].coeff;
+    case swmm_LANDUSE_WASHOFF_EXPON:
+        return Landuse[index].washoffFunc[subIndex].expon;
+    case swmm_LANDUSE_WASHOFF_SWEEP_EFFIC:
+        return Landuse[index].washoffFunc[subIndex].sweepEffic;
+    case swmm_LANDUSE_WASHOFF_BMP_EFFIC:
+        return Landuse[index].washoffFunc[subIndex].bmpEffic;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc setLanduseValue
+ * \details Sweeping and buildup/washoff function parameters are read per step
+ * (sweeping evaluation, surfqual buildup/washoff), so a mid-run edit takes
+ * effect on the next step. The accumulated buildup pool is left untouched;
+ * editing the function only changes how buildup evolves going forward. Removal
+ * fractions are bounded to [0, 1]; intervals and buildup/washoff coefficients
+ * must be non-negative; buildup edits recompute maxDays.
+ */
+int setLanduseValue(int property, int index, int subIndex, double value)
+{
+    if (index < 0 || index >= Nobjects[LANDUSE])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_LANDUSE_SWEEP_INTERVAL:
+        if (value < 0.0)
+            return ERR_API_PROPERTY_VALUE;
+        Landuse[index].sweepInterval = value;
+        return 0;
+    case swmm_LANDUSE_SWEEP_REMOVAL:
+        if (value < 0.0 || value > 1.0)
+            return ERR_API_PROPERTY_VALUE;
+        Landuse[index].sweepRemoval = value;
+        return 0;
+    default:
+        break;
+    }
+
+    // Per-pollutant buildup/washoff properties (subIndex = pollutant index)
+    if (subIndex < 0 || subIndex >= Nobjects[POLLUT])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_LANDUSE_BUILDUP_FUNC:
+        Landuse[index].buildupFunc[subIndex].funcType = (int)value;
+        recomputeBuildupMaxDays(index, subIndex);
+        return 0;
+    case swmm_LANDUSE_BUILDUP_COEFF1:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Landuse[index].buildupFunc[subIndex].coeff[0] = value;
+        recomputeBuildupMaxDays(index, subIndex);
+        return 0;
+    case swmm_LANDUSE_BUILDUP_COEFF2:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Landuse[index].buildupFunc[subIndex].coeff[1] = value;
+        recomputeBuildupMaxDays(index, subIndex);
+        return 0;
+    case swmm_LANDUSE_BUILDUP_COEFF3:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Landuse[index].buildupFunc[subIndex].coeff[2] = value;
+        recomputeBuildupMaxDays(index, subIndex);
+        return 0;
+    case swmm_LANDUSE_BUILDUP_NORMALIZER:
+        Landuse[index].buildupFunc[subIndex].normalizer = (int)value;
+        return 0;
+    case swmm_LANDUSE_WASHOFF_FUNC:
+        Landuse[index].washoffFunc[subIndex].funcType = (int)value;
+        return 0;
+    case swmm_LANDUSE_WASHOFF_COEFF:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Landuse[index].washoffFunc[subIndex].coeff = value;
+        return 0;
+    case swmm_LANDUSE_WASHOFF_EXPON:
+        Landuse[index].washoffFunc[subIndex].expon = value;
+        return 0;
+    case swmm_LANDUSE_WASHOFF_SWEEP_EFFIC:
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Landuse[index].washoffFunc[subIndex].sweepEffic = value;
+        return 0;
+    case swmm_LANDUSE_WASHOFF_BMP_EFFIC:
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Landuse[index].washoffFunc[subIndex].bmpEffic = value;
+        return 0;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc getAquiferValue
+ * \details Values are reported in input-file units, inverting the storage
+ * conversions of gwater_readAquiferParams.
+ */
+double getAquiferValue(int property, int index)
+{
+    if (index < 0 || index >= Nobjects[AQUIFER])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    case swmm_AQUIFER_POROSITY:
+        return Aquifer[index].porosity;
+    case swmm_AQUIFER_WILTING_POINT:
+        return Aquifer[index].wiltingPoint;
+    case swmm_AQUIFER_FIELD_CAPACITY:
+        return Aquifer[index].fieldCapacity;
+    case swmm_AQUIFER_CONDUCTIVITY:
+        return Aquifer[index].conductivity * UCF(RAINFALL);
+    case swmm_AQUIFER_CONDUCT_SLOPE:
+        return Aquifer[index].conductSlope;
+    case swmm_AQUIFER_TENSION_SLOPE:
+        return Aquifer[index].tensionSlope * UCF(LENGTH);
+    case swmm_AQUIFER_UPPER_EVAP_FRAC:
+        return Aquifer[index].upperEvapFrac;
+    case swmm_AQUIFER_LOWER_EVAP_DEPTH:
+        return Aquifer[index].lowerEvapDepth * UCF(LENGTH);
+    case swmm_AQUIFER_LOWER_LOSS_COEFF:
+        return Aquifer[index].lowerLossCoeff * UCF(RAINFALL);
+    case swmm_AQUIFER_BOTTOM_ELEV:
+        return Aquifer[index].bottomElev * UCF(LENGTH);
+    case swmm_AQUIFER_WATER_TABLE_ELEV:
+        return Aquifer[index].waterTableElev * UCF(LENGTH);
+    case swmm_AQUIFER_UPPER_MOISTURE:
+        return Aquifer[index].upperMoisture;
+    default:
+        return ERR_API_PROPERTY_TYPE;
+    }
+}
+
+/*!
+ * \copydoc setAquiferValue
+ * \details The per-step groundwater computation re-reads Aquifer[] each step
+ * (gwater.c), so the flux-coefficient edits take effect on the next step with
+ * no cache to refresh. Structural / initial-condition properties bound or
+ * seed the groundwater state and are rejected while the simulation is
+ * running. Storage conversions match gwater_readAquiferParams.
+ */
+int setAquiferValue(int property, int index, double value)
+{
+    if (index < 0 || index >= Nobjects[AQUIFER])
+        return ERR_API_OBJECT_INDEX;
+
+    switch (property)
+    {
+    // --- structural / initial conditions: pre-start-only
+    case swmm_AQUIFER_POROSITY:
+        if (IsStartedFlag) return ERR_API_IS_RUNNING;
+        if (value <= 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].porosity = value;
+        return 0;
+    case swmm_AQUIFER_WILTING_POINT:
+        if (IsStartedFlag) return ERR_API_IS_RUNNING;
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].wiltingPoint = value;
+        return 0;
+    case swmm_AQUIFER_FIELD_CAPACITY:
+        if (IsStartedFlag) return ERR_API_IS_RUNNING;
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].fieldCapacity = value;
+        return 0;
+    case swmm_AQUIFER_BOTTOM_ELEV:
+        if (IsStartedFlag) return ERR_API_IS_RUNNING;
+        Aquifer[index].bottomElev = value / UCF(LENGTH);
+        return 0;
+    case swmm_AQUIFER_WATER_TABLE_ELEV:
+        if (IsStartedFlag) return ERR_API_IS_RUNNING;
+        Aquifer[index].waterTableElev = value / UCF(LENGTH);
+        return 0;
+    case swmm_AQUIFER_UPPER_MOISTURE:
+        if (IsStartedFlag) return ERR_API_IS_RUNNING;
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].upperMoisture = value;
+        return 0;
+
+    // --- flux coefficients: read live each step, settable while running
+    case swmm_AQUIFER_CONDUCTIVITY:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].conductivity = value / UCF(RAINFALL);
+        return 0;
+    case swmm_AQUIFER_CONDUCT_SLOPE:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].conductSlope = value;
+        return 0;
+    case swmm_AQUIFER_TENSION_SLOPE:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].tensionSlope = value / UCF(LENGTH);
+        return 0;
+    case swmm_AQUIFER_UPPER_EVAP_FRAC:
+        if (value < 0.0 || value > 1.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].upperEvapFrac = value;
+        return 0;
+    case swmm_AQUIFER_LOWER_EVAP_DEPTH:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].lowerEvapDepth = value / UCF(LENGTH);
+        return 0;
+    case swmm_AQUIFER_LOWER_LOSS_COEFF:
+        if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+        Aquifer[index].lowerLossCoeff = value / UCF(RAINFALL);
+        return 0;
+    default:
+        return ERR_API_PROPERTY_TYPE;
     }
 }
 
@@ -1349,6 +1978,14 @@ int setGageValue(int property, int index, int subIndex, double value)
         if (value >= 0.0)
         {
             Gage[index].apiRainfall = value;
+            return 0;
+        }
+        else
+            return ERR_API_PROPERTY_VALUE;
+    case swmm_GAGE_SCALEFACTOR:
+        if (value > 0.0)
+        {
+            Gage[index].scaleFactor = value;
             return 0;
         }
         else
@@ -1394,6 +2031,87 @@ int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, 
             }
             else
                 return ERR_API_PROPERTY_VALUE;
+        case swmm_SUBCATCH_API_PET:
+            // negative value clears the prescription (reverts to climate evap)
+            if (value < 0.0) Subcatch[index].apiEvapRate = MISSING;
+            else             Subcatch[index].apiEvapRate = value / UCF(EVAPRATE);
+            return 0;
+        case swmm_SUBCATCH_GW_MOISTURE:
+        {
+            // sets the groundwater upper zone moisture content
+            double x[4];
+            if (Subcatch[index].groundwater == NULL)
+                return ERR_API_OBJECT_INDEX;
+            if (value < 0.0)
+                return ERR_API_PROPERTY_VALUE;
+            gwater_getState(index, x);
+            x[0] = value;
+            x[3] = MISSING;   // keep maxInfilVol unchanged
+            gwater_setState(index, x);
+            return 0;
+        }
+        case swmm_SUBCATCH_GW_LOWER_DEPTH:
+        {
+            // sets the saturated (lower) zone depth above the aquifer bottom
+            double x[4];
+            if (Subcatch[index].groundwater == NULL)
+                return ERR_API_OBJECT_INDEX;
+            if (value < 0.0)
+                return ERR_API_PROPERTY_VALUE;
+            gwater_getState(index, x);
+            x[1] = Subcatch[index].groundwater->bottomElev + value / UCF(LENGTH);
+            x[3] = MISSING;   // keep maxInfilVol unchanged
+            gwater_setState(index, x);
+            return 0;
+        }
+        case swmm_SUBCATCH_SNOW_SWE:
+        case swmm_SUBCATCH_SNOW_FW:
+        case swmm_SUBCATCH_SNOW_ATI:
+        case swmm_SUBCATCH_SNOW_COLDC:
+        {
+            // sets snow pack state on one snow subarea (subIndex 0-2)
+            TSnowpack* snowpack = Subcatch[index].snowpack;
+            if (snowpack == NULL)
+                return ERR_API_OBJECT_INDEX;
+            // snow subareas: 0 = plowable, 1 = impervious, 2 = pervious
+            if (subIndex < 0 || subIndex > 2)
+                return ERR_API_OBJECT_INDEX;
+            switch (property)
+            {
+            case swmm_SUBCATCH_SNOW_SWE:
+                if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+                snowpack->wsnow[subIndex] = value / UCF(RAINDEPTH);
+                break;
+            case swmm_SUBCATCH_SNOW_FW:
+                if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+                snowpack->fw[subIndex] = value / UCF(RAINDEPTH);
+                break;
+            case swmm_SUBCATCH_SNOW_ATI:
+                if (UnitSystem == SI) value = (9. / 5.) * value + 32.0;
+                snowpack->ati[subIndex] = value;
+                break;
+            case swmm_SUBCATCH_SNOW_COLDC:
+                if (value < 0.0) return ERR_API_PROPERTY_VALUE;
+                snowpack->coldc[subIndex] = value / UCF(RAINDEPTH);
+                break;
+            }
+            return 0;
+        }
+        case swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION:
+        {
+            // sets ponded surface water quality from a concentration
+            // (inverse of the getter); requires ponded water to hold mass
+            double pondedVol;
+            if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
+                return ERR_API_OBJECT_INDEX;
+            if (value < 0.0)
+                return ERR_API_PROPERTY_VALUE;
+            pondedVol = subcatch_getDepth(index) *
+                        MAX(0.0, Subcatch[index].area - Subcatch[index].lidArea) *
+                        UCF(LANDAREA);
+            Subcatch[index].pondedQual[pollutantIndex] = value * pondedVol;
+            return 0;
+        }
         case swmm_SUBCATCH_EXTERNAL_POLLUTANT_BUILDUP:
         {
             if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
@@ -1457,6 +2175,11 @@ int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, 
             }
             else
                 return ERR_API_PROPERTY_VALUE;
+        case swmm_SUBCATCH_API_PET:
+            // negative value clears the prescription (reverts to climate evap)
+            if (value < 0.0) Subcatch[index].apiEvapRate = MISSING;
+            else             Subcatch[index].apiEvapRate = value / UCF(EVAPRATE);
+            return 0;
         case swmm_SUBCATCH_RPTFLAG:
             if (value >= 0.0)
             {
@@ -1751,6 +2474,8 @@ static double getGageValue(int property, int index)
         return rain * UCF(RAINFALL);
     case swmm_GAGE_SNOWFALL:
         return snow * UCF(RAINFALL);
+    case swmm_GAGE_SCALEFACTOR:
+        return Gage[index].scaleFactor;
     default:
         return ERR_API_PROPERTY_TYPE;
     }
@@ -1847,6 +2572,48 @@ static double getSubcatchValue(int property, int index, int subIndex, int pollut
         return subcatch->apiRainfall * UCF(RAINFALL);
     case swmm_SUBCATCH_API_SNOWFALL:
         return subcatch->apiSnowfall * UCF(RAINFALL);
+    case swmm_SUBCATCH_API_PET:
+        // returns -1 when no PET prescription is active
+        if (subcatch->apiEvapRate == MISSING) return -1.0;
+        return subcatch->apiEvapRate * UCF(EVAPRATE);
+    case swmm_SUBCATCH_GW_MOISTURE:
+    {
+        double x[4];
+        if (subcatch->groundwater == NULL) return ERR_API_OBJECT_INDEX;
+        gwater_getState(index, x);
+        return x[0];
+    }
+    case swmm_SUBCATCH_GW_LOWER_DEPTH:
+    {
+        double x[4];
+        if (subcatch->groundwater == NULL) return ERR_API_OBJECT_INDEX;
+        gwater_getState(index, x);
+        return (x[1] - subcatch->groundwater->bottomElev) * UCF(LENGTH);
+    }
+    case swmm_SUBCATCH_SNOW_SWE:
+    case swmm_SUBCATCH_SNOW_FW:
+    case swmm_SUBCATCH_SNOW_ATI:
+    case swmm_SUBCATCH_SNOW_COLDC:
+    {
+        TSnowpack* snowpack = subcatch->snowpack;
+        if (snowpack == NULL) return ERR_API_OBJECT_INDEX;
+        // snow subareas: 0 = plowable, 1 = impervious, 2 = pervious
+        if (subIndex < 0 || subIndex > 2)
+            return ERR_API_OBJECT_INDEX;
+        switch (property)
+        {
+        case swmm_SUBCATCH_SNOW_SWE:
+            return snowpack->wsnow[subIndex] * UCF(RAINDEPTH);
+        case swmm_SUBCATCH_SNOW_FW:
+            return snowpack->fw[subIndex] * UCF(RAINDEPTH);
+        case swmm_SUBCATCH_SNOW_ATI:
+            if (UnitSystem == SI)
+                return (snowpack->ati[subIndex] - 32.0) * 5.0 / 9.0;
+            return snowpack->ati[subIndex];
+        default:
+            return snowpack->coldc[subIndex] * UCF(RAINDEPTH);
+        }
+    }
     case swmm_SUBCATCH_POLLUTANT_BUILDUP:
         if (pollutantIndex < 0 || pollutantIndex >= Nobjects[POLLUT])
             return ERR_API_OBJECT_INDEX;
@@ -1922,6 +2689,8 @@ static double getNodeValue(int property, int index, int subIndex, int pollutantI
             return node->inflow * UCF(FLOW);
         case swmm_NODE_OVERFLOW:
             return node->overflow * UCF(FLOW);
+        case swmm_NODE_OUTFLOW:
+            return node->outflow * UCF(FLOW);
         case swmm_NODE_RPTFLAG:
             return (node->rptFlag > 0);
         case swmm_NODE_SURCHARGE_DEPTH:
@@ -2137,6 +2906,29 @@ double getSystemValue(int property)
         return SysFlowTol;
     case swmm_LATFLOWTOL:
         return LatFlowTol;
+    case swmm_EVAPRATE:
+        return Evap.rate * UCF(EVAPRATE);
+    case swmm_TEMPERATURE:
+        // deg F internal -> deg C for SI projects
+        if (UnitSystem == SI) return (Temp.ta - 32.0) * 5.0 / 9.0;
+        return Temp.ta;
+    case swmm_API_TEMPERATURE:
+        // returns -999 when no temperature prescription is active
+        if (Temp.apiTemp == MISSING) return -999.0;
+        if (UnitSystem == SI) return (Temp.apiTemp - 32.0) * 5.0 / 9.0;
+        return Temp.apiTemp;
+    case swmm_WINDSPEED:
+        return Wind.ws * UCF(WINDSPEED);
+    case swmm_API_WINDSPEED:
+        // returns -1 when no wind prescription is active
+        if (Wind.apiWs == MISSING) return -1.0;
+        return Wind.apiWs * UCF(WINDSPEED);
+    case swmm_API_EVAP:
+        // returns -1 when no evaporation prescription is active
+        if (Evap.apiRate == MISSING) return -1.0;
+        return Evap.apiRate * UCF(EVAPRATE);
+    case swmm_EVAP_DRY_ONLY:
+        return (Evap.dryOnly ? 1.0 : 0.0);
     default:
         return ERR_API_PROPERTY_TYPE;
     }
@@ -2361,6 +3153,36 @@ static int setRoutingStep(double value)
 static int setSystemValue(int property, double value)
 {
     int y, m, d, h, mm, s;
+
+    // --- properties that may be set while the simulation is running
+    switch (property)
+    {
+    case swmm_API_TEMPERATURE:
+        // value <= -999 clears the prescription (reverts to climate temp.)
+        if (value <= -999.0) Temp.apiTemp = MISSING;
+        else
+        {
+            // convert deg C to deg F if need be
+            if (UnitSystem == SI) value = (9. / 5.) * value + 32.0;
+            Temp.apiTemp = value;
+        }
+        return 0;
+    case swmm_API_WINDSPEED:
+        // negative value clears the prescription (reverts to climate wind)
+        if (value < 0.0) Wind.apiWs = MISSING;
+        else Wind.apiWs = value / UCF(WINDSPEED);
+        return 0;
+    case swmm_API_EVAP:
+        // negative value clears the prescription (reverts to climate evap)
+        if (value < 0.0) Evap.apiRate = MISSING;
+        else Evap.apiRate = value / UCF(EVAPRATE);
+        return 0;
+    case swmm_EVAP_DRY_ONLY:
+        Evap.dryOnly = (value > 0.0);
+        return 0;
+    default:
+        break;
+    }
 
     if (IsStartedFlag)
         return ERR_API_NOT_ENDED;
@@ -2747,6 +3569,8 @@ static void getAbsolutePath(const char *fname, char *absPath, size_t size)
     // --- case of empty file anme
     if (fname == NULL || strlen(fname) == 0)
         return;
+    if (size == 0)
+        return;
 
     // --- if fname has a relative path then retrieve its full path
     if (isRelativePath(fname))
@@ -2758,11 +3582,19 @@ static void getAbsolutePath(const char *fname, char *absPath, size_t size)
             // realpath() can write up to PATH_MAX (4096) bytes, which may
             // exceed the size of absPath.  Passing NULL lets libc allocate
             // a sufficiently large buffer (POSIX.1-2008).
+            //
+            // sstrncpy(dest, src, n) copies up to n source chars and writes
+            // the null terminator at dest[n], so the buffer must be at least
+            // n+1 bytes — pass size-1 to keep the write inside absPath.
             char *resolved = realpath(fname, NULL);
             if (resolved)
             {
-                sstrncpy(absPath, resolved, size);
+                sstrncpy(absPath, resolved, size - 1);
                 free(resolved);
+            }
+            else
+            {
+                absPath[0] = '\0';
             }
         }
 #endif
@@ -2771,7 +3603,9 @@ static void getAbsolutePath(const char *fname, char *absPath, size_t size)
     // --- otherwise copy fname to absPath
     else
     {
-        sstrncpy(absPath, fname, strlen(fname));
+        size_t flen = strlen(fname);
+        if (flen > size - 1) flen = size - 1;
+        sstrncpy(absPath, fname, flen);
     }
 
 // --- trim file name portion of absPath

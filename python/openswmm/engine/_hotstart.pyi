@@ -1,106 +1,78 @@
 """
-Hot Start File Management
-=========================
-
-:author: Caleb Buahin
-:copyright: Copyright (c) HydroCouple 2026
-:license: MIT
+Hot start files (Pythonic v1 surface)
+=====================================
 
 Type stubs for :mod:`openswmm.engine._hotstart`.
-
-The :class:`HotStart` class manages hot start files for saving and restoring
-simulation state across runs.
 """
 
-from types import TracebackType
-from typing import Optional, Type
+from collections.abc import MutableSequence
+from datetime import datetime
+from os import PathLike
+from typing import Any, List, NamedTuple, Optional, Union
 
 from ._solver import Solver
 
 
+_PathLike = Union[str, PathLike[str]]
+
+
+class SaveScheduleEntry(NamedTuple):
+    when: datetime
+    path: str
+
+
 class HotStart:
-    """Handle to a hot start file.
-
-    Use :meth:`save` to write simulation state to disk and :meth:`open`
-    to read it back. Supports the context manager protocol for automatic
-    cleanup.
-
-    Example -- Saving a hot start::
-
-        with Solver("model.inp") as s:
-            while s.step():
-                pass
-            HotStart.save(s, "warmup.hs")
-
-    Example -- Applying a hot start::
-
-        with HotStart.open("warmup.hs") as hs:
-            s = Solver("model.inp")
-            s.open()
-            s.initialize()
-            hs.apply(s)
-            s.start()
-            while s.step():
-                pass
-            s.end()
-            s.destroy()
-    """
-
     def __init__(self) -> None: ...
 
     @staticmethod
-    def save(solver: Solver, path: str) -> None:
-        """Save the current simulation state to a hot start file.
-
-        Args:
-            solver: An active :class:`Solver` in RUNNING or ENDED state.
-            path: Output file path.
-
-        Raises:
-            EngineError: If the state cannot be saved.
-        """
-        ...
+    def save_from(solver: Solver, path: _PathLike) -> None: ...
 
     @classmethod
-    def open(cls, path: str) -> "HotStart":
-        """Open a hot start file for reading.
+    def open(cls, path: _PathLike) -> "HotStart": ...
 
-        Args:
-            path: Path to an existing hot start file.
-
-        Returns:
-            A new :class:`HotStart` handle.
-
-        Raises:
-            IOError: If the file cannot be opened.
-        """
-        ...
-
-    def apply(self, solver: Solver) -> None:
-        """Apply this hot start state to an engine.
-
-        The engine must be in ``INITIALIZED`` state (after
-        :meth:`Solver.initialize` but before :meth:`Solver.start`).
-
-        Args:
-            solver: Target :class:`Solver`.
-
-        Raises:
-            EngineError: If the state cannot be applied.
-        """
-        ...
-
-    def close(self) -> None:
-        """Close the hot start file and free resources.
-
-        Safe to call multiple times.
-        """
-        ...
-
+    def close(self) -> None: ...
     def __enter__(self) -> "HotStart": ...
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
-    ) -> bool: ...
+    def __exit__(self, *args: Any) -> bool: ...
+
+    def apply(self, solver: Solver) -> None: ...
+
+    @property
+    def sim_datetime(self) -> datetime:
+        """Simulation moment at which the hot-start state was captured."""
+        ...
+    @property
+    def crs(self) -> Optional[str]:
+        """Coordinate reference system string recorded in the file, or ``None``."""
+        ...
+    @property
+    def node_count(self) -> int:
+        """Number of nodes stored in the hot-start blob."""
+        ...
+    @property
+    def link_count(self) -> int:
+        """Number of links stored in the hot-start blob."""
+        ...
+    @property
+    def warnings(self) -> List[str]:
+        """Warnings emitted while opening or applying the hot-start file."""
+        ...
+
+    def set_node_depth(self, node_id: str, depth: float) -> None: ...
+    def set_node_head(self, node_id: str, head: float) -> None: ...
+    def set_link_flow(self, link_id: str, flow: float) -> None: ...
+    def set_link_depth(self, link_id: str, depth: float) -> None: ...
+    def set_subcatchment_runoff(self, sub_id: str, runoff: float) -> None: ...
+
+    def __repr__(self) -> str: ...
+
+
+class SaveSchedule(MutableSequence[SaveScheduleEntry]):
+    def __init__(self, solver: Solver) -> None: ...
+
+    def __len__(self) -> int: ...
+    def __getitem__(self, idx: Any) -> Any: ...
+    def __setitem__(self, idx: Any, value: Any) -> None: ...
+    def __delitem__(self, idx: Any) -> None: ...
+    def insert(self, idx: int, value: Any) -> None: ...
+    def append(self, value: Any) -> None: ...
+    def clear(self) -> None: ...

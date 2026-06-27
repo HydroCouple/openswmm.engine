@@ -1,0 +1,2 @@
+Q_in_cfs,channel_width_ft,bed_slope,n_mann,channel_length_ft,dt_s,n_steps,ss_check_step,ss_tol_rel,massbal_tol_rel
+50.0,10.0,0.001,0.013,500.0,60.0,10,10,0.005,0.05

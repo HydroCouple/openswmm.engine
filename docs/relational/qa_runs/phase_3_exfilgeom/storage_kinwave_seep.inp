@@ -1,0 +1,55 @@
+[TITLE]
+QA Phase 3.1b — KINWAVE functional storage + seepage.
+Exercises the Routing.cpp getVolume/getDepth (Router::step) and
+getSurfArea (initNodeFlows, via seepage) side-table read sites.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         KINWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+END_TIME             06:00:00
+REPORT_STEP          00:05:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         10
+ALLOW_PONDING        NO
+
+[JUNCTIONS]
+;;Name   Elev   MaxDepth  InitDepth  SurDepth  Aponded
+J1       20     6         0          0         0
+
+[STORAGE]
+;;Name   Elev  MaxDepth  InitDepth  Shape       A1     A2   A0    SurDepth  Fevap  Seep
+STOR1    10    12        2          FUNCTIONAL  1000   0    500   0         0      0.5
+
+[OUTFALLS]
+;;Name   Elev   Type   StageData   Gated
+OUT1     5      FREE               NO
+
+[CONDUITS]
+;;Name   FromNode  ToNode  Length  Roughness  InOffset  OutOffset  InitFlow  MaxFlow
+C_IN     J1        STOR1   200     0.013      0         0          0         0
+C_OUT    STOR1     OUT1    200     0.013      0         0          0         0
+
+[XSECTIONS]
+;;Link   Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C_IN     CIRCULAR  3.0    0      0      0      1
+C_OUT    CIRCULAR  2.0    0      0      0      1
+
+[INFLOWS]
+;;Node  Constituent  TimeSeries  Type   Mfactor  Sfactor  Baseline  Pattern
+J1      FLOW         TS_IN       FLOW   1.0      1.0
+
+[TIMESERIES]
+;;Name   Date  Time   Value
+TS_IN          0:00   10.0
+TS_IN          2:00   10.0
+TS_IN          2:05   0.0
+TS_IN          6:00   0.0
+
+[REPORT]
+INPUT     NO
+NODES     ALL
+LINKS     ALL

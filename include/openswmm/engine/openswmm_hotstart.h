@@ -51,7 +51,7 @@
  * @see Legacy reference: src/solver/hotstart.c — swmm_saveHotstart(), swmm_useHotstart()
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -72,6 +72,107 @@ typedef void* SWMM_HotStart;
 
 /** @brief Current hot start format version number. */
 #define OPENSWMM_HOTSTART_VERSION  1
+
+/* =========================================================================
+ * [FILES] section — `SAVE HOTSTART` entry management (Slice BV-01)
+ *
+ * These functions manage the *static* list of scheduled hot-start save
+ * entries that live in the `[FILES]` section of an `.inp` file
+ * (`SimulationContext::hotstart_saves`).  They are distinct from the
+ * runtime `swmm_hotstart_save()` function below, which writes a single
+ * hot-start file at the current sim time.
+ *
+ * Each entry is a `{path, datetime}` pair.  A `datetime` of `0.0`
+ * means "no datetime — save at end of run" (matches legacy semantics).
+ *
+ * The legacy singular `swmm_files_set("HOTSTART_SAVE_PATH", …)` /
+ * `_DATETIME` keys remain as slot-0 sugar.
+ * ========================================================================= */
+
+/**
+ * @brief Get the number of `SAVE HOTSTART` entries currently in `[FILES]`.
+ * @param engine  Engine handle.
+ * @param count   [out] Vector size (>= 0).
+ * @returns SWMM_OK or SWMM_ERR_BADHANDLE / SWMM_ERR_BADPARAM.
+ */
+SWMM_ENGINE_API int swmm_hotstart_saves_count(SWMM_Engine engine, int* count);
+
+/**
+ * @brief Get the path of the i-th `SAVE HOTSTART` entry.
+ * @param engine  Engine handle.
+ * @param idx     Slot index in `[0, swmm_hotstart_saves_count)`.
+ * @param buf     Caller-allocated buffer.
+ * @param buflen  Buffer size (NUL-terminated, truncated at `buflen - 1`).
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` is out of range.
+ */
+SWMM_ENGINE_API int swmm_hotstart_saves_get_path(
+    SWMM_Engine engine, int idx, char* buf, int buflen);
+
+/**
+ * @brief Get the datetime (decimal day; `0.0` = "end of run") of the
+ *        i-th `SAVE HOTSTART` entry.
+ * @param engine    Engine handle.
+ * @param idx       Slot index.
+ * @param datetime  [out] Decimal day.
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` is out of range.
+ */
+SWMM_ENGINE_API int swmm_hotstart_saves_get_datetime(
+    SWMM_Engine engine, int idx, double* datetime);
+
+/**
+ * @brief Replace the path of an existing `SAVE HOTSTART` entry.
+ *
+ * @details Multi-slot generalization of `swmm_files_set("HOTSTART_SAVE_PATH",
+ *          …)` (which only addresses slot 0).  Empty path + zero
+ *          datetime does *not* auto-remove the row here — the caller
+ *          is expected to manage row lifecycle explicitly via
+ *          `_remove()` / `_clear()`.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Slot index.
+ * @param path    New path (may be empty).
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` is out of range.
+ */
+SWMM_ENGINE_API int swmm_hotstart_saves_set_path(
+    SWMM_Engine engine, int idx, const char* path);
+
+/**
+ * @brief Replace the datetime of an existing `SAVE HOTSTART` entry.
+ *
+ * @param engine    Engine handle.
+ * @param idx       Slot index.
+ * @param datetime  Decimal day (`0.0` = "save at end of run").
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` is out of range.
+ */
+SWMM_ENGINE_API int swmm_hotstart_saves_set_datetime(
+    SWMM_Engine engine, int idx, double datetime);
+
+/**
+ * @brief Append a new `SAVE HOTSTART` entry.
+ *
+ * @param engine    Engine handle.
+ * @param path      File path (must be non-NULL; may be empty for a
+ *                  placeholder row to be filled in later).
+ * @param datetime  Decimal day (`0.0` = "save at end of run").
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM if `path` is NULL.
+ */
+SWMM_ENGINE_API int swmm_hotstart_saves_add(
+    SWMM_Engine engine, const char* path, double datetime);
+
+/**
+ * @brief Remove the i-th `SAVE HOTSTART` entry; subsequent slots shift down.
+ * @param engine  Engine handle.
+ * @param idx     Slot index.
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` is out of range.
+ */
+SWMM_ENGINE_API int swmm_hotstart_saves_remove(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Remove all `SAVE HOTSTART` entries.
+ * @param engine  Engine handle.
+ * @returns SWMM_OK or SWMM_ERR_BADHANDLE.
+ */
+SWMM_ENGINE_API int swmm_hotstart_saves_clear(SWMM_Engine engine);
 
 /* =========================================================================
  * Create / save

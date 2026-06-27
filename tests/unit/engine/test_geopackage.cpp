@@ -87,18 +87,6 @@ protected:
             ctx.nodes.init_depth.resize(n);
             ctx.nodes.sur_depth.resize(n);
             ctx.nodes.ponded_area.resize(n);
-            ctx.nodes.outfall_type.resize(n);
-            ctx.nodes.outfall_param.resize(n);
-            ctx.nodes.outfall_has_flap_gate.resize(n);
-            ctx.nodes.storage_curve.resize(n);
-            ctx.nodes.storage_curve_name.resize(n);
-            ctx.nodes.storage_a.resize(n);
-            ctx.nodes.storage_b.resize(n);
-            ctx.nodes.storage_c.resize(n);
-            ctx.nodes.divider_type.resize(n);
-            ctx.nodes.divider_cutoff.resize(n);
-            ctx.nodes.divider_curve.resize(n);
-            ctx.nodes.divider_curve_name.resize(n);
 
             ctx.nodes.type[idx] = NodeType::JUNCTION;
             ctx.nodes.invert_elev[idx] = 100.0 - idx * 2.0;
@@ -118,23 +106,13 @@ protected:
             ctx.nodes.init_depth.resize(n);
             ctx.nodes.sur_depth.resize(n);
             ctx.nodes.ponded_area.resize(n);
-            ctx.nodes.outfall_type.resize(n);
-            ctx.nodes.outfall_param.resize(n);
-            ctx.nodes.outfall_has_flap_gate.resize(n);
-            ctx.nodes.storage_curve.resize(n);
-            ctx.nodes.storage_curve_name.resize(n);
-            ctx.nodes.storage_a.resize(n);
-            ctx.nodes.storage_b.resize(n);
-            ctx.nodes.storage_c.resize(n);
-            ctx.nodes.divider_type.resize(n);
-            ctx.nodes.divider_cutoff.resize(n);
-            ctx.nodes.divider_curve.resize(n);
-            ctx.nodes.divider_curve_name.resize(n);
 
-            ctx.nodes.type[idx] = NodeType::OUTFALL;
+            const int outfall_row =
+                ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::OUTFALL);
             ctx.nodes.invert_elev[idx] = 90.0;
             ctx.nodes.full_depth[idx] = 0.0;
-            ctx.nodes.outfall_type[idx] = OutfallType::FREE;
+            ctx.node_subtypes.outfalls.bc_type[
+                static_cast<std::size_t>(outfall_row)] = OutfallType::FREE;
         }
 
         // --- COORDINATES ---
@@ -157,37 +135,31 @@ protected:
             ctx.links.xsect_y_full.resize(n);
             ctx.links.xsect_a_full.resize(n);
             ctx.links.xsect_w_max.resize(n);
+            ctx.links.xsect_geom1.resize(n);
+            ctx.links.xsect_geom2.resize(n);
+            ctx.links.xsect_geom3.resize(n);
+            ctx.links.xsect_geom4.resize(n);
             ctx.links.xsect_curve.resize(n);
-            ctx.links.roughness.resize(n);
-            ctx.links.length.resize(n);
-            ctx.links.barrels.resize(n);
-            ctx.links.culvert_code.resize(n);
-            ctx.links.loss_inlet.resize(n);
-            ctx.links.loss_outlet.resize(n);
-            ctx.links.loss_avg.resize(n);
             ctx.links.has_flap_gate.resize(n);
-            ctx.links.seep_rate.resize(n);
-            ctx.links.pump_curve.resize(n);
             ctx.links.pump_curve_name.resize(n);
-            ctx.links.pump_init_state.resize(n);
-            ctx.links.pump_startup.resize(n);
-            ctx.links.pump_shutoff.resize(n);
-            ctx.links.crest_height.resize(n);
-            ctx.links.cd.resize(n);
             ctx.links.xsect_y_bot.resize(n);
             ctx.spatial.link_vertices_x.resize(n);
             ctx.spatial.link_vertices_y.resize(n);
             ctx.spatial.link_x.resize(n);
             ctx.spatial.link_y.resize(n);
 
-            ctx.links.type[idx] = LinkType::CONDUIT;
+            // Phase 6: subtype config lives in the relational side-tables.
+            const auto cr = static_cast<std::size_t>(
+                ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::CONDUIT));
+            auto& C = ctx.link_subtypes.conduits;
             ctx.links.node1[idx] = i;
             ctx.links.node2[idx] = i + 1;
             ctx.links.xsect_shape[idx] = XsectShape::CIRCULAR;
             ctx.links.xsect_y_full[idx] = 2.0;
-            ctx.links.roughness[idx] = 0.013;
-            ctx.links.length[idx] = 400.0;
-            ctx.links.barrels[idx] = 1;
+            ctx.links.xsect_geom1[idx] = 2.0;   // raw [XSECTIONS] geom1 (diameter), persisted by the gpkg
+            C.roughness[cr] = 0.013;
+            C.length[cr] = 400.0;
+            C.barrels[cr] = 1;
             ctx.links.xsect_curve[idx] = -1;
         }
 
@@ -307,10 +279,27 @@ protected:
                                                  0.7, 0.8, 0.9, 1.0, 1.1, 1.2});
         }
 
-        // --- TAGS ---
-        ctx.node_tags["J1"] = "upstream";
-        ctx.link_tags["C1"] = "trunk";
-        ctx.subcatch_tags["S1"] = "residential";
+        // --- TAGS --- (now per-index on the SoA; resolve name → idx)
+        {
+            const int j1 = ctx.node_names.find("J1");
+            if (j1 >= 0) {
+                const auto u = static_cast<std::size_t>(j1);
+                if (u >= ctx.nodes.tags.size()) ctx.nodes.tags.resize(u + 1);
+                ctx.nodes.tags[u] = "upstream";
+            }
+            const int c1 = ctx.link_names.find("C1");
+            if (c1 >= 0) {
+                const auto u = static_cast<std::size_t>(c1);
+                if (u >= ctx.links.tags.size()) ctx.links.tags.resize(u + 1);
+                ctx.links.tags[u] = "trunk";
+            }
+            const int s1 = ctx.subcatch_names.find("S1");
+            if (s1 >= 0) {
+                const auto u = static_cast<std::size_t>(s1);
+                if (u >= ctx.subcatches.tags.size()) ctx.subcatches.tags.resize(u + 1);
+                ctx.subcatches.tags[u] = "residential";
+            }
+        }
 
         return ctx;
     }
@@ -397,6 +386,42 @@ TEST_F(GeoPackageTest, OptionsRoundTrip) {
     EXPECT_EQ(ctx_in.spatial.crs, "EPSG:4326");
 }
 
+// Climate settings ([TEMPERATURE]/[WINDSPEED]/SNOWMELT/ADC) round-trip,
+// including snow_elev and snow_dtlong (added to the climate_settings schema).
+TEST_F(GeoPackageTest, ClimateSettingsRoundTrip) {
+    auto ctx_out = build_test_context();
+    ctx_out.options.temp_source    = 1;        // TIMESERIES
+    ctx_out.options.temp_ts_name   = "TempTS";
+    ctx_out.options.temp_units     = 2;        // degF (newly round-tripped)
+    ctx_out.options.wind_type      = 0;        // MONTHLY
+    for (int i = 0; i < 12; ++i) ctx_out.options.wind_speed[i] = i + 1;
+    ctx_out.options.snow_divt      = 32.5;
+    ctx_out.options.snow_ati_wt    = 0.45;
+    ctx_out.options.snow_nrg_ratio = 0.55;
+    ctx_out.options.snow_lat       = 40.5;
+    ctx_out.options.snow_elev      = 100.0;    // newly round-tripped
+    ctx_out.options.snow_dtlong    = 240.0;    // newly round-tripped (minutes)
+    for (int i = 0; i < 10; ++i) ctx_out.options.adc_imperv[i] = 1.0 - i * 0.1;
+
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "clim"), 0);
+
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "clim"), 0);
+
+    EXPECT_EQ(ctx_in.options.temp_source, 1);
+    EXPECT_EQ(ctx_in.options.temp_ts_name, "TempTS");
+    EXPECT_EQ(ctx_in.options.temp_units, 2);
+    EXPECT_EQ(ctx_in.options.wind_type, 0);
+    EXPECT_DOUBLE_EQ(ctx_in.options.wind_speed[11], 12.0);
+    EXPECT_DOUBLE_EQ(ctx_in.options.snow_divt, 32.5);
+    EXPECT_DOUBLE_EQ(ctx_in.options.snow_ati_wt, 0.45);
+    EXPECT_DOUBLE_EQ(ctx_in.options.snow_nrg_ratio, 0.55);
+    EXPECT_DOUBLE_EQ(ctx_in.options.snow_lat, 40.5);
+    EXPECT_DOUBLE_EQ(ctx_in.options.snow_elev, 100.0);
+    EXPECT_DOUBLE_EQ(ctx_in.options.snow_dtlong, 240.0);
+    EXPECT_DOUBLE_EQ(ctx_in.options.adc_imperv[0], 1.0);
+}
+
 TEST_F(GeoPackageTest, JunctionsRoundTrip) {
     auto ctx_out = build_test_context();
     ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
@@ -423,8 +448,202 @@ TEST_F(GeoPackageTest, OutfallRoundTrip) {
     int o1 = ctx_in.node_names.find("O1");
     ASSERT_GE(o1, 0);
     EXPECT_EQ(ctx_in.nodes.type[o1], NodeType::OUTFALL);
-    EXPECT_EQ(ctx_in.nodes.outfall_type[o1], OutfallType::FREE);
+    EXPECT_EQ(ctx_in.node_subtypes.outfalls.bc_type[
+                  static_cast<std::size_t>(ctx_in.node_subtypes.outfall_row(o1))],
+              OutfallType::FREE);
     EXPECT_DOUBLE_EQ(ctx_in.nodes.invert_elev[o1], 90.0);
+}
+
+// Relational node child tables (storages/outfalls/dividers): full lossless field
+// set round-trip, incl. the divider subtype (no QA model exercises dividers) and
+// the fields the flat schema used to drop (storage seep/evap/exfil, outfall
+// route_to, divider cd/max_depth/curve/link).
+TEST_F(GeoPackageTest, NodeSubtypeChildTablesRoundTrip) {
+    SimulationContext ctx{};
+    ctx.options.flow_units = FlowUnits::CFS;   // US: no unit conversion in play
+    ctx.spatial.crs = "EPSG:4326";
+
+    auto add_node = [&](const char* nm) {
+        int idx = ctx.node_names.add(nm);
+        const auto n = static_cast<std::size_t>(idx + 1);
+        ctx.nodes.type.resize(n); ctx.nodes.invert_elev.resize(n);
+        ctx.nodes.full_depth.resize(n); ctx.nodes.init_depth.resize(n);
+        ctx.nodes.sur_depth.resize(n); ctx.nodes.ponded_area.resize(n);
+        ctx.nodes.type[static_cast<std::size_t>(idx)] = NodeType::JUNCTION;
+        return idx;
+    };
+    add_node("J1");
+    const int st = add_node("ST1");
+    const int of = add_node("OF1");
+    const int dv = add_node("DV1");
+    ctx.spatial.node_x = {0.0, 1.0, 2.0, 3.0};
+    ctx.spatial.node_y = {0.0, 0.0, 0.0, 0.0};
+
+    // A subcatchment for the outfall route_to target.
+    { int s = ctx.subcatch_names.add("S1");
+      const auto n = static_cast<std::size_t>(s + 1);
+      ctx.subcatches.outlet_node.resize(n, -1);
+      ctx.subcatches.outlet_subcatch.resize(n, -1);
+      ctx.subcatches.outlet_name.resize(n); }
+
+    auto& S = ctx.node_subtypes.storages;
+    const auto sr = static_cast<std::size_t>(ctx.node_subtypes.set_node_type(ctx.nodes, st, NodeType::STORAGE));
+    S.curve_name[sr] = "StoreCurve"; S.a[sr] = 1.5; S.b[sr] = 0.6; S.c[sr] = 2.5;
+    S.seep_rate[sr] = 0.1; S.evap_frac[sr] = 0.2;
+    S.exfil_suction[sr] = 3.0; S.exfil_ksat[sr] = 0.05; S.exfil_imd[sr] = 0.3;
+
+    auto& O = ctx.node_subtypes.outfalls;
+    const auto orr = static_cast<std::size_t>(ctx.node_subtypes.set_node_type(ctx.nodes, of, NodeType::OUTFALL));
+    O.bc_type[orr] = OutfallType::FIXED; O.param[orr] = 12.5; O.has_flap_gate[orr] = 1;
+    O.route_to[orr] = ctx.subcatch_names.find("S1");
+
+    auto& D = ctx.node_subtypes.dividers;
+    const auto dr = static_cast<std::size_t>(ctx.node_subtypes.set_node_type(ctx.nodes, dv, NodeType::DIVIDER));
+    D.method[dr] = DividerType::WEIR; D.cutoff[dr] = 1.1; D.cd[dr] = 0.9; D.max_depth[dr] = 4.0;
+    D.curve_name[dr] = "DivCurve"; D.link_name[dr] = "DivLink";
+
+    ASSERT_EQ(write_to_file(db_path_, ctx, "r"), 0);
+    SimulationContext in{};
+    ASSERT_EQ(read_from_file(db_path_, in, "r"), 0);
+
+    const int ist = in.node_names.find("ST1");
+    const auto uis = static_cast<std::size_t>(in.node_subtypes.storage_row(ist));
+    ASSERT_GE(in.node_subtypes.storage_row(ist), 0);
+    const auto& IS = in.node_subtypes.storages;
+    EXPECT_EQ(IS.curve_name[uis], "StoreCurve");
+    EXPECT_DOUBLE_EQ(IS.a[uis], 1.5); EXPECT_DOUBLE_EQ(IS.b[uis], 0.6); EXPECT_DOUBLE_EQ(IS.c[uis], 2.5);
+    EXPECT_DOUBLE_EQ(IS.seep_rate[uis], 0.1); EXPECT_DOUBLE_EQ(IS.evap_frac[uis], 0.2);
+    EXPECT_DOUBLE_EQ(IS.exfil_suction[uis], 3.0); EXPECT_DOUBLE_EQ(IS.exfil_ksat[uis], 0.05);
+    EXPECT_DOUBLE_EQ(IS.exfil_imd[uis], 0.3);
+
+    const int iof = in.node_names.find("OF1");
+    const auto uio = static_cast<std::size_t>(in.node_subtypes.outfall_row(iof));
+    ASSERT_GE(in.node_subtypes.outfall_row(iof), 0);
+    const auto& IO = in.node_subtypes.outfalls;
+    EXPECT_EQ(IO.bc_type[uio], OutfallType::FIXED);
+    EXPECT_DOUBLE_EQ(IO.param[uio], 12.5);
+    EXPECT_EQ(IO.has_flap_gate[uio], 1);
+    EXPECT_EQ(IO.route_to[uio], in.subcatch_names.find("S1"));  // name -> index resolved
+
+    const int idv = in.node_names.find("DV1");
+    const auto uid = static_cast<std::size_t>(in.node_subtypes.divider_row(idv));
+    ASSERT_GE(in.node_subtypes.divider_row(idv), 0);
+    const auto& ID = in.node_subtypes.dividers;
+    EXPECT_EQ(ID.method[uid], DividerType::WEIR);
+    EXPECT_DOUBLE_EQ(ID.cutoff[uid], 1.1); EXPECT_DOUBLE_EQ(ID.cd[uid], 0.9);
+    EXPECT_DOUBLE_EQ(ID.max_depth[uid], 4.0);
+    EXPECT_EQ(ID.curve_name[uid], "DivCurve");
+    EXPECT_EQ(ID.link_name[uid], "DivLink");
+}
+
+// Phase 7: relational link child tables (conduits/pumps/orifices/weirs/outlets):
+// lossless field-set round-trip with the param1/param2 -> NAMED column mapping.
+// Emphasis on weir + outlet (no QA model exercises them) and the TABULAR outlet
+// rating-curve NAME path; pump/orifice are covered by extran6/extran3 parity too.
+TEST_F(GeoPackageTest, LinkSubtypeChildTablesRoundTrip) {
+    SimulationContext ctx{};
+    ctx.options.flow_units = FlowUnits::CFS;   // US: no unit conversion in play
+    ctx.spatial.crs = "EPSG:4326";
+
+    auto add_node = [&](const char* nm) {
+        int idx = ctx.node_names.add(nm);
+        const auto n = static_cast<std::size_t>(idx + 1);
+        ctx.nodes.type.resize(n); ctx.nodes.invert_elev.resize(n);
+        ctx.nodes.full_depth.resize(n); ctx.nodes.init_depth.resize(n);
+        ctx.nodes.sur_depth.resize(n); ctx.nodes.ponded_area.resize(n);
+        ctx.nodes.type[static_cast<std::size_t>(idx)] = NodeType::JUNCTION;
+        return idx;
+    };
+    for (const char* nm : {"N0","N1","N2","N3","N4","N5"}) add_node(nm);
+    ctx.spatial.node_x = {0.0, 1.0, 2.0, 3.0, 4.0, 5.0};
+    ctx.spatial.node_y = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+
+    auto add_link = [&](const char* nm, LinkType t, int n1, int n2) {
+        int idx = ctx.link_names.add(nm);
+        const auto n = static_cast<std::size_t>(idx + 1);
+        ctx.links.type.resize(n);
+        ctx.links.node1.resize(n); ctx.links.node2.resize(n);
+        ctx.links.offset1.resize(n); ctx.links.offset2.resize(n);
+        ctx.links.q0.resize(n); ctx.links.q_limit.resize(n);
+        ctx.links.direction.resize(n, 1);
+        ctx.links.xsect_shape.resize(n); ctx.links.xsect_geom1.resize(n);
+        ctx.links.xsect_geom2.resize(n); ctx.links.xsect_geom3.resize(n);
+        ctx.links.xsect_geom4.resize(n); ctx.links.xsect_curve.resize(n, -1);
+        ctx.links.has_flap_gate.resize(n); ctx.links.pump_curve_name.resize(n);
+        ctx.spatial.link_vertices_x.resize(n); ctx.spatial.link_vertices_y.resize(n);
+        ctx.spatial.link_x.resize(n); ctx.spatial.link_y.resize(n);
+        const int row = ctx.link_subtypes.set_link_type(ctx.links, idx, t);
+        ctx.links.node1[idx] = n1; ctx.links.node2[idx] = n2;
+        return std::make_pair(idx, static_cast<std::size_t>(row));
+    };
+
+    auto [pi, pr]  = add_link("PMP", LinkType::PUMP, 0, 1);
+    ctx.links.pump_curve_name[pi] = "PumpCurve";
+    { auto& P = ctx.link_subtypes.pumps;
+      P.init_state[pr] = 1; P.startup[pr] = 2.5; P.shutoff[pr] = 1.5; }
+
+    auto [oi, orr] = add_link("ORF", LinkType::ORIFICE, 1, 2);
+    { auto& O = ctx.link_subtypes.orifices;
+      O.orifice_type[orr] = 1.0;  // SIDE
+      O.cd[orr] = 0.65; O.orate[orr] = 3600.0; }
+
+    auto [wi, wr]  = add_link("WER", LinkType::WEIR, 2, 3);
+    { auto& W = ctx.link_subtypes.weirs;
+      W.weir_type[wr] = 3.0;  // TRAPEZOIDAL
+      W.cd[wr] = 3.33; W.crest_height[wr] = 1.25; W.end_contractions[wr] = 2.0; }
+
+    auto [fi, fr]  = add_link("OLF", LinkType::OUTLET, 3, 4);
+    { auto& U = ctx.link_subtypes.outlets;
+      U.outlet_type[fr] = 0.0;  // FUNCTIONAL/HEAD
+      U.coeff[fr] = 2.5; U.expon[fr] = 0.6; U.crest_height[fr] = 0.75; }
+
+    auto [ti, tr]  = add_link("OLT", LinkType::OUTLET, 4, 5);
+    ctx.links.pump_curve_name[ti] = "RatingCurve";  // TABULAR rating-curve NAME
+    { auto& U = ctx.link_subtypes.outlets;
+      U.outlet_type[tr] = 3.0;  // TABULAR/DEPTH
+      U.crest_height[tr] = 0.5; }
+
+    ASSERT_EQ(write_to_file(db_path_, ctx, "r"), 0);
+    SimulationContext in{};
+    ASSERT_EQ(read_from_file(db_path_, in, "r"), 0);
+
+    const int ipmp = in.link_names.find("PMP");
+    ASSERT_GE(in.link_subtypes.pump_row(ipmp), 0);
+    const auto upr = static_cast<std::size_t>(in.link_subtypes.pump_row(ipmp));
+    EXPECT_EQ(in.links.type[ipmp], LinkType::PUMP);
+    EXPECT_EQ(in.links.pump_curve_name[ipmp], "PumpCurve");
+    EXPECT_EQ(in.link_subtypes.pumps.init_state[upr], 1);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.pumps.startup[upr], 2.5);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.pumps.shutoff[upr], 1.5);
+
+    const int iorf = in.link_names.find("ORF");
+    ASSERT_GE(in.link_subtypes.orifice_row(iorf), 0);
+    const auto uor = static_cast<std::size_t>(in.link_subtypes.orifice_row(iorf));
+    EXPECT_DOUBLE_EQ(in.link_subtypes.orifices.orifice_type[uor], 1.0);  // SIDE round-trips
+    EXPECT_DOUBLE_EQ(in.link_subtypes.orifices.cd[uor], 0.65);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.orifices.orate[uor], 3600.0);
+
+    const int iwer = in.link_names.find("WER");
+    ASSERT_GE(in.link_subtypes.weir_row(iwer), 0);
+    const auto uwr = static_cast<std::size_t>(in.link_subtypes.weir_row(iwer));
+    EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.weir_type[uwr], 3.0);  // TRAPEZOIDAL round-trips
+    EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.cd[uwr], 3.33);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.crest_height[uwr], 1.25);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.end_contractions[uwr], 2.0);
+
+    const int iolf = in.link_names.find("OLF");
+    ASSERT_GE(in.link_subtypes.outlet_row(iolf), 0);
+    const auto ufr = static_cast<std::size_t>(in.link_subtypes.outlet_row(iolf));
+    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.outlet_type[ufr], 0.0);  // FUNCTIONAL/HEAD
+    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.coeff[ufr], 2.5);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.expon[ufr], 0.6);
+    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.crest_height[ufr], 0.75);
+
+    const int iolt = in.link_names.find("OLT");
+    ASSERT_GE(in.link_subtypes.outlet_row(iolt), 0);
+    const auto utr = static_cast<std::size_t>(in.link_subtypes.outlet_row(iolt));
+    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.outlet_type[utr], 3.0);  // TABULAR/DEPTH
+    EXPECT_EQ(in.links.pump_curve_name[iolt], "RatingCurve");  // rating-curve NAME round-trips
 }
 
 TEST_F(GeoPackageTest, CoordinatesRoundTrip) {
@@ -454,8 +673,9 @@ TEST_F(GeoPackageTest, ConduitsRoundTrip) {
     EXPECT_EQ(ctx_in.links.type[c1], LinkType::CONDUIT);
     EXPECT_EQ(ctx_in.links.xsect_shape[c1], XsectShape::CIRCULAR);
     EXPECT_DOUBLE_EQ(ctx_in.links.xsect_y_full[c1], 2.0);
-    EXPECT_DOUBLE_EQ(ctx_in.links.roughness[c1], 0.013);
-    EXPECT_DOUBLE_EQ(ctx_in.links.length[c1], 400.0);
+    const auto ccr = static_cast<std::size_t>(ctx_in.link_subtypes.conduit_row(c1));
+    EXPECT_DOUBLE_EQ(ctx_in.link_subtypes.conduits.roughness[ccr], 0.013);
+    EXPECT_DOUBLE_EQ(ctx_in.link_subtypes.conduits.length[ccr], 400.0);
 }
 
 TEST_F(GeoPackageTest, LinkConnectivity) {
@@ -486,6 +706,52 @@ TEST_F(GeoPackageTest, VerticesRoundTrip) {
     ASSERT_EQ(ctx_in.spatial.link_vertices_x[c2].size(), 1u);
     EXPECT_DOUBLE_EQ(ctx_in.spatial.link_vertices_x[c2][0], 2500.0);
     EXPECT_DOUBLE_EQ(ctx_in.spatial.link_vertices_y[c2][0], 5100.0);
+}
+
+TEST_F(GeoPackageTest, VerticesFollowNodeToNodeOrder) {
+    auto ctx_out = build_test_context();
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+
+    // Store C2 geometry in reverse direction: node2 -> interior -> node1.
+    auto db = open_database(db_path_);
+    auto rev_geom = encode_linestring(
+        std::vector<double>{3000.0, 2500.0, 2000.0},
+        std::vector<double>{5000.0, 5100.0, 5000.0},
+        4326);
+    auto upd = prepare(db.get(),
+        "UPDATE links SET geom = ? WHERE simulation_id = ? AND link_id = ?");
+    bind_blob(upd.get(), 1, rev_geom.data(), static_cast<int>(rev_geom.size()));
+    bind_text(upd.get(), 2, "test_run");
+    bind_text(upd.get(), 3, "C2");
+    ASSERT_EQ(sqlite3_step(upd.get()), SQLITE_DONE);
+
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    int c2 = ctx_in.link_names.find("C2");
+    ASSERT_GE(c2, 0);
+    ASSERT_EQ(ctx_in.spatial.link_vertices_x[c2].size(), 1u);
+    EXPECT_DOUBLE_EQ(ctx_in.spatial.link_vertices_x[c2][0], 2500.0);
+    EXPECT_DOUBLE_EQ(ctx_in.spatial.link_vertices_y[c2][0], 5100.0);
+}
+
+TEST_F(GeoPackageTest, VertexBuffersAreRebuiltOnRead) {
+    auto ctx_out = build_test_context();
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+
+    // C1 has no interior vertices in the stored geometry.
+    SimulationContext ctx_in{};
+    ctx_in.spatial.link_vertices_x.resize(1);
+    ctx_in.spatial.link_vertices_y.resize(1);
+    ctx_in.spatial.link_vertices_x[0] = {123.0, 456.0};
+    ctx_in.spatial.link_vertices_y[0] = {789.0, 987.0};
+
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    int c1 = ctx_in.link_names.find("C1");
+    ASSERT_GE(c1, 0);
+    EXPECT_TRUE(ctx_in.spatial.link_vertices_x[c1].empty());
+    EXPECT_TRUE(ctx_in.spatial.link_vertices_y[c1].empty());
 }
 
 TEST_F(GeoPackageTest, SubcatchmentsRoundTrip) {
@@ -534,6 +800,33 @@ TEST_F(GeoPackageTest, PolygonsRoundTrip) {
     ASSERT_GE(ctx_in.spatial.subcatch_polygon_x[s1].size(), 4u);
     EXPECT_DOUBLE_EQ(ctx_in.spatial.subcatch_polygon_x[s1][0], 0.0);
     EXPECT_DOUBLE_EQ(ctx_in.spatial.subcatch_polygon_x[s1][1], 100.0);
+}
+
+TEST_F(GeoPackageTest, PolygonBuffersAreRebuiltOnRead) {
+    auto ctx_out = build_test_context();
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+
+    // Remove S2 geometry from DB so reader should leave an empty polygon,
+    // not stale values from a prior context state.
+    auto db = open_database(db_path_);
+    auto upd = prepare(db.get(),
+        "UPDATE subcatchments SET geom = NULL WHERE simulation_id = ? AND subcatch_id = ?");
+    bind_text(upd.get(), 1, "test_run");
+    bind_text(upd.get(), 2, "S2");
+    ASSERT_EQ(sqlite3_step(upd.get()), SQLITE_DONE);
+
+    SimulationContext ctx_in{};
+    ctx_in.spatial.subcatch_polygon_x.resize(2);
+    ctx_in.spatial.subcatch_polygon_y.resize(2);
+    ctx_in.spatial.subcatch_polygon_x[1] = {9.0, 8.0, 7.0};
+    ctx_in.spatial.subcatch_polygon_y[1] = {6.0, 5.0, 4.0};
+
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    int s2 = ctx_in.subcatch_names.find("S2");
+    ASSERT_GE(s2, 0);
+    EXPECT_TRUE(ctx_in.spatial.subcatch_polygon_x[s2].empty());
+    EXPECT_TRUE(ctx_in.spatial.subcatch_polygon_y[s2].empty());
 }
 
 TEST_F(GeoPackageTest, RainGagesRoundTrip) {
@@ -623,9 +916,17 @@ TEST_F(GeoPackageTest, TagsRoundTrip) {
     SimulationContext ctx_in{};
     ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
 
-    EXPECT_EQ(ctx_in.node_tags["J1"], "upstream");
-    EXPECT_EQ(ctx_in.link_tags["C1"], "trunk");
-    EXPECT_EQ(ctx_in.subcatch_tags["S1"], "residential");
+    {
+        const int j1 = ctx_in.node_names.find("J1");
+        ASSERT_GE(j1, 0);
+        EXPECT_EQ(ctx_in.nodes.tags[static_cast<std::size_t>(j1)], "upstream");
+        const int c1 = ctx_in.link_names.find("C1");
+        ASSERT_GE(c1, 0);
+        EXPECT_EQ(ctx_in.links.tags[static_cast<std::size_t>(c1)], "trunk");
+        const int s1 = ctx_in.subcatch_names.find("S1");
+        ASSERT_GE(s1, 0);
+        EXPECT_EQ(ctx_in.subcatches.tags[static_cast<std::size_t>(s1)], "residential");
+    }
 }
 
 // ============================================================================
@@ -806,6 +1107,14 @@ TEST(GeoPackagePluginInfoTest, FactoryCreatesReportPlugin) {
     delete plugin;
 }
 
+// Slice RC.2 hid the `openswmm_plugin_info` C export from the engine SHARED
+// (visibility=hidden + no public header declaration) to plug the dlsym leak
+// that PluginFactory::discover() was inadvertently picking up. The symbol
+// is still emitted into the openswmm_geopackage STATIC archive that this
+// test links, so a local forward declaration is sufficient to call it from
+// the test executable without re-exporting it for third-party consumers.
+extern "C" openswmm::IPluginComponentInfo* openswmm_plugin_info(void);
+
 TEST(GeoPackagePluginInfoTest, CExportFunction) {
     // Verify the C export returns the same singleton
     auto* exported = openswmm_plugin_info();
@@ -851,18 +1160,6 @@ protected:
             ctx.nodes.init_depth.resize(idx + 1);
             ctx.nodes.sur_depth.resize(idx + 1);
             ctx.nodes.ponded_area.resize(idx + 1);
-            ctx.nodes.outfall_type.resize(idx + 1);
-            ctx.nodes.outfall_param.resize(idx + 1);
-            ctx.nodes.outfall_has_flap_gate.resize(idx + 1);
-            ctx.nodes.storage_curve.resize(idx + 1);
-            ctx.nodes.storage_curve_name.resize(idx + 1);
-            ctx.nodes.storage_a.resize(idx + 1);
-            ctx.nodes.storage_b.resize(idx + 1);
-            ctx.nodes.storage_c.resize(idx + 1);
-            ctx.nodes.divider_type.resize(idx + 1);
-            ctx.nodes.divider_cutoff.resize(idx + 1);
-            ctx.nodes.divider_curve.resize(idx + 1);
-            ctx.nodes.divider_curve_name.resize(idx + 1);
             ctx.nodes.type[idx] = NodeType::JUNCTION;
             ctx.nodes.invert_elev[idx] = 100.0 - idx * 2.0;
             ctx.nodes.full_depth[idx] = 6.0;
@@ -885,34 +1182,22 @@ protected:
             ctx.links.xsect_a_full.resize(idx + 1);
             ctx.links.xsect_w_max.resize(idx + 1);
             ctx.links.xsect_curve.resize(idx + 1, -1);
-            ctx.links.roughness.resize(idx + 1);
-            ctx.links.length.resize(idx + 1);
-            ctx.links.barrels.resize(idx + 1, 1);
-            ctx.links.culvert_code.resize(idx + 1);
-            ctx.links.loss_inlet.resize(idx + 1);
-            ctx.links.loss_outlet.resize(idx + 1);
-            ctx.links.loss_avg.resize(idx + 1);
             ctx.links.has_flap_gate.resize(idx + 1);
-            ctx.links.seep_rate.resize(idx + 1);
-            ctx.links.pump_curve.resize(idx + 1, -1);
             ctx.links.pump_curve_name.resize(idx + 1);
-            ctx.links.pump_init_state.resize(idx + 1);
-            ctx.links.pump_startup.resize(idx + 1);
-            ctx.links.pump_shutoff.resize(idx + 1);
-            ctx.links.crest_height.resize(idx + 1);
-            ctx.links.cd.resize(idx + 1);
             ctx.links.xsect_y_bot.resize(idx + 1);
             ctx.spatial.link_vertices_x.resize(idx + 1);
             ctx.spatial.link_vertices_y.resize(idx + 1);
             ctx.spatial.link_x.resize(idx + 1);
             ctx.spatial.link_y.resize(idx + 1);
-            ctx.links.type[idx] = LinkType::CONDUIT;
+            const auto cr = static_cast<std::size_t>(
+                ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::CONDUIT));
+            auto& C = ctx.link_subtypes.conduits;
             ctx.links.node1[idx] = 0;
             ctx.links.node2[idx] = 1;
             ctx.links.xsect_shape[idx] = XsectShape::CIRCULAR;
             ctx.links.xsect_y_full[idx] = 2.0;
-            ctx.links.roughness[idx] = 0.013;
-            ctx.links.length[idx] = 400.0;
+            C.roughness[cr] = 0.013;
+            C.length[cr] = 400.0;
         }
 
         return ctx;

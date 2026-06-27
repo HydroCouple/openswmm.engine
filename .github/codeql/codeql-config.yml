@@ -1,0 +1,37 @@
+name: openswmm.engine CodeQL config
+
+# security-extended adds higher-precision security queries beyond the
+# default suite without pulling in the style/quality noise from
+# security-and-quality. Adjust here if signal-to-noise needs tuning.
+queries:
+  - uses: security-extended
+
+paths-ignore:
+  # ── EPA SWMM 5.x legacy tree ──────────────────────────────────────────
+  # The legacy C solver, output reader, and CLI must remain byte-for-byte
+  # identical to the upstream EPA reference to preserve the regression
+  # baseline (see src/legacy/engine/CMakeLists.txt). CodeQL findings here
+  # cannot be acted on, so we exclude the whole tree to keep the alert
+  # list focused on the new C++20 engine and Python bindings.
+  - src/legacy/**
+
+  # ── Generated / build outputs ─────────────────────────────────────────
+  - build*/**
+  - cmake-build*/**
+  - python/build/**
+  - "**/_export.h"
+  - "**/legacy_version.h"
+  - "**/version.h"
+
+  # ── Test data and golden files (not code) ─────────────────────────────
+  - tests/regression/data/**
+  - tests/regression_testing/results/**
+  - tests/unit/**/data/**
+
+  # ── Vendored third-party (if ever checked in) ─────────────────────────
+  - vcpkg/**
+  - vcpkg_installed/**
+
+  # ── Non-code ──────────────────────────────────────────────────────────
+  - docs/**
+  - paper/**

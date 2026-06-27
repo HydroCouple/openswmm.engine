@@ -1,0 +1,12 @@
+# ld64 -unexported_symbols_list for libopenswmm.engine (APPLE only).
+#
+# Hide the vendored static dependencies' symbols from this dylib's dynamic
+# export table so a consumer that links its OWN copy of HDF5/SQLite (the GUI
+# links HDF5 for its 2D mesh reader and SQLite transitively via GDAL) does not
+# cross-bind into this dylib's copy and crash in HDF5's atexit teardown.
+# See src/engine/CMakeLists.txt (~L292) for the full rationale.
+#
+# Lines beginning with '#' are comments; '*' is a glob. Patterns match the
+# mangled (leading-underscore) C symbol names produced on macOS.
+_H5*
+_sqlite3_*

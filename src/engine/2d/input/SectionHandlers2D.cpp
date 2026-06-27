@@ -8,10 +8,19 @@
 
 #include "SectionHandlers2D.hpp"
 
+#include "../data/BoundaryData.hpp"
+#include "../../input/InputReader.hpp"
+#include "../../input/Tokenizer.hpp"
+#include "../../core/SimulationContext.hpp"
+
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
+#include <string_view>
 
 namespace openswmm::twoD {
 
@@ -97,6 +106,9 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     } else if (iequals(key, "LIMITER_EPSILON")) {
         opts.limiter_epsilon = tryParseDouble(val, ok);
         if (!ok) return "Invalid LIMITER_EPSILON value";
+    } else if (iequals(key, "FLUX_DH_EPS")) {
+        opts.flux_dh_eps = tryParseDouble(val, ok);
+        if (!ok) return "Invalid FLUX_DH_EPS value";
     } else if (iequals(key, "MAX_CVODE_STEPS")) {
         opts.max_cvode_steps = tryParseInt(val, ok);
         if (!ok) return "Invalid MAX_CVODE_STEPS value";
@@ -116,6 +128,8 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.preconditioner = PreconditionerType::JACOBI;
         else if (iequals(val, "ILU"))
             opts.preconditioner = PreconditionerType::ILU;
+        else if (iequals(val, "AMG"))
+            opts.preconditioner = PreconditionerType::AMG;
         else
             return "Unknown PRECONDITIONER: " + val;
     } else if (iequals(key, "REPORT_2D")) {
@@ -125,10 +139,70 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.report_2d = false;
         else
             return "Invalid REPORT_2D value (YES/NO)";
+    } else if (iequals(key, "OUTPUT_FILE")) {
+        // Stored as the raw token; resolved against the .inp directory in
+        // SWMMEngine::open when the Default2DOutputPlugin is instantiated.
+        opts.output_file = val;
     } else {
         return "Unknown 2D_OPTIONS parameter: " + key;
     }
 
+    return {};
+}
+
+
+bool is2DOptionKey(const std::string& key) {
+    static const char* kKeys[] = {
+        "MAX_TIMESTEP", "MIN_TIMESTEP", "REL_TOLERANCE", "ABS_TOLERANCE",
+        "DRY_DEPTH", "MAX_KRYLOV_DIM", "COUPLING_INTERVAL", "COUPLING_CD",
+        "LIMITER_EPSILON", "FLUX_DH_EPS", "MAX_CVODE_STEPS", "LINEAR_SOLVER",
+        "PRECONDITIONER", "REPORT_2D", "OUTPUT_FILE",
+    };
+    for (const char* k : kKeys) {
+        if (iequals(key, k)) return true;
+    }
+    return false;
+}
+
+
+std::string format2DOptionValue(const SolverOptions2D& opts,
+                                const std::string& key) {
+    auto fmt_g = [](double v) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.12g", v);
+        return std::string(buf);
+    };
+
+    if (iequals(key, "MAX_TIMESTEP"))      return fmt_g(opts.max_timestep);
+    if (iequals(key, "MIN_TIMESTEP"))      return fmt_g(opts.min_timestep);
+    if (iequals(key, "REL_TOLERANCE"))     return fmt_g(opts.rel_tolerance);
+    if (iequals(key, "ABS_TOLERANCE"))     return fmt_g(opts.abs_tolerance);
+    if (iequals(key, "DRY_DEPTH"))         return fmt_g(opts.dry_depth);
+    if (iequals(key, "LIMITER_EPSILON"))   return fmt_g(opts.limiter_epsilon);
+    if (iequals(key, "FLUX_DH_EPS"))       return fmt_g(opts.flux_dh_eps);
+    if (iequals(key, "COUPLING_CD"))       return fmt_g(opts.coupling_cd);
+    if (iequals(key, "MAX_KRYLOV_DIM"))    return std::to_string(opts.max_krylov_dim);
+    if (iequals(key, "COUPLING_INTERVAL")) return std::to_string(opts.coupling_interval);
+    if (iequals(key, "MAX_CVODE_STEPS"))   return std::to_string(opts.max_cvode_steps);
+    if (iequals(key, "REPORT_2D"))         return opts.report_2d ? "YES" : "NO";
+    if (iequals(key, "OUTPUT_FILE"))       return opts.output_file;
+    if (iequals(key, "LINEAR_SOLVER")) {
+        switch (opts.linear_solver) {
+            case LinearSolverType::GMRES:    return "GMRES";
+            case LinearSolverType::BICGSTAB: return "BICGSTAB";
+            case LinearSolverType::TFQMR:    return "TFQMR";
+        }
+        return "GMRES";
+    }
+    if (iequals(key, "PRECONDITIONER")) {
+        switch (opts.preconditioner) {
+            case PreconditionerType::NONE:   return "NONE";
+            case PreconditionerType::JACOBI: return "JACOBI";
+            case PreconditionerType::ILU:    return "ILU";
+            case PreconditionerType::AMG:    return "AMG";
+        }
+        return "JACOBI";
+    }
     return {};
 }
 
@@ -254,6 +328,326 @@ std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens,
     }
 
     return {};
+}
+
+
+// ============================================================================
+// Helper: build a section-level lambda that tokenizes each line and calls
+// a line-oriented parser, reporting errors via the SimulationContext.
+// ============================================================================
+
+namespace {
+
+using LineParser = std::function<std::string(const std::vector<std::string>&)>;
+
+input::SectionHandler makeSectionHandler(LineParser line_parser) {
+    return [lp = std::move(line_parser)](
+        openswmm::SimulationContext& ctx,
+        const std::vector<std::string>& lines)
+    {
+        for (const auto& raw : lines) {
+            auto tokens = openswmm::input::Tokenizer::tokenize(raw);
+            if (tokens.empty()) continue;
+            std::string err = lp(tokens);
+            if (!err.empty()) {
+                // 5 = public SWMM_ERR_PARSE. Must be non-zero so InputReader
+                // (which gates success on ctx.error_code == 0) treats the
+                // section as failed; previously this was 1 (SWMM_ERR_NOMEM),
+                // so every 2D section parse error surfaced as "Out of memory".
+                ctx.error_code    = 5;
+                ctx.error_message = "[2D] " + err + " — line: " + raw;
+                return;
+            }
+        }
+    };
+}
+
+} // anonymous namespace
+
+
+// ============================================================================
+// V-E3 — [2D_BOUNDARY_CONDITIONS] line parser
+// ============================================================================
+
+std::string parse2DBoundaryConditionsLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_rows)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() < 3) {
+        return "[2D_BOUNDARY_CONDITIONS] needs TRI EDGE TYPE [PARAM_1 [PARAM_2 [GROUP]]]";
+    }
+
+    bool ok = false;
+    SurfaceRouter2D::PendingBoundaryRow row;
+    row.tri  = tryParseInt(tokens[0], ok);
+    if (!ok || row.tri < 0)
+        return "[2D_BOUNDARY_CONDITIONS] invalid TRI index";
+    row.edge = tryParseInt(tokens[1], ok);
+    if (!ok || row.edge < 0 || row.edge > 2)
+        return "[2D_BOUNDARY_CONDITIONS] invalid EDGE (must be 0..2)";
+
+    const std::string &type_tok = tokens[2];
+    if      (iequals(type_tok, "WALL"))            row.bc_type = static_cast<int>(BoundaryType::WALL);
+    else if (iequals(type_tok, "NORMAL_FLOW"))     row.bc_type = static_cast<int>(BoundaryType::NORMAL_FLOW);
+    else if (iequals(type_tok, "SPECIFIED_STAGE")) row.bc_type = static_cast<int>(BoundaryType::SPECIFIED_STAGE);
+    else if (iequals(type_tok, "TS_STAGE"))        row.bc_type = static_cast<int>(BoundaryType::SPECIFIED_STAGE);
+    else if (iequals(type_tok, "SPECIFIED_FLOW"))  row.bc_type = static_cast<int>(BoundaryType::SPECIFIED_FLOW);
+    else if (iequals(type_tok, "TS_FLOW"))         row.bc_type = static_cast<int>(BoundaryType::SPECIFIED_FLOW);
+    else if (iequals(type_tok, "RATING_CURVE"))    row.bc_type = static_cast<int>(BoundaryType::RATING_CURVE);
+    else return "[2D_BOUNDARY_CONDITIONS] unknown TYPE: " + type_tok;
+
+    // PARAM_1: typed by TYPE. For *_TS variants and RATING_CURVE the
+    // parameter is a name. For NORMAL_FLOW it's the slope. For
+    // SPECIFIED_STAGE it's the head. For SPECIFIED_FLOW it's the
+    // per-metre discharge. "*" means "no value supplied".
+    std::string p1 = (tokens.size() > 3) ? tokens[3] : "*";
+    if (p1 == "*") p1.clear();
+
+    // For Wall: PARAM_1 is irrelevant.
+    if (!p1.empty()) {
+        if (iequals(type_tok, "NORMAL_FLOW") ||
+            iequals(type_tok, "SPECIFIED_STAGE") ||
+            iequals(type_tok, "SPECIFIED_FLOW"))
+        {
+            row.param1 = tryParseDouble(p1, ok);
+            if (!ok) return "[2D_BOUNDARY_CONDITIONS] non-numeric PARAM_1: " + p1;
+        } else {
+            // TS or curve name.
+            row.name = p1;
+        }
+    }
+
+    // PARAM_2 reserved; ignored today.
+    // GROUP (optional).
+    if (tokens.size() > 5 && tokens[5] != "*") {
+        row.group = tokens[5];
+    }
+
+    pending_rows.push_back(std::move(row));
+    return {};
+}
+
+
+// ============================================================================
+// §11A — [2D_EDGE_CONVEYANCE] line parser
+// ============================================================================
+
+std::string parse2DEdgeConveyanceLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_rows)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() < 3) {
+        return "[2D_EDGE_CONVEYANCE] needs FROM_VERTEX TO_VERTEX CONVEYANCE";
+    }
+
+    SurfaceRouter2D::PendingEdgeConveyanceRow row;
+    bool ok = false;
+
+    row.v_from = tryParseInt(tokens[0], ok);
+    if (!ok || row.v_from < 0)
+        return "[2D_EDGE_CONVEYANCE] invalid FROM_VERTEX: " + tokens[0];
+
+    row.v_to = tryParseInt(tokens[1], ok);
+    if (!ok || row.v_to < 0)
+        return "[2D_EDGE_CONVEYANCE] invalid TO_VERTEX: " + tokens[1];
+
+    if (row.v_from == row.v_to)
+        return "[2D_EDGE_CONVEYANCE] FROM_VERTEX and TO_VERTEX must differ";
+
+    row.conveyance = tryParseDouble(tokens[2], ok);
+    if (!ok)
+        return "[2D_EDGE_CONVEYANCE] invalid CONVEYANCE: " + tokens[2];
+
+    // Q1 — strict [0, 1] clamp at parse time.
+    if (row.conveyance < 0.0 || row.conveyance > 1.0) {
+        return "[2D_EDGE_CONVEYANCE] CONVEYANCE must be in [0, 1] (got "
+               + tokens[2] + ")";
+    }
+
+    pending_rows.push_back(std::move(row));
+    return {};
+}
+
+
+// ============================================================================
+// register2DSections
+// ============================================================================
+
+void register2DSections(MeshData& mesh,
+                        SolverOptions2D& options,
+                        std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
+                        std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
+                        input::SectionRegistry& registry)
+{
+    registry.register_custom("2D_OPTIONS",
+        makeSectionHandler([&options](const std::vector<std::string>& tokens) {
+            return parse2DOptionsLine(tokens, options);
+        }));
+
+    registry.register_custom("2D_VERTICES",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DVertexLine(tokens, mesh);
+        }));
+
+    registry.register_custom("2D_TRIANGLES",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DTriangleLine(tokens, mesh);
+        }));
+
+    registry.register_custom("2D_VERTEX_NODE_MAP",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DVertexNodeMapLine(tokens, mesh);
+        }));
+
+    registry.register_custom("2D_TRIANGLE_NODE_MAP",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DTriangleNodeMapLine(tokens, mesh);
+        }));
+
+    // V-E3 — [2D_BOUNDARY_CONDITIONS] accumulates pending rows; drained
+    // during SurfaceRouter2D::initialize() after BoundaryData::resize.
+    registry.register_custom("2D_BOUNDARY_CONDITIONS",
+        makeSectionHandler([&pending_bc_rows](const std::vector<std::string>& tokens) {
+            return parse2DBoundaryConditionsLine(tokens, pending_bc_rows);
+        }));
+
+    // §11A — [2D_EDGE_CONVEYANCE] accumulates pending rows; drained
+    // during SurfaceRouter2D::initialize() after buildMeshTopology so
+    // the vertex-pair → (tri, edge_local) lookup table is available.
+    registry.register_custom("2D_EDGE_CONVEYANCE",
+        makeSectionHandler([&pending_ec_rows](const std::vector<std::string>& tokens) {
+            return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
+        }));
+
+    // [2D_MESH_FILE] — capture only the first FILE token; mesh is loaded
+    // after the main .inp is fully parsed (see SWMMEngine::open).
+    registry.register_custom("2D_MESH_FILE",
+        [&options](openswmm::SimulationContext& /*ctx*/,
+                   const std::vector<std::string>& lines)
+        {
+            for (const auto& raw : lines) {
+                auto tokens = openswmm::input::Tokenizer::tokenize(raw);
+                if (tokens.size() >= 2 && iequals(tokens[0], "FILE")) {
+                    options.mesh_file = tokens[1];
+                    return; // only first FILE line
+                }
+            }
+        });
+}
+
+
+// ============================================================================
+// load2DMeshExternalFile
+// ============================================================================
+
+std::string load2DMeshExternalFile(MeshData& mesh,
+                                   SolverOptions2D& opts,
+                                   std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
+                                   std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
+                                   const std::string& mesh_file,
+                                   const std::string& inp_base_dir)
+{
+    namespace fs = std::filesystem;
+
+    // Resolve path
+    fs::path p(mesh_file);
+    if (p.is_relative() && !inp_base_dir.empty())
+        p = fs::path(inp_base_dir) / p;
+
+    // Build a minimal registry (no 2D_MESH_FILE — prevents recursion)
+    openswmm::input::SectionRegistry mini;
+    mini.register_custom("2D_OPTIONS",
+        makeSectionHandler([&opts](const std::vector<std::string>& tokens) {
+            return parse2DOptionsLine(tokens, opts);
+        }));
+    mini.register_custom("2D_VERTICES",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DVertexLine(tokens, mesh);
+        }));
+    mini.register_custom("2D_TRIANGLES",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DTriangleLine(tokens, mesh);
+        }));
+    mini.register_custom("2D_VERTEX_NODE_MAP",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DVertexNodeMapLine(tokens, mesh);
+        }));
+    mini.register_custom("2D_TRIANGLE_NODE_MAP",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DTriangleNodeMapLine(tokens, mesh);
+        }));
+
+    // V-E3 — external .2dm may carry its own [2D_BOUNDARY_CONDITIONS].
+    mini.register_custom("2D_BOUNDARY_CONDITIONS",
+        makeSectionHandler([&pending_bc_rows](const std::vector<std::string>& tokens) {
+            return parse2DBoundaryConditionsLine(tokens, pending_bc_rows);
+        }));
+
+    // §11A — external .2dm may carry its own [2D_EDGE_CONVEYANCE].
+    mini.register_custom("2D_EDGE_CONVEYANCE",
+        makeSectionHandler([&pending_ec_rows](const std::vector<std::string>& tokens) {
+            return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
+        }));
+
+    // The external .2dm may carry its own `;; UNITS:` header. Scan first
+    // so SurfaceRouter2D::initialize sees the right flag before it runs.
+    prescan2DUnitsHeader(p.string(), opts);
+
+    openswmm::input::InputReader reader(mini);
+    openswmm::SimulationContext  dummy;
+    if (!reader.read(p.string(), dummy)) {
+        return "2D_MESH_FILE: error reading '" + p.string() + "': " + dummy.error_message;
+    }
+    return {};
+}
+
+// ============================================================================
+// prescan2DUnitsHeader
+// ============================================================================
+
+void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts)
+{
+    std::ifstream in(inp_path);
+    if (!in) return;  // file missing — caller will surface the error
+
+    auto trim = [](std::string s) {
+        const auto issp = [](unsigned char c) { return std::isspace(c) != 0; };
+        while (!s.empty() && issp(static_cast<unsigned char>(s.back())))   s.pop_back();
+        std::size_t i = 0;
+        while (i < s.size() && issp(static_cast<unsigned char>(s[i]))) ++i;
+        return s.substr(i);
+    };
+
+    std::string line;
+    while (std::getline(in, line)) {
+        const std::string t = trim(line);
+        if (t.size() < 2 || t[0] != ';' || t[1] != ';') continue;
+        std::string rest = trim(t.substr(2));
+        // Match "UNITS:" prefix case-insensitively.
+        constexpr std::string_view kKey = "UNITS:";
+        if (rest.size() < kKey.size()) continue;
+        bool match = true;
+        for (std::size_t i = 0; i < kKey.size(); ++i) {
+            if (std::toupper(static_cast<unsigned char>(rest[i])) != kKey[i]) {
+                match = false; break;
+            }
+        }
+        if (!match) continue;
+        const std::string value = trim(rest.substr(kKey.size()));
+        // Recognised metric markers.  Anything else (including absent /
+        // unknown / explicit "ft") leaves the flag at its current value.
+        const bool si =
+               iequals(value, "SI (m)")
+            || iequals(value, "m")
+            || iequals(value, "metre")
+            || iequals(value, "metres")
+            || iequals(value, "meter")
+            || iequals(value, "meters");
+        if (si) opts.mesh_units_si = true;
+        // We keep scanning so a later UNITS: line in the same file wins.
+    }
 }
 
 } // namespace openswmm::twoD

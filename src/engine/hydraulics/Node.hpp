@@ -9,7 +9,7 @@
  * @ingroup new_engine
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -23,6 +23,7 @@
 namespace openswmm {
 
 struct SimulationContext;
+struct NodeSubtypes;  // relational storage/outfall/divider side-tables (optional source)
 
 namespace node {
 
@@ -42,7 +43,8 @@ namespace node {
  * @returns Volume (ft3).
  */
 double getVolume(const NodeData& nodes, int idx, double depth,
-                 TableData* tables = nullptr);
+                 TableData* tables = nullptr, int unit_sys = 0,
+                 const NodeSubtypes* subs = nullptr);
 
 /**
  * @brief Compute surface area at a given depth for a single node.
@@ -56,7 +58,8 @@ double getVolume(const NodeData& nodes, int idx, double depth,
  * @returns Surface area (ft2).
  */
 double getSurfArea(const NodeData& nodes, int idx, double depth,
-                   TableData* tables = nullptr);
+                   TableData* tables = nullptr, int unit_sys = 0,
+                   const NodeSubtypes* subs = nullptr);
 
 /**
  * @brief Get the ponded area (for overflow above rim).
@@ -69,7 +72,9 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
  * @param depth  Water depth (ft).
  * @returns Effective surface area (ft2).
  */
-double getPondedArea(const NodeData& nodes, int idx, double depth);
+double getPondedArea(const NodeData& nodes, int idx, double depth,
+                     TableData* tables = nullptr, int unit_sys = 0,
+                     const NodeSubtypes* subs = nullptr);
 
 /**
  * @brief Compute max outflow limited by available volume.
@@ -103,11 +108,12 @@ double getOverflow(double new_volume, double full_volume, double dt);
  *
  * @details For JUNCTION: d = V / MIN_SURFAREA.
  *          For STORAGE functional: Newton iteration or direct inversion.
- *          For STORAGE tabular: inverse table lookup.
+ *          For STORAGE tabular: quadratic solve per interval (Gap #12).
  *  @see Legacy: node_getDepth() in node.c
  */
 double getDepth(const NodeData& nodes, int idx, double volume,
-                TableData* tables = nullptr);
+                TableData* tables = nullptr, int unit_sys = 0,
+                const NodeSubtypes* subs = nullptr);
 
 /**
  * @brief Compute head from depth: head = invert + depth.
@@ -137,7 +143,8 @@ void computeHeads(const double* invert, const double* depth, double* head, int n
  * @param depth   [in]  Depth array (may differ from nodes.depth).
  * @param volume  [out] Volume array.
  */
-void computeVolumes(const NodeData& nodes, const double* depth, double* volume);
+void computeVolumes(const NodeData& nodes, const double* depth, double* volume,
+                    const NodeSubtypes* subs = nullptr);
 
 /**
  * @brief Compute overflow for all nodes.

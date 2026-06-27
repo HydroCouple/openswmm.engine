@@ -9,7 +9,7 @@
  * @see openswmm_engine.h
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -63,7 +63,15 @@ typedef enum SWMM_RoutingTotal {
     SWMM_ROUTING_EVAP_LOSS     = 7,  /**< Cumulative evaporation loss from conveyance. */
     SWMM_ROUTING_SEEP_LOSS     = 8,  /**< Cumulative seepage loss from conveyance. */
     SWMM_ROUTING_INIT_STORAGE  = 9,  /**< Initial in-system storage volume. */
-    SWMM_ROUTING_FINAL_STORAGE = 10  /**< Final in-system storage volume. */
+    SWMM_ROUTING_FINAL_STORAGE = 10, /**< Final in-system storage volume. */
+    SWMM_ROUTING_FORCING_INFLOW = 11 /**< Cumulative runtime-API forced
+                                       *   lateral inflow volume (i.e. flow
+                                       *   injected via
+                                       *   `swmm_node_set_lateral_inflow` or
+                                       *   transient ForcingData). Distinct
+                                       *   from `SWMM_ROUTING_EXTERNAL`, which
+                                       *   only counts INP `[INFLOWS]`-derived
+                                       *   inflow. */
 } SWMM_RoutingTotal;
 
 /**

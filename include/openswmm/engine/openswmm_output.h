@@ -36,7 +36,7 @@
  * @see DefaultOutputPlugin.hpp — the writer that produces these files
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -205,9 +205,16 @@ SWMM_ENGINE_API int swmm_output_get_pollut_count(SWMM_Output handle);
 SWMM_ENGINE_API int swmm_output_get_period_count(SWMM_Output handle);
 
 /**
- * @brief Get the simulation start date as a Julian date (double).
+ * @brief Get the simulation start date as a SWMM DateTime double.
+ *
+ * @details SWMM's native DateTime representation is a double where the
+ *          integer part is days since 1899-12-30 (OLE Automation epoch)
+ *          and the fractional part is the time-of-day fraction
+ *          (0.5 = noon). Convert to a calendar date/time via the
+ *          datetime functions in `openswmm_datetime.h`.
+ *
  * @param handle      Output reader handle.
- * @param start_date  Pointer to receive the start date value.
+ * @param start_date  Pointer to receive the start date value (SWMM DateTime).
  * @returns 0 on success, -1 on error.
  */
 SWMM_ENGINE_API int swmm_output_get_start_date(SWMM_Output handle,
@@ -442,16 +449,93 @@ SWMM_ENGINE_API int swmm_output_get_link_attribute(SWMM_Output handle,
  * ========================================================================= */
 
 /**
- * @brief Get the simulation time (Julian date) for a given period.
+ * @brief Get the simulation time for a given period as a SWMM DateTime double.
+ *
+ * @details The value is the same SWMM DateTime convention used elsewhere in
+ *          the API: integer days since 1899-12-30 plus fractional time of
+ *          day. Use the helpers in `openswmm_datetime.h` to convert to a
+ *          calendar date/time.
  *
  * @param handle  Output reader handle.
  * @param period  Zero-based period index.
- * @param time    Pointer to receive the simulation time as a double (Julian date).
+ * @param time    Pointer to receive the simulation time as a SWMM DateTime double.
  * @returns 0 on success, -1 on error.
  */
 SWMM_ENGINE_API int swmm_output_get_period_time(SWMM_Output handle,
                                                   int period,
                                                   double* time);
+
+/* =========================================================================
+ * Per-node summary statistics — Slice QA-01
+ *
+ * The SWMM 5.x binary output format does not include a stats block; these
+ * functions reconstruct the four flooding statistics at read time by
+ * walking the per-period node results stored in the file. The semantics
+ * mirror the engine-side `swmm_node_get_stat_*` accessors (which read
+ * from SimulationContext.nodes.stat_*), except sourced from a SWMM_Output
+ * handle so per-output comparisons work across multiple loaded .out
+ * files. Implementations are O(n_periods) per call.
+ *
+ * Caveat: aggregation runs over REPORT-step samples, not the engine's
+ * internal routing-step samples. For runs where the report step is much
+ * coarser than the routing step (e.g. report every hour vs. route every
+ * 5 s), `time_flooded` and `vol_flooded` will under-count brief
+ * sub-report-step flooding events. The engine-side getters
+ * (`swmm_node_get_stat_*`) retain the legacy routing-step precision —
+ * use those when a fresh in-process run is the source.
+ * ========================================================================= */
+
+/**
+ * @brief Maximum node depth across all reporting periods.
+ *
+ * @details Computes `max(SWMM_OUT_NODE_DEPTH)` over the open file's
+ *          period range. Result is in the model's length units (ft / m).
+ *
+ * @param handle    Output reader handle.
+ * @param node_idx  Zero-based node index (0 .. node_count - 1).
+ * @param value     [out] Maximum depth on success; unchanged on error.
+ * @returns 0 on success, -1 on error (bad handle, index out of range, or
+ *          I/O failure during aggregation).
+ */
+SWMM_ENGINE_API int swmm_output_get_node_stat_max_depth(SWMM_Output handle,
+                                                          int          node_idx,
+                                                          double*      value);
+
+/**
+ * @brief Maximum node overflow rate across all reporting periods.
+ *
+ * @details Computes `max(SWMM_OUT_NODE_OVERFLOW)` over the open file's
+ *          period range. Result is in the file's flow units
+ *          (see swmm_output_get_flow_units).
+ */
+SWMM_ENGINE_API int swmm_output_get_node_stat_max_overflow(SWMM_Output handle,
+                                                             int          node_idx,
+                                                             double*      value);
+
+/**
+ * @brief Total flood volume at the node across the simulation.
+ *
+ * @details Aggregates `sum(overflow_i * report_step)` over the periods
+ *          where overflow > 0. Result is in cubic feet (US) or cubic
+ *          metres (SI) — matching `swmm_node_get_stat_vol_flooded` units.
+ *          Returns 0 when the file has no positive-overflow periods.
+ */
+SWMM_ENGINE_API int swmm_output_get_node_stat_vol_flooded(SWMM_Output handle,
+                                                            int          node_idx,
+                                                            double*      value);
+
+/**
+ * @brief Total time the node was flooded across the simulation.
+ *
+ * @details Counts the report periods where overflow > 0 and multiplies
+ *          by the file's report-step seconds. Result is in seconds —
+ *          matching `swmm_node_get_stat_time_flooded` units. Divide by
+ *          3600 for hours (the convention SWMM's statsrpt uses for
+ *          display).
+ */
+SWMM_ENGINE_API int swmm_output_get_node_stat_time_flooded(SWMM_Output handle,
+                                                             int          node_idx,
+                                                             double*      value);
 
 /* =========================================================================
  * Error reporting

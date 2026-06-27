@@ -8,7 +8,7 @@
  * @see openswmm_engine.h
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 HydroCouple. All rights reserved.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -66,14 +66,15 @@ SWMM_ENGINE_API int swmm_gage_index(SWMM_Engine engine, const char* id);
 SWMM_ENGINE_API const char* swmm_gage_id(SWMM_Engine engine, int idx);
 
 /* =========================================================================
- * Creation (BUILDING state only)
+ * Creation (BUILDING or OPENED — "editable" states)
  * ========================================================================= */
 
 /**
  * @brief Add a new rain gage to the model.
- * @param engine  Engine handle (SWMM_STATE_BUILDING).
+ * @param engine  Engine handle (SWMM_STATE_BUILDING or SWMM_STATE_OPENED).
  * @param id      Unique null-terminated identifier for the new gage.
- * @returns SWMM_OK on success, or an error code.
+ * @returns SWMM_OK on success, SWMM_ERR_LIFECYCLE if not in an editable
+ *          state, or another error code.
  */
 SWMM_ENGINE_API int swmm_gage_add(SWMM_Engine engine, const char* id);
 
@@ -122,11 +123,59 @@ SWMM_ENGINE_API int swmm_gage_set_timeseries(SWMM_Engine engine, int idx, const 
  * @param engine      Engine handle.
  * @param idx         Zero-based gage index.
  * @param path        File path to the external rainfall file.
- * @param station_id  Station identifier within the file.
+ * @param station_id  Station identifier within the file (standard SWMM rain
+ *                    file grammar `Fname Station Units`).
  * @returns SWMM_OK on success, or an error code.
+ *
+ * @details Sets the data source to FILE and selects the standard SWMM rain
+ *          file format (STAN_PRCP). The station id is stored in the gage's
+ *          `station_id` slot (the token matched against the file's first
+ *          column), not the CSV column-name slot.
  */
 SWMM_ENGINE_API int swmm_gage_set_filename(SWMM_Engine engine, int idx, const char* path,
                                                    const char* station_id);
+
+/**
+ * @brief Set the station id for a file-based gage (standard SWMM rain file).
+ * @param engine      Engine handle.
+ * @param idx         Zero-based gage index.
+ * @param station_id  Station identifier within the file ("*" or empty = all rows).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_set_station_id(SWMM_Engine engine, int idx, const char* station_id);
+
+/**
+ * @brief Set the snow-catch deficiency correction factor (SCF) for a gage.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based gage index.
+ * @param factor  Strictly positive correction factor (1.0 = no correction).
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if factor <= 0.0.
+ */
+SWMM_ENGINE_API int swmm_gage_set_snow_factor(SWMM_Engine engine, int idx, double factor);
+
+/**
+ * @brief Set the rain-depth units declared for a file-based gage.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based gage index.
+ * @param units   0 = IN (inches), 1 = MM (millimetres).
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if units not in {0,1}.
+ */
+SWMM_ENGINE_API int swmm_gage_set_rain_units(SWMM_Engine engine, int idx, int units);
+
+/**
+ * @brief Set the rainfall scaling factor for a gage.
+ *
+ * @details The scaling factor multiplies the gage's rainfall intensity after
+ *          rain-type and unit conversion. May be changed at any time (including
+ *          while the simulation is RUNNING) to support parameter sweeps; the
+ *          new value takes effect on the next timestep.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based gage index.
+ * @param factor  Strictly positive scaling factor (1.0 = no scaling).
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if factor <= 0.0.
+ */
+SWMM_ENGINE_API int swmm_gage_set_scale_factor(SWMM_Engine engine, int idx, double factor);
 
 /* =========================================================================
  * Property getters
@@ -149,6 +198,64 @@ SWMM_ENGINE_API int swmm_gage_get_rain_type(SWMM_Engine engine, int idx, int* ty
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_gage_get_data_source(SWMM_Engine engine, int idx, int* source);
+
+/**
+ * @brief Get the rainfall scaling factor for a gage.
+ * @param engine       Engine handle.
+ * @param idx          Zero-based gage index.
+ * @param[out] factor  Receives the current scaling factor (1.0 = no scaling).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_scale_factor(SWMM_Engine engine, int idx, double* factor);
+
+/**
+ * @brief Get the rainfall recording interval for a gage.
+ * @param engine        Engine handle.
+ * @param idx           Zero-based gage index.
+ * @param[out] seconds  Receives the recording interval in seconds.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_rain_interval(SWMM_Engine engine, int idx, double* seconds);
+
+/**
+ * @brief Get the snow-catch deficiency correction factor (SCF) for a gage.
+ * @param engine       Engine handle.
+ * @param idx          Zero-based gage index.
+ * @param[out] factor  Receives the current correction factor (1.0 = none).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_snow_factor(SWMM_Engine engine, int idx, double* factor);
+
+/**
+ * @brief Get the assigned time series id for a TIMESERIES-source gage.
+ * @param engine       Engine handle.
+ * @param idx          Zero-based gage index.
+ * @param[out] buf     Caller buffer that receives the NUL-terminated id
+ *                    (empty string when no series is assigned).
+ * @param buflen       Size of @p buf in bytes.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_timeseries(SWMM_Engine engine, int idx, char* buf, int buflen);
+
+/**
+ * @brief Get the station id for a file-based gage.
+ * @param engine       Engine handle.
+ * @param idx          Zero-based gage index.
+ * @param[out] buf     Caller buffer that receives the NUL-terminated station
+ *                    id (empty string when none is set).
+ * @param buflen       Size of @p buf in bytes.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_station_id(SWMM_Engine engine, int idx, char* buf, int buflen);
+
+/**
+ * @brief Get the rain-depth units declared for a file-based gage.
+ * @param engine        Engine handle.
+ * @param idx           Zero-based gage index.
+ * @param[out] units    Receives 0 = IN (inches) or 1 = MM (millimetres).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_rain_units(SWMM_Engine engine, int idx, int* units);
 
 /* =========================================================================
  * State
@@ -177,6 +284,11 @@ SWMM_ENGINE_API int swmm_gage_set_rainfall(SWMM_Engine engine, int idx, double r
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_gage_get_rainfall_bulk(SWMM_Engine engine, double* buf, int count);
+
+/** @brief Rename the rain gage at `idx` to `newId`.
+ *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
+ *  idx is out of range. */
+SWMM_ENGINE_API int swmm_gage_rename(SWMM_Engine engine, int idx, const char* newId);
 
 #ifdef __cplusplus
 } /* extern "C" */
