@@ -25,6 +25,8 @@
 #ifndef OPENSWMM_ENGINE_2D_I_SURFACE_SOLVER_HPP
 #define OPENSWMM_ENGINE_2D_I_SURFACE_SOLVER_HPP
 
+#include <vector>
+
 namespace openswmm::twoD {
 
 // Forward declarations — passed by reference, no definitions needed here.
@@ -90,6 +92,14 @@ public:
     /// Per-advance integrator deltas for the diagnostic CSV harness. Default
     /// returns zeros for backends that do not track them.
     virtual SolverAdvanceStats last_advance_stats() const noexcept { return {}; }
+
+    /// Per-point ∫Q dt (m³) from the live node-coupling macro-step path. Default
+    /// returns empty for backends that do not implement live coupling (so the
+    /// caller falls back to the held-flux booking). See CvodeSurfaceSolver.
+    virtual const std::vector<double>& last_coupling_exchange() const noexcept {
+        static const std::vector<double> kEmpty;
+        return kEmpty;
+    }
 
     /// True once initialize() has completed and the solver is ready.
     virtual bool is_initialized() const noexcept = 0;

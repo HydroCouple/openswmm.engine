@@ -11,17 +11,21 @@
 #include "CvodeSurfaceSolver.hpp"
 #include "SurfaceFluxCalculator.hpp"
 #include "../mesh/VertexReconstruction.hpp"
+#include "../coupling/NodeCoupling.hpp"   // live node-coupling helpers (macro-step path)
+#include "../../data/NodeData.hpp"        // 1D node state read by the live coupling
 #if defined(OPENSWMM_HAVE_HYPRE)
 #include "HypreAmgPreconditioner.hpp"
 #endif
 
 #include <cvode/cvode.h>
 #include <nvector/nvector_serial.h>
+#include <nvector/nvector_openmp.h>
 #include <sunlinsol/sunlinsol_spgmr.h>
 #include <sundials/sundials_context.h>
 
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -53,6 +57,15 @@ inline void reconstructFromVolume(const MeshData& m, int i, double V,
 inline double volumeFromHead(const MeshData& m, int i, double head) noexcept {
     const double d = head - m.tri_cz[i];
     return (d > 0.0) ? m.tri_area[i] * d : 0.0;
+}
+
+// State-vector factory: threaded OpenMP N_Vector when THREADS > 1 (CVODE clones
+// it for all work vectors, so the BDF/Newton/Krylov vector ops thread too), else
+// the serial vector. Math is unchanged; reductions sum in a different order
+// (within solver tolerance). num_threads ≤ 1 keeps the exact serial path.
+inline N_Vector makeStateVec(int n, int nthreads, SUNContext ctx) {
+    return (nthreads > 1) ? N_VNew_OpenMP(n, nthreads, ctx)
+                          : N_VNew_Serial(n, ctx);
 }
 } // namespace
 
@@ -96,6 +109,23 @@ int CvodeSurfaceSolver::rhs_fn(double /*t*/, N_Vector y, N_Vector ydot,
     // 6. Assemble RHS
     assembleRHS(mesh, state, opts, ydot_data);
 
+    // 7. Live node coupling (macro-step path only; node_coupling == nullptr on
+    //    the default held-flux path). Evaluate the orifice exchange against the
+    //    CURRENT 2D head so it self-limits as the cell drains and CVODE
+    //    integrates the stiff coupling implicitly (stable over a large window).
+    //    The sink/source is scattered into the cell ydot; ∫Q dt is accumulated
+    //    in the augmented state entries [nt, nt+nc) for conservative booking.
+    if (state.node_coupling != nullptr && state.nodes_1d != nullptr) {
+        const auto& cps   = *state.node_coupling;
+        const auto& nodes = *state.nodes_1d;
+        const int   ncp   = static_cast<int>(cps.size());
+        for (int k = 0; k < ncp; ++k) {
+            const double Q = computeNodeCouplingQ(cps[k], mesh, state, nodes, opts);
+            scatterCouplingToYdot(mesh, state, cps[k], -Q, ydot_data);  // cells lose drain Q
+            ydot_data[nt + k] = Q;                                      // dA_k/dt = Q
+        }
+    }
+
     return 0;  // Success
 }
 
@@ -131,25 +161,42 @@ int CvodeSurfaceSolver::rhs_fn(double /*t*/, N_Vector y, N_Vector ydot,
 // for "which preconditioner is wired today".
 
 int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
-                                   int /*jok*/, int* jcurPtr, double gamma,
+                                   int jok, int* jcurPtr, double gamma,
                                    void* user_data) {
     auto* ctx    = static_cast<CvodeSolverContext*>(user_data);
     auto& mesh   = *ctx->mesh;
     auto& state  = *ctx->state;
     auto* solver = ctx->solver;
 
-    // Always (re)build here; CVODE's psetup-calling policy provides the lag.
-    *jcurPtr = 1;  // SUNTRUE
+    // Lagged preconditioner: honor CVODE's jok flag. jok == SUNTRUE means the
+    // saved Jacobian data is still current (only γ drifted) — reuse the
+    // preconditioner and report it was NOT recomputed. jok == SUNFALSE means
+    // CVODE wants a fresh Jacobian — rebuild. GMRES preconditions with the true
+    // matrix-free operator, so reusing a slightly stale preconditioner only
+    // changes the Krylov iteration count, never the converged solution. This
+    // removes the dominant BoomerAMG hierarchy rebuild from the (majority)
+    // γ-only psetup calls.
+    ++solver->prec_total_calls_;
+    const bool recompute = (jok == SUNFALSE);
+    *jcurPtr = recompute ? SUNTRUE : SUNFALSE;
 
 #if defined(OPENSWMM_HAVE_HYPRE)
-    // AMG: assemble M = I − γ·J and rebuild the BoomerAMG hierarchy.
+    // AMG: assemble M = I − γ·J and rebuild the BoomerAMG hierarchy (only when
+    // recompute; setup() reuses the prior hierarchy otherwise).
     if (ctx->amg_active) {
-        solver->amg_precond_->setup(mesh, state, gamma);
+        solver->amg_precond_->setup(mesh, state, gamma, recompute);
+        if (recompute) ++solver->prec_full_builds_;
         return 0;
     }
 #else
     (void)gamma;
 #endif
+
+    // JACOBI: recompute the diagonal only when CVODE asks for a fresh Jacobian;
+    // otherwise reuse the cached diagonal (psolve_fn re-applies the current γ).
+    if (!recompute && !solver->precond_diag_.empty())
+        return 0;
+    ++solver->prec_full_builds_;
 
     int nt = mesh.n_triangles();
     auto& D = solver->precond_diag_;
@@ -191,8 +238,12 @@ int CvodeSurfaceSolver::psolve_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     // AMG: apply one BoomerAMG V-cycle z ≈ M⁻¹ r over all cells.
     if (ctx->amg_active) {
         const int n = ctx->mesh->n_triangles();
-        solver->amg_precond_->solve(N_VGetArrayPointer(r),
-                                    N_VGetArrayPointer(z), n);
+        const double* rd = N_VGetArrayPointer(r);
+        double*       zd = N_VGetArrayPointer(z);
+        solver->amg_precond_->solve(rd, zd, n);
+        // ∫Q dt accumulator rows have M_kk = 1 (nothing depends on them) ⇒ the
+        // exact preconditioner is the identity z = r.
+        for (int k = 0; k < solver->nc_; ++k) zd[n + k] = rd[n + k];
         return 0;
     }
 #endif
@@ -215,6 +266,8 @@ int CvodeSurfaceSolver::psolve_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
         if (std::abs(m) < m_floor) m = std::copysign(m_floor, m);
         z_data[i] = r_data[i] / m;
     }
+    // ∫Q dt accumulator rows: identity (M_kk = 1).
+    for (int k = 0; k < solver->nc_; ++k) z_data[nt + k] = r_data[nt + k];
     return 0;
 }
 
@@ -310,10 +363,18 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     if (err != 0)
         throw std::runtime_error("SUNContext_Create failed");
 
-    // Create N_Vector wrapping state.depth
-    y_ = N_VNew_Serial(nt, sun_ctx_);
+    // Augmented state size: nt cell volumes + nc_ live node-coupling ∫Q dt
+    // accumulators. nc_ == 0 (default / held-flux path) ⇒ ntot == nt, byte-for-
+    // byte identical to the legacy solver. The accumulators are pure quadrature
+    // (nothing depends on them), carried so the 1D↔2D booking is conservative.
+    nc_ = (state.node_coupling != nullptr)
+              ? static_cast<int>(state.node_coupling->size()) : 0;
+    const int ntot = nt + nc_;
+
+    // Create N_Vector wrapping state.depth (threaded when THREADS > 1).
+    y_ = makeStateVec(ntot, opts.num_threads, sun_ctx_);
     if (!y_)
-        throw std::runtime_error("N_VNew_Serial failed");
+        throw std::runtime_error("N_VNew (state) failed");
 
     // Seed y with the initial cell volume V from the initial free surface.
     // SurfaceRouter2D::initialize sets state.head[i] = mesh.tri_cz[i] (dry) ⇒
@@ -324,6 +385,9 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
         y_data[i] = volumeFromHead(mesh, i, state.head[i]);
         state.volume[i] = y_data[i];
     }
+    for (int k = 0; k < nc_; ++k) y_data[nt + k] = 0.0;  // ∫Q dt accumulators start at 0
+    coupling_accum_start_.assign(static_cast<std::size_t>(nc_), 0.0);
+    last_coupling_exchange_.assign(static_cast<std::size_t>(nc_), 0.0);
 
     // Create CVODE memory (BDF for stiff systems). The default nonlinear
     // corrector is Newton with inexact-tolerance control — exactly the
@@ -353,15 +417,19 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     // water. (The old H-formulation had to zero rtol and fold REL_TOLERANCE into
     // a dry_depth-scaled atol because y was a ~100 m elevation; with volume that
     // hack is gone.)
-    abstol_ = N_VNew_Serial(nt, sun_ctx_);
+    abstol_ = makeStateVec(ntot, opts.num_threads, sun_ctx_);
     if (!abstol_)
-        throw std::runtime_error("N_VNew_Serial (atol) failed");
+        throw std::runtime_error("N_VNew (atol) failed");
     {
         double* av = N_VGetArrayPointer(abstol_);
         for (int i = 0; i < nt; ++i) {
             const double A = mesh.tri_area[i];
             av[i] = opts.abs_tolerance * ((A > 1.0e-30) ? A : 1.0);
         }
+        // Accumulators carry a huge atol so their error never constrains the
+        // step (they are diagnostic quadrature, not part of the cell dynamics);
+        // they are still integrated to the step accuracy V drives.
+        for (int k = 0; k < nc_; ++k) av[nt + k] = 1.0e30;
     }
     // Kept alive for the solver's lifetime (freed in finalize): CVODE may
     // reference the tolerance vector, so it must outlive the integration.
@@ -447,6 +515,14 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
     CVodeGetNumPrecEvals(cvode_mem_, &c0_npe);
     CVodeGetNumLinConvFails(cvode_mem_, &c0_nlcf);
 
+    // Snapshot the ∫Q dt accumulators so the per-window node-coupling exchange
+    // is y[nt+k](end) − y[nt+k](start). Not reset between windows (a reset would
+    // need CVodeReInit, discarding the step-size/order history we want to keep).
+    if (nc_ > 0) {
+        const double* ys = N_VGetArrayPointer(y_);
+        for (int k = 0; k < nc_; ++k) coupling_accum_start_[k] = ys[nt + k];
+    }
+
     // Set stop time to guarantee exact arrival
     CVodeSetStopTime(cvode_mem_, t_target);
 
@@ -484,11 +560,21 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
     // Copy solution back to state: y is the cell volume V. Store V and the
     // reconstructed (η, h̄) so totalVolume / continuity / output are consistent.
     double* y_data = N_VGetArrayPointer(y_);
+    // Each i writes only its own volume/head/depth ⇒ race-free under OpenMP.
+#pragma omp parallel for schedule(static) num_threads(ctx_.opts->num_threads)
     for (int i = 0; i < nt; ++i) {
         const double V = y_data[i];
         ctx_.state->volume[i] = V;
         reconstructFromVolume(*ctx_.mesh, i, V,
                               ctx_.state->head[i], ctx_.state->depth[i]);
+    }
+
+    // Per-window node-coupling exchange ∫Q dt (m³, +drain/−spill) — the caller
+    // books these to the 1D node lateral inflow + the 2D mass-balance ledger.
+    if (nc_ > 0) {
+        const double* yd = N_VGetArrayPointer(y_);
+        for (int k = 0; k < nc_; ++k)
+            last_coupling_exchange_[k] = yd[nt + k] - coupling_accum_start_[k];
     }
 
     // Record solver statistics
@@ -516,6 +602,19 @@ void CvodeSurfaceSolver::reinitialize(double t0) {
 
 
 void CvodeSurfaceSolver::finalize() {
+    // Lagged-preconditioner reuse diagnostic (opt-in). Query before CVodeFree.
+    if (cvode_mem_) {
+        const char* e = std::getenv("OPENSWMM_2D_PREC_STATS");
+        if (e && e[0]) {
+            const long reuses = prec_total_calls_ - prec_full_builds_;
+            std::fprintf(stderr,
+                "[2D_PREC_STATS] psetup calls=%ld  full builds=%ld  reuses=%ld"
+                "  (%.1f%% reused)\n",
+                prec_total_calls_, prec_full_builds_, reuses,
+                prec_total_calls_ > 0 ? 100.0 * static_cast<double>(reuses) /
+                          static_cast<double>(prec_total_calls_) : 0.0);
+        }
+    }
     // CVode must be freed before its linear solver (CVODE holds an internal
     // pointer to ls_ via CVodeSetLinearSolver). Likewise free the N_Vector
     // and context last, since N_Vector destruction touches the context.

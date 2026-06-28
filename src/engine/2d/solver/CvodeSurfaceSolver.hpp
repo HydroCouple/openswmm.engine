@@ -137,6 +137,14 @@ public:
     /// Per-advance CVODE counter deltas (see SolverAdvanceStats).
     SolverAdvanceStats last_advance_stats() const noexcept override { return last_stats_; }
 
+    /// Per-point ∫Q dt (m³, +drain/−spill) accumulated over the last advance(),
+    /// one entry per live node-coupling point (state.node_coupling order). Empty
+    /// unless the live-coupling macro-step path is active. The caller books these
+    /// to the 1D node lateral inflow + the 2D mass-balance ledger.
+    const std::vector<double>& last_coupling_exchange() const noexcept override {
+        return last_coupling_exchange_;
+    }
+
     /// Check if solver is initialized.
     bool is_initialized() const noexcept override { return cvode_mem_ != nullptr; }
 
@@ -151,6 +159,23 @@ private:
 
     long   last_nsteps_ = 0;
     double last_h_      = 0.0;
+
+    // ── Live node-coupling (macro-step) state augmentation ────────────────────
+    // When state.node_coupling is set (COUPLING_INTERVAL > 1), the state vector
+    // is augmented to nt + nc_: the extra nc_ entries A_k = ∫Q_k dt accumulate
+    // the live orifice exchange per coupling point so the 1D↔2D booking is
+    // conservative (CVODE integrates A_k with the same BDF method as V). nc_ == 0
+    // (default) ⇒ no augmentation, byte-identical to the legacy held-flux path.
+    int    nc_ = 0;                              ///< number of live node-coupling points
+    std::vector<double> coupling_accum_start_;   ///< A_k at the start of the current advance
+    std::vector<double> last_coupling_exchange_; ///< per-point ∫Q dt over the last advance (m³)
+
+    /// Lagged-preconditioner diagnostics (OPENSWMM_2D_PREC_STATS). total = all
+    /// psetup calls; full_builds = the subset that rebuilt (jok == SUNFALSE);
+    /// reuses = total − full_builds. (CVodeGetNumPrecEvals only counts the
+    /// jok == SUNFALSE subset, so it cannot report the reuse fraction by itself.)
+    long   prec_total_calls_ = 0;
+    long   prec_full_builds_ = 0;
 
     /// Per-advance counter deltas, refreshed each advance() (diagnostic CSV).
     SolverAdvanceStats last_stats_;

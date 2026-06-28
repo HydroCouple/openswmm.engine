@@ -28,6 +28,7 @@
 // Forward declaration — avoid pulling in full SimulationContext
 namespace openswmm {
 struct SimulationContext;
+struct NodeData;
 }
 
 namespace openswmm::twoD {
@@ -82,6 +83,45 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
                               SimulationContext& ctx,
                               const SolverOptions2D& opts,
                               double dt);
+
+/**
+ * @brief Live node-coupling orifice flux for ONE non-outfall coupling point.
+ *
+ * Evaluates the bidirectional capped-pipe orifice exchange Q (m³/s; > 0 drains
+ * 2D → 1D, < 0 spills 1D → 2D) from the CURRENT 2D state (head/depth/vert_head,
+ * reconstructed live inside the CVODE RHS) against the 1D node head, which is
+ * frozen for the duration of a 2D advance() window. Unlike
+ * computeCouplingExchange (which pre-computes a HELD flux per window and caps it
+ * by available volume / dt to stop a held drain overshooting), this is the
+ * continuous form for use inside the RHS: the orifice + capped-pipe gate + the
+ * wet/dry Hermite ramp on the LIVE source-side depth make Q self-limit smoothly
+ * as the cell drains, so CVODE integrates the stiff coupling implicitly and
+ * stably across a large macro-window — no discrete avail/dt cap needed.
+ *
+ * Booking/conservation is handled by the caller integrating ∫Q dt (a per-point
+ * accumulator carried in the augmented state vector) over the window.
+ */
+double computeNodeCouplingQ(const CouplingPoint& cp,
+                            const MeshData& mesh,
+                            const SurfaceStateData& state,
+                            const NodeData& nodes,
+                            const SolverOptions2D& opts) noexcept;
+
+/**
+ * @brief Scatter a signed volumetric exchange Q (m³/s) directly onto the cell
+ *        derivatives ydot[] of the 2D volume ODE (for the live-RHS path).
+ *
+ * Same upwind-HGL stencil distribution as the held-flux scatterCouplingFlux, but
+ * adds the per-cell share Q·w (Σw = 1) straight into ydot (m³/s) rather than into
+ * a coupling_flux rate, so the exchange is conservative across the stencil.
+ * Sign convention matches ydot: positive Q = source INTO the cells, negative =
+ * sink OUT of them (so the RHS passes −Q_drain for a 2D → 1D drain).
+ */
+void scatterCouplingToYdot(const MeshData& mesh,
+                           const SurfaceStateData& state,
+                           const CouplingPoint& cp,
+                           double Q,
+                           double* ydot) noexcept;
 
 /**
  * @brief Update outfall boundary depths from 2D surface heads.

@@ -397,6 +397,12 @@ if(OPENSWMM_BUILD_2D)
     # CVODE wrapper requires SUNDIALS
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/CvodeSurfaceSolver.cpp)
 
+    # ARKODE/ARKStep IMEX wrapper (alternative integrator, OPENSWMM_2D_INTEGRATOR
+    # = arkode). Reuses the same SUNDIALS already linked for CVODE. The unique-
+    # edge structure backs the local-inertial (MOMENTUM=inertial) momentum DOFs.
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ArkodeSurfaceSolver.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/InertialEdges.cpp)
+
     # Approximate-Jacobian (diffusion-stencil) assembly — pure C++, shared by
     # the Jacobi and AMG preconditioners. Always compiled.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceJacobian.cpp)
@@ -414,9 +420,12 @@ if(OPENSWMM_BUILD_2D)
 
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
 
-    # Find SUNDIALS (CVODE) via vcpkg or system install
-    find_package(SUNDIALS REQUIRED COMPONENTS cvode)
-    target_link_libraries(openswmm_engine PRIVATE SUNDIALS::cvode)
+    # Find SUNDIALS (CVODE + ARKODE + the threaded OpenMP N_Vector). The OpenMP
+    # N_Vector (SUNDIALS::nvecopenmp) lets the core CPU solver run its vector ops
+    # multithreaded under the THREADS option without the Kokkos plugin.
+    find_package(SUNDIALS REQUIRED COMPONENTS cvode arkode nvecopenmp)
+    target_link_libraries(openswmm_engine PRIVATE
+        SUNDIALS::cvode SUNDIALS::arkode SUNDIALS::nvecopenmp)
 
     # hypre BoomerAMG — opt-in algebraic-multigrid preconditioner for the 2D
     # solver. We call hypre's IJ/BoomerAMG API directly from the psetup/psolve
@@ -466,7 +475,8 @@ if(OPENSWMM_BUILD_2D)
     # Also add to the internal static library for MSVC unit tests
     if(TARGET openswmm_engine_internal)
         target_sources(openswmm_engine_internal PRIVATE ${OPENSWMM_2D_SOURCES})
-        target_link_libraries(openswmm_engine_internal PRIVATE SUNDIALS::cvode)
+        target_link_libraries(openswmm_engine_internal PRIVATE
+            SUNDIALS::cvode SUNDIALS::arkode SUNDIALS::nvecopenmp)
         # The 2D sources include HypreAmgPreconditioner.cpp, which references
         # HYPRE_* symbols when OPENSWMM_HAVE_HYPRE is set. The shared engine
         # links HYPRE above; the internal STATIC lib must link it too, or MSVC

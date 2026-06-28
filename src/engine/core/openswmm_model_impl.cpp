@@ -1158,6 +1158,14 @@ SWMM_ENGINE_API int swmm_options_get_ext(SWMM_Engine engine,
     auto& ctx = to_engine(engine)->context();
 
 #ifdef OPENSWMM_HAS_2D
+    // [2D_MESH_FILE] reference — mirror the set_ext write side.
+    if (ctx.twod_io.options && upper_key(key) == "MESH_FILE") {
+        const std::string& v = ctx.twod_io.options->mesh_file;
+        std::strncpy(buf, v.c_str(), static_cast<std::size_t>(buflen - 1));
+        buf[buflen - 1] = '\0';
+        return SWMM_OK;
+    }
+
     // [2D_OPTIONS] keys read the live SolverOptions2D (the solver's source
     // of truth, wired through ctx.twod_io) instead of the generic
     // ext_options map — see swmm_options_set_ext for the write side.
@@ -1187,6 +1195,19 @@ SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine,
     auto& ctx = to_engine(engine)->context();
 
 #ifdef OPENSWMM_HAS_2D
+    // [2D_MESH_FILE] reference: route to the live SolverOptions2D::mesh_file
+    // so the GUI/API can attach (or detach) an external .2dm and have the
+    // InpWriter emit the [2D_MESH_FILE] section on the next save — without
+    // this the reference is dropped whenever the engine re-serialises the
+    // .inp (the model becomes 1D-only). An empty value clears the reference
+    // (engine reverts to the inline mesh, if any). Handled before the
+    // is2DOptionKey routing so it never touches the [2D_OPTIONS] grammar.
+    if (ctx.twod_io.options && upper_key(key) == "MESH_FILE") {
+        ctx.twod_io.options->mesh_file = value;
+        ctx.options.ext_options.erase(key);
+        return SWMM_OK;
+    }
+
     // Route [2D_OPTIONS] keys into the live SolverOptions2D so GUI/API
     // edits actually reach the 2D solver and persist (InpWriter emits them
     // in [2D_OPTIONS]; the GeoPackage writer as 2D_* option keys).

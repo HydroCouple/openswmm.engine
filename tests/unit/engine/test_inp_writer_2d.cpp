@@ -348,6 +348,59 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
 }
 
 // ---------------------------------------------------------------------------
+// [2D_MESH_FILE] is settable through swmm_options_set_ext on a model whose
+// engine holds NO in-memory mesh (the GUI "assign external .2dm" path). The
+// reference must be emitted on save and must NOT clobber the existing .2dm,
+// so a reopened model activates the 2D solver. Regression: assigning a mesh
+// in the GUI silently reverted to 1D after the pre-run save dropped it.
+// ---------------------------------------------------------------------------
+
+TEST_F(InpWriter2DTest, MeshFileSettableViaExtApiWithoutInMemoryMesh) {
+    const fs::path mesh_2dm = dir_ / "mesh_api.2dm";
+    write_file(mesh_2dm, k2DSections);            // valid external mesh on disk
+    const std::string mesh_before = read_file(mesh_2dm);
+
+    // 1D-only model: the engine carries no 2D mesh in memory.
+    const fs::path inp_a = dir_ / "api.inp";
+    write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS"));
+    eng_a_ = open_engine(inp_a);
+
+    // Assign the external mesh exactly like the GUI's Set Active / generate.
+    ASSERT_EQ(swmm_options_set_ext(eng_a_, "MESH_FILE", "mesh_api.2dm"), 0);
+    char buf[128] = {};
+    ASSERT_EQ(swmm_options_get_ext(eng_a_, "MESH_FILE", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "mesh_api.2dm");
+
+    // Save: the reference is emitted even though no mesh is in memory, and
+    // the geometry is NOT inlined.
+    const fs::path inp_b = dir_ / "api_out.inp";  // same dir → relative ref holds
+    ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
+    const std::string text = read_file(inp_b);
+    EXPECT_NE(text.find("[2D_MESH_FILE]"), std::string::npos);
+    EXPECT_NE(text.find("mesh_api.2dm"), std::string::npos);
+    EXPECT_EQ(text.find("[2D_VERTICES]"), std::string::npos)
+        << "must not inline geometry the engine does not hold";
+
+    // The good .2dm sidecar was left untouched (never clobbered with empty).
+    EXPECT_EQ(read_file(mesh_2dm), mesh_before);
+
+    // Reopening the saved model activates the 2D solver via the reference.
+    eng_b_ = open_engine(inp_b);
+    ASSERT_EQ(swmm_engine_initialize(eng_b_), 0);
+    int active = 0;
+    ASSERT_EQ(swmm_2d_is_active(eng_b_, &active), 0);
+    EXPECT_EQ(active, 1);
+
+    // Clearing the reference reverts to 1D (no [2D_MESH_FILE] emitted).
+    ASSERT_EQ(swmm_options_set_ext(eng_a_, "MESH_FILE", ""), 0);
+    ASSERT_EQ(swmm_options_get_ext(eng_a_, "MESH_FILE", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "");
+    const fs::path inp_c = dir_ / "api_clear.inp";
+    ASSERT_EQ(swmm_model_write(eng_a_, inp_c.string().c_str()), 0);
+    EXPECT_EQ(read_file(inp_c).find("[2D_MESH_FILE]"), std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
 // External-mesh mode: post-load API mutations persist — the save refreshes
 // the .2dm sidecar next to the destination .inp
 // ---------------------------------------------------------------------------

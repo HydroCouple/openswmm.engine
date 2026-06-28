@@ -76,11 +76,34 @@ if("kokkos" IN_LIST FEATURES)
     endif()
 endif()
 
+# Optional OpenMP N_Vector (SUNDIALS::nvecopenmp). ENABLE_OPENMP turns on the
+# threaded host N_Vector so the core CPU solver's vector ops run multithreaded
+# without the Kokkos plugin. On AppleClang, find_package(OpenMP) needs Homebrew
+# libomp wired explicitly (same as the kokkos block above).
+set(OPENMP_OPTIONS)
+if("openmp" IN_LIST FEATURES)
+    set(OPENMP_OPTIONS -DENABLE_OPENMP=ON)
+    if(VCPKG_TARGET_IS_OSX)
+        foreach(_libomp_prefix /opt/homebrew/opt/libomp /usr/local/opt/libomp)
+            if(EXISTS "${_libomp_prefix}/lib/libomp.dylib")
+                list(APPEND OPENMP_OPTIONS
+                    "-DOpenMP_CXX_FLAGS=-Xpreprocessor -fopenmp -I${_libomp_prefix}/include"
+                    "-DOpenMP_CXX_LIB_NAMES=omp"
+                    "-DOpenMP_C_FLAGS=-Xpreprocessor -fopenmp -I${_libomp_prefix}/include"
+                    "-DOpenMP_C_LIB_NAMES=omp"
+                    "-DOpenMP_omp_LIBRARY=${_libomp_prefix}/lib/libomp.dylib")
+                break()
+            endif()
+        endforeach()
+    endif()
+endif()
+
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
     OPTIONS
         ${POSIX_TIMERS}
         ${KOKKOS_OPTIONS}
+        ${OPENMP_OPTIONS}
         -D_BUILD_EXAMPLES=OFF
         -DEXAMPLES_ENABLE_CXX=OFF
         -DEXAMPLES_INSTALL=OFF

@@ -336,6 +336,49 @@ void assembleRHS(const MeshData& mesh, const SurfaceStateData& state,
 }
 
 
+void assembleImplicitRHS(const MeshData& mesh, const SurfaceStateData& state,
+                          const SolverOptions2D& opts, double* ydot) {
+    int nt = mesh.n_triangles();
+
+    // Implicit half of the IMEX split (ARKODE F_I): the flux divergence only —
+    // the stiff parabolic operator that sets the implicit need. Identical to the
+    // edge-flux term of assembleRHS, with the (non-stiff) source/sink terms
+    // removed to assembleExplicitRHS. Each cell sums its own 3 edge fluxes ⇒
+    // schedule(static) is bit-identical to serial.
+#pragma omp parallel for schedule(static) num_threads(opts.num_threads)
+    for (int i = 0; i < nt; ++i) {
+        double flux_sum = 0.0;
+        for (int e = 0; e < 3; ++e) {
+            flux_sum += state.edge_flux[i * 3 + e];
+        }
+        ydot[i] = flux_sum;
+    }
+}
+
+
+void assembleExplicitRHS(const MeshData& mesh, const SurfaceStateData& state,
+                          const SolverOptions2D& opts, const double* y,
+                          double* ydot) {
+    int nt = mesh.n_triangles();
+
+    // Explicit half of the IMEX split (ARKODE F_E): the non-stiff source/sink
+    // forcing — rainfall, held coupling, evaporation. Depth is reconstructed
+    // LOCALLY from the stage volume y (depth = max(V,0)/A) so this callback has
+    // no side effects on the shared state arrays the implicit half / the
+    // preconditioner read. assembleImplicitRHS + assembleExplicitRHS reproduces
+    // assembleRHS exactly (same antisymmetric edge fluxes ⇒ mass conservation
+    // is preserved by the split).
+#pragma omp parallel for schedule(static) num_threads(opts.num_threads)
+    for (int i = 0; i < nt; ++i) {
+        const double area  = mesh.tri_area[i];
+        const double v     = (y[i] > 0.0) ? y[i] : 0.0;
+        const double depth = (area > 1.0e-30) ? v / area : 0.0;
+        ydot[i] = area * (state.rainfall[i] + state.coupling_flux[i]
+                          - evapSink(state.evap_rate[i], depth, opts.dry_depth));
+    }
+}
+
+
 void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
                             const SolverOptions2D& opts, double dt) {
     int nt = mesh.n_triangles();

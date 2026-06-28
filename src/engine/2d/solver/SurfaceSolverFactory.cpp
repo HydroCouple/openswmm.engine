@@ -11,6 +11,7 @@
 #include "SurfaceSolverFactory.hpp"
 #include "ISurfaceSolver.hpp"
 #include "CvodeSurfaceSolver.hpp"
+#include "ArkodeSurfaceSolver.hpp"
 #include "GpuPluginAbi.h"
 #include "../data/SolverOptions2D.hpp"
 
@@ -143,9 +144,12 @@ using ProbeFn = int (*)(OpenSwmmGpuProbe*);
 using MakeFn  = void* (*)(const OpenSwmmGpuProbe*);
 
 // Try to load a specific backend plugin and build its solver. Returns null
-// (without throwing) if the plugin is absent, broken, or reports no device.
+// (without throwing) if the plugin is absent, broken, reports no device, or does
+// not export @p maker_sym (e.g. an older plugin without the inertial entry).
 std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
-                                           std::string* chosen) {
+                                           std::string* chosen,
+                                           const char* maker_sym =
+                                               "openswmm_make_gpu_surface_solver") {
     for (const auto& dir : search_dirs()) {
         for (const auto& fname : plugin_filenames(backend)) {
             const fs::path path = fs::path(dir) / fname;
@@ -155,7 +159,7 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
             void* h = load_cached(path.string());
             if (!h) continue;
             auto probe = reinterpret_cast<ProbeFn>(platform_sym(h, "openswmm_gpu_probe"));
-            auto make  = reinterpret_cast<MakeFn>(platform_sym(h, "openswmm_make_gpu_surface_solver"));
+            auto make  = reinterpret_cast<MakeFn>(platform_sym(h, maker_sym));
             if (!probe || !make) continue;
             OpenSwmmGpuProbe info{};
             const int rc = probe(&info);
@@ -182,15 +186,65 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
 
 } // anonymous namespace
 
-std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& /*opts*/,
+std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
                                                   std::string* chosen,
                                                   int n_cells) {
+    // Integrator selection — orthogonal to the serial/omp/gpu backend below.
+    // ARKODE (ARKStep IMEX) is CPU-only: when selected we return it directly and
+    // skip GPU-plugin discovery (there is no ARKODE device plugin). The env var
+    // OPENSWMM_2D_INTEGRATOR (cvode|arkode) overrides the [2D_OPTIONS] field.
+    const std::string integ = lower(env("OPENSWMM_2D_INTEGRATOR"));
+    const std::string mom    = lower(env("OPENSWMM_2D_MOMENTUM"));
+    // Local-inertial momentum is implemented only in the ARKStep IMEX solver, so
+    // requesting it forces ARKODE regardless of the integrator selector.
+    const bool want_inertial =
+        (mom == "inertial") ||
+        (mom.empty() && opts.momentum == MomentumType::INERTIAL);
+    const std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
+
+    if (want_inertial && integ != "cvode") {
+        // Local-inertial. Prefer a Kokkos inertial plugin (its augmented [V,q]
+        // N_Vector makes the vector ops parallel too); fall back to the serial
+        // CPU ArkodeSurfaceSolver. The serial solver is always available, so a
+        // missing/old plugin never hard-fails. Respects OPENSWMM_2D_BACKEND and
+        // the small-mesh gate, mirroring the DW backend policy below.
+        auto serial_inertial = [&]() -> std::unique_ptr<ISurfaceSolver> {
+            if (chosen) *chosen = "cpu (serial ARKODE IMEX, local-inertial)";
+            return std::make_unique<ArkodeSurfaceSolver>();
+        };
+        if (mode == "cpu") return serial_inertial();
+
+        const bool gated = (mode.empty() || mode == "auto") && [&] {
+            if (n_cells <= 0) return false;
+            long min_par = 20000;
+            if (const char* s = std::getenv("OPENSWMM_2D_MIN_PARALLEL_CELLS"))
+                min_par = std::atol(s);
+            return n_cells < min_par;
+        }();
+        if (!gated) {
+            const char* sym = "openswmm_make_gpu_inertial_solver";
+            if (mode.empty() || mode == "auto") {
+                for (const char* b : {"cuda", "hip", "sycl", "omp"})
+                    if (auto s = try_plugin(b, chosen, sym)) return s;
+            } else if (mode == "omp" || mode == "cuda" || mode == "hip" || mode == "sycl") {
+                if (auto s = try_plugin(mode, chosen, sym)) return s;
+            }
+        }
+        return serial_inertial();
+    }
+
+    const bool use_arkode =
+        (integ == "arkode") ||
+        (integ.empty() && opts.integrator == IntegratorType::ARKODE);
+    if (use_arkode && integ != "cvode") {
+        if (chosen) *chosen = "cpu (ARKODE/ARKStep IMEX)";
+        return std::make_unique<ArkodeSurfaceSolver>();
+    }
+
     auto cpu = [&]() -> std::unique_ptr<ISurfaceSolver> {
         if (chosen) *chosen = "cpu (serial CVODE)";
         return std::make_unique<CvodeSurfaceSolver>();
     };
-
-    const std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
 
     if (mode.empty() || mode == "auto") {
         // Small-mesh gate: a Kokkos plugin (OpenMP/CUDA/HIP/SYCL) pays a

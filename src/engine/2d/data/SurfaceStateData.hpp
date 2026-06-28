@@ -20,8 +20,13 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <vector>
+
+namespace openswmm { struct NodeData; }  // 1D node data (held during a 2D advance)
 
 namespace openswmm::twoD {
+
+struct CouplingPoint;  // fwd decl — 1D↔2D coupling descriptor (NodeCoupling.hpp)
 
 /**
  * @brief SoA storage for 2D surface routing state variables.
@@ -46,6 +51,16 @@ struct SurfaceStateData {
     /// The pointer is shallow-copied on assignment (it references config, not
     /// per-cell state), which is fine — both copies see the same BC config.
     const BoundaryData* boundary = nullptr;
+
+    /// Live node-coupling view, set by SurfaceRouter2D ONLY when the macro-step
+    /// path is active (COUPLING_INTERVAL > 1). When non-null the CVODE RHS
+    /// evaluates the 1D↔2D orifice exchange against the CURRENT 2D head (so it
+    /// self-limits and integrates stably over a large window) instead of a held
+    /// per-window source; the ∫Q dt is carried by CVODE quadrature for
+    /// conservative booking. nullptr ⇒ the legacy held-flux path (default).
+    /// `nodes_1d` is the 1D node data, frozen for the duration of the advance.
+    const NodeData*                   nodes_1d        = nullptr;
+    const std::vector<CouplingPoint>* node_coupling   = nullptr;  ///< non-outfall points
 
     std::vector<double> depth;          ///< Mean wetted depth h̄ = V/A_wet (m) [reconstructed]
     std::vector<double> head;           ///< Free-surface elevation η (m) [reconstructed]

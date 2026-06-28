@@ -97,6 +97,16 @@ OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out);
  */
 OPENSWMM_GPU_ABI void* openswmm_make_gpu_surface_solver(const OpenSwmmGpuProbe* probe);
 
+/**
+ * @brief Construct the GPU LOCAL-INERTIAL surface solver (MOMENTUM=inertial).
+ *
+ * OPTIONAL ABI symbol (does not bump OPENSWMM_GPU_ABI_VERSION): the core
+ * dlsym()s it only when the model selects the local-inertial momentum closure,
+ * and falls back to the serial CPU ArkodeSurfaceSolver when a plugin does not
+ * export it. Returns an ISurfaceSolver* (as void*) owned by the caller, or NULL.
+ */
+OPENSWMM_GPU_ABI void* openswmm_make_gpu_inertial_solver(const OpenSwmmGpuProbe* probe);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

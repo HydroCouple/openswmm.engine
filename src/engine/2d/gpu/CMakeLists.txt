@@ -58,11 +58,13 @@ if(OPENSWMM_GPU_BACKEND STREQUAL "stub")
 elseif(OPENSWMM_GPU_BACKEND STREQUAL "omp")
 
     find_package(Kokkos REQUIRED)
-    find_package(SUNDIALS REQUIRED COMPONENTS cvode nveckokkos)
+    find_package(SUNDIALS REQUIRED COMPONENTS cvode arkode nveckokkos)
 
     add_library(openswmm_gpu_omp SHARED
         GpuPluginOmp.cpp
-        CvodeKokkosSurfaceSolver.cpp)
+        CvodeKokkosSurfaceSolver.cpp
+        ArkodeKokkosSurfaceSolver.cpp
+        ../solver/InertialEdges.cpp)
     target_include_directories(openswmm_gpu_omp PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../solver
         ${CMAKE_CURRENT_SOURCE_DIR}/../data)
@@ -74,7 +76,8 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "omp")
     # and is implemented against Kokkos::kokkos, both already linked here.
     target_link_libraries(openswmm_gpu_omp PRIVATE
         Kokkos::kokkos
-        SUNDIALS::cvode)
+        SUNDIALS::cvode
+        SUNDIALS::arkode)
     target_compile_definitions(openswmm_gpu_omp PRIVATE
         OPENSWMM_GPU_EXECSPACE_OPENMP OPENSWMM_GPU_PLUGIN_BUILD)
     # MSVC's legacy `/openmp` (OpenMP 2.0/2.5) lacks omp_get_level(), which

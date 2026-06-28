@@ -53,7 +53,15 @@ public:
 
     /// Assemble M = I − γ·J from the current state and (re)build the AMG
     /// hierarchy. CVODE decides the cadence (lagged) via its psetup policy.
-    void setup(const MeshData& mesh, const SurfaceStateData& state, double gamma);
+    ///
+    /// When @p recompute is false AND a hierarchy already exists this is a
+    /// no-op: the previously built matrix + multigrid hierarchy are reused
+    /// (CVODE passed jok == SUNTRUE — the saved Jacobian is still current and
+    /// only γ drifted). GMRES preconditions with the true matrix-free operator,
+    /// so a slightly stale hierarchy only affects the Krylov iteration count,
+    /// never the converged solution. The first call always builds.
+    void setup(const MeshData& mesh, const SurfaceStateData& state, double gamma,
+               bool recompute = true);
 
     /// Apply one BoomerAMG V-cycle: z ≈ M⁻¹ r  (n entries each).
     void solve(const double* r, double* z, int n);
@@ -63,9 +71,13 @@ public:
 
     bool ready() const noexcept { return amg_ != nullptr; }
 
+    /// True once the multigrid hierarchy has been built at least once.
+    bool hierarchyBuilt() const noexcept { return hierarchy_built_; }
+
 private:
     SurfaceJacobian   jac_;
     int               n_ = 0;
+    bool              hierarchy_built_ = false;  ///< set by the first setup()
     std::vector<int>  rows_;     ///< 0..n−1 global row ids (sequential)
     std::vector<int>  ncols_;    ///< entries per row (for IJMatrixSetValues)
 

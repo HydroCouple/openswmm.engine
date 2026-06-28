@@ -36,6 +36,15 @@ vcpkg_from_github(
 
 string(COMPARE EQUAL "${VCPKG_LIBRARY_LINKAGE}" "dynamic" HYPRE_SHARED)
 
+# NOTE (2026-06-27): HYPRE_WITH_OPENMP was tried and REVERTED. Threaded
+# BoomerAMG regressed even the single-thread path (1M-cell CVODE-DW: 12.5 s →
+# 16.7 s serial; 100k slower at every thread count) — its setup/coarsening does
+# not parallelize and the OpenMP-instrumented code carries net overhead on CPU.
+# The 2D AMG preconditioner is single-threaded by design; thread the SUNDIALS
+# vector ops instead (the sundials overlay's `openmp` feature). The real parallel
+# AMG path is GPU (the CUDA plugin with a device-built hypre). See
+# examples/imex_scaling/RESULTS_phase2.md.
+
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}/src"
     DISABLE_PARALLEL_CONFIGURE # See 'Autogenerate csr_spgemm_device_numer$ files'

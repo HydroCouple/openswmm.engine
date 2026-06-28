@@ -123,6 +123,107 @@ inline void scatterCouplingFlux(const MeshData& mesh, SurfaceStateData& state,
 } // anonymous namespace
 
 
+double computeNodeCouplingQ(const CouplingPoint& cp,
+                            const MeshData& mesh,
+                            const SurfaceStateData& state,
+                            const NodeData& nodes,
+                            const SolverOptions2D& opts) noexcept {
+    const auto ni = static_cast<std::size_t>(cp.node_idx);
+    const int  ci = cp.cell_idx;
+
+    // Live 2D head at the coupling point (reconstructed this RHS call).
+    const double h_2d = (cp.vertex_idx >= 0) ? state.vert_head[cp.vertex_idx]
+                                             : state.head[ci];
+    // 1D node head — frozen across the 2D advance window.
+    const double h_1d = nodes.head[ni] * opts.len_1d_to_2d;
+
+    // Live max-over-stencil source depth: the wet/dry self-limiter below uses it
+    // so the drain ramps to zero as the cell dries (no overshoot / negativity).
+    double depth_2d_avail;
+    if (cp.vertex_idx >= 0) {
+        const int v = cp.vertex_idx;
+        const int s = mesh.vert_stencil_ptr[v];
+        const int e = mesh.vert_stencil_ptr[v + 1];
+        depth_2d_avail = 0.0;
+        for (int k = s; k < e; ++k)
+            depth_2d_avail = std::max(depth_2d_avail,
+                                      state.depth[mesh.vert_stencil_idx[k]]);
+    } else {
+        depth_2d_avail = state.depth[ci];
+    }
+    const double depth_1d_avail = nodes.depth[ni] * opts.len_1d_to_2d;
+
+    // Capped-pipe gate at the crown (= surcharge / slot-engagement threshold).
+    const double crown = (nodes.invert_elev[ni] + nodes.full_depth[ni])
+                         * opts.len_1d_to_2d;
+    const double z_top = crown;
+    const double h_max = std::max(h_1d, h_2d);
+    const double A_eff = effectiveArea(h_max, crown, nodes.full_depth[ni],
+                                       cp.area, cp.area * 2.0);
+
+    double Q = orificeFlow(h_2d - h_1d, cp.cd, A_eff);
+
+    // C¹ Hermite gate over a 5 cm band above the crown.
+    constexpr double CAP_BAND = 0.05;
+    const double ct = std::min(1.0, std::max(0.0, (h_max - z_top) / CAP_BAND));
+    Q *= ct * ct * (3.0 - 2.0 * ct);
+
+    // Source-side wet/dry self-limit on the LIVE depth — this is what makes the
+    // continuous coupling stable inside the implicit solve (Q → 0 as the source
+    // empties), replacing the held-flux avail/dt cap of computeCouplingExchange.
+    auto wetRamp = [&opts](double d) {
+        const double t = std::min(1.0, std::max(0.0, d / opts.dry_depth));
+        return t * t * (3.0 - 2.0 * t);
+    };
+    Q *= (Q > 0.0) ? wetRamp(depth_2d_avail) : wetRamp(depth_1d_avail);
+    return Q;
+}
+
+
+void scatterCouplingToYdot(const MeshData& mesh, const SurfaceStateData& state,
+                           const CouplingPoint& cp, double Q,
+                           double* ydot) noexcept {
+    if (cp.vertex_idx < 0) { ydot[cp.cell_idx] += Q; return; }
+
+    const int v = cp.vertex_idx;
+    const int start = mesh.vert_stencil_ptr[v];
+    const int end   = mesh.vert_stencil_ptr[v + 1];
+    const double hv = state.vert_head[v];
+    const double vx = mesh.vx[v];
+    const double vy = mesh.vy[v];
+    const double sign = (Q >= 0.0) ? 1.0 : -1.0;  // source → downhill, sink → uphill
+
+    double wsum = 0.0;
+    for (int k = start; k < end; ++k) {
+        const int kc = mesh.vert_stencil_idx[k];
+        const double dx = mesh.tri_cx[kc] - vx;
+        const double dy = mesh.tri_cy[kc] - vy;
+        const double d  = std::sqrt(dx * dx + dy * dy);
+        if (d < 1.0e-9) continue;
+        const double slope = sign * (hv - state.head[kc]) / d;
+        if (slope > 0.0) wsum += slope;
+    }
+
+    if (wsum > 1.0e-30) {
+        for (int k = start; k < end; ++k) {
+            const int kc = mesh.vert_stencil_idx[k];
+            const double dx = mesh.tri_cx[kc] - vx;
+            const double dy = mesh.tri_cy[kc] - vy;
+            const double d  = std::sqrt(dx * dx + dy * dy);
+            if (d < 1.0e-9) continue;
+            const double slope = sign * (hv - state.head[kc]) / d;
+            if (slope <= 0.0) continue;
+            ydot[kc] += Q * (slope / wsum);
+        }
+    } else {
+        for (int k = start; k < end; ++k) {
+            const int kc = mesh.vert_stencil_idx[k];
+            ydot[kc] += Q * mesh.vert_stencil_wt[k];
+        }
+    }
+}
+
+
 std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
                                                 const SimulationContext& ctx) {
     std::vector<CouplingPoint> cps;

@@ -261,6 +261,29 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Build coupling point descriptors
     coupling_points_ = buildCouplingPoints(mesh_, ctx);
 
+    // Live (implicit) coupling path — OPT-IN via OPENSWMM_2D_LIVE_COUPLING. The
+    // orifice exchange is evaluated inside the CVODE RHS against the live 2D head
+    // so it self-limits and integrates stably/conservatively over a large
+    // macro-window (the held-flux source becomes unstable there). It is correct
+    // and conservative, but CURRENTLY SLOW: the orifice is stiff and the
+    // diffusion-stencil preconditioner does not yet capture its Jacobian, so
+    // CVODE cannot take the large step (see §6 of the plan — a coupling-aware
+    // preconditioner is the remaining piece). Kept behind an env flag so the
+    // default + the fast held macro-step (COUPLING_INTERVAL) paths are unaffected.
+    // Build the non-outfall point list and publish it (+ the 1D node data, frozen
+    // during an advance) on the state BEFORE solver_->initialize(), which sizes
+    // the augmented state vector (nt cells + one ∫Q dt accumulator per point).
+    // Outfall coupling stays on the held path (transferOutfallDischarges).
+    if (std::getenv("OPENSWMM_2D_LIVE_COUPLING") != nullptr) {
+        node_coupling_points_.clear();
+        for (const auto& cp : coupling_points_)
+            if (!cp.is_outfall) node_coupling_points_.push_back(cp);
+        if (!node_coupling_points_.empty()) {
+            state_.node_coupling = &node_coupling_points_;
+            state_.nodes_1d      = &ctx.nodes;
+        }
+    }
+
     // Auto-align ponded storage on 2D-coupled junctions with the 2D surface.
     //
     // A coupled junction must be able to surcharge above its crown so the 1D
@@ -403,6 +426,14 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     state_.boundary = &boundary_;
 
 #ifdef OPENSWMM_HAS_2D
+    // Fold the OPENSWMM_2D_MOMENTUM env override into options_ so it is the single
+    // source of truth for both the solver (which RHS split) and the post-advance
+    // edge-flux handling below (DW recompute vs. inertial q-projection).
+    if (const char* m = std::getenv("OPENSWMM_2D_MOMENTUM")) {
+        if (std::strcmp(m, "inertial") == 0) options_.momentum = MomentumType::INERTIAL;
+        else if (std::strcmp(m, "dw") == 0)  options_.momentum = MomentumType::DW;
+    }
+
     // Construct the time integrator. The backend (serial CPU vs. a runtime-
     // loaded GPU plugin) is resolved by makeSurfaceSolver from the
     // OPENSWMM_2D_BACKEND policy; absent/unusable plugins fall back to the
@@ -416,6 +447,22 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     active_ = true;
     coupling_counter_ = 0;
     sim_time_ = 0.0;
+    pending_dt_ = 0.0;
+
+    // COUPLING_INTERVAL > 1 advances the 2D solver over a multi-routing-step
+    // macro-window so CVODE can take large adaptive steps (big speedup). This is
+    // an EXPLICIT coupling sub-cycle, so the window length is CFL-limited by the
+    // 1D↔2D coupling stiffness: small windows stay conservative, but too large a
+    // window destabilises the exchange (oscillation → clamped negative cells →
+    // mass loss). Always confirm the reported 2D continuity after enabling it.
+    if (options_.coupling_interval > 1) {
+        std::fprintf(stderr,
+            "[openswmm 2D] WARNING: COUPLING_INTERVAL=%d advances the 2D solver "
+            "over a %d-step macro-window (experimental). This is an explicit "
+            "coupling sub-cycle and is CFL-limited — verify the 2D continuity "
+            "error in the report; reduce the interval if it grows.\n",
+            options_.coupling_interval, options_.coupling_interval);
+    }
 
     // Seed the global 2D mass balance. init_storage is the surface volume at
     // the dry initial condition (0 unless a nonzero initial depth is set).
@@ -445,25 +492,46 @@ void SurfaceRouter2D::updateOutfallsPreRouting(SimulationContext& ctx) {
 }
 
 
-void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
+void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_dt,
                                           double t) {
     if (!active_) return;
 
-    // Subcycling support
-    coupling_counter_++;
-    if (options_.coupling_interval > 0
+    // Macro-step subcycling. Accumulate the routing time elapsed since the last
+    // 2D advance, then (when it is time to fire) integrate the 2D solver over
+    // the WHOLE accumulated window in a single advance() call. This lets CVODE
+    // take large adaptive internal steps instead of being hard-stopped on every
+    // ~routing-step boundary — the dominant cost driver for the semi-discrete
+    // solver. COUPLING_INTERVAL <= 1 (default) fires every step (today's
+    // behavior); > 1 advances once per `interval` routing steps. The coupling /
+    // forcing source terms are held constant across the window, and every
+    // downstream term below (the solver advance, sim_time_, boundary-flux,
+    // continuity, statistics, and the mass-balance ledgers) uses the same
+    // accumulated `dt`, so the 1D↔2D exchange stays conservative over the macro
+    // step. dt varies under VARIABLE_STEP, so accumulate the actual elapsed time.
+    pending_dt_ += routing_dt;
+    ++coupling_counter_;
+    if (options_.coupling_interval > 1
         && coupling_counter_ < options_.coupling_interval) {
-        return;  // Not yet time to advance 2D
+        return;  // Defer the 2D advance; keep accumulating elapsed routing time.
     }
+    const double dt = pending_dt_;   // the 2D macro-step (== routing_dt when interval<=1)
+    pending_dt_ = 0.0;
     coupling_counter_ = 0;
 
     // Save 2D state
     state_.save_state();
 
-    // Compute coupling exchange flows
-    computeCouplingExchange(coupling_points_, mesh_, state_, ctx, options_, dt);
+    // Node coupling. Default (held-flux) path: pre-compute the per-window
+    // exchange here and inject it as a held source + 1D lateral inflow. Live
+    // macro-step path (state_.node_coupling set, COUPLING_INTERVAL > 1): the
+    // orifice is evaluated INSIDE the CVODE RHS against the live 2D head so it
+    // self-limits and stays stable over the large window; the conservative
+    // ∫Q dt it integrates is booked to the 1D node + 2D ledger AFTER the advance.
+    const bool live_coupling = (state_.node_coupling != nullptr);
+    if (!live_coupling)
+        computeCouplingExchange(coupling_points_, mesh_, state_, ctx, options_, dt);
 
-    // Transfer outfall discharges into 2D cells
+    // Transfer outfall discharges into 2D cells (both paths)
     transferOutfallDischarges(coupling_points_, mesh_, state_, ctx, options_, dt);
 
     // Update rainfall from system gages
@@ -506,12 +574,32 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double dt,
     double t_target = sim_time_ + dt;
     solver_->advance(sim_time_, t_target);
 
+    // Live-path booking: the solver integrated ∫Q_k dt (m³, +drain/−spill) per
+    // node-coupling point over the window. Convert to the 1D node lateral inflow
+    // (avg flow = volume/window, in 1D flow units) so the 1D engine consumes it
+    // over the next window and accumulateMassBalance() below books the identical
+    // volume into the 2D ledger — keeping the exchange conservative. Cleared
+    // then accumulated so multiple points sharing a node sum correctly.
+    if (live_coupling && dt > 0.0) {
+        const std::vector<double>& exch = solver_->last_coupling_exchange();
+        for (const auto& cp : node_coupling_points_)
+            ctx.nodes.coupling_inflow[static_cast<std::size_t>(cp.node_idx)] = 0.0;
+        const std::size_t n = std::min(exch.size(), node_coupling_points_.size());
+        for (std::size_t k = 0; k < n; ++k) {
+            const auto ni = static_cast<std::size_t>(node_coupling_points_[k].node_idx);
+            ctx.nodes.coupling_inflow[ni] += exch[k] * options_.flow_2d_to_1d / dt;
+        }
+    }
+
     // Refresh edge fluxes at the final accepted (head, depth) so the saved
     // fluxes, the per-cell continuity residual, and the reconstructed cell
     // velocities are all consistent with the reported solution. The last
     // in-solver flux evaluation can sit at a Newton/JvP perturbation point,
-    // not the accepted state.
-    computeEdgeFluxes(mesh_, state_, options_);
+    // not the accepted state. In INERTIAL mode the edge flux is the prognostic
+    // discharge q (already projected into state_.edge_flux by the solver's
+    // advance), NOT the DW formula — so skip the DW recompute there.
+    if (options_.momentum != MomentumType::INERTIAL)
+        computeEdgeFluxes(mesh_, state_, options_);
 #endif
 
     // Boundary outflow over the step: integrate the refreshed end-of-step

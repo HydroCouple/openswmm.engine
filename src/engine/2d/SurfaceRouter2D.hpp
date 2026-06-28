@@ -231,10 +231,19 @@ private:
     std::vector<PendingEdgeConveyanceRow> pending_edge_conveyance_rows_;
 
     std::vector<CouplingPoint> coupling_points_;
+    /// Non-outfall coupling points only, for the live macro-step path. Stable
+    /// storage that state_.node_coupling points at; built once in initialize()
+    /// when COUPLING_INTERVAL > 1. Empty (and state_.node_coupling == nullptr)
+    /// on the default held-flux path.
+    std::vector<CouplingPoint> node_coupling_points_;
 
     bool   active_           = false;
     int    coupling_counter_ = 0;
     double sim_time_         = 0.0;
+    /// Routing time accumulated since the last 2D advance (COUPLING_INTERVAL
+    /// macro-step). Lets the 2D solver integrate one large adaptive window over
+    /// `interval` routing steps instead of being hard-stopped every step.
+    double pending_dt_       = 0.0;
 
     /// Previous cumulative boundary flux (Σ edge_bc_cum_flux, m³), for the
     /// per-step delta in the global mass balance.

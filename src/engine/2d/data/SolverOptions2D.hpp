@@ -69,6 +69,37 @@ enum class PreconditionerType : int8_t {
 };
 
 /**
+ * @brief Time-integrator selector for the 2D surface ODE.
+ *
+ * CVODE is the default fully-implicit BDF integrator (CvodeSurfaceSolver).
+ * ARKODE selects the ARKStep additive-Runge–Kutta IMEX integrator
+ * (ArkodeSurfaceSolver) — the diffusion flux is integrated implicitly while the
+ * non-stiff source forcing is explicit. See
+ * docs/IMEX_LOCAL_INERTIAL_IMPLEMENTATION_PLAN.md. Orthogonal to the
+ * serial/omp/gpu backend selector; ARKODE is CPU-only. The env var
+ * OPENSWMM_2D_INTEGRATOR (cvode|arkode) overrides this field.
+ */
+enum class IntegratorType : int8_t {
+    CVODE  = 0,     ///< Default: fully-implicit BDF (CvodeSurfaceSolver).
+    ARKODE = 1      ///< ARKStep IMEX additive-RK (ArkodeSurfaceSolver).
+};
+
+/**
+ * @brief Surface-momentum closure for the 2D flux.
+ *
+ * DW (default) is the Manning diffusive wave (no inertia; state = cell volume
+ * only). INERTIAL adds the LISFLOOD-FP local-inertial momentum: a prognostic
+ * per-edge discharge q with implicit gravity + friction, integrated by the
+ * ARKStep IMEX solver. See docs/IMEX_LOCAL_INERTIAL_IMPLEMENTATION_PLAN.md §2.
+ * Only honored by ArkodeSurfaceSolver; env OPENSWMM_2D_MOMENTUM (dw|inertial)
+ * overrides this field.
+ */
+enum class MomentumType : int8_t {
+    DW       = 0,   ///< Manning diffusive wave (default).
+    INERTIAL = 1    ///< Local-inertial (LISFLOOD-FP) with per-edge q.
+};
+
+/**
  * @brief Configuration for the 2D surface routing CVODE solver.
  *
  * Populated from [2D_OPTIONS] input section. Defaults are chosen for
@@ -95,6 +126,16 @@ struct SolverOptions2D {
     int    coupling_interval = 0;       ///< 0 = every SWMM step
     int    max_cvode_steps   = 500;     ///< Max CVODE steps per advance
     bool   report_2d         = true;    ///< Write 2D results to output
+
+    // Time integrator. Default CVODE (validated path); ARKODE selects the
+    // ARKStep IMEX solver. Parsed from [2D_OPTIONS] INTEGRATOR; env
+    // OPENSWMM_2D_INTEGRATOR overrides at solver-construction time.
+    IntegratorType     integrator      = IntegratorType::CVODE;
+
+    // Surface-momentum closure. Default DW (diffusive wave). INERTIAL selects the
+    // local-inertial scheme (per-edge q), honored only by ArkodeSurfaceSolver.
+    // Parsed from [2D_OPTIONS] MOMENTUM; env OPENSWMM_2D_MOMENTUM overrides.
+    MomentumType       momentum        = MomentumType::DW;
 
     LinearSolverType   linear_solver   = LinearSolverType::GMRES;
     // Default to AMG (hypre BoomerAMG): the only preconditioner with

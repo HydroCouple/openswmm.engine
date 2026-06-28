@@ -31,7 +31,8 @@
             "description": "2D surface routing module (SUNDIALS/CVODE solver + HDF5 for CF-1.11/UGRID-1.0 output)",
             "dependencies": [
                 {
-                    "name": "sundials"
+                    "name": "sundials",
+                    "features": ["openmp"]
                 },
                 {
                     "name": "hdf5",

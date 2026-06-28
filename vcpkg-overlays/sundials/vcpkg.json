@@ -19,6 +19,9 @@
             "dependencies": [
                 "kokkos"
             ]
+        },
+        "openmp": {
+            "description": "Build the OpenMP N_Vector (SUNDIALS::nvecopenmp) via ENABLE_OPENMP. Threads the SUNDIALS vector ops so the core (non-plugin) CPU solver gets OpenMP parallelism without the Kokkos plugin. OpenMP comes from the compiler / Homebrew libomp; no extra vcpkg dependency."
         }
     }
 }

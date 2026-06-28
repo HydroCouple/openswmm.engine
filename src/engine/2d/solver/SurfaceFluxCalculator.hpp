@@ -102,6 +102,40 @@ void assembleRHS(const MeshData& mesh, const SurfaceStateData& state,
                   const SolverOptions2D& opts, double* ydot);
 
 /**
+ * @brief Implicit half of the IMEX split: the flux divergence only (ARKODE F_I).
+ *
+ * Writes ydot_i = Σ_e edge_flux[i·3+e] — the stiff parabolic diffusion operator
+ * that drives the implicit solve. The source/sink forcing is handled separately
+ * by assembleExplicitRHS; together they reproduce assembleRHS exactly. Requires
+ * state.edge_flux to be current (computeEdgeFluxes already called this stage).
+ *
+ * @param mesh   Mesh geometry.
+ * @param state  Surface state (reads edge_flux).
+ * @param opts   Solver options (num_threads).
+ * @param ydot   Output: implicit dV/dt per triangle (size = n_triangles).
+ */
+void assembleImplicitRHS(const MeshData& mesh, const SurfaceStateData& state,
+                          const SolverOptions2D& opts, double* ydot);
+
+/**
+ * @brief Explicit half of the IMEX split: source/sink forcing (ARKODE F_E).
+ *
+ * Writes ydot_i = A_i·(rainfall_i + coupling_flux_i − evapSink_i). Cell depth is
+ * reconstructed locally from the stage volume @p y (depth = max(V,0)/A) so the
+ * callback is free of side effects on the shared state arrays the implicit half
+ * and the preconditioner read.
+ *
+ * @param mesh   Mesh geometry (tri_area).
+ * @param state  Surface state (reads rainfall, coupling_flux, evap_rate).
+ * @param opts   Solver options (dry_depth, num_threads).
+ * @param y      Stage cell volumes (m³), one per triangle.
+ * @param ydot   Output: explicit dV/dt per triangle (size = n_triangles).
+ */
+void assembleExplicitRHS(const MeshData& mesh, const SurfaceStateData& state,
+                          const SolverOptions2D& opts, const double* y,
+                          double* ydot);
+
+/**
  * @brief Compute the per-cell continuity residual (local mass-balance check).
  *
  * Evaluates the discrete semi-discrete balance for each cell:
