@@ -34,25 +34,29 @@ using namespace openswmm::landuse;
 // 1.2 Co-Pollutant Washoff Tests
 // ============================================================================
 
-class CoPollutantTest : public ::testing::Test {
+class CoPollutantTest : public ::testing::Test
+{
 protected:
     LanduseSolver solver;
     SurfaceQualitySoA sq;
 
-    void SetUp() override {
-        solver.init(1, 3);  // 1 landuse, 3 pollutants
+    void SetUp() override
+    {
+        solver.init(1, 3); // 1 landuse, 3 pollutants
 
         // Set up EMC washoff for all 3 pollutants
-        for (int p = 0; p < 3; ++p) {
+        for (int p = 0; p < 3; ++p)
+        {
             solver.washoff_params[static_cast<size_t>(p)].type = WashoffType::EMC;
             solver.washoff_params[static_cast<size_t>(p)].coeff = 10.0 * (p + 1);
         }
 
-        sq.resize(2, 1, 3);  // 2 subcatchments, 1 landuse, 3 pollutants
+        sq.resize(2, 1, 3); // 2 subcatchments, 1 landuse, 3 pollutants
     }
 };
 
-TEST_F(CoPollutantTest, NoCoPollutantNoChange) {
+TEST_F(CoPollutantTest, NoCoPollutantNoChange)
+{
     // Compute primary washoff
     double runoff[2] = {1.0, 2.0};
     double area[2] = {100.0, 200.0};
@@ -67,22 +71,24 @@ TEST_F(CoPollutantTest, NoCoPollutantNoChange) {
     solver.applyCoPollutant(sq, runoff, area, co_pollut, co_frac, 2);
 
     // Concentrations should be unchanged
-    for (size_t i = 0; i < sq.washoff_conc.size(); ++i) {
+    for (size_t i = 0; i < sq.washoff_conc.size(); ++i)
+    {
         EXPECT_NEAR(sq.washoff_conc[i], orig[i], 1e-10);
     }
 }
 
-TEST_F(CoPollutantTest, SimpleCoPollutantFraction) {
+TEST_F(CoPollutantTest, SimpleCoPollutantFraction)
+{
     // Pollutant 1 gets fraction of pollutant 0's washoff
     double runoff[2] = {1.0, 1.0};
     double area[2] = {100.0, 100.0};
     solver.computeWashoff(sq, runoff, area, 2);
 
-    double c0_before = sq.washoff_conc[0];  // pollutant 0, subcatch 0
-    double c1_before = sq.washoff_conc[1];  // pollutant 1, subcatch 0
+    double c0_before = sq.washoff_conc[0]; // pollutant 0, subcatch 0
+    double c1_before = sq.washoff_conc[1]; // pollutant 1, subcatch 0
 
-    int co_pollut[3] = {-1, 0, -1};   // pollutant 1 has co-pollutant 0
-    double co_frac[3] = {0.0, 0.5, 0.0};  // 50% of pollutant 0's washoff
+    int co_pollut[3] = {-1, 0, -1};      // pollutant 1 has co-pollutant 0
+    double co_frac[3] = {0.0, 0.5, 0.0}; // 50% of pollutant 0's washoff
     solver.applyCoPollutant(sq, runoff, area, co_pollut, co_frac, 2);
 
     // Pollutant 0 should be unchanged
@@ -95,7 +101,8 @@ TEST_F(CoPollutantTest, SimpleCoPollutantFraction) {
     EXPECT_NEAR(sq.washoff_conc[2], 30.0, 1e-10);
 }
 
-TEST_F(CoPollutantTest, MultipleSubcatchments) {
+TEST_F(CoPollutantTest, MultipleSubcatchments)
+{
     double runoff[2] = {1.0, 2.0};
     double area[2] = {100.0, 200.0};
     solver.computeWashoff(sq, runoff, area, 2);
@@ -113,7 +120,8 @@ TEST_F(CoPollutantTest, MultipleSubcatchments) {
     EXPECT_NEAR(sq.washoff_conc[sc1_p1], 20.0 + 0.25 * 10.0, 1e-10);
 }
 
-TEST_F(CoPollutantTest, ZeroFractionNoChange) {
+TEST_F(CoPollutantTest, ZeroFractionNoChange)
+{
     double runoff[2] = {1.0, 1.0};
     double area[2] = {100.0, 100.0};
     solver.computeWashoff(sq, runoff, area, 2);
@@ -121,24 +129,26 @@ TEST_F(CoPollutantTest, ZeroFractionNoChange) {
     std::vector<double> orig(sq.washoff_conc.begin(), sq.washoff_conc.end());
 
     int co_pollut[3] = {-1, 0, -1};
-    double co_frac[3] = {0.0, 0.0, 0.0};  // fraction is 0
+    double co_frac[3] = {0.0, 0.0, 0.0}; // fraction is 0
     solver.applyCoPollutant(sq, runoff, area, co_pollut, co_frac, 2);
 
-    for (size_t i = 0; i < sq.washoff_conc.size(); ++i) {
+    for (size_t i = 0; i < sq.washoff_conc.size(); ++i)
+    {
         EXPECT_NEAR(sq.washoff_conc[i], orig[i], 1e-10);
     }
 }
 
-TEST_F(CoPollutantTest, ChainCoPollutant) {
+TEST_F(CoPollutantTest, ChainCoPollutant)
+{
     // Pollutant 1 depends on 0, pollutant 2 depends on 1
     double runoff[1] = {1.0};
     double area[1] = {100.0};
     sq.resize(1, 1, 3);
     solver.computeWashoff(sq, runoff, area, 1);
 
-    double c0 = sq.washoff_conc[0];  // 10.0
-    double c1 = sq.washoff_conc[1];  // 20.0
-    double c2 = sq.washoff_conc[2];  // 30.0
+    double c0 = sq.washoff_conc[0]; // 10.0
+    double c1 = sq.washoff_conc[1]; // 20.0
+    double c2 = sq.washoff_conc[2]; // 30.0
 
     int co_pollut[3] = {-1, 0, 1};
     double co_frac[3] = {0.0, 0.5, 0.3};
@@ -155,14 +165,16 @@ TEST_F(CoPollutantTest, ChainCoPollutant) {
     EXPECT_NEAR(sq.washoff_conc[2], c2 + 0.3 * (c1 + 0.5 * c0), 1e-10);
 }
 
-TEST_F(CoPollutantTest, NullPointersHandled) {
+TEST_F(CoPollutantTest, NullPointersHandled)
+{
     double runoff[1] = {1.0};
     double area[1] = {100.0};
     // Should not crash with null pointers
     solver.applyCoPollutant(sq, runoff, area, nullptr, nullptr, 1);
 }
 
-TEST_F(CoPollutantTest, InvalidCoPollutantIndex) {
+TEST_F(CoPollutantTest, InvalidCoPollutantIndex)
+{
     double runoff[1] = {1.0};
     double area[1] = {100.0};
     sq.resize(1, 1, 3);
@@ -175,7 +187,8 @@ TEST_F(CoPollutantTest, InvalidCoPollutantIndex) {
     double co_frac[3] = {0.0, 0.5, 0.0};
     solver.applyCoPollutant(sq, runoff, area, co_pollut, co_frac, 1);
 
-    for (size_t i = 0; i < sq.washoff_conc.size(); ++i) {
+    for (size_t i = 0; i < sq.washoff_conc.size(); ++i)
+    {
         EXPECT_NEAR(sq.washoff_conc[i], orig[i], 1e-10);
     }
 }
@@ -184,7 +197,8 @@ TEST_F(CoPollutantTest, InvalidCoPollutantIndex) {
 // 1.3 Quality Continuity Error Tests
 // ============================================================================
 
-TEST(QualityError, ZeroFluxReturnsZero) {
+TEST(QualityError, ZeroFluxReturnsZero)
+{
     SimulationContext ctx;
     ctx.mass_balance.resize_quality(2);
     // All zeros → error should be 0.0
@@ -192,7 +206,8 @@ TEST(QualityError, ZeroFluxReturnsZero) {
     EXPECT_NEAR(total_in, 0.0, 1e-15);
 }
 
-TEST(QualityError, MassBalanceVectorsExist) {
+TEST(QualityError, MassBalanceVectorsExist)
+{
     SimulationContext ctx;
     ctx.mass_balance.resize_quality(3);
     EXPECT_EQ(ctx.mass_balance.qual_routing_wet.size(), 3u);
@@ -204,7 +219,8 @@ TEST(QualityError, MassBalanceVectorsExist) {
     EXPECT_EQ(ctx.mass_balance.qual_routing_ii_in.size(), 3u);
 }
 
-TEST(QualityError, PerfectBalanceZeroError) {
+TEST(QualityError, PerfectBalanceZeroError)
+{
     SimulationContext ctx;
     ctx.mass_balance.resize_quality(1);
 
@@ -222,7 +238,8 @@ TEST(QualityError, PerfectBalanceZeroError) {
     EXPECT_NEAR(error, 0.0, 1e-10);
 }
 
-TEST(QualityError, KnownImbalanceError) {
+TEST(QualityError, KnownImbalanceError)
+{
     SimulationContext ctx;
     ctx.mass_balance.resize_quality(1);
 
@@ -243,14 +260,16 @@ TEST(QualityError, KnownImbalanceError) {
 // 1.4 Routing Events Tests
 // ============================================================================
 
-TEST(RoutingEvents, EventSortChronological) {
+TEST(RoutingEvents, EventSortChronological)
+{
     std::vector<SimulationContext::Event> events;
     events.push_back({10.0, 20.0});
     events.push_back({5.0, 8.0});
     events.push_back({25.0, 30.0});
 
     std::sort(events.begin(), events.end(),
-              [](const SimulationContext::Event& a, const SimulationContext::Event& b) {
+              [](const SimulationContext::Event &a, const SimulationContext::Event &b)
+              {
                   return a.start < b.start;
               });
 
@@ -259,18 +278,21 @@ TEST(RoutingEvents, EventSortChronological) {
     EXPECT_NEAR(events[2].start, 25.0, 1e-10);
 }
 
-TEST(RoutingEvents, OverlappingEventsResolved) {
+TEST(RoutingEvents, OverlappingEventsResolved)
+{
     std::vector<SimulationContext::Event> events;
     events.push_back({5.0, 15.0});
     events.push_back({10.0, 20.0});
 
     std::sort(events.begin(), events.end(),
-              [](const SimulationContext::Event& a, const SimulationContext::Event& b) {
+              [](const SimulationContext::Event &a, const SimulationContext::Event &b)
+              {
                   return a.start < b.start;
               });
 
     // Resolve overlaps
-    for (size_t i = 0; i + 1 < events.size(); ++i) {
+    for (size_t i = 0; i + 1 < events.size(); ++i)
+    {
         if (events[i].end > events[i + 1].start)
             events[i].end = events[i + 1].start;
     }
@@ -280,7 +302,8 @@ TEST(RoutingEvents, OverlappingEventsResolved) {
     EXPECT_NEAR(events[1].start, 10.0, 1e-10);
 }
 
-TEST(RoutingEvents, NoEventsNeverBetween) {
+TEST(RoutingEvents, NoEventsNeverBetween)
+{
     // With no events defined, isBetweenEvents should always return false
     // (tested via empty events vector logic)
     std::vector<SimulationContext::Event> events;
@@ -288,21 +311,24 @@ TEST(RoutingEvents, NoEventsNeverBetween) {
     // An empty event list means "always route" (not between events)
 }
 
-TEST(RoutingEvents, BeforeFirstEventIsBetween) {
+TEST(RoutingEvents, BeforeFirstEventIsBetween)
+{
     SimulationContext::Event ev{10.0, 20.0};
     double current_date = 5.0;
     // Before first event → between events
     EXPECT_LT(current_date, ev.start);
 }
 
-TEST(RoutingEvents, DuringEventNotBetween) {
+TEST(RoutingEvents, DuringEventNotBetween)
+{
     SimulationContext::Event ev{10.0, 20.0};
     double current_date = 15.0;
     EXPECT_GE(current_date, ev.start);
     EXPECT_LE(current_date, ev.end);
 }
 
-TEST(RoutingEvents, AfterEventIsBetween) {
+TEST(RoutingEvents, AfterEventIsBetween)
+{
     SimulationContext::Event ev{10.0, 20.0};
     double current_date = 25.0;
     EXPECT_GT(current_date, ev.end);
@@ -312,61 +338,73 @@ TEST(RoutingEvents, AfterEventIsBetween) {
 // 1.5 Steady-State Skip Tests
 // ============================================================================
 
-TEST(SteadyState, OptionDefaultFalse) {
+TEST(SteadyState, OptionDefaultFalse)
+{
     SimulationOptions opts;
     EXPECT_FALSE(opts.skip_steady_state);
 }
 
-TEST(SteadyState, OptionCanBeEnabled) {
+TEST(SteadyState, OptionCanBeEnabled)
+{
     SimulationOptions opts;
     opts.skip_steady_state = true;
     EXPECT_TRUE(opts.skip_steady_state);
 }
 
-TEST(SteadyState, InflowChangeDetection) {
+TEST(SteadyState, InflowChangeDetection)
+{
     // Simulate checking if inflow changed significantly
     double qOld = 10.0;
-    double qNew = 10.4;  // 4% change — below 5% threshold
+    double qNew = 10.4; // 4% change — below 5% threshold
     double lat_flow_tol = 0.05;
 
     double diff = (std::abs(qOld) > 1e-6) ? (qNew / qOld) - 1.0 : 1.0;
     bool changed = std::abs(diff) > lat_flow_tol;
-    EXPECT_FALSE(changed);  // 4% change is below threshold
+    EXPECT_FALSE(changed); // 4% change is below threshold
 
-    qNew = 11.0;  // 10% change
+    qNew = 11.0; // 10% change
     diff = (qNew / qOld) - 1.0;
     changed = std::abs(diff) > lat_flow_tol;
     EXPECT_TRUE(changed);
 }
 
-TEST(SteadyState, ZeroInflowNoChange) {
+TEST(SteadyState, ZeroInflowNoChange)
+{
     double qOld = 0.0;
     double qNew = 0.0;
     double diff;
     constexpr double TINY = 1e-6;
 
-    if (std::abs(qOld) > TINY) diff = (qNew / qOld) - 1.0;
-    else if (std::abs(qNew) > TINY) diff = 1.0;
-    else diff = 0.0;
+    if (std::abs(qOld) > TINY)
+        diff = (qNew / qOld) - 1.0;
+    else if (std::abs(qNew) > TINY)
+        diff = 1.0;
+    else
+        diff = 0.0;
 
     EXPECT_NEAR(diff, 0.0, 1e-10);
 }
 
-TEST(SteadyState, ZeroToNonzeroIsChange) {
+TEST(SteadyState, ZeroToNonzeroIsChange)
+{
     double qOld = 0.0;
     double qNew = 1.0;
     double diff;
     constexpr double TINY = 1e-6;
 
-    if (std::abs(qOld) > TINY) diff = (qNew / qOld) - 1.0;
-    else if (std::abs(qNew) > TINY) diff = 1.0;
-    else diff = 0.0;
+    if (std::abs(qOld) > TINY)
+        diff = (qNew / qOld) - 1.0;
+    else if (std::abs(qNew) > TINY)
+        diff = 1.0;
+    else
+        diff = 0.0;
 
     EXPECT_NEAR(diff, 1.0, 1e-10);
-    EXPECT_TRUE(std::abs(diff) > 0.05);  // exceeds any reasonable tolerance
+    EXPECT_TRUE(std::abs(diff) > 0.05); // exceeds any reasonable tolerance
 }
 
-TEST(SteadyState, ActionCountPreventsSkip) {
+TEST(SteadyState, ActionCountPreventsSkip)
+{
     // If control actions were taken, should NOT skip even if flows unchanged
     int action_count = 1;
     EXPECT_GT(action_count, 0);
@@ -377,7 +415,8 @@ TEST(SteadyState, ActionCountPreventsSkip) {
 // Landuse Solver Basic Tests (existing functionality verification)
 // ============================================================================
 
-TEST(LanduseSolver, InitSetsCorrectSizes) {
+TEST(LanduseSolver, InitSetsCorrectSizes)
+{
     LanduseSolver solver;
     solver.init(2, 3);
     EXPECT_EQ(solver.n_landuses_, 2);
@@ -386,7 +425,8 @@ TEST(LanduseSolver, InitSetsCorrectSizes) {
     EXPECT_EQ(static_cast<int>(solver.washoff_params.size()), 6);
 }
 
-TEST(LanduseSolver, EMCWashoffConstant) {
+TEST(LanduseSolver, EMCWashoffConstant)
+{
     LanduseSolver solver;
     solver.init(1, 1);
     solver.washoff_params[0].type = WashoffType::EMC;
@@ -401,7 +441,8 @@ TEST(LanduseSolver, EMCWashoffConstant) {
     EXPECT_NEAR(sq.washoff_conc[0], 15.0, 1e-10);
 }
 
-TEST(LanduseSolver, ZeroRunoffZeroWashoff) {
+TEST(LanduseSolver, ZeroRunoffZeroWashoff)
+{
     LanduseSolver solver;
     solver.init(1, 1);
     solver.washoff_params[0].type = WashoffType::EMC;
@@ -416,13 +457,14 @@ TEST(LanduseSolver, ZeroRunoffZeroWashoff) {
     EXPECT_NEAR(sq.washoff_conc[0], 0.0, 1e-10);
 }
 
-TEST(LanduseSolver, PowerBuildup) {
+TEST(LanduseSolver, PowerBuildup)
+{
     LanduseSolver solver;
     solver.init(1, 1);
     solver.buildup_params[0].type = BuildupType::POWER;
-    solver.buildup_params[0].coeff[0] = 100.0;  // max
-    solver.buildup_params[0].coeff[1] = 5.0;    // rate
-    solver.buildup_params[0].coeff[2] = 0.5;    // power
+    solver.buildup_params[0].coeff[0] = 100.0; // max
+    solver.buildup_params[0].coeff[1] = 5.0;   // rate
+    solver.buildup_params[0].coeff[2] = 0.5;   // power
     solver.buildup_params[0].max_days = 365.0;
 
     SurfaceQualitySoA sq;
@@ -431,18 +473,19 @@ TEST(LanduseSolver, PowerBuildup) {
 
     double area[1] = {100.0};
     double curb[1] = {0.0};
-    solver.computeBuildup(sq, area, curb, 86400.0, 1);  // 1 day
+    solver.computeBuildup(sq, area, curb, 86400.0, 1); // 1 day
 
     EXPECT_GT(sq.buildup[0], 0.0);
     EXPECT_LE(sq.buildup[0], 100.0);
 }
 
-TEST(LanduseSolver, ExponentialBuildup) {
+TEST(LanduseSolver, ExponentialBuildup)
+{
     LanduseSolver solver;
     solver.init(1, 1);
     solver.buildup_params[0].type = BuildupType::EXPON;
-    solver.buildup_params[0].coeff[0] = 50.0;   // max
-    solver.buildup_params[0].coeff[1] = 0.1;    // rate
+    solver.buildup_params[0].coeff[0] = 50.0; // max
+    solver.buildup_params[0].coeff[1] = 0.1;  // rate
     solver.buildup_params[0].max_days = 365.0;
 
     SurfaceQualitySoA sq;
@@ -456,18 +499,19 @@ TEST(LanduseSolver, ExponentialBuildup) {
     for (int d = 0; d < 100; ++d)
         solver.computeBuildup(sq, area, curb, 86400.0, 1);
 
-    EXPECT_GT(sq.buildup[0], 45.0);  // close to 50 asymptote
+    EXPECT_GT(sq.buildup[0], 45.0); // close to 50 asymptote
     EXPECT_LE(sq.buildup[0], 50.0);
 }
 
-TEST(LanduseSolver, SurfaceQualitySoAResize) {
+TEST(LanduseSolver, SurfaceQualitySoAResize)
+{
     SurfaceQualitySoA sq;
     sq.resize(5, 2, 3);
     EXPECT_EQ(sq.n_subcatch, 5);
     EXPECT_EQ(sq.n_landuses, 2);
     EXPECT_EQ(sq.n_pollutants, 3);
-    EXPECT_EQ(static_cast<int>(sq.buildup.size()), 30);  // 5*2*3
-    EXPECT_EQ(static_cast<int>(sq.washoff_conc.size()), 15);  // 5*3
+    EXPECT_EQ(static_cast<int>(sq.buildup.size()), 30);      // 5*2*3
+    EXPECT_EQ(static_cast<int>(sq.washoff_conc.size()), 15); // 5*3
 }
 
 // ============================================================================
@@ -479,7 +523,8 @@ using namespace openswmm::xsect;
 using openswmm::XSectParams;
 using openswmm::XSectShape;
 
-TEST(KWSolver, InitAllocatesArrays) {
+TEST(KWSolver, InitAllocatesArrays)
+{
     KWSolver solver;
     XSectGroups groups;
     solver.init(5, groups);
@@ -487,7 +532,8 @@ TEST(KWSolver, InitAllocatesArrays) {
     // the solver should not crash on subsequent operations)
 }
 
-TEST(KWSolver, SetLinkOrder) {
+TEST(KWSolver, SetLinkOrder)
+{
     KWSolver solver;
     XSectGroups groups;
     solver.init(3, groups);
@@ -498,7 +544,8 @@ TEST(KWSolver, SetLinkOrder) {
     EXPECT_EQ(solver.sorted_links_[0], 2);
 }
 
-TEST(KWSolver, SolveConduitZeroFlow) {
+TEST(KWSolver, SolveConduitZeroFlow)
+{
     KWSolver solver;
     XSectGroups groups;
     solver.init(1, groups);
@@ -508,12 +555,13 @@ TEST(KWSolver, SolveConduitZeroFlow) {
     xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR) + 1, p, 1.0);
 
     int iters = solver.solveConduit(0, xs, 10.0, xs.a_full, xs.s_full,
-                                     1.0, 500.0, 300.0, 0.0);
+                                    1.0, 500.0, 300.0, 0.0);
     // With zero inflow, should converge quickly
     EXPECT_GE(iters, 0);
 }
 
-TEST(KWSolver, SolveConduitPositiveFlow) {
+TEST(KWSolver, SolveConduitPositiveFlow)
+{
     KWSolver solver;
     XSectGroups groups;
     solver.init(1, groups);
@@ -531,32 +579,35 @@ TEST(KWSolver, SolveConduitPositiveFlow) {
     // For a clean test, we just verify the solver doesn't crash and produces
     // reasonable output
     int iters = solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full,
-                                     beta, 500.0, 300.0, 0.0);
+                                    beta, 500.0, 300.0, 0.0);
     EXPECT_GE(iters, 0);
-    EXPECT_LE(iters, 40);  // MAX_ITERS
+    EXPECT_LE(iters, 40); // MAX_ITERS
 }
 
-TEST(KWSolver, SolveConduitConvergence) {
+TEST(KWSolver, SolveConduitConvergence)
+{
     KWSolver solver;
     XSectGroups groups;
     solver.init(1, groups);
 
     XSectParams xs{};
-    double p[4] = {2.0, 0, 0, 0};  // 2ft diameter circular
+    double p[4] = {2.0, 0, 0, 0}; // 2ft diameter circular
     xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR) + 1, p, 1.0);
 
     double q_full = 5.0;
     double beta = 0.5;
 
     // Multiple calls should converge to steady state
-    for (int step = 0; step < 10; ++step) {
+    for (int step = 0; step < 10; ++step)
+    {
         int iters = solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full,
-                                         beta, 300.0, 60.0, 0.0);
+                                        beta, 300.0, 60.0, 0.0);
         EXPECT_GE(iters, 0);
     }
 }
 
-TEST(KWSolver, ConstantsMatchLegacy) {
+TEST(KWSolver, ConstantsMatchLegacy)
+{
     EXPECT_NEAR(WX, 0.6, 1e-10);
     EXPECT_NEAR(WT, 0.6, 1e-10);
     EXPECT_NEAR(EPSIL, 0.001, 1e-10);
@@ -566,7 +617,8 @@ TEST(KWSolver, ConstantsMatchLegacy) {
 // Topological Sort Tests
 // ============================================================================
 
-TEST(TopoSort, SimpleChain) {
+TEST(TopoSort, SimpleChain)
+{
     // 3 nodes, 2 links: 0→1→2
     int node1[2] = {0, 1};
     int node2[2] = {1, 2};
@@ -579,7 +631,8 @@ TEST(TopoSort, SimpleChain) {
     EXPECT_EQ(sorted[1], 1);
 }
 
-TEST(TopoSort, BranchingNetwork) {
+TEST(TopoSort, BranchingNetwork)
+{
     // 4 nodes, 3 links: 0→2, 1→2, 2→3
     int node1[3] = {0, 1, 2};
     int node2[3] = {2, 2, 3};
@@ -592,10 +645,11 @@ TEST(TopoSort, BranchingNetwork) {
     auto it = std::find(sorted.begin(), sorted.end(), 2);
     EXPECT_NE(it, sorted.end());
     auto pos2 = std::distance(sorted.begin(), it);
-    EXPECT_EQ(pos2, 2);  // Link 2 should be last
+    EXPECT_EQ(pos2, 2); // Link 2 should be last
 }
 
-TEST(TopoSort, SingleLink) {
+TEST(TopoSort, SingleLink)
+{
     int node1[1] = {0};
     int node2[1] = {1};
     std::vector<int> sorted;
@@ -605,7 +659,8 @@ TEST(TopoSort, SingleLink) {
     EXPECT_EQ(sorted[0], 0);
 }
 
-TEST(TopoSort, EmptyNetwork) {
+TEST(TopoSort, EmptyNetwork)
+{
     std::vector<int> sorted;
     int n = openswmm::toposort::sortLinks(nullptr, nullptr, 0, 0, sorted);
     EXPECT_EQ(n, 0);
@@ -617,7 +672,8 @@ TEST(TopoSort, EmptyNetwork) {
 // ============================================================================
 
 // 2.2 Outfall-to-Subcatchment Routing
-TEST(OutfallRouting, RouteToFieldDefaultMinusOne) {
+TEST(OutfallRouting, RouteToFieldDefaultMinusOne)
+{
     NodeData nodes;
     nodes.resize(3);
     openswmm::NodeSubtypes subs;
@@ -627,7 +683,8 @@ TEST(OutfallRouting, RouteToFieldDefaultMinusOne) {
     }
 }
 
-TEST(OutfallRouting, RouteToCanBeSet) {
+TEST(OutfallRouting, RouteToCanBeSet)
+{
     NodeData nodes;
     nodes.resize(3);
     openswmm::NodeSubtypes subs;
@@ -636,16 +693,18 @@ TEST(OutfallRouting, RouteToCanBeSet) {
     EXPECT_EQ(subs.outfalls.route_to[static_cast<size_t>(r)], 5);
 }
 
-TEST(OutfallRouting, RunonConversion) {
+TEST(OutfallRouting, RunonConversion)
+{
     // Outfall discharge (CFS) → runon (depth/sec over subcatchment area)
-    double q_outfall = 10.0;   // CFS
-    double area = 43560.0;     // 1 acre in ft²
+    double q_outfall = 10.0; // CFS
+    double area = 43560.0;   // 1 acre in ft²
     double runon = q_outfall / area;
     EXPECT_GT(runon, 0.0);
     EXPECT_NEAR(runon, 10.0 / 43560.0, 1e-10);
 }
 
-TEST(OutfallRouting, NoRouteWhenMinusOne) {
+TEST(OutfallRouting, NoRouteWhenMinusOne)
+{
     // When outfall_route_to == -1, no routing should occur
     int sc = -1;
     EXPECT_LT(sc, 0);
@@ -653,7 +712,8 @@ TEST(OutfallRouting, NoRouteWhenMinusOne) {
 }
 
 // 2.3 Wind Speed — already implemented (verification tests)
-TEST(WindSpeed, MonthlyValuesStored) {
+TEST(WindSpeed, MonthlyValuesStored)
+{
     SimulationOptions opts;
     opts.wind_speed[0] = 5.0;
     opts.wind_speed[6] = 10.0;
@@ -663,13 +723,15 @@ TEST(WindSpeed, MonthlyValuesStored) {
 }
 
 // 2.4 Street Sweeping — already implemented (verification tests)
-TEST(StreetSweeping, ParametersExist) {
+TEST(StreetSweeping, ParametersExist)
+{
     SimulationOptions opts;
     EXPECT_EQ(opts.sweep_start, 1);
     EXPECT_EQ(opts.sweep_end, 365);
 }
 
-TEST(StreetSweeping, SweepEfficiencyInWashoffParams) {
+TEST(StreetSweeping, SweepEfficiencyInWashoffParams)
+{
     WashoffParams wp;
     wp.sweep_effic = 50.0;
     EXPECT_NEAR(wp.sweep_effic, 50.0, 1e-10);
@@ -679,31 +741,35 @@ TEST(StreetSweeping, SweepEfficiencyInWashoffParams) {
 // 2.5 Ponded Quality Tests
 // ============================================================================
 
-TEST(PondedQuality, FieldExistsInSubcatchData) {
+TEST(PondedQuality, FieldExistsInSubcatchData)
+{
     openswmm::SubcatchData sc;
     sc.resize(3);
     sc.resize_quality(2);
-    EXPECT_EQ(sc.ponded_qual.size(), 6u);  // 3 subcatch * 2 pollutants
-    for (size_t i = 0; i < sc.ponded_qual.size(); ++i) {
+    EXPECT_EQ(sc.ponded_qual.size(), 6u); // 3 subcatch * 2 pollutants
+    for (size_t i = 0; i < sc.ponded_qual.size(); ++i)
+    {
         EXPECT_NEAR(sc.ponded_qual[i], 0.0, 1e-15);
     }
 }
 
-TEST(PondedQuality, MassAccumulates) {
+TEST(PondedQuality, MassAccumulates)
+{
     // Ponded quality should accumulate rain deposition between events
     double ponded_qual = 0.0;
-    double c_rain = 5.0;    // mg/L in rainfall
-    double v_rain = 100.0;  // ft³ of rainfall
+    double c_rain = 5.0;   // mg/L in rainfall
+    double v_rain = 100.0; // ft³ of rainfall
     double w_rain = c_rain * v_rain;
 
     ponded_qual += w_rain;
     EXPECT_NEAR(ponded_qual, 500.0, 1e-10);
 }
 
-TEST(PondedQuality, RunoffCarriesMassOut) {
-    double ponded_qual = 500.0;  // accumulated mass
-    double v_outflow = 80.0;     // ft³ of runoff
-    double v_total = 100.0;      // total volume (rain + existing)
+TEST(PondedQuality, RunoffCarriesMassOut)
+{
+    double ponded_qual = 500.0; // accumulated mass
+    double v_outflow = 80.0;    // ft³ of runoff
+    double v_total = 100.0;     // total volume (rain + existing)
     double c_ponded = ponded_qual / v_total;
     double w_outflow = c_ponded * v_outflow;
     ponded_qual -= w_outflow;
@@ -713,19 +779,22 @@ TEST(PondedQuality, RunoffCarriesMassOut) {
     EXPECT_NEAR(ponded_qual, 100.0, 1e-10);
 }
 
-TEST(PondedQuality, PersistsBetweenDryPeriods) {
+TEST(PondedQuality, PersistsBetweenDryPeriods)
+{
     // During dry period (no runoff), ponded mass stays
     double ponded_qual = 100.0;
-    double q_runoff = 0.0;  // no runoff
+    double q_runoff = 0.0; // no runoff
 
     // No runoff → no removal
-    if (q_runoff <= 0.0) {
+    if (q_runoff <= 0.0)
+    {
         // ponded_qual unchanged
     }
     EXPECT_NEAR(ponded_qual, 100.0, 1e-10);
 }
 
-TEST(PondedQuality, ClampedAtZero) {
+TEST(PondedQuality, ClampedAtZero)
+{
     double ponded_qual = -0.001;
     ponded_qual = std::max(ponded_qual, 0.0);
     EXPECT_NEAR(ponded_qual, 0.0, 1e-15);
@@ -807,6 +876,7 @@ TEST(PondedQualityGap36, VInflowIncludesPondedVolume) {
 
 #include "hydrology/RunoffInterface.hpp"
 #include <cstdio>
+#include <filesystem>
 
 using namespace openswmm::runoff_iface;
 
@@ -849,7 +919,7 @@ TEST(RunoffInterface, IncompatibleHeaderFails) {
     // Read with different counts → should fail
     {
         RunoffInterfaceFile rif;
-        int err = rif.openForRead(path, 5, 2, 0);  // wrong subcatch count
+        int err = rif.openForRead(path, 5, 2, 0); // wrong subcatch count
         EXPECT_NE(err, 0);
     }
 
@@ -938,9 +1008,12 @@ TEST(RunoffInterface, EOFReturnsFalse) {
     std::remove(path);
 }
 
-TEST(RunoffInterface, NonexistentFileFails) {
+TEST(RunoffInterface, NonexistentFileFails)
+{
+    const std::string path = runoffTempPath("nonexistent_file_xyz.bin");
+    std::remove(path);
     RunoffInterfaceFile rif;
-    int err = rif.openForRead("/tmp/nonexistent_file_xyz.bin", 1, 0, 0);
+    int err = rif.openForRead(path, 1, 0, 0);
     EXPECT_NE(err, 0);
     EXPECT_FALSE(rif.isOpen());
 }
@@ -950,7 +1023,8 @@ TEST(RunoffInterface, NonexistentFileFails) {
 // ============================================================================
 
 // 3.1 Non-convergence stats — already tracked
-TEST(DiagRoutingStats, NonConvergenceTracked) {
+TEST(DiagRoutingStats, NonConvergenceTracked)
+{
     SimulationContext ctx;
     ctx.routing_stats.update_iterations(5, true);
     ctx.routing_stats.update_iterations(8, false);
@@ -963,7 +1037,8 @@ TEST(DiagRoutingStats, NonConvergenceTracked) {
 }
 
 // 3.2 Courant number monitoring
-TEST(DiagRoutingStats, MaxCourantTracked) {
+TEST(DiagRoutingStats, MaxCourantTracked)
+{
     SimulationContext ctx;
     ctx.routing_stats.max_courant = 0.0;
     ctx.routing_stats.max_courant = std::max(ctx.routing_stats.max_courant, 0.5);
@@ -972,24 +1047,28 @@ TEST(DiagRoutingStats, MaxCourantTracked) {
     EXPECT_NEAR(ctx.routing_stats.max_courant, 1.2, 1e-10);
 }
 
-TEST(DiagRoutingStats, MaxCourantDefaultZero) {
+TEST(DiagRoutingStats, MaxCourantDefaultZero)
+{
     SimulationContext ctx;
     EXPECT_NEAR(ctx.routing_stats.max_courant, 0.0, 1e-15);
 }
 
 // 3.3 Quality seepage/evaporation vectors
-TEST(DiagQualityLoss, SeepEvapVectorsExist) {
+TEST(DiagQualityLoss, SeepEvapVectorsExist)
+{
     SimulationContext ctx;
     ctx.mass_balance.resize_quality(3);
     EXPECT_EQ(ctx.mass_balance.qual_routing_seep.size(), 3u);
     EXPECT_EQ(ctx.mass_balance.qual_routing_evap.size(), 3u);
-    for (size_t i = 0; i < 3; ++i) {
+    for (size_t i = 0; i < 3; ++i)
+    {
         EXPECT_NEAR(ctx.mass_balance.qual_routing_seep[i], 0.0, 1e-15);
         EXPECT_NEAR(ctx.mass_balance.qual_routing_evap[i], 0.0, 1e-15);
     }
 }
 
-TEST(DiagQualityLoss, SeepEvapResetToZero) {
+TEST(DiagQualityLoss, SeepEvapResetToZero)
+{
     SimulationContext ctx;
     ctx.mass_balance.resize_quality(2);
     ctx.mass_balance.qual_routing_seep[0] = 100.0;
@@ -1000,7 +1079,8 @@ TEST(DiagQualityLoss, SeepEvapResetToZero) {
 }
 
 // 3.4 Capacity-limited detection — already tracked
-TEST(DiagCapacityLimited, FieldExists) {
+TEST(DiagCapacityLimited, FieldExists)
+{
     LinkData links;
     links.resize(3);
     EXPECT_EQ(links.stat_time_capacity_limited.size(), 3u);
@@ -1008,7 +1088,8 @@ TEST(DiagCapacityLimited, FieldExists) {
 }
 
 // 3.5 Pump utilization statistics
-TEST(DiagPumpStats, FieldsExist) {
+TEST(DiagPumpStats, FieldsExist)
+{
     LinkData links;
     links.resize(3);
     EXPECT_EQ(links.stat_pump_cycles.size(), 3u);
@@ -1017,65 +1098,87 @@ TEST(DiagPumpStats, FieldsExist) {
     EXPECT_EQ(links.stat_pump_was_on.size(), 3u);
 }
 
-TEST(DiagPumpStats, CycleDetection) {
+TEST(DiagPumpStats, CycleDetection)
+{
     // Simulate pump turning on and off
     bool was_on = false;
     int cycles = 0;
 
     // Step 1: off → on
     bool is_on = true;
-    if (is_on != was_on) { cycles++; was_on = is_on; }
+    if (is_on != was_on)
+    {
+        cycles++;
+        was_on = is_on;
+    }
     EXPECT_EQ(cycles, 1);
 
     // Step 2: on → on (no cycle)
     is_on = true;
-    if (is_on != was_on) { cycles++; was_on = is_on; }
+    if (is_on != was_on)
+    {
+        cycles++;
+        was_on = is_on;
+    }
     EXPECT_EQ(cycles, 1);
 
     // Step 3: on → off
     is_on = false;
-    if (is_on != was_on) { cycles++; was_on = is_on; }
+    if (is_on != was_on)
+    {
+        cycles++;
+        was_on = is_on;
+    }
     EXPECT_EQ(cycles, 2);
 
     // Step 4: off → on
     is_on = true;
-    if (is_on != was_on) { cycles++; was_on = is_on; }
+    if (is_on != was_on)
+    {
+        cycles++;
+        was_on = is_on;
+    }
     EXPECT_EQ(cycles, 3);
 }
 
-TEST(DiagPumpStats, VolumeAccumulation) {
+TEST(DiagPumpStats, VolumeAccumulation)
+{
     double volume = 0.0;
-    double q = 5.0;      // CFS
-    double dt = 300.0;   // seconds
+    double q = 5.0;    // CFS
+    double dt = 300.0; // seconds
 
     // Pump on for 3 steps
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 3; ++i)
+    {
         volume += q * dt;
     }
     EXPECT_NEAR(volume, 4500.0, 1e-10);
 }
 
-TEST(DiagPumpStats, OnTimeAccumulation) {
+TEST(DiagPumpStats, OnTimeAccumulation)
+{
     double on_time = 0.0;
     double dt = 60.0;
 
-    on_time += dt;  // step 1: on
-    on_time += dt;  // step 2: on
+    on_time += dt; // step 1: on
+    on_time += dt; // step 2: on
     // step 3: off (no accumulation)
-    on_time += dt;  // step 4: on
+    on_time += dt; // step 4: on
 
     EXPECT_NEAR(on_time, 180.0, 1e-10);
 }
 
 // 3.6 Routing stats histogram
-TEST(DiagRoutingStats, HistogramInit) {
+TEST(DiagRoutingStats, HistogramInit)
+{
     SimulationContext ctx;
     ctx.routing_stats.init_histogram(30.0, 0.5);
     EXPECT_NEAR(ctx.routing_stats.step_intervals[0], 30.0, 1e-10);
     EXPECT_GT(ctx.routing_stats.step_intervals[1], 0.0);
 }
 
-TEST(DiagRoutingStats, StepBinning) {
+TEST(DiagRoutingStats, StepBinning)
+{
     SimulationContext ctx;
     ctx.routing_stats.init_histogram(30.0, 0.5);
     ctx.routing_stats.record_step_bin(30.0);
@@ -1089,7 +1192,8 @@ TEST(DiagRoutingStats, StepBinning) {
     EXPECT_EQ(total, 3);
 }
 
-TEST(DiagRoutingStats, AvgStep) {
+TEST(DiagRoutingStats, AvgStep)
+{
     SimulationContext ctx;
     ctx.routing_stats.update(10.0);
     ctx.routing_stats.update(20.0);
@@ -1106,19 +1210,21 @@ TEST(DiagRoutingStats, AvgStep) {
 #include "hydraulics/Link.hpp"
 
 // 4.1 Inverse Volume → Depth (getDepth)
-TEST(NodeGetDepth, JunctionLinear) {
+TEST(NodeGetDepth, JunctionLinear)
+{
     NodeData nodes;
     nodes.resize(1);
     nodes.type[0] = NodeType::JUNCTION;
     nodes.full_depth[0] = 10.0;
 
     // Junction: V = MIN_SURFAREA * d → d = V / MIN_SURFAREA
-    double vol = 62.83;  // MIN_SURFAREA * 5.0
+    double vol = 62.83; // MIN_SURFAREA * 5.0
     double d = node::getDepth(nodes, 0, vol);
     EXPECT_NEAR(d, vol / 12.566, 0.01);
 }
 
-TEST(NodeGetDepth, JunctionZeroVolume) {
+TEST(NodeGetDepth, JunctionZeroVolume)
+{
     NodeData nodes;
     nodes.resize(1);
     nodes.type[0] = NodeType::JUNCTION;
@@ -1127,7 +1233,8 @@ TEST(NodeGetDepth, JunctionZeroVolume) {
     EXPECT_NEAR(d, 0.0, 1e-10);
 }
 
-TEST(NodeGetDepth, StorageFunctionalLinear) {
+TEST(NodeGetDepth, StorageFunctionalLinear)
+{
     NodeData nodes;
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
@@ -1146,7 +1253,8 @@ TEST(NodeGetDepth, StorageFunctionalLinear) {
     EXPECT_NEAR(d, 5.0, 0.01);
 }
 
-TEST(NodeGetDepth, StorageFunctionalNonlinear) {
+TEST(NodeGetDepth, StorageFunctionalNonlinear)
+{
     NodeData nodes;
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
@@ -1170,14 +1278,16 @@ TEST(NodeGetDepth, StorageFunctionalNonlinear) {
     EXPECT_NEAR(d, d_test, 0.01);
 }
 
-TEST(NodeGetDepth, VolumeDepthRoundTrip) {
+TEST(NodeGetDepth, VolumeDepthRoundTrip)
+{
     // Volume at depth d → getDepth(V) should return d
     NodeData nodes;
     nodes.resize(1);
     nodes.type[0] = NodeType::JUNCTION;
     nodes.full_depth[0] = 10.0;
 
-    for (double d = 0.5; d <= 9.5; d += 1.0) {
+    for (double d = 0.5; d <= 9.5; d += 1.0)
+    {
         double v = node::getVolume(nodes, 0, d);
         double d_back = node::getDepth(nodes, 0, v);
         EXPECT_NEAR(d_back, d, 0.01) << "Round-trip failed for d=" << d;
@@ -1185,28 +1295,33 @@ TEST(NodeGetDepth, VolumeDepthRoundTrip) {
 }
 
 // 4.2 Hydraulic Power
-TEST(HydPower, ZeroFlowZeroPower) {
+TEST(HydPower, ZeroFlowZeroPower)
+{
     double p = openswmm::link::getHydPower(0.0, 100.0, 95.0);
     EXPECT_NEAR(p, 0.0, 1e-10);
 }
 
-TEST(HydPower, PositiveFlowPositivePower) {
+TEST(HydPower, PositiveFlowPositivePower)
+{
     // P = gamma * |Q| * |hL| = 62.4 * 10 * 5 = 3120 ft·lb/s
     double p = openswmm::link::getHydPower(10.0, 100.0, 95.0);
     EXPECT_NEAR(p, 62.4 * 10.0 * 5.0, 0.1);
 }
 
-TEST(HydPower, ReverseFlowStillPositive) {
+TEST(HydPower, ReverseFlowStillPositive)
+{
     double p = openswmm::link::getHydPower(-5.0, 90.0, 100.0);
     EXPECT_GT(p, 0.0);
 }
 
-TEST(HydPower, ZeroHeadLossZeroPower) {
+TEST(HydPower, ZeroHeadLossZeroPower)
+{
     double p = openswmm::link::getHydPower(10.0, 100.0, 100.0);
     EXPECT_NEAR(p, 0.0, 1e-10);
 }
 
-TEST(HydPower, ConvertToHorsepower) {
+TEST(HydPower, ConvertToHorsepower)
+{
     double p = openswmm::link::getHydPower(10.0, 100.0, 95.0);
     double hp = p / 550.0;
     EXPECT_GT(hp, 0.0);

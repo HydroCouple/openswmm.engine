@@ -37,6 +37,7 @@
 #define OPENSWMM_ENGINE_SWMM_ENGINE_HPP
 
 #include "SimulationContext.hpp"
+#include "OperatorSnapshotState.hpp"
 #include "../plugins/PluginFactory.hpp"
 #include "../output/IOThread.hpp"
 #include "../hydraulics/Routing.hpp"
@@ -192,6 +193,13 @@ public:
     void set_warning_callback (SWMM_WarningCallback  cb, void* user_data) noexcept;
     void set_step_begin_callback(SWMM_StepBeginCallback cb, void* user_data) noexcept;
     void set_step_end_callback  (SWMM_StepEndCallback   cb, void* user_data) noexcept;
+
+    // =========================================================================
+    // Operator snapshot (Part 2: per-substep DW state exposure)
+    // =========================================================================
+
+    OperatorSnapshotState&       operatorSnapshot()       noexcept { return op_snap_; }
+    const OperatorSnapshotState& operatorSnapshot() const noexcept { return op_snap_; }
 
     // =========================================================================
     // Context access (for C API wrappers)
@@ -405,6 +413,7 @@ private:
     bool has_snow_   = false;  ///< Prev step had snow cover   (legacy HasSnow)
 
     EngineCallbacks callbacks_;   ///< Registered callback bundle
+    OperatorSnapshotState op_snap_;  ///< Per-instance operator snapshot state
     int save_results_ = 0;        ///< Whether to save binary results
 
     // -----------------------------------------------------------------------

@@ -2392,6 +2392,20 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     // matches legacy's "% of Steps Not Converging".
     ctx_.routing_stats.update_iterations(iters, router_.lastStepConverged());
 
+    // --- Operator snapshot: populate and fire callback (zero-cost when disabled) ---
+    if (ctx_.options.routing_model == RoutingModel::DYNWAVE &&
+        (op_snap_.hasCallback() || op_snap_.pollEnabled())) {
+        bool did_converge = router_.dwSolver().lastConverged();
+        router_.dwSolver().populateSnapshot(ctx_, dt_routing, iters,
+                                            did_converge,
+                                            op_snap_.snapshot(), op_snap_);
+        op_snap_.markPopulated();
+        if (op_snap_.hasCallback()) {
+            op_snap_.callback()(static_cast<SWMM_Engine>(this),
+                                &op_snap_.snapshot(), op_snap_.userData());
+        }
+    }
+
 #ifdef OPENSWMM_HAS_2D
     // B3+. Post-routing: compute 2D↔1D coupling exchange, update rainfall,
     //      advance CVODE solver, transfer outfall discharges to 2D cells.
@@ -3566,6 +3580,9 @@ int SWMMEngine::close() noexcept {
     // Unload all dynamically loaded plugin libraries
     plugins_.unload_all();
 
+    // Reset transient operator snapshot state so reopen starts clean
+    op_snap_.resetTransientState();
+
     ctx_.state = EngineState::CLOSED;
     return SWMM_OK;
 }
@@ -3892,6 +3909,15 @@ void SWMMEngine::initHydraulics() noexcept {
     if (ctx_.options.routing_model == RoutingModel::KINWAVE) rm = RouteModel::KINWAVE;
     else if (ctx_.options.routing_model == RoutingModel::STEADY) rm = RouteModel::STEADY;
     router_.init(ctx_, rm);
+
+    // Pre-allocate operator snapshot staging buffers (DW only)
+    if (rm == RouteModel::DYNWAVE) {
+        op_snap_.resizeStaging(ctx_.n_nodes(), ctx_.n_links(),
+                               router_.dwSolver().numConduits());
+
+        // Wire snapshot state into DW solver for iteration history recording
+        router_.dwSolver().setSnapshotState(&op_snap_);
+    }
 
     // Relational node refactor — Phase 4 (authoritative): the storage/outfall/
     // divider side-tables are the single source of truth, populated by the
