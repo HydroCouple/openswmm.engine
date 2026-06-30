@@ -28,9 +28,11 @@
 #include "data/BoundaryData.hpp"
 #include "data/PendingRows2D.hpp"
 #include "coupling/NodeCoupling.hpp"
+#include "mesh/RainfallInterpolator.hpp"
 
 #include <memory>
 #include <fstream>
+#include <vector>
 
 #ifdef OPENSWMM_HAS_2D
 #include "solver/ISurfaceSolver.hpp"
@@ -274,8 +276,18 @@ private:
     std::unique_ptr<ISurfaceSolver> solver_;
 #endif
 
-    /// Update rainfall from system rain gages.
+    /// Update rainfall from the rain gages (natural-neighbour interpolation or
+    /// the uniform SYSTEM mean, per options_.rainfall_mode).
     void updateRainfall(SimulationContext& ctx);
+
+    /// Static per-cell rainfall-interpolation weights. Built once in
+    /// initialize() (gage positions are fixed for a run); applied each step in
+    /// updateRainfall() for RainfallMode::NATURAL_NEIGHBOUR.
+    RainfallInterpolator interp_;
+
+    /// Per-step scratch: each gage's current rainfall converted to m/s, indexed
+    /// by global gage index. Reused across steps to avoid per-step allocation.
+    std::vector<double> rain_si_;
 
     /// Resolve per-step boundary driving values: evaluate SPECIFIED_STAGE /
     /// SPECIFIED_FLOW timeseries at time @p t and RATING_CURVE from the boundary

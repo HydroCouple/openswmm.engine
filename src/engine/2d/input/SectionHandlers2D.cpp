@@ -132,6 +132,13 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.preconditioner = PreconditionerType::AMG;
         else
             return "Unknown PRECONDITIONER: " + val;
+    } else if (iequals(key, "RAINFALL_MODE")) {
+        if (iequals(val, "NATURAL_NEIGHBOUR") || iequals(val, "NATURAL_NEIGHBOR"))
+            opts.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
+        else if (iequals(val, "SYSTEM"))
+            opts.rainfall_mode = RainfallMode::SYSTEM;
+        else
+            return "Unknown RAINFALL_MODE: " + val;
     } else if (iequals(key, "REPORT_2D")) {
         if (iequals(val, "YES") || val == "1")
             opts.report_2d = true;
@@ -156,7 +163,7 @@ bool is2DOptionKey(const std::string& key) {
         "MAX_TIMESTEP", "MIN_TIMESTEP", "REL_TOLERANCE", "ABS_TOLERANCE",
         "DRY_DEPTH", "MAX_KRYLOV_DIM", "COUPLING_INTERVAL", "COUPLING_CD",
         "LIMITER_EPSILON", "FLUX_DH_EPS", "MAX_CVODE_STEPS", "LINEAR_SOLVER",
-        "PRECONDITIONER", "REPORT_2D", "OUTPUT_FILE",
+        "PRECONDITIONER", "RAINFALL_MODE", "REPORT_2D", "OUTPUT_FILE",
     };
     for (const char* k : kKeys) {
         if (iequals(key, k)) return true;
@@ -202,6 +209,13 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
             case PreconditionerType::AMG:    return "AMG";
         }
         return "JACOBI";
+    }
+    if (iequals(key, "RAINFALL_MODE")) {
+        switch (opts.rainfall_mode) {
+            case RainfallMode::NATURAL_NEIGHBOUR: return "NATURAL_NEIGHBOUR";
+            case RainfallMode::SYSTEM:            return "SYSTEM";
+        }
+        return "NATURAL_NEIGHBOUR";
     }
     return {};
 }

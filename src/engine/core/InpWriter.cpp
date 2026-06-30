@@ -280,6 +280,7 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
     // keys are parse errors on reload).
     static const char* sLinSolver[] = {"GMRES", "BICGSTAB", "TFQMR"};
     static const char* sPrecond[]   = {"NONE", "JACOBI", "ILU", "AMG"};
+    static const char* sRainMode[]  = {"NATURAL_NEIGHBOUR", "SYSTEM"};
     sec(f, "2D_OPTIONS");
     std::fprintf(f, ";;%-20s %s\n", "Parameter", "Value");
     std::fprintf(f, "%-22s %.12g\n", "MAX_TIMESTEP",      o.max_timestep);
@@ -300,6 +301,10 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
                  sPrecond[static_cast<int>(o.preconditioner) >= 0 &&
                           static_cast<int>(o.preconditioner) <= 3
                               ? static_cast<int>(o.preconditioner) : 0]);
+    std::fprintf(f, "%-22s %s\n",    "RAINFALL_MODE",
+                 sRainMode[static_cast<int>(o.rainfall_mode) >= 0 &&
+                           static_cast<int>(o.rainfall_mode) <= 1
+                               ? static_cast<int>(o.rainfall_mode) : 0]);
     std::fprintf(f, "%-22s %s\n",    "REPORT_2D", o.report_2d ? "YES" : "NO");
     if (!o.output_file.empty())
         std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", o.output_file.c_str());

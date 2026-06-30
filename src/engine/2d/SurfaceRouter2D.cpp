@@ -24,6 +24,7 @@
 #include <unordered_set>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
@@ -216,6 +217,25 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
 
     // Build pseudo-Laplacian vertex reconstruction stencils
     buildVertexStencils(mesh_);
+
+    // Fold the OPENSWMM_2D_RAINFALL_MODE env override into options_ (outside the
+    // OPENSWMM_HAS_2D block — rainfall is applied whether or not the CVODE solver
+    // is compiled). Mirrors the OPENSWMM_2D_MOMENTUM override below.
+    if (const char* rm = std::getenv("OPENSWMM_2D_RAINFALL_MODE")) {
+        if (std::strcmp(rm, "system") == 0)
+            options_.rainfall_mode = RainfallMode::SYSTEM;
+        else if (std::strcmp(rm, "natural") == 0)
+            options_.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
+    }
+
+    // Precompute the static rainfall-interpolation weights. Gage POSITIONS are
+    // fixed for the run, so the natural-neighbour / IDW weights are built once
+    // here and only the per-step gage VALUES vary (see updateRainfall). The
+    // [SYMBOLS] gage coords are in project map units; mesh_to_si brings them into
+    // the SI mesh frame the centroids now live in. Rebuilds cleanly, so a
+    // repeated initialize() is idempotent.
+    interp_.build(mesh_.tri_cx, mesh_.tri_cy, ctx.spatial.gage_x, ctx.spatial.gage_y,
+                  ctx.n_gages(), mesh_to_si);
 
     // Resolve deferred coupling node names → indices
     for (int v = 0; v < mesh_.n_vertices(); ++v) {
@@ -575,19 +595,20 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     solver_->advance(sim_time_, t_target);
 
     // Live-path booking: the solver integrated ∫Q_k dt (m³, +drain/−spill) per
-    // node-coupling point over the window. Convert to the 1D node lateral inflow
-    // (avg flow = volume/window, in 1D flow units) so the 1D engine consumes it
-    // over the next window and accumulateMassBalance() below books the identical
-    // volume into the 2D ledger — keeping the exchange conservative. Cleared
-    // then accumulated so multiple points sharing a node sum correctly.
+    // node-coupling point over the window. Store the exchange VOLUME (in 1D flow
+    // units, ft³) into coupling_volume so the 1D engine consumes exactly that
+    // volume over the next step (assembleLateralInflows divides by that step's dt)
+    // and accumulateMassBalance() below books the identical volume into the 2D
+    // ledger — conservative under VARIABLE_STEP. Cleared then accumulated so
+    // multiple points sharing a node sum correctly.
     if (live_coupling && dt > 0.0) {
         const std::vector<double>& exch = solver_->last_coupling_exchange();
         for (const auto& cp : node_coupling_points_)
-            ctx.nodes.coupling_inflow[static_cast<std::size_t>(cp.node_idx)] = 0.0;
+            ctx.nodes.coupling_volume[static_cast<std::size_t>(cp.node_idx)] = 0.0;
         const std::size_t n = std::min(exch.size(), node_coupling_points_.size());
         for (std::size_t k = 0; k < n; ++k) {
             const auto ni = static_cast<std::size_t>(node_coupling_points_[k].node_idx);
-            ctx.nodes.coupling_inflow[ni] += exch[k] * options_.flow_2d_to_1d / dt;
+            ctx.nodes.coupling_volume[ni] += exch[k] * options_.flow_2d_to_1d;
         }
     }
 
@@ -699,30 +720,35 @@ double SurfaceRouter2D::totalExchangeFlow() const {
 
 
 void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
-    int nt = mesh_.n_triangles();
-    int n_gages = ctx.n_gages();
+    const int nt = mesh_.n_triangles();
+    const int n_gages = ctx.n_gages();
 
     if (n_gages <= 0) {
         std::fill(state_.rainfall.begin(), state_.rainfall.end(), 0.0);
         return;
     }
 
-    // Phase 1: use first available gage's current rainfall for all cells
-    // Future: natural neighbour interpolation across all gages
-    double rain_rate = ctx.gages.rainfall[0];  // User units (in/hr or mm/hr)
+    // Convert every gage's current rainfall (user units, in/hr or mm/hr) to the
+    // solver's SI m/s. The conversion is linear, so interpolating the converted
+    // values is identical to interpolating then converting.
+    const double to_ms =
+        (ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)) == 0)
+            ? (0.0254 / 3600.0)   // US: in/hr → m/s
+            : (0.001  / 3600.0);  // SI: mm/hr → m/s
+    rain_si_.assign(static_cast<std::size_t>(n_gages), 0.0);
+    for (int g = 0; g < n_gages; ++g)
+        rain_si_[static_cast<std::size_t>(g)] = ctx.gages.rainfall[g] * to_ms;
 
-    // Convert to m/s
-    double rain_m_per_s;
-    if (ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)) == 0) {
-        // US customary (CFS/GPM/MGD): in/hr → m/s
-        rain_m_per_s = rain_rate * 0.0254 / 3600.0;
+    if (options_.rainfall_mode == RainfallMode::NATURAL_NEIGHBOUR && interp_.ready()) {
+        // Natural-neighbour (Laplace) interpolation inside the gage hull, IDW
+        // outside — applied as the precomputed per-cell sparse weighted sum.
+        interp_.apply(rain_si_, state_.rainfall);
     } else {
-        // SI (CMS/LPS/MLD): mm/hr → m/s
-        rain_m_per_s = rain_rate * 0.001 / 3600.0;
-    }
-
-    for (int i = 0; i < nt; ++i) {
-        state_.rainfall[i] = rain_m_per_s;
+        // SYSTEM mode (or no located gages): uniform = mean of all gages.
+        double mean = 0.0;
+        for (double r : rain_si_) mean += r;
+        mean /= static_cast<double>(n_gages);
+        std::fill(state_.rainfall.begin(), state_.rainfall.end(), mean);
     }
 }
 
@@ -809,11 +835,12 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     mb.evap_out += evap_vol * dt;
     state_.evap_loss_total += evap_vol * dt;
 
-    // Coupling and outfall exchange. nodes.coupling_inflow / nodes.outflow are
-    // in the 1D engine's flow units (ft³/s for US); convert back to SI (m³/s).
-    // coupling_inflow is a per-NODE total (computeCouplingExchange accumulates
-    // all coupling points for a node into it), so dedupe by node index to
-    // avoid double counting when several points map to one node.
+    // Coupling and outfall exchange. The junction term reads nodes.coupling_volume
+    // (the per-window exchange VOLUME, 1D ft³, just written above); the outfall term
+    // reads nodes.inflow/outflow (1D flow units). Both convert to SI for the 2D
+    // ledger. coupling_volume is a per-NODE total (computeCouplingExchange / the
+    // live booking accumulate all coupling points for a node into it), so dedupe by
+    // node index to avoid double counting when several points map to one node.
     std::unordered_set<int> seen;
     for (const auto& cp : coupling_points_) {
         if (!seen.insert(cp.node_idx).second) continue;
@@ -829,9 +856,14 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
             else         mb.outfall_out += -q * dt;
         } else {
             // Positive = 2D→1D drainage (out of 2D); negative = 1D→2D spill.
-            double q = ctx.nodes.coupling_inflow[ni] * options_.flow_1d_to_2d;
-            if (q > 0.0) mb.coupling_2d_to_1d_out += q * dt;
-            else         mb.coupling_1d_to_2d_in  += -q * dt;
+            // coupling_volume is the exchanged VOLUME for this window (1D units,
+            // ft³, just written by computeCouplingExchange / the live booking);
+            // convert ft³→m³ and book directly — no ·dt (already a volume). This
+            // is the exact volume the 1D side will receive next step, so the two
+            // ledgers stay matched under VARIABLE_STEP.
+            double vol = ctx.nodes.coupling_volume[ni] * options_.vol_1d_to_2d;
+            if (vol > 0.0) mb.coupling_2d_to_1d_out += vol;
+            else           mb.coupling_1d_to_2d_in  += -vol;
         }
     }
 
@@ -885,13 +917,17 @@ void SurfaceRouter2D::writeDiagRow(SimulationContext& ctx, double dt, double t) 
     diag_prev_nwet_ = n_wet;
 
     // Largest single coupled-node exchange magnitude (m³/s) — surfaces the
-    // weir-flanking junctions that dominate the late-regime stiffness.
+    // weir-flanking junctions that dominate the late-regime stiffness. The
+    // exchange is now carried as a per-window volume (coupling_volume, 1D ft³);
+    // divide by dt for the rate this diagnostic reports.
     double max_node_exch = 0.0;
-    for (const auto& cp : coupling_points_) {
-        const auto ni = static_cast<std::size_t>(cp.node_idx);
-        const double q = std::abs(ctx.nodes.coupling_inflow[ni])
-                         * options_.flow_1d_to_2d;
-        if (q > max_node_exch) max_node_exch = q;
+    if (dt > 0.0) {
+        for (const auto& cp : coupling_points_) {
+            const auto ni = static_cast<std::size_t>(cp.node_idx);
+            const double q = std::abs(ctx.nodes.coupling_volume[ni] / dt)
+                             * options_.flow_1d_to_2d;
+            if (q > max_node_exch) max_node_exch = q;
+        }
     }
 
     // Per-advance integrator deltas (zeros if no 2D solver compiled in).

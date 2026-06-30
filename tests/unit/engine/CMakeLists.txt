@@ -308,6 +308,13 @@ if(OPENSWMM_BUILD_2D)
     # surcharge above its crown to spill onto the 2D mesh and recapture ponded
     # surface water through its inlet (both blocked when ponded_area was zeroed).
     add_gtest_unit(test_engine_2d_junction_coupling test_2d_junction_coupling.cpp)
+    # Cross-domain volume conservation of 1D↔2D coupling under VARIABLE_STEP —
+    # guards the per-window-volume carry that keeps the staggered exchange
+    # mass-conservative when the routing dt varies between produce and consume.
+    add_gtest_unit(test_engine_2d_coupling_conservation test_2d_coupling_conservation.cpp)
+    # Rainfall→mesh interpolation (natural-neighbour / IDW) + RAINFALL_MODE
+    # option round-trip. Pure geometry over the engine-exported interpolator.
+    add_gtest_unit(test_engine_2d_rainfall_interp test_2d_rainfall_interp.cpp)
 endif()
 
 # Golden cross-section parity harness — diffs the new xsect:: implementation

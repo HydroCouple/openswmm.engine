@@ -590,8 +590,10 @@ private:
     /** @brief Pre-compute GW surface water head and available node flow from routing state. */
     void assembleGWCoupling(double dt_runoff) noexcept;
 
-    /** @brief Assemble all decomposed inflow sources into nodes.lat_flow and compute step mass balance. */
-    void assembleLateralInflows() noexcept;
+    /** @brief Assemble all decomposed inflow sources into nodes.lat_flow and compute step mass balance.
+     *  @param dt_routing  Current routing step (s); used to re-derive the 1D↔2D
+     *                     coupling rate from the carried per-window exchange volume. */
+    void assembleLateralInflows(double dt_routing) noexcept;
 
     void stepRouting(double dt_routing) noexcept;
 

@@ -100,6 +100,27 @@ enum class MomentumType : int8_t {
 };
 
 /**
+ * @brief How raingage rainfall is mapped onto the 2D mesh cells.
+ *
+ * NATURAL_NEIGHBOUR (default) spatially interpolates the located raingages onto
+ * every cell centroid — natural-neighbour (Laplace) weights inside the convex
+ * hull of the gages, inverse-distance (power 2) extrapolation outside it. The
+ * weights are precomputed once in SurfaceRouter2D::initialize() (gage positions
+ * are static for a run) and applied each step as a sparse weighted sum.
+ *
+ * SYSTEM applies one uniform value to all cells: the arithmetic mean of every
+ * gage's current rainfall. It is also the automatic fallback when no gage has a
+ * map location (no [SYMBOLS] coordinate), since interpolation is then undefined.
+ *
+ * Parsed from [2D_OPTIONS] RAINFALL_MODE; env OPENSWMM_2D_RAINFALL_MODE
+ * (natural|system) overrides at initialize().
+ */
+enum class RainfallMode : int8_t {
+    NATURAL_NEIGHBOUR = 0,  ///< Default: spatial interpolation across all gages.
+    SYSTEM            = 1    ///< Uniform = mean of all gages.
+};
+
+/**
  * @brief Configuration for the 2D surface routing CVODE solver.
  *
  * Populated from [2D_OPTIONS] input section. Defaults are chosen for
@@ -136,6 +157,12 @@ struct SolverOptions2D {
     // local-inertial scheme (per-edge q), honored only by ArkodeSurfaceSolver.
     // Parsed from [2D_OPTIONS] MOMENTUM; env OPENSWMM_2D_MOMENTUM overrides.
     MomentumType       momentum        = MomentumType::DW;
+
+    // Rainfall→mesh mapping. Default NATURAL_NEIGHBOUR (spatial interpolation
+    // across all located gages); SYSTEM applies the uniform all-gage mean.
+    // Parsed from [2D_OPTIONS] RAINFALL_MODE; env OPENSWMM_2D_RAINFALL_MODE
+    // (natural|system) overrides.
+    RainfallMode       rainfall_mode   = RainfallMode::NATURAL_NEIGHBOUR;
 
     LinearSolverType   linear_solver   = LinearSolverType::GMRES;
     // Default to AMG (hypre BoomerAMG): the only preconditioner with

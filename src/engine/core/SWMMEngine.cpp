@@ -2252,7 +2252,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     iface_.readInflows(ctx_, ctx_.current_date);
 
     // B2c. Assemble all decomposed sources into nodes.lat_flow[]
-    assembleLateralInflows();
+    assembleLateralInflows(dt_routing);
 
 #ifdef OPENSWMM_HAS_2D
     // B2c. Pre-routing: update outfall boundary heads from 2D surface state.
@@ -4828,7 +4828,7 @@ void SWMMEngine::assembleRunon(double dt_runoff) noexcept {
 // assembleLateralInflows — sum decomposed inflow sources into lat_flow
 // ============================================================================
 
-void SWMMEngine::assembleLateralInflows() noexcept {
+void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
     // Sum all decomposed inflow source arrays into nodes.lat_flow[].
     // Each source process writes to its own buffer; this is the single
     // assembly point where they are combined for the routing solver.
@@ -4840,6 +4840,18 @@ void SWMMEngine::assembleLateralInflows() noexcept {
 
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
+
+        // Re-derive the 1D↔2D coupling RATE from the exchange VOLUME carried
+        // across the step boundary by the 2D module (coupling_volume, 1D ft³).
+        // Dividing by THIS step's dt makes the 1D node receive exactly the volume
+        // the 2D side exchanged, regardless of how the timestep changed since it
+        // was computed — the fix for the VARIABLE_STEP non-conservation. Delivered
+        // once: cleared so it is not re-applied on a later step (e.g. the
+        // intermediate steps of a COUPLING_INTERVAL > 1 macro window).
+        ctx_.nodes.coupling_inflow[uj] =
+            (dt_routing > 0.0) ? ctx_.nodes.coupling_volume[uj] / dt_routing : 0.0;
+        ctx_.nodes.coupling_volume[uj] = 0.0;
+
         ctx_.nodes.lat_flow[uj] = ctx_.nodes.runoff_inflow[uj]
                                 + ctx_.nodes.gw_inflow[uj]
                                 + ctx_.nodes.ext_inflow[uj]

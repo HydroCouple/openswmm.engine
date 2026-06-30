@@ -299,10 +299,13 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
     std::fill(state.coupling_flux.begin(), state.coupling_flux.end(), 0.0);
 
     // Clear the dedicated 1D-side coupling source array for every coupled
-    // junction. The signed Q accumulated below is consumed by
-    // assembleLateralInflows at the start of step N+1, where it is split
-    // into routing_external (positive part) and routing_flooding (negative
-    // part) for mass-balance accounting. See review §11.
+    // junction. The signed exchange VOLUME accumulated below (Q·dt) is consumed
+    // by assembleLateralInflows at the start of step N+1, which re-derives the
+    // rate coupling_inflow = coupling_volume/dt and splits it into
+    // routing_external (positive part) and routing_flooding (negative part) for
+    // mass-balance accounting. Carrying a volume (not a rate) keeps the exchange
+    // conservative under VARIABLE_STEP — the 1D node receives exactly Q·dt
+    // regardless of the next step's size. See review §11.
     //
     // This replaces the earlier hack of routing coupling Q through
     // forcing.node_lat_inflow_value with OVERRIDE+PERSIST, which (a)
@@ -313,7 +316,7 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
     for (const auto& cp : cps) {
         if (cp.is_outfall) continue;
         auto ni = static_cast<std::size_t>(cp.node_idx);
-        nodes.coupling_inflow[ni] = 0.0;
+        nodes.coupling_volume[ni] = 0.0;
     }
 
     for (const auto& cp : cps) {
@@ -485,19 +488,20 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
             Q = std::max(Q, Q_min);
         }
 
-        // Inject as a dedicated 2D-coupling source on the SWMM node.
-        // Multiple coupling points targeting the same node accumulate via
-        // the += below. Positive Q = 2D → 1D (drain into pipe);
-        // negative Q = 1D → 2D (surcharge spill out of pipe). The signed
-        // value is consumed by assembleLateralInflows at the start of the
-        // next routing step, which both feeds lat_flow for the DW solver
-        // and folds the sign-split volumes into routing_external (positive
-        // side) and routing_flooding (negative side, |Q|).
+        // Inject as a dedicated 2D-coupling source on the SWMM node, accumulated
+        // as the exchange VOLUME over this window (Q·dt). Multiple coupling points
+        // targeting the same node accumulate via the += below. Positive = 2D → 1D
+        // (drain into pipe); negative = 1D → 2D (surcharge spill out of pipe). The
+        // signed volume is consumed by assembleLateralInflows at the start of the
+        // next routing step, which divides by that step's dt to feed lat_flow for
+        // the DW solver and folds the sign-split volumes into routing_external
+        // (positive side) and routing_flooding (negative side).
         //
         // Q is in the 2D solver's SI flow units (m³/s); the 1D engine's
         // lateral-inflow sum and continuity accumulators are always in ft³/s
         // (1D US internal units), so convert back here (flow_2d_to_1d ≈ 35.31).
-        nodes.coupling_inflow[ni] += Q * opts.flow_2d_to_1d;
+        // ·dt makes it a volume (ft³) carried conservatively across the step.
+        nodes.coupling_volume[ni] += Q * opts.flow_2d_to_1d * dt;
 
         // Record coupling flux back to the 2D cell(s). For vertex coupling the
         // sink/source is distributed across the stencil weighted by the upwind
