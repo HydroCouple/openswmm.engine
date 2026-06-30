@@ -285,9 +285,22 @@ if(OPENSWMM_BUILD_2D AND OPENSWMM_BUILD_GPU_PLUGIN)
         COMMAND $<TARGET_FILE:openswmm> 2d_complete_example.inp 2d_omp_default.rpt
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
+    # Point plugin discovery straight at the freshly built omp plugin. Without
+    # this the engine only searches its own module dir; on Windows multi-config
+    # builds the CLI and the plugin land in separate per-config trees (e.g.
+    # bin/Debug vs src/engine/2d/gpu/Debug), so the omp plugin is never found,
+    # the run silently falls back to the serial CPU solver, and the
+    # PASS_REGULAR_EXPRESSION below never matches. OPENSWMM_GPU_PLUGIN_PATH is
+    # the highest-priority search dir, so this makes discovery deterministic on
+    # every platform/generator. Guarded so non-omp GPU backends still configure.
+    set(_omp_test_env "OPENSWMM_2D_BACKEND=omp")
+    if(TARGET openswmm_gpu_omp)
+        list(APPEND _omp_test_env
+             "OPENSWMM_GPU_PLUGIN_PATH=$<TARGET_FILE_DIR:openswmm_gpu_omp>")
+    endif()
     set_tests_properties(test_engine_2d_omp_default PROPERTIES
         LABELS "unit"
-        ENVIRONMENT "OPENSWMM_2D_BACKEND=omp"
+        ENVIRONMENT "${_omp_test_env}"
         PASS_REGULAR_EXPRESSION "using GPU backend: omp")
 endif()
 

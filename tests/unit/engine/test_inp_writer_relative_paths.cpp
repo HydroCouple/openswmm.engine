@@ -171,34 +171,38 @@ TEST(InpWriterRelativePaths, FilesBlockRebasedReviewable) {
 
 TEST(InpWriterRelativePaths, CrossVolumeFallbackProducesWarning) {
     SimulationContext ctx;
-    // Slot absolute is on a Windows-style drive D:; destination is on C:.
     ctx.files.rainfall_mode = FileMode::USE;
-    ctx.files.rainfall_path.original = "D:/data/rain.dat";
-    ctx.files.rainfall_path.absolute = "D:/data/rain.dat";
 
     const fs::path dst = testDataDir() / "cross_volume.inp";
-    // Use a Windows-style destination so the cross-volume check fires.
-    // The writer still writes to the actual `dst` (local POSIX path);
-    // the cross-volume check is purely lexical.
-    //
-    // The writer takes one `path` parameter which is BOTH the file we
-    // open() AND the anchor for the rebase. To force the lexical
-    // cross-volume check, we'd need to point both at a "C:/..." string,
-    // which won't actually open on Linux. Instead, exercise the same
-    // logic directly: write to a real path, then assert by re-running
-    // with a synthetic destination via a follow-up helper test.
-    //
-    // For the reviewable file we do the real write — and assert that
-    // the absolute form survives (no anchor-based rebase happened
-    // because dst_dir is on the local POSIX root, not on D:).
+
+    // Pick a Windows drive letter guaranteed DIFFERENT from the destination's
+    // own volume, so the cross-volume fallback fires on every platform and CI
+    // runner. The original test hardcoded "D:" as the foreign drive, but the
+    // Windows CI workspace itself lives on D:\ — there the slot was the *same*
+    // volume, the writer correctly relativised it, and the cross-volume branch
+    // never ran (no warning, token rebased). On POSIX the destination has no
+    // root_name, so any drive letter is cross-volume; on Windows we avoid
+    // colliding with dst's real drive.
+    const std::string dst_root = dst.root_name().string();  // "" on POSIX, "D:" on Win
+    const char foreign_drive =
+        (!dst_root.empty() && (dst_root[0] == 'Z' || dst_root[0] == 'z')) ? 'Y' : 'Z';
+    const std::string foreign_token =
+        std::string(1, foreign_drive) + ":/data/rain.dat";
+    ctx.files.rainfall_path.original = foreign_token;
+    ctx.files.rainfall_path.absolute = foreign_token;
+
+    // The writer takes one `path` parameter which is BOTH the file we open()
+    // AND the anchor for the rebase. The slot is on a foreign volume relative
+    // to that anchor, so the rebase is impossible: the writer must emit the
+    // absolute form verbatim and surface a warning.
     std::vector<std::string> warnings;
     ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(),
                                                   &warnings), 0);
     const std::string content = readFile(dst);
-    // The D:/data/rain.dat token *should still appear* — cross-volume
-    // rebase is impossible against a POSIX-root anchor, so the writer
-    // emits the absolute form.
-    EXPECT_NE(content.find("D:/data/rain.dat"), std::string::npos)
+    // The foreign-volume token *should still appear* — cross-volume rebase is
+    // impossible against the destination anchor, so the writer emits the
+    // absolute form.
+    EXPECT_NE(content.find(foreign_token), std::string::npos)
         << "cross-volume token was not preserved";
     // A warning should have been surfaced.
     EXPECT_FALSE(warnings.empty());

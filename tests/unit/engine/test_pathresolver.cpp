@@ -138,17 +138,21 @@ TEST(PathResolverResolve, EmptyTokenReturnsEmpty) {
 }
 
 TEST(PathResolverResolve, AbsoluteTokenReturnedUnchanged) {
+    // resolveRelative normalises to a portable forward-slash form on EVERY
+    // platform (it emits generic_string(), not make_preferred()), so a Windows
+    // drive token keeps forward slashes rather than being converted to "\".
 #ifdef _WIN32
-    EXPECT_EQ(resolveRelative("C:/data/rain.dat", "/a/b"), "C:\\data\\rain.dat");
+    EXPECT_EQ(resolveRelative("C:/data/rain.dat", "/a/b"), "C:/data/rain.dat");
 #else
     EXPECT_EQ(resolveRelative("/data/rain.dat", "/a/b"), "/data/rain.dat");
 #endif
 }
 
 TEST(PathResolverResolve, RelativeTokenJoinedToAnchor) {
+    // Joined output is also forward-slash on every platform (see above).
 #ifdef _WIN32
     EXPECT_EQ(resolveRelative("data/rain.dat", "C:/proj"),
-              "C:\\proj\\data\\rain.dat");
+              "C:/proj/data/rain.dat");
 #else
     EXPECT_EQ(resolveRelative("data/rain.dat", "/home/me/proj"),
               "/home/me/proj/data/rain.dat");

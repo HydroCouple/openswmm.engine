@@ -61,12 +61,30 @@ protected:
     std::vector<twoD::PendingEdgeConveyanceRow> pending_ec_in_;
 
     void SetUp() override {
-        db_path_ = (fs::temp_directory_path() / "test_openswmm_mesh2d.gpkg").string();
-        std::remove(db_path_.c_str());
+        // Unique file per test, plus sidecar cleanup. A single shared path let
+        // one test's leftover rows/locks bleed into the next on Windows (where
+        // a connection torn down mid-write keeps the .gpkg/-wal file locked):
+        // the rollback test then observed a previous test's rows, and the test
+        // after it failed to open with "database is locked". Per-test isolation
+        // removes that coupling; on POSIX it is simply harmless.
+        const ::testing::TestInfo* info =
+            ::testing::UnitTest::GetInstance()->current_test_info();
+        db_path_ = (fs::temp_directory_path() /
+                    ("test_openswmm_mesh2d_" + std::string(info->name()) + ".gpkg"))
+                       .string();
+        remove_db_files();
     }
 
     void TearDown() override {
+        remove_db_files();
+    }
+
+    // std::remove on the .gpkg alone leaves the WAL sidecars behind; clear all
+    // three so a stale -wal can never resurrect a prior test's contents.
+    void remove_db_files() {
         std::remove(db_path_.c_str());
+        std::remove((db_path_ + "-wal").c_str());
+        std::remove((db_path_ + "-shm").c_str());
     }
 
     DbPtr create_db() {

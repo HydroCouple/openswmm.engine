@@ -62,6 +62,16 @@ inline DbPtr open_database(const std::string& path, int flags = SQLITE_OPEN_READ
         throw GpkgError("Failed to enable foreign_keys pragma on '" + path
                           + "': " + msg, rc);
     }
+
+    // Retry on a busy database rather than failing immediately with
+    // SQLITE_BUSY. On Windows (mandatory file locking) a connection that is
+    // torn down while a write is still settling can briefly hold the .gpkg /
+    // -wal lock; without a busy handler the next open()'s first PRAGMA fails
+    // outright ("database is locked"). 5 s is generous for the short-lived
+    // intra-process contention we actually hit and is a no-op on POSIX, where
+    // advisory locking already tolerates this.
+    sqlite3_busy_timeout(db.get(), 5000);
+
     return db;
 }
 
