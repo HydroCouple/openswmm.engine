@@ -6,20 +6,27 @@
 # mpistubs no-op communicator), which is all the 2D surface preconditioner
 # needs and keeps the portable build free of an MPI stack.
 #
-# BLAS/LAPACK: on Linux/macOS we link the external vcpkg `lapack` (reference
-# LAPACK), which builds cleanly with the platform's gfortran. On Windows that
-# pulls `lapack-reference`, whose Fortran dependency (`vcpkg-gfortran` ->
-# LLVMFlang) puts a GNU-driver `clang.exe` on PATH; CMake's C-compiler ABI
-# probe then picks that clang while the x64-windows triplet injects MSVC-style
-# flags (/nologo, /MDd, ...), so the probe fails ("clang: error: no such file or
-# directory: '/nologo'") and the whole configure aborts. hypre ships portable C
-# implementations of the small BLAS/LAPACK subset BoomerAMG needs, so on Windows
-# we use those instead -- no Fortran toolchain, no lapack-reference, no external
-# blas/lapack dependency. See vcpkg.json (blas/lapack are gated to !windows).
-if(VCPKG_TARGET_IS_WINDOWS)
-    set(HYPRE_USE_BUNDLED_BLAS_LAPACK ON)
-else()
+# BLAS/LAPACK: hypre needs only a tiny dense BLAS/LAPACK subset for BoomerAMG,
+# and it ships portable C implementations of exactly that subset. We use those
+# bundled C sources on every platform EXCEPT macOS, so the build carries no
+# external blas/lapack dependency and no Fortran toolchain (`lapack-reference`):
+#   * Windows — `lapack-reference`'s Fortran dep (`vcpkg-gfortran` -> LLVMFlang)
+#     puts a GNU-driver `clang.exe` on PATH; CMake's C-compiler ABI probe then
+#     picks that clang while the x64-windows triplet injects MSVC-style flags
+#     (/nologo, /MDd, ...), so the probe fails ("clang: error: no such file or
+#     directory: '/nologo'") and configure aborts.
+#   * Linux — the manylinux/musllinux wheel containers expose a gfortran driver
+#     (identified as GNU 14.x) but an incomplete Fortran runtime, so
+#     `lapack-reference`'s configure fails its Fortran ABI probe ("building
+#     lapack-reference:*-linux failed with: BUILD_FAILED"), taking the whole
+#     wheel build down before any wheel is produced.
+# macOS keeps the external vcpkg `lapack` (reference LAPACK): its runners carry a
+# complete gfortran and that path builds cleanly. See vcpkg.json (blas/lapack are
+# gated to `osx`).
+if(VCPKG_TARGET_IS_OSX)
     set(HYPRE_USE_BUNDLED_BLAS_LAPACK OFF)
+else()
+    set(HYPRE_USE_BUNDLED_BLAS_LAPACK ON)
 endif()
 
 if(VCPKG_TARGET_IS_WINDOWS)
