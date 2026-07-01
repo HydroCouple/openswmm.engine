@@ -255,6 +255,15 @@ case "$(uname -m)" in
   aarch64) VCPKG_TRIPLET=arm64-linux ;;
   *)       echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
 esac
+# Make vcpkg use the SYSTEM cmake/ninja instead of the prebuilt tools it keeps
+# in downloads/tools. Those bundled binaries are glibc-linked; on musllinux
+# (Alpine) they cannot exec, so vcpkg's compiler-hash detection dies the instant
+# it invokes the downloaded ninja ("vcpkg was unable to detect the active
+# compiler's information", CMAKE_MAKE_PROGRAM=.../downloads/tools/ninja/...).
+# The system tools are installed above (apk ninja/samurai, yum/apt ninja-build)
+# with the pinned cmake<4 on PATH. This is what unbreaks the musllinux wheels;
+# it is a no-op on manylinux (glibc), where the same system tools are valid too.
+export VCPKG_FORCE_SYSTEM_BINARIES=1
 # /host persists across the manylinux and musllinux container runs within a
 # single cibuildwheel invocation, so a checkout from the earlier (manylinux)
 # run may already be at /host/vcpkg — and a bare `git clone` aborts on a
@@ -291,7 +300,13 @@ fi
   --x-feature hypre
 """
 before-build = "pip install ninja"
-environment  = { VCPKG_ROOT = "/host/vcpkg", CMAKE_POLICY_VERSION_MINIMUM = "3.5" }
+# VCPKG_FORCE_SYSTEM_BINARIES also has to be set for the wheel BUILD phase, not
+# just before-all: python/CMakeLists.txt auto-loads the vcpkg toolchain (manifest
+# mode) from VCPKG_ROOT, so vcpkg re-runs compiler-hash detection during the
+# build and would again reach for its glibc-only bundled ninja on musllinux.
+# cibuildwheel has no per-libc environment hook, so it is set for all Linux
+# images; it is benign on manylinux (system cmake/ninja are equally valid there).
+environment  = { VCPKG_ROOT = "/host/vcpkg", CMAKE_POLICY_VERSION_MINIMUM = "3.5", VCPKG_FORCE_SYSTEM_BINARIES = "1" }
 # Forward GHA cache creds + vcpkg binary cache config + the vcpkg ref pin into
 # the container.
 environment-pass = ["ACTIONS_CACHE_URL", "ACTIONS_RUNTIME_TOKEN", "VCPKG_BINARY_SOURCES", "VCPKG_REF"]
