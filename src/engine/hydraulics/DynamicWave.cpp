@@ -1827,7 +1827,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
 #ifdef SWMM_FAST_MANNING_POW
     double r43 = fastmath::pow4_3(rWtd);
 #else
-    double r43 = std::pow(rWtd, 1.33333);
+    double r43 = std::pow(rWtd, 1.33333333333);
 #endif
     double dq1 = dt * tile_rough_factor_[uci] / r43 * absv;
 
