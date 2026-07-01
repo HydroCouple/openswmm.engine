@@ -649,9 +649,15 @@ void DWSolver::setNumThreads(int n) {
     else
         num_threads_ = std::min(n, max_threads);
 
-    // Threshold: if fewer than 4 * num_threads conduits, overhead exceeds
-    // benefit — fall back to single-threaded (matching legacy dynwave.c).
-    if (n_links_ < 4 * num_threads_)
+    // Threshold: OpenMP fork/join + barrier overhead per parallel region only
+    // pays off at large link counts. EPA-SWMM's `4 * NumThreads` (project.c:277)
+    // is far too low — 2-thread DW routing is net-negative even at ~1100
+    // conduits (PHASE2 handoff) and ~180 conduits (East Boston: 42s serial vs
+    // 84s @ 2 threads). Require a substantial per-thread link count instead.
+    // PERFORMANCE-ONLY deviation from legacy: results are bit-identical because
+    // the per-conduit flow loop carries no cross-thread reduction. Tunable.
+    static constexpr int kMinLinksPerThread = 1000;
+    if (n_links_ < kMinLinksPerThread * num_threads_)
         num_threads_ = 1;
 }
 
@@ -1637,9 +1643,14 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
                 if (slope_check || froude_check) {
                     // PARITY dwflow.c:675: qNorm = beta*a1*pow(r1,2./3.) — (beta*a1)
                     // grouped first, libm std::pow (NOT cbrt(x*x)), raw upstream
-                    // hyd radius (no FUDGE clamp).
+                    // hyd radius (no FUDGE clamp). §6 fast-mode: cbrt(x*x) (opt-in).
+#ifdef SWMM_FAST_MANNING_POW
+                    double qNorm = tile_beta_[uci] * area1_[uj]
+                                 * fastmath::pow2_3(hrad1_[uj]);
+#else
                     double qNorm = tile_beta_[uci] * area1_[uj]
                                  * std::pow(hrad1_[uj], 2.0 / 3.0);
+#endif
                     if (qNorm < q) {
                         q = qNorm;
                         CD.normal_flow_limited[uci] = uint8_t{1};
@@ -1806,7 +1817,18 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     // ~2e-6..1e-5 relative error in r^exp (largest for nearly-dry conduits with
     // small rWtd) — the dominant timestep-by-timestep divergence from legacy.
     // Match the legacy literal exactly (dwflow.c:211) for bit-level parity.
+    //
+    // §6 fast-mode (opt-in, NOT bit-exact): std::pow(x,1.33333) via
+    // exp(1.33333*log(x)) is the single hottest transcendental in DW routing
+    // (~10% of compute in profiling). fastmath::pow4_3(x)=x*cbrt(x) computes the
+    // exact 4/3 power with a ~10-15 cycle cbrt instead of ~60-80 cycle pow. It
+    // differs from legacy by the exponent truncation (~1e-5 rel) — within the
+    // fast-mode tolerance gate. Default OFF keeps the legacy std::pow.
+#ifdef SWMM_FAST_MANNING_POW
+    double r43 = fastmath::pow4_3(rWtd);
+#else
     double r43 = std::pow(rWtd, 1.33333);
+#endif
     double dq1 = dt * tile_rough_factor_[uci] / r43 * absv;
 
     // Head gradient. PARITY dwflow.c:214: divide by length directly

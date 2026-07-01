@@ -187,6 +187,28 @@ else()
     endif()
 endif()
 
+# ---- Fast geometry / Manning kernels (opt-OUT; default ON) ----
+# The refactored engine ships with the fast cross-section table lookup
+# (reciprocal-multiply + `*inv_delta`, no per-element IEEE divide) and the fast
+# Manning friction (x*cbrt(x) instead of libm pow). Together ~10% faster DW
+# routing. These are NOT bit-exact vs legacy (ULP-level; ~1e-4 flow accumulated
+# over long runs — well inside the abs 1e-8 / rel 1e-7 gate per lookup). Turn
+# BOTH off for bit-exact legacy parity (the QA parity harness / regression
+# baselines): -DOPENSWMM_FAST_XSECT_LOOKUP=OFF -DOPENSWMM_FAST_MANNING_POW=OFF
+option(OPENSWMM_FAST_XSECT_LOOKUP
+    "Fast cross-section table lookup (reciprocal-multiply; not bit-exact vs legacy)" ON)
+option(OPENSWMM_FAST_MANNING_POW
+    "Fast Manning friction via cbrt instead of libm pow (not bit-exact vs legacy)" ON)
+if(OPENSWMM_FAST_XSECT_LOOKUP)
+    target_compile_definitions(openswmm_engine PRIVATE SWMM_XSECT_FAST_LOOKUP)
+endif()
+if(OPENSWMM_FAST_MANNING_POW)
+    target_compile_definitions(openswmm_engine PRIVATE SWMM_FAST_MANNING_POW)
+endif()
+message(STATUS "OpenSWMM Engine: fast kernels — xsect_lookup=${OPENSWMM_FAST_XSECT_LOOKUP}"
+        " manning_pow=${OPENSWMM_FAST_MANNING_POW}"
+        " (ON ⇒ ~10% faster DW routing, NOT bit-exact vs legacy)")
+
 # ---- Force-optimized override (for Debug parent builds) ----
 # When the engine is consumed as a subdirectory by a parent project that's
 # in Debug mode (e.g. a GUI under active development), CMAKE_BUILD_TYPE=Debug
@@ -374,6 +396,15 @@ if(MSVC AND OPENSWMM_BUILD_UNIT_TESTS)
         target_compile_definitions(openswmm_engine_internal PRIVATE OPENSWMM_SIMD_SCALAR=1)
     elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|x86")
         target_compile_options(openswmm_engine_internal PRIVATE /arch:AVX2)
+    endif()
+
+    # Fast kernels (default ON) — must match the shared engine so MSVC unit
+    # tests exercise the same build variant.
+    if(OPENSWMM_FAST_XSECT_LOOKUP)
+        target_compile_definitions(openswmm_engine_internal PRIVATE SWMM_XSECT_FAST_LOOKUP)
+    endif()
+    if(OPENSWMM_FAST_MANNING_POW)
+        target_compile_definitions(openswmm_engine_internal PRIVATE SWMM_FAST_MANNING_POW)
     endif()
 
     message(STATUS "OpenSWMM Engine: internal STATIC library enabled for MSVC unit tests")

@@ -22,6 +22,14 @@
 
 #include "XSectBatch.hpp"
 #include "xsect_tables.hpp"
+#include "XSectLookup.hpp"
+
+// Belt-and-suspenders against FMA contraction (global -ffp-contract=off /
+// /fp:precise already enforce this; see XSectLookup.hpp §3). Keeps the scalar
+// bit-exact lookup path from fusing mul+add and diverging across platforms.
+#if defined(__clang__) || defined(__GNUC__)
+#  pragma STDC FP_CONTRACT OFF
+#endif
 
 #include <cmath>
 #include <algorithm>
@@ -153,24 +161,18 @@ double lookup(double x, const double* table, int n_items) {
     // table wildly out of bounds (segfault); ARM saturates to INT_MAX and
     // happened to mask the bug. The legacy lookup() guarded x <= 0; restore
     // that and add the matching upper bound so non-finite x is handled safely.
-    if (!(x > 0.0)) return table[0];            // x <= 0 or NaN
-    if (x >= 1.0)   return table[n_items - 1];   // x >= 1 or +inf
-    double delta = 1.0 / static_cast<double>(n_items - 1);
-    int i = static_cast<int>(x / delta);
-    if (i >= n_items - 1) return table[n_items - 1];
-
-    double x0 = i * delta;
-    double x1 = (static_cast<double>(i) + 1.0) * delta;
-    double y = table[i] + (x - x0) * (table[i + 1] - table[i]) / delta;
-
-    // Quadratic refinement for low x (legacy: i < 2)
-    if (i < 2) {
-        double y2 = y + (x - x0) * (x - x1) / (delta * delta) *
-                    (table[i] / 2.0 - table[i + 1] + table[i + 2] / 2.0);
-        if (y2 > 0.0) y = y2;
-    }
-    if (y < 0.0) y = 0.0;
-    return y;
+    //
+    // On the finite domain (0, 1] this is bit-identical to legacy lookup():
+    //   - x <= 0 / NaN  -> table[0]  (legacy lookup(0) also returns table[0]).
+    //   - x >  1 / +inf -> table[n-1] (legacy takes the i >= n-1 early-out).
+    //     The bound is strict (`> 1.0`, not `>= 1.0`): at x == 1.0 legacy does
+    //     NOT early-out — 1.0/delta rounds just below n-1 — so it interpolates
+    //     the last segment. Deferring x == 1.0 to lookup_exact reproduces that;
+    //     no representable double lies in (1.0, n-1 * delta), so the strict
+    //     guard is exact.
+    if (!(x > 0.0)) return table[0];             // x <= 0 or NaN
+    if (x > 1.0)    return table[n_items - 1];    // x > 1 or +inf
+    return lookup_exact(x, table, n_items);
 }
 
 double invLookup(double y, const double* table, int n_items) {

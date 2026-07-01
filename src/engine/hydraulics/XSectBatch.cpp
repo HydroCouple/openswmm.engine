@@ -19,8 +19,18 @@
 
 #include "XSectBatch.hpp"
 #include "xsect_tables.hpp"
+#include "XSectLookup.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../math/SIMD.hpp"
+
+// Belt-and-suspenders against FMA contraction fusing a `mul`+`add` into a single
+// rounding (which would silently diverge NEON from x86). The CMake presets
+// already pass -ffp-contract=off / /fp:precise globally; this pragma guards the
+// bit-exact geometry kernels even if a future preset drops that flag. See
+// docs/plans/xsect_bitexact_vectorization.md §3 and XSectLookup.hpp.
+#if defined(__clang__) || defined(__GNUC__)
+#  pragma STDC FP_CONTRACT OFF
+#endif
 
 #include <cmath>
 #include <algorithm>
@@ -173,50 +183,30 @@ const ShapeGroup* XSectGroups::findGroup(XSectShape shape) const {
 
 namespace xsect_batch {
 
-// Legacy-faithful table interpolation (matches xsect.c lookup() exactly,
-// including the quadratic refinement for the first two segments). Kept inline
-// so the table kernels stay tight; the i<2 branch is rare and well-predicted.
-static inline double batch_lookup(double x, const double* table, int n_items) {
-    // inv_delta = (n_items-1); delta = 1/inv_delta. Index via multiply (not a
-    // per-element divide) — `x / delta` would emit a division every call.
-    const double inv_delta = static_cast<double>(n_items - 1);
-    const double delta = 1.0 / inv_delta;
-    int i = static_cast<int>(x * inv_delta);
-    if (i >= n_items - 1) return table[n_items - 1];
-    double x0 = i * delta;
-    double y = table[i] + (x - x0) * (table[i + 1] - table[i]) * inv_delta;
-    if (i < 2) {
-        double x1 = (static_cast<double>(i) + 1.0) * delta;
-        double y2 = y + (x - x0) * (x - x1) * (inv_delta * inv_delta) *
-                    (table[i] / 2.0 - table[i + 1] + table[i + 2] / 2.0);
-        if (y2 > 0.0) y = y2;
-    }
-    if (y < 0.0) y = 0.0;
-    return y;
-}
+// NOTE on the `nrm` parameter (the per-link normalization array): in the
+// default (bit-exact) build it is y_full and norm_lookup divides (y/yFull);
+// under -DSWMM_XSECT_FAST_LOOKUP it is inv_y_full and norm_lookup does the
+// reciprocal-multiply (plan §6). The dispatchers feed the matching array via
+// norm_param(g); norm_lookup/norm_x (XSectLookup.hpp) pick the arithmetic. This
+// keeps ONE kernel body for both modes.
+using xsect::norm_lookup;
+using xsect::norm_x;
 
 void area_circular(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT inv_y_full,
+    const double* OPENSWMM_RESTRICT nrm,
     const double* OPENSWMM_RESTRICT a_full,
     double*       OPENSWMM_RESTRICT area,
     int count
 ) {
-    // Vectorisable: all same table, pure arithmetic interpolation.
-    // Tried adding `#pragma omp parallel for if(count >= 256)` here; net
-    // regression of ~38 % wall time on Rich_BC_CSO. Each kernel call
-    // processes ~900 conduits at ~10 ns each = ~9 µs work, while the
-    // 8-way fork/join cost is ~3 µs. With 8 fork/join events per Picard
-    // iter × 1.6 M iters = 12.8 M regions, the cumulative overhead
-    // exceeds the work savings (and the cache-line ping-pong on the
-    // shared `area` array adds further cost). Kept serial.
+    // Legacy xsect_getAofY: a_full * lookup(y/yFull). y<=0 -> area 0 is handled
+    // by norm_x (x==0) + A_Circ[0]==0. (Kept serial: an OMP fork here regressed
+    // ~38% on Rich_BC_CSO — kernel work per call is smaller than fork/join cost.)
     const double* table = xsect_tables::A_Circ;
     constexpr int n_items = xsect_tables::N_A_Circ;
 
-    for (int k = 0; k < count; ++k) {
-        double y_norm = std::max(0.0, std::min(depth[k] * inv_y_full[k], 1.0));
-        area[k] = a_full[k] * batch_lookup(y_norm, table, n_items);
-    }
+    for (int k = 0; k < count; ++k)
+        area[k] = a_full[k] * norm_lookup(depth[k], nrm[k], table, n_items);
 }
 
 void area_rect(
@@ -288,55 +278,50 @@ void area_powerfunc(
 
 void area_tabulated(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT inv_y_full,
+    const double* OPENSWMM_RESTRICT nrm,
     const double* OPENSWMM_RESTRICT a_full,
     const double* table,
     int            table_size,
     double*       OPENSWMM_RESTRICT area,
     int count
 ) {
-    for (int k = 0; k < count; ++k) {
-        double y = depth[k];
-        if (y <= 0.0) { area[k] = 0.0; continue; }
-        double y_norm = std::min(y * inv_y_full[k], 1.0);
-        area[k] = a_full[k] * batch_lookup(y_norm, table, table_size);
-    }
+    // Legacy getAofY (tabulated shapes): a_full * lookup(y/yFull). y<=0 -> 0
+    // via norm_x (x==0, A_tbl[0]==0). No min(.,1) clamp: yn>1 takes the lookup
+    // i>=n-1 early-out (== table[n-1]), exactly as legacy.
+    for (int k = 0; k < count; ++k)
+        area[k] = a_full[k] * norm_lookup(depth[k], nrm[k], table, table_size);
 }
 
 void area_inv_tabulated(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT inv_y_full,
+    const double* OPENSWMM_RESTRICT nrm,
     const double* OPENSWMM_RESTRICT a_full,
     const double* table,
     int            table_size,
     double*       OPENSWMM_RESTRICT area,
     int count
 ) {
-    // For shapes where area table is Y vs A (inverted), use invLookup
-    for (int k = 0; k < count; ++k) {
-        double y = depth[k];
-        if (y <= 0.0) { area[k] = 0.0; continue; }
-        double y_norm = y * inv_y_full[k];
-        y_norm = std::min(y_norm, 1.0);
-        area[k] = a_full[k] * xsect::invLookup(y_norm, table, table_size);
-    }
+    // Shapes whose area table is Y vs A (inverted) use invLookup. Legacy getAofY:
+    // a_full * invLookup(y/yFull); norm_x gives x==0 at y<=0 (invLookup(0)==0).
+    for (int k = 0; k < count; ++k)
+        area[k] = a_full[k] * xsect::invLookup(norm_x(depth[k], nrm[k]), table, table_size);
 }
 
 /// Per-link tabulated lookup (for IRREGULAR shapes where each link has its own table).
 void perlink_tabulated(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT inv_y_full,
+    const double* OPENSWMM_RESTRICT nrm,
     const double* OPENSWMM_RESTRICT scale,      // a_full, r_full, or w_max
     const double* const* tables,                 // per-link table pointers
     int            table_size,
     double*       OPENSWMM_RESTRICT result,
     int count
 ) {
+    // Per-link transect tables (IRREGULAR/CUSTOM/STREET). Matches legacy
+    // getAofY/getRofY/getWofY normalization (norm_x = y/yFull, mode-aware).
     for (int k = 0; k < count; ++k) {
-        double y = depth[k];
-        if (y <= 0.0 || !tables[k]) { result[k] = 0.0; continue; }
-        double y_norm = std::min(y * inv_y_full[k], 1.0);
-        result[k] = scale[k] * batch_lookup(y_norm, tables[k], table_size);
+        if (!tables[k]) { result[k] = 0.0; continue; }
+        result[k] = scale[k] * norm_lookup(depth[k], nrm[k], tables[k], table_size);
     }
 }
 
@@ -346,18 +331,18 @@ void perlink_tabulated(
 
 void hydrad_circular(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT inv_y_full,
+    const double* OPENSWMM_RESTRICT nrm,
     const double* OPENSWMM_RESTRICT r_full,
     double*       OPENSWMM_RESTRICT hydrad,
     int count
 ) {
+    // Legacy xsect_getRofY: r_full * lookup(y/yFull), NO y<=0 guard — at y==0
+    // norm_x gives x==0 and lookup(0)==R_Circ[0] (0.01, not 0), matching legacy.
     const double* table = xsect_tables::R_Circ;
     constexpr int n_items = xsect_tables::N_R_Circ;
 
-    for (int k = 0; k < count; ++k) {
-        double y_norm = std::max(0.0, std::min(depth[k] * inv_y_full[k], 1.0));
-        hydrad[k] = r_full[k] * batch_lookup(y_norm, table, n_items);
-    }
+    for (int k = 0; k < count; ++k)
+        hydrad[k] = r_full[k] * norm_lookup(depth[k], nrm[k], table, n_items);
 }
 
 // Fused area + hydraulic radius for the dominant CIRCULAR/FORCE_MAIN shape.
@@ -367,22 +352,24 @@ void hydrad_circular(
 // hard-wired (no per-element divide, no function-call indirection).
 void area_hydrad_circular(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT inv_y_full,
+    const double* OPENSWMM_RESTRICT nrm,
     const double* OPENSWMM_RESTRICT a_full,
     const double* OPENSWMM_RESTRICT r_full,
     double*       OPENSWMM_RESTRICT area,
     double*       OPENSWMM_RESTRICT hydrad,
     int count
 ) {
+#ifdef SWMM_XSECT_FAST_LOOKUP
+    // §6 fast mode: reciprocal-multiply normalization (nrm == inv_y_full) +
+    // `* inv_delta` index/interp. NOT bit-exact; tolerance-tested (§6).
     const double* A = xsect_tables::A_Circ;
     const double* R = xsect_tables::R_Circ;
     constexpr int    n         = xsect_tables::N_A_Circ;   // == N_R_Circ
     constexpr double inv_delta = static_cast<double>(n - 1);
     constexpr double delta     = 1.0 / inv_delta;
-
     OPENSWMM_IVDEP
     for (int k = 0; k < count; ++k) {
-        double yn = std::max(0.0, std::min(depth[k] * inv_y_full[k], 1.0));
+        double yn = norm_x(depth[k], nrm[k]);              // depth*inv, clamped [0,1]
         int i = static_cast<int>(yn * inv_delta);
         if (i >= n - 1) {
             area[k]   = a_full[k] * A[n - 1];
@@ -390,10 +377,10 @@ void area_hydrad_circular(
             continue;
         }
         double x0 = i * delta;
-        double f  = (yn - x0) * inv_delta;          // fractional position in segment
+        double f  = (yn - x0) * inv_delta;
         double a  = A[i] + f * (A[i + 1] - A[i]);
         double r  = R[i] + f * (R[i + 1] - R[i]);
-        if (i < 2) {                                 // quadratic refinement (legacy lookup)
+        if (i < 2) {
             double x1 = (static_cast<double>(i) + 1.0) * delta;
             double q  = (yn - x0) * (yn - x1) * (inv_delta * inv_delta);
             double a2 = a + q * (A[i] / 2.0 - A[i + 1] + A[i + 2] / 2.0);
@@ -404,6 +391,60 @@ void area_hydrad_circular(
         area[k]   = a_full[k] * std::max(a, 0.0);
         hydrad[k] = r_full[k] * std::max(r, 0.0);
     }
+    return;
+#else
+    // A_Circ and R_Circ share the same 51-entry grid, so the depth
+    // normalization and segment index are computed ONCE and reused for both
+    // lookups. Every arithmetic op is the DIVIDE form of legacy lookup()
+    // (see xsect::lookup_exact) so this is bit-identical to calling
+    // lookup_exact(yn, A_Circ) and lookup_exact(yn, R_Circ) separately:
+    //   - index via `yn / delta` (not `yn * inv_delta`),
+    //   - linear term `... / delta`, quadratic term `... / (delta*delta)`,
+    //   - no fused multiply-add (kept as separate mul/sub/add/div).
+    // area at yn == 0 is 0 (A_Circ[0] == 0), matching legacy getAofY's y<=0
+    // guard; hydrad at yn == 0 is r_full * R_Circ[0], matching getRofY.
+    // NOTE (§5.2 measured & rejected on this arch): a fully branchless variant
+    // (compute the quadratic refinement for every lane + masked select) was
+    // implemented and proven bit-identical, but microbenchmarked 2.4× SLOWER on
+    // arm64/NEON — NEON has no hardware double-gather so the loop does not
+    // vectorize, and evaluating the quadratic (2 extra divides) for every element
+    // instead of only the rare i<2 lanes dominates. Since "performance is the
+    // ultimate goal" (§0) and both forms are bit-exact, we keep the branched form
+    // (the `if (i<2)` branch is rare and well-predicted). Revisit branchless only
+    // with a measured win behind a hardware-gather (AVX2/AVX-512) path.
+    const double* A = xsect_tables::A_Circ;
+    const double* R = xsect_tables::R_Circ;
+    constexpr int    n     = xsect_tables::N_A_Circ;   // == N_R_Circ
+    constexpr double delta = 1.0 / static_cast<double>(n - 1);
+    constexpr double dd    = delta * delta;
+
+    OPENSWMM_IVDEP
+    for (int k = 0; k < count; ++k) {
+        double yn = norm_x(depth[k], nrm[k]);        // (nrm>0 && d>0) ? d/nrm : 0
+        int i = static_cast<int>(yn / delta);
+        if (i >= n - 1) {
+            area[k]   = a_full[k] * A[n - 1];
+            hydrad[k] = r_full[k] * R[n - 1];
+            continue;
+        }
+        double x0 = i * delta;
+        double a  = A[i] + (yn - x0) * (A[i + 1] - A[i]) / delta;
+        double r  = R[i] + (yn - x0) * (R[i + 1] - R[i]) / delta;
+        if (i < 2) {                                 // quadratic refinement (legacy lookup)
+            double x1 = (static_cast<double>(i) + 1.0) * delta;
+            double a2 = a + (yn - x0) * (yn - x1) / dd *
+                            (A[i] / 2.0 - A[i + 1] + A[i + 2] / 2.0);
+            double r2 = r + (yn - x0) * (yn - x1) / dd *
+                            (R[i] / 2.0 - R[i + 1] + R[i + 2] / 2.0);
+            if (a2 > 0.0) a = a2;
+            if (r2 > 0.0) r = r2;
+        }
+        if (a < 0.0) a = 0.0;
+        if (r < 0.0) r = 0.0;
+        area[k]   = a_full[k] * a;
+        hydrad[k] = r_full[k] * r;
+    }
+#endif  // SWMM_XSECT_FAST_LOOKUP
 }
 
 void hydrad_trapezoidal(
@@ -501,33 +542,34 @@ void hydrad_rect_open(
 // where legacy getWofY returns 0.
 void width_rect_closed(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT inv_y_full,
+    const double* OPENSWMM_RESTRICT nrm,
     const double* OPENSWMM_RESTRICT w_max,
     double*       OPENSWMM_RESTRICT width,
     int count
 ) {
+    // Legacy getWofY RECT_CLOSED: 0 exactly at the crown (yNorm == 1.0), else
+    // wMax. In the bit-exact default norm_x DIVIDES (y == yFull -> yNorm == 1.0
+    // exactly); the fast reciprocal form can round just off 1.0 (accepted in §6).
     OPENSWMM_IVDEP
     for (int k = 0; k < count; ++k) {
-        double y_norm = depth[k] * inv_y_full[k];
+        double y_norm = norm_x(depth[k], nrm[k]);
         width[k] = (y_norm == 1.0) ? 0.0 : w_max[k];
     }
 }
 
 void hydrad_tabulated(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT inv_y_full,
+    const double* OPENSWMM_RESTRICT nrm,
     const double* OPENSWMM_RESTRICT r_full,
     const double* table,
     int            table_size,
     double*       OPENSWMM_RESTRICT hydrad,
     int count
 ) {
-    for (int k = 0; k < count; ++k) {
-        double y = depth[k];
-        if (y <= 0.0) { hydrad[k] = 0.0; continue; }
-        double y_norm = std::min(y * inv_y_full[k], 1.0);
-        hydrad[k] = r_full[k] * batch_lookup(y_norm, table, table_size);
-    }
+    // Legacy getRofY (tabulated shapes): r_full * lookup(y/yFull), NO y<=0 guard
+    // — at y==0 norm_x gives x==0 and lookup(0)==R_tbl[0] (0.01, not 0).
+    for (int k = 0; k < count; ++k)
+        hydrad[k] = r_full[k] * norm_lookup(depth[k], nrm[k], table, table_size);
 }
 
 // ============================================================================
@@ -536,18 +578,18 @@ void hydrad_tabulated(
 
 void width_circular(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT inv_y_full,
+    const double* OPENSWMM_RESTRICT nrm,
     const double* OPENSWMM_RESTRICT w_max,
     double*       OPENSWMM_RESTRICT width,
     int count
 ) {
+    // Legacy xsect_getWofY: w_max * lookup(y/yFull), no y<=0 guard
+    // (at y==0 norm_x gives x==0 and lookup(0)==W_Circ[0]==0 -> width 0).
     const double* table = xsect_tables::W_Circ;
     constexpr int n_items = xsect_tables::N_W_Circ;
 
-    for (int k = 0; k < count; ++k) {
-        double y_norm = std::max(0.0, std::min(depth[k] * inv_y_full[k], 1.0));
-        width[k] = w_max[k] * batch_lookup(y_norm, table, n_items);
-    }
+    for (int k = 0; k < count; ++k)
+        width[k] = w_max[k] * norm_lookup(depth[k], nrm[k], table, n_items);
 }
 
 void width_trapezoidal(
@@ -589,20 +631,17 @@ void width_rect(
 
 void width_tabulated(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT inv_y_full,
+    const double* OPENSWMM_RESTRICT nrm,
     const double* OPENSWMM_RESTRICT w_max,
     const double* table,
     int            table_size,
     double*       OPENSWMM_RESTRICT width,
     int count
 ) {
-    for (int k = 0; k < count; ++k) {
-        // Matches legacy getWofY: w_max * lookup(y_norm) with no special-case
-        // zeroing at the crown (the table's last entry already carries the
-        // crown width).
-        double y_norm = std::min(depth[k] * inv_y_full[k], 1.0);
-        width[k] = w_max[k] * batch_lookup(y_norm, table, table_size);
-    }
+    // Legacy getWofY: w_max * lookup(y/yFull), no crown special-case (the table's
+    // last entry carries the crown width) and no y<=0 guard (lookup(0)==W_tbl[0]).
+    for (int k = 0; k < count; ++k)
+        width[k] = w_max[k] * norm_lookup(depth[k], nrm[k], table, table_size);
 }
 
 } // namespace xsect_batch
@@ -612,6 +651,18 @@ void width_tabulated(
 // ============================================================================
 
 namespace {
+
+/// The per-link normalization array the kernels consume: y_full for the default
+/// bit-exact divide form, or the precomputed inv_y_full under the §6 fast mode.
+/// Selected at compile time so norm_x/norm_lookup (XSectLookup.hpp) and the fed
+/// array always agree.
+static inline const double* norm_param(const ShapeGroup& g) {
+#ifdef SWMM_XSECT_FAST_LOOKUP
+    return g.inv_y_full.data();
+#else
+    return g.y_full.data();
+#endif
+}
 
 /// Gather depths from global array into contiguous group-local buffer.
 void gather_depths(const ShapeGroup& g, const double* global_depths,
@@ -716,7 +767,7 @@ static void apply_area_kernel(const ShapeGroup& g,
     switch (g.shape) {
         case XSectShape::CIRCULAR:
         case XSectShape::FORCE_MAIN:
-            xsect_batch::area_circular(local_d, g.inv_y_full.data(),
+            xsect_batch::area_circular(local_d, norm_param(g),
                                        g.a_full.data(), local_a, g.count);
             break;
         case XSectShape::RECT_CLOSED:
@@ -743,20 +794,20 @@ static void apply_area_kernel(const ShapeGroup& g,
         case XSectShape::CUSTOM:
         case XSectShape::STREET_XSECT:
             if (!g.area_tables.empty())
-                xsect_batch::perlink_tabulated(local_d, g.inv_y_full.data(),
+                xsect_batch::perlink_tabulated(local_d, norm_param(g),
                                                g.a_full.data(), g.area_tables.data(),
                                                g.transect_tbl_size, local_a, g.count);
             break;
         default: {
             auto tbl = area_table_for(g.shape);
             if (tbl.data) {
-                xsect_batch::area_tabulated(local_d, g.inv_y_full.data(),
+                xsect_batch::area_tabulated(local_d, norm_param(g),
                                             g.a_full.data(), tbl.data, tbl.size,
                                             local_a, g.count);
             } else {
                 auto inv = area_inv_table_for(g.shape);
                 if (inv.data) {
-                    xsect_batch::area_inv_tabulated(local_d, g.inv_y_full.data(),
+                    xsect_batch::area_inv_tabulated(local_d, norm_param(g),
                                                     g.a_full.data(), inv.data, inv.size,
                                                     local_a, g.count);
                 } else {
@@ -776,7 +827,7 @@ static void apply_hydrad_kernel(const ShapeGroup& g,
     switch (g.shape) {
         case XSectShape::CIRCULAR:
         case XSectShape::FORCE_MAIN:
-            xsect_batch::hydrad_circular(local_d, g.inv_y_full.data(),
+            xsect_batch::hydrad_circular(local_d, norm_param(g),
                                          g.r_full.data(), local_h, g.count);
             break;
         case XSectShape::RECT_CLOSED:
@@ -800,14 +851,14 @@ static void apply_hydrad_kernel(const ShapeGroup& g,
         case XSectShape::CUSTOM:
         case XSectShape::STREET_XSECT:
             if (!g.hrad_tables.empty())
-                xsect_batch::perlink_tabulated(local_d, g.inv_y_full.data(),
+                xsect_batch::perlink_tabulated(local_d, norm_param(g),
                                                g.r_full.data(), g.hrad_tables.data(),
                                                g.transect_tbl_size, local_h, g.count);
             break;
         default: {
             auto tbl = hydrad_table_for(g.shape);
             if (tbl.data) {
-                xsect_batch::hydrad_tabulated(local_d, g.inv_y_full.data(),
+                xsect_batch::hydrad_tabulated(local_d, norm_param(g),
                                               g.r_full.data(), tbl.data, tbl.size,
                                               local_h, g.count);
             } else {
@@ -826,14 +877,14 @@ static void apply_width_kernel(const ShapeGroup& g,
     switch (g.shape) {
         case XSectShape::CIRCULAR:
         case XSectShape::FORCE_MAIN:
-            xsect_batch::width_circular(local_d, g.inv_y_full.data(),
+            xsect_batch::width_circular(local_d, norm_param(g),
                                         g.w_max.data(), local_w, g.count);
             break;
         case XSectShape::RECT_OPEN:
             xsect_batch::width_rect(g.w_max.data(), local_w, g.count);
             break;
         case XSectShape::RECT_CLOSED:
-            xsect_batch::width_rect_closed(local_d, g.inv_y_full.data(),
+            xsect_batch::width_rect_closed(local_d, norm_param(g),
                                            g.w_max.data(), local_w, g.count);
             break;
         case XSectShape::TRAPEZOIDAL:
@@ -848,14 +899,14 @@ static void apply_width_kernel(const ShapeGroup& g,
         case XSectShape::CUSTOM:
         case XSectShape::STREET_XSECT:
             if (!g.width_tables.empty())
-                xsect_batch::perlink_tabulated(local_d, g.inv_y_full.data(),
+                xsect_batch::perlink_tabulated(local_d, norm_param(g),
                                                g.w_max.data(), g.width_tables.data(),
                                                g.transect_tbl_size, local_w, g.count);
             break;
         default: {
             auto tbl = width_table_for(g.shape);
             if (tbl.data) {
-                xsect_batch::width_tabulated(local_d, g.inv_y_full.data(),
+                xsect_batch::width_tabulated(local_d, norm_param(g),
                                              g.w_max.data(), tbl.data, tbl.size,
                                              local_w, g.count);
             } else {
@@ -876,7 +927,7 @@ static void apply_width_kernel(const ShapeGroup& g,
 static void apply_area_hydrad_kernel(const ShapeGroup& g, const double* local_d,
                                      double* local_a, double* local_h) {
     if (g.shape == XSectShape::CIRCULAR || g.shape == XSectShape::FORCE_MAIN) {
-        xsect_batch::area_hydrad_circular(local_d, g.inv_y_full.data(),
+        xsect_batch::area_hydrad_circular(local_d, norm_param(g),
                                           g.a_full.data(), g.r_full.data(),
                                           local_a, local_h, g.count);
     } else {

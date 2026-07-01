@@ -493,7 +493,7 @@ void hydrad_circular(
 /// Fused area + hydraulic radius for CIRCULAR/FORCE_MAIN (shared table index).
 void area_hydrad_circular(
     const double* OPENSWMM_RESTRICT depth,
-    const double* OPENSWMM_RESTRICT inv_y_full,
+    const double* OPENSWMM_RESTRICT y_full,
     const double* OPENSWMM_RESTRICT a_full,
     const double* OPENSWMM_RESTRICT r_full,
     double*       OPENSWMM_RESTRICT area,

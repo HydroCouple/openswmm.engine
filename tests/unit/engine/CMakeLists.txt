@@ -356,6 +356,13 @@ target_include_directories(test_engine_xsect_parity
 if(MSVC)
     target_compile_options(test_engine_xsect_parity PRIVATE /EHsc)
 endif()
+# Mirror the engine's fast-lookup build variant into the test TU so the
+# BitExact batch/golden checks adapt (ULP==0 when bit-exact, tolerance when
+# the default fast lookup is on). The scalar lookup_exact checks stay ULP==0
+# either way (XSection.cpp's scalar accessor always uses the exact core).
+if(OPENSWMM_FAST_XSECT_LOOKUP)
+    target_compile_definitions(test_engine_xsect_parity PRIVATE SWMM_XSECT_FAST_LOOKUP)
+endif()
 set_target_properties(test_engine_xsect_parity PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
