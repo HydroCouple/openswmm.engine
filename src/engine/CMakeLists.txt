@@ -235,6 +235,25 @@ endif()
 if(NOT DEFINED OPENSWMM_ENABLE_LTO)
     set(OPENSWMM_ENABLE_LTO ON CACHE BOOL "Enable interprocedural / link-time optimization for Release builds")
 endif()
+# musl libc (Alpine / musllinux wheels): the `fortify-headers` package (pulled in
+# by `build-base`) wraps stdio in `always_inline` gnu_inline functions that GCC
+# cannot inline during the `-flto` link ("inlining failed in call to
+# 'always_inline' 'vsnprintf': function body can be overwritten at link time"),
+# which aborts the engine shared-library link. LTO + fortify-headers is a
+# known-broken combination on musl; disable IPO there. glibc (manylinux),
+# macOS, and Windows keep LTO. check_ipo_supported() does NOT catch this — its
+# probe program never includes the fortify stdio wrappers.
+if(OPENSWMM_ENABLE_LTO AND CMAKE_CXX_COMPILER)
+    execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -dumpmachine
+                    OUTPUT_VARIABLE OPENSWMM_TARGET_TRIPLE
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+    if(OPENSWMM_TARGET_TRIPLE MATCHES "musl")
+        set(OPENSWMM_ENABLE_LTO OFF)
+        message(STATUS "OpenSWMM Engine: IPO/LTO disabled on musl libc "
+                       "(${OPENSWMM_TARGET_TRIPLE}) — fortify-headers + LTO incompatible")
+    endif()
+endif()
 if(OPENSWMM_ENABLE_LTO AND
    (OPENSWMM_ENGINE_FORCE_OPTIMIZED OR NOT CMAKE_BUILD_TYPE STREQUAL "Debug"))
     include(CheckIPOSupported)
