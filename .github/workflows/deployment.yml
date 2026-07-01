@@ -342,6 +342,90 @@ jobs:
           path: ./wheelhouse/*.whl
 
   # ──────────────────────────────────────────────────────────────────────
+  #  Wheel smoke test — install the *uploaded* wheels into a brand-new venv
+  #  (the way an end user would) and run the example model.
+  #
+  #  cibuildwheel already runs pytest against each wheel INSIDE the build
+  #  container before upload. This job is the missing end-user check: it
+  #  downloads the uploaded base (`openswmm`) + companion (`openswmm-gpu-omp`)
+  #  wheel artifacts, installs BOTH into a fresh venv (numpy from PyPI), runs
+  #  python/smoke_test.py (site_drainage_example.inp → OutputReader node/link
+  #  counts), and verifies the gpu-omp plugin is auto-discovered. The captured
+  #  output is uploaded as an artifact. A `needs:` of `release`, so a wheel that
+  #  can't install/run in a clean env blocks the GitHub release.
+  #
+  #  Pinned to Python 3.12: the base wheels ship cp310–cp313 and the companion
+  #  is one py3-none wheel, so 3.12 co-installs both. The repo is checked out so
+  #  smoke_test.py's dev-tree fallback finds the example .inp (NOT in the wheel).
+  # ──────────────────────────────────────────────────────────────────────
+  wheel-smoke:
+    name: "Wheel smoke (${{ matrix.os }})"
+    needs: [wheels, gpu-omp-wheels]
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04          # Linux x86_64
+          - ubuntu-24.04-arm      # Linux aarch64 (native, no QEMU)
+          - windows-2025          # Windows x86_64
+          - macos-15              # macOS arm64
+          - macos-15-intel        # macOS x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Both artifacts extract into one dir; base wheels are named openswmm-*.whl
+      # and the companion openswmm_gpu_omp-*.whl, so there is no filename clash.
+      - name: Download base wheels
+        uses: actions/download-artifact@v5
+        with:
+          name: python-wheels-${{ matrix.os }}
+          path: wheelhouse
+
+      - name: Download gpu-omp companion wheels
+        uses: actions/download-artifact@v5
+        with:
+          name: python-gpu-omp-wheels-${{ matrix.os }}
+          path: wheelhouse
+
+      - name: Install wheels into a fresh venv and run the example
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The repo is checked out, so python/smoke_test.py lives in python/ —
+          # which Python would prepend to sys.path and let the (uncompiled)
+          # source python/openswmm/ shadow the installed wheel. PYTHONSAFEPATH=1
+          # (3.11+) stops that; __file__-based .inp discovery is unaffected.
+          export PYTHONSAFEPATH=1
+          python -m venv .venv
+          PY=.venv/bin/python
+          [ -x "$PY" ] || PY=.venv/Scripts/python.exe
+          "$PY" -m pip install --upgrade pip
+          # --only-binary :all: forbids an sdist rebuild fallback, so a missing
+          # platform wheel fails loudly instead of silently building from source.
+          # numpy is still pulled from PyPI (as a wheel).
+          "$PY" -m pip install --only-binary :all: --find-links wheelhouse openswmm openswmm-gpu-omp
+          "$PY" -m pip show openswmm | tee wheel-smoke-${{ matrix.os }}.txt
+          # gpu-omp companion must import AND be auto-discovered by base openswmm
+          # (import openswmm runs _register_gpu_companion → OPENSWMM_GPU_PLUGIN_PATH).
+          "$PY" -c "import os,openswmm,openswmm_gpu_omp as g; p=os.environ.get('OPENSWMM_GPU_PLUGIN_PATH'); assert p, 'gpu-omp plugin not discovered'; print('OPENSWMM_GPU_PLUGIN_PATH='+p); print('companion at '+g.__file__)" | tee -a wheel-smoke-${{ matrix.os }}.txt
+          # Run the example model end-to-end via the shared smoke script.
+          "$PY" python/smoke_test.py 2>&1 | tee -a wheel-smoke-${{ matrix.os }}.txt
+
+      - name: Upload smoke-test output
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: wheel-smoke-output-${{ matrix.os }}
+          path: wheel-smoke-*.txt
+
+  # ──────────────────────────────────────────────────────────────────────
   #  Python source distribution (sdist) — platform-independent, built once.
   # ──────────────────────────────────────────────────────────────────────
   sdist:
@@ -438,7 +522,7 @@ jobs:
   release:
     name: Create GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, test, wheels, gpu-omp-wheels, sdist]
+    needs: [build, test, wheels, gpu-omp-wheels, sdist, wheel-smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
