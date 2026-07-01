@@ -1711,6 +1711,37 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
     // The ONLY display-unit fields written are the link cross-section RAW
     // geom1-4 (ctx-native display, like the .inp); the reader converts those.
 
+    // Fail-fast 2D-coupling FK validation, BEFORE opening the transaction.
+    // A coupling that names a node no node row will materialize trips the
+    // mesh_2d_*_coupling → nodes(node_id) foreign key mid-write. Recovering from
+    // that relies on the RAII Transaction rolling the partial write back, which
+    // is fragile on Windows: a constraint-aborted statement unwinding blocks the
+    // ROLLBACK (see GpkgUtils.hpp Transaction), leaving a partially-written
+    // .gpkg (test_engine_geopackage_mesh2d saw 3 nodes/4 vertices/60 options).
+    // Validating up front throws with NOTHING written, so the atomic-write
+    // guarantee holds identically on every platform without depending on the
+    // rollback. The FK + Transaction rollback remain as defense in depth.
+    if (has_mesh_2d(ctx)) {
+        const auto& m = *ctx.twod_io.mesh;
+        auto coupled_name = [&ctx](const std::string& name, int idx) -> std::string {
+            if (!name.empty()) return name;                       // mirrors node_name_for
+            if (idx >= 0 && idx < ctx.node_names.size()) return ctx.node_names.name_of(idx);
+            return {};
+        };
+        auto require_node = [&ctx](const std::string& cn, const char* what, int k) {
+            if (!cn.empty() && ctx.node_names.find(cn) < 0)
+                throw GpkgError("2D coupling references unknown node \"" + cn +
+                                "\" (" + what + " " + std::to_string(k) + ")",
+                                SQLITE_CONSTRAINT);
+        };
+        for (int i = 0; i < m.n_vertices(); ++i)
+            require_node(coupled_name(m.vert_coupled_node_name[i], m.vert_coupled_node[i]),
+                         "vertex", i);
+        for (int t = 0; t < m.n_triangles(); ++t)
+            require_node(coupled_name(m.tri_coupled_node_name[t], m.tri_coupled_node[t]),
+                         "triangle", t);
+    }
+
     Transaction txn(db);
 
     // Register CRS and feature tables
