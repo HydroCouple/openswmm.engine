@@ -562,17 +562,39 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
     for (const auto& cp : cps) {
         if (!cp.is_outfall) continue;
 
-        // 2D head and bed elevation at the outfall coupling point
-        double h_2d, bed_z;
+        // 2D stage and wetness at the outfall coupling point.
+        //
+        // For vertex-coupled outfalls, do NOT derive these from the
+        // pseudo-Laplacian vert_head: it averages neighbour CELL heads and
+        // ignores the vertex's own z, so a vertex carved below its neighbours
+        // (outfall vertices are commonly written at the pipe INVERT, metres
+        // below the surrounding terrain) reads vert_head ≈ terrain on a bone-
+        // dry mesh → phantom depth equal to the bed relief → every outfall
+        // pinned at a terrain-level tailwater from the first step (choked /
+        // reversed discharge, 1D routing-step collapse). This is failure mode
+        // (a) documented for the junction path above; mirror its guard here:
+        // wetness AND stage come from the actual water in the vertex stencil.
+        // The deepest stencil cell is where outfall water genuinely pools, and
+        // its head is a real water surface — dry cells (head = own bed) can
+        // never fake a tailwater.
+        double h_2d, depth_2d;
         if (cp.vertex_idx >= 0) {
-            h_2d  = state.vert_head[cp.vertex_idx];
-            bed_z = mesh.vz[cp.vertex_idx];
+            const int v = cp.vertex_idx;
+            const int s = mesh.vert_stencil_ptr[v];
+            const int e = mesh.vert_stencil_ptr[v + 1];
+            int deepest = -1;
+            depth_2d = 0.0;
+            for (int k = s; k < e; ++k) {
+                const int c = mesh.vert_stencil_idx[k];
+                if (state.depth[c] > depth_2d) { depth_2d = state.depth[c]; deepest = c; }
+            }
+            // Fully dry stencil: ramp below reads 0, so the cached stage is
+            // never applied; the vertex bed keeps the value physically sane.
+            h_2d = (deepest >= 0) ? state.head[deepest] : mesh.vz[v];
         } else {
-            h_2d  = state.head[cp.cell_idx];
-            bed_z = mesh.tri_cz[cp.cell_idx];
+            h_2d     = state.head[cp.cell_idx];
+            depth_2d = state.depth[cp.cell_idx];  // == head - tri_cz by reconstruction
         }
-
-        double depth_2d = h_2d - bed_z;   // SI (metres); opts.dry_depth is metres
         // h_2d is SI (metres). The 1D consumer (Outfall::setAllOutfallDepths)
         // always compares against h_standard in feet (1D US internal units),
         // so convert back here (opts.len_2d_to_1d ≈ 3.281 always). Cache into the
@@ -588,13 +610,16 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
 }
 
 
-void transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
+int transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
                                 const MeshData& mesh,
                                 SurfaceStateData& state,
                                 const SimulationContext& ctx,
                                 const SolverOptions2D& opts,
-                                double /*dt*/) {
+                                double dt,
+                                std::unordered_map<int, double>& applied_q) {
     auto& nodes = ctx.nodes;
+    applied_q.clear();
+    int clamped = 0;
 
     for (const auto& cp : cps) {
         if (!cp.is_outfall) continue;
@@ -611,13 +636,41 @@ void transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
         // 2D domain. Convert to the 2D solver's SI flow units (≈ 0.0283).
         double Q_net = (nodes.inflow[ni] - nodes.outflow[ni]) * opts.flow_1d_to_2d;
 
+        // Withdrawal cap (Q_net < 0): bound the held sink by the water actually
+        // present in the cell(s) it draws from — the whole stencil for vertex
+        // coupling, one cell for triangle coupling, matching scatterCouplingFlux
+        // so the cap stays conservative. Mirrors the junction drain cap above
+        // (signed volumes, clamped at 0). Without it the sink is held constant
+        // over the whole advance window and pulls cell volumes straight through
+        // zero: the 1D network then books water the surface never had.
+        if (Q_net < 0.0 && dt > 0.0) {
+            double avail_2d = 0.0;
+            if (cp.vertex_idx >= 0) {
+                const int v = cp.vertex_idx;
+                const int s = mesh.vert_stencil_ptr[v];
+                const int e = mesh.vert_stencil_ptr[v + 1];
+                for (int k = s; k < e; ++k)
+                    avail_2d += state.volume[mesh.vert_stencil_idx[k]];  // m³ signed
+            } else {
+                avail_2d = state.volume[cp.cell_idx];  // m³ signed
+            }
+            const double Q_min = -std::max(0.0, avail_2d) / dt;
+            if (Q_net < Q_min) { Q_net = Q_min; ++clamped; }
+        }
+
         // Positive → pipe discharging onto the surface → 2D source.
         // Negative → surface water drawn back into the pipe → 2D sink.
         // Distributed across the stencil (vertex) or single cell (triangle),
         // mirroring the junction path so head-from-many and flux-into-many stay
         // consistent.
         scatterCouplingFlux(mesh, state, cp, Q_net);
+
+        // The ledger must book what was APPLIED to the 2D domain, not the raw
+        // 1D rates — otherwise a clamped withdrawal is double-counted as water
+        // the surface gave up. One entry per node (dedupe matches the ledger's).
+        applied_q[cp.node_idx] = Q_net;
     }
+    return clamped;
 }
 
 } // namespace openswmm::twoD

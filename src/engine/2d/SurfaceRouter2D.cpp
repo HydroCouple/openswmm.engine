@@ -490,6 +490,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     ctx.mass_balance_2d.init_storage = totalVolume();
     ctx.mass_balance_2d.final_storage = ctx.mass_balance_2d.init_storage;
     prev_boundary_cum_ = 0.0;
+
+    // Seed the cached CFL hint from the initial state (nonzero if the model
+    // starts with water on the mesh); refreshed after every 2D advance.
+    updateCflHint();
 }
 
 
@@ -551,8 +555,12 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     if (!live_coupling)
         computeCouplingExchange(coupling_points_, mesh_, state_, ctx, options_, dt);
 
-    // Transfer outfall discharges into 2D cells (both paths)
-    transferOutfallDischarges(coupling_points_, mesh_, state_, ctx, options_, dt);
+    // Transfer outfall discharges into 2D cells (both paths). Withdrawal is
+    // capped at the water available in the receiving cells; the ledger books
+    // the applied (clamped) rates from outfall_applied_q_.
+    if (transferOutfallDischarges(coupling_points_, mesh_, state_, ctx, options_,
+                                  dt, outfall_applied_q_) > 0)
+        ++outfall_clamp_windows_;
 
     // Update rainfall from system gages
     updateRainfall(ctx);
@@ -589,10 +597,40 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     // No-op for WALL / NORMAL_FLOW and for constant SPECIFIED_* edges.
     resolveBoundaryValues(ctx, t);
 
+    bool advance_failed = false;
+
 #ifdef OPENSWMM_HAS_2D
     // Advance CVODE by dt
     double t_target = sim_time_ + dt;
-    solver_->advance(sim_time_, t_target);
+    const double t_reached = solver_->advance(sim_time_, t_target);
+
+    // Advance failure (e.g. MAX_CVODE_STEPS exhausted): the solver left the 2D
+    // state unchanged, but its internal integrator clock may sit anywhere in the
+    // window. Previously this was silently ignored — time moved on while the
+    // exchanges the 1D side already consumed were still booked to a surface
+    // that never integrated them, desynchronising the ledgers. Instead: freeze
+    // the 2D domain for this window (state is already the window-start state),
+    // resync the integrator to it, and un-book the held exchanges so neither
+    // domain receives water the other never moved.
+    advance_failed = (dt > 0.0) && !(t_reached > sim_time_);
+    if (advance_failed) {
+        ++failed_advance_windows_;
+        if (failed_advance_windows_ == 1) {
+            std::fprintf(stderr,
+                "[openswmm 2D] WARNING: 2D solver advance failed at t=%.1f s "
+                "(window %.3f s); the surface is held frozen for this window. "
+                "Total occurrences are reported at the end of the run.\n",
+                sim_time_, dt);
+        }
+        solver_->reinitialize(sim_time_);
+        if (!live_coupling) {
+            for (const auto& cp : coupling_points_)
+                if (!cp.is_outfall)
+                    ctx.nodes.coupling_volume[
+                        static_cast<std::size_t>(cp.node_idx)] = 0.0;
+        }
+        outfall_applied_q_.clear();
+    }
 
     // Live-path booking: the solver integrated ∫Q_k dt (m³, +drain/−spill) per
     // node-coupling point over the window. Store the exchange VOLUME (in 1D flow
@@ -601,7 +639,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     // and accumulateMassBalance() below books the identical volume into the 2D
     // ledger — conservative under VARIABLE_STEP. Cleared then accumulated so
     // multiple points sharing a node sum correctly.
-    if (live_coupling && dt > 0.0) {
+    if (live_coupling && dt > 0.0 && !advance_failed) {
         const std::vector<double>& exch = solver_->last_coupling_exchange();
         for (const auto& cp : node_coupling_points_)
             ctx.nodes.coupling_volume[static_cast<std::size_t>(cp.node_idx)] = 0.0;
@@ -627,7 +665,9 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     // boundary edge fluxes (inflow-positive) as −F·dt (outward-positive) into
     // the cumulative tracker the 2D mass balance reads (accumulateMassBalance).
     // First-order in dt (end-of-step flux), consistent with computeCellContinuity.
-    {
+    // Skipped for a failed (frozen) window: the state did not change, so no
+    // volume actually crossed the boundary.
+    if (!advance_failed) {
         const int ne = boundary_.size();
         for (int idx = 0; idx < ne; ++idx) {
             if (static_cast<BoundaryType>(boundary_.edge_bc_type[idx])
@@ -650,8 +690,17 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     // Update statistics
     state_.update_statistics(mesh_.tri_area, dt, options_.num_threads);
 
-    // Accumulate the global 2D mass-balance terms for this step.
-    accumulateMassBalance(ctx, dt);
+    // Accumulate the global 2D mass-balance terms for this step. A failed
+    // (frozen) window moved no water — rainfall/evaporation/exchange were not
+    // integrated, and the held exchanges were un-booked above — so booking
+    // them would inject phantom volume into the ledger.
+    if (!advance_failed) accumulateMassBalance(ctx, dt);
+
+    // Refresh the cached CFL hint from the just-accepted state. The 1D engine
+    // consults computeCflHint() every routing step, but the 2D state only
+    // changes here — computing once per advance replaces an O(n_triangles)
+    // scan per routing step with a cached read.
+    updateCflHint();
 
     // Stiffness-attribution diagnostic row (opt-in via OPENSWMM_2D_DIAG_CSV).
     writeDiagRow(ctx, dt, sim_time_);
@@ -667,33 +716,48 @@ void SurfaceRouter2D::finalize() {
         solver_->finalize();
     }
 #endif
+    if (outfall_clamp_windows_ > 0) {
+        std::fprintf(stderr,
+            "[openswmm 2D] WARNING: outfall withdrawal was capped by the water "
+            "available on the 2D surface in %ld advance window(s). The 1D "
+            "network may have drawn tailwater the surface could not supply; "
+            "check the outfall stage coupling and the 2D continuity block.\n",
+            outfall_clamp_windows_);
+    }
+    if (failed_advance_windows_ > 0) {
+        std::fprintf(stderr,
+            "[openswmm 2D] WARNING: the 2D solver failed to integrate %ld "
+            "advance window(s); the surface was held frozen over them. "
+            "Consider raising MAX_CVODE_STEPS or the tolerances.\n",
+            failed_advance_windows_);
+    }
     active_ = false;
 }
 
 
 double SurfaceRouter2D::computeCflHint(const SimulationContext& /*ctx*/) const {
     if (!active_) return 1.0e30;
+    return cfl_hint_;
+}
 
-    // Estimate maximum wave speed from maximum depth and minimum cell size
-    double max_depth = 0.0;
-    double min_dx = 1.0e30;
 
-    int nt = mesh_.n_triangles();
+void SurfaceRouter2D::updateCflHint() {
+    // Per-cell celerity constraint: dt_i = sqrt(A_i) / sqrt(g·h_i) over wet
+    // cells. Pairing each cell's own depth with its own size is the physical
+    // constraint; the previous global-max-depth × global-min-cell-size pairing
+    // let one wet cell anywhere combine with the smallest triangle anywhere to
+    // pin the 1D routing step for the whole run. Dry cells impose nothing.
+    double hint = 1.0e30;
+    const int nt = mesh_.n_triangles();
     for (int i = 0; i < nt; ++i) {
-        max_depth = std::max(max_depth, state_.depth[i]);
-
-        // Characteristic cell size ~ sqrt(area)
-        double dx = std::sqrt(mesh_.tri_area[i]);
-        min_dx = std::min(min_dx, dx);
+        const double h = state_.depth[i];
+        if (h < options_.dry_depth) continue;
+        const double dx = std::sqrt(mesh_.tri_area[i]);
+        if (dx < 1.0e-6) continue;
+        const double c = std::sqrt(9.80665 * h);
+        hint = std::min(hint, dx / std::max(c, 1.0e-6));
     }
-
-    if (max_depth < options_.dry_depth || min_dx < 1.0e-6) {
-        return 1.0e30;  // All dry — no CFL constraint
-    }
-
-    // Shallow water wave speed ~ sqrt(g * h)
-    double c = std::sqrt(9.80665 * max_depth);
-    return min_dx / std::max(c, 1.0e-6);
+    cfl_hint_ = hint;
 }
 
 
@@ -846,12 +910,13 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
         if (!seen.insert(cp.node_idx).second) continue;
         auto ni = static_cast<std::size_t>(cp.node_idx);
         if (cp.is_outfall) {
-            // Net signed 1D→2D exchange at the outfall — the same quantity
-            // transferOutfallDischarges injects into coupling_flux. Positive
-            // (inflow) = pipe discharge into 2D (source); negative (outflow) =
-            // surface water drawn back into the pipe (withdrawal).
-            double q = (ctx.nodes.inflow[ni] - ctx.nodes.outflow[ni])
-                       * options_.flow_1d_to_2d;
+            // Net signed 1D→2D exchange at the outfall — exactly the quantity
+            // transferOutfallDischarges injected into coupling_flux this window
+            // (AFTER its withdrawal cap), so the ledger matches what the 2D
+            // domain actually received/gave up. Positive = pipe discharge into
+            // 2D (source); negative = surface water drawn back (withdrawal).
+            auto it = outfall_applied_q_.find(cp.node_idx);
+            double q = (it != outfall_applied_q_.end()) ? it->second : 0.0;
             if (q > 0.0) mb.outfall_in  += q * dt;
             else         mb.outfall_out += -q * dt;
         } else {

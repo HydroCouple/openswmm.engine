@@ -21,6 +21,8 @@
 #ifndef OPENSWMM_ENGINE_2D_NODE_COUPLING_HPP
 #define OPENSWMM_ENGINE_2D_NODE_COUPLING_HPP
 
+#include <unordered_map>
+
 #include "../data/MeshData.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../data/SolverOptions2D.hpp"
@@ -146,21 +148,28 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
  * @brief Transfer outfall discharges into 2D coupling cells.
  *
  * After 1D routing, the outfall discharge is a source for the 2D cell
- * at the outfall coupling point.
+ * at the outfall coupling point. Withdrawal (net backflow into the pipe)
+ * is capped at the water actually available in the receiving cell(s) so
+ * the held sink cannot pull cell volumes negative over the window.
  *
- * @param cps   Coupling points.
- * @param mesh  Mesh data.
- * @param state 2D surface state.
- * @param ctx   Simulation context.
- * @param opts  2D solver options (for unit-system coupling factors).
- * @param dt    Routing timestep (s).
+ * @param cps        Coupling points.
+ * @param mesh       Mesh data.
+ * @param state      2D surface state.
+ * @param ctx        Simulation context.
+ * @param opts       2D solver options (for unit-system coupling factors).
+ * @param dt         2D advance window (s); used for the withdrawal cap.
+ * @param applied_q  Out: net SI exchange (m³/s, +into 2D) actually applied per
+ *                   outfall node index — the mass-balance ledger must book
+ *                   exactly these (clamped) values, not the raw 1D rates.
+ * @return Number of outfalls whose withdrawal was clamped this window.
  */
-void transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
+int transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
                                 const MeshData& mesh,
                                 SurfaceStateData& state,
                                 const SimulationContext& ctx,
                                 const SolverOptions2D& opts,
-                                double dt);
+                                double dt,
+                                std::unordered_map<int, double>& applied_q);
 
 } // namespace openswmm::twoD
 

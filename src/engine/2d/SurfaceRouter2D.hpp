@@ -32,6 +32,7 @@
 
 #include <memory>
 #include <fstream>
+#include <unordered_map>
 #include <vector>
 
 #ifdef OPENSWMM_HAS_2D
@@ -115,7 +116,9 @@ public:
      *
      * Returns an advisory maximum dt based on mesh resolution and wave speeds.
      * CVODE handles its own sub-stepping, but this prevents the coupling
-     * interval from being too large.
+     * interval from being too large. Returns a value cached at the last 2D
+     * advance (the state cannot change between advances), so the per-routing-
+     * step call is O(1).
      *
      * @param ctx Simulation context.
      * @return Advisory maximum timestep (seconds).
@@ -250,6 +253,23 @@ private:
     /// Previous cumulative boundary flux (Σ edge_bc_cum_flux, m³), for the
     /// per-step delta in the global mass balance.
     double prev_boundary_cum_ = 0.0;
+
+    /// Net SI exchange (m³/s, +into 2D) actually applied per outfall node this
+    /// window by transferOutfallDischarges — after the withdrawal cap. The
+    /// mass-balance ledger books these (not the raw 1D rates) so a clamped
+    /// withdrawal is never double-counted.
+    std::unordered_map<int, double> outfall_applied_q_;
+    /// Windows in which at least one outfall withdrawal hit the availability
+    /// cap; reported once at finalize().
+    long outfall_clamp_windows_ = 0;
+    /// 2D advance windows the solver failed to integrate (surface held frozen,
+    /// exchanges un-booked); reported once at finalize().
+    long failed_advance_windows_ = 0;
+
+    /// CFL hint cached at the last 2D advance (per-cell celerity minimum over
+    /// wet cells); 1e30 while the mesh is dry. Refreshed by updateCflHint().
+    double cfl_hint_ = 1.0e30;
+    void updateCflHint();
 
     /// One-shot guard: resolve deferred boundary timeseries/curve NAMES to
     /// registry indices on the first advance (ctx.table_names is populated by

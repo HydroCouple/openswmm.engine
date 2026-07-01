@@ -418,3 +418,120 @@ TEST_F(OutfallCoupling2DTest, BuriedOutfallFreesAndJunctionDrainsWhenSurfaceDrie
         << "continuity_2d_frac," << r.cont_2d << "\n"
         << "continuity_routing_frac," << r.cont_routing << "\n";
 }
+
+// ---------------------------------------------------------------------------
+// Carved-vertex phantom-tailwater regression (Bellinge in miniature).
+//
+// GUI-written meshes place the outfall's coupling vertex at the pipe INVERT,
+// below the surrounding terrain vertices. The pseudo-Laplacian vert_head
+// averages neighbour CELL heads and ignores the vertex's own z, so on a
+// bone-dry mesh the carved vertex reads vert_head ≈ terrain → phantom depth
+// equal to the bed relief → updateOutfallBoundaries reported the outfall as
+// wet (ramp_2d = 1) and pinned its stage at terrain level with ZERO water
+// anywhere. Every outfall in the model then chokes/reverses from the first
+// step, the network floods, and the 1D routing step collapses to its floor.
+//
+// The model here has NO inflow at all: everything must stay dry, and the
+// outfall must keep its FREE (zero-depth) boundary. Pre-fix, O1's depth reads
+// the bed relief (~1.33 m = mean neighbour-cell head above the carved vertex)
+// the whole run, and the phantom tailwater drives backflow that withdraws
+// water from an empty mesh (negative 2D storage).
+TEST_F(OutfallCoupling2DTest, CarvedOutfallVertexStaysDryOnDryMesh) {
+    const fs::path inp = dir_ / "carved_outfall.inp";
+    const fs::path rpt = dir_ / "carved_outfall.rpt";
+    { std::ofstream f(inp); f <<
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CMS\n"
+        "FLOW_ROUTING         DYNWAVE\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2026\n"
+        "END_TIME             00:10:00\n"
+        "REPORT_STEP          00:01:00\n"
+        "ROUTING_STEP         2\n"
+        "\n"
+        "[JUNCTIONS]\n"
+        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+        "J1      1.0   5.0       0          0         0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev  Type  Gated\n"
+        "O1      0.0   FREE  NO\n"
+        "\n"
+        "[CONDUITS]\n"
+        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+        "C1      J1    O1  50.0    0.013      0         0          0\n"
+        "\n"
+        "[XSECTIONS]\n"
+        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+        "C1      CIRCULAR  0.5    0      0      0      1\n"
+        "\n"
+        "[2D_OPTIONS]\n"
+        "MAX_TIMESTEP     2\n"
+        "DRY_DEPTH        0.002\n"
+        "COUPLING_CD      0.7\n"
+        "LINEAR_SOLVER    GMRES\n"
+        "PRECONDITIONER   JACOBI\n"
+        "REPORT_2D        NO\n"
+        "\n"
+        // v0 is the outfall vertex, carved 2 m below the surrounding terrain
+        // (mimics a GUI mesh that stamps the pipe invert into the vertex).
+        "[2D_VERTICES]\n"
+        ";;X      Y      Z\n"
+        " 0.0    0.0   0.0\n"
+        "20.0    0.0   2.0\n"
+        "20.0   20.0   2.0\n"
+        " 0.0   20.0   2.0\n"
+        "\n"
+        "[2D_TRIANGLES]\n"
+        ";;V1  V2  V3  MANNINGS_N\n"
+        "0     1   2   0.03\n"
+        "0     2   3   0.03\n"
+        "\n"
+        "[2D_VERTEX_NODE_MAP]\n"
+        ";;Vertex  Node  Cd   Area\n"
+        "0         O1    0.7  2.5\n";
+    }
+
+    SWMM_Engine eng = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
+                               nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
+    int active = 0;
+    swmm_2d_is_active(eng, &active);
+    ASSERT_TRUE(active);
+    ASSERT_EQ(swmm_engine_start(eng, 1), SWMM_OK);
+
+    const int o1 = swmm_node_index(eng, "O1");
+    ASSERT_GE(o1, 0);
+
+    double max_o1_depth = 0.0;
+    double elapsed = 0.0;
+    while (swmm_engine_step(eng, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        double d = 0.0;
+        if (swmm_node_get_depth(eng, o1, &d) == SWMM_OK)
+            max_o1_depth = std::max(max_o1_depth, d);
+    }
+    swmm_engine_end(eng);
+
+    double init_s = 0, final_s = 0, rain = 0, c12 = 0, c21 = 0, ofin = 0,
+           ofout = 0, bin = 0, bout = 0, evap = 0;
+    swmm_2d_get_mass_balance(eng, &init_s, &final_s, &rain, &c12, &c21, &ofin,
+                             &ofout, &bin, &bout, &evap);
+    swmm_engine_close(eng);
+    swmm_engine_destroy(eng);
+
+    // THE BUG: with zero water anywhere, the outfall stage must stay at its
+    // free (dry) condition. Pre-fix it is pinned at the phantom bed-relief
+    // tailwater (~1.33 m here) for the entire run.
+    EXPECT_LT(max_o1_depth, 0.02)
+        << "outfall depth " << max_o1_depth << " m on a bone-dry model — "
+        << "phantom tailwater from the carved coupling vertex";
+
+    // No exchange in either direction, and the (empty) surface must not have
+    // been drawn negative by phantom backflow.
+    EXPECT_NEAR(ofin, 0.0, 1e-6);
+    EXPECT_NEAR(ofout, 0.0, 1e-6);
+    EXPECT_GE(final_s, -1e-6)
+        << "2D storage went negative on a dry mesh (withdrawal from nothing)";
+}

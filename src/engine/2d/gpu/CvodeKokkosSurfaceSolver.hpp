@@ -86,6 +86,9 @@ public:
     double last_step_size() const noexcept override { return last_h_; }
     bool   is_initialized() const noexcept override { return cvode_mem_ != nullptr; }
 
+    /// Per-advance CVODE counter deltas (see SolverAdvanceStats).
+    SolverAdvanceStats last_advance_stats() const noexcept override { return last_stats_; }
+
 private:
     // SUNDIALS handles.
     SUNContext      sun_ctx_   = nullptr;
@@ -113,6 +116,7 @@ private:
     int  nv_ = 0;
     long last_nsteps_ = 0;
     double last_h_    = 0.0;
+    SolverAdvanceStats last_stats_;
 
     // Host<->device transfer helpers (no-ops in Phase 1 OpenMP host space).
     void uploadMesh();

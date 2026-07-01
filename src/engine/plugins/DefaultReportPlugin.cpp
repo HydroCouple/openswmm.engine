@@ -935,8 +935,13 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         for (int j = 0; j < ctx.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             double in_vol  = ctx.nodes.stat_total_inflow_vol[uj];
+            // Final stored volume counts as outflow, matching legacy
+            // massbal_getStorage (massbal.c: NodeOutflow[j] += newVolume at the
+            // final period) — a node that ends the run holding its inflow is
+            // balanced, not a 100% loss.
             double out_vol = ctx.nodes.stat_total_outflow_vol[uj]
-                           + ctx.nodes.stat_vol_flooded[uj];
+                           + ctx.nodes.stat_vol_flooded[uj]
+                           + ctx.nodes.volume[uj];
             double denom = std::max(in_vol, out_vol);
             if (denom < 1.0) continue; // skip nodes with negligible flow
             double err_pct = 100.0 * (in_vol - out_vol) / denom;
