@@ -310,6 +310,50 @@ int swmm_2d_set_vertex_coupled_node(SWMM_Engine engine, int vertex_idx,
     return SWMM_OK;
 }
 
+int swmm_2d_get_vertex_coupling_cd(SWMM_Engine engine, int vertex_idx,
+                                     double* cd) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_VERT_IDX(vertex_idx, router2d);
+    if (!cd) return SWMM_ERR_BADPARAM;
+
+    *cd = router2d.mesh().vert_coupling_cd[vertex_idx];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_vertex_coupling_cd(SWMM_Engine engine, int vertex_idx,
+                                     double cd) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_VERT_IDX(vertex_idx, router2d);
+    if (!(cd > 0.0)) return SWMM_ERR_BADPARAM;
+
+    router2d.mesh().vert_coupling_cd[vertex_idx] = cd;
+    return SWMM_OK;
+}
+
+int swmm_2d_get_vertex_coupling_area(SWMM_Engine engine, int vertex_idx,
+                                       double* area) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_VERT_IDX(vertex_idx, router2d);
+    if (!area) return SWMM_ERR_BADPARAM;
+
+    *area = router2d.mesh().vert_coupling_area[vertex_idx];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_vertex_coupling_area(SWMM_Engine engine, int vertex_idx,
+                                       double area) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_VERT_IDX(vertex_idx, router2d);
+    if (!(area > 0.0)) return SWMM_ERR_BADPARAM;
+
+    router2d.mesh().vert_coupling_area[vertex_idx] = area;
+    return SWMM_OK;
+}
+
 // ============================================================================
 // 2D State — Per-Triangle
 // ============================================================================

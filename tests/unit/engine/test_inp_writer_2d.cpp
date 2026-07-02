@@ -441,6 +441,55 @@ TEST_F(InpWriter2DTest, ExternalMeshMutationsPersistOnSave) {
 }
 
 // ---------------------------------------------------------------------------
+// Per-vertex coupling Cd/Area C API: parsed values readable in the OPENED
+// state, setters mutate them, and edits persist through swmm_model_write
+// (the GUI save path pushes these right before the write)
+// ---------------------------------------------------------------------------
+
+TEST_F(InpWriter2DTest, CouplingCdAreaApiRoundTrip) {
+    const fs::path inp_a = dir_ / "cdarea.inp";
+    write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS") + k2DSections);
+
+    // OPENED (not initialized) — the state the GUI keeps the engine in.
+    eng_a_ = open_engine(inp_a);
+
+    double cd = 0.0, area = 0.0;
+    ASSERT_EQ(swmm_2d_get_vertex_coupling_cd(eng_a_, 0, &cd), 0);
+    ASSERT_EQ(swmm_2d_get_vertex_coupling_area(eng_a_, 0, &area), 0);
+    EXPECT_NEAR(cd, 0.7, 1e-12) << "parsed [2D_VERTEX_NODE_MAP] CD";
+    EXPECT_NEAR(area, 2.5, 1e-12) << "parsed [2D_VERTEX_NODE_MAP] AREA";
+
+    // Uncoupled vertex keeps the resize defaults.
+    ASSERT_EQ(swmm_2d_get_vertex_coupling_cd(eng_a_, 1, &cd), 0);
+    ASSERT_EQ(swmm_2d_get_vertex_coupling_area(eng_a_, 1, &area), 0);
+    EXPECT_NEAR(cd, 0.65, 1e-12);
+    EXPECT_NEAR(area, 1.0, 1e-12);
+
+    // Invalid inputs are rejected.
+    EXPECT_EQ(swmm_2d_set_vertex_coupling_cd(eng_a_, 0, 0.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_set_vertex_coupling_area(eng_a_, 0, -1.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_set_vertex_coupling_cd(eng_a_, 99, 0.5), SWMM_ERR_BADINDEX);
+
+    // Mutate and read back.
+    ASSERT_EQ(swmm_2d_set_vertex_coupling_cd(eng_a_, 0, 0.55), 0);
+    ASSERT_EQ(swmm_2d_set_vertex_coupling_area(eng_a_, 0, 3.75), 0);
+    ASSERT_EQ(swmm_2d_get_vertex_coupling_cd(eng_a_, 0, &cd), 0);
+    ASSERT_EQ(swmm_2d_get_vertex_coupling_area(eng_a_, 0, &area), 0);
+    EXPECT_NEAR(cd, 0.55, 1e-12);
+    EXPECT_NEAR(area, 3.75, 1e-12);
+
+    // Edits persist through the writer.
+    const fs::path inp_b = dir_ / "cdarea_out.inp";
+    ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
+
+    eng_b_ = open_engine(inp_b);
+    ASSERT_EQ(swmm_2d_get_vertex_coupling_cd(eng_b_, 0, &cd), 0);
+    ASSERT_EQ(swmm_2d_get_vertex_coupling_area(eng_b_, 0, &area), 0);
+    EXPECT_NEAR(cd, 0.55, 1e-12) << "CD edit must survive the save";
+    EXPECT_NEAR(area, 3.75, 1e-12) << "AREA edit must survive the save";
+}
+
+// ---------------------------------------------------------------------------
 // GeoPackage end-to-end: open .inp → write .gpkg via plugin → reopen .gpkg
 // ---------------------------------------------------------------------------
 

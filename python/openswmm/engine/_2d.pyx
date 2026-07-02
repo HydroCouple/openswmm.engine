@@ -377,6 +377,70 @@ cdef class Surface2D:
         cdef bytes b = (node_name or "").encode('utf-8')
         _check(swmm_2d_set_vertex_coupled_node(self._engine, vertex_idx, b))
 
+    def get_vertex_coupling_cd(self, int vertex_idx) -> float:
+        """Return the coupling discharge coefficient of a vertex.
+
+        Corresponds to the C{[2D_VERTEX_NODE_MAP]} CD column
+        (default 0.65).
+
+        @param vertex_idx: Vertex index (0-based).
+        @type vertex_idx: int
+        @return: Discharge coefficient.
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef double cd = 0.0
+        _check(swmm_2d_get_vertex_coupling_cd(self._engine, vertex_idx, &cd))
+        return cd
+
+    def set_vertex_coupling_cd(self, int vertex_idx, double cd) -> None:
+        """Set the coupling discharge coefficient of a vertex.
+
+        Corresponds to the C{[2D_VERTEX_NODE_MAP]} CD column and is
+        persisted by the C{.inp} writer.
+
+        @param vertex_idx: Vertex index (0-based).
+        @type vertex_idx: int
+        @param cd: Discharge coefficient; must be > 0.
+        @type cd: float
+        @raise RuntimeError: If the C API rejects the value (e.g. a
+            non-positive coefficient).
+        """
+        _check(swmm_2d_set_vertex_coupling_cd(self._engine, vertex_idx, cd))
+
+    def get_vertex_coupling_area(self, int vertex_idx) -> float:
+        """Return the coupling exchange area of a vertex.
+
+        Corresponds to the C{[2D_VERTEX_NODE_MAP]} AREA column in m^2
+        (default 1.0).
+
+        @param vertex_idx: Vertex index (0-based).
+        @type vertex_idx: int
+        @return: Exchange area in m^2.
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef double area = 0.0
+        _check(swmm_2d_get_vertex_coupling_area(self._engine, vertex_idx,
+                                                  &area))
+        return area
+
+    def set_vertex_coupling_area(self, int vertex_idx, double area) -> None:
+        """Set the coupling exchange area of a vertex.
+
+        Corresponds to the C{[2D_VERTEX_NODE_MAP]} AREA column (m^2) and
+        is persisted by the C{.inp} writer.
+
+        @param vertex_idx: Vertex index (0-based).
+        @type vertex_idx: int
+        @param area: Exchange area in m^2; must be > 0.
+        @type area: float
+        @raise RuntimeError: If the C API rejects the value (e.g. a
+            non-positive area).
+        """
+        _check(swmm_2d_set_vertex_coupling_area(self._engine, vertex_idx,
+                                                  area))
+
     def get_triangle_coupled_node(self, int tri_idx) -> int:
         """Return the SWMM node index coupled to a triangle.
 

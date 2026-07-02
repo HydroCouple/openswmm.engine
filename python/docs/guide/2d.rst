@@ -114,6 +114,16 @@ Where the mesh exchanges flow with the 1-D network:
      - SWMM node index coupled to a vertex (``-1`` if uncoupled).
    * - ``set_vertex_coupled_node(vertex_idx, node_name)``
      - Couple a vertex to a 1-D node by id (``""`` clears the coupling).
+   * - ``get_vertex_coupling_cd(vertex_idx)`` /
+       ``set_vertex_coupling_cd(vertex_idx, cd)``
+     - Coupling discharge coefficient (``[2D_VERTEX_NODE_MAP]`` CD
+       column; default 0.65, must be > 0). Persisted by the ``.inp``
+       writer.
+   * - ``get_vertex_coupling_area(vertex_idx)`` /
+       ``set_vertex_coupling_area(vertex_idx, area)``
+     - Coupling exchange area in m² (``[2D_VERTEX_NODE_MAP]`` AREA
+       column; default 1.0, must be > 0). Persisted by the ``.inp``
+       writer.
    * - ``get_triangle_coupled_node(tri_idx)``
      - SWMM node index coupled to a triangle (``-1`` if uncoupled).
 

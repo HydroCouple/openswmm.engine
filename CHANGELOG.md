@@ -13,6 +13,13 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
 
 ### Added
 
+- **Python bindings for 2D vertex coupling CD/AREA** —
+  `Surface2D.get/set_vertex_coupling_cd` and `get/set_vertex_coupling_area`
+  wrap the recently added `swmm_2d_get/set_vertex_coupling_cd` / `_area` C
+  API (the `[2D_VERTEX_NODE_MAP]` CD and AREA columns), closing the binding
+  gap flagged by `python/tests/test_api_coverage.py`. Tests:
+  `python/tests/engine/test_surface2d_view.py::TestVertexCouplingParams`.
+
 - **Python GeoPackage model export** — `Solver.write_with_plugin(path,
   output_plugin_id)` and the convenience `Solver.write_geopackage(path,
   crs=...)` so a loaded model can be exported to a `.gpkg` from Python (the C

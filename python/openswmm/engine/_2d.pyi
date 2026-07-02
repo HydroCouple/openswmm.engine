@@ -253,6 +253,42 @@ class Surface2D:
         """Couple a mesh vertex to a 1D SWMM node by name (C{""} clears)."""
         ...
 
+    def get_vertex_coupling_cd(self, vertex_idx: int) -> float:
+        """Return the coupling discharge coefficient of a vertex.
+
+        Corresponds to the C{[2D_VERTEX_NODE_MAP]} CD column
+        (default 0.65).
+
+        @param vertex_idx: Vertex index (0-based).
+        @type vertex_idx: int
+        @return: Discharge coefficient.
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def set_vertex_coupling_cd(self, vertex_idx: int, cd: float) -> None:
+        """Set the coupling discharge coefficient of a vertex (must be > 0)."""
+        ...
+
+    def get_vertex_coupling_area(self, vertex_idx: int) -> float:
+        """Return the coupling exchange area of a vertex.
+
+        Corresponds to the C{[2D_VERTEX_NODE_MAP]} AREA column in m^2
+        (default 1.0).
+
+        @param vertex_idx: Vertex index (0-based).
+        @type vertex_idx: int
+        @return: Exchange area in m^2.
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def set_vertex_coupling_area(self, vertex_idx: int, area: float) -> None:
+        """Set the coupling exchange area of a vertex in m^2 (must be > 0)."""
+        ...
+
     def get_triangle_coupled_node(self, tri_idx: int) -> int:
         """Return the SWMM node index coupled to a triangle.
 

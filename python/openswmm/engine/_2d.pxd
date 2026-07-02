@@ -37,6 +37,10 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_triangle_coupling_count(void* engine, int* count)
     int swmm_2d_vertex_get_coupled_node(void* engine, int vidx, int* nidx)
     int swmm_2d_set_vertex_coupled_node(void* engine, int vidx, const char* node_name)
+    int swmm_2d_get_vertex_coupling_cd(void* engine, int vidx, double* cd)
+    int swmm_2d_set_vertex_coupling_cd(void* engine, int vidx, double cd)
+    int swmm_2d_get_vertex_coupling_area(void* engine, int vidx, double* area)
+    int swmm_2d_set_vertex_coupling_area(void* engine, int vidx, double area)
     int swmm_2d_triangle_get_coupled_node(void* engine, int tidx, int* nidx)
 
     # State — per triangle

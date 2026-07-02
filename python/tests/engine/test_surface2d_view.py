@@ -68,3 +68,41 @@ class TestSurface2dProperty:
         finally:
             s.close()
             s.destroy()
+
+
+class TestVertexCouplingParams:
+    """CD / AREA columns of ``[2D_VERTEX_NODE_MAP]``.
+
+    The example model couples vertex 4 to node ``J1`` with ``CD 0.65`` and
+    ``AREA 2.0``; every other vertex carries the engine defaults
+    (CD 0.65, AREA 1.0 m²) per ``openswmm_2d.h``.
+    """
+
+    def test_inp_values_loaded(self, twod_solver):
+        surface = twod_solver.surface2d
+        assert surface.get_vertex_coupling_cd(4) == pytest.approx(0.65)
+        assert surface.get_vertex_coupling_area(4) == pytest.approx(2.0)
+
+    def test_defaults_for_uncoupled_vertex(self, twod_solver):
+        surface = twod_solver.surface2d
+        assert surface.get_vertex_coupling_cd(0) == pytest.approx(0.65)
+        assert surface.get_vertex_coupling_area(0) == pytest.approx(1.0)
+
+    def test_set_round_trip(self, twod_solver):
+        surface = twod_solver.surface2d
+        surface.set_vertex_coupling_cd(4, 0.8)
+        surface.set_vertex_coupling_area(4, 3.5)
+        assert surface.get_vertex_coupling_cd(4) == pytest.approx(0.8)
+        assert surface.get_vertex_coupling_area(4) == pytest.approx(3.5)
+
+    def test_non_positive_values_rejected(self, twod_solver):
+        surface = twod_solver.surface2d
+        with pytest.raises(RuntimeError):
+            surface.set_vertex_coupling_cd(4, 0.0)
+        with pytest.raises(RuntimeError):
+            surface.set_vertex_coupling_area(4, -1.0)
+
+    def test_bad_vertex_index_rejected(self, twod_solver):
+        surface = twod_solver.surface2d
+        with pytest.raises(RuntimeError):
+            surface.get_vertex_coupling_cd(surface.n_vertices)

@@ -239,6 +239,45 @@ SWMM_ENGINE_API int swmm_2d_set_vertex_coupled_node(SWMM_Engine engine,
                                                       int vertex_idx,
                                                       const char* node_name);
 
+/** @brief Get the coupling discharge coefficient of a vertex
+ *         (`[2D_VERTEX_NODE_MAP]` CD column; default 0.65).
+ *  @param vertex_idx Vertex index in `[0, vertex_count)`.
+ *  @param cd Output discharge coefficient.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_vertex_coupling_cd(SWMM_Engine engine,
+                                                     int vertex_idx,
+                                                     double* cd);
+
+/** @brief Set the coupling discharge coefficient of a vertex
+ *         (`[2D_VERTEX_NODE_MAP]` CD column). Persisted by the `.inp` writer.
+ *  @param vertex_idx Vertex index in `[0, vertex_count)`.
+ *  @param cd Discharge coefficient; must be > 0.
+ *  @return SWMM_OK on success; SWMM_ERR_BADPARAM on non-positive cd.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_vertex_coupling_cd(SWMM_Engine engine,
+                                                     int vertex_idx,
+                                                     double cd);
+
+/** @brief Get the coupling exchange area of a vertex
+ *         (`[2D_VERTEX_NODE_MAP]` AREA column, m²; default 1.0).
+ *  @param vertex_idx Vertex index in `[0, vertex_count)`.
+ *  @param area Output exchange area (m²).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_vertex_coupling_area(SWMM_Engine engine,
+                                                       int vertex_idx,
+                                                       double* area);
+
+/** @brief Set the coupling exchange area of a vertex
+ *         (`[2D_VERTEX_NODE_MAP]` AREA column, m²). Persisted by the `.inp`
+ *         writer.
+ *  @param vertex_idx Vertex index in `[0, vertex_count)`.
+ *  @param area Exchange area in m²; must be > 0.
+ *  @return SWMM_OK on success; SWMM_ERR_BADPARAM on non-positive area.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_vertex_coupling_area(SWMM_Engine engine,
+                                                       int vertex_idx,
+                                                       double area);
+
 /* =========================================================================
  * 2D State — Per-Triangle (read during RUNNING)
  * ========================================================================= */
