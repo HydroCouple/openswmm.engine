@@ -166,13 +166,20 @@ TEST(ActiveSetBuilder, SourcesAndCouplingStencilsSeed) {
     cp.cd = 0.65; cp.area = 1.0; cp.is_outfall = false; cp.has_flap_gate = false;
     cps.push_back(cp);
 
-    rebuildActiveSet(mesh, state, nullptr, &cps, opts, as);
-
+    // Held path: a zero-exchange coupling stencil contributes nothing this
+    // window (the flux is held), so cell 5 must stay frozen.
+    rebuildActiveSet(mesh, state, nullptr, &cps, opts, as, /*live=*/false);
     EXPECT_EQ(as.cell_ring[10], 0);  // rainfall seed
     EXPECT_EQ(as.cell_ring[20], 0);  // coupling-flux seed
-    EXPECT_EQ(as.cell_ring[5], 0)    // force-activated coupling cell
-        << "coupling-point cells must seed even with zero current exchange";
+    EXPECT_FALSE(as.cell_active[5])
+        << "held path must not blanket-activate zero-exchange stencils";
     EXPECT_FALSE(as.cell_active[15]) << "cell between seeds stays frozen";
+
+    // Live path: the exchange is evaluated inside the RHS, so every coupling
+    // stencil must be force-activated regardless of current flux.
+    rebuildActiveSet(mesh, state, nullptr, &cps, opts, as, /*live=*/true);
+    EXPECT_EQ(as.cell_ring[5], 0)
+        << "live path must force-activate coupling-point cells";
 }
 
 TEST(ActiveSetBuilder, DepartingCellFluxSlotsZeroed) {

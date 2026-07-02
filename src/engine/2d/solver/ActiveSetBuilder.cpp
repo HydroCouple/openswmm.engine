@@ -45,7 +45,8 @@ void seedInactiveState(const MeshData& mesh, SurfaceStateData& state,
 void rebuildActiveSet(const MeshData& mesh, SurfaceStateData& state,
                       const BoundaryData* boundary,
                       const std::vector<CouplingPoint>* coupling_pts,
-                      const SolverOptions2D& opts, ActiveSetData& as) {
+                      const SolverOptions2D& opts, ActiveSetData& as,
+                      bool live_coupling) {
     const int nt = mesh.n_triangles();
     const int nv = mesh.n_vertices();
     if (static_cast<int>(as.cell_ring.size()) != nt
@@ -84,11 +85,16 @@ void rebuildActiveSet(const MeshData& mesh, SurfaceStateData& state,
         }
     }
 
-    // Coupling-point stencils are force-activated: on the live path the
-    // orifice exchange is scattered INSIDE the RHS (coupling_flux stays 0
-    // here), and on the held path a zero-now exchange can wake within the
-    // window as the 1D state the ledger was built from already moved.
-    if (coupling_pts != nullptr) {
+    // Coupling-point stencils. On the HELD path (live_coupling == false) the
+    // exchange is a per-window constant already scattered into coupling_flux —
+    // a stencil whose cells all carry zero flux contributes NOTHING this
+    // window, so only nonzero-exchange stencils need activation (the wet/flux
+    // seeds above already cover them; activating the rest would keep all
+    // ~n_nodes stencils hot forever — measured 15.7k active for 740 wet on
+    // Bellinge). On the LIVE path the orifice exchange is evaluated INSIDE
+    // the RHS against the moving 2D head (coupling_flux stays 0 here), so
+    // every coupling stencil must be active unconditionally.
+    if (coupling_pts != nullptr && live_coupling) {
         for (const auto& cp : *coupling_pts) {
             if (cp.vertex_idx >= 0) {
                 const int v = cp.vertex_idx;

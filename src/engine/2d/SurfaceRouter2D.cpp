@@ -769,7 +769,8 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
     // the front room to move within the window (breach-checked below).
     if (active_set_.enabled)
         rebuildActiveSet(mesh_, state_, &boundary_,
-                         &coupling_points_, options_, active_set_);
+                         &coupling_points_, options_, active_set_,
+                         live_coupling);
 
     // Advance CVODE by dt
     double t_target = sim_time_ + dt;
@@ -790,7 +791,8 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
             state_.head[i] = mesh_.tri_cz[i] + state_.depth[i];
         active_set_.halo_rings = std::min(2 * active_set_.halo_rings, 16);
         rebuildActiveSet(mesh_, state_, &boundary_,
-                         &coupling_points_, options_, active_set_);
+                         &coupling_points_, options_, active_set_,
+                         live_coupling);
         solver_->reinitialize(sim_time_);
         t_reached = solver_->advance(sim_time_, t_target);
         if (t_reached > sim_time_

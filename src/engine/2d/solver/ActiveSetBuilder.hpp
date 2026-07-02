@@ -33,15 +33,21 @@ void seedInactiveState(const MeshData& mesh, SurfaceStateData& state,
 /// Rebuild the mask from the CURRENT wet set + sources. O(nt + nv), once per
 /// advance window (never per RHS evaluation). Seeds = wet cells (V > eps·A)
 /// ∪ nonzero rainfall/coupling sources (runtime forcings must already be
-/// folded into those arrays) ∪ cells with a non-WALL boundary edge ∪ the
-/// coupling-point stencils (force-activated: on the live path the exchange
-/// is scattered inside the RHS, so coupling_flux alone cannot reveal them).
+/// folded into those arrays) ∪ cells with a non-WALL boundary edge. With
+/// `live_coupling` set, ALL coupling-point stencils are additionally
+/// force-activated: the live exchange is evaluated inside the RHS against the
+/// moving 2D head, so coupling_flux alone cannot reveal them. On the held
+/// path a zero-flux stencil contributes nothing this window by construction,
+/// so the flux seeds above are exact — and skipping the blanket activation is
+/// what keeps the active set near the wet front instead of pinning every
+/// coupled node's neighbourhood hot for the whole run.
 /// Cells that leave the active set get their edge-flux slots zeroed so stale
 /// values cannot linger in diagnostics or boundary integration.
 void rebuildActiveSet(const MeshData& mesh, SurfaceStateData& state,
                       const BoundaryData* boundary,
                       const std::vector<CouplingPoint>* coupling_pts,
-                      const SolverOptions2D& opts, ActiveSetData& as);
+                      const SolverOptions2D& opts, ActiveSetData& as,
+                      bool live_coupling = false);
 
 /// Post-advance safety check: true if any OUTER-ring cell got wet
 /// (volume > eps·A) — the front crossed the whole halo within one window and
