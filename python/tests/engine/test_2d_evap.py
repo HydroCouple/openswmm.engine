@@ -45,6 +45,9 @@ def _solver(name):
     return s
 
 
+_MM_HR_TO_MS = 1.0 / (1000.0 * 3600.0)  # mm/hr → m/s
+
+
 def _run_with_evap(rate_mm_hr, n=30, rain_mm_hr=30.0):
     """Run the mesh under steady rain + forced evap; return final mass balance.
 
@@ -54,9 +57,9 @@ def _run_with_evap(rate_mm_hr, n=30, rain_mm_hr=30.0):
     s = _solver(f"twod_evap_{rate_mm_hr}")
     try:
         surf = s.surface2d
-        surf.force_rainfall_uniform(rain_mm_hr, persist=ForcingPersist.PERSIST)
+        surf.force_rainfall_uniform(rain_mm_hr * _MM_HR_TO_MS, persist=ForcingPersist.PERSIST)
         if rate_mm_hr > 0.0:
-            surf.force_evap_uniform(rate_mm_hr, persist=ForcingPersist.PERSIST)
+            surf.force_evap_uniform(rate_mm_hr * _MM_HR_TO_MS, persist=ForcingPersist.PERSIST)
         for _ in range(n):
             s.step()
         return surf.get_mass_balance()
@@ -90,12 +93,12 @@ class TestSurface2dEvap:
         s = _solver("twod_evap_oneshot")
         try:
             surf = s.surface2d
-            surf.force_rainfall_uniform(30.0, persist=ForcingPersist.PERSIST)
+            surf.force_rainfall_uniform(30.0 * _MM_HR_TO_MS, persist=ForcingPersist.PERSIST)
             for _ in range(5):
                 s.step()
             before = surf.get_mass_balance()["evap_out"]
             # One-shot evap (default RESET persist): one step of loss.
-            surf.force_evap_uniform(10.0)
+            surf.force_evap_uniform(10.0 * _MM_HR_TO_MS)
             s.step()
             after_one = surf.get_mass_balance()["evap_out"]
             assert after_one > before
